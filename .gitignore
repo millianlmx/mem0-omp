@@ -1,0 +1,8 @@
+# Données locales du stack — jamais commitées
+mem0-stack/qdrant_storage/
+mem0-stack/.env
+
+node_modules/
+*.log
+.DS_Store
+__pycache__/

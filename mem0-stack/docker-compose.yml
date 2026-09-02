@@ -1,0 +1,46 @@
+services:
+  qdrant:
+    build: ./qdrant-docker
+    container_name: mem0-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"   # API + dashboard http://localhost:6333/dashboard
+      - "6334:6334"   # gRPC
+    volumes:
+      - ./qdrant_storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/readyz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mem0-mcp:
+    build: ./mem0-http
+    container_name: mem0-http
+    restart: unless-stopped
+    depends_on:
+      qdrant:
+        condition: service_healthy
+    ports:
+      # HTTP direct pour le plugin OMP natif (omp-mem0-memory).
+      # Bindé en 127.0.0.1 : accessible depuis le Mac hôte (où tourne OMP),
+      # pas exposé au reste du réseau.
+      - "127.0.0.1:8321:8321"
+    environment:
+      QDRANT_HOST: qdrant
+      QDRANT_PORT: "6333"
+      # oMLX tourne EN NATIF sur le Mac (omlx start), pas dans Docker.
+      # host.docker.internal est résolu nativement par Docker Desktop sur macOS.
+      OMLX_BASE_URL: "http://host.docker.internal:8000/v1"
+      OMLX_LLM_MODEL: ${OMLX_LLM_MODEL:-qwen3-8b}
+      OMLX_EMBED_MODEL: ${OMLX_EMBED_MODEL:-bge-m3}
+      EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
+      # Optionnel : si définie, le plugin OMP doit l'envoyer dans le header
+      # X-Mem0-Token à chaque requête (défense en profondeur, cf. .env.example).
+      MEM0_HTTP_TOKEN: ${MEM0_HTTP_TOKEN:-}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8321/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
