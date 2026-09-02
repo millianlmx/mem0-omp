@@ -1,13 +1,13 @@
 {
   "name": "omp-mem0-memory",
-  "version": "2.2.0",
+  "version": "0.1.0",
   "description": "Mémoire mem0 (Qdrant + oMLX) native pour OMP : brief posé automatiquement par projet, /mem0-init pour amorcer un dépôt existant, recall au premier tour, retain toutes les 3 questions, scope par projet.",
   "license": "MIT",
-  "author": "Millian",
-  "homepage": "https://github.com/millian/mem0-omp",
+  "author": "MillianLMX",
+  "homepage": "https://github.com/millianlmx/mem0-omp",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/millian/mem0-omp.git",
+    "url": "git+https://github.com/millianlmx/mem0-omp.git",
     "directory": "omp-mem0-memory"
   },
   "keywords": ["omp", "oh-my-pi", "extension", "memory", "mem0", "qdrant"],

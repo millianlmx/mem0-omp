@@ -28,9 +28,14 @@ mem0-omp/                              racine = marketplace OMP
 
 ```bash
 git clone https://github.com/millian/mem0-omp
-cd mem0-omp/mem0-stack && docker compose up -d
-curl http://localhost:8321/health          # -> {"ok":true}
+cd mem0-omp/mem0-stack
+cp .env.example .env        # ajuste OMLX_BASE_URL selon podman/docker
+podman compose up -d        # ou: docker compose up -d
+./doctor.sh
 ```
+
+`doctor.sh` teste la chaîne complète — conteneurs, port, Qdrant, oMLX, puis un
+aller-retour écriture/relecture — et dit quoi faire à chaque échec.
 
 **2. Le plugin**, depuis une session OMP :
 
@@ -129,6 +134,51 @@ Si le projet a déjà des souvenirs, une confirmation est demandée avant de
 réamorcer : les quasi-doublons ne sont pas toujours rattrapés par la fusion mem0 et
 diluent le recall.
 
+## Quand ça ne répond pas
+
+`/mem0-status` en erreur avec « socket connection was closed unexpectedly » ne
+veut pas dire que le service est absent : ça veut dire que le port est tenu par
+le proxy du moteur de conteneurs pendant que le conteneur **redémarre en
+boucle**. La connexion est acceptée puis fermée, au lieu d'un « connection
+refused » franc.
+
+```bash
+cd mem0-stack && ./doctor.sh
+podman logs --tail 80 mem0-http
+podman compose up mem0-http        # sans -d : le traceback s'affiche
+```
+
+Deux vérifications marchent même quand le conteneur redémarre en boucle, parce
+qu'elles n'ont besoin que de l'image :
+
+```bash
+podman run --rm mem0-stack-mem0-http:latest python memory_config.py   # config résolue
+podman run --rm mem0-stack-mem0-http:latest python test_api.py        # conformité API mem0
+```
+
+Un `NameError` sur la première veut dire que le fichier embarqué diffère de
+celui sur disque : `podman compose build --no-cache mem0-http`, puis `up -d`.
+
+Ensuite, trois causes couvrent la quasi-totalité des cas :
+
+- **oMLX injoignable depuis le conteneur.** Il tourne en natif sur le Mac ;
+  `localhost` dans un conteneur désigne le conteneur. Podman veut
+  `host.containers.internal`, Docker Desktop `host.docker.internal`. Vérifie
+  aussi qu'oMLX écoute sur `0.0.0.0` et pas seulement `127.0.0.1`.
+- **`EMBEDDING_DIMS` ne correspond pas au modèle.** La collection Qdrant est
+  créée avec cette dimension au premier appel ; la changer ensuite fait rejeter
+  toutes les écritures. Supprime `mem0-stack/qdrant_storage` pour repartir.
+- **Premier démarrage lent.** L'import de `mem0ai` prend du temps ; le
+  `start_period` du healthcheck est à 45 s pour cette raison.
+
+Note sur les versions de mem0 : la 2.x a cassé l'API de la 1.x sans renommer
+les méthodes. `from_config` est redevenu synchrone, `search`/`get_all` refusent
+`user_id`/`agent_id` au premier niveau (il faut passer par `filters`), et
+`limit` s'appelle `top_k`. Chacune de ces ruptures ne se manifeste qu'à
+l'exécution de la route concernée, avec un `500`. D'où la borne `mem0ai<3.0`
+dans le Dockerfile et `test_api.py`, exécuté **au build** : une rupture d'API
+fait désormais échouer la construction de l'image, pas la première requête.
+
 ## Commandes
 
 - `/mem0-status` — connexion, projet résolu, état du brief, nombre de souvenirs.
@@ -144,8 +194,8 @@ diluent le recall.
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
-| `OMLX_LLM_MODEL` | `Spark-X2.5-4B-MLX-4bit` | modèle d'extraction (dans `.env`) |
-| `OMLX_EMBED_MODEL` | `bge-m3-mlx-8bit` | modèle d'embedding (dans `.env`) |
+| `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |
+| `OMLX_EMBED_MODEL` | `bge-m3` | modèle d'embedding (dans `.env`) |
 
 Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le réseau.
 

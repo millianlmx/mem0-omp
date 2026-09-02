@@ -26,8 +26,28 @@ HTTP_TOKEN = os.environ.get("MEM0_HTTP_TOKEN", "")
 async def get_memory() -> AsyncMemory:
     global _mem
     if _mem is None:
-        _mem = await AsyncMemory.from_config(CONFIG)
+        # from_config est un classmethod SYNCHRONE en mem0 2.x ; seules les
+        # méthodes d'instance (add/search/get_all/...) sont des coroutines.
+        _mem = AsyncMemory.from_config(CONFIG)
     return _mem
+
+
+def scope_filters(agent_id: str | None, run_id: str | None = None, extra: dict | None = None) -> dict:
+    """Filtres d'entité pour search/get_all.
+
+    mem0 2.x REFUSE user_id/agent_id/run_id en paramètres de premier niveau sur
+    search() et get_all() : ils doivent passer par `filters`. Les filtres de
+    métadonnées fournis par l'appelant sont appliqués d'abord, puis le scoping
+    d'entité par-dessus — le cloisonnement ne doit pas pouvoir être contourné
+    depuis le corps de la requête.
+    """
+    f: dict = dict(extra or {})
+    f["user_id"] = USER
+    if agent_id:
+        f["agent_id"] = agent_id
+    if run_id:
+        f["run_id"] = run_id
+    return f
 
 
 def check_token(token: str | None) -> None:
@@ -57,7 +77,9 @@ class SearchRequest(BaseModel):
 
 @app.get("/health")
 async def health():
-    return {"ok": True}
+    import mem0
+
+    return {"ok": True, "mem0": getattr(mem0, "__version__", "?"), "user": USER}
 
 
 @app.post("/memory/add")
@@ -93,10 +115,8 @@ async def search_memories(req: SearchRequest, x_mem0_token: str | None = Header(
     m = await get_memory()
     return await m.search(
         req.query,
-        user_id=USER,
-        agent_id=req.agent_id or None,
-        limit=req.limit,
-        filters=req.filters,
+        top_k=req.limit,                                     # `limit` s'appelle top_k en 2.x
+        filters=scope_filters(req.agent_id, extra=req.filters),
     )
 
 
@@ -104,7 +124,7 @@ async def search_memories(req: SearchRequest, x_mem0_token: str | None = Header(
 async def get_all_memories(agent_id: str | None = None, x_mem0_token: str | None = Header(default=None)):
     check_token(x_mem0_token)
     m = await get_memory()
-    return await m.get_all(user_id=USER, agent_id=agent_id or None)
+    return await m.get_all(filters=scope_filters(agent_id), top_k=100)
 
 
 @app.delete("/memory/{memory_id}")

@@ -5,13 +5,44 @@ lui qui trie, dans un segment de conversation brut, ce qui mérite d'être gard�
 est aligné sur le bloc AGENTS.md posé dans les projets.
 """
 import os
+import sys
 
-QDRANT_HOST = os.environ.get("QDRANT_HOST", "qdrant")
-QDRANT_PORT = int(os.environ.get("QDRANT_PORT", "6333"))
-OMLX_BASE_URL = os.environ.get("OMLX_BASE_URL", "http://host.docker.internal:8000/v1")
-LLM_MODEL = os.environ.get("OMLX_LLM_MODEL", "qwen3-8b")
-EMBED_MODEL = os.environ.get("OMLX_EMBED_MODEL", "bge-m3")
-OMLX_API_TOKEN = os.environ.get("OMLX_API_TOKEN", "")
+
+def _env(name: str, default: str) -> str:
+    """Variable d'environnement, avec repli si absente OU vide.
+
+    docker-compose écrit une chaîne vide quand une variable est déclarée sans
+    valeur dans .env (`EMBEDDING_DIMS=`). os.environ.get() renvoie alors "" et
+    non le défaut : sans ce repli, int("") lève une ValueError obscure.
+    """
+    raw = os.environ.get(name)
+    return default if raw is None or raw.strip() == "" else raw.strip()
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = _env(name, str(default))
+    try:
+        return int(raw)
+    except ValueError:
+        raise SystemExit(
+            f"[mem0-config] {name}={raw!r} n'est pas un entier. "
+            f"Corrige la valeur dans .env (attendu : un nombre, ex. {default})."
+        )
+
+
+QDRANT_HOST = _env("QDRANT_HOST", "qdrant")
+QDRANT_PORT = _env_int("QDRANT_PORT", 6333)
+# Docker Desktop : host.docker.internal — Podman : host.containers.internal.
+OMLX_BASE_URL = _env("OMLX_BASE_URL", "http://host.containers.internal:8000/v1")
+LLM_MODEL = _env("OMLX_LLM_MODEL", "qwen3-8b")
+EMBED_MODEL = _env("OMLX_EMBED_MODEL", "bge-m3")
+# oMLX peut exiger une clé. Le client OpenAI en veut une non vide de toute
+# façon, d'où le repli sur une valeur factice quand le serveur n'en demande pas.
+OMLX_API_KEY = _env("OMLX_API_TOKEN", "not-needed")
+# Doit correspondre au modèle d'embedding (bge-m3 = 1024). La collection Qdrant
+# est créée avec cette dimension au premier appel : la changer ensuite fait
+# rejeter les écritures.
+EMBEDDING_DIMS = _env_int("EMBEDDING_DIMS", 1024)
 
 # Constant : c'est toi. Le cloisonnement se fait par agent_id (= nom du projet),
 # envoyé par le plugin OMP.
@@ -90,7 +121,7 @@ CONFIG = {
         "provider": "openai",
         "config": {
             "model": LLM_MODEL,
-            "api_key": OMLX_API_TOKEN if OMLX_API_TOKEN else "not-needed",
+            "api_key": OMLX_API_KEY,
             "openai_base_url": OMLX_BASE_URL,
         },
     },
@@ -98,7 +129,7 @@ CONFIG = {
         "provider": "openai",
         "config": {
             "model": EMBED_MODEL,
-            "api_key": OMLX_API_TOKEN if OMLX_API_TOKEN else "not-needed",
+            "api_key": OMLX_API_KEY,
             "openai_base_url": OMLX_BASE_URL,
             # pas de embedding_dims ici : cf. bug mem0 #4153 avec certains
             # backends OpenAI-compatible qui n'aiment pas le param "dimensions"
@@ -108,3 +139,25 @@ CONFIG = {
     "custom_update_memory_prompt": UPDATE_MEMORY_PROMPT,
     "version": "v1.1",
 }
+
+
+if __name__ == "__main__":
+    # Auto-test : `podman run --rm <image> python memory_config.py` affiche la
+    # configuration réellement embarquée dans l'image. Utile quand le conteneur
+    # redémarre en boucle et que tu veux voir ce qu'il exécute vraiment.
+    import json as _json
+
+    print("memory_config chargé sans erreur.")
+    print(f"  fichier        : {__file__}")
+    print(f"  QDRANT         : {QDRANT_HOST}:{QDRANT_PORT}")
+    print(f"  OMLX_BASE_URL  : {OMLX_BASE_URL}")
+    _k = OMLX_API_KEY
+    print(f"  OMLX_API_TOKEN : {'(aucun)' if _k == 'not-needed' else _k[:6] + '…' + _k[-3:]}")
+    print(f"  LLM            : {LLM_MODEL}")
+    print(f"  EMBED          : {EMBED_MODEL} ({EMBEDDING_DIMS} dimensions)")
+    print(f"  USER           : {USER}")
+    missing = [k for k in ("vector_store", "llm", "embedder") if k not in CONFIG]
+    if missing:
+        raise SystemExit(f"CONFIG incomplète, sections manquantes : {missing}")
+    print("CONFIG complète.")
+    _json.dumps(CONFIG)  # sérialisable = exploitable par mem0

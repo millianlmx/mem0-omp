@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.2.0"
+    "version": "0.1.0"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
       "description": "Mémoire mem0 par projet : brief posé automatiquement, recall au premier tour, retain toutes les 3 questions, /mem0-init pour amorcer un dépôt existant. Nécessite le stack mem0-stack en local.",
-      "version": "2.2.0",
+      "version": "0.1.0",
       "author": {
         "name": "MillianLMX"
       },
