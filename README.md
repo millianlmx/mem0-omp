@@ -187,6 +187,16 @@ fait désormais échouer la construction de l'image, pas la première requête.
   modifications, écritures mémoire, présence du sommaire.
 - `/mem0-init` — amorce un projet existant (voir ci-dessus).
 - `/mem0-brief` — état du brief. `--update` réécrit la version courante.
+- `/mem0-dedupe` — repère les souvenirs redondants et supprime les moins informatifs.
+  **Simulation par défaut, rien n'est écrit sans `--apply`.** L'aperçu est fait pour
+  être vérifié avant d'écrire : une paire par bloc, avec son score de recouvrement,
+  le texte **intégral** du souvenir voué à la suppression — c'est lui qu'on détruit,
+  un id ne se relit pas — et les mots qu'il contient et que le souvenir conservé ne
+  reprend pas. « perte : aucune » signifie que la suppression ne coûte aucun
+  vocabulaire ; une liste de mots signifie qu'il faut regarder de près, voire
+  fusionner à la main avec `mem0_update` plutôt que supprimer. Aucune paire n'est
+  masquée. `--strict` ne traite que les recouvrements quasi totaux, `--scope global`
+  cible la mémoire transverse. Avec `--apply`, le rapport liste les ids supprimés.
 - `/mem0-save` — demande à l'agent d'écrire maintenant ce que la session a produit
   de durable, sans attendre la fin de session.
 

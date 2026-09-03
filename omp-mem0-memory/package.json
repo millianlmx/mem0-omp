@@ -1,6 +1,6 @@
 {
   "name": "omp-mem0-memory",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "description": "Mémoire mem0 (Qdrant + oMLX) native pour OMP : brief posé automatiquement par projet, /mem0-init pour amorcer un dépôt existant, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, écriture par l'agent, scope par projet.",
   "license": "MIT",
   "author": "MillianLMX",

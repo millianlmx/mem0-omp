@@ -96,6 +96,10 @@ const DEDUP_MERGE_MIN_COVERAGE = 0.35;
 // filtre vectoriel en amont, il est en simulation par défaut, et les doublons
 // déjà en base sont des reformulations qui plafonnent vers 0.75-0.85.
 const DEDUPE_SWEEP_CONTAINED = 0.75;
+// Aperçu de /mem0-dedupe. Le souvenir SUPPRIMÉ est rendu en entier : c'est lui
+// qu'on détruit, un id ne se relit pas. La tête conservée suffit en extrait.
+const DEDUPE_PREVIEW_KEEP_CHARS = 240;
+const DEDUPE_PREVIEW_LOST_TOKENS = 12;
 const MERGED_MAX_CHARS = 1_400;
 
 const GLOBAL_SCOPE = "_global";
@@ -653,6 +657,82 @@ function coverage(a: Set<string>, b: Set<string>): number {
   let hit = 0;
   for (const t of a) if (b.has(t)) hit++;
   return hit / a.size;
+}
+
+/** Tokens de `a` absents de `b` — ce qu'une suppression de `a` ferait perdre. */
+function lostTokens(a: Set<string>, b: Set<string>): string[] {
+  const lost: string[] = [];
+  for (const t of a) if (!b.has(t)) lost.push(t);
+  return lost;
+}
+
+// ---------------------------------------------------------------------------
+// Nettoyage rétroactif (/mem0-dedupe)
+//
+// Regroupement et rendu sont des fonctions pures, sorties du handler : c'est ce
+// qui les rend exécutables sans OMP ni serveur mem0, donc vérifiables.
+// ---------------------------------------------------------------------------
+
+export type DedupeEntry = { id: string; text: string; tokens: Set<string> };
+export type DedupePair = { keep: DedupeEntry; drop: DedupeEntry; cov: number };
+
+/**
+ * Regroupe les quasi-doublons autour d'une tête plutôt que par paires : trié
+ * par longueur décroissante, le premier souvenir non absorbé d'un groupe est
+ * toujours le plus informatif, et une tête ne peut plus être supprimée par une
+ * paire évaluée plus tard. `entries` n'est pas muté.
+ */
+export function planDedupe(entries: DedupeEntry[], threshold: number): DedupePair[] {
+  const ranked = [...entries].sort((x, y) => y.text.length - x.text.length);
+  const absorbed = new Set<string>();
+  const pairs: DedupePair[] = [];
+  for (let i = 0; i < ranked.length; i++) {
+    const head = ranked[i]!;
+    if (absorbed.has(head.id)) continue;
+    for (let j = i + 1; j < ranked.length; j++) {
+      const other = ranked[j]!;
+      if (absorbed.has(other.id)) continue;
+      // `other` est le plus court : c'est sa couverture par la tête qui dit s'il
+      // n'apporte rien. L'inverse serait une inclusion large, pas un doublon.
+      // Le score est conservé : c'est lui qui justifie la suppression à l'écran.
+      const cov = coverage(other.tokens, head.tokens);
+      if (cov < threshold) continue;
+      pairs.push({ keep: head, drop: other, cov });
+      absorbed.add(other.id);
+    }
+  }
+  return pairs;
+}
+
+/**
+ * Un bloc par paire. Un id ne se vérifie pas : ce qui se vérifie, c'est le
+ * texte INTÉGRAL de ce qui part, le score qui a déclenché la paire, et les mots
+ * du supprimé que la tête ne reprend pas — liste vide = suppression sans perte
+ * de vocabulaire. La liste des paires n'est jamais tronquée : masquer une paire
+ * dans un aperçu d'audit retire précisément ce qu'on vient vérifier.
+ */
+export function renderDedupePreview(pairs: DedupePair[], threshold: number): string {
+  return pairs
+    .map((p, i) => {
+      const lost = lostTokens(p.drop.tokens, p.keep.tokens);
+      const shown = lost.slice(0, DEDUPE_PREVIEW_LOST_TOKENS).join(", ");
+      const lostLine = lost.length
+        ? `${lost.length} mot(s) hors du gardé : ${shown}${lost.length > DEDUPE_PREVIEW_LOST_TOKENS ? ", …" : ""}`
+        : "aucune, tout le vocabulaire du supprimé est déjà dans le gardé";
+      const keepText =
+        p.keep.text.length > DEDUPE_PREVIEW_KEEP_CHARS
+          ? `${p.keep.text.slice(0, DEDUPE_PREVIEW_KEEP_CHARS)}…`
+          : p.keep.text;
+      return [
+        `── paire ${i + 1}/${pairs.length} · recouvrement ${p.cov.toFixed(2)} (seuil ${threshold})`,
+        `  GARDE    [${p.keep.id}] ${p.keep.text.length} car.`,
+        `    ${keepText}`,
+        `  SUPPRIME [${p.drop.id}] ${p.drop.text.length} car.`,
+        `    ${p.drop.text}`,
+        `  perte    ${lostLine}`,
+      ].join("\n");
+    })
+    .join("\n\n");
 }
 
 async function findSimilar(text: string, scope: string): Promise<Similar | null> {
@@ -1422,8 +1502,10 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   pi.registerCommand("mem0-dedupe", {
     description:
       "Repère les souvenirs redondants du projet et supprime les moins informatifs. Simulation " +
-      "par défaut ; --apply pour écrire, --strict pour ne fusionner que les recouvrements quasi " +
-      "totaux, --scope global pour la mémoire transverse",
+      "par défaut : chaque paire est affichée avec son score de recouvrement, le texte intégral " +
+      "du souvenir voué à la suppression et les mots qu'elle ferait perdre. --apply pour écrire, " +
+      "--strict pour ne traiter que les recouvrements quasi totaux, --scope global pour la " +
+      "mémoire transverse",
     handler: async (args, ctx) => {
       const argv = String(args ?? "");
       const apply = argv.includes("--apply");
@@ -1441,34 +1523,12 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       // Comparaison lexicale pure, sans embedding : on travaille sur une base
       // déjà chargée en mémoire, et un aller-retour vectoriel par paire coûterait
       // O(n²) requêtes pour un gain nul sur des quasi-doublons.
-      type Entry = { id: string; text: string; tokens: Set<string> };
-      const entries: Entry[] = all
+      const entries: DedupeEntry[] = all
         .map((m) => ({ id: String(m?.id ?? ""), text: memoryLine(m) }))
         .filter((e) => e.id)
         .map((e) => ({ ...e, tokens: contentTokens(e.text) }));
 
-      // Clustering autour d'une tête, pas comparaison par paires : trié par
-      // longueur décroissante, le premier souvenir non absorbé d'un groupe est
-      // toujours le plus informatif, et une tête ne peut plus être supprimée par
-      // une paire évaluée plus tard.
-      entries.sort((x, y) => y.text.length - x.text.length);
-
-      const absorbed = new Set<string>();
-      const actions: Array<{ keep: Entry; drop: Entry }> = [];
-
-      for (let i = 0; i < entries.length; i++) {
-        const head = entries[i]!;
-        if (absorbed.has(head.id)) continue;
-        for (let j = i + 1; j < entries.length; j++) {
-          const other = entries[j]!;
-          if (absorbed.has(other.id)) continue;
-          // `other` est le plus court : c'est sa couverture par la tête qui dit
-          // s'il n'apporte rien. L'inverse serait une inclusion large, pas un doublon.
-          if (coverage(other.tokens, head.tokens) < threshold) continue;
-          actions.push({ keep: head, drop: other });
-          absorbed.add(other.id);
-        }
-      }
+      const actions = planDedupe(entries, threshold);
 
       if (!actions.length) {
         ctx.ui.notify(
@@ -1479,36 +1539,35 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       }
 
       if (!apply) {
-        const preview = actions
-          .slice(0, 10)
-          .map((x) => `  · garde [${x.keep.id}] «${x.keep.text.slice(0, 70)}…» / supprime [${x.drop.id}]`)
-          .join("\n");
         ctx.ui.notify(
-          `[mem0] "${scope}" : ${actions.length} doublon(s) sur ${entries.length} souvenir(s).\n${preview}` +
-            (actions.length > 10 ? `\n  … et ${actions.length - 10} autre(s)` : "") +
-            `\n/mem0-dedupe --apply pour appliquer.`,
+          `[mem0] "${scope}" : ${actions.length} doublon(s) sur ${entries.length} souvenir(s) — simulation, rien n'est écrit.\n\n` +
+            `${renderDedupePreview(actions, threshold)}\n\n` +
+            `/mem0-dedupe --apply supprime les ${actions.length} souvenir(s) marqués SUPPRIME.`,
           "info",
         );
         return;
       }
 
-      let removed = 0;
+      const deleted: string[] = [];
       const failures: string[] = [];
       for (const action of actions) {
         try {
           await mem0.delete(action.drop.id);
-          removed++;
+          deleted.push(action.drop.id);
         } catch (err) {
-          failures.push((err as Error).message);
+          failures.push(`[${action.drop.id}] ${(err as Error).message}`);
         }
       }
       // La base a changé sous le cache local : sommaire et agrafage seraient faux.
       const st = stateOf(ctx);
       st.mem = null;
       st.index = null;
+      // Les ids supprimés partent dans le rapport : après coup, c'est la seule
+      // trace qui permet de dire ce qui a disparu.
       ctx.ui.notify(
-        `[mem0] "${scope}" : ${removed} doublon(s) supprimé(s), ${entries.length - removed} restant(s)` +
-          (failures.length ? ` · ${failures.length} échec(s) : ${failures[0]}` : ""),
+        `[mem0] "${scope}" : ${deleted.length} doublon(s) supprimé(s), ${entries.length - deleted.length} restant(s)` +
+          (deleted.length ? `\n  supprimés : ${deleted.join(", ")}` : "") +
+          (failures.length ? `\n  ${failures.length} échec(s) : ${failures.join(" · ")}` : ""),
         failures.length ? "warning" : "info",
       );
     },
