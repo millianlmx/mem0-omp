@@ -18,9 +18,10 @@ mem0-omp/                              racine = marketplace OMP
 | Quand | Quoi |
 |---|---|
 | Premier démarrage dans un dépôt | Pose le brief mémoire : écrit `.omp/mem0-brief.md` et ajoute un bloc dans `AGENTS.md` qui le cite. Une fois, tout seul. |
-| Premier tour d'une session | Cherche dans la mémoire du projet, ancré sur ta demande réelle, et injecte le résultat silencieusement dans le même tour. |
-| Toutes les 3 questions, puis en fin de session | Envoie le segment de conversation à mem0, qui n'en garde que ce qui vaut le coup. En tâche de fond : jamais de latence visible. |
-| À la demande | `mem0_search`, `mem0_add`, `mem0_forget`. |
+| Chaque tour | Cherche dans la mémoire du projet sur ton prompt brut, filtré par un plancher de score, et injecte le résultat silencieusement dans le même tour. Le sommaire exhaustif de la mémoire du projet part dans le prompt système : l'agent sait ce qui existe sans avoir à chercher. |
+| Chaque `read` / `grep` / `glob` / `lsp` / `edit` / `write` | Le souvenir qui concerne les arguments de l'outil est posé en tête du résultat, sans appel réseau et sans amputer le résultat. Un même argument n'agrafe qu'une fois. |
+| Fin de session | Si la session a modifié des fichiers sans rien écrire en mémoire, une relance unique demande à l'agent d'écrire ce qui sera encore vrai dans six mois. Aucune écriture automatique par extraction serveur. |
+| À la demande | `mem0_search`, `mem0_add`, `mem0_update`, `mem0_forget`. |
 
 ## Installation
 
@@ -181,10 +182,13 @@ fait désormais échouer la construction de l'image, pas la première requête.
 
 ## Commandes
 
-- `/mem0-status` — connexion, projet résolu, état du brief, nombre de souvenirs.
+- `/mem0-status` — connexion, projet résolu, état du brief, nombre de souvenirs, et
+  les compteurs de la session : tours, rappels non vides, explorations, agrafages,
+  modifications, écritures mémoire, présence du sommaire.
 - `/mem0-init` — amorce un projet existant (voir ci-dessus).
 - `/mem0-brief` — état du brief. `--update` réécrit la version courante.
-- `/mem0-save` — force l'écriture immédiate de ce qui n'a pas encore été mémorisé.
+- `/mem0-save` — demande à l'agent d'écrire maintenant ce que la session a produit
+  de durable, sans attendre la fin de session.
 
 ## Config
 
@@ -213,15 +217,33 @@ Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le ré
   écritures, qui déclenchent deux passes LLM locales (10 à 60 s). Elles échouaient
   toutes, silencieusement, au moment où la session se fermait. Lecture 3 s,
   écriture 120 s.
-- **Retain incrémental.** Avant : les 12 derniers messages, uniquement en fin de
-  session — donc la conclusion, pas le bug résolu au message 40. Et tout était perdu
-  en cas de crash. Maintenant : par segment, toutes les 3 questions, avec flush final.
+- **Plus d'écriture automatique.** Avant : le segment de conversation partait vers
+  mem0 toutes les 3 questions avec `infer=true`. Sur 38 souvenirs, 26 venaient de là
+  et étaient inexploitables — hallucinations grand public et paraphrases creuses. La
+  cause est dans mem0 2.0.20 : `custom_fact_extraction_prompt` est du config mort, le
+  chemin réel est un prompt grand public non remplaçable. Maintenant, c'est l'agent
+  qui écrit, avec une relance unique en fin de session quand la session a modifié des
+  fichiers sans rien mémoriser.
+- **Rappel sur le prompt brut, avec plancher de score.** Le gabarit qui enveloppait
+  la demande annulait son pouvoir discriminant : le gabarit seul sortait un top-1 plus
+  haut que n'importe quelle vraie question. Le `threshold` de mem0 est maintenant
+  exposé par le service et envoyé à chaque rappel.
+- **Sommaire exhaustif dans le prompt système**, plus agrafage d'un souvenir aux
+  résultats de `read`/`grep`/`glob`/`lsp`/`edit`/`write` : la mémoire arrive dans la
+  sortie que l'agent lit de toute façon, au lieu de dépendre d'une consigne.
+- **Recherche hybride réellement active.** L'image installe `fastembed`, donc mem0
+  écrit le vecteur creux BM25 et les identifiants exacts (`EMBEDDING_DIMS`) se
+  retrouvent : rang 1 au lieu d'absent du top 8.
 - **Clé de session stable** au lieu d'un `WeakSet` sur l'objet `ctx`, qui pouvait
   faire partir le recall à chaque tour ou jamais selon la version d'OMP.
-- **Trois tools au lieu de cinq**, avec des descriptions qui disent *quand* les
-  utiliser. `mem0_add` couvre faits et procédures via `kind`.
-- **Le prompt d'extraction** liste explicitement ce qu'il faut ignorer, à commencer
-  par l'état courant du code — c'est ce qui périmait le plus vite dans la v1.
+- **Quatre tools au lieu de cinq**, avec des descriptions qui disent *quand* les
+  utiliser. `mem0_add` couvre faits et procédures via `kind`, et déduplique lui-même :
+  score vectoriel pour « même sujet », recouvrement lexical pour « n'apporte rien de
+  plus ». Sans recouvrement, pas de fusion — quel que soit le score.
+- **Les prompts d'extraction du serveur ont été retirés** : en mem0 2.0.20,
+  `custom_fact_extraction_prompt` et `custom_update_memory_prompt` n'ont aucun
+  appelant. Seul `custom_instructions` est réellement injecté, et il ne sert plus qu'à
+  l'échappatoire `mem0_add(infer: true)`.
 - Plus de couche MCP stdio (`server.py`). Si un autre client en a besoin, reprends-la
   telle quelle depuis l'ancien zip.
 - Plus de pipeline.
@@ -233,8 +255,13 @@ par une erreur :
 
 - `event.prompt` sur `before_agent_start`, et la forme du retour
   `{ message: { customType, content, display, attribution } }`.
-- La forme des entrées de `ctx.sessionManager.getBranch()` — `entryText()` essaie
-  plusieurs formes, mais si le recall marche et que rien ne s'écrit jamais, c'est là.
+- `event.systemPrompt` (`string[]`) et `event.content` / `event.input` /
+  `event.isError` sur `tool_result` — c'est par là que passent le sommaire et
+  l'agrafage. Un retour de `tool_result` REMPLACE le contenu du résultat : le handler
+  reconstruit toujours `[bloc mémoire, ...event.content]`.
+- `SessionStopEventResult` (`{ continue, additionalContext }`) pour la relance de fin
+  de session ; le runtime plafonne les continuations, et l'extension n'en demande
+  qu'une par session.
 - `pi.zod` : depuis la v17.2.10, zod est remplacé par `omptype` avec une façade de
   compatibilité. L'usage ici est basique et devrait passer ; si un `registerTool`
   échoue au chargement, c'est le premier endroit à regarder.
@@ -247,5 +274,6 @@ L'event `session_start` n'est pas critique : si ta version ne l'émet pas, le pr
 
 Test de bout en bout, une minute : ouvre une session dans un projet, vérifie que
 `.omp/mem0-brief.md` et le bloc `AGENTS.md` sont apparus, dis « note que le linter de
-ce projet est Ruff », lance `/mem0-save`, attends 30 s, `/mem0-status` doit avoir
-incrémenté. Nouvelle session : demande quel linter tu utilises.
+ce projet est Ruff » — l'agent doit appeler `mem0_add` — puis `/mem0-status` doit
+compter une écriture mémoire. Nouvelle session : demande quel linter tu utilises ; la
+réponse doit venir du rappel, sans lecture de fichier.

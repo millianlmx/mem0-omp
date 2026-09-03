@@ -112,6 +112,15 @@ def main() -> int:
         print(f"{'PASS' if ok else 'FAIL'}  filtres client fusionnés sans écraser le scope : {merged}")
         failures += 0 if ok else 1
 
+        # `threshold` doit atteindre mem0.search : sans lui le service tourne au
+        # plancher par défaut 0.1, c'est-à-dire sans filtrage. `_record` lie les
+        # arguments à la vraie signature : ce test échoue si mem0 retire le paramètre.
+        calls.clear()
+        client.post("/memory/search", json={"query": "q", "agent_id": "A", "limit": 5, "threshold": 0.4})
+        ok = calls[0][1].get("threshold") == 0.4
+        print(f"{'PASS' if ok else 'FAIL'}  threshold transmis à mem0.search : {calls[0][1].get('threshold')}")
+        failures += 0 if ok else 1
+
         print()
         print("Conforme." if failures == 0 else f"{failures} échec(s).")
         return 1 if failures else 0

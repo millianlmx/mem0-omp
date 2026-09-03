@@ -48,64 +48,23 @@ EMBEDDING_DIMS = _env_int("EMBEDDING_DIMS", 1024)
 # envoyé par le plugin OMP.
 USER = "moi"
 
-FACT_EXTRACTION_PROMPT = """
-Tu extrais les souvenirs durables d'une session de développement logiciel.
-
-GARDE uniquement, et seulement si l'information est explicitement présente :
-- stack et choix techniques du projet (langage, framework, versions imposées,
-  outil de test, linter, cible de déploiement) ;
-- décisions d'architecture, avec leur raison ;
-- conventions de code et contraintes du dépôt, surtout celles qui ne sont écrites
-  nulle part ;
-- bugs résolus : symptôme + cause racine + correctif ;
-- exigences incontournables d'une feature (compat, perf, règle métier, sécurité,
-  accessibilité) ;
-- préférences de travail exprimées par l'utilisateur.
-
-IGNORE :
-- l'état courant du code (nombre de lignes, contenu d'un fichier, ce qui est en
-  cours) — ça change, le dépôt fait autorité ;
-- les raisonnements intermédiaires, hypothèses non confirmées, tâches en cours,
-  sorties de tests, logs ;
-- le bavardage, les confirmations, les remerciements ;
-- tout secret, clé, token, mot de passe, identifiant ou donnée personnelle.
-
-Chaque fait doit être AUTOPORTANT : compréhensible dans six mois sans la
-conversation d'origine. Nomme les fichiers, modules et symboles concernés. Un fait
-sans sa cause ou sa raison n'a presque aucune valeur — ne le produis pas à moitié.
-
-Réponds uniquement en JSON, clé "facts", liste de chaînes. Liste vide si rien ne
-mérite d'être retenu — c'est un résultat normal et fréquent.
-
-Exemples :
-
-Input: Bon ça marche enfin, merci
-Output: {"facts": []}
-
-Input: J'ai relancé les tests, 42 passent
-Output: {"facts": []}
-
-Input: Le TypeError venait de pydantic v2, fallait remplacer .dict() par .model_dump() dans api/serializers.py
-Output: {"facts": ["Bug TypeError dans api/serializers.py : cause = appel de .dict() (API pydantic v1) sur un modele v2. Fix = .model_dump(). Verifier ce pattern partout ou pydantic est utilise."]}
-
-Input: On part sur Ruff plutot que Flake8+Black, un seul outil a configurer et c'est 10x plus rapide en CI
-Output: {"facts": ["Decision projet : linter et formatter = Ruff, retenu contre Flake8+Black pour n'avoir qu'un outil a configurer et un temps de CI nettement plus court."]}
-
-Input: Attention le reset de mot de passe doit rester a usage unique, c'est non negociable pour l'audit
-Output: {"facts": ["Exigence non negociable (audit) : les tokens de reset de mot de passe sont a usage unique."]}
-"""
-
-UPDATE_MEMORY_PROMPT = """
-Tu compares un souvenir existant a une nouvelle information sur le meme sujet.
-
-Si la nouvelle information corrige ou precise l'ancienne, produis un souvenir mis a
-jour qui garde une trace explicite de l'etat precedent ("auparavant X, desormais Y"
-et la raison du changement si elle est connue). L'historique d'une decision vaut
-souvent autant que la decision.
-
-Ne supprime jamais silencieusement une information encore potentiellement utile. Si
-les deux informations coexistent sans se contredire, garde les deux.
-"""
+# Seul slot d'extraction réellement lu par mem0 2.0.20 : `MemoryConfig.custom_instructions`
+# (mem0/configs/base.py), injecté en section « ## Custom Instructions » du prompt
+# utilisateur d'extraction. `custom_fact_extraction_prompt` et
+# `custom_update_memory_prompt` sont du config mort dans cette version — aucun appelant —
+# et donnaient l'illusion que l'extraction était sous contrôle. Le prompt système
+# grand public de mem0 (ADDITIVE_EXTRACTION_PROMPT) reste en tête et n'est pas
+# remplaçable : ce chemin ne sert donc que pour l'échappatoire mem0_add(infer=true),
+# jamais pour une écriture automatique.
+CUSTOM_INSTRUCTIONS = (
+    "Contexte : session de développement logiciel, pas conversation personnelle. "
+    "N'extrais QUE : stack et choix techniques, décisions d'architecture avec leur raison, "
+    "conventions du dépôt, bugs résolus (symptôme + cause racine + correctif), exigences "
+    "non négociables d'une feature. N'extrais RIEN d'autre : ni préférences personnelles, "
+    "ni expériences, ni recommandations de l'assistant, ni état courant du code. "
+    "Une liste vide est un résultat normal et fréquent. "
+    "Rédige dans la langue de la conversation, en nommant fichiers, modules et symboles."
+)
 
 CONFIG = {
     "vector_store": {
@@ -135,8 +94,7 @@ CONFIG = {
             # backends OpenAI-compatible qui n'aiment pas le param "dimensions"
         },
     },
-    "custom_fact_extraction_prompt": FACT_EXTRACTION_PROMPT,
-    "custom_update_memory_prompt": UPDATE_MEMORY_PROMPT,
+    "custom_instructions": CUSTOM_INSTRUCTIONS,
     "version": "v1.1",
 }
 

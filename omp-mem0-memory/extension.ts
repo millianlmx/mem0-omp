@@ -4,13 +4,17 @@
 //   1. Au premier contact avec un projet : pose le brief mémoire tout seul —
 //      écrit .omp/mem0-brief.md et cite ce fichier dans AGENTS.md. Idempotent,
 //      une seule fois par projet, rien à installer à la main.
-//   2. Recall au premier tour d'une session : cherche dans la mémoire du projet
-//      courant, ancré sur ce que tu demandes vraiment, et l'injecte
-//      silencieusement dans le même tour.
-//   3. Retain automatique tous les N tours utilisateur (et flush en fin de
-//      session) : le segment de conversation part vers mem0 avec infer=true, le
-//      prompt d'extraction côté serveur ne garde que ce qui vaut le coup.
-//   4. Trois tools explicites : mem0_search / mem0_add / mem0_forget.
+//   2. Rappel à CHAQUE tour : recherche sur le prompt brut, filtrée par un
+//      plancher de score, injectée silencieusement dans le même tour. Le
+//      sommaire exhaustif de la mémoire du projet part dans le system prompt,
+//      donc la consultation cesse d'être spéculative.
+//   3. Agrafage : le souvenir qui concerne les arguments d'un read/grep/glob/
+//      lsp/edit/write est posé en tête du résultat de l'outil, sans amputer
+//      ce résultat et sans aucun appel réseau.
+//   4. Aucune écriture automatique : c'est l'agent qui écrit. Une relance
+//      unique en fin de session le rappelle quand il a modifié des fichiers
+//      sans rien mémoriser.
+//   5. Quatre tools explicites : mem0_search / mem0_add / mem0_update / mem0_forget.
 //
 // La mémoire est scopée PAR PROJET (agent_id = nom du projet), avec un scope
 // "global" séparé pour les préférences transverses. Les deux sont interrogés en
@@ -31,12 +35,68 @@ const MEM0_HTTP_TOKEN = process.env.MEM0_HTTP_TOKEN || "";
 // serveur (extraction de faits + fusion avec l'existant) : sur qwen3-8b en local
 // c'est couramment 10 à 60 s. Un budget global de quelques secondes ferait
 // échouer silencieusement toutes les écritures.
-const TIMEOUT = { search: 3_000, write: 120_000, other: 10_000 };
+// Le budget de recherche doit couvrir un premier appel à froid : l'embedding
+// local (oMLX) charge son modèle à la première requête de la session. 3 s
+// suffisaient à faire échouer TOUS les rappels en silence.
+const TIMEOUT = { search: 20_000, write: 120_000, other: 10_000 };
 
-const RECALL_LIMIT = 8; // souvenirs projet injectés au premier tour
-const RECALL_GLOBAL_LIMIT = 3; // + préférences transverses
-const RETAIN_EVERY_N_TURNS = 3; // cadence d'écriture automatique
-const RETAIN_MAX_CHARS = 24_000; // borne la taille d'un segment envoyé
+const RECALL_LIMIT = 5; // souvenirs projet injectés par tour
+const RECALL_GLOBAL_LIMIT = 2; // + préférences transverses
+const RECALL_MIN_PROMPT = 12; // en dessous ("ok", "continue"), on ne cherche pas
+// Plancher envoyé au serveur. ATTENTION à la sémantique, vérifiée dans le source de
+// mem0 2.0.20 (`score_and_rank`) : `threshold` filtre le score SÉMANTIQUE brut avant
+// fusion, alors que le `score` renvoyé dans les résultats est le score COMBINÉ
+// (sémantique + bm25 + boost entités) divisé par le nombre de signaux actifs. Les deux
+// ne sont donc pas comparables : on ne calibre pas ce plancher sur les scores affichés.
+// Mesuré sur la base réelle : à 0.4, les cinq requêtes pertinentes de contrôle
+// renvoient toutes des résultats et "quelle est la couleur du bouton de connexion"
+// n'en renvoie aucun ; à 0.45 une vraie question ("à quoi sert EMBEDDING_DIMS") est
+// déjà perdue. C'est le sommaire exhaustif, pas le seuil, qui rattrape un rappel qui rate.
+const RECALL_THRESHOLD = 0.4;
+const INDEX_MAX_ENTRIES = 60; // au-delà, sommaire tronqué aux plus récents
+const INDEX_LINE_CHARS = 100; // longueur d'une ligne de sommaire
+
+// Agrafage d'un souvenir au résultat d'un outil d'exploration.
+const PIN_TOOLS: Record<string, true> = { read: true, grep: true, glob: true, lsp: true, edit: true, write: true };
+const PIN_MIN_RATIO = 0.5; // part des tokens de l'argument retrouvés dans le souvenir
+const PIN_COMMON_RATIO = 0.4; // au-delà, un token est trop répandu pour être informatif
+const PIN_TEXT_CHARS = 700; // longueur du souvenir agrafé
+
+// Compteurs par outil : ce qui compte comme exploration, ce qui compte comme
+// modification. `mutations > 0 && adds === 0` en fin de session déclenche la relance.
+const EXPLORE_TOOLS: Record<string, true> = { read: true, grep: true, glob: true, lsp: true };
+const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, apply_patch: true };
+
+function nudgeText(mutations: number): string {
+  return (
+    `[mem0] Cette session a modifié ${mutations} fichier(s) et n'a rien écrit en mémoire. ` +
+    `Avant de conclure : un fait de cette session sera-t-il encore vrai dans six mois — décision ` +
+    `d'architecture et sa raison, bug avec sa cause racine et son correctif, convention du dépôt, ` +
+    `exigence non négociable ? Si oui, appelle mem0_add maintenant : un fait par appel, autoportant, ` +
+    `en nommant fichiers et symboles. Si non, dis en une phrase qu'il n'y a rien à retenir et termine.`
+  );
+}
+
+// Dedup à l'écriture. Le `score` sur lequel on filtre est celui renvoyé par mem0,
+// donc le score COMBINÉ (sémantique + bm25 normalisé) / nombre de signaux : depuis
+// l'activation de fastembed il n'est plus un cosinus, et un texte qui reprend les
+// mêmes mots-clés qu'un souvenir voisin y monte très haut sans dire la même chose.
+// 0.55 attrape les reformulations ; DEDUP_SCORE_LONG relève le plancher sur les
+// paragraphes, où deux faits sans rapport atteignent facilement 0.60-0.79 juste
+// parce qu'ils parlent d'architecture du même projet (constaté deux fois en audit).
+// Le garde-fou qui porte réellement est lexical : sans recouvrement de tokens, pas
+// de concaténation, quel que soit le score.
+const DEDUP_SCORE = 0.55;
+const DEDUP_CANDIDATES = 5;
+const DEDUP_CONTAINED = 0.9; // couverture lexicale au-delà de laquelle un fait en absorbe un autre
+const DEDUP_LONG_CHARS = 400;
+const DEDUP_SCORE_LONG = 0.75;
+const DEDUP_MERGE_MIN_COVERAGE = 0.35;
+// Le nettoyage rétroactif (/mem0-dedupe) est plus permissif : il n'a pas le
+// filtre vectoriel en amont, il est en simulation par défaut, et les doublons
+// déjà en base sont des reformulations qui plafonnent vers 0.75-0.85.
+const DEDUPE_SWEEP_CONTAINED = 0.75;
+const MERGED_MAX_CHARS = 1_400;
 
 const GLOBAL_SCOPE = "_global";
 
@@ -48,7 +108,7 @@ const AUTOSETUP = process.env.MEM0_AUTOSETUP !== "0";
 // autonome une fois copiée dans ~/.omp/extensions/.
 // ---------------------------------------------------------------------------
 
-const BRIEF_VERSION = "v2";
+const BRIEF_VERSION = "v3";
 const BRIEF_REF_PATH = path.join(".omp", "mem0-brief.md");
 const MARKER_OPEN = `<!-- mem0:brief ${BRIEF_VERSION} -->`;
 const MARKER_CLOSE = "<!-- /mem0:brief -->";
@@ -59,29 +119,44 @@ const MARKER_ANY = /<!--\s*mem0:brief(?:\s+v(\d+))?\s*-->/;
 const AGENTS_BLOCK = `${MARKER_OPEN}
 ## Mémoire du projet
 
-Une mémoire persistante (mem0) est branchée sur ce projet : rappel automatique au
-début de chaque session, écriture automatique toutes les quelques questions. Le tri
-automatique rate ce qui est décidé en une phrase sans être répété — quand ça arrive,
-appelle \`mem0_add\` toi-même, sur le moment.
+Une mémoire persistante (mem0) est branchée sur ce projet. Un rappel automatique
+est injecté à chaque tour, mais il est calé sur la formulation de la demande : dès
+que la conversation se déplace vers un sujet que ce rappel ne couvre pas, appelle
+\`mem0_search\` **avant** de lire le code ou de proposer une solution. C'est moins
+cher qu'une exploration de dépôt, et c'est la seule façon de retrouver un bug déjà
+corrigé ou une décision déjà tranchée.
 
-**Mémorise** : stack et choix techniques, décisions d'architecture *avec leur
-raison*, conventions du dépôt qui ne sont écrites nulle part, bugs résolus (symptôme
-+ cause racine + correctif), exigences incontournables d'une feature, préférences de
-travail exprimées par l'utilisateur.
+Appelle \`mem0_search\` en particulier avant de : débugger quelque chose qui
+ressemble à du déjà-vu, trancher une question d'architecture, choisir une
+convention de nommage ou de découpage, ou répondre à une question sur "comment on
+fait ici".
+
+**Mémorise** (\`mem0_add\`) : stack et choix techniques, décisions d'architecture
+*avec leur raison*, conventions du dépôt qui ne sont écrites nulle part, bugs
+résolus (symptôme + cause racine + correctif), exigences incontournables d'une
+feature, préférences de travail exprimées par l'utilisateur.
 
 **Ne mémorise pas** : l'état courant du code, ce qui est déjà écrit ici ou dans le
 README, un raisonnement en cours, un résultat de test, du bavardage, un secret.
 
-Un fait par appel, autoportant. Le dépôt fait toujours autorité contre un souvenir :
-s'il le contredit, le souvenir est périmé — corrige-le (\`mem0_add\`) ou supprime-le
-(\`mem0_forget\`), ne travaille pas dessus.
+Un fait par appel, autoportant, rédigé tel quel — \`mem0_add\` stocke ton texte
+sans le reformuler. Avant d'écrire, il cherche un souvenir proche : s'il en trouve
+un, il le **complète** au lieu de créer un doublon, et te renvoie la version
+fusionnée. Relis-la : si la fusion est mauvaise, réécris l'entrée avec
+\`mem0_update\`.
 
-Quand la conversation part sur un sujet que le rappel de début de session ne
-couvrait pas : \`mem0_search\` avant de te lancer.
+Le dépôt fait toujours autorité contre un souvenir : s'il le contredit, le souvenir
+est périmé — corrige-le (\`mem0_update\`) ou supprime-le (\`mem0_forget\`), ne
+travaille pas dessus.
 
 Règles complètes et exemples : \`${BRIEF_REF_PATH}\` — lis-le avant ton premier
 \`mem0_add\` dans ce projet.
 ${MARKER_CLOSE}`;
+
+// Directive réinjectée dans le system prompt à CHAQUE tour. Le bloc AGENTS.md
+// se noie dans un long contexte ; cette ligne-ci est reposée à chaque requête
+// provider, donc elle survit à la compaction et au bruit.
+const SYSTEM_DIRECTIVE = `Mémoire mem0 : le sommaire de la mémoire du projet est dans ton contexte système, et les souvenirs pertinents pour la demande en cours sont injectés à chaque tour. Traite-les comme acquis : n'explore pas le dépôt pour revérifier un point que la mémoire couvre déjà. Un sujet absent du sommaire n'est pas en mémoire — explore, puis appelle mem0_add. Appelle mem0_search uniquement pour déplier une entrée du sommaire dont le rappel n'a pas donné le texte complet. Un fait par appel, autoportant ; mem0_add déduplique tout seul. Si le dépôt contredit un souvenir, le dépôt gagne : corrige avec mem0_update.`;
 
 // Fichier de référence, lu à la demande par l'agent (divulgation progressive).
 const BRIEF_REFERENCE = `${MARKER_OPEN}
@@ -89,6 +164,14 @@ const BRIEF_REFERENCE = `${MARKER_OPEN}
 
 Généré par le plugin \`omp-mem0-memory\`. Tu peux éditer ce fichier : il ne sera pas
 réécrit tant que le marqueur de version en tête reste \`${BRIEF_VERSION}\`.
+
+## Quand chercher
+
+Le rappel automatique de début de tour est construit à partir de ta demande. Il rate
+ce qui est formulé autrement. \`mem0_search\` dès que le sujet bouge : avant de
+débugger un symptôme qui ressemble à du déjà-vu, avant de trancher une question
+d'architecture, avant de choisir une convention, avant de répondre à "comment on
+fait ici". Une recherche coûte moins qu'une lecture de dépôt.
 
 ## Ce qui mérite d'être mémorisé
 
@@ -121,19 +204,37 @@ personnelle — la rédaction automatique existe mais elle est approximative.
 Une idée par appel, autoportante : quelqu'un doit pouvoir la comprendre dans six mois
 sans le contexte de cette conversation. Nomme les fichiers, modules et symboles.
 
+Ton texte est stocké **tel quel** : \`mem0_add\` n'appelle pas d'extraction LLM par
+défaut. Écris donc la phrase finale, pas une note à retravailler.
+
 - OUI — \`Tests : XCTest, un fichier par type, fixtures dans Tests/Support. Pas de mocks manuels, on passe par des protocoles + implémentations de test.\`
 - OUI — \`Bug écran de séance figé : cause = Timer non invalidé au dismiss de la vue. Fix = .onDisappear { timer.invalidate() }. Vérifier ce pattern sur toute vue à timer.\`
 - NON — \`On a corrigé le bug du timer.\` (ni symptôme, ni cause, ni fix)
 - NON — \`TabataEngine.swift fait 340 lignes.\` (périmé au prochain commit)
+- NON — \`L'équipe travaille sur une architecture single-app.\` (vague, non actionnable, et déjà dit ailleurs)
 
 Une méthode réutilisable en plusieurs étapes (déployer, débugger une catégorie
 d'erreur, checklist avant release) → \`mem0_add\` avec \`kind: "procedure"\`.
 
+## Déduplication
+
+\`mem0_add\` cherche d'abord un souvenir proche dans le même scope. Trois issues :
+
+- **rien de proche** → nouvelle entrée ;
+- **le souvenir existant dit déjà ce que tu apportes** → rien n'est écrit, l'entrée
+  existante t'est renvoyée ;
+- **ton texte complète ou remplace l'existant** → l'entrée est *mise à jour* et la
+  version fusionnée t'est renvoyée.
+
+Relis toujours la fusion renvoyée. Si elle est bancale (deux faits distincts collés,
+information perdue), réécris l'entrée avec \`mem0_update\` — c'est prévu pour ça.
+Passe \`dedupe: false\` seulement quand tu sais que le fait doit vivre séparément.
+
 ## Quand un souvenir est faux
 
 Le dépôt gagne toujours. Si un souvenir contredit le code réel, il est périmé :
-enregistre la version à jour avec \`mem0_add\` (la fusion garde une trace de l'état
-précédent), ou supprime-le avec \`mem0_forget\` s'il est simplement faux.
+réécris-le avec \`mem0_update\`, ou supprime-le avec \`mem0_forget\` s'il est
+simplement faux.
 `;
 
 // ---------------------------------------------------------------------------
@@ -484,17 +585,27 @@ const mem0 = {
         body: JSON.stringify(
           opts.procedure
             ? { steps: text, agent_id: scope }
-            : { text, agent_id: scope, tags: opts.tags, infer: opts.infer ?? true },
+            : { text, agent_id: scope, tags: opts.tags, infer: opts.infer === true },
         ),
       },
       TIMEOUT.write,
     ),
 
-  search: (query: string, scope: string, limit: number) =>
+  search: (query: string, scope: string, limit: number, threshold?: number) =>
     mem0Fetch(
       "/memory/search",
-      { method: "POST", body: JSON.stringify({ query, agent_id: scope, limit, filters: null }) },
+      {
+        method: "POST",
+        body: JSON.stringify({ query, agent_id: scope, limit, threshold: threshold ?? null, filters: null }),
+      },
       TIMEOUT.search,
+    ),
+
+  update: (id: string, text: string) =>
+    mem0Fetch(
+      `/memory/${encodeURIComponent(id)}`,
+      { method: "PUT", body: JSON.stringify({ text }) },
+      TIMEOUT.write,
     ),
 
   getAll: (scope: string) => mem0Fetch(`/memory/all?agent_id=${encodeURIComponent(scope)}`),
@@ -508,6 +619,92 @@ function rows(result: any): any[] {
 
 function memoryLine(m: any): string {
   return String(m?.memory ?? m?.text ?? JSON.stringify(m));
+}
+
+// ---------------------------------------------------------------------------
+// Déduplication à l'écriture
+//
+// Deux niveaux, volontairement : le score vectoriel de mem0 dit "ça parle du
+// même sujet", la couverture lexicale dit "et ça n'apporte rien de plus". Le
+// score seul fusionnerait deux décisions voisines mais distinctes ; la
+// couverture seule raterait toute reformulation.
+// ---------------------------------------------------------------------------
+
+type Similar = { id: string; text: string; score: number };
+
+function foldForCompare(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+// Mots de 4 lettres et plus : les articles et prépositions gonflent la
+// couverture sans rien dire du contenu.
+function contentTokens(s: string): Set<string> {
+  return new Set(foldForCompare(s).split(" ").filter((w) => w.length > 3));
+}
+
+/** Part des tokens de `a` présents dans `b`, dans [0,1]. */
+function coverage(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0) return 1;
+  let hit = 0;
+  for (const t of a) if (b.has(t)) hit++;
+  return hit / a.size;
+}
+
+async function findSimilar(text: string, scope: string): Promise<Similar | null> {
+  // Pas de plancher serveur ici : la dédup applique le sien sur le score renvoyé,
+  // et un filtrage en amont masquerait des candidats utiles.
+  const res = await mem0.search(text, scope, DEDUP_CANDIDATES).catch(() => null);
+  if (!res) return null;
+  const floor = text.length >= DEDUP_LONG_CHARS ? DEDUP_SCORE_LONG : DEDUP_SCORE;
+  let best: Similar | null = null;
+  for (const m of rows(res)) {
+    const id = m?.id;
+    const score = typeof m?.score === "number" ? m.score : 0;
+    if (!id || score < floor) continue;
+    if (!best || score > best.score) best = { id: String(id), text: memoryLine(m), score };
+  }
+  return best;
+}
+
+type MergeOutcome =
+  | { action: "insert" }
+  | { action: "skip"; target: Similar }
+  | { action: "update"; target: Similar; merged: string };
+
+/**
+ * Décide quoi faire d'un fait entrant face au souvenir le plus proche.
+ *
+ * - l'existant couvre déjà le nouveau  → on n'écrit rien ;
+ * - le nouveau couvre déjà l'existant  → il le remplace (formulation plus complète) ;
+ * - les deux apportent quelque chose   → concaténation, l'existant d'abord.
+ *
+ * La concaténation est délibérément mécanique : elle est relue par l'agent, qui
+ * peut la réécrire avec `mem0_update`. Faire arbitrer un LLM local ici
+ * ajouterait 10 à 60 s à chaque écriture pour un gain incertain.
+ */
+function planMerge(text: string, similar: Similar | null): MergeOutcome {
+  if (!similar) return { action: "insert" };
+  const incoming = contentTokens(text);
+  const existing = contentTokens(similar.text);
+  if (coverage(incoming, existing) >= DEDUP_CONTAINED) return { action: "skip", target: similar };
+  if (coverage(existing, incoming) >= DEDUP_CONTAINED) {
+    return { action: "update", target: similar, merged: text.slice(0, MERGED_MAX_CHARS) };
+  }
+  // Deux faits qui ne se recouvrent pas lexicalement ne sont pas le même sujet,
+  // quel que soit le score vectoriel : ils vivent séparément.
+  const overlap = Math.max(coverage(incoming, existing), coverage(existing, incoming));
+  if (overlap < DEDUP_MERGE_MIN_COVERAGE) return { action: "insert" };
+  const merged = `${similar.text}\n${text}`;
+  // Une concaténation tronquée perd la queue du fait entrant, et surtout elle ne
+  // se stabilise jamais : le même texte rejoué n'est plus couvert par l'existant
+  // amputé, donc il refusionne à chaque appel. Quand ça ne tient pas, on insère.
+  if (merged.length > MERGED_MAX_CHARS) return { action: "insert" };
+  return { action: "update", target: similar, merged };
 }
 
 // ---------------------------------------------------------------------------
@@ -530,30 +727,129 @@ function redact(text: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Lecture du transcript (forme défensive : elle a bougé entre versions d'OMP)
+// Cache local de la mémoire du projet
+//
+// Chargé une fois par session, il sert à deux choses : rendre le sommaire
+// exhaustif injecté dans le system prompt, et agrafer un souvenir aux arguments
+// d'un outil sans aucun appel réseau (un mem0.search dans `tool_result`
+// ajouterait jusqu'à 20 s à chaque grep, et sur un chemin ou un symbole le
+// matching lexical bat de toute façon la similarité dense).
 // ---------------------------------------------------------------------------
 
-function entryText(entry: any): string | null {
-  const role = entry?.role ?? entry?.type;
-  if (role !== "user" && role !== "assistant") return null;
-  const content = entry?.content ?? entry?.message?.content;
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    const text = content.map((c: any) => (typeof c?.text === "string" ? c.text : "")).filter(Boolean).join("\n");
-    return text || null;
-  }
-  return null;
+/** Souvenir préparé pour le matching local. */
+type Prepared = { id: string; text: string; tokens: Set<string>; updatedAt: string };
+
+type MemoryCache = { entries: Prepared[]; df: Map<string, number> };
+
+/** Charge les souvenirs du projet et prépare le matching local. */
+async function loadMemory(scope: string): Promise<MemoryCache | null> {
+  const all = rows(await mem0.getAll(scope).catch(() => null));
+  const entries: Prepared[] = all
+    .filter((m) => m?.id)
+    .map((m) => {
+      const text = memoryLine(m);
+      return { id: String(m.id), text, tokens: contentTokens(text), updatedAt: String(m?.updated_at ?? "") };
+    })
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  if (!entries.length) return null;
+  // Fréquence documentaire : un token présent dans la moitié de la base ne
+  // discrimine rien, l'agrafage doit pouvoir l'ignorer.
+  const df = new Map<string, number>();
+  for (const e of entries) for (const t of e.tokens) df.set(t, (df.get(t) ?? 0) + 1);
+  return { entries, df };
 }
 
-function branchOf(ctx: ExtensionContext): any[] {
-  return ctx.sessionManager?.getBranch?.() ?? [];
+/** Sommaire exhaustif, rendu depuis le cache. */
+function buildIndex(scope: string, mem: MemoryCache): string {
+  const shown = mem.entries.slice(0, INDEX_MAX_ENTRIES);
+  const hidden = mem.entries.length - shown.length;
+  return (
+    `[mem0] Sommaire de la mémoire du projet "${scope}" — ${mem.entries.length} souvenir(s). ` +
+    `Ce sommaire est exhaustif : un sujet qui n'y figure pas n'est pas en mémoire, ` +
+    `n'appelle pas mem0_search pour t'en assurer. Pour déplier une entrée, mem0_search sur son ` +
+    `sujet ; les ids servent à mem0_update et mem0_forget.\n` +
+    shown
+      .map((e) => {
+        const line = e.text.split("\n")[0]!.trim();
+        return `- [${e.id}] ${line.length > INDEX_LINE_CHARS ? `${line.slice(0, INDEX_LINE_CHARS - 1)}…` : line}`;
+      })
+      .join("\n") +
+    (hidden > 0 ? `\n(+ ${hidden} souvenir(s) plus anciens, atteignables par mem0_search)` : "")
+  );
+}
+
+/** Arguments d'un outil réduits au texte qui porte du sens pour le matching. */
+function toolQuery(toolName: string, input: Record<string, unknown>): string {
+  const pick = (...keys: string[]) =>
+    keys.map((k) => (typeof input[k] === "string" ? (input[k] as string) : "")).join(" ");
+  switch (toolName) {
+    case "grep":
+      return pick("pattern", "path");
+    case "read":
+    case "glob":
+      return pick("path");
+    case "edit":
+    case "write":
+      return pick("path", "paths");
+    case "lsp":
+      return pick("symbol", "query", "file");
+    default:
+      return "";
+  }
+}
+
+/**
+ * Souvenir le plus proche des arguments d'un outil, ou null.
+ *
+ * Deux conditions cumulées : au moins un token INFORMATIF partagé (un token présent
+ * dans plus de PIN_COMMON_RATIO des souvenirs ne discrimine rien — "extension" est dans
+ * la moitié de la base), et au moins PIN_MIN_RATIO des tokens de l'argument retrouvés.
+ * Sans le second garde-fou, lire un fichier suffirait à agrafer n'importe quel souvenir
+ * qui le mentionne ; sans le premier, un chemin générique agraferait au hasard.
+ */
+function pickPin(mem: MemoryCache, query: string, seen: Set<string>): Prepared | null {
+  const args = contentTokens(query);
+  if (!args.size) return null;
+  const common = Math.max(1, Math.floor(mem.entries.length * PIN_COMMON_RATIO));
+  let best: { entry: Prepared; score: number } | null = null;
+  for (const entry of mem.entries) {
+    if (seen.has(entry.id)) continue;
+    let hits = 0;
+    let informative = 0;
+    for (const t of args) {
+      if (!entry.tokens.has(t)) continue;
+      hits++;
+      if ((mem.df.get(t) ?? 0) <= common) informative++;
+    }
+    if (!informative || hits / args.size < PIN_MIN_RATIO) continue;
+    // entries est trié du plus récent au plus ancien : `>` garde le plus récent à score égal.
+    if (!best || informative > best.score) best = { entry, score: informative };
+  }
+  return best?.entry ?? null;
 }
 
 // ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 
-type SessionState = { turns: number; cursor: number; recalled: boolean };
+type SessionState = {
+  turns: number;
+  /** ids déjà montrés dans cette session, par rappel ou par agrafage : on ne répète pas. */
+  injected: Set<string>;
+  /** arguments d'outil déjà agrafés : un même chemin ou pattern n'agrafe qu'une fois. */
+  pinnedQueries: Set<string>;
+  /** cache local des souvenirs du projet + fréquence documentaire des tokens. */
+  mem: MemoryCache | null;
+  /** sommaire rendu, reconstruit en même temps que le cache. */
+  index: string | null;
+  /** compteurs : instrumentation (/mem0-status) et déclenchement du nudge (session_stop). */
+  mutations: number; // edit/write réussis
+  explorations: number; // read/grep/glob/lsp réussis
+  recalls: number; // tours où au moins un souvenir a été injecté
+  pinned: number; // souvenirs agrafés à un résultat d'outil
+  adds: number; // écritures mémoire réussies
+  nudged: boolean;
+};
 
 export default function mem0MemoryExtension(pi: ExtensionAPI) {
   const { z } = pi.zod;
@@ -565,11 +861,29 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   // Clé stable par session. `ctx` peut être recréé d'un tour à l'autre selon la
   // version, donc pas de WeakSet sur l'objet ctx.
   function stateOf(ctx: any): SessionState {
+    // ReadonlySessionManager expose getSessionId(), pas une propriété sessionId :
+    // l'ancienne lecture retombait toujours sur cwd, et deux sessions ouvertes
+    // sur le même projet partageaient compteur de tours et état de rappel.
     const key = String(
-      ctx?.sessionManager?.sessionId ?? ctx?.sessionId ?? ctx?.session?.id ?? ctx?.cwd ?? "session",
+      ctx?.sessionManager?.getSessionId?.() ?? ctx?.sessionId ?? ctx?.session?.id ?? ctx?.cwd ?? "session",
     );
     let st = states.get(key);
-    if (!st) { st = { turns: 0, cursor: 0, recalled: false }; states.set(key, st); }
+    if (!st) {
+      st = {
+        turns: 0,
+        injected: new Set(),
+        pinnedQueries: new Set(),
+        mem: null,
+        index: null,
+        mutations: 0,
+        explorations: 0,
+        recalls: 0,
+        pinned: 0,
+        adds: 0,
+        nudged: false,
+      };
+      states.set(key, st);
+    }
     return st;
   }
 
@@ -601,37 +915,6 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     return status;
   }
 
-  // Segment de conversation non encore retenu, borné en taille.
-  function pendingSegment(ctx: ExtensionContext, st: SessionState): string | null {
-    const branch = branchOf(ctx);
-    if (branch.length <= st.cursor) return null;
-    const slice = branch.slice(st.cursor);
-    st.cursor = branch.length;
-    const texts: string[] = [];
-    for (const entry of slice) {
-      const t = entryText(entry);
-      if (t) texts.push(`${entry.role ?? entry.type}: ${t}`);
-    }
-    if (!texts.length) return null;
-    const joined = texts.join("\n\n");
-    return joined.length > RETAIN_MAX_CHARS ? joined.slice(-RETAIN_MAX_CHARS) : joined;
-  }
-
-  // Écriture en tâche de fond : ne bloque jamais un tour. Un retain lent (deux
-  // passes LLM locales) ne doit pas se voir dans la latence perçue.
-  function retainInBackground(ctx: ExtensionContext, st: SessionState) {
-    const segment = pendingSegment(ctx, st);
-    if (!segment) return;
-    const scope = projectId(ctx.cwd);
-    void mem0
-      .add(redact(segment), scope, { infer: true, tags: "auto" })
-      .catch((err) => {
-        // Cursor déjà avancé : on ne réessaie pas, sinon un serveur en panne
-        // ferait grossir indéfiniment le segment suivant.
-        console.warn(`[mem0] retain échoué (${scope}) : ${(err as Error).message}`);
-      });
-  }
-
   // --- Vérification du brief au démarrage de session ------------------------
   // session_start couvre le cas normal ; le premier before_agent_start rattrape
   // les versions d'OMP où l'event ne remonte pas. checkBrief est mémoïsé, donc
@@ -640,53 +923,109 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     try { checkBrief(ctx); } catch { /* jamais bloquant */ }
   });
 
-  // --- Premier tour : recall. Tours suivants : retain à la cadence. ---------
+  // Après une compaction ou un changement de branche, les souvenirs déjà posés
+  // ne sont plus forcément dans le contexte : on autorise leur réinjection.
+  const forgetInjected = (ctx: ExtensionContext) => { stateOf(ctx).injected.clear(); };
+  pi.on("session_compact", async (_event, ctx) => forgetInjected(ctx));
+  pi.on("auto_compaction_end", async (_event, ctx) => forgetInjected(ctx));
+  pi.on("session_branch", async (_event, ctx) => forgetInjected(ctx));
+
+  // --- Rappel à CHAQUE tour + sommaire exhaustif ----------------------------
+  //
+  // La requête est le PROMPT BRUT. L'ancienne version l'enveloppait dans un
+  // gabarit fixe ("Projet X. Demande en cours… stack, conventions, décisions…") :
+  // mesuré sur la base réelle, le gabarit seul (demande vide) sortait un top-1 à
+  // 0.687, plus haut que le top-1 de n'importe quelle vraie question, et sur une
+  // demande hors sujet 4 des 5 premiers résultats étaient ceux du gabarit. Le
+  // boilerplate était l'attracteur, pas la question.
   pi.on("before_agent_start", async (event, ctx) => {
     const st = stateOf(ctx);
     st.turns += 1;
 
-    if (st.turns > 1) {
-      if ((st.turns - 1) % RETAIN_EVERY_N_TURNS === 0) retainInBackground(ctx, st);
-      return undefined;
+    if (st.turns === 1) {
+      try { checkBrief(ctx); } catch { /* jamais bloquant */ }
     }
 
-    try { checkBrief(ctx); } catch { /* jamais bloquant */ }
-
-    const prompt = String((event as any).prompt ?? "").trim();
-    if (!prompt || st.recalled) return undefined;
-    st.recalled = true;
-
     const scope = projectId(ctx.cwd);
-    const query =
-      `Projet : ${scope}. Demande en cours : "${prompt.slice(0, 800)}". ` +
-      `Stack et architecture du projet, conventions, décisions actées, bugs déjà ` +
-      `rencontrés et leurs correctifs, exigences incontournables — ce qui est utile ` +
-      `pour traiter cette demande.`;
+
+    // Cache + sommaire : une fois par session, retentés au tour suivant en cas
+    // d'échec. Sans cache, pas d'agrafage — l'exploration se déroule normalement.
+    if (st.mem === null) {
+      st.mem = await loadMemory(scope);
+      st.index = st.mem ? buildIndex(scope, st.mem) : null;
+    }
+
+    // La directive et le sommaire sont reposés à chaque tour : un message se
+    // dilue dans un long contexte et ne survit pas à la compaction, le system
+    // prompt si.
+    const systemPrompt = [...event.systemPrompt, SYSTEM_DIRECTIVE, ...(st.index ? [st.index] : [])];
+
+    const prompt = event.prompt.trim();
+    if (prompt.length < RECALL_MIN_PROMPT) return { systemPrompt };
 
     try {
       // Projet et global en parallèle : pas de latence supplémentaire.
+      // Les échecs sont tracés — un rappel muet a caché le problème trop longtemps.
       const [projectRes, globalRes] = await Promise.all([
-        mem0.search(query, scope, RECALL_LIMIT).catch(() => null),
-        mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_LIMIT).catch(() => null),
+        mem0.search(prompt.slice(0, 800), scope, RECALL_LIMIT, RECALL_THRESHOLD).catch((err) => {
+          console.warn(`[mem0] recall projet indisponible : ${(err as Error).message}`);
+          return null;
+        }),
+        mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_LIMIT, RECALL_THRESHOLD).catch(() => null),
       ]);
 
-      const projectMems = rows(projectRes);
-      const globalMems = rows(globalRes);
-      if (!projectMems.length && !globalMems.length) return undefined;
+      // Service injoignable : ne rien affirmer sur le contenu de la mémoire.
+      if (projectRes === null && globalRes === null) return { systemPrompt };
 
-      const parts = [`[mem0] Mémoire du projet "${scope}" — contexte, pas vérité terrain.`];
+      // Un souvenir déjà posé est dans le contexte : le reposer dilue le nouveau.
+      // Exception sur le meilleur résultat du tour — il peut être loin derrière ou
+      // avoir été compacté, et c'est celui dont l'agent a besoin maintenant.
+      const fresh = (res: unknown, keepTop: boolean) =>
+        rows(res).filter((m, i) => {
+          const id = m?.id ? String(m.id) : memoryLine(m);
+          const seen = st.injected.has(id);
+          st.injected.add(id);
+          return keepTop && i === 0 ? true : !seen;
+        });
+
+      const projectMems = fresh(projectRes, true);
+      const globalMems = fresh(globalRes, false);
+
+      // Cas vide : autrefois silencieux. C'est le signal qui déclenche l'écriture.
+      if (!projectMems.length && !globalMems.length) {
+        return {
+          systemPrompt,
+          message: {
+            customType: "mem0-recall",
+            content:
+              `[mem0] Rien en mémoire sur cette demande (plancher de score ${RECALL_THRESHOLD}). ` +
+              `Explore le dépôt, puis écris avec mem0_add ce qui sera encore vrai dans six mois : ` +
+              `décision et sa raison, bug avec cause racine et correctif, convention, exigence.`,
+            display: false,
+            attribution: "agent",
+          },
+        };
+      }
+
+      const parts = [
+        `[mem0] Déjà en mémoire sur cette demande — points acquis, ne relis pas les fichiers ` +
+          `pour les revérifier, cite l'id quand tu t'en sers :`,
+      ];
       if (projectMems.length) {
-        parts.push(projectMems.map((m) => `- ${memoryLine(m)}`).join("\n"));
+        parts.push(projectMems.map((m) => `- [${m.id ?? "?"}] ${memoryLine(m)}`).join("\n"));
       }
       if (globalMems.length) {
         parts.push("Préférences transverses :", globalMems.map((m) => `- ${memoryLine(m)}`).join("\n"));
       }
       parts.push(
-        "Si un souvenir contredit l'état réel du dépôt, le dépôt gagne — le souvenir est périmé, " +
-          "corrige-le avec mem0_add. Utilise mem0_search pour creuser un point précis.",
+        "Ce qui n'apparaît pas ci-dessus n'est pas en mémoire sur cette demande : explore, puis " +
+          "écris ce que tu as appris avec mem0_add. Si le dépôt contredit un souvenir, le dépôt " +
+          "gagne — corrige-le avec mem0_update.",
       );
+      st.recalls += 1;
 
       return {
+        systemPrompt,
         message: {
           customType: "mem0-recall",
           content: parts.join("\n\n"),
@@ -696,32 +1035,93 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       };
     } catch (err) {
       console.warn(`[mem0] recall indisponible : ${(err as Error).message}`);
-      return undefined;
+      return { systemPrompt };
     }
   });
 
-  // --- Flush en fin de session --------------------------------------------
-  const flush = (ctx: ExtensionContext) => retainInBackground(ctx, stateOf(ctx));
-  pi.on("session_stop", async (_event, ctx) => flush(ctx));
-  pi.on("session_shutdown", async (_event, ctx) => flush(ctx));
+  // --- Compteurs par outil + agrafage --------------------------------------
+  //
+  // Aucun appel réseau ici : le matching se fait sur le cache chargé au premier
+  // tour. Le souvenir est posé EN TÊTE et le contenu original conservé
+  // intégralement — l'outil n'est jamais amputé de son résultat.
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.isError) return;
+    const st = stateOf(ctx);
+    if (MUTATE_TOOLS[event.toolName]) st.mutations += 1;
+    else if (EXPLORE_TOOLS[event.toolName]) st.explorations += 1;
+
+    if (!st.mem || !PIN_TOOLS[event.toolName]) return;
+    const query = toolQuery(event.toolName, event.input);
+    if (!query) return;
+    // Un même argument n'agrafe qu'une fois : rejouer le même grep ou relire le
+    // même fichier viderait sinon la base souvenir par souvenir dans le contexte.
+    const key = `${event.toolName}:${query}`;
+    if (st.pinnedQueries.has(key)) return;
+    const hit = pickPin(st.mem, query, st.injected);
+    if (!hit) return;
+    st.pinnedQueries.add(key);
+    st.injected.add(hit.id);
+    st.pinned += 1;
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text:
+            `[mem0] Déjà en mémoire à propos de ceci — n'explore pas pour le revérifier, ` +
+            `cite l'id si tu t'en sers :\n[${hit.id}] ${hit.text.slice(0, PIN_TEXT_CHARS)}`,
+        },
+        ...event.content,
+      ],
+    };
+  });
+
+  // --- Relance en fin de session -------------------------------------------
+  // Une seule par session, et seulement quand la session a modifié des fichiers
+  // sans rien mémoriser : une conversation d'exploration ne déclenche rien.
+  pi.on("session_stop", async (_event, ctx) => {
+    const st = stateOf(ctx);
+    if (st.nudged || st.adds > 0 || st.mutations === 0) return;
+    st.nudged = true;
+    return { continue: true, additionalContext: nudgeText(st.mutations) };
+  });
 
   // --- Tools ---------------------------------------------------------------
 
+  // `loadMode: "essential"` sur les quatre tools. Sans ça, OMP les monte en
+  // devices xd:// (les tools d'extension sont "discoverable" par défaut) : le
+  // modèle doit alors écrire ses arguments dans le `content` du tool write, et
+  // se trompe régulièrement d'enveloppe — d'où les
+  // `Invalid args for xd://mem0_search`. En essential, le schéma part sur le fil
+  // à chaque requête et l'appel est direct.
   pi.registerTool({
     name: "mem0_search",
     label: "mem0 · search",
+    loadMode: "essential",
     description:
       "Cherche dans la mémoire du projet : stack, conventions, décisions d'archi, bugs déjà " +
-      "corrigés, exigences incontournables. À appeler avant de débugger quelque chose qui " +
-      "ressemble à du déjà-vu, ou avant de trancher une question d'architecture.",
+      "corrigés, exigences incontournables. À appeler dès que le sujet se déplace hors du " +
+      "rappel automatique : avant de débugger un symptôme qui ressemble à du déjà-vu, avant " +
+      "de trancher une question d'architecture, avant de choisir une convention, avant de " +
+      "répondre à une question sur la façon de faire dans ce dépôt. Moins cher qu'une " +
+      "exploration du dépôt.",
     parameters: z.object({
       query: z.string().describe("Résumé du symptôme, du sujet ou de la décision recherchée"),
       scope: z.enum(["project", "global"]).optional().default("project"),
-      limit: z.number().int().min(1).max(20).optional().default(6),
+      // Le plafond accepte large et borne au moment de l'appel : un `limit: 100`
+      // renvoyait une erreur de validation et brûlait un tour pour rien.
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(200)
+        .optional()
+        .default(6)
+        .describe("Nombre de souvenirs renvoyés, borné à 50"),
     }),
     async execute(_id, params, _signal, _onUpdate, ctx: any) {
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
-      const result = await mem0.search(params.query, scope, params.limit ?? 6);
+      const limit = Math.min(params.limit ?? 6, 50);
+      const result = await mem0.search(params.query, scope, limit);
       const found = rows(result);
       const text = found.length
         ? found.map((m) => `- [${m.id ?? "?"}] ${memoryLine(m)}`).join("\n")
@@ -733,11 +1133,15 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "mem0_add",
     label: "mem0 · add",
+    loadMode: "essential",
     description:
       "Enregistre un point durable : stack ou choix technique du projet, convention, décision " +
       "d'architecture, bug + cause racine + correctif, exigence incontournable d'une feature, " +
       "préférence de travail. Une seule idée par appel, formulée pour être comprise dans six " +
-      "mois sans le contexte de cette conversation. N'enregistre rien de trivial ni de temporaire.",
+      "mois sans le contexte de cette conversation. Le texte est stocké tel quel, écris donc " +
+      "la phrase finale. Un souvenir proche est cherché d'abord : s'il en existe un, il est " +
+      "complété au lieu d'être dupliqué, et la version fusionnée t'est renvoyée — relis-la. " +
+      "N'enregistre rien de trivial ni de temporaire.",
     parameters: z.object({
       text: z.string().describe("Le fait, autoportant. Ex: 'Auth : tokens de reset à usage unique, TTL 15 min (décision du 12/03).'"),
       kind: z
@@ -751,33 +1155,117 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         .default("project")
         .describe("'global' uniquement pour une préférence valable sur tous tes projets"),
       tags: z.string().optional().describe("valeurs séparées par des virgules, ex: 'stack,swiftui'"),
-      verbatim: z
+      dedupe: z
+        .boolean()
+        .optional()
+        .default(true)
+        .describe("false uniquement si ce fait doit vivre séparément d'un souvenir voisin déjà en base"),
+      infer: z
         .boolean()
         .optional()
         .default(false)
-        .describe("true pour stocker le texte exact (extrait de code, diff) sans passer par l'extraction LLM"),
+        .describe(
+          "true pour laisser mem0 reformuler ton texte via son extraction LLM. Laisse false : " +
+            "l'extraction paraphrase un fait déjà propre en énoncé vague et crée des quasi-doublons.",
+        ),
     }),
-    async execute(_id, params, _signal, _onUpdate, ctx: any) {
+    async execute(_id, params, _signal, _onUpdate, ctx) {
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
-      const result = await mem0.add(redact(params.text), scope, {
-        tags: params.tags,
-        infer: !params.verbatim,
-        procedure: params.kind === "procedure",
-      });
+      const text = redact(params.text);
+
+      // Toute écriture périme le cache local et le sommaire : ils seront rechargés
+      // au tour suivant. Le chemin `skip` n'écrit rien, donc n'invalide rien.
+      const wrote = (st: SessionState) => { st.adds += 1; st.mem = null; st.index = null; };
+
+      // Les procédures vivent dans un autre espace mem0 (memory_type
+      // procedural_memory) : la recherche de similarité ne les atteint pas, on
+      // ne tente donc pas de fusion.
+      if (params.kind === "procedure") {
+        const result = await mem0.add(text, scope, { procedure: true });
+        wrote(stateOf(ctx));
+        return { content: [{ type: "text", text: `Procédure enregistrée dans "${scope}".` }], details: result };
+      }
+
+      const similar = params.dedupe === false ? null : await findSimilar(text, scope);
+      const plan = planMerge(text, similar);
+
+      if (plan.action === "skip") {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Déjà en mémoire (similarité ${plan.target.score.toFixed(2)}), rien écrit :\n` +
+                `- [${plan.target.id}] ${plan.target.text}\n\n` +
+                `Si ton fait dit vraiment autre chose, rappelle mem0_add avec dedupe: false, ` +
+                `ou réécris l'entrée avec mem0_update.`,
+            },
+          ],
+          details: plan.target,
+        };
+      }
+
+      if (plan.action === "update") {
+        const result = await mem0.update(plan.target.id, plan.merged);
+        wrote(stateOf(ctx));
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Souvenir complété (similarité ${plan.target.score.toFixed(2)}) — [${plan.target.id}] :\n` +
+                `${plan.merged}\n\n` +
+                `Relis la fusion. Si elle est bancale, réécris-la avec mem0_update.`,
+            },
+          ],
+          details: result,
+        };
+      }
+
+      const result = await mem0.add(text, scope, { tags: params.tags, infer: params.infer === true });
+      wrote(stateOf(ctx));
       return { content: [{ type: "text", text: `Enregistré dans "${scope}".` }], details: result };
+    },
+  });
+
+  pi.registerTool({
+    name: "mem0_update",
+    label: "mem0 · update",
+    loadMode: "essential",
+    description:
+      "Réécrit intégralement un souvenir existant, par son id (renvoyé par mem0_search, " +
+      "mem0_add ou le rappel automatique). À utiliser quand un souvenir est devenu partiellement " +
+      "faux, ou quand la fusion automatique de mem0_add a produit un texte bancal. Le nouveau " +
+      "texte remplace l'ancien : reprends ce qui reste vrai.",
+    parameters: z.object({
+      memory_id: z.string(),
+      text: z.string().describe("Le souvenir complet réécrit, autoportant"),
+    }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const result = await mem0.update(params.memory_id, redact(params.text));
+      // Le texte a changé : cache local et sommaire sont périmés.
+      const st = stateOf(ctx);
+      st.mem = null;
+      st.index = null;
+      return { content: [{ type: "text", text: `Souvenir [${params.memory_id}] réécrit.` }], details: result };
     },
   });
 
   pi.registerTool({
     name: "mem0_forget",
     label: "mem0 · forget",
+    loadMode: "essential",
     description:
       "Supprime un souvenir par son id (retourné par mem0_search). À utiliser quand un souvenir " +
-      "est devenu faux — pas quand il est simplement incomplet : dans ce cas, ajoute la version " +
-      "à jour avec mem0_add, la fusion garde une trace de l'ancien état.",
+      "est devenu faux — pas quand il est simplement incomplet ou partiellement périmé : dans ce " +
+      "cas, réécris-le avec mem0_update.",
     parameters: z.object({ memory_id: z.string() }),
-    async execute(_id, params, _signal, _onUpdate, _ctx) {
+    async execute(_id, params, _signal, _onUpdate, ctx) {
       const result = await mem0.delete(params.memory_id);
+      // Le souvenir n'existe plus : cache local et sommaire sont périmés.
+      const st = stateOf(ctx);
+      st.mem = null;
+      st.index = null;
       return { content: [{ type: "text", text: "Supprimé." }], details: result };
     },
   });
@@ -787,6 +1275,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   pi.registerCommand("mem0-status", {
     description: "Connexion mem0, projet résolu, état du brief, nombre de souvenirs",
     handler: async (_args, ctx) => {
+      const st = stateOf(ctx);
       const scope = projectId(ctx.cwd);
       const brief = provisioned.get(rootOf(ctx.cwd).dir) ?? checkBrief(ctx);
       try {
@@ -795,6 +1284,14 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         ctx.ui.notify(
           `[mem0] ok=${!!health.ok} · ${MEM0_HTTP_URL} · projet="${scope}" ${rows(proj).length} souvenir(s) · ` +
             `global ${rows(glob).length} · brief ref=${brief.ref} agents=${brief.agents}`,
+          "info",
+        );
+        // Ce sont les ratios qui disent si le dispositif tient : recalls/turns et
+        // pinned/explorations pour la couverture en lecture, adds/mutations en écriture.
+        ctx.ui.notify(
+          `[mem0] session : ${st.turns} tour(s) · ${st.recalls} rappel(s) non vide(s) · ` +
+            `${st.explorations} exploration(s) · ${st.pinned} agrafage(s) · ${st.mutations} modification(s) · ` +
+            `${st.adds} écriture(s) mémoire · sommaire ${st.index ? "présent" : "absent"}`,
           "info",
         );
       } catch (err) {
@@ -843,8 +1340,11 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         let go = false;
         if (ctx.hasUI) {
           try {
+            // `confirm` prend (titre, message) : l'appel à un seul argument passait
+            // un message `undefined` au dialogue.
             go = await ctx.ui.confirm(
-              `Le projet "${scope}" a déjà ${existing} souvenir(s). Réamorcer risque de créer des doublons. Continuer ?`,
+              `Réamorcer "${scope}" ?`,
+              `Ce projet a déjà ${existing} souvenir(s). Réamorcer risque de créer des doublons.`,
             );
           } catch { go = false; }
         }
@@ -863,9 +1363,19 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       }
 
       let written = 0;
+      let merged = 0;
       const failures: string[] = [];
       for (const fact of facts) {
         try {
+          // Même chemin que mem0_add : un réamorçage ne doit pas empiler une
+          // deuxième copie de l'empreinte.
+          const plan = planMerge(fact, await findSimilar(fact, scope));
+          if (plan.action === "skip") continue;
+          if (plan.action === "update") {
+            await mem0.update(plan.target.id, plan.merged);
+            merged++;
+            continue;
+          }
           await mem0.add(fact, scope, { infer: false, tags: "stack,init" });
           written++;
         } catch (err) {
@@ -873,13 +1383,14 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         }
       }
       ctx.ui.notify(
-        `[mem0] empreinte de "${scope}" : ${written}/${facts.length} fait(s) enregistré(s)` +
+        `[mem0] empreinte de "${scope}" : ${written} nouveau(x), ${merged} complété(s), ` +
+          `${facts.length - written - merged - failures.length} déjà connu(s)` +
           (failures.length ? ` · ${failures.length} échec(s) : ${failures[0]}` : ""),
         failures.length ? "warning" : "info",
       );
 
       if (scanOnly) return;
-      if (written === 0 && facts.length > 0) {
+      if (written + merged === 0 && facts.length > 0 && failures.length > 0) {
         ctx.ui.notify("[mem0] aucune écriture n'a abouti — relecture non lancée. Vérifie /mem0-status.", "error");
         return;
       }
@@ -888,7 +1399,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       // en tant que message utilisateur pour que le tour démarre normalement.
       try {
         await ctx.waitForIdle?.();
-        pi.sendUserMessage(initPrompt(scope, written));
+        pi.sendUserMessage(initPrompt(scope, written + merged));
       } catch (err) {
         ctx.ui.notify(`[mem0] relecture non lancée : ${(err as Error).message}`, "warning");
       }
@@ -908,11 +1419,108 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     },
   });
 
+  pi.registerCommand("mem0-dedupe", {
+    description:
+      "Repère les souvenirs redondants du projet et supprime les moins informatifs. Simulation " +
+      "par défaut ; --apply pour écrire, --strict pour ne fusionner que les recouvrements quasi " +
+      "totaux, --scope global pour la mémoire transverse",
+    handler: async (args, ctx) => {
+      const argv = String(args ?? "");
+      const apply = argv.includes("--apply");
+      const threshold = argv.includes("--strict") ? DEDUP_CONTAINED : DEDUPE_SWEEP_CONTAINED;
+      const scope = argv.includes("--scope global") ? GLOBAL_SCOPE : projectId(ctx.cwd);
+
+      let all: any[];
+      try {
+        all = rows(await mem0.getAll(scope));
+      } catch (err) {
+        ctx.ui.notify(`[mem0] injoignable sur ${MEM0_HTTP_URL} : ${(err as Error).message}`, "error");
+        return;
+      }
+
+      // Comparaison lexicale pure, sans embedding : on travaille sur une base
+      // déjà chargée en mémoire, et un aller-retour vectoriel par paire coûterait
+      // O(n²) requêtes pour un gain nul sur des quasi-doublons.
+      type Entry = { id: string; text: string; tokens: Set<string> };
+      const entries: Entry[] = all
+        .map((m) => ({ id: String(m?.id ?? ""), text: memoryLine(m) }))
+        .filter((e) => e.id)
+        .map((e) => ({ ...e, tokens: contentTokens(e.text) }));
+
+      // Clustering autour d'une tête, pas comparaison par paires : trié par
+      // longueur décroissante, le premier souvenir non absorbé d'un groupe est
+      // toujours le plus informatif, et une tête ne peut plus être supprimée par
+      // une paire évaluée plus tard.
+      entries.sort((x, y) => y.text.length - x.text.length);
+
+      const absorbed = new Set<string>();
+      const actions: Array<{ keep: Entry; drop: Entry }> = [];
+
+      for (let i = 0; i < entries.length; i++) {
+        const head = entries[i]!;
+        if (absorbed.has(head.id)) continue;
+        for (let j = i + 1; j < entries.length; j++) {
+          const other = entries[j]!;
+          if (absorbed.has(other.id)) continue;
+          // `other` est le plus court : c'est sa couverture par la tête qui dit
+          // s'il n'apporte rien. L'inverse serait une inclusion large, pas un doublon.
+          if (coverage(other.tokens, head.tokens) < threshold) continue;
+          actions.push({ keep: head, drop: other });
+          absorbed.add(other.id);
+        }
+      }
+
+      if (!actions.length) {
+        ctx.ui.notify(
+          `[mem0] "${scope}" : ${entries.length} souvenir(s), aucun doublon au seuil ${threshold}.`,
+          "info",
+        );
+        return;
+      }
+
+      if (!apply) {
+        const preview = actions
+          .slice(0, 10)
+          .map((x) => `  · garde [${x.keep.id}] «${x.keep.text.slice(0, 70)}…» / supprime [${x.drop.id}]`)
+          .join("\n");
+        ctx.ui.notify(
+          `[mem0] "${scope}" : ${actions.length} doublon(s) sur ${entries.length} souvenir(s).\n${preview}` +
+            (actions.length > 10 ? `\n  … et ${actions.length - 10} autre(s)` : "") +
+            `\n/mem0-dedupe --apply pour appliquer.`,
+          "info",
+        );
+        return;
+      }
+
+      let removed = 0;
+      const failures: string[] = [];
+      for (const action of actions) {
+        try {
+          await mem0.delete(action.drop.id);
+          removed++;
+        } catch (err) {
+          failures.push((err as Error).message);
+        }
+      }
+      // La base a changé sous le cache local : sommaire et agrafage seraient faux.
+      const st = stateOf(ctx);
+      st.mem = null;
+      st.index = null;
+      ctx.ui.notify(
+        `[mem0] "${scope}" : ${removed} doublon(s) supprimé(s), ${entries.length - removed} restant(s)` +
+          (failures.length ? ` · ${failures.length} échec(s) : ${failures[0]}` : ""),
+        failures.length ? "warning" : "info",
+      );
+    },
+  });
+
   pi.registerCommand("mem0-save", {
-    description: "Force l'écriture immédiate du segment de conversation non encore mémorisé",
+    description: "Demande à l'agent d'écrire maintenant ce que cette session a produit de durable",
     handler: async (_args, ctx) => {
-      retainInBackground(ctx as any, stateOf(ctx));
-      ctx.ui.notify(`[mem0] écriture lancée en tâche de fond (projet "${projectId(ctx.cwd)}")`, "info");
+      const st = stateOf(ctx);
+      st.nudged = true;
+      await ctx.waitForIdle?.();
+      pi.sendUserMessage(nudgeText(st.mutations));
     },
   });
 }

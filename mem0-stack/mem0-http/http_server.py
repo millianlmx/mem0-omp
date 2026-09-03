@@ -68,11 +68,18 @@ class AddProcedureRequest(BaseModel):
     agent_id: str
 
 
+class UpdateRequest(BaseModel):
+    text: str
+
+
 class SearchRequest(BaseModel):
     query: str
     agent_id: str | None = None
     limit: int = 5
     filters: dict | None = None
+    # Plancher de score. mem0 applique 0.1 quand c'est None (`_search_vector_store`),
+    # ce qui revient à « renvoie tout » : le filtrage utile se décide côté appelant.
+    threshold: float | None = None
 
 
 @app.get("/health")
@@ -117,6 +124,7 @@ async def search_memories(req: SearchRequest, x_mem0_token: str | None = Header(
         req.query,
         top_k=req.limit,                                     # `limit` s'appelle top_k en 2.x
         filters=scope_filters(req.agent_id, extra=req.filters),
+        threshold=req.threshold,
     )
 
 
@@ -125,6 +133,20 @@ async def get_all_memories(agent_id: str | None = None, x_mem0_token: str | None
     check_token(x_mem0_token)
     m = await get_memory()
     return await m.get_all(filters=scope_filters(agent_id), top_k=100)
+
+
+@app.put("/memory/{memory_id}")
+async def update_memory(memory_id: str, req: UpdateRequest, x_mem0_token: str | None = Header(default=None)):
+    """Réécriture intégrale d'un souvenir.
+
+    Sert la fusion côté plugin : quand `mem0_add` retrouve un souvenir proche, il
+    complète l'entrée au lieu d'en créer une deuxième. `update()` conserve l'id et
+    empile une révision dans l'historique, donc l'état précédent reste consultable
+    via /memory/{id}/history.
+    """
+    check_token(x_mem0_token)
+    m = await get_memory()
+    return await m.update(memory_id=memory_id, data=req.text)
 
 
 @app.delete("/memory/{memory_id}")
