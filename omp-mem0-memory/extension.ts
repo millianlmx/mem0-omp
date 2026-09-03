@@ -53,6 +53,10 @@ const RECALL_MIN_PROMPT = 12; // en dessous ("ok", "continue"), on ne cherche pa
 // n'en renvoie aucun ; à 0.45 une vraie question ("à quoi sert EMBEDDING_DIMS") est
 // déjà perdue. C'est le sommaire exhaustif, pas le seuil, qui rattrape un rappel qui rate.
 const RECALL_THRESHOLD = 0.4;
+const RECALL_LINE_CHARS = 100; // aperçu d'un souvenir dans le transcript, une ligne
+const RECALL_MESSAGE_TYPE = "mem0-recall";
+// Le bloc de rappel est visible par défaut : un rappel muet ne se distingue pas d'un rappel absent.
+const RECALL_DISPLAY = process.env.MEM0_QUIET !== "1";
 const INDEX_MAX_ENTRIES = 60; // au-delà, sommaire tronqué aux plus récents
 const INDEX_LINE_CHARS = 100; // longueur d'une ligne de sommaire
 
@@ -909,6 +913,99 @@ function pickPin(mem: MemoryCache, query: string, seen: Set<string>): Prepared |
 }
 
 // ---------------------------------------------------------------------------
+type RecallHead = { id: string; head: string };
+
+type RecallDetails = {
+  status: "hit" | "empty" | "unavailable";
+  scope: string;
+  threshold: number;
+  /** souvenirs du sommaire injecté en prompt système ; 0 si le cache n'a pas chargé. */
+  indexSize: number;
+  /** agrafages survenus depuis le rappel précédent. */
+  pinned: number;
+  project: RecallHead[];
+  global: RecallHead[];
+  /** renseigné uniquement quand status === "unavailable". */
+  error?: string;
+};
+
+type RecallRow = { text: string; tone: "header" | "item" | "body" | "alert" };
+
+function clip(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+function wrapAt(s: string, n: number): string[] {
+  if (s.length === 0) return [""];
+  const result: string[] = [];
+  let remaining = s;
+  while (remaining.length > 0) {
+    if (remaining.length <= n) { result.push(remaining); break; }
+    // find last space at or before n
+    const spaceIdx = remaining.slice(0, n).lastIndexOf(" ");
+    if (spaceIdx === -1) {
+      // no space: hard cut
+      result.push(remaining.slice(0, n));
+      remaining = remaining.slice(n);
+    } else {
+      result.push(remaining.slice(0, spaceIdx));
+      remaining = remaining.slice(spaceIdx + 1);
+    }
+  }
+  return result;
+}
+
+function renderRecallRows(
+  d: RecallDetails,
+  body: string,
+  expanded: boolean,
+  width: number,
+): RecallRow[] {
+  const w = Math.max(20, width);
+  const rows: RecallRow[] = [{ text: "", tone: "body" }];
+
+  // En-tête
+  let header = "";
+  if (d.status === "hit") {
+    const n = d.project.length + d.global.length;
+    header = `mem0 · ${n} souvenir(s) (projet ${d.project.length} · global ${d.global.length}) · sommaire ${d.indexSize} · seuil ${d.threshold}`;
+  } else if (d.status === "empty") {
+    header = `mem0 · aucun souvenir au-dessus du seuil ${d.threshold} · sommaire ${d.indexSize}`;
+  } else {
+    header = `mem0 · mémoire injoignable : ${d.error ?? "erreur inconnue"}`;
+  }
+
+  // Suffixes
+  if (d.pinned > 0) header += ` · ${d.pinned} agrafé(s)`;
+  if (!expanded && (d.status !== "empty" || body)) header += " · Ctrl+O";
+
+  header = clip(header, w);
+  rows.push({ text: header, tone: d.status === "unavailable" ? "alert" : "header" });
+
+  if (!expanded) {
+    // Résumé : une ligne item par souvenir, projet d'abord puis global
+    if (d.status !== "empty" && d.status !== "unavailable") {
+      for (const p of d.project) {
+        rows.push({ text: `    [${p.id.slice(0, 8)}] ${clip(p.head, w)}`, tone: "item" });
+      }
+      for (const g of d.global) {
+        rows.push({ text: `    [${g.id.slice(0, 8)}] ${clip(g.head, w)}`, tone: "item" });
+      }
+    }
+  } else {
+    // Déplié : body découpé sur \n, chaque ligne repliée à w-4
+    const wBody = Math.max(w - 4, 16);
+    for (const line of body.split("\n")) {
+      if (line.length === 0) { rows.push({ text: "", tone: "body" }); continue; }
+      for (const wrapped of wrapAt(`    ${line}`, wBody)) {
+        rows.push({ text: wrapped, tone: "body" });
+      }
+    }
+  }
+
+  return rows;
+}
+// ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 
@@ -926,14 +1023,38 @@ type SessionState = {
   mutations: number; // edit/write réussis
   explorations: number; // read/grep/glob/lsp réussis
   recalls: number; // tours où au moins un souvenir a été injecté
-  pinned: number; // souvenirs agrafés à un résultat d'outil
   adds: number; // écritures mémoire réussies
   nudged: boolean;
+  /** agrafages depuis le dernier bloc de rappel affiché. */
+  pinnedSinceRecall: number;
 };
 
 export default function mem0MemoryExtension(pi: ExtensionAPI) {
   const { z } = pi.zod;
   pi.setLabel("mem0 memory");
+
+  // Le composant retourné remplace le cadre par défaut (cf. renderFramedMessage côté hôte).
+  // Il n'implémente que `render(width)` : c'est le seul membre requis de l'interface Component,
+  // ce qui évite d'importer @oh-my-pi/pi-tui — un import de VALEUR depuis @oh-my-pi/* casse la
+  // résolution au runtime (extension chargée depuis ~/.omp/plugins/... qui n'a pas ces paquets)
+  // et fait échouer scripts/check.sh.
+  const TONES = { header: "customMessageLabel", item: "muted", body: "dim", alert: "warning" } as const;
+
+  pi.registerMessageRenderer<RecallDetails>(RECALL_MESSAGE_TYPE, (message, options, theme) => {
+    const d = message.details;
+    if (!d || typeof d !== "object" || typeof (d as RecallDetails).status !== "string") return undefined;
+    const body =
+      typeof message.content === "string"
+        ? message.content
+        : message.content.map((c: any) => (c?.type === "text" ? String(c.text) : "")).join("\n");
+    return {
+      render(width: number) {
+        return renderRecallRows(d as RecallDetails, body, options.expanded, width).map((r) =>
+          r.text ? theme.fg(TONES[r.tone], r.text) : "",
+        );
+      },
+    };
+  });
 
   const states = new Map<string, SessionState>();
   const provisioned = new Map<string, BriefStatus>(); // par racine de projet
@@ -961,6 +1082,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         pinned: 0,
         adds: 0,
         nudged: false,
+        pinnedSinceRecall: 0,
       };
       states.set(key, st);
     }
@@ -1044,18 +1166,47 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     if (prompt.length < RECALL_MIN_PROMPT) return { systemPrompt };
 
     try {
-      // Projet et global en parallèle : pas de latence supplémentaire.
+      let recallError: string | undefined;
+      // Calcul unique des métadonnées pour le bloc visible : pinned est lu AVANT
+      // toute remise à zéro dans recallMessage, indexSize est le même partout.
+      const indexSize = st.mem?.entries.length ?? 0;
+      const pinned = st.pinnedSinceRecall;
+      const head = (m: any): RecallHead => ({
+        id: String(m?.id ?? "?"),
+        head: clip(memoryLine(m).split("\n")[0]!.trim(), RECALL_LINE_CHARS),
+      });
+      const recallMessage = (content: string, details: RecallDetails) => {
+        st.pinnedSinceRecall = 0;
+        return {
+          systemPrompt,
+          message: {
+            customType: RECALL_MESSAGE_TYPE,
+            content,
+            display: RECALL_DISPLAY,
+            attribution: "agent" as const,
+            details,
+          },
+        };
+      };
       // Les échecs sont tracés — un rappel muet a caché le problème trop longtemps.
       const [projectRes, globalRes] = await Promise.all([
         mem0.search(prompt.slice(0, 800), scope, RECALL_LIMIT, RECALL_THRESHOLD).catch((err) => {
-          console.warn(`[mem0] recall projet indisponible : ${(err as Error).message}`);
+          recallError = (err as Error).message;
+          console.warn(`[mem0] recall projet indisponible : ${recallError}`);
           return null;
         }),
         mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_LIMIT, RECALL_THRESHOLD).catch(() => null),
       ]);
 
       // Service injoignable : ne rien affirmer sur le contenu de la mémoire.
-      if (projectRes === null && globalRes === null) return { systemPrompt };
+      if (projectRes === null && globalRes === null) {
+        return recallMessage(
+          `[mem0] Service mémoire injoignable (${MEM0_HTTP_URL}) : ${recallError ?? "aucune réponse"}. ` +
+            `Aucun rappel ce tour : ne conclus rien sur le contenu de la mémoire, et ne tente pas ` +
+            `d'écrire avec mem0_add tant qu'elle ne répond pas.`,
+          { status: "unavailable", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: [], global: [], error: recallError ?? "aucune réponse" },
+        );
+      }
 
       // Un souvenir déjà posé est dans le contexte : le reposer dilue le nouveau.
       // Exception sur le meilleur résultat du tour — il peut être loin derrière ou
@@ -1071,20 +1222,15 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       const projectMems = fresh(projectRes, true);
       const globalMems = fresh(globalRes, false);
 
+
       // Cas vide : autrefois silencieux. C'est le signal qui déclenche l'écriture.
       if (!projectMems.length && !globalMems.length) {
-        return {
-          systemPrompt,
-          message: {
-            customType: "mem0-recall",
-            content:
-              `[mem0] Rien en mémoire sur cette demande (plancher de score ${RECALL_THRESHOLD}). ` +
-              `Explore le dépôt, puis écris avec mem0_add ce qui sera encore vrai dans six mois : ` +
-              `décision et sa raison, bug avec cause racine et correctif, convention, exigence.`,
-            display: false,
-            attribution: "agent",
-          },
-        };
+        return recallMessage(
+          `[mem0] Rien en mémoire sur cette demande (plancher de score ${RECALL_THRESHOLD}). ` +
+            `Explore le dépôt, puis écris avec mem0_add ce qui sera encore vrai dans six mois : ` +
+            `décision et sa raison, bug avec cause racine et correctif, convention, exigence.`,
+          { status: "empty", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: [], global: [] },
+        );
       }
 
       const parts = [
@@ -1104,18 +1250,18 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       );
       st.recalls += 1;
 
-      return {
-        systemPrompt,
-        message: {
-          customType: "mem0-recall",
-          content: parts.join("\n\n"),
-          display: false,
-          attribution: "agent",
-        },
-      };
+      return recallMessage(
+        parts.join("\n\n"),
+        { status: "hit", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: projectMems.map(head), global: globalMems.map(head) },
+      );
     } catch (err) {
       console.warn(`[mem0] recall indisponible : ${(err as Error).message}`);
-      return { systemPrompt };
+      return recallMessage(
+        `[mem0] Service mémoire injoignable (${MEM0_HTTP_URL}) : ${(err as Error).message}. ` +
+          `Aucun rappel ce tour : ne conclus rien sur le contenu de la mémoire, et ne tente pas ` +
+          `d'écrire avec mem0_add tant qu'elle ne répond pas.`,
+        { status: "unavailable", scope, threshold: RECALL_THRESHOLD, indexSize: st.mem?.entries.length ?? 0, pinned: st.pinnedSinceRecall, project: [], global: [], error: (err as Error).message },
+      );
     }
   });
 
@@ -1142,6 +1288,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     st.pinnedQueries.add(key);
     st.injected.add(hit.id);
     st.pinned += 1;
+    st.pinnedSinceRecall += 1;
     return {
       content: [
         {

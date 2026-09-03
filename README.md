@@ -208,6 +208,7 @@ fait désormais échouer la construction de l'image, pas la première requête.
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
+| `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |
 | `OMLX_EMBED_MODEL` | `bge-m3` | modèle d'embedding (dans `.env`) |
 

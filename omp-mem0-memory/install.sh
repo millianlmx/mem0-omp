@@ -44,4 +44,5 @@ Variables d'env (optionnelles) :
   MEM0_HTTP_TOKEN   si défini côté serveur
   MEM0_PROJECT_ID   force le nom de projet ; sinon déduit du dépôt
   MEM0_AUTOSETUP=0  n'écrit jamais dans un dépôt (brief à poser à la main)
+  MEM0_QUIET      `0`   réinjecte les souvenirs sans les afficher dans le transcript
 EOF
