@@ -71,6 +71,17 @@ const PIN_TEXT_CHARS = 700; // longueur du souvenir agrafé
 const EXPLORE_TOOLS: Record<string, true> = { read: true, grep: true, glob: true, lsp: true };
 const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: true, apply_patch: true };
 
+// ---------------------------------------------------------------------------
+// Checkpoint exploration — déclenche un rappel d'écriture quand l'agent explore
+// trop sans écrire. Mots-clés de phase compressent le seuil.
+// ---------------------------------------------------------------------------
+const PHASE_KEYWORDS = ["spécification", "besoin", "collecte", "implémentation", "review", "architecture", "bug"];
+const PHASE_KEYWORD_RE = new RegExp(`\\b(${PHASE_KEYWORDS.join("|")})\\b`, "i");
+
+const CHECKPOINT_THRESHOLD_NORMAL = 15;
+const CHECKPOINT_THRESHOLD_PHASE = 5;
+const CHECKPOINT_MESSAGE_TYPE = "mem0-checkpoint";
+
 function nudgeText(mutations: number): string {
   return (
     `[mem0] Cette session a modifié ${mutations} fichier(s) et n'a rien écrit en mémoire. ` +
@@ -157,6 +168,13 @@ Le dépôt fait toujours autorité contre un souvenir : s'il le contredit, le so
 est périmé — corrige-le (\`mem0_update\`) ou supprime-le (\`mem0_forget\`), ne
 travaille pas dessus.
 
+- **Checkpoint automatique** — si tu exploras (read, grep, glob, lsp) plus de 5 fichiers
+  sans écrire avec \`mem0_add\` pendant une phase détectée ("spécification", "besoin",
+  "implémentation", "review", "bug"), un message "mem0 checkpoint" t'est envoyé.
+  C'est un appel à écrire : tu as collecté des informations durables, enregistre-les
+  immédiatement. Sur session normale, le seuil est 15. Le compteur reset après
+  chaque \`mem0_add\`.
+
 Règles complètes et exemples : \`${BRIEF_REF_PATH}\` — lis-le avant ton premier
 \`mem0_add\` dans ce projet.
 ${MARKER_CLOSE}`;
@@ -164,7 +182,7 @@ ${MARKER_CLOSE}`;
 // Directive réinjectée dans le system prompt à CHAQUE tour. Le bloc AGENTS.md
 // se noie dans un long contexte ; cette ligne-ci est reposée à chaque requête
 // provider, donc elle survit à la compaction et au bruit.
-const SYSTEM_DIRECTIVE = `Mémoire mem0 : le sommaire de la mémoire du projet est dans ton contexte système, et les souvenirs pertinents pour la demande en cours sont injectés à chaque tour. Traite-les comme acquis : n'explore pas le dépôt pour revérifier un point que la mémoire couvre déjà. Un sujet absent du sommaire n'est pas en mémoire — explore, puis appelle mem0_add. Appelle mem0_search uniquement pour déplier une entrée du sommaire dont le rappel n'a pas donné le texte complet. Un fait par appel, autoportant ; mem0_add déduplique tout seul. Si le dépôt contredit un souvenir, le dépôt gagne : corrige avec mem0_update.`;
+const SYSTEM_DIRECTIVE = `Mémoire mem0 : le sommaire de la mémoire du projet est dans ton contexte système, et les souvenirs pertinents pour la demande en cours sont injectés à chaque tour. Traite-les comme acquis : n'explore pas le dépôt pour revérifier un point que la mémoire couvre déjà. Un sujet absent du sommaire n'est pas en mémoire — explore, puis appelle mem0_add. Appelle mem0_search uniquement pour déplier une entrée du sommaire dont le rappel n'a pas donné le texte complet. Un fait par appel, autoportant ; mem0_add déduplique tout seul. Si le dépôt contredit un souvenir, le dépôt gagne : corrige avec mem0_update. Un checkpoint peut t'être envoyé (message "mem0 checkpoint") quand tu explores trop sans écrire — c'est un signal d'écriture, pas d'erreur : appelle mem0_add immédiatement pour sauver ce que tu as appris. Traite-les comme acquis : n'explore pas le dépôt pour revérifier un point que la mémoire couvre déjà.`;
 
 // Fichier de référence, lu à la demande par l'agent (divulgation progressive).
 const BRIEF_REFERENCE = `${MARKER_OPEN}
@@ -1027,6 +1045,10 @@ type SessionState = {
   nudged: boolean;
   /** agrafages depuis le dernier bloc de rappel affiché. */
   pinnedSinceRecall: number;
+  /** explorations sans écriture mem0_add ; déclenche un checkpoint au-delà du seuil. */
+  explorationSinceLastWrite: number;
+  /** sticky phase flag : une fois détectée, la phase reste active pour le seuil réduit. */
+  phaseDetected: boolean;
 };
 
 export default function mem0MemoryExtension(pi: ExtensionAPI) {
@@ -1148,7 +1170,27 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       try { checkBrief(ctx); } catch { /* jamais bloquant */ }
     }
 
-    const scope = projectId(ctx.cwd);
+    // Détection de phase importante et checkpoint exploration ----------------
+    if (PHASE_KEYWORD_RE.test(event.prompt.trim())) { st.phaseDetected = true; }
+    const phaseThreshold = st.phaseDetected
+      ? CHECKPOINT_THRESHOLD_PHASE
+      : CHECKPOINT_THRESHOLD_NORMAL;
+    if (st.explorationSinceLastWrite >= phaseThreshold) {
+      const explorationsDone = st.explorationSinceLastWrite;
+      st.explorationSinceLastWrite = 0;
+      return { systemPrompt, message: {
+        customType: CHECKPOINT_MESSAGE_TYPE,
+        content: `[mem0 checkpoint] ${explorationsDone} exploration(s) faites sans écriture. ` +
+          `Tu as lu/grepé/parcouru des fichiers qui contiennent probablement des connaissances ` +
+          `permanentes (architecture, conventions, bugs, décisions). ` +
+          `Écris maintenant avec mem0_add ce qui sera vrai dans 6 mois. ` +
+          `Un fait par appel, autoportant, en nommant fichiers et symboles.`,
+        display: true,
+        attribution: "agent" as const,
+      }};
+    }
+
+     const scope = projectId(ctx.cwd);
 
     // Cache + sommaire : une fois par session, retentés au tour suivant en cas
     // d'échec. Sans cache, pas d'agrafage — l'exploration se déroule normalement.
@@ -1274,7 +1316,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     if (event.isError) return;
     const st = stateOf(ctx);
     if (MUTATE_TOOLS[event.toolName]) st.mutations += 1;
-    else if (EXPLORE_TOOLS[event.toolName]) st.explorations += 1;
+    else if (EXPLORE_TOOLS[event.toolName]) { st.explorations += 1; st.explorationSinceLastWrite += 1; }
 
     if (!st.mem || !PIN_TOOLS[event.toolName]) return;
     const query = toolQuery(event.toolName, event.input);
@@ -1402,7 +1444,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
 
       // Toute écriture périme le cache local et le sommaire : ils seront rechargés
       // au tour suivant. Le chemin `skip` n'écrit rien, donc n'invalide rien.
-      const wrote = (st: SessionState) => { st.adds += 1; st.mem = null; st.index = null; };
+      const wrote = (st: SessionState) => { st.adds += 1; st.mem = null; st.index = null; st.explorationSinceLastWrite = 0; };
 
       // Les procédures vivent dans un autre espace mem0 (memory_type
       // procedural_memory) : la recherche de similarité ne les atteint pas, on
