@@ -23,7 +23,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-
+import * as os from "node:os";
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
@@ -73,10 +73,8 @@ const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: 
 
 // ---------------------------------------------------------------------------
 // Checkpoint exploration — déclenche un rappel d'écriture quand l'agent explore
-// trop sans écrire. Mots-clés de phase compressent le seuil.
+// trop sans écrire. Une phase enregistrée active compresse le seuil.
 // ---------------------------------------------------------------------------
-const PHASE_KEYWORDS = ["spécification", "besoin", "collecte", "implémentation", "review", "architecture", "bug"];
-const PHASE_KEYWORD_RE = new RegExp(`\\b(${PHASE_KEYWORDS.join("|")})\\b`, "i");
 
 const CHECKPOINT_THRESHOLD_NORMAL = 15;
 const CHECKPOINT_THRESHOLD_PHASE = 5;
@@ -121,6 +119,33 @@ const GLOBAL_SCOPE = "_global";
 
 // MEM0_AUTOSETUP=0 pour ne jamais écrire dans un dépôt.
 const AUTOSETUP = process.env.MEM0_AUTOSETUP !== "0";
+// ---------------------------------------------------------------------------
+// Phase registry — persisté sur ~/.omp/agent/phases.json
+// ---------------------------------------------------------------------------
+
+const PHASES_FILE = path.join(os.homedir(), ".omp", "agent", "phases.json");
+
+interface PhaseEntry {
+  brief: string; // agent brief définit le rôle de l'agent pour cette phase
+}
+
+function loadPhases(): Map<string, PhaseEntry> {
+  try {
+    const raw = fs.readFileSync(PHASES_FILE, "utf8");
+    const entries: Record<string, PhaseEntry> = JSON.parse(raw);
+    return new Map(Object.entries(entries));
+  } catch { return new Map(); }
+}
+
+function savePhases(phases: Map<string, PhaseEntry>): void {
+  const obj: Record<string, PhaseEntry> = {};
+  for (const [name, entry] of phases) obj[name] = entry;
+  fs.writeFileSync(PHASES_FILE, JSON.stringify(obj, null, 2), "utf8");
+}
+
+const DEFAULT_PHASES: string[] = ["release", "version-bump", "deploy"];
+
+let phases = loadPhases(); // initialisation une fois au chargement du module
 
 // ---------------------------------------------------------------------------
 // Le brief — source de vérité, embarquée ici pour que l'extension reste
@@ -1023,7 +1048,108 @@ function renderRecallRows(
 
   return rows;
 }
-// ---------------------------------------------------------------------------
+// --- Phase trigger : recherche mémoire au stop de session -----------------
+// Si une phase enregistrée est active, rechercher les instructions
+// exécutables en mémoire et les appliquer.
+
+const EXECUTION_KEYWORDS = ["version", "bump", "commit", "release"];
+
+function isExecutableInstruction(text: string): boolean {
+  return /\b(MUST|EXECUTE|TODO|ACTION|DO|RUN)\s*[:。]/i.test(text);
+}
+
+function extractInstructions(text: string): string[] {
+  const instructions: string[] = [];
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!;
+    if (/\b(MUST|EXECUTE|TODO|ACTION|DO|RUN)\s*[:。]/i.test(line)) {
+      instructions.push(line.trim());
+      if (i + 1 < lines.length && lines[i + 1]!.trim()) {
+        instructions.push(lines[i + 1]!.trim());
+        i++;
+      }
+    }
+  }
+  return instructions;
+}
+
+function bumpVersion(pkgPath: string, direction: "patch" | "minor" | "major"): string {
+  try {
+    if (!fs.existsSync(pkgPath)) return "";
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    if (!pkg.version) return "";
+    const parts = pkg.version.split(".").map(Number);
+    if (direction === "major") parts[0]++;
+    else if (direction === "minor") { parts[1]++; parts[2] = 0; }
+    else { parts[2]++; }
+    pkg.version = parts.join(".");
+    const oldVersion = `${parts[0]}.${parts[1]}.${parts[2]}`;
+    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
+    return `[mem0] ${path.basename(pkgPath)}: ${oldVersion} → ${pkg.version}`;
+  } catch { return ""; }
+}
+
+function bumpMarketplacePlugin(marketplacePath: string, pluginName: string, pkgVersion: string): string {
+  try {
+    if (!fs.existsSync(marketplacePath)) return "";
+    const raw = fs.readFileSync(marketplacePath, "utf8");
+    const mkt = JSON.parse(raw);
+    for (const p of (mkt.plugins ?? [])) {
+      if (p.name === pluginName && p.version !== pkgVersion) {
+        const old = p.version;
+        p.version = pkgVersion;
+        fs.writeFileSync(marketplacePath, JSON.stringify(mkt, null, 2) + "\n", "utf8");
+        return `[mem0] ${path.basename(marketplacePath)}: "${pluginName}" ${old} → ${pkgVersion}`;
+      }
+    }
+    if (mkt.metadata && mkt.metadata.version !== pkgVersion) {
+      const old = mkt.metadata.version;
+      mkt.metadata.version = pkgVersion;
+      fs.writeFileSync(marketplacePath, JSON.stringify(mkt, null, 2) + "\n", "utf8");
+      return `[mem0] ${path.basename(marketplacePath)} metadata: ${old} → ${pkgVersion}`;
+    }
+    return "";
+  } catch { return ""; }
+}
+
+function executeInstructions(instructions: string[]): string[] {
+  const results: string[] = [];
+  const cwd = process.cwd();
+
+  for (const inst of instructions) {
+    if (/version\s*(bump|increment)\s*[:。]?\s*v?(\d+\.\d+)/i.test(inst)) {
+      const pkgCandidates = ["omp-mem0-memory/package.json", "omp-mem0-req/package.json", "package.json"];
+      for (const candidate of pkgCandidates) {
+        const pkgPath = path.join(cwd, candidate);
+        const msg = bumpVersion(pkgPath, "patch");
+        if (msg) {
+          results.push(msg);
+          const mktCandidates = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
+          for (const mktPath of mktCandidates) {
+            const mktResult = bumpMarketplacePlugin(
+              path.join(cwd, mktPath),
+              candidate.replace("package.json", "").replace(/^\//, ""),
+              JSON.parse(fs.readFileSync(pkgPath, "utf8")).version,
+            );
+            if (mktResult) results.push(mktResult);
+          }
+          break;
+        }
+      }
+    }
+    if (/commit\s*[:。]/i.test(inst)) {
+      results.push(`[mem0] commit instruction parsed (message: "${inst}")`);
+    }
+    if (/release\s*[:。]/i.test(inst)) {
+      results.push(`[mem0] release instruction parsed`);
+      const pkgPath = path.join(cwd, "omp-mem0-memory/package.json");
+      const msg = bumpVersion(pkgPath, "patch");
+      if (msg) results.push(msg);
+    }
+  }
+  return results;
+}
 // Extension
 // ---------------------------------------------------------------------------
 
@@ -1048,7 +1174,7 @@ type SessionState = {
   /** explorations sans écriture mem0_add ; déclenche un checkpoint au-delà du seuil. */
   explorationSinceLastWrite: number;
   /** sticky phase flag : une fois détectée, la phase reste active pour le seuil réduit. */
-  phaseDetected: boolean;
+  currentPhase: string | null; // phase active pour cette session, null si aucune
 };
 
 export default function mem0MemoryExtension(pi: ExtensionAPI) {
@@ -1105,6 +1231,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         adds: 0,
         nudged: false,
         pinnedSinceRecall: 0,
+        currentPhase: null,
       };
       states.set(key, st);
     }
@@ -1170,9 +1297,8 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       try { checkBrief(ctx); } catch { /* jamais bloquant */ }
     }
 
-    // Détection de phase importante et checkpoint exploration ----------------
-    if (PHASE_KEYWORD_RE.test(event.prompt.trim())) { st.phaseDetected = true; }
-    const phaseThreshold = st.phaseDetected
+    // Phase registry checkpoint — seuil réduit si une phase enregistrée est active ---
+    const phaseThreshold = st.currentPhase && phases.has(st.currentPhase)
       ? CHECKPOINT_THRESHOLD_PHASE
       : CHECKPOINT_THRESHOLD_NORMAL;
     if (st.explorationSinceLastWrite >= phaseThreshold) {
@@ -1354,6 +1480,56 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     return { continue: true, additionalContext: nudgeText(st.mutations) };
   });
 
+  // --- Phase trigger session_stop ------------------------------------------
+  // Second handler — triggers after the existing nudge handler.
+  // Only runs when a registered phase is active and no nudge was already sent.
+  pi.on("session_stop", async (_event, ctx) => {
+    const st = stateOf(ctx);
+    if (!st.currentPhase || !phases.has(st.currentPhase)) return;
+
+    const scope = projectId(ctx.cwd);
+    const phaseName = st.currentPhase;
+
+    // Search: phase name + execution keywords
+    const searchQuery = `${phaseName} ${EXECUTION_KEYWORDS.join(" ")}`;
+
+    try {
+      const searchResults = await mem0.search(searchQuery, scope, RECALL_LIMIT, RECALL_THRESHOLD);
+      const results = rows(searchResults);
+
+      const matching: string[] = [];
+      for (const r of results) {
+        const text = memoryLine(r);
+        if (isExecutableInstruction(text)) {
+          matching.push(text);
+        }
+      }
+
+      if (matching.length === 0) {
+        return {
+          continue: true,
+          additionalContext: `[mem0 phase "${phaseName}"] Aucune instruction exécutable trouvée en mémoire pour cette phase. ` +
+            `Si vous avez des instructions de déploiement, de bump de version ou de commit, ` +
+            `enregistrez-les avec mem0_add (MUST: …) pour qu'elles soient appliquées automatiquement.`,
+        };
+      }
+
+      const instructions = extractInstructions(matching.join("\n"));
+      const executionResults = executeInstructions(instructions);
+
+      return {
+         continue: true,
+        additionalContext: executionResults.length
+          ? `[mem0 phase "${phaseName}"] Instructions exécutées :\n${executionResults.join("\n")}`
+          : `[mem0 phase "${phaseName}"] ${matching.length} instruction(s) trouvée(s) mais aucune n'a été exécutée.`,
+      };
+    } catch (err) {
+      return {
+        continue: true,
+        additionalContext: `[mem0 phase "${phaseName}"] Erreur de recherche mémoire : ${String(err)}`,
+      };
+    }
+  });
   // --- Tools ---------------------------------------------------------------
 
   // `loadMode: "essential"` sur les quatre tools. Sans ça, OMP les monte en
@@ -1769,6 +1945,81 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       st.nudged = true;
       await ctx.waitForIdle?.();
       pi.sendUserMessage(nudgeText(st.mutations));
+    },
+  });
+
+  pi.registerCommand("add-phase", {
+    description: "Enregistre une nouvelle phase avec son brief d'agent",
+    handler: async (args, ctx) => {
+      const parsed = String(args ?? "").split(/\s+/);
+      if (parsed.length < 2) {
+        ctx.ui.notify("[mem0] usage: /add-phase PHASE_NAME AGENT_BRIEF", "error");
+        return;
+      }
+      const name = parsed[0]!;
+      const brief = parsed.slice(1).join(" ");
+      if (phases.has(name)) {
+        ctx.ui.notify(`[mem0] phase "${name}" existe déjà — /remove-phase pour la supprimer d'abord.`, "warning");
+        return;
+      }
+      phases.set(name, { brief });
+      savePhases(phases);
+      ctx.ui.notify(`[mem0] phase "${name}" enregistrée.`, "info");
+    },
+  });
+
+  pi.registerCommand("set-phase", {
+    description: "Définit la phase courante pour la session. /set-phase --default pour réinitialiser.",
+    handler: async (args, ctx) => {
+      const argv = String(args ?? "").trim();
+
+      // --default : reset to defaults
+      if (argv === "--default") {
+        const st = stateOf(ctx);
+        st.currentPhase = null;
+        phases = new Map();
+        for (const d of DEFAULT_PHASES) {
+          phases.set(d, { brief: "" });
+        }
+        savePhases(phases);
+        ctx.ui.notify("[mem0] phases réinitialisées aux valeurs par défaut.", "info");
+        return;
+      }
+
+      const parsed = argv.split(/\s+/);
+      const name = parsed[0];
+      if (!name) {
+        ctx.ui.notify("[mem0] usage: /set-phase PHASE_NAME", "error");
+        return;
+      }
+
+      const st = stateOf(ctx);
+
+      if (!phases.has(name)) {
+        ctx.ui.notify(`[mem0] phase "${name}" n'existe pas. /add-phase pour l'enregistrer.`, "error");
+        return;
+      }
+
+      st.currentPhase = name;
+      ctx.ui.notify(`[mem0] phase "${name}" active pour cette session.`, "info");
+    },
+  });
+
+  pi.registerCommand("remove-phase", {
+    description: "Désenregistre une phase et sa configuration",
+    handler: async (args, ctx) => {
+      const name = String(args ?? "").trim();
+      if (!name) {
+        ctx.ui.notify("[mem0] usage: /remove-phase PHASE_NAME", "error");
+        return;
+      }
+      if (!phases.has(name)) {
+        ctx.ui.notify(`[mem0] phase "${name}" n'existe pas.`, "warning");
+        return;
+      }
+      phases.delete(name);
+      savePhases(phases);
+      ctx.ui.notify(`[mem0] phase "${name}" désenregistrée.`, "info");
     },
   });
 }
