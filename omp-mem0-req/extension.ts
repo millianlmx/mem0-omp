@@ -141,24 +141,27 @@ export default function reqExtension(pi: ExtensionAPI) {
   // transmet pas aux handlers de commande. Il se contente d'activer le mode
   // et d'envoyer un message d'accueil. Le reste est géré dans before_agent_start.
 
-  pi.registerCommand("req", async (_params, ctx) => {
-    const st = stateOf(ctx);
+  pi.registerCommand("req", {
+    description: "Active le mode collecte de besoins",
+    handler: async (_params, ctx) => {
+      const st = stateOf(ctx);
 
-    if (!st.reqMode) {
-      st.reqMode = true;
-      st.reqTurns = 0;
-      st.reqMessages = [];
-      st.reqConfirmed = [];
-      st.reqSummary = null;
+      if (!st.reqMode) {
+        st.reqMode = true;
+        st.reqTurns = 0;
+        st.reqMessages = [];
+        st.reqConfirmed = [];
+        st.reqSummary = null;
 
-      pi.sendUserMessage(
-        "[req] Mode collecte activé. Décrivez-moi ce que vous voulez faire.\n" +
-          "Je vais vous poser des questions pour clarifier chaque point.\n" +
-          "Dites \"fin\" quand vous avez tout dit — je reformulerai alors\n" +
-          "l'ensemble de vos besoins pour vérification."
-      );
-    }
-    // Si reqMode est déjà true : noop (le mode est déjà actif).
+        pi.sendUserMessage(
+          "[req] Mode collecte activé. Décrivez-moi ce que vous voulez faire.\n" +
+            "Je vais vous poser des questions pour clarifier chaque point.\n" +
+            "Dites \"fin\" quand vous avez tout dit — je reformulerai alors\n" +
+            "l'ensemble de vos besoins pour vérification."
+        );
+      }
+      // Si reqMode est déjà true : noop (le mode est déjà actif).
+    },
   });
 
   // --- Hook before_agent_start -------------------------------------------
