@@ -78,6 +78,11 @@ const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: 
 
 const CHECKPOINT_THRESHOLD_NORMAL = 15;
 const CHECKPOINT_MESSAGE_TYPE = "mem0-checkpoint";
+// Session de pure discussion (needs, specs, archi) : aucune édition de fichier,
+// donc le nudge de fin fondé sur `mutations` ne tire jamais. Au-delà de ce
+// nombre de tours substantiels sans écriture mémoire, on relance une fois en
+// fin de session pour capturer ce qui a été décidé.
+const DISCUSSION_MIN_TURNS = 4;
 
 function nudgeText(mutations: number): string {
   return (
@@ -87,6 +92,35 @@ function nudgeText(mutations: number): string {
     `exigence non négociable ? Si oui, appelle mem0_add maintenant : un fait par appel, autoportant, ` +
     `en nommant fichiers et symboles. Si non, dis en une phrase qu'il n'y a rien à retenir et termine.`
   );
+}
+
+function discussionNudgeText(turns: number): string {
+  return (
+    `[mem0] Cette session a échangé ${turns} tour(s) substantiel(s) sans modifier de fichier ` +
+    `ni rien écrire en mémoire. Une discussion de besoins, de specs ou d'architecture produit ` +
+    `souvent du durable : besoin arrêté, décision et sa raison, contrainte non négociable, ` +
+    `convention retenue. Si c'est le cas, appelle mem0_add maintenant — un fait par appel, ` +
+    `autoportant, en nommant fichiers et symboles. Si la session n'a rien décidé de permanent, ` +
+    `dis-le en une phrase et termine.`
+  );
+}
+
+/**
+ * Politique de relance de fin de session — pure et exportée pour être testée
+ * hors runtime. Rend le message à injecter, ou null s'il n'y a rien à capturer.
+ * L'idempotence (`nudged`) reste au handler ; cette fonction ne décide que du
+ * QUOI, pas du COMBIEN DE FOIS. Priorité : rien si déjà écrit (adds), sinon le
+ * travail de code (mutations), sinon la discussion substantielle sans édition.
+ */
+export function pickSessionStopNudge(input: {
+  adds: number;
+  mutations: number;
+  substantiveTurns: number;
+}): string | null {
+  if (input.adds > 0) return null;
+  if (input.mutations > 0) return nudgeText(input.mutations);
+  if (input.substantiveTurns >= DISCUSSION_MIN_TURNS) return discussionNudgeText(input.substantiveTurns);
+  return null;
 }
 
 // Dedup à l'écriture. Le `score` sur lequel on filtre est celui renvoyé par mem0,
@@ -151,7 +185,7 @@ function savePhases(reg: Map<string, PhaseEntry>): void {
   }
 }
 
-const DEFAULT_PHASES: string[] = ["release", "version-bump", "deploy"];
+const DEFAULT_PHASES: string[] = ["release", "version-bump", "deploy", "review"];
 
 // Chargé une fois au chargement du module ; muté par /add-phase, /remove-phase, /set-phase --default.
 let phases = loadPhases();
@@ -901,14 +935,29 @@ async function loadMemory(scope: string): Promise<MemoryCache | null> {
 }
 
 /** Sommaire exhaustif, rendu depuis le cache. */
-function buildIndex(scope: string, mem: MemoryCache): string {
+export function buildIndex(scope: string, mem: MemoryCache): string {
   const shown = mem.entries.slice(0, INDEX_MAX_ENTRIES);
   const hidden = mem.entries.length - shown.length;
+  // Le sommaire n'est "exhaustif" que tant qu'il n'est pas tronqué. Au-delà de
+  // INDEX_MAX_ENTRIES, affirmer l'exhaustivité ET « n'appelle pas mem0_search »
+  // dit à l'agent d'ignorer des souvenirs qui EXISTENT mais sont hors liste :
+  // c'est précisément la ré-exploration que ce dispositif doit supprimer. Quand
+  // la liste est tronquée, on retire la garantie et on invite explicitement à
+  // chercher un sujet absent avant de conclure.
+  const header =
+    hidden > 0
+      ? `[mem0] Sommaire de la mémoire du projet "${scope}" — ${mem.entries.length} souvenir(s), ` +
+        `les ${shown.length} plus récents listés ci-dessous ; les ${hidden} plus anciens ne le sont PAS. ` +
+        `Cette liste n'est donc pas exhaustive : si ta demande porte sur un sujet qui n'y figure pas, ` +
+        `appelle mem0_search avant de conclure qu'il n'est pas en mémoire. Pour déplier une entrée, ` +
+        `mem0_search sur son sujet ; les ids servent à mem0_update et mem0_forget.`
+      : `[mem0] Sommaire de la mémoire du projet "${scope}" — ${mem.entries.length} souvenir(s). ` +
+        `Ce sommaire est exhaustif : un sujet qui n'y figure pas n'est pas en mémoire, ` +
+        `n'appelle pas mem0_search pour t'en assurer. Pour déplier une entrée, mem0_search sur son ` +
+        `sujet ; les ids servent à mem0_update et mem0_forget.`;
   return (
-    `[mem0] Sommaire de la mémoire du projet "${scope}" — ${mem.entries.length} souvenir(s). ` +
-    `Ce sommaire est exhaustif : un sujet qui n'y figure pas n'est pas en mémoire, ` +
-    `n'appelle pas mem0_search pour t'en assurer. Pour déplier une entrée, mem0_search sur son ` +
-    `sujet ; les ids servent à mem0_update et mem0_forget.\n` +
+    header +
+    "\n" +
     shown
       .map((e) => {
         const line = e.text.split("\n")[0]!.trim();
@@ -1067,6 +1116,8 @@ function renderRecallRows(
 
 type SessionState = {
   turns: number;
+  /** tours dont le prompt dépasse RECALL_MIN_PROMPT ; proxy de « la session a du fond ». */
+  substantiveTurns: number;
   /** ids déjà montrés dans cette session, par rappel ou par agrafage : on ne répète pas. */
   injected: Set<string>;
   /** arguments d'outil déjà agrafés : un même chemin ou pattern n'agrafe qu'une fois. */
@@ -1136,6 +1187,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     if (!st) {
       st = {
         turns: 0,
+        substantiveTurns: 0,
         injected: new Set(),
         pinnedQueries: new Set(),
         mem: null,
@@ -1210,6 +1262,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event, ctx) => {
     const st = stateOf(ctx);
     st.turns += 1;
+    if (event.prompt.trim().length >= RECALL_MIN_PROMPT) st.substantiveTurns += 1;
 
     if (st.turns === 1) {
       try { checkBrief(ctx); } catch { /* jamais bloquant */ }
@@ -1388,13 +1441,18 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   });
 
   // --- Relance en fin de session -------------------------------------------
-  // Une seule par session, et seulement quand la session a modifié des fichiers
-  // sans rien mémoriser : une conversation d'exploration ne déclenche rien.
+  // Une seule par session, quand rien n'a été écrit en mémoire (adds === 0) et
+  // que la session a produit quelque chose de potentiellement durable : soit des
+  // fichiers modifiés (travail de code), soit une discussion substantielle sans
+  // édition (needs, specs, archi — sinon le nudge fondé sur `mutations` ne tire
+  // jamais et ces phases n'écrivent rien).
   pi.on("session_stop", async (_event, ctx) => {
     const st = stateOf(ctx);
-    if (st.nudged || st.adds > 0 || st.mutations === 0) return;
+    if (st.nudged) return;
+    const msg = pickSessionStopNudge(st);
+    if (!msg) return;
     st.nudged = true;
-    return { continue: true, additionalContext: nudgeText(st.mutations) };
+    return { continue: true, additionalContext: msg };
   });
 
   // --- Fin de phase : lecture mémoire déléguée -----------------------------
@@ -1867,7 +1925,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       const st = stateOf(ctx);
       st.nudged = true;
       await ctx.waitForIdle?.();
-      pi.sendUserMessage(nudgeText(st.mutations));
+      pi.sendUserMessage(st.mutations > 0 ? nudgeText(st.mutations) : discussionNudgeText(st.substantiveTurns));
     },
   });
 

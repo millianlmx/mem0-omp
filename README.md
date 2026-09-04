@@ -20,7 +20,7 @@ mem0-omp/                              racine = marketplace OMP
 | Premier démarrage dans un dépôt | Pose le brief mémoire : écrit `.omp/mem0-brief.md` et ajoute un bloc dans `AGENTS.md` qui le cite. Une fois, tout seul. |
 | Chaque tour | Cherche dans la mémoire du projet sur ton prompt brut, filtré par un plancher de score, et injecte le résultat silencieusement dans le même tour. Le sommaire exhaustif de la mémoire du projet part dans le prompt système : l'agent sait ce qui existe sans avoir à chercher. |
 | Chaque `read` / `grep` / `glob` / `lsp` / `edit` / `write` | Le souvenir qui concerne les arguments de l'outil est posé en tête du résultat, sans appel réseau et sans amputer le résultat. Un même argument n'agrafe qu'une fois. |
-| Fin de session | Si la session a modifié des fichiers sans rien écrire en mémoire, une relance unique demande à l'agent d'écrire ce qui sera encore vrai dans six mois. Aucune écriture automatique par extraction serveur. |
+| Fin de session | Si la session a produit du durable sans rien écrire en mémoire — fichiers modifiés, **ou** discussion substantielle sans édition (needs, specs, archi) — une relance unique demande à l'agent d'écrire ce qui sera encore vrai dans six mois. Aucune écriture automatique par extraction serveur. |
 | À la demande | `mem0_search`, `mem0_add`, `mem0_update`, `mem0_forget`. |
 
 ## Installation
@@ -202,6 +202,9 @@ fait désormais échouer la construction de l'image, pas la première requête.
 - `/add-phase NOM BRIEF` — enregistre une phase et le rôle d'agent associé.
 - `/set-phase NOM` — active une phase pour la session (`--default` réinitialise le registry).
 - `/remove-phase NOM` — désenregistre une phase.
+- `/review` — ouvre une session de revue one-shot qui cherche ses specs et besoins en mémoire
+  projet (mem0_search), lit les fichiers modifiés, et rend une évaluation structurée
+  (STATUT, SPEC PAR SPEC, BLOQUANTS, DÉCISION FINALE).
 
 ## Phases
 
@@ -219,6 +222,11 @@ Une **phase** est un rôle nommé qu'on active sur une session (par exemple `rel
 - Si aucune instruction exécutable n'est trouvée, elle invite à en enregistrer une avec
   `mem0_add` (`… — RUN: …`) pour la prochaine fin de phase.
 
+La phase `review` est pré-enregistrée dans les valeurs par défaut (avec `release`,
+`version-bump`, `deploy`). Elle s'active par `/set-phase review`. La commande
+`/review` ouvre quant à elle une session de revue indépendante, sans passer par
+le système de phases — mais `review` est aussi disponible comme phase pour les
+déclenchements automatiques en fin de session.
 Le déclenchement est **borné à une fois par session** et protégé contre les relances
 (`stop_hook_active`) : la session se termine normalement. Une relance de ta part (nouveau
 message) n'est pas une fin de phase et ne déclenche rien.
