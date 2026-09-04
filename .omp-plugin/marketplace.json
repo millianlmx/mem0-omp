@@ -28,7 +28,7 @@
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
       "description": "Collecte rigoureuse de besoins : mode req qui active une directive systémique forçant l'agent à challenger chaque vague via ask, avec détection de 'fin' pour la clôture et le résumé.",
-      "version": "0.1.0",
+ "version": "0.1.1",
       "author": {
         "name": "MillianLMX"
       },

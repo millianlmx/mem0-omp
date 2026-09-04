@@ -1,6 +1,6 @@
 {
   "name": "omp-mem0-req",
-  "version": "0.1.0",
+ "version": "0.1.1",
   "description": "Collecte rigoureuse de besoins : mode 'req' qui challenge chaque ambiguïté via ask, s'appuie sur mem0, et reformule un résumé non-ambigu à la fin.",
   "license": "MIT",
   "author": "MillianLMX",
