@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.5.0"
+    "version": "2.6.0"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
-      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, /mem0-init pour amorcer un dépôt existant. Nécessite le stack mem0-stack en local.",
-      "version": "2.5.0",
+      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration automatique, /mem0-init pour amorcer un dépôt existant. Nécessite le stack mem0-stack en local.",
+      "version": "2.6.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -23,6 +23,21 @@
       "category": "productivity",
       "keywords": ["memory", "mem0", "qdrant", "recall", "context"],
       "commands": ["mem0-status", "mem0-init", "mem0-brief", "mem0-dedupe", "mem0-save"]
+    },
+    {
+      "name": "omp-mem0-req",
+      "source": "./omp-mem0-req",
+      "description": "Collecte rigoureuse de besoins : mode req qui active une directive systémique forçant l'agent à challenger chaque vague via ask, avec détection de 'fin' pour la clôture et le résumé.",
+      "version": "0.1.0",
+      "author": {
+        "name": "MillianLMX"
+      },
+      "homepage": "https://github.com/millianlmx/mem0-omp",
+      "repository": "https://github.com/millianlmx/mem0-omp",
+      "license": "MIT",
+      "category": "productivity",
+      "keywords": ["requirements", "gathering", "ask", "clarification"],
+      "commands": ["req"]
     }
   ]
 }
