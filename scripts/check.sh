@@ -124,6 +124,17 @@ else
   pass "aucun import de valeur depuis @oh-my-pi/*"
 fi
 
+echo "── Tests"
+if command -v node >/dev/null 2>&1; then
+  if node --test --experimental-strip-types test/*.test.ts >/dev/null 2>&1; then
+    pass "tests unitaires (dedupe, buildSummary)"
+  else
+    fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
+  fi
+else
+  echo "  · node absent, tests non exécutés"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   echo "Dépôt prêt à publier."

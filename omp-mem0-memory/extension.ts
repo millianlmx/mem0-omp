@@ -77,7 +77,6 @@ const MUTATE_TOOLS: Record<string, true> = { edit: true, write: true, ast_edit: 
 // ---------------------------------------------------------------------------
 
 const CHECKPOINT_THRESHOLD_NORMAL = 15;
-const CHECKPOINT_THRESHOLD_PHASE = 5;
 const CHECKPOINT_MESSAGE_TYPE = "mem0-checkpoint";
 
 function nudgeText(mutations: number): string {
@@ -119,33 +118,48 @@ const GLOBAL_SCOPE = "_global";
 
 // MEM0_AUTOSETUP=0 pour ne jamais écrire dans un dépôt.
 const AUTOSETUP = process.env.MEM0_AUTOSETUP !== "0";
+
 // ---------------------------------------------------------------------------
-// Phase registry — persisté sur ~/.omp/agent/phases.json
+// Phases — rôles nommés qu'on active sur une session (/set-phase). À la fin d'une
+// phase (l'agent a rendu la main → session_stop), on cherche en mémoire les
+// instructions de la phase et on les DÉLÈGUE à l'agent : l'extension n'édite
+// jamais un fichier elle-même. Registry global (partagé entre projets), persisté.
 // ---------------------------------------------------------------------------
 
 const PHASES_FILE = path.join(os.homedir(), ".omp", "agent", "phases.json");
 
-interface PhaseEntry {
-  brief: string; // agent brief définit le rôle de l'agent pour cette phase
-}
+type PhaseEntry = { brief: string };
 
 function loadPhases(): Map<string, PhaseEntry> {
   try {
     const raw = fs.readFileSync(PHASES_FILE, "utf8");
     const entries: Record<string, PhaseEntry> = JSON.parse(raw);
     return new Map(Object.entries(entries));
-  } catch { return new Map(); }
+  } catch {
+    return new Map();
+  }
 }
 
-function savePhases(phases: Map<string, PhaseEntry>): void {
+function savePhases(reg: Map<string, PhaseEntry>): void {
   const obj: Record<string, PhaseEntry> = {};
-  for (const [name, entry] of phases) obj[name] = entry;
-  fs.writeFileSync(PHASES_FILE, JSON.stringify(obj, null, 2), "utf8");
+  for (const [name, entry] of reg) obj[name] = entry;
+  try {
+    fs.mkdirSync(path.dirname(PHASES_FILE), { recursive: true });
+    fs.writeFileSync(PHASES_FILE, JSON.stringify(obj, null, 2), "utf8");
+  } catch {
+    /* best-effort : un registry non persistable ne doit pas casser une session */
+  }
 }
 
 const DEFAULT_PHASES: string[] = ["release", "version-bump", "deploy"];
 
-let phases = loadPhases(); // initialisation une fois au chargement du module
+// Chargé une fois au chargement du module ; muté par /add-phase, /remove-phase, /set-phase --default.
+let phases = loadPhases();
+
+// Repère un souvenir qui porte une instruction à exécuter. C'est l'agent qui
+// juge et agit ; ce test ne fait que décider quels souvenirs lui présenter.
+const EXECUTION_KEYWORDS = ["version", "bump", "commit", "release"];
+const EXECUTABLE_RE = /\b(MUST|EXECUTE|TODO|ACTION|DO|RUN)\s*[:：。]/i;
 
 // ---------------------------------------------------------------------------
 // Le brief — source de vérité, embarquée ici pour que l'extension reste
@@ -1048,108 +1062,6 @@ function renderRecallRows(
 
   return rows;
 }
-// --- Phase trigger : recherche mémoire au stop de session -----------------
-// Si une phase enregistrée est active, rechercher les instructions
-// exécutables en mémoire et les appliquer.
-
-const EXECUTION_KEYWORDS = ["version", "bump", "commit", "release"];
-
-function isExecutableInstruction(text: string): boolean {
-  return /\b(MUST|EXECUTE|TODO|ACTION|DO|RUN)\s*[:。]/i.test(text);
-}
-
-function extractInstructions(text: string): string[] {
-  const instructions: string[] = [];
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (/\b(MUST|EXECUTE|TODO|ACTION|DO|RUN)\s*[:。]/i.test(line)) {
-      instructions.push(line.trim());
-      if (i + 1 < lines.length && lines[i + 1]!.trim()) {
-        instructions.push(lines[i + 1]!.trim());
-        i++;
-      }
-    }
-  }
-  return instructions;
-}
-
-function bumpVersion(pkgPath: string, direction: "patch" | "minor" | "major"): string {
-  try {
-    if (!fs.existsSync(pkgPath)) return "";
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
-    if (!pkg.version) return "";
-    const parts = pkg.version.split(".").map(Number);
-    if (direction === "major") parts[0]++;
-    else if (direction === "minor") { parts[1]++; parts[2] = 0; }
-    else { parts[2]++; }
-    pkg.version = parts.join(".");
-    const oldVersion = `${parts[0]}.${parts[1]}.${parts[2]}`;
-    fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n", "utf8");
-    return `[mem0] ${path.basename(pkgPath)}: ${oldVersion} → ${pkg.version}`;
-  } catch { return ""; }
-}
-
-function bumpMarketplacePlugin(marketplacePath: string, pluginName: string, pkgVersion: string): string {
-  try {
-    if (!fs.existsSync(marketplacePath)) return "";
-    const raw = fs.readFileSync(marketplacePath, "utf8");
-    const mkt = JSON.parse(raw);
-    for (const p of (mkt.plugins ?? [])) {
-      if (p.name === pluginName && p.version !== pkgVersion) {
-        const old = p.version;
-        p.version = pkgVersion;
-        fs.writeFileSync(marketplacePath, JSON.stringify(mkt, null, 2) + "\n", "utf8");
-        return `[mem0] ${path.basename(marketplacePath)}: "${pluginName}" ${old} → ${pkgVersion}`;
-      }
-    }
-    if (mkt.metadata && mkt.metadata.version !== pkgVersion) {
-      const old = mkt.metadata.version;
-      mkt.metadata.version = pkgVersion;
-      fs.writeFileSync(marketplacePath, JSON.stringify(mkt, null, 2) + "\n", "utf8");
-      return `[mem0] ${path.basename(marketplacePath)} metadata: ${old} → ${pkgVersion}`;
-    }
-    return "";
-  } catch { return ""; }
-}
-
-function executeInstructions(instructions: string[]): string[] {
-  const results: string[] = [];
-  const cwd = process.cwd();
-
-  for (const inst of instructions) {
-    if (/version\s*(bump|increment)\s*[:。]?\s*v?(\d+\.\d+)/i.test(inst)) {
-      const pkgCandidates = ["omp-mem0-memory/package.json", "omp-mem0-req/package.json", "package.json"];
-      for (const candidate of pkgCandidates) {
-        const pkgPath = path.join(cwd, candidate);
-        const msg = bumpVersion(pkgPath, "patch");
-        if (msg) {
-          results.push(msg);
-          const mktCandidates = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
-          for (const mktPath of mktCandidates) {
-            const mktResult = bumpMarketplacePlugin(
-              path.join(cwd, mktPath),
-              candidate.replace("package.json", "").replace(/^\//, ""),
-              JSON.parse(fs.readFileSync(pkgPath, "utf8")).version,
-            );
-            if (mktResult) results.push(mktResult);
-          }
-          break;
-        }
-      }
-    }
-    if (/commit\s*[:。]/i.test(inst)) {
-      results.push(`[mem0] commit instruction parsed (message: "${inst}")`);
-    }
-    if (/release\s*[:。]/i.test(inst)) {
-      results.push(`[mem0] release instruction parsed`);
-      const pkgPath = path.join(cwd, "omp-mem0-memory/package.json");
-      const msg = bumpVersion(pkgPath, "patch");
-      if (msg) results.push(msg);
-    }
-  }
-  return results;
-}
 // Extension
 // ---------------------------------------------------------------------------
 
@@ -1169,12 +1081,16 @@ type SessionState = {
   recalls: number; // tours où au moins un souvenir a été injecté
   adds: number; // écritures mémoire réussies
   nudged: boolean;
+  /** agrafages réussis sur la session, affiché par /mem0-status. */
+  pinned: number;
   /** agrafages depuis le dernier bloc de rappel affiché. */
   pinnedSinceRecall: number;
   /** explorations sans écriture mem0_add ; déclenche un checkpoint au-delà du seuil. */
   explorationSinceLastWrite: number;
-  /** sticky phase flag : une fois détectée, la phase reste active pour le seuil réduit. */
-  currentPhase: string | null; // phase active pour cette session, null si aucune
+  /** phase active pour la session, définie par /set-phase ; null si aucune. */
+  currentPhase: string | null;
+  /** le trigger de fin de phase n'agit qu'une fois par session (garde anti-boucle). */
+  phaseTriggered: boolean;
 };
 
 export default function mem0MemoryExtension(pi: ExtensionAPI) {
@@ -1231,7 +1147,9 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         adds: 0,
         nudged: false,
         pinnedSinceRecall: 0,
+        explorationSinceLastWrite: 0,
         currentPhase: null,
+        phaseTriggered: false,
       };
       states.set(key, st);
     }
@@ -1297,25 +1215,6 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       try { checkBrief(ctx); } catch { /* jamais bloquant */ }
     }
 
-    // Phase registry checkpoint — seuil réduit si une phase enregistrée est active ---
-    const phaseThreshold = st.currentPhase && phases.has(st.currentPhase)
-      ? CHECKPOINT_THRESHOLD_PHASE
-      : CHECKPOINT_THRESHOLD_NORMAL;
-    if (st.explorationSinceLastWrite >= phaseThreshold) {
-      const explorationsDone = st.explorationSinceLastWrite;
-      st.explorationSinceLastWrite = 0;
-      return { systemPrompt, message: {
-        customType: CHECKPOINT_MESSAGE_TYPE,
-        content: `[mem0 checkpoint] ${explorationsDone} exploration(s) faites sans écriture. ` +
-          `Tu as lu/grepé/parcouru des fichiers qui contiennent probablement des connaissances ` +
-          `permanentes (architecture, conventions, bugs, décisions). ` +
-          `Écris maintenant avec mem0_add ce qui sera vrai dans 6 mois. ` +
-          `Un fait par appel, autoportant, en nommant fichiers et symboles.`,
-        display: true,
-        attribution: "agent" as const,
-      }};
-    }
-
      const scope = projectId(ctx.cwd);
 
     // Cache + sommaire : une fois par session, retentés au tour suivant en cas
@@ -1330,8 +1229,39 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     // prompt si.
     const systemPrompt = [...event.systemPrompt, SYSTEM_DIRECTIVE, ...(st.index ? [st.index] : [])];
 
+    // Checkpoint exploration : nudge d'écriture quand l'agent a beaucoup exploré
+    // sans rien mémoriser. `systemPrompt` doit être construit avant ce retour.
+    if (st.explorationSinceLastWrite >= CHECKPOINT_THRESHOLD_NORMAL) {
+      const explorationsDone = st.explorationSinceLastWrite;
+      st.explorationSinceLastWrite = 0;
+      return { systemPrompt, message: {
+        customType: CHECKPOINT_MESSAGE_TYPE,
+        content: `[mem0 checkpoint] ${explorationsDone} exploration(s) faites sans écriture. ` +
+          `Tu as lu/grepé/parcouru des fichiers qui contiennent probablement des connaissances ` +
+          `permanentes (architecture, conventions, bugs, décisions). ` +
+          `Écris maintenant avec mem0_add ce qui sera vrai dans 6 mois. ` +
+          `Un fait par appel, autoportant, en nommant fichiers et symboles.`,
+        display: true,
+        attribution: "agent" as const,
+      }};
+    }
+
     const prompt = event.prompt.trim();
     if (prompt.length < RECALL_MIN_PROMPT) return { systemPrompt };
+
+    const recallMessage = (content: string, details: RecallDetails) => {
+      st.pinnedSinceRecall = 0;
+      return {
+        systemPrompt,
+        message: {
+          customType: RECALL_MESSAGE_TYPE,
+          content,
+          display: RECALL_DISPLAY,
+          attribution: "agent" as const,
+          details,
+        },
+      };
+    };
 
     try {
       let recallError: string | undefined;
@@ -1343,19 +1273,6 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         id: String(m?.id ?? "?"),
         head: clip(memoryLine(m).split("\n")[0]!.trim(), RECALL_LINE_CHARS),
       });
-      const recallMessage = (content: string, details: RecallDetails) => {
-        st.pinnedSinceRecall = 0;
-        return {
-          systemPrompt,
-          message: {
-            customType: RECALL_MESSAGE_TYPE,
-            content,
-            display: RECALL_DISPLAY,
-            attribution: "agent" as const,
-            details,
-          },
-        };
-      };
       // Les échecs sont tracés — un rappel muet a caché le problème trop longtemps.
       const [projectRes, globalRes] = await Promise.all([
         mem0.search(prompt.slice(0, 800), scope, RECALL_LIMIT, RECALL_THRESHOLD).catch((err) => {
@@ -1480,56 +1397,62 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     return { continue: true, additionalContext: nudgeText(st.mutations) };
   });
 
-  // --- Phase trigger session_stop ------------------------------------------
-  // Second handler — triggers after the existing nudge handler.
-  // Only runs when a registered phase is active and no nudge was already sent.
-  pi.on("session_stop", async (_event, ctx) => {
+  // --- Fin de phase : lecture mémoire déléguée -----------------------------
+  // Phase enregistrée active + agent qui rend la main → on cherche les
+  // instructions de la phase et on les PRÉSENTE à l'agent pour qu'il les applique
+  // avec ses propres outils. Gardes : event.stop_hook_active (anti-boucle runtime)
+  // + un seul déclenchement par session.
+  pi.on("session_stop", async (event, ctx) => {
+    if (event?.stop_hook_active) return;
     const st = stateOf(ctx);
+    if (st.phaseTriggered) return;
     if (!st.currentPhase || !phases.has(st.currentPhase)) return;
 
-    const scope = projectId(ctx.cwd);
     const phaseName = st.currentPhase;
-
-    // Search: phase name + execution keywords
-    const searchQuery = `${phaseName} ${EXECUTION_KEYWORDS.join(" ")}`;
+    const scope = projectId(ctx.cwd);
+    const brief = phases.get(phaseName)?.brief ?? "";
+    // Une seule fois, même si la recherche échoue ou ne renvoie rien.
+    st.phaseTriggered = true;
 
     try {
-      const searchResults = await mem0.search(searchQuery, scope, RECALL_LIMIT, RECALL_THRESHOLD);
-      const results = rows(searchResults);
+      // Requête = intention de la phase (nom + brief). On NE concatène PAS les
+      // mots-clés fixes dans le texte embeddé : padder la requête détruit sa
+      // pertinence (mesuré). Les mots-clés servent de tri lexical en aval.
+      const query = brief ? `${phaseName} ${brief}` : phaseName;
+      const found = rows(await mem0.search(query, scope, RECALL_LIMIT, RECALL_THRESHOLD)).map(memoryLine);
+      const hasKeyword = (t: string) => EXECUTION_KEYWORDS.some((k) => t.toLowerCase().includes(k));
+      const executable = found
+        .filter((t) => EXECUTABLE_RE.test(t))
+        .sort((a, b) => Number(hasKeyword(b)) - Number(hasKeyword(a)));
 
-      const matching: string[] = [];
-      for (const r of results) {
-        const text = memoryLine(r);
-        if (isExecutableInstruction(text)) {
-          matching.push(text);
-        }
-      }
-
-      if (matching.length === 0) {
+      if (executable.length) {
         return {
           continue: true,
-          additionalContext: `[mem0 phase "${phaseName}"] Aucune instruction exécutable trouvée en mémoire pour cette phase. ` +
-            `Si vous avez des instructions de déploiement, de bump de version ou de commit, ` +
-            `enregistrez-les avec mem0_add (MUST: …) pour qu'elles soient appliquées automatiquement.`,
+          additionalContext:
+            `[mem0 phase "${phaseName}"] Phase terminée. Instructions trouvées en mémoire à appliquer maintenant, ` +
+            `avec tes propres outils (édition, bash/git) et sous les gardes d'approbation :\n` +
+            executable.map((t, i) => `${i + 1}. ${t}`).join("\n") +
+            `\n\nApplique celles qui sont pertinentes puis rends la main. Si une instruction ne colle pas ` +
+            `à l'état réel du dépôt, dis-le au lieu de l'exécuter.`,
         };
       }
 
-      const instructions = extractInstructions(matching.join("\n"));
-      const executionResults = executeInstructions(instructions);
-
       return {
-         continue: true,
-        additionalContext: executionResults.length
-          ? `[mem0 phase "${phaseName}"] Instructions exécutées :\n${executionResults.join("\n")}`
-          : `[mem0 phase "${phaseName}"] ${matching.length} instruction(s) trouvée(s) mais aucune n'a été exécutée.`,
+        continue: true,
+        additionalContext:
+          `[mem0 phase "${phaseName}"] Phase terminée, aucune instruction exécutable en mémoire pour cette phase. ` +
+          `Si elle doit déclencher des actions (bump de version, commit, release, déploiement), enregistre-les ` +
+          `avec mem0_add sous forme d'instruction, par exemple : « ${phaseName} — RUN: incrémenter la version ` +
+          `dans package.json et marketplace.json puis commiter ». Elles seront présentées à la prochaine fin de phase.`,
       };
     } catch (err) {
       return {
         continue: true,
-        additionalContext: `[mem0 phase "${phaseName}"] Erreur de recherche mémoire : ${String(err)}`,
+        additionalContext: `[mem0 phase "${phaseName}"] Recherche mémoire indisponible : ${(err as Error).message}. Aucune action automatique ce tour.`,
       };
     }
   });
+
   // --- Tools ---------------------------------------------------------------
 
   // `loadMode: "essential"` sur les quatre tools. Sans ça, OMP les monte en
@@ -1949,17 +1872,18 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("add-phase", {
-    description: "Enregistre une nouvelle phase avec son brief d'agent",
+    description: "Enregistre une phase et le brief de rôle de l'agent : /add-phase NOM BRIEF",
     handler: async (args, ctx) => {
-      const parsed = String(args ?? "").split(/\s+/);
-      if (parsed.length < 2) {
-        ctx.ui.notify("[mem0] usage: /add-phase PHASE_NAME AGENT_BRIEF", "error");
+      const argv = String(args ?? "").trim();
+      const sp = argv.indexOf(" ");
+      const name = (sp === -1 ? argv : argv.slice(0, sp)).trim();
+      const brief = sp === -1 ? "" : argv.slice(sp + 1).trim();
+      if (!name) {
+        ctx.ui.notify("[mem0] usage : /add-phase NOM BRIEF", "error");
         return;
       }
-      const name = parsed[0]!;
-      const brief = parsed.slice(1).join(" ");
       if (phases.has(name)) {
-        ctx.ui.notify(`[mem0] phase "${name}" existe déjà — /remove-phase pour la supprimer d'abord.`, "warning");
+        ctx.ui.notify(`[mem0] phase "${name}" existe déjà — /remove-phase pour la retirer d'abord.`, "warning");
         return;
       }
       phases.set(name, { brief });
@@ -1969,56 +1893,52 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("set-phase", {
-    description: "Définit la phase courante pour la session. /set-phase --default pour réinitialiser.",
+    description: "Active une phase pour la session (--default réinitialise le registry) : /set-phase NOM",
     handler: async (args, ctx) => {
       const argv = String(args ?? "").trim();
-
-      // --default : reset to defaults
-      if (argv === "--default") {
-        const st = stateOf(ctx);
-        st.currentPhase = null;
-        phases = new Map();
-        for (const d of DEFAULT_PHASES) {
-          phases.set(d, { brief: "" });
-        }
-        savePhases(phases);
-        ctx.ui.notify("[mem0] phases réinitialisées aux valeurs par défaut.", "info");
-        return;
-      }
-
-      const parsed = argv.split(/\s+/);
-      const name = parsed[0];
-      if (!name) {
-        ctx.ui.notify("[mem0] usage: /set-phase PHASE_NAME", "error");
-        return;
-      }
-
       const st = stateOf(ctx);
 
-      if (!phases.has(name)) {
-        ctx.ui.notify(`[mem0] phase "${name}" n'existe pas. /add-phase pour l'enregistrer.`, "error");
+      if (argv === "--default") {
+        st.currentPhase = null;
+        st.phaseTriggered = false;
+        phases = new Map(DEFAULT_PHASES.map((d) => [d, { brief: "" }] as [string, PhaseEntry]));
+        savePhases(phases);
+        ctx.ui.notify(`[mem0] registry réinitialisé : ${DEFAULT_PHASES.join(", ")}. Aucune phase active.`, "info");
         return;
       }
 
+      const name = argv.split(/\s+/)[0] ?? "";
+      if (!name) {
+        ctx.ui.notify("[mem0] usage : /set-phase NOM", "error");
+        return;
+      }
+      if (!phases.has(name)) {
+        ctx.ui.notify(`[mem0] phase "${name}" inconnue. /add-phase pour l'enregistrer, /set-phase --default pour les valeurs par défaut.`, "error");
+        return;
+      }
       st.currentPhase = name;
-      ctx.ui.notify(`[mem0] phase "${name}" active pour cette session.`, "info");
+      st.phaseTriggered = false;
+      const brief = phases.get(name)?.brief;
+      ctx.ui.notify(`[mem0] phase "${name}" active pour cette session${brief ? ` — rôle : ${brief}` : ""}.`, "info");
     },
   });
 
   pi.registerCommand("remove-phase", {
-    description: "Désenregistre une phase et sa configuration",
+    description: "Désenregistre une phase : /remove-phase NOM",
     handler: async (args, ctx) => {
-      const name = String(args ?? "").trim();
+      const name = String(args ?? "").trim().split(/\s+/)[0] ?? "";
       if (!name) {
-        ctx.ui.notify("[mem0] usage: /remove-phase PHASE_NAME", "error");
+        ctx.ui.notify("[mem0] usage : /remove-phase NOM", "error");
         return;
       }
       if (!phases.has(name)) {
-        ctx.ui.notify(`[mem0] phase "${name}" n'existe pas.`, "warning");
+        ctx.ui.notify(`[mem0] phase "${name}" inconnue.`, "warning");
         return;
       }
       phases.delete(name);
       savePhases(phases);
+      const st = stateOf(ctx);
+      if (st.currentPhase === name) st.currentPhase = null;
       ctx.ui.notify(`[mem0] phase "${name}" désenregistrée.`, "info");
     },
   });

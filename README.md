@@ -199,6 +199,29 @@ fait désormais échouer la construction de l'image, pas la première requête.
   cible la mémoire transverse. Avec `--apply`, le rapport liste les ids supprimés.
 - `/mem0-save` — demande à l'agent d'écrire maintenant ce que la session a produit
   de durable, sans attendre la fin de session.
+- `/add-phase NOM BRIEF` — enregistre une phase et le rôle d'agent associé.
+- `/set-phase NOM` — active une phase pour la session (`--default` réinitialise le registry).
+- `/remove-phase NOM` — désenregistre une phase.
+
+## Phases
+
+Une **phase** est un rôle nommé qu'on active sur une session (par exemple `release`,
+`deploy`). Elle automatise la lecture mémoire en fin de session :
+
+- `/add-phase release "release manager : bump + changelog + tag"` enregistre la phase
+  (registry global, persisté dans `~/.omp/agent/phases.json`, rechargé au démarrage).
+- `/set-phase release` l'active pour la session courante.
+- Quand l'agent rend la main (`session_stop`, phase terminée), l'extension cherche en
+  mémoire les instructions de la phase — recherche hybride sur le rôle de la phase, pas
+  sur des mots-clés collés à la requête — et **les présente à l'agent** pour qu'il les
+  applique avec ses propres outils (édition, `bash`/`git`), sous les gardes d'approbation.
+  L'extension n'édite jamais de fichier elle-même.
+- Si aucune instruction exécutable n'est trouvée, elle invite à en enregistrer une avec
+  `mem0_add` (`… — RUN: …`) pour la prochaine fin de phase.
+
+Le déclenchement est **borné à une fois par session** et protégé contre les relances
+(`stop_hook_active`) : la session se termine normalement. Une relance de ta part (nouveau
+message) n'est pas une fin de phase et ne déclenche rien.
 
 ## Config
 

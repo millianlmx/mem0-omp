@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.7.0"
+    "version": "2.8.0"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
-      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration automatique, /mem0-init pour amorcer un dépôt existant. Nécessite le stack mem0-stack en local.",
-      "version": "2.7.0",
+      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant. Nécessite le stack mem0-stack en local.",
+      "version": "2.8.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -22,7 +22,7 @@
       "license": "MIT",
       "category": "productivity",
       "keywords": ["memory", "mem0", "qdrant", "recall", "context"],
-      "commands": ["mem0-status", "mem0-init", "mem0-brief", "mem0-dedupe", "mem0-save"]
+      "commands": ["mem0-status", "mem0-init", "mem0-brief", "mem0-dedupe", "mem0-save", "add-phase", "set-phase", "remove-phase"]
     },
     {
       "name": "omp-mem0-req",
