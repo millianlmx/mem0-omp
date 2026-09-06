@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.9.0"
+    "version": "2.9.1"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
-      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase et commande). Nécessite le stack mem0-stack en local.",
-      "version": "2.9.0",
+      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Nécessite le stack mem0-stack en local.",
+      "version": "2.9.1",
       "author": {
         "name": "MillianLMX"
       },
@@ -22,13 +22,13 @@
       "license": "MIT",
       "category": "productivity",
       "keywords": ["memory", "mem0", "qdrant", "recall", "context"],
-      "commands": ["mem0-status", "mem0-init", "mem0-brief", "mem0-dedupe", "mem0-save", "add-phase", "set-phase", "remove-phase", "review"]
+      "commands": ["mem0-status", "mem0-init", "mem0-brief", "mem0-dedupe", "mem0-save", "add-phase", "set-phase", "remove-phase"]
     },
     {
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
       "description": "Collecte rigoureuse de besoins puis transition vers les spécifications et la revue : mode req qui force l'agent à challenger chaque ambiguïté via ask, capte les besoins persistés en mémoire, /specs qui fige les besoins et ouvre une session de spécification one-shot amorcée par eux, /impl pour l'implémentation one-shot, /review pour la revue.",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "author": {
         "name": "MillianLMX"
       },

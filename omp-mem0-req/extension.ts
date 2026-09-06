@@ -283,11 +283,12 @@ const REVIEW_DIRECTIVE = `Tu es un agent de revue. Ton contrat : vérifier qu'un
 Procédure OBLIGATOIRE, dans l'ordre :
 1. Récupère les specs en mémoire projet (mem0_search sur le périmètre / la feature). Si AUCUNE spec n'est trouvée, indique-le clairement — la revue ne peut pas se faire sans specs.
 2. Récupère aussi les besoins originaux (mem0_search sur le périmètre) si des specs existent mais que les besoins ne sont pas traçables.
-3. LIS les fichiers du dépôt qui ont changé depuis les specs : ouvre les fichiers modifiés (read), vérifie les symboles réels (lsp), confirme l'état actuel (grep). Ne révise pas sur un résumé.
-4. POUR CHAQUE spec : vérifie que l'implémentation respecte son critère d'acceptation Given/When/Then (lance ou écrit le test correspondant). Une spec n'est revue que quand son critère est prouvé.
-5. Vérifie la traçabilité : chaque spec doit pointer vers un besoin original. Spéc sans besoin = spec orpheline à signaler.
-6. Évalue les implications sécurité : nouvelles dépendances, exposition d'API, gestion des erreurs critiques.
-7. Vérifie les exigences non-fonctionnelles si listées dans les specs (performance, compatibilité).
+3. Constitue le PÉRIMÈTRE réel à réviser via git, ne le devine pas : \`git status\` puis \`git diff\` (les modifications non commitées laissées par la session /impl vivent dans l'arbre de travail). Si l'arbre est propre, \`git diff\` contre le dernier commit ou tag de release. La revue porte sur CE diff, pas sur ta mémoire de ce qui aurait dû changer.
+4. LIS chaque fichier du diff : ouvre-le (read), vérifie les symboles réels (lsp), confirme l'état actuel (grep). Ne révise pas sur un résumé.
+5. POUR CHAQUE spec : vérifie que l'implémentation respecte son critère d'acceptation Given/When/Then (lance ou écrit le test correspondant). Une spec n'est revue que quand son critère est prouvé.
+6. Traçabilité DANS LES DEUX SENS : (a) chaque spec pointe vers un besoin original — spec sans besoin = spec orpheline à signaler ; (b) chaque fichier du diff est couvert par au moins une spec — fichier modifié sans spec = changement non spécifié à signaler.
+7. Évalue les implications sécurité : nouvelles dépendances, exposition d'API, gestion des erreurs critiques.
+8. Vérifie les exigences non-fonctionnelles si listées dans les specs (performance, compatibilité).
 
 Sortie attendue (format structuré) :
 - STATUT : APPROUVÉ / BLOQUANT / MINEUR
@@ -403,7 +404,7 @@ export default function reqExtension(pi: ExtensionAPI) {
   //
   // Ouvre une session de revue one-shot. La revue cherche ses propres specs
   // et besoins en mémoire projet (via son seed) : le handler n'a pas besoin
-  // de lire l'état local. Commenon/ /specs, /impl, newSession n'est disponible
+  // de lire l'état local. Comme /specs, /impl, newSession n'est disponible
   // que sur le contexte de commande.
   pi.registerCommand("review", {
     description: "Ouvre une session de revue one-shot (cherche specs + besoins en mémoire)",
