@@ -5,4 +5,7 @@ mem0-stack/.env
 node_modules/
 *.log
 .DS_Store
+
+# Contrat de pipeline /req→/specs→/impl→/review — artefact transitoire par feature
+.omp/pipeline/
 __pycache__/

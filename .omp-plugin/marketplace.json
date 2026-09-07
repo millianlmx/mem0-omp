@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.9.1"
+    "version": "2.9.3"
   },
   "plugins": [
     {
@@ -27,8 +27,8 @@
     {
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
-      "description": "Collecte rigoureuse de besoins puis transition vers les spécifications et la revue : mode req qui force l'agent à challenger chaque ambiguïté via ask, capte les besoins persistés en mémoire, /specs qui fige les besoins et ouvre une session de spécification one-shot amorcée par eux, /impl pour l'implémentation one-shot, /review pour la revue.",
-      "version": "0.3.1",
+      "description": "Pipeline one-shot besoins → specs → impl → revue : /req clarifie l'intention par des questions à enjeu (pas de check-list mécanique), /specs fige des specs non ambiguës contre le dépôt réel, /impl implémente d'un trait, /review révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire.",
+      "version": "0.4.1",
       "author": {
         "name": "MillianLMX"
       },

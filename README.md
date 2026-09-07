@@ -202,9 +202,19 @@ fait désormais échouer la construction de l'image, pas la première requête.
 - `/add-phase NOM BRIEF` — enregistre une phase et le rôle d'agent associé.
 - `/set-phase NOM` — active une phase pour la session (`--default` réinitialise le registry).
 - `/remove-phase NOM` — désenregistre une phase.
-- `/review` — ouvre une session de revue one-shot qui cherche ses specs et besoins en mémoire
-  projet (mem0_search), lit les fichiers modifiés, et rend une évaluation structurée
-  (STATUT, SPEC PAR SPEC, BLOQUANTS, DÉCISION FINALE).
+- `/req`, `/specs`, `/impl`, `/review` (plugin `omp-mem0-req`) — pipeline one-shot en
+  quatre sessions dédiées. `/req` clarifie l'intention par des questions à enjeu (pas
+  de check-list mécanique, et une option « peu importe » sur chaque `ask`). `/specs`
+  fige des specs non ambiguës contre le dépôt réel. `/impl` implémente d'un trait.
+  `/review` révise le `git diff` (source de vérité de ce qui a changé) contre les specs.
+  L'état traverse les sessions par un **fichier contrat déterministe**
+  `.omp/pipeline/contract.md` — besoins puis specs y sont écrits par l'agent, relus
+  tels quels à l'étape suivante — et non par la mémoire mem0 : besoins et specs sont
+  des artefacts transitoires de la feature ; mem0 ne garde que les décisions durables.
+  `/review` rend une évaluation structurée (STATUT, SPEC PAR SPEC, BLOQUANTS, DÉCISION)
+  et la consigne dans le contrat sous `## Revue`. La boucle se ferme avec `/impl --fix` :
+  une session qui lit ce verdict et lève chaque BLOQUANT sans élargir le périmètre, puis
+  relance `/review` pour reconfirmer.
 
 ## Phases
 

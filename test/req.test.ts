@@ -1,129 +1,103 @@
-// Tests de omp-mem0-req/extension.ts : le pont besoins → mémoire.
-// - recordConfirmedNeed : un besoin est confirmé quand l'agent le PERSISTE via
-//   mem0_add pendant la collecte (pas via `ask`, qui ne fait que clarifier).
-// - buildReqHandoff : message de clôture, adapté selon que des besoins ont été
-//   captés (valider) ou non (déléguer la reformulation + persistance).
+// Tests de omp-mem0-req/extension.ts : pipeline besoins → specs → impl → review.
+// L'état traverse les sessions par le FICHIER CONTRAT .omp/pipeline/contract.md,
+// pas par la mémoire mem0. Les amorces sont des fonctions pures : on vérifie
+// qu'elles pointent l'agent vers ce contrat et portent le bon contrat de rôle.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildReqHandoff, buildSummary, buildSpecsSeed, buildImplSeed, buildReviewSeed, recordConfirmedNeed } from "../omp-mem0-req/extension.ts";
+import {
+  buildReqHandoff,
+  buildSpecsSeed,
+  buildImplSeed,
+  buildReviewSeed,
+  CONTRACT_PATH,
+} from "../omp-mem0-req/extension.ts";
 
-type Confirmation = { question: string; answer: string; index?: number };
-const st = (confirmed: Confirmation[], reqMode = false) => ({
-  reqMode,
-  reqTurns: 0,
-  reqMessages: [],
-  reqConfirmed: confirmed,
-  reqSummary: null,
+// Le chemin du contrat contient des points : on l'échappe pour en faire un motif.
+const contractRe = new RegExp(CONTRACT_PATH.replace(/[.]/g, "\\."));
+
+test("CONTRACT_PATH : contrat de feature sous .omp/", () => {
+  assert.equal(CONTRACT_PATH, ".omp/pipeline/contract.md");
 });
 
-test("recordConfirmedNeed: mem0_add pendant la collecte → besoin capté", () => {
-  const s = st([], true);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", { text: "  Auth : JWT court, refresh 7j  " }, false), true);
-  assert.equal(s.reqConfirmed.length, 1);
-  assert.equal(s.reqConfirmed[0].question, "Auth : JWT court, refresh 7j");
-});
-
-test("recordConfirmedNeed: hors mode collecte → ignoré", () => {
-  const s = st([], false);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", { text: "un besoin" }, false), false);
-  assert.equal(s.reqConfirmed.length, 0);
-});
-
-test("recordConfirmedNeed: un autre outil (ask, read) → ignoré", () => {
-  const s = st([], true);
-  assert.equal(recordConfirmedNeed(s, "ask", { text: "Quelle auth ?" }, false), false);
-  assert.equal(recordConfirmedNeed(s, "read", { path: "x" }, false), false);
-  assert.equal(s.reqConfirmed.length, 0);
-});
-
-test("recordConfirmedNeed: résultat en erreur ou texte vide → ignoré", () => {
-  const s = st([], true);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", { text: "raté" }, true), false);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", { text: "   " }, false), false);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", {}, false), false);
-  assert.equal(s.reqConfirmed.length, 0);
-});
-
-test("recordConfirmedNeed: même texte deux fois → pas de doublon", () => {
-  const s = st([], true);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", { text: "besoin unique" }, false), true);
-  assert.equal(recordConfirmedNeed(s, "mem0_add", { text: "besoin unique" }, false), false);
-  assert.equal(s.reqConfirmed.length, 1);
-});
-
-test("buildSummary: rend un besoin capté sans détail (answer vide)", () => {
-  const s = st([], true);
-  recordConfirmedNeed(s, "mem0_add", { text: "activer le rate-limit" }, false);
-  assert.equal(buildSummary(s), "1. ACTION : activer le rate-limit");
-});
-
-test("buildReqHandoff: sans besoin capté → délègue reformulation + persistance", () => {
-  const out = buildReqHandoff(st([]));
-  assert.match(out, /Aucun besoin n'a encore été enregistré/);
-  assert.match(out, /si l'outil mem0_add est disponible/);
-  assert.match(out, /récapitulatif/);
-  assert.doesNotMatch(out, /Aucun besoin n'a été confirmé cette session/);
-});
-
-test("buildReqHandoff: avec besoins captés → récap à valider, pas de re-persistance", () => {
-  const out = buildReqHandoff(st([{ question: "hasher les tokens", answer: "argon2id" }]));
-  assert.match(out, /1\. ACTION : hasher les tokens \(argon2id\)/);
-  assert.match(out, /mémoire projet/);
+test("buildReqHandoff : fige les besoins validés dans le contrat, pas en mémoire", () => {
+  const out = buildReqHandoff();
+  assert.match(out, /ACTION/);
+  assert.match(out, contractRe); // écrit dans le contrat
+  assert.match(out, /## Besoins/);
   assert.match(out, /validation/);
+  assert.match(out, /Ne mets pas les besoins en mémoire mem0/); // pas de transport mem0
+  assert.match(out, /\/specs/); // renvoie vers l'étape suivante
 });
 
-test("buildSpecsSeed: injecte les besoins et le rubric de bonnes specs", () => {
-  const out = buildSpecsSeed("1. ACTION : hasher les tokens (argon2id)");
-  assert.match(out, /Besoins à spécifier/);
-  assert.match(out, /hasher les tokens/);
+test("buildSpecsSeed : lit les besoins du contrat, y écrit les specs, ambiguïtés techniques seules", () => {
+  const out = buildSpecsSeed("");
+  assert.match(out, contractRe);
+  assert.match(out, /## Besoins/); // lit les besoins figés
+  assert.match(out, /## Spécifications/); // écrit les specs
   assert.match(out, /SANS AMBIGUÏTÉ/);
   assert.match(out, /Given\/When\/Then/);
   assert.match(out, /NON-objectifs/);
   assert.match(out, /PLAN D'IMPLÉMENTATION/);
+  assert.match(out, /ambiguïtés TECHNIQUES/); // ne re-questionne pas l'intention métier
+  assert.match(out, /N'écris PAS les specs en mémoire mem0/);
 });
 
-test("buildSpecsSeed: sans besoins transmis → demande de les récupérer d'abord", () => {
-  assert.match(buildSpecsSeed(""), /Aucun besoin n'a été transmis/);
-  // le fallback buildSummary ne doit pas être pris pour des besoins réels
-  assert.match(
-    buildSpecsSeed("Aucun besoin n'a été confirmé cette session. Redémarrez /req pour commencer une nouvelle collecte."),
-    /Aucun besoin n'a été transmis/,
-  );
+test("buildSpecsSeed : le contexte ajouté par l'utilisateur est injecté", () => {
+  assert.match(buildSpecsSeed("cible le module auth"), /Contexte ajouté : cible le module auth/);
 });
 
-test("buildImplSeed: implémente les specs de la mémoire, ne les redéfinit pas", () => {
+test("buildSpecsSeed : sans contexte ajouté → pas de ligne Contexte", () => {
+  assert.doesNotMatch(buildSpecsSeed("  "), /Contexte ajouté/);
+});
+
+test("buildImplSeed : lit les specs du contrat, s'arrête si absentes", () => {
   const out = buildImplSeed("");
-  assert.match(out, /mémoire projet/);
-  assert.match(out, /mem0_search/);
-  assert.match(out, /AUCUNE spec/); // stop si pas de spec, renvoie vers /specs
-  assert.match(out, /\/specs/);
+  assert.match(out, contractRe);
+  assert.match(out, /ARRÊTE/); // stop si pas de specs figées
+  assert.match(out, /\/specs/); // renvoie vers /specs
   assert.match(out, /Given\/When\/Then/);
   assert.match(out, /aucun stub/);
   assert.doesNotMatch(out, /Périmètre :/); // pas de focus fourni
 });
 
-test("buildImplSeed: le focus fourni restreint le périmètre", () => {
-  const out = buildImplSeed("feature auth");
-  assert.match(out, /Périmètre : feature auth/);
+test("buildImplSeed : mode --fix lit la revue et lève les bloquants", () => {
+  const out = buildImplSeed("", true);
+  assert.match(out, /\[impl --fix\]/);
+  assert.match(out, /CORRECTION/);
+  assert.match(out, contractRe);
+  assert.match(out, /## Revue/); // lit le verdict consigné par /review
+  assert.match(out, /BLOQUANT/);
+  assert.match(out, /ARRÊTE/); // rien à corriger → stop, renvoie /review
+  assert.match(out, /scope creep/); // ne pas élargir le périmètre
 });
 
-test("buildReviewSeed: révise contre le diff git, pas contre un résumé", () => {
+test("buildImplSeed : sans --fix → mode implémentation, pas correction", () => {
+  const out = buildImplSeed("");
+  assert.doesNotMatch(out, /--fix/);
+  assert.doesNotMatch(out, /CORRECTION/);
+});
+
+test("buildImplSeed : --fix respecte le focus fourni", () => {
+  assert.match(buildImplSeed("auth", true), /Périmètre : auth/);
+});
+
+test("buildImplSeed : le focus fourni restreint le périmètre", () => {
+  assert.match(buildImplSeed("feature auth"), /Périmètre : feature auth/);
+});
+
+test("buildReviewSeed : révise le git diff contre le contrat", () => {
   const out = buildReviewSeed("");
-  // Récupère specs + besoins en mémoire.
-  assert.match(out, /mem0_search/);
-  // Constitue le périmètre via git plutôt que de le deviner.
-  assert.match(out, /git diff/);
-  // Traçabilité bidirectionnelle : besoin ⇄ spec ⇄ fichier du diff.
-  assert.match(out, /spec orpheline/);
-  assert.match(out, /changement non spécifié/);
+  assert.match(out, contractRe); // besoins + specs viennent du contrat
+  assert.match(out, /git diff/); // source de vérité du changement
+  assert.match(out, /spec orpheline/); // traçabilité spec → besoin
+  assert.match(out, /changement non spécifié/); // traçabilité fichier → spec
+  assert.match(out, /## Revue/); // consigne le verdict dans le contrat pour /impl --fix
 });
 
-test("buildReviewSeed: le focus fourni restreint le périmètre", () => {
-  const out = buildReviewSeed("feature auth");
-  assert.match(out, /Périmètre : feature auth/);
+test("buildReviewSeed : le focus fourni restreint le périmètre", () => {
+  assert.match(buildReviewSeed("feature auth"), /Périmètre : feature auth/);
 });
 
-test("buildReviewSeed: sans focus → pas de ligne Périmètre", () => {
-  const out = buildReviewSeed("   ");
-  assert.doesNotMatch(out, /Périmètre :/);
+test("buildReviewSeed : sans focus → pas de ligne Périmètre", () => {
+  assert.doesNotMatch(buildReviewSeed("   "), /Périmètre :/);
 });
