@@ -28,7 +28,7 @@
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
       "description": "Pipeline one-shot besoins → specs → impl → revue : /req clarifie l'intention par des questions à enjeu (pas de check-list mécanique), /specs fige des specs non ambiguës contre le dépôt réel, /impl implémente d'un trait, /review révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire.",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "author": {
         "name": "MillianLMX"
       },

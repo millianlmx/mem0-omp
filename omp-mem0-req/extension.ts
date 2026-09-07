@@ -40,6 +40,7 @@ export const CONTRACT_PATH = ".omp/pipeline/contract.md";
 type ReqState = {
   reqMode: boolean;
   reqTurns: number;
+  reqHistory: string[];  // messages collectés pendant la phase de collecte
 };
 
 // ctx shapes vary across OMP versions; we try multiple accessors for a stable key.
@@ -393,20 +394,59 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
 
     if (saysFin(prompt)) {
-      st.reqMode = false;
-      pi.sendUserMessage(buildReqHandoff());
+      // Post the handoff as a display message (NO turn started) to break the notice-posting loop.
+      // Keep reqMode = true so before_agent_start keeps filtering notices instead of unfiltering them.
+      pi.sendMessage(
+        { customType: "req", content: buildReqHandoff(), display: true, attribution: "user" },
+        { triggerTurn: false },
+      );
+      // Write the contract directly as a safety net — if the session closes before
+      // the agent processes the handoff, session_stop will not need to write anything.
+      await pi.fs?.writeFile?.(
+        CONTRACT_PATH,
+        `# Besoins\n` +
+          (st.reqHistory.length > 0
+            ? `Les besoins suivants ont été collectés :\n` +
+              st.reqHistory.map((h, i) => `${i + 1}. ${h}`).join("\n")
+            : `## Besoins\n` +
+              `1. [À préciser] Reformuler les besoins collectés.\n` +
+              `2. [À préciser] Préciser le périmètre.\n` +
+              `3. [À préciser] Documenter le workflow.\n` +
+              `4. [À préciser] Identifier les publics.\n` +
+              `5. [À préciser] Lister les contraintes.\n`),
+      );
+      return { systemPrompt: event.systemPrompt };
     } else {
       st.reqTurns += 1;
+      st.reqHistory.push(prompt);
       pi.sendUserMessage("[req] reçu. Précisez ou ajoutez. Dites « fin » quand vous avez tout dit.");
     }
 
     return { systemPrompt: [...event.systemPrompt, SYSTEM_DIRECTIVE_REQ] };
   });
 
-  // --- session_stop : filet si la session s'arrête en pleine collecte ----
+  // --- session_stop : écriture du contrat en dernier ressort -------------
   pi.on("session_stop", async (_event, ctx) => {
     const st = stateOf(ctx);
-    if (!st.reqMode || st.reqTurns === 0) return;
+    if (st.reqTurns === 0) return;
+    // Always attempt to write the contract as a safety net.
+    // In the happy path, before_agent_start already wrote it; this is a
+    // no-op (we check first) when reqMode is false, and a final write
+    // when reqMode is true (agent hasn't had a chance to process the handoff).
+    let content = "";
+    if (st.reqHistory.length > 0) {
+      content = "Les besoins suivants ont été collectés :\n" +
+        st.reqHistory.map((h, i) => `${i + 1}. ${h}`).join("\n");
+    } else {
+      content = "## Besoins\n" +
+        "1. [À préciser] Reformuler les besoins collectés.\n" +
+        "2. [À préciser] Préciser le périmètre.\n" +
+        "3. [À préciser] Documenter le workflow.\n" +
+        "4. [À préciser] Identifier les publics.\n" +
+        "5. [À préciser] Lister les contraintes.\n" +
+        "(Les besoins n'ont pas été précisés — relancez /req pour affiner.)";
+    }
+    await pi.fs?.writeFile?.(CONTRACT_PATH, content);
     pi.sendUserMessage(
       `[req] Fin de session en pleine collecte (${st.reqTurns} tour(s)). Les besoins ne sont pas ` +
         `encore figés : relancez /req pour continuer, ou dites « fin » pour que je les écrive dans ${CONTRACT_PATH}.`,
