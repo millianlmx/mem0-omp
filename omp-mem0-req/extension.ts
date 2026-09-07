@@ -101,6 +101,33 @@ Règles :
 
 7. N'écris PAS les besoins en mémoire mem0 : ce sont des artefacts transitoires de cette feature, ils vivent dans le contrat, pas dans la mémoire durable.`;
 
+// Message d'accueil affiché à l'activation de /req. Il est posté en message
+// d'AFFICHAGE (pi.sendMessage, triggerTurn:false), PAS via sendUserMessage : il
+// contient « fin » (« Dites « fin » … ») et démarrer un tour l'aurait fait
+// détecter comme clôture immédiate par before_agent_start — la collecte se
+// terminait avant même que l'utilisateur ait parlé.
+export const WELCOME =
+  "[req] Mode collecte activé. Décrivez-moi ce que vous voulez obtenir.\n" +
+  "Je clarifie l'intention — résultat attendu, périmètre, criticité — sans toucher\n" +
+  "aux choix techniques (ça, c'est /specs, qui lit le dépôt).\n" +
+  `Dites « fin » quand tout est dit : je figerai vos besoins validés dans ${CONTRACT_PATH},\n` +
+  "puis lancez /specs pour les spécifications.";
+
+// « fin » comme MOT ISOLÉ (Unicode-aware), jamais la sous-chaîne : « définir »,
+// « enfin », « affiner », « finir » ne clôturent pas. Une lettre adjacente
+// (avant ou après) invalide le match.
+export function saysFin(prompt: string): boolean {
+  return /(^|[^\p{L}])fin([^\p{L}]|$)/iu.test(prompt);
+}
+
+// Les notices du plugin ([req] …) retraversent before_agent_start comme
+// n'importe quel message. Elles ne sont PAS des entrées utilisateur : les passer
+// au détecteur de « fin » clôturerait la collecte sur le mot « fin » du message
+// d'accueil. Le préfixe est la seule marque fiable (l'utilisateur n'écrit pas « [req] »).
+export function isReqNotice(prompt: string): boolean {
+  return prompt.trimStart().startsWith("[req]");
+}
+
 /**
  * Message de clôture, envoyé quand l'utilisateur dit « fin ». Il fige : l'agent
  * reformule chaque besoin en phrase d'action et l'écrit dans le contrat. C'est
@@ -267,12 +294,13 @@ export default function reqExtension(pi: ExtensionAPI) {
       if (!st.reqMode) {
         st.reqMode = true;
         st.reqTurns = 0;
-        pi.sendUserMessage(
-          "[req] Mode collecte activé. Décrivez-moi ce que vous voulez obtenir.\n" +
-            "Je clarifie l'intention — résultat attendu, périmètre, criticité — sans toucher\n" +
-            "aux choix techniques (ça, c'est /specs, qui lit le dépôt).\n" +
-            `Dites « fin » quand tout est dit : je figerai vos besoins validés dans ${CONTRACT_PATH},\n` +
-            "puis lancez /specs pour les spécifications."
+        // Message d'affichage, PAS un prompt : triggerTurn:false n'ouvre aucun
+        // tour. Un sendUserMessage démarrerait un tour dont le prompt (WELCOME,
+        // qui contient « fin ») déclencherait la clôture immédiate dans
+        // before_agent_start. La collecte démarre au premier message utilisateur.
+        pi.sendMessage(
+          { customType: "req", content: WELCOME, display: true, attribution: "user" },
+          { triggerTurn: false },
         );
       }
       // reqMode déjà actif : noop.
@@ -356,12 +384,15 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
 
     const prompt = event.prompt.trim();
-    // « fin » comme MOT ISOLÉ (Unicode-aware), pas la sous-chaîne : sinon
-    // « définir », « enfin », « affiner », « finir » clôtureraient à tort la
-    // collecte. Une lettre adjacente (avant ou après) invalide le match.
-    const saysFin = /(^|[^\p{L}])fin([^\p{L}]|$)/iu.test(prompt);
+    // Nos propres notices ([req] …) retraversent ce hook ; ne jamais les traiter
+    // comme une entrée utilisateur, sinon le « fin » du message d'accueil
+    // clôturerait la collecte. Défense en profondeur : WELCOME est déjà posté
+    // sans démarrer de tour, mais un echo ou une régression resteraient sûrs.
+    if (isReqNotice(prompt)) {
+      return { systemPrompt: event.systemPrompt };
+    }
 
-    if (saysFin) {
+    if (saysFin(prompt)) {
       st.reqMode = false;
       pi.sendUserMessage(buildReqHandoff());
     } else {

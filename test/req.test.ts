@@ -9,6 +9,9 @@ import {
   buildSpecsSeed,
   buildImplSeed,
   buildReviewSeed,
+  saysFin,
+  isReqNotice,
+  WELCOME,
   CONTRACT_PATH,
 } from "../omp-mem0-req/extension.ts";
 
@@ -103,4 +106,38 @@ test("buildReviewSeed : le focus fourni restreint le périmètre", () => {
 
 test("buildReviewSeed : sans focus → pas de ligne Périmètre", () => {
   assert.doesNotMatch(buildReviewSeed("   "), /Périmètre :/);
+});
+
+// --- Clôture de collecte : « fin » comme mot isolé, jamais sous-chaîne -------
+
+test("saysFin : « fin » mot isolé clôture", () => {
+  assert.ok(saysFin("fin"));
+  assert.ok(saysFin("c'est bon, fin"));
+  assert.ok(saysFin("FIN"));
+  assert.ok(saysFin("voilà. fin."));
+});
+
+test("saysFin : « fin » en sous-chaîne ne clôture pas", () => {
+  assert.ok(!saysFin("il faut définir le périmètre"));
+  assert.ok(!saysFin("enfin bref"));
+  assert.ok(!saysFin("je veux affiner ça"));
+  assert.ok(!saysFin("on doit finir la feature"));
+  assert.ok(!saysFin("prêt pour les spécifications"));
+});
+
+// --- Régression : le message d'accueil ne doit pas auto-clôturer la collecte -
+// WELCOME contient « fin » (« Dites « fin » … ») ; s'il traverse before_agent_start
+// comme une entrée utilisateur, la collecte se ferme avant de commencer. La garde
+// isReqNotice l'en empêche : toute notice [req] est ignorée par le détecteur.
+
+test("isReqNotice : les notices [req] (dont WELCOME) sont ignorées, pas les entrées utilisateur", () => {
+  assert.ok(isReqNotice(WELCOME));
+  assert.ok(isReqNotice("[req] reçu. Précisez ou ajoutez. Dites « fin » quand vous avez tout dit."));
+  assert.ok(!isReqNotice("je veux ajouter une commande /export"));
+  assert.ok(!isReqNotice("fin"));
+});
+
+test("WELCOME : contient « fin » mais est une notice — sinon il s'auto-clôturerait", () => {
+  assert.ok(saysFin(WELCOME), "présuppose la présence du mot « fin » dans l'accueil");
+  assert.ok(isReqNotice(WELCOME), "donc la garde de notice DOIT le neutraliser");
 });
