@@ -40,6 +40,8 @@ test("buildSpecsSeed : lit les besoins du contrat, y écrit les specs, ambiguït
   assert.match(out, /PLAN D'IMPLÉMENTATION/);
   assert.match(out, /ambiguïtés TECHNIQUES/); // ne re-questionne pas l'intention métier
   assert.match(out, /N'écris PAS les specs en mémoire mem0/);
+  assert.match(out, /## Documentation/); // rassemble la doc externe pour /impl
+  assert.match(out, /DOCUMENTE-toi pour la future implémentation/);
 });
 
 test("buildSpecsSeed : le contexte ajouté par l'utilisateur est injecté", () => {
@@ -57,6 +59,7 @@ test("buildImplSeed : lit les specs du contrat, s'arrête si absentes", () => {
   assert.match(out, /\/specs/); // renvoie vers /specs
   assert.match(out, /Given\/When\/Then/);
   assert.match(out, /aucun stub/);
+  assert.match(out, /## Documentation/); // s'appuie sur la doc rassemblée par /specs
   assert.doesNotMatch(out, /Périmètre :/); // pas de focus fourni
 });
 
