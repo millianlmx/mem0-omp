@@ -53,6 +53,12 @@ const RECALL_MIN_PROMPT = 12; // en dessous ("ok", "continue"), on ne cherche pa
 // n'en renvoie aucun ; à 0.45 une vraie question ("à quoi sert EMBEDDING_DIMS") est
 // déjà perdue. C'est le sommaire exhaustif, pas le seuil, qui rattrape un rappel qui rate.
 const RECALL_THRESHOLD = 0.4;
+// Plancher du search EXPLICITE (tool mem0_search). Sans lui, mem0 applique son
+// défaut 0.1 = « renvoie tout » : une requête hors-sujet ramène les souvenirs les
+// plus proches quand même (mesuré : « recette de tarte… » → 8 résultats bruités à
+// 0.1, → 0 à 0.4). Même sémantique de gate sémantique brut que RECALL_THRESHOLD ;
+// constante séparée pour la régler indépendamment du rappel.
+const SEARCH_THRESHOLD = 0.4;
 const RECALL_LINE_CHARS = 100; // aperçu d'un souvenir dans le transcript, une ligne
 const RECALL_MESSAGE_TYPE = "mem0-recall";
 // Le bloc de rappel est visible par défaut : un rappel muet ne se distingue pas d'un rappel absent.
@@ -1547,7 +1553,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, ctx: any) {
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
       const limit = Math.min(params.limit ?? 6, 50);
-      const result = await mem0.search(params.query, scope, limit);
+      const result = await mem0.search(params.query, scope, limit, SEARCH_THRESHOLD);
       const found = rows(result);
       const text = found.length
         ? found.map((m) => `- [${m.id ?? "?"}] ${memoryLine(m)}`).join("\n")
