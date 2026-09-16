@@ -206,7 +206,7 @@ const EXECUTABLE_RE = /\b(MUST|EXECUTE|TODO|ACTION|DO|RUN)\s*[:：。]/i;
 // autonome une fois copiée dans ~/.omp/extensions/.
 // ---------------------------------------------------------------------------
 
-const BRIEF_VERSION = "v3";
+const BRIEF_VERSION = "v4";
 const BRIEF_REF_PATH = path.join(".omp", "mem0-brief.md");
 const MARKER_OPEN = `<!-- mem0:brief ${BRIEF_VERSION} -->`;
 const MARKER_CLOSE = "<!-- /mem0:brief -->";
@@ -247,12 +247,12 @@ Le dépôt fait toujours autorité contre un souvenir : s'il le contredit, le so
 est périmé — corrige-le (\`mem0_update\`) ou supprime-le (\`mem0_forget\`), ne
 travaille pas dessus.
 
-- **Checkpoint automatique** — si tu exploras (read, grep, glob, lsp) plus de 5 fichiers
-  sans écrire avec \`mem0_add\` pendant une phase détectée ("spécification", "besoin",
-  "implémentation", "review", "bug"), un message "mem0 checkpoint" t'est envoyé.
+- **Checkpoint automatique** — au-delà de 15 explorations (read, grep, glob, lsp)
+  sans écriture avec \`mem0_add\`, un message "mem0 checkpoint" t'est envoyé.
   C'est un appel à écrire : tu as collecté des informations durables, enregistre-les
-  immédiatement. Sur session normale, le seuil est 15. Le compteur reset après
-  chaque \`mem0_add\`.
+  maintenant. Le compteur repart à zéro après chaque \`mem0_add\`. En fin de session,
+  une relance unique te demande aussi de mémoriser ce qui a été produit — fichiers
+  modifiés, ou discussion de besoins/specs/archi sans édition.
 
 Règles complètes et exemples : \`${BRIEF_REF_PATH}\` — lis-le avant ton premier
 \`mem0_add\` dans ce projet.
@@ -1446,75 +1446,74 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     };
   });
 
-  // --- Relance en fin de session -------------------------------------------
-  // Une seule par session, quand rien n'a été écrit en mémoire (adds === 0) et
-  // que la session a produit quelque chose de potentiellement durable : soit des
-  // fichiers modifiés (travail de code), soit une discussion substantielle sans
-  // édition (needs, specs, archi — sinon le nudge fondé sur `mutations` ne tire
-  // jamais et ces phases n'écrivent rien).
-  pi.on("session_stop", async (_event, ctx) => {
-    const st = stateOf(ctx);
-    if (st.nudged) return;
-    const msg = pickSessionStopNudge(st);
-    if (!msg) return;
-    st.nudged = true;
-    return { continue: true, additionalContext: msg };
-  });
-
-  // --- Fin de phase : lecture mémoire déléguée -----------------------------
-  // Phase enregistrée active + agent qui rend la main → on cherche les
-  // instructions de la phase et on les PRÉSENTE à l'agent pour qu'il les applique
-  // avec ses propres outils. Gardes : event.stop_hook_active (anti-boucle runtime)
-  // + un seul déclenchement par session.
+  // --- Fin de session : UNE continuation, deux décisions -------------------
+  //
+  // session_stop n'honore qu'une continuation : le premier handler qui renvoie
+  // `{ continue, additionalContext }` court-circuite les suivants (runner OMP,
+  // src/extensibility/extensions/runner.ts). Deux handlers séparés — relance
+  // d'écriture et fin de phase — étaient donc mutuellement exclusifs : un nudge
+  // qui tirait faisait perdre les instructions de la phase active. Les deux
+  // décisions sont réunies ici, la phase d'abord (intention explicite de
+  // l'utilisateur), et fusionnées en une seule continuation.
+  //
+  // Gardes : `stop_hook_active` (le hook refire après une continuation) et un
+  // flag par décision, pour qu'aucune ne se rejoue.
   pi.on("session_stop", async (event, ctx) => {
     if (event?.stop_hook_active) return;
     const st = stateOf(ctx);
-    if (st.phaseTriggered) return;
-    if (!st.currentPhase || !phases.has(st.currentPhase)) return;
+    const parts: string[] = [];
 
+    // 1. Phase active + agent qui rend la main → chercher les instructions de la
+    //    phase en mémoire et les PRÉSENTER à l'agent, qui les applique avec ses
+    //    propres outils. L'extension n'édite jamais un fichier elle-même.
     const phaseName = st.currentPhase;
-    const scope = projectId(ctx.cwd);
-    const brief = phases.get(phaseName)?.brief ?? "";
-    // Une seule fois, même si la recherche échoue ou ne renvoie rien.
-    st.phaseTriggered = true;
+    if (phaseName && phases.has(phaseName) && !st.phaseTriggered) {
+      // Une seule fois, même si la recherche échoue ou ne renvoie rien.
+      st.phaseTriggered = true;
+      const scope = projectId(ctx.cwd);
+      const brief = phases.get(phaseName)?.brief ?? "";
+      try {
+        // Requête = intention de la phase (nom + brief). On NE concatène PAS les
+        // mots-clés fixes dans le texte embeddé : padder la requête détruit sa
+        // pertinence (mesuré). Les mots-clés servent de tri lexical en aval.
+        const query = brief ? `${phaseName} ${brief}` : phaseName;
+        const found = rows(await mem0.search(query, scope, RECALL_LIMIT, RECALL_THRESHOLD)).map(memoryLine);
+        const executable = found
+          .filter((t) => EXECUTABLE_RE.test(t))
+          .map((t) => ({ t, rank: EXECUTION_KEYWORDS.some((k) => t.toLowerCase().includes(k)) ? 1 : 0 }))
+          .sort((a, b) => b.rank - a.rank)
+          .map((x) => x.t);
 
-    try {
-      // Requête = intention de la phase (nom + brief). On NE concatène PAS les
-      // mots-clés fixes dans le texte embeddé : padder la requête détruit sa
-      // pertinence (mesuré). Les mots-clés servent de tri lexical en aval.
-      const query = brief ? `${phaseName} ${brief}` : phaseName;
-      const found = rows(await mem0.search(query, scope, RECALL_LIMIT, RECALL_THRESHOLD)).map(memoryLine);
-      const hasKeyword = (t: string) => EXECUTION_KEYWORDS.some((k) => t.toLowerCase().includes(k));
-      const executable = found
-        .filter((t) => EXECUTABLE_RE.test(t))
-        .sort((a, b) => Number(hasKeyword(b)) - Number(hasKeyword(a)));
-
-      if (executable.length) {
-        return {
-          continue: true,
-          additionalContext:
-            `[mem0 phase "${phaseName}"] Phase terminée. Instructions trouvées en mémoire à appliquer maintenant, ` +
-            `avec tes propres outils (édition, bash/git) et sous les gardes d'approbation :\n` +
-            executable.map((t, i) => `${i + 1}. ${t}`).join("\n") +
-            `\n\nApplique celles qui sont pertinentes puis rends la main. Si une instruction ne colle pas ` +
-            `à l'état réel du dépôt, dis-le au lieu de l'exécuter.`,
-        };
+        parts.push(
+          executable.length
+            ? `[mem0 phase "${phaseName}"] Phase terminée. Instructions trouvées en mémoire à appliquer maintenant, ` +
+              `avec tes propres outils (édition, bash/git) et sous les gardes d'approbation :\n` +
+              executable.map((t, i) => `${i + 1}. ${t}`).join("\n") +
+              `\n\nApplique celles qui sont pertinentes puis rends la main. Si une instruction ne colle pas ` +
+              `à l'état réel du dépôt, dis-le au lieu de l'exécuter.`
+            : `[mem0 phase "${phaseName}"] Phase terminée, aucune instruction exécutable en mémoire pour cette phase. ` +
+              `Si elle doit déclencher des actions (bump de version, commit, release, déploiement), enregistre-les ` +
+              `avec mem0_add sous forme d'instruction, par exemple : « ${phaseName} — RUN: incrémenter la version ` +
+              `dans package.json et marketplace.json puis commiter ». Elles seront présentées à la prochaine fin de phase.`,
+        );
+      } catch (err) {
+        parts.push(
+          `[mem0 phase "${phaseName}"] Recherche mémoire indisponible : ${(err as Error).message}. Aucune action automatique ce tour.`,
+        );
       }
-
-      return {
-        continue: true,
-        additionalContext:
-          `[mem0 phase "${phaseName}"] Phase terminée, aucune instruction exécutable en mémoire pour cette phase. ` +
-          `Si elle doit déclencher des actions (bump de version, commit, release, déploiement), enregistre-les ` +
-          `avec mem0_add sous forme d'instruction, par exemple : « ${phaseName} — RUN: incrémenter la version ` +
-          `dans package.json et marketplace.json puis commiter ». Elles seront présentées à la prochaine fin de phase.`,
-      };
-    } catch (err) {
-      return {
-        continue: true,
-        additionalContext: `[mem0 phase "${phaseName}"] Recherche mémoire indisponible : ${(err as Error).message}. Aucune action automatique ce tour.`,
-      };
     }
+
+    // 2. Relance d'écriture — une seule par session, quand rien n'a été écrit en
+    //    mémoire (adds === 0) et que la session a produit du potentiellement
+    //    durable : fichiers modifiés, ou discussion substantielle sans édition
+    //    (needs, specs, archi — sinon le nudge fondé sur `mutations` ne tire pas).
+    if (!st.nudged) {
+      const msg = pickSessionStopNudge(st);
+      if (msg) { st.nudged = true; parts.push(msg); }
+    }
+
+    if (!parts.length) return;
+    return { continue: true, additionalContext: parts.join("\n\n") };
   });
 
   // --- Tools ---------------------------------------------------------------

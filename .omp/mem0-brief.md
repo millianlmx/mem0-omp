@@ -1,8 +1,8 @@
-<!-- mem0:brief v3 -->
+<!-- mem0:brief v4 -->
 # Brief mémoire — règles complètes
 
 Généré par le plugin `omp-mem0-memory`. Tu peux éditer ce fichier : il ne sera pas
-réécrit tant que le marqueur de version en tête reste `v3`.
+réécrit tant que le marqueur de version en tête reste `v4`.
 
 ## Quand chercher
 

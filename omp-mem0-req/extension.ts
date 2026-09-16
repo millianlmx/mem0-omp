@@ -39,8 +39,6 @@ export const CONTRACT_PATH = ".omp/pipeline/contract.md";
 
 type ReqState = {
   reqMode: boolean;
-  reqTurns: number;
-  reqHistory: string[];  // messages collectés pendant la phase de collecte
 };
 
 // ctx shapes vary across OMP versions; we try multiple accessors for a stable key.
@@ -62,7 +60,7 @@ function stateOf(ctx: ExtensionContext): ReqState {
   const key = sessionId(ctx);
   let st = states.get(key);
   if (!st) {
-    st = { reqMode: false, reqTurns: 0 };
+    st = { reqMode: false };
     states.set(key, st);
   }
   return st;
@@ -294,7 +292,6 @@ export default function reqExtension(pi: ExtensionAPI) {
       const st = stateOf(ctx);
       if (!st.reqMode) {
         st.reqMode = true;
-        st.reqTurns = 0;
         // Message d'affichage, PAS un prompt : triggerTurn:false n'ouvre aucun
         // tour. Un sendUserMessage démarrerait un tour dont le prompt (WELCOME,
         // qui contient « fin ») déclencherait la clôture immédiate dans
@@ -400,56 +397,25 @@ export default function reqExtension(pi: ExtensionAPI) {
         { customType: "req", content: buildReqHandoff(), display: true, attribution: "user" },
         { triggerTurn: false },
       );
-      // Write the contract directly as a safety net — if the session closes before
-      // the agent processes the handoff, session_stop will not need to write anything.
-      await pi.fs?.writeFile?.(
-        CONTRACT_PATH,
-        `# Besoins\n` +
-          (st.reqHistory.length > 0
-            ? `Les besoins suivants ont été collectés :\n` +
-              st.reqHistory.map((h, i) => `${i + 1}. ${h}`).join("\n")
-            : `## Besoins\n` +
-              `1. [À préciser] Reformuler les besoins collectés.\n` +
-              `2. [À préciser] Préciser le périmètre.\n` +
-              `3. [À préciser] Documenter le workflow.\n` +
-              `4. [À préciser] Identifier les publics.\n` +
-              `5. [À préciser] Lister les contraintes.\n`),
-      );
+      // Le contrat n'est PAS écrit ici : `pi.fs` n'existe pas sur ExtensionAPI
+      // (vérifié dans les types OMP : ni fs, ni readFile, ni writeFile), et un
+      // dump brut des messages n'est de toute façon pas le contrat attendu —
+      // `## Besoins` doit porter des phrases d'action. C'est l'agent, dans ce
+      // même tour, qui lit le handoff et écrit le fichier avec son outil write.
       return { systemPrompt: event.systemPrompt };
-    } else {
-      st.reqTurns += 1;
-      st.reqHistory.push(prompt);
-      pi.sendUserMessage("[req] reçu. Précisez ou ajoutez. Dites « fin » quand vous avez tout dit.");
     }
 
+    // Pas d'accusé de réception par sendUserMessage : il DÉMARRE un tour
+    // supplémentaire à chaque message (deux tours par échange, pour rien). La
+    // directive suffit à faire répondre l'agent, et la conversation est déjà
+    // dans son contexte — inutile de la recopier dans un état local vide.
     return { systemPrompt: [...event.systemPrompt, SYSTEM_DIRECTIVE_REQ] };
   });
 
-  // --- session_stop : écriture du contrat en dernier ressort -------------
-  pi.on("session_stop", async (_event, ctx) => {
-    const st = stateOf(ctx);
-    if (st.reqTurns === 0) return;
-    // Always attempt to write the contract as a safety net.
-    // In the happy path, before_agent_start already wrote it; this is a
-    // no-op (we check first) when reqMode is false, and a final write
-    // when reqMode is true (agent hasn't had a chance to process the handoff).
-    let content = "";
-    if (st.reqHistory.length > 0) {
-      content = "Les besoins suivants ont été collectés :\n" +
-        st.reqHistory.map((h, i) => `${i + 1}. ${h}`).join("\n");
-    } else {
-      content = "## Besoins\n" +
-        "1. [À préciser] Reformuler les besoins collectés.\n" +
-        "2. [À préciser] Préciser le périmètre.\n" +
-        "3. [À préciser] Documenter le workflow.\n" +
-        "4. [À préciser] Identifier les publics.\n" +
-        "5. [À préciser] Lister les contraintes.\n" +
-        "(Les besoins n'ont pas été précisés — relancez /req pour affiner.)";
-    }
-    await pi.fs?.writeFile?.(CONTRACT_PATH, content);
-    pi.sendUserMessage(
-      `[req] Fin de session en pleine collecte (${st.reqTurns} tour(s)). Les besoins ne sont pas ` +
-        `encore figés : relancez /req pour continuer, ou dites « fin » pour que je les écrive dans ${CONTRACT_PATH}.`,
-    );
-  });
+  // Pas de handler `session_stop` ici. OMP l'émet à CHAQUE fin de tour, pas à la
+  // fermeture de session : un « filet » qui relançait un tour à chaque yield
+  // bouclait indéfiniment (chaque `sendUserMessage` démarre un tour, dont la fin
+  // redéclenche le hook), et écrire le contrat à cet instant ne pouvait produire
+  // qu'un dump brut des messages — pas les besoins rédigés par l'agent. Le
+  // contrat est écrit par l'agent, dans le tour de « fin », à partir du handoff.
 }

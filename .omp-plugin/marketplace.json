@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.9.6"
+    "version": "2.9.7"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
       "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Nécessite le stack mem0-stack en local.",
-      "version": "2.9.2",
+      "version": "2.9.3",
       "author": {
         "name": "MillianLMX"
       },
@@ -28,7 +28,7 @@
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
       "description": "Pipeline one-shot besoins → specs → impl → revue : /req clarifie l'intention par des questions à enjeu (pas de check-list mécanique), /specs fige des specs non ambiguës contre le dépôt réel, /impl implémente d'un trait, /review révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire.",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "author": {
         "name": "MillianLMX"
       },
