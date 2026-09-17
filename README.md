@@ -202,19 +202,36 @@ fait désormais échouer la construction de l'image, pas la première requête.
 - `/add-phase NOM BRIEF` — enregistre une phase et le rôle d'agent associé.
 - `/set-phase NOM` — active une phase pour la session (`--default` réinitialise le registry).
 - `/remove-phase NOM` — désenregistre une phase.
-- `/req`, `/specs`, `/impl`, `/review` (plugin `omp-mem0-req`) — pipeline one-shot en
-  quatre sessions dédiées. `/req` clarifie l'intention par des questions à enjeu (pas
-  de check-list mécanique, et une option « peu importe » sur chaque `ask`). `/specs`
-  fige des specs non ambiguës contre le dépôt réel. `/impl` implémente d'un trait.
-  `/review` révise le `git diff` (source de vérité de ce qui a changé) contre les specs.
+- `/req`, `/specs`, `/impl`, `/review` (plugin `omp-mem0-req`) — pipeline one-shot
+  **piloté par le critère d'acceptation**, en quatre sessions dédiées. Chaque maillon
+  descend d'un id, ce qui rend la chaîne vérifiable au lieu d'être déclarative :
+  `B-n` (besoin) → `AC-n` (critère, Given/When/Then) → `S-n` (spec) → `BR-n` (lot) →
+  test tagué `AC-n` → verdict.
+
+  `/req` clarifie l'intention par des questions à enjeu (pas de check-list mécanique,
+  et une option « peu importe » sur chaque `ask`) et fait émerger les **critères
+  d'acceptation** — un critère est comportemental, donc de l'intention : c'est
+  l'utilisateur qui le valide. La clôture est refusée tant qu'un besoin n'a pas au
+  moins un critère falsifiable : c'est là que doit passer l'essentiel du temps.
+  `/specs` fige des specs non ambiguës contre le dépôt réel, tracées vers les
+  critères, puis découpe la feature en **lots** — des briefs **typés** (`ui` / `archi`
+  / `aucun`) qui portent le « comment » que la spec laisse dehors : états d'écran et
+  interactions pour `ui`, modèle de données, contrats d'API et migrations pour `archi`.
+  `/impl` implémente d'un trait et **prouve chaque critère par un test qui porte son
+  id** (`AC-3`), pour être retrouvable mécaniquement.
+  `/review` révise le `git diff` (source de vérité de ce qui a changé) contre le
+  contrat, **critère par critère** : il retrouve le test par `grep AC-n`, le lit, le
+  lance, et rapporte `AC-n → fichier:ligne → pass/fail`. Un critère sans test traçable
+  est un bloquant.
   L'état traverse les sessions par un **fichier contrat déterministe**
-  `.omp/pipeline/contract.md` — besoins puis specs y sont écrits par l'agent, relus
-  tels quels à l'étape suivante — et non par la mémoire mem0 : besoins et specs sont
-  des artefacts transitoires de la feature ; mem0 ne garde que les décisions durables.
-  `/review` rend une évaluation structurée (STATUT, SPEC PAR SPEC, BLOQUANTS, DÉCISION)
-  et la consigne dans le contrat sous `## Revue`. La boucle se ferme avec `/impl --fix` :
-  une session qui lit ce verdict et lève chaque BLOQUANT sans élargir le périmètre, puis
-  relance `/review` pour reconfirmer.
+  `.omp/pipeline/contract.md` — besoins et critères, puis specs et lots y sont écrits
+  par l'agent, relus tels quels à l'étape suivante — et non par la mémoire mem0 :
+  besoins, critères, specs et lots sont des artefacts transitoires de la feature ;
+  mem0 ne garde que les décisions durables.
+  `/review` rend une évaluation structurée (STATUT, AC PAR AC, SPEC PAR SPEC,
+  BLOQUANTS, DÉCISION) et la consigne dans le contrat sous `## Revue`. La boucle se
+  ferme avec `/impl --fix` : une session qui lit ce verdict et lève chaque BLOQUANT
+  sans élargir le périmètre, puis relance `/review` pour reconfirmer.
 
 ## Phases
 

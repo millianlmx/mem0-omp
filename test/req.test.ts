@@ -1,7 +1,9 @@
-// Tests de omp-mem0-req/extension.ts : pipeline besoins → specs → impl → review.
-// L'état traverse les sessions par le FICHIER CONTRAT .omp/pipeline/contract.md,
-// pas par la mémoire mem0. Les amorces sont des fonctions pures : on vérifie
-// qu'elles pointent l'agent vers ce contrat et portent le bon contrat de rôle.
+// Tests de omp-mem0-req/extension.ts : pipeline piloté par le critère
+// d'acceptation — /req (B-<n> + AC-<n>), /specs (S-<n> + lots BR-<n>),
+// /impl (test tagué AC-<n>), /review (grep AC-<n>). L'état traverse les sessions
+// par le FICHIER CONTRAT .omp/pipeline/contract.md, pas par la mémoire mem0. Les
+// amorces sont des fonctions pures : on vérifie qu'elles pointent l'agent vers ce
+// contrat et portent le bon contrat de rôle.
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -22,21 +24,26 @@ test("CONTRACT_PATH : contrat de feature sous .omp/", () => {
   assert.equal(CONTRACT_PATH, ".omp/pipeline/contract.md");
 });
 
-test("buildReqHandoff : fige les besoins validés dans le contrat, pas en mémoire", () => {
+test("buildReqHandoff : fige besoins ET critères validés dans le contrat, pas en mémoire", () => {
   const out = buildReqHandoff();
-  assert.match(out, /ACTION/);
+  assert.match(out, /B-</); // besoins identifiés
+  assert.match(out, /AC-</); // et critères d'acceptation, le pivot
+  assert.match(out, /Given/);
   assert.match(out, contractRe); // écrit dans le contrat
   assert.match(out, /## Besoins/);
+  assert.match(out, /## Critères d'acceptation/);
   assert.match(out, /validation/);
-  assert.match(out, /Ne mets pas les besoins en mémoire mem0/); // pas de transport mem0
+  assert.match(out, /Ne mets pas les besoins ni les critères en mémoire mem0/); // pas de transport mem0
   assert.match(out, /\/specs/); // renvoie vers l'étape suivante
 });
 
-test("buildSpecsSeed : lit les besoins du contrat, y écrit les specs, ambiguïtés techniques seules", () => {
+test("buildSpecsSeed : lit le contrat, y écrit specs ET lots, ambiguïtés techniques seules", () => {
   const out = buildSpecsSeed("");
   assert.match(out, contractRe);
   assert.match(out, /## Besoins/); // lit les besoins figés
+  assert.match(out, /## Critères d'acceptation/); // et les critères — le pivot
   assert.match(out, /## Spécifications/); // écrit les specs
+  assert.match(out, /## Lots/); // et les briefs typés
   assert.match(out, /SANS AMBIGUÏTÉ/);
   assert.match(out, /Given\/When\/Then/);
   assert.match(out, /NON-objectifs/);
@@ -45,6 +52,14 @@ test("buildSpecsSeed : lit les besoins du contrat, y écrit les specs, ambiguït
   assert.match(out, /N'écris PAS les specs en mémoire mem0/);
   assert.match(out, /## Documentation/); // rassemble la doc externe pour /impl
   assert.match(out, /DOCUMENTE-toi pour la future implémentation/);
+});
+
+test("buildSpecsSeed : les lots portent le « comment » typé (ui / archi)", () => {
+  const out = buildSpecsSeed("");
+  assert.match(out, /BR-<n> — type: ui \| archi \| aucun/); // type déclaré, avec échappatoire
+  assert.match(out, /CHAQUE ÉTAT/); // savoir-faire ui : états d'écran
+  assert.match(out, /CONTRATS D'API/); // savoir-faire archi
+  assert.match(out, /Aucun lot orphelin/); // traçabilité lot → AC
 });
 
 test("buildSpecsSeed : le contexte ajouté par l'utilisateur est injecté", () => {
@@ -63,7 +78,14 @@ test("buildImplSeed : lit les specs du contrat, s'arrête si absentes", () => {
   assert.match(out, /Given\/When\/Then/);
   assert.match(out, /aucun stub/);
   assert.match(out, /## Documentation/); // s'appuie sur la doc rassemblée par /specs
+  assert.match(out, /## Lots/); // et suit les briefs pour le « comment »
   assert.doesNotMatch(out, /Périmètre :/); // pas de focus fourni
+});
+
+test("buildImplSeed : la preuve porte l'id du critère, pour le grep de /review", () => {
+  const out = buildImplSeed("");
+  assert.match(out, /test\("AC-3/); // convention : AC-<n> dans le nom du test
+  assert.match(out, /grep/);
 });
 
 test("buildImplSeed : mode --fix lit la revue et lève les bloquants", () => {
@@ -95,9 +117,17 @@ test("buildReviewSeed : révise le git diff contre le contrat", () => {
   const out = buildReviewSeed("");
   assert.match(out, contractRe); // besoins + specs viennent du contrat
   assert.match(out, /git diff/); // source de vérité du changement
-  assert.match(out, /spec orpheline/); // traçabilité spec → besoin
+  assert.match(out, /spec orpheline/); // traçabilité spec → AC
   assert.match(out, /changement non spécifié/); // traçabilité fichier → spec
   assert.match(out, /## Revue/); // consigne le verdict dans le contrat pour /impl --fix
+});
+
+test("buildReviewSeed : chaque critère est retrouvé par grep et rejoué", () => {
+  const out = buildReviewSeed("");
+  assert.match(out, /grep AC-<n>/); // le test se retrouve par l'id, pas par confiance
+  assert.match(out, /AC PAR AC/); // le verdict rapporte critère par critère
+  assert.match(out, /pass\/fail/);
+  assert.match(out, /AC non couvert/); // un critère que rien ne couvre est signalé
 });
 
 test("buildReviewSeed : le focus fourni restreint le périmètre", () => {
@@ -140,4 +170,9 @@ test("isReqNotice : les notices [req] (dont WELCOME) sont ignorées, pas les ent
 test("WELCOME : contient « fin » mais est une notice — sinon il s'auto-clôturerait", () => {
   assert.ok(saysFin(WELCOME), "présuppose la présence du mot « fin » dans l'accueil");
   assert.ok(isReqNotice(WELCOME), "donc la garde de notice DOIT le neutraliser");
+});
+
+test("WELCOME : annonce la collecte des critères d'acceptation et le contrat", () => {
+  assert.match(WELCOME, /critères/); // l'utilisateur sait ce qu'on attend de lui
+  assert.match(WELCOME, contractRe);
 });

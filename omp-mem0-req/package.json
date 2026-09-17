@@ -1,7 +1,7 @@
 {
   "name": "omp-mem0-req",
-  "version": "0.4.5",
-  "description": "Pipeline one-shot besoins → specs → implémentation → revue. /req clarifie l'intention, /specs fige les specs, /impl implémente, /review révise ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire.",
+  "version": "0.5.0",
+  "description": "Pipeline one-shot piloté par le critère d'acceptation. /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige les specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire.",
   "license": "MIT",
   "author": "MillianLMX",
   "omp": {
