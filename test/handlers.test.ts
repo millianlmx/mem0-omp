@@ -15,7 +15,15 @@ import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import reqExtension, { CONTRACT_PATH, worktreePathFor, type GitResult } from "../omp-mem0-req/extension.ts";
+import reqExtension, {
+  CONTRACT_PATH,
+  PANEL_WIDTH,
+  pipelineHistoryDir,
+  pipelineRunningDir,
+  runningIdFor,
+  worktreePathFor,
+  type GitResult,
+} from "../omp-mem0-req/extension.ts";
 
 // ---------------------------------------------------------------------------
 // Dépôt git réel sous dossier temporaire
@@ -71,6 +79,8 @@ type FakeUI = {
   /** Éditeur de la TUI — absent des `ui` qui ne l'exposent pas (cas S-4 §6). */
   getEditorText?: () => string;
   setEditorText?: (text: string) => void;
+  /** `ctx.ui.custom` : capture la fabrique et ses options sans rien monter. */
+  custom?: (factory: never, options?: never) => Promise<never>;
 };
 
 type FakeCtx = {
@@ -87,6 +97,7 @@ type Displayed = { customType?: string; content: string; display?: boolean; attr
 type FakeApp = {
   handlers: Map<string, (args: string, ctx: never) => Promise<void>>;
   hooks: Map<string, (event: never, ctx: never) => Promise<unknown>>;
+  shortcuts: Map<string, (ctx: never) => Promise<void> | void>;
   seeds: string[];
   displayed: Displayed[];
 };
@@ -94,12 +105,16 @@ type FakeApp = {
 function mkApp(): FakeApp {
   const handlers = new Map<string, (args: string, ctx: never) => Promise<void>>();
   const hooks = new Map<string, (event: never, ctx: never) => Promise<unknown>>();
+  const shortcuts = new Map<string, (ctx: never) => Promise<void> | void>();
   const seeds: string[] = [];
   const displayed: Displayed[] = [];
 
   const pi = {
     registerCommand(name: string, def: { handler: (args: string, ctx: never) => Promise<void> }) {
       handlers.set(name, def.handler);
+    },
+    registerShortcut(name: string, def: { handler: (ctx: never) => Promise<void> | void }) {
+      shortcuts.set(name, def.handler);
     },
     on(name: string, def: (event: never, ctx: never) => Promise<unknown>) {
       hooks.set(name, def);
@@ -116,7 +131,7 @@ function mkApp(): FakeApp {
   };
 
   reqExtension(pi as unknown as Parameters<typeof reqExtension>[0]);
-  return { handlers, hooks, seeds, displayed };
+  return { handlers, hooks, shortcuts, seeds, displayed };
 }
 
 function mkCtx(
@@ -125,6 +140,7 @@ function mkCtx(
 ) {
   const notices: Array<{ message: string; type?: string }> = [];
   const moved: string[] = [];
+  const mounted: Array<{ factory: never; options: never; close: () => void }> = [];
   let sessions = 0;
   let editor = options.editor ?? "";
   let editorWrites = 0;
@@ -137,6 +153,18 @@ function mkCtx(
       editor = text;
       editorWrites += 1;
     };
+  }
+  if (options.hasUI) {
+    // Le panneau reste MONTÉ tant que `done` n'est pas appelé : la promesse ne se
+    // résout qu'à la fermeture, comme le fait `ctx.ui.custom` en vrai.
+    ui.custom = (factory: never, mountOptions?: never) =>
+      new Promise<never>((resolve) => {
+        mounted.push({
+          factory,
+          options: mountOptions as never,
+          close: () => resolve(undefined as never),
+        });
+      });
   }
 
   const ctx: FakeCtx = {
@@ -163,6 +191,7 @@ function mkCtx(
     ctx,
     notices,
     moved,
+    mounted,
     sessions: () => sessions,
     editor: () => editor,
     editorWrites: () => editorWrites,
@@ -180,6 +209,39 @@ async function withWorktreesDir<T>(base: string, fn: () => Promise<T>): Promise<
     if (previous === undefined) delete process.env.MEM0_PIPELINE_WORKTREES_DIR;
     else process.env.MEM0_PIPELINE_WORKTREES_DIR = previous;
   }
+}
+
+// Le registre publie dans `pipelineStateDir()` À CHAQUE écriture : les tests qui
+// arment un maillon écriraient sinon dans le magasin réel de la machine. Le
+// magasin par défaut du fichier est un dossier temporaire ; les tests qui
+// inspectent le magasin s'en donnent un à eux.
+process.env.MEM0_PIPELINE_STATE_DIR = mktmp("pl-state-");
+
+async function withStateDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.MEM0_PIPELINE_STATE_DIR;
+  process.env.MEM0_PIPELINE_STATE_DIR = dir;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.MEM0_PIPELINE_STATE_DIR;
+    else process.env.MEM0_PIPELINE_STATE_DIR = previous;
+  }
+}
+
+/** L'entrée en cours d'un cwd, telle qu'un AUTRE processus la lirait. */
+function readRunning(stateDir: string, cwd: string): Record<string, unknown> | null {
+  const file = path.join(pipelineRunningDir(stateDir), `${runningIdFor(cwd)}.json`);
+  if (!fs.existsSync(file)) return null;
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function readHistory(stateDir: string): Array<Record<string, unknown>> {
+  const dir = pipelineHistoryDir(stateDir);
+  if (!fs.existsSync(dir)) return [];
+  return fs
+    .readdirSync(dir)
+    .filter((name) => name.endsWith(".json"))
+    .map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8")));
 }
 
 // ---------------------------------------------------------------------------
@@ -555,5 +617,217 @@ test("S-4 : éditeur d'espaces, fin de cycle, hors TUI et API absente — l'édi
     await settleLink(app, "specs", worktree, bare.ctx as never);
     assert.equal(bare.editorWrites(), 0, "API d'éditeur absente : aucune erreur, aucun appel");
     assert.equal(bare.notices.length, 0, "et aucune erreur signalée à l'utilisateur");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Panneau des pipelines et registre d'état (AC-1, AC-5, AC-8)
+// ---------------------------------------------------------------------------
+
+/** Ce que la fabrique du panneau reçoit du TUI : glyphes ASCII, thème neutre. */
+const PANEL_THEME = {
+  fg: (_color: string, text: string) => text,
+  boxRound: {
+    topLeft: "+",
+    topRight: "+",
+    bottomLeft: "+",
+    bottomRight: "+",
+    horizontal: "-",
+    vertical: "|",
+    teeLeft: "+",
+    teeRight: "+",
+  },
+  nav: { cursor: ">" },
+};
+const PANEL_KEYS = {
+  matches: (data: string, action: string) =>
+    (action === "tui.select.cancel" && (data === "\u001b" || data === "\u0003")) ||
+    (action === "tui.select.confirm" && data === "\r"),
+};
+const PANEL_TUI = { terminal: { rows: 24 }, requestRender: () => {} };
+
+test("AC-1 : le toggle monte un overlay ancré en haut à droite et Échap le referme", async () => {
+  const root = mkRepo();
+  const app = mkApp();
+  const stateDir = mktmp("pl-state-mount-");
+
+  // Les deux points d'entrée : la commande et le raccourci.
+  assert.ok(app.handlers.has("pipelines"), "la commande /pipelines est enregistrée");
+  assert.ok(app.shortcuts.has("alt+w"), "le raccourci alt+w est enregistré");
+
+  await withStateDir(stateDir, async () => {
+    const { ctx, mounted } = mkCtx(root, { hasUI: true });
+    await app.handlers.get("pipelines")!("", ctx as never);
+
+    assert.equal(mounted.length, 1, "un panneau monté");
+    const options = mounted[0]!.options as {
+      overlay?: boolean;
+      overlayOptions?: { anchor?: string; width?: number; maxHeight?: string; margin?: number };
+    };
+    assert.equal(options.overlay, true, "monté en overlay, pas en remplacement de l'éditeur");
+    assert.equal(options.overlayOptions?.anchor, "top-right", "ancré en haut à droite");
+    assert.equal(options.overlayOptions?.width, PANEL_WIDTH);
+    assert.equal(options.overlayOptions?.maxHeight, "80%");
+    assert.equal(options.overlayOptions?.margin, 1);
+
+    // Un seul panneau par processus : tant qu'il est monté, rouvrir ne monte rien.
+    await app.shortcuts.get("alt+w")!(ctx as never);
+    await app.handlers.get("pipelines")!("", ctx as never);
+    assert.equal(mounted.length, 1, "aucun overlay empilé, aucun doublon");
+
+    // Échap ferme (action `app.interrupt` d'OMP = `tui.select.cancel`).
+    let closed = 0;
+    const component = mounted[0]!.factory(
+      PANEL_TUI as never,
+      PANEL_THEME as never,
+      PANEL_KEYS as never,
+      (() => {
+        closed += 1;
+      }) as never,
+    ) as { handleInput(data: string): void; render(width: number): string[] };
+    assert.match(component.render(64).join("\n"), /Pipelines · 0 en cours/, "magasin vide : le panneau s'affiche");
+    component.handleInput("\u001b");
+    assert.equal(closed, 1, "Échap rend le focus à l'éditeur en refermant le panneau");
+  });
+});
+
+test("AC-1 : hors session interactive, la commande ne monte rien et le dit une seule fois", async () => {
+  const root = mkRepo();
+  const app = mkApp();
+  const { ctx, mounted } = mkCtx(root, { hasUI: false });
+
+  await app.handlers.get("pipelines")!("", ctx as never);
+  await app.shortcuts.get("alt+w")!(ctx as never);
+
+  assert.equal(mounted.length, 0, "aucun montage hors TUI");
+  const said = app.displayed.filter((m) => m.content.includes("panneau indisponible hors session interactive"));
+  assert.equal(said.length, 1, "signalé UNE fois, pas à chaque tentative");
+  assert.equal(said[0]!.customType, "pipeline", "notice durable, pas un toast");
+});
+
+test("S-3 : chaque maillon armé publie son entrée dès la commande", async () => {
+  const root = mkRepo();
+  const base = mktmp("hw-base-");
+  const stateDir = mktmp("pl-state-arm-");
+
+  await withWorktreesDir(base, async () => {
+    await withStateDir(stateDir, async () => {
+      const app = mkApp();
+      const opener = mkCtx(root);
+      await app.handlers.get("req")!("publie", opener.ctx as never);
+      const worktree = worktreePathFor(base, root, "publie");
+
+      const armé = readRunning(stateDir, worktree);
+      assert.ok(armé, "l'entrée existe dès /req, avant toute réponse du modèle");
+      assert.equal(armé.phase, "req");
+      assert.equal(armé.version, 1);
+      assert.equal((armé.owner as { pid: number }).pid, process.pid, "le propriétaire est ce processus");
+
+      // Le maillon suivant REMPLACE la phase et remet le temps de l'étape à zéro.
+      const before = armé.phaseStartedAt as number;
+      const { ctx } = mkCtx(worktree);
+      await app.handlers.get("specs")!("", ctx as never);
+      const suivant = readRunning(stateDir, worktree);
+      assert.equal(suivant?.phase, "specs");
+      assert.ok((suivant?.phaseStartedAt as number) >= before, "le temps repart au changement d'étape");
+      assert.notEqual(suivant?.id, undefined, "un seul cwd ⇒ un seul fichier, jamais deux");
+      const files = fs.readdirSync(pipelineRunningDir(stateDir));
+      assert.equal(files.length, 1, "l'entrée reste unique pour ce cwd");
+    });
+  });
+});
+
+test("AC-5 : l'outil ask en vol bascule l'état en attend", async () => {
+  const root = mkRepo();
+  const base = mktmp("hw-base-");
+  const stateDir = mktmp("pl-state-ask-");
+
+  await withWorktreesDir(base, async () => {
+    await withStateDir(stateDir, async () => {
+      const app = mkApp();
+      const worktree = await openFeature(app, root, base, "ask-en-vol");
+      const live = mkCtx(worktree).ctx;
+
+      const state = () => readRunning(stateDir, worktree)?.state;
+      // L'agent travaille : un tour démarre dans la session du worktree.
+      await app.hooks.get("agent_start")!({}, live as never);
+      assert.equal(state(), "running", "agent actif ⇒ « tourne »");
+
+      // L'outil `ask` part : la pipeline est suspendue à une question.
+      await app.hooks.get("tool_execution_start")!({ toolCallId: "call-1", toolName: "ask" }, live as never);
+      assert.equal(state(), "waiting", "une question en vol ⇒ « attend »");
+
+      // La réponse arrive : le compteur est décrémenté PAR identifiant d'appel.
+      await app.hooks.get("tool_execution_end")!({ toolCallId: "call-1", toolName: "ask" }, live as never);
+      assert.equal(state(), "running", "question répondue ⇒ « tourne »");
+
+      // Un `end` d'un AUTRE appel ne remet pas le compteur à zéro.
+      await app.hooks.get("tool_execution_start")!({ toolCallId: "call-2", toolName: "ask" }, live as never);
+      await app.hooks.get("tool_execution_end")!({ toolCallId: "call-3", toolName: "bash" }, live as never);
+      assert.equal(state(), "waiting", "le compteur tient par identifiant, pas globalement");
+    });
+  });
+});
+
+test("AC-8 : une pipeline terminée rejoint l'historique en « terminé »", async () => {
+  const root = mkRepo();
+  const base = mktmp("hw-base-");
+  const stateDir = mktmp("pl-state-done-");
+
+  await withWorktreesDir(base, async () => {
+    await withStateDir(stateDir, async () => {
+      const app = mkApp();
+      const worktree = await openFeature(app, root, base, "cycle-clos");
+      writeContract(worktree, SPECS_SECTION + REVIEW_CLEAN);
+
+      await settleLink(app, "review", worktree, mkCtx(worktree).ctx as never);
+
+      assert.equal(readRunning(stateDir, worktree), null, "la pipeline quitte la liste des pipelines en cours");
+      const history = readHistory(stateDir);
+      assert.equal(history.length, 1);
+      assert.equal(history[0]!.finalState, "done");
+      assert.equal(history[0]!.phase, "review", "le maillon terminal est conservé");
+      assert.equal(history[0]!.cwd, worktree);
+      assert.equal(typeof history[0]!.endedAt, "number");
+    });
+  });
+});
+
+test("AC-8 : une revue bloquante laisse la pipeline en cours", async () => {
+  const root = mkRepo();
+  const base = mktmp("hw-base-");
+  const stateDir = mktmp("pl-state-blocked-");
+
+  await withWorktreesDir(base, async () => {
+    await withStateDir(stateDir, async () => {
+      const app = mkApp();
+      const worktree = await openFeature(app, root, base, "cycle-bloque");
+      writeContract(worktree, SPECS_SECTION + REVIEW_BLOCKERS);
+
+      await settleLink(app, "review", worktree, mkCtx(worktree).ctx as never);
+
+      assert.deepEqual(readHistory(stateDir), [], "aucune entrée d'historique : la suite est /impl --fix");
+      assert.equal(readRunning(stateDir, worktree)?.phase, "review", "l'entrée en cours demeure");
+    });
+  });
+});
+
+test("AC-8 : un verdict de revue illisible ne clôt jamais la pipeline par défaut", async () => {
+  const root = mkRepo();
+  const base = mktmp("hw-base-");
+  const stateDir = mktmp("pl-state-unreadable-");
+
+  await withWorktreesDir(base, async () => {
+    await withStateDir(stateDir, async () => {
+      const app = mkApp();
+      const worktree = await openFeature(app, root, base, "verdict-illisible");
+      // `## Revue` sans le champ BLOQUANTS : le cycle n'est pas constaté clos.
+      writeContract(worktree, `${SPECS_SECTION}## Revue\n\n- STATUT : APPROUVÉ\n`);
+
+      await settleLink(app, "review", worktree, mkCtx(worktree).ctx as never);
+
+      assert.deepEqual(readHistory(stateDir), [], "jamais un « terminé » par défaut");
+      assert.equal(readRunning(stateDir, worktree)?.phase, "review");
+    });
   });
 });
