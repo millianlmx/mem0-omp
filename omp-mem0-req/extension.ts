@@ -34,6 +34,15 @@
 //   4. /review : session qui révise le git diff contre le contrat, critère par
 //                critère (grep AC-n → test → pass/fail).
 //
+// FIN DE MAILLON — à chaque retombée terminale, l'extension annonce la commande de
+// la suite dans le transcript (message d'affichage durable, pas un toast) : /specs
+// après /req, /impl après /specs, /review après /impl, puis /impl --fix tant que
+// `## Revue` consigne un BLOQUANT — sinon la fin du cycle est signalée. Un maillon
+// dont le contrat n'a pas de `## Spécifications` renvoie vers /specs. En session
+// interactive, la commande est en plus PRÉREMPLIE dans la zone de saisie (jamais
+// par-dessus un brouillon). Le déclencheur est `session_stop`, pas `agent_end` :
+// lui seul marque la retombée terminale du fil principal.
+//
 // Indépendante du plugin omp-mem0-memory : ne dépend que de l'API de base d'OMP
 // (pi.registerCommand, pi.on). Sans plugin mémoire, le pipeline fonctionne quand
 // même : le contrat est un simple fichier.
@@ -71,6 +80,12 @@ export const CONTRACT_PATH = ".omp/pipeline/contract.md";
 
 type ReqState = {
   reqMode: boolean;
+  /** Maillon du pipeline ARMÉ pour ce cwd — absent hors pipeline. */
+  phase?: PipelinePhase;
+  /** /req : l'utilisateur a dit « fin » — le maillon peut se clore. */
+  closing?: boolean;
+  /** La suite de ce maillon a déjà été annoncée : une seule annonce par maillon. */
+  announced?: boolean;
 };
 
 const states = new Map<string, ReqState>();
@@ -83,6 +98,19 @@ function stateOfCwd(cwd: string | undefined): ReqState {
     states.set(key, st);
   }
   return st;
+}
+
+/**
+ * Arme un maillon : à sa prochaine retombée terminale, la suite sera annoncée.
+ * À appeler APRÈS la bascule de session et juste AVANT `sendUserMessage` — armé
+ * plus tôt, l'annonce partirait sur la retombée du tour PRÉCÉDENT (l'utilisateur
+ * lance /specs pendant que le tour de /req tourne encore).
+ */
+function armPhase(cwd: string | undefined, phase: PipelinePhase): void {
+  const st = stateOfCwd(cwd);
+  st.phase = phase;
+  st.closing = false; // le maillon qui s'arme n'a pas dit « fin »
+  st.announced = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -460,6 +488,173 @@ export function buildSweepMessage(result: {
 }
 
 // ---------------------------------------------------------------------------
+// Fin de maillon — la suite du pipeline est ANNONCÉE dans le transcript.
+// ---------------------------------------------------------------------------
+// Chaque maillon (/req, /specs, /impl, /review) se termine par une retombée
+// TERMINALE du fil principal (session_stop, cf. `## Documentation` §1a) : c'est le
+// seul instant où « la phase est finie » est vrai. L'extension y poste la
+// commande EXACTE de la suite — l'utilisateur n'a plus à se souvenir de l'ordre du
+// pipeline, ni à relire le contrat pour savoir si /review a laissé des bloquants.
+//
+// Message d'AFFICHAGE (pi.sendMessage, triggerTurn:false), jamais un toast : un
+// notify disparaît au redraw et ne serait relisible nulle part (le critère exige
+// la relecture après coup).
+//
+// Ces prédicats sont PURS — aucun accès disque, aucun état : le handler
+// `session_stop` lit le contrat lui-même et leur en passe le contenu.
+
+export type PipelinePhase = "req" | "specs" | "impl" | "review";
+export type NextStep = { kind: "command"; command: string } | { kind: "cycle-end" };
+
+// Ligne normalisée des règles de lecture du verdict : /review écrit en Markdown,
+// donc les marques de mise en forme (gras, italique, code, dièses) sautent, puis
+// la puce et les espaces de bord. Sans ça, `- **BLOQUANTS** : aucun` serait
+// illisible et le cycle repartirait en /review.
+function normalizeLine(line: string): string {
+  return line
+    .replace(/[*_`#]/g, "")
+    .replace(/^[\s\-+•]+/, "")
+    .replace(/\s+$/, "");
+}
+
+/** Le contrat porte-t-il la section `## <titre>` ? (`titre` sans les dièses) */
+export function contractHasSection(contract: string, title: string): boolean {
+  return contract.split("\n").some((line) => line.trim() === `## ${title}`);
+}
+
+/** Corps d'une section `## <titre>` : de son titre à la prochaine section `## `. */
+export function contractSection(contract: string, title: string): string | null {
+  const lines = contract.split("\n");
+  const head = lines.findIndex((line) => line.trim() === `## ${title}`);
+  if (head === -1) return null;
+  const body: string[] = [];
+  for (const line of lines.slice(head + 1)) {
+    if (line.trimStart().startsWith("## ")) break;
+    body.push(line);
+  }
+  return body.join("\n");
+}
+
+// Libellés du verdict de /review (REVIEW_DIRECTIVE), dans l'ordre où ils sont
+// écrits : ils bornent le corps du champ BLOQUANTS — le champ suivant n'est pas un
+// bloquant, et une recommandation n'en est jamais un.
+const REVIEW_LABELS = ["STATUT", "AC PAR AC", "SPEC PAR SPEC", "BLOQUANTS", "RECOMMANDATIONS", "DÉCISION FINALE"];
+
+function isReviewLabel(line: string): boolean {
+  const n = normalizeLine(line).toUpperCase();
+  return REVIEW_LABELS.some((label) => n.startsWith(label));
+}
+
+// « Aucun bloquant » s'écrit de plusieurs façons selon la plume de l'agent : les
+// reconnaître toutes évite de renvoyer l'utilisateur en /impl --fix pour rien.
+const VACUOUS: Record<string, true> = {
+  aucun: true,
+  aucune: true,
+  néant: true,
+  "n/a": true,
+  none: true,
+  "0": true,
+  "-": true,
+  "—": true,
+  "–": true,
+  "(aucun)": true,
+};
+
+function isVacuous(line: string): boolean {
+  const n = normalizeLine(line).replace(/[.!]$/, "").trim();
+  return n === "" || VACUOUS[n.toLowerCase()] === true;
+}
+
+/**
+ * Verdict du maillon /review, lu dans `## Revue`. `"unreadable"` couvre les deux
+ * cas où il n'y a rien à lire (section absente, champ `BLOQUANTS` absent) : dans
+ * le doute on renvoie vers /review, jamais vers /impl --fix (corriger ce qui n'a
+ * pas été identifié) ni vers une fausse fin de cycle.
+ */
+export function reviewVerdict(contract: string): "blockers" | "clean" | "unreadable" {
+  const section = contractSection(contract, "Revue");
+  if (section === null) return "unreadable";
+  const lines = section.split("\n");
+  const at = lines.findIndex((line) => /^BLOQUANTS\s*(?::|：|$)/i.test(normalizeLine(line)));
+  if (at === -1) return "unreadable";
+  const head = normalizeLine(lines[at]!);
+  const sep = /^BLOQUANTS\s*(?::|：)?/i.exec(head)!;
+  const body = [head.slice(sep[0].length)];
+  for (const line of lines.slice(at + 1)) {
+    if (line.trimStart().startsWith("## ") || isReviewLabel(line)) break;
+    body.push(line);
+  }
+  return body.every(isVacuous) ? "clean" : "blockers";
+}
+
+/**
+ * Suite d'un maillon terminé. Pure : aucun accès disque, aucun état. Un maillon
+ * dont le contrat ne porte pas `## Spécifications` renvoie vers /specs : il n'y a
+ * rien à implémenter ni à réviser, et proposer /review enverrait l'utilisateur
+ * vers la revue d'un travail qui n'a pas eu lieu.
+ */
+export function nextStepFor(phase: PipelinePhase, contract: string): NextStep {
+  const hasSpecs = contractHasSection(contract, "Spécifications");
+  switch (phase) {
+    case "req":
+      return { kind: "command", command: "/specs" };
+    case "specs":
+      return hasSpecs ? { kind: "command", command: "/impl" } : { kind: "command", command: "/specs" };
+    case "impl":
+      return hasSpecs ? { kind: "command", command: "/review" } : { kind: "command", command: "/specs" };
+    case "review": {
+      const verdict = reviewVerdict(contract);
+      if (verdict === "blockers") return { kind: "command", command: "/impl --fix" };
+      if (verdict === "clean") return { kind: "cycle-end" };
+      return { kind: "command", command: "/review" };
+    }
+  }
+}
+
+/**
+ * Message d'affichage annonçant la suite. Aucune notice du plugin ne doit
+ * contenir « fin » comme mot isolé : elles retraversent before_agent_start, où un
+ * « fin » clôturerait la collecte (cf. isPipelineNotice).
+ */
+export function buildNextStepNotice(phase: PipelinePhase, step: NextStep): string {
+  if (step.kind === "cycle-end") {
+    return (
+      "[pipeline] Phase /review terminée — cycle terminé : aucun BLOQUANT consigné dans " +
+      "## Revue, rien à corriger."
+    );
+  }
+  return `[pipeline] Phase /${phase} terminée — commande suivante : ${step.command}`;
+}
+
+/** Le strict nécessaire de `ctx.ui` : l'éditeur, qui n'existe qu'en mode interactif. */
+type EditorUI = {
+  getEditorText?: () => string;
+  setEditorText?: (text: string) => void;
+};
+
+/**
+ * Préremplit la zone de saisie avec la commande de la suite. Les quatre
+ * conditions sont nécessaires : hors TUI les méthodes sont des no-op (et la
+ * commande n'aurait nulle part où s'afficher), et un brouillon déjà saisi est du
+ * travail de l'utilisateur — jamais écrasé. Échec = éditeur inchangé, en silence :
+ * l'annonce dans le transcript porte déjà l'information.
+ */
+function prefillEditor(ctx: { hasUI: boolean; ui?: EditorUI }, step: NextStep): void {
+  if (step.kind !== "command") return; // fin de cycle : rien à valider
+  if (!ctx.hasUI) return;
+  const ui = ctx.ui;
+  if (typeof ui?.getEditorText !== "function" || typeof ui.setEditorText !== "function") return;
+  let current = "";
+  try {
+    current = ui.getEditorText();
+  } catch {
+    return;
+  }
+  if (typeof current !== "string" || current.trim() !== "") return;
+  ui.setEditorText(step.command);
+}
+
+// ---------------------------------------------------------------------------
 // /req — directive injectée en mode collecte. Clarifie l'INTENTION seulement :
 // besoins ET critères d'acceptation (un critère est comportemental, donc de
 // l'intention — l'utilisateur arbitre les deux). Questionne par enjeu, pas par
@@ -505,12 +700,16 @@ export function saysFin(prompt: string): boolean {
   return /(^|[^\p{L}])fin([^\p{L}]|$)/iu.test(prompt);
 }
 
-// Les notices du plugin ([req] …) retraversent before_agent_start comme
-// n'importe quel message. Elles ne sont PAS des entrées utilisateur : les passer
-// au détecteur de « fin » clôturerait la collecte sur le mot « fin » du message
-// d'accueil. Le préfixe est la seule marque fiable (l'utilisateur n'écrit pas « [req] »).
-export function isReqNotice(prompt: string): boolean {
-  return prompt.trimStart().startsWith("[req]");
+// Les notices du plugin ([req] … et [pipeline] …) retraversent before_agent_start
+// comme n'importe quel message. Elles ne sont PAS des entrées utilisateur : les
+// passer au détecteur de « fin » clôturerait la collecte sur le mot « fin » du
+// message d'accueil, et le préfixe `[pipeline]` d'une notice de fin de maillon
+// n'immunise pas son contenu — une notice qui cite un chemin contenant « fin »
+// (ex. /x/fin-de-feature) contient un « fin » isolé. Le préfixe est la seule
+// marque fiable : l'utilisateur n'écrit ni « [req] » ni « [pipeline] ».
+export function isPipelineNotice(prompt: string): boolean {
+  const p = prompt.trimStart();
+  return p.startsWith("[req]") || p.startsWith("[pipeline]");
 }
 
 /**
@@ -688,7 +887,7 @@ Format du verdict (dans le contrat ET dans ta réponse) :
 - STATUT : APPROUVÉ / BLOQUANT / MINEUR
 - AC PAR AC : id → test (fichier:ligne) → pass/fail
 - SPEC PAR SPEC : pass ou fail, avec preuve
-- BLOQUANTS : détails des échecs bloquants, numérotés et actionnables — c'est la liste que /impl --fix traitera
+- BLOQUANTS : s'il n'y a AUCUN bloquant, écris EXACTEMENT \`- BLOQUANTS : aucun\` ; s'il y en a, liste-les numérotés et actionnables, un par ligne sous ce champ (\`1. …\`). Cette ligne est relue MÉCANIQUEMENT pour router la suite du pipeline — elle annonce /impl --fix tant qu'un bloquant reste consigné, et la fin du cycle sur « aucun » ; un champ omis donne un verdict illisible (retour sur /review). C'est aussi la liste que /impl --fix traitera.
 - RECOMMANDATIONS : améliorations non-bloquantes
 - DÉCISION FINALE : approuvé ou non (avec raison)`;
 
@@ -848,7 +1047,11 @@ export default function reqExtension(pi: ExtensionAPI) {
 
       // La collecte suit le WORKTREE (clé = cwd), pas la session : la session
       // vient d'être remplacée, le worktree est l'identité de la feature.
-      stateOfCwd(created.path).reqMode = true;
+      const st = stateOfCwd(created.path);
+      st.reqMode = true;
+      // Maillon armé après la bascule de session : l'annonce partira à la
+      // retombée qui SUIT un « fin » de l'utilisateur, jamais pendant la collecte.
+      armPhase(created.path, "req");
       pi.sendMessage(
         {
           customType: "req",
@@ -890,6 +1093,10 @@ export default function reqExtension(pi: ExtensionAPI) {
           );
         }
       }
+      // Armé juste avant l'envoi de l'amorce : la suite (/impl, ou /specs si le
+      // contrat n'a pas de specs) sera annoncée à la retombée de CE maillon, pas
+      // à celle du tour précédent.
+      armPhase(ctx.cwd, "specs");
       pi.sendUserMessage(seed);
     },
   });
@@ -920,6 +1127,9 @@ export default function reqExtension(pi: ExtensionAPI) {
           );
         }
       }
+      // Armé juste avant l'envoi de l'amorce : la suite (/review, ou /specs si le
+      // contrat n'a pas de specs) sera annoncée à la retombée de ce maillon.
+      armPhase(ctx.cwd, "impl");
       pi.sendUserMessage(seed);
     },
   });
@@ -946,6 +1156,9 @@ export default function reqExtension(pi: ExtensionAPI) {
           );
         }
       }
+      // Armé juste avant l'envoi de l'amorce : à la retombée, le verdict lu dans
+      // `## Revue` décidera entre /impl --fix et la fin de cycle.
+      armPhase(ctx.cwd, "review");
       pi.sendUserMessage(seed);
     },
   });
@@ -958,15 +1171,21 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
 
     const prompt = event.prompt.trim();
-    // Nos propres notices ([req] …) retraversent ce hook ; ne jamais les traiter
-    // comme une entrée utilisateur, sinon le « fin » du message d'accueil
-    // (buildWelcome) clôturerait la collecte. Défense en profondeur : il est déjà
-    // posté sans démarrer de tour, mais un echo ou une régression resteraient sûrs.
-    if (isReqNotice(prompt)) {
+    // Nos propres notices ([req] … et [pipeline] …) retraversent ce hook ; ne
+    // jamais les traiter comme une entrée utilisateur, sinon le « fin » du message
+    // d'accueil (buildWelcome) clôturerait la collecte, et celui d'une notice de
+    // fin de maillon (un chemin de worktree peut contenir « fin ») aussi. Défense
+    // en profondeur : elles sont déjà postées sans démarrer de tour, mais un echo
+    // ou une régression resteraient sûrs.
+    if (isPipelineNotice(prompt)) {
       return { systemPrompt: event.systemPrompt };
     }
 
     if (saysFin(prompt)) {
+      // « fin » dit : le maillon /req peut se clore. C'est la seule clôture que le
+      // handler session_stop acceptera d'annoncer pour cette phase — sans elle, la
+      // collecte est en cours et l'agent vient simplement de rendre la main.
+      st.closing = true;
       // Post the handoff as a display message (NO turn started) to break the notice-posting loop.
       // Keep reqMode = true so before_agent_start keeps filtering notices instead of unfiltering them.
       pi.sendMessage(
@@ -989,10 +1208,52 @@ export default function reqExtension(pi: ExtensionAPI) {
     return { systemPrompt: [...event.systemPrompt, SYSTEM_DIRECTIVE_REQ] };
   });
 
-  // Pas de handler `session_stop` ici. OMP l'émet à CHAQUE fin de tour, pas à la
-  // fermeture de session : un « filet » qui relançait un tour à chaque yield
-  // bouclait indéfiniment (chaque `sendUserMessage` démarre un tour, dont la fin
-  // redéclenche le hook), et écrire le contrat à cet instant ne pouvait produire
-  // qu'un dump brut des messages — pas les besoins rédigés par l'agent. Le
-  // contrat est écrit par l'agent, dans le tour de « fin », à partir du handoff.
+  // --- session_stop : fin de maillon, la commande de la suite est annoncée ---
+  // OMP n'émet `session_stop` que sur la retombée TERMINALE du fil principal :
+  // toutes les retombées non terminales (retry, compaction, todo, job asynchrone)
+  // sortent avant par un `willContinue: true`, et une session de sous-agent `task`
+  // est écartée par la garde `agentKind` du harness. C'est donc le seul instant où
+  // « la phase est finie » est vrai — d'où ce hook, et pas `agent_end`.
+  //
+  // Le handler ne demande AUCUNE continuation et ne relance AUCUN tour : il poste
+  // un message d'affichage et rend `undefined`. C'est la faute qui avait produit
+  // la boucle infinie de la v0.4.5 — un `sendUserMessage` d'ici démarre un tour
+  // dont la fin redéclenche ce hook. Corps sous try/catch : une annonce ne doit
+  // jamais perturber la retombée.
+  pi.on("session_stop", async (_event, ctx) => {
+    try {
+      const st = stateOfCwd(ctx.cwd);
+      const phase = st.phase;
+      if (!phase || st.announced) return;
+      // /req ne se clôt que sur « fin » : sans elle, la collecte est en cours et
+      // l'agent vient simplement de rendre la main.
+      if (phase === "req" && !st.closing) return;
+      // Marqué AVANT les effets : une annonce qui échoue ne doit pas se rejouer à
+      // chaque retombée suivante.
+      st.announced = true;
+
+      // Contrat du cwd, `""` s'il est absent ou illisible : lu comme « pas de
+      // specs » → /specs, ce qui est le rattrapage voulu et non un échec.
+      let contract = "";
+      try {
+        contract = fs.readFileSync(contractPathFor(ctx.cwd), "utf8");
+      } catch {
+        /* contrat absent : routage sur chaîne vide */
+      }
+
+      const step = nextStepFor(phase, contract);
+      pi.sendMessage(
+        {
+          customType: "pipeline",
+          content: buildNextStepNotice(phase, step),
+          display: true,
+          attribution: "user",
+        },
+        { triggerTurn: false },
+      );
+      prefillEditor(ctx, step);
+    } catch {
+      /* une annonce ne doit jamais perturber la fin de maillon */
+    }
+  });
 }

@@ -231,7 +231,19 @@ fait désormais échouer la construction de l'image, pas la première requête.
   `/review` rend une évaluation structurée (STATUT, AC PAR AC, SPEC PAR SPEC,
   BLOQUANTS, DÉCISION) et la consigne dans le contrat sous `## Revue`. La boucle se
   ferme avec `/impl --fix` : une session qui lit ce verdict et lève chaque BLOQUANT
-  sans élargir le périmètre, puis relance `/review` pour reconfirmer.
+  sans élargir le périmètre, puis relance `/review` pour reconfirmer. Le champ
+  `BLOQUANTS` est relu mécaniquement : sans bloquant, il s'écrit `BLOQUANTS : aucun`.
+
+  **Chaque maillon annonce la suite.** À la retombée terminale de la session — le seul
+  instant où « la phase est finie » est vrai, OMP n'émettant `session_stop` que là, et
+  jamais pour une session de sous-agent — l'extension poste dans le transcript un
+  message DURABLE (pas un toast, qui disparaît au redraw) portant la commande exacte du
+  maillon suivant : `/specs` après `/req`, `/impl` après `/specs`, `/review` après
+  `/impl`, puis `/impl --fix` tant que `## Revue` consigne un BLOQUANT — et la fin du
+  cycle est signalée quand il n'y en a aucun. Un maillon qui s'arrête faute de section
+  `## Spécifications` dans le contrat renvoie vers `/specs`. En session interactive, la
+  commande est en plus préremplie dans la zone de saisie, prête à valider par Entrée —
+  et jamais par-dessus un brouillon déjà tapé.
 
   **Chaque feature vit dans son propre worktree git.** `/req <nom-de-feature>` crée
   `<base>/<dépôt>-<hash7>/<nom>` sur la branche `feat/<nom>` (base :
