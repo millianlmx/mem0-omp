@@ -11,10 +11,18 @@ import {
   buildSpecsSeed,
   buildImplSeed,
   buildReviewSeed,
+  buildNextStepNotice,
+  buildSweepMessage,
   buildWelcome,
+  contractHasSection,
+  contractSection,
+  nextStepFor,
+  reviewVerdict,
   saysFin,
-  isReqNotice,
+  isPipelineNotice,
   CONTRACT_PATH,
+  type NextStep,
+  type PipelinePhase,
 } from "../omp-mem0-req/extension.ts";
 
 // Le chemin du contrat contient des points : on l'échappe pour en faire un motif.
@@ -167,18 +175,21 @@ test("saysFin : « fin » en sous-chaîne ne clôture pas", () => {
 // --- Régression : le message d'accueil ne doit pas auto-clôturer la collecte -
 // L'accueil (buildWelcome) contient « fin » (« Dites « fin » … ») ; s'il traverse
 // before_agent_start comme une entrée utilisateur, la collecte se ferme avant de
-// commencer. La garde isReqNotice l'en empêche : toute notice [req] est ignorée.
+// commencer. La garde isPipelineNotice l'en empêche : toute notice du plugin est
+// ignorée — y compris la notice de fin de maillon, dont le contenu peut citer un
+// chemin contenant « fin » (ex. /x/fin-de-feature).
 
-test("isReqNotice : les notices [req] (dont l'accueil) sont ignorées, pas les entrées utilisateur", () => {
-  assert.ok(isReqNotice(welcome));
-  assert.ok(isReqNotice("[req] reçu. Précisez ou ajoutez. Dites « fin » quand vous avez tout dit."));
-  assert.ok(!isReqNotice("je veux ajouter une commande /export"));
-  assert.ok(!isReqNotice("fin"));
+test("isPipelineNotice : les notices [req] et [pipeline] sont ignorées, pas les entrées utilisateur", () => {
+  assert.ok(isPipelineNotice(welcome));
+  assert.ok(isPipelineNotice("[req] reçu. Précisez ou ajoutez. Dites « fin » quand vous avez tout dit."));
+  assert.ok(isPipelineNotice("[pipeline] Phase /req terminée — commande suivante : /specs"));
+  assert.ok(!isPipelineNotice("je veux ajouter une commande /export"));
+  assert.ok(!isPipelineNotice("fin"));
 });
 
 test("buildWelcome : contient « fin » mais est une notice — sinon il s'auto-clôturerait", () => {
   assert.ok(saysFin(welcome), "présuppose la présence du mot « fin » dans l'accueil");
-  assert.ok(isReqNotice(welcome), "donc la garde de notice DOIT le neutraliser");
+  assert.ok(isPipelineNotice(welcome), "donc la garde de notice DOIT le neutraliser");
 });
 
 test("buildWelcome : nomme le worktree, la branche et la collecte des critères", () => {
@@ -189,4 +200,127 @@ test("buildWelcome : nomme le worktree, la branche et la collecte des critères"
   assert.match(welcome, /critères/); // l'utilisateur sait ce qu'on attend de lui
   assert.match(welcome, contractRe); // et où le contrat sera écrit
   assert.match(welcome, /\/specs/); // étape suivante
+});
+
+// ---------------------------------------------------------------------------
+// Fin de maillon — routage de la suite annoncée (S-1, S-2, S-3)
+// ---------------------------------------------------------------------------
+
+// Contrats réduits à ce que la lecture du verdict regarde : la présence de la
+// section `## Spécifications`, et le corps du champ BLOQUANTS de `## Revue`.
+const WITH_SPECS = "## Besoins\n\nB-1 : …\n\n## Spécifications\n\nS-1 (AC-1) : …\n";
+const WITHOUT_SPECS = "## Besoins\n\nB-1 : …\n\n## Critères d'acceptation\n\nAC-1 (B-1) : Given … When … Then …\n";
+const REVIEW_BLOCKERS =
+  "## Revue\n\n- STATUT : BLOQUANT\n- AC PAR AC : AC-3 → test/handlers.test.ts → fail\n" +
+  "- BLOQUANTS :\n  1. Le test AC-3 manque.\n- RECOMMANDATIONS : aucune\n- DÉCISION FINALE : non\n";
+const REVIEW_CLEAN =
+  "## Revue\n\n- STATUT : APPROUVÉ\n- BLOQUANTS : aucun\n- RECOMMANDATIONS : aucune\n- DÉCISION FINALE : approuvé\n";
+
+// Table de routage de S-1/S-3 : maillon terminé → commande annoncée (`""` = fin de
+// cycle, aucune commande — le seul cas que la pipeline ne doit pas proposer).
+const ROUTING: Array<[PipelinePhase, string, string]> = [
+  ["req", "", "/specs"],
+  ["specs", WITH_SPECS, "/impl"],
+  ["specs", WITHOUT_SPECS, "/specs"],
+  ["specs", "", "/specs"],
+  ["impl", WITH_SPECS, "/review"],
+  ["impl", WITHOUT_SPECS, "/specs"],
+  ["impl", "", "/specs"],
+  ["review", REVIEW_BLOCKERS, "/impl --fix"],
+  ["review", REVIEW_CLEAN, ""],
+  ["review", "## Revue\n\n- STATUT : APPROUVÉ\n", "/review"], // verdict illisible
+  ["review", "", "/review"], // contrat absent
+];
+
+test("nextStepFor : la table de routage de S-1/S-3 est respectée, maillon par maillon", () => {
+  for (const [phase, contract, command] of ROUTING) {
+    const step: NextStep = nextStepFor(phase, contract);
+    assert.equal(step.kind, command ? "command" : "cycle-end", `/${phase} : type de la suite`);
+    if (step.kind === "command") {
+      assert.equal(step.command, command, `/${phase} : commande annoncée`);
+    } else {
+      assert.equal(phase, "review", "la fin de cycle n'existe que pour /review");
+    }
+  }
+});
+
+test("buildNextStepNotice : annonce la commande à l'octet près, fin de cycle comprise", () => {
+  for (const [phase, contract, command] of ROUTING) {
+    const notice = buildNextStepNotice(phase, nextStepFor(phase, contract));
+    if (command) {
+      assert.equal(
+        notice,
+        `[pipeline] Phase /${phase} terminée — commande suivante : ${command}`,
+        `/${phase} : la notice porte la commande exacte`,
+      );
+    } else {
+      assert.equal(
+        notice,
+        "[pipeline] Phase /review terminée — cycle terminé : aucun BLOQUANT consigné dans ## Revue, " +
+          "rien à corriger.",
+      );
+    }
+  }
+});
+
+test("reviewVerdict : le champ BLOQUANTS est lu, les échappatoires « aucun » comprises", () => {
+  assert.equal(reviewVerdict("## Besoins\n\nB-1 : …\n"), "unreadable", "section absente");
+  assert.equal(reviewVerdict("## Revue\n\n- STATUT : APPROUVÉ\n- DÉCISION FINALE : approuvé\n"), "unreadable", "champ absent");
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n- RECOMMANDATIONS : aucune\n- DÉCISION FINALE : approuvé\n"), "clean");
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : néant\n"), "clean");
+  assert.equal(reviewVerdict("## Revue\n\n- **BLOQUANTS** : `0`\n"), "clean");
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : —\n"), "clean");
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : (aucun)\n"), "clean");
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS :\n  1. Le test AC-3 manque.\n"), "blockers", "numéroté multiligne");
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : 1) Le test AC-3 manque.\n"), "blockers", "numéroté même ligne");
+});
+
+test("reviewVerdict : le corps du champ s'arrête au libellé suivant et au titre de section", () => {
+  // `- BLOQUANTS : aucun` suivi d'un AUTRE champ : la recommandation n'est pas un bloquant.
+  assert.equal(
+    reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n- RECOMMANDATIONS :\n  1. Renommer le helper.\n"),
+    "clean",
+  );
+  // Une section suivante a ses propres champs : ils ne comptent pas pour `## Revue`.
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n\n## Annexe\n\n- BLOQUANTS :\n  1. Hors périmètre.\n"), "clean");
+  // Le champ DÉCISION FINALE n'est PAS lu : un « non » n'est pas un bloquant.
+  assert.equal(reviewVerdict("## Revue\n\n- BLOQUANTS : aucun\n- DÉCISION FINALE : non\n"), "clean");
+});
+
+test("contractHasSection : titre exact, casse et accents respectés", () => {
+  assert.ok(contractHasSection(WITH_SPECS, "Spécifications"));
+  assert.ok(contractHasSection("  ## Spécifications  \n", "Spécifications"), "espaces de bord tolérés");
+  assert.ok(!contractHasSection("## Specifications\n", "Spécifications"));
+  assert.ok(!contractHasSection("### Spécifications\n", "Spécifications"));
+  assert.ok(!contractHasSection("## Spécifications détaillées\n", "Spécifications"));
+  assert.ok(!contractHasSection("", "Spécifications"));
+});
+
+test("contractSection : corps de la section, null si absente", () => {
+  const contract = "## A\n\ncorps A\n\n## Revue\n\n- BLOQUANTS : aucun\n\n## Z\n\ncorps Z\n";
+  assert.equal(contractSection(contract, "Revue"), "\n- BLOQUANTS : aucun\n");
+  assert.equal(contractSection(contract, "Absente"), null);
+});
+
+test("aucune notice du plugin ne porte « fin » isolé, même quand elle cite un chemin", () => {
+  // Le piège : une notice de balayage cite un chemin de worktree qui contient
+  // « fin » — `saysFin` y voit un mot isolé, seul le préfixe [pipeline] protège.
+  const sweep = buildSweepMessage({
+    removed: [],
+    kept: [{ path: "/x/fin-de-feature", reason: "branche non poussée" }],
+  });
+  assert.ok(saysFin(sweep), "présuppose un « fin » isolé dans le chemin cité");
+  const notices = [
+    sweep,
+    buildWelcome(FEATURE),
+    buildReqHandoff(),
+    ...ROUTING.map(([phase, contract]) => buildNextStepNotice(phase, nextStepFor(phase, contract))),
+  ];
+  for (const notice of notices) {
+    assert.ok(isPipelineNotice(notice), `notice non reconnue par la garde : ${notice.split("\n")[0]}`);
+  }
+});
+
+test("buildReviewSeed : impose la forme lisible du verdict (« BLOQUANTS : aucun »)", () => {
+  assert.match(buildReviewSeed(""), /- BLOQUANTS : aucun/);
 });
