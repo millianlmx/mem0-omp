@@ -312,7 +312,8 @@ Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le ré
 - **Rappel sur le prompt brut, avec plancher de score.** Le gabarit qui enveloppait
   la demande annulait son pouvoir discriminant : le gabarit seul sortait un top-1 plus
   haut que n'importe quelle vraie question. Le `threshold` de mem0 est maintenant
-  exposé par le service et envoyé à chaque rappel.
+  exposé par le service et envoyé à chaque rappel — il porte sur le **cosinus brut**
+  (`explain`), jamais sur le `score` affiché, que BM25 sature.
 - **Sommaire exhaustif dans le prompt système**, plus agrafage d'un souvenir aux
   résultats de `read`/`grep`/`glob`/`lsp`/`edit`/`write` : la mémoire arrive dans la
   sortie que l'agent lit de toute façon, au lieu de dépendre d'une consigne.
@@ -329,6 +330,21 @@ Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le ré
   `custom_fact_extraction_prompt` et `custom_update_memory_prompt` n'ont aucun
   appelant. Seul `custom_instructions` est réellement injecté, et il ne sert plus qu'à
   l'échappatoire `mem0_add(infer: true)`.
+- **Plancher de pertinence 0.4 → 0.55, sur le cosinus brut.** Le rappel injectait des
+  souvenirs hors-sujet — « recette de tarte aux pommes » (0.432), « résumé de cette
+  session » (0.534), et un souvenir d'un autre dépôt au milieu de souvenirs légitimes.
+  La cause n'était pas la valeur du seuil mais ce qu'il mesurait : le `score` renvoyé
+  par le service est le score **combiné** (sémantique + bm25 + boost entités), que BM25
+  sature — sur une sonde hors-sujet il monte à 0.716, plus haut que n'importe quelle
+  ligne d'une demande pertinente, et le service classe donc dans un ordre qui n'est pas
+  sémantique. Le service expose maintenant le **cosinus brut** (`explain` →
+  `score_details.semantic_score`), l'extension filtre ET trie dessus (pool de 4 × la
+  limite, puis troncature), la recherche manuelle `mem0_search` applique le même
+  plancher — et quand un service ancien ne renvoie pas ce score, le rappel s'abstient
+  et le dit au lieu d'injecter à l'aveugle. L'origine d'un souvenir n'est jamais un
+  critère : seul le cosinus l'est. Déploiement : `docker compose build mem0-http &&
+  docker compose up -d mem0-http`, puis relance d'OMP (l'extension ne recharge pas le
+  service).
 - Plus de couche MCP stdio (`server.py`). Si un autre client en a besoin, reprends-la
   telle quelle depuis l'ancien zip.
 - Plus de pipeline.
