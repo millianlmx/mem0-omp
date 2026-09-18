@@ -355,13 +355,41 @@ const MANIFESTS: Array<[string, (raw: string) => string | null]> = [
 
 type Root = { dir: string; isRepo: boolean };
 
+/**
+ * Un worktree lié porte un `.git` FICHIER (« gitfile ») qui pointe vers
+ * `<principal>/.git/worktrees/<nom>` : la racine de projet est alors celle du
+ * dépôt principal. Sans ça, une feature menée dans un worktree ouvrirait un second
+ * scope mem0 (souvenirs irretrouvables depuis le dépôt) et poserait son brief dans
+ * l'arbre de la feature — qui doit rester propre pour être nettoyé après le push.
+ * Un `.git` de sous-module pointe vers `…/.git/modules/<nom>` : pas un worktree.
+ */
+export function gitfilePrimaryRoot(contents: string): string | null {
+  const m = /^\s*gitdir:\s*(.+?)\s*$/m.exec(contents);
+  if (!m || !m[1]) return null;
+  const w = /^(.*)\/\.git\/worktrees\/[^/]+$/.exec(m[1].replace(/\\/g, "/"));
+  if (!w) return null;
+  const primary = w[1].replace(/\/+$/, "");
+  return primary || null;
+}
+
 // Remonte jusqu'à la racine du dépôt. `isRepo` sert de garde-fou : on n'écrit
 // jamais de fichier dans un dossier qui n'est manifestement pas un projet
-// (omp lancé depuis $HOME, par exemple).
-function resolveRoot(cwd: string): Root {
+// (omp lancé depuis $HOME, par exemple). Exporté pour les tests.
+export function resolveRoot(cwd: string): Root {
   let dir = cwd;
   for (let i = 0; i < 12; i++) {
-    if (fs.existsSync(path.join(dir, ".git"))) return { dir, isRepo: true };
+    const dotGit = path.join(dir, ".git");
+    if (fs.existsSync(dotGit)) {
+      try {
+        if (fs.statSync(dotGit).isFile()) {
+          const primary = gitfilePrimaryRoot(fs.readFileSync(dotGit, "utf8"));
+          if (primary) return { dir: primary, isRepo: true };
+        }
+      } catch {
+        /* `.git` illisible : repli sur la racine locale, comportement inchangé */
+      }
+      return { dir, isRepo: true };
+    }
     const parent = path.dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -377,7 +405,8 @@ function rootOf(cwd: string): Root {
   return r;
 }
 
-function projectId(cwd: string): string {
+/** Exporté pour les tests : la scope mémoire est une identité de PROJET, pas de worktree. */
+export function projectId(cwd: string): string {
   const override = process.env.MEM0_PROJECT_ID;
   if (override) return override;
   const { dir } = rootOf(cwd);

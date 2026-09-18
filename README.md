@@ -233,6 +233,21 @@ fait désormais échouer la construction de l'image, pas la première requête.
   ferme avec `/impl --fix` : une session qui lit ce verdict et lève chaque BLOQUANT
   sans élargir le périmètre, puis relance `/review` pour reconfirmer.
 
+  **Chaque feature vit dans son propre worktree git.** `/req <nom-de-feature>` crée
+  `<base>/<dépôt>-<hash7>/<nom>` sur la branche `feat/<nom>` (base :
+  `~/.omp/pipeline-worktrees`, ou `MEM0_PIPELINE_WORKTREES_DIR`) puis y relocalise la
+  session : le contrat — relatif au cwd — vit donc sur la branche de la feature, et
+  deux features en parallèle ne se marchent plus dessus. Le dépôt principal est laissé
+  intact par la création (ni commit, ni fichier touché) ; `/req` s'ouvre depuis lui et
+  refuse de s'ouvrir depuis un worktree. `/specs`, `/impl` et `/review` refusent de
+  tourner hors du worktree d'une feature (sauf contrat hérité du mode précédent).
+  **Le push vaut clôture.** La pipeline ne commite rien et ne pousse jamais rien : dès
+  que la branche est poussée sur `origin` et que l'arbre du worktree est propre, il est
+  retiré au déclenchement suivant (maillon ou commande) — la branche reste. Un worktree
+  sale ou non poussé est conservé avec sa raison, et un balayage impossible ne retire
+  rien (avertissement). La mémoire reste unique : worktree et dépôt principal partagent
+  le même scope mem0, et rien n'est écrit dans l'arbre de la feature.
+
 ## Phases
 
 Une **phase** est un rôle nommé qu'on active sur une session (par exemple `release`,
@@ -265,6 +280,7 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_HTTP_URL` | `http://localhost:8321` | URL du service |
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
+| `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |

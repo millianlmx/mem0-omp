@@ -11,14 +11,23 @@ import {
   buildSpecsSeed,
   buildImplSeed,
   buildReviewSeed,
+  buildWelcome,
   saysFin,
   isReqNotice,
-  WELCOME,
   CONTRACT_PATH,
 } from "../omp-mem0-req/extension.ts";
 
 // Le chemin du contrat contient des points : on l'échappe pour en faire un motif.
 const contractRe = new RegExp(CONTRACT_PATH.replace(/[.]/g, "\\."));
+
+// Feature ouverte par /req : sa session vit dans son worktree, donc le contrat —
+// relatif au cwd — vit sur sa branche.
+const FEATURE = {
+  slug: "isolation-worktree",
+  branch: "feat/isolation-worktree",
+  path: "/home/m/.omp/pipeline-worktrees/mem0-omp-1a2b3c4/isolation-worktree",
+};
+const welcome = buildWelcome(FEATURE);
 
 test("CONTRACT_PATH : contrat de feature sous .omp/", () => {
   assert.equal(CONTRACT_PATH, ".omp/pipeline/contract.md");
@@ -156,23 +165,28 @@ test("saysFin : « fin » en sous-chaîne ne clôture pas", () => {
 });
 
 // --- Régression : le message d'accueil ne doit pas auto-clôturer la collecte -
-// WELCOME contient « fin » (« Dites « fin » … ») ; s'il traverse before_agent_start
-// comme une entrée utilisateur, la collecte se ferme avant de commencer. La garde
-// isReqNotice l'en empêche : toute notice [req] est ignorée par le détecteur.
+// L'accueil (buildWelcome) contient « fin » (« Dites « fin » … ») ; s'il traverse
+// before_agent_start comme une entrée utilisateur, la collecte se ferme avant de
+// commencer. La garde isReqNotice l'en empêche : toute notice [req] est ignorée.
 
-test("isReqNotice : les notices [req] (dont WELCOME) sont ignorées, pas les entrées utilisateur", () => {
-  assert.ok(isReqNotice(WELCOME));
+test("isReqNotice : les notices [req] (dont l'accueil) sont ignorées, pas les entrées utilisateur", () => {
+  assert.ok(isReqNotice(welcome));
   assert.ok(isReqNotice("[req] reçu. Précisez ou ajoutez. Dites « fin » quand vous avez tout dit."));
   assert.ok(!isReqNotice("je veux ajouter une commande /export"));
   assert.ok(!isReqNotice("fin"));
 });
 
-test("WELCOME : contient « fin » mais est une notice — sinon il s'auto-clôturerait", () => {
-  assert.ok(saysFin(WELCOME), "présuppose la présence du mot « fin » dans l'accueil");
-  assert.ok(isReqNotice(WELCOME), "donc la garde de notice DOIT le neutraliser");
+test("buildWelcome : contient « fin » mais est une notice — sinon il s'auto-clôturerait", () => {
+  assert.ok(saysFin(welcome), "présuppose la présence du mot « fin » dans l'accueil");
+  assert.ok(isReqNotice(welcome), "donc la garde de notice DOIT le neutraliser");
 });
 
-test("WELCOME : annonce la collecte des critères d'acceptation et le contrat", () => {
-  assert.match(WELCOME, /critères/); // l'utilisateur sait ce qu'on attend de lui
-  assert.match(WELCOME, contractRe);
+test("buildWelcome : nomme le worktree, la branche et la collecte des critères", () => {
+  assert.ok(welcome.includes(FEATURE.slug));
+  assert.ok(welcome.includes(FEATURE.branch));
+  assert.ok(welcome.includes(FEATURE.path)); // l'utilisateur sait où vit sa feature
+  assert.match(welcome, /dépôt principal/); // et que celui-ci reste intact
+  assert.match(welcome, /critères/); // l'utilisateur sait ce qu'on attend de lui
+  assert.match(welcome, contractRe); // et où le contrat sera écrit
+  assert.match(welcome, /\/specs/); // étape suivante
 });

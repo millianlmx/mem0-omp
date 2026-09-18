@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.9.8"
+    "version": "2.9.9"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
-      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Nécessite le stack mem0-stack en local.",
-      "version": "2.9.3",
+      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Le scope est celui du dépôt, worktrees git compris. Nécessite le stack mem0-stack en local.",
+      "version": "2.9.4",
       "author": {
         "name": "MillianLMX"
       },
@@ -27,8 +27,8 @@
     {
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
-      "description": "Pipeline one-shot piloté par le critère d'acceptation : /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige des specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep et révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire.",
-      "version": "0.5.0",
+      "description": "Pipeline one-shot piloté par le critère d'acceptation : /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige des specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep et révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>) : le push de l'utilisateur vaut clôture, la branche est conservée.",
+      "version": "0.6.0",
       "author": {
         "name": "MillianLMX"
       },
