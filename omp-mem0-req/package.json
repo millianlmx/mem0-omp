@@ -1,7 +1,7 @@
 {
   "name": "omp-mem0-req",
-  "version": "0.7.0",
-  "description": "Pipeline one-shot piloté par le critère d'acceptation. /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige les specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>) : le push de l'utilisateur vaut clôture, la branche est conservée.",
+  "version": "0.8.0",
+  "description": "Pipeline one-shot piloté par le critère d'acceptation. /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige les specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>) : le push de l'utilisateur vaut clôture, la branche est conservée. Le panneau /pipelines (ou alt+w) liste les pipelines de tous les processus OMP de la machine et permet de rejoindre une session.",
   "license": "MIT",
   "author": "MillianLMX",
   "omp": {

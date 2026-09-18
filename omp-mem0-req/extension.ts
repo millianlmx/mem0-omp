@@ -86,6 +86,10 @@ type ReqState = {
   closing?: boolean;
   /** La suite de ce maillon a déjà été annoncée : une seule annonce par maillon. */
   announced?: boolean;
+  /** Instant du lancement du maillon courant : le temps affiché repart de là. */
+  phaseStartedAt?: number;
+  /** Dernière entrée publiée dans le magasin — la session publiée vient d'elle. */
+  entry?: RunningEntry;
 };
 
 const states = new Map<string, ReqState>();
@@ -485,6 +489,992 @@ export function buildSweepMessage(result: {
     lines.push(`[pipeline] worktree conservé : ${k.path} — ${k.reason}.`);
   }
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Registre des pipelines — le magasin d'état partagé par TOUS les processus.
+// ---------------------------------------------------------------------------
+// Le panneau liste les pipelines de tous les processus OMP de la machine, y
+// compris ceux d'autres dépôts : un état en mémoire ne traverse pas les
+// processus, et un démon serait un service de plus à faire vivre. Chaque
+// processus PUBLIE donc ses pipelines armées dans un répertoire de fichiers, et
+// le panneau LIT ce répertoire. Un fichier par pipeline — jamais un fichier
+// partagé — écrit dans un temporaire puis RENOMMÉ : un lecteur ne voit jamais un
+// JSON partiel.
+//
+// Le propriétaire fait autorité : lui seul écrit son fichier (`owner.pid`) et lui
+// seul calcule l'état publié (`running` / `waiting`). Les autres processus se
+// contentent de CONSTATER la mort d'un propriétaire pour déplacer l'entrée vers
+// l'historique — c'est le seul effet de bord qu'un lecteur s'autorise. Il est
+// idempotent : l'id d'une entrée d'historique dérive de l'entrée (cwd + instant
+// de fin), jamais de l'instant du constat, donc deux lecteurs écrivent le même
+// fichier.
+
+export type PipelineRunState = "running" | "waiting";
+export type PipelineFinalState = "done" | "failed";
+
+/** Entrée `running/<id>.json` : une pipeline en cours, écrite par son propriétaire. */
+export type RunningEntry = {
+  id: string;
+  cwd: string;
+  label: string;
+  phase: PipelinePhase;
+  state: PipelineRunState;
+  phaseStartedAt: number;
+  updatedAt: number;
+  sessionFile: string | null;
+  sessionId: string | null;
+  owner: { pid: number };
+};
+
+/** Entrée `history/<id>.json` : une pipeline close, écrite une seule fois. */
+export type HistoryEntry = {
+  id: string;
+  cwd: string;
+  label: string;
+  phase: PipelinePhase;
+  finalState: PipelineFinalState;
+  sessionFile: string | null;
+  sessionId: string | null;
+  phaseStartedAt: number;
+  endedAt: number;
+};
+
+export type StoreSnapshot = { running: RunningEntry[]; history: HistoryEntry[]; unreadable: number };
+
+/** Le strict nécessaire d'un contexte pour publier/constater : rien d'OMP-specific. */
+export type PipelineCtx = {
+  cwd?: string;
+  isIdle?: () => boolean;
+  sessionManager?: {
+    getCwd?: () => string;
+    getSessionFile?: () => string | undefined;
+    getSessionId?: () => string;
+  };
+  setInterval?: (callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => unknown;
+  clearTimer?: (timer: unknown) => void;
+};
+
+/** Seuls les fichiers d'id sont lus : temporaires d'écriture, `.DS_Store` ignorés. */
+const STORE_FILE = /^[0-9a-f]{16}\.json$/;
+
+// Bornes d'une passe de lecture : au-delà, le panneau ne sert plus à rien et la
+// lecture synchrone coûterait un rafraîchissement par seconde.
+export const RUNNING_READ_LIMIT = 200;
+export const HISTORY_READ_LIMIT = 20;
+
+/** Battement du propriétaire : réécrit ses entrées toutes les 2 s (S-3). */
+export const PIPELINE_HEARTBEAT_MS = 2000;
+
+const PIPELINE_PHASES: readonly PipelinePhase[] = ["req", "specs", "impl", "review"];
+
+/**
+ * Répertoire d'état commun : `MEM0_PIPELINE_STATE_DIR` (absolu ou `~`,
+ * prioritaire) sinon `~/.omp/agent/pipeline`. Un chemin relatif est ignoré — il
+ * dépendrait du cwd, donc de la session (même règle que les worktrees).
+ */
+export function pipelineStateDir(
+  env: Record<string, string | undefined> = process.env,
+  home: string = os.homedir(),
+): string {
+  const raw = (env.MEM0_PIPELINE_STATE_DIR ?? "").trim();
+  if (raw === "~") return home;
+  if (raw.startsWith("~/")) return path.join(home, raw.slice(2));
+  if (path.isAbsolute(raw)) return raw;
+  return path.join(home, ".omp", "agent", "pipeline");
+}
+
+export function pipelineRunningDir(stateDir: string): string {
+  return path.join(stateDir, "running");
+}
+
+export function pipelineHistoryDir(stateDir: string): string {
+  return path.join(stateDir, "history");
+}
+
+/** `sha1(path.resolve(cwd)).slice(0,16)` : un fichier par pipeline, un par cwd. */
+export function runningIdFor(cwd: string): string {
+  return crypto.createHash("sha1").update(path.resolve(cwd)).digest("hex").slice(0, 16);
+}
+
+/** `sha1(realpath(cwd) + ":" + endedAt).slice(0,16)` : une entrée par clôture. */
+export function historyIdFor(cwd: string, endedAt: number): string {
+  return crypto.createHash("sha1").update(`${realpathOr(cwd)}:${endedAt}`).digest("hex").slice(0, 16);
+}
+
+/** `<dépôt>/<feature>` dans un worktree de feature, sinon le basename du cwd. */
+export function pipelineLabel(cwd: string): string {
+  const root = resolveFeatureRoot(cwd);
+  if (root.primary) return `${path.basename(root.primary)}/${path.basename(root.dir)}`;
+  return path.basename(root.dir) || path.resolve(root.dir);
+}
+
+/**
+ * Temps écoulé : `<m>:<ss>` sous une heure, `<h>:<mm>:<ss>` au-delà. Un écart
+ * négatif (horloge reculée, entrée future) vaut `0:00` plutôt qu'un signe.
+ */
+export function elapsedLabel(ms: number): string {
+  const total = Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+  const seconds = String(total % 60).padStart(2, "0");
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  return hours === 0 ? `${minutes}:${seconds}` : `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`;
+}
+
+/**
+ * Le pid vit-il ? Seul `ESRCH` veut dire « mort » : `EPERM` (processus d'un autre
+ * utilisateur) est traité comme vivant, sinon on enterrerait des pipelines bien
+ * vivantes. Aucun seuil de fraîcheur : un processus vivant mais figé reste en
+ * cours (S-6).
+ */
+export function pidAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
+function readJsonFile(file: string): unknown {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function asStringOrNull(value: unknown): string | null {
+  return typeof value === "string" && value !== "" ? value : null;
+}
+
+/** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
+function asRunningEntry(raw: unknown): RunningEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (e.version !== 1) return null;
+  if (typeof e.id !== "string" || typeof e.cwd !== "string" || typeof e.label !== "string") return null;
+  if (!PIPELINE_PHASES.includes(e.phase as PipelinePhase)) return null;
+  if (e.state !== "running" && e.state !== "waiting") return null;
+  if (typeof e.phaseStartedAt !== "number" || typeof e.updatedAt !== "number") return null;
+  const owner = e.owner;
+  if (!owner || typeof owner !== "object" || !("pid" in owner) || typeof owner.pid !== "number") return null;
+  return {
+    id: e.id,
+    cwd: e.cwd,
+    label: e.label,
+    // La phase est validée contre la liste ci-dessus : c'est un PipelinePhase.
+    phase: e.phase as PipelinePhase,
+    state: e.state,
+    phaseStartedAt: e.phaseStartedAt,
+    updatedAt: e.updatedAt,
+    sessionFile: asStringOrNull(e.sessionFile),
+    sessionId: asStringOrNull(e.sessionId),
+    owner: { pid: owner.pid },
+  };
+}
+
+function asHistoryEntry(raw: unknown): HistoryEntry | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (e.version !== 1) return null;
+  if (typeof e.id !== "string" || typeof e.cwd !== "string" || typeof e.label !== "string") return null;
+  if (!PIPELINE_PHASES.includes(e.phase as PipelinePhase)) return null;
+  if (e.finalState !== "done" && e.finalState !== "failed") return null;
+  if (typeof e.phaseStartedAt !== "number" || typeof e.endedAt !== "number") return null;
+  return {
+    id: e.id,
+    cwd: e.cwd,
+    label: e.label,
+    phase: e.phase as PipelinePhase,
+    finalState: e.finalState,
+    sessionFile: asStringOrNull(e.sessionFile),
+    sessionId: asStringOrNull(e.sessionId),
+    phaseStartedAt: e.phaseStartedAt,
+    endedAt: e.endedAt,
+  };
+}
+
+/** Fichiers lisibles d'un répertoire du magasin : absent ou vide ⇒ aucun. */
+function storeFiles(dir: string): string[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const files: string[] = [];
+  for (const name of names) {
+    if (STORE_FILE.test(name)) files.push(path.join(dir, name));
+  }
+  return files;
+}
+
+/** Écriture ATOMIQUE : temporaire dans le même répertoire, puis `rename`. */
+function writeJsonAtomic(file: string, payload: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+  fs.renameSync(tmp, file);
+}
+
+export function writeRunningEntry(stateDir: string, entry: RunningEntry): void {
+  writeJsonAtomic(path.join(pipelineRunningDir(stateDir), `${entry.id}.json`), { version: 1, ...entry });
+}
+
+export function writeHistoryEntry(stateDir: string, entry: HistoryEntry): void {
+  writeJsonAtomic(path.join(pipelineHistoryDir(stateDir), `${entry.id}.json`), { version: 1, ...entry });
+}
+
+/** Suppression = `unlink` : un fichier déjà absent est un succès silencieux (S-7). */
+export function deleteHistoryEntry(stateDir: string, id: string): void {
+  if (!/^[0-9a-f]{16}$/.test(id)) return;
+  try {
+    fs.unlinkSync(path.join(pipelineHistoryDir(stateDir), `${id}.json`));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+export function deleteRunningEntry(stateDir: string, id: string): void {
+  if (!/^[0-9a-f]{16}$/.test(id)) return;
+  try {
+    fs.unlinkSync(path.join(pipelineRunningDir(stateDir), `${id}.json`));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+/**
+ * Une passe de lecture : les entrées du magasin, triées et bornées. Aucune
+ * écriture — la réconciliation des propriétaires morts est une passe distincte.
+ * Un fichier au JSON invalide ou au schéma incomplet est ignoré ET compté ; tout
+ * autre fichier du répertoire (temporaire d'écriture, `.DS_Store`) est ignoré
+ * sans être compté.
+ */
+export function readStore(stateDir: string): StoreSnapshot {
+  let unreadable = 0;
+  const running: RunningEntry[] = [];
+  for (const file of storeFiles(pipelineRunningDir(stateDir))) {
+    const entry = asRunningEntry(readJsonFile(file));
+    if (entry) running.push(entry);
+    else unreadable += 1;
+  }
+  const history: HistoryEntry[] = [];
+  for (const file of storeFiles(pipelineHistoryDir(stateDir))) {
+    const entry = asHistoryEntry(readJsonFile(file));
+    if (entry) history.push(entry);
+    else unreadable += 1;
+  }
+  // En cours : le plus ancien maillon d'abord (l'ordre d'arrivée) ; historique :
+  // le plus récent d'abord — puis les bornes, qui gardent donc les plus récents.
+  running.sort((a, b) => a.phaseStartedAt - b.phaseStartedAt || a.cwd.localeCompare(b.cwd));
+  history.sort((a, b) => b.endedAt - a.endedAt || a.cwd.localeCompare(b.cwd));
+  return {
+    running: running.slice(0, RUNNING_READ_LIMIT),
+    history: history.slice(0, HISTORY_READ_LIMIT),
+    unreadable,
+  };
+}
+
+/**
+ * Réconciliation : toute entrée en cours dont le propriétaire n'existe plus passe
+ * à l'historique en `failed`. L'écriture d'historique PRÉCÈDE la suppression du
+ * fichier en cours : une écriture impossible laisse l'entrée en cours (pas de
+ * perte silencieuse). `endedAt` est le dernier `updatedAt` connu — l'instant où
+ * le propriétaire a cessé de battre — ce qui rend l'opération idempotente entre
+ * deux lecteurs.
+ */
+export function reconcileStore(stateDir: string, snapshot: StoreSnapshot = readStore(stateDir)): StoreSnapshot {
+  const alive: RunningEntry[] = [];
+  const moved: HistoryEntry[] = [];
+  for (const entry of snapshot.running) {
+    if (pidAlive(entry.owner.pid)) {
+      alive.push(entry);
+      continue;
+    }
+    const endedAt = entry.updatedAt;
+    const record: HistoryEntry = {
+      id: historyIdFor(entry.cwd, endedAt),
+      cwd: entry.cwd,
+      label: entry.label,
+      phase: entry.phase,
+      finalState: "failed",
+      sessionFile: entry.sessionFile,
+      sessionId: entry.sessionId,
+      phaseStartedAt: entry.phaseStartedAt,
+      endedAt,
+    };
+    try {
+      writeHistoryEntry(stateDir, record);
+      deleteRunningEntry(stateDir, entry.id);
+    } catch {
+      alive.push(entry); // écriture impossible : l'entrée en cours reste
+      continue;
+    }
+    moved.push(record);
+  }
+  if (moved.length === 0) return snapshot;
+  const history = [...moved, ...snapshot.history].sort((a, b) => b.endedAt - a.endedAt).slice(0, HISTORY_READ_LIMIT);
+  return { running: alive, history, unreadable: snapshot.unreadable };
+}
+
+// --- côté propriétaire : armement, battement, publication -------------------
+
+/** Horloge et sorties injectables : les tests pilotent le temps et les notices. */
+export type PublishDeps = {
+  ctx?: PipelineCtx;
+  notify?: (text: string) => void;
+  now?: () => number;
+  stateDir?: string;
+};
+
+// Compteurs d'activité par identifiant d'appel d'outil : incrémentés et
+// décrémentés, jamais posés à zéro sur un événement — un `tool_execution_end`
+// manquant (processus tué, tour interrompu) ne doit pas figer l'état.
+const pendingAsks = new Set<string>();
+const pendingApprovals = new Set<string>();
+
+// Dernier contexte vu pour ce processus : source de `isIdle` (délégué au runner,
+// donc vivant) et de la session publiée. Le battement n'en a pas d'autre.
+let liveCtx: PipelineCtx | undefined;
+let stateWriteWarned = false;
+let heartbeatStop: (() => void) | null = null;
+
+function armedCwds(): string[] {
+  const out: string[] = [];
+  for (const [cwd, st] of states) {
+    if (st.phase) out.push(cwd);
+  }
+  return out;
+}
+
+/**
+ * Une écriture impossible (disque plein, permissions) ne casse JAMAIS un tour :
+ * l'erreur est avalée et signalée au plus une fois par session, par une notice
+ * durable — un toast disparaîtrait au redraw.
+ */
+export function reportStateWriteFailure(deps: PublishDeps, error: unknown): void {
+  if (stateWriteWarned) return;
+  stateWriteWarned = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  deps.notify?.(`[pipeline] état des pipelines non écrit : ${reason}`);
+}
+
+/** La session de ce contexte conduit-elle bien ce cwd ? Sinon le fichier est nul. */
+function sessionMatches(ctx: PipelineCtx | undefined, cwd: string): boolean {
+  const manager = ctx?.sessionManager;
+  if (typeof manager?.getCwd !== "function") return false;
+  try {
+    // Appelée SUR le manager, jamais via une variable intermédiaire : `getCwd`
+    // lit `this.#cwd`, et un receveur perdu lève un TypeError qu'on lirait à tort
+    // comme « pas la bonne session » — donc comme une entrée sans fichier.
+    return path.resolve(manager.getCwd() ?? "") === path.resolve(cwd);
+  } catch {
+    return false;
+  }
+}
+
+function sessionFileOf(ctx: PipelineCtx | undefined): string | null {
+  try {
+    return asStringOrNull(ctx?.sessionManager?.getSessionFile?.());
+  } catch {
+    return null;
+  }
+}
+
+function sessionIdOf(ctx: PipelineCtx | undefined): string | null {
+  try {
+    return asStringOrNull(ctx?.sessionManager?.getSessionId?.());
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * État publié d'une pipeline : `waiting` si une question `ask` est en vol, si une
+ * approbation est en attente, si l'agent est inactif, ou si la session courante
+ * ne conduit pas ce cwd (cette pipeline n'est alors plus pilotée par personne) ;
+ * `running` sinon.
+ */
+function currentRunState(ctx: PipelineCtx | undefined, cwd: string): PipelineRunState {
+  if (pendingAsks.size > 0 || pendingApprovals.size > 0) return "waiting";
+  if (ctx?.cwd && path.resolve(ctx.cwd) !== path.resolve(cwd)) return "waiting";
+  try {
+    if (ctx?.isIdle?.() === true) return "waiting";
+  } catch {
+    /* contexte sans isIdle : on suppose l'agent actif */
+  }
+  return "running";
+}
+
+/**
+ * Publie (ou republie) l'entrée en cours d'un cwd ARMÉ : phase courante, horodatage
+ * de l'étape, état, session. Aucun effet si ce cwd n'est pas armé par ce processus —
+ * le propriétaire ne réécrit que SES entrées.
+ */
+export function publishRunning(deps: PublishDeps, cwd: string): void {
+  const st = states.get(path.resolve(cwd));
+  if (!st?.phase) return;
+  const ctx = deps.ctx ?? liveCtx;
+  const now = (deps.now ?? Date.now)();
+  const previous = st.entry;
+  const same = sessionMatches(ctx, cwd);
+  const entry: RunningEntry = {
+    id: runningIdFor(cwd),
+    cwd: path.resolve(cwd),
+    label: previous?.label ?? pipelineLabel(cwd),
+    phase: st.phase,
+    state: currentRunState(ctx, cwd),
+    phaseStartedAt: st.phaseStartedAt ?? previous?.phaseStartedAt ?? now,
+    updatedAt: now,
+    // La session publiée n'est retenue que si le contexte appartient bien à ce
+    // cwd : après un `newSession`, le contexte du handler décrit encore la
+    // session PRÉCÉDENTE, et publier son fichier ferait rejoindre la mauvaise.
+    sessionFile: same ? (sessionFileOf(ctx) ?? previous?.sessionFile ?? null) : (previous?.sessionFile ?? null),
+    sessionId: same ? (sessionIdOf(ctx) ?? previous?.sessionId ?? null) : (previous?.sessionId ?? null),
+    owner: { pid: process.pid },
+  };
+  st.entry = entry;
+  try {
+    writeRunningEntry(deps.stateDir ?? pipelineStateDir(), entry);
+  } catch (err) {
+    reportStateWriteFailure(deps, err);
+  }
+}
+
+/** Republie l'entrée du cwd courant, s'il est armé : le chemin des six événements. */
+export function publishCurrentCwd(deps: PublishDeps): void {
+  // Une publication est un effet de bord : elle ne doit jamais faire échouer le
+  // tour qui l'a déclenchée, quelle que soit la panne.
+  try {
+    const ctx = deps.ctx;
+    if (!ctx?.cwd) return;
+    liveCtx = ctx;
+    publishRunning(deps, ctx.cwd);
+  } catch (err) {
+    reportStateWriteFailure(deps, err);
+  }
+}
+
+/**
+ * Un seul intervalle de battement par processus : réarmer REMPLACE le précédent.
+ * Réarmé à chaque armement parce qu'un changement de session (newSession) nettoie
+ * les minuteries gérées de la session quittée.
+ */
+export function ensureHeartbeat(ctx: PipelineCtx | undefined, deps: Omit<PublishDeps, "ctx"> = {}): void {
+  if (typeof ctx?.setInterval !== "function") return;
+  if (ctx) liveCtx = ctx;
+  heartbeatStop?.();
+  const timer = ctx.setInterval(() => {
+    for (const cwd of armedCwds()) publishRunning({ ...deps, ctx: liveCtx }, cwd);
+  }, PIPELINE_HEARTBEAT_MS);
+  heartbeatStop = () => {
+    try {
+      ctx.clearTimer?.(timer);
+    } catch {
+      /* minuterie déjà nettoyée par la session : rien à faire */
+    }
+  };
+}
+
+/** Repart à zéro à chaque session : « signalée au plus une fois par session ». */
+export function resetStateWriteWarning(): void {
+  stateWriteWarned = false;
+}
+
+/**
+ * Arme un maillon ET le publie : l'entrée apparaît dès la commande, avant toute
+ * réponse du modèle (S-3). Remplace `armPhase` partout où un contexte est
+ * disponible ; un nouveau maillon réinitialise le temps de l'étape.
+ */
+export function armPipeline(deps: PublishDeps, cwd: string | undefined, phase: PipelinePhase): void {
+  if (!cwd) return;
+  armPhase(cwd, phase);
+  const st = stateOfCwd(cwd);
+  st.phaseStartedAt = (deps.now ?? Date.now)();
+  st.entry = undefined;
+  resetStateWriteWarning();
+  ensureHeartbeat(deps.ctx, { notify: deps.notify, stateDir: deps.stateDir });
+  publishRunning(deps, cwd);
+}
+
+/**
+ * Clôt une pipeline : l'historique est écrit PUIS le fichier en cours supprimé,
+ * jamais l'inverse — une écriture impossible laisse l'entrée en cours, et l'appel
+ * remonte l'erreur à son appelant (qui la signale au plus une fois).
+ */
+export function closePipeline(deps: PublishDeps, cwd: string, finalState: PipelineFinalState): void {
+  const st = states.get(path.resolve(cwd));
+  const now = (deps.now ?? Date.now)();
+  const previous = st?.entry;
+  // `endedAt` figé pour un échec (dernier battement), instant de clôture pour une
+  // fin de cycle : deux lecteurs qui constatent la même mort écrivent le même id.
+  const endedAt = finalState === "failed" ? (previous?.updatedAt ?? now) : now;
+  const record: HistoryEntry = {
+    id: historyIdFor(cwd, endedAt),
+    cwd: path.resolve(cwd),
+    label: previous?.label ?? pipelineLabel(cwd),
+    phase: st?.phase ?? previous?.phase ?? "req",
+    finalState,
+    sessionFile: previous?.sessionFile ?? null,
+    sessionId: previous?.sessionId ?? null,
+    phaseStartedAt: st?.phaseStartedAt ?? previous?.phaseStartedAt ?? now,
+    endedAt,
+  };
+  const stateDir = deps.stateDir ?? pipelineStateDir();
+  writeHistoryEntry(stateDir, record);
+  deleteRunningEntry(stateDir, runningIdFor(cwd));
+  if (st) {
+    st.phase = undefined;
+    st.entry = undefined;
+    st.phaseStartedAt = undefined;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Panneau des pipelines — un overlay ancré en haut à droite.
+// ---------------------------------------------------------------------------
+// C'est un `ctx.ui.custom` avec `overlay: true` et `anchor: "top-right"` — le seul
+// point de montage d'un composant maison en TUI (cf. `## Documentation` §1).
+// L'overlay prend le FOCUS : aucune touche n'atteint l'éditeur tant qu'il est
+// ouvert, et `done` est le seul moyen de rendre le focus et le texte de l'éditeur.
+//
+// La mise en page est une fonction PURE de rangs `{text, tone}` (aucun état, aucun
+// accès disque), construite hors du composant et testable avec des glyphes ASCII —
+// même séparation que `renderRecallRows` du plugin mémoire. Le composant ne fait
+// que colorier EN BLOC : un rang, une couleur, donc aucun calcul ANSI.
+//
+// Contrainte de plateforme : la souris n'existe pas pour un overlay non
+// fullscreen (cf. `## Documentation` §1). Rien n'est câblé — et rien ne doit
+// l'être : les séquences de clic ne sont même pas émises.
+
+export type PanelTone = "border" | "accent" | "muted" | "dim" | "success" | "error" | "warning" | "text";
+export type PanelRow = { text: string; tone: PanelTone };
+
+/** Glyphes injectés : `theme.boxRound` + `theme.nav.cursor` en production. */
+export type PanelGlyphs = {
+  topLeft: string;
+  topRight: string;
+  bottomLeft: string;
+  bottomRight: string;
+  horizontal: string;
+  vertical: string;
+  teeLeft: string;
+  teeRight: string;
+  cursor: string;
+};
+
+export type PanelModel = {
+  running: RunningEntry[];
+  history: HistoryEntry[];
+  /** Index sur la liste concaténée `[...running, ...history]`, borné, `-1` si vide. */
+  selection: number;
+  notice: string | null;
+  unreadable: number;
+};
+
+export const PANEL_WIDTH = 64;
+export const PANEL_REFRESH_MS = 1000;
+export const PANEL_MIN_ROWS = 8;
+export const PANEL_MAX_ROWS = 18;
+
+/** Le panneau se borne lui-même : au-delà, le TUI couperait par le BAS (pied perdu). */
+export function panelBudget(terminalRows: number): number {
+  const rows = Number.isFinite(terminalRows) && terminalRows > 0 ? terminalRows : 24;
+  return Math.max(PANEL_MIN_ROWS, Math.min(Math.floor(rows * 0.8), PANEL_MAX_ROWS));
+}
+
+export function clampSelection(selection: number, count: number): number {
+  if (count <= 0) return -1;
+  if (!Number.isFinite(selection)) return 0;
+  return Math.min(Math.max(Math.trunc(selection), 0), count - 1);
+}
+
+/** Déplacement borné, sans bouclage : on ne sort pas de la liste. */
+export function moveSelection(selection: number, count: number, delta: number): number {
+  if (count <= 0) return -1;
+  // `-1` = « rien de sélectionné » : se déplacer entre alors par le premier rang.
+  const current = selection < 0 ? -1 : clampSelection(selection, count);
+  return clampSelection(current + delta, count);
+}
+
+/**
+ * Modèle du panneau : lecture du magasin, réconciliation des propriétaires morts,
+ * puis borne de la sélection. C'est la seule fonction qui touche le disque.
+ */
+export function readPanelModel(input: {
+  stateDir: string;
+  selection?: number;
+  notice?: string | null;
+}): PanelModel {
+  const snapshot = reconcileStore(input.stateDir);
+  const count = snapshot.running.length + snapshot.history.length;
+  return {
+    running: snapshot.running,
+    history: snapshot.history,
+    selection: clampSelection(input.selection ?? 0, count),
+    notice: input.notice ?? null,
+    unreadable: snapshot.unreadable,
+  };
+}
+
+function fit(text: string, width: number): string {
+  if (text.length === width) return text;
+  return text.length > width ? clip(text, width) : text + " ".repeat(width - text.length);
+}
+
+function clip(s: string, n: number): string {
+  if (n <= 0) return "";
+  return s.length > n ? (n > 1 ? `${s.slice(0, n - 1)}…` : s.slice(0, n)) : s;
+}
+
+/** Rang encadré : `│ <contenu de largeur innerW> │`, exactement `width` colonnes. */
+function frame(glyphs: PanelGlyphs, content: string, width: number, innerW: number): string {
+  return fit(`${glyphs.vertical} ${fit(clip(content, innerW), innerW)} ${glyphs.vertical}`, width);
+}
+
+/** Rang de titre : le cadre s'ouvre après le texte, sans le traverser. */
+function topRule(glyphs: PanelGlyphs, title: string, width: number): string {
+  const head = `${glyphs.topLeft} ${clip(title, Math.max(0, width - 4))} `;
+  const rest = Math.max(0, width - head.length - 1);
+  return fit(head + glyphs.horizontal.repeat(rest) + glyphs.topRight, width);
+}
+
+/** Séparateur de sections — et frontière entre « en cours » et « historique ». */
+function separatorRule(glyphs: PanelGlyphs, width: number): string {
+  return fit(
+    `${glyphs.teeLeft}${glyphs.horizontal.repeat(Math.max(0, width - 2))}${glyphs.teeRight}`,
+    width,
+  );
+}
+
+/** Dernier rang : le pied porte le texte ET ferme le cadre. */
+function bottomRule(glyphs: PanelGlyphs, text: string, width: number): string {
+  const head = `${glyphs.bottomLeft} ${clip(text, Math.max(0, width - 4))} `;
+  const rest = Math.max(0, width - head.length - 1);
+  return fit(head + glyphs.horizontal.repeat(rest) + glyphs.bottomRight, width);
+}
+
+/** `<label>` à gauche, `<droite>` aligné à droite, curseur en tête si sélectionné. */
+function entryLine(label: string, right: string, selected: boolean, glyphs: PanelGlyphs, innerW: number): string {
+  const prefix = selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
+  const room = Math.max(0, innerW - prefix.length);
+  if (right.length + 1 >= room) return clip(prefix + label, innerW); // pas la place pour la droite
+  const left = clip(label, room - right.length - 1);
+  const gap = " ".repeat(Math.max(1, room - left.length - right.length));
+  return prefix + left + gap + right;
+}
+
+/** Le rang de notice, unique, compose l'illisible et le message d'action. */
+function noticeText(model: PanelModel): string | null {
+  const parts: string[] = [];
+  if (model.unreadable > 0) {
+    parts.push(`${model.unreadable} fichier(s) d'état illisible(s) — entrée(s) ignorée(s)`);
+  }
+  if (model.notice) parts.push(model.notice);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
+/**
+ * Tous les rangs du panneau, DANS L'ORDRE : titre, section « en cours »,
+ * séparateur, section « historique », notice (absente si aucune), deux rangs de
+ * pied. Pur : le temps écoulé vient de `now`, jamais d'une horloge implicite, et
+ * les glyphes du test sont de l'ASCII.
+ *
+ * Le panneau tient dans `budget` rangs : toutes les pipelines en cours d'abord
+ * (priorité), puis autant d'entrées d'historique que la place le permet, la plus
+ * récente d'abord, et un rang `… <n> de plus` par section tronquée.
+ */
+export function buildPanelRows(
+  model: PanelModel,
+  opts: { width: number; budget: number; glyphs: PanelGlyphs; now: number },
+): PanelRow[] {
+  const width = Math.max(1, Math.floor(opts.width));
+  const glyphs = opts.glyphs;
+  const innerW = Math.max(0, width - 4);
+  const rows: PanelRow[] = [];
+
+  rows.push({
+    text: topRule(glyphs, `Pipelines · ${model.running.length} en cours`, width),
+    tone: "accent",
+  });
+
+  const runningCount = model.running.length;
+  const historyCount = model.history.length;
+  const notice = noticeText(model);
+  // Titre + séparateur + deux rangs de pied, plus la notice quand il y en a une.
+  const available = Math.max(0, opts.budget - (4 + (notice ? 1 : 0)));
+
+  let shownRunning = Math.min(runningCount, available);
+  if (runningCount > available) shownRunning = Math.max(0, available - 1);
+  const runningMarker = runningCount > shownRunning && available - shownRunning >= 1;
+  const left = available - shownRunning - (runningMarker ? 1 : 0);
+  let shownHistory = Math.min(historyCount, left);
+  if (historyCount > left) shownHistory = Math.max(0, left - 1);
+  const historyMarker = historyCount > shownHistory && left - shownHistory >= 1;
+
+  if (runningCount === 0) {
+    rows.push({ text: frame(glyphs, "aucune pipeline en cours", width, innerW), tone: "muted" });
+  } else {
+    for (let i = 0; i < shownRunning; i++) {
+      const entry = model.running[i]!;
+      const state = entry.state === "waiting" ? "attend" : "tourne";
+      const right = `/${entry.phase} · ${state} · ${elapsedLabel(opts.now - entry.phaseStartedAt)}`;
+      rows.push({
+        text: frame(glyphs, entryLine(entry.label, right, model.selection === i, glyphs, innerW), width, innerW),
+        tone: entry.state === "waiting" ? "warning" : "success",
+      });
+    }
+    if (runningMarker) {
+      rows.push({ text: frame(glyphs, `… ${runningCount - shownRunning} de plus`, width, innerW), tone: "dim" });
+    }
+  }
+
+  rows.push({ text: separatorRule(glyphs, width), tone: "border" });
+
+  if (historyCount === 0) {
+    rows.push({ text: frame(glyphs, "aucun historique", width, innerW), tone: "muted" });
+  } else {
+    for (let i = 0; i < shownHistory; i++) {
+      const entry = model.history[i]!;
+      const final = entry.finalState === "done" ? "terminé" : "échoué";
+      const right = `/${entry.phase} · ${final}`;
+      const selected = model.selection === runningCount + i;
+      rows.push({
+        text: frame(glyphs, entryLine(entry.label, right, selected, glyphs, innerW), width, innerW),
+        tone: entry.finalState === "done" ? "dim" : "error",
+      });
+    }
+    if (historyMarker) {
+      rows.push({ text: frame(glyphs, `… ${historyCount - shownHistory} de plus`, width, innerW), tone: "dim" });
+    }
+  }
+
+  if (notice) rows.push({ text: frame(glyphs, notice, width, innerW), tone: "warning" });
+
+  rows.push({ text: frame(glyphs, "↑↓ naviguer · Entrée rejoindre · d supprimer", width, innerW), tone: "dim" });
+  rows.push({ text: bottomRule(glyphs, "Échap fermer", width), tone: "border" });
+
+  return rows.map((row) => ({ text: fit(row.text, width), tone: row.tone }));
+}
+
+// --- rejoindre la session d'une entrée (S-5) --------------------------------
+
+export type JoinDecision = { kind: "switch"; path: string } | { kind: "unavailable"; message: string };
+
+/**
+ * Décision de bascule, PURE (`exists` injecté). Le contrôle d'existence est
+ * OBLIGATOIRE : basculer vers un chemin absent n'échoue pas, il CRÉE une session
+ * vide à ce chemin (cf. `## Documentation` §2) — soit exactement l'inverse de ce
+ * qu'on veut en signalant une entrée non reprenable.
+ */
+export function switchDecision(entry: { sessionFile?: string | null }, exists: (p: string) => boolean): JoinDecision {
+  const file = asStringOrNull(entry.sessionFile);
+  if (file && exists(file)) return { kind: "switch", path: file };
+  return {
+    kind: "unavailable",
+    message: file
+      ? `session introuvable — entrée non reprenable : ${file}`
+      : "session introuvable — entrée non reprenable",
+  };
+}
+
+/** Le strict nécessaire d'un contexte de COMMANDE pour basculer. */
+export type SwitchCtx = { switchSession?: (sessionPath: string) => Promise<{ cancelled: boolean }> };
+
+export type JoinDeps = {
+  /** Contexte de commande : `switchSession` y est disponible, commande comme raccourci. */
+  ctx?: SwitchCtx;
+  /** Ferme le panneau — AVANT la bascule, aucun overlay orphelin au-dessus du transcript. */
+  close: () => void;
+  /** Notice affichée DANS le panneau (entrée non reprenable). */
+  showNotice: (message: string) => void;
+  /** Notice DURABLE dans le transcript (bascule refusée). */
+  notify: (text: string) => void;
+  exists?: (p: string) => boolean;
+};
+
+/**
+ * Rejoint la session d'une entrée, dans cet ordre : existence du fichier, notice
+ * dans le panneau s'il manque, fermeture du panneau, bascule. Un refus
+ * (`{cancelled: true}`) ou une exception devient une notice durable — jamais une
+ * exception qui remonte au tour.
+ */
+export async function joinEntry(entry: { sessionFile?: string | null }, deps: JoinDeps): Promise<void> {
+  const decision = switchDecision(entry, deps.exists ?? fs.existsSync);
+  if (decision.kind === "unavailable") {
+    deps.showNotice(decision.message);
+    return;
+  }
+  deps.close();
+  const switchSession = deps.ctx?.switchSession;
+  if (typeof switchSession !== "function") {
+    deps.notify(`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${decision.path}`);
+    return;
+  }
+  let refused = false;
+  try {
+    const res = await switchSession(decision.path);
+    refused = res?.cancelled === true;
+  } catch {
+    refused = true;
+  }
+  if (refused) {
+    deps.notify(`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${decision.path}`);
+  }
+}
+
+// --- le composant et sa fabrique --------------------------------------------
+
+/** Surface de la TUI réellement utilisée : structurelle, donc testable sans OMP. */
+export type PanelTui = { terminal?: { rows?: number }; requestRender?: () => void };
+export type PanelTheme = {
+  fg(color: string, text: string): string;
+  boxRound: Omit<PanelGlyphs, "cursor">;
+  nav: { cursor: string };
+};
+export type PanelKeybindings = { matches?: (data: string, keybinding: string) => boolean };
+
+export type PanelComponent = {
+  render(width: number): string[];
+  handleInput(data: string): void;
+  /** Relecture du magasin — c'est exactement ce que déclenche le rafraîchissement périodique. */
+  refresh(): void;
+  dispose(): void;
+};
+
+export type PipelinesPanelDeps = {
+  stateDir: string;
+  /** Horloge du temps écoulé : injectée, le temps affiché est donc testable. */
+  now?: () => number;
+  /** Ordonnanceur du rafraîchissement ; renvoie de quoi l'arrêter. */
+  schedule?: (callback: () => void, ms: number) => () => void;
+  /** Rejoint la session d'une entrée (rangs en cours ET historique). */
+  join: (entry: RunningEntry | HistoryEntry, close: () => void, showNotice: (message: string) => void) => void;
+};
+
+/** `unref` — un rafraîchissement de panneau ne doit pas retenir le processus. */
+function unrefTimer(timer: unknown): void {
+  if (timer && typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") timer.unref();
+}
+
+/** Minuterie de rafraîchissement ; l'arrêt est rendu à l'appelant (`dispose`). */
+function defaultSchedule(callback: () => void, ms: number): () => void {
+  const timer = setInterval(callback, ms);
+  unrefTimer(timer);
+  return () => clearInterval(timer);
+}
+
+/**
+ * Fabrique du composant, au contrat `Component` de la TUI : `render(width)` rend
+ * des rangs ≤ `width`, `dispose` arrête la minuterie. Le premier rendu est déjà
+ * peuplé (lecture synchrone bornée : il n'y a pas d'état « chargement »), et un
+ * magasin vide n'empêche pas le panneau de s'afficher.
+ */
+export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
+  return (
+    tui: PanelTui,
+    theme: PanelTheme,
+    keybindings: PanelKeybindings,
+    done: (result?: unknown) => void,
+  ): PanelComponent => {
+    const glyphs: PanelGlyphs = {
+      topLeft: theme.boxRound.topLeft,
+      topRight: theme.boxRound.topRight,
+      bottomLeft: theme.boxRound.bottomLeft,
+      bottomRight: theme.boxRound.bottomRight,
+      horizontal: theme.boxRound.horizontal,
+      vertical: theme.boxRound.vertical,
+      teeLeft: theme.boxRound.teeLeft,
+      teeRight: theme.boxRound.teeRight,
+      cursor: theme.nav.cursor,
+    };
+    const now = deps.now ?? (() => Date.now());
+    const schedule = deps.schedule ?? defaultSchedule;
+    let notice: string | null = null;
+    let model = readPanelModel({ stateDir: deps.stateDir, selection: 0, notice });
+
+    const paint = () => {
+      model = readPanelModel({ stateDir: deps.stateDir, selection: model.selection, notice });
+    };
+    const redraw = () => {
+      paint();
+      tui.requestRender?.();
+    };
+    const showNotice = (message: string) => {
+      notice = message;
+      paint();
+      tui.requestRender?.();
+    };
+    const entries = (): Array<RunningEntry | HistoryEntry> => [...model.running, ...model.history];
+    // Le déplacement efface la notice : elle décrit un rang, pas le panneau.
+    const move = (delta: number) => {
+      notice = null;
+      model = { ...model, notice: null, selection: moveSelection(model.selection, entries().length, delta) };
+      tui.requestRender?.();
+    };
+    const selected = (): RunningEntry | HistoryEntry | undefined => entries()[model.selection];
+
+    const remove = () => {
+      const index = model.selection;
+      if (index < 0) return; // aucune entrée : rien, aucune notice
+      if (index < model.running.length) {
+        showNotice("seules les entrées d'historique se suppriment");
+        return;
+      }
+      const entry = model.history[index - model.running.length];
+      if (!entry) return;
+      try {
+        deleteHistoryEntry(deps.stateDir, entry.id);
+      } catch (err) {
+        showNotice(`suppression impossible : ${err instanceof Error ? err.message : String(err)}`);
+        return;
+      }
+      notice = null;
+      redraw();
+    };
+
+    const stop = schedule(() => redraw(), PANEL_REFRESH_MS);
+
+    return {
+      render(width: number): string[] {
+        const budget = panelBudget(tui.terminal?.rows ?? 24);
+        return buildPanelRows(model, { width, budget, glyphs, now: now() }).map((row) =>
+          theme.fg(row.tone, row.text),
+        );
+      },
+      handleInput(data: string): void {
+        const matches = (keybinding: string) => keybindings?.matches?.(data, keybinding) === true;
+        // Fermer : Échap (`app.interrupt`) ou Ctrl+C, les deux du select.cancel d'OMP.
+        if (matches("tui.select.cancel")) {
+          done();
+          return;
+        }
+        if (matches("tui.select.up") || data === "k") {
+          move(-1);
+          return;
+        }
+        if (matches("tui.select.down") || data === "j") {
+          move(1);
+          return;
+        }
+        if (data === "d") {
+          remove();
+          return;
+        }
+        if (matches("tui.select.confirm")) {
+          const entry = selected();
+          if (entry) deps.join(entry, () => done(), showNotice);
+        }
+      },
+      refresh: redraw,
+      dispose(): void {
+        stop();
+      },
+    };
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -951,6 +1941,109 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
   };
 
+  // Une notice DURABLE (message d'affichage, jamais un toast qui disparaît au
+  // redraw) est le seul canal de signalement du registre : le panneau, lui, ne
+  // parle à l'utilisateur que dans son propre rang de notice.
+  const notifyDurable = (text: string) =>
+    pi.sendMessage({ customType: "pipeline", content: text, display: true, attribution: "user" }, { triggerTurn: false });
+
+  const pipelineDeps = (ctx: PipelineCtx): PublishDeps => ({ ctx, notify: notifyDurable });
+
+  // --- /pipelines et alt+w : le panneau des pipelines en cours --------------
+  // Un seul panneau par processus : tant qu'un overlay est monté, une seconde
+  // ouverture ne monte rien (aucun overlay empilé, aucun doublon).
+  let panelOpen = false;
+  let panelUnavailableNotified = false;
+
+  const openPanel = (ctx: ExtensionContext) => {
+    if (!ctx.hasUI || typeof ctx.ui?.custom !== "function") {
+      // RPC / print : rien à monter, et l'utilisateur doit l'apprendre UNE fois.
+      if (!panelUnavailableNotified) {
+        panelUnavailableNotified = true;
+        notifyDurable("[pipeline] panneau indisponible hors session interactive");
+      }
+      return;
+    }
+    if (panelOpen) return;
+    panelOpen = true;
+    const deps: PipelinesPanelDeps = {
+      stateDir: pipelineStateDir(),
+      join: (entry, close, showNotice) => {
+        // `switchSession` vit sur le contexte de COMMANDE : le runtime appelle
+        // `createCommandContext()` pour les commandes ET pour les raccourcis, donc
+        // le même `ctx` porte la bascule dans les deux cas (cf. `## Documentation` §3).
+        void joinEntry(entry, { ctx: ctx as SwitchCtx, close, showNotice, notify: notifyDurable });
+      },
+    };
+    try {
+      void ctx.ui
+        .custom(pipelinesPanelFactory(deps), {
+          overlay: true,
+          overlayOptions: { anchor: "top-right", width: PANEL_WIDTH, maxHeight: "80%", margin: 1 },
+        })
+        .catch(() => {
+          /* le panneau ne doit jamais faire échouer la commande qui l'ouvre */
+        })
+        .finally(() => {
+          panelOpen = false;
+        });
+    } catch {
+      panelOpen = false;
+      ctx.ui?.notify?.("[pipeline] affichage du panneau impossible.", "warning");
+    }
+  };
+
+  pi.registerCommand("pipelines", {
+    description: "Affiche le panneau des pipelines en cours (tous les processus OMP, tous dépôts) — Échap ferme",
+    handler: async (_args, ctx) => {
+      openPanel(ctx);
+    },
+  });
+
+  pi.registerShortcut("alt+w", {
+    description: "Panneau des pipelines en cours",
+    handler: async (ctx) => {
+      openPanel(ctx);
+    },
+  });
+
+  // --- registre des pipelines : battement et republication -------------------
+  // Le propriétaire SEUL écrit ses entrées : les lecteurs du magasin (le panneau,
+  // y compris celui d'un autre processus) ne font que constater.
+  pi.on("session_start", async (_event, ctx) => {
+    resetStateWriteWarning();
+    ensureHeartbeat(ctx as PipelineCtx, { notify: notifyDurable });
+  });
+
+  pi.on("agent_start", async (_event, ctx) => {
+    publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
+  });
+
+  // L'outil `ask` en vol est le cas le plus visible de « suspendu à une question » :
+  // l'état est publié dès le démarrage de l'appel, pas à la fin du tour.
+  pi.on("tool_execution_start", async (event, ctx) => {
+    if (event.toolName === "ask") pendingAsks.add(event.toolCallId);
+    publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
+  });
+
+  pi.on("tool_execution_end", async (event, ctx) => {
+    // Par identifiant d'appel : un `end` manquant ne fige pas le compteur, et un
+    // `end` d'un autre appel non plus.
+    pendingAsks.delete(event.toolCallId);
+    pendingApprovals.delete(event.toolCallId);
+    publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
+  });
+
+  pi.on("tool_approval_requested", async (event, ctx) => {
+    pendingApprovals.add(event.toolCallId);
+    publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
+  });
+
+  pi.on("tool_approval_resolved", async (event, ctx) => {
+    pendingApprovals.delete(event.toolCallId);
+    publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
+  });
+
   // --- /req : ouvre la feature dans son worktree, puis arme la collecte ------
   // L'isolation passe AVANT tout envoi de texte : l'agent doit écrire le contrat
   // dans le worktree, pas dans le dépôt principal.
@@ -1051,7 +2144,8 @@ export default function reqExtension(pi: ExtensionAPI) {
       st.reqMode = true;
       // Maillon armé après la bascule de session : l'annonce partira à la
       // retombée qui SUIT un « fin » de l'utilisateur, jamais pendant la collecte.
-      armPhase(created.path, "req");
+      // L'armement publie AUSSI l'entrée du magasin : elle existe dès la commande.
+      armPipeline(pipelineDeps(ctx as PipelineCtx), created.path, "req");
       pi.sendMessage(
         {
           customType: "req",
@@ -1096,7 +2190,7 @@ export default function reqExtension(pi: ExtensionAPI) {
       // Armé juste avant l'envoi de l'amorce : la suite (/impl, ou /specs si le
       // contrat n'a pas de specs) sera annoncée à la retombée de CE maillon, pas
       // à celle du tour précédent.
-      armPhase(ctx.cwd, "specs");
+      armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "specs");
       pi.sendUserMessage(seed);
     },
   });
@@ -1129,7 +2223,7 @@ export default function reqExtension(pi: ExtensionAPI) {
       }
       // Armé juste avant l'envoi de l'amorce : la suite (/review, ou /specs si le
       // contrat n'a pas de specs) sera annoncée à la retombée de ce maillon.
-      armPhase(ctx.cwd, "impl");
+      armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "impl");
       pi.sendUserMessage(seed);
     },
   });
@@ -1158,7 +2252,7 @@ export default function reqExtension(pi: ExtensionAPI) {
       }
       // Armé juste avant l'envoi de l'amorce : à la retombée, le verdict lu dans
       // `## Revue` décidera entre /impl --fix et la fin de cycle.
-      armPhase(ctx.cwd, "review");
+      armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "review");
       pi.sendUserMessage(seed);
     },
   });
@@ -1224,6 +2318,9 @@ export default function reqExtension(pi: ExtensionAPI) {
     try {
       const st = stateOfCwd(ctx.cwd);
       const phase = st.phase;
+      // L'agent rend la main : l'état publié bascule sur « attend » (S-4), même
+      // quand ce maillon n'a rien à annoncer (retombée d'une collecte en cours).
+      publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
       if (!phase || st.announced) return;
       // /req ne se clôt que sur « fin » : sans elle, la collecte est en cours et
       // l'agent vient simplement de rendre la main.
@@ -1252,6 +2349,21 @@ export default function reqExtension(pi: ExtensionAPI) {
         { triggerTurn: false },
       );
       prefillEditor(ctx, step);
+
+      // Fin de CYCLE (S-6) : le verdict de /review ne laisse aucun bloquant — la
+      // pipeline quitte la liste des pipelines en cours et rejoint l'historique en
+      // « terminé ». Une revue bloquante la laisse en cours (la suite est
+      // /impl --fix), et un verdict illisible n'est jamais un « terminé » par
+      // défaut : `nextStepFor` ne rend `cycle-end` que sur un verdict propre.
+      if (step.kind === "cycle-end") {
+        try {
+          closePipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "done");
+        } catch (err) {
+          // Historique non écrit ⇒ l'entrée en cours reste (aucune perte
+          // silencieuse) ; l'échec est signalé au plus une fois par session.
+          reportStateWriteFailure(pipelineDeps(ctx as PipelineCtx), err);
+        }
+      }
     } catch {
       /* une annonce ne doit jamais perturber la fin de maillon */
     }

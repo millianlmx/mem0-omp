@@ -6,7 +6,7 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.9.11"
+    "version": "2.9.12"
   },
   "plugins": [
     {
@@ -27,8 +27,8 @@
     {
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
-      "description": "Pipeline one-shot piloté par le critère d'acceptation : /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige des specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep et révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>) : le push de l'utilisateur vaut clôture, la branche est conservée. Chaque maillon annonce la commande de la suite dans le transcript et la préremplit dans la zone de saisie.",
-      "version": "0.7.0",
+      "description": "Pipeline one-shot piloté par le critère d'acceptation : /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige des specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep et révise le git diff. L'état traverse les sessions par un fichier contrat déterministe .omp/pipeline/contract.md, pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>) : le push de l'utilisateur vaut clôture, la branche est conservée. Chaque maillon annonce la commande de la suite dans le transcript et la préremplit dans la zone de saisie. Le panneau /pipelines (ou alt+w) liste en direct les pipelines de TOUS les processus OMP de la machine — dépôt/feature, maillon, état (tourne/attend), temps de l'étape — permet de rejoindre une session et garde un historique persistant des pipelines terminées ou échouées, purgeable entrée par entrée.",
+      "version": "0.8.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -36,8 +36,8 @@
       "repository": "https://github.com/millianlmx/mem0-omp",
       "license": "MIT",
       "category": "productivity",
-      "keywords": ["requirements", "gathering", "ask", "clarification"],
-      "commands": ["req", "specs", "impl", "review"]
+      "keywords": ["requirements", "gathering", "ask", "clarification", "panel"],
+      "commands": ["req", "specs", "impl", "review", "pipelines"]
     }
   ]
 }

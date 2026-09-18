@@ -259,6 +259,59 @@ fait désormais échouer la construction de l'image, pas la première requête.
   sale ou non poussé est conservé avec sa raison, et un balayage impossible ne retire
   rien (avertissement). La mémoire reste unique : worktree et dépôt principal partagent
   le même scope mem0, et rien n'est écrit dans l'arbre de la feature.
+- `/pipelines` (raccourci `alt+w`, plugin `omp-mem0-req`) — ouvre le **panneau des
+  pipelines en cours** : voir ci-dessous.
+
+## Pipelines en cours
+
+`/pipelines` — ou `alt+w` — monte un panneau ancré en **haut à droite** qui liste les
+pipelines de **tous les processus OMP de la machine**, tous dépôts confondus : la
+sienne comme celle d'un autre terminal, d'un autre dépôt, d'un worktree voisin. Rien
+n'est à rafraîchir : le panneau relit l'état partagé une fois par seconde, l'horloge du
+temps écoulé avec lui.
+
+Chaque rang porte le dépôt et la feature, le maillon courant (`/req`, `/specs`,
+`/impl`, `/review`), l'état et le temps passé sur **l'étape courante** — le compteur
+repart à chaque changement de maillon, ce n'est jamais la durée totale :
+
+```
+┌ Pipelines · 2 en cours ──────────────────────────────────────┐
+│ > mem0-omp/panneau-des-pipelines  /impl · tourne · 3:12       │
+│   mem0-omp/fetch-du-souvenir      /specs · attend · 0:41      │
+├───────────────────────────────────────────────────────────────┤
+│   mem0-omp/isolation-worktree     /review · terminé           │
+│   autre-depot/fix-recall          /req · échoué               │
+│ ↑↓ naviguer · Entrée rejoindre · d supprimer                  │
+└ Échap fermer ─────────────────────────────────────────────────┘
+```
+
+- **État** : `tourne` quand l'agent travaille, `attend` quand la pipeline est suspendue
+  à une question — un `ask` en vol, une approbation d'outil en attente, ou l'agent qui a
+  rendu la main. L'état est calculé par le processus **propriétaire** de la pipeline,
+  jamais deviné par celui qui lit.
+- **Entrée** rejoint la session correspondante, avec son transcript — y compris
+  inter-processus et inter-dépôts. Si le fichier de session n'existe pas (ou pas encore
+  écrit sur le disque), le panneau **reste ouvert** et le dit : basculer vers un chemin
+  absent créerait une session vide à la place. Après une bascule réussie, le panneau se
+  referme.
+- **`d`** supprime l'entrée d'historique sélectionnée, définitivement et sans
+  confirmation (une entrée à la fois). Sur une pipeline en cours, il ne supprime rien et
+  le dit.
+- **`↑`/`k`, `↓`/`j`, `Entrée`, `d`, `Échap`/`Ctrl+C`** — c'est un overlay focalisé :
+  tant qu'il est ouvert, aucune touche n'atteint l'éditeur, et `Échap` est le seul
+  moyen de le fermer. Le **texte de l'éditeur est restauré** à la fermeture.
+- **Pas de souris** : ce n'est pas un choix, c'est une contrainte d'OMP — un overlay
+  non plein écran ne reçoit aucun événement de souris (les séquences de clic ne sont
+  même pas émises). Ni fenêtre redimensionnable, ni défilement ligne à ligne.
+- **Fin de pipeline** : un cycle clos par `/review` sans bloquant quitte la liste des
+  pipelines en cours et rejoint l'**historique** avec l'état `terminé` ; un processus
+  qui disparaît sans terminer y entre en `échoué` (constaté par le premier lecteur, à
+  partir du pid du propriétaire). L'historique vit sur le disque : il survit aux
+  redémarrages d'OMP, et `d` est le seul moyen d'en retirer une entrée.
+- **Où c'est écrit** : `<état>/running/<id>.json` (une entrée par pipeline, écrite par
+  son propriétaire, remplacée atomiquement) et `<état>/history/<id>.json`, sous
+  `~/.omp/agent/pipeline` — ou `MEM0_PIPELINE_STATE_DIR`. Aucun serveur, aucun démon :
+  des fichiers, et rien d'autre.
 
 ## Phases
 
@@ -293,6 +346,7 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
+| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`) lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |
