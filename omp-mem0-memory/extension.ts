@@ -43,22 +43,41 @@ const TIMEOUT = { search: 20_000, write: 120_000, other: 10_000 };
 const RECALL_LIMIT = 5; // souvenirs projet injectés par tour
 const RECALL_GLOBAL_LIMIT = 2; // + préférences transverses
 const RECALL_MIN_PROMPT = 12; // en dessous ("ok", "continue"), on ne cherche pas
-// Plancher envoyé au serveur. ATTENTION à la sémantique, vérifiée dans le source de
-// mem0 2.0.20 (`score_and_rank`) : `threshold` filtre le score SÉMANTIQUE brut avant
-// fusion, alors que le `score` renvoyé dans les résultats est le score COMBINÉ
-// (sémantique + bm25 + boost entités) divisé par le nombre de signaux actifs. Les deux
-// ne sont donc pas comparables : on ne calibre pas ce plancher sur les scores affichés.
-// Mesuré sur la base réelle : à 0.4, les cinq requêtes pertinentes de contrôle
-// renvoient toutes des résultats et "quelle est la couleur du bouton de connexion"
-// n'en renvoie aucun ; à 0.45 une vraie question ("à quoi sert EMBEDDING_DIMS") est
-// déjà perdue. C'est le sommaire exhaustif, pas le seuil, qui rattrape un rappel qui rate.
-const RECALL_THRESHOLD = 0.4;
+// Plancher de PERTINENCE. Sémantique, vérifiée dans le source de mem0 2.0.20
+// (`score_and_rank`) : c'est le COSINUS BRUT (`score_details.semantic_score`) qui est
+// filtré, jamais le `score` renvoyé — celui-ci est le score COMBINÉ (sémantique + bm25
+// + boost entités) et BM25 le sature. Mesuré : sur « recette de tarte aux pommes », le
+// souvenir le plus proche reçoit bm25 = 1.000 et un combiné de 0.716, plus haut que
+// n'importe quelle ligne d'une demande pertinente — trier ou filtrer sur le combiné
+// inverse donc l'ordre sémantique. D'où `explain: true` sur la recherche : sans
+// `score_details`, aucune décision de pertinence n'est possible.
+//
+// Mesuré le 2026-09-18 sur la base réelle (69 souvenirs projet + 14 globaux, cosinus
+// bruts) : le hors-sujet ne descend pas sous ~0.25 et les deux classes SE RECOUVRENT —
+// « couleur du bouton de connexion » 0.424-0.478, « recette de tarte » 0.432,
+// « résumé de ce qu'on a fait dans cette session » 0.501-0.534 (le hors-sujet le plus
+// proche du seuil) contre 0.559-0.726 pour les demandes franchement en rapport. 0.55
+// écarte TOUTES les sondes hors-sujet mesurées et garde les souvenirs qui tombent
+// juste. Aucun plancher unique ne sépare parfaitement l'ambigu du modéré : le contrat
+// tranche pour le silence, et c'est le sommaire exhaustif — pas ce seuil — qui rattrape
+// un rappel qui rate. L'ancien 0.4 laissait entrer du hors-sujet mesuré à 0.42-0.53.
+const RECALL_THRESHOLD = 0.55;
+// Sur-échantillonnage demandé au serveur (4 × la limite finale). Le serveur classe par
+// score COMBINÉ : un souvenir à fort cosinus peut être rétrogradé hors du top servi,
+// donc sans marge la sélection finale le manquerait. C'est `selectRelevant` qui tranche.
+const RECALL_POOL = 20;
+const RECALL_GLOBAL_POOL = 8;
 // Plancher du search EXPLICITE (tool mem0_search). Sans lui, mem0 applique son
 // défaut 0.1 = « renvoie tout » : une requête hors-sujet ramène les souvenirs les
-// plus proches quand même (mesuré : « recette de tarte… » → 8 résultats bruités à
-// 0.1, → 0 à 0.4). Même sémantique de gate sémantique brut que RECALL_THRESHOLD ;
-// constante séparée pour la régler indépendamment du rappel.
-const SEARCH_THRESHOLD = 0.4;
+// plus proches quand même. Même sémantique que RECALL_THRESHOLD — cosinus brut — et
+// même valeur ; constante séparée pour la régler indépendamment du rappel.
+const SEARCH_THRESHOLD = 0.55;
+const SEARCH_POOL_MAX = 50; // plafond du pool demandé par le tool (4 × limit)
+// Plancher de la recherche de FIN DE PHASE (session_stop). Elle garde 0.4 — le
+// comportement d'avant : elle est déclenchée par une intention explicite (/set-phase)
+// et filtrée en aval par EXECUTABLE_RE, la sévérité du rappel automatique n'a pas lieu
+// de s'y appliquer.
+const PHASE_THRESHOLD = 0.4;
 const RECALL_LINE_CHARS = 100; // aperçu d'un souvenir dans le transcript, une ligne
 const RECALL_MESSAGE_TYPE = "mem0-recall";
 // Le bloc de rappel est visible par défaut : un rappel muet ne se distingue pas d'un rappel absent.
@@ -725,12 +744,23 @@ const mem0 = {
       TIMEOUT.write,
     ),
 
-  search: (query: string, scope: string, limit: number, threshold?: number) =>
+  // `explain` ajoute `score_details.semantic_score` (cosinus brut) à chaque résultat —
+  // seule voie d'accès à un score non saturé par BM25. Le serveur d'avant ce champ
+  // l'ignore (pydantic) : les lignes arrivent alors sans `score_details`, ce que
+  // `selectRelevant` traite comme « aucun score » et que le rappel signale bruyamment.
+  search: (query: string, scope: string, limit: number, threshold?: number, explain = false) =>
     mem0Fetch(
       "/memory/search",
       {
         method: "POST",
-        body: JSON.stringify({ query, agent_id: scope, limit, threshold: threshold ?? null, filters: null }),
+        body: JSON.stringify({
+          query,
+          agent_id: scope,
+          limit,
+          threshold: threshold ?? null,
+          filters: null,
+          explain,
+        }),
       },
       TIMEOUT.search,
     ),
@@ -753,6 +783,64 @@ function rows(result: any): any[] {
 
 function memoryLine(m: any): string {
   return String(m?.memory ?? m?.text ?? JSON.stringify(m));
+}
+
+/** Identifiant d'une ligne de résultat brute, ou "?" quand elle n'en porte pas. */
+function memoryId(m: unknown): string {
+  if (typeof m !== "object" || m === null || !("id" in m)) return "?";
+  const id = m.id;
+  return typeof id === "string" || typeof id === "number" ? String(id) : "?";
+}
+
+/**
+ * Cosinus brut d'une ligne de résultat (`score_details.semantic_score`), ou null
+ * quand la ligne n'en porte pas — champ absent (service antérieur à `explain`),
+ * non numérique, NaN ou infini. Garde locale plutôt qu'un `any` : ces lignes
+ * viennent du réseau et ne sont validées nulle part ailleurs.
+ */
+function semanticScore(row: unknown): number | null {
+  if (typeof row !== "object" || row === null || !("score_details" in row)) return null;
+  const details = row.score_details;
+  if (typeof details !== "object" || details === null || !("semantic_score" in details)) return null;
+  const score = details.semantic_score;
+  return typeof score === "number" && Number.isFinite(score) ? score : null;
+}
+
+/**
+ * Sélection de pertinence — pure et exportée pour être exécutable sans OMP ni
+ * serveur (convention `buildIndex` / `planDedupe`).
+ *
+ * Le SEUL critère est le cosinus brut : ni la portée d'un souvenir (projet ou
+ * globale), ni le dépôt d'où il vient, ni sa langue, ni sa date n'entrent en
+ * compte. Le tri se fait sur ce cosinus, jamais sur le `score` renvoyé par le
+ * serveur : celui-ci est le score combiné, que BM25 sature, et le serveur classe
+ * donc dans un ordre qui n'est pas sémantique.
+ *
+ * `kept` : lignes dont le cosinus est un nombre ≥ `floor`, triées par ce score
+ * décroissant puis tronquées à `limit`. `candidates` : lignes reçues. `scored` :
+ * lignes portant un cosinus numérique — 0 avec des candidats signifie que le
+ * service ne renvoie pas `score_details` (version antérieure à `explain`).
+ * `rows` n'est pas muté.
+ */
+export function selectRelevant(
+  rows: unknown[],
+  floor: number,
+  limit: number,
+): { kept: unknown[]; candidates: number; scored: number } {
+  const hits: Array<{ row: unknown; score: number }> = [];
+  let scored = 0;
+  for (const row of rows) {
+    const score = semanticScore(row);
+    if (score === null) continue;
+    scored += 1;
+    if (score >= floor) hits.push({ row, score });
+  }
+  hits.sort((a, b) => b.score - a.score);
+  return {
+    kept: hits.slice(0, Math.max(0, limit)).map((h) => h.row),
+    candidates: rows.length,
+    scored,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1362,13 +1450,15 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         head: clip(memoryLine(m).split("\n")[0]!.trim(), RECALL_LINE_CHARS),
       });
       // Les échecs sont tracés — un rappel muet a caché le problème trop longtemps.
+      // `explain: true` est requis : sans `score_details.semantic_score`, aucune
+      // décision de pertinence n'est possible (le `score` renvoyé est saturé par BM25).
       const [projectRes, globalRes] = await Promise.all([
-        mem0.search(prompt.slice(0, 800), scope, RECALL_LIMIT, RECALL_THRESHOLD).catch((err) => {
+        mem0.search(prompt.slice(0, 800), scope, RECALL_POOL, RECALL_THRESHOLD, true).catch((err) => {
           recallError = (err as Error).message;
           console.warn(`[mem0] recall projet indisponible : ${recallError}`);
           return null;
         }),
-        mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_LIMIT, RECALL_THRESHOLD).catch(() => null),
+        mem0.search(prompt.slice(0, 400), GLOBAL_SCOPE, RECALL_GLOBAL_POOL, RECALL_THRESHOLD, true).catch(() => null),
       ]);
 
       // Service injoignable : ne rien affirmer sur le contenu de la mémoire.
@@ -1378,6 +1468,25 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
             `Aucun rappel ce tour : ne conclus rien sur le contenu de la mémoire, et ne tente pas ` +
             `d'écrire avec mem0_add tant qu'elle ne répond pas.`,
           { status: "unavailable", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: [], global: [], error: recallError ?? "aucune réponse" },
+        );
+      }
+
+      // Sélection sur le cosinus brut, avant le filtre des souvenirs déjà montrés :
+      // un souvenir écarté par le plancher ne doit pas consommer son id, sinon il ne
+      // pourrait plus être injecté le jour où la demande devient en rapport.
+      const project = selectRelevant(rows(projectRes), RECALL_THRESHOLD, RECALL_LIMIT);
+      const global = selectRelevant(rows(globalRes), RECALL_THRESHOLD, RECALL_GLOBAL_LIMIT);
+
+      // Le service répond mais aucun candidat ne porte de cosinus : il tourne sans
+      // `explain` (version antérieure à ce champ). Le doute se traduit par le silence,
+      // mais l'échec est BRUYANT — un dispositif muet en silence a déjà caché ce
+      // type de panne, et sans score le rappel ne saurait pas trier ce qu'il injecte.
+      if (project.candidates + global.candidates > 0 && project.scored + global.scored === 0) {
+        return recallMessage(
+          `[mem0] Le service mémoire ne renvoie pas de score sémantique (paramètre absent) — ` +
+            `reconstruis le conteneur : docker compose build mem0-http && docker compose up -d mem0-http. ` +
+            `Aucun rappel ce tour.`,
+          { status: "unavailable", scope, threshold: RECALL_THRESHOLD, indexSize, pinned, project: [], global: [], error: "score sémantique absent" },
         );
       }
 
@@ -1392,8 +1501,8 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
           return keepTop && i === 0 ? true : !seen;
         });
 
-      const projectMems = fresh(projectRes, true);
-      const globalMems = fresh(globalRes, false);
+      const projectMems = fresh(project.kept, true);
+      const globalMems = fresh(global.kept, false);
 
 
       // Cas vide : autrefois silencieux. C'est le signal qui déclenche l'écriture.
@@ -1506,7 +1615,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         // mots-clés fixes dans le texte embeddé : padder la requête détruit sa
         // pertinence (mesuré). Les mots-clés servent de tri lexical en aval.
         const query = brief ? `${phaseName} ${brief}` : phaseName;
-        const found = rows(await mem0.search(query, scope, RECALL_LIMIT, RECALL_THRESHOLD)).map(memoryLine);
+        const found = rows(await mem0.search(query, scope, RECALL_LIMIT, PHASE_THRESHOLD)).map(memoryLine);
         const executable = found
           .filter((t) => EXECUTABLE_RE.test(t))
           .map((t) => ({ t, rank: EXECUTION_KEYWORDS.some((k) => t.toLowerCase().includes(k)) ? 1 : 0 }))
@@ -1581,12 +1690,31 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
     async execute(_id, params, _signal, _onUpdate, ctx: any) {
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
       const limit = Math.min(params.limit ?? 6, 50);
-      const result = await mem0.search(params.query, scope, limit, SEARCH_THRESHOLD);
-      const found = rows(result);
-      const text = found.length
-        ? found.map((m) => `- [${m.id ?? "?"}] ${memoryLine(m)}`).join("\n")
+      // Sur-échantillonnage : le serveur classe par score combiné, donc sans marge
+      // les souvenirs à fort cosinus rétrogradés hors du top servi seraient perdus.
+      const result = await mem0.search(params.query, scope, Math.min(limit * 4, SEARCH_POOL_MAX), SEARCH_THRESHOLD, true);
+      const sel = selectRelevant(rows(result), SEARCH_THRESHOLD, limit);
+      // Des candidats mais aucun cosinus : le service tourne sans `explain`. Ne rien
+      // rendre du pool courant (il n'est pas trié sémantiquement) et le dire.
+      if (sel.candidates > 0 && sel.scored === 0) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `[mem0] Le service mémoire ne renvoie pas de score sémantique (paramètre absent) : ` +
+              `recherche indisponible. Reconstruis le conteneur : ` +
+              `docker compose build mem0-http && docker compose up -d mem0-http.`,
+          }],
+          details: { candidates: sel.candidates, scored: sel.scored, floor: SEARCH_THRESHOLD, kept: [] },
+        };
+      }
+      const text = sel.kept.length
+        ? sel.kept.map((m) => `- [${memoryId(m)}] ${memoryLine(m)}`).join("\n")
         : "Aucun souvenir pertinent.";
-      return { content: [{ type: "text", text }], details: result };
+      return {
+        content: [{ type: "text", text }],
+        details: { candidates: sel.candidates, scored: sel.scored, floor: SEARCH_THRESHOLD, kept: sel.kept },
+      };
     },
   });
 

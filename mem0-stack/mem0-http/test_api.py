@@ -121,6 +121,24 @@ def main() -> int:
         print(f"{'PASS' if ok else 'FAIL'}  threshold transmis à mem0.search : {calls[0][1].get('threshold')}")
         failures += 0 if ok else 1
 
+        # `explain` doit atteindre mem0.search : c'est la seule voie d'accès au
+        # cosinus brut (`score_details.semantic_score`) sur lequel le plugin filtre
+        # la pertinence — le `score` renvoyé est le score combiné, que BM25 sature.
+        calls.clear()
+        client.post("/memory/search", json={"query": "q", "agent_id": "A", "limit": 5, "explain": True})
+        ok = calls[0][1].get("explain") is True
+        print(f"{'PASS' if ok else 'FAIL'}  explain transmis à mem0.search : {calls[0][1].get('explain')}")
+        failures += 0 if ok else 1
+
+        # Non-régression : un client qui ne connaît pas le champ (version antérieure
+        # du plugin) reste accepté, et le défaut est False — la réponse est celle
+        # d'avant, sans `score_details`.
+        calls.clear()
+        client.post("/memory/search", json={"query": "q", "agent_id": "A", "limit": 5})
+        ok = calls[0][1].get("explain") is False
+        print(f"{'PASS' if ok else 'FAIL'}  explain absent → False (compat ascendante) : {calls[0][1].get('explain')}")
+        failures += 0 if ok else 1
+
         print()
         print("Conforme." if failures == 0 else f"{failures} échec(s).")
         return 1 if failures else 0

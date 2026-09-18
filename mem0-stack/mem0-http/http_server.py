@@ -80,6 +80,12 @@ class SearchRequest(BaseModel):
     # Plancher de score. mem0 applique 0.1 quand c'est None (`_search_vector_store`),
     # ce qui revient à « renvoie tout » : le filtrage utile se décide côté appelant.
     threshold: float | None = None
+    # Ajoute `score_details.semantic_score` à chaque résultat : c'est la SEULE voie
+    # d'accès au cosinus brut. Le `score` renvoyé, lui, est le score combiné
+    # (sémantique + bm25 + boost entités) — BM25 le sature, donc il ne départage pas
+    # un souvenir hors-sujet d'un souvenir pertinent. Optionnel : absent = réponse
+    # strictement identique à avant (`score_details` en moins pour les anciens clients).
+    explain: bool = False
 
 
 @app.get("/health")
@@ -125,6 +131,7 @@ async def search_memories(req: SearchRequest, x_mem0_token: str | None = Header(
         top_k=req.limit,                                     # `limit` s'appelle top_k en 2.x
         filters=scope_filters(req.agent_id, extra=req.filters),
         threshold=req.threshold,
+        explain=req.explain,
     )
 
 
