@@ -1262,68 +1262,241 @@ export function buildPanelRows(
 
 // --- rejoindre la session d'une entrée (S-5) --------------------------------
 
-export type JoinDecision = { kind: "switch"; path: string } | { kind: "unavailable"; message: string };
+/** En-tête exploitable d'un fichier de session : ce qu'on en garde pour la bascule. */
+export type SessionHeaderInfo = { cwd: string | null };
 
 /**
- * Décision de bascule, PURE (`exists` injecté). Le contrôle d'existence est
- * OBLIGATOIRE : basculer vers un chemin absent n'échoue pas, il CRÉE une session
- * vide à ce chemin (cf. `## Documentation` §2) — soit exactement l'inverse de ce
- * qu'on veut en signalant une entrée non reprenable.
+ * Borne de lecture de l'en-tête : une session pèse des mégaoctets et le panneau
+ * se rafraîchit à la seconde — on ne lit jamais le fichier entier, et la boucle de
+ * rafraîchissement n'appelle même pas cette fonction.
  */
-export function switchDecision(entry: { sessionFile?: string | null }, exists: (p: string) => boolean): JoinDecision {
-  const file = asStringOrNull(entry.sessionFile);
-  if (file && exists(file)) return { kind: "switch", path: file };
-  return {
-    kind: "unavailable",
-    message: file
-      ? `session introuvable — entrée non reprenable : ${file}`
-      : "session introuvable — entrée non reprenable",
-  };
+export const SESSION_HEADER_READ_BYTES = 8192;
+
+/**
+ * En-tête d'un fichier de session : la PREMIÈRE ligne dont l'objet JSON satisfait
+ * le validateur d'OMP (`type === "session"` et `id` chaîne, cf. `## Documentation`
+ * §3), dans les `maxBytes` premiers octets. Un fichier courant commence par un
+ * créneau de titre — l'en-tête est donc en 2e ligne — un fichier hérité le porte
+ * en 1re. Aucune exception ne sort d'ici : illisible, ligne tronquée par la borne
+ * ou JSON mal formé ⇒ `null`.
+ */
+export function readSessionHeader(file: string, maxBytes = SESSION_HEADER_READ_BYTES): SessionHeaderInfo | null {
+  let raw: string;
+  try {
+    const fd = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(maxBytes);
+      raw = buf.subarray(0, fs.readSync(fd, buf, 0, maxBytes, 0)).toString("utf8");
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+  for (const line of raw.split("\n")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue; // ligne vide, tronquée par la borne, ou JSON mal formé
+    }
+    const rec = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+    if (rec?.type !== "session" || typeof rec.id !== "string") continue;
+    return { cwd: asStringOrNull(rec.cwd) };
+  }
+  return null;
 }
 
+/** Sondes disque de la décision — injectées, pour que `switchDecision` reste PURE. */
+export type SessionProbe = {
+  /** Le chemin existe ET est un fichier régulier. */
+  isSessionFile: (file: string) => boolean;
+  /** En-tête de session (1re entrée valide : `type === "session"` et `id` chaîne), ou null si absent/illisible. */
+  sessionHeader: (file: string) => SessionHeaderInfo | null;
+  /** Le répertoire existe et est un répertoire (`statSync` suit les liens symboliques). */
+  isDirectory: (dir: string) => boolean;
+};
+
+/** Sonde disque réelle, synchrone et bornée : aucune exception ne sort d'ici. */
+export const diskProbe: SessionProbe = {
+  isSessionFile: (file) => {
+    try {
+      return fs.statSync(file).isFile();
+    } catch {
+      return false;
+    }
+  },
+  sessionHeader: (file) => readSessionHeader(file),
+  isDirectory: (dir) => {
+    try {
+      return fs.statSync(dir).isDirectory();
+    } catch {
+      return false;
+    }
+  },
+};
+
+export type JoinDecision =
+  | { kind: "switch"; path: string; cwd: string | null }
+  | { kind: "unavailable"; message: string };
+
+/**
+ * Décision de bascule, PURE (toute lecture passe par `probe`). Les contrôles sont
+ * OBLIGATOIRES : basculer vers un chemin absent ne réinitialise pas la session, il
+ * en CRÉE une vide à ce chemin, et OMP accepte une cible dont le cwd enregistré a
+ * disparu (cf. `## Documentation` §4 points 5-6) — soit exactement l'inverse de ce
+ * qu'on veut en signalant une entrée non reprenable.
+ */
+export function switchDecision(entry: { sessionFile?: string | null }, probe: SessionProbe): JoinDecision {
+  const file = asStringOrNull(entry.sessionFile);
+  if (!file) return { kind: "unavailable", message: "session introuvable — entrée non reprenable" };
+  if (!probe.isSessionFile(file)) {
+    return { kind: "unavailable", message: `session introuvable — entrée non reprenable : ${file}` };
+  }
+  const header = probe.sessionHeader(file);
+  if (!header) {
+    // Un fichier de 0 octet est converti en session vide par OMP à la bascule :
+    // même piège que le chemin absent, donc même refus (S-2, 3e ligne).
+    return { kind: "unavailable", message: `session sans en-tête valide — entrée non reprenable : ${file}` };
+  }
+  if (header.cwd !== null && !probe.isDirectory(header.cwd)) {
+    return {
+      kind: "unavailable",
+      message: `répertoire de travail de la session cible disparu — entrée non reprenable : ${header.cwd}`,
+    };
+  }
+  return { kind: "switch", path: file, cwd: header.cwd };
+}
+
+/**
+ * Le gestionnaire de session VIVANT (`ctx.sessionManager`) : méthodes optionnelles
+ * parce que la façade publique d'OMP masque celles de relocalisation
+ * (`## Documentation` §2) — un OMP qui ne les expose pas dégrade en bascule simple.
+ */
+export type NavSessionManager = {
+  getCwd?: () => string;
+  captureState?: () => unknown;
+  setCwdWithoutRelocation?: (cwd: string) => void;
+  adoptRecordedCwd?: () => void;
+  restoreState?: (snapshot: unknown) => void;
+};
+
 /** Le strict nécessaire d'un contexte de COMMANDE pour basculer. */
-export type SwitchCtx = { switchSession?: (sessionPath: string) => Promise<{ cancelled: boolean }> };
+export type SwitchCtx = {
+  switchSession?: (sessionPath: string) => Promise<{ cancelled: boolean }>;
+  sessionManager?: NavSessionManager;
+};
 
 export type JoinDeps = {
   /** Contexte de commande : `switchSession` y est disponible, commande comme raccourci. */
   ctx?: SwitchCtx;
+  /** Sondes disque ; sonde réelle par défaut. */
+  probe?: SessionProbe;
   /** Ferme le panneau — AVANT la bascule, aucun overlay orphelin au-dessus du transcript. */
   close: () => void;
   /** Notice affichée DANS le panneau (entrée non reprenable). */
   showNotice: (message: string) => void;
   /** Notice DURABLE dans le transcript (bascule refusée). */
   notify: (text: string) => void;
-  exists?: (p: string) => boolean;
 };
 
 /**
- * Rejoint la session d'une entrée, dans cet ordre : existence du fichier, notice
- * dans le panneau s'il manque, fermeture du panneau, bascule. Un refus
- * (`{cancelled: true}`) ou une exception devient une notice durable — jamais une
- * exception qui remonte au tour.
+ * Aménagement du cwd de la session COURANTE avant la bascule, ou `null` si inutile
+ * ou impossible. Aucun fichier n'est déplacé, aucun en-tête réécrit
+ * (`setCwdWithoutRelocation`, `## Documentation` §2) : c'est la seule façon de
+ * passer la garde d'OMP, qui refuse une cible dont le cwd enregistré diffère du
+ * cwd courant (`## Documentation` §1). Le cwd déjà bon ⇒ rien à faire (et un
+ * `getCwd` absent n'empêche pas l'aménagement : il est idempotent).
+ */
+function relocateCwd(
+  sm: NavSessionManager | undefined,
+  cwd: string | null,
+): { sm: NavSessionManager; snapshot: unknown } | null {
+  if (cwd === null || !sm) return null;
+  if (
+    typeof sm.captureState !== "function" ||
+    typeof sm.setCwdWithoutRelocation !== "function" ||
+    typeof sm.restoreState !== "function"
+  ) {
+    return null;
+  }
+  try {
+    const current = sm.getCwd?.();
+    if (typeof current === "string" && path.resolve(current) === path.resolve(cwd)) return null;
+  } catch {
+    /* getCwd cassé : on aménage quand même, l'opération est idempotente */
+  }
+  let snapshot: unknown;
+  try {
+    snapshot = sm.captureState();
+    sm.setCwdWithoutRelocation(cwd);
+  } catch {
+    // Mutation interrompue : on remet l'état d'avant plutôt que de basculer sur un
+    // gestionnaire à moitié amendé (l'annulation est elle-même sans garantie).
+    try {
+      sm.restoreState(snapshot);
+    } catch {
+      /* rien de mieux à faire : la bascule simple reste possible */
+    }
+    return null;
+  }
+  return { sm, snapshot };
+}
+
+/**
+ * Rejoint la session d'une entrée, dans cet ordre (S-1) : décision, notice DANS le
+ * panneau si l'entrée n'est pas reprenable (S-2/S-3), fermeture du panneau,
+ * aménagement du cwd, bascule, adoption du répertoire de session, restauration du
+ * snapshot sur refus. Un refus (`{cancelled: true}`), une exception ou un contexte
+ * dégradé devient une notice durable — jamais une exception qui remonte au tour.
  */
 export async function joinEntry(entry: { sessionFile?: string | null }, deps: JoinDeps): Promise<void> {
-  const decision = switchDecision(entry, deps.exists ?? fs.existsSync);
+  const decision = switchDecision(entry, deps.probe ?? diskProbe);
   if (decision.kind === "unavailable") {
     deps.showNotice(decision.message);
     return;
   }
   deps.close();
-  const switchSession = deps.ctx?.switchSession;
-  if (typeof switchSession !== "function") {
+
+  const ctx = deps.ctx;
+  if (!ctx || typeof ctx.switchSession !== "function") {
     deps.notify(`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${decision.path}`);
     return;
   }
+  const switchSession = ctx.switchSession;
+  const relocation = relocateCwd(ctx.sessionManager, decision.cwd);
+
   let refused = false;
   try {
-    const res = await switchSession(decision.path);
+    // `call(ctx)` : la méthode garde son receveur (le câblage d'OMP passe une
+    // fermeture, mais un contexte réel peut exposer une méthode liée à `this`).
+    const res = await switchSession.call(ctx, decision.path);
     refused = res?.cancelled === true;
   } catch {
     refused = true;
   }
-  if (refused) {
-    deps.notify(`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${decision.path}`);
+
+  if (!refused) {
+    if (relocation) {
+      // Sans ça le magasin reste sur le bucket de la session QUITTÉE (il n'est
+      // re-pointé que par l'adoption, `## Documentation` §2).
+      try {
+        relocation.sm.adoptRecordedCwd?.();
+      } catch {
+        /* la bascule elle-même a réussi : rien à signaler */
+      }
+    }
+    return;
   }
+
+  if (relocation) {
+    try {
+      relocation.sm.restoreState?.(relocation.snapshot);
+    } catch {
+      /* restauration impossible : la notice durable reste le seul effet utile */
+    }
+  }
+  deps.notify(`[pipeline] bascule refusée — la session cible n'a pas pu être ouverte : ${decision.path}`);
 }
 
 // --- le composant et sa fabrique --------------------------------------------
@@ -1972,7 +2145,15 @@ export default function reqExtension(pi: ExtensionAPI) {
         // `switchSession` vit sur le contexte de COMMANDE : le runtime appelle
         // `createCommandContext()` pour les commandes ET pour les raccourcis, donc
         // le même `ctx` porte la bascule dans les deux cas (cf. `## Documentation` §3).
-        void joinEntry(entry, { ctx: ctx as SwitchCtx, close, showNotice, notify: notifyDurable });
+        // Le cast est DOUBLE parce que la façade publique masque les méthodes de
+        // relocalisation du gestionnaire (`## Documentation` §2) : elles sont bien
+        // là au runtime, le type ne les déclare pas.
+        void joinEntry(entry, {
+          ctx: ctx as unknown as SwitchCtx,
+          close,
+          showNotice,
+          notify: notifyDurable,
+        });
       },
     };
     try {
