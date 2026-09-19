@@ -44,6 +44,7 @@ import {
   type PanelRow,
   type PipelinesPanelDeps,
   type RunningEntry,
+  type SessionProbe,
 } from "../omp-mem0-req/extension.ts";
 
 // ---------------------------------------------------------------------------
@@ -374,7 +375,12 @@ test("AC-6 : sélectionner une pipeline ouvre la session correspondante", async 
   const stateDir = mktmp("pl-ac6-");
   const cwd = mktmp("pl-repo-join-");
   const sessionFile = path.join(stateDir, "session-cible.jsonl");
-  fs.writeFileSync(sessionFile, '{"type":"session"}\n');
+  // Un fichier de session RÉELLEMENT valide : en-tête complet, avec le cwd du
+  // répertoire courant (une 4e cause de refus existe pour un cwd disparu).
+  fs.writeFileSync(
+    sessionFile,
+    `{"type":"session","version":3,"id":"s-cible","timestamp":"2026-09-19T00:00:00.000Z","cwd":${JSON.stringify(cwd)}}\n`,
+  );
   mkRunning(stateDir, { cwd, label: "depot/feature", sessionFile, sessionId: "abc" });
 
   const switched: string[] = [];
@@ -700,23 +706,36 @@ test("l'état est écrit en toutes lettres : la couleur ne le porte jamais seule
 
 test("switchDecision : chemin absent, chemin vide et chemin présent", () => {
   const present = "/sessions/abc.jsonl";
-  assert.deepEqual(switchDecision({ sessionFile: present }, (p) => p === present), {
+  const cwd = "/depot/cible";
+  const probe: SessionProbe = {
+    isSessionFile: (p) => p === present,
+    sessionHeader: () => ({ cwd }),
+    isDirectory: () => true,
+  };
+  assert.deepEqual(switchDecision({ sessionFile: present }, probe), {
     kind: "switch",
     path: present,
+    cwd,
   });
-  assert.deepEqual(switchDecision({ sessionFile: present }, () => false), {
+  assert.deepEqual(switchDecision({ sessionFile: present }, { ...probe, isSessionFile: () => false }), {
     kind: "unavailable",
     message: `session introuvable — entrée non reprenable : ${present}`,
   });
-  assert.deepEqual(switchDecision({ sessionFile: null }, () => true), {
+  assert.deepEqual(switchDecision({ sessionFile: null }, probe), {
     kind: "unavailable",
     message: "session introuvable — entrée non reprenable",
   });
 });
 
 test("joinEntry : une bascule refusée devient une notice durable, jamais une exception", async () => {
-  const sessionFile = path.join(mktmp("pl-join-"), "session.jsonl");
-  fs.writeFileSync(sessionFile, "");
+  const dir = mktmp("pl-join-");
+  const sessionFile = path.join(dir, "session.jsonl");
+  // Session valide : le test porte sur le REFUS de la bascule, pas sur celui de
+  // l'entrée (un fichier vide tomberait sur « sans en-tête valide »).
+  fs.writeFileSync(
+    sessionFile,
+    `{"type":"session","version":3,"id":"s-jointe","timestamp":"2026-09-19T00:00:00.000Z","cwd":${JSON.stringify(dir)}}\n`,
+  );
   const durable: string[] = [];
   const shown: string[] = [];
   const closed: number[] = [];

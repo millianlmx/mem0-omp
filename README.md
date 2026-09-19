@@ -290,10 +290,16 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
   rendu la main. L'état est calculé par le processus **propriétaire** de la pipeline,
   jamais deviné par celui qui lit.
 - **Entrée** rejoint la session correspondante, avec son transcript — y compris
-  inter-processus et inter-dépôts. Si le fichier de session n'existe pas (ou pas encore
-  écrit sur le disque), le panneau **reste ouvert** et le dit : basculer vers un chemin
-  absent créerait une session vide à la place. Après une bascule réussie, le panneau se
-  referme.
+  inter-processus, inter-dépôts et depuis un worktree voisin : la session courante est
+  d'abord amenée sur le répertoire de travail enregistré par la cible, donc les
+  commandes suivantes partent de là, et la session quittée reste intacte et reprenable
+  (seul le périmètre de la **session** change : réglages et plugins du processus, eux,
+  ne bougent pas). Si le fichier de session n'existe pas (ou pas encore écrit sur le
+  disque), ou s'il ne porte pas d'en-tête de session valide, le panneau **reste ouvert**
+  et le dit : basculer vers un chemin absent — ou vers un fichier de 0 octet — créerait
+  une session vide à la place. Même refus, avec sa cause, quand le répertoire de travail
+  enregistré par la cible a disparu (worktree archivé) : le panneau nomme le chemin
+  manquant et rien n'est créé. Après une bascule réussie, le panneau se referme.
 - **`d`** supprime l'entrée d'historique sélectionnée, définitivement et sans
   confirmation (une entrée à la fois). Sur une pipeline en cours, il ne supprime rien et
   le dit.
