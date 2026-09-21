@@ -168,7 +168,7 @@ function noticeRow(notice: string, width: number): string {
 // S-1 — AC-1 : rejoindre l'entrée d'un worktree voisin
 // ---------------------------------------------------------------------------
 
-test("AC-1 : rejoindre l'entrée d'un worktree voisin charge sa session et adopte son cwd", async () => {
+test("join/AC-1 : rejoindre l'entrée d'un worktree voisin charge sa session et adopte son cwd", async () => {
   // Disposition « worktree » : deux répertoires FRÈRES sous un même parent.
   const parent = mktmp("join-ac1-");
   const a = path.join(parent, "mem0-omp");
@@ -219,7 +219,7 @@ test("AC-1 : rejoindre l'entrée d'un worktree voisin charge sa session et adopt
 // S-1 — AC-2 : rejoindre l'entrée d'un dépôt entièrement différent
 // ---------------------------------------------------------------------------
 
-test("AC-2 : rejoindre l'entrée d'un dépôt entièrement différent charge sa session et adopte son cwd", async () => {
+test("join/AC-2 : rejoindre l'entrée d'un dépôt entièrement différent charge sa session et adopte son cwd", async () => {
   // Le cas rapporté : une session de pdp-cyber-aithreat rejointe depuis mem0-omp.
   // Deux arborescences DISJOINTES (AC-1, au contraire, a deux répertoires frères
   // d'un même parent) — le protocole ne dépend que des cwd, jamais du dépôt.
@@ -270,7 +270,7 @@ test("AC-2 : rejoindre l'entrée d'un dépôt entièrement différent charge sa 
 // session vide
 // ---------------------------------------------------------------------------
 
-test("AC-3 : une entrée dont le fichier de session a disparu laisse la fenêtre en place", async () => {
+test("join/AC-3 : une entrée dont le fichier de session a disparu laisse la fenêtre en place", async () => {
   const root = mktmp("join-ac3-");
   const dirA = path.join(root, "sessions");
   fs.mkdirSync(dirA, { recursive: true });
@@ -324,7 +324,7 @@ test("AC-3 : une entrée dont le fichier de session a disparu laisse la fenêtre
 // S-3 — AC-4 : la cible dont le cwd a disparu est refusée AVEC sa cause
 // ---------------------------------------------------------------------------
 
-test("AC-4 : une entrée dont le répertoire de travail a disparu est refusée avec sa cause", async () => {
+test("join/AC-4 : une entrée dont le répertoire de travail a disparu est refusée avec sa cause", async () => {
   const root = mktmp("join-ac4-");
   const gone = path.join(root, "worktree-archive");
   fs.mkdirSync(gone, { recursive: true });

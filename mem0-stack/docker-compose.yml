@@ -1,8 +1,18 @@
 services:
   qdrant:
-    image: qdrant/qdrant:latest
+    # Tag épinglé volontairement (jamais `latest`) : ./qdrant_storage est un
+    # bind-mount, et un pull vers une majeure incompatible peut rendre la base
+    # illisible. v1.19.0 est la version que la pile locale exécute déjà.
+    image: qdrant/qdrant:v1.19.0
     container_name: mem0-qdrant
     restart: unless-stopped
+    # Sans clé, Qdrant auto-hébergé n'a AUCUNE authentification : tout processus
+    # local lit/efface la base via l'API ou le dashboard. Les routes de santé
+    # (/readyz, /livez, /healthz) restent accessibles sans clé, donc le
+    # healthcheck ci-dessous et la sonde de doctor.sh §3 sont inchangés.
+    # Défaut non secret : c'est une valeur LOCALE, surchargeable dans .env.
+    environment:
+      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-mem0-local-qdrant-key}
     ports:
       - "127.0.0.1:6333:6333"   # API + dashboard http://localhost:6333/dashboard
       - "127.0.0.1:6334:6334"   # gRPC
@@ -33,6 +43,11 @@ services:
     environment:
       QDRANT_HOST: qdrant
       QDRANT_PORT: "6333"
+      # MÊME expression que le service qdrant ci-dessus : une seule variable
+      # alimente les deux côtés, donc les clés ne peuvent pas diverger.
+      # La changer dans .env impose `compose up -d --force-recreate` (les deux
+      # conteneurs gardent sinon l'ancienne valeur).
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-mem0-local-qdrant-key}
       # oMLX tourne EN NATIF sur le Mac, pas dans un conteneur.
       #   Docker Desktop : http://host.docker.internal:8000/v1
       #   Podman         : http://host.containers.internal:8000/v1

@@ -9,11 +9,16 @@ commande d'ajout côté utilisateur.
 mem0-omp/                              ← racine du dépôt = marketplace
 ├── .omp-plugin/marketplace.json       ← catalogue, chemin lu par OMP
 ├── .claude-plugin/marketplace.json    ← copie, repli compatible Claude Code
-├── omp-mem0-memory/                   ← le plugin
+├── omp-mem0-memory/                   ← le plugin mémoire
 │   ├── package.json                   ← déclare omp.extensions
 │   ├── extension.ts
 │   └── install.sh                     ← chemin manuel, hors marketplace
+├── omp-mem0-req/                      ← le plugin pipeline (/req → /specs → /impl → /review)
+│   ├── package.json                   ← déclare omp.extensions
+│   └── extension.ts
 ├── mem0-stack/                        ← le service mem0, à lancer séparément
+│   └── mem0-http/                     ← l'API HTTP et sa config mem0
+├── test/                              ← suite de tests, hors publication
 ├── scripts/check.sh
 └── .github/workflows/check.yml
 ```
@@ -42,23 +47,29 @@ rejetée à la validation, ou l'extension est silencieusement ignorée au runtim
 ## Avant de pousser
 
 ```bash
-# 1. Remplace le handle GitHub dans les 3 fichiers qui le contiennent
-grep -rl 'millian/mem0-omp' . --exclude-dir=.git
-#    .omp-plugin/marketplace.json
-#    .claude-plugin/marketplace.json
-#    omp-mem0-memory/package.json
+# 1. Remplace le handle GitHub dans les fichiers qui portent une URL de dépôt :
+grep -rl 'github.com/' . --exclude-dir=.git --exclude-dir=node_modules
 
 # 2. Valide
 ./scripts/check.sh
 ```
 
-Le script vérifie : JSON valide, catalogues synchronisés, règles de nommage
-(minuscules, chiffres, tirets et points, début et fin alphanumériques, 64
-caractères max), présence du `package.json`, résolution réelle de chaque entrée
-d'extension sur disque, transpilation de `extension.ts`, et absence d'import de
-valeur depuis `@oh-my-pi/*`.
+Cette commande liste exactement cinq fichiers — `README.md`,
+`.omp-plugin/marketplace.json`, `.claude-plugin/marketplace.json`,
+`omp-mem0-memory/package.json` et ce `PUBLISHING.md` — et c'est elle qui fait
+autorité : après une édition, relance-la plutôt que de te fier à cette liste.
+Pour un fork, le texte à substituer est le handle : `<ton-handle>`.
 
-Ce dernier point mérite une explication : `import type { ExtensionAPI }` est
+Le script vérifie : JSON valide, catalogues synchronisés octet pour octet, règles
+de nommage (minuscules, chiffres, tirets et points, début et fin alphanumériques,
+64 caractères max), présence du `package.json` de chaque plugin, résolution réelle
+de chaque entrée d'extension sur disque, **transpilation des deux `extension.ts`**,
+**absence d'import de valeur depuis `@oh-my-pi/*` dans les deux**, cohérence du
+tableau `commands` de chaque entrée de catalogue avec les `registerCommand()`
+réellement appelés, **cohérence des versions** (voir « Mettre à jour »),
+type-check du plugin pipeline contre les types de l'hôte, et la suite de tests.
+
+Le contrôle d'import mérite une explication : `import type { ExtensionAPI }` est
 effacé à la compilation, donc l'extension n'a aucune dépendance à résoudre au
 runtime. Un `import` de valeur en créerait une, et elle casse selon la
 plateforme — c'est la cause de toute une famille de plugins qui ne chargent pas
@@ -89,6 +100,7 @@ Côté utilisateur, dans une session OMP :
 ```
 /marketplace add <ton-handle>/mem0-omp
 /marketplace install omp-mem0-memory@mem0-omp
+/marketplace install omp-mem0-req@mem0-omp
 ```
 
 C'est bien `/marketplace`, pas `/plugin` : `/plugins` (au pluriel) existe aussi
@@ -98,9 +110,14 @@ ligne de commande :
 ```bash
 omp plugin marketplace add <ton-handle>/mem0-omp
 omp plugin install omp-mem0-memory@mem0-omp
+omp plugin install omp-mem0-req@mem0-omp
 omp plugin list          # vérifier
 omp plugin doctor        # diagnostiquer
 ```
+
+Les deux plugins sont indépendants, l'ordre n'a pas d'importance ; installer les
+deux est la seule façon d'avoir la mémoire **et** le pipeline `/req → /specs →
+/impl → /review`.
 
 Ajoute `--scope project` pour n'installer que sur le projet courant ; par défaut
 l'installation est utilisateur, donc valable partout.
@@ -136,22 +153,33 @@ Le catalogue est du contenu de dépôt : un `git push` suffit, il n'y a rien à
 republier ailleurs.
 
 ```bash
-# bump dans les 2 catalogues + package.json, puis
-./scripts/check.sh && git commit -am "chore: v2.3.0" && git push
+# bump dans les 4 fichiers porteurs de version, puis
+./scripts/check.sh && git commit -am "chore: v2.4.0" && git push
 ```
+
+Le bump se fait dans **quatre** fichiers : `omp-mem0-memory/package.json`,
+`omp-mem0-req/package.json`, `.omp-plugin/marketplace.json` et
+`.claude-plugin/marketplace.json` — les deux catalogues doivent rester identiques
+octet pour octet.
+
+L'invariant est celui que `./scripts/check.sh` vérifie, et c'est le seul qui
+compte : le champ `version` de chaque entrée de `plugins[]` **égale** la `version`
+du `package.json` du plugin visé, et `metadata.version` du catalogue **nomme une
+version publiée** — l'une des versions d'entrée. Ce dernier champ n'est pas un
+compteur libre : s'il ne correspond à aucune version de plugin, `/plugins list`
+affiche un numéro qui n'existe nulle part.
 
 Côté utilisateur :
 
 ```
 /marketplace update mem0-omp
 /marketplace upgrade omp-mem0-memory@mem0-omp
+/marketplace upgrade omp-mem0-req@mem0-omp
 ```
 
 La version d'installation vient du champ `version` de l'entrée de catalogue ; à
 défaut de `.claude-plugin/plugin.json`, puis de `package.json`, puis du SHA de
-la source, puis `0.0.0`. Ici il y a deux sources à garder alignées — l'entrée de
-catalogue et `omp-mem0-memory/package.json` — sinon `/plugins list` affichera un
-numéro qui ne correspond à rien.
+la source, puis `0.0.0`.
 
 Si tu veux figer ce que les gens installent, épingle la source sur un commit
 exact plutôt que sur une branche :

@@ -47,7 +47,7 @@
 // (pi.registerCommand, pi.on). Sans plugin mémoire, le pipeline fonctionne quand
 // même : le contrat est un simple fichier.
 
-import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, KeybindingsManager } from "@oh-my-pi/pi-coding-agent";
 import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -719,8 +719,17 @@ function writeJsonAtomic(file: string, payload: unknown): void {
   fs.renameSync(tmp, file);
 }
 
+/**
+ * Schéma réellement écrit dans `running/<id>.json` : `RunningEntry` plus le
+ * marqueur de schéma. Nommé pour que l'écart ne se reperde pas — `version` n'est
+ * pas un champ de `RunningEntry`, et le lecteur (`asRunningEntry`) refuse toute
+ * autre valeur que 1.
+ */
+export type RunningFile = RunningEntry & { version: 1 };
+
 export function writeRunningEntry(stateDir: string, entry: RunningEntry): void {
-  writeJsonAtomic(path.join(pipelineRunningDir(stateDir), `${entry.id}.json`), { version: 1, ...entry });
+  const payload: RunningFile = { version: 1, ...entry };
+  writeJsonAtomic(path.join(pipelineRunningDir(stateDir), `${entry.id}.json`), payload);
 }
 
 export function writeHistoryEntry(stateDir: string, entry: HistoryEntry): void {
@@ -995,7 +1004,9 @@ export function armPipeline(deps: PublishDeps, cwd: string | undefined, phase: P
   const st = stateOfCwd(cwd);
   st.phaseStartedAt = (deps.now ?? Date.now)();
   st.entry = undefined;
-  resetStateWriteWarning();
+  // Aucun réarmement ici : la notice « état non écrit » vaut AU PLUS UNE FOIS PAR
+  // SESSION, et la seule frontière de session est le hook `session_start`. Réarmer
+  // à chaque maillon la republiait une fois par maillon.
   ensureHeartbeat(deps.ctx, { notify: deps.notify, stateDir: deps.stateDir });
   publishRunning(deps, cwd);
 }
@@ -1508,7 +1519,13 @@ export type PanelTheme = {
   boxRound: Omit<PanelGlyphs, "cursor">;
   nav: { cursor: string };
 };
-export type PanelKeybindings = { matches?: (data: string, keybinding: string) => boolean };
+/**
+ * Surface de `KeybindingsManager` réellement utilisée par le panneau. Le nom du
+ * keybinding est DÉRIVÉ de la signature de l'hôte (jamais réinventé) : un
+ * paramètre plus large rendrait la fabrique non assignable à `ctx.ui.custom`.
+ */
+type HostKeybinding = Parameters<KeybindingsManager["matches"]>[1];
+export type PanelKeybindings = { matches?: (data: string, keybinding: HostKeybinding) => boolean };
 
 export type PanelComponent = {
   render(width: number): string[];
@@ -1619,7 +1636,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         );
       },
       handleInput(data: string): void {
-        const matches = (keybinding: string) => keybindings?.matches?.(data, keybinding) === true;
+        const matches = (keybinding: HostKeybinding) => keybindings?.matches?.(data, keybinding) === true;
         // Fermer : Échap (`app.interrupt`) ou Ctrl+C, les deux du select.cancel d'OMP.
         if (matches("tui.select.cancel")) {
           done();

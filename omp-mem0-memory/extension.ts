@@ -179,6 +179,23 @@ const GLOBAL_SCOPE = "_global";
 const AUTOSETUP = process.env.MEM0_AUTOSETUP !== "0";
 
 // ---------------------------------------------------------------------------
+// Écriture atomique. Le plugin frère (omp-mem0-req) a le même helper, mais les
+// deux plugins restent autonomes (copiables séparément) : il est réécrit ici,
+// jamais importé de l'un à l'autre. Un `writeFileSync` interrompu (mort du
+// process) laisse un fichier tronqué — ici l'`AGENTS.md` de l'utilisateur ou le
+// registry de phases global. Le temporaire est créé dans le répertoire CIBLE :
+// `renameSync` n'est atomique qu'à l'intérieur d'un même système de fichiers.
+// ---------------------------------------------------------------------------
+
+/** Exporté pour les tests. */
+export function writeFileAtomic(file: string, content: string): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, content, "utf8");
+  fs.renameSync(tmp, file);
+}
+
+// ---------------------------------------------------------------------------
 // Phases — rôles nommés qu'on active sur une session (/set-phase). À la fin d'une
 // phase (l'agent a rendu la main → session_stop), on cherche en mémoire les
 // instructions de la phase et on les DÉLÈGUE à l'agent : l'extension n'édite
@@ -199,14 +216,32 @@ function loadPhases(): Map<string, PhaseEntry> {
   }
 }
 
-function savePhases(reg: Map<string, PhaseEntry>): void {
+// Dernier message d'échec d'écriture, lu par les handlers de commande : `ctx`
+// n'entre pas dans `mutatePhases`, qui reste sans UI.
+let phaseWriteError = "";
+
+/**
+ * Relit le disque, applique `mutate`, écrit atomiquement. Rend false si l'écriture a échoué.
+ * Relire AVANT de muter est ce qui préserve les entrées écrites par une autre session OMP
+ * depuis le chargement du module : `phases` en mémoire ne peut pas servir de base d'écriture,
+ * le fichier est GLOBAL (tous les projets, tous les process), le dernier écrivain écraserait
+ * les autres.
+ */
+function mutatePhases(mutate: (registry: Map<string, PhaseEntry>) => void): boolean {
+  const registry = loadPhases();
+  mutate(registry);
+  phases = registry;
   const obj: Record<string, PhaseEntry> = {};
-  for (const [name, entry] of reg) obj[name] = entry;
+  for (const [name, entry] of registry) obj[name] = entry;
   try {
-    fs.mkdirSync(path.dirname(PHASES_FILE), { recursive: true });
-    fs.writeFileSync(PHASES_FILE, JSON.stringify(obj, null, 2), "utf8");
-  } catch {
-    /* best-effort : un registry non persistable ne doit pas casser une session */
+    writeFileAtomic(PHASES_FILE, JSON.stringify(obj, null, 2));
+    phaseWriteError = "";
+    return true;
+  } catch (err) {
+    // Le registre en mémoire porte l'état fusionné, le disque est resté intact :
+    // c'est au handler de commande de le dire, une fois, à l'utilisateur.
+    phaseWriteError = (err as Error).message;
+    return false;
   }
 }
 
@@ -475,11 +510,10 @@ function ensureBrief(cwd: string, force = false): BriefStatus {
     if (fs.existsSync(refAbs)) {
       const current = versionOf(fs.readFileSync(refAbs, "utf8"));
       if (current === BRIEF_VERSION) status.ref = "present";
-      else if (force) { fs.writeFileSync(refAbs, BRIEF_REFERENCE, "utf8"); status.ref = "created"; }
+      else if (force) { writeFileAtomic(refAbs, BRIEF_REFERENCE); status.ref = "created"; }
       else status.ref = "outdated";
     } else {
-      fs.mkdirSync(path.dirname(refAbs), { recursive: true });
-      fs.writeFileSync(refAbs, BRIEF_REFERENCE, "utf8");
+      writeFileAtomic(refAbs, BRIEF_REFERENCE);
       status.ref = "created";
     }
   } catch (err) {
@@ -493,22 +527,35 @@ function ensureBrief(cwd: string, force = false): BriefStatus {
     if (fs.existsSync(agentsAbs)) {
       const body = fs.readFileSync(agentsAbs, "utf8");
       const current = versionOf(body);
-      if (current === BRIEF_VERSION) {
+      // Un marqueur d'ouverture à la bonne version ne suffit pas à dire le bloc
+      // complet : sans marqueur de fermeture, `body.replace(block, …)` ne matche
+      // rien. On ne l'annonce donc jamais "present" — c'est ce qui interdisait à
+      // /mem0-brief --update de voir l'anomalie et de la signaler.
+      if (current === BRIEF_VERSION && body.includes(MARKER_CLOSE)) {
         status.agents = "present";
       } else if (current) {
         if (force) {
           const block = new RegExp(`<!--\\s*mem0:brief[\\s\\S]*?${escapeRe(MARKER_CLOSE)}`);
-          fs.writeFileSync(agentsAbs, body.replace(block, AGENTS_BLOCK), "utf8");
-          status.agents = "created";
+          const next = body.replace(block, AGENTS_BLOCK);
+          // Un remplacement qui ne change rien n'est pas une écriture : on ne
+          // répare pas (réécrire depuis l'ouverture détruirait le contenu
+          // utilisateur qui suit), on signale.
+          if (next === body) {
+            status.agents = "failed";
+            status.detail = `bloc mem0 sans marqueur de fermeture (${MARKER_CLOSE}) — AGENTS.md laissé intact`;
+          } else {
+            writeFileAtomic(agentsAbs, next);
+            status.agents = "created";
+          }
         } else {
           status.agents = "outdated";
         }
       } else {
-        fs.appendFileSync(agentsAbs, `\n\n${AGENTS_BLOCK}\n`, "utf8");
+        writeFileAtomic(agentsAbs, `${body}\n\n${AGENTS_BLOCK}\n`);
         status.agents = "created";
       }
     } else {
-      fs.writeFileSync(agentsAbs, `# AGENTS.md\n\n${AGENTS_BLOCK}\n`, "utf8");
+      writeFileAtomic(agentsAbs, `# AGENTS.md\n\n${AGENTS_BLOCK}\n`);
       status.agents = "created";
     }
   } catch (err) {
@@ -2106,9 +2153,11 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         ctx.ui.notify(`[mem0] phase "${name}" existe déjà — /remove-phase pour la retirer d'abord.`, "warning");
         return;
       }
-      phases.set(name, { brief });
-      savePhases(phases);
-      ctx.ui.notify(`[mem0] phase "${name}" enregistrée.`, "info");
+      if (mutatePhases((r) => r.set(name, { brief }))) {
+        ctx.ui.notify(`[mem0] phase "${name}" enregistrée.`, "info");
+      } else {
+        ctx.ui.notify(`[mem0] phases non enregistrées : ${phaseWriteError}`, "warning");
+      }
     },
   });
 
@@ -2121,8 +2170,16 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
       if (argv === "--default") {
         st.currentPhase = null;
         st.phaseTriggered = false;
-        phases = new Map(DEFAULT_PHASES.map((d) => [d, { brief: "" }] as [string, PhaseEntry]));
-        savePhases(phases);
+        // Seule opération destructive du registry : par définition, elle retire
+        // les phases des autres sessions (README §Phases).
+        const ok = mutatePhases((r) => {
+          r.clear();
+          for (const d of DEFAULT_PHASES) r.set(d, { brief: "" });
+        });
+        if (!ok) {
+          ctx.ui.notify(`[mem0] phases non enregistrées : ${phaseWriteError}`, "warning");
+          return;
+        }
         ctx.ui.notify(`[mem0] registry réinitialisé : ${DEFAULT_PHASES.join(", ")}. Aucune phase active.`, "info");
         return;
       }
@@ -2155,8 +2212,10 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
         ctx.ui.notify(`[mem0] phase "${name}" inconnue.`, "warning");
         return;
       }
-      phases.delete(name);
-      savePhases(phases);
+      if (!mutatePhases((r) => r.delete(name))) {
+        ctx.ui.notify(`[mem0] phases non enregistrées : ${phaseWriteError}`, "warning");
+        return;
+      }
       const st = stateOf(ctx);
       if (st.currentPhase === name) st.currentPhase = null;
       ctx.ui.notify(`[mem0] phase "${name}" désenregistrée.`, "info");

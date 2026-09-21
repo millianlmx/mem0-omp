@@ -66,6 +66,9 @@ class StubMemory:
     async def history(self, *a, **k):
         return await self._record("history", a, k)
 
+    async def update(self, *a, **k):
+        return await self._record("update", a, k)
+
 
 def main() -> int:
     with patch("http_server.AsyncMemory", StubMemory):
@@ -92,6 +95,12 @@ def main() -> int:
         check("/memory/all", client.get("/memory/all?agent_id=P"))
         check("/memory/{id} DELETE", client.delete("/memory/x1"))
         check("/memory/{id}/history", client.get("/memory/x1/history"))
+        check("api/AC-11 — PUT /memory/{id}", client.put("/memory/x1", json={"text": "réécrit"}))
+
+        update = next(k for n, k in calls if n == "update")
+        ok = update.get("text") == "réécrit" and "data" not in update
+        print(f"{'PASS' if ok else 'FAIL'}  update : clé text, alias data absent : {update}")
+        failures += 0 if ok else 1
 
         search = next(k for n, k in calls if n == "search")
         get_all = next(k for n, k in calls if n == "get_all")

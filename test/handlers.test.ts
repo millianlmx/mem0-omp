@@ -248,7 +248,7 @@ function readHistory(stateDir: string): Array<Record<string, unknown>> {
 // AC-1 — le handler /req isole la feature et installe la collecte dans le worktree
 // ---------------------------------------------------------------------------
 
-test("AC-1 : le handler /req ouvre le worktree, accueille et arme la collecte du worktree", async () => {
+test("handlers/AC-1 : le handler /req ouvre le worktree, accueille et arme la collecte du worktree", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
   const mainBranch = git(["branch", "--show-current"], root).stdout.trim();
@@ -292,7 +292,7 @@ test("AC-1 : le handler /req ouvre le worktree, accueille et arme la collecte du
   });
 });
 
-test("AC-1 : sans newSession, /req annule le worktree et conserve la branche", async () => {
+test("sans newSession, /req annule le worktree et conserve la branche", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -318,7 +318,7 @@ test("AC-1 : sans newSession, /req annule le worktree et conserve la branche", a
 // AC-2 — chaque maillon vise le contrat de SON cwd (régression : /specs mort)
 // ---------------------------------------------------------------------------
 
-test("AC-2 : /specs, /impl et /review envoient leur seed depuis le worktree de la feature", async () => {
+test("handlers/AC-2 : /specs, /impl et /review envoient leur seed depuis le worktree de la feature", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -353,7 +353,7 @@ test("AC-2 : /specs, /impl et /review envoient leur seed depuis le worktree de l
   });
 });
 
-test("AC-2 : hors worktree et sans contrat hérité, les maillons refusent sans session ni seed", async () => {
+test("hors worktree et sans contrat hérité, les maillons refusent sans session ni seed", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -415,7 +415,7 @@ async function settleLink(
   return announcements(app).slice(before);
 }
 
-test("AC-1 : /req, /specs et /impl annoncent chacun la commande de la suite", async () => {
+test("/req, /specs et /impl annoncent chacun la commande de la suite", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -445,7 +445,7 @@ test("AC-1 : /req, /specs et /impl annoncent chacun la commande de la suite", as
   });
 });
 
-test("AC-2 : l'annonce est un message d'affichage durable, jamais un toast", async () => {
+test("l'annonce est un message d'affichage durable, jamais un toast", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -467,7 +467,7 @@ test("AC-2 : l'annonce est un message d'affichage durable, jamais un toast", asy
   });
 });
 
-test("AC-3 : /review terminée avec un BLOQUANT annonce /impl --fix", async () => {
+test("handlers/AC-3 : /review terminée avec un BLOQUANT annonce /impl --fix", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -483,7 +483,7 @@ test("AC-3 : /review terminée avec un BLOQUANT annonce /impl --fix", async () =
   });
 });
 
-test("AC-4 : /review terminée sans BLOQUANT signale la fin du cycle, sans correction", async () => {
+test("handlers/AC-4 : /review terminée sans BLOQUANT signale la fin du cycle, sans correction", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -501,7 +501,7 @@ test("AC-4 : /review terminée sans BLOQUANT signale la fin du cycle, sans corre
   });
 });
 
-test("AC-5 : un maillon /impl sans `## Spécifications` renvoie vers /specs, pas /review", async () => {
+test("handlers/AC-5 : un maillon /impl sans `## Spécifications` renvoie vers /specs, pas /review", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -547,7 +547,7 @@ test("S-1 : hors maillon armé, maillon déjà annoncé ou collecte en cours, ri
 // Fin de maillon — préremplissage de la zone de saisie (AC-6, AC-7, S-4)
 // ---------------------------------------------------------------------------
 
-test("AC-6 : en TUI, la zone de saisie reçoit la commande annoncée, prête à valider", async () => {
+test("handlers/AC-6 : en TUI, la zone de saisie reçoit la commande annoncée, prête à valider", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -566,7 +566,7 @@ test("AC-6 : en TUI, la zone de saisie reçoit la commande annoncée, prête à 
   });
 });
 
-test("AC-7 : un brouillon déjà saisi reste intact — rien n'est écrasé", async () => {
+test("handlers/AC-7 : un brouillon déjà saisi reste intact — rien n'est écrasé", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
 
@@ -646,7 +646,7 @@ const PANEL_KEYS = {
 };
 const PANEL_TUI = { terminal: { rows: 24 }, requestRender: () => {} };
 
-test("AC-1 : le toggle monte un overlay ancré en haut à droite et Échap le referme", async () => {
+test("le toggle monte un overlay ancré en haut à droite et Échap le referme", async () => {
   const root = mkRepo();
   const app = mkApp();
   const stateDir = mktmp("pl-state-mount-");
@@ -691,7 +691,7 @@ test("AC-1 : le toggle monte un overlay ancré en haut à droite et Échap le re
   });
 });
 
-test("AC-1 : hors session interactive, la commande ne monte rien et le dit une seule fois", async () => {
+test("hors session interactive, la commande ne monte rien et le dit une seule fois", async () => {
   const root = mkRepo();
   const app = mkApp();
   const { ctx, mounted } = mkCtx(root, { hasUI: false });
@@ -737,7 +737,7 @@ test("S-3 : chaque maillon armé publie son entrée dès la commande", async () 
   });
 });
 
-test("AC-5 : l'outil ask en vol bascule l'état en attend", async () => {
+test("l'outil ask en vol bascule l'état en attend", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
   const stateDir = mktmp("pl-state-ask-");
@@ -769,7 +769,7 @@ test("AC-5 : l'outil ask en vol bascule l'état en attend", async () => {
   });
 });
 
-test("AC-8 : une pipeline terminée rejoint l'historique en « terminé »", async () => {
+test("handlers/AC-8 : une pipeline terminée rejoint l'historique en « terminé »", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
   const stateDir = mktmp("pl-state-done-");
@@ -793,7 +793,7 @@ test("AC-8 : une pipeline terminée rejoint l'historique en « terminé »", asy
   });
 });
 
-test("AC-8 : une revue bloquante laisse la pipeline en cours", async () => {
+test("une revue bloquante laisse la pipeline en cours", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
   const stateDir = mktmp("pl-state-blocked-");
@@ -812,7 +812,7 @@ test("AC-8 : une revue bloquante laisse la pipeline en cours", async () => {
   });
 });
 
-test("AC-8 : un verdict de revue illisible ne clôt jamais la pipeline par défaut", async () => {
+test("un verdict de revue illisible ne clôt jamais la pipeline par défaut", async () => {
   const root = mkRepo();
   const base = mktmp("hw-base-");
   const stateDir = mktmp("pl-state-unreadable-");

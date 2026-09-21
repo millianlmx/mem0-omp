@@ -199,7 +199,7 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}) {
 // AC-1 — les rangs du panneau
 // ---------------------------------------------------------------------------
 
-test("AC-1 : les rangs du panneau portent le cadre et le pied", () => {
+test("pipelines/AC-1 : les rangs du panneau portent le cadre et le pied", () => {
   // Aucune entrée du tout : le panneau s'affiche quand même (titre, sections
   // vides, pied) — il ne se ferme pas tout seul.
   const model: PanelModel = { running: [], history: [], selection: -1, notice: null, unreadable: 0 };
@@ -217,7 +217,7 @@ test("AC-1 : les rangs du panneau portent le cadre et le pied", () => {
   }
 });
 
-test("AC-1 : une sélection vide ne fait rien (Entrée et d sans entrée)", async () => {
+test("une sélection vide ne fait rien (Entrée et d sans entrée)", async () => {
   const stateDir = mktmp("pl-ac1-empty-");
   const panel = mountPanel(stateDir);
   panel.component.handleInput("\r");
@@ -232,7 +232,7 @@ test("AC-1 : une sélection vide ne fait rien (Entrée et d sans entrée)", asyn
 // AC-2 — tout le magasin, tous dépôts confondus
 // ---------------------------------------------------------------------------
 
-test("AC-2 : le panneau liste les pipelines de deux dépôts distincts", () => {
+test("pipelines/AC-2 : le panneau liste les pipelines de deux dépôts distincts", () => {
   const stateDir = mktmp("pl-ac2-");
   const other = process.ppid;
   assert.ok(pidAlive(other), "le second propriétaire doit vivre pour rester « en cours »");
@@ -259,7 +259,7 @@ test("AC-2 : le panneau liste les pipelines de deux dépôts distincts", () => {
   assert.match(text, /autre-depot\/fix-recall/, "les deux labels sont RENDUS, pas seulement lus");
 });
 
-test("AC-2 : un fichier d'état illisible est ignoré et signalé", () => {
+test("un fichier d'état illisible est ignoré et signalé", () => {
   const stateDir = mktmp("pl-ac2-broken-");
   const cwd = mktmp("pl-repo-ok-");
   mkRunning(stateDir, { cwd, label: "depot/lisible" });
@@ -277,7 +277,7 @@ test("AC-2 : un fichier d'état illisible est ignoré et signalé", () => {
 // AC-3 — maillon courant et rafraîchissement sans geste
 // ---------------------------------------------------------------------------
 
-test("AC-3 : un changement de maillon est repris au rafraîchissement suivant", () => {
+test("pipelines/AC-3 : un changement de maillon est repris au rafraîchissement suivant", () => {
   const stateDir = mktmp("pl-ac3-");
   const cwd = mktmp("pl-repo-phase-");
   mkRunning(stateDir, { cwd, label: "depot/feature", phase: "req" });
@@ -295,7 +295,7 @@ test("AC-3 : un changement de maillon est repris au rafraîchissement suivant", 
   assert.doesNotMatch(text, /\/req ·/, "l'ancien maillon a disparu");
 });
 
-test("AC-3 : le panneau se rafraîchit sans action", () => {
+test("le panneau se rafraîchit sans action", () => {
   const stateDir = mktmp("pl-ac3-tick-");
   const cwd = mktmp("pl-repo-tick-");
   mkRunning(stateDir, { cwd, label: "depot/avant", phase: "req" });
@@ -315,7 +315,7 @@ test("AC-3 : le panneau se rafraîchit sans action", () => {
   assert.equal(panel.stopped(), 1, "dispose arrête le rafraîchissement (aucun timer qui survit au panneau)");
 });
 
-test("AC-4 : le temps écoulé repart au changement d'étape", () => {
+test("pipelines/AC-4 : le temps écoulé repart au changement d'étape", () => {
   const origin = 1_700_000_000_000;
   const stateDir = mktmp("pl-ac4-");
   const cwd = mktmp("pl-repo-time-");
@@ -349,7 +349,7 @@ test("AC-4 : le temps écoulé repart au changement d'étape", () => {
 // AC-5 — « tourne » / « attend »
 // ---------------------------------------------------------------------------
 
-test("AC-5 : une pipeline qui attend une réponse est marquée « attend »", () => {
+test("pipelines/AC-5 : une pipeline qui attend une réponse est marquée « attend »", () => {
   const stateDir = mktmp("pl-ac5-");
   const busy = mktmp("pl-repo-busy-");
   const idle = mktmp("pl-repo-idle-");
@@ -371,7 +371,7 @@ test("AC-5 : une pipeline qui attend une réponse est marquée « attend »", ()
 // AC-6 — rejoindre la session correspondante
 // ---------------------------------------------------------------------------
 
-test("AC-6 : sélectionner une pipeline ouvre la session correspondante", async () => {
+test("pipelines/AC-6 : sélectionner une pipeline ouvre la session correspondante", async () => {
   const stateDir = mktmp("pl-ac6-");
   const cwd = mktmp("pl-repo-join-");
   const sessionFile = path.join(stateDir, "session-cible.jsonl");
@@ -410,7 +410,7 @@ test("AC-6 : sélectionner une pipeline ouvre la session correspondante", async 
 // AC-7 — une session non reprenable est SIGNALÉE
 // ---------------------------------------------------------------------------
 
-test("AC-7 : une session non reprenable est signalée au lieu de rester sans effet", async () => {
+test("pipelines/AC-7 : une session non reprenable est signalée au lieu de rester sans effet", async () => {
   const stateDir = mktmp("pl-ac7-");
   const cwd = mktmp("pl-repo-gone-");
   const missing = path.join(stateDir, "session-absente.jsonl"); // jamais écrite sur le disque
@@ -449,7 +449,7 @@ test("AC-7 : une session non reprenable est signalée au lieu de rester sans eff
 // AC-8 — fin de pipeline : sortie de la liste, entrée d'historique
 // ---------------------------------------------------------------------------
 
-test("AC-8 : un processus disparu rejoint l'historique en « échoué »", () => {
+test("pipelines/AC-8 : un processus disparu rejoint l'historique en « échoué »", () => {
   const stateDir = mktmp("pl-ac8-");
   const cwd = mktmp("pl-repo-dead-");
   const gone = deadPid();
@@ -486,7 +486,7 @@ test("AC-8 : un processus disparu rejoint l'historique en « échoué »", () =>
 // AC-9 — l'historique survit au redémarrage
 // ---------------------------------------------------------------------------
 
-test("AC-9 : l'historique survit au redémarrage", () => {
+test("pipelines/AC-9 : l'historique survit au redémarrage", () => {
   const stateDir = mktmp("pl-ac9-");
   const done = mktmp("pl-repo-done-");
   const failed = mktmp("pl-repo-failed-");
@@ -512,7 +512,7 @@ test("AC-9 : l'historique survit au redémarrage", () => {
 // AC-10 — suppression unitaire et définitive
 // ---------------------------------------------------------------------------
 
-test("AC-10 : une entrée supprimée ne réapparaît pas", () => {
+test("pipelines/AC-10 : une entrée supprimée ne réapparaît pas", () => {
   const stateDir = mktmp("pl-ac10-");
   const runningCwd = mktmp("pl-repo-live-");
   const oldCwd = mktmp("pl-repo-old-");
@@ -540,7 +540,7 @@ test("AC-10 : une entrée supprimée ne réapparaît pas", () => {
   );
 });
 
-test("AC-10 : la suppression ne s'applique qu'à l'historique", () => {
+test("la suppression ne s'applique qu'à l'historique", () => {
   const stateDir = mktmp("pl-ac10-live-");
   const cwd = mktmp("pl-repo-keep-");
   const entry = mkRunning(stateDir, { cwd, label: "depot/en-cours" });

@@ -5,11 +5,16 @@ Une mémoire persistante par projet, branchée nativement dans OMP. Rien d'autre
 ```
 mem0-omp/                              racine = marketplace OMP
 ├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
-├── omp-mem0-memory/                   le plugin
+├── omp-mem0-memory/                   le plugin mémoire
 │   ├── package.json                   déclare omp.extensions
-│   ├── extension.ts                   tout est là, brief compris
+│   ├── extension.ts
 │   └── install.sh                     installation manuelle, hors marketplace
+├── omp-mem0-req/                      le plugin pipeline (/req → /specs → /impl → /review)
+│   ├── package.json
+│   └── extension.ts
 ├── mem0-stack/                        mem0 + Qdrant, en local
+│   └── mem0-http/                     l'API HTTP et sa config mem0
+├── test/                              suite node --test
 └── scripts/check.sh                   validation avant publication
 ```
 
@@ -18,7 +23,7 @@ mem0-omp/                              racine = marketplace OMP
 | Quand | Quoi |
 |---|---|
 | Premier démarrage dans un dépôt | Pose le brief mémoire : écrit `.omp/mem0-brief.md` et ajoute un bloc dans `AGENTS.md` qui le cite. Une fois, tout seul. |
-| Chaque tour | Cherche dans la mémoire du projet sur ton prompt brut, filtré par un plancher de score, et injecte le résultat silencieusement dans le même tour. Le sommaire exhaustif de la mémoire du projet part dans le prompt système : l'agent sait ce qui existe sans avoir à chercher. |
+| Chaque tour | Cherche dans la mémoire du projet sur ton prompt brut, filtré par un plancher de score, et injecte le résultat silencieusement dans le même tour. Le sommaire de la mémoire du projet part dans le prompt système — exhaustif tant qu'il n'est pas tronqué (60 entrées), au-delà de quoi il dit lui-même ce qui manque et invite à `mem0_search`. |
 | Chaque `read` / `grep` / `glob` / `lsp` / `edit` / `write` | Le souvenir qui concerne les arguments de l'outil est posé en tête du résultat, sans appel réseau et sans amputer le résultat. Un même argument n'agrafe qu'une fois. |
 | Fin de session | Si la session a produit du durable sans rien écrire en mémoire — fichiers modifiés, **ou** discussion substantielle sans édition (needs, specs, archi) — une relance unique demande à l'agent d'écrire ce qui sera encore vrai dans six mois. Aucune écriture automatique par extraction serveur. |
 | À la demande | `mem0_search`, `mem0_add`, `mem0_update`, `mem0_forget`. |
@@ -28,7 +33,7 @@ mem0-omp/                              racine = marketplace OMP
 **1. Le service** — obligatoire, le plugin ne le déploie pas :
 
 ```bash
-git clone https://github.com/millian/mem0-omp
+git clone https://github.com/millianlmx/mem0-omp
 cd mem0-omp/mem0-stack
 cp .env.example .env        # ajuste OMLX_BASE_URL selon podman/docker
 podman compose up -d        # ou: docker compose up -d
@@ -38,20 +43,23 @@ podman compose up -d        # ou: docker compose up -d
 `doctor.sh` teste la chaîne complète — conteneurs, port, Qdrant, oMLX, puis un
 aller-retour écriture/relecture — et dit quoi faire à chaque échec.
 
-**2. Le plugin**, depuis une session OMP :
+**2. Les plugins**, depuis une session OMP :
 
 ```
-/marketplace add millian/mem0-omp
+/marketplace add millianlmx/mem0-omp
 /marketplace install omp-mem0-memory@mem0-omp
+/marketplace install omp-mem0-req@mem0-omp
 ```
 
 Puis **relance `omp`** : `/reload-plugins` rafraîchit les commandes et les skills,
 mais pas les modules d'extension. Ouvre une session dans un projet, `/mem0-status`.
 
 Équivalents en ligne de commande :
-`omp plugin marketplace add millian/mem0-omp` puis
-`omp plugin install omp-mem0-memory@mem0-omp`. Ajoute `--scope project` pour
-n'installer que sur le projet courant.
+`omp plugin marketplace add millianlmx/mem0-omp` puis
+`omp plugin install omp-mem0-memory@mem0-omp` et
+`omp plugin install omp-mem0-req@mem0-omp`. Ajoute `--scope project` pour
+n'installer que sur le projet courant. Les deux plugins sont indépendants :
+l'ordre d'installation n'a pas d'importance.
 
 Sans marketplace, `omp-mem0-memory/install.sh` dépose l'extension dans
 `~/.omp/agent/extensions/`, où OMP la découvre seule au démarrage.
@@ -386,9 +394,11 @@ Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le ré
   haut que n'importe quelle vraie question. Le `threshold` de mem0 est maintenant
   exposé par le service et envoyé à chaque rappel — il porte sur le **cosinus brut**
   (`explain`), jamais sur le `score` affiché, que BM25 sature.
-- **Sommaire exhaustif dans le prompt système**, plus agrafage d'un souvenir aux
-  résultats de `read`/`grep`/`glob`/`lsp`/`edit`/`write` : la mémoire arrive dans la
-  sortie que l'agent lit de toute façon, au lieu de dépendre d'une consigne.
+- **Sommaire de la mémoire dans le prompt système** — exhaustif tant qu'il n'est
+  pas tronqué (60 entrées) ; au-delà, il annonce le nombre d'entrées masquées et
+  invite à `mem0_search`. Plus l'agrafage d'un souvenir aux résultats de
+  `read`/`grep`/`glob`/`lsp`/`edit`/`write` : la mémoire arrive dans la sortie que
+  l'agent lit de toute façon, au lieu de dépendre d'une consigne.
 - **Recherche hybride réellement active.** L'image installe `fastembed`, donc mem0
   écrit le vecteur creux BM25 et les identifiants exacts (`EMBEDDING_DIMS`) se
   retrouvent : rang 1 au lieu d'absent du top 8.

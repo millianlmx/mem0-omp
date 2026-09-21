@@ -28,4 +28,17 @@ RUN python -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding(mo
 # résolue. Une rupture d'API fait échouer le build, pas la première requête.
 RUN python test_api.py
 
+# Le serveur tourne sous un uid non nul : il accepte du JSON arbitraire et du
+# texte venant du LLM, et l'API Qdrant publiée sur 127.0.0.1 est authentifiée
+# depuis S-2. uid/gid fixés à 10001 pour être prédictibles et vérifiables par
+# `id` (pas de `--uid` implicite décidé par la base).
+# Le `chown` du cache fastembed est OBLIGATOIRE : le modèle BM25 y est cuit en
+# root, et son chargement en non-root journalise sinon « Ignoring corrupted
+# tree cache file /tmp/fastembed_cache/models--Qdrant--bm25/...: Permission
+# denied » à chaque démarrage (l'embedding creux sort quand même, le cache est
+# simplement corrompu). /tmp est en 1777, donc uvicorn n'a besoin de rien d'autre.
+RUN useradd --uid 10001 --user-group --create-home --shell /usr/sbin/nologin mem0 \
+ && chown -R mem0:mem0 /app /tmp/fastembed_cache
+USER mem0
+
 CMD ["python", "http_server.py"]

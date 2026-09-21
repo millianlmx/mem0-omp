@@ -153,7 +153,7 @@ async def update_memory(memory_id: str, req: UpdateRequest, x_mem0_token: str | 
     """
     check_token(x_mem0_token)
     m = await get_memory()
-    return await m.update(memory_id=memory_id, data=req.text)
+    return await m.update(memory_id=memory_id, text=req.text)
 
 
 @app.delete("/memory/{memory_id}")

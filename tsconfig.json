@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "typeRoots": ["./.typecheck/node_modules/@types"],
+    "paths": { "@oh-my-pi/*": ["./.typecheck/node_modules/@oh-my-pi/*"] }
+  },
+  "files": ["omp-mem0-req/extension.ts"]
+}

@@ -90,7 +90,7 @@ const headOf = (dir: string) => git(["rev-parse", "HEAD"], dir).stdout.trim();
 // AC-1 / AC-2 — isolation de /req et parallélisme
 // ---------------------------------------------------------------------------
 
-test("AC-1 : /req crée un worktree dédié et laisse le dépôt principal intact", async () => {
+test("worktree/AC-1 : /req crée un worktree dédié et laisse le dépôt principal intact", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
   const originBranch = git(["branch", "--show-current"], root).stdout.trim();
@@ -120,7 +120,7 @@ test("AC-1 : /req crée un worktree dédié et laisse le dépôt principal intac
   assert.equal(resolveFeatureRoot(root).primary, undefined, "le dépôt principal n'est pas un worktree");
 });
 
-test("AC-2 : deux features en parallèle ne partagent ni chemin, ni branche, ni contrat", async () => {
+test("worktree/AC-2 : deux features en parallèle ne partagent ni chemin, ni branche, ni contrat", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
 
@@ -165,7 +165,7 @@ test("S-1 : une branche déjà prise (locale ou distante) refuse la création, s
 // AC-3 — une seule mémoire mem0 par dépôt, worktrees compris
 // ---------------------------------------------------------------------------
 
-test("AC-3 : worktree et dépôt principal partagent le même scope mem0", async () => {
+test("worktree/AC-3 : worktree et dépôt principal partagent le même scope mem0", async () => {
   const root = mkRepo({ "package.json": JSON.stringify({ name: "acme-ac3" }) });
   const base = mktmp("wt-base-");
   const wt = await createFeatureWorktree({ run, primaryRoot: root, slug: "memoire", baseDir: base });
@@ -192,7 +192,7 @@ test("AC-3 : worktree et dépôt principal partagent le même scope mem0", async
   }
 });
 
-test("AC-3 : un .git de sous-module n'est pas pris pour un worktree", () => {
+test("un .git de sous-module n'est pas pris pour un worktree", () => {
   assert.equal(gitfilePrimaryRoot("gitdir: /x/repo/.git/modules/sub"), null);
   assert.equal(gitfilePrimaryRoot("gitdir: /x/repo/.git/modules/sub\n"), null);
   assert.equal(gitfilePrimaryRoot("pas un gitfile\n"), null);
@@ -215,7 +215,7 @@ test("AC-3 : un .git de sous-module n'est pas pris pour un worktree", () => {
 // AC-4 / AC-5 / AC-6 / AC-7 — balayage
 // ---------------------------------------------------------------------------
 
-test("AC-4 : un worktree poussé et propre est retiré, la branche reste", async () => {
+test("worktree/AC-4 : un worktree poussé et propre est retiré, la branche reste", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
   const wt = await createFeatureWorktree({ run, primaryRoot: root, slug: "poussee", baseDir: base });
@@ -229,7 +229,7 @@ test("AC-4 : un worktree poussé et propre est retiré, la branche reste", async
   assert.match(git(["branch", "--list", "feat/poussee"], root).stdout, /feat\/poussee/, "la branche est conservée");
 });
 
-test("AC-5 : un worktree sale ou non poussé est conservé et le blocage est signalé", async () => {
+test("worktree/AC-5 : un worktree sale ou non poussé est conservé et le blocage est signalé", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
   const dirty = await createFeatureWorktree({ run, primaryRoot: root, slug: "sale", baseDir: base });
@@ -252,7 +252,7 @@ test("AC-5 : un worktree sale ou non poussé est conservé et le blocage est sig
   assert.equal(buildSweepMessage({ removed: [], kept: [] }), "", "rien à signaler ⇒ aucun message");
 });
 
-test("AC-6 : seul le worktree de la feature poussée est retiré", async () => {
+test("worktree/AC-6 : seul le worktree de la feature poussée est retiré", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
   const done = await createFeatureWorktree({ run, primaryRoot: root, slug: "finie", baseDir: base });
@@ -272,7 +272,7 @@ test("AC-6 : seul le worktree de la feature poussée est retiré", async () => {
   assert.ok(message.includes(`worktree conservé : ${wip.path}`));
 });
 
-test("AC-7 : la pipeline ne pousse rien et conserve le worktree après un cycle clos", async () => {
+test("worktree/AC-7 : la pipeline ne pousse rien et conserve le worktree après un cycle clos", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
   // `.omp/` ignoré (comme au dépôt réel) : le contrat ne salit pas l'arbre
