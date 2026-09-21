@@ -32,6 +32,10 @@ def _env_int(name: str, default: int) -> int:
 
 QDRANT_HOST = _env("QDRANT_HOST", "qdrant")
 QDRANT_PORT = _env_int("QDRANT_PORT", 6333)
+# Doit être IDENTIQUE à QDRANT__SERVICE__API_KEY du service qdrant (compose les
+# alimente par la même variable) : Qdrant auto-hébergé n'a sinon aucune
+# authentification et la base est lisible/effaçable par tout processus local.
+QDRANT_API_KEY = _env("QDRANT_API_KEY", "mem0-local-qdrant-key")
 # Docker Desktop : host.docker.internal — Podman : host.containers.internal.
 OMLX_BASE_URL = _env("OMLX_BASE_URL", "http://host.containers.internal:8000/v1")
 LLM_MODEL = _env("OMLX_LLM_MODEL", "qwen3-8b")
@@ -73,6 +77,13 @@ CONFIG = {
             "collection_name": "omp_memory",
             "host": QDRANT_HOST,
             "port": QDRANT_PORT,
+            "api_key": QDRANT_API_KEY,
+            # qdrant-client déduit https=True dès qu'une api_key est fournie
+            # (`_https = https if https is not None else api_key is not None`,
+            # mesuré en 1.19.1) : sans ce False explicite, chaque requête part en
+            # TLS sur un port en clair et l'API rend 500 en
+            # [SSL: WRONG_VERSION_NUMBER]. Qdrant est ici en HTTP local (pas de TLS).
+            "https": False,
             "embedding_model_dims": EMBEDDING_DIMS,
         },
     },

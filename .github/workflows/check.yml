@@ -7,11 +7,19 @@ on:
 
 jobs:
   check:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Installer les types de l'hôte
+        run: |
+          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.2.6 @types/node@22
+          echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
       - name: Valider le catalogue, le manifeste et l'extension
         run: ./scripts/check.sh

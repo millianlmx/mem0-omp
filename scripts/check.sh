@@ -104,24 +104,149 @@ sys.exit(0 if ok else 1)
 PY
 [ $? -ne 0 ] && FAIL=1
 
+# Le tableau `commands` est ce que l'utilisateur lit pour savoir ce qu'il installe :
+# une commande déclarée sans `registerCommand` est un bouton mort, l'inverse une
+# commande invisible. Les deux ensembles doivent être identiques.
+python3 - <<'PY'
+import json, os, re, sys
+cat = json.load(open(".omp-plugin/marketplace.json"))
+root = cat.get("metadata", {}).get("pluginRoot", "")
+ok = True
+for p in cat["plugins"]:
+    src = p["source"]
+    if not isinstance(src, str):
+        print(f"  · {p['name']} : source distante, commandes non vérifiables ici")
+        continue
+    d = os.path.join(root, src[2:]) if root else src[2:]
+    ext = os.path.join(d, "extension.ts")
+    if not os.path.isfile(ext):
+        print(f"  ✗ {p['name']} : {ext} introuvable — commandes invérifiables"); ok = False; continue
+    declared = set(p.get("commands") or [])
+    registered = set(re.findall(r'registerCommand\(\s*["\']([^"\']+)["\']',
+                                open(ext, encoding="utf-8").read()))
+    missing = sorted(declared - registered)
+    extra = sorted(registered - declared)
+    if missing:
+        print(f"  ✗ {p['name']} : commande déclarée sans registerCommand : {', '.join(missing)}")
+        ok = False
+    if extra:
+        print(f"  ✗ {p['name']} : registerCommand absent du catalogue : {', '.join(extra)}")
+        ok = False
+    if not missing and not extra:
+        print(f"  ✓ {p['name']} : {len(declared)} commande(s) déclarée(s), "
+              f"{len(registered)} enregistrée(s)")
+sys.exit(0 if ok else 1)
+PY
+[ $? -ne 0 ] && FAIL=1
+
+echo "── Versions"
+
+# Ce que le catalogue annonce doit être ce que le package.json porte : une entrée
+# qui ment installe une version que l'utilisateur ne croit pas installer.
+# `metadata.version` est facultative, mais si elle est là elle doit NOMMER une
+# version publiée — sinon elle est invérifiable par construction.
+python3 - <<'PY'
+import json, os, sys
+cat = json.load(open(".omp-plugin/marketplace.json"))
+root = cat.get("metadata", {}).get("pluginRoot", "")
+OK = True
+published = []
+for p in cat["plugins"]:
+    src = p["source"]
+    if not isinstance(src, str):
+        print(f"  · {p['name']} : source distante, non vérifiable ici")
+        continue
+    if not src.startswith("./"):
+        print(f"  ✗ {p['name']} : une source relative doit commencer par ./"); OK = False; continue
+    d = os.path.join(root, src[2:]) if root else src[2:]
+    pkg_path = os.path.join(d, "package.json")
+    if not os.path.isfile(pkg_path):
+        print(f"  ✗ {p['name']} : package.json introuvable — version invérifiable"); OK = False; continue
+    actual = json.load(open(pkg_path)).get("version")
+    entry = p.get("version")
+    published.append(entry)
+    if entry != actual:
+        print(f"  ✗ {p['name']} : version d'entrée {entry} ≠ package.json {actual}"); OK = False
+    else:
+        print(f"  ✓ {p['name']} : version {actual} alignée sur le package.json")
+meta = cat.get("metadata", {}).get("version")
+if meta is None:
+    pass  # champ facultatif : absent, il n'y a rien à vérifier
+elif meta not in published:
+    print(f"  ✗ metadata.version {meta} ne correspond à aucune version publiée "
+          f"({', '.join(str(v) for v in published)})")
+    OK = False
+else:
+    print(f"  ✓ metadata.version {meta} nomme une version publiée")
+sys.exit(0 if OK else 1)
+PY
+[ $? -ne 0 ] && FAIL=1
+
 echo "── Extension"
 
+# Liste écrite en dur (et non déduite du catalogue) : la transpilation couvre les
+# extensions DU DÉPÔT, y compris si un plugin venait à disparaître du catalogue.
 if command -v npx >/dev/null 2>&1; then
-  if npx --yes esbuild@0.24.0 omp-mem0-memory/extension.ts --format=esm --outfile=/dev/null --log-level=error 2>&1; then
-    pass "extension.ts se transpile"
-  else
-    fail "extension.ts ne se transpile pas"
-  fi
+  TRANSPILED=1
+  for p in omp-mem0-memory omp-mem0-req; do
+    if npx --yes esbuild@0.24.0 "$p/extension.ts" --format=esm --outfile=/dev/null --log-level=error 2>&1; then
+      :
+    else
+      fail "$p/extension.ts ne se transpile pas"
+      TRANSPILED=0
+    fi
+  done
+  [ "$TRANSPILED" -eq 1 ] && pass "les 2 extensions se transpilent"
 else
-  echo "  · npx absent, transpilation non vérifiée"
+  echo "  · npx absent, transpilation non vérifiée (2 plugins)"
 fi
 
 # Un import de valeur (non type-only) depuis @oh-my-pi/pi-* crée une dépendance
 # de résolution au runtime, qui casse selon la plateforme (cf. issue #1292).
-if grep -nE '^\s*import\s+(?!type)[^;]*from\s+"@oh-my-pi/' -P omp-mem0-memory/extension.ts >/dev/null 2>&1; then
-  fail "import de valeur depuis @oh-my-pi/* — préfère 'import type', effacé à la compilation"
+# Le contrôle passe par python3, jamais par `grep -P` : le grep BSD de macOS
+# rejette `-P` (et le lookahead sous `-E`), donc l'ancien contrôle échouait AVANT
+# toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
+if command -v python3 >/dev/null 2>&1; then
+python3 - <<'PY'
+import re, sys
+pat = re.compile(r'^\s*import\s+(?!type\b)[^;]*from\s+["\']@oh-my-pi/', re.M)
+hits = []
+for f in ("omp-mem0-memory/extension.ts", "omp-mem0-req/extension.ts"):
+    src = open(f, encoding="utf-8").read()
+    for m in pat.finditer(src):
+        hits.append((f, src.count("\n", 0, m.start()) + 1))
+for f, line in hits:
+    print(f"  ✗ import de valeur depuis @oh-my-pi/* — {f}:{line} ; "
+          f"préfère 'import type', effacé à la compilation")
+if hits:
+    sys.exit(1)
+print("  ✓ aucun import de valeur depuis @oh-my-pi/* (2 plugins contrôlés)")
+PY
+[ $? -ne 0 ] && FAIL=1
 else
-  pass "aucun import de valeur depuis @oh-my-pi/*"
+  echo "  · python3 absent, contrôle d'import non vérifié"
+fi
+
+echo "── Types"
+
+# Le type-check vit dans scripts/typecheck.sh (créé par BR-7) : check.sh l'appelle
+# et reste le seul porteur de la logique. Types de l'hôte absents ⇒ le script sort
+# 0 en l'annonçant : on recopie son verdict sans jamais afficher un « ✓ » trompeur.
+if [ -f scripts/typecheck.sh ]; then
+  types_out="$(bash scripts/typecheck.sh 2>&1)"
+  types_status=$?
+  [ -n "$types_out" ] && printf '%s\n' "$types_out"
+  if [ "$types_status" -eq 0 ]; then
+    case "$types_out" in
+      *"types de l'hôte absents"*) : ;;
+      *) pass "les types de l'hôte encaissent le type-check de omp-mem0-req" ;;
+    esac
+  else
+    errs="$(printf '%s\n' "$types_out" | grep -F 'error TS' | tr '\n' ' ')"
+    fail "type-check de omp-mem0-req : ${errs:-sortie non nulle sans erreur TS} (relance : ./scripts/typecheck.sh)"
+  fi
+else
+  echo "  · scripts/typecheck.sh absent, type-check non vérifié"
 fi
 
 echo "── Tests"

@@ -6,6 +6,9 @@
 # Chaque test dit ce qu'il faut faire quand il échoue. L'ordre est celui de la
 # chaîne réelle : conteneur -> port -> API -> Qdrant -> oMLX. Le premier échec
 # est presque toujours la cause ; les suivants n'en sont que la conséquence.
+#
+# Le code de sortie dit si le diagnostic est passé : `./doctor.sh && compose up -d`
+# ne doit PAS s'enchaîner quand une vérification a échoué.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
@@ -15,28 +18,54 @@ else echo "Ni podman ni docker trouvés."; exit 1; fi
 echo "Moteur : $CE"
 echo
 
-fail() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "    → $2"; }
+FAIL=0
+fail() { echo "  ✗ $1"; [ $# -gt 1 ] && echo "    → $2"; FAIL=1; }
 pass() { echo "  ✓ $1"; }
+
+# API mem0 vue de l'hôte (nom déjà documenté au README, table Config) : §2 et §5
+# s'y adressent. Surchargeable pour viser un autre port ou une autre machine —
+# sans la variable, le script reste identique à lui-même.
+BASE="${MEM0_HTTP_URL:-http://localhost:8321}"
+
+# Le conteneur EXISTE-t-il ? §0b, §3, §4 et §5 l'interrogent (exec, run) : sans lui
+# elles ne pourraient que décrire son absence — et inventeraient une panne (config
+# mémoire illisible, rupture d'API) là où il n'y a qu'un `compose up` à faire. On le
+# sait donc AVANT de les exécuter. `inspect` échoue aussi bien sur un conteneur
+# inexistant que sur un moteur momentanément muet : vide = absent, choix
+# conservateur (d'une réponse manquante on ne déduit aucune panne).
+CONTAINER=$($CE inspect -f '{{.State.Status}}' mem0-http 2>/dev/null || true)
+RUNNING=$($CE inspect -f '{{.State.Running}}' mem0-http 2>/dev/null || echo false)
+echo "── Conteneur mem0-http"
+if [ -z "$CONTAINER" ]; then
+  fail "conteneur mem0-http absent" "$CE compose up -d"
+else
+  echo "  · état : $CONTAINER"
+fi
+echo
 
 # 0. Configuration EFFECTIVE.
 # On interroge le conteneur en marche (exec), pas une instance neuve : un
 # `run --rm` ne reçoit pas les variables de compose et afficherait donc les
 # défauts de l'image au lieu de ta config .env. On ne retombe sur `run` que si
 # le conteneur est mort — auquel cas c'est justement ce qu'on veut voir.
-IMG=$($CE inspect -f '{{.Image}}' mem0-http 2>/dev/null || true)
-RUNNING=$($CE inspect -f '{{.State.Running}}' mem0-http 2>/dev/null || echo false)
-
-if [ "$RUNNING" = "true" ]; then
+if [ -z "$CONTAINER" ]; then
   echo "── Configuration effective du conteneur"
-  if $CE exec mem0-http python memory_config.py 2>&1 | sed 's/^/  /'; then :; else
-    fail "memory_config.py ne se charge pas" "$CE compose build --no-cache mem0-http"
-  fi
+  echo "  · non exécuté — conteneur mem0-http absent"
 else
-  echo "── Configuration par défaut de l'image (conteneur arrêté)"
-  echo "  Les valeurs de .env ne sont PAS appliquées ici."
-  if [ -n "$IMG" ] && $CE run --rm "$IMG" python memory_config.py 2>&1 | sed 's/^/  /'; then :; else
-    fail "memory_config.py ne se charge pas dans l'image" \
-         "reconstruis sans cache : $CE compose build --no-cache mem0-http"
+  IMG=$($CE inspect -f '{{.Image}}' mem0-http 2>/dev/null || true)
+
+  if [ "$RUNNING" = "true" ]; then
+    echo "── Configuration effective du conteneur"
+    if $CE exec mem0-http python memory_config.py 2>&1 | sed 's/^/  /'; then :; else
+      fail "memory_config.py ne se charge pas" "$CE compose build --no-cache mem0-http"
+    fi
+  else
+    echo "── Configuration par défaut de l'image (conteneur arrêté)"
+    echo "  Les valeurs de .env ne sont PAS appliquées ici."
+    if [ -n "$IMG" ] && $CE run --rm "$IMG" python memory_config.py 2>&1 | sed 's/^/  /'; then :; else
+      fail "memory_config.py ne se charge pas dans l'image" \
+           "reconstruis sans cache : $CE compose build --no-cache mem0-http"
+    fi
   fi
 fi
 echo
@@ -67,8 +96,10 @@ fi
 
 # 0b. Conformité à l'API mem0 installée
 echo "── Conformité API mem0"
-if [ -n "${IMG:-}" ] && $CE run --rm "$IMG" python test_api.py >/tmp/mem0-api.log 2>&1; then
-  pass "les 8 routes sont conformes à la version de mem0 embarquée"
+if [ -z "$CONTAINER" ]; then
+  echo "  · non exécuté — conteneur mem0-http absent"
+elif [ -n "${IMG:-}" ] && $CE run --rm "$IMG" python test_api.py >/tmp/mem0-api.log 2>&1; then
+  pass "les 9 routes sont conformes à la version de mem0 embarquée"
 else
   fail "rupture d'API mem0" "tail -30 /tmp/mem0-api.log"
 fi
@@ -100,8 +131,8 @@ echo
 
 # 2. Port depuis l'hôte
 echo "── Port 8321 depuis l'hôte"
-if curl -sf -m 5 http://localhost:8321/health >/dev/null 2>&1; then
-  pass "http://localhost:8321/health répond"
+if curl -sf -m 5 "$BASE/health" >/dev/null 2>&1; then
+  pass "$BASE/health répond"
 else
   code=$?
   if [ $code -eq 52 ] || [ $code -eq 56 ]; then
@@ -115,7 +146,9 @@ echo
 
 # 3. Qdrant vu depuis le conteneur mem0
 echo "── Qdrant, vu depuis mem0-http"
-if $CE exec mem0-http python -c "
+if [ -z "$CONTAINER" ]; then
+  echo "  · non exécuté — conteneur mem0-http absent"
+elif $CE exec mem0-http python -c "
 import urllib.request,sys
 urllib.request.urlopen('http://qdrant:6333/readyz',timeout=5).read()" 2>/dev/null; then
   pass "qdrant:6333 joignable depuis le conteneur"
@@ -127,9 +160,12 @@ echo
 
 # 4. oMLX vu depuis le conteneur — la panne la plus fréquente
 echo "── oMLX, vu depuis mem0-http"
-BASE=$($CE exec mem0-http printenv OMLX_BASE_URL 2>/dev/null || echo "?")
-echo "  OMLX_BASE_URL = $BASE"
-OUT=$($CE exec mem0-http python -c "
+if [ -z "$CONTAINER" ]; then
+  echo "  · non exécuté — conteneur mem0-http absent"
+else
+  OMLX_BASE=$($CE exec mem0-http printenv OMLX_BASE_URL 2>/dev/null || echo "?")
+  echo "  OMLX_BASE_URL = $OMLX_BASE"
+  OUT=$($CE exec mem0-http python -c "
 import os, json, urllib.request, urllib.error
 base = os.environ['OMLX_BASE_URL'].rstrip('/')
 key = os.environ.get('OMLX_API_TOKEN') or ''
@@ -146,51 +182,79 @@ except Exception as e:
     print('NET ' + type(e).__name__ + ': ' + str(e)[:120])
 " 2>&1)
 
-case "$OUT" in
-  OK*)
-    pass "oMLX répond — modèles : ${OUT#OK }"
-    # Les modèles demandés existent-ils vraiment ?
-    for var in OMLX_LLM_MODEL OMLX_EMBED_MODEL; do
-      want=$($CE exec mem0-http printenv "$var" 2>/dev/null || echo "")
-      if [ -n "$want" ] && ! printf '%s' "$OUT" | grep -qF "$want"; then
-        fail "$var=$want absent de la liste des modèles chargés" \
-             "charge-le dans oMLX, ou corrige le nom dans .env (il doit être exact)"
-      fi
-    done
-    ;;
-  "HTTP 401"|"HTTP 403")
-    fail "oMLX répond mais refuse l'authentification ($OUT)" \
-         "ton oMLX exige une clé : mets OMLX_API_TOKEN=... dans .env puis
+  case "$OUT" in
+    OK*)
+      pass "oMLX répond — modèles : ${OUT#OK }"
+      # Les modèles demandés existent-ils vraiment ?
+      for var in OMLX_LLM_MODEL OMLX_EMBED_MODEL; do
+        want=$($CE exec mem0-http printenv "$var" 2>/dev/null || echo "")
+        if [ -n "$want" ] && ! printf '%s' "$OUT" | grep -qF "$want"; then
+          fail "$var=$want absent de la liste des modèles chargés" \
+               "charge-le dans oMLX, ou corrige le nom dans .env (il doit être exact)"
+        fi
+      done
+      ;;
+    "HTTP 401"|"HTTP 403")
+      fail "oMLX répond mais refuse l'authentification ($OUT)" \
+           "ton oMLX exige une clé : mets OMLX_API_TOKEN=... dans .env puis
        $CE compose up -d --force-recreate mem0-http
        Sans elle, mem0 envoie api_key=not-needed et tout part en 401."
-    ;;
-  HTTP*)
-    fail "oMLX répond mais renvoie une erreur ($OUT)" "vérifie que l'URL pointe bien sur /v1"
-    ;;
-  *)
-    fail "oMLX injoignable depuis le conteneur ($OUT)" \
-         "oMLX tourne en natif sur le Mac : un conteneur ne le voit pas via localhost.
+      ;;
+    HTTP*)
+      fail "oMLX répond mais renvoie une erreur ($OUT)" "vérifie que l'URL pointe bien sur /v1"
+      ;;
+    *)
+      fail "oMLX injoignable depuis le conteneur ($OUT)" \
+           "oMLX tourne en natif sur le Mac : un conteneur ne le voit pas via localhost.
        Podman -> host.containers.internal ; Docker Desktop -> host.docker.internal.
        Vérifie surtout qu'oMLX écoute sur 0.0.0.0 et pas seulement sur 127.0.0.1 :
        lié au loopback, il reste invisible même avec le bon nom d'hôte."
-    ;;
-esac
+      ;;
+  esac
+fi
 echo
 
-# 5. Aller-retour complet
+# 5. Aller-retour complet.
+# Le token est lu du CONTENEUR (source de vérité, comme §0) : dès que
+# MEM0_HTTP_TOKEN y est défini, `check_token` (http_server.py) rejette par 401 tout
+# appel sans l'en-tête X-Mem0-Token. Sans token défini, aucun en-tête n'est envoyé.
+# Pas de tableau d'arguments pour l'en-tête : sous `set -u`, bash 3.2 refuse
+# l'expansion `"${tab[@]}"` d'un tableau vide.
+api_curl() { # api_curl <arguments curl…>
+  if [ -n "${TOKEN:-}" ]; then
+    curl -H "X-Mem0-Token: $TOKEN" "$@"
+  else
+    curl "$@"
+  fi
+}
 echo "── Écriture puis relecture"
-if curl -sf -m 120 -X POST http://localhost:8321/memory/add \
-     -H 'Content-Type: application/json' \
-     -d '{"text":"doctor: test de bout en bout","agent_id":"_doctor","infer":false}' >/dev/null 2>&1 \
-   && curl -sf -m 30 -X POST http://localhost:8321/memory/search \
-     -H 'Content-Type: application/json' \
-     -d '{"query":"doctor","agent_id":"_doctor","limit":1}' 2>/dev/null | grep -q doctor; then
-  pass "écriture et relecture fonctionnelles"
-  echo "  (souvenir de test laissé dans le scope _doctor, sans effet sur tes projets)"
+if [ -z "$CONTAINER" ]; then
+  echo "  · non exécuté — conteneur mem0-http absent"
 else
-  fail "l'aller-retour échoue" \
-       "si les tests 1 à 4 passent, c'est l'embedding : vérifie OMLX_EMBED_MODEL et
+  TOKEN=$($CE exec mem0-http printenv MEM0_HTTP_TOKEN 2>/dev/null || true)
+  if api_curl -sf -m 120 -X POST "$BASE/memory/add" \
+       -H 'Content-Type: application/json' \
+       -d '{"text":"doctor: test de bout en bout","agent_id":"_doctor","infer":false}' >/dev/null 2>&1 \
+     && api_curl -sf -m 30 -X POST "$BASE/memory/search" \
+       -H 'Content-Type: application/json' \
+       -d '{"query":"doctor","agent_id":"_doctor","limit":1}' 2>/dev/null | grep -q doctor; then
+    pass "écriture et relecture fonctionnelles"
+    echo "  (souvenir de test laissé dans le scope _doctor, sans effet sur tes projets)"
+  elif [ -n "$TOKEN" ]; then
+    fail "l'aller-retour échoue" \
+         "vérifie que MEM0_HTTP_TOKEN est identique dans .env et dans le conteneur :
+       $CE compose up -d --force-recreate mem0-http
+       Si le token est bon, c'est l'embedding : vérifie OMLX_EMBED_MODEL et
        EMBEDDING_DIMS (bge-m3 = 1024). Une dimension fausse fait rejeter l'écriture
        par Qdrant après création de la collection — dans ce cas supprime
        ./qdrant_storage et relance."
+  else
+    fail "l'aller-retour échoue" \
+         "si les tests 1 à 4 passent, c'est l'embedding : vérifie OMLX_EMBED_MODEL et
+       EMBEDDING_DIMS (bge-m3 = 1024). Une dimension fausse fait rejeter l'écriture
+       par Qdrant après création de la collection — dans ce cas supprime
+       ./qdrant_storage et relance."
+  fi
 fi
+
+exit "$FAIL"

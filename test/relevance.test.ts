@@ -152,7 +152,7 @@ function injectedIds(content: string): string[] {
 // AC-1 — prompt sans aucun lien avec la mémoire → rien d'injecté, rien d'affiché
 // ---------------------------------------------------------------------------
 
-test("AC-1 : un prompt hors-sujet n'injecte aucun souvenir (plancher 0.55)", async () => {
+test("relevance/AC-1 : un prompt hors-sujet n'injecte aucun souvenir (plancher 0.55)", async () => {
   const svc = stubService(
     [scored("081332b1", 0.424), scored("d319c0c3", 0.408), scored("e70a14da", 0.375)],
     [scored("f9921087", 0.478), scored("260026b3", 0.444), scored("a59bfaa7", 0.444)],
@@ -173,7 +173,7 @@ test("AC-1 : un prompt hors-sujet n'injecte aucun souvenir (plancher 0.55)", asy
 // AC-2 — parenté ambiguë : le doute se traduit par le silence
 // ---------------------------------------------------------------------------
 
-test("AC-2 : une parenté ambiguë (jusqu'à 0.534, sous le plancher) n'injecte rien", async () => {
+test("relevance/AC-2 : une parenté ambiguë (jusqu'à 0.534, sous le plancher) n'injecte rien", async () => {
   const svc = stubService(
     [scored("235717ed", 0.501), scored("dc393290", 0.486), scored("97053023", 0.480)],
     [scored("4b7866e3", 0.534), scored("7cce9bdc", 0.522)],
@@ -190,7 +190,7 @@ test("AC-2 : une parenté ambiguë (jusqu'à 0.534, sous le plancher) n'injecte 
   }
 });
 
-test("AC-2 : service sans score sémantique → statut unavailable, message de reconstruction", async () => {
+test("service sans score sémantique → statut unavailable, message de reconstruction", async () => {
   const svc = stubService(
     [unscored("235717ed"), unscored("dc393290")],
     [unscored("4b7866e3"), unscored("7cce9bdc")],
@@ -217,7 +217,7 @@ test("AC-2 : service sans score sémantique → statut unavailable, message de r
 //        triés par le cosinus brut (le serveur, lui, sert dans l'ordre combiné)
 // ---------------------------------------------------------------------------
 
-test("AC-3 : un prompt en rapport injecte les souvenirs pertinents, triés par cosinus", async () => {
+test("relevance/AC-3 : un prompt en rapport injecte les souvenirs pertinents, triés par cosinus", async () => {
   const svc = stubService(
     // Servi du moins bon au meilleur, à l'inverse de l'ordre attendu : c'est le
     // serveur qui classe par score combiné, donc c'est le tri de l'extension qui
@@ -260,7 +260,7 @@ test("AC-3 : un prompt en rapport injecte les souvenirs pertinents, triés par c
 // AC-4 — un souvenir d'un AUTRE dépôt est écarté, sans exclure par l'origine
 // ---------------------------------------------------------------------------
 
-test("AC-4 : un souvenir d'un autre dépôt n'est pas injecté, les souvenirs du dépôt le sont", async () => {
+test("relevance/AC-4 : un souvenir d'un autre dépôt n'est pas injecté, les souvenirs du dépôt le sont", async () => {
   const svc = stubService(
     [
       scored("b44e8e08", 0.679),
@@ -299,7 +299,7 @@ test("AC-4 : un souvenir d'un autre dépôt n'est pas injecté, les souvenirs du
 // AC-5 / AC-6 — la recherche manuelle applique le même plancher
 // ---------------------------------------------------------------------------
 
-test("AC-5 : une recherche hors-sujet ne retourne aucun résultat", async () => {
+test("relevance/AC-5 : une recherche hors-sujet ne retourne aucun résultat", async () => {
   const svc = stubService(
     [scored("b44e8e08", 0.414), scored("88a36927", 0.372), scored("e7c396c7", 0.403)],
     [scored("b659e2b0", 0.298)],
@@ -317,7 +317,7 @@ test("AC-5 : une recherche hors-sujet ne retourne aucun résultat", async () => 
   }
 });
 
-test("AC-6 : une recherche qui correspond à des souvenirs réels les retourne", async () => {
+test("relevance/AC-6 : une recherche qui correspond à des souvenirs réels les retourne", async () => {
   const svc = stubService(
     [scored("4f41b0d5", 0.619), scored("1978ef06", 0.550), scored("d319c0c3", 0.525)],
     [],

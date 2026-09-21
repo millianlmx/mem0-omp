@@ -3,6 +3,8 @@ mem0-stack/qdrant_storage/
 mem0-stack/.env
 
 node_modules/
+# Racine de types temporaire de scripts/typecheck.sh (lien vers l'installation de l'hôte)
+.typecheck/
 *.log
 .DS_Store
 
