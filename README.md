@@ -261,14 +261,18 @@ fait désormais échouer la construction de l'image, pas la première requête.
   intact par la création (ni commit, ni fichier touché) ; `/req` s'ouvre depuis lui et
   refuse de s'ouvrir depuis un worktree. `/specs`, `/impl` et `/review` refusent de
   tourner hors du worktree d'une feature (sauf contrat hérité du mode précédent).
-  **Le push vaut clôture.** La pipeline ne commite rien et ne pousse jamais rien : dès
-  que la branche est poussée sur `origin` et que l'arbre du worktree est propre, il est
+  **Le push vaut clôture.** Hors lot, la pipeline ne commite rien et ne pousse rien
+  elle-même : dès que la branche est poussée sur `origin` — par toi, ou par la
+  livraison d'une feature de lot (voir « Lot de features ») — et que l'arbre du
+  worktree est propre, il est
   retiré au déclenchement suivant (maillon ou commande) — la branche reste. Un worktree
   sale ou non poussé est conservé avec sa raison, et un balayage impossible ne retire
   rien (avertissement). La mémoire reste unique : worktree et dépôt principal partagent
   le même scope mem0, et rien n'est écrit dans l'arbre de la feature.
-- `/pipelines` (raccourci `alt+w`, plugin `omp-mem0-req`) — ouvre le **panneau des
-  pipelines en cours** : voir ci-dessous.
+- `/pipelines` (raccourci `alt+w`, plugin `omp-mem0-req`) — ouvre la **salle de contrôle**
+  des pipelines : le **lot de features** du dépôt (ajouter, lancer, répondre, valider,
+  accepter, relancer, annuler) au-dessus des pipelines en cours de toute la machine —
+  voir ci-dessous.
 
 ## Pipelines en cours
 
@@ -327,6 +331,72 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
   `~/.omp/agent/pipeline` — ou `MEM0_PIPELINE_STATE_DIR`. Aucun serveur, aucun démon :
   des fichiers, et rien d'autre.
 
+## Lot de features
+
+Un **lot** enchaîne plusieurs features : chacune a son pipeline (les quatre maillons
+`/req` → `/specs` → `/impl` → `/review`), et le lot les fait avancer **tout seul** — un
+processus par maillon — en ne s'arrêtant que là où il a besoin de toi. Il se pilote
+entièrement depuis le panneau.
+
+```
++ Pipelines · 0 en cours --------------------------------------+
++─ Lot · mem0-omp · 3 features --------------------------------+
+| > isolation-worktree       /specs · attend validation · 1:20 |
+|   base-qdrant ← isolation-worktree     /req · à venir · 0:12 |
+|   panneau-lot                          /impl · bloqué · 4:03 |
+| aucune pipeline en cours                                     |
++--------------------------------------------------------------+
+| aucun historique                                             |
+| a ajouter · l lancer · Entrée rejoindre                      |
+| v valider · c annuler                                        |
++ Échap fermer ------------------------------------------------+
+```
+
+La **seconde ligne de pied** est contextuelle : elle n'annonce que les touches qui
+s'appliquent à la ligne sélectionnée (`i répondre`, `v valider`, `y accepter`,
+`R relancer`, `x retirer`, `c annuler` — `aucune action` si aucune ne s'applique).
+`d supprimer` n'apparaît que sur une entrée d'historique, le seul rang qu'il supprime.
+
+- **Ajouter** (`a`) : trois champs — nom, **Description** (elle amorce la collecte),
+  dépendances (slugs séparés par des virgules, vide admis). Le worktree de la feature est
+  créé au lancement (`feat/<nom>`), jamais à l'ajout. **Retirer** (`x`) enlève une feature
+  qui n'a pas encore démarré.
+- **Lancer** (`l`) : chaque feature démarre son maillon courant, **toutes en parallèle** —
+  deux features sans dépendance ne s'attendent jamais.
+- **La chaîne** : collecte → specs → implémentation → revue → livraison. Elle ne s'arrête
+  que sur trois jalons : une **question** de l'agent, la **validation des specs** (`v`),
+  l'**accord de fin de revue** (`y`). Entre deux jalons, tu n'as rien à lancer.
+- **La boucle de correction** (`/impl --fix` → `/review`) tourne seule, dans la limite de
+  `MEM0_PIPELINE_REVIEW_CAP` tours (3 par défaut) : au-delà, la feature passe *bloqué* au
+  lieu de boucler.
+- **Répondre** (`i`) : en mode lot, l'outil `ask` n'existe pas — le maillon termine son
+  tour par ses questions en clair, reprises dans l'alerte durable du transcript. Ta
+  réponse relance le maillon **dans sa session** (`--resume`) : il reprend exactement là
+  où il s'était arrêté.
+- **La livraison** : après ton accord, un dernier run met **un** commit (message
+  conventionnel, versions bumpées si un plugin change) et écrit le corps de la PR ; le
+  pilote **pousse la branche vers l'URL HTTPS du dépôt** (jamais `origin` en SSH) puis
+  ouvre la PR avec `gh` — son URL est consignée dans le panneau.
+- **Relancer** (`R`) repart du maillon courant d'une feature bloquée ou échouée, sans
+  toucher aux autres pipelines — et sans repartir tant qu'une dépendance de la feature
+  n'est pas terminée (`dépendance <nom> non terminée`). **Annuler** (`c`) te fait choisir
+  le devenir du worktree :
+  `1` conservé en place, `2` archivé (les fichiers ignorés — le contrat, les caches — sont
+  copiés sous `~/.omp/pipeline-archive/…`, puis le worktree est retiré), `3` supprimé —
+  **la branche reste** dans les trois cas.
+- **Dépendances** : une feature ne démarre qu'après la fin de celles dont elle dépend, et
+  reste *bloqué* si l'une d'elles échoue, se bloque ou est annulée.
+- **Le récap** : quand le dernier pipeline atteint un état terminal, le lot poste son
+  décompte (terminées, bloquées, échouées, annulées) dans le transcript.
+- **Où c'est piloté** : `<état>/lots/<sha1(realpath(dépôt))[:16]>.json`, écrit par **un
+  seul** process, le pilote. Fermer ce process ne perd pas le lot : la première session
+  qui le rouvre le **reprend**, et les runs en cours (tués avec lui) sont relançables d'un
+  `R`.
+- **Une feature ouverte par `/req`** suit exactement la même chaîne : sa collecte se
+  déroule dans ta session (avec les questions à options d'`ask`), puis le lot prend la
+  main dès `/specs`. `/specs`, `/impl` et `/review` restent utilisables à la main tant
+  qu'aucun lot ne pilote la feature.
+
 ## Phases
 
 Une **phase** est un rôle nommé qu'on active sur une session (par exemple `release`,
@@ -360,7 +430,11 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
-| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`) lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
+| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`) et des lots (`lots/`), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
+| `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
+| `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget d'un run de maillon en millisecondes (10 s à 24 h) ; au-delà, la feature passe `échoué` |
+| `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` des runs du lot (chemin absolu si `omp` n'est pas dans le `PATH`) |
+| `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |
 | `OMLX_LLM_MODEL` | `qwen3-8b` | modèle d'extraction (dans `.env`) |

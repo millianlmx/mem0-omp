@@ -272,7 +272,7 @@ test("worktree/AC-6 : seul le worktree de la feature poussée est retiré", asyn
   assert.ok(message.includes(`worktree conservé : ${wip.path}`));
 });
 
-test("worktree/AC-7 : la pipeline ne pousse rien et conserve le worktree après un cycle clos", async () => {
+test("worktree/AC-7 : le balayage ne pousse rien et conserve le worktree après un cycle clos", async () => {
   const root = mkRepo();
   const base = mktmp("wt-base-");
   // `.omp/` ignoré (comme au dépôt réel) : le contrat ne salit pas l'arbre
@@ -303,8 +303,11 @@ test("worktree/AC-7 : la pipeline ne pousse rien et conserve le worktree après 
   });
   assert.deepEqual(decision, { remove: false, reason: "branche non poussée" });
 
+  // Le vocabulaire git du BALAYAGE reste en lecture seule. Le push d'une feature
+  // appartient au maillon de livraison du lot (couvert par les tests du lot), pas
+  // à cette liste.
   for (const forbidden of ["push", "fetch", "pull"]) {
-    assert.ok(!PIPELINE_GIT_SUBCOMMANDS.includes(forbidden), `${forbidden} hors du vocabulaire git de la pipeline`);
+    assert.ok(!PIPELINE_GIT_SUBCOMMANDS.includes(forbidden), `${forbidden} hors du vocabulaire git du balayage`);
   }
 });
 
