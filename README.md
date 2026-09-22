@@ -305,39 +305,69 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
   jamais deviné par celui qui lit.
 - **Entrée** ouvre la **vue de session** de la ligne, dans le panneau : la transcription
   du fichier de session, du plus ancien au plus récent, relue à chaque rafraîchissement —
-  un maillon qui travaille se voit avancer. Chaque entrée est rendue **entière** : un
-  message de plusieurs lignes occupe plusieurs lignes de terminal, et les lignes trop
-  longues se replient au lieu de déborder. L'en-tête rappelle le rang, son maillon, son
-  état, le nom du fichier — et `run en cours — lecture seule` quand un run est en train
-  d'écrire cette session. `↑`/`k`, `↓`/`j`, `PageUp`/`PageDown` et la molette remontent
-  et redescendent la transcription.
-- **La vue répond** — c'est le seul endroit d'où une écriture part vers le lot, et elle
-  n'en part qu'après confirmation. Sa **zone de saisie** a quatre états, et elle dit
-  toujours lequel :
+  un maillon qui travaille se voit avancer sans sortir et rentrer (≤ 2 s). Le rendu est
+  celui d'OMP : le markdown est mis en forme — titres, listes à puces ou numérotées,
+  blocs de code —, un appel d'outil qui modifie un fichier montre son **diff** (les
+  ajouts en `+`, les suppressions en `-`, le contexte en gris) au lieu des arguments
+  bruts, et chaque entrée est rendue **entière** : un message de plusieurs lignes occupe
+  plusieurs lignes de terminal, les lignes trop longues se replient au lieu de déborder.
+  Une entrée de plus de **12 rangs** est **repliée d'office** : ses 8 premiers rangs, puis
+  la mention `… <n> lignes repliées — ctrl+o déplier`. `ctrl+o` déplie l'entrée repliée la
+  plus récente, puis la replie ; un clic sur la mention bascule celle qu'on vise, une
+  entrée à la fois — une conversation s'ouvre toujours repliée. L'en-tête rappelle le rang,
+  son maillon, son état, le nom du fichier — et `run en cours — lecture seule` quand un
+  run est en train d'écrire cette session. `↑`/`k`, `↓`/`j`, `PageUp`/`PageDown` et la
+  molette remontent et redescendent la transcription.
+- **La vue répond** — c'est le seul endroit d'où une écriture part, vers le lot ou vers
+  une session, et elle n'en part qu'après confirmation. Sa **zone de saisie** choisit sa
+  forme selon le rang, et elle dit toujours laquelle :
   - la pipeline **attend une réponse et sa question propose des choix** : les options
     sont rendues `(1) …`, `(2) …` — `↑`/`↓`, `1`…`9` ou un clic choisissent, `Entrée`
     ouvre l'aperçu `Envoyer à <feature> · /<maillon> : « <libellé> »`, un second `Entrée`
     livre le libellé. La ligne `autre — saisir ma réponse` bascule sur l'éditeur libre,
     tampon vide ;
+  - un **maillon du lot pose une question `ask`** : la question et ses options
+    apparaissent **dans la conversation** — une question à la fois, 1 à 9 options — et la
+    zone prend la même forme d'options, sa première ligne rappelant la question. Choisir
+    une option puis confirmer livre la réponse au maillon, qui repart **dans son tour en
+    cours** : **aucun nouveau run n'est lancé**, et l'état du rang cesse d'être `attend`.
+    Les options d'une feature en attente, elles, viennent du **texte** de la question
+    (forme `- (1) <libellé>`, une par ligne) — la convention que le lot impose à ce
+    dialogue-là ;
   - la pipeline **attend une réponse sans choix** (ou vous avez choisi « autre ») :
-    `Réponse : <tampon>▏`. Les caractères imprimables s'ajoutent, `⌫` efface, `Entrée`
-    ouvre le même aperçu — **jamais** un envoi direct —, `Échap` y revient au tampon
-    intact. Un tampon vide est refusé (`réponse vide`), l'éditeur reste ouvert ;
-  - la pipeline **travaille** : le même éditeur, mais l'aperçu dit
-    `Mettre en file pour <feature> · … le message part au prochain maillon`. Le run en
-    cours n'est ni interrompu ni avorté — aucune API de l'hôte n'atteint un processus
-    enfant —, le message attend dans la **file** de la feature et part avec le prochain
-    run que le pilote démarre pour elle. La liste l'annonce (`· 1 message en attente`),
-    et la file est bornée (9 messages, 12 000 caractères) ;
-  - la pipeline **ne tourne pas** (terminée, échouée, annulée, bloquée, à venir, ou
-    arrêtée sur un jalon de specs/revue) : `lecture seule — <raison>`, avec la raison
-    écrite en toutes lettres. Aucun champ de saisie n'est offert — un champ absent est
-    plus honnête qu'un champ qui refuse.
+    `Réponse : <tampon>▏`. Les caractères imprimables s'ajoutent, un texte collé entre
+    d'un bloc (borné à 4 000 caractères, notice `message tronqué à 4000 caractères`
+    au-delà), `⌫` efface, `Entrée` ouvre le même aperçu — **jamais** un envoi direct —,
+    `Échap` y revient au tampon intact. Un tampon vide est refusé (`réponse vide`),
+    l'éditeur reste ouvert ;
+  - la pipeline **travaille** et son run est **vivant** : le même éditeur, mais l'aperçu
+    dit `Envoyer au maillon — injecté dans son tour en cours`. Le message part dans la
+    boîte de réception du run, que le maillon consomme : il en tient compte **dans le
+    tour en cours**, avant de rendre la main, et **aucun nouveau run n'est lancé**. La
+    notice `message transmis au maillon` accuse la livraison ; un message confirmé juste
+    avant la mort du run est reporté au prochain run plutôt que perdu ;
+  - la pipeline **travaille** sans run vivant joignable (rang tenu par un process d'une
+    version antérieure) : l'aperçu dit `Mettre en file pour <feature> · … le message part
+    au prochain maillon`. Le run en cours n'est ni interrompu ni avorté, le message attend
+    dans la **file** de la feature et part avec le prochain run que le pilote démarre pour
+    elle. La liste l'annonce (`· 1 message en attente`), et la file est bornée (9
+    messages, 12 000 caractères) ;
+  - la pipeline est **bloquée** : le même éditeur libre, et ta réponse relance le maillon
+    **dans sa session** (`--resume`) avec son contexte — il reprend là où il s'était
+    arrêté, et la chaîne du lot repart ;
+  - le rang est une **session terminée** hors lot : le même éditeur, et ta réponse lance
+    un **nouveau run sur cette session** (`--resume`) — elle s'ajoute à la conversation
+    que tu as sous les yeux ;
+  - la pipeline **ne tourne pas** (terminée, échouée, annulée, à venir, ou arrêtée sur un
+    jalon de specs/revue) : `lecture seule — <raison>`, avec la raison écrite en toutes
+    lettres. Aucun champ de saisie n'est offert — un champ absent est plus honnête qu'un
+    champ qui refuse. Une **session vivante dans un autre process** y tombe, avec son
+    motif (`cette session appartient à un autre process (pid <n>)`) : rien n'entre dans un
+    run qui ne nous écoute pas, et **rien n'est envoyé**.
   Une question à choix se répond donc **sans quitter le panneau**, jusqu'à la clôture
   d'une collecte `/req` : la chaîne enchaîne ensuite toute seule sur le maillon suivant.
-  Les options viennent du **texte** de la question (forme `- (1) <libellé>`, une par
-  ligne) : c'est la convention que le lot impose à ses runs, faute de pouvoir poser un
-  `ask` en headless.
+  Pendant qu'une conversation est ouverte, le lot continue d'enchaîner ses autres
+  maillons — la vue ne met rien en pause.
 - **`o`** rejoint vraiment la session correspondante (la bascule OMP, avec son
   transcript) — y compris inter-processus, inter-dépôts et depuis un worktree voisin : la
   session courante est d'abord amenée sur le répertoire de travail enregistré par la
@@ -356,10 +386,13 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 - **`d`** supprime l'entrée d'historique sélectionnée, définitivement et sans
   confirmation (une entrée à la fois). Sur une pipeline en cours, il ne supprime rien et
   le dit.
-- **`↑`/`k`, `↓`/`j`, `Entrée`, `o`, `d`, `Échap`/`Ctrl+C`** — c'est un overlay
+- **`↑`/`k`, `↓`/`j`, `Entrée`, `o`, `d`, `ctrl+o`, `Échap`/`Ctrl+C`** — c'est un overlay
   focalisé : tant qu'il est ouvert, aucune touche n'atteint l'éditeur, et `Échap` est le
   seul moyen de le fermer depuis la liste (depuis la vue de session, il ramène à la
-  liste). Le **texte de l'éditeur est restauré** à la fermeture.
+  liste). Dans la vue, **`ctrl+o`** déplie l'entrée repliée la plus récente, puis la
+  replie — c'est la touche de pliage native d'OMP, et l'hôte la cède au panneau tant que
+  l'overlay est ouvert : elle ne vole rien à la saisie. Le **texte de l'éditeur est
+  restauré** à la fermeture.
 - **À la souris** : le clic gauche prend la ligne visée — et, dans la vue, l'option
   visée — et la molette déplace la sélection d'un cran (ou le défilement, dans la vue de
   session). Conséquence assumée du plein écran : tant que le panneau est ouvert, la
@@ -429,10 +462,16 @@ s'affiche tel quel au lieu d'être avalé.
 - **La boucle de correction** (`/impl --fix` → `/review`) tourne seule, dans la limite de
   `MEM0_PIPELINE_REVIEW_CAP` tours (3 par défaut) : au-delà, la feature passe *bloqué* au
   lieu de boucler.
-- **Répondre** (`i`) : en mode lot, l'outil `ask` n'existe pas — le maillon termine son
-  tour par ses questions en clair, reprises dans l'alerte durable du transcript. Ta
-  réponse relance le maillon **dans sa session** (`--resume`) : il reprend exactement là
-  où il s'était arrêté.
+- **Répondre** (`i`) : dans un run lancé par le panneau, le maillon dispose d'un outil
+  `ask` à options — **une question à la fois, 1 à 9 options**. La question s'affiche dans
+  la conversation, où tu sélectionnes une option ; la réponse repart dans le maillon
+  **sans lancer de nouveau run**, la question se résout dans le tour en cours, et la
+  chaîne reprend à la fin de ce tour. Un message tapé pendant que le maillon travaille lui
+  est **injecté dans le tour en cours**, même sans question posée. Quand un maillon a fini
+  son tour (état « attend réponse » ou « bloqué »), ta réponse le relance **dans sa
+  session** (`--resume`) : il reprend exactement là où il s'était arrêté. Hors lot, un run
+  n'est pas armé : le maillon garde ses questions en clair, reprises dans l'alerte durable
+  du transcript.
 - **La livraison** : après ton accord, un dernier run met **un** commit (message
   conventionnel, versions bumpées si un plugin change) et écrit le corps de la PR ; le
   pilote **pousse la branche vers l'URL HTTPS du dépôt** (jamais `origin` en SSH) puis
