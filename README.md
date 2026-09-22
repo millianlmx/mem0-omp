@@ -276,9 +276,11 @@ fait désormais échouer la construction de l'image, pas la première requête.
 
 ## Pipelines en cours
 
-`/pipelines` — ou `alt+w` — monte un panneau ancré en **haut à droite** qui liste les
-pipelines de **tous les processus OMP de la machine**, tous dépôts confondus : la
-sienne comme celle d'un autre terminal, d'un autre dépôt, d'un worktree voisin. Rien
+`/pipelines` — ou `alt+w` — monte un panneau **plein écran** qui liste les pipelines de
+**tous les processus OMP de la machine**, tous dépôts confondus : la sienne comme celle
+d'un autre terminal, d'un autre dépôt, d'un worktree voisin. Le chat n'est pas visible
+derrière (le panneau emprunte le buffer alterné du terminal) et rien de l'écran normal
+n'est modifié : à la fermeture, la transcription est exactement là où elle était. Rien
 n'est à rafraîchir : le panneau relit l'état partagé une fois par seconde, l'horloge du
 temps écoulé avec lui.
 
@@ -293,7 +295,7 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 ├───────────────────────────────────────────────────────────────┤
 │   mem0-omp/isolation-worktree     /review · terminé           │
 │   autre-depot/fix-recall          /req · échoué               │
-│ ↑↓ naviguer · Entrée rejoindre · d supprimer                  │
+│ ↑↓ naviguer · Entrée session · d supprimer                    │
 └ Échap fermer ─────────────────────────────────────────────────┘
 ```
 
@@ -301,26 +303,48 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
   à une question — un `ask` en vol, une approbation d'outil en attente, ou l'agent qui a
   rendu la main. L'état est calculé par le processus **propriétaire** de la pipeline,
   jamais deviné par celui qui lit.
-- **Entrée** rejoint la session correspondante, avec son transcript — y compris
-  inter-processus, inter-dépôts et depuis un worktree voisin : la session courante est
-  d'abord amenée sur le répertoire de travail enregistré par la cible, donc les
-  commandes suivantes partent de là, et la session quittée reste intacte et reprenable
-  (seul le périmètre de la **session** change : réglages et plugins du processus, eux,
-  ne bougent pas). Si le fichier de session n'existe pas (ou pas encore écrit sur le
-  disque), ou s'il ne porte pas d'en-tête de session valide, le panneau **reste ouvert**
-  et le dit : basculer vers un chemin absent — ou vers un fichier de 0 octet — créerait
-  une session vide à la place. Même refus, avec sa cause, quand le répertoire de travail
-  enregistré par la cible a disparu (worktree archivé) : le panneau nomme le chemin
-  manquant et rien n'est créé. Après une bascule réussie, le panneau se referme.
+- **Entrée** ouvre la **vue de session** de la ligne, dans le panneau : la transcription
+  du fichier de session, du plus ancien au plus récent, relue à chaque rafraîchissement —
+  un maillon qui travaille se voit avancer. C'est une vue en **lecture seule** : elle
+  n'écrit rien, ne bascule rien, n'annule rien, et `Échap` ramène à la liste telle qu'on
+  l'a laissée. L'en-tête rappelle le rang, son maillon, son état, le nom du fichier — et
+  `run en cours — lecture seule` quand un run est en train d'écrire cette session.
+  `↑`/`k`, `↓`/`j` et la molette remontent et redescendent la transcription.
+- **`o`** rejoint vraiment la session correspondante (la bascule OMP, avec son
+  transcript) — y compris inter-processus, inter-dépôts et depuis un worktree voisin : la
+  session courante est d'abord amenée sur le répertoire de travail enregistré par la
+  cible, donc les commandes suivantes partent de là, et la session quittée reste intacte
+  et reprenable (seul le périmètre de la **session** change : réglages et plugins du
+  processus, eux, ne bougent pas). Deux refus, avant toute lecture disque : tant qu'un
+  **run vit** sur la ligne (deux écrivains sur un fichier de session le corrompraient —
+  la ligne le dit, `Entrée` reste disponible), et quand la ligne **est** la session
+  courante du processus (viser la sienne abandonnerait le tour en cours). Si le fichier
+  de session n'existe pas (ou pas encore écrit sur le disque), ou s'il ne porte pas
+  d'en-tête de session valide, le panneau **reste ouvert** et le dit : basculer vers un
+  chemin absent — ou vers un fichier de 0 octet — créerait une session vide à la place.
+  Même refus, avec sa cause, quand le répertoire de travail enregistré par la cible a
+  disparu (worktree archivé) : le panneau nomme le chemin manquant et rien n'est créé.
+  Après une bascule réussie, le panneau se referme.
 - **`d`** supprime l'entrée d'historique sélectionnée, définitivement et sans
   confirmation (une entrée à la fois). Sur une pipeline en cours, il ne supprime rien et
   le dit.
-- **`↑`/`k`, `↓`/`j`, `Entrée`, `d`, `Échap`/`Ctrl+C`** — c'est un overlay focalisé :
-  tant qu'il est ouvert, aucune touche n'atteint l'éditeur, et `Échap` est le seul
-  moyen de le fermer. Le **texte de l'éditeur est restauré** à la fermeture.
-- **Pas de souris** : ce n'est pas un choix, c'est une contrainte d'OMP — un overlay
-  non plein écran ne reçoit aucun événement de souris (les séquences de clic ne sont
-  même pas émises). Ni fenêtre redimensionnable, ni défilement ligne à ligne.
+- **`↑`/`k`, `↓`/`j`, `Entrée`, `o`, `d`, `Échap`/`Ctrl+C`** — c'est un overlay
+  focalisé : tant qu'il est ouvert, aucune touche n'atteint l'éditeur, et `Échap` est le
+  seul moyen de le fermer depuis la liste (depuis la vue de session, il ramène à la
+  liste). Le **texte de l'éditeur est restauré** à la fermeture.
+- **À la souris** : le clic gauche prend la ligne visée (jamais plus : un clic n'entre
+  pas dans une session et ne déclenche aucune action de lot) et la molette déplace la
+  sélection d'un cran — ou le défilement, dans la vue de session. Conséquence assumée du
+  plein écran : tant que le panneau est ouvert, la sélection de texte native du terminal
+  est capturée par le panneau.
+- **La sélection est mémorisée par dépôt** : fermer le panneau puis le rouvrir (`alt+w`)
+  rend la même ligne — et la vue de session s'ouvre par `Entrée`, se referme par `Échap`,
+  sans qu'aucune commande soit à retaper.
+- **Une ligne par feature** : dès qu'une feature du lot a un run, c'est **sa** ligne qui
+  porte le maillon, l'état et le temps de ce run — elle n'apparaît jamais deux fois (une
+  ligne de lot + une ligne « en cours »). Ce qui reste dans « en cours », ce sont les
+  pipelines hors lot (autres dépôts, autres sessions) ; l'historique, lui, garde une
+  trace par maillon terminé.
 - **Fin de pipeline** : un cycle clos par `/review` sans bloquant quitte la liste des
   pipelines en cours et rejoint l'**historique** avec l'état `terminé` ; un processus
   qui disparaît sans terminer y entre en `échoué` (constaté par le premier lecteur, à
@@ -347,7 +371,7 @@ entièrement depuis le panneau.
 | aucune pipeline en cours                                     |
 +--------------------------------------------------------------+
 | aucun historique                                             |
-| a ajouter · l lancer · Entrée rejoindre                      |
+| a ajouter · l lancer · Entrée session                        |
 | v valider · c annuler                                        |
 + Échap fermer ------------------------------------------------+
 ```
