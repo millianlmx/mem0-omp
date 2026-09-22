@@ -202,14 +202,14 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}) {
 test("pipelines/AC-1 : les rangs du panneau portent le cadre et le pied", () => {
   // Aucune entrée du tout : le panneau s'affiche quand même (titre, sections
   // vides, pied) — il ne se ferme pas tout seul.
-  const model: PanelModel = { running: [], history: [], selection: -1, notice: null, unreadable: 0 };
+  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0 };
   const rows = buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 1_000 });
   const text = rowsText(rows);
 
   assert.match(text, /Pipelines · 0 en cours/, "le titre porte le compteur des pipelines en cours");
   assert.match(text, /aucune pipeline en cours/);
   assert.match(text, /aucun historique/);
-  assert.match(text, /↑↓ naviguer · Entrée rejoindre · d supprimer/);
+  assert.match(text, /↑↓ naviguer · Entrée session · d supprimer/);
   assert.match(text, /Échap fermer/);
   assert.equal(rows.length, 6, "titre + séparateur + 2 sections vides + 2 rangs de pied");
   for (const row of rows) {
@@ -398,7 +398,7 @@ test("pipelines/AC-6 : sélectionner une pipeline ouvre la session correspondant
   });
 
   assert.match(panel.render(), /depot\/feature/, "le rang est là");
-  panel.component.handleInput("\r"); // Entrée
+  panel.component.handleInput("o"); // la bascule vit sur `o` (S-3)
   await Promise.all(panel.pending);
 
   assert.deepEqual(switched, [sessionFile], "la session de l'entrée est ouverte");
@@ -430,7 +430,7 @@ test("pipelines/AC-7 : une session non reprenable est signalée au lieu de reste
     },
   });
 
-  panel.component.handleInput("\r");
+  panel.component.handleInput("o"); // la bascule vit sur `o` (S-3)
   await Promise.all(panel.pending);
 
   assert.deepEqual(switched, [], "aucune bascule tentée : elle créerait une session vide à ce chemin");
@@ -567,6 +567,7 @@ test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
   // les lots, et `mode: browse` l'absence de saisie en cours (S-7).
   assert.deepEqual(model, {
     running: [],
+    live: {},
     history: [],
     lot: null,
     mode: { kind: "browse" },
@@ -635,6 +636,7 @@ test("la sélection est bornée, sans bouclage, et reste valide après une suppr
 
 test("le panneau se borne en hauteur : en cours prioritaires, marqueurs de troncature", () => {
   const model: PanelModel = {
+    live: {},
     running: [0, 1, 2].map((i) => ({
       id: runningIdFor(`/r${i}`),
       cwd: `/r${i}`,
@@ -683,9 +685,10 @@ test("le panneau se borne en hauteur : en cours prioritaires, marqueurs de tronc
       assert.equal(row.text.length, width, `largeur ${width} respectée`);
     }
   }
-  assert.equal(panelBudget(10), 8, "plancher de 8 rangs");
-  assert.equal(panelBudget(100), 18, "plafond de 18 rangs");
-  assert.equal(panelBudget(20), 16, "80 % de la hauteur du terminal, entre les deux");
+  assert.equal(panelBudget(4), 8, "plancher de 8 rangs : sous lui, le TUI coupe");
+  assert.equal(panelBudget(10), 10, "le budget est la hauteur du terminal, sans plafond");
+  assert.equal(panelBudget(100), 100, "un écran haut donne un budget haut");
+  assert.equal(panelBudget(0), 24, "hauteur absente ou nulle : repli de 24");
 });
 
 test("le rang sélectionné porte le curseur, les autres un préfixe de même largeur", () => {

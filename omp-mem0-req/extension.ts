@@ -3087,24 +3087,46 @@ export function createLotController(deps: LotControllerDeps): LotController {
 }
 
 // ---------------------------------------------------------------------------
-// Panneau des pipelines — un overlay ancré en haut à droite.
+// Panneau des pipelines — un plein écran, pilotable au clavier ET à la souris.
 // ---------------------------------------------------------------------------
-// C'est un `ctx.ui.custom` avec `overlay: true` et `anchor: "top-right"` — le seul
-// point de montage d'un composant maison en TUI (cf. `## Documentation` §1).
-// L'overlay prend le FOCUS : aucune touche n'atteint l'éditeur tant qu'il est
-// ouvert, et `done` est le seul moyen de rendre le focus et le texte de l'éditeur.
+// C'est un `ctx.ui.custom` avec `overlay: true` et `fullscreen: true` : le seul
+// point de montage d'un composant maison en TUI (cf. `## Documentation` §1). Le
+// plein écran emprunte le buffer alterné — le chat n'est plus visible derrière, et
+// rien de l'écran normal n'est modifié. L'overlay prend le FOCUS : aucune touche
+// n'atteint l'éditeur tant qu'il est ouvert, et `done` est le seul moyen de rendre
+// le focus et le texte de l'éditeur.
+//
+// Le plein écran ouvre la SOURIS : `pi-tui` capture les rapports dès que l'overlay
+// visible du dessus est plein écran et que `mouseTracking` n'est pas désactivé, et
+// les remet à `handleInput` en SGR. Le décodage est local (`parseSgrMouse`, aucun
+// import de valeur `@oh-my-pi/*`) et la résolution rang → rang sélectionnable passe
+// par `PanelRow.target`, posé par le constructeur de rangs : la correspondance
+// n'est jamais devinée à l'écran. Conséquence assumée : tant que le panneau est
+// ouvert, la sélection de texte native du terminal est capturée par le panneau.
 //
 // La mise en page est une fonction PURE de rangs `{text, tone}` (aucun état, aucun
 // accès disque), construite hors du composant et testable avec des glyphes ASCII —
 // même séparation que `renderRecallRows` du plugin mémoire. Le composant ne fait
-// que colorier EN BLOC : un rang, une couleur, donc aucun calcul ANSI.
+// que colorier EN BLOC : un rang, une couleur, donc aucun calcul ANSI — et il
+// remplit la hauteur de l'écran, ce que le constructeur de rangs ne fait pas (son
+// contrat « au plus `budget` rangs » est verrouillé par les tests).
 //
-// Contrainte de plateforme : la souris n'existe pas pour un overlay non
-// fullscreen (cf. `## Documentation` §1). Rien n'est câblé — et rien ne doit
-// l'être : les séquences de clic ne sont même pas émises.
+// Le panneau est STRICTEMENT lecteur du magasin et du lot : il n'écrit ni entrée,
+// ni lot, et n'arrête aucun run (hors `c`, l'annulation explicite).
 
 export type PanelTone = "border" | "accent" | "muted" | "dim" | "success" | "error" | "warning" | "text";
-export type PanelRow = { text: string; tone: PanelTone };
+export type PanelRow = {
+  text: string;
+  tone: PanelTone;
+  /**
+   * L'index de SÉLECTION que ce rang représente (S-4) : posé par le constructeur
+   * de rangs sur les rangs sélectionnables (feature du lot, entrée en cours,
+   * entrée d'historique), absent partout ailleurs (cadre, titres, marqueurs,
+   * notice, rangs de saisie, pied). Le clic résout sa cible par ce champ : la
+   * correspondance rang → ligne n'est jamais devinée à l'écran.
+   */
+  target?: number;
+};
 
 /** Glyphes injectés : `theme.boxRound` + `theme.nav.cursor` en production. */
 export type PanelGlyphs = {
@@ -3120,7 +3142,19 @@ export type PanelGlyphs = {
 };
 
 export type PanelModel = {
+  /**
+   * Les entrées en cours NON appariées à une feature du lot : les runs d'autres
+   * dépôts, les sessions hors lot. Une entrée appariée n'est pas ici — elle est
+   * absorbée par le rang de sa feature (`live`), pour qu'une feature n'occupe
+   * qu'une seule ligne.
+   */
   running: RunningEntry[];
+  /**
+   * Les entrées en cours APPARIÉES à une feature du lot, indexées par
+   * `feature.slug` : c'est le run qui écrit la session de ce rang, et c'est lui
+   * qui lui donne son maillon, son état et son temps (S-1).
+   */
+  live: Record<string, RunningEntry>;
   history: HistoryEntry[];
   /**
    * Le lot du dépôt de la session, `null` s'il n'y en a pas : dans ce cas le
@@ -3129,7 +3163,10 @@ export type PanelModel = {
   lot?: Lot | null;
   /** Le mode de saisie courant (`browse` : aucune saisie en cours). */
   mode?: LotPanelMode;
-  /** Index sur la liste concaténée `[...features du lot, ...running, ...history]`, borné, `-1` si vide. */
+  /**
+   * Index sur la liste concaténée
+   * `[...features du lot, ...running NON appariés, ...history]`, borné, `-1` si vide.
+   */
   selection: number;
   notice: string | null;
   unreadable: number;
@@ -3147,15 +3184,83 @@ export type LotPanelMode =
   | { kind: "answer"; slug: string; buffer: string }
   | { kind: "cancel"; slug: string };
 
-export const PANEL_WIDTH = 64;
 export const PANEL_REFRESH_MS = 1000;
 export const PANEL_MIN_ROWS = 8;
-export const PANEL_MAX_ROWS = 18;
 
-/** Le panneau se borne lui-même : au-delà, le TUI couperait par le BAS (pied perdu). */
+/**
+ * Le panneau occupe tout l'écran (S-4) : le budget est la hauteur du terminal,
+ * sans plafond ni facteur — le TUI n'a plus rien à couper puisque le cadre EST
+ * l'écran. Le plancher reste : sous `PANEL_MIN_ROWS`, le contenu déborde et c'est
+ * le TUI qui coupe par le bas (dégradation admise, terminal minuscule). Un
+ * `rows` absent, nul ou non fini retombe sur 24.
+ */
 export function panelBudget(terminalRows: number): number {
   const rows = Number.isFinite(terminalRows) && terminalRows > 0 ? terminalRows : 24;
-  return Math.max(PANEL_MIN_ROWS, Math.min(Math.floor(rows * 0.8), PANEL_MAX_ROWS));
+  return Math.max(PANEL_MIN_ROWS, Math.floor(rows));
+}
+
+/**
+ * La hauteur du cadre, en rangs : celle du terminal, ou le repli de 24. C'est elle
+ * que le composant remplit de rangs vides (S-4) — le constructeur de rangs, lui,
+ * ne connaît que son budget.
+ */
+export function panelHeight(tui: PanelTui): number {
+  const rows = tui.terminal?.rows;
+  return Number.isFinite(rows) && (rows as number) > 0 ? Math.floor(rows as number) : 24;
+}
+
+/**
+ * Complète la hauteur : tant que le contenu n'occupe pas l'écran, des rangs vides
+ * s'insèrent IMMÉDIATEMENT AVANT le dernier rang — la règle basse reste ainsi sur
+ * le dernier rang de l'écran. Au-delà de la hauteur, rien n'est inséré : le TUI
+ * coupe par le bas, comme avant (terminal plus court que le cadre).
+ */
+export function fillPanelHeight(rows: PanelRow[], width: number, height: number): PanelRow[] {
+  if (rows.length === 0 || rows.length >= height) return rows;
+  const blanks: PanelRow[] = Array.from({ length: height - rows.length }, () => ({
+    text: " ".repeat(width),
+    tone: "dim" as const,
+  }));
+  return [...rows.slice(0, -1), ...blanks, rows[rows.length - 1]!];
+}
+
+/** Rapport SGR de souris décodé (S-4) : `row`/`col` sont 0-based et indexent les rangs rendus. */
+export type SgrMouseEvent = {
+  row: number;
+  col: number;
+  /** -1 = vers le haut, 1 = vers le bas, `null` = pas une molette verticale. */
+  wheel: -1 | 1 | null;
+  leftClick: boolean;
+  motion: boolean;
+  release: boolean;
+};
+
+/** `ESC [ < bouton ; colonne ; ligne M|m` — la seule forme émise par `pi-tui`. */
+const SGR_MOUSE = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/;
+
+/**
+ * Décodage LOCAL d'un rapport de souris (## Documentation §1) : le dépôt interdit
+ * tout import de VALEUR depuis `@oh-my-pi/*`, donc le format et les bitwise de
+ * `pi-tui/src/mouse.ts` sont réimplémentés ici, en fonction pure. `null` pour
+ * toute autre donnée : le clavier suit alors son chemin normal.
+ *
+ * Les molettes HORIZONTALES (boutons 66/67) ne sont pas une direction : `wheel`
+ * reste `null`, et le rapport est ignoré.
+ */
+export function parseSgrMouse(data: string): SgrMouseEvent | null {
+  const match = SGR_MOUSE.exec(data);
+  if (!match) return null;
+  const button = Number(match[1]);
+  const release = match[4] === "m";
+  const wheel = (button & 64) !== 0 && (button & 2) === 0 ? ((button & 1) !== 0 ? 1 : -1) : null;
+  return {
+    row: Number(match[3]) - 1,
+    col: Number(match[2]) - 1,
+    wheel,
+    motion: (button & 32) !== 0 && wheel === null,
+    leftClick: !release && wheel === null && (button & 32) === 0 && (button & 3) === 0,
+    release,
+  };
 }
 
 export function clampSelection(selection: number, count: number): number {
@@ -3174,8 +3279,9 @@ export function moveSelection(selection: number, count: number, delta: number): 
 
 /**
  * Modèle du panneau : lecture du magasin, réconciliation des propriétaires morts,
- * lecture du lot du dépôt de la session, puis borne de la sélection. C'est la
- * seule fonction qui touche le disque (deux petits fichiers : le magasin et le lot).
+ * lecture du lot du dépôt de la session, appariement lot ↔ entrées en cours, puis
+ * borne de la sélection. C'est la seule fonction qui touche le disque (deux petits
+ * fichiers : le magasin et le lot).
  */
 export function readPanelModel(input: {
   stateDir: string;
@@ -3192,9 +3298,33 @@ export function readPanelModel(input: {
   // champ manquant) est un fichier illisible comme un autre : le panneau le dit
   // au lieu de retomber silencieusement sur son rendu d'avant les lots (S-1).
   const lotUnreadable = lot === null && lotPath !== null && fs.existsSync(lotPath) ? 1 : 0;
-  const count = (lot?.features.length ?? 0) + snapshot.running.length + snapshot.history.length;
+  const features = lot?.features ?? [];
+  // APPARIEMENT (S-1) : l'entrée en cours du worktree d'une feature est absorbée
+  // par son rang de lot — une feature n'occupe qu'une ligne, à tout instant de sa
+  // vie. `worktree !== ""` n'est pas cosmétique : `realpathOr("")` vaut le cwd du
+  // process, donc une feature `pending` (worktree vide) absorberait l'entrée du
+  // dépôt principal et la ferait disparaître de la section « en cours ».
+  // Au plus une entrée par feature (un fichier d'entrée par cwd) : si deux
+  // features pointaient le même worktree, la première absorbe et l'entrée n'est
+  // rendue qu'une fois.
+  const live: Record<string, RunningEntry> = {};
+  const running: RunningEntry[] = [];
+  // Les worktrees réels sont calculés UNE fois (c'est un appel disque chacun) : le
+  // panneau se rafraîchit à la seconde, un `realpathOr` par entrée × feature se
+  // paierait à chaque passe pour rien.
+  const worktrees = features
+    .filter((f) => f.worktree !== "")
+    .map((f) => ({ slug: f.slug, real: realpathOr(f.worktree) }));
+  for (const entry of snapshot.running) {
+    const real = realpathOr(entry.cwd);
+    const feature = worktrees.find((w) => w.real === real);
+    if (feature && !(feature.slug in live)) live[feature.slug] = entry;
+    else running.push(entry);
+  }
+  const count = features.length + running.length + snapshot.history.length;
   return {
-    running: snapshot.running,
+    running,
+    live,
     history: snapshot.history,
     lot,
     mode: input.mode ?? { kind: "browse" },
@@ -3202,6 +3332,100 @@ export function readPanelModel(input: {
     notice: input.notice ?? null,
     unreadable: snapshot.unreadable + lotUnreadable,
   };
+}
+
+// --- le rang sélectionnable : sa session, son cwd, la vivacité de son écrivain --
+
+/** Un rang SÉLECTIONNABLE du panneau : une feature du lot, ou une entrée du magasin. */
+export type PanelRowRef = LotFeature | RunningEntry | HistoryEntry;
+
+/** Une feature du lot se reconnaît à son worktree ; une entrée du magasin a un `cwd`. */
+function isLotFeature(row: PanelRowRef): row is LotFeature {
+  return "worktree" in row;
+}
+
+/** Le nombre de rangs sélectionnables : features du lot, puis entrées non appariées, puis historique. */
+export function panelRowCount(model: PanelModel): number {
+  return (model.lot?.features.length ?? 0) + model.running.length + model.history.length;
+}
+
+/** Le rang sélectionnable d'index `selection`, dans l'ordre de la liste. Pur, sans allocation. */
+export function panelRowAt(model: PanelModel, selection: number): PanelRowRef | undefined {
+  if (selection < 0) return undefined;
+  const features = model.lot?.features ?? [];
+  if (selection < features.length) return features[selection];
+  const index = selection - features.length;
+  if (index < model.running.length) return model.running[index];
+  return model.history[index - model.running.length];
+}
+
+/** Le cwd d'un rang : le worktree de la feature, le cwd de l'entrée. `null` si indéterminé. */
+function rowCwd(row: PanelRowRef): string | null {
+  if (!isLotFeature(row)) return asStringOrNull(row.cwd);
+  return row.worktree === "" ? null : row.worktree;
+}
+
+/**
+ * La session COURANTE d'un rang, quelle que soit sa section (S-1) : celle du run
+ * apparié quand il y en a un, sinon celle portée par la feature, sinon celle de
+ * l'entrée. `null` = ce rang n'a aucune session à montrer.
+ */
+export function rowSessionFile(model: PanelModel, row: PanelRowRef): string | null {
+  if (!isLotFeature(row)) return asStringOrNull(row.sessionFile);
+  return asStringOrNull(model.live[row.slug]?.sessionFile) ?? asStringOrNull(row.sessionFile);
+}
+
+/**
+ * Un run VIVANT écrit-il la session de ce rang ? (S-1) C'est la question dont
+ * dépendent les deux gardes de `o` et la mention « run en cours » de la vue : un
+ * run d'un AUTRE process — le nôtre ne se concurrence pas lui-même — qui vise le
+ * même fichier de session, ou, quand le run ne publie pas de fichier, le même cwd
+ * (refus par prudence : c'est le worktree d'un run vivant).
+ */
+export function hasLiveWriter(model: PanelModel, row: PanelRowRef): boolean {
+  const file = rowSessionFile(model, row);
+  const cwd = rowCwd(row);
+  for (const entry of [...model.running, ...Object.values(model.live)]) {
+    if (entry.owner.pid === process.pid || !pidAlive(entry.owner.pid)) continue;
+    const target = asStringOrNull(entry.sessionFile);
+    if (target !== null) {
+      if (file !== null && realpathOr(target) === realpathOr(file)) return true;
+      continue;
+    }
+    if (cwd !== null && realpathOr(entry.cwd) === realpathOr(cwd)) return true;
+  }
+  return false;
+}
+
+/**
+ * Le libellé d'un rang, tel que le panneau l'écrit : la ligne du lot, ou celle de
+ * l'entrée du magasin.
+ */
+function rowLabel(row: PanelRowRef): string {
+  return isLotFeature(row) ? lotFeatureLabel(row) : row.label;
+}
+
+/** Le maillon d'un rang : celui du run apparié quand il y en a un, sinon le sien. */
+function rowPhase(model: PanelModel, row: PanelRowRef): PipelinePhase {
+  return isLotFeature(row) ? (model.live[row.slug]?.phase ?? row.phase) : row.phase;
+}
+
+/** L'état d'un rang, dans les mots du panneau (S-1) : jamais un état inventé. */
+function rowStateLabel(model: PanelModel, row: PanelRowRef): string {
+  if (isLotFeature(row)) {
+    const live = model.live[row.slug];
+    if (live) return live.state === "waiting" ? "attend" : "tourne";
+    return lotWaitLabel(row.waitKind) ?? lotStateLabel(row.state);
+  }
+  if ("finalState" in row) return row.finalState === "done" ? "terminé" : "échoué";
+  return row.state === "waiting" ? "attend" : "tourne";
+}
+
+/** La notice d'un rang sans session (S-2) : le texte existant, par section. */
+function noSessionNotice(row: PanelRowRef): string {
+  return isLotFeature(row)
+    ? "cette feature n'a pas encore de session — attends son premier maillon"
+    : "session introuvable — entrée non reprenable";
 }
 
 // --- la section « Lot » du panneau ------------------------------------------
@@ -3224,6 +3448,14 @@ function lotFeatureLabel(feature: LotFeature): string {
 function lotFeatureRight(feature: LotFeature, now: number): string {
   const state = lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state);
   return `/${feature.phase} · ${state} · ${elapsedLabel((feature.endedAt ?? now) - feature.sinceAt)}`;
+}
+
+/**
+ * La colonne de droite d'une ENTRÉE en cours : même format que celle d'un rang de
+ * lot, pour qu'une feature appariée à son run ne change pas de forme (S-1).
+ */
+function entryRight(entry: { phase: PipelinePhase; state: PipelineRunState; phaseStartedAt: number }, now: number): string {
+  return `/${entry.phase} · ${entry.state === "waiting" ? "attend" : "tourne"} · ${elapsedLabel(now - entry.phaseStartedAt)}`;
 }
 
 function lotStateTone(state: LotFeatureState): PanelTone {
@@ -3306,15 +3538,26 @@ export function lotFooterActions(features: LotFeature[], selection: number): str
  * La seconde ligne du pied : ce qui s'applique à la LIGNE SÉLECTIONNÉE, quelle
  * qu'elle soit. Un rang de lot passe par `lotFooterActions` ; une entrée
  * d'historique est le seul rang que `d` supprime ; un rang « en cours » n'offre
- * aucune action de ligne — et une sélection vide n'annonce rien.
+ * aucune action de ligne — et une sélection vide n'annonce rien. La bascule `o`
+ * s'ajoute à la fin dès que le rang a une session (S-3) : elle existe sur les
+ * trois sections, elle doit donc s'annoncer partout où elle mène quelque part.
  */
 function panelFooterActions(model: PanelModel, runningCount: number): string {
   const features = model.lot?.features.length ?? 0;
   const selection = model.selection;
-  if (selection < features) return lotFooterActions(model.lot?.features ?? [], selection);
-  if (selection < features + runningCount) return "aucune action";
-  if (selection < features + runningCount + model.history.length) return "d supprimer";
-  return "aucune action";
+  const base =
+    selection < features
+      ? lotFooterActions(model.lot?.features ?? [], selection)
+      : selection < features + runningCount
+        ? "aucune action"
+        : selection < features + runningCount + model.history.length
+          ? "d supprimer"
+          : "aucune action";
+  const row = panelRowAt(model, selection);
+  if (!row || rowSessionFile(model, row) === null) return base;
+  // « aucune action » n'est pas une action : la ligne ne se contredit pas en
+  // annonçant la bascule à côté d'un « aucune action ».
+  return base === "aucune action" ? "o rejoindre" : `${base} · o rejoindre`;
 }
 
 function fit(text: string, width: number): string {
@@ -3335,6 +3578,22 @@ function clip(s: string, n: number): string {
 function clipTail(s: string, n: number): string {
   if (n <= 0) return "";
   return s.length > n ? (n > 1 ? `…${s.slice(-(n - 1))}` : s.slice(-n)) : s;
+}
+
+/**
+ * La fenêtre d'une section tronquée : celle qui CONTIENT le rang sélectionné, au
+ * plus près (S-4). `sel` est l'index de la sélection DANS la section (`-1` quand
+ * elle n'y est pas) : une section tronquée ne cache jamais la ligne qu'on regarde,
+ * et les autres sections gardent leur début.
+ */
+function windowStart(sel: number, shown: number, count: number): number {
+  if (sel < 0 || shown >= count) return 0;
+  return Math.min(Math.max(sel - shown + 1, 0), Math.max(0, count - shown));
+}
+
+/** L'index de la sélection DANS une section, ou `-1` si elle porte sur une autre. */
+function sectionSelection(selection: number, offset: number, count: number): number {
+  return selection >= 0 && selection < count ? selection + offset : -1;
 }
 
 /** Rang encadré : `│ <contenu de largeur innerW> │`, exactement `width` colonnes. */
@@ -3410,14 +3669,18 @@ export function buildPanelRows(
   const mode = model.mode ?? { kind: "browse" };
   const notice = noticeText(model);
   const modeRows = lotModeRows(mode, glyphs, width, innerW);
+  const runningCount = model.running.length;
 
+  // Le titre annonce les PROCESS vivants : les entrées appariées sont absorbées
+  // par un rang de lot, mais elles tournent toujours.
   rows.push({
-    text: topRule(glyphs, `Pipelines · ${model.running.length} en cours`, width),
+    text: topRule(glyphs, `Pipelines · ${runningCount + Object.keys(model.live).length} en cours`, width),
     tone: "accent",
   });
 
   // Les rangs du lot, dans l'ordre d'ajout : la salle de contrôle vient en tête.
   const lotBody: PanelRow[] = [];
+  let lotOffset = 0;
   if (lot) {
     if (lot.features.length === 0) {
       lotBody.push({ text: frame(glyphs, "aucune feature — a ajouter", width, innerW), tone: "muted" });
@@ -3425,21 +3688,30 @@ export function buildPanelRows(
       if (lot.status === "draft") {
         lotBody.push({ text: frame(glyphs, "lot non lancé — l lancer", width, innerW), tone: "muted" });
       }
+      // Les rangs de tête (état vide, lot non lancé) précèdent les features : la
+      // fenêtre d'une section tronquée compte en rangs, la sélection en features.
+      lotOffset = lotBody.length;
       lot.features.forEach((feature, index) => {
+        // Une feature appariée à son run prend son maillon, son état, son temps ET
+        // son ton (S-1) : c'est le run qui travaille, c'est lui qui se lit.
+        const live = model.live[feature.slug];
         const content = entryLine(
           lotFeatureLabel(feature),
-          lotFeatureRight(feature, opts.now),
+          live ? entryRight(live, opts.now) : lotFeatureRight(feature, opts.now),
           model.selection === index,
           glyphs,
           innerW,
         );
-        lotBody.push({ text: frame(glyphs, content, width, innerW), tone: lotStateTone(feature.state) });
+        lotBody.push({
+          text: frame(glyphs, content, width, innerW),
+          tone: live ? (live.state === "waiting" ? "warning" : "success") : lotStateTone(feature.state),
+          target: index,
+        });
       });
     }
   }
 
   const features = lot?.features.length ?? 0;
-  const runningCount = model.running.length;
   const historyCount = model.history.length;
   // Le budget paie d'abord ce qui est TOUJOURS rendu : titre, séparateur, pied
   // (deux rangs de touches avec un lot, plus « Échap fermer » — c'est lui que le
@@ -3487,7 +3759,8 @@ export function buildPanelRows(
 
   if (lot) {
     rows.push({ text: sectionRule(glyphs, lotSectionTitle(lot), width), tone: "accent" });
-    for (const row of lotBody.slice(0, lotShown.shown)) rows.push(row);
+    const start = windowStart(sectionSelection(model.selection, lotOffset, lot.features.length), lotShown.shown, lotBody.length);
+    for (const row of lotBody.slice(start, start + lotShown.shown)) rows.push(row);
     if (lotShown.marker) {
       rows.push({ text: frame(glyphs, `… ${lotBody.length - lotShown.shown} de plus`, width, innerW), tone: "dim" });
     }
@@ -3496,13 +3769,13 @@ export function buildPanelRows(
   if (runningCount === 0) {
     if (runningEmpty) rows.push({ text: frame(glyphs, "aucune pipeline en cours", width, innerW), tone: "muted" });
   } else {
-    for (let i = 0; i < runningShown.shown; i++) {
+    const start = windowStart(sectionSelection(model.selection - features, 0, runningCount), runningShown.shown, runningCount);
+    for (let i = start; i < start + runningShown.shown; i++) {
       const entry = model.running[i]!;
-      const state = entry.state === "waiting" ? "attend" : "tourne";
-      const right = `/${entry.phase} · ${state} · ${elapsedLabel(opts.now - entry.phaseStartedAt)}`;
       rows.push({
-        text: frame(glyphs, entryLine(entry.label, right, model.selection === features + i, glyphs, innerW), width, innerW),
+        text: frame(glyphs, entryLine(entry.label, entryRight(entry, opts.now), model.selection === features + i, glyphs, innerW), width, innerW),
         tone: entry.state === "waiting" ? "warning" : "success",
+        target: features + i,
       });
     }
     if (runningShown.marker) {
@@ -3518,7 +3791,12 @@ export function buildPanelRows(
   if (historyCount === 0) {
     if (historyEmpty) rows.push({ text: frame(glyphs, "aucun historique", width, innerW), tone: "muted" });
   } else {
-    for (let i = 0; i < historyShown.shown; i++) {
+    const start = windowStart(
+      sectionSelection(model.selection - features - runningCount, 0, historyCount),
+      historyShown.shown,
+      historyCount,
+    );
+    for (let i = start; i < start + historyShown.shown; i++) {
       const entry = model.history[i]!;
       const final = entry.finalState === "done" ? "terminé" : "échoué";
       const right = `/${entry.phase} · ${final}`;
@@ -3526,6 +3804,7 @@ export function buildPanelRows(
       rows.push({
         text: frame(glyphs, entryLine(entry.label, right, selected, glyphs, innerW), width, innerW),
         tone: entry.finalState === "done" ? "dim" : "error",
+        target: features + runningCount + i,
       });
     }
     if (historyShown.marker) {
@@ -3548,8 +3827,8 @@ export function buildPanelRows(
     text: frame(
       glyphs,
       lot
-        ? "a ajouter · l lancer · Entrée rejoindre"
-        : "↑↓ naviguer · Entrée rejoindre · d supprimer · a ajouter",
+        ? "a ajouter · l lancer · Entrée session"
+        : "↑↓ naviguer · Entrée session · d supprimer · a ajouter",
       width,
       innerW,
     ),
@@ -3560,7 +3839,7 @@ export function buildPanelRows(
   }
   rows.push({ text: bottomRule(glyphs, "Échap fermer", width), tone: "border" });
 
-  return rows.map((row) => ({ text: fit(row.text, width), tone: row.tone }));
+  return rows.map((row) => ({ ...row, text: fit(row.text, width) }));
 }
 
 // --- rejoindre la session d'une entrée (S-5) --------------------------------
@@ -3608,6 +3887,196 @@ export function readSessionHeader(file: string, maxBytes = SESSION_HEADER_READ_B
     return { cwd: asStringOrNull(rec.cwd) };
   }
   return null;
+}
+
+// --- la vue de session : lire un JSONL de session, borné et sans jamais écrire --
+
+/**
+ * Borne de lecture de la vue : les 256 DERNIERS Kio d'un fichier de session
+ * suffisent à voir où en est un run, et le panneau se rafraîchit à la seconde —
+ * une session de plusieurs mégaoctets ne coûte pas plus cher qu'une petite.
+ */
+export const SESSION_VIEW_READ_BYTES = 256 * 1024;
+/** Borne du nombre d'entrées rendues ; au-delà, l'en-tête « début tronqué » le dit. */
+export const SESSION_VIEW_MAX_ENTRIES = 500;
+
+/** Une entrée de session RENDABLE : tout le reste du JSONL ne produit aucun rang. */
+export type SessionViewEntry =
+  | { kind: "user"; text: string }
+  | { kind: "assistant"; text: string }
+  | { kind: "toolCall"; name: string; text: string }
+  | { kind: "toolResult"; name: string; text: string }
+  | { kind: "custom"; customType: string }
+  | { kind: "customMessage"; customType: string; text: string };
+
+/** Le contenu lisible d'un fichier de session, ou le chemin en erreur (absent/illisible). */
+export type SessionView = { entries: SessionViewEntry[]; truncated: boolean } | { error: string };
+
+/** La première ligne NON VIDE d'un texte : ce qu'un rang de transcription peut montrer. */
+function firstLine(text: string): string {
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed !== "") return trimmed;
+  }
+  return "";
+}
+
+/** Le texte d'un contenu de message : une chaîne, ou les blocs `text` d'un tableau. */
+function textOfContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    if (rec.type === "text" && typeof rec.text === "string") parts.push(rec.text);
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Une entrée du JSONL → zéro ou plusieurs entrées de vue (S-2). Pure : une entrée
+ * technique (`title`, `model_usage`, `label`, …) ou inconnue ne rend RIEN, et rien
+ * ici ne peut lever — un fichier en cours d'écriture est lu ligne par ligne.
+ */
+function sessionViewEntries(raw: unknown): SessionViewEntry[] {
+  if (!raw || typeof raw !== "object") return [];
+  const rec = raw as Record<string, unknown>;
+  if (rec.type === "custom_message") {
+    const customType = asStringOrNull(rec.customType);
+    if (!customType) return [];
+    return [{ kind: "customMessage", customType, text: firstLine(textOfContent(rec.content)) }];
+  }
+  if (rec.type === "custom") {
+    const customType = asStringOrNull(rec.customType);
+    return customType ? [{ kind: "custom", customType }] : [];
+  }
+  if (rec.type !== "message" || !rec.message || typeof rec.message !== "object") return [];
+  const message = rec.message as Record<string, unknown>;
+  if (message.role === "user") return [{ kind: "user", text: firstLine(textOfContent(message.content)) }];
+  if (message.role === "toolResult") {
+    return [
+      {
+        kind: "toolResult",
+        name: asStringOrNull(message.toolName) ?? "?",
+        text: firstLine(textOfContent(message.content)),
+      },
+    ];
+  }
+  if (message.role !== "assistant") return [];
+  const out: SessionViewEntry[] = [];
+  // Un rang vide n'apprend rien : un tour qui n'a produit que des appels d'outil
+  // se lit par ses appels, pas par une ligne « agent : » sans texte.
+  const text = firstLine(textOfContent(message.content));
+  if (text !== "") out.push({ kind: "assistant", text });
+  if (Array.isArray(message.content)) {
+    for (const block of message.content) {
+      if (!block || typeof block !== "object") continue;
+      const call = block as Record<string, unknown>;
+      if (call.type !== "toolCall") continue;
+      out.push({
+        kind: "toolCall",
+        name: asStringOrNull(call.name) ?? "?",
+        text: firstLine(JSON.stringify(call.arguments ?? {})),
+      });
+    }
+  }
+  return out;
+}
+
+/** Les `maxBytes` derniers octets d'un fichier, ou `null` s'il est absent ou illisible. */
+function readTail(file: string, maxBytes: number): { text: string; fromTail: boolean } | null {
+  try {
+    const size = fs.statSync(file).size;
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+    const fd = fs.openSync(file, "r");
+    try {
+      const buf = Buffer.alloc(length);
+      const read = fs.readSync(fd, buf, 0, length, start);
+      return { text: buf.subarray(0, read).toString("utf8"), fromTail: start > 0 };
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Lecture BORNÉE d'un fichier de session pour la vue (S-2) : au plus les 256
+ * derniers Kio et au plus 500 entrées, lignes mal formées ignorées, aucune
+ * exception. La première ligne d'une lecture partielle est une ligne tronquée :
+ * elle ne parse pas et tombe donc d'elle-même.
+ */
+export function readSessionView(file: string): SessionView {
+  const tail = readTail(file, SESSION_VIEW_READ_BYTES);
+  if (tail === null) return { error: file };
+  const entries: SessionViewEntry[] = [];
+  for (const line of tail.text.split("\n")) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue; // ligne vide, tronquée par la borne, ou JSON mal formé
+    }
+    for (const entry of sessionViewEntries(parsed)) entries.push(entry);
+  }
+  let truncated = tail.fromTail;
+  if (entries.length > SESSION_VIEW_MAX_ENTRIES) {
+    entries.splice(0, entries.length - SESSION_VIEW_MAX_ENTRIES);
+    truncated = true;
+  }
+  return { entries, truncated };
+}
+
+/**
+ * Les rangs d'une vue de session (S-2), du plus ancien au plus récent : un rang par
+ * entrée, tronqué à la largeur reçue, et les états rendus EXPLICITEMENT — jamais
+ * déduits d'une absence de rang.
+ *
+ * La liste rendue est COMPLÈTE (bornée par la lecture : ≤ 500 entrées) : c'est le
+ * composant qui en découpe la fenêtre visible et qui borne son défilement sur sa
+ * longueur. `budget` est la hauteur de la vue — titre, mention de run vivant et
+ * pied compris — donc l'arithmétique de la fenêtre reste au même endroit.
+ */
+export function buildSessionRows(
+  view: SessionView,
+  opts: { width: number; budget: number; glyphs: PanelGlyphs },
+): PanelRow[] {
+  const width = Math.max(1, Math.floor(opts.width));
+  const innerW = Math.max(0, width - 4);
+  const row = (content: string, tone: PanelTone): PanelRow => ({
+    text: frame(opts.glyphs, content, width, innerW),
+    tone,
+  });
+  if ("error" in view) return [row(`aucune entrée lisible — ${view.error}`, "warning")];
+  if (view.entries.length === 0) return [row("aucune entrée à afficher", "muted")];
+  const rows: PanelRow[] = [];
+  if (view.truncated) rows.push(row("… début tronqué", "dim"));
+  for (const entry of view.entries) {
+    switch (entry.kind) {
+      case "user":
+        rows.push(row(`▸ toi : ${entry.text}`, "text"));
+        break;
+      case "assistant":
+        rows.push(row(`▸ agent : ${entry.text}`, "accent"));
+        break;
+      case "toolCall":
+        rows.push(row(`→ ${entry.name} ${entry.text}`, "dim"));
+        break;
+      case "toolResult":
+        rows.push(row(`← ${entry.name} ${entry.text}`, "dim"));
+        break;
+      case "customMessage":
+        rows.push(row(`· ${entry.customType} : ${entry.text}`, "dim"));
+        break;
+      case "custom":
+        rows.push(row(`· ${entry.customType}`, "dim"));
+        break;
+    }
+  }
+  return rows;
 }
 
 /** Sondes disque de la décision — injectées, pour que `switchDecision` reste PURE. */
@@ -3837,9 +4306,43 @@ export type PipelinesPanelDeps = {
   now?: () => number;
   /** Ordonnanceur du rafraîchissement ; renvoie de quoi l'arrêter. */
   schedule?: (callback: () => void, ms: number) => () => void;
-  /** Rejoint la session d'une entrée (rangs en cours ET historique). */
-  join: (entry: RunningEntry | HistoryEntry, close: () => void, showNotice: (message: string) => void) => void;
+  /**
+   * Rejoint la session d'un rang (feature du lot, entrée en cours, historique) :
+   * la bascule réelle de `o`, qui ne reçoit qu'un fichier de session.
+   */
+  join: (entry: { sessionFile?: string | null }, close: () => void, showNotice: (message: string) => void) => void;
+  /**
+   * Le fichier de la session COURANTE de ce process (`ctx.sessionManager`), capturé
+   * au montage : viser sa propre session est refusé (S-3, garde 2), parce que
+   * `switchSession` avorte le tour courant avant même de regarder la cible. Absent
+   * (contexte dégradé), la garde ne se déclenche pas.
+   */
+  currentSessionFile?: string | null;
 };
+
+/**
+ * La sélection du panneau, mémorisée par RACINE DE DÉPÔT (S-5) : fermer puis
+ * rouvrir rend le panneau sur la même ligne, sans commande à retaper. En mémoire
+ * de process seulement — aucun fichier, aucune config, aucun partage entre
+ * process — et l'index est re-borné au montage, donc une liste qui a changé ne
+ * casse rien.
+ */
+const panelSelections = new Map<string, number>();
+
+/** L'état de vue du panneau : la liste, ou la transcription d'une session (S-2). */
+type PanelView =
+  | { kind: "list" }
+  | {
+      kind: "session";
+      sessionFile: string;
+      label: string;
+      phase: string;
+      state: string;
+      /** `hasLiveWriter` au moment du rendu : un run écrit-il cette session ? */
+      live: boolean;
+      /** Rangs remontés depuis la fin de la transcription : 0 = les plus récents. */
+      scroll: number;
+    };
 
 /** `unref` — un rafraîchissement de panneau ne doit pas retenir le processus. */
 function unrefTimer(timer: unknown): void {
@@ -3879,9 +4382,27 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     };
     const now = deps.now ?? (() => Date.now());
     const schedule = deps.schedule ?? defaultSchedule;
+    /** La clé de la sélection mémorisée : une racine de dépôt, un état (S-5). */
+    const selectionKey = deps.repoRoot ?? "";
     let notice: string | null = null;
     let mode: LotPanelMode = { kind: "browse" };
-    let model = readPanelModel({ stateDir: deps.stateDir, repoRoot: deps.repoRoot, selection: 0, notice, mode });
+    // La VUE repart toujours de la liste : elle ne se quitte que par Échap, donc un
+    // panneau fermé n'a jamais été fermé depuis la vue (S-5).
+    let view: PanelView = { kind: "list" };
+    /** Les rangs du DERNIER rendu : le clic y résout sa cible par index (S-4). */
+    let drawn: PanelRow[] = [];
+    /** Les rangs de CONTENU de la vue ouverte : leur nombre borne le défilement. */
+    let drawnContent: PanelRow[] = [];
+    let model = readPanelModel({
+      stateDir: deps.stateDir,
+      repoRoot: deps.repoRoot,
+      selection: panelSelections.get(selectionKey) ?? 0,
+      notice,
+      mode,
+    });
+
+    /** Fige la sélection courante : c'est elle que le prochain montage restaurera (S-5). */
+    const remember = () => panelSelections.set(selectionKey, model.selection);
 
     const paint = () => {
       model = readPanelModel({
@@ -3891,6 +4412,20 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         notice,
         mode,
       });
+      // Une vue ouverte suit l'instant présent : le run peut avancer, se terminer,
+      // ou la ligne changer de section pendant qu'on la regarde (S-2).
+      if (view.kind === "session") {
+        const row = rowForSession(view.sessionFile);
+        if (row) {
+          view = {
+            ...view,
+            label: rowLabel(row),
+            phase: rowPhase(model, row),
+            state: rowStateLabel(model, row),
+            live: hasLiveWriter(model, row),
+          };
+        }
+      }
     };
     const redraw = () => {
       paint();
@@ -3911,14 +4446,19 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
 
     // Le lot occupe la TÊTE de la liste sélectionnable : les rangs machine suivent.
     const features = (): LotFeature[] => model.lot?.features ?? [];
-    const entries = (): Array<RunningEntry | HistoryEntry> => [...model.running, ...model.history];
     const selectedFeature = (): LotFeature | undefined => {
       const index = model.selection;
       return index >= 0 && index < features().length ? features()[index] : undefined;
     };
-    const selectedEntry = (): RunningEntry | HistoryEntry | undefined => {
-      const index = model.selection - features().length;
-      return index >= 0 ? entries()[index] : undefined;
+    /** Le rang sélectionné, quelle que soit sa section — la seule façon d'atteindre une feature appariée. */
+    const selectedRow = (): PanelRowRef | undefined => panelRowAt(model, model.selection);
+    /** Le rang qui porte ce fichier de session : la vue le suit d'un rendu à l'autre. */
+    const rowForSession = (file: string): PanelRowRef | undefined => {
+      for (let i = 0; i < panelRowCount(model); i++) {
+        const row = panelRowAt(model, i);
+        if (row && rowSessionFile(model, row) === file) return row;
+      }
+      return undefined;
     };
     // Le déplacement efface la notice : elle décrit un rang, pas le panneau.
     const move = (delta: number) => {
@@ -3926,8 +4466,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       model = {
         ...model,
         notice: null,
-        selection: moveSelection(model.selection, features().length + entries().length, delta),
+        selection: moveSelection(model.selection, panelRowCount(model), delta),
       };
+      remember();
       tui.requestRender?.();
     };
 
@@ -3979,6 +4520,112 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       void run()
         .then(settle)
         .catch((err: unknown) => settle(err instanceof Error ? err.message : String(err)));
+    };
+
+    /**
+     * `Entrée` (S-2) : la VUE de session du rang sélectionné — jamais la bascule.
+     * Un rang sans session garde la notice existante, et aucune vue ne s'ouvre.
+     */
+    const openView = () => {
+      const row = selectedRow();
+      if (!row) return;
+      const file = rowSessionFile(model, row);
+      if (!file) {
+        showNotice(noSessionNotice(row));
+        return;
+      }
+      // La notice n'est pas effacée : au retour, la liste est celle qu'on a quittée.
+      view = {
+        kind: "session",
+        sessionFile: file,
+        label: rowLabel(row),
+        phase: rowPhase(model, row),
+        state: rowStateLabel(model, row),
+        live: hasLiveWriter(model, row),
+        scroll: 0,
+      };
+      tui.requestRender?.();
+    };
+
+    /**
+     * `o` (S-3) : la bascule RÉELLE dans la session du rang, sous deux gardes qui
+     * répondent à la même question — le fichier visé est-il VIVANT ? Un run qui
+     * l'écrit (deux écrivains sur un fichier de session, c'est une
+     * `SessionWriteConflictError` garantie) ou notre propre session courante
+     * (`switchSession` avorte le tour courant AVANT de regarder la cible).
+     */
+    const join = () => {
+      const row = selectedRow();
+      if (!row) return;
+      if (hasLiveWriter(model, row)) {
+        showNotice("run en cours — la session s'ouvre en lecture seule (Entrée) ; o attend la fin du maillon");
+        return;
+      }
+      const file = rowSessionFile(model, row);
+      const current = deps.currentSessionFile ?? null;
+      if (file !== null && current !== null && realpathOr(file) === realpathOr(current)) {
+        showNotice("la collecte se déroule dans ta session — réponds-y directement");
+        return;
+      }
+      if (file === null) {
+        showNotice(noSessionNotice(row));
+        return;
+      }
+      deps.join({ sessionFile: file }, () => done(), showNotice);
+    };
+
+    /** Le nombre de rangs de contenu qu'une vue affiche : son titre et son pied sont payés. */
+    const viewRoom = (height: number, live: boolean) => Math.max(1, height - 2 - (live ? 1 : 0));
+
+    /** Défilement de la vue, borné aux rangs rendus : un cran en butée ne change rien. */
+    const scrollView = (delta: number) => {
+      if (view.kind !== "session") return;
+      const max = Math.max(0, drawnContent.length - viewRoom(panelHeight(tui), view.live));
+      view = { ...view, scroll: Math.min(Math.max(view.scroll + delta, 0), max) };
+      tui.requestRender?.();
+    };
+
+    /**
+     * Les touches de la VUE (S-2) : `Échap` revient à la liste telle qu'elle était,
+     * `↑`/`k` et `↓`/`j` défilent, tout le reste est ignoré — aucune action de lot
+     * n'est déclenchable depuis la vue, et elle ne ferme pas le panneau.
+     */
+    const handleViewKey = (data: string): void => {
+      if (isKey(data, "tui.select.cancel")) {
+        view = { kind: "list" };
+        tui.requestRender?.();
+        return;
+      }
+      // La fenêtre est ancrée sur la FIN (le run en cours se voit avancer) : monter
+      // remonte le temps, descendre revient au présent.
+      if (isKey(data, "tui.select.up") || data === "k") scrollView(1);
+      else if (isKey(data, "tui.select.down") || data === "j") scrollView(-1);
+    };
+
+    /**
+     * Un rapport de souris est toujours CONSOMMÉ (S-4) : ce n'est jamais du clavier.
+     * Dans la liste, le clic gauche prend la ligne visée (`PanelRow.target`, posé par
+     * le constructeur de rangs) et la molette vaut ±1 cran ; en mode de saisie,
+     * l'éditeur en ligne garde le clavier ; dans la vue, seule la molette agit.
+     */
+    const handleMouse = (event: SgrMouseEvent): void => {
+      if (view.kind === "session") {
+        if (event.wheel !== null) scrollView(-event.wheel);
+        return;
+      }
+      if (mode.kind !== "browse") return;
+      if (event.wheel !== null) {
+        move(event.wheel);
+        return;
+      }
+      if (!event.leftClick) return;
+      const target = drawn[event.row]?.target;
+      // Cadre, titre, séparateur, marqueur, notice, pied, rang de remplissage : rien.
+      if (target === undefined) return;
+      notice = null;
+      model = { ...model, notice: null, selection: target };
+      remember();
+      tui.requestRender?.();
     };
 
     /** L'éditeur en ligne : les caractères imprimables s'ajoutent, retour arrière efface. */
@@ -4073,9 +4720,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         return;
       }
       if (isKey(data, "tui.select.confirm")) {
-        const entry = selectedEntry();
-        if (entry) deps.join(entry, () => done(), showNotice);
-        else if (selectedFeature()) showNotice("cette feature n'a pas encore de session — attends son premier maillon");
+        openView();
+        return;
+      }
+      if (data === "o") {
+        join();
         return;
       }
       const lot = deps.lot;
@@ -4168,14 +4817,62 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
 
     const stop = schedule(() => redraw(), PANEL_REFRESH_MS);
 
+    /**
+     * Les rangs de la VUE de session (S-2) : titre remplacé par le rang du rang
+     * regardé, mention de run vivant s'il y en a un, transcription du fichier — relue
+     * à chaque rendu, donc au rythme du rafraîchissement — puis le pied de la vue.
+     * La fenêtre est ancrée sur la FIN : un run en cours se voit avancer sans rien
+     * toucher, et remonter (molette, `↑`) révèle le plus ancien.
+     */
+    const renderView = (width: number, height: number): PanelRow[] => {
+      if (view.kind !== "session") return [];
+      const innerW = Math.max(0, width - 4);
+      const rows: PanelRow[] = [
+        {
+          text: topRule(
+            glyphs,
+            `${view.label} · /${view.phase} · ${view.state} · session ${path.basename(view.sessionFile)}`,
+            width,
+          ),
+          tone: "accent",
+        },
+      ];
+      if (view.live) {
+        rows.push({ text: frame(glyphs, "run en cours — lecture seule", width, innerW), tone: "warning" });
+      }
+      const content = buildSessionRows(readSessionView(view.sessionFile), { width, budget: height, glyphs });
+      drawnContent = content;
+      const room = viewRoom(height, view.live);
+      const start = Math.max(0, content.length - room - view.scroll);
+      for (const row of content.slice(start, start + room)) rows.push(row);
+      rows.push({ text: bottomRule(glyphs, "↑↓/molette défiler · Échap revenir au panneau", width), tone: "border" });
+      return rows;
+    };
+
     return {
       render(width: number): string[] {
-        const budget = panelBudget(tui.terminal?.rows ?? 24);
-        return buildPanelRows(model, { width, budget, glyphs, now: now() }).map((row) =>
-          theme.fg(row.tone, row.text),
-        );
+        const height = panelHeight(tui);
+        const rows =
+          view.kind === "session"
+            ? renderView(width, height)
+            : buildPanelRows(model, { width, budget: panelBudget(height), glyphs, now: now() });
+        // Le remplissage est le fait du COMPOSANT : le constructeur de rangs, lui,
+        // tient toujours dans son budget (contrat verrouillé par les tests).
+        drawn = fillPanelHeight(rows, width, height);
+        return drawn.map((row) => theme.fg(row.tone, row.text));
       },
       handleInput(data: string): void {
+        // La souris d'abord : un rapport SGR n'est jamais du clavier (S-4). Puis la
+        // VUE, avant les modes et la liste : aucune touche du panneau ne l'atteint.
+        const mouse = parseSgrMouse(data);
+        if (mouse) {
+          handleMouse(mouse);
+          return;
+        }
+        if (view.kind === "session") {
+          handleViewKey(data);
+          return;
+        }
         if (handleMode(data)) return;
         handleBrowse(data);
       },
@@ -4779,6 +5476,8 @@ export default function reqExtension(pi: ExtensionAPI) {
         return root.primary ?? root.dir;
       })(),
       lot: workerMode() ? undefined : controllerFor(ctx),
+      // La session VIVANTE de ce process : viser sa propre session est refusé (S-3).
+      currentSessionFile: sessionFileOf(ctx as PipelineCtx),
       join: (entry, close, showNotice) => {
         // `switchSession` vit sur le contexte de COMMANDE : le runtime appelle
         // `createCommandContext()` pour les commandes ET pour les raccourcis, donc
@@ -4798,7 +5497,10 @@ export default function reqExtension(pi: ExtensionAPI) {
       void ctx.ui
         .custom(pipelinesPanelFactory(deps), {
           overlay: true,
-          overlayOptions: { anchor: "top-right", width: PANEL_WIDTH, maxHeight: "80%", margin: 1 },
+          // Plein écran ET souris (S-4) : plus d'ancre, plus de largeur, plus de
+          // hauteur maximale — le cadre EST l'écran, et `mouseTracking` est ce qui
+          // fait émettre les rapports de clic et de molette.
+          overlayOptions: { fullscreen: true, mouseTracking: true },
         })
         .catch(() => {
           /* le panneau ne doit jamais faire échouer la commande qui l'ouvre */

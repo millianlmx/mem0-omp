@@ -17,7 +17,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import reqExtension, {
   CONTRACT_PATH,
-  PANEL_WIDTH,
   pipelineHistoryDir,
   pipelineRunningDir,
   runningIdFor,
@@ -684,13 +683,15 @@ test("le toggle monte un overlay ancré en haut à droite et Échap le referme",
     assert.equal(mounted.length, 1, "un panneau monté");
     const options = mounted[0]!.options as {
       overlay?: boolean;
-      overlayOptions?: { anchor?: string; width?: number; maxHeight?: string; margin?: number };
+      overlayOptions?: { fullscreen?: boolean; mouseTracking?: boolean; anchor?: unknown; width?: unknown };
     };
     assert.equal(options.overlay, true, "monté en overlay, pas en remplacement de l'éditeur");
-    assert.equal(options.overlayOptions?.anchor, "top-right", "ancré en haut à droite");
-    assert.equal(options.overlayOptions?.width, PANEL_WIDTH);
-    assert.equal(options.overlayOptions?.maxHeight, "80%");
-    assert.equal(options.overlayOptions?.margin, 1);
+    // Plein écran (S-4) : le cadre EST l'écran, donc plus d'ancre, plus de largeur,
+    // plus de hauteur maximale — et la souris est capturée tant qu'il est ouvert.
+    assert.equal(options.overlayOptions?.fullscreen, true, "le panneau occupe tout l'écran");
+    assert.equal(options.overlayOptions?.mouseTracking, true, "le panneau reçoit la souris");
+    assert.equal(options.overlayOptions?.anchor, undefined, "aucune ancre : le plein écran ne s'ancre pas");
+    assert.equal(options.overlayOptions?.width, undefined, "aucune largeur : le plein écran prend celle du terminal");
 
     // Un seul panneau par processus : tant qu'il est monté, rouvrir ne monte rien.
     await app.shortcuts.get("alt+w")!(ctx as never);

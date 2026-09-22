@@ -1879,7 +1879,7 @@ test("le récap nomme le décompte exact et omet les catégories vides", () => {
 // Le panneau
 // ---------------------------------------------------------------------------
 
-const emptyModel: PanelModel = { running: [], history: [], selection: -1, notice: null, unreadable: 0 };
+const emptyModel: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0 };
 
 test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et son état", async () => {
   const states: Array<[LotFeatureState, string]> = [
@@ -1941,7 +1941,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   // celles de la LIGNE SÉLECTIONNÉE. Sur un rang de lot, `x` est annoncé (AC-3) et
   // `d` jamais — il n'y supprime rien (BLOQUANT 3 de la revue).
   const footer = rows.slice(-3).map((row) => row.text);
-  assert.match(footer[0]!, /a ajouter · l lancer · Entrée rejoindre/);
+  assert.match(footer[0]!, /a ajouter · l lancer · Entrée session/);
   assert.ok(!footer[0]!.includes("d supprimer"), `aucune touche morte annoncée : ${footer[0]}`);
   assert.match(footer[1]!, /x retirer · c annuler/, "la touche de retrait est annoncée sur la ligne qui la porte");
 
@@ -2074,7 +2074,7 @@ test("sans lot, le panneau rend exactement ce qu'il rendait", () => {
   assert.match(rowsText(rows), /Pipelines · 0 en cours/);
   assert.match(rowsText(rows), /aucune pipeline en cours/);
   assert.match(rowsText(rows), /aucun historique/);
-  assert.match(rowsText(rows), /↑↓ naviguer · Entrée rejoindre · d supprimer · a ajouter/);
+  assert.match(rowsText(rows), /↑↓ naviguer · Entrée session · d supprimer · a ajouter/);
   assert.match(rowsText(rows), /Échap fermer/);
 });
 
@@ -2101,7 +2101,7 @@ test("un lot vide et un lot non lancé le disent, avec la touche qui débloque",
   assert.match(rowsText(empty), /aucune feature — a ajouter/);
   // La première ligne n'annonce que les touches du panneau : `d` ne s'applique
   // qu'à une entrée d'historique et n'a rien à faire sur un rang de lot.
-  assert.match(rowsText(empty), /a ajouter · l lancer · Entrée rejoindre/);
+  assert.match(rowsText(empty), /a ajouter · l lancer · Entrée session/);
   assert.ok(!rowsText(empty).includes("d supprimer"), "aucune touche morte annoncée");
   assert.match(rowsText(empty), /aucune action/, "aucune ligne de lot à sélectionner, aucune action de ligne");
 
