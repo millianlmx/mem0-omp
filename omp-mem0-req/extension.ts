@@ -52,6 +52,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // Contrat unique de la feature active, relatif à la racine du dépôt (même
 // convention que .omp/mem0-brief.md). Une seule feature active à la fois : un
@@ -566,7 +567,7 @@ export const HISTORY_READ_LIMIT = 20;
 /** Battement du propriétaire : réécrit ses entrées toutes les 2 s (S-3). */
 export const PIPELINE_HEARTBEAT_MS = 2000;
 
-const PIPELINE_PHASES: readonly PipelinePhase[] = ["req", "specs", "impl", "review"];
+const PIPELINE_PHASES: readonly PipelinePhase[] = ["req", "specs", "impl", "review", "release"];
 
 /**
  * Répertoire d'état commun : `MEM0_PIPELINE_STATE_DIR` (absolu ou `~`,
@@ -1045,6 +1046,2047 @@ export function closePipeline(deps: PublishDeps, cwd: string, finalState: Pipeli
 }
 
 // ---------------------------------------------------------------------------
+// Lot de features — le magasin, la chaîne, le pilote.
+// ---------------------------------------------------------------------------
+// Un lot = N features, un pipeline par feature, piloté par UN process (le
+// propriétaire, `owner.pid`). Chaque maillon d'une feature est un RUN : un
+// processus `omp -p` (cf. `buildLotRunArgv`) qui travaille dans le worktree de la
+// feature et meurt à la fin de son tour. Le pilote ne décide rien d'autre que la
+// suite, et cette décision est PURE (`nextChainAction`) : l'état vit dans deux
+// fichiers — le contrat de la feature (écrit par l'agent) et le lot (écrit par le
+// pilote seul).
+//
+// Pourquoi des processus et pas des sessions en mémoire : l'échec ou le blocage
+// d'un pipeline ne doit ni emporter le lot ni freiner les autres (B-5), et une
+// extension n'a aucun moyen de créer une session (`ctx.newSession` n'existe que
+// sur un contexte de commande, cf. `## Documentation` §1). Le parallélisme du lot
+// est donc celui de N processus indépendants, et l'isolation est structurelle.
+
+export const LOT_VERSION = 1;
+
+export type LotFeatureState = "pending" | "running" | "waiting" | "blocked" | "failed" | "done" | "cancelled";
+export type LotWaitKind = "answer" | "specs" | "review";
+/**
+ * D'où vient la feature. `session` : sa collecte se déroule dans la session de
+ * l'utilisateur (créée par /req) — le pilote ne lance aucun run tant que le
+ * maillon `req` n'est pas clos. `panneau` : tout est run, collecte comprise.
+ */
+export type LotOrigin = "session" | "panneau";
+
+export type LotFeature = {
+  slug: string;
+  /** L'intention déclarée à l'ajout : elle amorce la collecte. */
+  name: string;
+  branch: string;
+  /** Chemin du worktree de la feature ("" tant qu'il n'est pas créé). */
+  worktree: string;
+  deps: string[];
+  origin: LotOrigin;
+  state: LotFeatureState;
+  phase: PipelinePhase;
+  waitKind: LotWaitKind | null;
+  /** Texte à montrer quand la feature attend une réponse (fin du tour du run). */
+  waitPrompt: string | null;
+  sessionFile: string | null;
+  prUrl: string | null;
+  stopReason: string | null;
+  /** Tours de correction `impl --fix` consommés (plafond, S-5). */
+  fixes: number;
+  /** Passes de `review` consommées (borne du verdict illisible). */
+  reviewRuns: number;
+  /** sha1 du contrat au DÉMARRAGE du run courant — dit si un run a travaillé. */
+  contractHash: string | null;
+  addedAt: number;
+  /** Instant d'entrée dans l'état courant : c'est lui que le panneau chronomètre. */
+  sinceAt: number;
+  updatedAt: number;
+  endedAt: number | null;
+};
+
+export type Lot = {
+  version: 1;
+  id: string;
+  repoRoot: string;
+  status: "draft" | "running";
+  /** Plafond de tours de correction, figé au premier lancement (S-5). */
+  reviewCap: number;
+  /** Instant du récap posté, `null` tant qu'il ne l'a pas été (S-12). */
+  recapAt: number | null;
+  owner: { pid: number; sessionFile: string | null; sessionId: string | null };
+  createdAt: number;
+  launchedAt: number | null;
+  features: LotFeature[];
+};
+
+export type LotTotals = { done: number; blocked: number; failed: number; cancelled: number; live: number };
+
+const LOT_FEATURE_STATES: Record<LotFeatureState, true> = {
+  pending: true,
+  running: true,
+  waiting: true,
+  blocked: true,
+  failed: true,
+  done: true,
+  cancelled: true,
+};
+const LOT_WAIT_KINDS: Record<LotWaitKind, true> = { answer: true, specs: true, review: true };
+const LOT_ORIGINS: Record<LotOrigin, true> = { session: true, panneau: true };
+
+/** Un état terminal ne repart que par une relance explicite (S-9). */
+export function lotStateTerminal(state: LotFeatureState): boolean {
+  return state === "blocked" || state === "failed" || state === "done" || state === "cancelled";
+}
+
+export function lotStateLabel(state: LotFeatureState): string {
+  switch (state) {
+    case "pending":
+      return "à venir";
+    case "running":
+      return "en cours";
+    case "waiting":
+      return "attend";
+    case "blocked":
+      return "bloqué";
+    case "failed":
+      return "échoué";
+    case "done":
+      return "terminé";
+    case "cancelled":
+      return "annulé";
+  }
+}
+
+/** Le libellé du jalon en cours d'attente (« attend ma réponse », …). */
+export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
+  if (waitKind === "answer") return "attend réponse";
+  if (waitKind === "specs") return "attend validation";
+  if (waitKind === "review") return "attend accord";
+  return null;
+}
+
+/** `<stateDir>/lots` : un fichier par dépôt. */
+export function lotStateDir(stateDir: string): string {
+  return path.join(stateDir, "lots");
+}
+
+/** `sha1(realpath(repoRoot)).slice(0,16)` : même famille d'id que `runningIdFor`. */
+export function lotRepoKey(repoRoot: string): string {
+  return crypto.createHash("sha1").update(realpathOr(repoRoot)).digest("hex").slice(0, 16);
+}
+
+export function lotPathFor(stateDir: string, repoKey: string): string {
+  return path.join(lotStateDir(stateDir), `${repoKey}.json`);
+}
+
+function asLotFeatureState(value: unknown): LotFeatureState | null {
+  return typeof value === "string" && LOT_FEATURE_STATES[value as LotFeatureState] === true
+    ? (value as LotFeatureState)
+    : null;
+}
+
+/** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
+function asLotFeature(raw: unknown): LotFeature | null {
+  if (!raw || typeof raw !== "object") return null;
+  const f = raw as Record<string, unknown>;
+  // Le FORMAT du slug compte autant que son type : il nomme un répertoire de
+  // worktree et sort de la base d'archive (`worktreePathFor`), puis sert de `cwd`
+  // aux runs. Un slug hors `[a-z0-9-]` — fichier de lot falsifié ou écrit par une
+  // version future — est donc rejeté ici, comme un champ manquant.
+  if (typeof f.slug !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(f.slug)) return null;
+  if (typeof f.name !== "string" || typeof f.branch !== "string" || typeof f.worktree !== "string") return null;
+  const state = asLotFeatureState(f.state);
+  if (!state) return null;
+  if (!PIPELINE_PHASES.includes(f.phase as PipelinePhase)) return null;
+  const origin =
+    typeof f.origin === "string" && LOT_ORIGINS[f.origin as LotOrigin] === true ? (f.origin as LotOrigin) : null;
+  if (!origin) return null;
+  const waitKind =
+    f.waitKind === null
+      ? null
+      : typeof f.waitKind === "string" && LOT_WAIT_KINDS[f.waitKind as LotWaitKind] === true
+        ? (f.waitKind as LotWaitKind)
+        : undefined;
+  if (waitKind === undefined) return null;
+  const deps = Array.isArray(f.deps) ? f.deps.filter((d): d is string => typeof d === "string") : [];
+  const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  return {
+    slug: f.slug,
+    name: f.name,
+    branch: f.branch,
+    worktree: f.worktree,
+    deps,
+    origin,
+    state,
+    // La phase est validée contre la liste ci-dessus : c'est un PipelinePhase.
+    phase: f.phase as PipelinePhase,
+    waitKind,
+    waitPrompt: asStringOrNull(f.waitPrompt),
+    sessionFile: asStringOrNull(f.sessionFile),
+    prUrl: asStringOrNull(f.prUrl),
+    stopReason: asStringOrNull(f.stopReason),
+    fixes: Math.max(0, Math.trunc(num(f.fixes, 0))),
+    reviewRuns: Math.max(0, Math.trunc(num(f.reviewRuns, 0))),
+    contractHash: asStringOrNull(f.contractHash),
+    addedAt: num(f.addedAt, 0),
+    sinceAt: num(f.sinceAt, 0),
+    updatedAt: num(f.updatedAt, 0),
+    endedAt: typeof f.endedAt === "number" && Number.isFinite(f.endedAt) ? f.endedAt : null,
+  };
+}
+
+function asLot(raw: unknown): Lot | null {
+  if (!raw || typeof raw !== "object") return null;
+  const l = raw as Record<string, unknown>;
+  if (l.version !== LOT_VERSION) return null;
+  if (typeof l.id !== "string" || l.id === "" || typeof l.repoRoot !== "string" || l.repoRoot === "") return null;
+  if (l.status !== "draft" && l.status !== "running") return null;
+  if (!Array.isArray(l.features)) return null;
+  // Une feature invalide fait rejeter le lot ENTIER : un lot amputé en silence
+  // ferait disparaître un pipeline du panneau et lancerait les runs d'un état que
+  // personne n'a écrit. Même doctrine que le reste du fichier — un schéma
+  // incomplet est lu comme absent (S-1), et le panneau le compte comme illisible.
+  const features: LotFeature[] = [];
+  for (const raw of l.features) {
+    const feature = asLotFeature(raw);
+    if (!feature) return null;
+    features.push(feature);
+  }
+  const owner = l.owner;
+  if (!owner || typeof owner !== "object" || typeof (owner as Record<string, unknown>).pid !== "number") return null;
+  const o = owner as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+  return {
+    version: LOT_VERSION,
+    id: l.id,
+    repoRoot: l.repoRoot,
+    status: l.status,
+    reviewCap: Math.max(1, Math.trunc(typeof l.reviewCap === "number" ? l.reviewCap : 1)),
+    recapAt: typeof l.recapAt === "number" && Number.isFinite(l.recapAt) ? l.recapAt : null,
+    owner: { pid: o.pid as number, sessionFile: asStringOrNull(o.sessionFile), sessionId: asStringOrNull(o.sessionId) },
+    createdAt: num(l.createdAt),
+    launchedAt: typeof l.launchedAt === "number" && Number.isFinite(l.launchedAt) ? l.launchedAt : null,
+    features,
+  };
+}
+
+/** Le lot du dépôt, ou `null` (absent, illisible, ou schéma d'une autre version). */
+export function readLot(stateDir: string, repoKey: string): Lot | null {
+  return asLot(readJsonFile(lotPathFor(stateDir, repoKey)));
+}
+
+export function writeLot(stateDir: string, lot: Lot): void {
+  writeJsonAtomic(lotPathFor(stateDir, lot.id), { ...lot, version: LOT_VERSION });
+}
+
+export function lotFeature(lot: Lot, slug: string): LotFeature | undefined {
+  return lot.features.find((f) => f.slug === slug);
+}
+
+/** Une feature sans dépendance satisfaite n'a pas le droit de démarrer (S-10). */
+export function runnable(lot: Lot, feature: LotFeature): boolean {
+  return feature.deps.every((dep) => lotFeature(lot, dep)?.state === "done");
+}
+
+/**
+ * Raison de blocage héritée d'une dépendance, ou `null`. Une dépendance `done`
+ * libère ; une dépendance en cours ou en attente fait patienter (sans erreur) ;
+ * échouée, bloquée ou annulée bloque la dépendante (AC-17).
+ */
+export function dependencyBlock(lot: Lot, feature: LotFeature): string | null {
+  for (const dep of feature.deps) {
+    const d = lotFeature(lot, dep);
+    if (!d) return `dépendance inconnue : ${dep}`;
+    if (d.state === "failed" || d.state === "blocked" || d.state === "cancelled") {
+      return `dépend de ${dep} (${lotStateLabel(d.state)})`;
+    }
+  }
+  return null;
+}
+
+export function lotTotals(lot: Lot): LotTotals {
+  const totals: LotTotals = { done: 0, blocked: 0, failed: 0, cancelled: 0, live: 0 };
+  for (const f of lot.features) {
+    if (f.state === "done") totals.done += 1;
+    else if (f.state === "blocked") totals.blocked += 1;
+    else if (f.state === "failed") totals.failed += 1;
+    else if (f.state === "cancelled") totals.cancelled += 1;
+    else totals.live += 1;
+  }
+  return totals;
+}
+
+/**
+ * Récap de fin de lot (AC-15) : le décompte exact et une ligne par catégorie non
+ * vide. Les raisons des bloquées et des échouées sont reprises telles quelles.
+ */
+export function buildLotRecap(repo: string, lot: Lot): string {
+  const t = lotTotals(lot);
+  const lines = [
+    `[pipeline] lot ${repo} terminé — ${t.done} terminées, ${t.blocked} bloquées, ${t.failed} échouées, ${t.cancelled} annulées`,
+  ];
+  const withState = (state: LotFeatureState) => lot.features.filter((f) => f.state === state);
+  const done = withState("done").map((f) => f.slug);
+  if (done.length > 0) lines.push(`terminé : ${done.join(", ")}`);
+  const blocked = withState("blocked");
+  if (blocked.length > 0) {
+    lines.push(`bloqué : ${blocked.map((f) => `${f.slug} (${f.stopReason ?? "raison inconnue"})`).join(", ")}`);
+  }
+  const failed = withState("failed");
+  if (failed.length > 0) {
+    lines.push(`échoué : ${failed.map((f) => `${f.slug} (${f.stopReason ?? "raison inconnue"})`).join(", ")}`);
+  }
+  const cancelled = withState("cancelled").map((f) => f.slug);
+  if (cancelled.length > 0) lines.push(`annulé : ${cancelled.join(", ")}`);
+  return lines.join("\n");
+}
+
+export type LotAlert = { text: string; tone: "info" | "warning" | "error" };
+
+/**
+ * Alerte d'une transition (AC-11) : une par transition, jamais rejouée par une
+ * relecture. `null` pour les états qui n'appellent pas l'utilisateur (à venir, en
+ * cours, annulé). Le texte ne contient jamais « fin » comme mot isolé : il
+ * retraverse `before_agent_start`, où ce mot clôturerait une collecte.
+ */
+export function buildLotAlert(repo: string, feature: LotFeature): LotAlert | null {
+  const head = `${repo}/${feature.slug}`;
+  if (feature.state === "waiting") {
+    if (feature.waitKind === "specs") {
+      return { text: `[pipeline] ${head} : spécifications prêtes, attend ta validation — v dans /pipelines`, tone: "warning" };
+    }
+    if (feature.waitKind === "review") {
+      return {
+        text: `[pipeline] ${head} : revue propre, attend ton accord pour livrer — y dans /pipelines`,
+        tone: "warning",
+      };
+    }
+    const prompt = feature.waitPrompt ? `\n${clipTail(feature.waitPrompt, LOT_ALERT_PROMPT_MAX)}` : "";
+    return {
+      text: `[pipeline] ${head} attend ta réponse (maillon /${feature.phase}) — /pipelines${prompt}`,
+      tone: "warning",
+    };
+  }
+  if (feature.state === "blocked") {
+    return { text: `[pipeline] ${head} bloqué : ${feature.stopReason ?? "raison inconnue"} — /pipelines`, tone: "error" };
+  }
+  if (feature.state === "failed") {
+    return { text: `[pipeline] ${head} échoué : ${feature.stopReason ?? "raison inconnue"} — /pipelines`, tone: "error" };
+  }
+  if (feature.state === "done") {
+    return { text: `[pipeline] ${head} terminé — ${feature.prUrl ? `PR ${feature.prUrl}` : "PR non confirmée"}`, tone: "info" };
+  }
+  return null;
+}
+
+// --- plafond, sortie de run, timeouts : bornes et lecture d'environnement -----
+
+export const LOT_TICK_MS = 2000;
+export const LOT_RUN_TIMEOUT_MS = 3_600_000;
+export const PIPELINE_REVIEW_CAP_DEFAULT = 3;
+/** Le texte d'un run est borné : le panneau en montre la fin (les questions y sont). */
+export const LOT_WAIT_PROMPT_MAX = 1200;
+export const LOT_ALERT_PROMPT_MAX = 400;
+/** Un motif de panne tient dans un rang de panneau et dans une alerte (S-4). */
+export const LOT_REASON_MAX = 200;
+/** Budget de l'éditeur en ligne du panneau (S-7). */
+export const LOT_EDITOR_MAX = 4000;
+
+/** Entier d'environnement borné, ou le défaut (une variable absente ou vide). */
+function envInt(raw: string | undefined, fallback: number, min: number, max: number): number {
+  const text = (raw ?? "").trim();
+  if (text === "") return fallback;
+  const value = Number(text);
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
+/** `MEM0_PIPELINE_REVIEW_CAP` : plafond des tours de correction (défaut 3). */
+export function lotReviewCap(env: Record<string, string | undefined> = process.env): number {
+  return envInt(env.MEM0_PIPELINE_REVIEW_CAP, PIPELINE_REVIEW_CAP_DEFAULT, 1, 20);
+}
+
+/** `MEM0_PIPELINE_RUN_TIMEOUT_MS` : budget d'un run (défaut 1 h). */
+export function lotRunTimeoutMs(env: Record<string, string | undefined> = process.env): number {
+  return envInt(env.MEM0_PIPELINE_RUN_TIMEOUT_MS, LOT_RUN_TIMEOUT_MS, 10_000, 86_400_000);
+}
+
+/** `MEM0_PIPELINE_OMP_BIN` : binaire `omp` des runs, sinon `omp` du PATH. */
+export function lotOmpBin(env: Record<string, string | undefined> = process.env): string {
+  const raw = (env.MEM0_PIPELINE_OMP_BIN ?? "").trim();
+  return raw === "" ? "omp" : raw;
+}
+
+/**
+ * `MEM0_PIPELINE_ARCHIVE_DIR` (absolu ou `~`) sinon `~/.omp/pipeline-archive` :
+ * même famille que `worktreesBaseDir`, un chemin relatif est ignoré.
+ */
+export function lotArchiveBaseDir(
+  env: Record<string, string | undefined> = process.env,
+  home: string = os.homedir(),
+): string {
+  const raw = (env.MEM0_PIPELINE_ARCHIVE_DIR ?? "").trim();
+  if (raw === "~") return home;
+  if (raw.startsWith("~/")) return path.join(home, raw.slice(2));
+  if (path.isAbsolute(raw)) return raw;
+  return path.join(home, ".omp", "pipeline-archive");
+}
+
+// --- la chaîne : une décision pure, appliquée par le pilote (S-4, S-5) --------
+
+export type ChainOutcome = "ok" | "error";
+export type ChainAction =
+  | { kind: "run"; phase: PipelinePhase; fix: boolean }
+  | { kind: "wait"; waitKind: LotWaitKind }
+  | { kind: "blocked"; reason: string }
+  | { kind: "failed"; reason: string }
+  | { kind: "done" };
+
+/**
+ * Le maillon suivant, décidé par le seul contrat (+ l'issue du run et les
+ * compteurs du plafond). Pure : c'est la même décision pour une feature de lot et
+ * pour une feature ouverte par /req (AC-4), et c'est elle que les tests figent.
+ *
+ * Les deux jalons de l'utilisateur sont ici : `specs` produit ⇒ `wait specs`
+ * (AC-8), revue propre ⇒ `wait review` (AC-9). La boucle de correction est bornée
+ * par `cap` (AC-7).
+ */
+export function nextChainAction(input: {
+  phase: PipelinePhase;
+  outcome: ChainOutcome;
+  contract: string;
+  fixes: number;
+  reviewRuns: number;
+  cap: number;
+}): ChainAction {
+  const { phase, outcome, contract, fixes, reviewRuns, cap } = input;
+  // La raison précise est attachée par le pilote (dernière ligne de stderr,
+  // dépassement, binaire absent) : ici on ne connaît que l'issue.
+  if (outcome === "error") return { kind: "failed", reason: "exécution en échec" };
+  const hasSpecs = contractHasSection(contract, "Spécifications");
+  switch (phase) {
+    case "req": {
+      const closed =
+        contractHasSection(contract, "Besoins") && contractHasSection(contract, "Critères d'acceptation");
+      // Collecte close (les deux sections sont écrites) ⇒ specs ; sinon le run a
+      // posé ses questions et l'utilisateur doit répondre (AC-12).
+      return closed ? { kind: "run", phase: "specs", fix: false } : { kind: "wait", waitKind: "answer" };
+    }
+    case "specs":
+      return hasSpecs
+        ? { kind: "wait", waitKind: "specs" }
+        : { kind: "blocked", reason: "aucune spécification écrite par /specs" };
+    case "impl":
+      return hasSpecs
+        ? { kind: "run", phase: "review", fix: false }
+        : { kind: "blocked", reason: "le contrat n'a plus de section ## Spécifications" };
+    case "review": {
+      const verdict = reviewVerdict(contract);
+      if (verdict === "clean") return { kind: "wait", waitKind: "review" };
+      if (verdict === "blockers") {
+        if (fixes < cap) return { kind: "run", phase: "impl", fix: true };
+        return { kind: "blocked", reason: `plafond de ${cap} tours de correction atteint, revue toujours bloquante` };
+      }
+      if (reviewRuns <= cap) return { kind: "run", phase: "review", fix: false };
+      return { kind: "blocked", reason: `verdict de revue illisible après ${cap + 1} passes` };
+    }
+    case "release":
+      return { kind: "done" };
+  }
+}
+
+/**
+ * Un run interrompu (pilote disparu) se juge sur le seul indice disponible : le
+ * contrat a-t-il bougé ? Modifié ⇒ le maillon a fait son travail, la chaîne
+ * reprend ; inchangé ⇒ rien n'a été produit, la feature échoue et reste
+ * relançable (S-1).
+ */
+export function reconcileInterrupted(input: {
+  contractHashAtStart: string | null;
+  currentContractHash: string | null;
+}): "continue" | "failed" {
+  if (input.currentContractHash !== null && input.currentContractHash !== input.contractHashAtStart) return "continue";
+  return "failed";
+}
+
+/** sha1 du contrat d'un worktree, `null` s'il n'existe pas encore. */
+export function contractHashOf(worktree: string): string | null {
+  try {
+    return crypto.createHash("sha1").update(fs.readFileSync(contractPathFor(worktree), "utf8")).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+/** Contenu du contrat d'un worktree, `""` s'il est absent ou illisible. */
+export function readContractText(worktree: string): string {
+  try {
+    return fs.readFileSync(contractPathFor(worktree), "utf8");
+  } catch {
+    return "";
+  }
+}
+
+// --- le run : un processus `omp` par maillon (S-13) --------------------------
+
+/** Ce qu'un runner de run rend : la sortie du mode print et son issue. */
+export type LotRunnerResult = { code: number; killed: boolean; stdout: string; stderr: string };
+export type LotRunnerInput = { argv: string[]; cwd: string; timeout: number; signal: AbortSignal };
+export type LotRunner = (input: LotRunnerInput) => Promise<LotRunnerResult>;
+
+export type LotRunSpec = {
+  ompBin: string;
+  worktree: string;
+  prompt: string;
+  lotId: string;
+  slug: string;
+  phase: PipelinePhase;
+  stateDir: string;
+  sessionFile?: string | null;
+  selfPath?: string | null;
+};
+
+/**
+ * L'argv exact d'un run. Le prompt suit `--` (positionnel littéral, cf.
+ * `## Documentation` §2) : un prompt qui commence par `-` ne peut pas être pris
+ * pour un drapeau. `--auto-approve` est nécessaire — sans lui les approbations
+ * d'outils sont fail-closed en headless (`## Documentation` §1).
+ */
+export function buildLotRunArgv(spec: LotRunSpec): string[] {
+  const argv = [
+    spec.ompBin,
+    "--cwd",
+    spec.worktree,
+    "-p",
+    "--auto-approve",
+    "--pipeline-lot",
+    spec.lotId,
+    "--pipeline-feature",
+    spec.slug,
+    "--pipeline-phase",
+    spec.phase,
+    "--pipeline-state-dir",
+    spec.stateDir,
+  ];
+  if (spec.sessionFile) argv.push("--resume", spec.sessionFile);
+  if (spec.selfPath) argv.push("-e", spec.selfPath);
+  argv.push("--", spec.prompt);
+  return argv;
+}
+
+/**
+ * Le chemin de CETTE extension, pour qu'un run enfant charge exactement le code
+ * qui vient de le lancer (en dev : le worktree de la feature). `null` si l'URL du
+ * module n'est pas un fichier : l'enfant se rabat alors sur la découverte des
+ * plugins — les chemins d'extension sont dédupliqués par chemin résolu, donc
+ * passer les deux est sûr (`## Documentation` §2).
+ */
+export function selfExtensionArg(metaUrl: string | undefined): string | null {
+  if (typeof metaUrl !== "string" || !metaUrl.startsWith("file://")) return null;
+  try {
+    const file = decodeURIComponent(new URL(metaUrl).pathname);
+    return path.isAbsolute(file) ? file : null;
+  } catch {
+    return null;
+  }
+}
+
+/** L'URL de ce module, quand le runtime en expose une (ESM) — sinon `undefined`. */
+const SELF_MODULE_URL: string | undefined = (() => {
+  try {
+    return (import.meta as { url?: string }).url;
+  } catch {
+    return undefined;
+  }
+})();
+
+export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
+
+/**
+ * Le préambule de tout run de lot. Deux règles non négociables : l'outil `ask`
+ * n'existe pas en headless (l'agent finit son tour avec ses questions EN TEXTE,
+ * cf. `## Documentation` §1) et la chaîne n'appartient pas à l'agent — le pilote
+ * la décide (`nextChainAction`).
+ */
+export const LOT_WORKER_DIRECTIVE = `Mode lot : tu tournes dans un pipeline, sans interface.
+- L'outil \`ask\` n'est pas disponible. Termine ton tour par tes questions bloquantes EN TEXTE, numérotées et actionnables : elles s'affichent dans le panneau du lot et l'utilisateur y répond ; sa réponse te reviendra au tour suivant.
+- N'annonce aucune commande et n'enchaîne aucun maillon de toi-même : la chaîne est pilotée par le lot.
+- Le contrat de cette feature vit dans .omp/pipeline/contract.md, relatif à ton répertoire de travail.`;
+
+/** La graine d'un maillon : les quatre existantes, plus la livraison. */
+function phaseSeed(input: { phase: PipelinePhase; slug: string; fix: boolean; focus: string }): string {
+  switch (input.phase) {
+    case "specs":
+      return buildSpecsSeed(input.focus);
+    case "impl":
+      return buildImplSeed(input.focus, input.fix);
+    case "review":
+      return buildReviewSeed(input.focus);
+    case "release":
+      return buildReleaseSeed({ slug: input.slug, branch: branchFor(input.slug) });
+    case "req":
+      return `[req] Collecte des besoins de la feature « ${input.slug} ».`;
+  }
+}
+
+/**
+ * Le prompt d'un run (S-13). `collecte` est préfixé `[req]` : le préambule d'un
+ * run n'est pas une entrée de l'utilisateur, et le détecteur de clôture
+ * (`saysFin`) ne doit jamais s'y appliquer — seule une réponse tapée par
+ * l'utilisateur clôt une collecte.
+ */
+export function buildLotPrompt(input: {
+  kind: LotPromptKind;
+  phase: PipelinePhase;
+  slug: string;
+  description?: string;
+  text?: string;
+  focus?: string;
+  fix?: boolean;
+}): string {
+  const seed = phaseSeed({ phase: input.phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
+  if (input.kind === "collecte") {
+    const intent = (input.description ?? "").trim();
+    return `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
+  }
+  if (input.kind === "answer") {
+    return (
+      `[réponse de l'utilisateur] ${(input.text ?? "").trim()}\n\n` +
+      `Maillon courant : /${input.phase}. Lis le contrat .omp/pipeline/contract.md pour l'état de la feature.\n\n` +
+      LOT_WORKER_DIRECTIVE
+    );
+  }
+  if (input.kind === "relaunch") {
+    return (
+      "[reprise] Le maillon est relancé par l'utilisateur : reprends où tu t'es arrêté, " +
+      `sans élargir le périmètre.\n\n${seed}\n\n${LOT_WORKER_DIRECTIVE}`
+    );
+  }
+  return `${seed}\n\n${LOT_WORKER_DIRECTIVE}`;
+}
+
+/**
+ * Dernière ligne non vide d'un texte : la plus informative d'un échec de
+ * commande, et la raison consignée dans le lot.
+ */
+export function lastLine(text: string): string {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  return lines.length > 0 ? (lines[lines.length - 1] as string) : "";
+}
+
+// --- la livraison : un run d'agent, puis deux commandes mécaniques (S-6/BR-7) -
+
+/**
+ * La directive du maillon `release`. L'agent prépare le commit et le corps de la
+ * PR ; le PILOTE pousse et ouvre la PR (URL HTTPS + `gh`, cf. `## Documentation`
+ * §4 et §5) — parce que ces deux étapes doivent être déterministes, et parce que
+ * le chemin de poussée de cette machine passe par le token de `gh`, jamais par
+ * une clé SSH.
+ */
+export const RELEASE_DIRECTIVE = `Tu es l'agent de livraison. La revue est propre et l'utilisateur a accepté la fin du cycle : tu prépares le commit et le corps de la PR. Le pilotage du lot poussera la branche et ouvrira la PR juste après toi.
+
+Procédure OBLIGATOIRE, dans l'ordre :
+1. Lis le contrat .omp/pipeline/contract.md : Besoins (B-<n>), Critères d'acceptation (AC-<n>), Spécifications (S-<n>), Lots (BR-<n>) et le verdict de \`## Revue\`. Si \`## Revue\` est absente ou consigne des BLOQUANTS, ARRÊTE-toi et dis-le : il n'y a rien à livrer.
+2. \`git status --porcelain\`. Si l'arbre est VIDE, la feature est déjà commitée : ne recommite pas (idempotence) et passe à l'étape 5.
+3. Sinon, fais UN SEUL commit avec tout le travail de la feature (\`git add -A\` puis \`git commit\`). Message en français, conventionnel : un titre \`type(scope): sujet\` (les scopes nomment les composants touchés ; les versions livrées vont entre parenthèses si tu en bumpes), puis un corps qui porte la cause racine, les décisions et leurs raisons, les preuves réellement exécutées avec leurs chiffres, les versions bumpées et le verdict de revue. N'invente aucune preuve : reprends celles du contrat et des commandes que tu as lancées.
+4. Bumpe les versions SI ET SEULEMENT SI la feature modifie un plugin du dépôt : les QUATRE fichiers alignés (les deux package.json et les deux catalogues, identiques octet pour octet — règle de PUBLISHING.md, section « Mettre à jour »). Si tu bumpes après avoir commité, refais un commit unique : un seul commit par feature.
+5. Écris le corps de la PR dans .omp/pipeline/pr-body.md : le résumé de la feature (ses besoins), la liste des critères d'acceptation avec la preuve de chacun (fichier de test), les décisions techniques notables et le verdict de revue. Ce fichier est ignoré par git : il ne doit pas entrer dans le commit.
+6. NE POUSSE PAS et N'OUVRE PAS de PR : le pilotage du lot s'en charge (\`git push\` vers l'URL HTTPS, puis \`gh pr create\`). N'appelle ni l'un ni l'autre.
+7. Termine par exactement une ligne : \`commit <sha> — <sujet du commit>\`.`;
+
+export function buildReleaseSeed(feature: { slug: string; branch: string }): string {
+  return (
+    `[release] Livraison de la feature « ${feature.slug} » (branche ${feature.branch}).\n\n` + RELEASE_DIRECTIVE
+  );
+}
+
+export type ReleaseTarget = { pushUrl: string | null; base: string | null };
+
+/** `gh repo view --json url,defaultBranchRef` → URL HTTPS de push et base de PR. */
+export function releaseTarget(raw: unknown): ReleaseTarget {
+  if (!raw || typeof raw !== "object") return { pushUrl: null, base: null };
+  const rec = raw as Record<string, unknown>;
+  const url =
+    typeof rec.url === "string" && rec.url.startsWith("https://") ? `${rec.url.replace(/\.git$/, "")}.git` : null;
+  const ref = rec.defaultBranchRef;
+  const base =
+    ref && typeof ref === "object" && typeof (ref as Record<string, unknown>).name === "string"
+      ? String((ref as Record<string, unknown>).name)
+      : null;
+  return { pushUrl: url, base };
+}
+
+/** Les deux commandes mécaniques de la livraison, dans l'ordre (S-6). */
+export function releaseArgs(input: {
+  pushUrl: string;
+  branch: string;
+  base: string;
+  title: string;
+  bodyFile?: string | null;
+  body?: string | null;
+}): { push: string[]; pr: string[] } {
+  const pr = ["pr", "create", "-B", input.base, "-H", input.branch, "-t", input.title];
+  if (input.bodyFile) pr.push("-F", input.bodyFile);
+  else pr.push("-b", input.body ?? "");
+  return { push: ["push", "-u", input.pushUrl, input.branch], pr };
+}
+
+/** L'URL de PR imprimée par `gh pr create` sur stdout (`## Documentation` §4). */
+export function parsePrUrl(stdout: string): string | null {
+  for (const line of stdout.split("\n")) {
+    const m = /^(https:\/\/\S*\/pull\/\d+)$/.exec(line.trim());
+    if (m && m[1]) return m[1];
+  }
+  return null;
+}
+
+/**
+ * L'URL de la PR d'une branche, lue dans la charge de `gh pr view <branche> --json
+ * url` (S-6). C'est une forme DIFFÉRENTE de celle de `gh pr create` : du JSON
+ * (`{"url":"https://…/pull/<n>"}`) et non l'URL nue — la reprise après un push
+ * réussi lit celle-ci (`parsePrUrl` seul n'y reconnaît rien).
+ */
+export function prUrlOfView(stdout: string): string | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(stdout);
+  } catch {
+    return null;
+  }
+  const url = raw && typeof raw === "object" ? (raw as Record<string, unknown>).url : null;
+  return typeof url === "string" ? parsePrUrl(url) : null;
+}
+
+// --- annulation : le devenir du worktree (S-9) -------------------------------
+
+export type WorktreeFate = "keep" | "archive" | "delete";
+export type FateResult = { ok: true; message: string } | { ok: false; message: string };
+
+/** Chemins ignorés par git (lignes `!! …`) d'un `git status --porcelain --ignored`. */
+export function ignoredPaths(statusOutput: string): string[] {
+  const out: string[] = [];
+  for (const line of statusOutput.split("\n")) {
+    if (!line.startsWith("!! ")) continue;
+    const rel = line.slice(3).trim();
+    if (rel !== "" && rel !== ".git" && !rel.startsWith(".git/")) out.push(rel);
+  }
+  return out;
+}
+
+/**
+ * Applique le devenir choisi pour le worktree d'une feature annulée (AC-14) :
+ * `keep` ne touche à rien, `archive` copie d'abord les fichiers IGNORÉS (le
+ * contrat, les caches locaux) dans l'archive du dépôt puis retire le worktree,
+ * `delete` retire directement. Dans les deux derniers cas les modifications non
+ * commitées sont perdues — le libellé du choix le dit — et la branche reste.
+ */
+export async function applyWorktreeFate(input: {
+  fate: WorktreeFate;
+  feature: { slug: string; branch: string; worktree: string };
+  repoRoot: string;
+  archiveBase: string;
+  currentCwd: string;
+  run: GitRunner;
+}): Promise<FateResult> {
+  const { fate, feature, repoRoot, archiveBase, currentCwd, run } = input;
+  const worktree = realpathOr(feature.worktree);
+  const branchKept = `branche ${feature.branch} conservée`;
+  if (fate === "keep") return { ok: true, message: `worktree conservé en place : ${worktree} (${branchKept})` };
+  if (!fs.existsSync(worktree)) {
+    return { ok: true, message: `worktree introuvable — rien à retirer (${branchKept})` };
+  }
+  const cwd = realpathOr(currentCwd);
+  if (cwd === worktree || isUnder(cwd, worktree)) {
+    return { ok: true, message: `worktree de la session courante — conservé (${branchKept})` };
+  }
+  // Un worktree en HEAD détaché n'est plus celui de la branche annoncée : le
+  // retirer avec `--force` perdrait les modifications d'une autre branche — même
+  // règle que `reapDecision` (S-9).
+  const head = await run(["rev-parse", "--abbrev-ref", "HEAD"], worktree);
+  if (head.code === 0 && head.stdout.trim() === "HEAD") {
+    return { ok: true, message: `worktree en HEAD détaché — conservé (${branchKept})` };
+  }
+  let archived: string | null = null;
+  if (fate === "archive") {
+    const status = await run(["status", "--porcelain", "--ignored"], worktree);
+    if (status.code !== 0) {
+      return { ok: false, message: `lecture des fichiers ignorés refusée : ${lastLine(status.stderr)}` };
+    }
+    archived = worktreePathFor(archiveBase, repoRoot, feature.slug);
+    try {
+      for (const rel of ignoredPaths(status.stdout)) {
+        fs.cpSync(path.join(worktree, rel), path.join(archived, rel), { recursive: true });
+      }
+    } catch (err) {
+      return { ok: false, message: `archivage impossible : ${(err as Error).message}` };
+    }
+  }
+  const removed = await run(["worktree", "remove", "--force", worktree], repoRoot);
+  if (removed.code !== 0) {
+    return { ok: false, message: `retrait du worktree refusé : ${lastLine(removed.stderr)}` };
+  }
+  return {
+    ok: true,
+    message: archived
+      ? `worktree archivé dans ${archived} puis retiré (${branchKept})`
+      : `worktree retiré : ${worktree} (${branchKept})`,
+  };
+}
+
+// --- mode worker : l'enfant ne décide de rien (S-13) -------------------------
+
+export type WorkerMode = { lotId: string; slug: string; phase: PipelinePhase; stateDir: string | null };
+export type FlagReader = { getFlag?: (name: string) => boolean | string | undefined };
+
+/**
+ * Les quatre drapeaux d'un run de lot, relus par l'enfant au démarrage. `null`
+ * hors d'un run : la session est une session ordinaire, avec ses commandes et ses
+ * jalons (un drapeau inconnu du CLI étant une erreur dure, ils sont déclarés au
+ * chargement — cf. `## Documentation` §2).
+ */
+export function workerModeOf(pi: FlagReader): WorkerMode | null {
+  if (typeof pi.getFlag !== "function") return null;
+  const lotId = pi.getFlag("pipeline-lot");
+  const slug = pi.getFlag("pipeline-feature");
+  const phase = pi.getFlag("pipeline-phase");
+  if (typeof lotId !== "string" || lotId === "") return null;
+  if (typeof slug !== "string" || slug === "") return null;
+  if (typeof phase !== "string" || !PIPELINE_PHASES.includes(phase as PipelinePhase)) return null;
+  const dir = pi.getFlag("pipeline-state-dir");
+  return {
+    lotId,
+    slug,
+    phase: phase as PipelinePhase,
+    stateDir: typeof dir === "string" && path.isAbsolute(dir) ? dir : null,
+  };
+}
+
+/** La session du dernier run d'un cwd : celle qu'on reprend pour répondre (AC-12). */
+export function latestSessionFile(stateDir: string, cwd: string, sinceMs: number): string | null {
+  const real = realpathOr(cwd);
+  const snapshot = readStore(stateDir);
+  const candidates: Array<{ file: string; at: number }> = [];
+  for (const entry of snapshot.running) {
+    if (entry.sessionFile && realpathOr(entry.cwd) === real && entry.updatedAt >= sinceMs) {
+      candidates.push({ file: entry.sessionFile, at: entry.updatedAt });
+    }
+  }
+  for (const entry of snapshot.history) {
+    if (entry.sessionFile && realpathOr(entry.cwd) === real && entry.endedAt >= sinceMs) {
+      candidates.push({ file: entry.sessionFile, at: entry.endedAt });
+    }
+  }
+  candidates.sort((a, b) => b.at - a.at);
+  return candidates[0]?.file ?? null;
+}
+
+/** La racine du dépôt vue depuis `cwd` : le dépôt principal si `cwd` est un worktree. */
+export function repoRootOf(cwd: string): string {
+  const root = resolveFeatureRoot(cwd);
+  return root.primary ?? root.dir;
+}
+
+/**
+ * Le lot qui pilote encore `cwd` (`null` sinon) : c'est lui qui interdit aux
+ * commandes manuelles de réécrire le contrat d'une feature (S-14).
+ *
+ * Ne compte PAS comme pilotée : la collecte d'une feature ouverte par /req (elle
+ * appartient à la session de l'utilisateur), une feature terminale, et une feature
+ * dont le lot n'a plus de pilote vivant (l'utilisateur reprend alors à la main).
+ */
+export function lotDriverFor(stateDir: string, repoRoot: string, cwd: string): Lot | null {
+  const lot = readLot(stateDir, lotRepoKey(repoRoot));
+  if (!lot) return null;
+  const feature = lot.features.find((f) => realpathOr(f.worktree) === realpathOr(cwd));
+  if (!feature) return null;
+  if (feature.origin === "session" && feature.phase === "req") return null;
+  if (lotStateTerminal(feature.state)) return null;
+  return pidAlive(lot.owner.pid) ? lot : null;
+}
+
+/**
+ * Bascule la collecte d'une feature de lot vers le pilote (S-14) : la feature
+ * passe au maillon `specs`, en cours, et cette session devient propriétaire du lot
+ * (sans quoi la passe du pilote qu'elle vient d'armer refuserait de le conduire).
+ * Rend `true` quand la main a été passée — la session de l'utilisateur n'annonce
+ * alors plus rien.
+ *
+ * Un lot conduit par un process VIVANT étranger n'est jamais réécrit ici (S-1,
+ * invariant 2) : la bascule n'a pas lieu et la chaîne reste manuelle. Une écriture
+ * impossible est signalée par la notice durable de `reportStateWriteFailure` — la
+ * bascule n'a pas eu lieu non plus, et l'utilisateur l'apprend au lieu de rester
+ * avec une feature figée `req`/en cours, que plus aucune passe ne relèverait.
+ */
+export function handOverCollecte(input: {
+  stateDir: string;
+  repoRoot: string;
+  cwd: string;
+  contract: string;
+  sessionFile: string | null;
+  now?: number;
+  notify?: (text: string) => void;
+}): boolean {
+  if (!contractHasSection(input.contract, "Besoins")) return false;
+  const lot = readLot(input.stateDir, lotRepoKey(input.repoRoot));
+  if (!lot) return false;
+  if (lot.owner.pid !== process.pid && pidAlive(lot.owner.pid)) return false;
+  const feature = lot.features.find(
+    (f) => f.origin === "session" && f.phase === "req" && realpathOr(f.worktree) === realpathOr(input.cwd),
+  );
+  if (!feature || lotStateTerminal(feature.state)) return false;
+  const at = input.now ?? Date.now();
+  feature.phase = "specs";
+  feature.state = "running";
+  feature.waitKind = null;
+  feature.waitPrompt = null;
+  feature.stopReason = null;
+  feature.sessionFile = input.sessionFile ?? feature.sessionFile;
+  feature.sinceAt = at;
+  feature.updatedAt = at;
+  lot.owner = { pid: process.pid, sessionFile: feature.sessionFile, sessionId: lot.owner.sessionId };
+  try {
+    writeLot(input.stateDir, lot);
+  } catch (err) {
+    // Une écriture impossible ne casse jamais un tour : l'erreur est avalée et
+    // signalée au plus une fois par session (S-1, cas limites). La bascule, elle,
+    // n'a PAS eu lieu : l'appelant garde l'annonce de la chaîne manuelle.
+    reportStateWriteFailure({ notify: input.notify, stateDir: input.stateDir }, err);
+    return false;
+  }
+  return true;
+}
+
+// --- le pilote : une passe = lire, décider, lancer (S-2, S-4, S-11) ----------
+
+export type AddFeatureInput = { name: string; description: string; deps: string[] };
+
+/** Ce que le panneau demande au pilote : chaque refus rend son motif, jamais une exception. */
+export type LotPanelActions = {
+  add(input: AddFeatureInput): Promise<string | null>;
+  launch(): Promise<string | null>;
+  remove(slug: string): Promise<string | null>;
+  answer(slug: string, text: string): Promise<string | null>;
+  validate(slug: string): Promise<string | null>;
+  accept(slug: string): Promise<string | null>;
+  relaunch(slug: string): Promise<string | null>;
+  cancel(slug: string, fate: WorktreeFate): Promise<string | null>;
+};
+
+export type LotControllerDeps = {
+  stateDir: string;
+  repoRoot: string;
+  run: LotRunner;
+  runGit: GitRunner;
+  /** `gh`, pour l'URL du dépôt et la PR. Absent ⇒ la livraison est bloquée, sans exception. */
+  runGh?: (args: string[], cwd: string) => Promise<GitResult>;
+  notify?: (text: string) => void;
+  toast?: (text: string, type: "info" | "warning" | "error") => void;
+  /** La session du pilote : publiée comme propriétaire (diagnostic et reprise). */
+  session?: () => { file: string | null; id: string | null };
+  now?: () => number;
+  schedule?: (callback: () => void, ms: number) => () => void;
+  worktreesBase?: string;
+  archiveBase?: string;
+  ompBin?: string;
+  selfPath?: string | null;
+  reviewCap?: number;
+  runTimeoutMs?: number;
+};
+
+export type LotController = LotPanelActions & {
+  read(): Lot | null;
+  start(): void;
+  stop(): void;
+  tick(): Promise<void>;
+  adopt(): boolean;
+  /** Inscription d'une feature créée par /req (sa collecte se déroule en session). Rend le motif d'un refus. */
+  enrol(input: { slug: string; name: string; branch: string; worktree: string }): string | null;
+};
+
+type PlannedLaunch = { slug: string; phase: PipelinePhase; fix: boolean; kind: LotPromptKind; text?: string; resume: boolean };
+
+/**
+ * Le pilote d'un dépôt. Il lit le lot, décide (`nextChainAction`), lance des runs
+ * et se réécrit propriétaire. Deux règles structurent tout le reste : un run
+ * n'est JAMAIS attendu dans une passe (l'isolation de B-5 tient à ça), et une
+ * feature ne bouge que par sa propre entrée — aucune transition ne touche deux
+ * features à la fois.
+ */
+export function createLotController(deps: LotControllerDeps): LotController {
+  const { stateDir } = deps;
+  const repoKey = lotRepoKey(deps.repoRoot);
+  const repo = path.basename(realpathOr(deps.repoRoot)) || realpathOr(deps.repoRoot);
+  const now = () => (deps.now ?? Date.now)();
+  const cap = deps.reviewCap ?? lotReviewCap();
+  const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
+  const ompBin = deps.ompBin ?? lotOmpBin();
+  const worktreesBase = deps.worktreesBase ?? worktreesBaseDir();
+  const archiveBase = deps.archiveBase ?? lotArchiveBaseDir();
+  const inFlight = new Map<string, AbortController>();
+  /**
+   * Ce que CE pilote sait des runs : `inflight` pendant, `settled` quand la fin a
+   * été traitée. C'est ce qui distingue « le maillon n'a jamais tourné » (bascule
+   * d'une collecte en session, feature reprise par un autre pilote) de « le run a
+   * fini et la chaîne a déjà décidé » — un état purement local, qui ne se confond
+   * pas avec l'absence de contrat.
+   */
+  const watched = new Map<string, "inflight" | "settled">();
+  /**
+   * Les annulations en cours. Une annulation laisse au run qu'elle tue jusqu'à 10 s
+   * pour rendre la main (S-9) : la fin de ce run ne doit donc pas marquer la
+   * feature `failed` pendant cette attente — c'est l'annulation qui décide de son
+   * sort, et une feature que l'utilisateur annule ne doit pas finir « échouée ».
+   */
+  const cancelling = new Set<string>();
+  let stopLoop: (() => void) | null = null;
+  /** La file des passes : une seule à la fois, aucune perdue (cf. `tick`). */
+  let tickQueue: Promise<void> = Promise.resolve();
+  /** Une seule notice pour un lot qu'un autre process conduit (S-1). */
+  let foreignOwnerWarned = false;
+
+  const read = () => readLot(stateDir, repoKey);
+  const notify = (text: string) => {
+    try {
+      deps.notify?.(text);
+    } catch {
+      /* une notice ne casse jamais un tour */
+    }
+  };
+
+  /** Le motif d'un refus d'écriture, mot pour mot le même que celui d'`open`. */
+  const foreignOwnerReason = (pid: number) => `le lot est piloté par une autre session (pid ${pid})`;
+
+  /**
+   * Le pid étranger VIVANT qui conduit ce lot sur le DISQUE, ou `null`. Le pid
+   * mort n'est pas un obstacle : c'est la reprise admise (S-1).
+   */
+  function foreignOwner(): number | null {
+    const onDisk = read();
+    if (!onDisk || onDisk.owner.pid === process.pid) return null;
+    return pidAlive(onDisk.owner.pid) ? onDisk.owner.pid : null;
+  }
+
+  /** Un refus d'écriture est dit UNE fois par session — le toast disparaîtrait. */
+  function reportForeignOwner(pid: number): void {
+    if (foreignOwnerWarned) return;
+    foreignOwnerWarned = true;
+    notify(`[pipeline] lot ${repo} : ${foreignOwnerReason(pid)} — rien ne lui a été écrit`);
+  }
+
+  /**
+   * Écrit le lot ENTIER : l'objet passé doit donc venir d'une lecture qui n'a
+   * aucun `await` d'écart avec cette écriture (S-1, « un seul écrivain »).
+   * La passe sépare pour cela sa phase d'attente (les worktrees) de sa phase de
+   * décision, `finishRun` et `finishRelease` ne mutent qu'une relecture, et les
+   * actions du panneau — qui attendent `git`, `gh` ou la mort d'un run (jusqu'à
+   * 10 s pour une annulation) — relisent le lot APRÈS leur attente, avant de
+   * muter. Un lot périmé réécrit ici effacerait les transitions écrites
+   * entre-temps : une feature reviendrait au maillon précédent, sa fin de run
+   * serait ignorée et elle resterait `running` sans run, sans alerte, hors de
+   * portée du panneau (AC-2, AC-19).
+   *
+   * Le propriétaire est revérifié ICI, sur le disque, quel que soit le chemin qui
+   * écrit : un lot conduit par un process VIVANT étranger n'est JAMAIS réécrit
+   * (S-1, invariant 2). Sans cette garde, un `/req` d'une seconde session — ou une
+   * écriture qui a attendu pendant qu'un autre pilote reprenait le lot — en
+   * ferait le propriétaire : deux pilotes sur le même lot, les transitions du
+   * premier jetées par la garde de sa passe, et deux runs concurrents dans le
+   * même worktree. Un propriétaire MORT ne s'oppose à rien (c'est la reprise) :
+   * `adopt`, `open` et `lotForAdd` écrivent après l'avoir constaté.
+   *
+   * Rend `null` quand le lot a été écrit, sinon le motif du refus — jamais une
+   * exception.
+   */
+  function save(lot: Lot): string | null {
+    const foreign = foreignOwner();
+    if (foreign !== null) {
+      reportForeignOwner(foreign);
+      return foreignOwnerReason(foreign);
+    }
+    const session = deps.session?.() ?? { file: null, id: null };
+    lot.owner = { pid: process.pid, sessionFile: session.file, sessionId: session.id };
+    try {
+      writeLot(stateDir, lot);
+    } catch (err) {
+      // Même garantie que pour le magasin : avalée, et signalée AU PLUS UNE FOIS
+      // par session (le drapeau est celui de `reportStateWriteFailure`).
+      reportStateWriteFailure({ notify: deps.notify, stateDir }, err);
+      return `écriture du lot impossible : ${err instanceof Error ? err.message : String(err)}`;
+    }
+    return null;
+  }
+
+  /** Entrée dans un nouvel état : `sinceAt` et `updatedAt` avancent ensemble. */
+  function touch(feature: LotFeature, at: number): number {
+    feature.sinceAt = at;
+    feature.updatedAt = at;
+    return at;
+  }
+
+  /** Une transition qui appelle l'utilisateur est annoncée UNE fois (AC-11). */
+  function emit(lot: Lot, feature: LotFeature, before: LotFeatureState): void {
+    if (before === feature.state) return;
+    const alert = buildLotAlert(repo, feature);
+    if (!alert) return;
+    notify(alert.text);
+    try {
+      // Le MÊME texte que le message durable (S-8) : le toast est la visibilité
+      // immédiate, et le prompt d'un run est repris en entier.
+      deps.toast?.(alert.text, alert.tone);
+    } catch {
+      /* un toast raté n'a aucune conséquence : le message durable est posté */
+    }
+  }
+
+  function settle(lot: Lot, feature: LotFeature, state: "blocked" | "failed", reason: string): void {
+    const before = feature.state;
+    feature.state = state;
+    feature.stopReason = reason;
+    feature.waitKind = null;
+    feature.waitPrompt = null;
+    feature.endedAt = touch(feature, now());
+    emit(lot, feature, before);
+  }
+
+  function freshLot(): Lot {
+    const at = now();
+    return {
+      version: LOT_VERSION,
+      id: repoKey,
+      repoRoot: realpathOr(deps.repoRoot),
+      status: "draft",
+      reviewCap: cap,
+      recapAt: null,
+      owner: { pid: process.pid, sessionFile: null, sessionId: null },
+      createdAt: at,
+      launchedAt: null,
+      features: [],
+    };
+  }
+
+  /**
+   * Le lot prêt à recevoir une nouvelle feature, RELU à l'instant de l'écriture :
+   * propriété (refus si un autre pilote vit, reprise s'il est mort), remplacement
+   * d'un lot dont plus rien ne tourne (le récap a déjà été posté), puis les
+   * validations de S-3 — dans cet ordre, sans rien créer. Rend le motif du refus,
+   * ou le lot et ses dépendances normalisées.
+   *
+   * `add` l'appelle DEUX fois — avant et après l'attente de `branchTaken` : la
+   * première passe rend le bon motif tout de suite (l'ordre de S-3), la seconde
+   * est celle qui écrit.
+   */
+  function lotForAdd(slug: string, depsRaw: string[]): { lot: Lot; deps: string[] } | string {
+    const existing = read();
+    if (existing && existing.owner.pid !== process.pid) {
+      if (pidAlive(existing.owner.pid)) return foreignOwnerReason(existing.owner.pid);
+      const refusal = save(existing);
+      if (refusal) return refusal;
+      start();
+    }
+    const lot = !existing || (existing.features.length > 0 && lotTotals(existing).live === 0) ? freshLot() : existing;
+    if (lotFeature(lot, slug)) return `« ${slug} » est déjà dans le lot`;
+    const deps: string[] = [];
+    for (const raw of depsRaw) {
+      // Un slug non normalisable n'est jamais dans le lot : il tombe donc dans
+      // le même refus que la dépendance absente (S-3), sans message de plus.
+      const dep = toSlug(raw) ?? raw.trim();
+      if (dep === slug) return `dépendance circulaire : ${slug}`;
+      if (!lotFeature(lot, dep)) return `dépendance inconnue : ${dep}`;
+      deps.push(dep);
+    }
+    return { lot, deps };
+  }
+
+  function startRun(lot: Lot, feature: LotFeature, launch: PlannedLaunch): void {
+    const prompt = buildLotPrompt({
+      kind: launch.kind,
+      phase: launch.phase,
+      slug: feature.slug,
+      description: feature.name,
+      text: launch.text,
+      fix: launch.fix,
+    });
+    const sessionFile = launch.resume ? feature.sessionFile : null;
+    const argv = buildLotRunArgv({
+      ompBin,
+      worktree: feature.worktree,
+      prompt,
+      lotId: lot.id,
+      slug: feature.slug,
+      phase: launch.phase,
+      stateDir,
+      sessionFile,
+      selfPath: deps.selfPath ?? selfExtensionArg(SELF_MODULE_URL),
+    });
+    const abort = new AbortController();
+    inFlight.set(feature.slug, abort);
+    watched.set(feature.slug, "inflight");
+    // Le hash du contrat est figé AVANT le lancement, et ÉCRIT avant lui (S-1) :
+    // c'est le seul indice dont disposera un pilote qui reprend un run interrompu
+    // pour juger si le maillon a travaillé. Les appelants ont déjà sauvegardé leur
+    // état, donc cette écriture est la leur, augmentée du hash — la poser après
+    // leur sauvegarde (comme avant) la laissait en mémoire et jamais sur le disque.
+    // `""` note « aucun contrat au démarrage », à distinguer de `null` : « aucun
+    // run n'a été lancé pour cette feature » (bascule d'une collecte, S-14).
+    feature.contractHash = contractHashOf(feature.worktree) ?? "";
+    // Le lot n'est pas écrit (propriétaire étranger vivant, écriture impossible) :
+    // aucun run ne part — un maillon lancé sans que son lot le sache serait un
+    // processus orphelin, dans un worktree que le véritable pilote conduit. Le
+    // suivi en mémoire est DÉFAIT avec lui : `inFlight` retenu sans run ferait
+    // sauter la feature à toutes les passes (`inFlight.has`), donc rester `running`
+    // sur le disque sans run et sans réconciliation — la classe de défaut qu'AC-19
+    // interdit.
+    if (save(lot) !== null) {
+      inFlight.delete(feature.slug);
+      watched.delete(feature.slug);
+      return;
+    }
+    const startedAt = now();
+    // `deps.run` peut jeter AVANT de rendre sa promesse (argv inexploitable,
+    // spawn refusé) : l'échec appartient alors à CETTE feature, jamais à la passe.
+    let launched: Promise<LotRunnerResult>;
+    try {
+      launched = Promise.resolve(
+        deps.run({ argv, cwd: feature.worktree, timeout: runTimeout, signal: abort.signal }),
+      );
+    } catch (err) {
+      launched = Promise.reject(err);
+    }
+    void launched
+      .catch((err: unknown) => ({
+        code: 127,
+        killed: false,
+        stdout: "",
+        stderr: err instanceof Error ? err.message : String(err),
+      }))
+      .then((result: LotRunnerResult) => finishRun(feature.slug, launch.phase, result, startedAt));
+  }
+
+  /** La raison consignée quand un run ne rend pas `ok` (S-4). */
+  function failureReason(result: LotRunnerResult): string {
+    if (result.killed) return `délai dépassé (${Math.round(runTimeout / 60_000)} min)`;
+    if (result.code === 127) return "binaire omp introuvable (code 127)";
+    // 200 caractères : un motif de panne tient dans une ligne de panneau et dans
+    // une alerte ; une trace entière n'y tient pas et noierait le reste.
+    const reason = lastLine(result.stderr) || lastLine(result.stdout) || `sortie non nulle (code ${result.code})`;
+    return reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason;
+  }
+
+  /** Le run a rendu la main : la chaîne décide de la suite, pour CETTE feature. */
+  function finishRun(slug: string, phase: PipelinePhase, result: LotRunnerResult, startedAt: number): void {
+    inFlight.delete(slug);
+    watched.set(slug, "settled");
+    // Une annulation en cours décide SEULE du sort de sa feature (S-9) : le run
+    // qu'elle vient de tuer ne la marque pas `failed`.
+    if (cancelling.has(slug)) return;
+    const lot = read();
+    if (!lot) return;
+    if (lot.owner.pid !== process.pid) return; // un autre pilote a repris : ne rien écrire
+    const feature = lotFeature(lot, slug);
+    if (!feature || feature.state !== "running" || feature.phase !== phase) return;
+    const outcome: ChainOutcome = result.code === 0 && !result.killed ? "ok" : "error";
+    if (outcome === "ok") {
+      // La session du run sert à répondre (AC-12) et à rejoindre la ligne.
+      const session = latestSessionFile(stateDir, feature.worktree, startedAt);
+      if (session) feature.sessionFile = session;
+    }
+    const routed = route(lot, feature, { outcome, stdout: result.stdout, reason: failureReason(result) });
+    // Rien n'a été écrit : la chaîne ne part pas, et le marqueur `settled` est
+    // retiré — sans lui, la passe croirait la fin de ce run déjà traitée et
+    // laisserait la feature `running` sans run, alors que la réconciliation par
+    // le hash du contrat (S-1) saurait, elle, décider (reprise ou `failed`
+    // relançable).
+    if (save(lot) !== null) {
+      watched.delete(slug);
+      return;
+    }
+    for (const launch of routed.launches) startRun(lot, feature, launch);
+    if (routed.release) void finishRelease(feature);
+    void Promise.resolve().then(() => tick().catch(() => undefined));
+  }
+
+  /**
+   * Applique la décision de la chaîne à UNE feature et rend ce qu'il reste à
+   * faire APRÈS la sauvegarde : les runs à lancer et, pour la livraison, les deux
+   * commandes mécaniques. Rien n'est lancé ici : un run qui rend la main aussitôt
+   * écrirait sa transition sur un lot plus vieux que celui qu'on vient de calculer.
+   */
+  function route(
+    lot: Lot,
+    feature: LotFeature,
+    result: { outcome: ChainOutcome; stdout: string; reason: string },
+  ): { launches: PlannedLaunch[]; release: boolean } {
+    const out: { launches: PlannedLaunch[]; release: boolean } = { launches: [], release: false };
+    const before = feature.state;
+    const contract = readContractText(feature.worktree);
+    const action = nextChainAction({
+      phase: feature.phase,
+      outcome: result.outcome,
+      contract,
+      fixes: feature.fixes,
+      reviewRuns: feature.reviewRuns,
+      // Le plafond est celui FIGÉ dans le lot au premier lancement (S-5) : un
+      // pilote qui reprend le lot avec un autre environnement ne doit pas
+      // changer la borne en cours de route.
+      cap: lot.reviewCap,
+    });
+    if (action.kind === "run") {
+      feature.fixes += action.fix ? 1 : 0;
+      feature.reviewRuns += action.phase === "review" ? 1 : 0;
+      feature.phase = action.phase;
+      feature.state = "running";
+      feature.waitKind = null;
+      feature.waitPrompt = null;
+      feature.stopReason = null;
+      feature.endedAt = null;
+      touch(feature, now());
+      out.launches.push({
+        slug: feature.slug,
+        phase: action.phase,
+        fix: action.fix,
+        kind: "phase",
+        resume: false,
+      });
+      return out;
+    }
+    if (action.kind === "wait") {
+      feature.state = "waiting";
+      feature.waitKind = action.waitKind;
+      feature.waitPrompt = action.waitKind === "answer" ? clipTail(result.stdout.trim(), LOT_WAIT_PROMPT_MAX) || null : null;
+      feature.stopReason = null;
+      feature.endedAt = null;
+      touch(feature, now());
+      emit(lot, feature, before);
+      return out;
+    }
+    if (action.kind === "failed") {
+      settle(lot, feature, "failed", result.reason || action.reason);
+      return out;
+    }
+    if (action.kind === "blocked") {
+      settle(lot, feature, "blocked", action.reason);
+      return out;
+    }
+    // `done` : la seule route qui y mène est la fin d'un run de livraison — les
+    // deux commandes mécaniques restent à passer (elles sont asynchrones).
+    out.release = true;
+    return out;
+  }
+
+  /**
+   * Les deux commandes de la livraison (S-6) : pousser vers l'URL HTTPS du dépôt
+   * puis ouvrir la PR avec `gh`, dont la sortie porte l'URL. Tout échec rend la
+   * feature `blocked` avec le motif de la commande — jamais un demi-succès.
+   *
+   * Cette étape ATTEND (git, gh, plusieurs secondes) : elle réapplique donc son
+   * seul changement sur une lecture FRAÎCHE du lot, pour ne rien écraser des
+   * transitions qui auraient eu lieu entre-temps — et si la feature a été
+   * annulée ou relancée pendant l'attente, elle ne touche plus à rien.
+   */
+  async function finishRelease(feature: LotFeature): Promise<void> {
+    const commit = (state: "blocked" | "done", prUrl: string | null, reason: string | null) => {
+      const fresh = read();
+      // Le lot peut avoir changé de main pendant les attentes (git, gh) : la
+      // transition n'est écrite — et annoncée — que si CE pilote le conduit encore
+      // (S-1). `emit` avant la garde aurait annoncé un état que personne n'écrit.
+      if (!fresh || fresh.owner.pid !== process.pid) return;
+      const target = lotFeature(fresh, feature.slug);
+      if (!target || target.state !== "running") return;
+      const before = target.state;
+      target.state = state;
+      target.prUrl = prUrl;
+      target.stopReason = reason;
+      target.waitKind = null;
+      target.waitPrompt = null;
+      target.endedAt = touch(target, now());
+      emit(fresh, target, before);
+      maybeRecap(fresh);
+      save(fresh);
+    };
+    const fail = (reason: string) => commit("blocked", null, reason);
+    const gh = deps.runGh;
+    if (!gh) {
+      fail("gh introuvable — installe GitHub CLI puis relance la livraison");
+      return;
+    }
+    const view = await gh(["repo", "view", "--json", "url,defaultBranchRef"], feature.worktree);
+    if (view.code !== 0) {
+      // `pi.exec` JETTE quand le binaire est absent (spawn ENOENT) ; le runner
+      // câblé en production le mappe en `code 127`. C'est LE signal d'un `gh`
+      // absent du PATH : s'en remettre au seul `deps.runGh` manquant rendait ce
+      // libellé inatteignable hors des tests, et une machine sans GitHub CLI
+      // lisait `gh indisponible : spawn gh ENOENT` au lieu de la marche à suivre.
+      // Un dépassement de délai (`killed`, code 124) n'est PAS un binaire absent :
+      // il garde son motif, qui dit la vérité.
+      fail(
+        view.code === 127
+          ? "gh introuvable — installe GitHub CLI puis relance la livraison"
+          : `gh indisponible : ${lastLine(view.stderr) || `code ${view.code}`}`,
+      );
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(view.stdout);
+    } catch {
+      parsed = null;
+    }
+    const target = releaseTarget(parsed);
+    if (!target.pushUrl) {
+      fail("URL HTTPS du dépôt introuvable (gh repo view)");
+      return;
+    }
+    const subject = await deps.runGit(["log", "-1", "--format=%s"], feature.worktree);
+    const title = subject.code === 0 && subject.stdout.trim() !== "" ? subject.stdout.trim() : feature.branch;
+    const bodyFile = path.join(contractPathFor(feature.worktree), "..", "pr-body.md");
+    const body = await deps.runGit(["log", "-1", "--format=%b"], feature.worktree);
+    const args = releaseArgs({
+      pushUrl: target.pushUrl,
+      branch: feature.branch,
+      base: target.base ?? "main",
+      title,
+      bodyFile: fs.existsSync(bodyFile) ? bodyFile : null,
+      body: lastLine(body.stdout),
+    });
+    const push = await deps.runGit(args.push, feature.worktree);
+    if (push.code !== 0) {
+      fail(`push refusé : ${lastLine(push.stderr) || `code ${push.code}`}`);
+      return;
+    }
+    const pr = await gh(args.pr, feature.worktree);
+    let url = parsePrUrl(pr.stdout);
+    if (pr.code !== 0 && !url) {
+      // Une PR peut déjà exister (relance après un push réussi) : la retrouver
+      // plutôt que de la déclarer manquante. `gh pr view --json url` imprime du
+      // JSON — c'est `prUrlOfView` qui le lit, pas `parsePrUrl`.
+      const existing = await gh(["pr", "view", feature.branch, "--json", "url"], feature.worktree);
+      url = existing.code === 0 ? prUrlOfView(existing.stdout) : null;
+      if (!url) {
+        fail(`PR non créée : ${lastLine(pr.stderr) || `code ${pr.code}`}`);
+        return;
+      }
+    }
+    commit("done", url, null);
+  }
+
+  /** Le worktree d'une feature, créé au moment où elle démarre (S-2). */
+  async function ensureWorktree(feature: LotFeature): Promise<string | null> {
+    if (feature.worktree !== "") {
+      if (!fs.existsSync(feature.worktree)) return "worktree introuvable sur le disque";
+      // Un arbre sur disque n'est pas forcément celui de la branche annoncée :
+      // relancer dessus écrirait dans un worktree étranger (S-2). Un `git` muet
+      // (chemin qui n'est pas un dépôt) n'est pas un motif de refus : il n'y a
+      // rien à juger, et le run rapportera lui-même ce qu'il trouve.
+      const head = await deps.runGit(["rev-parse", "--abbrev-ref", "HEAD"], feature.worktree);
+      if (head.code === 0 && head.stdout.trim() !== feature.branch) return "worktree sans branche";
+      return null;
+    }
+    const created = await createFeatureWorktree({
+      run: deps.runGit,
+      primaryRoot: deps.repoRoot,
+      slug: feature.slug,
+      baseDir: worktreesBase,
+    });
+    if (!created.ok) return created.error;
+    feature.worktree = created.path;
+    feature.branch = created.branch;
+    return null;
+  }
+
+  /**
+   * Les arbres créés pour une feature que l'utilisateur a reprise pendant la
+   * création (annulation) : personne ne les réclame. Les retirer est la seule
+   * façon de ne pas laisser d'orphelin derrière une annulation qui vient
+   * d'annoncer « jamais créé » (S-9). La BRANCHE est conservée : c'est la règle
+   * des trois devenirs (S-9), un arbre retiré ne fait pas disparaître le travail.
+   * Ne lève jamais : un retrait refusé est dit, jamais avalé — et l'arbre reste
+   * nommé, pour que l'utilisateur sache quoi retirer à la main.
+   */
+  async function discardWorktrees(paths: string[]): Promise<void> {
+    for (const dir of paths) {
+      try {
+        const removed = await deps.runGit(["worktree", "remove", "--force", dir], deps.repoRoot);
+        if (removed.code === 0) continue;
+        notify(
+          `[pipeline] worktree créé puis abandonné — retrait refusé : ${
+            lastLine(removed.stderr) || `code ${removed.code}`
+          } — arbre à retirer à la main : ${dir}`,
+        );
+      } catch (err) {
+        notify(
+          `[pipeline] worktree créé puis abandonné — retrait refusé : ${
+            err instanceof Error ? err.message : String(err)
+          } — arbre à retirer à la main : ${dir}`,
+        );
+      }
+    }
+  }
+
+  /** Le récap de fin de lot (AC-15) : posté une fois, quand plus rien ne tourne. */
+  function maybeRecap(lot: Lot): boolean {
+    if (lot.features.length === 0 || lotTotals(lot).live > 0 || lot.recapAt !== null) return false;
+    lot.recapAt = now();
+    notify(buildLotRecap(repo, lot));
+    return true;
+  }
+
+  /**
+   * Une passe. Deux passes concurrentes créeraient deux fois le même worktree
+   * (la seconde échouerait sur le `git` de la première et la feature serait
+   * marquée `failed` pour rien) : les appels sont donc SÉRIALISÉS — un tick
+   * demandé pendant une passe n'est jamais perdu, il attend la fin de celle-ci.
+   */
+  function tick(): Promise<void> {
+    const next = tickQueue.then(() => pass(), () => pass());
+    tickQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  async function pass(): Promise<void> {
+    const initial = read();
+    if (!initial) return;
+    if (initial.owner.pid !== process.pid) {
+      stop();
+      return;
+    }
+    // PHASE A — les worktrees manquants. C'est le SEUL moment où la passe attend :
+    // aucune mutation en mémoire ne l'a précédée, donc rien ne sera écrit sur un
+    // lot périmé (une fin de run peut tomber pendant l'attente du git).
+    const created: Array<{ slug: string; result: { path: string; branch: string } | { error: string } }> = [];
+    if (initial.status === "running") {
+      for (const feature of initial.features) {
+        if (feature.state !== "pending" || feature.worktree !== "" || !runnable(initial, feature)) continue;
+        // L'arbre est déjà là mais la branche `feat/<slug>` n'existe pas : ce n'est
+        // pas le worktree de cette feature, et git refuserait de le recréer — le
+        // diagnostic est nommé plutôt que rendu par le message brut de git (S-2).
+        const target = worktreePathFor(worktreesBase, deps.repoRoot, feature.slug);
+        if (fs.existsSync(target)) {
+          const branch = await deps.runGit(
+            ["rev-parse", "--verify", "--quiet", `refs/heads/${feature.branch}`],
+            deps.repoRoot,
+          );
+          if (branch.code !== 0) {
+            created.push({ slug: feature.slug, result: { error: "worktree sans branche" } });
+            continue;
+          }
+        }
+        const made = await createFeatureWorktree({
+          run: deps.runGit,
+          primaryRoot: deps.repoRoot,
+          slug: feature.slug,
+          baseDir: worktreesBase,
+        });
+        created.push({
+          slug: feature.slug,
+          result: made.ok ? { path: made.path, branch: made.branch } : { error: made.error },
+        });
+      }
+    }
+
+    // PHASE B — lecture fraîche, décisions, écriture : AUCUNE attente ici, pour
+    // qu'une transition concurrente ne soit jamais écrasée par un état périmé.
+    const lot = read();
+    if (!lot) return;
+    if (lot.owner.pid !== process.pid) {
+      stop();
+      return;
+    }
+    const launches: PlannedLaunch[] = [];
+    const releases: LotFeature[] = [];
+    /**
+     * Les arbres créés pendant que l'utilisateur reprenait leur feature : plus
+     * personne ne les réclame, et les laisser derrière ferait mentir l'annulation
+     * qui vient d'annoncer « jamais créé » (S-9, AC-14). Retirés APRÈS l'écriture.
+     */
+    const orphans: string[] = [];
+    let changed = false;
+
+    for (const item of created) {
+      const feature = lotFeature(lot, item.slug);
+      // L'ACTION DE L'UTILISATEUR PRIME (S-1, AC-14) : pendant la création du
+      // worktree (phase A, la seule qui attend), la feature a pu être annulée —
+      // une annulation n'attend rien quand son worktree est vide. Appliquer ici
+      // une décision périmée la ressusciterait `failed` après la notice `annulé`
+      // (et après son récap), et lui écrirait le chemin d'un arbre créé APRÈS
+      // l'annulation : un orphelin que cette notice dit « jamais créé », hors de
+      // portée de `cancel` (une feature terminale) comme de `remove` (une feature
+      // démarrée). Rien n'est donc appliqué, et l'arbre sans propriétaire est
+      // retiré — la branche, elle, reste (même règle que les trois devenirs S-9).
+      if (!feature || feature.state !== "pending") {
+        if ("path" in item.result) orphans.push(item.result.path);
+        continue;
+      }
+      if ("error" in item.result) {
+        settle(lot, feature, "failed", item.result.error);
+      } else {
+        feature.worktree = item.result.path;
+        feature.branch = item.result.branch;
+      }
+      changed = true;
+    }
+
+    // 1. Les features en cours sans run suivi : un maillon jamais lancé (bascule
+    // d'une collecte en session, pilote repris) démarre ici ; un run interrompu se
+    // juge sur le contrat (modifié = le maillon a travaillé).
+    for (const feature of lot.features) {
+      if (feature.state !== "running" || inFlight.has(feature.slug)) continue;
+      if (feature.origin === "session" && feature.phase === "req") continue; // collecte en session
+      if (feature.worktree === "") continue;
+      // La fin de ce run a déjà été traitée par ce pilote : la chaîne a décidé.
+      if (watched.get(feature.slug) === "settled") continue;
+      // Aucun hash : aucun pilote n'a lancé de run pour cette feature — c'est le
+      // cas d'une feature dont la collecte vient de basculer (S-14). Un run
+      // interrompu, lui, a laissé sa marque sur le disque : le hash du contrat au
+      // démarrage du run, `""` s'il n'y en avait pas encore (S-1).
+      if (feature.contractHash === null) {
+        launches.push({
+          slug: feature.slug,
+          phase: feature.phase,
+          fix: false,
+          kind: feature.phase === "req" ? "collecte" : "phase",
+          resume: false,
+        });
+        changed = true;
+        continue;
+      }
+      const verdict = reconcileInterrupted({
+        contractHashAtStart: feature.contractHash,
+        currentContractHash: contractHashOf(feature.worktree),
+      });
+      if (verdict === "continue") {
+        const routed = route(lot, feature, { outcome: "ok", stdout: "", reason: "" });
+        launches.push(...routed.launches);
+        if (routed.release) releases.push(feature);
+      } else {
+        settle(lot, feature, "failed", "exécution interrompue (pilote disparu)");
+      }
+      changed = true;
+    }
+
+    // 2. Les dépendances fautives bloquent leurs dépendantes (AC-17).
+    for (const feature of lot.features) {
+      if (feature.state !== "pending") continue;
+      const reason = dependencyBlock(lot, feature);
+      if (reason) {
+        settle(lot, feature, "blocked", reason);
+        changed = true;
+      }
+    }
+
+    // 3. Les features runnables démarrent, toutes dans la même passe (AC-18).
+    for (const feature of lot.features) {
+      if (lot.status !== "running" || feature.state !== "pending") continue;
+      if (!runnable(lot, feature) || feature.worktree === "") continue;
+      feature.state = "running";
+      feature.waitKind = null;
+      feature.stopReason = null;
+      touch(feature, now());
+      launches.push({
+        slug: feature.slug,
+        phase: feature.phase,
+        fix: false,
+        kind: feature.phase === "req" ? "collecte" : "phase",
+        resume: false,
+      });
+      changed = true;
+    }
+
+    if (maybeRecap(lot)) changed = true;
+    // Le lot n'a pas pu être écrit : aucun run ne part (cf. `startRun`), et la
+    // passe rend la main — le véritable pilote conduira ce lot.
+    if (changed && save(lot) !== null) return;
+    // Les lancements viennent APRÈS la sauvegarde : un run qui rend la main
+    // aussitôt n'écrit jamais sur un lot plus vieux que celui qu'on vient d'écrire.
+    for (const launch of launches) {
+      const feature = lotFeature(lot, launch.slug);
+      if (feature) startRun(lot, feature, launch);
+    }
+    for (const feature of releases) void finishRelease(feature);
+    // Dernier acte de la passe, APRÈS l'écriture : c'est un `await` (`git`), il ne
+    // décide plus rien — l'arbre abandonné n'appartient à aucune feature du lot.
+    await discardWorktrees(orphans);
+  }
+
+  /** Démarre la boucle (une passe par `LOT_TICK_MS`) et se réécrit propriétaire. */
+  function start(): void {
+    if (stopLoop) return;
+    stopLoop = (deps.schedule ?? defaultSchedule)(() => {
+      void tick().catch(() => undefined);
+    }, LOT_TICK_MS);
+    void tick().catch(() => undefined);
+  }
+
+  function stop(): void {
+    stopLoop?.();
+    stopLoop = null;
+  }
+
+  /** Reprend un lot dont le pilote a disparu (S-1) — jamais un lot qui vit encore. */
+  function adopt(): boolean {
+    const lot = read();
+    if (!lot || lot.status !== "running" || lotTotals(lot).live === 0) return false;
+    if (lot.owner.pid === process.pid || pidAlive(lot.owner.pid)) return false;
+    if (save(lot) !== null) return false;
+    notify(`[pipeline] lot ${repo} repris par cette session (pilote précédent disparu)`);
+    return true;
+  }
+
+  /**
+   * Une action du panneau qui démarre un run : l'état change, puis le run part.
+   * Rend le motif du refus quand le lot n'a pas pu être écrit (rien ne partirait).
+   */
+  function startPlanned(lot: Lot, feature: LotFeature, launch: PlannedLaunch): string | null {
+    feature.phase = launch.phase;
+    feature.state = "running";
+    feature.waitKind = null;
+    feature.waitPrompt = null;
+    feature.stopReason = null;
+    feature.endedAt = null;
+    touch(feature, now());
+    // Sauvegarde AVANT le lancement : un run qui rend la main tout de suite ne
+    // doit pas écrire sa transition sur un lot plus vieux que celui-ci — et rien
+    // ne part si le lot n'a pas pu être écrit.
+    const refusal = save(lot);
+    if (refusal) return refusal;
+    startRun(lot, feature, launch);
+    return null;
+  }
+
+  /**
+   * Ouvre le lot pour une action : refuse si une AUTRE session vivante le pilote
+   * (un seul pilote), reprend la main si son pilote est mort. Rend un motif de
+   * refus, ou le lot (et la feature demandée).
+   */
+  function open(slug?: string): { lot: Lot; feature?: LotFeature } | string {
+    const lot = read();
+    if (!lot) return "aucun lot pour ce dépôt";
+    if (lot.owner.pid !== process.pid) {
+      if (pidAlive(lot.owner.pid)) return foreignOwnerReason(lot.owner.pid);
+      const refusal = save(lot);
+      if (refusal) return refusal;
+      start();
+    }
+    if (slug === undefined) return { lot };
+    const feature = lotFeature(lot, slug);
+    if (!feature) return `« ${slug} » n'est pas dans le lot`;
+    return { lot, feature };
+  }
+
+  return {
+    read,
+    start,
+    stop,
+    tick,
+    adopt,
+
+    enrol(input) {
+      const existing = read();
+      // Un lot conduit par une session VIVANTE n'est jamais réécrit (S-1,
+      // invariant 2) : ce `/req` n'y inscrit rien — sa feature garde la chaîne
+      // manuelle (S-14), et le lot de l'autre session est intact. Un pilote MORT,
+      // lui, se reprend : c'est la seule reprise admise.
+      if (existing && existing.owner.pid !== process.pid) {
+        if (pidAlive(existing.owner.pid)) {
+          reportForeignOwner(existing.owner.pid);
+          return foreignOwnerReason(existing.owner.pid);
+        }
+        const taken = save(existing);
+        if (taken) return taken;
+        start();
+      }
+      const lot =
+        !existing || (existing.features.length > 0 && lotTotals(existing).live === 0) ? freshLot() : existing;
+      if (lotFeature(lot, input.slug)) return null;
+      const at = now();
+      lot.features.push({
+        slug: input.slug,
+        name: input.name,
+        branch: input.branch,
+        worktree: input.worktree,
+        deps: [],
+        origin: "session",
+        state: "running",
+        phase: "req",
+        waitKind: null,
+        waitPrompt: null,
+        sessionFile: deps.session?.().file ?? null,
+        prUrl: null,
+        stopReason: null,
+        fixes: 0,
+        reviewRuns: 0,
+        contractHash: null,
+        addedAt: at,
+        sinceAt: at,
+        updatedAt: at,
+        endedAt: null,
+      });
+      if (lot.status === "draft") {
+        lot.status = "running";
+        lot.launchedAt = at;
+        lot.reviewCap = cap;
+      }
+      return save(lot);
+    },
+
+    async add(input) {
+      const slug = toSlug(input.name);
+      if (!slug) {
+        return `nom invalide : « ${input.name} » — lettres minuscules, chiffres et tirets (ex. isolation-worktree)`;
+      }
+      // Les refus qui ne demandent aucun `git` sont rendus tout de suite, dans
+      // l'ordre de S-3.
+      const early = lotForAdd(slug, input.deps);
+      if (typeof early === "string") return early;
+      const branch = branchFor(slug);
+      if (await branchTaken(deps.runGit, deps.repoRoot, branch)) {
+        return `la branche ${branch} existe déjà — choisis un autre nom`;
+      }
+      // `branchTaken` a ATTENDU : le lot est donc relu ici, et l'ajout s'écrit
+      // dans la foulée sans aucun `await` (S-1). Écrire le lot lu avant l'attente
+      // écraserait une transition tombée entre-temps (AC-2 : les pipelines en
+      // cours ne bougent pas).
+      const opened = lotForAdd(slug, input.deps);
+      if (typeof opened === "string") return opened;
+      const { lot, deps: depsSlugs } = opened;
+      const at = now();
+      lot.features.push({
+        slug,
+        name: input.description.trim(),
+        branch,
+        worktree: "",
+        deps: depsSlugs,
+        origin: "panneau",
+        state: "pending",
+        phase: "req",
+        waitKind: null,
+        waitPrompt: null,
+        sessionFile: null,
+        prUrl: null,
+        stopReason: null,
+        fixes: 0,
+        reviewRuns: 0,
+        contractHash: null,
+        addedAt: at,
+        sinceAt: at,
+        updatedAt: at,
+        endedAt: null,
+      });
+      const refusal = save(lot);
+      if (refusal) return refusal;
+      // Un lot lancé avance par sa boucle : la nouvelle feature démarre à la
+      // passe qui suit, sans autre action de l'utilisateur (AC-2) et sans que
+      // les autres pipelines soient touchés.
+      if (lot.status === "running") {
+        start();
+        await tick();
+      }
+      return null;
+    },
+
+    async launch() {
+      const opened = open();
+      if (typeof opened === "string") return opened;
+      const { lot } = opened;
+      if (lot.features.length === 0) return "lot vide — a pour ajouter une feature";
+      if (lot.status === "draft") {
+        lot.status = "running";
+        lot.launchedAt = now();
+        lot.reviewCap = cap;
+        const refusal = save(lot);
+        if (refusal) return refusal;
+      }
+      // Le lot tourne : sa boucle est armée (S-11). Sans elle, un lot né du
+      // panneau n'avancerait qu'à la fin d'un run — une feature devenue runnable
+      // pendant qu'aucun run n'est en vol resterait `pending` indéfiniment.
+      start();
+      await tick();
+      return null;
+    },
+
+    async remove(slug) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { lot, feature } = opened;
+      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (feature.state !== "pending") return `« ${slug} » a déjà démarré — c pour annuler`;
+      const dependent = lot.features.find((other) => other.state === "pending" && other.deps.includes(slug));
+      if (dependent) return `retrait refusé : ${dependent.slug} en dépend`;
+      lot.features = lot.features.filter((other) => other.slug !== slug);
+      return save(lot);
+    },
+
+    async answer(slug, text) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { lot, feature } = opened;
+      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (feature.origin === "session" && feature.phase === "req") {
+        return "la collecte se déroule dans ta session — réponds-y directement";
+      }
+      if (feature.state !== "waiting" || feature.waitKind !== "answer") return "rien à répondre sur cette ligne";
+      const trimmed = text.trim();
+      if (trimmed === "") return "réponse vide";
+      return startPlanned(lot, feature, {
+        slug,
+        phase: feature.phase,
+        fix: false,
+        kind: "answer",
+        text: trimmed,
+        resume: true,
+      });
+    },
+
+    async validate(slug) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { lot, feature } = opened;
+      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (feature.state !== "waiting" || feature.waitKind !== "specs") {
+        return "rien à valider : la feature n'est pas au jalon des specs";
+      }
+      return startPlanned(lot, feature, { slug, phase: "impl", fix: false, kind: "phase", resume: false });
+    },
+
+    async accept(slug) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { lot, feature } = opened;
+      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (feature.state !== "waiting" || feature.waitKind !== "review") {
+        return "rien à accepter : la revue n'est pas propre";
+      }
+      return startPlanned(lot, feature, { slug, phase: "release", fix: false, kind: "phase", resume: false });
+    },
+
+    async relaunch(slug) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { lot, feature } = opened;
+      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (feature.state !== "blocked" && feature.state !== "failed") {
+        return "relance possible sur une feature bloquée ou échouée";
+      }
+      // Une dépendance non satisfaite garde la feature à l'arrêt (S-10) : la
+      // relancer ouvrirait un run pour une feature dont l'amont a échoué.
+      const unmet = feature.deps.map((dep) => lotFeature(lot, dep)).find((up) => up?.state !== "done");
+      if (!runnable(lot, feature) && unmet) {
+        const refusal = `dépendance ${unmet.slug} non terminée (${lotStateLabel(unmet.state)})`;
+        // `settle` alerte lui-même si l'état CHANGE (échouée → bloquée) : une
+        // feature déjà bloquée n'a pas de transition, donc pas d'alerte en double.
+        settle(lot, feature, "blocked", refusal);
+        const written = save(lot);
+        return written ?? refusal;
+      }
+      // La préparation du worktree ATTEND (`git`) : elle travaille sur un brouillon
+      // jetable, jamais sur le lot — l'écriture se fera après la relecture.
+      const draft: LotFeature = { ...feature };
+      const worktreeError = await ensureWorktree(draft);
+      if (worktreeError) return worktreeError;
+      const prepared = draft.worktree;
+      const preparedBranch = draft.branch;
+      // La préparation du worktree a ATTENDU (`git`) : le lot est relu ici, et la
+      // relance s'écrit dans la foulée sans aucun `await` (S-1).
+      const fresh = read();
+      if (!fresh) return "aucun lot pour ce dépôt";
+      if (fresh.owner.pid !== process.pid) {
+        return foreignOwnerReason(fresh.owner.pid);
+      }
+      const target = lotFeature(fresh, slug);
+      if (!target) return `« ${slug} » n'est pas dans le lot`;
+      if (target.state !== "blocked" && target.state !== "failed") {
+        return "relance possible sur une feature bloquée ou échouée";
+      }
+      // Le worktree préparé est un fait du DISQUE : il se consigne même si la
+      // feature a bougé entre-temps — c'est le chemin qu'un run utiliserait.
+      target.worktree = prepared;
+      target.branch = preparedBranch;
+      // Le plafond est une borne par tentative : relancer ouvre un nouveau crédit.
+      target.fixes = 0;
+      target.reviewRuns = 0;
+      const fix = target.phase === "impl" && reviewVerdict(readContractText(target.worktree)) === "blockers";
+      return startPlanned(fresh, target, { slug, phase: target.phase, fix, kind: "relaunch", resume: false });
+    },
+
+    async cancel(slug, fate) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { feature } = opened;
+      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (lotStateTerminal(feature.state)) return `annulation impossible : la feature est ${lotStateLabel(feature.state)}`;
+      // Une annulation ATTEND : la mort du run (jusqu'à 10 s, c'est ce qu'elle
+      // attend) puis `git` pour le sort du worktree. Elle n'écrit donc RIEN avant
+      // d'avoir relu le lot (S-1) : la transition d'une AUTRE feature tombée dans
+      // cette fenêtre doit survivre — S-9 promet de ne pas y toucher, et AC-19
+      // qu'un pipeline fautif ne freine pas les autres.
+      cancelling.add(slug);
+      try {
+        const abort = inFlight.get(slug);
+        if (abort) {
+          abort.abort();
+          const deadline = Date.now() + 10_000;
+          while (inFlight.has(slug) && Date.now() < deadline) await sleep(50);
+          inFlight.delete(slug);
+        }
+        // Le chemin du worktree vient du DISQUE, pas d'un lot lu avant l'attente.
+        const known = read();
+        const subject = (known ? lotFeature(known, slug) : undefined) ?? feature;
+        let message = "worktree conservé (jamais créé)";
+        if (subject.worktree !== "") {
+          const applied = await applyWorktreeFate({
+            fate,
+            feature: subject,
+            repoRoot: deps.repoRoot,
+            archiveBase,
+            currentCwd: process.cwd(),
+            run: deps.runGit,
+          });
+          if (!applied.ok) {
+            const lot = read();
+            const target = lot ? lotFeature(lot, slug) : undefined;
+            // Une feature devenue terminale pendant l'attente (son run a fini
+            // avant de mourir) n'est plus touchée : le refus est alors rendu sans
+            // écriture — pas plus qu'un lot repris entre-temps par un pilote
+            // vivant, dont cette session n'écrit plus rien (S-1).
+            if (lot && lot.owner.pid === process.pid && target && !lotStateTerminal(target.state)) {
+              settle(lot, target, "blocked", applied.message);
+              save(lot);
+            }
+            return applied.message;
+          }
+          message = applied.message;
+        }
+        // Relecture, mutation, écriture : sans aucun `await` entre elles.
+        const lot = read();
+        if (!lot) return "aucun lot pour ce dépôt";
+        if (lot.owner.pid !== process.pid) return foreignOwnerReason(lot.owner.pid);
+        const target = lotFeature(lot, slug);
+        if (!target) return `« ${slug} » n'est pas dans le lot`;
+        if (lotStateTerminal(target.state)) {
+          return `annulation impossible : la feature est ${lotStateLabel(target.state)}`;
+        }
+        // Un run a pu partir pendant l'attente (passe déclenchée par une autre
+        // feature) : une feature annulée n'en laisse aucun tourner.
+        inFlight.get(slug)?.abort();
+        const before = target.state;
+        target.state = "cancelled";
+        target.waitKind = null;
+        target.waitPrompt = null;
+        target.stopReason = null;
+        target.endedAt = touch(target, now());
+        emit(lot, target, before);
+        notify(`[pipeline] ${slug} annulé — ${message}`);
+        maybeRecap(lot);
+        return save(lot);
+      } finally {
+        cancelling.delete(slug);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Panneau des pipelines — un overlay ancré en haut à droite.
 // ---------------------------------------------------------------------------
 // C'est un `ctx.ui.custom` avec `overlay: true` et `anchor: "top-right"` — le seul
@@ -1080,11 +3122,30 @@ export type PanelGlyphs = {
 export type PanelModel = {
   running: RunningEntry[];
   history: HistoryEntry[];
-  /** Index sur la liste concaténée `[...running, ...history]`, borné, `-1` si vide. */
+  /**
+   * Le lot du dépôt de la session, `null` s'il n'y en a pas : dans ce cas le
+   * panneau rend exactement ce qu'il rendait avant les lots.
+   */
+  lot?: Lot | null;
+  /** Le mode de saisie courant (`browse` : aucune saisie en cours). */
+  mode?: LotPanelMode;
+  /** Index sur la liste concaténée `[...features du lot, ...running, ...history]`, borné, `-1` si vide. */
   selection: number;
   notice: string | null;
   unreadable: number;
 };
+
+/** Les modes du panneau : consulter, ajouter, répondre, choisir le sort d'un worktree. */
+export type LotPanelMode =
+  | { kind: "browse" }
+  | {
+      kind: "add";
+      step: "name" | "description" | "deps";
+      draft: { name: string; description: string; deps: string };
+      buffer: string;
+    }
+  | { kind: "answer"; slug: string; buffer: string }
+  | { kind: "cancel"; slug: string };
 
 export const PANEL_WIDTH = 64;
 export const PANEL_REFRESH_MS = 1000;
@@ -1113,22 +3174,147 @@ export function moveSelection(selection: number, count: number, delta: number): 
 
 /**
  * Modèle du panneau : lecture du magasin, réconciliation des propriétaires morts,
- * puis borne de la sélection. C'est la seule fonction qui touche le disque.
+ * lecture du lot du dépôt de la session, puis borne de la sélection. C'est la
+ * seule fonction qui touche le disque (deux petits fichiers : le magasin et le lot).
  */
 export function readPanelModel(input: {
   stateDir: string;
+  /** Racine du dépôt : absente, il n'y a pas de lot à afficher (rendu d'avant les lots). */
+  repoRoot?: string;
   selection?: number;
   notice?: string | null;
+  mode?: LotPanelMode;
 }): PanelModel {
   const snapshot = reconcileStore(input.stateDir);
-  const count = snapshot.running.length + snapshot.history.length;
+  const lotPath = input.repoRoot ? lotPathFor(input.stateDir, lotRepoKey(input.repoRoot)) : null;
+  const lot = input.repoRoot ? readLot(input.stateDir, lotRepoKey(input.repoRoot)) : null;
+  // Un fichier de lot PRÉSENT mais rejeté (JSON tronqué, `version` étrangère,
+  // champ manquant) est un fichier illisible comme un autre : le panneau le dit
+  // au lieu de retomber silencieusement sur son rendu d'avant les lots (S-1).
+  const lotUnreadable = lot === null && lotPath !== null && fs.existsSync(lotPath) ? 1 : 0;
+  const count = (lot?.features.length ?? 0) + snapshot.running.length + snapshot.history.length;
   return {
     running: snapshot.running,
     history: snapshot.history,
+    lot,
+    mode: input.mode ?? { kind: "browse" },
     selection: clampSelection(input.selection ?? 0, count),
     notice: input.notice ?? null,
-    unreadable: snapshot.unreadable,
+    unreadable: snapshot.unreadable + lotUnreadable,
   };
+}
+
+// --- la section « Lot » du panneau ------------------------------------------
+
+/**
+ * Rang de titre de section : le cadre s'ouvre sur le titre, comme `topRule`, et
+ * le rang fait exactement `width` colonnes.
+ */
+function sectionRule(glyphs: PanelGlyphs, title: string, width: number): string {
+  const head = `${glyphs.teeLeft}─ ${clip(title, Math.max(0, width - 6))} `;
+  return fit(head + glyphs.horizontal.repeat(Math.max(0, width - head.length - 1)) + glyphs.teeRight, width);
+}
+
+/** `<slug> ← deps` : la ligne d'une feature dit de quoi elle dépend. */
+function lotFeatureLabel(feature: LotFeature): string {
+  return feature.deps.length > 0 ? `${feature.slug} ← ${feature.deps.join(",")}` : feature.slug;
+}
+
+/** La colonne de droite : maillon, état (le jalon nommé quand il y en a un), temps. */
+function lotFeatureRight(feature: LotFeature, now: number): string {
+  const state = lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state);
+  return `/${feature.phase} · ${state} · ${elapsedLabel((feature.endedAt ?? now) - feature.sinceAt)}`;
+}
+
+function lotStateTone(state: LotFeatureState): PanelTone {
+  switch (state) {
+    case "running":
+      return "success";
+    case "waiting":
+      return "warning";
+    case "blocked":
+    case "failed":
+      return "error";
+    case "cancelled":
+      return "muted";
+    default:
+      return "dim";
+  }
+}
+
+function lotSectionTitle(lot: Lot): string {
+  return `Lot · ${path.basename(lot.repoRoot)} · ${lot.features.length} features`;
+}
+
+/**
+ * Les rangs d'un mode de saisie : le champ courant (tampon + curseur) et son
+ * aide, ou la question du devenir du worktree. `browse` n'ajoute rien.
+ */
+function lotModeRows(mode: LotPanelMode, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
+  if (mode.kind === "browse") return [];
+  if (mode.kind === "cancel") {
+    // Deux rangs : le panneau fait 64 colonnes et les trois devenirs ne tiennent
+    // pas sur un seul rang avec leur conséquence.
+    return [
+      {
+        text: frame(glyphs, `Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`, width, innerW),
+        tone: "warning",
+      },
+      {
+        text: frame(glyphs, "la branche reste · 2 copie les ignorés · Échap annuler", width, innerW),
+        tone: "dim",
+      },
+    ];
+  }
+  if (mode.kind === "answer") {
+    return [
+      { text: frame(glyphs, `Réponse à ${mode.slug} : ${mode.buffer}▏`, width, innerW), tone: "text" },
+      { text: frame(glyphs, "Entrée envoyer · Échap annuler", width, innerW), tone: "dim" },
+    ];
+  }
+  const field =
+    mode.step === "name"
+      ? "Nom"
+      : mode.step === "description"
+        ? "Description"
+        : "Dépendances (slugs séparés par des virgules)";
+  const next = mode.step === "deps" ? "créer la feature" : "champ suivant";
+  return [
+    { text: frame(glyphs, `${field} : ${mode.buffer}▏`, width, innerW), tone: "text" },
+    { text: frame(glyphs, `Entrée ${next} · Échap annuler`, width, innerW), tone: "dim" },
+  ];
+}
+
+/** Les touches qui s'appliquent à la ligne sélectionnée, dans l'ordre du pied. */
+export function lotFooterActions(features: LotFeature[], selection: number): string {
+  const feature = selection >= 0 && selection < features.length ? features[selection] : undefined;
+  if (!feature) return "aucune action";
+  // La collecte d'une feature de lot se répond DANS la session, jamais au panneau
+  // (`answer` refuse cet état) : l'annoncer serait une touche morte.
+  const collecte = feature.origin === "session" && feature.phase === "req";
+  const actions: string[] = [];
+  if (!collecte && feature.state === "waiting" && feature.waitKind === "answer") actions.push("i répondre");
+  if (feature.state === "waiting" && feature.waitKind === "specs") actions.push("v valider");
+  if (feature.state === "waiting" && feature.waitKind === "review") actions.push("y accepter");
+  if (feature.state === "blocked" || feature.state === "failed") actions.push("R relancer");
+  if (feature.state === "pending") actions.push("x retirer");
+  if (!lotStateTerminal(feature.state)) actions.push("c annuler");
+  return actions.length > 0 ? actions.join(" · ") : "aucune action";
+}
+
+/**
+ * La seconde ligne du pied : ce qui s'applique à la LIGNE SÉLECTIONNÉE, quelle
+ * qu'elle soit. Un rang de lot passe par `lotFooterActions` ; une entrée
+ * d'historique est le seul rang que `d` supprime ; un rang « en cours » n'offre
+ * aucune action de ligne — et une sélection vide n'annonce rien.
+ */
+function panelFooterActions(model: PanelModel, runningCount: number): string {
+  const features = model.lot?.features.length ?? 0;
+  const selection = model.selection;
+  if (selection < features) return lotFooterActions(model.lot?.features ?? [], selection);
+  if (selection < features + runningCount) return "aucune action";
+  if (selection < features + runningCount + model.history.length) return "d supprimer";
+  return "aucune action";
 }
 
 function fit(text: string, width: number): string {
@@ -1139,6 +3325,16 @@ function fit(text: string, width: number): string {
 function clip(s: string, n: number): string {
   if (n <= 0) return "";
   return s.length > n ? (n > 1 ? `${s.slice(0, n - 1)}…` : s.slice(0, n)) : s;
+}
+
+/**
+ * Les `n` DERNIERS caractères (S-4) : dans la sortie d'un maillon, ce qui compte
+ * est la fin — l'agent y pose ses questions et sa conclusion —, pas l'en-tête du
+ * récapitulatif qui la précède.
+ */
+function clipTail(s: string, n: number): string {
+  if (n <= 0) return "";
+  return s.length > n ? (n > 1 ? `…${s.slice(-(n - 1))}` : s.slice(-n)) : s;
 }
 
 /** Rang encadré : `│ <contenu de largeur innerW> │`, exactement `width` colonnes. */
@@ -1194,9 +3390,13 @@ function noticeText(model: PanelModel): string | null {
  * pied. Pur : le temps écoulé vient de `now`, jamais d'une horloge implicite, et
  * les glyphes du test sont de l'ASCII.
  *
- * Le panneau tient dans `budget` rangs : toutes les pipelines en cours d'abord
- * (priorité), puis autant d'entrées d'historique que la place le permet, la plus
- * récente d'abord, et un rang `… <n> de plus` par section tronquée.
+ * Le panneau tient dans `budget` rangs — le pied compris, c'est lui que le TUI
+ * couperait par le bas. Le budget paie d'abord le cadre (titre, séparateur, pied,
+ * notice, rangs de saisie, titre de la section lot), puis un rang minimum par
+ * section non vide — son entrée, ou son marqueur `… <n> de plus` quand elle est
+ * tronquée : aucune section non vide ne disparaît en silence. Le surplus va par
+ * priorité au lot (la salle de contrôle), puis aux pipelines en cours (vivants),
+ * puis à l'historique, la plus récente d'abord.
  */
 export function buildPanelRows(
   model: PanelModel,
@@ -1206,66 +3406,158 @@ export function buildPanelRows(
   const glyphs = opts.glyphs;
   const innerW = Math.max(0, width - 4);
   const rows: PanelRow[] = [];
+  const lot = model.lot ?? null;
+  const mode = model.mode ?? { kind: "browse" };
+  const notice = noticeText(model);
+  const modeRows = lotModeRows(mode, glyphs, width, innerW);
 
   rows.push({
     text: topRule(glyphs, `Pipelines · ${model.running.length} en cours`, width),
     tone: "accent",
   });
 
+  // Les rangs du lot, dans l'ordre d'ajout : la salle de contrôle vient en tête.
+  const lotBody: PanelRow[] = [];
+  if (lot) {
+    if (lot.features.length === 0) {
+      lotBody.push({ text: frame(glyphs, "aucune feature — a ajouter", width, innerW), tone: "muted" });
+    } else {
+      if (lot.status === "draft") {
+        lotBody.push({ text: frame(glyphs, "lot non lancé — l lancer", width, innerW), tone: "muted" });
+      }
+      lot.features.forEach((feature, index) => {
+        const content = entryLine(
+          lotFeatureLabel(feature),
+          lotFeatureRight(feature, opts.now),
+          model.selection === index,
+          glyphs,
+          innerW,
+        );
+        lotBody.push({ text: frame(glyphs, content, width, innerW), tone: lotStateTone(feature.state) });
+      });
+    }
+  }
+
+  const features = lot?.features.length ?? 0;
   const runningCount = model.running.length;
   const historyCount = model.history.length;
-  const notice = noticeText(model);
-  // Titre + séparateur + deux rangs de pied, plus la notice quand il y en a une.
-  const available = Math.max(0, opts.budget - (4 + (notice ? 1 : 0)));
+  // Le budget paie d'abord ce qui est TOUJOURS rendu : titre, séparateur, pied
+  // (deux rangs de touches avec un lot, plus « Échap fermer » — c'est lui que le
+  // budget protège du rognage par le bas), notice, rangs de saisie et titre de la
+  // section lot.
+  const footRows = lot ? 3 : 2;
+  const frameRows = 1 + footRows + 1 + (notice ? 1 : 0) + modeRows.length + (lot ? 1 : 0);
 
-  let shownRunning = Math.min(runningCount, available);
-  if (runningCount > available) shownRunning = Math.max(0, available - 1);
-  const runningMarker = runningCount > shownRunning && available - shownRunning >= 1;
-  const left = available - shownRunning - (runningMarker ? 1 : 0);
-  let shownHistory = Math.min(historyCount, left);
-  if (historyCount > left) shownHistory = Math.max(0, left - 1);
-  const historyMarker = historyCount > shownHistory && left - shownHistory >= 1;
+  /**
+   * Répartit une section dans `room` rangs : toutes ses entrées si elles tiennent,
+   * sinon autant d'entrées que possible en gardant le DERNIER rang pour le
+   * marqueur `… n de plus` — une section tronquée le dit toujours, elle ne
+   * disparaît jamais en silence (S-7). `room` à 0 ne rend rien.
+   */
+  const take = (count: number, room: number): { shown: number; marker: boolean } =>
+    count <= room ? { shown: count, marker: false } : { shown: Math.max(0, room - 1), marker: room > 0 };
+
+  let left = Math.max(0, opts.budget - frameRows);
+  const credit = (want: number): number => {
+    const paid = Math.min(want, Math.max(0, left));
+    left -= paid;
+    return paid;
+  };
+
+  // 1. Le minimum de chaque section NON VIDE : un rang — son entrée, ou son
+  //    marqueur. Réservé avant de servir la première section, le budget servait
+  //    auparavant les entrées du lot jusqu'à laisser la section « en cours »
+  //    sans un rang ni un marqueur : un pipeline vivant disparaissait de l'écran
+  //    alors que le titre en annonçait le compte (BLOQUANT 4 de la revue n°3).
+  const minLot = credit(lotBody.length > 0 ? 1 : 0);
+  const minRunning = credit(runningCount > 0 ? 1 : 0);
+  const minHistory = credit(historyCount > 0 ? 1 : 0);
+  // 2. Le surplus, par priorité : le lot (la salle de contrôle), puis les
+  //    pipelines en cours (vivants), puis l'historique.
+  const lotShown = take(lotBody.length, minLot + credit(Math.max(0, lotBody.length - minLot)));
+  const runningShown = take(runningCount, minRunning + credit(Math.max(0, runningCount - minRunning)));
+  const historyShown = take(historyCount, minHistory + credit(Math.max(0, historyCount - minHistory)));
+  // 3. Les rangs d'ÉTAT VIDE (« aucune pipeline en cours », « aucun historique »)
+  //    se paient comme les autres : ce sont eux qui, oubliés du calcul, faisaient
+  //    dépasser le budget d'un rang par section vide et coupaient le pied
+  //    (BLOQUANT 3 de la revue n°3). Sans budget pour eux, le titre de section dit
+  //    déjà l'essentiel.
+  const runningEmpty = runningCount === 0 && credit(1) === 1;
+  const historyEmpty = historyCount === 0 && credit(1) === 1;
+
+  if (lot) {
+    rows.push({ text: sectionRule(glyphs, lotSectionTitle(lot), width), tone: "accent" });
+    for (const row of lotBody.slice(0, lotShown.shown)) rows.push(row);
+    if (lotShown.marker) {
+      rows.push({ text: frame(glyphs, `… ${lotBody.length - lotShown.shown} de plus`, width, innerW), tone: "dim" });
+    }
+  }
 
   if (runningCount === 0) {
-    rows.push({ text: frame(glyphs, "aucune pipeline en cours", width, innerW), tone: "muted" });
+    if (runningEmpty) rows.push({ text: frame(glyphs, "aucune pipeline en cours", width, innerW), tone: "muted" });
   } else {
-    for (let i = 0; i < shownRunning; i++) {
+    for (let i = 0; i < runningShown.shown; i++) {
       const entry = model.running[i]!;
       const state = entry.state === "waiting" ? "attend" : "tourne";
       const right = `/${entry.phase} · ${state} · ${elapsedLabel(opts.now - entry.phaseStartedAt)}`;
       rows.push({
-        text: frame(glyphs, entryLine(entry.label, right, model.selection === i, glyphs, innerW), width, innerW),
+        text: frame(glyphs, entryLine(entry.label, right, model.selection === features + i, glyphs, innerW), width, innerW),
         tone: entry.state === "waiting" ? "warning" : "success",
       });
     }
-    if (runningMarker) {
-      rows.push({ text: frame(glyphs, `… ${runningCount - shownRunning} de plus`, width, innerW), tone: "dim" });
+    if (runningShown.marker) {
+      rows.push({
+        text: frame(glyphs, `… ${runningCount - runningShown.shown} de plus`, width, innerW),
+        tone: "dim",
+      });
     }
   }
 
   rows.push({ text: separatorRule(glyphs, width), tone: "border" });
 
   if (historyCount === 0) {
-    rows.push({ text: frame(glyphs, "aucun historique", width, innerW), tone: "muted" });
+    if (historyEmpty) rows.push({ text: frame(glyphs, "aucun historique", width, innerW), tone: "muted" });
   } else {
-    for (let i = 0; i < shownHistory; i++) {
+    for (let i = 0; i < historyShown.shown; i++) {
       const entry = model.history[i]!;
       const final = entry.finalState === "done" ? "terminé" : "échoué";
       const right = `/${entry.phase} · ${final}`;
-      const selected = model.selection === runningCount + i;
+      const selected = model.selection === features + runningCount + i;
       rows.push({
         text: frame(glyphs, entryLine(entry.label, right, selected, glyphs, innerW), width, innerW),
         tone: entry.finalState === "done" ? "dim" : "error",
       });
     }
-    if (historyMarker) {
-      rows.push({ text: frame(glyphs, `… ${historyCount - shownHistory} de plus`, width, innerW), tone: "dim" });
+    if (historyShown.marker) {
+      rows.push({
+        text: frame(glyphs, `… ${historyCount - historyShown.shown} de plus`, width, innerW),
+        tone: "dim",
+      });
     }
   }
 
   if (notice) rows.push({ text: frame(glyphs, notice, width, innerW), tone: "warning" });
+  for (const row of modeRows) rows.push(row);
 
-  rows.push({ text: frame(glyphs, "↑↓ naviguer · Entrée rejoindre · d supprimer", width, innerW), tone: "dim" });
+  // Le pied : les touches de la salle de contrôle quand un lot est là, sinon le
+  // pied d'avant, augmenté de l'unique touche qui crée un lot. Avec un lot, la
+  // seconde ligne dit ce qui s'applique à la LIGNE SÉLECTIONNÉE : c'est elle qui
+  // annonce `x` sur un rang de lot, et `d` sur une entrée d'historique — le seul
+  // rang où `d` agit. Annoncer `d` sur un rang de lot serait une touche morte.
+  rows.push({
+    text: frame(
+      glyphs,
+      lot
+        ? "a ajouter · l lancer · Entrée rejoindre"
+        : "↑↓ naviguer · Entrée rejoindre · d supprimer · a ajouter",
+      width,
+      innerW,
+    ),
+    tone: "dim",
+  });
+  if (lot) {
+    rows.push({ text: frame(glyphs, panelFooterActions(model, runningCount), width, innerW), tone: "dim" });
+  }
   rows.push({ text: bottomRule(glyphs, "Échap fermer", width), tone: "border" });
 
   return rows.map((row) => ({ text: fit(row.text, width), tone: row.tone }));
@@ -1537,6 +3829,10 @@ export type PanelComponent = {
 
 export type PipelinesPanelDeps = {
   stateDir: string;
+  /** Racine du dépôt : c'est elle qui identifie le lot que le panneau pilote. */
+  repoRoot?: string;
+  /** Les actions du lot ; absentes, le panneau reste en consultation (comportement d'avant les lots). */
+  lot?: LotPanelActions;
   /** Horloge du temps écoulé : injectée, le temps affiché est donc testable. */
   now?: () => number;
   /** Ordonnanceur du rafraîchissement ; renvoie de quoi l'arrêter. */
@@ -1584,10 +3880,17 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const now = deps.now ?? (() => Date.now());
     const schedule = deps.schedule ?? defaultSchedule;
     let notice: string | null = null;
-    let model = readPanelModel({ stateDir: deps.stateDir, selection: 0, notice });
+    let mode: LotPanelMode = { kind: "browse" };
+    let model = readPanelModel({ stateDir: deps.stateDir, repoRoot: deps.repoRoot, selection: 0, notice, mode });
 
     const paint = () => {
-      model = readPanelModel({ stateDir: deps.stateDir, selection: model.selection, notice });
+      model = readPanelModel({
+        stateDir: deps.stateDir,
+        repoRoot: deps.repoRoot,
+        selection: model.selection,
+        notice,
+        mode,
+      });
     };
     const redraw = () => {
       paint();
@@ -1598,18 +3901,44 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       paint();
       tui.requestRender?.();
     };
+    const setMode = (next: LotPanelMode) => {
+      mode = next;
+      notice = null;
+      paint();
+      tui.requestRender?.();
+    };
+    const isKey = (data: string, keybinding: HostKeybinding) => keybindings?.matches?.(data, keybinding) === true;
+
+    // Le lot occupe la TÊTE de la liste sélectionnable : les rangs machine suivent.
+    const features = (): LotFeature[] => model.lot?.features ?? [];
     const entries = (): Array<RunningEntry | HistoryEntry> => [...model.running, ...model.history];
+    const selectedFeature = (): LotFeature | undefined => {
+      const index = model.selection;
+      return index >= 0 && index < features().length ? features()[index] : undefined;
+    };
+    const selectedEntry = (): RunningEntry | HistoryEntry | undefined => {
+      const index = model.selection - features().length;
+      return index >= 0 ? entries()[index] : undefined;
+    };
     // Le déplacement efface la notice : elle décrit un rang, pas le panneau.
     const move = (delta: number) => {
       notice = null;
-      model = { ...model, notice: null, selection: moveSelection(model.selection, entries().length, delta) };
+      model = {
+        ...model,
+        notice: null,
+        selection: moveSelection(model.selection, features().length + entries().length, delta),
+      };
       tui.requestRender?.();
     };
-    const selected = (): RunningEntry | HistoryEntry | undefined => entries()[model.selection];
 
     const remove = () => {
-      const index = model.selection;
-      if (index < 0) return; // aucune entrée : rien, aucune notice
+      const index = model.selection - features().length;
+      // Un rang de lot ne se supprime pas : `x` le retire du lot (S-3) — le dire
+      // vaut mieux qu'une touche muette. Une sélection vide reste muette.
+      if (index < 0) {
+        if (selectedFeature()) showNotice("seules les entrées d'historique se suppriment");
+        return;
+      }
       if (index < model.running.length) {
         showNotice("seules les entrées d'historique se suppriment");
         return;
@@ -1626,6 +3955,217 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       redraw();
     };
 
+    /**
+     * Une action du lot : elle ne jette jamais. Son motif de refus devient la
+     * notice du panneau ; un succès redessine (l'état affiché vient des fichiers).
+     * `keep` est le mode de saisie à REPOSER tel quel — S-7 : « chaque action
+     * refusée par le modèle (nom invalide, etc.) laisse le mode et affiche le motif
+     * dans le rang de notice ». Refermer l'éditeur avant de soumettre ferait
+     * retaper les trois champs d'un ajout pour un simple « déjà dans le lot ».
+     */
+    const act = (run: () => Promise<string | null>, keep?: LotPanelMode) => {
+      const settle = (reason: string | null) => {
+        if (reason === null) {
+          if (keep) setMode({ kind: "browse" }); // un succès ferme la saisie
+          else {
+            notice = null;
+            redraw();
+          }
+          return;
+        }
+        if (keep) setMode(keep);
+        showNotice(reason);
+      };
+      void run()
+        .then(settle)
+        .catch((err: unknown) => settle(err instanceof Error ? err.message : String(err)));
+    };
+
+    /** L'éditeur en ligne : les caractères imprimables s'ajoutent, retour arrière efface. */
+    const edit = (data: string, buffer: string): string | null => {
+      if (data === "\x7f" || data === "\b") return buffer.slice(0, -1);
+      if (data.length === 1 && data >= " " && buffer.length < LOT_EDITOR_MAX) return buffer + data;
+      return null;
+    };
+
+    /** Les trois modes de saisie. Rend `true` quand la touche est consommée. */
+    const handleMode = (data: string): boolean => {
+      if (mode.kind === "browse") return false;
+      if (isKey(data, "tui.select.cancel")) {
+        setMode({ kind: "browse" });
+        return true;
+      }
+      const lot = deps.lot;
+      if (!lot) {
+        showNotice("lot indisponible dans cette session");
+        setMode({ kind: "browse" });
+        return true;
+      }
+      const confirm = isKey(data, "tui.select.confirm");
+      if (mode.kind === "cancel") {
+        const fate: WorktreeFate | null = data === "1" ? "keep" : data === "2" ? "archive" : data === "3" ? "delete" : null;
+        if (!fate) return true; // toute autre touche est ignorée : 1, 2, 3 ou Échap
+        const slug = mode.slug;
+        act(() => lot.cancel(slug, fate), mode);
+        return true;
+      }
+      if (mode.kind === "answer") {
+        if (confirm) {
+          const text = mode.buffer.trim();
+          if (text === "") {
+            showNotice("réponse vide");
+            return true;
+          }
+          const slug = mode.slug;
+          act(() => lot.answer(slug, text), mode);
+          return true;
+        }
+        const next = edit(data, mode.buffer);
+        if (next !== null) setMode({ ...mode, buffer: next });
+        return true;
+      }
+      if (confirm) {
+        const draft = mode.draft;
+        if (mode.step === "name") {
+          if (mode.buffer.trim() === "") {
+            showNotice("nom de feature requis");
+            return true;
+          }
+          setMode({ kind: "add", step: "description", draft: { ...draft, name: mode.buffer.trim() }, buffer: "" });
+          return true;
+        }
+        if (mode.step === "description") {
+          setMode({ kind: "add", step: "deps", draft: { ...draft, description: mode.buffer.trim() }, buffer: "" });
+          return true;
+        }
+        const input: AddFeatureInput = {
+          name: draft.name,
+          description: draft.description,
+          deps: mode.buffer
+            .split(",")
+            .map((part) => part.trim())
+            .filter((part) => part !== ""),
+        };
+        act(() => lot.add(input), mode);
+        return true;
+      }
+      const next = edit(data, mode.buffer);
+      if (next !== null) setMode({ ...mode, buffer: next });
+      return true;
+    };
+
+    const handleBrowse = (data: string): void => {
+      // Fermer : Échap (`app.interrupt`) ou Ctrl+C, les deux du select.cancel d'OMP.
+      if (isKey(data, "tui.select.cancel")) {
+        done();
+        return;
+      }
+      if (isKey(data, "tui.select.up") || data === "k") {
+        move(-1);
+        return;
+      }
+      if (isKey(data, "tui.select.down") || data === "j") {
+        move(1);
+        return;
+      }
+      if (data === "d") {
+        remove();
+        return;
+      }
+      if (isKey(data, "tui.select.confirm")) {
+        const entry = selectedEntry();
+        if (entry) deps.join(entry, () => done(), showNotice);
+        else if (selectedFeature()) showNotice("cette feature n'a pas encore de session — attends son premier maillon");
+        return;
+      }
+      const lot = deps.lot;
+      // Toute action du lot exige le pilote : sans lui, le panneau reste en lecture.
+      const requireLot = (): LotPanelActions | null => {
+        if (lot) return lot;
+        showNotice("lot indisponible dans cette session");
+        return null;
+      };
+      if (data === "a") {
+        const actions = requireLot();
+        if (!actions) return;
+        setMode({ kind: "add", step: "name", draft: { name: "", description: "", deps: "" }, buffer: "" });
+        return;
+      }
+      if (data === "l") {
+        const actions = requireLot();
+        if (actions) act(() => actions.launch());
+        return;
+      }
+      if (data === "x") {
+        const feature = selectedFeature();
+        if (!feature) {
+          showNotice("retrait possible sur une feature qui n'a pas démarré");
+          return;
+        }
+        const actions = requireLot();
+        if (actions) act(() => actions.remove(feature.slug));
+        return;
+      }
+      if (data === "i") {
+        const feature = selectedFeature();
+        if (!feature || feature.state !== "waiting" || feature.waitKind !== "answer") {
+          showNotice("rien à répondre sur cette ligne");
+          return;
+        }
+        if (feature.origin === "session" && feature.phase === "req") {
+          showNotice("la collecte se déroule dans ta session — réponds-y directement");
+          return;
+        }
+        const actions = requireLot();
+        if (actions) setMode({ kind: "answer", slug: feature.slug, buffer: "" });
+        return;
+      }
+      if (data === "v") {
+        const feature = selectedFeature();
+        if (!feature || feature.state !== "waiting" || feature.waitKind !== "specs") {
+          showNotice("rien à valider : la feature n'est pas au jalon des specs");
+          return;
+        }
+        const actions = requireLot();
+        if (actions) act(() => actions.validate(feature.slug));
+        return;
+      }
+      if (data === "y") {
+        const feature = selectedFeature();
+        if (!feature || feature.state !== "waiting" || feature.waitKind !== "review") {
+          showNotice("rien à accepter : la revue n'est pas propre");
+          return;
+        }
+        const actions = requireLot();
+        if (actions) act(() => actions.accept(feature.slug));
+        return;
+      }
+      if (data === "R") {
+        const feature = selectedFeature();
+        if (!feature || (feature.state !== "blocked" && feature.state !== "failed")) {
+          showNotice("relance possible sur une feature bloquée ou échouée");
+          return;
+        }
+        const actions = requireLot();
+        if (actions) act(() => actions.relaunch(feature.slug));
+        return;
+      }
+      if (data === "c") {
+        const feature = selectedFeature();
+        if (!feature) {
+          showNotice("annulation impossible : sélectionne une feature du lot");
+          return;
+        }
+        if (lotStateTerminal(feature.state)) {
+          showNotice(`annulation impossible : la feature est ${lotStateLabel(feature.state)}`);
+          return;
+        }
+        const actions = requireLot();
+        if (actions) setMode({ kind: "cancel", slug: feature.slug });
+        return;
+      }
+    };
+
     const stop = schedule(() => redraw(), PANEL_REFRESH_MS);
 
     return {
@@ -1636,28 +4176,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         );
       },
       handleInput(data: string): void {
-        const matches = (keybinding: HostKeybinding) => keybindings?.matches?.(data, keybinding) === true;
-        // Fermer : Échap (`app.interrupt`) ou Ctrl+C, les deux du select.cancel d'OMP.
-        if (matches("tui.select.cancel")) {
-          done();
-          return;
-        }
-        if (matches("tui.select.up") || data === "k") {
-          move(-1);
-          return;
-        }
-        if (matches("tui.select.down") || data === "j") {
-          move(1);
-          return;
-        }
-        if (data === "d") {
-          remove();
-          return;
-        }
-        if (matches("tui.select.confirm")) {
-          const entry = selected();
-          if (entry) deps.join(entry, () => done(), showNotice);
-        }
+        if (handleMode(data)) return;
+        handleBrowse(data);
       },
       refresh: redraw,
       dispose(): void {
@@ -1683,7 +4203,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
 // Ces prédicats sont PURS — aucun accès disque, aucun état : le handler
 // `session_stop` lit le contrat lui-même et leur en passe le contenu.
 
-export type PipelinePhase = "req" | "specs" | "impl" | "review";
+export type PipelinePhase = "req" | "specs" | "impl" | "review" | "release";
 export type NextStep = { kind: "command"; command: string } | { kind: "cycle-end" };
 
 // Ligne normalisée des règles de lecture du verdict : /review écrit en Markdown,
@@ -1788,6 +4308,10 @@ export function nextStepFor(phase: PipelinePhase, contract: string): NextStep {
       if (verdict === "clean") return { kind: "cycle-end" };
       return { kind: "command", command: "/review" };
     }
+    // La livraison est le DERNIER maillon : plus rien à annoncer après elle (le
+    // push et la PR sont faits par le pilote du lot, cf. `releaseArgs`).
+    case "release":
+      return { kind: "cycle-end" };
   }
 }
 
@@ -2137,7 +4661,99 @@ export default function reqExtension(pi: ExtensionAPI) {
   const notifyDurable = (text: string) =>
     pi.sendMessage({ customType: "pipeline", content: text, display: true, attribution: "user" }, { triggerTurn: false });
 
-  const pipelineDeps = (ctx: PipelineCtx): PublishDeps => ({ ctx, notify: notifyDurable });
+  const pipelineDeps = (ctx: PipelineCtx): PublishDeps => ({ ctx, notify: notifyDurable, stateDir: storeDir() });
+
+  // `gh` : même doctrine que git (jamais node:child_process, runner câblé sur
+  // `pi.exec`), avec un budget plus large — c'est du réseau, pas une commande
+  // locale (cf. `## Documentation` §4).
+  const GH_TIMEOUT_MS = 60_000;
+  const runGh = async (args: string[], cwd: string): Promise<GitResult> => {
+    try {
+      const res = await pi.exec("gh", args, { cwd, timeout: GH_TIMEOUT_MS });
+      return {
+        code: res.killed ? 124 : res.code,
+        stdout: res.stdout ?? "",
+        stderr: res.killed ? `gh ${args[0]} : délai dépassé (${GH_TIMEOUT_MS} ms)` : (res.stderr ?? ""),
+      };
+    } catch (err) {
+      return { code: 127, stdout: "", stderr: (err as Error).message };
+    }
+  };
+
+  // --- drapeaux du mode worker, et pilote du lot ----------------------------
+  // Les drapeaux sont déclarés AU CHARGEMENT : un drapeau inconnu du CLI est une
+  // erreur dure, et un run de lot est lancé avec ces quatre-là (`buildLotRunArgv`,
+  // cf. `## Documentation` §2).
+  pi.registerFlag("pipeline-lot", { type: "string", description: "Lot propriétaire de ce run (mode worker)" });
+  pi.registerFlag("pipeline-feature", { type: "string", description: "Feature de ce run (mode worker)" });
+  pi.registerFlag("pipeline-phase", {
+    type: "string",
+    description: "Maillon de ce run : req, specs, impl, review ou release",
+  });
+  pi.registerFlag("pipeline-state-dir", {
+    type: "string",
+    description: "Répertoire du magasin d'état des pipelines",
+  });
+
+  // Mode worker : ce process EST un maillon du lot. Il publie son état, exécute le
+  // prompt reçu en argv et n'annonce rien — la chaîne appartient au pilote.
+  //
+  // Les drapeaux sont relus À CHAQUE FOIS, jamais au chargement : le CLI applique
+  // les drapeaux d'extension APRÈS avoir chargé les extensions (`## Documentation`
+  // §2), donc un `pi.getFlag` évalué à l'import rend toujours `undefined`.
+  const workerMode = (): WorkerMode | null => workerModeOf(pi);
+
+  /**
+   * Le magasin d'état de CE process : le drapeau d'un run de lot fait autorité
+   * (le pilote peut avoir un magasin que l'environnement de l'enfant ne dit pas),
+   * sinon `MEM0_PIPELINE_STATE_DIR` puis `~/.omp/agent/pipeline`. Toutes les
+   * écritures du registre passent par ici — sans quoi un run de lot publierait
+   * dans le magasin par défaut de la machine au lieu de celui de son lot.
+   */
+  const storeDir = (): string => workerMode()?.stateDir ?? pipelineStateDir();
+
+  let lotController: { repoRoot: string; controller: LotController } | null = null;
+
+  /**
+   * Le pilote du dépôt de cette session, un par process : le lot n'a qu'un
+   * écrivain. Deux sessions du même dépôt ne se marchent pas dessus — la seconde
+   * ne reprend la main que si le pid de la première est mort.
+   */
+  const controllerFor = (ctx: ExtensionContext): LotController => {
+    const root = resolveFeatureRoot(ctx.cwd);
+    const repoRoot = root.primary ?? root.dir;
+    if (lotController && lotController.repoRoot === repoRoot) return lotController.controller;
+    lotController?.controller.stop();
+    const controller = createLotController({
+      stateDir: storeDir(),
+      repoRoot,
+      run: async ({ argv, cwd, timeout, signal }) => {
+        const res = await pi.exec(argv[0] ?? "omp", argv.slice(1), { cwd, timeout, signal });
+        return {
+          code: res.killed ? 124 : res.code,
+          killed: res.killed === true,
+          stdout: res.stdout ?? "",
+          stderr: res.stderr ?? "",
+        };
+      },
+      runGit: run,
+      runGh,
+      notify: notifyDurable,
+      toast: (text, tone) => ctx.ui?.notify?.(text, tone),
+      session: () => ({ file: sessionFileOf(ctx as PipelineCtx), id: sessionIdOf(ctx as PipelineCtx) }),
+      selfPath: selfExtensionArg(SELF_MODULE_URL),
+      schedule: (callback, ms) => {
+        // Minuterie GÉRÉE : nettoyée au `session_shutdown`, jamais orpheline. Un
+        // contexte dégradé (hors OMP complet) n'a pas de minuterie : le pilote
+        // tourne alors à la demande (chaque action relance une passe).
+        if (typeof ctx.setInterval !== "function" || typeof ctx.clearTimer !== "function") return () => {};
+        const timer = ctx.setInterval(callback, ms);
+        return () => ctx.clearTimer(timer);
+      },
+    });
+    lotController = { repoRoot, controller };
+    return controller;
+  };
 
   // --- /pipelines et alt+w : le panneau des pipelines en cours --------------
   // Un seul panneau par processus : tant qu'un overlay est monté, une seconde
@@ -2157,7 +4773,12 @@ export default function reqExtension(pi: ExtensionAPI) {
     if (panelOpen) return;
     panelOpen = true;
     const deps: PipelinesPanelDeps = {
-      stateDir: pipelineStateDir(),
+      stateDir: storeDir(),
+      repoRoot: (() => {
+        const root = resolveFeatureRoot(ctx.cwd);
+        return root.primary ?? root.dir;
+      })(),
+      lot: workerMode() ? undefined : controllerFor(ctx),
       join: (entry, close, showNotice) => {
         // `switchSession` vit sur le contexte de COMMANDE : le runtime appelle
         // `createCommandContext()` pour les commandes ET pour les raccourcis, donc
@@ -2211,6 +4832,17 @@ export default function reqExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     resetStateWriteWarning();
     ensureHeartbeat(ctx as PipelineCtx, { notify: notifyDurable });
+    // Un run de lot arme SON maillon et le publie : il apparaît dans /pipelines
+    // dès le démarrage, et un maillon `req` reçoit la directive de collecte.
+    const mode = workerMode();
+    if (mode) {
+      stateOfCwd(ctx.cwd).reqMode = mode.phase === "req";
+      armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, mode.phase);
+      return;
+    }
+    // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend.
+    const controller = controllerFor(ctx);
+    if (controller.adopt()) controller.start();
   });
 
   pi.on("agent_start", async (_event, ctx) => {
@@ -2307,6 +4939,17 @@ export default function reqExtension(pi: ExtensionAPI) {
         await run(["worktree", "remove", created.path], root.dir);
       };
 
+      // La feature entre dans le lot du dépôt AVANT la relocalisation : sa collecte
+      // se déroule dans cette session (`origin: "session"`), et le pilote prend la
+      // main à sa clôture (S-14). Si la collecte n'aboutit pas, la feature reste
+      // visible dans le panneau, en attente de cette session.
+      const lotDriver = controllerFor(ctx);
+      const refused = lotDriver.enrol({ slug, name: typed || slug, branch: created.branch, worktree: created.path });
+      // Un lot conduit par une session vivante ne s'écrit pas (S-1) : la feature
+      // n'y entre pas, et cette session le dit au lieu de laisser croire qu'elle
+      // est pilotée par le lot de l'autre (elle garde la chaîne manuelle, S-14).
+      if (refused) ctx.ui?.notify?.(`[req] ${refused} — cette feature garde la chaîne manuelle.`, "warning");
+
       if (typeof ctx.newSession !== "function") {
         await rollback();
         ctx.ui?.notify?.(
@@ -2344,6 +4987,10 @@ export default function reqExtension(pi: ExtensionAPI) {
       // retombée qui SUIT un « fin » de l'utilisateur, jamais pendant la collecte.
       // L'armement publie AUSSI l'entrée du magasin : elle existe dès la commande.
       armPipeline(pipelineDeps(ctx as PipelineCtx), created.path, "req");
+      // Le pilote tourne : les AUTRES features du lot (s'il y en a) avancent
+      // pendant cette collecte, et celle-ci sera prise en charge à sa clôture.
+      // Une feature refusée n'appartient à aucun lot : aucun pilote à faire tourner.
+      if (!refused) lotDriver.start();
       pi.sendMessage(
         {
           customType: "req",
@@ -2370,6 +5017,17 @@ export default function reqExtension(pi: ExtensionAPI) {
       const gate = linkGate(ctx.cwd);
       if (!gate.ok) {
         ctx.ui?.notify?.(`[specs] : ${gate.reason}`, "warning");
+        return;
+      }
+      // Un seul acteur écrit un contrat à la fois : si le lot pilote cette feature,
+      // la commande manuelle s'efface (S-14).
+      const driving = lotDriverFor(storeDir(), repoRootOf(ctx.cwd), ctx.cwd);
+      if (driving) {
+        ctx.ui?.notify?.(
+          `[specs] cette feature est pilotée par le lot ${path.basename(driving.repoRoot)} — ` +
+            "pilote-la depuis /pipelines (ou annule-la pour reprendre à la main).",
+          "warning",
+        );
         return;
       }
       const seed = buildSpecsSeed(String(args ?? "").trim());
@@ -2403,6 +5061,15 @@ export default function reqExtension(pi: ExtensionAPI) {
         ctx.ui?.notify?.(`[impl] : ${gate.reason}`, "warning");
         return;
       }
+      const driving = lotDriverFor(storeDir(), repoRootOf(ctx.cwd), ctx.cwd);
+      if (driving) {
+        ctx.ui?.notify?.(
+          `[impl] cette feature est pilotée par le lot ${path.basename(driving.repoRoot)} — ` +
+            "pilote-la depuis /pipelines (ou annule-la pour reprendre à la main).",
+          "warning",
+        );
+        return;
+      }
       const raw = String(args ?? "").trim();
       const tokens = raw.split(/\s+/).filter(Boolean);
       const fix = tokens.includes("--fix");
@@ -2434,6 +5101,15 @@ export default function reqExtension(pi: ExtensionAPI) {
       const gate = linkGate(ctx.cwd);
       if (!gate.ok) {
         ctx.ui?.notify?.(`[review] : ${gate.reason}`, "warning");
+        return;
+      }
+      const driving = lotDriverFor(storeDir(), repoRootOf(ctx.cwd), ctx.cwd);
+      if (driving) {
+        ctx.ui?.notify?.(
+          `[review] cette feature est pilotée par le lot ${path.basename(driving.repoRoot)} — ` +
+            "pilote-la depuis /pipelines (ou annule-la pour reprendre à la main).",
+          "warning",
+        );
         return;
       }
       const seed = buildReviewSeed(String(args ?? "").trim());
@@ -2470,7 +5146,9 @@ export default function reqExtension(pi: ExtensionAPI) {
     // en profondeur : elles sont déjà postées sans démarrer de tour, mais un echo
     // ou une régression resteraient sûrs.
     if (isPipelineNotice(prompt)) {
-      return { systemPrompt: event.systemPrompt };
+      // Une notice n'est pas une entrée de l'utilisateur : jamais de clôture sur
+      // son contenu — mais la directive reste due, le mode collecte étant actif.
+      return { systemPrompt: [...event.systemPrompt, SYSTEM_DIRECTIVE_REQ] };
     }
 
     if (saysFin(prompt)) {
@@ -2514,6 +5192,16 @@ export default function reqExtension(pi: ExtensionAPI) {
   // jamais perturber la retombée.
   pi.on("session_stop", async (_event, ctx) => {
     try {
+      // Un run de lot : le maillon a rendu la main. Il clôt son entrée du magasin
+      // et n'annonce RIEN — la chaîne appartient au pilote (S-13).
+      if (workerMode()) {
+        try {
+          closePipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "done");
+        } catch (err) {
+          reportStateWriteFailure(pipelineDeps(ctx as PipelineCtx), err);
+        }
+        return;
+      }
       const st = stateOfCwd(ctx.cwd);
       const phase = st.phase;
       // L'agent rend la main : l'état publié bascule sur « attend » (S-4), même
@@ -2534,6 +5222,37 @@ export default function reqExtension(pi: ExtensionAPI) {
         contract = fs.readFileSync(contractPathFor(ctx.cwd), "utf8");
       } catch {
         /* contrat absent : routage sur chaîne vide */
+      }
+
+      // BASCULE VERS LE LOT (S-14) : la collecte d'une feature de lot est close
+      // (besoins écrits) — le pilote prend la main sur /specs, et cette session
+      // n'annonce plus rien pour elle.
+      const controller = controllerFor(ctx);
+      const handed = handOverCollecte({
+        stateDir: storeDir(),
+        repoRoot: repoRootOf(ctx.cwd),
+        cwd: ctx.cwd,
+        contract,
+        sessionFile: sessionFileOf(ctx as PipelineCtx),
+        notify: notifyDurable,
+      });
+      if (handed) {
+        try {
+          closePipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "done");
+        } catch (err) {
+          reportStateWriteFailure(pipelineDeps(ctx as PipelineCtx), err);
+        }
+        controller.start();
+        pi.sendMessage(
+          {
+            customType: "pipeline",
+            content: "[pipeline] la chaîne du lot prend la main — avancement dans /pipelines",
+            display: true,
+            attribution: "user",
+          },
+          { triggerTurn: false },
+        );
+        return;
       }
 
       const step = nextStepFor(phase, contract);

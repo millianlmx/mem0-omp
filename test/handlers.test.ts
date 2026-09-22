@@ -116,6 +116,13 @@ function mkApp(): FakeApp {
     registerShortcut(name: string, def: { handler: (ctx: never) => Promise<void> | void }) {
       shortcuts.set(name, def.handler);
     },
+    // Les drapeaux du mode worker (S-13) : déclarés au chargement, absents d'une
+    // session ordinaire — donc `getFlag` rend `undefined` et la session n'est pas
+    // un run de lot.
+    registerFlag(_name: string, _options: { type: "boolean" | "string" }) {},
+    getFlag(_name: string): string | undefined {
+      return undefined;
+    },
     on(name: string, def: (event: never, ctx: never) => Promise<unknown>) {
       hooks.set(name, def);
     },
@@ -402,6 +409,18 @@ function announcements(app: FakeApp): Displayed[] {
   return app.displayed.filter((m) => m.customType === "pipeline" && m.content.startsWith("[pipeline] Phase /"));
 }
 
+/**
+ * Simule une session HORS lot : les maillons retrouvent leur comportement manuel
+ * (annonce de la suite, préremplissage de l'éditeur). Depuis la feature
+ * multi-pipeline, une feature ouverte par /req appartient à un lot et la chaîne
+ * est pilotée par lui — ces tests couvrent le cas où aucun lot ne pilote la
+ * session (worktree ouvert à la main, lot clos).
+ */
+function forgetLot(): void {
+  const dir = process.env.MEM0_PIPELINE_STATE_DIR;
+  if (dir) fs.rmSync(path.join(dir, "lots"), { recursive: true, force: true });
+}
+
 /** Arme un maillon par son handler, puis simule la retombée terminale du fil principal. */
 async function settleLink(
   app: FakeApp,
@@ -409,6 +428,7 @@ async function settleLink(
   cwd: string,
   stopCtx: never,
 ): Promise<Displayed[]> {
+  forgetLot();
   await app.handlers.get(command)!("", mkCtx(cwd).ctx as never);
   const before = announcements(app).length;
   await app.hooks.get("session_stop")!({}, stopCtx);
@@ -428,6 +448,7 @@ test("/req, /specs et /impl annoncent chacun la commande de la suite", async () 
     await app.hooks.get("before_agent_start")!({ prompt: "fin", systemPrompt: ["base"] }, {
       cwd: worktree,
     } as never);
+    forgetLot();
     await app.hooks.get("session_stop")!({}, mkCtx(worktree).ctx as never);
 
     await settleLink(app, "specs", worktree, mkCtx(worktree).ctx as never);
@@ -530,6 +551,7 @@ test("S-1 : hors maillon armé, maillon déjà annoncé ou collecte en cours, ri
 
     // Maillon armé : une seule annonce, quel que soit le nombre de retombées
     const oneShot = await openFeature(app, root, base, "une-seule-annonce");
+    forgetLot();
     await app.hooks.get("before_agent_start")!({ prompt: "fin", systemPrompt: [] }, { cwd: oneShot } as never);
     for (let i = 0; i < 3; i++) {
       await app.hooks.get("session_stop")!({}, mkCtx(oneShot).ctx as never);
@@ -765,6 +787,12 @@ test("l'outil ask en vol bascule l'état en attend", async () => {
       await app.hooks.get("tool_execution_start")!({ toolCallId: "call-2", toolName: "ask" }, live as never);
       await app.hooks.get("tool_execution_end")!({ toolCallId: "call-3", toolName: "bash" }, live as never);
       assert.equal(state(), "waiting", "le compteur tient par identifiant, pas globalement");
+
+      // L'appel laissé en vol est refermé : le compteur est un état de MODULE, et
+      // un test qui le laisse sale rend toutes les publications suivantes « attend »
+      // (visible avec un harnais qui partage le process entre fichiers).
+      await app.hooks.get("tool_execution_end")!({ toolCallId: "call-2", toolName: "ask" }, live as never);
+      assert.equal(state(), "running", "plus aucune question en vol");
     });
   });
 });

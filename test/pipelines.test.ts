@@ -563,7 +563,17 @@ test("la suppression ne s'applique qu'à l'historique", () => {
 test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
   const stateDir = path.join(mktmp("pl-empty-"), "jamais-cree");
   const model = readPanelModel({ stateDir });
-  assert.deepEqual(model, { running: [], history: [], selection: -1, notice: null, unreadable: 0 });
+  // Sans racine de dépôt, il n'y a pas de lot : `lot: null` est le rendu d'avant
+  // les lots, et `mode: browse` l'absence de saisie en cours (S-7).
+  assert.deepEqual(model, {
+    running: [],
+    history: [],
+    lot: null,
+    mode: { kind: "browse" },
+    selection: -1,
+    notice: null,
+    unreadable: 0,
+  });
   assert.equal(renderModel(model, 1_000).split("\n").length, 6, "le panneau s'affiche quand même");
 });
 
