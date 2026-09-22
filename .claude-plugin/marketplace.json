@@ -27,8 +27,8 @@
     {
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
-      "description": "Pipeline one-shot piloté par le critère d'acceptation. /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige les specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>). Le lot de features enchaîne les pipelines tout seul — un processus par maillon, en parallèle, jusqu'aux jalons (question de l'agent, validation des specs, accord de fin de revue), puis pousse la branche et ouvre la PR : le panneau /pipelines (ou alt+w) est sa salle de contrôle et liste en plus les pipelines de tous les processus OMP de la machine.",
-      "version": "0.10.0",
+      "description": "Pipeline one-shot piloté par le critère d'acceptation. /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige les specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>). Le lot de features enchaîne les pipelines tout seul — un processus par maillon, en parallèle, jusqu'aux jalons (question de l'agent, validation des specs, accord de fin de revue), puis pousse la branche et ouvre la PR : le panneau /pipelines (ou alt+w) est sa salle de contrôle : il liste en plus les pipelines de tous les processus OMP de la machine, montre la conversation de chacune en direct, et permet de répondre à ses questions depuis sa vue (options sélectionnables ou texte libre) — un message adressé à une pipeline qui travaille part en file jusqu'à son prochain maillon.",
+      "version": "0.11.0",
       "author": {
         "name": "MillianLMX"
       },

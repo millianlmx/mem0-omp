@@ -305,11 +305,39 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
   jamais deviné par celui qui lit.
 - **Entrée** ouvre la **vue de session** de la ligne, dans le panneau : la transcription
   du fichier de session, du plus ancien au plus récent, relue à chaque rafraîchissement —
-  un maillon qui travaille se voit avancer. C'est une vue en **lecture seule** : elle
-  n'écrit rien, ne bascule rien, n'annule rien, et `Échap` ramène à la liste telle qu'on
-  l'a laissée. L'en-tête rappelle le rang, son maillon, son état, le nom du fichier — et
-  `run en cours — lecture seule` quand un run est en train d'écrire cette session.
-  `↑`/`k`, `↓`/`j` et la molette remontent et redescendent la transcription.
+  un maillon qui travaille se voit avancer. Chaque entrée est rendue **entière** : un
+  message de plusieurs lignes occupe plusieurs lignes de terminal, et les lignes trop
+  longues se replient au lieu de déborder. L'en-tête rappelle le rang, son maillon, son
+  état, le nom du fichier — et `run en cours — lecture seule` quand un run est en train
+  d'écrire cette session. `↑`/`k`, `↓`/`j`, `PageUp`/`PageDown` et la molette remontent
+  et redescendent la transcription.
+- **La vue répond** — c'est le seul endroit d'où une écriture part vers le lot, et elle
+  n'en part qu'après confirmation. Sa **zone de saisie** a quatre états, et elle dit
+  toujours lequel :
+  - la pipeline **attend une réponse et sa question propose des choix** : les options
+    sont rendues `(1) …`, `(2) …` — `↑`/`↓`, `1`…`9` ou un clic choisissent, `Entrée`
+    ouvre l'aperçu `Envoyer à <feature> · /<maillon> : « <libellé> »`, un second `Entrée`
+    livre le libellé. La ligne `autre — saisir ma réponse` bascule sur l'éditeur libre,
+    tampon vide ;
+  - la pipeline **attend une réponse sans choix** (ou vous avez choisi « autre ») :
+    `Réponse : <tampon>▏`. Les caractères imprimables s'ajoutent, `⌫` efface, `Entrée`
+    ouvre le même aperçu — **jamais** un envoi direct —, `Échap` y revient au tampon
+    intact. Un tampon vide est refusé (`réponse vide`), l'éditeur reste ouvert ;
+  - la pipeline **travaille** : le même éditeur, mais l'aperçu dit
+    `Mettre en file pour <feature> · … le message part au prochain maillon`. Le run en
+    cours n'est ni interrompu ni avorté — aucune API de l'hôte n'atteint un processus
+    enfant —, le message attend dans la **file** de la feature et part avec le prochain
+    run que le pilote démarre pour elle. La liste l'annonce (`· 1 message en attente`),
+    et la file est bornée (9 messages, 12 000 caractères) ;
+  - la pipeline **ne tourne pas** (terminée, échouée, annulée, bloquée, à venir, ou
+    arrêtée sur un jalon de specs/revue) : `lecture seule — <raison>`, avec la raison
+    écrite en toutes lettres. Aucun champ de saisie n'est offert — un champ absent est
+    plus honnête qu'un champ qui refuse.
+  Une question à choix se répond donc **sans quitter le panneau**, jusqu'à la clôture
+  d'une collecte `/req` : la chaîne enchaîne ensuite toute seule sur le maillon suivant.
+  Les options viennent du **texte** de la question (forme `- (1) <libellé>`, une par
+  ligne) : c'est la convention que le lot impose à ses runs, faute de pouvoir poser un
+  `ask` en headless.
 - **`o`** rejoint vraiment la session correspondante (la bascule OMP, avec son
   transcript) — y compris inter-processus, inter-dépôts et depuis un worktree voisin : la
   session courante est d'abord amenée sur le répertoire de travail enregistré par la
@@ -332,11 +360,10 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
   focalisé : tant qu'il est ouvert, aucune touche n'atteint l'éditeur, et `Échap` est le
   seul moyen de le fermer depuis la liste (depuis la vue de session, il ramène à la
   liste). Le **texte de l'éditeur est restauré** à la fermeture.
-- **À la souris** : le clic gauche prend la ligne visée (jamais plus : un clic n'entre
-  pas dans une session et ne déclenche aucune action de lot) et la molette déplace la
-  sélection d'un cran — ou le défilement, dans la vue de session. Conséquence assumée du
-  plein écran : tant que le panneau est ouvert, la sélection de texte native du terminal
-  est capturée par le panneau.
+- **À la souris** : le clic gauche prend la ligne visée — et, dans la vue, l'option
+  visée — et la molette déplace la sélection d'un cran (ou le défilement, dans la vue de
+  session). Conséquence assumée du plein écran : tant que le panneau est ouvert, la
+  sélection de texte native du terminal est capturée par le panneau.
 - **La sélection est mémorisée par dépôt** : fermer le panneau puis le rouvrir (`alt+w`)
   rend la même ligne — et la vue de session s'ouvre par `Entrée`, se referme par `Échap`,
   sans qu'aucune commande soit à retaper.
@@ -377,9 +404,18 @@ entièrement depuis le panneau.
 ```
 
 La **seconde ligne de pied** est contextuelle : elle n'annonce que les touches qui
-s'appliquent à la ligne sélectionnée (`i répondre`, `v valider`, `y accepter`,
-`R relancer`, `x retirer`, `c annuler` — `aucune action` si aucune ne s'applique).
-`d supprimer` n'apparaît que sur une entrée d'historique, le seul rang qu'il supprime.
+s'appliquent à la ligne sélectionnée (`Entrée répondre`, `Entrée écrire`, `v valider`,
+`y accepter`, `R relancer`, `x retirer`, `c annuler` — `aucune action` si aucune ne
+s'applique). `d supprimer` n'apparaît que sur une entrée d'historique, le seul rang qu'il
+supprime.
+
+**Tout geste qui change l'état du lot s'annonce avant d'agir** : `l` (lancer), `x`
+(retirer), `R` (relancer), `v` (valider les specs), `y` (accepter la revue), `c`
+(annuler, après le choix `1 gardé · 2 archivé · 3 supprimé`) et le dernier champ d'un
+`a` (ajouter) affichent d'abord un **aperçu** — le destinataire, la transition d'état, la
+conséquence — puis attendent `Entrée` pour agir. `Échap` revient en arrière sans aucun
+effet, tampon compris. Rien n'est écrit avant la confirmation, et un refus du pilote
+s'affiche tel quel au lieu d'être avalé.
 
 - **Ajouter** (`a`) : trois champs — nom, **Description** (elle amorce la collecte),
   dépendances (slugs séparés par des virgules, vide admis). Le worktree de la feature est

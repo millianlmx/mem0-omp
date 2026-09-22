@@ -1088,6 +1088,14 @@ export type LotFeature = {
   /** Texte à montrer quand la feature attend une réponse (fin du tour du run). */
   waitPrompt: string | null;
   sessionFile: string | null;
+  /**
+   * Les messages de l'utilisateur MIS EN FILE (S-5) : un run est en vol, aucun
+   * canal de l'hôte ne l'atteint (`## Documentation` §1), donc le texte part au
+   * prochain run que le pilote démarre pour cette feature — quel qu'il soit.
+   * Ordonné (FIFO), borné en nombre et en caractères, vidé par `cancel`, conservé
+   * par une relance.
+   */
+  pendingTexts: string[];
   prUrl: string | null;
   stopReason: string | null;
   /** Tours de correction `impl --fix` consommés (plafond, S-5). */
@@ -1164,6 +1172,83 @@ export function lotWaitLabel(waitKind: LotWaitKind | null): string | null {
   return null;
 }
 
+/** Au plus neuf options sélectionnables (S-3) : au-delà, la question reste lisible. */
+export const MAX_REPLY_OPTIONS = 9;
+
+/**
+ * La forme EXACTE d'une option de question (S-3) : `- (1) <libellé>`. Le `\s*`
+ * après la puce facultative est ce qui fait tenir la forme que la directive
+ * impose aux runs (« `- (1) <libellé du choix>` ») : sans lui, la regex de la
+ * spec ne reconnaissait ni `- (1) …` ni `* (2) …`, ses deux exemples.
+ */
+const REPLY_OPTION = /^[-*]?\s*\((\d{1,2})\)\s+(\S.*)$/;
+
+/** Le libellé d'une ligne d'option, ou `null` si la ligne n'en est pas une. */
+function replyOptionLabel(line: string): string | null {
+  const match = REPLY_OPTION.exec(line.trim());
+  if (!match) return null;
+  const label = (match[2] as string).trim();
+  return label === "" ? null : label;
+}
+
+/**
+ * Les libellés d'options d'une question en attente, dans l'ordre, au plus
+ * MAX_REPLY_OPTIONS. Pure : la question est le `waitPrompt` du lot, déjà lu.
+ *
+ * Seule la DERNIÈRE séquence contiguë de lignes d'options compte : les options
+ * d'une question ancienne, séparées par du texte, ne sont pas offertes — le
+ * panneau n'offre que ce à quoi la feature attend une réponse maintenant.
+ */
+export function parseReplyOptions(text: string | null): string[] {
+  if (text === null || text === "") return [];
+  const lines = text.split("\n");
+  let last = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (replyOptionLabel(lines[i] as string) !== null) {
+      last = i;
+      break;
+    }
+  }
+  if (last === -1) return [];
+  let first = last;
+  while (first > 0 && replyOptionLabel(lines[first - 1] as string) !== null) first -= 1;
+  const options: string[] = [];
+  for (let i = first; i <= last && options.length < MAX_REPLY_OPTIONS; i += 1) {
+    const label = replyOptionLabel(lines[i] as string);
+    if (label !== null) options.push(label);
+  }
+  return options;
+}
+
+/** Ce qu'un rang accepte comme écriture (S-11) : la règle unique, appliquée deux fois. */
+export type RowReply =
+  | { kind: "reply"; phase: PipelinePhase; question: string | null; options: string[] }
+  | { kind: "queue"; phase: PipelinePhase }
+  | { kind: "closed"; reason: string };
+
+/**
+ * Ce qu'une feature du lot accepte, dans cet ordre (S-11) : la collecte d'une
+ * feature ouverte par /req se répond DANS la session ; une feature qui attend une
+ * réponse la reçoit ; une feature qui tourne met le texte en file ; tout autre
+ * état est fermé. Pure — le panneau s'en sert pour poser sa zone de saisie, et
+ * `answer` applique exactement la même règle pour exécuter.
+ */
+export function rowReply(feature: LotFeature): RowReply {
+  if (feature.origin === "session" && feature.phase === "req") {
+    return { kind: "closed", reason: "la collecte se déroule dans ta session — réponds-y directement" };
+  }
+  if (feature.state === "waiting" && feature.waitKind === "answer") {
+    return {
+      kind: "reply",
+      phase: feature.phase,
+      question: feature.waitPrompt,
+      options: parseReplyOptions(feature.waitPrompt),
+    };
+  }
+  if (feature.state === "running") return { kind: "queue", phase: feature.phase };
+  return { kind: "closed", reason: `rien à répondre : la feature est ${lotStateLabel(feature.state)}` };
+}
+
 /** `<stateDir>/lots` : un fichier par dépôt. */
 export function lotStateDir(stateDir: string): string {
   return path.join(stateDir, "lots");
@@ -1208,6 +1293,16 @@ function asLotFeature(raw: unknown): LotFeature | null {
         : undefined;
   if (waitKind === undefined) return null;
   const deps = Array.isArray(f.deps) ? f.deps.filter((d): d is string => typeof d === "string") : [];
+  // La file (S-5) suit la convention déjà en place pour `deps` : un champ absent
+  // ou qui n'est pas un tableau vaut `[]`, donc un lot écrit avant cette feature se
+  // lit sans aucune modification. Les textes vides tombent, l'ordre est conservé,
+  // et chaque texte est rogné à la borne de l'éditeur.
+  const pendingTexts = Array.isArray(f.pendingTexts)
+    ? f.pendingTexts
+        .filter((t): t is string => typeof t === "string" && t.trim() !== "")
+        .slice(0, LOT_PENDING_MAX)
+        .map((t) => t.slice(0, LOT_EDITOR_MAX))
+    : [];
   const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
   return {
     slug: f.slug,
@@ -1222,6 +1317,7 @@ function asLotFeature(raw: unknown): LotFeature | null {
     waitKind,
     waitPrompt: asStringOrNull(f.waitPrompt),
     sessionFile: asStringOrNull(f.sessionFile),
+    pendingTexts,
     prUrl: asStringOrNull(f.prUrl),
     stopReason: asStringOrNull(f.stopReason),
     fixes: Math.max(0, Math.trunc(num(f.fixes, 0))),
@@ -1390,6 +1486,12 @@ export const LOT_ALERT_PROMPT_MAX = 400;
 export const LOT_REASON_MAX = 200;
 /** Budget de l'éditeur en ligne du panneau (S-7). */
 export const LOT_EDITOR_MAX = 4000;
+/** Messages en file par feature (S-5) : au-delà, la mise en file est refusée. */
+export const LOT_PENDING_MAX = 9;
+/** Caractères en file par feature (S-5) : la somme des textes en attente. */
+export const LOT_PENDING_TOTAL_MAX = 12_000;
+/** Refus de mise en file, mot pour mot (S-5) : il s'affiche tel quel au panneau. */
+export const LOT_PENDING_FULL = "file pleine — attends la transmission des messages en attente";
 
 /** Entier d'environnement borné, ou le défaut (une variable absente ou vide). */
 function envInt(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -1608,7 +1710,7 @@ export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
  * la décide (`nextChainAction`).
  */
 export const LOT_WORKER_DIRECTIVE = `Mode lot : tu tournes dans un pipeline, sans interface.
-- L'outil \`ask\` n'est pas disponible. Termine ton tour par tes questions bloquantes EN TEXTE, numérotées et actionnables : elles s'affichent dans le panneau du lot et l'utilisateur y répond ; sa réponse te reviendra au tour suivant.
+- L'outil \`ask\` n'est pas disponible. Termine ton tour par tes questions bloquantes EN TEXTE, numérotées et actionnables : elles s'affichent dans le panneau du lot et l'utilisateur y répond ; sa réponse te reviendra au tour suivant. Quand une question propose des choix, écris-les une par ligne sous la forme \`- (1) <libellé du choix>\` : c'est cette forme, et elle seule, que le panneau rend sélectionnable.
 - N'annonce aucune commande et n'enchaîne aucun maillon de toi-même : la chaîne est pilotée par le lot.
 - Le contrat de cette feature vit dans .omp/pipeline/contract.md, relatif à ton répertoire de travail.`;
 
@@ -1633,6 +1735,10 @@ function phaseSeed(input: { phase: PipelinePhase; slug: string; fix: boolean; fo
  * run n'est pas une entrée de l'utilisateur, et le détecteur de clôture
  * (`saysFin`) ne doit jamais s'y appliquer — seule une réponse tapée par
  * l'utilisateur clôt une collecte.
+ *
+ * `messages` (S-5) sont les textes mis en file depuis le panneau : ils s'ajoutent
+ * APRÈS le prompt, un bloc par message, dans l'ordre — et aucun préfixe existant
+ * ne bouge (`isPipelineNotice` et `saysFin` gardent leurs déclenchements).
  */
 export function buildLotPrompt(input: {
   kind: LotPromptKind;
@@ -1642,26 +1748,29 @@ export function buildLotPrompt(input: {
   text?: string;
   focus?: string;
   fix?: boolean;
+  messages?: string[];
 }): string {
   const seed = phaseSeed({ phase: input.phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
+  let prompt: string;
   if (input.kind === "collecte") {
     const intent = (input.description ?? "").trim();
-    return `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
-  }
-  if (input.kind === "answer") {
-    return (
+    prompt = `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
+  } else if (input.kind === "answer") {
+    prompt =
       `[réponse de l'utilisateur] ${(input.text ?? "").trim()}\n\n` +
       `Maillon courant : /${input.phase}. Lis le contrat .omp/pipeline/contract.md pour l'état de la feature.\n\n` +
-      LOT_WORKER_DIRECTIVE
-    );
-  }
-  if (input.kind === "relaunch") {
-    return (
+      LOT_WORKER_DIRECTIVE;
+  } else if (input.kind === "relaunch") {
+    prompt =
       "[reprise] Le maillon est relancé par l'utilisateur : reprends où tu t'es arrêté, " +
-      `sans élargir le périmètre.\n\n${seed}\n\n${LOT_WORKER_DIRECTIVE}`
-    );
+      `sans élargir le périmètre.\n\n${seed}\n\n${LOT_WORKER_DIRECTIVE}`;
+  } else {
+    prompt = `${seed}\n\n${LOT_WORKER_DIRECTIVE}`;
   }
-  return `${seed}\n\n${LOT_WORKER_DIRECTIVE}`;
+  const queued = (input.messages ?? []).map((message) => message.trim()).filter((message) => message !== "");
+  if (queued.length === 0) return prompt;
+  const blocks = queued.map((message) => `[message de l'utilisateur, envoyé depuis /pipelines]\n${message}`);
+  return `${prompt}\n\n${blocks.join("\n\n")}`;
 }
 
 /**
@@ -1967,7 +2076,10 @@ export type LotPanelActions = {
   add(input: AddFeatureInput): Promise<string | null>;
   launch(): Promise<string | null>;
   remove(slug: string): Promise<string | null>;
+  /** Livre la réponse (feature `waiting`+`answer`) ou met le texte en file (`running`). */
   answer(slug: string, text: string): Promise<string | null>;
+  /** Ce que cette feature accepte comme écriture — la MÊME règle que `answer` applique. */
+  reply(slug: string): RowReply;
   validate(slug: string): Promise<string | null>;
   accept(slug: string): Promise<string | null>;
   relaunch(slug: string): Promise<string | null>;
@@ -2200,6 +2312,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
   }
 
   function startRun(lot: Lot, feature: LotFeature, launch: PlannedLaunch): void {
+    // La file (S-5) est consommée PAR le run qui part : les textes sont capturés
+    // avant d'être vidés, et le vidage part dans l'écriture même qui démarre le run.
+    // Une écriture refusée (propriétaire étranger vivant, disque) rend les textes à
+    // la file : aucun run ne part, donc aucun message n'est perdu.
+    const queued = feature.pendingTexts;
+    feature.pendingTexts = [];
     const prompt = buildLotPrompt({
       kind: launch.kind,
       phase: launch.phase,
@@ -2207,6 +2325,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       description: feature.name,
       text: launch.text,
       fix: launch.fix,
+      messages: queued,
     });
     const sessionFile = launch.resume ? feature.sessionFile : null;
     const argv = buildLotRunArgv({
@@ -2241,6 +2360,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (save(lot) !== null) {
       inFlight.delete(feature.slug);
       watched.delete(feature.slug);
+      // Le lot n'a pas été écrit : le vidage de la file non plus. Les textes
+      // retournent dans la feature, comme ils sont restés sur le disque (S-5).
+      feature.pendingTexts = queued;
       return;
     }
     const startedAt = now();
@@ -2812,6 +2934,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         waitKind: null,
         waitPrompt: null,
         sessionFile: deps.session?.().file ?? null,
+        pendingTexts: [],
         prUrl: null,
         stopReason: null,
         fixes: 0,
@@ -2863,6 +2986,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         waitKind: null,
         waitPrompt: null,
         sessionFile: null,
+        pendingTexts: [],
         prUrl: null,
         stopReason: null,
         fixes: 0,
@@ -2917,17 +3041,31 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return save(lot);
     },
 
+    /**
+     * Livre une réponse (feature `waiting`+`answer`) ou met le texte en FILE
+     * (feature `running`) — la MÊME règle que `rowReply`, appliquée ici pour
+     * exécuter (S-5, S-11). Un tampon vide se refuse AVANT la règle. Aucun `await`
+     * entre la lecture et l'écriture : un seul écrivain.
+     */
     async answer(slug, text) {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
       if (!feature) return `« ${slug} » n'est pas dans le lot`;
-      if (feature.origin === "session" && feature.phase === "req") {
-        return "la collecte se déroule dans ta session — réponds-y directement";
-      }
-      if (feature.state !== "waiting" || feature.waitKind !== "answer") return "rien à répondre sur cette ligne";
       const trimmed = text.trim();
       if (trimmed === "") return "réponse vide";
+      const reply = rowReply(feature);
+      if (reply.kind === "closed") return reply.reason;
+      if (reply.kind === "queue") {
+        const queued = feature.pendingTexts;
+        const total = queued.reduce((count, message) => count + message.length, 0);
+        if (queued.length >= LOT_PENDING_MAX || total + trimmed.length > LOT_PENDING_TOTAL_MAX) {
+          return LOT_PENDING_FULL;
+        }
+        feature.pendingTexts = [...queued, trimmed.slice(0, LOT_EDITOR_MAX)];
+        feature.updatedAt = now();
+        return save(lot);
+      }
       return startPlanned(lot, feature, {
         slug,
         phase: feature.phase,
@@ -2936,6 +3074,19 @@ export function createLotController(deps: LotControllerDeps): LotController {
         text: trimmed,
         resume: true,
       });
+    },
+
+    /**
+     * Ce que cette feature accepte comme écriture (S-11), pour la zone de saisie
+     * de la vue. Lecture seule : aucun propriétaire n'est revendiqué, et un slug
+     * absent rend le motif que `answer` aurait rendu.
+     */
+    reply(slug) {
+      const lot = read();
+      if (!lot) return { kind: "closed", reason: "aucun lot pour ce dépôt" };
+      const feature = lotFeature(lot, slug);
+      if (!feature) return { kind: "closed", reason: `« ${slug} » n'est pas dans le lot` };
+      return rowReply(feature);
     },
 
     async validate(slug) {
@@ -3074,6 +3225,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
         target.waitKind = null;
         target.waitPrompt = null;
         target.stopReason = null;
+        // Une feature terminale n'a plus de destinataire : la file tombe avec elle
+        // (S-5). Une RELANCE, elle, la conserve — la reprise emporte le message.
+        target.pendingTexts = [];
         target.endedAt = touch(target, now());
         emit(lot, target, before);
         notify(`[pipeline] ${slug} annulé — ${message}`);
@@ -3126,6 +3280,12 @@ export type PanelRow = {
    * correspondance rang → ligne n'est jamais devinée à l'écran.
    */
   target?: number;
+  /**
+   * L'index de l'OPTION que ce rang représente dans la zone de saisie de la vue
+   * (S-3) : c'est lui qui rend une option cliquable — la correspondance rang →
+   * option n'est jamais devinée à l'écran, comme pour `target`.
+   */
+  choice?: number;
 };
 
 /** Glyphes injectés : `theme.boxRound` + `theme.nav.cursor` en production. */
@@ -3172,7 +3332,7 @@ export type PanelModel = {
   unreadable: number;
 };
 
-/** Les modes du panneau : consulter, ajouter, répondre, choisir le sort d'un worktree. */
+/** Les modes du panneau : consulter, ajouter, choisir le sort d'un worktree, confirmer. */
 export type LotPanelMode =
   | { kind: "browse" }
   | {
@@ -3181,8 +3341,128 @@ export type LotPanelMode =
       draft: { name: string; description: string; deps: string };
       buffer: string;
     }
-  | { kind: "answer"; slug: string; buffer: string }
-  | { kind: "cancel"; slug: string };
+  | { kind: "cancel"; slug: string }
+  | {
+      /**
+       * L'APERÇU (S-8) : le seul endroit d'où part une action. `back` est l'état
+       * antérieur — `Échap` y revient, tampon compris (le champ d'un ajout, le
+       * choix du devenir d'un worktree).
+       */
+      kind: "confirm";
+      gesture: PanelGesture;
+      back: LotPanelMode;
+    };
+
+/**
+ * Un geste qui change l'état du lot (S-8). Sa forme est une donnée pure : l'aperçu
+ * est calculé sans monter le panneau, et c'est la MÊME description qui décide de
+ * ce qui s'affiche et de ce qui part.
+ */
+export type PanelGesture =
+  | { kind: "launch" }
+  | { kind: "remove"; slug: string }
+  | { kind: "relaunch"; slug: string; phase: PipelinePhase }
+  | { kind: "validate"; slug: string }
+  | { kind: "accept"; slug: string }
+  | { kind: "cancel"; slug: string; fate: WorktreeFate }
+  | { kind: "add"; input: AddFeatureInput };
+
+/** Le libellé du devenir d'un worktree, tel qu'il s'annonce dans l'aperçu. */
+function fateLabel(fate: WorktreeFate): string {
+  return fate === "keep" ? "gardé" : fate === "archive" ? "archivé" : "supprimé";
+}
+
+/** L'état d'une feature dans les mots du panneau (S-7) : jamais un état inventé. */
+function featureStateLabel(lot: Lot | null, feature: LotFeature): string {
+  if (feature.state === "pending" && lot && !runnable(lot, feature)) {
+    return `en attente de ${pendingDeps(lot, feature).join(",")}`;
+  }
+  return lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state);
+}
+
+/** Le libellé de la feature d'un geste : son slug suffit à nommer la cible. */
+function gestureFeature(lot: Lot | null, slug: string): LotFeature | undefined {
+  return lot?.features.find((feature) => feature.slug === slug);
+}
+
+/**
+ * L'aperçu d'un geste de la liste (S-8) : le rang de tête (ce qui va se passer) et
+ * son aide (les touches). Pur : il ne lit rien et n'écrit rien — c'est ce que le
+ * panneau rend AVANT d'agir, et rien n'a encore changé quand il s'affiche.
+ */
+export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: string; hint: string } {
+  const feature = "slug" in gesture ? gestureFeature(lot, gesture.slug) : undefined;
+  const state = feature ? featureStateLabel(lot, feature) : "état inconnu";
+  switch (gesture.kind) {
+    case "launch": {
+      const starting = (lot?.features ?? []).filter((f) => f.state === "pending" && (!lot || runnable(lot, f))).length;
+      return {
+        head: `Lancer le lot ? · ${starting} feature(s) à venir démarrent`,
+        hint: "Entrée lancer · Échap annuler",
+      };
+    }
+    case "remove":
+      return {
+        head: `Retirer ${gesture.slug} du lot ? · la feature quitte le lot, aucun run n'est lancé`,
+        hint: "Entrée retirer · Échap annuler",
+      };
+    case "relaunch":
+      return {
+        head: `Relancer ${gesture.slug} ? · un nouveau run /${gesture.phase} démarre · ${state} → en cours`,
+        hint: "Entrée relancer · Échap annuler",
+      };
+    case "validate":
+      return {
+        head: `Valider les specs de ${gesture.slug} ? · le maillon /impl démarre · ${state} → en cours`,
+        hint: "Entrée valider · Échap annuler",
+      };
+    case "accept":
+      return {
+        head: `Accepter la revue de ${gesture.slug} ? · le maillon /release démarre : commit, push et PR · ${state} → en cours`,
+        hint: "Entrée accepter · Échap annuler",
+      };
+    case "cancel":
+      return {
+        head: `Annuler ${gesture.slug} ? · ${state} → annulé · worktree ${fateLabel(gesture.fate)} · la branche reste`,
+        hint: "Entrée annuler · Échap retour",
+      };
+    case "add": {
+      const slug = toSlug(gesture.input.name) ?? gesture.input.name.trim();
+      const description = gesture.input.description.trim();
+      const deps = `${gesture.input.deps.length} dépendance(s)`;
+      return {
+        head: [`Créer ${slug} ?`, description, deps].filter((part) => part !== "").join(" · "),
+        hint: "Entrée créer · Échap annuler",
+      };
+    }
+  }
+}
+
+/**
+ * L'aperçu d'une livraison depuis la VUE (S-8) : la réponse à une question, ou la
+ * mise en file quand un run est en vol. Même contrat que `gesturePreview` — c'est
+ * la seule porte d'où part une écriture vers le lot.
+ */
+export function replyPreview(input: {
+  slug: string;
+  phase: PipelinePhase;
+  text: string;
+  queue: boolean;
+}): { head: string; hint: string } {
+  const body = `« ${input.text} »`;
+  if (input.queue) {
+    return {
+      head:
+        `Mettre en file pour ${input.slug} · /${input.phase} : ${body} — le run en cours continue, ` +
+        "le message part au prochain maillon",
+      hint: "Entrée mettre en file · Échap modifier",
+    };
+  }
+  return {
+    head: `Envoyer à ${input.slug} · /${input.phase} : ${body}`,
+    hint: "Entrée envoyer · Échap modifier",
+  };
+}
 
 export const PANEL_REFRESH_MS = 1000;
 export const PANEL_MIN_ROWS = 8;
@@ -3436,17 +3716,29 @@ function noSessionNotice(row: PanelRowRef): string {
  */
 function sectionRule(glyphs: PanelGlyphs, title: string, width: number): string {
   const head = `${glyphs.teeLeft}─ ${clip(title, Math.max(0, width - 6))} `;
-  return fit(head + glyphs.horizontal.repeat(Math.max(0, width - head.length - 1)) + glyphs.teeRight, width);
+  return fit(head + glyphs.horizontal.repeat(Math.max(0, width - displayWidth(head) - 1)) + glyphs.teeRight, width);
 }
 
-/** `<slug> ← deps` : la ligne d'une feature dit de quoi elle dépend. */
+/** Les dépendances d'une feature qui ne sont pas TERMINÉES, dans l'ordre déclaré. */
+function pendingDeps(lot: Lot, feature: LotFeature): string[] {
+  return feature.deps.filter((dep) => lotFeature(lot, dep)?.state !== "done");
+}
+
+/**
+ * `<slug> ← deps` : la ligne d'une feature dit de quoi elle dépend — et, quand des
+ * messages attendent leur prochain run, combien (S-5/S-7) : la file se voit dans
+ * la LISTE, sans ouvrir la vue.
+ */
 function lotFeatureLabel(feature: LotFeature): string {
-  return feature.deps.length > 0 ? `${feature.slug} ← ${feature.deps.join(",")}` : feature.slug;
+  const base = feature.deps.length > 0 ? `${feature.slug} ← ${feature.deps.join(",")}` : feature.slug;
+  const queued = feature.pendingTexts.length;
+  if (queued === 0) return base;
+  return `${base} · ${queued} message${queued > 1 ? "s" : ""} en attente`;
 }
 
 /** La colonne de droite : maillon, état (le jalon nommé quand il y en a un), temps. */
-function lotFeatureRight(feature: LotFeature, now: number): string {
-  const state = lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state);
+function lotFeatureRight(lot: Lot, feature: LotFeature, now: number): string {
+  const state = featureStateLabel(lot, feature);
   return `/${feature.phase} · ${state} · ${elapsedLabel((feature.endedAt ?? now) - feature.sinceAt)}`;
 }
 
@@ -3479,29 +3771,31 @@ function lotSectionTitle(lot: Lot): string {
 }
 
 /**
- * Les rangs d'un mode de saisie : le champ courant (tampon + curseur) et son
- * aide, ou la question du devenir du worktree. `browse` n'ajoute rien.
+ * Les rangs d'un mode du panneau : l'aperçu d'un geste (S-8), ou le champ courant
+ * du mode de saisie (tampon + curseur) et son aide. `browse` n'ajoute rien. Chaque
+ * rang se replie (S-9) — un aperçu plus long que le cadre reste lisible EN ENTIER.
  */
-function lotModeRows(mode: LotPanelMode, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
+function lotModeRows(mode: LotPanelMode, lot: Lot | null, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
   if (mode.kind === "browse") return [];
+  if (mode.kind === "confirm") {
+    const preview = gesturePreview(mode.gesture, lot);
+    return [
+      ...framedRows(preview.head, "warning", glyphs, width, innerW),
+      ...framedRows(preview.hint, "dim", glyphs, width, innerW),
+    ];
+  }
   if (mode.kind === "cancel") {
     // Deux rangs : le panneau fait 64 colonnes et les trois devenirs ne tiennent
     // pas sur un seul rang avec leur conséquence.
     return [
-      {
-        text: frame(glyphs, `Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`, width, innerW),
-        tone: "warning",
-      },
-      {
-        text: frame(glyphs, "la branche reste · 2 copie les ignorés · Échap annuler", width, innerW),
-        tone: "dim",
-      },
-    ];
-  }
-  if (mode.kind === "answer") {
-    return [
-      { text: frame(glyphs, `Réponse à ${mode.slug} : ${mode.buffer}▏`, width, innerW), tone: "text" },
-      { text: frame(glyphs, "Entrée envoyer · Échap annuler", width, innerW), tone: "dim" },
+      ...framedRows(
+        `Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`,
+        "warning",
+        glyphs,
+        width,
+        innerW,
+      ),
+      ...framedRows("la branche reste · 2 copie les ignorés · Échap annuler", "dim", glyphs, width, innerW),
     ];
   }
   const field =
@@ -3512,8 +3806,8 @@ function lotModeRows(mode: LotPanelMode, glyphs: PanelGlyphs, width: number, inn
         : "Dépendances (slugs séparés par des virgules)";
   const next = mode.step === "deps" ? "créer la feature" : "champ suivant";
   return [
-    { text: frame(glyphs, `${field} : ${mode.buffer}▏`, width, innerW), tone: "text" },
-    { text: frame(glyphs, `Entrée ${next} · Échap annuler`, width, innerW), tone: "dim" },
+    ...framedRows(`${field} : ${mode.buffer}▏`, "text", glyphs, width, innerW),
+    ...framedRows(`Entrée ${next} · Échap annuler`, "dim", glyphs, width, innerW),
   ];
 }
 
@@ -3522,10 +3816,12 @@ export function lotFooterActions(features: LotFeature[], selection: number): str
   const feature = selection >= 0 && selection < features.length ? features[selection] : undefined;
   if (!feature) return "aucune action";
   // La collecte d'une feature de lot se répond DANS la session, jamais au panneau
-  // (`answer` refuse cet état) : l'annoncer serait une touche morte.
+  // (`rowReply` refuse cet état) : l'annoncer serait une touche morte — pour la
+  // réponse comme pour l'écriture, la zone de saisie de sa vue est fermée.
   const collecte = feature.origin === "session" && feature.phase === "req";
   const actions: string[] = [];
-  if (!collecte && feature.state === "waiting" && feature.waitKind === "answer") actions.push("i répondre");
+  if (!collecte && feature.state === "waiting" && feature.waitKind === "answer") actions.push("Entrée répondre");
+  if (!collecte && feature.state === "running") actions.push("Entrée écrire");
   if (feature.state === "waiting" && feature.waitKind === "specs") actions.push("v valider");
   if (feature.state === "waiting" && feature.waitKind === "review") actions.push("y accepter");
   if (feature.state === "blocked" || feature.state === "failed") actions.push("R relancer");
@@ -3560,24 +3856,267 @@ function panelFooterActions(model: PanelModel, runningCount: number): string {
   return base === "aucune action" ? "o rejoindre" : `${base} · o rejoindre`;
 }
 
+// --- largeur d'affichage et repli : les primitives du cadre (S-9) -----------
+//
+// Le cadre se cale en COLONNES VISIBLES, jamais en unités de code : un libellé
+// CJK, un emoji ou une marque combinante ne se mesurent pas en `.length`, et
+// l'hôte exige des lignes qui n'excèdent jamais `width` (`## Documentation` §2).
+// `visibleWidth`/`wrapTextWithAnsi` de l'hôte sont INACCESSIBLES (le dépôt interdit
+// tout import de VALEUR `@oh-my-pi/*`, et ces primitives sont natives côté Bun) :
+// elles sont donc réimplémentées ici, en JS pur — `Bun.stringWidth` quand il existe
+// (OMP tourne sous Bun), et la table locale UAX #11 sinon. C'est la table locale que
+// les tests exercent : `node --test` n'a pas de `Bun`.
+
+/** Bornes Large/Fullwidth de la table UAX #11 (`## Documentation` §3). */
+const WIDE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x1100, 0x115f],
+  [0x2e80, 0x303e],
+  [0x3041, 0x33ff],
+  [0x3400, 0x4dbf],
+  [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x1f300, 0x1faff],
+  [0x20000, 0x3fffd],
+];
+
+/** Marques combinantes, format, ZWJ, sélecteurs de variante : 0 colonne. */
+const ZERO_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0x0300, 0x036f],
+  [0x200b, 0x200f],
+  [0x2060, 0x2064],
+  [0x20d0, 0x20ff],
+  [0xfe00, 0xfe0f],
+  [0xfeff, 0xfeff],
+];
+
+function inRanges(cp: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  for (const [from, to] of ranges) {
+    if (cp >= from && cp <= to) return true;
+  }
+  return false;
+}
+
+/** Une séquence CSI (`ESC [ … m` et consorts) : 0 colonne. */
+const ANSI_AT = /^\u001b\[[0-9;?]*[A-Za-z]/;
+const ANSI_GLOBAL = /\u001b\[[0-9;?]*[A-Za-z]/g;
+/** Tabulations et contrôles : rendus comme un espace, donc mesurés comme lui. */
+const CONTROL_GLOBAL = /[\u0000-\u001f\u007f]/g;
+
+/** L'atome qui commence à `index` : une séquence ANSI (0) ou un point de code. */
+function scanAtom(text: string, index: number, out: { next: number; width: number }): void {
+  if (text.charCodeAt(index) === 0x1b) {
+    const ansi = ANSI_AT.exec(text.slice(index, index + 32));
+    if (ansi) {
+      out.next = index + ansi[0].length;
+      out.width = 0;
+      return;
+    }
+  }
+  const cp = text.codePointAt(index) as number;
+  out.next = index + (cp > 0xffff ? 2 : 1);
+  if (cp < 0x20 || cp === 0x7f) out.width = 1;
+  else if (inRanges(cp, WIDE_RANGES)) out.width = 2;
+  else if (inRanges(cp, ZERO_RANGES)) out.width = 0;
+  else out.width = 1;
+}
+
+/**
+ * Texte mesurable et rendable : séquences ANSI RETIRÉES (0 colonne, et rien
+ * d'un fichier externe n'atteint le terminal), puis contrôles → espaces.
+ */
+function sanitizeForWidth(text: string): string {
+  return text.replace(ANSI_GLOBAL, "").replace(CONTROL_GLOBAL, " ");
+}
+
+/** Table locale de largeur : le chemin de `node --test`, et le repli de Bun. */
+function localWidth(text: string): number {
+  const out = { next: 0, width: 0 };
+  let index = 0;
+  let width = 0;
+  while (index < text.length) {
+    scanAtom(text, index, out);
+    width += out.width;
+    index = out.next;
+  }
+  return width;
+}
+
+/** `Bun.stringWidth` s'il existe — lu une fois : OMP tourne sous Bun, pas les tests. */
+const BUN_STRING_WIDTH: ((text: string) => number) | null = (() => {
+  const bun = (globalThis as { Bun?: { stringWidth?: (text: string) => number } }).Bun;
+  return typeof bun?.stringWidth === "function" ? bun.stringWidth.bind(bun) : null;
+})();
+
+/**
+ * Largeur d'AFFICHAGE d'un texte, en colonnes de terminal (S-9) : ANSI = 0,
+ * combinantes = 0, Large/Fullwidth = 2, autres = 1, tabulations et contrôles = 1.
+ * Rapide sur l'ASCII pur (`text.length`), puis `Bun.stringWidth` (la mesure de
+ * l'hôte), puis la table locale — jamais d'exception.
+ */
+export function displayWidth(text: string): number {
+  if (text === "") return 0;
+  let plain = true;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+    if (code < 0x20 || code > 0x7e) {
+      plain = false;
+      break;
+    }
+  }
+  if (plain) return text.length;
+  const sanitized = sanitizeForWidth(text);
+  if (BUN_STRING_WIDTH) {
+    try {
+      const measured = BUN_STRING_WIDTH(sanitized);
+      if (Number.isFinite(measured) && measured >= 0) return measured;
+    } catch {
+      /* repli : la table locale reste le dernier mot */
+    }
+  }
+  return localWidth(sanitized);
+}
+
+/** Le plus long préfixe de `text` tenant dans `max` colonnes visibles. */
+function takeByWidth(text: string, max: number): string {
+  const out = { next: 0, width: 0 };
+  let index = 0;
+  let used = 0;
+  while (index < text.length) {
+    scanAtom(text, index, out);
+    if (used + out.width > max) break;
+    used += out.width;
+    index = out.next;
+  }
+  return text.slice(0, index);
+}
+
+/** Le plus long suffixe de `text` tenant dans `max` colonnes visibles. */
+function takeTailByWidth(text: string, max: number): string {
+  const starts: number[] = [];
+  const widths: number[] = [];
+  const out = { next: 0, width: 0 };
+  let index = 0;
+  while (index < text.length) {
+    starts.push(index);
+    scanAtom(text, index, out);
+    widths.push(out.width);
+    index = out.next;
+  }
+  let used = 0;
+  let at = starts.length;
+  while (at > 0 && used + (widths[at - 1] as number) <= max) {
+    used += widths[at - 1] as number;
+    at -= 1;
+  }
+  return text.slice(starts[at] ?? text.length);
+}
+
+/**
+ * Replie un texte : chaque ligne rendue a une largeur d'affichage ≤ `width`.
+ * Coupure aux espaces, jamais au milieu d'un mot qui tient sur une ligne ; un mot
+ * plus large que la place disponible est coupé dur ; les espaces de tête d'une
+ * ligne de continuation sont absorbés ; une ligne vide du texte source reste une
+ * ligne vide ; les séquences ANSI sont retirées (0 colonne — et rien d'un fichier
+ * externe n'atteint le terminal), tabulations et contrôles valent un espace.
+ * `width <= 0` ⇒ aucun rang.
+ *
+ * Seule exception à l'invariant : un point de code plus large que `width` (un CJK
+ * dans une colonne) est rendu seul — le perdre serait pire, et le `fit` du cadre
+ * rogne de toute façon le rang à la largeur reçue.
+ */
+export function wrapVisible(text: string, width: number): string[] {
+  const limit = Math.floor(width);
+  if (!Number.isFinite(limit) || limit <= 0) return [];
+  const rows: string[] = [];
+  for (const source of text.split("\n")) {
+    const line = sanitizeForWidth(source);
+    if (line === "") {
+      rows.push("");
+      continue;
+    }
+    let rest = line;
+    while (rest !== "") {
+      if (displayWidth(rest) <= limit) {
+        rows.push(rest);
+        break;
+      }
+      const cut = breakIndex(rest, limit);
+      const head = rest.slice(0, cut);
+      const trimmed = head.replace(/ +$/, "");
+      rows.push(trimmed === "" ? head : trimmed);
+      rest = rest.slice(cut).replace(/^ +/, "");
+    }
+  }
+  return rows;
+}
+
+/**
+ * L'index de coupe d'une ligne trop longue : à la dernière espace qui tient, sinon
+ * dur. Rend toujours > 0 (un caractère plus large que la ligne est rendu seul).
+ */
+function breakIndex(text: string, limit: number): number {
+  const out = { next: 0, width: 0 };
+  let index = 0;
+  let used = 0;
+  let lastSpace = -1;
+  while (index < text.length) {
+    scanAtom(text, index, out);
+    if (used + out.width > limit) break;
+    used += out.width;
+    index = out.next;
+    if (out.width === 1 && text.charCodeAt(index - 1) === 0x20) lastSpace = index;
+  }
+  if (index === 0) {
+    const cp = text.codePointAt(0) as number;
+    return cp > 0xffff ? 2 : 1;
+  }
+  return lastSpace > 0 ? lastSpace : index;
+}
+
+/** Le nombre de lignes qu'un rang de la LISTE peut occuper (S-9). */
+export const PANEL_WRAP_MAX_LINES = 3;
+
+/**
+ * Le repli d'un rang de liste : au plus `PANEL_WRAP_MAX_LINES` lignes, la dernière
+ * finissant par `…` quand il reste du texte — jamais une coupe silencieuse.
+ */
+export function cappedWrap(text: string, width: number, max = PANEL_WRAP_MAX_LINES): string[] {
+  const lines = wrapVisible(text, width);
+  if (lines.length <= max) return lines;
+  const kept = lines.slice(0, max);
+  kept[max - 1] = clip(lines.slice(max - 1).join(" "), width);
+  return kept;
+}
+
 function fit(text: string, width: number): string {
-  if (text.length === width) return text;
-  return text.length > width ? clip(text, width) : text + " ".repeat(width - text.length);
+  const target = Math.max(0, Math.floor(width));
+  const measured = displayWidth(text);
+  if (measured === target) return text;
+  return measured > target ? clip(text, target) : text + " ".repeat(target - measured);
 }
 
 function clip(s: string, n: number): string {
   if (n <= 0) return "";
-  return s.length > n ? (n > 1 ? `${s.slice(0, n - 1)}…` : s.slice(0, n)) : s;
+  if (displayWidth(s) <= n) return s;
+  if (n === 1) return takeByWidth(s, 1);
+  return `${takeByWidth(s, n - 1)}…`;
 }
 
 /**
- * Les `n` DERNIERS caractères (S-4) : dans la sortie d'un maillon, ce qui compte
+ * Les `n` DERNIÈRES colonnes (S-4) : dans la sortie d'un maillon, ce qui compte
  * est la fin — l'agent y pose ses questions et sa conclusion —, pas l'en-tête du
  * récapitulatif qui la précède.
  */
 function clipTail(s: string, n: number): string {
   if (n <= 0) return "";
-  return s.length > n ? (n > 1 ? `…${s.slice(-(n - 1))}` : s.slice(-n)) : s;
+  if (displayWidth(s) <= n) return s;
+  if (n === 1) return "…";
+  return `…${takeTailByWidth(s, n - 1)}`;
 }
 
 /**
@@ -3601,10 +4140,35 @@ function frame(glyphs: PanelGlyphs, content: string, width: number, innerW: numb
   return fit(`${glyphs.vertical} ${fit(clip(content, innerW), innerW)} ${glyphs.vertical}`, width);
 }
 
+/**
+ * Un contenu → les rangs du cadre (S-9) : replié sur plusieurs lignes s'il dépasse
+ * le cadre, chaque ligne encadrée et complétée à la largeur. Les rangs de
+ * continuation gardent le TON et les MARQUES du rang (`target` pour la sélection,
+ * `choice` pour une option de la vue) : un rang replié est indissociable, au clic
+ * comme à la sélection. Sans place dans le cadre (`innerW = 0`), le rang existe
+ * quand même — réduit au cadre, jamais absent.
+ */
+function framedRows(
+  content: string,
+  tone: PanelTone,
+  glyphs: PanelGlyphs,
+  width: number,
+  innerW: number,
+  marks?: { target?: number; choice?: number },
+): PanelRow[] {
+  const lines = innerW > 0 ? cappedWrap(content, innerW) : [""];
+  return lines.map((line) => {
+    const row: PanelRow = { text: frame(glyphs, line, width, innerW), tone };
+    if (marks?.target !== undefined) row.target = marks.target;
+    if (marks?.choice !== undefined) row.choice = marks.choice;
+    return row;
+  });
+}
+
 /** Rang de titre : le cadre s'ouvre après le texte, sans le traverser. */
 function topRule(glyphs: PanelGlyphs, title: string, width: number): string {
   const head = `${glyphs.topLeft} ${clip(title, Math.max(0, width - 4))} `;
-  const rest = Math.max(0, width - head.length - 1);
+  const rest = Math.max(0, width - displayWidth(head) - 1);
   return fit(head + glyphs.horizontal.repeat(rest) + glyphs.topRight, width);
 }
 
@@ -3619,18 +4183,41 @@ function separatorRule(glyphs: PanelGlyphs, width: number): string {
 /** Dernier rang : le pied porte le texte ET ferme le cadre. */
 function bottomRule(glyphs: PanelGlyphs, text: string, width: number): string {
   const head = `${glyphs.bottomLeft} ${clip(text, Math.max(0, width - 4))} `;
-  const rest = Math.max(0, width - head.length - 1);
+  const rest = Math.max(0, width - displayWidth(head) - 1);
   return fit(head + glyphs.horizontal.repeat(rest) + glyphs.bottomRight, width);
 }
 
-/** `<label>` à gauche, `<droite>` aligné à droite, curseur en tête si sélectionné. */
-function entryLine(label: string, right: string, selected: boolean, glyphs: PanelGlyphs, innerW: number): string {
+/**
+ * Les lignes de contenu d'un rang de pipeline (S-9) : `<label>` à gauche,
+ * `<droite>` aligné à droite, curseur en tête si sélectionné. La colonne de droite
+ * reste sur la PREMIÈRE ligne ; le libellé se replie SOUS elle, indenté de la
+ * largeur du curseur — et si elle ne laisse aucune place au libellé, elle occupe
+ * seule la première ligne. Au plus `PANEL_WRAP_MAX_LINES` lignes, la dernière
+ * finissant par `…` quand il reste du texte.
+ */
+function entryLines(label: string, right: string, selected: boolean, glyphs: PanelGlyphs, innerW: number): string[] {
   const prefix = selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
-  const room = Math.max(0, innerW - prefix.length);
-  if (right.length + 1 >= room) return clip(prefix + label, innerW); // pas la place pour la droite
-  const left = clip(label, room - right.length - 1);
-  const gap = " ".repeat(Math.max(1, room - left.length - right.length));
-  return prefix + left + gap + right;
+  const room = Math.max(1, innerW - prefix.length);
+  const indent = " ".repeat(Math.min(prefix.length, innerW));
+  const wrapped = wrapVisible(label, room);
+  const first = wrapped[0] ?? "";
+  const beside = right !== "" && displayWidth(right) + 1 + displayWidth(first) <= room;
+  let lines: string[];
+  if (right === "") {
+    lines = wrapped.map((line, index) => (index === 0 ? prefix + line : indent + line));
+  } else if (beside) {
+    const gap = " ".repeat(Math.max(1, room - displayWidth(first) - displayWidth(right)));
+    lines = [`${prefix}${first}${gap}${right}`, ...wrapped.slice(1).map((line) => indent + line)];
+  } else {
+    lines = [`${prefix}${right}`, ...wrapped.map((line) => indent + line)];
+  }
+  if (lines.length > PANEL_WRAP_MAX_LINES) {
+    const kept = lines.slice(0, PANEL_WRAP_MAX_LINES);
+    const last = PANEL_WRAP_MAX_LINES - 1;
+    kept[last] = clip(`${kept[last]}…`, innerW);
+    lines = kept;
+  }
+  return lines.map((line) => clip(line, innerW));
 }
 
 /** Le rang de notice, unique, compose l'illisible et le message d'action. */
@@ -3649,13 +4236,13 @@ function noticeText(model: PanelModel): string | null {
  * pied. Pur : le temps écoulé vient de `now`, jamais d'une horloge implicite, et
  * les glyphes du test sont de l'ASCII.
  *
- * Le panneau tient dans `budget` rangs — le pied compris, c'est lui que le TUI
- * couperait par le bas. Le budget paie d'abord le cadre (titre, séparateur, pied,
- * notice, rangs de saisie, titre de la section lot), puis un rang minimum par
- * section non vide — son entrée, ou son marqueur `… <n> de plus` quand elle est
- * tronquée : aucune section non vide ne disparaît en silence. Le surplus va par
- * priorité au lot (la salle de contrôle), puis aux pipelines en cours (vivants),
- * puis à l'historique, la plus récente d'abord.
+ * Le panneau tient dans `budget` LIGNES — le pied compris, c'est lui que le TUI
+ * couperait par le bas. Le budget compte des lignes de terminal, donc des rangs
+ * REPLIÉS (S-9) : le minimum d'une section non vide reste une entrée complète (au
+ * plus `PANEL_WRAP_MAX_LINES` lignes), jamais un demi-rang, et une section
+ * tronquée le dit par son marqueur `… <n> de plus`. Le surplus va par priorité au
+ * lot (la salle de contrôle), puis aux pipelines en cours (vivants), puis à
+ * l'historique, la plus récente d'abord.
  */
 export function buildPanelRows(
   model: PanelModel,
@@ -3668,7 +4255,7 @@ export function buildPanelRows(
   const lot = model.lot ?? null;
   const mode = model.mode ?? { kind: "browse" };
   const notice = noticeText(model);
-  const modeRows = lotModeRows(mode, glyphs, width, innerW);
+  const modeRows = lotModeRows(mode, lot, glyphs, width, innerW);
   const runningCount = model.running.length;
 
   // Le titre annonce les PROCESS vivants : les entrées appariées sont absorbées
@@ -3678,56 +4265,95 @@ export function buildPanelRows(
     tone: "accent",
   });
 
-  // Les rangs du lot, dans l'ordre d'ajout : la salle de contrôle vient en tête.
-  const lotBody: PanelRow[] = [];
+  const features = lot?.features.length ?? 0;
+  const historyCount = model.history.length;
+
+  // Les ENTRÉES du lot, dans l'ordre d'ajout : la salle de contrôle vient en tête.
+  // Une entrée = une ligne logique ET ses rangs de repli (S-9) : le budget et la
+  // troncature comptent des lignes, mais ne coupent jamais une entrée en deux.
+  const lotEntries: PanelRow[][] = [];
   let lotOffset = 0;
   if (lot) {
     if (lot.features.length === 0) {
-      lotBody.push({ text: frame(glyphs, "aucune feature — a ajouter", width, innerW), tone: "muted" });
+      lotEntries.push(framedRows("aucune feature — a ajouter", "muted", glyphs, width, innerW));
     } else {
       if (lot.status === "draft") {
-        lotBody.push({ text: frame(glyphs, "lot non lancé — l lancer", width, innerW), tone: "muted" });
+        lotEntries.push(framedRows("lot non lancé — l lancer", "muted", glyphs, width, innerW));
       }
-      // Les rangs de tête (état vide, lot non lancé) précèdent les features : la
-      // fenêtre d'une section tronquée compte en rangs, la sélection en features.
-      lotOffset = lotBody.length;
+      // Les entrées de tête (état vide, lot non lancé) précèdent les features : la
+      // fenêtre d'une section tronquée compte en entrées, la sélection en features.
+      lotOffset = lotEntries.length;
       lot.features.forEach((feature, index) => {
         // Une feature appariée à son run prend son maillon, son état, son temps ET
         // son ton (S-1) : c'est le run qui travaille, c'est lui qui se lit.
         const live = model.live[feature.slug];
-        const content = entryLine(
-          lotFeatureLabel(feature),
-          live ? entryRight(live, opts.now) : lotFeatureRight(feature, opts.now),
-          model.selection === index,
-          glyphs,
-          innerW,
+        const right = live ? entryRight(live, opts.now) : lotFeatureRight(lot, feature, opts.now);
+        const tone: PanelTone = live
+          ? live.state === "waiting"
+            ? "warning"
+            : "success"
+          : lotStateTone(feature.state);
+        lotEntries.push(
+          entryLines(lotFeatureLabel(feature), right, model.selection === index, glyphs, innerW).map((line) => ({
+            text: frame(glyphs, line, width, innerW),
+            tone,
+            target: index,
+          })),
         );
-        lotBody.push({
-          text: frame(glyphs, content, width, innerW),
-          tone: live ? (live.state === "waiting" ? "warning" : "success") : lotStateTone(feature.state),
-          target: index,
-        });
       });
     }
   }
 
-  const features = lot?.features.length ?? 0;
-  const historyCount = model.history.length;
+  const runningEntries: PanelRow[][] = model.running.map((entry, index) =>
+    entryLines(entry.label, entryRight(entry, opts.now), model.selection === features + index, glyphs, innerW).map(
+      (line) => ({
+        text: frame(glyphs, line, width, innerW),
+        tone: entry.state === "waiting" ? ("warning" as const) : ("success" as const),
+        target: features + index,
+      }),
+    ),
+  );
+
+  const historyEntries: PanelRow[][] = model.history.map((entry, index) => {
+    const right = `/${entry.phase} · ${entry.finalState === "done" ? "terminé" : "échoué"}`;
+    const selected = model.selection === features + runningCount + index;
+    return entryLines(entry.label, right, selected, glyphs, innerW).map((line) => ({
+      text: frame(glyphs, line, width, innerW),
+      tone: entry.finalState === "done" ? ("dim" as const) : ("error" as const),
+      target: features + runningCount + index,
+    }));
+  });
+
   // Le budget paie d'abord ce qui est TOUJOURS rendu : titre, séparateur, pied
   // (deux rangs de touches avec un lot, plus « Échap fermer » — c'est lui que le
   // budget protège du rognage par le bas), notice, rangs de saisie et titre de la
-  // section lot.
+  // section lot. La notice et les rangs de saisie se replient : ils se paient en
+  // LIGNES, comme le reste.
+  const noticeRows = notice ? framedRows(notice, "warning", glyphs, width, innerW) : [];
   const footRows = lot ? 3 : 2;
-  const frameRows = 1 + footRows + 1 + (notice ? 1 : 0) + modeRows.length + (lot ? 1 : 0);
+  const frameRows = 1 + footRows + 1 + noticeRows.length + modeRows.length + (lot ? 1 : 0);
+
+  const rowsOf = (entries: PanelRow[][]): number => entries.reduce((count, entry) => count + entry.length, 0);
 
   /**
-   * Répartit une section dans `room` rangs : toutes ses entrées si elles tiennent,
-   * sinon autant d'entrées que possible en gardant le DERNIER rang pour le
-   * marqueur `… n de plus` — une section tronquée le dit toujours, elle ne
-   * disparaît jamais en silence (S-7). `room` à 0 ne rend rien.
+   * Répartit une section dans `room` LIGNES : toutes ses entrées si elles tiennent,
+   * sinon autant d'entrées complètes que possible en gardant la dernière ligne pour
+   * le marqueur `… n de plus` — une section tronquée le dit toujours, elle ne
+   * disparaît jamais en silence (S-7), et elle ne montre jamais un demi-rang.
    */
-  const take = (count: number, room: number): { shown: number; marker: boolean } =>
-    count <= room ? { shown: count, marker: false } : { shown: Math.max(0, room - 1), marker: room > 0 };
+  const take = (entries: PanelRow[][], room: number): { shown: number; marker: boolean } => {
+    if (entries.length === 0) return { shown: 0, marker: false };
+    if (room <= 0) return { shown: 0, marker: false };
+    if (rowsOf(entries) <= room) return { shown: entries.length, marker: false };
+    let used = 0;
+    let shown = 0;
+    for (const entry of entries) {
+      if (used + entry.length > room - 1) break;
+      used += entry.length;
+      shown += 1;
+    }
+    return { shown, marker: true };
+  };
 
   let left = Math.max(0, opts.budget - frameRows);
   const credit = (want: number): number => {
@@ -3736,19 +4362,27 @@ export function buildPanelRows(
     return paid;
   };
 
-  // 1. Le minimum de chaque section NON VIDE : un rang — son entrée, ou son
-  //    marqueur. Réservé avant de servir la première section, le budget servait
-  //    auparavant les entrées du lot jusqu'à laisser la section « en cours »
-  //    sans un rang ni un marqueur : un pipeline vivant disparaissait de l'écran
-  //    alors que le titre en annonçait le compte (BLOQUANT 4 de la revue n°3).
-  const minLot = credit(lotBody.length > 0 ? 1 : 0);
-  const minRunning = credit(runningCount > 0 ? 1 : 0);
-  const minHistory = credit(historyCount > 0 ? 1 : 0);
+  // 1. Le minimum de chaque section NON VIDE : une ENTRÉE complète (ses rangs de
+  //    repli compris), ou son marqueur. Réservé avant de servir la première
+  //    section, le budget servait auparavant les entrées du lot jusqu'à laisser la
+  //    section « en cours » sans un rang ni un marqueur : un pipeline vivant
+  //    disparaissait de l'écran alors que le titre en annonçait le compte
+  //    (BLOQUANT 4 de la revue n°3).
+  const lotRows = rowsOf(lotEntries);
+  const runningRows = rowsOf(runningEntries);
+  const historyRows = rowsOf(historyEntries);
+  const minLot = credit(lotEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, (lotEntries[0] as PanelRow[]).length) : 0);
+  const minRunning = credit(
+    runningEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, (runningEntries[0] as PanelRow[]).length) : 0,
+  );
+  const minHistory = credit(
+    historyEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, (historyEntries[0] as PanelRow[]).length) : 0,
+  );
   // 2. Le surplus, par priorité : le lot (la salle de contrôle), puis les
   //    pipelines en cours (vivants), puis l'historique.
-  const lotShown = take(lotBody.length, minLot + credit(Math.max(0, lotBody.length - minLot)));
-  const runningShown = take(runningCount, minRunning + credit(Math.max(0, runningCount - minRunning)));
-  const historyShown = take(historyCount, minHistory + credit(Math.max(0, historyCount - minHistory)));
+  const lotShown = take(lotEntries, minLot + credit(Math.max(0, lotRows - minLot)));
+  const runningShown = take(runningEntries, minRunning + credit(Math.max(0, runningRows - minRunning)));
+  const historyShown = take(historyEntries, minHistory + credit(Math.max(0, historyRows - minHistory)));
   // 3. Les rangs d'ÉTAT VIDE (« aucune pipeline en cours », « aucun historique »)
   //    se paient comme les autres : ce sont eux qui, oubliés du calcul, faisaient
   //    dépasser le budget d'un rang par section vide et coupaient le pied
@@ -3759,63 +4393,46 @@ export function buildPanelRows(
 
   if (lot) {
     rows.push({ text: sectionRule(glyphs, lotSectionTitle(lot), width), tone: "accent" });
-    const start = windowStart(sectionSelection(model.selection, lotOffset, lot.features.length), lotShown.shown, lotBody.length);
-    for (const row of lotBody.slice(start, start + lotShown.shown)) rows.push(row);
+    const start = windowStart(sectionSelection(model.selection, lotOffset, features), lotShown.shown, lotEntries.length);
+    for (const entry of lotEntries.slice(start, start + lotShown.shown)) rows.push(...entry);
     if (lotShown.marker) {
-      rows.push({ text: frame(glyphs, `… ${lotBody.length - lotShown.shown} de plus`, width, innerW), tone: "dim" });
+      rows.push(
+        ...framedRows(`… ${lotEntries.length - lotShown.shown} de plus`, "dim", glyphs, width, innerW),
+      );
     }
   }
 
   if (runningCount === 0) {
-    if (runningEmpty) rows.push({ text: frame(glyphs, "aucune pipeline en cours", width, innerW), tone: "muted" });
+    if (runningEmpty) rows.push(...framedRows("aucune pipeline en cours", "muted", glyphs, width, innerW));
   } else {
     const start = windowStart(sectionSelection(model.selection - features, 0, runningCount), runningShown.shown, runningCount);
-    for (let i = start; i < start + runningShown.shown; i++) {
-      const entry = model.running[i]!;
-      rows.push({
-        text: frame(glyphs, entryLine(entry.label, entryRight(entry, opts.now), model.selection === features + i, glyphs, innerW), width, innerW),
-        tone: entry.state === "waiting" ? "warning" : "success",
-        target: features + i,
-      });
-    }
+    for (const entry of runningEntries.slice(start, start + runningShown.shown)) rows.push(...entry);
     if (runningShown.marker) {
-      rows.push({
-        text: frame(glyphs, `… ${runningCount - runningShown.shown} de plus`, width, innerW),
-        tone: "dim",
-      });
+      rows.push(
+        ...framedRows(`… ${runningCount - runningShown.shown} de plus`, "dim", glyphs, width, innerW),
+      );
     }
   }
 
   rows.push({ text: separatorRule(glyphs, width), tone: "border" });
 
   if (historyCount === 0) {
-    if (historyEmpty) rows.push({ text: frame(glyphs, "aucun historique", width, innerW), tone: "muted" });
+    if (historyEmpty) rows.push(...framedRows("aucun historique", "muted", glyphs, width, innerW));
   } else {
     const start = windowStart(
       sectionSelection(model.selection - features - runningCount, 0, historyCount),
       historyShown.shown,
       historyCount,
     );
-    for (let i = start; i < start + historyShown.shown; i++) {
-      const entry = model.history[i]!;
-      const final = entry.finalState === "done" ? "terminé" : "échoué";
-      const right = `/${entry.phase} · ${final}`;
-      const selected = model.selection === features + runningCount + i;
-      rows.push({
-        text: frame(glyphs, entryLine(entry.label, right, selected, glyphs, innerW), width, innerW),
-        tone: entry.finalState === "done" ? "dim" : "error",
-        target: features + runningCount + i,
-      });
-    }
+    for (const entry of historyEntries.slice(start, start + historyShown.shown)) rows.push(...entry);
     if (historyShown.marker) {
-      rows.push({
-        text: frame(glyphs, `… ${historyCount - historyShown.shown} de plus`, width, innerW),
-        tone: "dim",
-      });
+      rows.push(
+        ...framedRows(`… ${historyCount - historyShown.shown} de plus`, "dim", glyphs, width, innerW),
+      );
     }
   }
 
-  if (notice) rows.push({ text: frame(glyphs, notice, width, innerW), tone: "warning" });
+  for (const row of noticeRows) rows.push(row);
   for (const row of modeRows) rows.push(row);
 
   // Le pied : les touches de la salle de contrôle quand un lot est là, sinon le
@@ -3899,6 +4516,13 @@ export function readSessionHeader(file: string, maxBytes = SESSION_HEADER_READ_B
 export const SESSION_VIEW_READ_BYTES = 256 * 1024;
 /** Borne du nombre d'entrées rendues ; au-delà, l'en-tête « début tronqué » le dit. */
 export const SESSION_VIEW_MAX_ENTRIES = 500;
+/**
+ * Borne du nombre de LIGNES rendues par la vue (S-1) : elle compte des lignes de
+ * terminal (donc APRÈS le repli, qui dépend de la largeur), pas des entrées — c'est
+ * pourquoi elle vit dans le rendu de la vue et non dans `readSessionView`, dont les
+ * bornes (octets, entrées) restent ce qu'elles sont.
+ */
+export const SESSION_VIEW_MAX_ROWS = 2000;
 
 /** Une entrée de session RENDABLE : tout le reste du JSONL ne produit aucun rang. */
 export type SessionViewEntry =
@@ -3911,15 +4535,6 @@ export type SessionViewEntry =
 
 /** Le contenu lisible d'un fichier de session, ou le chemin en erreur (absent/illisible). */
 export type SessionView = { entries: SessionViewEntry[]; truncated: boolean } | { error: string };
-
-/** La première ligne NON VIDE d'un texte : ce qu'un rang de transcription peut montrer. */
-function firstLine(text: string): string {
-  for (const line of text.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed !== "") return trimmed;
-  }
-  return "";
-}
 
 /** Le texte d'un contenu de message : une chaîne, ou les blocs `text` d'un tableau. */
 function textOfContent(content: unknown): string {
@@ -3938,6 +4553,10 @@ function textOfContent(content: unknown): string {
  * Une entrée du JSONL → zéro ou plusieurs entrées de vue (S-2). Pure : une entrée
  * technique (`title`, `model_usage`, `label`, …) ou inconnue ne rend RIEN, et rien
  * ici ne peut lever — un fichier en cours d'écriture est lu ligne par ligne.
+ *
+ * Le TEXTE est porté ENTIER (S-1) : c'est le repli du rendu, qui connaît la
+ * largeur, qui en fait des lignes — plus une troncature à la première ligne, qui
+ * perdait tout ce qu'un agent écrit d'utile après son premier paragraphe.
  */
 function sessionViewEntries(raw: unknown): SessionViewEntry[] {
   if (!raw || typeof raw !== "object") return [];
@@ -3945,7 +4564,7 @@ function sessionViewEntries(raw: unknown): SessionViewEntry[] {
   if (rec.type === "custom_message") {
     const customType = asStringOrNull(rec.customType);
     if (!customType) return [];
-    return [{ kind: "customMessage", customType, text: firstLine(textOfContent(rec.content)) }];
+    return [{ kind: "customMessage", customType, text: textOfContent(rec.content).trim() }];
   }
   if (rec.type === "custom") {
     const customType = asStringOrNull(rec.customType);
@@ -3953,13 +4572,13 @@ function sessionViewEntries(raw: unknown): SessionViewEntry[] {
   }
   if (rec.type !== "message" || !rec.message || typeof rec.message !== "object") return [];
   const message = rec.message as Record<string, unknown>;
-  if (message.role === "user") return [{ kind: "user", text: firstLine(textOfContent(message.content)) }];
+  if (message.role === "user") return [{ kind: "user", text: textOfContent(message.content).trim() }];
   if (message.role === "toolResult") {
     return [
       {
         kind: "toolResult",
         name: asStringOrNull(message.toolName) ?? "?",
-        text: firstLine(textOfContent(message.content)),
+        text: textOfContent(message.content).trim(),
       },
     ];
   }
@@ -3967,7 +4586,7 @@ function sessionViewEntries(raw: unknown): SessionViewEntry[] {
   const out: SessionViewEntry[] = [];
   // Un rang vide n'apprend rien : un tour qui n'a produit que des appels d'outil
   // se lit par ses appels, pas par une ligne « agent : » sans texte.
-  const text = firstLine(textOfContent(message.content));
+  const text = textOfContent(message.content).trim();
   if (text !== "") out.push({ kind: "assistant", text });
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
@@ -3977,7 +4596,7 @@ function sessionViewEntries(raw: unknown): SessionViewEntry[] {
       out.push({
         kind: "toolCall",
         name: asStringOrNull(call.name) ?? "?",
-        text: firstLine(JSON.stringify(call.arguments ?? {})),
+        text: JSON.stringify(call.arguments ?? {}),
       });
     }
   }
@@ -4032,51 +4651,57 @@ export function readSessionView(file: string): SessionView {
 
 /**
  * Les rangs d'une vue de session (S-2), du plus ancien au plus récent : un rang par
- * entrée, tronqué à la largeur reçue, et les états rendus EXPLICITEMENT — jamais
- * déduits d'une absence de rang.
+ * LIGNE de terminal — une entrée complète (S-1) occupe donc autant de lignes qu'il
+ * en faut, sans autre borne que `SESSION_VIEW_MAX_ROWS` — et les états rendus
+ * EXPLICITEMENT, jamais déduits d'une absence de rang.
  *
- * La liste rendue est COMPLÈTE (bornée par la lecture : ≤ 500 entrées) : c'est le
- * composant qui en découpe la fenêtre visible et qui borne son défilement sur sa
- * longueur. `budget` est la hauteur de la vue — titre, mention de run vivant et
- * pied compris — donc l'arithmétique de la fenêtre reste au même endroit.
+ * La liste rendue est COMPLÈTE (bornée par la lecture : ≤ 500 entrées, et par le
+ * rendu : ≤ 2000 lignes) : c'est le composant qui en découpe la fenêtre visible et
+ * qui borne son défilement sur sa longueur. `budget` est la hauteur de la vue —
+ * titre, mention de run vivant, zone de saisie et pied compris — donc l'arithmétique
+ * de la fenêtre reste au même endroit.
  */
 export function buildSessionRows(
   view: SessionView,
-  opts: { width: number; budget: number; glyphs: PanelGlyphs },
+  opts: { width: number; budget: number; glyphs: PanelGlyphs; maxRows?: number },
 ): PanelRow[] {
   const width = Math.max(1, Math.floor(opts.width));
   const innerW = Math.max(0, width - 4);
-  const row = (content: string, tone: PanelTone): PanelRow => ({
-    text: frame(opts.glyphs, content, width, innerW),
-    tone,
-  });
-  if ("error" in view) return [row(`aucune entrée lisible — ${view.error}`, "warning")];
-  if (view.entries.length === 0) return [row("aucune entrée à afficher", "muted")];
+  const row = (content: string, tone: PanelTone): PanelRow[] => {
+    const lines = innerW > 0 ? wrapVisible(content, innerW) : [""];
+    return lines.map((line) => ({ text: frame(opts.glyphs, line, width, innerW), tone }));
+  };
+  if ("error" in view) return row(`aucune entrée lisible — ${view.error}`, "warning");
+  if (view.entries.length === 0) return row("aucune entrée à afficher", "muted");
   const rows: PanelRow[] = [];
-  if (view.truncated) rows.push(row("… début tronqué", "dim"));
+  if (view.truncated) rows.push(...row("… début tronqué", "dim"));
   for (const entry of view.entries) {
     switch (entry.kind) {
       case "user":
-        rows.push(row(`▸ toi : ${entry.text}`, "text"));
+        rows.push(...row(`▸ toi : ${entry.text}`, "text"));
         break;
       case "assistant":
-        rows.push(row(`▸ agent : ${entry.text}`, "accent"));
+        rows.push(...row(`▸ agent : ${entry.text}`, "accent"));
         break;
       case "toolCall":
-        rows.push(row(`→ ${entry.name} ${entry.text}`, "dim"));
+        rows.push(...row(`→ ${entry.name} ${entry.text}`, "dim"));
         break;
       case "toolResult":
-        rows.push(row(`← ${entry.name} ${entry.text}`, "dim"));
+        rows.push(...row(`← ${entry.name} ${entry.text}`, "dim"));
         break;
       case "customMessage":
-        rows.push(row(`· ${entry.customType} : ${entry.text}`, "dim"));
+        rows.push(...row(`· ${entry.customType} : ${entry.text}`, "dim"));
         break;
       case "custom":
-        rows.push(row(`· ${entry.customType}`, "dim"));
+        rows.push(...row(`· ${entry.customType}`, "dim"));
         break;
     }
   }
-  return rows;
+  const max = opts.maxRows ?? SESSION_VIEW_MAX_ROWS;
+  if (rows.length <= max) return rows;
+  // Ce sont les DERNIÈRES lignes qu'on garde (le présent du run), et le marqueur
+  // existant dit ce qui a été abandonné — jamais une coupe silencieuse.
+  return [...row("… début tronqué", "dim"), ...rows.slice(rows.length - max)];
 }
 
 /** Sondes disque de la décision — injectées, pour que `switchDecision` reste PURE. */
@@ -4329,12 +4954,141 @@ export type PipelinesPanelDeps = {
  */
 const panelSelections = new Map<string, number>();
 
+/**
+ * L'état d'un rang de LOT qui n'accepte aucune écriture (S-10) : la raison exacte,
+ * écrite en toutes lettres dans la zone. Jamais un champ grisé — un champ absent
+ * est plus honnête qu'un champ qui refuse.
+ */
+function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
+  switch (feature.state) {
+    case "done":
+      return "la feature est terminée";
+    case "failed":
+      return "la feature est échouée";
+    case "cancelled":
+      return "la feature est annulée";
+    case "blocked":
+      return "la feature est bloquée : R la relance";
+    case "pending":
+      return lot && !runnable(lot, feature)
+        ? `en attente de ${pendingDeps(lot, feature).join(",")} : L la lance, R la relance`
+        : "la feature n'a pas démarré";
+    case "waiting":
+      if (feature.waitKind === "specs") return "les spécifications attendent ta validation (v)";
+      if (feature.waitKind === "review") return "la revue attend ton accord (y)";
+      return `rien à répondre : la feature est ${lotStateLabel(feature.state)}`;
+    default:
+      return `rien à répondre : la feature est ${lotStateLabel(feature.state)}`;
+  }
+}
+
+/**
+ * L'état de la zone de saisie d'une vue (S-3, S-4, S-8, S-10) : fermée (la raison
+ * est écrite), ouverte (liste d'options, éditeur libre), ou en aperçu.
+ */
+type ViewInputZone = {
+  kind: "input";
+  /** La feature du lot visée : c'est elle que la livraison nomme. */
+  slug: string;
+  phase: PipelinePhase;
+  /** Les options de la question en attente ; vide ⇒ éditeur libre (S-4). */
+  options: string[];
+  /** L'option courante ; `options.length` = la ligne « autre — saisir ma réponse ». */
+  cursor: number;
+  /** L'éditeur de texte a le focus (état « libre ») ; sinon la liste d'options l'a. */
+  free: boolean;
+  buffer: string;
+  /** La livraison part dans la FILE (run en vol, S-5) au lieu d'être une réponse. */
+  queue: boolean;
+};
+
+type ViewZone = { kind: "closed"; reason: string } | ViewInputZone | { kind: "preview"; input: ViewInputZone; text: string };
+
+/** L'état de la zone a-t-il CHANGÉ DE SOURCE ? Le tampon, lui, appartient à l'utilisateur. */
+function sameZoneSource(a: ViewZone, b: ViewZone): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === "closed" && b.kind === "closed") return a.reason === b.reason;
+  if (a.kind === "input" && b.kind === "input") {
+    return a.slug === b.slug && a.queue === b.queue && a.options.join("\u0000") === b.options.join("\u0000");
+  }
+  return true; // deux aperçus : rien à rafraîchir, l'aperçu ne se réécrit pas sous les doigts
+}
+
+/** Une zone ouverte, dans son état initial : options s'il y en a, éditeur libre sinon. */
+function inputZone(slug: string, phase: PipelinePhase, options: string[], queue: boolean): ViewInputZone {
+  return { kind: "input", slug, phase, options, cursor: 0, free: options.length === 0, buffer: "", queue };
+}
+
+/** L'aperçu d'une livraison, tel que la zone le rend (S-8) — une seule source du texte. */
+function zonePreview(zone: { input: ViewInputZone; text: string }): { head: string; hint: string } {
+  return replyPreview({ slug: zone.input.slug, phase: zone.input.phase, text: zone.text, queue: zone.input.queue });
+}
+
+/** Les rangs de la zone de saisie de la vue, selon son état (S-3, S-4, S-8, S-10). */
+function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
+  if (zone.kind === "closed") return framedRows(`lecture seule — ${zone.reason}`, "dim", glyphs, width, innerW);
+  if (zone.kind === "preview") {
+    const preview = zonePreview(zone);
+    return [
+      ...framedRows(preview.head, "warning", glyphs, width, innerW),
+      ...framedRows(preview.hint, "dim", glyphs, width, innerW),
+    ];
+  }
+  const verb = zone.queue ? "mettre en file" : "envoyer";
+  if (zone.free || zone.options.length === 0) {
+    return [
+      ...framedRows(`Réponse : ${zone.buffer}▏`, "text", glyphs, width, innerW),
+      ...framedRows(`Entrée ${verb} · Échap annuler`, "dim", glyphs, width, innerW),
+    ];
+  }
+  const rows: PanelRow[] = [];
+  const marker = (selected: boolean) =>
+    selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
+  zone.options.forEach((option, index) => {
+    const selected = index === zone.cursor;
+    rows.push(
+      ...framedRows(
+        `${marker(selected)}(${index + 1}) ${option}`,
+        selected ? "accent" : "text",
+        glyphs,
+        width,
+        innerW,
+        { choice: index },
+      ),
+    );
+  });
+  const other = zone.cursor === zone.options.length;
+  rows.push(
+    ...framedRows(
+      `${marker(other)}autre — saisir ma réponse`,
+      other ? "accent" : "text",
+      glyphs,
+      width,
+      innerW,
+      { choice: zone.options.length },
+    ),
+  );
+  return rows;
+}
+
+/** Le pied de la vue, selon l'état de sa zone (S-3, S-4, S-8). */
+function viewFooter(zone: ViewZone): string {
+  if (zone.kind === "preview") return zonePreview(zone).hint;
+  if (zone.kind === "input" && !zone.free && zone.options.length > 0) {
+    return "1-9/↑↓ choisir · PageUp/PageDown défiler · Échap revenir au panneau";
+  }
+  return "↑↓/molette défiler · Échap revenir au panneau";
+}
+
 /** L'état de vue du panneau : la liste, ou la transcription d'une session (S-2). */
 type PanelView =
   | { kind: "list" }
   | {
       kind: "session";
-      sessionFile: string;
+      /** Le fichier de session suivi ; `null` quand le rang n'en a pas (S-1). */
+      sessionFile: string | null;
+      /** Le slug de la feature du lot visée ; `null` pour une entrée du magasin. */
+      slug: string | null;
       label: string;
       phase: string;
       state: string;
@@ -4342,6 +5096,8 @@ type PanelView =
       live: boolean;
       /** Rangs remontés depuis la fin de la transcription : 0 = les plus récents. */
       scroll: number;
+      /** La zone de saisie, ou sa raison d'être fermée (S-10). */
+      zone: ViewZone;
     };
 
 /** `unref` — un rafraîchissement de panneau ne doit pas retenir le processus. */
@@ -4415,7 +5171,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // Une vue ouverte suit l'instant présent : le run peut avancer, se terminer,
       // ou la ligne changer de section pendant qu'on la regarde (S-2).
       if (view.kind === "session") {
-        const row = rowForSession(view.sessionFile);
+        const row = rowForView();
         if (row) {
           view = {
             ...view,
@@ -4425,6 +5181,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             live: hasLiveWriter(model, row),
           };
         }
+        // La question peut avoir changé (nouvelle réponse, nouveau maillon) : la
+        // zone suit l'état frais — mais jamais sous les doigts d'un aperçu, et
+        // jamais au prix du tampon tant que la source n'a pas bougé (S-6).
+        refreshZone();
       }
     };
     const redraw = () => {
@@ -4459,6 +5219,57 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         if (row && rowSessionFile(model, row) === file) return row;
       }
       return undefined;
+    };
+    /**
+     * Le rang que la vue suit d'un rendu à l'autre : son SLUG quand c'est une
+     * feature du lot (il survit à une session qui apparaît), sinon son fichier de
+     * session. Un rang disparu de la liste ne fait pas tomber la vue.
+     */
+    const rowForView = (): PanelRowRef | undefined => {
+      if (view.kind !== "session") return undefined;
+      const { slug, sessionFile } = view;
+      if (slug !== null) {
+        const feature = features().find((candidate) => candidate.slug === slug);
+        if (feature) return feature;
+      }
+      return sessionFile === null ? undefined : rowForSession(sessionFile);
+    };
+    /**
+     * La zone de saisie d'un rang (S-3, S-4, S-10, S-11) : la règle du pilote
+     * (`rowReply`) pour une feature du lot, les raisons de la vue pour tout autre
+     * rang — un rang non-lot n'accepte JAMAIS d'écriture, aucune API de l'hôte
+     * n'atteignant la session d'un autre process (`## Documentation` §1).
+     */
+    const zoneFor = (row: PanelRowRef | undefined): ViewZone => {
+      if (!row) return { kind: "closed", reason: "session terminée" };
+      if (isLotFeature(row)) {
+        const reply = rowReply(row);
+        if (reply.kind === "reply") return inputZone(row.slug, reply.phase, reply.options, false);
+        if (reply.kind === "queue") return inputZone(row.slug, reply.phase, [], true);
+        if (row.origin === "session" && row.phase === "req") return { kind: "closed", reason: reply.reason };
+        return { kind: "closed", reason: readOnlyReason(model.lot ?? null, row) };
+      }
+      if ("finalState" in row) return { kind: "closed", reason: "session terminée" };
+      if (row.owner.pid === process.pid) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
+      return { kind: "closed", reason: `cette session appartient à un autre process (pid ${row.owner.pid})` };
+    };
+    /** Le rafraîchissement de la zone : elle suit l'état frais, jamais le tampon. */
+    const refreshZone = () => {
+      if (view.kind !== "session" || view.zone.kind === "preview") return;
+      const next = zoneFor(rowForView());
+      if (sameZoneSource(view.zone, next)) return;
+      view = { ...view, zone: next };
+    };
+    /**
+     * La zone de la vue : toute touche qui la change passe par ici (elle efface la
+     * notice, qui décrit un rang et non le panneau), et un aperçu ne se réécrit
+     * jamais sous les doigts — seule la livraison ou `Échap` en sortent.
+     */
+    const setZone = (next: ViewZone) => {
+      if (view.kind !== "session") return;
+      view = { ...view, zone: next };
+      notice = null;
+      tui.requestRender?.();
     };
     // Le déplacement efface la notice : elle décrit un rang, pas le panneau.
     const move = (delta: number) => {
@@ -4524,13 +5335,18 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
 
     /**
      * `Entrée` (S-2) : la VUE de session du rang sélectionné — jamais la bascule.
-     * Un rang sans session garde la notice existante, et aucune vue ne s'ouvre.
+     * Elle s'ouvre quand le rang a un fichier de session OU quand il accepte une
+     * écriture (S-1/S-11) : une feature qui attend une réponse reste répondable
+     * même si sa session a disparu du disque, et une feature en cours reste
+     * joignable par un message. Un rang qui n'a ni l'un ni l'autre garde la
+     * notice existante, et rien ne s'ouvre.
      */
     const openView = () => {
       const row = selectedRow();
       if (!row) return;
       const file = rowSessionFile(model, row);
-      if (!file) {
+      const zone = zoneFor(row);
+      if (file === null && zone.kind === "closed") {
         showNotice(noSessionNotice(row));
         return;
       }
@@ -4538,11 +5354,13 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       view = {
         kind: "session",
         sessionFile: file,
+        slug: isLotFeature(row) ? row.slug : null,
         label: rowLabel(row),
         phase: rowPhase(model, row),
         state: rowStateLabel(model, row),
         live: hasLiveWriter(model, row),
         scroll: 0,
+        zone,
       };
       tui.requestRender?.();
     };
@@ -4574,43 +5392,180 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       deps.join({ sessionFile: file }, () => done(), showNotice);
     };
 
-    /** Le nombre de rangs de contenu qu'une vue affiche : son titre et son pied sont payés. */
-    const viewRoom = (height: number, live: boolean) => Math.max(1, height - 2 - (live ? 1 : 0));
+    /** Les rangs de la zone au dernier rendu : la fenêtre les paie, comme le titre. */
+    let drawnZone: PanelRow[] = [];
+
+    /** Le nombre de rangs de transcription qu'une vue affiche : titre, zone et pied payés. */
+    const viewRoom = (height: number) =>
+      Math.max(1, height - 2 - (view.kind === "session" && view.live ? 1 : 0) - drawnZone.length);
 
     /** Défilement de la vue, borné aux rangs rendus : un cran en butée ne change rien. */
     const scrollView = (delta: number) => {
       if (view.kind !== "session") return;
-      const max = Math.max(0, drawnContent.length - viewRoom(panelHeight(tui), view.live));
+      const max = Math.max(0, drawnContent.length - viewRoom(panelHeight(tui)));
       view = { ...view, scroll: Math.min(Math.max(view.scroll + delta, 0), max) };
       tui.requestRender?.();
     };
 
+    /** L'aperçu d'une livraison : `Entrée` n'écrit JAMAIS directement (S-4, S-8). */
+    const openReplyPreview = () => {
+      if (view.kind !== "session" || view.zone.kind !== "input") return;
+      const zone = view.zone;
+      const chosen = zone.free || zone.options.length === 0 ? zone.buffer : (zone.options[zone.cursor] ?? "");
+      const text = chosen.trim();
+      if (text === "") {
+        // Rien à envoyer : l'éditeur reste ouvert, tampon intact (S-4).
+        showNotice("réponse vide");
+        return;
+      }
+      setZone({ kind: "preview", input: zone, text });
+    };
+
+    /** La livraison confirmée : une seule écriture, puis la zone suit l'état frais. */
+    const deliver = (zone: { input: ViewInputZone; text: string }) => {
+      const actions = deps.lot;
+      if (!actions) {
+        showNotice("lot indisponible dans cette session");
+        return;
+      }
+      const { slug } = zone.input;
+      const text = zone.text;
+      // L'aperçu se referme AVANT l'appel : deux `Entrée` rapides ne livrent qu'une fois.
+      setZone(zone.input);
+      actView(() => actions.answer(slug, text), zone.input);
+    };
+
     /**
-     * Les touches de la VUE (S-2) : `Échap` revient à la liste telle qu'elle était,
-     * `↑`/`k` et `↓`/`j` défilent, tout le reste est ignoré — aucune action de lot
-     * n'est déclenchable depuis la vue, et elle ne ferme pas le panneau.
+     * Une livraison depuis la VUE : le cycle de `act`, transposé à la zone de
+     * saisie — succès ⇒ la zone se recalcule sur l'état frais, refus ⇒ la zone est
+     * REPOSÉE telle quelle (tampon compris) PUIS la notice s'affiche. L'ordre est
+     * imposé : `setZone` efface la notice.
+     */
+    const actView = (run: () => Promise<string | null>, keep: ViewZone) => {
+      const settle = (reason: string | null) => {
+        if (reason === null) {
+          // La question n'est plus en attente : le modèle est RELU, donc la zone
+          // suit l'état frais (éditeur libre, ou lecture seule) au rendu suivant.
+          notice = null;
+          redraw();
+          return;
+        }
+        setZone(keep);
+        showNotice(reason);
+      };
+      void run()
+        .then(settle)
+        .catch((err: unknown) => settle(err instanceof Error ? err.message : String(err)));
+    };
+
+    /** La zone d'OPTIONS : `↑`/`↓`/`k`/`j` déplacent le curseur, sans sortir de la liste. */
+    const moveCursor = (delta: number) => {
+      if (view.kind !== "session" || view.zone.kind !== "input") return;
+      const zone = view.zone;
+      const count = zone.options.length + 1; // les options, plus « autre »
+      setZone({ ...zone, cursor: clampSelection(zone.cursor + delta, count) });
+    };
+
+    /** Un clic sur une ligne d'option : la ligne « autre » passe en éditeur libre. */
+    const chooseOption = (index: number) => {
+      if (view.kind !== "session" || view.zone.kind !== "input" || view.zone.free) return;
+      const zone = view.zone;
+      if (index >= zone.options.length) {
+        setZone({ ...zone, cursor: zone.options.length, free: true });
+        return;
+      }
+      setZone({ ...zone, cursor: index });
+      openReplyPreview();
+    };
+
+    /**
+     * Les touches de la VUE (S-2, S-3, S-4, S-8, S-10). L'aperçu est un état à part
+     * — seuls `Entrée` et `Échap` y agissent, comme le mode `cancel` de la liste.
+     * Dans la zone d'options, un caractère imprimable passe en éditeur libre en
+     * l'insérant ; `Échap` remonte de l'éditeur libre aux options s'il y en a, et
+     * sort de la vue sinon. La transcription garde son ancrage et ses bornes.
      */
     const handleViewKey = (data: string): void => {
+      if (view.kind !== "session") return;
+      const zone = view.zone;
+      if (zone.kind === "preview") {
+        if (isKey(data, "tui.select.cancel")) setZone(zone.input);
+        else if (isKey(data, "tui.select.confirm")) deliver(zone);
+        return;
+      }
       if (isKey(data, "tui.select.cancel")) {
+        if (zone.kind === "input" && zone.free && zone.options.length > 0) {
+          setZone({ ...zone, free: false });
+          return;
+        }
         view = { kind: "list" };
         tui.requestRender?.();
         return;
       }
+      if (zone.kind === "input") {
+        if (!zone.free) {
+          if (isKey(data, "tui.select.up") || data === "k") moveCursor(-1);
+          else if (isKey(data, "tui.select.down") || data === "j") moveCursor(1);
+          else if (isKey(data, "tui.select.confirm")) openReplyPreview();
+          else if (isKey(data, "tui.select.pageUp")) scrollView(viewRoom(panelHeight(tui)));
+          else if (isKey(data, "tui.select.pageDown")) scrollView(-viewRoom(panelHeight(tui)));
+          else if (/^[1-9]$/.test(data)) {
+            // `1`..`9` SAUTENT au choix visé : l'aperçu ne s'ouvre que sur `Entrée`
+            // ou sur un clic (S-3).
+            const index = Number(data) - 1;
+            if (index < zone.options.length) setZone({ ...zone, cursor: index });
+          } else if (data === "a") setZone({ ...zone, cursor: zone.options.length, free: true });
+          else if (data.length === 1 && data >= " ") {
+            // Une frappe qui n'est pas un choix : elle vaut réponse libre.
+            setZone({ ...zone, free: true, buffer: zone.buffer + data });
+          }
+          return;
+        }
+        // L'éditeur libre garde le défilement de la transcription : `↑`/`k` et
+        // `↓`/`j` remontent le temps, Entrée ouvre l'aperçu (S-4).
+        if (isKey(data, "tui.select.confirm")) {
+          openReplyPreview();
+          return;
+        }
+        if (isKey(data, "tui.select.up") || data === "k") {
+          scrollView(1);
+          return;
+        }
+        if (isKey(data, "tui.select.down") || data === "j") {
+          scrollView(-1);
+          return;
+        }
+        const next = edit(data, zone.buffer);
+        if (next !== null) setZone({ ...zone, buffer: next });
+        return;
+      }
       // La fenêtre est ancrée sur la FIN (le run en cours se voit avancer) : monter
-      // remonte le temps, descendre revient au présent.
+      // remonte le temps, descendre revient au présent. Les touches de page valent
+      // une fenêtre — les noms viennent de l'hôte, jamais réinventés.
+      const page = viewRoom(panelHeight(tui));
       if (isKey(data, "tui.select.up") || data === "k") scrollView(1);
       else if (isKey(data, "tui.select.down") || data === "j") scrollView(-1);
+      else if (isKey(data, "tui.select.pageUp")) scrollView(page);
+      else if (isKey(data, "tui.select.pageDown")) scrollView(-page);
     };
 
     /**
      * Un rapport de souris est toujours CONSOMMÉ (S-4) : ce n'est jamais du clavier.
      * Dans la liste, le clic gauche prend la ligne visée (`PanelRow.target`, posé par
      * le constructeur de rangs) et la molette vaut ±1 cran ; en mode de saisie,
-     * l'éditeur en ligne garde le clavier ; dans la vue, seule la molette agit.
+     * l'éditeur en ligne garde le clavier ; dans la vue, la molette défile et le
+     * clic prend l'option visée (`PanelRow.choice`).
      */
     const handleMouse = (event: SgrMouseEvent): void => {
       if (view.kind === "session") {
-        if (event.wheel !== null) scrollView(-event.wheel);
+        if (event.wheel !== null) {
+          scrollView(-event.wheel);
+          return;
+        }
+        if (!event.leftClick) return;
+        const choice = drawn[event.row]?.choice;
+        if (choice === undefined) return;
+        chooseOption(choice);
         return;
       }
       if (mode.kind !== "browse") return;
@@ -4635,11 +5590,35 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       return null;
     };
 
-    /** Les trois modes de saisie. Rend `true` quand la touche est consommée. */
+    /** Le geste d'un aperçu, exécuté sur le pilote — `null` s'il n'y en a pas. */
+    const gestureRun = (gesture: PanelGesture): (() => Promise<string | null>) | null => {
+      const lot = deps.lot;
+      if (!lot) return null;
+      switch (gesture.kind) {
+        case "launch":
+          return () => lot.launch();
+        case "remove":
+          return () => lot.remove(gesture.slug);
+        case "relaunch":
+          return () => lot.relaunch(gesture.slug);
+        case "validate":
+          return () => lot.validate(gesture.slug);
+        case "accept":
+          return () => lot.accept(gesture.slug);
+        case "cancel":
+          return () => lot.cancel(gesture.slug, gesture.fate);
+        case "add":
+          return () => lot.add(gesture.input);
+      }
+    };
+
+    /** Les modes de saisie et l'aperçu. Rend `true` quand la touche est consommée. */
     const handleMode = (data: string): boolean => {
       if (mode.kind === "browse") return false;
       if (isKey(data, "tui.select.cancel")) {
-        setMode({ kind: "browse" });
+        // `Échap` quitte l'aperçu en rendant l'état ANTÉRIEUR — le tampon d'un
+        // ajout ou d'une réponse est conservé (S-7, S-8).
+        setMode(mode.kind === "confirm" ? mode.back : { kind: "browse" });
         return true;
       }
       const lot = deps.lot;
@@ -4649,26 +5628,32 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         return true;
       }
       const confirm = isKey(data, "tui.select.confirm");
+      if (mode.kind === "confirm") {
+        // L'APERÇU (S-8) : `Entrée` est la SEULE porte par où le geste part — et il
+        // part une fois (l'aperçu se referme avant l'appel, une double frappe ne
+        // déclenche pas deux actions).
+        if (!confirm) return true;
+        const run = gestureRun(mode.gesture);
+        if (!run) {
+          showNotice("lot indisponible dans cette session");
+          return true;
+        }
+        const back = mode.back;
+        setMode({ kind: "browse" });
+        // Un ajout refusé rouvre son champ : le motif s'affiche SANS faire retaper
+        // les trois champs. Les autres gestes n'ont aucun état à reposer.
+        act(run, back.kind === "add" ? back : undefined);
+        return true;
+      }
       if (mode.kind === "cancel") {
         const fate: WorktreeFate | null = data === "1" ? "keep" : data === "2" ? "archive" : data === "3" ? "delete" : null;
         if (!fate) return true; // toute autre touche est ignorée : 1, 2, 3 ou Échap
-        const slug = mode.slug;
-        act(() => lot.cancel(slug, fate), mode);
-        return true;
-      }
-      if (mode.kind === "answer") {
-        if (confirm) {
-          const text = mode.buffer.trim();
-          if (text === "") {
-            showNotice("réponse vide");
-            return true;
-          }
-          const slug = mode.slug;
-          act(() => lot.answer(slug, text), mode);
-          return true;
-        }
-        const next = edit(data, mode.buffer);
-        if (next !== null) setMode({ ...mode, buffer: next });
+        // Le devenir choisi, puis l'aperçu qui dit ce qui va se passer (S-8).
+        setMode({
+          kind: "confirm",
+          gesture: { kind: "cancel", slug: mode.slug, fate },
+          back: mode,
+        });
         return true;
       }
       if (confirm) {
@@ -4693,7 +5678,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             .map((part) => part.trim())
             .filter((part) => part !== ""),
         };
-        act(() => lot.add(input), mode);
+        // Le dernier champ n'écrit rien : il ouvre l'aperçu du geste (S-8).
+        setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
         return true;
       }
       const next = edit(data, mode.buffer);
@@ -4734,6 +5720,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         showNotice("lot indisponible dans cette session");
         return null;
       };
+      /** Un geste qui change l'état du lot passe par son APERÇU — jamais direct (S-8). */
+      const preview = (gesture: PanelGesture) => setMode({ kind: "confirm", gesture, back: { kind: "browse" } });
       if (data === "a") {
         const actions = requireLot();
         if (!actions) return;
@@ -4742,7 +5730,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       if (data === "l") {
         const actions = requireLot();
-        if (actions) act(() => actions.launch());
+        if (actions) preview({ kind: "launch" });
         return;
       }
       if (data === "x") {
@@ -4752,21 +5740,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         const actions = requireLot();
-        if (actions) act(() => actions.remove(feature.slug));
-        return;
-      }
-      if (data === "i") {
-        const feature = selectedFeature();
-        if (!feature || feature.state !== "waiting" || feature.waitKind !== "answer") {
-          showNotice("rien à répondre sur cette ligne");
-          return;
-        }
-        if (feature.origin === "session" && feature.phase === "req") {
-          showNotice("la collecte se déroule dans ta session — réponds-y directement");
-          return;
-        }
-        const actions = requireLot();
-        if (actions) setMode({ kind: "answer", slug: feature.slug, buffer: "" });
+        if (actions) preview({ kind: "remove", slug: feature.slug });
         return;
       }
       if (data === "v") {
@@ -4776,7 +5750,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         const actions = requireLot();
-        if (actions) act(() => actions.validate(feature.slug));
+        if (actions) preview({ kind: "validate", slug: feature.slug });
         return;
       }
       if (data === "y") {
@@ -4786,7 +5760,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         const actions = requireLot();
-        if (actions) act(() => actions.accept(feature.slug));
+        if (actions) preview({ kind: "accept", slug: feature.slug });
         return;
       }
       if (data === "R") {
@@ -4796,7 +5770,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         const actions = requireLot();
-        if (actions) act(() => actions.relaunch(feature.slug));
+        if (actions) preview({ kind: "relaunch", slug: feature.slug, phase: feature.phase });
         return;
       }
       if (data === "c") {
@@ -4810,6 +5784,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         const actions = requireLot();
+        // Le devenir du worktree reste un premier pas (`1`/`2`/`3`), l'aperçu le suit.
         if (actions) setMode({ kind: "cancel", slug: feature.slug });
         return;
       }
@@ -4820,32 +5795,37 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     /**
      * Les rangs de la VUE de session (S-2) : titre remplacé par le rang du rang
      * regardé, mention de run vivant s'il y en a un, transcription du fichier — relue
-     * à chaque rendu, donc au rythme du rafraîchissement — puis le pied de la vue.
-     * La fenêtre est ancrée sur la FIN : un run en cours se voit avancer sans rien
-     * toucher, et remonter (molette, `↑`) révèle le plus ancien.
+     * à chaque rendu, donc au rythme du rafraîchissement —, la ZONE DE SAISIE (S-3,
+     * S-4, S-10) puis le pied de la vue. La fenêtre est ancrée sur la FIN : un run en
+     * cours se voit avancer sans rien toucher, et remonter (molette, `↑`) révèle le
+     * plus ancien. Un rang sans fichier de session le DIT, au lieu de ne rien rendre.
      */
     const renderView = (width: number, height: number): PanelRow[] => {
       if (view.kind !== "session") return [];
       const innerW = Math.max(0, width - 4);
-      const rows: PanelRow[] = [
-        {
-          text: topRule(
-            glyphs,
-            `${view.label} · /${view.phase} · ${view.state} · session ${path.basename(view.sessionFile)}`,
-            width,
-          ),
-          tone: "accent",
-        },
-      ];
+      const title = [`${view.label} · /${view.phase} · ${view.state}`];
+      if (view.sessionFile !== null) title.push(`session ${path.basename(view.sessionFile)}`);
+      const rows: PanelRow[] = [{ text: topRule(glyphs, title.join(" · "), width), tone: "accent" }];
       if (view.live) {
         rows.push({ text: frame(glyphs, "run en cours — lecture seule", width, innerW), tone: "warning" });
       }
-      const content = buildSessionRows(readSessionView(view.sessionFile), { width, budget: height, glyphs });
+      const content =
+        view.sessionFile === null
+          ? framedRows(`pas de transcription — ${view.state}`, "muted", glyphs, width, innerW)
+          : buildSessionRows(readSessionView(view.sessionFile), { width, budget: height, glyphs });
       drawnContent = content;
-      const room = viewRoom(height, view.live);
+      // La notice est rendue ICI aussi : un refus prononcé depuis la vue (« réponse
+      // vide », refus du pilote) doit être lisible là où il a eu lieu, sinon il
+      // serait avalé jusqu'au retour à la liste.
+      drawnZone = [
+        ...(notice ? framedRows(notice, "warning", glyphs, width, innerW) : []),
+        ...viewZoneRows(view.zone, glyphs, width, innerW),
+      ];
+      const room = viewRoom(height);
       const start = Math.max(0, content.length - room - view.scroll);
       for (const row of content.slice(start, start + room)) rows.push(row);
-      rows.push({ text: bottomRule(glyphs, "↑↓/molette défiler · Échap revenir au panneau", width), tone: "border" });
+      for (const row of drawnZone) rows.push(row);
+      rows.push({ text: bottomRule(glyphs, viewFooter(view.zone), width), tone: "border" });
       return rows;
     };
 

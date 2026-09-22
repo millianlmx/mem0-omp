@@ -140,6 +140,7 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     waitKind: null,
     waitPrompt: null,
     sessionFile: null,
+    pendingTexts: [],
     prUrl: null,
     stopReason: null,
     fixes: 0,
@@ -566,6 +567,9 @@ test("sessions/AC-7 : chaque action du panneau s'applique à la feature sélecti
       log.push(`answer:${slug}:${text}`);
       return null;
     },
+    // Le panneau ne s'en sert pas dans la liste (il applique `rowReply`), mais le
+    // contrat de `LotPanelActions` l'exige : une doublure sans elle ne compile pas.
+    reply: () => ({ kind: "closed", reason: "test" }),
     validate: async (slug) => {
       log.push(`validate:${slug}`);
       return null;
@@ -595,44 +599,67 @@ test("sessions/AC-7 : chaque action du panneau s'applique à la feature sélecti
     },
   });
 
-  // `i` sur alpha : la réponse part à CETTE feature.
-  panel.component.handleInput("i");
-  assert.match(panel.screen(), /Réponse à alpha : ▏/, "l'éditeur de réponse nomme la feature");
+  // `Entrée` sur alpha : la VUE de sa session porte la zone de réponse — c'est
+  // désormais là qu'on répond, et la livraison passe par un aperçu (S-8).
+  panel.component.handleInput("\r");
+  assert.match(
+    panel.screen(200),
+    new RegExp(`alpha · /req · attend réponse · session ${sessionName(sessionFile)}`),
+    "la vue nomme la feature et sa session",
+  );
+  assert.match(panel.screen(200), /Réponse : ▏/, "sa zone de saisie est ouverte");
   for (const char of "voici") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(200), /Envoyer à alpha · \/req : « voici »/, "la livraison passe par un aperçu");
+  assert.deepEqual(log, [], "rien n'est parti avant la confirmation");
   panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(log, ["answer:alpha:voici"], "la réponse s'applique à la ligne sélectionnée");
+  panel.component.handleInput("\u001b");
 
-  // `v` sur beta : la validation des specs.
+  // `v` sur beta : la validation des specs, après son aperçu.
   panel.component.handleInput("j");
   assert.match(panel.screen(), /> beta/, "la sélection a suivi");
   panel.component.handleInput("v");
+  assert.match(panel.screen(200), /Valider les specs de beta \?/, "l'aperçu annonce le geste");
+  assert.deepEqual(log.at(-1), "answer:alpha:voici", "rien n'est parti avant la confirmation");
+  panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(log.at(-1), "validate:beta");
 
-  // `y` sur gamma : l'accord de revue.
+  // `y` sur gamma : l'accord de revue, après son aperçu.
   panel.component.handleInput("j");
   panel.component.handleInput("y");
+  assert.match(panel.screen(200), /Accepter la revue de gamma \?/, "l'aperçu annonce le geste");
+  panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(log.at(-1), "accept:gamma");
 
-  // `R` sur delta : la relance d'un maillon bloqué.
+  // `R` sur delta : la relance d'un maillon bloqué, après son aperçu.
   panel.component.handleInput("j");
   panel.component.handleInput("R");
+  assert.match(panel.screen(200), /Relancer delta \?/, "l'aperçu annonce le geste");
+  panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(log.at(-1), "relaunch:delta");
 
-  // `c` puis `1` sur epsilon : l'annulation, avec le sort du worktree.
+  // `c` puis `1` sur epsilon : l'annulation, avec le sort du worktree — le devenir
+  // choisi ouvre l'aperçu qui précède l'action.
   panel.component.handleInput("j");
   assert.match(panel.screen(), /> epsilon/);
   panel.component.handleInput("c");
   assert.match(panel.screen(200), /Annuler epsilon \? worktree : 1 gardé · 2 archivé · 3 supprimé/);
   panel.component.handleInput("1");
+  assert.match(panel.screen(200), /Annuler epsilon \? · .*worktree gardé/, "le devenir choisi passe par un aperçu");
+  assert.deepEqual(log.at(-1), "relaunch:delta", "rien n'est parti avant la confirmation");
+  panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(log.at(-1), "cancel:epsilon:keep");
 
-  // `x` sur epsilon : le retrait d'une feature qui n'a pas démarré.
+  // `x` sur epsilon : le retrait d'une feature qui n'a pas démarré, après son aperçu.
   panel.component.handleInput("x");
+  assert.match(panel.screen(200), /Retirer epsilon du lot \?/, "le retrait passe par un aperçu");
+  panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(log.at(-1), "remove:epsilon");
 
@@ -1054,20 +1081,30 @@ test("sessions/AC-3 : les actions non interruptives du panneau ne touchent aucun
 
   const storeBefore = storeFiles(stateDir, "history");
 
-  // Entrée (vue), Échap (retour), o (refusé : le run écrit la session), i, a puis
-  // Échap, x : aucune de ces actions ne vise à interrompre un run.
+  // Entrée (vue), Échap (retour), o (refusé : le run écrit la session), la zone
+  // d'écriture de la vue, a puis Échap, x puis son aperçu : aucune de ces actions
+  // ne vise à interrompre un run.
   panel.component.handleInput("\r");
   assert.match(panel.screen(), /session session-alpha\.jsonl/);
   panel.component.handleInput("\u001b");
   panel.component.handleInput("o");
   await Promise.all(panel.pending);
   assert.match(panel.screen(200), /run en cours — la session s'ouvre en lecture seule/);
-  panel.component.handleInput("i");
-  assert.match(panel.screen(), /rien à répondre sur cette ligne/);
+  // La vue d'un rang en cours propose une écriture (mise en file) : son aperçu
+  // n'écrit RIEN, et Échap revient sans rien envoyer.
+  panel.component.handleInput("\r");
+  for (const char of "un mot") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(200), /Mettre en file pour alpha · \/req : « un mot »/, "l'aperçu de la mise en file");
+  panel.component.handleInput("\u001b");
+  panel.component.handleInput("\u001b");
+  assert.match(panel.screen(), /> alpha/, "la vue rend la main à la liste, même sélection");
   panel.component.handleInput("a");
   assert.match(panel.screen(), /Nom : ▏/, "l'éditeur d'ajout s'ouvre");
   panel.component.handleInput("\u001b");
   panel.component.handleInput("x");
+  assert.match(panel.screen(200), /Retirer alpha du lot \?/, "le retrait passe par un aperçu");
+  panel.component.handleInput("\r");
   await flush();
   // Le refus du pilote est le texte EXISTANT (S-3 : « refus et textes inchangés ») :
   // `x` ne retire pas une feature qui a démarré, elle s'annule par `c`.
@@ -1100,6 +1137,8 @@ test("sessions/AC-4 : annuler un run n'arrête que lui, le reste du lot continue
   withLot.component.handleInput("c");
   assert.match(withLot.screen(), /Annuler alpha \? worktree : 1 gardé · 2 archivé · 3 supprimé/);
   withLot.component.handleInput("1");
+  assert.match(withLot.screen(), /Annuler alpha \? · .*worktree gardé/, "le devenir choisi passe par un aperçu");
+  withLot.component.handleInput("\r");
   await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state === "cancelled");
   await flush();
 
@@ -1126,7 +1165,9 @@ test("la vue rend chaque état : succès, erreur, vide lisible, troncature, run 
   const stateDir = mktmp("sessions-view-");
   const opts = { width: 64, budget: 24, glyphs: GLYPHS };
 
-  // Succès : un rang par entrée rendable, les entrées techniques ignorées.
+  // Succès : un rang par LIGNE de message — un message de plusieurs lignes occupe
+  // PLUSIEURS rangs (c'est la largeur qui replie, la vue ne tronque plus à la
+  // première ligne) — et les entrées techniques sont ignorées.
   const file = path.join(stateDir, "session.jsonl");
   writeSession(file, stateDir, [
     { type: "thinking_level_change", id: "t", parentId: null, timestamp: "t", thinkingLevel: "max" },
@@ -1141,17 +1182,19 @@ test("la vue rend chaque état : succès, erreur, vide lisible, troncature, run 
   assert.ok(!("error" in view), "le fichier est lisible");
   const rows = buildSessionRows(view, opts);
   const text = rows.map((row) => row.text).join("\n");
-  assert.match(text, /▸ toi : premier tour/, "le message utilisateur, première ligne seule");
+  assert.match(text, /▸ toi : premier tour/, "la première ligne du message utilisateur");
+  assert.match(text, /suite ignorée/, "et sa SUITE, sur son propre rang");
   assert.match(text, /▸ agent : je lis/);
   assert.match(text, /→ read \{"path":"\.omp\/pipeline\/contract\.md"\}/, "un rang par appel d'outil");
   assert.match(text, /← read contenu du contrat/);
   assert.match(text, /· pipeline : la chaîne prend la main/, "les notices du plugin restent visibles");
   assert.match(text, /· tool_execution_start/, "une entrée `custom` se nomme sans ses données");
   assert.doesNotMatch(text, /thinking_level_change|jalon/, "les entrées techniques ne rendent aucun rang");
-  assert.equal(rows.length, 6, "six entrées rendables, six rangs");
+  assert.equal(rows.length, 7, "sept lignes : le message de deux lignes en occupe deux");
   assert.equal(rows[0]!.tone, "text");
-  assert.equal(rows[1]!.tone, "accent");
-  for (const row of rows) assert.equal(row.text.length, 64, "chaque rang est tronqué à la largeur");
+  assert.equal(rows[1]!.tone, "text", "la suite d'un message garde le ton de son message");
+  assert.equal(rows.find((row) => /▸ agent : je lis/.test(row.text))!.tone, "accent");
+  for (const row of rows) assert.equal(row.text.length, 64, "chaque rang fait la largeur reçue");
 
   // Erreur : fichier absent.
   const missing = path.join(stateDir, "absent.jsonl");
@@ -1184,9 +1227,13 @@ test("la vue rend chaque état : succès, erreur, vide lisible, troncature, run 
   assert.ok(bigView.entries.length <= 500, `au plus 500 entrées (${bigView.entries.length})`);
   assert.ok(bigView.entries.length > 0, "et le contenu lu est bien rendu");
   const bigRows = buildSessionRows(bigView, opts);
+  const bigText = bigRows.map((row) => row.text).join("\n");
   assert.match(bigRows[0]!.text, /… début tronqué/, "l'en-tête de troncature précède le contenu");
-  assert.equal(bigRows.length, bigView.entries.length + 1, "un rang par entrée lue, plus l'en-tête");
-  assert.match(bigRows[1]!.text, /▸ toi : \d+ /, "les entrées rendues sont celles de la fin du fichier");
+  assert.ok(
+    bigRows.length >= bigView.entries.length + 1,
+    `au moins un rang par entrée lue, plus l'en-tête (${bigRows.length} rangs)`,
+  );
+  assert.match(bigText, /▸ toi : 1199 /, "les entrées rendues sont celles de la fin du fichier");
 
   // Une ligne tronquée par la borne est ignorée, jamais fatale.
   const cut = path.join(stateDir, "coupe.jsonl");
@@ -1230,7 +1277,13 @@ test("la vue n'écrit rien et ne bascule jamais : elle lit un fichier de session
 
   panel.component.handleInput("\r");
   assert.match(panel.screen(), /session session-alpha\.jsonl/);
+  assert.match(
+    panel.screen(200),
+    /lecture seule — les spécifications attendent ta validation \(v\)/,
+    "la zone de la vue est FERMÉE : sa raison est écrite",
+  );
   // Aucune touche de la vue ne peut annuler, relancer ou retirer : seule Échap agit.
+  // Un `Entrée` seul, dans une zone FERMÉE, n'ouvre même pas d'aperçu : rien ne part.
   for (const key of ["i", "v", "y", "R", "x", "c", "d", "a", "l", "\r", "j", "k"]) {
     panel.component.handleInput(key);
   }
@@ -1287,9 +1340,12 @@ test("le défilement de la vue remonte le temps, borné aux rangs rendus", () =>
   // premier ne l'est pas — c'est ce qui fait qu'un run en cours se voit avancer.
   assert.match(panel.screen(), /tour 29/, "les rangs les plus récents sont visibles");
   assert.doesNotMatch(panel.screen(), /tour 0 /, "les plus anciens sont hors de la fenêtre");
+  // La zone d'un run en cours est un éditeur libre : c'est elle qui laisse `↑`/`↓`
+  // à la transcription au lieu de déplacer un curseur d'options.
+  assert.match(panel.screen(), /Réponse : ▏/, "la zone de saisie libre est ouverte");
 
   // `↑` remonte d'un rang par cran, et la molette fait la même chose.
-  for (let i = 0; i < 10; i++) panel.component.handleInput("\u001b[A");
+  for (let i = 0; i < 40; i++) panel.component.handleInput("\u001b[A");
   assert.match(panel.screen(), /tour 0 /, "remonter assez haut atteint le début");
   panel.component.handleInput("\x1b[<65;10;5M"); // molette vers le bas
   assert.match(panel.screen(), /tour 1 /, "la molette redescend d'un rang");
@@ -1462,15 +1518,21 @@ test("les deux gardes de `o` refusent sans basculer, et nomment le chemin de lec
   assert.deepEqual(switched, [], "toujours aucune bascule");
   assert.equal(current.closed(), 0, "le panneau reste ouvert");
 
-  // Garde 3 : un rang sans session garde la notice existante, par section.
+  // Garde 3 : un rang sans session garde la notice existante, par section. S'il
+  // accepte une écriture, `Entrée` ouvre quand même sa VUE — sans fabriquer ni
+  // adopter de session pour autant.
   seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile: null, state: "running", phase: "impl" })]);
   const bare = mountPanel(stateDir, { repoRoot, currentSessionFile: null });
   bare.component.handleInput("o");
   assert.match(bare.screen(200), /cette feature n'a pas encore de session — attends son premier maillon/);
   bare.component.handleInput("\r");
-  assert.match(bare.screen(200), /cette feature n'a pas encore de session/, "Entrée ne fabrique pas de vue sans session");
+  assert.match(bare.screen(200), /pas de transcription — en cours/, "Entrée ouvre la vue d'un rang qui accepte une écriture");
+  assert.match(bare.screen(200), /Réponse : ▏/, "avec sa zone de saisie");
+  assert.deepEqual(switched, [], "aucune session fabriquée ni adoptée");
   assert.equal(bare.closed(), 0);
 
+  // Un rang qui n'a NI session NI écriture acceptée garde la notice : c'est le
+  // seul cas où elle reste la réponse.
   const historySession = path.join(stateDir, "session-close.jsonl");
   writeSession(historySession, worktree, [userEntry("terminé")]);
   closedEntry(stateDir, { cwd: worktree, label: "repo/alpha", phase: "review", sessionFile: null });
@@ -1479,6 +1541,8 @@ test("les deux gardes de `o` refusent sans basculer, et nomment le chemin de lec
   assert.match(hist.screen(), /> repo\/alpha/);
   hist.component.handleInput("o");
   assert.match(hist.screen(), /session introuvable — entrée non reprenable/);
+  hist.component.handleInput("\r");
+  assert.match(hist.screen(), /session introuvable — entrée non reprenable/, "Entrée n'ouvre pas de vue sans session");
   assert.deepEqual(switched, []);
   for (const harness of [panel, current, bare, hist]) harness.component.dispose();
 });
@@ -1497,6 +1561,23 @@ test("le pied annonce Entrée session et la bascule o quand la ligne en a une", 
     .join("\n");
   assert.match(text, /a ajouter · l lancer · Entrée session/, "la bascule n'est plus annoncée sur Entrée");
   assert.match(text, /v valider · c annuler · o rejoindre/, "la ligne qui a une session annonce sa bascule");
+
+  // Les deux écritures d'une ligne de lot s'annoncent par leur état (S-11) : la
+  // réponse pour une feature qui attend, l'écriture pour une feature en cours — la
+  // touche `i` a disparu, on répond désormais dans la VUE (`Entrée`).
+  const footerOf = (selection: number): string =>
+    buildPanelRows(readPanelModel({ stateDir, repoRoot, selection }), { width: 64, budget: 18, glyphs: GLYPHS, now: 0 })
+      .map((row) => row.text)
+      .join("\n");
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { worktree, sessionFile, state: "waiting", phase: "req", waitKind: "answer" }),
+  ]);
+  const answering = footerOf(0);
+  assert.match(answering, /Entrée répondre/, "une feature qui attend une réponse annonce Entrée répondre");
+  assert.doesNotMatch(answering, /i répondre/, "la touche `i` n'est plus annoncée");
+
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "running", phase: "impl" })]);
+  assert.match(footerOf(0), /Entrée écrire/, "une feature en cours annonce Entrée écrire");
 
   // Un rang « en cours » vivant n'offre aucune action de ligne : il annonce la seule
   // qui existe pour lui.
