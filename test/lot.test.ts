@@ -233,6 +233,8 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     waitKind: null,
     waitPrompt: null,
     sessionFile: null,
+    // Champ REQUIS depuis S-5 : la file des messages en attente de run.
+    pendingTexts: [],
     prUrl: null,
     stopReason: null,
     fixes: 0,
@@ -320,7 +322,12 @@ function phaseOf(run: RecordedRun): string {
 test("un lot écrit puis relu est identique, et un schéma étranger est rejeté", () => {
   const stateDir = mktmp("lot-store-");
   const repoRoot = mktmp("lot-repo-root-");
-  const lot = seedLot(stateDir, repoRoot, [feature("a"), feature("b", { deps: ["a"], state: "blocked" })]);
+  // `b` porte une file : le tour de passe-passe disque → mémoire doit la rendre
+  // intacte (S-5), comme les autres champs.
+  const lot = seedLot(stateDir, repoRoot, [
+    feature("a"),
+    feature("b", { deps: ["a"], state: "blocked", pendingTexts: ["un message en attente"] }),
+  ]);
   const file = lotPathFor(stateDir, lotRepoKey(repoRoot));
 
   assert.deepEqual(readLot(stateDir, lotRepoKey(repoRoot)), lot);
@@ -1945,6 +1952,46 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   assert.ok(!footer[0]!.includes("d supprimer"), `aucune touche morte annoncée : ${footer[0]}`);
   assert.match(footer[1]!, /x retirer · c annuler/, "la touche de retrait est annoncée sur la ligne qui la porte");
 
+  // S-11 : une ligne qui accepte une écriture l'annonce par `Entrée` (la touche `i`
+  // n'existe plus — on répond dans la VUE du rang).
+  assert.match(
+    lotFooterActions([feature("w", { state: "waiting", waitKind: "answer", phase: "req" })], 0),
+    /^Entrée répondre/,
+    "une feature qui attend une réponse annonce Entrée répondre",
+  );
+  assert.match(
+    lotFooterActions([feature("r", { state: "running" })], 0),
+    /^Entrée écrire/,
+    "une feature en cours annonce Entrée écrire (le texte part en file)",
+  );
+
+  // S-7 : le vocabulaire d'état est FERMÉ. Un `pending` que ses dépendances
+  // retiennent dit ce qui le retient DANS LA MÊME COLONNE, et une attente de
+  // réponse se nomme — jamais un état inventé ni une ligne muette.
+  const held = buildPanelRows(
+    {
+      ...emptyModel,
+      lot: {
+        ...lot,
+        features: [
+          feature("f0", { phase: "impl" }),
+          feature("f2", { phase: "impl", deps: ["f0"] }),
+          feature("f3", { phase: "req", state: "waiting", waitKind: "answer" }),
+        ],
+      },
+      selection: 0,
+    },
+    { width: 64, budget: 18, glyphs: GLYPHS, now: 1_700_000_000_000 },
+  );
+  const heldRow = held.find((row) => row.text.includes("f2 ←"));
+  assert.ok(heldRow, "le rang de la feature retenue rappelle ses dépendances");
+  assert.ok(
+    heldRow.text.includes("/impl · en attente de f0"),
+    `l'état dit ce qui retient la feature : ${heldRow.text}`,
+  );
+  const waitingRow = held.find((row) => row.text.includes("f3 "));
+  assert.ok(waitingRow?.text.includes("attend réponse"), `l'attente de réponse se lit sur son rang : ${waitingRow?.text}`);
+
   // Sur une entrée d'historique — le seul rang que `d` supprime —, la seconde
   // ligne le dit : la touche n'est jamais perdue de vue.
   const historique: HistoryEntry = {
@@ -2040,6 +2087,9 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     launch: async () => null,
     remove: async () => null,
     answer: async () => null,
+    // Le panneau interroge la règle d'écriture d'un rang pour poser sa zone de
+    // saisie (S-11) : une doublure doit la porter comme le pilote.
+    reply: () => ({ kind: "closed", reason: "test" }),
     validate: async () => null,
     accept: async () => null,
     relaunch: async () => null,
@@ -2053,6 +2103,11 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   panel.component.handleInput("\r");
   for (const char of "alpha") panel.component.handleInput(char);
   assert.match(panel.screen(), /Dépendances \(slugs séparés par des virgules\) : alpha▏/);
+  // S-8 : le dernier champ n'écrit RIEN — il ouvre l'APERÇU du geste.
+  panel.component.handleInput("\r");
+  assert.equal(submitted.length, 0, "l'aperçu n'a rien créé");
+  assert.match(panel.screen(), /Créer delta \? · une intention · 1 dépendance\(s\)/);
+  assert.match(panel.screen(), /Entrée créer · Échap annuler/);
   panel.component.handleInput("\r");
   await flush(4);
   assert.match(panel.screen(), /« delta » est déjà dans le lot/, "le motif du refus est affiché");
@@ -2061,6 +2116,9 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     /Dépendances \(slugs séparés par des virgules\) : alpha▏/,
     "l'éditeur est resté ouvert, tampon compris",
   );
+  // Le brouillon resoumis repasse par l'aperçu : deux `Entrée`, aucune retape.
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(), /Créer delta \? · une intention · 1 dépendance\(s\)/);
   panel.component.handleInput("\r");
   await flush(4);
   assert.equal(submitted.length, 2, "Entrée resoumet le MÊME brouillon, sans le retaper");
@@ -2147,11 +2205,19 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   assert.match(rowsText(add), /Description : une intention▏/);
   assert.match(rowsText(add), /Entrée champ suivant · Échap annuler/);
 
-  const answer = buildPanelRows(
-    { ...emptyModel, lot, selection: 0, mode: { kind: "answer", slug: "alpha", buffer: "voici" } },
+  // S-8 : le mode `answer` n'existe plus — une réponse s'écrit dans la VUE du rang,
+  // et tout geste de la liste passe par son APERÇU, qui est donc un mode du panneau.
+  const confirm = buildPanelRows(
+    {
+      ...emptyModel,
+      lot,
+      selection: 0,
+      mode: { kind: "confirm", gesture: { kind: "launch" }, back: { kind: "browse" } },
+    },
     opts,
   );
-  assert.match(rowsText(answer), /Réponse à alpha : voici▏/);
+  assert.match(rowsText(confirm), /Lancer le lot \? · 0 feature\(s\) à venir démarrent/);
+  assert.match(rowsText(confirm), /Entrée lancer · Échap annuler/);
 
   const cancel = buildPanelRows(
     { ...emptyModel, lot, selection: 0, mode: { kind: "cancel", slug: "alpha" } },
@@ -2159,10 +2225,10 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   );
   assert.match(rowsText(cancel), /Annuler alpha \? worktree : 1 gardé · 2 archivé · 3 supprimé/);
   assert.match(rowsText(cancel), /la branche reste · 2 copie les ignorés · Échap annuler/);
-  for (const rows of [add, answer, cancel]) {
+  for (const rows of [add, confirm, cancel]) {
     for (const row of rows) assert.equal(row.text.length, 64);
   }
-  assert.match(rowsText(cancel), /i répondre/, "le pied rappelle les touches applicables à la ligne");
+  assert.match(rowsText(cancel), /Entrée répondre/, "le pied rappelle les touches applicables à la ligne");
   assert.equal(lotFooterActions([feature("a", { state: "done" })], 0), "aucune action");
 });
 
@@ -2183,10 +2249,18 @@ test("les touches du panneau pilotent le lot, et les refus s'affichent sans rien
   const component = factory(
     { terminal: { rows: 24 }, requestRender: () => {} } as never,
     { fg: (_tone: string, text: string) => text, boxRound: GLYPHS, nav: { cursor: ">" } } as never,
-    { matches: () => false } as never,
+    // Entrée et Échap comme l'hôte les résout : sans quoi rien ne se confirme —
+    // c'est le seul chemin par où un geste part désormais (S-8).
+    {
+      matches: (data: string, action: string) =>
+        action === "tui.select.confirm" ? data === "\r" : action === "tui.select.cancel" ? data === "\u001b" : false,
+    } as never,
     () => {},
   );
   const screen = () => component.render(64).join("\n");
+  // Largeur confortable : une formulation d'aperçu plus longue que le cadre s'y lit
+  // d'un seul rang, sans deviner où le repli tombe.
+  const wide = () => component.render(200).join("\n");
 
   assert.match(screen(), /> alpha/);
   assert.match(screen(), /attend validation/);
@@ -2197,8 +2271,20 @@ test("les touches du panneau pilotent le lot, et les refus s'affichent sans rien
   assert.match(screen(), /rien à accepter : la revue n'est pas propre/);
   assert.equal(runs.length, 0);
 
-  // `v` valide les specs : le maillon d'implémentation part.
+  // `v` n'agit pas : il ouvre l'APERÇU du geste (S-8) — rien n'est encore parti.
   component.handleInput("v");
+  assert.equal(runs.length, 0, "l'aperçu n'a rien lancé");
+  // L'aperçu se replie dans le cadre (S-9) : la formulation exacte se lit large.
+  assert.match(wide(), /Valider les specs de alpha \? · le maillon \/impl démarre · attend validation → en cours/);
+  assert.match(wide(), /Entrée valider · Échap annuler/);
+  // `Échap` revient à l'état antérieur : la liste, et le lot n'a pas bougé.
+  component.handleInput("\u001b");
+  assert.equal(runs.length, 0);
+  assert.match(screen(), /> alpha/);
+  assert.match(screen(), /attend validation/);
+  // Le second `v`, puis `Entrée` : c'est LÀ que le maillon d'implémentation part.
+  component.handleInput("v");
+  component.handleInput("\r");
   await flush(4);
   assert.equal(runs.length, 1);
   assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "impl");
@@ -2224,12 +2310,18 @@ test("les touches du panneau pilotent le lot, et les refus s'affichent sans rien
 
 /** Monte le panneau sur un vrai pilote, et rend de quoi lire l'écran rendu. */
 function mkPanel(repoRoot: string, stateDir: string, actions: LotPanelActions, runs: RecordedRun[]) {
+  // Le rafraîchissement périodique du panneau (1 Hz en production) : capturé, jamais
+  // lancé — le test décide quand le panneau relit le magasin et l'état du lot.
+  const scheduled: Array<() => void> = [];
   const factory = pipelinesPanelFactory({
     stateDir,
     repoRoot,
     lot: actions,
     now: () => 1_700_000_000_000,
-    schedule: () => () => {},
+    schedule: (callback) => {
+      scheduled.push(callback);
+      return () => {};
+    },
     join: () => {},
   });
   const component = factory(
@@ -2242,7 +2334,15 @@ function mkPanel(repoRoot: string, stateDir: string, actions: LotPanelActions, r
     } as never,
     () => {},
   );
-  return { component, screen: () => component.render(64).join("\n"), runs };
+  return {
+    component,
+    screen: () => component.render(64).join("\n"),
+    // Largeur confortable : une formulation d'aperçu plus longue que le cadre s'y lit
+    // d'un seul rang, sans deviner où le repli tombe.
+    wide: () => component.render(200).join("\n"),
+    tick: () => scheduled.forEach((callback) => callback()),
+    runs,
+  };
 }
 
 test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `2` archive", async () => {
@@ -2255,11 +2355,22 @@ test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `
   // beta dépend d'alpha : elle ne peut pas démarrer, donc `x` la retirera.
   await controller.add({ name: "alpha", description: "a", deps: [] });
   await controller.add({ name: "beta", description: "b", deps: ["alpha"] });
-  const { component, screen } = mkPanel(repoRoot, stateDir, controller, runs);
+  const { component, screen, wide } = mkPanel(repoRoot, stateDir, controller, runs);
   assert.equal(runs.length, 0, "rien ne tourne tant que le lot n'est pas lancé");
 
-  // `l` : le lot passe en cours et alpha démarre ; beta attend sa dépendance.
+  // `l` n'agit pas : il ouvre l'APERÇU du geste (S-8) — rien n'est encore parti.
   component.handleInput("l");
+  assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.status, "draft", "l'aperçu n'a rien lancé");
+  assert.match(wide(), /Lancer le lot \? · 1 feature\(s\) à venir démarrent/);
+  assert.match(wide(), /Entrée lancer · Échap annuler/);
+  // `Échap` revient à l'état antérieur : la liste, et le lot intact.
+  component.handleInput("\u001b");
+  assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.status, "draft");
+  assert.match(screen(), /> alpha/);
+
+  // `l` puis `Entrée` : le lot passe en cours et alpha démarre ; beta attend sa dépendance.
+  component.handleInput("l");
+  component.handleInput("\r");
   await flush(6);
   const launched = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(launched.status, "running");
@@ -2273,6 +2384,14 @@ test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `
   component.handleInput("j");
   assert.match(screen(), /> beta/);
   component.handleInput("x");
+  assert.match(wide(), /Retirer beta du lot \? · la feature quitte le lot, aucun run n'est lancé/);
+  assert.match(wide(), /Entrée retirer · Échap annuler/);
+  assert.deepEqual(
+    readLot(stateDir, lotRepoKey(repoRoot))!.features.map((f) => f.slug),
+    ["alpha", "beta"],
+    "l'aperçu n'a rien retiré",
+  );
+  component.handleInput("\r");
   await flush(4);
   const afterRemove = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.deepEqual(
@@ -2282,12 +2401,21 @@ test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `
   );
   assert.equal(runs.length, 1, "aucun run n'est lancé par un retrait");
 
-  // `c` puis `2` : le devenir du worktree est CHOISI au clavier, et appliqué.
+  // `c` puis `2` : le devenir du worktree est CHOISI au clavier, puis APERÇU avant
+  // que l'annulation ne parte (S-8).
   writeContract(alpha.worktree, CONTRACT_CLOSED);
   const archive = worktreePathFor(path.join(path.dirname(stateDir), "archive"), repoRoot, "alpha");
   component.handleInput("c");
   assert.match(screen(), /Annuler alpha \? worktree : 1 gardé · 2 archivé · 3 supprimé/);
   component.handleInput("2");
+  assert.match(wide(), /Annuler alpha \? · en cours → annulé · worktree archivé · la branche reste/);
+  assert.match(wide(), /Entrée annuler · Échap retour/);
+  assert.equal(
+    readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state,
+    "running",
+    "l'aperçu n'a rien annulé",
+  );
+  component.handleInput("\r");
   // L'annulation attend la fin du run en vol (borne de 10 s) : on observe l'état.
   await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state === "cancelled");
   await flush(4);
@@ -2302,7 +2430,7 @@ test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `
   component.dispose();
 });
 
-test("`i` répond au maillon qui attend, `R` le relance depuis sa ligne", async () => {
+test("`Entrée` répond au maillon qui attend depuis sa VUE, `R` le relance depuis sa ligne", async () => {
   const repoRoot = mkRepo();
   const answerWt = mktmp("lot-key-answer-");
   const blockedWt = mktmp("lot-key-blocked-");
@@ -2317,14 +2445,34 @@ test("`i` répond au maillon qui attend, `R` le relance depuis sa ligne", async 
       sessionFile: "/tmp/lot-key-iota.jsonl",
       origin: "panneau",
     }),
-    feature("rho", { worktree: blockedWt, state: "blocked", phase: "impl", stopReason: "boom", origin: "panneau" }),
+    feature("rho", {
+      worktree: blockedWt,
+      state: "blocked",
+      phase: "impl",
+      stopReason: "boom",
+      origin: "panneau",
+      // Une file déjà là : la relance la CONSERVE et le run qui part l'emporte (S-5).
+      pendingTexts: ["note en attente"],
+    }),
   ]);
-  const { component, screen } = mkPanel(repoRoot, stateDir, controller, runs);
+  const { component, screen, wide, tick } = mkPanel(repoRoot, stateDir, controller, runs);
 
-  // `i` ouvre l'éditeur de réponse ; la réponse part au maillon, dans sa session.
-  component.handleInput("i");
-  assert.match(screen(), /Réponse à iota : ▏/);
+  // `Entrée` sur la ligne d'iota ouvre sa VUE (S-2) : c'est là qu'on répond, la
+  // touche `i` de la liste n'existe plus.
+  component.handleInput("\r");
+  assert.match(screen(), /Réponse : ▏/, "la vue porte une zone de saisie");
   for (const char of "voici ma réponse bloquante") component.handleInput(char);
+  assert.match(screen(), /Réponse : voici ma réponse bloquante▏/);
+  // `Entrée` n'envoie pas : il ouvre l'APERÇU de la livraison (S-8).
+  component.handleInput("\r");
+  assert.equal(runs.length, 0, "l'aperçu n'a rien envoyé");
+  assert.match(wide(), /Envoyer à iota · \/req : « voici ma réponse bloquante »/);
+  assert.match(wide(), /Entrée envoyer · Échap modifier/);
+  // `Échap` revient à la saisie, tampon compris.
+  component.handleInput("\u001b");
+  assert.match(screen(), /Réponse : voici ma réponse bloquante▏/);
+  // Les deux `Entrée` de l'aperçu livrent la réponse au maillon, dans sa session.
+  component.handleInput("\r");
   component.handleInput("\r");
   await flush(6);
   assert.equal(runs.length, 1);
@@ -2333,16 +2481,46 @@ test("`i` répond au maillon qui attend, `R` le relance depuis sa ligne", async 
   assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /voici ma réponse bloquante/);
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state, "running");
 
-  // `R` sur la ligne bloquée : le maillon courant repart, avec le préambule de reprise.
+  // S-5 : une feature qui TOURNE n'accepte plus de réponse — le texte part en FILE.
+  // Le panneau relit le magasin (1 Hz en production) : la zone suit l'état frais.
+  tick();
+  assert.match(screen(), /Entrée mettre en file · Échap annuler/);
+  for (const char of "suite du travail") component.handleInput(char);
+  component.handleInput("\r");
+  assert.match(
+    wide(),
+    /Mettre en file pour iota · \/req : « suite du travail » — le run en cours continue, le message part au prochain maillon/,
+  );
+  component.handleInput("\r");
+  await flush(4);
+  assert.deepEqual(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.pendingTexts, ["suite du travail"]);
+  // `Échap` referme la vue : la LISTE dit les messages en attente (S-7).
+  component.handleInput("\u001b");
+  tick();
+  assert.match(screen(), /iota · 1 message en attente/);
+
+  // `R` sur la ligne bloquée : un APERÇU, puis le maillon courant repart avec le
+  // préambule de reprise ET les messages que la relance conserve (S-5).
   component.handleInput("j");
   assert.match(screen(), /> rho/);
   component.handleInput("R");
+  assert.equal(runs.length, 1, "l'aperçu n'a rien relancé");
+  assert.match(wide(), /Relancer rho \? · un nouveau run \/impl démarre · bloqué → en cours/);
+  assert.match(wide(), /Entrée relancer · Échap annuler/);
+  component.handleInput("\r");
   await flush(6);
   assert.equal(runs.length, 2);
-  assert.match(runs[1]!.argv[runs[1]!.argv.length - 1]!, /^\[reprise\]/);
+  const prompt = runs[1]!.argv[runs[1]!.argv.length - 1]!;
+  assert.match(prompt, /^\[reprise\]/);
+  assert.match(
+    prompt,
+    /\[message de l'utilisateur, envoyé depuis \/pipelines\]\nnote en attente/,
+    "le run qui part emporte les messages en file",
+  );
   const rho = readLot(stateDir, lotRepoKey(repoRoot))!.features[1]!;
   assert.equal(rho.state, "running");
   assert.equal(rho.stopReason, null, "la relance efface la raison du blocage");
+  assert.deepEqual(rho.pendingTexts, [], "le run qui part consomme la file");
   component.dispose();
 });
 
