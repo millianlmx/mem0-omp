@@ -101,6 +101,78 @@ type FakeApp = {
   displayed: Displayed[];
 };
 
+/**
+ * Le faux kit de composants de l'hôte (S-1) posé sur `pi.pi` : sans lui, le
+ * panneau REFUSE de s'ouvrir (« panneau indisponible : composants de l'hôte
+ * absents ») et aucun overlay n'est monté — or c'est le montage que ce fichier
+ * vérifie. Le rendu réel des composants est celui d'OMP (prouvé par la fumée PTY,
+ * BR-7) : ici ils rendent juste de quoi composer un écran.
+ */
+function fakeHostKit(): Record<string, unknown> {
+  class FakeText {
+    #text: string;
+    constructor(text = "", _paddingX = 1, _paddingY = 0, _background?: unknown) {
+      this.#text = text;
+    }
+    setText(text: string): boolean {
+      const changed = text !== this.#text;
+      this.#text = text;
+      return changed;
+    }
+    setStyleFn(): this {
+      return this;
+    }
+    render(_width: number): string[] {
+      return this.#text === "" ? [] : [this.#text];
+    }
+  }
+  class FakeBorder {
+    render(width: number): string[] {
+      return ["-".repeat(Math.max(1, width))];
+    }
+  }
+  class FakeContainer {
+    #children: Array<{ render(width: number): readonly string[] }> = [];
+    addChild(child: { render(width: number): readonly string[] }): void {
+      this.#children.push(child);
+    }
+    render(width: number): string[] {
+      return this.#children.flatMap((child) => [...child.render(width)]);
+    }
+  }
+  class FakeSpacer {
+    setLines(_lines: number): void {}
+    render(): string[] {
+      return [];
+    }
+  }
+  class FakeMessage {
+    render(): string[] {
+      return [];
+    }
+    setExpanded(_expanded: boolean): void {}
+    updateArgs(_args: unknown, _id?: string): void {}
+    setArgsComplete(_id?: string): void {}
+    setExecutionStarted(_id?: string): void {}
+    updateResult(_result: unknown, _partial?: boolean, _id?: string): void {}
+  }
+  return {
+    Text: FakeText,
+    DynamicBorder: FakeBorder,
+    Container: FakeContainer,
+    Spacer: FakeSpacer,
+    theme: { fg: (_tone: string, text: string) => text, bg: (_tone: string, text: string) => text, nav: { cursor: ">" } },
+    UserMessageComponent: FakeMessage,
+    AssistantMessageComponent: FakeMessage,
+    ToolExecutionComponent: FakeMessage,
+    ReadToolGroupComponent: FakeMessage,
+    CustomMessageComponent: FakeMessage,
+    BashExecutionComponent: FakeMessage,
+    CompactionSummaryMessageComponent: FakeMessage,
+    BranchSummaryMessageComponent: FakeMessage,
+  };
+}
+
 function mkApp(): FakeApp {
   const handlers = new Map<string, (args: string, ctx: never) => Promise<void>>();
   const hooks = new Map<string, (event: never, ctx: never) => Promise<unknown>>();
@@ -109,6 +181,9 @@ function mkApp(): FakeApp {
   const displayed: Displayed[] = [];
 
   const pi = {
+    // Le namespace du module d'entrée de l'hôte (`pi.pi`) : c'est de là que le
+    // panneau tire ses composants.
+    pi: fakeHostKit(),
     registerCommand(name: string, def: { handler: (args: string, ctx: never) => Promise<void> }) {
       handlers.set(name, def.handler);
     },

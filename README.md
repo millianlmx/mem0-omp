@@ -289,35 +289,46 @@ Chaque rang porte le dépôt et la feature, le maillon courant (`/req`, `/specs`
 repart à chaque changement de maillon, ce n'est jamais la durée totale :
 
 ```
-┌ Pipelines · 2 en cours ──────────────────────────────────────┐
-│ > mem0-omp/panneau-des-pipelines  /impl · tourne · 3:12       │
-│   mem0-omp/fetch-du-souvenir      /specs · attend · 0:41      │
-├───────────────────────────────────────────────────────────────┤
-│   mem0-omp/isolation-worktree     /review · terminé           │
-│   autre-depot/fix-recall          /req · échoué               │
-│ ↑↓ naviguer · Entrée session · d supprimer                    │
-└ Échap fermer ─────────────────────────────────────────────────┘
+────────────────────────────────────────────────────────────────
+ Pipelines · 2 en cours
+ Lot · mem0-omp · 3 features
+ ❯ mem0-omp/panneau-des-pipelines      /impl · tourne · 3:12
+   mem0-omp/fetch-du-souvenir          /specs · attend · 0:41
+ ──────────────────────────────────────────────────────────────
+   mem0-omp/isolation-worktree         /review · terminé
+   autre-depot/fix-recall              /req · échoué
+ a ajouter · l lancer · Entrée session
+ x retirer · c annuler
+ Échap fermer
+────────────────────────────────────────────────────────────────
 ```
+
+Le cadre, les rangs, le curseur et les couleurs viennent des **composants pi-tui de
+l'hôte** — les mêmes que les écrans d'OMP (`DynamicBorder` pour les règles, `Text` pour
+les rangs, le thème actif pour les couleurs et le curseur de sélection) : le panneau ne
+jure pas à côté du reste. Sans ces composants (hôte d'une autre version), il **refuse de
+s'ouvrir** et le dit (`panneau indisponible : composants de l'hôte absents (OMP)`) plutôt
+que d'afficher un écran à moitié peint.
 
 - **État** : `tourne` quand l'agent travaille, `attend` quand la pipeline est suspendue
   à une question — un `ask` en vol, une approbation d'outil en attente, ou l'agent qui a
   rendu la main. L'état est calculé par le processus **propriétaire** de la pipeline,
   jamais deviné par celui qui lit.
 - **Entrée** ouvre la **vue de session** de la ligne, dans le panneau : la transcription
-  du fichier de session, du plus ancien au plus récent, relue à chaque rafraîchissement —
-  un maillon qui travaille se voit avancer sans sortir et rentrer (≤ 2 s). Le rendu est
-  celui d'OMP : le markdown est mis en forme — titres, listes à puces ou numérotées,
-  blocs de code —, un appel d'outil qui modifie un fichier montre son **diff** (les
-  ajouts en `+`, les suppressions en `-`, le contexte en gris) au lieu des arguments
-  bruts, et chaque entrée est rendue **entière** : un message de plusieurs lignes occupe
-  plusieurs lignes de terminal, les lignes trop longues se replient au lieu de déborder.
-  Une entrée de plus de **12 rangs** est **repliée d'office** : ses 8 premiers rangs, puis
-  la mention `… <n> lignes repliées — ctrl+o déplier`. `ctrl+o` déplie l'entrée repliée la
-  plus récente, puis la replie ; un clic sur la mention bascule celle qu'on vise, une
-  entrée à la fois — une conversation s'ouvre toujours repliée. L'en-tête rappelle le rang,
-  son maillon, son état, le nom du fichier — et `run en cours — lecture seule` quand un
-  run est en train d'écrire cette session. `↑`/`k`, `↓`/`j`, `PageUp`/`PageDown` et la
-  molette remontent et redescendent la transcription.
+  du fichier de session, du plus ancien au plus récent, relue en direct — un maillon qui
+  travaille se voit avancer **sans rien toucher** (≤ 2 s), et remonter dans la vue fige la
+  position de lecture : le contenu qui arrive ne la déplace pas d'un rang. Le rendu est
+  celui d'OMP, **par les composants d'OMP** : chaque entrée est confiée au composant de
+  l'hôte qui la rend dans une vraie session — le markdown est mis en forme, un appel
+  d'outil montre sa carte (et son **diff**, ajouts en `+`, suppressions en `-`) —, si bien
+  qu'une session se lit ici comme dans OMP. `ctrl+o` — la touche de pliage **native**
+  d'OMP — bascule d'un coup le dépliage de **toutes** les entrées repliables de la vue,
+  exactement comme dans le transcript principal, et les entrées qui arrivent ensuite
+  naissent dans l'état courant. L'en-tête rappelle le rang, son maillon, son état, le nom
+  du fichier — et `run en cours — lecture seule` quand un run est en train d'écrire cette
+  session. Le défilement est celui d'une session OMP : `↑`/`k` et `↓`/`j` d'un rang,
+  `maj+↑`/`maj+↓` de cinq, `PageUp`/`PageDown` d'une fenêtre, `Début`/`Fin` aux
+  extrémités (`Fin` réarme le suivi du direct), et la **molette** de trois rangs par cran.
 - **La vue répond** — c'est le seul endroit d'où une écriture part, vers le lot ou vers
   une session, et elle n'en part qu'après confirmation. Sa **zone de saisie** choisit sa
   forme selon le rang, et elle dit toujours laquelle :
@@ -389,14 +400,18 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 - **`↑`/`k`, `↓`/`j`, `Entrée`, `o`, `d`, `ctrl+o`, `Échap`/`Ctrl+C`** — c'est un overlay
   focalisé : tant qu'il est ouvert, aucune touche n'atteint l'éditeur, et `Échap` est le
   seul moyen de le fermer depuis la liste (depuis la vue de session, il ramène à la
-  liste). Dans la vue, **`ctrl+o`** déplie l'entrée repliée la plus récente, puis la
-  replie — c'est la touche de pliage native d'OMP, et l'hôte la cède au panneau tant que
-  l'overlay est ouvert : elle ne vole rien à la saisie. Le **texte de l'éditeur est
-  restauré** à la fermeture.
+  liste). Dans la vue, **`ctrl+o`** bascule d'un coup le dépliage de **toutes** les
+  entrées repliables — les cartes d'appels d'outils, les messages d'affichage, les
+  résumés — exactement comme dans le transcript d'OMP, et le pied le rappelle
+  (`ctrl+o déplier/replier`). C'est la touche de pliage native d'OMP, et l'hôte la cède
+  au panneau tant que l'overlay est ouvert : elle ne vole rien à la saisie, même quand la
+  zone de réponse contient du texte. Le **texte de l'éditeur est restauré** à la
+  fermeture.
 - **À la souris** : le clic gauche prend la ligne visée — et, dans la vue, l'option
-  visée — et la molette déplace la sélection d'un cran (ou le défilement, dans la vue de
-  session). Conséquence assumée du plein écran : tant que le panneau est ouvert, la
-  sélection de texte native du terminal est capturée par le panneau.
+  visée — et la molette déplace la sélection d'un cran dans la liste, ou **trois rangs**
+  de transcription dans la vue (le facteur du lecteur plein écran d'OMP). Conséquence
+  assumée du plein écran : tant que le panneau est ouvert, la sélection de texte native
+  du terminal est capturée par le panneau.
 - **La sélection est mémorisée par dépôt** : fermer le panneau puis le rouvrir (`alt+w`)
   rend la même ligne — et la vue de session s'ouvre par `Entrée`, se referme par `Échap`,
   sans qu'aucune commande soit à retaper.
@@ -423,17 +438,19 @@ processus par maillon — en ne s'arrêtant que là où il a besoin de toi. Il s
 entièrement depuis le panneau.
 
 ```
-+ Pipelines · 0 en cours --------------------------------------+
-+─ Lot · mem0-omp · 3 features --------------------------------+
-| > isolation-worktree       /specs · attend validation · 1:20 |
-|   base-qdrant ← isolation-worktree     /req · à venir · 0:12 |
-|   panneau-lot                          /impl · bloqué · 4:03 |
-| aucune pipeline en cours                                     |
-+--------------------------------------------------------------+
-| aucun historique                                             |
-| a ajouter · l lancer · Entrée session                        |
-| v valider · c annuler                                        |
-+ Échap fermer ------------------------------------------------+
+────────────────────────────────────────────────────────────────
+ Pipelines · 0 en cours
+ Lot · mem0-omp · 3 features
+ ❯ isolation-worktree             /specs · attend validation · 1:20
+   base-qdrant ← isolation-worktree      /req · à venir · 0:12
+   panneau-lot                           /impl · bloqué · 4:03
+ aucune pipeline en cours
+ ──────────────────────────────────────────────────────────────
+ aucun historique
+ a ajouter · l lancer · Entrée session
+ v valider · c annuler · o rejoindre
+ Échap fermer
+────────────────────────────────────────────────────────────────
 ```
 
 La **seconde ligne de pied** est contextuelle : elle n'annonce que les touches qui
@@ -462,7 +479,8 @@ s'affiche tel quel au lieu d'être avalé.
 - **La boucle de correction** (`/impl --fix` → `/review`) tourne seule, dans la limite de
   `MEM0_PIPELINE_REVIEW_CAP` tours (3 par défaut) : au-delà, la feature passe *bloqué* au
   lieu de boucler.
-- **Répondre** (`i`) : dans un run lancé par le panneau, le maillon dispose d'un outil
+- **Répondre** (`Entrée` sur la ligne, puis la zone de saisie de la vue) : dans un run
+  lancé par le panneau, le maillon dispose d'un outil
   `ask` à options — **une question à la fois, 1 à 9 options**. La question s'affiche dans
   la conversation, où tu sélectionnes une option ; la réponse repart dans le maillon
   **sans lancer de nouveau run**, la question se résout dans le tour en cours, et la

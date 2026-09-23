@@ -3951,6 +3951,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
 export type PanelTone = "border" | "accent" | "muted" | "dim" | "success" | "error" | "warning" | "text";
 export type PanelRow = {
+  /**
+   * Le CONTENU du rang, jamais une ligne déjà mise au cadre (S-1) : le repli à la
+   * largeur est le fait du `Text` de l'hôte, qui reçoit la largeur au rendu. Les
+   * rangs de SERVICE (titre, pied, notice, zone) sont, eux, mesurés en amont par
+   * `fit`/`clip` — ce sont des garde-fous, pas une composition concurrente.
+   */
   text: string;
   tone: PanelTone;
   /**
@@ -3962,27 +3968,35 @@ export type PanelRow = {
    */
   target?: number;
   /**
-   * La cible CLIQUABLE que ce rang représente dans la zone de saisie de la vue
-   * (S-3) : l'index de l'OPTION (la correspondance rang → option n'est jamais
-   * devinée à l'écran, comme pour `target`), ou le PLI d'une entrée longue (S-3)
-   * — le rang de mention d'une entrée repliée bascule CETTE entrée, n'importe
-   * laquelle, pas seulement la dernière.
+   * La cible CLIQUABLE que ce rang représente (S-7) : l'index de l'OPTION dans la
+   * zone de saisie (la correspondance rang → option n'est jamais devinée à
+   * l'écran, comme pour `target`), ou la MENTION de pliage — le rang qui annonce
+   * `ctrl+o déplier/replier` bascule l'état global de dépliage, exactement comme
+   * la touche (S-4).
    */
-  choice?: number | { kind: "fold"; key: string };
+  choice?: number | { kind: "expand" };
+  /**
+   * Le rang SÉLECTIONNÉ (S-1) : c'est lui que le composant peint avec le fond
+   * `selectedBg` du thème — le curseur de sélection, lui, reste un préfixe de rang,
+   * donc le curseur du terminal n'est jamais utilisé.
+   */
+  selected?: boolean;
+  /**
+   * Une RÈGLE du cadre (S-1) : le composant la rend en `DynamicBorder` coloré par
+   * le thème ACTIF, jamais en `Text` — `frame` pour le haut et le bas du panneau,
+   * `separator` pour la frontière entre « en cours » et « historique ».
+   */
+  rule?: "frame" | "separator";
+  /**
+   * Le rang de REMPLISSAGE : le composant le rend en `Spacer(n)`, la seule façon
+   * d'occuper la hauteur sans peindre de blanc (le `Text` d'un texte vide ne rend
+   * aucun rang). Il est posé juste avant le pied, pour que le pied soit en bas.
+   */
+  fill?: boolean;
 };
 
-/** Glyphes injectés : `theme.boxRound` + `theme.nav.cursor` en production. */
-export type PanelGlyphs = {
-  topLeft: string;
-  topRight: string;
-  bottomLeft: string;
-  bottomRight: string;
-  horizontal: string;
-  vertical: string;
-  teeLeft: string;
-  teeRight: string;
-  cursor: string;
-};
+/** Les glyphes injectés (S-1) : le curseur de sélection vient de `theme.nav.cursor`. */
+export type PanelGlyphs = { cursor: string };
 
 export type PanelModel = {
   /**
@@ -4176,27 +4190,12 @@ export function panelBudget(terminalRows: number): number {
 
 /**
  * La hauteur du cadre, en rangs : celle du terminal, ou le repli de 24. C'est elle
- * que le composant remplit de rangs vides (S-4) — le constructeur de rangs, lui,
- * ne connaît que son budget.
+ * que le COMPOSANT remplit (S-1) : le constructeur de rangs, lui, ne connaît que
+ * son budget et pose le rang de remplissage.
  */
 export function panelHeight(tui: PanelTui): number {
   const rows = tui.terminal?.rows;
   return Number.isFinite(rows) && (rows as number) > 0 ? Math.floor(rows as number) : 24;
-}
-
-/**
- * Complète la hauteur : tant que le contenu n'occupe pas l'écran, des rangs vides
- * s'insèrent IMMÉDIATEMENT AVANT le dernier rang — la règle basse reste ainsi sur
- * le dernier rang de l'écran. Au-delà de la hauteur, rien n'est inséré : le TUI
- * coupe par le bas, comme avant (terminal plus court que le cadre).
- */
-export function fillPanelHeight(rows: PanelRow[], width: number, height: number): PanelRow[] {
-  if (rows.length === 0 || rows.length >= height) return rows;
-  const blanks: PanelRow[] = Array.from({ length: height - rows.length }, () => ({
-    text: " ".repeat(width),
-    tone: "dim" as const,
-  }));
-  return [...rows.slice(0, -1), ...blanks, rows[rows.length - 1]!];
 }
 
 /** Rapport SGR de souris décodé (S-4) : `row`/`col` sont 0-based et indexent les rangs rendus. */
@@ -4411,15 +4410,6 @@ function noSessionNotice(row: PanelRowRef): string {
 
 // --- la section « Lot » du panneau ------------------------------------------
 
-/**
- * Rang de titre de section : le cadre s'ouvre sur le titre, comme `topRule`, et
- * le rang fait exactement `width` colonnes.
- */
-function sectionRule(glyphs: PanelGlyphs, title: string, width: number): string {
-  const head = `${glyphs.teeLeft}─ ${clip(title, Math.max(0, width - 6))} `;
-  return fit(head + glyphs.horizontal.repeat(Math.max(0, width - displayWidth(head) - 1)) + glyphs.teeRight, width);
-}
-
 /** Les dépendances d'une feature qui ne sont pas TERMINÉES, dans l'ordre déclaré. */
 function pendingDeps(lot: Lot, feature: LotFeature): string[] {
   return feature.deps.filter((dep) => lotFeature(lot, dep)?.state !== "done");
@@ -4473,30 +4463,24 @@ function lotSectionTitle(lot: Lot): string {
 
 /**
  * Les rangs d'un mode du panneau : l'aperçu d'un geste (S-8), ou le champ courant
- * du mode de saisie (tampon + curseur) et son aide. `browse` n'ajoute rien. Chaque
- * rang se replie (S-9) — un aperçu plus long que le cadre reste lisible EN ENTIER.
+ * du mode de saisie (tampon + curseur) et son aide. `browse` n'ajoute rien. Ce
+ * sont des rangs de SERVICE (S-1) : une ligne chacun, mesurés par `clip`.
  */
-function lotModeRows(mode: LotPanelMode, lot: Lot | null, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
+function lotModeRows(mode: LotPanelMode, lot: Lot | null, innerW: number): PanelRow[] {
   if (mode.kind === "browse") return [];
   if (mode.kind === "confirm") {
     const preview = gesturePreview(mode.gesture, lot);
     return [
-      ...framedRows(preview.head, "warning", glyphs, width, innerW),
-      ...framedRows(preview.hint, "dim", glyphs, width, innerW),
+      ...wrappedRow(preview.head, "warning", innerW),
+      ...wrappedRow(preview.hint, "dim", innerW),
     ];
   }
   if (mode.kind === "cancel") {
     // Deux rangs : le panneau fait 64 colonnes et les trois devenirs ne tiennent
     // pas sur un seul rang avec leur conséquence.
     return [
-      ...framedRows(
-        `Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`,
-        "warning",
-        glyphs,
-        width,
-        innerW,
-      ),
-      ...framedRows("la branche reste · 2 copie les ignorés · Échap annuler", "dim", glyphs, width, innerW),
+      ...wrappedRow(`Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`, "warning", innerW),
+      ...wrappedRow("la branche reste · 2 copie les ignorés · Échap annuler", "dim", innerW),
     ];
   }
   const field =
@@ -4507,8 +4491,8 @@ function lotModeRows(mode: LotPanelMode, lot: Lot | null, glyphs: PanelGlyphs, w
         : "Dépendances (slugs séparés par des virgules)";
   const next = mode.step === "deps" ? "créer la feature" : "champ suivant";
   return [
-    ...framedRows(`${field} : ${mode.buffer}▏`, "text", glyphs, width, innerW),
-    ...framedRows(`Entrée ${next} · Échap annuler`, "dim", glyphs, width, innerW),
+    serviceRow(`${field} : ${mode.buffer}▏`, "text", innerW),
+    serviceRow(`Entrée ${next} · Échap annuler`, "dim", innerW),
   ];
 }
 
@@ -4779,27 +4763,8 @@ function breakIndex(text: string, limit: number): number {
   return lastSpace > 0 ? lastSpace : index;
 }
 
-/** Le nombre de lignes qu'un rang de la LISTE peut occuper (S-9). */
+/** Le nombre de lignes qu'un rang de la LISTE peut occuper avant le repli (S-1). */
 export const PANEL_WRAP_MAX_LINES = 3;
-
-/**
- * Le repli d'un rang de liste : au plus `PANEL_WRAP_MAX_LINES` lignes, la dernière
- * finissant par `…` quand il reste du texte — jamais une coupe silencieuse.
- */
-export function cappedWrap(text: string, width: number, max = PANEL_WRAP_MAX_LINES): string[] {
-  const lines = wrapVisible(text, width);
-  if (lines.length <= max) return lines;
-  const kept = lines.slice(0, max);
-  kept[max - 1] = clip(lines.slice(max - 1).join(" "), width);
-  return kept;
-}
-
-function fit(text: string, width: number): string {
-  const target = Math.max(0, Math.floor(width));
-  const measured = displayWidth(text);
-  if (measured === target) return text;
-  return measured > target ? clip(text, target) : text + " ".repeat(target - measured);
-}
 
 function clip(s: string, n: number): string {
   if (n <= 0) return "";
@@ -4836,89 +4801,65 @@ function sectionSelection(selection: number, offset: number, count: number): num
   return selection >= 0 && selection < count ? selection + offset : -1;
 }
 
-/** Rang encadré : `│ <contenu de largeur innerW> │`, exactement `width` colonnes. */
-function frame(glyphs: PanelGlyphs, content: string, width: number, innerW: number): string {
-  return fit(`${glyphs.vertical} ${fit(clip(content, innerW), innerW)} ${glyphs.vertical}`, width);
-}
+/**
+ * Les rangs du panneau et de la vue sont rendus par un `Text` de l'hôte, qui
+ * réserve `paddingX` colonnes de chaque côté : la largeur de CONTENU d'un rang —
+ * celle sur laquelle se mesurent les garde-fous de largeur — en découle.
+ */
+const ROW_PADDING_X = 1;
 
 /**
- * Un contenu → les rangs du cadre (S-9) : replié sur plusieurs lignes s'il dépasse
- * le cadre, chaque ligne encadrée et complétée à la largeur. Les rangs de
- * continuation gardent le TON et les MARQUES du rang (`target` pour la sélection,
- * `choice` pour une option de la vue) : un rang replié est indissociable, au clic
- * comme à la sélection. Sans place dans le cadre (`innerW = 0`), le rang existe
- * quand même — réduit au cadre, jamais absent.
+ * Un rang de SERVICE (S-1) : titre, titre de section, notice, rang de saisie,
+ * pied. `clip` est le garde-fou — un chemin de session, un tampon de saisie ou une
+ * notice tiennent sur UNE ligne, jamais dix, et ne débordent jamais la largeur
+ * reçue. Le contenu, lui, n'est pas coupé ici : c'est le `Text` qui le replie.
  */
-function framedRows(
-  content: string,
+function serviceRow(
+  text: string,
   tone: PanelTone,
-  glyphs: PanelGlyphs,
-  width: number,
   innerW: number,
-  marks?: { target?: number; choice?: number },
-): PanelRow[] {
-  const lines = innerW > 0 ? cappedWrap(content, innerW) : [""];
-  return lines.map((line) => {
-    const row: PanelRow = { text: frame(glyphs, line, width, innerW), tone };
-    if (marks?.target !== undefined) row.target = marks.target;
-    if (marks?.choice !== undefined) row.choice = marks.choice;
-    return row;
-  });
-}
-
-/** Rang de titre : le cadre s'ouvre après le texte, sans le traverser. */
-function topRule(glyphs: PanelGlyphs, title: string, width: number): string {
-  const head = `${glyphs.topLeft} ${clip(title, Math.max(0, width - 4))} `;
-  const rest = Math.max(0, width - displayWidth(head) - 1);
-  return fit(head + glyphs.horizontal.repeat(rest) + glyphs.topRight, width);
-}
-
-/** Séparateur de sections — et frontière entre « en cours » et « historique ». */
-function separatorRule(glyphs: PanelGlyphs, width: number): string {
-  return fit(
-    `${glyphs.teeLeft}${glyphs.horizontal.repeat(Math.max(0, width - 2))}${glyphs.teeRight}`,
-    width,
-  );
-}
-
-/** Dernier rang : le pied porte le texte ET ferme le cadre. */
-function bottomRule(glyphs: PanelGlyphs, text: string, width: number): string {
-  const head = `${glyphs.bottomLeft} ${clip(text, Math.max(0, width - 4))} `;
-  const rest = Math.max(0, width - displayWidth(head) - 1);
-  return fit(head + glyphs.horizontal.repeat(rest) + glyphs.bottomRight, width);
+  marks?: { target?: number; choice?: PanelRow["choice"]; selected?: boolean },
+): PanelRow {
+  const row: PanelRow = { text: clip(text, innerW), tone };
+  if (marks?.target !== undefined) row.target = marks.target;
+  if (marks?.choice !== undefined) row.choice = marks.choice;
+  if (marks?.selected !== undefined) row.selected = marks.selected;
+  return row;
 }
 
 /**
- * Les lignes de contenu d'un rang de pipeline (S-9) : `<label>` à gauche,
- * `<droite>` aligné à droite, curseur en tête si sélectionné. La colonne de droite
- * reste sur la PREMIÈRE ligne ; le libellé se replie SOUS elle, indenté de la
- * largeur du curseur — et si elle ne laisse aucune place au libellé, elle occupe
- * seule la première ligne. Au plus `PANEL_WRAP_MAX_LINES` lignes, la dernière
- * finissant par `…` quand il reste du texte.
+ * Un rang de service REPLIÉ (S-1) : un aperçu de livraison, un motif de refus ou
+ * une question se lisent EN ENTIER — ils sont mesurés ici, en lignes, plutôt que
+ * coupés. Le budget reste exact : un rang replié compte ses lignes.
  */
-function entryLines(label: string, right: string, selected: boolean, glyphs: PanelGlyphs, innerW: number): string[] {
+function wrappedRow(
+  text: string,
+  tone: PanelTone,
+  innerW: number,
+  marks?: { target?: number; choice?: PanelRow["choice"]; selected?: boolean },
+  max = Number.POSITIVE_INFINITY,
+): PanelRow[] {
+  const lines = innerW > 0 ? wrapVisible(text, innerW) : [""];
+  // Au-delà de `max`, le reste tient sur le dernier rang, tronqué : un rang de
+  // service ne mange jamais le budget de la liste (`PANEL_WRAP_MAX_LINES`).
+  const kept =
+    lines.length <= max ? lines : [...lines.slice(0, max - 1), clip(lines.slice(max - 1).join(" "), innerW)];
+  return kept.map((line) => serviceRow(line, tone, innerW, marks));
+}
+
+/**
+ * Le contenu d'un rang de pipeline (S-1) : `<label>` à gauche, `<droite>` aligné à
+ * droite, curseur de sélection en tête. Le REPLI n'est pas fait ici — c'est le
+ * `Text` de l'hôte qui replie à la largeur qu'il reçoit, donc la colonne de droite
+ * reste sur la première ligne du rang, et un libellé plus long que la place
+ * disponible passe simplement à la ligne au lieu d'être tronqué.
+ */
+function entryContent(label: string, right: string, selected: boolean, glyphs: PanelGlyphs, innerW: number): string {
   const prefix = selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
+  if (right === "") return prefix + label;
   const room = Math.max(1, innerW - prefix.length);
-  const indent = " ".repeat(Math.min(prefix.length, innerW));
-  const wrapped = wrapVisible(label, room);
-  const first = wrapped[0] ?? "";
-  const beside = right !== "" && displayWidth(right) + 1 + displayWidth(first) <= room;
-  let lines: string[];
-  if (right === "") {
-    lines = wrapped.map((line, index) => (index === 0 ? prefix + line : indent + line));
-  } else if (beside) {
-    const gap = " ".repeat(Math.max(1, room - displayWidth(first) - displayWidth(right)));
-    lines = [`${prefix}${first}${gap}${right}`, ...wrapped.slice(1).map((line) => indent + line)];
-  } else {
-    lines = [`${prefix}${right}`, ...wrapped.map((line) => indent + line)];
-  }
-  if (lines.length > PANEL_WRAP_MAX_LINES) {
-    const kept = lines.slice(0, PANEL_WRAP_MAX_LINES);
-    const last = PANEL_WRAP_MAX_LINES - 1;
-    kept[last] = clip(`${kept[last]}…`, innerW);
-    lines = kept;
-  }
-  return lines.map((line) => clip(line, innerW));
+  const gap = Math.max(1, room - displayWidth(label) - displayWidth(right));
+  return `${prefix}${label}${" ".repeat(gap)}${right}`;
 }
 
 /** Le rang de notice, unique, compose l'illisible et le message d'action. */
@@ -4932,18 +4873,23 @@ function noticeText(model: PanelModel): string | null {
 }
 
 /**
- * Tous les rangs du panneau, DANS L'ORDRE : titre, section « en cours »,
- * séparateur, section « historique », notice (absente si aucune), deux rangs de
- * pied. Pur : le temps écoulé vient de `now`, jamais d'une horloge implicite, et
- * les glyphes du test sont de l'ASCII.
+ * Tous les rangs du panneau, DANS L'ORDRE : règle d'ouverture, titre, section du
+ * lot, section « en cours », séparateur, section « historique », notice (absente
+ * si aucune), rangs de saisie, remplissage, pied, règle de fermeture. Pur : le
+ * temps écoulé vient de `now`, jamais d'une horloge implicite.
+ *
+ * Chaque rang est SÉMANTIQUE (S-1) : `text` est le CONTENU du rang, pas une ligne
+ * déjà mise au cadre — c'est le composant qui choisit celui de l'hôte qui le rend
+ * (`DynamicBorder` pour une règle, `Spacer` pour le remplissage, `Text` sinon), et
+ * le `Text` qui le replie à la largeur qu'il reçoit.
  *
  * Le panneau tient dans `budget` LIGNES — le pied compris, c'est lui que le TUI
  * couperait par le bas. Le budget compte des lignes de terminal, donc des rangs
- * REPLIÉS (S-9) : le minimum d'une section non vide reste une entrée complète (au
- * plus `PANEL_WRAP_MAX_LINES` lignes), jamais un demi-rang, et une section
- * tronquée le dit par son marqueur `… <n> de plus`. Le surplus va par priorité au
- * lot (la salle de contrôle), puis aux pipelines en cours (vivants), puis à
- * l'historique, la plus récente d'abord.
+ * REPLIÉS : `linesOf` mesure ce que le `Text` occupera, sans jamais couper le
+ * contenu. Le minimum d'une section non vide reste une entrée complète, jamais un
+ * demi-rang, et une section tronquée le dit par son marqueur `… <n> de plus`. Le
+ * surplus va par priorité au lot (la salle de contrôle), puis aux pipelines en
+ * cours (vivants), puis à l'historique, la plus récente d'abord.
  */
 export function buildPanelRows(
   model: PanelModel,
@@ -4951,35 +4897,37 @@ export function buildPanelRows(
 ): PanelRow[] {
   const width = Math.max(1, Math.floor(opts.width));
   const glyphs = opts.glyphs;
-  const innerW = Math.max(0, width - 4);
+  const innerW = Math.max(0, width - ROW_PADDING_X * 2);
   const rows: PanelRow[] = [];
   const lot = model.lot ?? null;
   const mode = model.mode ?? { kind: "browse" };
   const notice = noticeText(model);
-  const modeRows = lotModeRows(mode, lot, glyphs, width, innerW);
+  const modeRows = lotModeRows(mode, lot, innerW);
   const runningCount = model.running.length;
 
-  // Le titre annonce les PROCESS vivants : les entrées appariées sont absorbées
-  // par un rang de lot, mais elles tournent toujours.
-  rows.push({
-    text: topRule(glyphs, `Pipelines · ${runningCount + Object.keys(model.live).length} en cours`, width),
-    tone: "accent",
-  });
+  // Le cadre s'ouvre sur une règle de l'hôte, et le titre est le premier rang —
+  // la disposition des blocs de commande d'OMP (`## Documentation` §1). Le titre
+  // annonce les PROCESS vivants : les entrées appariées sont absorbées par un rang
+  // de lot, mais elles tournent toujours.
+  rows.push({ text: "", tone: "border", rule: "frame" });
+  rows.push(
+    serviceRow(`Pipelines · ${runningCount + Object.keys(model.live).length} en cours`, "accent", innerW),
+  );
 
   const features = lot?.features.length ?? 0;
   const historyCount = model.history.length;
 
   // Les ENTRÉES du lot, dans l'ordre d'ajout : la salle de contrôle vient en tête.
-  // Une entrée = une ligne logique ET ses rangs de repli (S-9) : le budget et la
-  // troncature comptent des lignes, mais ne coupent jamais une entrée en deux.
+  // Une entrée = UN rang : son repli éventuel est le fait du `Text`, et le budget
+  // le compte en lignes sans jamais couper une entrée en deux.
   const lotEntries: PanelRow[][] = [];
   let lotOffset = 0;
   if (lot) {
     if (lot.features.length === 0) {
-      lotEntries.push(framedRows("aucune feature — a ajouter", "muted", glyphs, width, innerW));
+      lotEntries.push([serviceRow("aucune feature — a ajouter", "muted", innerW)]);
     } else {
       if (lot.status === "draft") {
-        lotEntries.push(framedRows("lot non lancé — l lancer", "muted", glyphs, width, innerW));
+        lotEntries.push([serviceRow("lot non lancé — l lancer", "muted", innerW)]);
       }
       // Les entrées de tête (état vide, lot non lancé) précèdent les features : la
       // fenêtre d'une section tronquée compte en entrées, la sélection en features.
@@ -4994,47 +4942,60 @@ export function buildPanelRows(
             ? "warning"
             : "success"
           : lotStateTone(feature.state);
-        lotEntries.push(
-          entryLines(lotFeatureLabel(feature), right, model.selection === index, glyphs, innerW).map((line) => ({
-            text: frame(glyphs, line, width, innerW),
+        lotEntries.push([
+          {
+            text: entryContent(lotFeatureLabel(feature), right, model.selection === index, glyphs, innerW),
             tone,
             target: index,
-          })),
-        );
+            selected: model.selection === index,
+          },
+        ]);
       });
     }
   }
 
-  const runningEntries: PanelRow[][] = model.running.map((entry, index) =>
-    entryLines(entry.label, entryRight(entry, opts.now), model.selection === features + index, glyphs, innerW).map(
-      (line) => ({
-        text: frame(glyphs, line, width, innerW),
-        tone: entry.state === "waiting" ? ("warning" as const) : ("success" as const),
-        target: features + index,
-      }),
-    ),
-  );
+  const runningEntries: PanelRow[][] = model.running.map((entry, index) => [
+    {
+      text: entryContent(entry.label, entryRight(entry, opts.now), model.selection === features + index, glyphs, innerW),
+      tone: entry.state === "waiting" ? ("warning" as const) : ("success" as const),
+      target: features + index,
+      selected: model.selection === features + index,
+    },
+  ]);
 
   const historyEntries: PanelRow[][] = model.history.map((entry, index) => {
     const right = `/${entry.phase} · ${entry.finalState === "done" ? "terminé" : "échoué"}`;
     const selected = model.selection === features + runningCount + index;
-    return entryLines(entry.label, right, selected, glyphs, innerW).map((line) => ({
-      text: frame(glyphs, line, width, innerW),
-      tone: entry.finalState === "done" ? ("dim" as const) : ("error" as const),
-      target: features + runningCount + index,
-    }));
+    return [
+      {
+        text: entryContent(entry.label, right, selected, glyphs, innerW),
+        tone: entry.finalState === "done" ? ("dim" as const) : ("error" as const),
+        target: features + runningCount + index,
+        selected,
+      },
+    ];
   });
 
-  // Le budget paie d'abord ce qui est TOUJOURS rendu : titre, séparateur, pied
-  // (deux rangs de touches avec un lot, plus « Échap fermer » — c'est lui que le
-  // budget protège du rognage par le bas), notice, rangs de saisie et titre de la
-  // section lot. La notice et les rangs de saisie se replient : ils se paient en
-  // LIGNES, comme le reste.
-  const noticeRows = notice ? framedRows(notice, "warning", glyphs, width, innerW) : [];
+  // Le budget paie d'abord ce qui est TOUJOURS rendu : les deux règles du cadre,
+  // le titre, le titre de section du lot, le séparateur, la notice, les rangs de
+  // saisie et les rangs de pied (deux sans lot, trois avec — « Échap fermer » en
+  // fait partie, c'est lui que le budget protège du rognage par le bas). Ce sont
+  // des rangs de service : une ligne chacun, jamais repliés.
+  // La notice est un rang de SERVICE : elle se REPLIE (S-2, « les notices et les
+  // refus sont inchangés »), bornée à `PANEL_WRAP_MAX_LINES` pour ne pas manger le
+  // budget de la liste — le repli des rangs de CONTENU, lui, est le fait du `Text`.
+  const noticeRows = notice ? wrappedRow(notice, "warning", innerW, undefined, PANEL_WRAP_MAX_LINES) : [];
   const footRows = lot ? 3 : 2;
-  const frameRows = 1 + footRows + 1 + noticeRows.length + modeRows.length + (lot ? 1 : 0);
+  const frameRows = 2 + 1 + (lot ? 1 : 0) + 1 + noticeRows.length + modeRows.length + footRows;
 
-  const rowsOf = (entries: PanelRow[][]): number => entries.reduce((count, entry) => count + entry.length, 0);
+  /** Les LIGNES qu'une entrée occupe une fois repliée par le `Text` : jamais zéro. */
+  function linesOf(entry: PanelRow[]): number {
+    let lines = 0;
+    for (const row of entry) lines += Math.max(1, wrapVisible(row.text, innerW).length);
+    return lines;
+  }
+
+  const rowsOf = (entries: PanelRow[][]): number => entries.reduce((count, entry) => count + linesOf(entry), 0);
 
   /**
    * Répartit une section dans `room` LIGNES : toutes ses entrées si elles tiennent,
@@ -5049,8 +5010,8 @@ export function buildPanelRows(
     let used = 0;
     let shown = 0;
     for (const entry of entries) {
-      if (used + entry.length > room - 1) break;
-      used += entry.length;
+      if (used + linesOf(entry) > room - 1) break;
+      used += linesOf(entry);
       shown += 1;
     }
     return { shown, marker: true };
@@ -5072,12 +5033,12 @@ export function buildPanelRows(
   const lotRows = rowsOf(lotEntries);
   const runningRows = rowsOf(runningEntries);
   const historyRows = rowsOf(historyEntries);
-  const minLot = credit(lotEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, (lotEntries[0] as PanelRow[]).length) : 0);
+  const minLot = credit(lotEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, linesOf(lotEntries[0] as PanelRow[])) : 0);
   const minRunning = credit(
-    runningEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, (runningEntries[0] as PanelRow[]).length) : 0,
+    runningEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, linesOf(runningEntries[0] as PanelRow[])) : 0,
   );
   const minHistory = credit(
-    historyEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, (historyEntries[0] as PanelRow[]).length) : 0,
+    historyEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, linesOf(historyEntries[0] as PanelRow[])) : 0,
   );
   // 2. Le surplus, par priorité : le lot (la salle de contrôle), puis les
   //    pipelines en cours (vivants), puis l'historique.
@@ -5093,32 +5054,28 @@ export function buildPanelRows(
   const historyEmpty = historyCount === 0 && credit(1) === 1;
 
   if (lot) {
-    rows.push({ text: sectionRule(glyphs, lotSectionTitle(lot), width), tone: "accent" });
+    rows.push(serviceRow(lotSectionTitle(lot), "accent", innerW));
     const start = windowStart(sectionSelection(model.selection, lotOffset, features), lotShown.shown, lotEntries.length);
     for (const entry of lotEntries.slice(start, start + lotShown.shown)) rows.push(...entry);
     if (lotShown.marker) {
-      rows.push(
-        ...framedRows(`… ${lotEntries.length - lotShown.shown} de plus`, "dim", glyphs, width, innerW),
-      );
+      rows.push(serviceRow(`… ${lotEntries.length - lotShown.shown} de plus`, "dim", innerW));
     }
   }
 
   if (runningCount === 0) {
-    if (runningEmpty) rows.push(...framedRows("aucune pipeline en cours", "muted", glyphs, width, innerW));
+    if (runningEmpty) rows.push(serviceRow("aucune pipeline en cours", "muted", innerW));
   } else {
     const start = windowStart(sectionSelection(model.selection - features, 0, runningCount), runningShown.shown, runningCount);
     for (const entry of runningEntries.slice(start, start + runningShown.shown)) rows.push(...entry);
     if (runningShown.marker) {
-      rows.push(
-        ...framedRows(`… ${runningCount - runningShown.shown} de plus`, "dim", glyphs, width, innerW),
-      );
+      rows.push(serviceRow(`… ${runningCount - runningShown.shown} de plus`, "dim", innerW));
     }
   }
 
-  rows.push({ text: separatorRule(glyphs, width), tone: "border" });
+  rows.push({ text: "", tone: "border", rule: "separator" });
 
   if (historyCount === 0) {
-    if (historyEmpty) rows.push(...framedRows("aucun historique", "muted", glyphs, width, innerW));
+    if (historyEmpty) rows.push(serviceRow("aucun historique", "muted", innerW));
   } else {
     const start = windowStart(
       sectionSelection(model.selection - features - runningCount, 0, historyCount),
@@ -5127,37 +5084,38 @@ export function buildPanelRows(
     );
     for (const entry of historyEntries.slice(start, start + historyShown.shown)) rows.push(...entry);
     if (historyShown.marker) {
-      rows.push(
-        ...framedRows(`… ${historyCount - historyShown.shown} de plus`, "dim", glyphs, width, innerW),
-      );
+      rows.push(serviceRow(`… ${historyCount - historyShown.shown} de plus`, "dim", innerW));
     }
   }
 
   for (const row of noticeRows) rows.push(row);
   for (const row of modeRows) rows.push(row);
 
+  // Le REMPLISSAGE (S-1) : le composant le rend en `Spacer`, juste avant le pied —
+  // le pied reste ainsi collé au bas de l'écran, comme la règle basse d'avant. Il
+  // n'existe que s'il reste de la place : au-delà du budget, rien n'est inséré et
+  // le TUI coupe par le bas (terminal plus court que le panneau).
+  const used =
+    rows.reduce((lines, row) => lines + Math.max(1, wrapVisible(row.text, innerW).length), 0) + footRows + 1;
+  if (opts.budget - used >= 1) rows.push({ text: "", tone: "dim", fill: true });
+
   // Le pied : les touches de la salle de contrôle quand un lot est là, sinon le
   // pied d'avant, augmenté de l'unique touche qui crée un lot. Avec un lot, la
   // seconde ligne dit ce qui s'applique à la LIGNE SÉLECTIONNÉE : c'est elle qui
   // annonce `x` sur un rang de lot, et `d` sur une entrée d'historique — le seul
   // rang où `d` agit. Annoncer `d` sur un rang de lot serait une touche morte.
-  rows.push({
-    text: frame(
-      glyphs,
-      lot
-        ? "a ajouter · l lancer · Entrée session"
-        : "↑↓ naviguer · Entrée session · d supprimer · a ajouter",
-      width,
+  rows.push(
+    serviceRow(
+      lot ? "a ajouter · l lancer · Entrée session" : "↑↓ naviguer · Entrée session · d supprimer · a ajouter",
+      "dim",
       innerW,
     ),
-    tone: "dim",
-  });
-  if (lot) {
-    rows.push({ text: frame(glyphs, panelFooterActions(model, runningCount), width, innerW), tone: "dim" });
-  }
-  rows.push({ text: bottomRule(glyphs, "Échap fermer", width), tone: "border" });
+  );
+  if (lot) rows.push(serviceRow(panelFooterActions(model, runningCount), "dim", innerW));
+  rows.push(serviceRow("Échap fermer", "dim", innerW));
+  rows.push({ text: "", tone: "border", rule: "frame" });
 
-  return rows.map((row) => ({ ...row, text: fit(row.text, width) }));
+  return rows;
 }
 
 // --- rejoindre la session d'une entrée (S-5) --------------------------------
@@ -5208,444 +5166,400 @@ export function readSessionHeader(file: string, maxBytes = SESSION_HEADER_READ_B
 }
 
 // --- la vue de session : lire un JSONL de session, borné et sans jamais écrire --
+//
+// Le lecteur est INCRÉMENTAL (S-8) : la première peinture ne lit que la fin du
+// fichier, une entrée ajoutée ne coûte que ses propres octets, et le début se
+// complète à la demande (`Début`, ou défilement vers le haut). Une réécriture est
+// détectée par l'identité du fichier ET par des sondes de 4 Kio (tête, milieu,
+// queue) — les mêmes que le lecteur plein écran de l'hôte (`## Documentation` §4),
+// qui n'utilise aucun `fs.watch` et sonde toutes les 250 ms.
+//
+// Lecture seule STRICTE : `SessionManager.open` prendrait le verrou d'écriture du
+// fichier, donc il n'est jamais ouvert ici — la vue lit le JSONL elle-même.
 
 /**
- * Borne de lecture de la vue : les 256 DERNIERS Kio d'un fichier de session
- * suffisent à voir où en est un run, et le panneau se rafraîchit à la seconde —
- * une session de plusieurs mégaoctets ne coûte pas plus cher qu'une petite.
+ * Une entrée de fichier de session, telle que la vue la lit. `message` et
+ * `custom_message` portent le rendu ; tout le reste (`session`, `model_change`,
+ * `label`, `title_change`, …) est IGNORÉ — exactement le filtre du lecteur de
+ * l'hôte, dont `transcriptEntryMessage` rend `undefined` pour ces entrées. Le
+ * lecteur conserve l'ORDRE du fichier et ne construit aucun arbre.
+ *
+ * `at` est l'octet où commence la ligne : c'est l'identité d'une entrée qui n'a
+ * pas d'`id` (le cache d'assemblage s'en sert comme clé), et rien d'autre.
+ */
+export type SessionEntryLike =
+  | { type: "message"; at: number; id: string; timestamp: string; message: Record<string, unknown> }
+  | {
+      type: "custom_message";
+      at: number;
+      id: string;
+      timestamp: string;
+      customType: string;
+      content: unknown;
+      details?: unknown;
+      display: boolean;
+      attribution?: unknown;
+    }
+  | { type: "other"; at: number; id: string; timestamp: string };
+
+/**
+ * Bornes du lecteur (S-8). `SESSION_VIEW_READ_BYTES` est ce que coûte la PREMIÈRE
+ * peinture, sondes d'identité comprises ; `SESSION_VIEW_MAX_BYTES` est la fenêtre
+ * maximale qu'on accepte de garder quand l'utilisateur remonte jusqu'au début.
  */
 export const SESSION_VIEW_READ_BYTES = 256 * 1024;
-/** Borne du nombre d'entrées rendues ; au-delà, l'en-tête « début tronqué » le dit. */
+export const SESSION_VIEW_MAX_BYTES = 8 * 1024 * 1024;
+/** Borne du nombre d'entrées gardées : le plus ancien est évincé le premier (S-8). */
 export const SESSION_VIEW_MAX_ENTRIES = 500;
-/**
- * Borne du nombre de LIGNES rendues par la vue (S-1) : elle compte des lignes de
- * terminal (donc APRÈS le repli, qui dépend de la largeur), pas des entrées — c'est
- * pourquoi elle vit dans le rendu de la vue et non dans `readSessionView`, dont les
- * bornes (octets, entrées) restent ce qu'elles sont.
- */
-export const SESSION_VIEW_MAX_ROWS = 2000;
-/**
- * Le seuil du repli d'office (S-3) : une entrée dont le RENDU dépasse cette borne
- * est affichée repliée. Le repli se compte en rangs rendus (donc APRÈS le repli à
- * la largeur), pas en lignes de source : c'est ce que l'utilisateur voit.
- */
-export const SESSION_VIEW_FOLD_MIN = 12;
-/** Les rangs gardés d'une entrée repliée, avant le rang de mention (S-3). */
-export const SESSION_VIEW_FOLD_ROWS = 8;
+/** La taille d'une sonde d'identité, et le pas du rattrapage vers le début. */
+const SESSION_SENTINEL_BYTES = 4096;
+const SESSION_BLOCK_BYTES = 256 * 1024;
+/** Ce que la fenêtre du premier chargement laisse aux trois sondes qui la débordent. */
+const SESSION_FIRST_WINDOW_BYTES = SESSION_VIEW_READ_BYTES - SESSION_SENTINEL_BYTES * 3;
+
+/** Une sonde d'identité : un bloc du fichier, résumé par un digest. */
+type SessionSentinel = { offset: number; length: number; digest: string };
 
 /**
- * Une entrée de session RENDABLE : tout le reste du JSONL ne produit aucun rang.
- * `key` identifie l'entrée d'un rendu à l'autre (S-3) : la fenêtre de lecture est
- * une FIN de fichier, les index glissent, les clés non. `<id du JSONL>:<rang
- * interne>` — une entrée `assistant` produit un rang de texte puis un par appel
- * d'outil, chacun avec sa clé — ou `#<rang>` quand l'entrée n'a pas d'id.
+ * L'état du lecteur d'un fichier : de quoi reprendre la lecture au bon octet et de
+ * quoi reconnaître une réécriture. Invariant : `offset` ne recule jamais sans
+ * reconstruction, et `start` est TOUJOURS le premier octet d'une ligne complète.
  */
-export type SessionViewEntry = { key: string } & (
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "toolCall"; name: string; text: string }
-  | { kind: "toolResult"; name: string; text: string }
-  | { kind: "custom"; customType: string }
-  | { kind: "customMessage"; customType: string; text: string }
-);
-
-/** Le contenu lisible d'un fichier de session, ou le chemin en erreur (absent/illisible). */
-export type SessionView = { entries: SessionViewEntry[]; truncated: boolean } | { error: string };
-
-/** Le texte d'un contenu de message : une chaîne, ou les blocs `text` d'un tableau. */
-function textOfContent(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-  const parts: string[] = [];
-  for (const block of content) {
-    if (!block || typeof block !== "object") continue;
-    const rec = block as Record<string, unknown>;
-    if (rec.type === "text" && typeof rec.text === "string") parts.push(rec.text);
-  }
-  return parts.join(" ");
-}
+export type SessionTail = {
+  path: string;
+  dev: number;
+  ino: number;
+  size: number;
+  mtimeMs: number;
+  /** Premier octet de la fenêtre chargée : 0 quand le fichier est chargé en entier. */
+  start: number;
+  /** Octet où reprendre la lecture des octets NEUFS. */
+  offset: number;
+  /** Fin de ligne partielle : elle sera complétée par la lecture suivante. */
+  pending: string;
+  sentinels: SessionSentinel[];
+};
 
 /**
- * Le rendu markdown d'un texte d'entrée (S-1) : PUR, ligne à ligne, sans état et
- * sans accès disque — c'est un test qui le fige, pas le panneau. Le contrat est
- * une correspondance stricte : un bloc de code (délimiteurs RETIRÉS, contenu
- * décalé de deux espaces, tone `dim`), un titre (les `#` tombent, tone `accent`),
- * une puce ou une liste ordonnée (préfixe normalisé, tone de l'entrée), puis
- * l'emphase EN LIGNE des lignes restantes — sans jamais toucher un `*` ou un `_`
- * isolé, que le texte brut utilise couramment.
- *
- * Non-objectifs assumés : tables, citations, liens, HTML, coloration syntaxique,
- * ton intra-ligne (un rang porte UN ton, cf. `PanelRow`).
+ * Le résultat d'une lecture : les entrées lues, et ce que l'appelant doit en
+ * faire — `reset` (elles remplacent la fenêtre), `append` (elles s'y ajoutent),
+ * `prepend` (elles la précèdent). `truncated` dit que le DÉBUT du fichier n'est
+ * pas chargé, `more` qu'il reste des octets avant la fenêtre.
  */
-export function markdownRows(text: string, tone: PanelTone = "text"): { text: string; tone: PanelTone }[] {
-  const rows: { text: string; tone: PanelTone }[] = [];
-  if (text === "") return rows;
-  let code = false;
-  for (const line of text.split("\n")) {
-    if (/^\s*```+/.test(line)) {
-      // Les délimiteurs — et l'info-chaîne de langue — ne s'affichent pas : un
-      // bloc non fermé laisse simplement le reste du texte en code (markdown).
-      code = !code;
-      continue;
-    }
-    if (code) {
-      rows.push({ text: `  ${line}`, tone: "dim" });
-      continue;
-    }
-    const heading = /^ {0,3}(#{1,6})\s+(.*)$/.exec(line);
-    if (heading) {
-      rows.push({ text: heading[2] ?? "", tone: "accent" });
-      continue;
-    }
-    const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
-    if (bullet) {
-      rows.push({ text: `${bullet[1] ?? ""}• ${bullet[2] ?? ""}`, tone });
-      continue;
-    }
-    const ordered = /^(\s*)(\d+)[.)]\s+(.*)$/.exec(line);
-    if (ordered) {
-      rows.push({ text: `${ordered[1] ?? ""}${ordered[2]}. ${ordered[3] ?? ""}`, tone });
-      continue;
-    }
-    rows.push({ text: inlineEmphasis(line), tone });
-  }
-  return rows;
-}
-
-/** L'emphase en ligne d'une ligne (S-1) : `` `x` ``, `**x**`, `__x__`, `*x*`, `_x_`. */
-function inlineEmphasis(line: string): string {
-  // Les délimiteurs n'encadrent que du texte NON VIDE sans espace de bord, ET aux
-  // FRONTIÈRES d'un mot : c'est ce qui distingue `*texte*` d'une multiplication,
-  // et `_ceci_` d'un identifiant comme `a_b_c`.
-  return line
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/(^|[^\w*])\*\*([^\s*](?:[^*]*[^\s*])?)\*\*(?![\w*])/g, "$1$2")
-    .replace(/(^|[^\w_])__([^\s_](?:[^_]*[^\s_])?)__(?![\w_])/g, "$1$2")
-    .replace(/(^|[^\w*])\*([^\s*](?:[^*]*[^\s*])?)\*(?![\w*])/g, "$1$2")
-    .replace(/(^|[^\w_])_([^\s_](?:[^_]*[^\s_])?)_(?![\w_])/g, "$1$2");
-}
-
-/** Borne du calcul de diff (cellules de la matrice) : au-delà, le repli est « tout d'un côté ». */
-const LINE_DIFF_MAX_CELLS = 250_000;
-
-/** Les lignes d'un texte : `""` n'a AUCUNE ligne — que des ajouts ou des suppressions. */
-function linesOf(text: string): string[] {
-  return text === "" ? [] : text.split("\n");
-}
-
-/** Une ligne de diff textuel avec SON marqueur (S-2) : `-`, `+`, ou contexte. */
-function diffMarkerLine(line: string): { text: string; tone: PanelTone } {
-  if (line.startsWith("-")) return { text: line, tone: "error" };
-  if (line.startsWith("+")) return { text: line, tone: "success" };
-  return { text: line, tone: "dim" };
-}
+export type SessionRead = {
+  entries: SessionEntryLike[];
+  mode: "reset" | "append" | "prepend";
+  tail: SessionTail | null;
+  truncated: boolean;
+  more: boolean;
+  /** Le chemin, quand rien n'a pu être lu : absent, illisible, ou pas un fichier. */
+  error: string | null;
+};
 
 /**
- * Le diff ligne à ligne de deux textes (S-2) : plus longue sous-séquence commune,
- * suppressions AVANT ajouts à égalité — l'ordre qu'un lecteur attend d'un diff. Un
- * texte démesuré retombe sur « tout supprimé, tout ajouté », qui ne ment pas.
+ * La lecture d'un bloc du fichier, telle que le lecteur la fait. C'est un SEAM
+ * injecté (comme `GitRunner`, `SessionProbe` ou l'horloge du panneau) : les tests
+ * mesurent ainsi les octets réellement lus — la borne de S-8.1 est un critère
+ * d'acceptation, donc elle se prouve sur un compteur, pas sur une intention.
  */
-export function lineDiff(oldText: string, newText: string): { text: string; tone: PanelTone }[] {
-  const before = linesOf(oldText);
-  const after = linesOf(newText);
-  if (before.length * after.length > LINE_DIFF_MAX_CELLS) {
-    return [
-      ...before.map((line) => ({ text: `- ${line}`, tone: "error" as const })),
-      ...after.map((line) => ({ text: `+ ${line}`, tone: "success" as const })),
-    ];
-  }
-  const width = after.length + 1;
-  const lcs = new Uint32Array((before.length + 1) * width);
-  for (let i = before.length - 1; i >= 0; i -= 1) {
-    for (let j = after.length - 1; j >= 0; j -= 1) {
-      lcs[i * width + j] =
-        before[i] === after[j]
-          ? (lcs[(i + 1) * width + j + 1] as number) + 1
-          : Math.max(lcs[(i + 1) * width + j] as number, lcs[i * width + j + 1] as number);
-    }
-  }
-  const rows: { text: string; tone: PanelTone }[] = [];
-  let i = 0;
-  let j = 0;
-  while (i < before.length && j < after.length) {
-    if (before[i] === after[j]) {
-      rows.push({ text: `  ${before[i]}`, tone: "dim" });
-      i += 1;
-      j += 1;
-      continue;
-    }
-    if ((lcs[(i + 1) * width + j] as number) >= (lcs[i * width + j + 1] as number)) {
-      rows.push({ text: `- ${before[i]}`, tone: "error" });
-      i += 1;
-    } else {
-      rows.push({ text: `+ ${after[j]}`, tone: "success" });
-      j += 1;
-    }
-  }
-  for (; i < before.length; i += 1) rows.push({ text: `- ${before[i]}`, tone: "error" });
-  for (; j < after.length; j += 1) rows.push({ text: `+ ${after[j]}`, tone: "success" });
-  return rows;
-}
+export type SessionReader = (file: string, offset: number, length: number) => Buffer | null;
 
-/** Les rangs d'une forme `patch` d'`edit` (S-2) : un rang par ligne de chaque `edits[]`. */
-function patchRows(file: string, edits: unknown[]): { text: string; tone: PanelTone }[] {
-  const rows: { text: string; tone: PanelTone }[] = [];
-  for (const raw of edits) {
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
-    const edit = raw as Record<string, unknown>;
-    const op = typeof edit.op === "string" ? edit.op : "update";
-    if (typeof edit.diff === "string") {
-      // `op: "create"` porte le CONTENU dans `diff`, sans marqueur
-      // (`## Documentation` §3) : toutes ses lignes sont des ajouts.
-      for (const line of linesOf(edit.diff)) {
-        rows.push(op === "create" ? { text: `+ ${line}`, tone: "success" } : diffMarkerLine(line));
-      }
-    } else if (op === "delete") {
-      rows.push({ text: `- ${file} (supprimé)`, tone: "error" });
-    }
-    if (typeof edit.rename === "string" && edit.rename !== "") {
-      rows.push({ text: `→ ${file} → ${edit.rename}`, tone: "dim" });
-    }
-  }
-  return rows;
-}
-
-/**
- * Le diff d'un appel d'outil qui MODIFIE un fichier (S-2), ou `null` quand l'outil
- * n'en est pas un — l'appel garde alors son rendu brut (`→ <nom> <arguments>`).
- * Pur : les formes reconnues sont celles de l'hôte (`edit` replace, `edit` patch,
- * `write`, cf. `## Documentation` §3), et la matière vient des ARGUMENTS de
- * l'appel — les détails du résultat sont élagués par l'hôte, donc inutilisables.
- */
-export function fileDiffRows(name: string, args: unknown): { text: string; tone: PanelTone }[] | null {
-  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
-  const call = args as Record<string, unknown>;
-  if (typeof call.path !== "string" || call.path === "") return null;
-  const head = { text: `→ ${name} ${call.path}`, tone: "dim" as const };
-  if (name === "edit") {
-    if (typeof call.old_string === "string" && typeof call.new_string === "string") {
-      if (call.old_string === call.new_string) return [head, { text: "  (aucun changement)", tone: "dim" }];
-      return [head, ...lineDiff(call.old_string, call.new_string)];
-    }
-    if (Array.isArray(call.edits)) return [head, ...patchRows(call.path, call.edits)];
+/** Lit `length` octets à `offset` : `null` si le fichier a disparu ou est illisible. */
+function readBytesAt(file: string, offset: number, length: number): Buffer | null {
+  if (length <= 0) return Buffer.alloc(0);
+  let fd: number;
+  try {
+    fd = fs.openSync(file, "r");
+  } catch {
     return null;
   }
-  if (name === "write") {
-    if (typeof call.content !== "string") return null;
-    return [head, ...linesOf(call.content).map((line) => ({ text: `+ ${line}`, tone: "success" as const }))];
+  try {
+    const buf = Buffer.alloc(length);
+    let filled = 0;
+    while (filled < length) {
+      const read = fs.readSync(fd, buf, filled, length - filled, offset + filled);
+      if (read <= 0) break;
+      filled += read;
+    }
+    return buf.subarray(0, filled);
+  } catch {
+    return null;
+  } finally {
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* descripteur déjà fermé : rien de mieux à faire */
+    }
   }
-  return null;
 }
 
-/**
- * Une entrée du JSONL → zéro ou plusieurs entrées de vue (S-2). Pure : une entrée
- * technique (`title`, `model_usage`, `label`, …) ou inconnue ne rend RIEN, et rien
- * ici ne peut lever — un fichier en cours d'écriture est lu ligne par ligne.
- *
- * Le TEXTE est porté ENTIER (S-1) : c'est le repli du rendu, qui connaît la
- * largeur, qui en fait des lignes — plus une troncature à la première ligne, qui
- * perdait tout ce qu'un agent écrit d'utile après son premier paragraphe.
- *
- * `start` est le rang GLOBAL de la première entrée produite : il ne sert qu'aux
- * clés des entrées sans id (S-3), où l'identité est la position.
- */
-function sessionViewEntries(raw: unknown, start: number): SessionViewEntry[] {
-  if (!raw || typeof raw !== "object") return [];
-  const rec = raw as Record<string, unknown>;
-  const id = asStringOrNull(rec.id);
-  const key = (rank: number) => (id === null ? `#${start + rank}` : `${id}:${rank}`);
-  if (rec.type === "custom_message") {
-    const customType = asStringOrNull(rec.customType);
-    if (!customType) return [];
-    return [{ kind: "customMessage", customType, text: textOfContent(rec.content).trim(), key: key(0) }];
-  }
-  if (rec.type === "custom") {
-    const customType = asStringOrNull(rec.customType);
-    return customType ? [{ kind: "custom", customType, key: key(0) }] : [];
-  }
-  if (rec.type !== "message" || !rec.message || typeof rec.message !== "object") return [];
-  const message = rec.message as Record<string, unknown>;
-  if (message.role === "user") {
-    return [{ kind: "user", text: textOfContent(message.content).trim(), key: key(0) }];
-  }
-  if (message.role === "toolResult") {
-    return [
-      {
-        kind: "toolResult",
-        name: asStringOrNull(message.toolName) ?? "?",
-        text: textOfContent(message.content).trim(),
-        key: key(0),
-      },
-    ];
-  }
-  if (message.role !== "assistant") return [];
-  const out: SessionViewEntry[] = [];
-  // Un rang vide n'apprend rien : un tour qui n'a produit que des appels d'outil
-  // se lit par ses appels, pas par une ligne « agent : » sans texte.
-  const text = textOfContent(message.content).trim();
-  if (text !== "") out.push({ kind: "assistant", text, key: key(0) });
-  if (Array.isArray(message.content)) {
-    for (const block of message.content) {
-      if (!block || typeof block !== "object") continue;
-      const call = block as Record<string, unknown>;
-      if (call.type !== "toolCall") continue;
-      out.push({
-        kind: "toolCall",
-        name: asStringOrNull(call.name) ?? "?",
-        text: JSON.stringify(call.arguments ?? {}),
-        key: key(out.length),
-      });
-    }
+/** Les trois offsets sondés (tête, milieu, queue), sans doublon sur un petit fichier. */
+function sentinelOffsets(size: number): number[] {
+  if (size <= 0) return [];
+  const length = Math.min(SESSION_SENTINEL_BYTES, size);
+  const out: number[] = [];
+  for (const offset of [0, Math.max(0, Math.floor((size - length) / 2)), Math.max(0, size - length)]) {
+    if (!out.includes(offset)) out.push(offset);
   }
   return out;
 }
 
-/** Les `maxBytes` derniers octets d'un fichier, ou `null` s'il est absent ou illisible. */
-function readTail(file: string, maxBytes: number): { text: string; fromTail: boolean } | null {
-  try {
-    const size = fs.statSync(file).size;
-    const start = Math.max(0, size - maxBytes);
-    const length = size - start;
-    const fd = fs.openSync(file, "r");
-    try {
-      const buf = Buffer.alloc(length);
-      const read = fs.readSync(fd, buf, 0, length, start);
-      return { text: buf.subarray(0, read).toString("utf8"), fromTail: start > 0 };
-    } finally {
-      fs.closeSync(fd);
-    }
-  } catch {
-    return null;
+/**
+ * Les sondes d'identité d'un fichier de `size` octets, ou `null` s'il a disparu en
+ * cours de route. `have` porte des octets DÉJÀ lus (la fenêtre, ou les octets
+ * neufs) : une sonde qui tombe dedans n'est pas relue.
+ */
+function computeSentinels(
+  file: string,
+  size: number,
+  read: SessionReader,
+  have?: { start: number; bytes: Buffer },
+): SessionSentinel[] | null {
+  const length = Math.min(SESSION_SENTINEL_BYTES, size);
+  const out: SessionSentinel[] = [];
+  for (const offset of sentinelOffsets(size)) {
+    const inHand =
+      have !== undefined && offset >= have.start && offset + length <= have.start + have.bytes.byteLength;
+    const block = inHand
+      ? have.bytes.subarray(offset - have.start, offset - have.start + length)
+      : read(file, offset, length);
+    if (block === null || block.byteLength !== length) return null;
+    out.push({ offset, length, digest: crypto.createHash("sha1").update(block).digest("hex") });
   }
+  return out;
 }
 
 /**
- * Lecture BORNÉE d'un fichier de session pour la vue (S-2) : au plus les 256
- * derniers Kio et au plus 500 entrées, lignes mal formées ignorées, aucune
- * exception. La première ligne d'une lecture partielle est une ligne tronquée :
- * elle ne parse pas et tombe donc d'elle-même.
+ * Les sondes tiennent-elles encore ? Une réécriture EN PLACE qui garde la même
+ * taille est le seul cas que `dev`/`ino`/`size` ne voient pas — c'est celui que
+ * ces sondes attrapent, et il impose une reconstruction complète.
  */
-export function readSessionView(file: string): SessionView {
-  const tail = readTail(file, SESSION_VIEW_READ_BYTES);
-  if (tail === null) return { error: file };
-  const entries: SessionViewEntry[] = [];
-  for (const line of tail.text.split("\n")) {
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line);
-    } catch {
-      continue; // ligne vide, tronquée par la borne, ou JSON mal formé
-    }
-    for (const entry of sessionViewEntries(parsed, entries.length)) entries.push(entry);
+function sentinelsHold(file: string, sentinels: SessionSentinel[], read: SessionReader): boolean {
+  for (const sentinel of sentinels) {
+    const block = read(file, sentinel.offset, sentinel.length);
+    if (block === null || block.byteLength !== sentinel.length) return false;
+    if (crypto.createHash("sha1").update(block).digest("hex") !== sentinel.digest) return false;
   }
-  let truncated = tail.fromTail;
+  return true;
+}
+
+/** Une ligne JSONL → l'entrée de fichier correspondante, ou `null` (vide, invalide). */
+function sessionEntryOf(line: string, at: number): SessionEntryLike | null {
+  if (line.trim() === "") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null; // ligne tronquée par la borne, ou JSON mal formé : ignorée sans bruit
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const rec = parsed as Record<string, unknown>;
+  const id = asStringOrNull(rec.id) ?? "";
+  const timestamp = asStringOrNull(rec.timestamp) ?? "";
+  if (rec.type === "message" && rec.message && typeof rec.message === "object" && !Array.isArray(rec.message)) {
+    return { type: "message", at, id, timestamp, message: rec.message as Record<string, unknown> };
+  }
+  if (rec.type === "custom_message" && typeof rec.customType === "string") {
+    return {
+      type: "custom_message",
+      at,
+      id,
+      timestamp,
+      customType: rec.customType,
+      content: rec.content,
+      details: rec.details,
+      display: rec.display !== false,
+      attribution: rec.attribution,
+    };
+  }
+  return { type: "other", at, id, timestamp };
+}
+
+/**
+ * Les entrées d'un bloc de lignes COMPLÈTES, dans l'ordre du fichier, avec l'octet
+ * de chacune. `from` est l'octet de la première ligne du bloc : les offsets sont
+ * comptés en OCTETS (jamais en unités de code — un accent en fait deux), sinon la
+ * reprise de lecture dériverait sur un fichier non ASCII.
+ */
+function entriesOfText(text: string, from: number): SessionEntryLike[] {
+  const entries: SessionEntryLike[] = [];
+  let at = from;
+  for (const line of text.split("\n")) {
+    if (line !== "") {
+      const entry = sessionEntryOf(line, at);
+      if (entry) entries.push(entry);
+    }
+    at += Buffer.byteLength(line, "utf8") + 1;
+  }
+  return entries;
+}
+
+/**
+ * Lit un fichier de session à partir de l'état précédent (S-8) : les octets NEUFS
+ * quand le fichier n'a fait que grandir, la fin du fichier sinon (première lecture,
+ * réécriture, troncature, rotation). Une ligne partielle n'est JAMAIS émise : elle
+ * est reportée à la lecture suivante. Aucune exception ne sort d'ici, et le
+ * fichier n'est jamais modifié.
+ */
+export function readSessionTail(
+  file: string,
+  previous: SessionTail | null,
+  read: SessionReader = readBytesAt,
+): SessionRead {
+  let stat: fs.Stats;
+  try {
+    stat = fs.statSync(file);
+    if (!stat.isFile()) throw new Error("pas un fichier");
+  } catch {
+    return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+  }
+
+  // AJOUT : même fichier (identité), qui n'a fait que grandir, et sondes intactes.
+  if (
+    previous &&
+    previous.path === file &&
+    previous.dev === stat.dev &&
+    previous.ino === stat.ino &&
+    stat.size >= previous.size &&
+    sentinelsHold(file, previous.sentinels, read)
+  ) {
+    const chunk = read(file, previous.offset, stat.size - previous.offset);
+    const sentinels = computeSentinels(file, stat.size, read, chunk ? { start: previous.offset, bytes: chunk } : undefined);
+    if (chunk !== null && sentinels !== null) {
+      const combined = previous.pending + chunk.toString("utf8");
+      const lastNewline = combined.lastIndexOf("\n");
+      const complete = lastNewline >= 0 ? combined.slice(0, lastNewline + 1) : "";
+      const tail: SessionTail = {
+        path: file,
+        dev: stat.dev,
+        ino: stat.ino,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        start: previous.start,
+        offset: stat.size,
+        pending: lastNewline >= 0 ? combined.slice(lastNewline + 1) : combined,
+        sentinels,
+      };
+      return {
+        entries:
+          complete === ""
+            ? []
+            : // Le reste de ligne déjà consommé commence AVANT `previous.offset` : le
+              // premier octet de la ligne complétée est `offset - pending`.
+              entriesOfText(complete, previous.offset - Buffer.byteLength(previous.pending, "utf8")),
+        mode: "append",
+        tail,
+        truncated: previous.start > 0,
+        more: previous.start > 0,
+        error: null,
+      };
+    }
+  }
+
+  // RECONSTRUCTION : la fenêtre part de la FIN du fichier, bornée par la première
+  // peinture (S-8.1) — jamais l'intégralité d'un fichier de plusieurs mégaoctets.
+  const window = Math.min(stat.size, SESSION_FIRST_WINDOW_BYTES);
+  const readFrom = stat.size - window;
+  let start = readFrom;
+  const bytes = read(file, readFrom, window);
+  if (bytes === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+  let text = bytes.toString("utf8");
+  if (start > 0) {
+    // La première ligne est celle qu'on a coupée : elle est abandonnée, et la
+    // fenêtre commence à la ligne complète suivante.
+    const newline = text.indexOf("\n");
+    if (newline < 0) {
+      return {
+        entries: [],
+        mode: "reset",
+        tail: null,
+        truncated: true,
+        more: true,
+        error: null,
+      };
+    }
+    start += Buffer.byteLength(text.slice(0, newline + 1), "utf8");
+    text = text.slice(newline + 1);
+  }
+  const lastNewline = text.lastIndexOf("\n");
+  const complete = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : "";
+  const pending = lastNewline >= 0 ? text.slice(lastNewline + 1) : text;
+  // Les sondes se mesurent sur les octets RÉELLEMENT lus : `readFrom`, pas `start`
+  // (avancé au-delà de la première ligne jetée) — sinon chaque sonde digérerait des
+  // octets décalés, et la lecture suivante croirait à une réécriture.
+  const sentinels = computeSentinels(file, stat.size, read, { start: readFrom, bytes });
+  if (sentinels === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+  let entries = complete === "" ? [] : entriesOfText(complete, start);
+  // Borne du nombre d'entrées : le plus ancien est évincé en premier, et le début
+  // de la fenêtre suit — la ligne évincée n'est plus chargée, et la vue le DIT.
   if (entries.length > SESSION_VIEW_MAX_ENTRIES) {
-    entries.splice(0, entries.length - SESSION_VIEW_MAX_ENTRIES);
-    truncated = true;
+    entries = entries.slice(entries.length - SESSION_VIEW_MAX_ENTRIES);
   }
-  return { entries, truncated };
-}
-
-/** Les arguments d'un appel d'outil, tels que la vue les a sérialisés : `null` si le JSON est illisible. */
-function parsedArgs(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Les lignes LOGIQUES d'une entrée de la vue (S-1, S-2), avant le repli à la
- * largeur : le markdown pour les entrées de texte, le diff d'un appel d'outil qui
- * modifie un fichier, et le rendu d'avant (`→`, `←`, `·`) pour tout le reste.
- */
-function sessionEntryLines(entry: SessionViewEntry): { text: string; tone: PanelTone }[] {
-  switch (entry.kind) {
-    case "user":
-      return withPrefix("▸ toi : ", markdownRows(entry.text, "text"), "text");
-    case "assistant":
-      return withPrefix("▸ agent : ", markdownRows(entry.text, "accent"), "accent");
-    case "customMessage":
-      return withPrefix(`· ${entry.customType} : `, markdownRows(entry.text, "dim"), "dim");
-    case "toolCall":
-      return fileDiffRows(entry.name, parsedArgs(entry.text)) ?? [{ text: `→ ${entry.name} ${entry.text}`, tone: "dim" }];
-    case "toolResult":
-      return [{ text: `← ${entry.name} ${entry.text}`, tone: "dim" }];
-    case "custom":
-      return [{ text: `· ${entry.customType}`, tone: "dim" }];
-  }
-}
-
-/**
- * Le préfixe d'une entrée de texte, sur sa PREMIÈRE ligne seulement (S-1) : c'est
- * ce qui laisse « toi : » / « agent : » nommer l'entrée sans décaler son contenu.
- * Un texte vide garde son rang — un message vide se voit, il ne disparaît pas.
- */
-function withPrefix(
-  prefix: string,
-  lines: { text: string; tone: PanelTone }[],
-  tone: PanelTone,
-): { text: string; tone: PanelTone }[] {
-  if (lines.length === 0) return [{ text: prefix.trimEnd(), tone }];
-  return lines.map((line, index) => (index === 0 ? { text: `${prefix}${line.text}`, tone: line.tone } : line));
-}
-
-/**
- * Les rangs d'une vue de session (S-2), du plus ancien au plus récent : un rang par
- * LIGNE de terminal — une entrée complète (S-1) occupe donc autant de lignes qu'il
- * en faut, sans autre borne que `SESSION_VIEW_MAX_ROWS` — et les états rendus
- * EXPLICITEMENT, jamais déduits d'une absence de rang.
- *
- * `expanded` porte les CLÉS des entrées dépliées (S-3) : une entrée longue est
- * repliée d'office, garde ses premiers rangs, puis dit ce qu'elle cache et la
- * touche qui la déplie — la mention porte le pli de CETTE entrée, donc le clic
- * bascule celle qu'on vise.
- *
- * La liste rendue est COMPLÈTE (bornée par la lecture : ≤ 500 entrées, et par le
- * rendu : ≤ 2000 lignes) : c'est le composant qui en découpe la fenêtre visible et
- * qui borne son défilement sur sa longueur. `budget` est la hauteur de la vue —
- * titre, mention de run vivant, zone de saisie et pied compris — donc l'arithmétique
- * de la fenêtre reste au même endroit.
- */
-export function buildSessionRows(
-  view: SessionView,
-  opts: { width: number; budget: number; glyphs: PanelGlyphs; maxRows?: number; expanded?: readonly string[] },
-): PanelRow[] {
-  const width = Math.max(1, Math.floor(opts.width));
-  const innerW = Math.max(0, width - 4);
-  const row = (content: string, tone: PanelTone, choice?: PanelRow["choice"]): PanelRow[] => {
-    const lines = innerW > 0 ? wrapVisible(content, innerW) : [""];
-    return lines.map((line) => {
-      const built: PanelRow = { text: frame(opts.glyphs, line, width, innerW), tone };
-      if (choice !== undefined) built.choice = choice;
-      return built;
-    });
+  const first = entries[0];
+  const windowStart = first ? first.at : start;
+  const tail: SessionTail = {
+    path: file,
+    dev: stat.dev,
+    ino: stat.ino,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    start: windowStart,
+    offset: stat.size,
+    pending,
+    sentinels,
   };
-  if ("error" in view) return row(`aucune entrée lisible — ${view.error}`, "warning");
-  if (view.entries.length === 0) return row("aucune entrée à afficher", "muted");
-  const expanded = opts.expanded ?? [];
-  const rows: PanelRow[] = [];
-  if (view.truncated) rows.push(...row("… début tronqué", "dim"));
-  for (const entry of view.entries) {
-    const lines = sessionEntryLines(entry);
-    if (lines.length > SESSION_VIEW_FOLD_MIN && !expanded.includes(entry.key)) {
-      for (const line of lines.slice(0, SESSION_VIEW_FOLD_ROWS)) rows.push(...row(line.text, line.tone));
-      rows.push(
-        ...row(`… ${lines.length - SESSION_VIEW_FOLD_ROWS} lignes repliées — ctrl+o déplier`, "dim", {
-          kind: "fold",
-          key: entry.key,
-        }),
-      );
-      continue;
-    }
-    for (const line of lines) rows.push(...row(line.text, line.tone));
+  return {
+    entries,
+    mode: "reset",
+    tail,
+    truncated: windowStart > 0,
+    more: windowStart > 0,
+    error: null,
+  };
+}
+
+/**
+ * Étend la fenêtre VERS LE DÉBUT, par blocs bornés (S-8) : c'est ce qu'appelle
+ * `Début`, ou un défilement qui arrive en haut de ce qui est chargé. Le fichier
+ * n'est jamais relu pour un simple défilement : cette fonction n'est appelée que
+ * quand il n'y a plus rien à montrer au-dessus. La fenêtre totale est bornée par
+ * `SESSION_VIEW_MAX_BYTES`, et `more` dit alors qu'il reste des octets avant elle.
+ */
+export function extendSessionTail(
+  file: string,
+  previous: SessionTail,
+  read: SessionReader = readBytesAt,
+): SessionRead {
+  if (previous.start <= 0) {
+    return { entries: [], mode: "prepend", tail: previous, truncated: false, more: false, error: null };
   }
-  const max = opts.maxRows ?? SESSION_VIEW_MAX_ROWS;
-  if (rows.length <= max) return rows;
-  // Ce sont les DERNIÈRES lignes qu'on garde (le présent du run), et le marqueur
-  // existant dit ce qui a été abandonné — jamais une coupe silencieuse.
-  return [...row("… début tronqué", "dim"), ...rows.slice(rows.length - max)];
+  const floor = Math.max(0, previous.size - SESSION_VIEW_MAX_BYTES);
+  const from = Math.max(floor, previous.start - SESSION_BLOCK_BYTES);
+  const bytes = read(file, from, previous.start - from);
+  if (bytes === null) return { entries: [], mode: "prepend", tail: previous, truncated: true, more: true, error: file };
+  let text = bytes.toString("utf8");
+  let start = from;
+  if (from > 0) {
+    // Comme pour la fenêtre initiale : la première ligne est coupée, donc jetée.
+    const newline = text.indexOf("\n");
+    if (newline < 0) {
+      return { entries: [], mode: "prepend", tail: previous, truncated: true, more: true, error: null };
+    }
+    start += Buffer.byteLength(text.slice(0, newline + 1), "utf8");
+    text = text.slice(newline + 1);
+  }
+  const lastNewline = text.lastIndexOf("\n");
+  const complete = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : "";
+  const entries = complete === "" ? [] : entriesOfText(complete, start);
+  const tail: SessionTail = { ...previous, start: entries[0]?.at ?? start };
+  return {
+    entries,
+    mode: "prepend",
+    tail,
+    truncated: tail.start > 0,
+    more: tail.start > 0,
+    error: null,
+  };
 }
 
 /** Sondes disque de la décision — injectées, pour que `switchDecision` reste PURE. */
@@ -5846,9 +5760,538 @@ export async function joinEntry(entry: { sessionFile?: string | null }, deps: Jo
 export type PanelTui = { terminal?: { rows?: number }; requestRender?: () => void };
 export type PanelTheme = {
   fg(color: string, text: string): string;
-  boxRound: Omit<PanelGlyphs, "cursor">;
   nav: { cursor: string };
 };
+
+// --- les composants de l'hôte : le kit injecté (S-1) -------------------------
+//
+// Le panneau et la vue ne composent aucune ligne eux-mêmes : le RENDU vient des
+// composants de l'hôte — `Text` replie et colorie un rang, `DynamicBorder` ferme
+// le cadre, `Container`/`Spacer` assemblent et remplissent la hauteur, et les
+// composants de messages rendent une transcription (S-3). Le dépôt interdit tout
+// import de VALEUR `@oh-my-pi/*` (scripts/check.sh § « Extension ») : le kit est
+// donc lu sur `pi.pi`, le namespace du module d'entrée de l'hôte, et décrit par
+// des types STRUCTURELS — un faux kit suffit à tester le panneau, et un kit
+// incomplet vaut un refus explicite, jamais un rendu de repli.
+
+/** Le contrat `Component` de la TUI : `render(width)` rend des rangs ≤ `width`. */
+export type HostComponent = { render(width: number): readonly string[]; invalidate?(): void; dispose?(): void };
+/** Une fonction de style de l'hôte (`theme.fg`, `theme.bg`) : texte → texte. */
+export type HostStyle = (text: string) => string;
+/** Un rang de texte : le `Text` de l'hôte replie, colorie et complète à la largeur. */
+export type HostText = HostComponent & { setText(text: string): boolean; setStyleFn(style?: HostStyle): unknown };
+export type HostContainer = HostComponent & { addChild(child: HostComponent): void };
+/** Ce qu'un résultat d'outil porte, tel que `updateResult` le reçoit. */
+export type HostToolResult = {
+  content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  details?: unknown;
+  isError?: boolean;
+};
+/** Ce que l'hôte donne à une carte d'outil : trois façons de demander un repaint. */
+export type HostToolUi = {
+  requestRender(): void;
+  requestComponentRender(component: HostComponent): void;
+  resetDisplay(): void;
+};
+/** Une carte d'appel d'outil, ou le groupe de lectures : le handle complet de l'hôte. */
+export type HostToolHandle = HostComponent & {
+  updateArgs(args: unknown, toolCallId?: string): void;
+  setArgsComplete(toolCallId?: string): void;
+  setExecutionStarted(toolCallId?: string): void;
+  updateResult(result: HostToolResult, isPartial?: boolean, toolCallId?: string): void;
+  setExpanded(expanded: boolean): void;
+};
+/** Un composant repliable : c'est lui que la bascule globale `ctrl+o` atteint (S-4). */
+export type HostExpandable = HostComponent & { setExpanded(expanded: boolean): void };
+export type HostAssistant = HostExpandable & {
+  setImagesVisible(visible: boolean): void;
+  setToolResultImagesVisible(visible: boolean): void;
+};
+export type HostBash = HostExpandable & {
+  appendOutput(chunk: string): void;
+  setComplete(exitCode: number | undefined, cancelled: boolean, options?: { output?: string; showImages?: boolean }): void;
+};
+
+/**
+ * Le sous-ensemble de `pi.pi` que le panneau et la vue utilisent. Chaque entrée a
+ * été relevée sur les signatures réelles de l'hôte installé (`## Documentation`
+ * §2-3) : ce sont les mêmes classes que celles du transcript vivant d'OMP, donc le
+ * rendu ne jure pas à côté des autres écrans.
+ */
+export type HostComponents = {
+  Text: new (text?: string, paddingX?: number, paddingY?: number, background?: HostStyle) => HostText;
+  DynamicBorder: new (color?: HostStyle) => HostComponent;
+  Container: new () => HostContainer;
+  Spacer: new (lines?: number) => HostComponent;
+  /** Le thème ACTIF du process : celui de l'utilisateur, jamais un ton codé en dur. */
+  theme: PanelTheme & { bg(color: string, text: string): string };
+  UserMessageComponent: new (text: string, options?: { synthetic?: boolean }) => HostComponent;
+  AssistantMessageComponent: new (
+    message?: unknown,
+    hideThinkingBlock?: boolean,
+    onImageUpdate?: () => void,
+    thinkingRenderers?: readonly unknown[],
+    imageBudget?: unknown,
+    proseOnlyThinking?: boolean,
+    linkTargets?: ReadonlyMap<string, string>,
+  ) => HostAssistant;
+  ToolExecutionComponent: new (
+    toolName: string,
+    args: unknown,
+    options: { showImages?: boolean; useBuiltInRenderer?: boolean } | undefined,
+    tool: unknown,
+    ui: HostToolUi,
+    cwd?: string,
+    toolCallId?: string,
+  ) => HostToolHandle;
+  ReadToolGroupComponent: new (options?: { showContentPreview?: boolean }) => HostToolHandle;
+  CustomMessageComponent: new (message: unknown, renderer?: unknown) => HostExpandable;
+  BashExecutionComponent: new (command: string, ui: HostToolUi, excludeFromContext?: boolean) => HostBash;
+  CompactionSummaryMessageComponent: new (message: unknown) => HostExpandable;
+  BranchSummaryMessageComponent: new (message: unknown) => HostExpandable;
+};
+
+/**
+ * Les noms REQUIS du kit : sans eux, ni le panneau ni la vue ne savent rendre, et
+ * il n'existe AUCUN rendu de repli (S-1 cas 3) — un kit incomplet vaut un refus
+ * explicite, jamais un écran à moitié peint ni une exception en plein rendu.
+ */
+const HOST_COMPONENT_NAMES = [
+  "Text",
+  "DynamicBorder",
+  "Container",
+  "Spacer",
+  "theme",
+  "UserMessageComponent",
+  "AssistantMessageComponent",
+  "ToolExecutionComponent",
+  "ReadToolGroupComponent",
+  "CustomMessageComponent",
+  "BashExecutionComponent",
+  "CompactionSummaryMessageComponent",
+  "BranchSummaryMessageComponent",
+] as const;
+
+/**
+ * Lit le kit sur `pi.pi` (le namespace du module d'entrée de l'hôte, seul chemin
+ * qui respecte l'interdiction d'import de valeur) : `null` dès qu'un nom requis
+ * manque. La forme est vérifiée nom par nom — `theme` doit être un objet qui sait
+ * peindre (`fg`), les autres des constructeurs — pour qu'un hôte d'une autre
+ * version soit REFUSÉ au montage plutôt que de jeter au premier rendu.
+ */
+export function hostComponents(pi: unknown): HostComponents | null {
+  const host = (pi as { pi?: unknown } | null | undefined)?.pi;
+  if (!host || typeof host !== "object") return null;
+  const kit = host as Record<string, unknown>;
+  for (const name of HOST_COMPONENT_NAMES) {
+    const value = kit[name];
+    if (name === "theme") {
+      // `fg` est REQUIS : il peint chaque rang du panneau, donc un thème qui
+      // l'omet est un kit incomplet (S-1 cas 1.3), pas un thème à replier. Ses
+      // glyphes, eux, ont leurs replis (`cursorGlyph`) : un thème sans
+      // `nav.cursor` ne fait jamais jeter le montage.
+      if (!value || typeof value !== "object" || !("fg" in value) || typeof value.fg !== "function") return null;
+      continue;
+    }
+    if (typeof value !== "function") return null;
+  }
+  return host as unknown as HostComponents;
+}
+
+/**
+ * Le curseur de sélection du panneau (S-1) : le glyphe du thème ACTIF, ou le
+ * curseur ASCII `>` — un thème sans `nav.cursor` (ou d'une autre version) REPLIE,
+ * il ne fait jamais jeter le montage. Le cadre, lui, vient de `DynamicBorder`,
+ * qui porte son propre repli : `boxRound` n'est plus lu ici.
+ */
+export function cursorGlyph(theme: unknown): string {
+  const nav = theme && typeof theme === "object" && "nav" in theme ? theme.nav : undefined;
+  const cursor = nav && typeof nav === "object" && "cursor" in nav ? nav.cursor : undefined;
+  return typeof cursor === "string" && cursor !== "" ? cursor : ">";
+}
+
+// --- l'assembleur entrée → composants de l'hôte (S-3) ------------------------
+//
+// Une entrée de fichier devient un ou plusieurs composants de l'HÔTE : c'est la
+// table de correspondance de S-3, celle du transcript vivant d'OMP (`## Documentation`
+// §6) — `UserMessageComponent` pour un message utilisateur, `AssistantMessageComponent`
+// pour l'assistant, `ToolExecutionComponent` pour un appel d'outil (le composant
+// résout LUI-MÊME son renderer intégré, diff compris), `CustomMessageComponent`
+// pour un message d'affichage. Aucun rendu maison ne subsiste : le repli, la
+// coloration, le markdown et les diffs viennent de ces composants.
+//
+// L'assemblage est INCRÉMENTAL (S-8) : une entrée déjà construite n'est jamais
+// reconstruite, un `toolResult` ne crée aucun composant (il met à jour la carte de
+// son appel), et une reconstruction (fichier réécrit) repart de zéro.
+
+/** Le texte d'un contenu de message : une chaîne, ou les blocs `text` d'un tableau. */
+function textOfContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    if (rec.type === "text" && typeof rec.text === "string") parts.push(rec.text);
+  }
+  return parts.join(" ");
+}
+
+/** Le contenu d'un résultat d'outil, sous la forme que `updateResult` attend. */
+function toolContentOf(content: unknown): HostToolResult["content"] {
+  if (typeof content === "string") return [{ type: "text", text: content }];
+  if (!Array.isArray(content)) return [];
+  const out: HostToolResult["content"] = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    if (typeof rec.type !== "string") continue;
+    out.push({
+      type: rec.type,
+      ...(typeof rec.text === "string" ? { text: rec.text } : {}),
+      ...(typeof rec.data === "string" ? { data: rec.data } : {}),
+      ...(typeof rec.mimeType === "string" ? { mimeType: rec.mimeType } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * La règle de l'hôte (`assistantHasVisibleContent`), réécrite localement : un
+ * segment d'assistant qui ne porte ni texte, ni raisonnement, ni image ne mérite
+ * pas de carte — un tour qui n'a produit que des appels d'outils se lit par ses
+ * appels.
+ */
+function assistantHasVisibleContent(message: Record<string, unknown>): boolean {
+  const content = Array.isArray(message.content) ? message.content : [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const rec = block as Record<string, unknown>;
+    if (rec.type === "image") return true;
+    if (rec.type === "text" && typeof rec.text === "string" && rec.text.trim() !== "") return true;
+    if (rec.type === "thinking" && typeof rec.thinking === "string" && rec.thinking.trim() !== "") return true;
+  }
+  return false;
+}
+
+/**
+ * `splitAssistantMessageToolTimeline` de l'hôte, réécrite localement (elle vit
+ * dans un module inaccessible : `## Documentation` §2) : tout ce qui précède le
+ * PREMIER appel d'outil va dans `beforeTools` ; ce qui suit un appel jusqu'au
+ * suivant est attaché à cet appel, rendu comme un message « display » (`stopReason`
+ * forcé à `stop`, erreur et reprise retirées) — c'est ce qui fait qu'un texte écrit
+ * APRÈS un outil s'affiche sous sa carte, pas au-dessus.
+ */
+export function splitAssistantToolTimeline(message: Record<string, unknown>): {
+  beforeTools: Record<string, unknown>;
+  afterToolCalls: Map<string, Record<string, unknown>>;
+  hasToolCalls: boolean;
+  lastToolCallId?: string;
+} {
+  const content = Array.isArray(message.content) ? message.content : [];
+  const before: unknown[] = [];
+  const afterToolCalls = new Map<string, Record<string, unknown>>();
+  let pending: unknown[] = [];
+  let lastToolCallId: string | undefined;
+  let sawToolCall = false;
+  const displaySegment = (blocks: unknown[]): Record<string, unknown> => ({
+    ...message,
+    content: blocks,
+    stopReason: "stop",
+    errorMessage: undefined,
+    retryRecovery: undefined,
+  });
+  const flush = () => {
+    if (lastToolCallId === undefined || pending.length === 0) return;
+    afterToolCalls.set(lastToolCallId, displaySegment(pending));
+    pending = [];
+  };
+  for (const block of content) {
+    if (block && typeof block === "object" && (block as Record<string, unknown>).type === "toolCall") {
+      flush();
+      sawToolCall = true;
+      lastToolCallId = asStringOrNull((block as Record<string, unknown>).id) ?? undefined;
+      continue;
+    }
+    if (sawToolCall) pending.push(block);
+    else before.push(block);
+  }
+  flush();
+  if (!sawToolCall) return { beforeTools: message, afterToolCalls, hasToolCalls: false };
+  return { beforeTools: displaySegment(before), afterToolCalls, hasToolCalls: true, lastToolCallId };
+}
+
+/**
+ * L'état d'un assemblage : l'ordre d'affichage, ce que chaque entrée a produit, ce
+ * que la bascule globale atteint, et les cartes d'outils encore en vol. Il se
+ * PROLONGE d'une lecture à l'autre (S-8) : c'est lui qui évite de reconstruire ce
+ * qui est déjà à l'écran.
+ */
+export type SessionAssembly = {
+  components: HostComponent[];
+  /** Les composants qu'une entrée a produits, par clé d'entrée (son `id`, ou son octet). */
+  byEntryId: Map<string, HostComponent[]>;
+  /** Les composants repliables : c'est cette liste que `ctrl+o` bascule (S-4). */
+  expandables: HostExpandable[];
+  /** Les cartes d'appel d'outil en attente de résultat, par `toolCallId`. */
+  toolCards: Map<string, HostToolHandle>;
+  /** Le groupe de lectures OUVERT : un `read` consécutif le rejoint (S-3, §6). */
+  readGroup: HostToolHandle | null;
+  /** L'état global de dépliage : une carte construite après la bascule naît dépliée. */
+  expanded: boolean;
+};
+
+/** Le handle d'un composant repliable, suivi à part : `ctrl+o` l'atteindra (S-4). */
+function trackExpandable(assembly: SessionAssembly, component: HostExpandable): void {
+  component.setExpanded(assembly.expanded);
+  assembly.expandables.push(component);
+}
+
+/** Le groupe de lectures courant, ouvert au premier `read` d'une course (S-3, §6). */
+function ensureReadGroup(assembly: SessionAssembly, kit: HostComponents): HostToolHandle {
+  if (assembly.readGroup) return assembly.readGroup;
+  const group = new kit.ReadToolGroupComponent({ showContentPreview: false });
+  trackExpandable(assembly, group);
+  assembly.components.push(group);
+  assembly.readGroup = group;
+  return group;
+}
+
+/** Une entrée → ses composants, ajoutés à l'assemblage dans l'ordre du fichier. */
+function appendEntry(
+  assembly: SessionAssembly,
+  entry: SessionEntryLike,
+  kit: HostComponents,
+  ui: HostToolUi,
+  cwd: string,
+): void {
+  if (entry.type === "other") return; // entrée technique : aucun composant (S-3)
+  if (entry.type === "custom_message") {
+    assembly.readGroup = null;
+    if (!entry.display) return;
+    const component = new kit.CustomMessageComponent(
+      {
+        role: "custom",
+        customType: entry.customType,
+        content: entry.content,
+        display: true,
+        details: entry.details,
+        attribution: entry.attribution,
+        timestamp: entry.timestamp,
+      },
+      undefined,
+    );
+    trackExpandable(assembly, component);
+    assembly.components.push(component);
+    return;
+  }
+  const message = entry.message;
+  const role = asStringOrNull(message.role);
+  if (role !== "assistant" && role !== "toolResult") {
+    // Un message qui n'est ni un assistant ni un résultat d'outil referme la
+    // course de lectures : le repli de l'hôte s'arrête là (S-3, §6).
+    assembly.readGroup = null;
+  }
+  if (role === "user" || role === "developer") {
+    const text = textOfContent(message.content).trim();
+    if (text === "") return;
+    const synthetic = role === "developer" || message.synthetic === true;
+    assembly.components.push(synthetic ? new kit.UserMessageComponent(text, { synthetic: true }) : new kit.UserMessageComponent(text));
+    return;
+  }
+  if (role === "assistant") {
+    const timeline = splitAssistantToolTimeline(message);
+    const before = timeline.beforeTools;
+    if (assistantHasVisibleContent(before)) {
+      const card = new kit.AssistantMessageComponent(before, false, () => ui.requestRender(), [], undefined, true, undefined);
+      card.setImagesVisible(false);
+      card.setToolResultImagesVisible(true);
+      trackExpandable(assembly, card);
+      assembly.components.push(card);
+      // Un texte visible referme la course de lectures : les lectures qui suivent
+      // commencent un nouveau groupe (S-3, §6).
+      assembly.readGroup = null;
+    }
+    const content = Array.isArray(message.content) ? message.content : [];
+    for (const block of content) {
+      if (!block || typeof block !== "object") continue;
+      const call = block as Record<string, unknown>;
+      if (call.type !== "toolCall") continue;
+      const id = asStringOrNull(call.id) ?? "";
+      const name = asStringOrNull(call.name) ?? "?";
+      const after = id === "" ? undefined : timeline.afterToolCalls.get(id);
+      if (name === "read" && id !== "") {
+        const group = ensureReadGroup(assembly, kit);
+        group.updateArgs(call.arguments, id);
+        group.setArgsComplete(id);
+        group.setExecutionStarted(id);
+        assembly.toolCards.set(id, group);
+      } else {
+        assembly.readGroup = null;
+        const card = new kit.ToolExecutionComponent(
+          name,
+          call.arguments,
+          { showImages: false, useBuiltInRenderer: true },
+          undefined,
+          ui,
+          cwd,
+          id === "" ? undefined : id,
+        );
+        card.setArgsComplete(id);
+        card.setExecutionStarted(id);
+        trackExpandable(assembly, card);
+        assembly.components.push(card);
+        if (id !== "") assembly.toolCards.set(id, card);
+      }
+      if (after && assistantHasVisibleContent(after)) {
+        const segment = new kit.AssistantMessageComponent(after, false, () => ui.requestRender(), [], undefined, true, undefined);
+        segment.setImagesVisible(false);
+        segment.setToolResultImagesVisible(true);
+        trackExpandable(assembly, segment);
+        assembly.components.push(segment);
+        assembly.readGroup = null;
+      }
+    }
+    return;
+  }
+  if (role === "toolResult") {
+    const id = asStringOrNull(message.toolCallId) ?? "";
+    const card = assembly.toolCards.get(id);
+    // Un résultat sans carte connue est ignoré, comme chez l'hôte : les résultats
+    // se rendent DANS la carte de leur appel, jamais à part (S-3).
+    if (!card) return;
+    card.updateResult(
+      { content: toolContentOf(message.content), details: message.details, isError: message.isError === true },
+      false,
+      id,
+    );
+    assembly.toolCards.delete(id);
+    return;
+  }
+  if (role === "bashExecution") {
+    const component = new kit.BashExecutionComponent(
+      asStringOrNull(message.command) ?? "",
+      ui,
+      message.excludeFromContext === true,
+    );
+    if (typeof message.output === "string" && message.output !== "") component.appendOutput(message.output);
+    component.setComplete(typeof message.exitCode === "number" ? message.exitCode : undefined, message.cancelled === true, {
+      showImages: false,
+    });
+    trackExpandable(assembly, component);
+    assembly.components.push(component);
+    return;
+  }
+  if (role === "pythonExecution") {
+    // `EvalExecutionComponent` n'est pas atteignable (`## Documentation` §2) : la
+    // carte d'outil `eval` rend le même bloc, avec le code et sa sortie.
+    const card = new kit.ToolExecutionComponent(
+      "eval",
+      { code: message.code },
+      { showImages: false, useBuiltInRenderer: true },
+      undefined,
+      ui,
+      cwd,
+    );
+    card.setArgsComplete();
+    card.setExecutionStarted();
+    card.updateResult(
+      {
+        content: toolContentOf(typeof message.output === "string" ? message.output : ""),
+        isError: message.exitCode !== 0 && message.exitCode !== undefined,
+      },
+      false,
+    );
+    trackExpandable(assembly, card);
+    assembly.components.push(card);
+    return;
+  }
+  if (role === "compactionSummary" || role === "branchSummary") {
+    const component =
+      role === "compactionSummary"
+        ? new kit.CompactionSummaryMessageComponent(message)
+        : new kit.BranchSummaryMessageComponent(message);
+    trackExpandable(assembly, component);
+    assembly.components.push(component);
+    return;
+  }
+  if (role === "custom" || role === "hookMessage") {
+    if (message.display !== true) return;
+    const component = new kit.CustomMessageComponent(message, undefined);
+    trackExpandable(assembly, component);
+    assembly.components.push(component);
+    return;
+  }
+  // `fileMention` (et tout rôle inconnu) ne rend rien : `buildFileMentionBlock`
+  // n'est pas atteignable (`## Documentation` §2) — écart documenté de S-3.
+}
+
+/**
+ * Les composants des entrées d'une fenêtre, dans l'ordre du fichier (S-3). Avec un
+ * assemblage PRÉCÉDENT, seules les entrées dont la clé n'y figure pas encore sont
+ * construites (S-8.2) ; un composant dont le constructeur jette devient un rang
+ * d'erreur lisible, sans interrompre l'assemblage du reste.
+ */
+export function buildSessionComponents(
+  entries: SessionEntryLike[],
+  deps: {
+    components: HostComponents;
+    ui: HostToolUi;
+    cwd: string;
+    /** L'état global de dépliage ; sans lui, celui de l'assemblage précédent (S-4). */
+    expanded?: boolean;
+    previous?: SessionAssembly | null;
+  },
+): SessionAssembly {
+  const previous = deps.previous ?? null;
+  const assembly: SessionAssembly = previous
+    ? { ...previous, expandables: [...previous.expandables] }
+    : {
+        components: [],
+        byEntryId: new Map(),
+        expandables: [],
+        toolCards: new Map(),
+        readGroup: null,
+        expanded: deps.expanded ?? false,
+      };
+  assembly.expanded = deps.expanded ?? previous?.expanded ?? false;
+  for (const entry of entries) {
+    // La clé porte l'id ET l'octet de l'entrée : l'id SEUL n'est pas unique dans un
+    // fichier de session (deux entrées peuvent le partager), et une entrée sautée
+    // serait une transcription menteuse. L'octet, lui, ne bouge jamais dans un
+    // fichier qu'on ne fait que compléter (S-8) — c'est lui qui rend l'assemblage
+    // incrémental.
+    const key = entry.id !== "" ? `${entry.id}@${entry.at}` : `#${entry.at}`;
+    if (assembly.byEntryId.has(key)) continue;
+    const before = assembly.components.length;
+    try {
+      appendEntry(assembly, entry, deps.components, deps.ui, deps.cwd);
+    } catch {
+      // Une entrée illisible ne casse pas la transcription : elle se voit (BR-3).
+      const id = entry.id !== "" ? entry.id : key;
+      assembly.components.push(new deps.components.Text(`entrée illisible — ${id}`, 1, 0));
+    }
+    assembly.byEntryId.set(key, assembly.components.slice(before));
+  }
+  return assembly;
+}
+
+/** La bascule GLOBALE de dépliage (S-4) : toutes les cartes repliables, d'un coup. */
+export function applyExpanded(assembly: SessionAssembly, expanded: boolean): void {
+  assembly.expanded = expanded;
+  for (const component of assembly.expandables) component.setExpanded(expanded);
+}
+
+/**
+ * La surface de TUI que les cartes d'outil reçoivent (`ToolExecutionUi`) : elles ne
+ * repeignent que par elle, et un overlay n'a qu'un repaint à offrir — les trois
+ * méthodes demandent le même rendu, jamais un état de TUI qu'on n'a pas.
+ */
+export function toolUi(tui: PanelTui): HostToolUi {
+  const repaint = () => tui.requestRender?.();
+  return { requestRender: repaint, requestComponentRender: repaint, resetDisplay: repaint };
+}
+
 /**
  * Surface de `KeybindingsManager` réellement utilisée par le panneau. Le nom du
  * keybinding est DÉRIVÉ de la signature de l'hôte (jamais réinventé) : un
@@ -5867,6 +6310,12 @@ export type PanelComponent = {
 
 export type PipelinesPanelDeps = {
   stateDir: string;
+  /**
+   * Le kit de composants de l'hôte (S-1) : le panneau ne rend RIEN sans lui, et
+   * c'est la seule source du rendu. `null` (kit incomplet, ou `pi.pi` absent) fait
+   * refuser l'ouverture, avec le message de S-1 — jamais un rendu de repli.
+   */
+  components: HostComponents | null;
   /** Racine du dépôt : c'est elle qui identifie le lot que le panneau pilote. */
   repoRoot?: string;
   /** Les actions du lot ; absentes, le panneau reste en consultation (comportement d'avant les lots). */
@@ -6032,76 +6481,120 @@ function zonePreview(zone: { input: ViewInputZone; text: string }): { head: stri
   return replyPreview({ slug: input.slug, phase: input.phase, text: zone.text, queue: input.queue });
 }
 
-/** Les rangs de la zone de saisie de la vue, selon son état (S-3, S-6, S-7, S-8, S-10). */
-function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
-  if (zone.kind === "closed") return framedRows(`lecture seule — ${zone.reason}`, "dim", glyphs, width, innerW);
+/**
+ * Les touches de la vue que les keybindings de l'hôte ne nomment pas (S-6, S-7).
+ * `matchesKey` de pi-tui vit dans un module NATIF, hors de portée d'une extension
+ * (`## Documentation` §2) : les séquences sont donc locales, et couvrent les deux
+ * encodages que les terminaux envoient — `CSI 1;2 A/B` (xterm, kitty, VTE) et
+ * `CSI 2 A/B` (terminaux historiques) pour le défilement rapide, `CSI H/F`,
+ * `CSI 1~/4~` et `SS3 H/F` pour début et fin.
+ */
+const FAST_SCROLL_LINES = 5;
+/** Le facteur de la molette : 3 rangs par cran, comme le lecteur plein écran de l'hôte. */
+const WHEEL_SCROLL_LINES = 3;
+/** Le repli de `app.tools.expand` quand les keybindings ne le résolvent pas (S-4). */
+const EXPAND_KEY = "\u000f";
+const SHIFT_UP_KEYS = ["\u001b[1;2A", "\u001b[2A"];
+const SHIFT_DOWN_KEYS = ["\u001b[1;2B", "\u001b[2B"];
+const HOME_KEYS = ["\u001b[H", "\u001b[1~", "\u001bOH", "\u001b[7~"];
+const END_KEYS = ["\u001b[F", "\u001b[4~", "\u001bOF", "\u001b[8~"];
+
+/**
+ * Les rangs de la zone de saisie de la vue, selon son état (S-11) : ce sont des
+ * rangs de SERVICE — une ligne chacun, mesurés par `clip` — et leurs libellés sont
+ * ceux d'avant, à l'octet près. Seule la SOURCE du rendu change : c'est le `Text`
+ * de l'hôte qui les peint (S-1).
+ */
+function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, innerW: number): PanelRow[] {
+  if (zone.kind === "closed") return [serviceRow(`lecture seule — ${zone.reason}`, "dim", innerW)];
   if (zone.kind === "preview") {
     const preview = zonePreview(zone);
     return [
-      ...framedRows(preview.head, "warning", glyphs, width, innerW),
-      ...framedRows(preview.hint, "dim", glyphs, width, innerW),
+      ...wrappedRow(preview.head, "warning", innerW),
+      ...wrappedRow(preview.hint, "dim", innerW),
     ];
   }
   const verb = zone.queue ? "mettre en file" : "envoyer";
   if (zone.free || zone.options.length === 0) {
     return [
-      ...framedRows(`Réponse : ${zone.buffer}▏`, "text", glyphs, width, innerW),
-      ...framedRows(`Entrée ${verb} · Échap annuler`, "dim", glyphs, width, innerW),
+      serviceRow(`Réponse : ${zone.buffer}▏`, "text", innerW),
+      serviceRow(`Entrée ${verb} · Échap annuler`, "dim", innerW),
     ];
   }
   const rows: PanelRow[] = [];
-  // La question ouvre la zone (S-7) : on répond à CE qui est demandé, pas à une
-  // liste d'options anonyme. Trois rangs au plus, comme les notices.
+  // La question ouvre la zone (S-11) : on répond à CE qui est demandé, pas à une
+  // liste d'options anonyme. Elle se mesure comme les notices : une ligne.
   if (zone.question !== null) {
-    rows.push(...framedRows(`question : ${zone.question}`, "dim", glyphs, width, innerW));
+    rows.push(...wrappedRow(`question : ${zone.question}`, "dim", innerW));
   }
-  const marker = (selected: boolean) =>
-    selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
+  const marker = (selected: boolean) => (selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1));
   zone.options.forEach((option, index) => {
     const selected = index === zone.cursor;
     rows.push(
-      ...framedRows(
-        `${marker(selected)}(${index + 1}) ${option}`,
-        selected ? "accent" : "text",
-        glyphs,
-        width,
-        innerW,
-        { choice: index },
-      ),
+      serviceRow(`${marker(selected)}(${index + 1}) ${option}`, selected ? "accent" : "text", innerW, {
+        choice: index,
+      }),
     );
   });
   const other = zone.cursor === zone.options.length;
   rows.push(
-    ...framedRows(
-      `${marker(other)}autre — saisir ma réponse`,
-      other ? "accent" : "text",
-      glyphs,
-      width,
-      innerW,
-      { choice: zone.options.length },
-    ),
+    serviceRow(`${marker(other)}autre — saisir ma réponse`, other ? "accent" : "text", innerW, {
+      choice: zone.options.length,
+    }),
   );
   return rows;
 }
 
-/** Le pied de la vue, selon l'état de sa zone (S-3, S-4, S-6, S-8). */
+/**
+ * Le pied de la vue, selon l'état de sa zone (S-11). Les deux états sans choix à
+ * faire — zone fermée, éditeur libre — partagent le pied qui annonce le dépliage
+ * GLOBAL (S-4) : c'est ce rang qui porte la cible cliquable de la bascule (S-7).
+ */
 function viewFooter(zone: ViewZone): string {
   if (zone.kind === "preview") return zonePreview(zone).hint;
   if (zone.kind === "input" && !zone.free && zone.options.length > 0) {
     return "1-9/↑↓ choisir · PageUp/PageDown défiler · Échap revenir au panneau";
   }
-  // Les deux états sans choix à faire — zone fermée, éditeur libre — partagent ce
-  // pied : le pli des entrées longues s'y annonce, puisqu'il y fonctionne.
   return "↑↓/molette défiler · ctrl+o déplier/replier · Échap revenir au panneau";
 }
 
-/** L'état de vue du panneau : la liste, ou la transcription d'une session (S-2). */
+/**
+ * La transcription d'une vue ouverte (S-3, S-5, S-8) : ce que le lecteur a chargé,
+ * ce que l'assembleur en a fait, et la FENÊTRE — le suivi de queue, ou l'ancre du
+ * premier rang affiché quand l'utilisateur a remonté.
+ */
+type ViewTranscript = {
+  /** Le fichier suivi ; `null` quand le rang n'en a pas (S-3 cas 4). */
+  sessionFile: string | null;
+  /** Le cwd du rang : celui des cartes d'outils (le rendu d'un diff s'y rapporte). */
+  cwd: string;
+  /** L'état du lecteur (identité, offset, sondes), ou `null` si rien n'a pu être lu. */
+  tail: SessionTail | null;
+  /** Les entrées chargées, dans l'ordre du fichier, bornées (S-8). */
+  entries: SessionEntryLike[];
+  /** Le DÉBUT du fichier n'est pas chargé : la vue le dit (`… début tronqué`). */
+  truncated: boolean;
+  /** Il reste des octets avant la fenêtre : `Début` peut les charger (S-8). */
+  more: boolean;
+  /** Le chemin, quand rien n'a pu être lu (absent, illisible). */
+  error: string | null;
+  /** L'assemblage courant : ses composants, son cache, l'état de dépliage global. */
+  assembly: SessionAssembly | null;
+  /** Le nombre de lignes rendues par composant, pour la largeur courante (S-8). */
+  counts: number[];
+  /** La largeur à laquelle `counts` a été mesuré (0 = jamais). */
+  countsWidth: number;
+  /** Le suivi de queue (S-5) : vrai, la fenêtre colle au bas de la transcription. */
+  followBottom: boolean;
+  /** Le premier rang affiché, ancré : il ne bouge pas quand du contenu arrive (S-5). */
+  offsetLines: number;
+};
+
+/** L'état de vue du panneau : la liste, ou la transcription d'une session (S-3). */
 type PanelView =
   | { kind: "list" }
   | {
       kind: "session";
-      /** Le fichier de session suivi ; `null` quand le rang n'en a pas (S-1). */
-      sessionFile: string | null;
       /** Le slug de la feature du lot visée ; `null` pour une entrée du magasin. */
       slug: string | null;
       label: string;
@@ -6109,15 +6602,9 @@ type PanelView =
       state: string;
       /** `hasLiveWriter` au moment du rendu : un run écrit-il cette session ? */
       live: boolean;
-      /** Rangs remontés depuis la fin de la transcription : 0 = les plus récents. */
-      scroll: number;
-      /**
-       * Les CLÉS des entrées dépliées (S-3), de la plus ancienne à la plus
-       * récente : une conversation s'ouvre REPLIÉE (`[]`), et le dépli vaut pour
-       * cette vue seulement — il ne survit pas à sa fermeture.
-       */
-      expanded: string[];
-      /** La zone de saisie, ou sa raison d'être fermée (S-10). */
+      /** La transcription : le lecteur, l'assembleur et la fenêtre. */
+      transcript: ViewTranscript;
+      /** La zone de saisie, ou sa raison d'être fermée (S-11). */
       zone: ViewZone;
     };
 
@@ -6134,6 +6621,25 @@ function defaultSchedule(callback: () => void, ms: number): () => void {
 }
 
 /**
+ * Le rang d'erreur d'un composant qui a jeté au `render` (S-1 « Cas limites ») :
+ * UNE ligne lisible, à la largeur reçue, là où le composant fautif aurait été
+ * peint. Le panneau reste ouvert et ce qui a échoué se lit — jamais une sortie
+ * brutale de l'overlay (l'hôte n'attrape pas : `tui.ts:2501` rend le composant à nu).
+ */
+function unreadableLine(what: string, error: unknown, width: number): string {
+  const message = error instanceof Error && error.message !== "" ? error.message : String(error);
+  const room = Math.max(1, Math.floor(width));
+  const line = clip(` entrée illisible — ${what} : ${message === "" ? "erreur sans message" : message}`, room);
+  return line + " ".repeat(Math.max(0, room - displayWidth(line)));
+}
+
+/** Le nom du composant fautif, pour son rang d'erreur — jamais vide. */
+function componentLabel(component: unknown, index: number): string {
+  const name = component && typeof component === "object" && "constructor" in component ? component.constructor.name : "";
+  return typeof name === "string" && name !== "" ? name : `composant ${index + 1}`;
+}
+
+/**
  * Fabrique du composant, au contrat `Component` de la TUI : `render(width)` rend
  * des rangs ≤ `width`, `dispose` arrête la minuterie. Le premier rendu est déjà
  * peuplé (lecture synchrone bornée : il n'y a pas d'état « chargement »), et un
@@ -6146,19 +6652,37 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     keybindings: PanelKeybindings,
     done: (result?: unknown) => void,
   ): PanelComponent => {
-    const glyphs: PanelGlyphs = {
-      topLeft: theme.boxRound.topLeft,
-      topRight: theme.boxRound.topRight,
-      bottomLeft: theme.boxRound.bottomLeft,
-      bottomRight: theme.boxRound.bottomRight,
-      horizontal: theme.boxRound.horizontal,
-      vertical: theme.boxRound.vertical,
-      teeLeft: theme.boxRound.teeLeft,
-      teeRight: theme.boxRound.teeRight,
-      cursor: theme.nav.cursor,
-    };
+    // Le kit de l'hôte est la SEULE source du rendu (S-1). Un panneau monté sans
+    // lui (chemin de refus de `openPanel`) ne rend rien : une ligne le dit, et
+    // aucune touche n'agit — jamais un second rendu, jamais une exception.
+    const kit = deps.components;
+    if (!kit) {
+      return {
+        render: () => ["[pipeline] panneau indisponible : composants de l'hôte absents (OMP)"],
+        handleInput: () => {},
+        refresh: () => {},
+        dispose: () => {},
+      };
+    }
+    const glyphs: PanelGlyphs = { cursor: cursorGlyph(theme) };
+    const ui = toolUi(tui);
     const now = deps.now ?? (() => Date.now());
     const schedule = deps.schedule ?? defaultSchedule;
+
+    /**
+     * Rend un composant de l'hôte en ISOLANT son échec (S-1 « Cas limites ») : la
+     * vue monte ces composants sur le JSONL d'un AUTRE process (résultat d'outil
+     * malformé, `details` d'une autre version), donc un `throw` ne sort pas de
+     * l'overlay — il devient le rang d'erreur du composant fautif, à sa place, et
+     * le reste de l'écran reste peint.
+     */
+    const renderComponent = (component: HostComponent, label: string, width: number): string[] => {
+      try {
+        return [...component.render(width)];
+      } catch (error) {
+        return [unreadableLine(label, error, width)];
+      }
+    };
     /** La clé de la sélection mémorisée : une racine de dépôt, un état (S-5). */
     const selectionKey = deps.repoRoot ?? "";
     let notice: string | null = null;
@@ -6166,10 +6690,18 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     // La VUE repart toujours de la liste : elle ne se quitte que par Échap, donc un
     // panneau fermé n'a jamais été fermé depuis la vue (S-5).
     let view: PanelView = { kind: "list" };
-    /** Les rangs du DERNIER rendu : le clic y résout sa cible par index (S-4). */
-    let drawn: PanelRow[] = [];
-    /** Les rangs de CONTENU de la vue ouverte : leur nombre borne le défilement. */
-    let drawnContent: PanelRow[] = [];
+    /**
+     * La VERSION du rendu : elle change dès que quelque chose change (contenu,
+     * pliage, zone, sélection, horloge du panneau) et JAMAIS sinon — c'est elle qui
+     * autorise le composant à rendre le MÊME tableau, condition du « sans
+     * clignotement » de S-5.
+     */
+    let version = 0;
+    /** Le dernier rendu mémoïsé : sa clé, ses lignes, et la cible de chacune (S-7). */
+    let renderedKey = "";
+    let renderedLines: string[] = [];
+    /** Les rangs du DERNIER rendu, une entrée par LIGNE rendue : le clic y résout la sienne. */
+    let drawn: (PanelRow | null)[] = [];
     let model = readPanelModel({
       stateDir: deps.stateDir,
       repoRoot: deps.repoRoot,
@@ -6212,6 +6744,90 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
     };
 
+    /**
+     * Relit la transcription de la vue (S-5, S-8) : le lecteur ne lit que les
+     * octets NOUVEAUX quand le fichier n'a fait que grandir, l'assembleur ne
+     * construit que les entrées qu'il ne connaît pas encore, et une réécriture
+     * (identité ou sondes changées) repart de zéro. Rend `true` si l'écran change.
+     */
+    const readTranscript = (): boolean => {
+      if (view.kind !== "session") return false;
+      const transcript = view.transcript;
+      if (transcript.sessionFile === null) return false;
+      const read = readSessionTail(transcript.sessionFile, transcript.tail);
+      const reset = read.mode === "reset";
+      const merged = [...transcript.entries, ...read.entries];
+      // Borne du cache d'entrées (S-8) : le plus ancien est évincé le premier, et
+      // ce qui n'est plus chargé est ANNONCÉ (`… début tronqué`), jamais coupé en
+      // silence.
+      const evicted = merged.length > SESSION_VIEW_MAX_ENTRIES;
+      const entries = reset ? read.entries : evicted ? merged.slice(merged.length - SESSION_VIEW_MAX_ENTRIES) : merged;
+      const truncated = read.truncated || evicted;
+      const more = read.more && entries.length < SESSION_VIEW_MAX_ENTRIES;
+      const changed =
+        reset ||
+        read.entries.length > 0 ||
+        read.error !== transcript.error ||
+        truncated !== transcript.truncated ||
+        more !== transcript.more;
+      if (!changed) return false;
+      view = {
+        ...view,
+        transcript: {
+          ...transcript,
+          tail: read.tail,
+          entries,
+          truncated,
+          more,
+          error: read.error,
+          // Les comptes de lignes repartent : le contenu a changé (les composants
+          // inchangés, eux, ne sont PAS reconstruits — c'est le cache qui le dit).
+          counts: [],
+          countsWidth: 0,
+          assembly: buildSessionComponents(entries, {
+            components: kit,
+            ui,
+            cwd: transcript.cwd,
+            previous: reset ? null : transcript.assembly,
+          }),
+        },
+      };
+      return true;
+    };
+
+    /**
+     * La vue suit l'instant présent : son rang peut avancer, se terminer, changer
+     * de section, et sa transcription grandir (S-5). Rend `true` si l'écran change
+     * — c'est ce qui évite de repeindre un cadre identique.
+     */
+    const followView = (): boolean => {
+      if (view.kind !== "session") return false;
+      let changed = false;
+      const row = rowForView();
+      if (row) {
+        const label = rowLabel(row);
+        const phase = rowPhase(model, row);
+        const state = rowStateLabel(model, row);
+        const live = hasLiveWriter(model, row);
+        if (label !== view.label || phase !== view.phase || state !== view.state || live !== view.live) {
+          view = { ...view, label, phase, state, live };
+          changed = true;
+        }
+      }
+      // La question peut avoir changé (nouvelle réponse, nouveau maillon) : la
+      // zone suit l'état frais — mais jamais sous les doigts d'un aperçu, et
+      // jamais au prix du tampon tant que la source n'a pas bougé (S-11).
+      if (refreshZone()) changed = true;
+      if (readTranscript()) changed = true;
+      return changed;
+    };
+
+    /**
+     * Le rafraîchissement : le magasin est relu, et une vue ouverte suit l'instant
+     * présent — son rang peut avancer, se terminer, changer de section, et sa
+     * transcription est relue (au plus une fois par seconde pour l'affichage,
+     * plus les relectures demandées par une touche : S-5).
+     */
     const paint = () => {
       model = readPanelModel({
         stateDir: deps.stateDir,
@@ -6220,25 +6836,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         notice,
         mode,
       });
-      // Une vue ouverte suit l'instant présent : le run peut avancer, se terminer,
-      // ou la ligne changer de section pendant qu'on la regarde (S-2).
-      if (view.kind === "session") {
-        const row = rowForView();
-        if (row) {
-          view = {
-            ...view,
-            label: rowLabel(row),
-            phase: rowPhase(model, row),
-            state: rowStateLabel(model, row),
-            live: hasLiveWriter(model, row),
-          };
-        }
-        // La question peut avoir changé (nouvelle réponse, nouveau maillon) : la
-        // zone suit l'état frais — mais jamais sous les doigts d'un aperçu, et
-        // jamais au prix du tampon tant que la source n'a pas bougé (S-6).
-        refreshZone();
-      }
+      // La LISTE change à chaque battement : son horloge (le temps écoulé) bouge à
+      // la seconde. La VUE, elle, ne se repeint que si quelque chose a changé —
+      // c'est la condition du « sans clignotement » (S-5).
+      const changed = view.kind === "list" ? true : followView();
       collectLeftovers();
+      if (changed) version += 1;
     };
     const redraw = () => {
       paint();
@@ -6280,7 +6883,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      */
     const rowForView = (): PanelRowRef | undefined => {
       if (view.kind !== "session") return undefined;
-      const { slug, sessionFile } = view;
+      const { slug } = view;
+      const sessionFile = view.transcript.sessionFile;
       if (slug !== null) {
         const feature = features().find((candidate) => candidate.slug === slug);
         if (feature) return feature;
@@ -6391,12 +6995,17 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         target: { kind: "inbox", dir },
       });
     };
-    /** Le rafraîchissement de la zone : elle suit l'état frais, jamais le tampon. */
-    const refreshZone = () => {
-      if (view.kind !== "session" || view.zone.kind === "preview") return;
+    /**
+     * Le rafraîchissement de la zone : elle suit l'état frais, jamais le tampon.
+     * Rend `true` quand la zone a changé de source — l'aperçu, lui, ne se réécrit
+     * jamais sous les doigts (S-11).
+     */
+    const refreshZone = (): boolean => {
+      if (view.kind !== "session" || view.zone.kind === "preview") return false;
       const next = zoneFor(rowForView());
-      if (sameZoneSource(view.zone, next)) return;
+      if (sameZoneSource(view.zone, next)) return false;
       view = { ...view, zone: next };
+      return true;
     };
     /**
      * La zone de la vue : toute touche qui la change passe par ici (elle efface la
@@ -6407,6 +7016,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (view.kind !== "session") return;
       view = { ...view, zone: next };
       notice = null;
+      version += 1;
       tui.requestRender?.();
     };
     // Le déplacement efface la notice : elle décrit un rang, pas le panneau.
@@ -6418,6 +7028,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         selection: moveSelection(model.selection, panelRowCount(model), delta),
       };
       remember();
+      version += 1;
       tui.requestRender?.();
     };
 
@@ -6489,21 +7100,36 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         return;
       }
       // La notice n'est pas effacée : au retour, la liste est celle qu'on a quittée.
+      // La transcription s'ouvre ANCRÉE SUR LA FIN (S-5) : le run en cours se voit
+      // avancer sans rien toucher, et la première peinture est synchrone — le
+      // lecteur part de la fin du fichier, borné (S-8.1).
       view = {
         kind: "session",
-        sessionFile: file,
         slug: isLotFeature(row) ? row.slug : null,
         label: rowLabel(row),
         phase: rowPhase(model, row),
         state: rowStateLabel(model, row),
         live: hasLiveWriter(model, row),
-        scroll: 0,
-        // Une conversation s'ouvre REPLIÉE (S-3) : les entrées longues montrent
-        // leurs premiers rangs et disent ce qu'elles cachent — on déplie ce qu'on
-        // veut lire, une entrée à la fois.
-        expanded: [],
+        transcript: {
+          sessionFile: file,
+          cwd: rowCwd(row) ?? deps.repoRoot ?? "",
+          tail: null,
+          entries: [],
+          truncated: false,
+          more: false,
+          error: null,
+          assembly: null,
+          counts: [],
+          countsWidth: 0,
+          followBottom: true,
+          offsetLines: 0,
+        },
         zone,
       };
+      version += 1;
+      // Première peinture : la lecture est faite MAINTENANT, pas au premier
+      // battement — la vue n'a pas d'état « chargement » à montrer.
+      followView();
       tui.requestRender?.();
     };
 
@@ -6537,15 +7163,129 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     /** Les rangs de la zone au dernier rendu : la fenêtre les paie, comme le titre. */
     let drawnZone: PanelRow[] = [];
 
-    /** Le nombre de rangs de transcription qu'une vue affiche : titre, zone et pied payés. */
-    const viewRoom = (height: number) =>
-      Math.max(1, height - 2 - (view.kind === "session" && view.live ? 1 : 0) - drawnZone.length);
+    /**
+     * Le rang d'ÉTAT du corps de la vue (S-3) : `aucune entrée lisible`, `pas de
+     * transcription`, `aucune entrée à afficher`, `… début tronqué` — un au plus, et
+     * il se lit EN TÊTE de la transcription, jamais à la place du contenu.
+     */
+    const bodyStateRow = (innerW: number): PanelRow | null => {
+      if (view.kind !== "session") return null;
+      const transcript = view.transcript;
+      if (transcript.error !== null) return serviceRow(`aucune entrée lisible — ${transcript.error}`, "warning", innerW);
+      if (transcript.sessionFile === null) return serviceRow(`pas de transcription — ${view.state}`, "muted", innerW);
+      if (transcript.entries.length === 0) return serviceRow("aucune entrée à afficher", "muted", innerW);
+      if (transcript.truncated) return serviceRow("… début tronqué", "dim", innerW);
+      return null;
+    };
 
-    /** Défilement de la vue, borné aux rangs rendus : un cran en butée ne change rien. */
+    /**
+     * Le nombre de rangs de transcription qu'une vue affiche : les deux règles du
+     * cadre, le titre, la zone de saisie, la notice, le rang d'état du corps (S-3)
+     * et le pied sont payés d'abord. Le défilement s'y tient comme le rendu : un rang
+     * de plus et le corps déborderait la hauteur du terminal.
+     */
+    const viewRoom = (height: number) =>
+      Math.max(1, height - 4 - drawnZone.length - (notice ? 1 : 0) - (bodyStateRow(0) === null ? 0 : 1));
+
+    /** Le nombre total de rangs de la transcription ouverte, à la largeur courante. */
+    const transcriptRows = (): number => {
+      if (view.kind !== "session") return 0;
+      return view.transcript.counts.reduce((total, count) => total + count, 0);
+    };
+
+    /**
+     * Charge le bloc PRÉCÉDENT de la transcription (S-8), ou `null` s'il n'y a plus
+     * rien avant. Les entrées plus anciennes s'assemblent À PART puis se placent
+     * DEVANT : l'assemblage incrémental n'ajoute qu'à la fin, et la fenêtre ne
+     * relit jamais le fichier pour un simple défilement.
+     */
+    const loadOlder = (
+      transcript: ViewTranscript,
+    ): { entries: SessionEntryLike[]; tail: SessionTail | null; truncated: boolean; more: boolean; added: number } | null => {
+      const current = view;
+      if (current.kind !== "session") return null;
+      if (!transcript.more || transcript.tail === null || transcript.sessionFile === null) return null;
+      const read = extendSessionTail(transcript.sessionFile, transcript.tail);
+      if (read.entries.length === 0) return null;
+      const older = buildSessionComponents(read.entries, {
+        components: kit,
+        ui,
+        cwd: transcript.cwd,
+        previous: null,
+      });
+      const width = transcript.countsWidth > 0 ? transcript.countsWidth : 80;
+      let added = 0;
+      for (const component of older.components) added += component.render(width).length;
+      const assembly: SessionAssembly = transcript.assembly
+        ? {
+            ...transcript.assembly,
+            components: [...older.components, ...transcript.assembly.components],
+            byEntryId: new Map([...older.byEntryId, ...transcript.assembly.byEntryId]),
+            expandables: [...older.expandables, ...transcript.assembly.expandables],
+          }
+        : older;
+      const entries = [...read.entries, ...transcript.entries];
+      view = {
+        ...current,
+        transcript: {
+          ...transcript,
+          tail: read.tail,
+          entries,
+          truncated: read.truncated,
+          more: read.more && entries.length < SESSION_VIEW_MAX_ENTRIES,
+          counts: [],
+          countsWidth: 0,
+          assembly,
+        },
+      };
+      return { entries, tail: read.tail, truncated: read.truncated, more: read.more, added };
+    };
+
+    /**
+     * Le défilement de la vue (S-6) : ancré sur les RANGS RENDUS, jamais sur les
+     * octets, et borné — aux extrémités, la touche ne fait rien. `delta > 0` va vers
+     * le plus récent (comme `ScrollView.scroll` de l'hôte). Descendre jusqu'au bas
+     * RÉARME le suivi de queue (S-5) ; remonter le coupe, et la position ne bouge
+     * plus quand du contenu arrive.
+     */
     const scrollView = (delta: number) => {
       if (view.kind !== "session") return;
-      const max = Math.max(0, drawnContent.length - viewRoom(panelHeight(tui)));
-      view = { ...view, scroll: Math.min(Math.max(view.scroll + delta, 0), max) };
+      const transcript = view.transcript;
+      const max = Math.max(0, transcriptRows() - viewRoom(panelHeight(tui)));
+      const current = transcript.followBottom ? max : Math.min(Math.max(transcript.offsetLines, 0), max);
+      const next = Math.min(Math.max(current + delta, 0), max);
+      const follow = next >= max;
+      // Remonter AU-DELÀ du plus ancien rang chargé charge le bloc précédent, et
+      // l'ancre glisse d'autant : le rang qu'on regardait ne bouge pas (S-8).
+      if (next === 0 && delta < 0) {
+        const older = loadOlder(transcript);
+        if (older) {
+          view = { ...view, transcript: { ...view.transcript, offsetLines: older.added, followBottom: false } };
+          version += 1;
+          tui.requestRender?.();
+          return;
+        }
+      }
+      if (next === current && follow === transcript.followBottom) return;
+      view = { ...view, transcript: { ...transcript, offsetLines: next, followBottom: follow } };
+      version += 1;
+      tui.requestRender?.();
+    };
+
+    /** `Début` (S-6) : le plus ancien rang — et, si besoin, on le CHARGE (S-8). */
+    const scrollToTop = () => {
+      if (view.kind !== "session") return;
+      loadOlder(view.transcript);
+      view = { ...view, transcript: { ...view.transcript, offsetLines: 0, followBottom: false } };
+      version += 1;
+      tui.requestRender?.();
+    };
+
+    /** `Fin` (S-6) : le plus récent, et le suivi de queue est réarmé (S-5). */
+    const scrollToBottom = () => {
+      if (view.kind !== "session") return;
+      view = { ...view, transcript: { ...view.transcript, followBottom: true, offsetLines: 0 } };
+      version += 1;
       tui.requestRender?.();
     };
 
@@ -6665,44 +7405,23 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       openReplyPreview();
     };
 
-    /** Les clés des entrées REPLIÉES du dernier rendu : leur rang de mention porte le pli (S-3). */
-    const foldedKeys = (): string[] => {
-      const keys: string[] = [];
-      for (const row of drawnContent) {
-        const choice = row.choice;
-        if (choice !== undefined && typeof choice !== "number" && choice.kind === "fold") keys.push(choice.key);
-      }
-      return keys;
-    };
-
-    /** Bascule le pli d'UNE entrée : la sienne, désignée par sa clé (S-3). */
-    const toggleFold = (key: string) => {
-      if (view.kind !== "session") return;
-      const expanded = view.expanded;
-      view = expanded.includes(key)
-        ? { ...view, expanded: expanded.filter((candidate) => candidate !== key) }
-        : { ...view, expanded: [...expanded, key] };
-      // Le défilement n'est PAS réinitialisé : déplier ne déplace pas la fenêtre,
-      // qui reste ancrée sur la fin de la transcription.
-      tui.requestRender?.();
-    };
-
     /**
-     * `ctrl+o` (S-3), le keybinding d'hôte `app.tools.expand` : sans entrée
-     * dépliée, il déplie la dernière entrée REPLIÉE de la fenêtre (la plus proche
-     * de la fin) ; sinon il replie l'entrée dépliée la plus récente. Les clés
-     * portent l'id de l'entrée JSONL — les id sont chronologiques — donc la plus
-     * grande clé est la plus récente.
+     * `ctrl+o` (S-4) : la bascule est GLOBALE, exactement comme chez l'hôte
+     * (« Tool output expansion: enabled/disabled ») — toutes les cartes repliables
+     * changent d'état d'un coup, y compris celles qui arriveront ensuite. L'état
+     * courant s'applique aux composants déjà construits, et l'assemblage le garde
+     * pour les suivants.
      */
-    const toggleLastFold = () => {
-      const expanded = view.kind === "session" ? view.expanded : [];
-      if (expanded.length === 0) {
-        const keys = foldedKeys();
-        const key = keys[keys.length - 1];
-        if (key !== undefined) toggleFold(key);
-        return;
-      }
-      toggleFold(expanded.reduce((a, b) => (b > a ? b : a)));
+    const toggleExpanded = () => {
+      if (view.kind !== "session" || !view.transcript.assembly) return;
+      const expanded = !view.transcript.assembly.expanded;
+      applyExpanded(view.transcript.assembly, expanded);
+      // Le défilement n'est PAS réinitialisé : déplier ne déplace pas la fenêtre.
+      // Les comptes de lignes, eux, changent (les cartes ne font plus la même
+      // hauteur) : ils sont remesurés au rendu suivant.
+      view = { ...view, transcript: { ...view.transcript, counts: [], countsWidth: 0 } };
+      version += 1;
+      tui.requestRender?.();
     };
 
     /**
@@ -6749,8 +7468,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      */
     const handleViewKey = (data: string): void => {
       if (view.kind !== "session") return;
-      if (isKey(data, "app.tools.expand")) {
-        toggleLastFold();
+      // `ctrl+o` d'abord, et dans TOUS les états : c'est une touche de contrôle, pas
+      // un caractère imprimable — elle ne vole rien à la zone de saisie (S-4).
+      if (isKey(data, "app.tools.expand") || data === EXPAND_KEY) {
+        toggleExpanded();
         return;
       }
       const zone = view.zone;
@@ -6765,75 +7486,110 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         view = { kind: "list" };
+        version += 1;
         tui.requestRender?.();
         return;
       }
+      const page = viewRoom(panelHeight(tui));
       if (zone.kind === "input") {
         if (!zone.free) {
           if (isKey(data, "tui.select.up") || data === "k") moveCursor(-1);
           else if (isKey(data, "tui.select.down") || data === "j") moveCursor(1);
           else if (isKey(data, "tui.select.confirm")) openReplyPreview();
-          else if (isKey(data, "tui.select.pageUp")) scrollView(viewRoom(panelHeight(tui)));
-          else if (isKey(data, "tui.select.pageDown")) scrollView(-viewRoom(panelHeight(tui)));
+          else if (isKey(data, "tui.select.pageUp")) scrollView(-page);
+          else if (isKey(data, "tui.select.pageDown")) scrollView(page);
           else if (/^[1-9]$/.test(data)) {
             // `1`..`9` SAUTENT au choix visé : l'aperçu ne s'ouvre que sur `Entrée`
-            // ou sur un clic (S-3).
+            // ou sur un clic (S-11).
             const index = Number(data) - 1;
             if (index < zone.options.length) setZone({ ...zone, cursor: index });
           } else if (data === "a") setZone({ ...zone, cursor: zone.options.length, free: true });
           else {
             // Une frappe — ou un collage — qui n'est pas un choix : elle vaut
-            // réponse libre (S-5).
+            // réponse libre (S-11).
             insertInZone(zone, data, { free: true, cursor: zone.options.length });
           }
           return;
         }
         // L'éditeur libre garde le défilement de la transcription : `↑`/`k` et
-        // `↓`/`j` remontent le temps, Entrée ouvre l'aperçu (S-4).
+        // `↓`/`j` remontent le temps, Entrée ouvre l'aperçu (S-11). Les touches de
+        // S-6 qui ne sont PAS des caractères (séquences d'échappement : maj+flèches,
+        // page haut/bas, début/fin) défilent même ici — elles ne volent aucune
+        // frappe —, et `j`/`k` ne défilent que sur un tampon VIDE, comme le lecteur
+        // de l'hôte : sinon ce sont des lettres qu'on écrit.
         if (isKey(data, "tui.select.confirm")) {
           openReplyPreview();
           return;
         }
-        if (isKey(data, "tui.select.up") || data === "k") {
+        const fast = Math.min(FAST_SCROLL_LINES, page);
+        if (isKey(data, "tui.select.up") || (data === "k" && zone.buffer === "")) {
+          scrollView(-1);
+          return;
+        }
+        if (isKey(data, "tui.select.down") || (data === "j" && zone.buffer === "")) {
           scrollView(1);
           return;
         }
-        if (isKey(data, "tui.select.down") || data === "j") {
-          scrollView(-1);
+        if (SHIFT_UP_KEYS.includes(data)) {
+          scrollView(-fast);
+          return;
+        }
+        if (SHIFT_DOWN_KEYS.includes(data)) {
+          scrollView(fast);
+          return;
+        }
+        if (isKey(data, "tui.select.pageUp")) {
+          scrollView(-page);
+          return;
+        }
+        if (isKey(data, "tui.select.pageDown")) {
+          scrollView(page);
+          return;
+        }
+        if (HOME_KEYS.includes(data)) {
+          scrollToTop();
+          return;
+        }
+        if (END_KEYS.includes(data)) {
+          scrollToBottom();
           return;
         }
         insertInZone(zone, data, {});
         return;
       }
-      // La fenêtre est ancrée sur la FIN (le run en cours se voit avancer) : monter
-      // remonte le temps, descendre revient au présent. Les touches de page valent
-      // une fenêtre — les noms viennent de l'hôte, jamais réinventés.
-      const page = viewRoom(panelHeight(tui));
-      if (isKey(data, "tui.select.up") || data === "k") scrollView(1);
-      else if (isKey(data, "tui.select.down") || data === "j") scrollView(-1);
-      else if (isKey(data, "tui.select.pageUp")) scrollView(page);
-      else if (isKey(data, "tui.select.pageDown")) scrollView(-page);
+      // La transcription : les touches de S-6, ancrées sur les RANGS RENDUS. Le
+      // défilement rapide vaut 5 rangs, ou la fenêtre quand elle est plus courte.
+      const fast = Math.min(FAST_SCROLL_LINES, page);
+      if (isKey(data, "tui.select.up") || data === "k") scrollView(-1);
+      else if (isKey(data, "tui.select.down") || data === "j") scrollView(1);
+      else if (SHIFT_UP_KEYS.includes(data)) scrollView(-fast);
+      else if (SHIFT_DOWN_KEYS.includes(data)) scrollView(fast);
+      else if (isKey(data, "tui.select.pageUp")) scrollView(-page);
+      else if (isKey(data, "tui.select.pageDown")) scrollView(page);
+      else if (HOME_KEYS.includes(data) || data === "g") scrollToTop();
+      else if (END_KEYS.includes(data) || data === "G") scrollToBottom();
     };
 
     /**
-     * Un rapport de souris est toujours CONSOMMÉ (S-4) : ce n'est jamais du clavier.
+     * Un rapport de souris est toujours CONSOMMÉ (S-7) : ce n'est jamais du clavier.
      * Dans la liste, le clic gauche prend la ligne visée (`PanelRow.target`, posé par
-     * le constructeur de rangs) et la molette vaut ±1 cran ; en mode de saisie,
-     * l'éditeur en ligne garde le clavier ; dans la vue, la molette défile, le clic
-     * prend l'option visée et le clic sur un rang de mention bascule SON pli
-     * (`PanelRow.choice`).
+     * le constructeur de rangs) et la molette vaut ±1 cran ; dans la vue, la molette
+     * vaut 3 rangs (le facteur du lecteur plein écran de l'hôte), le clic prend
+     * l'option visée, et le clic sur la mention de pliage bascule l'état GLOBAL. Le
+     * survol, le relâchement et tout autre bouton ne font RIEN : aucun surlignage,
+     * aucun repaint.
      */
     const handleMouse = (event: SgrMouseEvent): void => {
       if (view.kind === "session") {
         if (event.wheel !== null) {
-          scrollView(-event.wheel);
+          scrollView(event.wheel * WHEEL_SCROLL_LINES);
           return;
         }
         if (!event.leftClick) return;
         const choice = drawn[event.row]?.choice;
         if (choice === undefined) return;
         if (typeof choice === "number") chooseOption(choice);
-        else toggleFold(choice.key);
+        else toggleExpanded();
         return;
       }
       if (mode.kind !== "browse") return;
@@ -6848,6 +7604,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       notice = null;
       model = { ...model, notice: null, selection: target };
       remember();
+      version += 1;
       tui.requestRender?.();
     };
 
@@ -7057,61 +7814,213 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const stop = schedule(() => redraw(), PANEL_REFRESH_MS);
 
     /**
-     * Les rangs de la VUE de session (S-2) : titre remplacé par le rang du rang
-     * regardé, mention de run vivant s'il y en a un, transcription du fichier — relue
-     * à chaque rendu, donc au rythme du rafraîchissement —, la ZONE DE SAISIE (S-3,
-     * S-4, S-10) puis le pied de la vue. La fenêtre est ancrée sur la FIN : un run en
-     * cours se voit avancer sans rien toucher, et remonter (molette, `↑`) révèle le
-     * plus ancien. Un rang sans fichier de session le DIT, au lieu de ne rien rendre.
+     * Les comptes de lignes par composant, à la largeur courante (S-8) : mesurés une
+     * fois, ils servent la fenêtre — c'est ce qui évite de rendre les composants
+     * qu'on ne voit pas. Un changement de largeur, un contenu neuf ou une bascule
+     * les invalident (ils repartent de zéro).
      */
-    const renderView = (width: number, height: number): PanelRow[] => {
-      if (view.kind !== "session") return [];
-      const innerW = Math.max(0, width - 4);
-      const title = [`${view.label} · /${view.phase} · ${view.state}`];
-      if (view.sessionFile !== null) title.push(`session ${path.basename(view.sessionFile)}`);
-      const rows: PanelRow[] = [{ text: topRule(glyphs, title.join(" · "), width), tone: "accent" }];
-      if (view.live) {
-        rows.push({ text: frame(glyphs, "run en cours — lecture seule", width, innerW), tone: "warning" });
+    const ensureCounts = (transcript: ViewTranscript, width: number): void => {
+      const components = transcript.assembly?.components ?? [];
+      if (transcript.countsWidth !== width || transcript.counts.length > components.length) {
+        transcript.counts = [];
+        transcript.countsWidth = width;
       }
-      const content =
-        view.sessionFile === null
-          ? framedRows(`pas de transcription — ${view.state}`, "muted", glyphs, width, innerW)
-          : buildSessionRows(readSessionView(view.sessionFile), {
-              width,
-              budget: height,
-              glyphs,
-              expanded: view.expanded,
-            });
-      drawnContent = content;
-      // La notice est rendue ICI aussi : un refus prononcé depuis la vue (« réponse
-      // vide », refus du pilote) doit être lisible là où il a eu lieu, sinon il
-      // serait avalé jusqu'au retour à la liste.
-      drawnZone = [
-        ...(notice ? framedRows(notice, "warning", glyphs, width, innerW) : []),
-        ...viewZoneRows(view.zone, glyphs, width, innerW),
+      for (let i = transcript.counts.length; i < components.length; i += 1) {
+        const component = components[i] as HostComponent;
+        transcript.counts.push(renderComponent(component, componentLabel(component, i), width).length);
+      }
+    };
+
+    /**
+     * Les lignes de la FENÊTRE de la transcription (S-5, S-6) : le suivi de queue
+     * garde les derniers rangs, une ancre garde ceux qu'on regardait — et seuls les
+     * composants de la fenêtre sont rendus.
+     */
+    const windowLines = (width: number, room: number): string[] => {
+      if (view.kind !== "session") return [];
+      const transcript = view.transcript;
+      const components = transcript.assembly?.components ?? [];
+      ensureCounts(transcript, width);
+      const total = transcriptRows();
+      const max = Math.max(0, total - room);
+      const start = transcript.followBottom
+        ? max
+        : Math.min(Math.max(transcript.offsetLines, 0), max);
+      const lines: string[] = [];
+      let at = 0;
+      for (let i = 0; i < components.length && lines.length < room; i += 1) {
+        const count = transcript.counts[i] ?? 0;
+        if (at + count <= start) {
+          at += count;
+          continue;
+        }
+        const rendered = renderComponent(components[i] as HostComponent, componentLabel(components[i], i), width);
+        for (let n = Math.max(0, start - at); n < rendered.length && lines.length < room; n += 1) {
+          lines.push(rendered[n] as string);
+        }
+        at += count;
+      }
+      return lines;
+    };
+
+    /**
+     * Un rang → le composant de l'hôte qui le rend (S-1) : `DynamicBorder` pour une
+     * règle, `Text` pour tout le reste — colorié par le thème ACTIF, et fond
+     * `selectedBg` pour le rang sélectionné (le même jeton que les listes d'OMP).
+     */
+    const rowComponent = (row: PanelRow): HostComponent => {
+      if (row.rule) return new kit.DynamicBorder((text) => kit.theme.fg("border", text));
+      const text = new kit.Text(
+        row.text,
+        ROW_PADDING_X,
+        0,
+        row.selected === true ? (value) => kit.theme.bg("selectedBg", value) : undefined,
+      );
+      text.setStyleFn((value) => kit.theme.fg(row.tone, value));
+      return text;
+    };
+
+    /**
+     * La composition d'un écran : ses lignes, et la CIBLE de chaque ligne (S-7) — le
+     * clic résout sa cible par la ligne visée, jamais en la devinant.
+     */
+    type Composition = { lines: string[]; targets: (PanelRow | null)[] };
+
+    /** Les lignes du panneau, composées par les composants de l'hôte (S-1). */
+    const renderList = (current: PanelModel, width: number, height: number): Composition => {
+      const rows = buildPanelRows(current, { width, budget: panelBudget(height), glyphs, now: now() });
+      const children: HostComponent[] = [];
+      const owner: (PanelRow | null)[] = [];
+      let fillAt = -1;
+      for (const row of rows) {
+        if (row.fill) {
+          fillAt = children.length;
+          children.push(new kit.Spacer(0));
+          owner.push(null);
+          continue;
+        }
+        children.push(rowComponent(row));
+        owner.push(row);
+      }
+      // Le remplissage se mesure sur ce que les composants rendent VRAIMENT (le
+      // `Text` replie) : c'est la composition du conteneur, pas un calcul en amont.
+      // Un composant qui jette compte le rang d'erreur qui le remplace.
+      const counts: number[] = [];
+      let used = 0;
+      for (let i = 0; i < children.length; i += 1) {
+        const count = renderComponent(children[i] as HostComponent, componentLabel(children[i], i), width).length;
+        counts.push(count);
+        used += count;
+      }
+      if (fillAt >= 0) {
+        const fill = Math.max(0, height - used);
+        (children[fillAt] as HostComponent & { setLines(lines: number): void }).setLines(fill);
+        counts[fillAt] = fill;
+      }
+      const container = new kit.Container();
+      for (const child of children) container.addChild(child);
+      let lines: string[];
+      try {
+        lines = [...container.render(width)];
+      } catch {
+        // Un enfant a jeté DANS le conteneur : les rangs sont peints un par un, le
+        // fautif remplacé par son rang d'erreur — le panneau reste ouvert, complet.
+        lines = [];
+        for (let i = 0; i < children.length; i += 1) {
+          lines.push(...renderComponent(children[i] as HostComponent, componentLabel(children[i], i), width));
+        }
+      }
+      const targets: (PanelRow | null)[] = [];
+      for (let i = 0; i < children.length; i += 1) {
+        for (let n = 0; n < (counts[i] ?? 0); n += 1) targets.push(owner[i] ?? null);
+      }
+      return { lines, targets };
+    };
+
+    /**
+     * Les lignes de la VUE de session (S-3) : les deux règles du cadre, le titre (le
+     * rang regardé, sa session, la mention de run vivant), la transcription — rendue
+     * par les composants de l'hôte, fenêtrée —, la ZONE DE SAISIE (S-11), la notice
+     * (un refus prononcé ici doit être lisible ici) et le pied. Les états sont
+     * rendus EXPLICITEMENT, jamais déduits d'une absence de lignes.
+     */
+    const renderView = (width: number, height: number): Composition => {
+      if (view.kind !== "session") return { lines: [], targets: [] };
+      const innerW = Math.max(0, width - ROW_PADDING_X * 2);
+      const transcript = view.transcript;
+      const title = [`${view.label} · /${view.phase} · ${view.state}`];
+      if (transcript.sessionFile !== null) title.push(`session ${path.basename(transcript.sessionFile)}`);
+      if (view.live) title.push("run en cours — lecture seule");
+      const zoneRows = [
+        ...(notice ? [serviceRow(notice, "warning", innerW)] : []),
+        ...viewZoneRows(view.zone, glyphs, innerW),
       ];
-      const room = viewRoom(height);
-      const start = Math.max(0, content.length - room - view.scroll);
-      for (const row of content.slice(start, start + room)) rows.push(row);
-      for (const row of drawnZone) rows.push(row);
-      rows.push({ text: bottomRule(glyphs, viewFooter(view.zone), width), tone: "border" });
-      return rows;
+      drawnZone = zoneRows;
+      const footer = viewFooter(view.zone);
+      const state = bodyStateRow(innerW);
+      const bodyRows: PanelRow[] = state === null ? [] : [state];
+      const head: PanelRow[] = [
+        { text: "", tone: "border", rule: "frame" },
+        serviceRow(title.join(" · "), "accent", innerW),
+      ];
+      const tail: PanelRow[] = [
+        ...zoneRows,
+        serviceRow(footer, "dim", innerW, footer.includes("ctrl+o déplier/replier") ? { choice: { kind: "expand" } } : undefined),
+        { text: "", tone: "border", rule: "frame" },
+      ];
+      const lines: string[] = [];
+      const targets: (PanelRow | null)[] = [];
+      const pushRow = (row: PanelRow): void => {
+        let rendered: string[];
+        try {
+          rendered = [...rowComponent(row).render(width)];
+        } catch (error) {
+          // Construction ou rendu d'un rang du panneau : même garantie que pour
+          // les composants de la vue (S-1 « Cas limites ») — un rang lisible.
+          rendered = [unreadableLine("rang du panneau", error, width)];
+        }
+        for (const line of rendered) {
+          lines.push(line);
+          targets.push(row);
+        }
+      };
+      for (const row of head) pushRow(row);
+      for (const row of bodyRows) pushRow(row);
+      // Le corps : les lignes des composants de la fenêtre, telles quelles — elles
+      // portent leur propre mise en forme, et aucune n'est une cible de clic. Un état
+      // dit (S-3) est peint EN TÊTE de la transcription, jamais à sa place : une
+      // session dont le début a été élagué garde tout son contenu lisible.
+      for (const line of windowLines(width, viewRoom(height))) {
+        lines.push(line);
+        targets.push(null);
+      }
+      for (const row of tail) pushRow(row);
+      return { lines, targets };
     };
 
     return {
       render(width: number): string[] {
         const height = panelHeight(tui);
-        const rows =
-          view.kind === "session"
-            ? renderView(width, height)
-            : buildPanelRows(model, { width, budget: panelBudget(height), glyphs, now: now() });
-        // Le remplissage est le fait du COMPOSANT : le constructeur de rangs, lui,
-        // tient toujours dans son budget (contrat verrouillé par les tests).
-        drawn = fillPanelHeight(rows, width, height);
-        return drawn.map((row) => theme.fg(row.tone, row.text));
+        // La mémoïsation (S-5) : rien n'a changé (contenu, largeur, hauteur,
+        // pliage, zone) ⇒ le MÊME tableau, donc aucune repeinture.
+        const key = `${version}|${width}|${height}`;
+        if (key === renderedKey) return renderedLines;
+        let composed: Composition;
+        try {
+          composed = view.kind === "session" ? renderView(width, height) : renderList(model, width, height);
+        } catch (error) {
+          // Dernier recours (S-1 « Cas limites ») : une composition qui jette quand
+          // même (un constructeur de l'hôte, une mesure de largeur) laisse le
+          // panneau OUVERT sur un rang lisible — jamais une sortie de l'overlay.
+          composed = { lines: [unreadableLine("panneau", error, width)], targets: [] };
+        }
+        renderedKey = key;
+        renderedLines = composed.lines;
+        drawn = composed.targets;
+        return renderedLines;
       },
       handleInput(data: string): void {
-        // La souris d'abord : un rapport SGR n'est jamais du clavier (S-4). Puis la
+        // La souris d'abord : un rapport SGR n'est jamais du clavier (S-7). Puis la
         // VUE, avant les modes et la liste : aucune touche du panneau ne l'atteint.
         const mouse = parseSgrMouse(data);
         if (mouse) {
@@ -7730,10 +8639,20 @@ export default function reqExtension(pi: ExtensionAPI) {
       return;
     }
     if (panelOpen) return;
+    // Le kit de composants de l'hôte (S-1) : sans lui, le panneau ne s'ouvre pas —
+    // il n'existe AUCUN rendu de repli, et un écran à moitié peint serait pire
+    // qu'un refus. Le message est celui de S-1, sur le même canal que le refus hors
+    // session interactive.
+    const components = hostComponents(pi);
+    if (!components) {
+      notifyDurable("[pipeline] panneau indisponible : composants de l'hôte absents (OMP)");
+      return;
+    }
     panelOpen = true;
     const stateDir = storeDir();
     const deps: PipelinesPanelDeps = {
       stateDir,
+      components,
       repoRoot: (() => {
         const root = resolveFeatureRoot(ctx.cwd);
         return root.primary ?? root.dir;

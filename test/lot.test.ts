@@ -14,6 +14,7 @@ import * as path from "node:path";
 
 import reqExtension, {
   LOT_WORKER_DIRECTIVE,
+  displayWidth,
   LOT_VERSION,
   applyWorktreeFate,
   buildLotAlert,
@@ -38,6 +39,7 @@ import reqExtension, {
   lotStateDir,
   lotStateLabel,
   lotTotals,
+  wrapVisible,
   lotWaitLabel,
   nextChainAction,
   LOT_TICK_MS,
@@ -296,17 +298,254 @@ async function waitFor(predicate: () => boolean, tries = 200_000): Promise<void>
   }
 }
 
-const GLYPHS = {
-  topLeft: "+",
-  topRight: "+",
-  bottomLeft: "+",
-  bottomRight: "+",
-  horizontal: "-",
-  vertical: "|",
-  teeLeft: "+",
-  teeRight: "+",
-  cursor: ">",
+const GLYPHS = { cursor: ">" };
+
+/** Le thème neutre : `fg`/`bg` rendent le texte tel quel, donc les assertions lisent le texte NU. */
+const THEME = {
+  fg: (_tone: string, text: string) => text,
+  bg: (_tone: string, text: string) => text,
+  nav: { cursor: ">" },
 };
+
+/**
+ * Le faux kit de composants de l'hôte (S-1) : le panneau et la vue ne composent
+ * plus aucune ligne eux-mêmes, donc les tests montent un kit qui JOURNALISE ses
+ * constructions et rend des lignes lisibles. Ce qui est prouvé ici, c'est ce que
+ * le panneau DEMANDE aux composants (quel composant, avec quelle entrée) ; le
+ * rendu des composants de l'hôte est celui d'OMP, prouvé par la fumée PTY (BR-7).
+ */
+function fakeKit() {
+  const built: string[] = [];
+  class FakeText {
+    #text: string;
+    #paddingX: number;
+    #background?: (text: string) => string;
+    #style?: (text: string) => string;
+    constructor(text = "", paddingX = 1, _paddingY = 0, background?: (text: string) => string) {
+      built.push("Text");
+      this.#text = text;
+      this.#paddingX = paddingX;
+      this.#background = background;
+    }
+    setText(text: string): boolean {
+      const changed = text !== this.#text;
+      this.#text = text;
+      return changed;
+    }
+    setStyleFn(style?: (text: string) => string): this {
+      this.#style = style;
+      return this;
+    }
+    render(width: number): readonly string[] {
+      if (this.#text.trim() === "") return [];
+      const content = Math.max(1, width - this.#paddingX * 2);
+      const styled = this.#style ? this.#style(this.#text) : this.#text;
+      return wrapVisible(styled, content).map((line) => {
+        const padded = `${" ".repeat(this.#paddingX)}${line}`;
+        const filled = padded + " ".repeat(Math.max(0, width - displayWidth(padded)));
+        return this.#background ? this.#background(filled) : filled;
+      });
+    }
+  }
+  class FakeBorder {
+    #color: (text: string) => string;
+    constructor(color?: (text: string) => string) {
+      built.push("DynamicBorder");
+      this.#color = color ?? ((text) => text);
+    }
+    render(width: number): readonly string[] {
+      return [this.#color("─".repeat(Math.max(1, width)))];
+    }
+  }
+  class FakeSpacer {
+    #lines: number;
+    constructor(lines = 1) {
+      built.push("Spacer");
+      this.#lines = lines;
+    }
+    setLines(lines: number): void {
+      this.#lines = lines;
+    }
+    render(): readonly string[] {
+      return new Array<string>(Math.max(0, this.#lines)).fill("");
+    }
+  }
+  class FakeContainer {
+    children: FakeText[] = [];
+    addChild(child: FakeText): void {
+      this.children.push(child);
+    }
+    render(width: number): readonly string[] {
+      return this.children.flatMap((child) => [...child.render(width)]);
+    }
+  }
+  /** Le texte d'un message, réduit à ses blocs `text` — la matière que la carte rend. */
+  const textOf = (message: Record<string, unknown>): string => {
+    const content = Array.isArray(message.content) ? message.content : [];
+    return content
+      .filter((block) => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+      .map((block) => String((block as Record<string, unknown>).text ?? ""))
+      .join(" ");
+  };
+  const resultText = (result: { content: Array<{ text?: string }> }): string =>
+    result.content.map((block) => block.text ?? "").join("\n");
+  /**
+   * Les lignes d'un composant de message : repliées à la largeur reçue et
+   * complétées, exactement comme le fait le composant de l'hôte — sans quoi les
+   * assertions de largeur ne prouveraient rien.
+   */
+  const frame = (lines: string[], width: number): readonly string[] =>
+    lines.flatMap((line) =>
+      wrapVisible(line, Math.max(1, width)).map((part) => part + " ".repeat(Math.max(0, width - displayWidth(part)))),
+    );
+  class FakeUser {
+    #text: string;
+    constructor(text: string, _options?: { synthetic?: boolean }) {
+      built.push("UserMessageComponent");
+      this.#text = text;
+    }
+    render(width: number): readonly string[] {
+      return frame(this.#text.split("\n").map((line) => `▸ toi : ${line}`), width);
+    }
+  }
+  class FakeAssistant {
+    #message: Record<string, unknown>;
+    #expanded = false;
+    constructor(message?: Record<string, unknown>) {
+      built.push("AssistantMessageComponent");
+      this.#message = message ?? {};
+    }
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    setImagesVisible(): void {}
+    setToolResultImagesVisible(): void {}
+    render(width: number): readonly string[] {
+      const text = textOf(this.#message);
+      if (text.trim() === "") return [];
+      const lines = text.split("\n").map((line) => `▸ agent : ${line}`);
+      if (this.#expanded || lines.length <= 2) return frame(lines, width);
+      return frame([lines[0] as string, `… ${lines.length - 1} lignes repliées — ctrl+o déplier`], width);
+    }
+  }
+  class FakeTool {
+    #name: string;
+    #args: unknown;
+    #result?: { content: Array<{ text?: string }>; isError?: boolean };
+    #expanded = false;
+    constructor(toolName: string, args: unknown, _options?: unknown, _tool?: unknown, _ui?: unknown, _cwd?: string) {
+      built.push("ToolExecutionComponent");
+      this.#name = toolName;
+      this.#args = args;
+    }
+    updateArgs(args: unknown): void {
+      this.#args = args;
+    }
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    updateResult(result: { content: Array<{ text?: string }>; isError?: boolean }): void {
+      this.#result = result;
+    }
+    render(width: number): readonly string[] {
+      const head = `→ ${this.#name} ${JSON.stringify(this.#args ?? {})}`;
+      if (!this.#result) return frame([head], width);
+      const lines = resultText(this.#result).split("\n");
+      const shown = this.#expanded ? lines : lines.slice(0, 1);
+      return frame([head, ...shown.map((line) => `← ${this.#name} ${line}`)], width);
+    }
+  }
+  class FakeReadGroup {
+    #calls: Array<{ id: string; args: unknown }> = [];
+    #results = new Map<string, string>();
+    #expanded = false;
+    constructor(_options?: unknown) {
+      built.push("ReadToolGroupComponent");
+    }
+    updateArgs(args: unknown, id?: string): void {
+      this.#calls.push({ id: id ?? "", args });
+    }
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    updateResult(result: { content: Array<{ text?: string }> }, _partial?: boolean, id?: string): void {
+      this.#results.set(id ?? "", resultText(result));
+    }
+    render(width: number): readonly string[] {
+      const lines: string[] = [];
+      for (const call of this.#calls) {
+        lines.push(`→ read ${JSON.stringify(call.args ?? {})}`);
+        const output = this.#results.get(call.id);
+        if (output === undefined) continue;
+        const parts = output.split("\n");
+        const shown = this.#expanded ? parts : parts.slice(0, 1);
+        for (const part of shown) lines.push(`← read ${part}`);
+      }
+      return frame(lines, width);
+    }
+  }
+  class FakeCustom {
+    #message: Record<string, unknown>;
+    #expanded = false;
+    constructor(message: unknown) {
+      built.push("CustomMessageComponent");
+      this.#message = (message ?? {}) as Record<string, unknown>;
+    }
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    render(width: number): readonly string[] {
+      const content = typeof this.#message.content === "string" ? this.#message.content : "";
+      return frame([`· ${String(this.#message.customType ?? "?")} : ${content}`], width);
+    }
+  }
+  class FakeBash {
+    #command: string;
+    #output = "";
+    constructor(command: string) {
+      built.push("BashExecutionComponent");
+      this.#command = command;
+    }
+    appendOutput(chunk: string): void {
+      this.#output += chunk;
+    }
+    setComplete(): void {}
+    setExpanded(): void {}
+    render(width: number): readonly string[] {
+      return frame([`$ ${this.#command}`, ...this.#output.split("\n")], width);
+    }
+  }
+  const summary = (name: string) =>
+    class {
+      constructor(_message: unknown) {
+        built.push(name);
+      }
+      setExpanded(): void {}
+      render(): readonly string[] {
+        return ["≡ résumé de session"];
+      }
+    };
+  const kit = {
+    Text: FakeText,
+    DynamicBorder: FakeBorder,
+    Container: FakeContainer,
+    Spacer: FakeSpacer,
+    theme: THEME,
+    UserMessageComponent: FakeUser,
+    AssistantMessageComponent: FakeAssistant,
+    ToolExecutionComponent: FakeTool,
+    ReadToolGroupComponent: FakeReadGroup,
+    CustomMessageComponent: FakeCustom,
+    BashExecutionComponent: FakeBash,
+    CompactionSummaryMessageComponent: summary("CompactionSummaryMessageComponent"),
+    BranchSummaryMessageComponent: summary("BranchSummaryMessageComponent"),
+  };
+  return { kit: kit as unknown as never, built };
+}
 
 const rowsText = (rows: PanelRow[]) => rows.map((row) => row.text).join("\n");
 
@@ -1941,7 +2180,9 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     assert.ok(row.text.includes("/impl"), `le maillon courant est sur le rang de f${index} : ${row.text}`);
     assert.ok(row.text.includes(label), `l'état « ${label} » est sur le rang de f${index} : ${row.text}`);
   });
-  for (const row of rows) assert.equal(row.text.length, 64, `chaque rang fait 64 colonnes : ${row.text}`);
+  for (const row of rows) {
+    assert.ok(displayWidth(row.text) <= 62, `un rang de service tient dans la largeur de contenu : ${row.text}`);
+  }
   const tones = rows.map((row) => row.tone);
   assert.ok(tones.includes("error") && tones.includes("warning") && tones.includes("success") && tones.includes("dim"));
   assert.equal(lotStateLabel("cancelled"), "annulé");
@@ -1950,7 +2191,12 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   // Le pied : la première ligne n'annonce que les touches du panneau, la seconde
   // celles de la LIGNE SÉLECTIONNÉE. Sur un rang de lot, `x` est annoncé (AC-3) et
   // `d` jamais — il n'y supprime rien (BLOQUANT 3 de la revue).
-  const footer = rows.slice(-3).map((row) => row.text);
+  // Les rangs de pied sont suivis de « Échap fermer » et de la règle de fermeture
+  // (S-1) : on les prend par leur contenu, pas par leur position.
+  const footer = rows
+    .map((row) => row.text)
+    .filter((line) => line !== "")
+    .slice(-3);
   assert.match(footer[0]!, /a ajouter · l lancer · Entrée session/);
   assert.ok(!footer[0]!.includes("d supprimer"), `aucune touche morte annoncée : ${footer[0]}`);
   assert.match(footer[1]!, /x retirer · c annuler/, "la touche de retrait est annoncée sur la ligne qui la porte");
@@ -2012,7 +2258,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     { ...emptyModel, lot, selection: lot.features.length, history: [historique] },
     { width: 64, budget: 18, glyphs: GLYPHS, now: 1_700_000_000_000 },
   );
-  assert.match(withHistory[withHistory.length - 2]!.text, /d supprimer/);
+  assert.match(rowsText(withHistory), /d supprimer/, "sur un rang d'historique, `d` est annoncé");
 
   // --- le BUDGET et les sections tronquées (revue n°3) -----------------------
   // Le panneau se borne lui-même : au-delà, le TUI coupe par le BAS et le pied —
@@ -2033,7 +2279,10 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     sessionId: null,
     owner: { pid: 1 },
   };
-  for (const budget of [8, 10, 12, 18]) {
+  // Le cadre de S-1 coûte 8 rangs de service (deux règles, le titre, le titre de
+  // section, le séparateur et les trois rangs de pied) : c'est le budget à partir
+  // duquel les deux sections non vides gardent chacune un rang.
+  for (const budget of [10, 12, 18]) {
     const tight = buildPanelRows(
       { ...emptyModel, lot: { ...lot, features: many }, running: [courant], selection: 0 },
       { width: 64, budget, glyphs: GLYPHS, now: 1_700_000_000_000 },
@@ -2043,21 +2292,21 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     assert.ok(drawn.includes("mem0-omp/racine"), `le pipeline vivant n'est jamais muet (budget ${budget})`);
     assert.match(drawn, /… \d+ de plus/, `la section tronquée garde son marqueur (budget ${budget})`);
     assert.ok(drawn.includes("Échap fermer"), `c'est le pied que le budget protège (${budget})`);
-    assert.equal(tight[tight.length - 1]!.text.trimEnd().endsWith("+"), true, "le cadre se referme sur son dernier rang");
+    assert.equal(tight[tight.length - 1]!.rule, "frame", "le cadre se referme sur sa règle (S-1)");
   }
   const full = buildPanelRows(
     { ...emptyModel, lot: { ...lot, features: many }, running: [courant], selection: 0 },
     { width: 64, budget: 18, glyphs: GLYPHS, now: 1_700_000_000_000 },
   );
-  assert.match(rowsText(full), /… 2 de plus/, "le lot tronqué dit combien de features manquent");
+  assert.match(rowsText(full), /… 4 de plus/, "le lot tronqué dit combien de features manquent");
 
-  // Le plancher : à trois sections non vides, `cadre + minima` vaut 9 (cadre 6 +
+  // Le plancher : à trois sections non vides, `cadre + minima` vaut 11 (cadre 8 +
   // un rang par section). Au ras du plancher, chacune garde un rang — le pipeline
   // VIVANT est nommé (c'est lui qu'un titre « N en cours » annonçait sans le
   // montrer), et le surplus tronqué se dit par un marqueur. En dessous du plancher,
   // la priorité décide (S-7) : c'est la seule dégradation admise.
   const historique2: HistoryEntry = { ...historique, id: "h2" };
-  for (const budget of [9, 10]) {
+  for (const budget of [11, 12]) {
     const tight = buildPanelRows(
       {
         ...emptyModel,
@@ -2131,7 +2380,9 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
 
 test("sans lot, le panneau rend exactement ce qu'il rendait", () => {
   const rows = buildPanelRows(emptyModel, { width: 64, budget: 18, glyphs: GLYPHS, now: 0 });
-  assert.equal(rows.length, 6);
+  // Deux règles de cadre, le titre, le séparateur, les deux états vides, le
+  // remplissage et les deux rangs de pied.
+  assert.equal(rows.length, 9);
   assert.match(rowsText(rows), /Pipelines · 0 en cours/);
   assert.match(rowsText(rows), /aucune pipeline en cours/);
   assert.match(rowsText(rows), /aucun historique/);
@@ -2229,7 +2480,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   assert.match(rowsText(cancel), /Annuler alpha \? worktree : 1 gardé · 2 archivé · 3 supprimé/);
   assert.match(rowsText(cancel), /la branche reste · 2 copie les ignorés · Échap annuler/);
   for (const rows of [add, confirm, cancel]) {
-    for (const row of rows) assert.equal(row.text.length, 64);
+    for (const row of rows) assert.ok(displayWidth(row.text) <= 62, `un rang tient dans la largeur : ${row.text}`);
   }
   assert.match(rowsText(cancel), /Entrée répondre/, "le pied rappelle les touches applicables à la ligne");
   assert.equal(lotFooterActions([feature("a", { state: "done" })], 0), "aucune action");
@@ -2243,6 +2494,7 @@ test("les touches du panneau pilotent le lot, et les refus s'affichent sans rien
   ]);
   const factory = pipelinesPanelFactory({
     stateDir,
+    components: fakeKit().kit as never,
     repoRoot,
     lot: controller,
     now: () => 1_700_000_000_000,
@@ -2318,6 +2570,7 @@ function mkPanel(repoRoot: string, stateDir: string, actions: LotPanelActions, r
   const scheduled: Array<() => void> = [];
   const factory = pipelinesPanelFactory({
     stateDir,
+    components: fakeKit().kit as never,
     repoRoot,
     lot: actions,
     now: () => 1_700_000_000_000,

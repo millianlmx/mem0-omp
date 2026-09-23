@@ -20,6 +20,7 @@ import {
   buildPanelRows,
   clampSelection,
   deleteHistoryEntry,
+  displayWidth,
   elapsedLabel,
   historyIdFor,
   joinEntry,
@@ -36,6 +37,7 @@ import {
   readStore,
   runningIdFor,
   switchDecision,
+  wrapVisible,
   writeHistoryEntry,
   writeRunningEntry,
   type HistoryEntry,
@@ -111,34 +113,117 @@ function mkHistory(stateDir: string, input: Partial<HistoryEntry> & { cwd: strin
 // Rangs purs : glyphes ASCII, thème neutre, horloge injectée
 // ---------------------------------------------------------------------------
 
-const GLYPHS: PanelGlyphs = {
-  topLeft: "+",
-  topRight: "+",
-  bottomLeft: "+",
-  bottomRight: "+",
-  horizontal: "-",
-  vertical: "|",
-  teeLeft: "+",
-  teeRight: "+",
-  cursor: ">",
-};
+const GLYPHS: PanelGlyphs = { cursor: ">" };
 
+/** Le thème neutre : `fg`/`bg` rendent le texte tel quel, donc les assertions lisent le texte NU. */
 const THEME = {
-  // Thème neutre : `fg` rend le texte tel quel, donc les assertions lisent le
-  // texte NU (aucun ANSI à défaire).
-  fg: (_color: string, text: string) => text,
-  boxRound: {
-    topLeft: "+",
-    topRight: "+",
-    bottomLeft: "+",
-    bottomRight: "+",
-    horizontal: "-",
-    vertical: "|",
-    teeLeft: "+",
-    teeRight: "+",
-  },
+  fg: (_tone: string, text: string) => text,
+  bg: (_tone: string, text: string) => text,
   nav: { cursor: ">" },
 };
+
+/**
+ * Le faux kit de composants de l'hôte (S-1) : il JOURNALISE ses constructions et
+ * rend des lignes mesurables. Les tests portent donc sur ce que le panneau DEMANDE
+ * aux composants — plus aucun rendu maison n'existe pour être épinglé.
+ */
+function fakeKit() {
+  const built: string[] = [];
+  class Inert {
+    render(): readonly string[] {
+      return [];
+    }
+    setExpanded(): void {}
+    setImagesVisible(): void {}
+    setToolResultImagesVisible(): void {}
+    updateArgs(): void {}
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    updateResult(): void {}
+    appendOutput(): void {}
+    setComplete(): void {}
+    addChild(): void {}
+  }
+  class FakeText {
+    #text: string;
+    #paddingX: number;
+    #background?: (text: string) => string;
+    #style?: (text: string) => string;
+    constructor(text = "", paddingX = 1, _paddingY = 0, background?: (text: string) => string) {
+      built.push("Text");
+      this.#text = text;
+      this.#paddingX = paddingX;
+      this.#background = background;
+    }
+    setText(text: string): boolean {
+      const changed = text !== this.#text;
+      this.#text = text;
+      return changed;
+    }
+    setStyleFn(style?: (text: string) => string): this {
+      this.#style = style;
+      return this;
+    }
+    render(width: number): readonly string[] {
+      if (this.#text.trim() === "") return [];
+      const content = Math.max(1, width - this.#paddingX * 2);
+      const styled = this.#style ? this.#style(this.#text) : this.#text;
+      return wrapVisible(styled, content).map((line) => {
+        const padded = `${" ".repeat(this.#paddingX)}${line}`;
+        const filled = padded + " ".repeat(Math.max(0, width - displayWidth(padded)));
+        return this.#background ? this.#background(filled) : filled;
+      });
+    }
+  }
+  class FakeBorder {
+    #color: (text: string) => string;
+    constructor(color?: (text: string) => string) {
+      built.push("DynamicBorder");
+      this.#color = color ?? ((text) => text);
+    }
+    render(width: number): readonly string[] {
+      return [this.#color("─".repeat(Math.max(1, width)))];
+    }
+  }
+  class FakeSpacer {
+    #lines: number;
+    constructor(lines = 1) {
+      built.push("Spacer");
+      this.#lines = lines;
+    }
+    setLines(lines: number): void {
+      this.#lines = lines;
+    }
+    render(): readonly string[] {
+      return new Array<string>(Math.max(0, this.#lines)).fill("");
+    }
+  }
+  class FakeContainer {
+    children: FakeText[] = [];
+    addChild(child: FakeText): void {
+      this.children.push(child);
+    }
+    render(width: number): readonly string[] {
+      return this.children.flatMap((child) => [...child.render(width)]);
+    }
+  }
+  const kit = {
+    Text: FakeText,
+    DynamicBorder: FakeBorder,
+    Container: FakeContainer,
+    Spacer: FakeSpacer,
+    theme: THEME,
+    UserMessageComponent: Inert,
+    AssistantMessageComponent: Inert,
+    ToolExecutionComponent: Inert,
+    ReadToolGroupComponent: Inert,
+    CustomMessageComponent: Inert,
+    BashExecutionComponent: Inert,
+    CompactionSummaryMessageComponent: Inert,
+    BranchSummaryMessageComponent: Inert,
+  };
+  return { kit, built };
+}
 
 const KEYBINDINGS = {
   matches: (data: string, action: string) =>
@@ -166,6 +251,7 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}) {
   const pending: Array<Promise<void>> = [];
   const deps: PipelinesPanelDeps = {
     stateDir,
+    components: fakeKit().kit as PipelinesPanelDeps["components"],
     now: () => 10_000,
     schedule: (callback, ms) => {
       scheduled.push({ callback, ms });
@@ -211,9 +297,22 @@ test("pipelines/AC-1 : les rangs du panneau portent le cadre et le pied", () => 
   assert.match(text, /aucun historique/);
   assert.match(text, /↑↓ naviguer · Entrée session · d supprimer/);
   assert.match(text, /Échap fermer/);
-  assert.equal(rows.length, 6, "titre + séparateur + 2 sections vides + 2 rangs de pied");
+  // Le cadre est fait de RÈGLES (S-1) : le composant les rend en `DynamicBorder` —
+  // une en tête, une en queue, et le séparateur des deux sections.
+  assert.deepEqual(
+    rows.filter((row) => row.rule !== undefined).map((row) => row.rule),
+    ["frame", "separator", "frame"],
+    "les règles du cadre, dans l'ordre du panneau",
+  );
+  // Le rang de REMPLISSAGE occupe ce qui reste de la hauteur, et le budget est
+  // respecté : le constructeur de rangs ne dépasse jamais son budget (verrouillé).
+  assert.equal(rows.filter((row) => row.fill === true).length, 1, "un seul rang de remplissage");
+  assert.ok(rows.length <= 18, `le panneau ne dépasse jamais son budget : ${rows.length}`);
   for (const row of rows) {
-    assert.equal(row.text.length, 64, `chaque rang fait exactement la largeur reçue : ${JSON.stringify(row.text)}`);
+    assert.ok(
+      displayWidth(row.text) <= 62,
+      `un rang de SERVICE tient dans la largeur de contenu : ${JSON.stringify(row.text)}`,
+    );
   }
 });
 
@@ -575,7 +674,7 @@ test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
     notice: null,
     unreadable: 0,
   });
-  assert.equal(renderModel(model, 1_000).split("\n").length, 6, "le panneau s'affiche quand même");
+  assert.equal(renderModel(model, 1_000).split("\n").length, 9, "le panneau s'affiche quand même");
 });
 
 test("les fichiers étrangers au magasin sont ignorés SANS être comptés", () => {
@@ -665,24 +764,26 @@ test("le panneau se borne en hauteur : en cours prioritaires, marqueurs de tronc
     unreadable: 0,
   };
 
-  // budget 10 ⇒ 6 rangs de contenu : 3 en cours (priorité) + 2 d'historique + le
+  // budget 13 ⇒ 7 rangs de contenu : 3 en cours (priorité) + 3 d'historique + le
   // marqueur de la section tronquée.
-  const rows = buildPanelRows(model, { width: 40, budget: 10, glyphs: GLYPHS, now: 500 });
-  assert.equal(rows.length, 10, "le panneau ne dépasse jamais son budget de rangs");
+  const rows = buildPanelRows(model, { width: 40, budget: 13, glyphs: GLYPHS, now: 500 });
+  assert.ok(rows.length <= 13, `le panneau ne dépasse jamais son budget de rangs : ${rows.length}`);
   const text = rowsText(rows);
   assert.match(text, /depot\/live-0/);
   assert.match(text, /depot\/live-2/, "toutes les pipelines en cours passent avant l'historique");
   assert.match(text, /depot\/old-0/, "puis l'historique le plus récent");
-  assert.match(text, /… 3 de plus/, "un marqueur par section tronquée");
+  assert.match(text, /… 2 de plus/, "un marqueur pour la section tronquée");
   assert.match(text, /↑↓ naviguer/, "le pied survit à la réduction");
-  for (const row of rows) {
-    assert.equal(row.text.length, 40, "largeur exacte, même tronqué");
-  }
 
-  // Terminal étroit : rien ne dépasse, quel que soit la largeur reçue.
+  // Terminal étroit : le panneau RENDU ne déborde jamais, quelle que soit la
+  // largeur reçue — c'est le `Text` de l'hôte qui replie les rangs de contenu, et
+  // les rangs de service sont mesurés en amont (S-1).
+  const stateDir = mktmp("pl-width-");
+  mkRunning(stateDir, { cwd: mktmp("pl-repo-w-"), label: "depot/un-libelle-assez-long-pour-se-replier" });
+  const panel = mountPanel(stateDir);
   for (const width of [20, 31, 64, 120]) {
-    for (const row of buildPanelRows(model, { width, budget: 12, glyphs: GLYPHS, now: 500 })) {
-      assert.equal(row.text.length, width, `largeur ${width} respectée`);
+    for (const line of panel.renderAt(width).split("\n")) {
+      assert.ok(displayWidth(line) <= width, `largeur ${width} respectée : ${JSON.stringify(line)}`);
     }
   }
   assert.equal(panelBudget(4), 8, "plancher de 8 rangs : sous lui, le TUI coupe");
@@ -698,8 +799,21 @@ test("le rang sélectionné porte le curseur, les autres un préfixe de même la
   mkRunning(stateDir, { cwd: a, label: "depot/un", phaseStartedAt: 1 });
   mkRunning(stateDir, { cwd: b, label: "depot/deux", phaseStartedAt: 2 });
   const text = renderModel(readPanelModel({ stateDir, selection: 1 }), 3_000);
-  assert.match(text, /\| {3}depot\/un /, "le rang non sélectionné est indenté d'autant que le curseur");
-  assert.match(text, /\| > depot\/deux /, "le rang sélectionné porte le curseur en tête");
+  assert.match(text, /^ {2}depot\/un /m, "le rang non sélectionné est indenté d'autant que le curseur");
+  assert.match(text, /^> depot\/deux /m, "le rang sélectionné porte le curseur en tête");
+  // Le rang sélectionné est AUSSI signalé au composant, qui le peint du fond
+  // `selectedBg` du thème (S-1) : le curseur seul ne porterait pas la sélection.
+  const rows = buildPanelRows(readPanelModel({ stateDir, selection: 1 }), {
+    width: 64,
+    budget: 18,
+    glyphs: GLYPHS,
+    now: 3_000,
+  });
+  assert.deepEqual(
+    rows.filter((row) => row.selected === true).map((row) => row.target),
+    [1],
+    "un seul rang sélectionné, celui de la ligne visée",
+  );
 });
 
 test("l'état est écrit en toutes lettres : la couleur ne le porte jamais seule", () => {

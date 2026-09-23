@@ -295,8 +295,12 @@ test("join/AC-3 : une entrée dont le fichier de session a disparu laisse la fen
     noticeRow(rec.notices[0]!, 200).includes(`session introuvable — entrée non reprenable : ${target}`),
     `le panneau le dit explicitement, chemin compris :\n${noticeRow(rec.notices[0]!, 200)}`,
   );
-  // …et reste celui-là à 64 colonnes (le chemin y est tronqué, pas reformulé).
-  assert.match(noticeRow(rec.notices[0]!, 64), /session introuvable — entrée non reprenable : /);
+  // …et à 64 colonnes, le rang de service se REPLIE (S-2, « les notices et les
+  // refus sont inchangés ») : le message reste entier et le fichier visé reste
+  // nommé — jamais une notice muette ni un chemin perdu.
+  const narrow = noticeRow(rec.notices[0]!, 64);
+  assert.match(narrow, /session introuvable — entrée non reprenable :/);
+  assert.match(narrow, /session-jamais-ecrite\.jsonl/, "le fichier visé reste nommé");
 
   assert.equal(fs.existsSync(target), false, "aucun fichier de session créé au chemin cible");
   assert.deepEqual(fs.readdirSync(dirA), listBefore, "et rien d'autre n'est apparu dans le magasin");
