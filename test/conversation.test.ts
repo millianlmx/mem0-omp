@@ -35,6 +35,7 @@ import reqExtension, {
   conversationRefusal,
   createLotController,
   displayWidth,
+  gesturePreview,
   lotRepoKey,
   LOT_EDITOR_MAX,
   LOT_VERSION,
@@ -46,6 +47,7 @@ import reqExtension, {
   readLot,
   readPanelModel,
   readStore,
+  replyPreview,
   writeDelivery,
   writeHistoryEntry,
   writeLot,
@@ -57,6 +59,7 @@ import reqExtension, {
   type LotPanelActions,
   type LotRunnerResult,
   type PanelDelivery,
+  type PanelGesture,
   type PanelGlyphs,
   type PipelinesPanelDeps,
   type RowReply,
@@ -868,9 +871,9 @@ test("conversation/AC-6 : la question ask du maillon s'affiche et une option se 
   assert.match(screen, /\(1\) JWT/);
   assert.match(screen, /\(2\) cookie/);
   assert.match(screen, /autre — saisir ma réponse/, "l'échappatoire reste offerte");
+  // S-1 : la réponse à une question `ask` EN VOL part au PREMIER `Entrée`, sans
+  // aperçu intermédiaire — c'est le seul geste qui perd son aperçu.
   panel.component.handleInput("2");
-  panel.component.handleInput("\r");
-  assert.match(panel.screen(), /Répondre au maillon : cookie/, "l'aperçu nomme la réponse");
   panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(deliveryOf(inbox), {
@@ -926,9 +929,8 @@ test("conversation/AC-7 : répondre à la question fait cesser « attend », et 
   assert.match(panel.screen(120), /attend/, "la question en vol publie l'état « attend »");
   panel.component.handleInput("1");
   panel.component.handleInput("\r");
-  panel.component.handleInput("\r");
   await flush();
-  assert.equal((deliveryOf(inbox) as { selected?: string }).selected, "oui", "l'option est livrée au maillon");
+  assert.equal(deliveryOf(inbox)["selected"], "oui", "l'option est livrée au maillon");
 
   // L'enfant a résolu la question dans le tour : l'entrée publiée n'attend plus,
   // et le rang cesse de dire « attend » — sans qu'aucun run n'ait été lancé.
@@ -1216,10 +1218,10 @@ test("S-9 : répondre à un ask ne touche ni le magasin, ni les sessions, ni la 
   };
   assert.match(panel.screen(120), /attend/, "le maillon attend sa réponse");
 
-  // Répondre depuis la vue : l'option, l'aperçu, la livraison.
+  // Répondre depuis la vue : l'option part au PREMIER `Entrée` (S-1) — plus
+  // d'aperçu intermédiaire pour la réponse à une question `ask` en vol.
   panel.component.handleInput("\r");
   panel.component.handleInput("1");
-  panel.component.handleInput("\r");
   panel.component.handleInput("\r");
   await flush();
 
@@ -1269,7 +1271,6 @@ test("S-10 : deux réponses de suite puis un message reprennent la MÊME session
   panel.component.handleInput("\r");
   panel.component.handleInput("1");
   panel.component.handleInput("\r");
-  panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(storeFingerprint(stateDir), store1, "la première réponse ne touche pas au magasin");
 
@@ -1288,7 +1289,6 @@ test("S-10 : deux réponses de suite puis un message reprennent la MÊME session
   // Deuxième réponse : la seconde option, jamais un doublon de la première.
   const store2 = storeFingerprint(stateDir);
   panel.component.handleInput("2");
-  panel.component.handleInput("\r");
   panel.component.handleInput("\r");
   await flush();
   assert.deepEqual(storeFingerprint(stateDir), store2, "la seconde réponse ne touche pas au magasin");
@@ -1420,10 +1420,26 @@ test("le collage est inséré en bloc, borné à la taille de l'éditeur", async
     texts.includes("a".repeat(LOT_EDITOR_MAX)),
     `le tampon ne dépasse jamais la borne (livré : ${texts.map((t) => t.length).join(",")})`,
   );
-  // Un fragment fait uniquement de séquences d'échappement n'insère rien.
+  // Un fragment fait uniquement de séquences d'échappement n'insère rien. Le
+  // tampon de départ est celui qu'on vient de retaper : la livraison réussie a vidé
+  // l'éditeur (S-7), et ce qui reste après la séquence d'échappement est intact.
+  panel.component.handleInput("relance");
   panel.component.handleInput("\u001b[3~");
   panel.component.handleInput("\r");
   assert.match(panel.screen(), /Envoyer au maillon/, "le tampon est intact : il reste de quoi envoyer");
+  panel.component.handleInput("\r");
+  await flush();
+  const delivered = readDeliveries(inbox)
+    .map((entry) => entry.delivery)
+    .filter((delivery): delivery is PanelDelivery & { kind: "text" } => delivery?.kind === "text")
+    .map((delivery) => delivery.text);
+  // L'ORDRE des livraisons n'est pas celui de l'horloge quand `now()` est figé (le
+  // nom du fichier mêle l'horodatage et un sel aléatoire) : on compte, on ne trie pas.
+  assert.equal(
+    delivered.filter((text) => text === "relance").length,
+    1,
+    `la séquence d'échappement n'a rien inséré, et une seule livraison est partie : ${delivered.join(" | ")}`,
+  );
 });
 
 test("l'outil ask valide son appel et refuse ce qui n'est pas une question unique à options", () => {
@@ -1604,4 +1620,386 @@ test("S-1 : aucune ligne de la vue ne dépasse la largeur, repli compris", () =>
       }
     }
   }
+});
+
+// ---------------------------------------------------------------------------
+// conversation-ask — la réponse à une question `ask`, du panneau au maillon
+// ---------------------------------------------------------------------------
+//
+// Un test PAR critère de la feature, sous le slug `conversation-ask` (l'invariant
+// `criteria/AC-13` veut un id qualifié unique par test, et le slug ne vit que dans
+// ce fichier). Le harnais est celui d'au-dessus : la VRAIE fabrique montée, des
+// boîtes réelles sur disque, et l'API de l'hôte en doublure.
+
+test("conversation-ask/AC-1 : une option part au PREMIER Entrée, sans aperçu", async () => {
+  const stateDir = path.join(mktmp("conversation-ask-ac1-"), "pipeline");
+  const worktree = mktmp("conversation-ask-ac1-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  // Un maillon ARMÉ : sa boîte est celle que le lanceur lui a donnée dans son argv
+  // (`--panel-inbox`), et c'est elle que le panneau écrit.
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  const app = mkApp({ "panel-inbox": inbox, "pipeline-phase": "impl", "pipeline-state-dir": stateDir });
+  const ctx = childCtx(worktree, () => false);
+  await app.hooks.get("session_start")!(undefined as never, ctx as never);
+  assert.equal(readStore(stateDir).running.find((entry) => entry.cwd === fs.realpathSync(worktree))?.inbox, inbox);
+
+  // Le run vit dans CE process : le panneau refuserait d'écrire dans « sa » session.
+  // On republie donc la MÊME entrée comme celle d'un autre process — le cas réel.
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: {
+      toolCallId: "call-1",
+      id: "auth",
+      question: "Quelle authentification ?",
+      options: [{ label: "JWT" }, { label: "cookie" }],
+    },
+  });
+  const panel = mountPanel(stateDir, { repoRoot: mkRepo() });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(120), /question : Quelle authentification \?/);
+
+  // UN SEUL `Entrée` : la réponse part, sans aperçu intermédiaire.
+  panel.component.handleInput("2");
+  panel.component.handleInput("\r");
+  await flush();
+  assert.deepEqual(deliveryOf(inbox), {
+    version: 1,
+    kind: "ask",
+    toolCallId: "call-1",
+    selected: "cookie",
+    sentAt: 0,
+  });
+  assert.doesNotMatch(panel.screen(120), /Répondre au maillon/, "aucun aperçu n'est peint entre les deux");
+
+  // Le maillon CONSOMME la livraison dans SON tour : sa propre pompe (celle de sa
+  // minuterie) vide la boîte, et aucun run n'est lancé — le panneau n'en lance
+  // jamais pour une réponse. La résolution de l'outil `ask` par cette livraison est
+  // prouvée plus bas (« le run armé enregistre son outil ask… »).
+  pumpInbox(app as never, ctx as never, inbox);
+  assert.deepEqual(readDeliveries(inbox), [], "la livraison est consommée par le maillon");
+
+  // Le maillon republie son entrée sans question : la zone cesse de l'attendre au
+  // rafraîchissement suivant, et devient l'éditeur libre du maillon vivant.
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "running",
+    inbox,
+    sessionFile: session,
+  });
+  panel.component.refresh();
+  const after = panel.screen(120);
+  assert.doesNotMatch(after, /question : Quelle authentification/, "la question n'est plus affichée comme en attente");
+  assert.match(after, /Réponse : ▏/, "la zone est redevenue l'éditeur libre du maillon");
+  panel.component.dispose();
+});
+
+test("conversation-ask/AC-2 : une réponse libre part au PREMIER Entrée", async () => {
+  const stateDir = path.join(mktmp("conversation-ask-ac2-"), "pipeline");
+  const worktree = mktmp("conversation-ask-ac2-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: {
+      toolCallId: "call-2",
+      id: "auth",
+      question: "Quelle authentification ?",
+      options: [{ label: "JWT" }, { label: "cookie" }],
+    },
+  });
+  const panel = mountPanel(stateDir, { repoRoot: mkRepo() });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+  // Une frappe passe à l'éditeur libre (la question reste au-dessus, AC-11), et
+  // UN SEUL `Entrée` livre le tampon. Le texte ne commence pas par `a` : dans la
+  // liste d'options, `a` est le raccourci de la ligne « autre ».
+  for (const char of "plutôt JWT") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  await flush();
+  assert.deepEqual(deliveryOf(inbox), {
+    version: 1,
+    kind: "ask",
+    toolCallId: "call-2",
+    custom: "plutôt JWT",
+    sentAt: 0,
+  });
+  assert.match(panel.screen(120), /réponse transmise au maillon/, "la notice accuse la livraison");
+  assert.doesNotMatch(panel.screen(120), /Répondre au maillon/, "aucun aperçu n'est peint");
+  panel.component.dispose();
+});
+
+test("conversation-ask/AC-3 : tous les autres gestes gardent leur aperçu", async () => {
+  {
+    // Les aperçus PURS : chaque geste de la liste a sa formulation, et chaque
+    // écriture de la vue la sienne — seul l'`ask` en vol livre au premier `Entrée`.
+    const stateDir = mktmp("conversation-ask-ac3-");
+    const repoRoot = mktmp("conversation-ask-ac3-repo-");
+    const lot = seedLot(stateDir, repoRoot, [
+      feature("alpha", { state: "running", phase: "impl" }),
+      feature("beta", { state: "waiting", phase: "specs", waitKind: "answer", waitPrompt: "- (1) oui" }),
+      feature("gamma", { state: "blocked", phase: "impl", stopReason: "x" }),
+      feature("delta", { state: "pending" }),
+    ]);
+    const gestures: PanelGesture[] = [
+      { kind: "launch" },
+      { kind: "remove", slug: "delta" },
+      { kind: "relaunch", slug: "gamma", phase: "impl" },
+      { kind: "validate", slug: "beta" },
+      { kind: "accept", slug: "beta" },
+      { kind: "cancel", slug: "alpha", fate: "archive" },
+      { kind: "add", input: { name: "zeta", description: "", deps: [] } },
+    ];
+    for (const gesture of gestures) {
+      const preview = gesturePreview(gesture, lot);
+      assert.notEqual(preview.head, "", `le geste ${gesture.kind} a un aperçu`);
+      assert.match(preview.hint, /^Entrée /, `le geste ${gesture.kind} annonce sa touche`);
+    }
+    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: true }).hint, /Entrée mettre en file/);
+    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false }).hint, /Entrée envoyer/);
+    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false, mode: "steer" }).hint, /Entrée envoyer · Échap revenir/);
+    assert.match(replyPreview({ slug: "alpha", phase: "impl", text: "un mot", queue: false, mode: "ask" }).hint, /Entrée envoyer · Échap revenir/);
+  }
+
+  {
+    // Monté : `x` ouvre l'aperçu du geste, et rien ne part avant le second `Entrée`.
+    const repoRoot = mkRepo();
+    const { runner } = mkRunner();
+    const { controller, stateDir } = mkCtl(repoRoot, runner);
+    seedLot(stateDir, repoRoot, [feature("alpha"), feature("beta")]);
+    const lotFile = () => readLot(stateDir, lotRepoKey(repoRoot));
+    const panel = mountPanel(stateDir, { repoRoot, lot: controller });
+    panel.component.handleInput("x");
+    assert.match(panel.screen(120), /Retirer alpha du lot \?/, "l'aperçu du retrait est peint");
+    assert.deepEqual(lotFile()!.features.map((f) => f.slug), ["alpha", "beta"], "l'aperçu n'a rien retiré");
+    panel.component.handleInput("\u001b");
+    assert.deepEqual(lotFile()!.features.map((f) => f.slug), ["alpha", "beta"], "Échap n'agit pas");
+    panel.component.handleInput("x");
+    panel.component.handleInput("\r");
+    await flush(4);
+    assert.deepEqual(lotFile()!.features.map((f) => f.slug), ["beta"], "le second Entrée, lui, retire");
+    panel.component.dispose();
+  }
+
+  {
+    // Monté : un message adressé à un run ARMÉ passe par l'aperçu (`steer`), et la
+    // livraison n'a lieu qu'au second `Entrée`.
+    const stateDir = mktmp("conversation-ask-ac3c-");
+    const worktree = mktmp("conversation-ask-ac3c-wt-");
+    const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+    const inbox = panelInboxDirFor(stateDir, worktree);
+    liveEntry(stateDir, {
+      cwd: worktree,
+      label: "depot/alpha",
+      phase: "impl",
+      state: "running",
+      inbox,
+      sessionFile: session,
+    });
+    const panel = mountPanel(stateDir, { repoRoot: mktmp("conversation-ask-ac3c-repo-") });
+    panel.component.handleInput("\r");
+    for (const char of "continue") panel.component.handleInput(char);
+    panel.component.handleInput("\r");
+    assert.match(panel.screen(120), /Envoyer au maillon — injecté dans son tour en cours/, "l'aperçu du steer");
+    assert.deepEqual(readDeliveries(inbox), [], "rien n'est livré avant la confirmation");
+    panel.component.handleInput("\r");
+    await flush();
+    assert.equal(deliveryOf(inbox)["text"], "continue", "le second Entrée livre le texte");
+    panel.component.dispose();
+  }
+
+  {
+    // Un CLIC sur une option d'une question `ask` ouvre l'aperçu : un clic seul
+    // n'écrit rien, même pour la question qui livre au premier `Entrée` (S-1).
+    const stateDir = mktmp("conversation-ask-ac3d-");
+    const worktree = mktmp("conversation-ask-ac3d-wt-");
+    const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+    const inbox = panelInboxDirFor(stateDir, worktree);
+    liveEntry(stateDir, {
+      cwd: worktree,
+      label: "depot/alpha",
+      phase: "impl",
+      state: "waiting",
+      inbox,
+      sessionFile: session,
+      pendingAsk: {
+        toolCallId: "call-3",
+        id: "auth",
+        question: "Quelle authentification ?",
+        options: [{ label: "JWT" }, { label: "cookie" }],
+      },
+    });
+    const panel = mountPanel(stateDir, { repoRoot: mktmp("conversation-ask-ac3d-repo-") });
+    panel.component.refresh();
+    panel.component.handleInput("\r");
+    const optionAt = panel.component.render(120).findIndex((line) => /\(2\) cookie/.test(line));
+    assert.ok(optionAt > 0, "l'option est peinte");
+    panel.component.handleInput(`\u001b[<0;5;${optionAt + 1}M`);
+    assert.match(panel.screen(120), /Répondre au maillon : cookie/, "le clic ouvre l'aperçu");
+    assert.deepEqual(readDeliveries(inbox), [], "un clic seul n'écrit rien");
+    panel.component.dispose();
+  }
+});
+
+test("conversation-ask/AC-10 : la description d'une option est lisible dans la vue", async () => {
+  const stateDir = mktmp("conversation-ask-ac10-");
+  const worktree = mktmp("conversation-ask-ac10-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: {
+      toolCallId: "call-10",
+      id: "auth",
+      question: "Quelle authentification ?",
+      options: [
+        { label: "JWT", description: "un jeton signé, sans état côté serveur" },
+        { label: "cookie" },
+      ],
+    },
+  });
+  const panel = mountPanel(stateDir, { repoRoot: mktmp("conversation-ask-ac10-repo-") });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+  const screen = panel.screen(120);
+  assert.match(screen, /\(1\) JWT/, "le libellé de l'option");
+  assert.match(screen, /un jeton signé, sans état côté serveur/, "la description fournie par le maillon est rendue");
+  assert.match(screen, /\(2\) cookie/);
+  // Une option SANS description n'ajoute aucun rang : la description est rendue
+  // pour celle qui en a une, et pour elle seule.
+  assert.equal(screen.split("un jeton signé").length - 1, 1, "la description n'est peinte qu'une fois");
+  panel.component.dispose();
+});
+
+test("conversation-ask/AC-11 : la question reste au-dessus de l'éditeur libre", async () => {
+  const stateDir = mktmp("conversation-ask-ac11-");
+  const worktree = mktmp("conversation-ask-ac11-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: {
+      toolCallId: "call-11",
+      id: "auth",
+      question: "Quelle authentification ?",
+      options: [{ label: "JWT" }, { label: "cookie" }],
+    },
+  });
+  const panel = mountPanel(stateDir, { repoRoot: mktmp("conversation-ask-ac11-repo-") });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(120), /question : Quelle authentification \?/);
+
+  // Le choix « autre », puis une frappe : les deux passent à l'éditeur libre, et la
+  // question reste peinte AU-DESSUS du champ de réponse.
+  panel.component.handleInput("a");
+  const screen = panel.screen(120);
+  const lines = screen.split("\n");
+  const questionAt = lines.findIndex((line) => /question : Quelle authentification \?/.test(line));
+  const answerAt = lines.findIndex((line) => /Réponse : /.test(line));
+  assert.ok(questionAt >= 0 && answerAt > questionAt, `la question précède la réponse :\n${screen}`);
+  panel.component.dispose();
+});
+
+test("conversation-ask/AC-12 : l'indice d'aperçu n'est peint qu'à un seul rang", async () => {
+  const stateDir = mktmp("conversation-ask-ac12-");
+  const worktree = mktmp("conversation-ask-ac12-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  // Un run ARMÉ sans question en vol : sa zone est un éditeur libre, et `Entrée` y
+  // ouvre l'aperçu d'un message — l'état où l'indice doit n'être peint qu'une fois.
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "running",
+    inbox,
+    sessionFile: session,
+  });
+  const panel = mountPanel(stateDir, { repoRoot: mktmp("conversation-ask-ac12-repo-") });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+  for (const char of "un message") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  const screen = panel.screen(120);
+  assert.match(screen, /Envoyer au maillon — injecté dans son tour en cours/, "l'aperçu peint sa tête");
+  assert.equal(screen.split("Envoyer au maillon").length - 1, 1, "la tête n'est peinte qu'une fois");
+  assert.equal(screen.split("Entrée envoyer · Échap revenir").length - 1, 1, "l'indice n'est peint qu'au pied");
+  assert.deepEqual(readDeliveries(inbox), [], "l'aperçu n'écrit rien");
+  panel.component.dispose();
+});
+
+test("conversation-ask/AC-13 : le titre d'une vue qui écrit ne dit jamais « lecture seule »", async () => {
+  const stateDir = mktmp("conversation-ask-ac13-");
+  const repoRoot = mktmp("conversation-ask-ac13-repo-");
+  // Deux maillons vivants, chacun dans SON worktree et SA session : le premier a
+  // une zone OUVERTE (run armé), le second une zone FERMÉE (sa collecte se répond
+  // dans la session de l'utilisateur) — les deux titres disent le run vivant.
+  const openWt = mktmp("conversation-ask-ac13-open-");
+  const closedWt = mktmp("conversation-ask-ac13-closed-");
+  const openSession = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), openWt, "tour du maillon");
+  const closedSession = oneLineSession(path.join(stateDir, "sessions", "beta.jsonl"), closedWt, "collecte");
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { origin: "session", state: "running", phase: "impl", worktree: openWt, sessionFile: openSession }),
+    feature("beta", { origin: "session", state: "running", phase: "req", worktree: closedWt, sessionFile: closedSession }),
+  ]);
+  liveEntry(stateDir, {
+    cwd: openWt,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "running",
+    inbox: panelInboxDirFor(stateDir, openWt),
+    sessionFile: openSession,
+  });
+  liveEntry(stateDir, {
+    cwd: closedWt,
+    label: "depot/beta",
+    phase: "req",
+    state: "running",
+    inbox: panelInboxDirFor(stateDir, closedWt),
+    sessionFile: closedSession,
+  });
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.refresh();
+
+  // Rang VIVANT dont la zone est OUVERTE (un run armé accepte un message) : le titre
+  // dit le run en cours, jamais la lecture seule.
+  panel.component.handleInput("\r");
+  const open = panel.screen(120);
+  assert.match(open, /run en cours/, "le titre annonce le run vivant");
+  assert.doesNotMatch(open, /lecture seule/, "le titre d'une vue qui accepte une écriture ne dit pas « lecture seule »");
+  assert.match(open, /Réponse : ▏/, "et la zone écrit");
+  panel.component.handleInput("\u001b");
+
+  // Le second rang, zone FERMÉE (la collecte se répond dans la session) : la raison
+  // vit alors dans le rang de la ZONE, et nulle part ailleurs.
+  panel.component.handleInput("j");
+  panel.component.handleInput("\r");
+  const closed = panel.screen(200);
+  assert.match(closed, /run en cours/, "le titre dit encore le run vivant");
+  assert.doesNotMatch(closed.split("\n")[1]!, /lecture seule/, "le TITRE ne porte pas la mention");
+  assert.match(closed, /lecture seule — la collecte se déroule dans ta session/, "la ZONE fermée porte la raison");
+  panel.component.dispose();
 });

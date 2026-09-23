@@ -292,11 +292,16 @@ test("pipelines/AC-1 : les rangs du panneau portent le cadre et le pied", () => 
   const rows = buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 1_000 });
   const text = rowsText(rows);
 
-  assert.match(text, /Pipelines · 0 en cours/, "le titre porte le compteur des pipelines en cours");
+  assert.match(text, /Pipelines · 0 processus/, "le titre porte le compteur des pipelines en cours");
   assert.match(text, /aucune pipeline en cours/);
   assert.match(text, /aucun historique/);
-  assert.match(text, /↑↓ naviguer · Entrée session · d supprimer/);
+  // Le pied a TOUJOURS trois rangs (S-7) : les touches du panneau, celles de la
+  // ligne sélectionnée, et `Échap fermer`. `d supprimer` n'y figure que sur un rang
+  // qu'il supprime réellement — ici, aucune sélection.
+  assert.match(text, /↑↓ naviguer · Entrée session/);
+  assert.match(text, /aucune action/);
   assert.match(text, /Échap fermer/);
+  assert.ok(!text.includes("d supprimer"), "aucune touche morte annoncée sur une liste vide");
   // Le cadre est fait de RÈGLES (S-1) : le composant les rend en `DynamicBorder` —
   // une en tête, une en queue, et le séparateur des deux sections.
   assert.deepEqual(
@@ -575,7 +580,7 @@ test("pipelines/AC-8 : un processus disparu rejoint l'historique en « échoué 
   assert.equal(fs.existsSync(path.join(pipelineHistoryDir(stateDir), `${record.id}.json`)), true);
   const text = renderModel(model, 6_000);
   assert.match(text, /depot\/abandonnee\s+\/impl · échoué/);
-  assert.match(text, /Pipelines · 0 en cours/);
+  assert.match(text, /Pipelines · 0 processus/);
 
   // Idempotent : une seconde lecture (un autre « processus ») ne duplique rien.
   assert.equal(readPanelModel({ stateDir }).history.length, 1);
@@ -604,7 +609,7 @@ test("pipelines/AC-9 : l'historique survit au redémarrage", () => {
   const text = renderModel(model, 10_000);
   assert.match(text, /depot\/terminee\s+\/review · terminé/);
   assert.match(text, /depot\/echouee\s+\/review · échoué/);
-  assert.match(text, /Pipelines · 0 en cours/);
+  assert.match(text, /Pipelines · 0 processus/);
 });
 
 // ---------------------------------------------------------------------------
@@ -674,7 +679,10 @@ test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
     notice: null,
     unreadable: 0,
   });
-  assert.equal(renderModel(model, 1_000).split("\n").length, 9, "le panneau s'affiche quand même");
+  // Deux règles de cadre, le titre, les deux en-têtes de section (`Hors lot`,
+  // `Historique`), le séparateur, les deux états vides, le remplissage, les trois
+  // rangs de pied et la règle basse (S-7, S-8).
+  assert.equal(renderModel(model, 1_000).split("\n").length, 12, "le panneau s'affiche quand même");
 });
 
 test("les fichiers étrangers au magasin sont ignorés SANS être comptés", () => {
@@ -764,15 +772,17 @@ test("le panneau se borne en hauteur : en cours prioritaires, marqueurs de tronc
     unreadable: 0,
   };
 
-  // budget 13 ⇒ 7 rangs de contenu : 3 en cours (priorité) + 3 d'historique + le
-  // marqueur de la section tronquée.
-  const rows = buildPanelRows(model, { width: 40, budget: 13, glyphs: GLYPHS, now: 500 });
-  assert.ok(rows.length <= 13, `le panneau ne dépasse jamais son budget de rangs : ${rows.length}`);
+  // budget 14 ⇒ 5 rangs de contenu : 3 en cours (priorité) + 1 d'historique + le
+  // marqueur de la section tronquée. Le cadre coûte 9 rangs (deux règles, le titre,
+  // les deux en-têtes de section, le séparateur et les trois rangs de pied, S-7/S-8),
+  // donc ce budget a monté de 2 par rapport à l'ancien cadre.
+  const rows = buildPanelRows(model, { width: 40, budget: 14, glyphs: GLYPHS, now: 500 });
+  assert.ok(rows.length <= 14, `le panneau ne dépasse jamais son budget de rangs : ${rows.length}`);
   const text = rowsText(rows);
   assert.match(text, /depot\/live-0/);
   assert.match(text, /depot\/live-2/, "toutes les pipelines en cours passent avant l'historique");
   assert.match(text, /depot\/old-0/, "puis l'historique le plus récent");
-  assert.match(text, /… 2 de plus/, "un marqueur pour la section tronquée");
+  assert.match(text, /… 4 de plus dans l'historique/, "un marqueur NOMME la section tronquée");
   assert.match(text, /↑↓ naviguer/, "le pied survit à la réduction");
 
   // Terminal étroit : le panneau RENDU ne déborde jamais, quelle que soit la

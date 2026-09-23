@@ -725,7 +725,7 @@ test("sessions/AC-5 : une feature du lot n'occupe qu'une ligne, à tout instant 
   seen = panel(lot);
   assert.equal(seen.model.running.length, 1, "l'entrée non appariée reste dans « en cours »");
   assert.equal(sectionRows(seen.rows, 1, 1, /alpha/), 1, "et ne double pas la ligne de la feature");
-  assert.match(text(seen.rows), /Pipelines · 1 en cours/, "le titre annonce le process vivant");
+  assert.match(text(seen.rows), /Pipelines · 1 processus/, "le titre annonce le process vivant");
 });
 
 test("sessions/AC-6 : la ligne d'une feature en cours de travail est dans la section du lot", () => {
@@ -1038,9 +1038,13 @@ test("sessions/AC-9 : le panneau occupe tout l'écran, le chat n'est pas visible
     assert.equal(options.overlay, true, "toujours un overlay");
     assert.equal(options.overlayOptions?.fullscreen, true, "buffer alterné : le chat n'est pas derrière");
     assert.equal(options.overlayOptions?.mouseTracking, true, "la souris est capturée par le panneau");
-    for (const gone of ["anchor", "width", "maxHeight", "margin"] as const) {
-      assert.equal(options.overlayOptions?.[gone], undefined, `plus de dimensionnement « ${gone} » en plein écran`);
-    }
+    assert.equal(options.overlayOptions?.anchor, undefined, "aucune ancre : le plein écran ne s'ancre pas");
+    // Les trois autres termes du défaut de l'hôte, repris EXPLICITEMENT : un
+    // `overlayOptions` fourni remplace ce défaut, et sans `width` l'overlay est
+    // plafonné à `min(80, disponible)` colonnes (S-3, `## Documentation` §1).
+    assert.equal(options.overlayOptions?.width, "100%", "le panneau prend toute la largeur");
+    assert.equal(options.overlayOptions?.maxHeight, "100%", "et toute la hauteur");
+    assert.equal(options.overlayOptions?.margin, 0, "sans marge");
 
     // Le RENDU : autant de rangs que l'écran en a, chacun de la largeur reçue.
     const tui = { terminal: { rows: 24 }, requestRender: () => {} };
@@ -1079,7 +1083,14 @@ test("sessions/AC-9 : le panneau occupe tout l'écran, le chat n'est pas visible
 
     tui.terminal.rows = 4;
     rows = component.render(64);
-    assert.ok(rows.length <= panelBudget(4), "sous le plancher, le budget reste le plancher");
+    // Sous le plancher, le budget reste le plancher (8 rangs) — mais le CADRE est
+    // irréductible : ses deux règles, son titre, ses en-têtes de section et ses
+    // trois rangs de pied (S-7, S-8) font dix rangs, donc le rendu s'arrête là et
+    // c'est le TUI qui coupe par le bas. Dégradation admise (S-3, cas limites).
+    assert.ok(
+      rows.length <= Math.max(panelBudget(4), 10),
+      `sous le plancher, le rendu s'arrête au cadre : ${rows.length} rangs`,
+    );
     assert.ok(
       rows.some((row) => /Échap fermer/.test(row)),
       "le pied survit à un terminal minuscule",
@@ -1228,10 +1239,10 @@ test("sessions/AC-1 : entrer dans la session d'un maillon vivant ne l'interrompt
 
   // `Entrée` : la vue s'ouvre dans le panneau.
   panel.component.handleInput("\r");
-  assert.match(panel.screen(), /session session-alpha\.jsonl/, "la vue est ouverte dans le panneau");
-  // Le titre est un rang de service : à 64 colonnes il est TRONQUÉ, donc la marque
-  // du run vivant se lit à la largeur qui la porte.
-  assert.match(panel.screen(200), /run en cours — lecture seule/, "elle annonce le run vivant");
+  assert.match(panel.screen(), /session-alpha\.jsonl/, "la vue est ouverte dans le panneau");
+  // Le titre est un rang de service : à 64 colonnes il se REPLIE (S-2), donc la
+  // marque du run vivant se lit à la largeur qui la porte.
+  assert.match(panel.screen(200), /run en cours/, "elle annonce le run vivant, sans « lecture seule » (S-6)");
   assert.match(panel.screen(), /▸ toi : le maillon travaille/, "la transcription est lue");
   assert.equal(panel.closed(), 0, "le panneau n'est pas fermé par la vue");
   panel.component.handleInput("\u001b");
@@ -1487,7 +1498,10 @@ test("la vue n'écrit rien et ne bascule jamais : elle lit un fichier de session
   });
 
   panel.component.handleInput("\r");
-  assert.match(panel.screen(), /session session-alpha\.jsonl/);
+  // Le titre nomme le fichier de session ; il se REPLIE à la largeur reçue (S-2),
+  // donc le nom peut se poursuivre sur le rang suivant.
+  assert.match(panel.screen(), /session-alpha\.jsonl/);
+  assert.match(panel.screen(200), /session session-alpha\.jsonl/, "à 200 colonnes, le titre tient sur un rang");
   assert.match(
     panel.screen(200),
     /lecture seule — les spécifications attendent ta validation \(v\)/,
@@ -1632,7 +1646,11 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   const render = (selection: number) =>
     buildPanelRows(
       { running: [], live: {}, history: [], lot, selection, notice: null, unreadable: 0 },
-      { width: 64, budget: 10, glyphs: GLYPHS, now: 0 },
+      // Le cadre porte maintenant trois en-têtes de section (`Lot`, `Hors lot`,
+      // `Historique`) et trois rangs de pied (S-7, S-8) : son coût incompressible
+      // passe de 8 à 11 rangs ici (le titre du lot se replie sur deux), donc le
+      // budget de ce test monte d'autant.
+      { width: 64, budget: 13, glyphs: GLYPHS, now: 0 },
     );
 
   // Sélection sur le DERNIER rang : la fenêtre doit l'inclure, pas rester en tête.
@@ -1640,8 +1658,8 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   const text = rows.map((row) => row.text).join("\n");
   assert.match(text, /> g11/, "le rang sélectionné est rendu, même tout en bas");
   assert.doesNotMatch(text, /g0 /, "et la fenêtre ne montre pas le début");
-  assert.match(text, /… 11 de plus/, "le marqueur compte le total caché");
-  assert.ok(rows.length <= 10, "le budget tient toujours");
+  assert.match(text, /… 11 de plus dans le lot/, "le marqueur compte le total caché, et nomme sa section");
+  assert.ok(rows.length <= 13, "le budget tient toujours");
 
   // Sélection en tête : la fenêtre revient au début, le marqueur reste unique.
   const head = render(0);

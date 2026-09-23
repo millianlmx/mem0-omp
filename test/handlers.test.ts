@@ -758,15 +758,26 @@ test("le toggle monte un overlay ancré en haut à droite et Échap le referme",
     assert.equal(mounted.length, 1, "un panneau monté");
     const options = mounted[0]!.options as {
       overlay?: boolean;
-      overlayOptions?: { fullscreen?: boolean; mouseTracking?: boolean; anchor?: unknown; width?: unknown };
+      overlayOptions?: {
+        fullscreen?: boolean;
+        mouseTracking?: boolean;
+        anchor?: unknown;
+        width?: unknown;
+        maxHeight?: unknown;
+        margin?: unknown;
+      };
     };
     assert.equal(options.overlay, true, "monté en overlay, pas en remplacement de l'éditeur");
-    // Plein écran (S-4) : le cadre EST l'écran, donc plus d'ancre, plus de largeur,
-    // plus de hauteur maximale — et la souris est capturée tant qu'il est ouvert.
+    // Plein écran ET PLEINE LARGEUR (S-3) : le cadre EST l'écran. Un
+    // `overlayOptions` fourni REMPLACE le défaut de l'hôte, donc `width`,
+    // `maxHeight` et `margin` sont repris explicitement — sans `width`, l'hôte
+    // plafonne l'overlay à `min(80, disponible)` colonnes.
     assert.equal(options.overlayOptions?.fullscreen, true, "le panneau occupe tout l'écran");
     assert.equal(options.overlayOptions?.mouseTracking, true, "le panneau reçoit la souris");
     assert.equal(options.overlayOptions?.anchor, undefined, "aucune ancre : le plein écran ne s'ancre pas");
-    assert.equal(options.overlayOptions?.width, undefined, "aucune largeur : le plein écran prend celle du terminal");
+    assert.equal(options.overlayOptions?.width, "100%", "la largeur du terminal, pas le plafond de 80");
+    assert.equal(options.overlayOptions?.maxHeight, "100%", "et toute la hauteur");
+    assert.equal(options.overlayOptions?.margin, 0, "sans marge");
 
     // Un seul panneau par processus : tant qu'il est monté, rouvrir ne monte rien.
     await app.shortcuts.get("alt+w")!(ctx as never);
@@ -783,7 +794,7 @@ test("le toggle monte un overlay ancré en haut à droite et Échap le referme",
         closed += 1;
       }) as never,
     ) as { handleInput(data: string): void; render(width: number): string[] };
-    assert.match(component.render(64).join("\n"), /Pipelines · 0 en cours/, "magasin vide : le panneau s'affiche");
+    assert.match(component.render(64).join("\n"), /Pipelines · 0 processus/, "magasin vide : le panneau s'affiche");
     component.handleInput("\u001b");
     assert.equal(closed, 1, "Échap rend le focus à l'éditeur en refermant le panneau");
   });

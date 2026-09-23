@@ -290,18 +290,52 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 
 ```
 ────────────────────────────────────────────────────────────────
- Pipelines · 2 en cours
- Lot · mem0-omp · 3 features
+ Pipelines · 2 processus
+ Lot · mem0-omp · 3 features · 1 terminée · 0 bloquée · 0 échouée
+ · 0 annulée · 2 en cours
  ❯ mem0-omp/panneau-des-pipelines      /impl · tourne · 3:12
-   mem0-omp/fetch-du-souvenir          /specs · attend · 0:41
+   mem0-omp/fetch-du-souvenir          /specs · attend réponse · 0:41
+   mem0-omp/isolation-worktree         /review · terminé · 0:08
+ Hors lot · 1
+   autre-depot/fix-recall              /req · tourne · 0:12
  ──────────────────────────────────────────────────────────────
-   mem0-omp/isolation-worktree         /review · terminé
-   autre-depot/fix-recall              /req · échoué
- a ajouter · l lancer · Entrée session
- x retirer · c annuler
+ Historique · 1
+   autre-depot/vieux-cycle             /review · terminé
+ ↑↓ naviguer · Entrée session
+ Entrée écrire · c annuler · o rejoindre
  Échap fermer
 ────────────────────────────────────────────────────────────────
 ```
+
+Le panneau occupe **toute la largeur** du terminal (et toute sa hauteur) : rien n'est
+rendu dans une colonne de 80 caractères, et un redimensionnement se voit au rendu
+suivant, sans touche à presser. **Aucun texte n'est coupé** : un libellé, une notice, une
+question, une réponse, un titre ou un pied plus large que la place disponible **revient à
+la ligne**, sur autant de rangs qu'il en faut — le panneau se contente de borner les
+fenêtres qui pourraient manger l'écran, et de les faire défiler.
+
+- **Le titre** compte les **processus** vivants (runs appariés à une feature du lot +
+  pipelines hors lot) : c'est ce qu'il mesure, et il le dit. Les états des rangs
+  (`en cours`, `tourne`, `attend`, `bloqué`…) ne s'y trouvent pas — deux mesures
+  différentes ne se lisent pas avec les mêmes mots.
+- **Les sections sont nommées** : `Lot · <dépôt> · <n> features` suivi de la
+  **répartition** (`1 terminée · 0 bloquée · 0 échouée · 0 annulée · 2 en cours`), puis
+  `Hors lot · <n>` et `Historique · <n>`. Quand une section ne tient pas à l'écran, elle
+  garde un marqueur qui **nomme la section qu'il tronque** (`… 4 de plus dans le lot`).
+- **La colonne de droite** d'un rang est `<maillon> · <état> · <temps>` — jamais les
+  dépendances : elles restent sur le libellé (`base-qdrant ← isolation-worktree`), une
+  seule fois. Quand le libellé et la colonne ne tiennent pas ensemble sur la largeur de
+  contenu, l'entrée peint **deux rangs** : le libellé, puis l'état et le temps — jamais
+  coupés en deux.
+- **La raison d'arrêt** d'une feature bloquée ou échouée est portée par la liste, sur un
+  second rang de son entrée : `arrêt : run tué par le délai de 3600s`. `échoué` ne dit
+  pas pourquoi ; le motif, si.
+- **Le pied a toujours trois rangs** : les touches du panneau, celles de la **ligne
+  sélectionnée** — `Entrée écrire`, `Entrée répondre`, `v valider`, `y accepter`,
+  `R relancer`, `x retirer`, `c annuler`, `d supprimer` (le seul rang qu'il supprime est
+  l'entrée d'historique), `o rejoindre` quand le rang a une session — puis `Échap
+  fermer`. Rien n'y est annoncé qui n'agisse : sur un rang où `d` ne supprime rien,
+  `d supprimer` n'apparaît pas.
 
 Le cadre, les rangs, le curseur et les couleurs viennent des **composants pi-tui de
 l'hôte** — les mêmes que les écrans d'OMP (`DynamicBorder` pour les règles, `Text` pour
@@ -324,11 +358,14 @@ que d'afficher un écran à moitié peint.
   qu'une session se lit ici comme dans OMP. `ctrl+o` — la touche de pliage **native**
   d'OMP — bascule d'un coup le dépliage de **toutes** les entrées repliables de la vue,
   exactement comme dans le transcript principal, et les entrées qui arrivent ensuite
-  naissent dans l'état courant. L'en-tête rappelle le rang, son maillon, son état, le nom
-  du fichier — et `run en cours — lecture seule` quand un run est en train d'écrire cette
-  session. Le défilement est celui d'une session OMP : `↑`/`k` et `↓`/`j` d'un rang,
-  `maj+↑`/`maj+↓` de cinq, `PageUp`/`PageDown` d'une fenêtre, `Début`/`Fin` aux
-  extrémités (`Fin` réarme le suivi du direct), et la **molette** de trois rangs par cran.
+  naissent dans l'état courant. L'en-tête rappelle le rang, son maillon, son état et le
+  nom du fichier — et `run en cours` quand un run est en train d'écrire cette session.
+  `lecture seule` n'y figure **jamais** : une vue dont la zone de saisie accepte une
+  écriture ne peut pas s'annoncer en lecture seule — quand elle l'est vraiment, la raison
+  est écrite **dans la zone** (`lecture seule — <raison>`). Le défilement est celui d'une
+  session OMP : `↑`/`k` et `↓`/`j` d'un rang, `maj+↑`/`maj+↓` de cinq, `PageUp`/`PageDown`
+  d'une fenêtre, `Début`/`Fin` aux extrémités (`Fin` réarme le suivi du direct), et la
+  **molette** de trois rangs par cran.
 - **La vue répond** — c'est le seul endroit d'où une écriture part, vers le lot ou vers
   une session, et elle n'en part qu'après confirmation. Sa **zone de saisie** choisit sa
   forme selon le rang, et elle dit toujours laquelle :
@@ -339,18 +376,26 @@ que d'afficher un écran à moitié peint.
     tampon vide ;
   - un **maillon du lot pose une question `ask`** : la question et ses options
     apparaissent **dans la conversation** — une question à la fois, 1 à 9 options — et la
-    zone prend la même forme d'options, sa première ligne rappelant la question. Choisir
-    une option puis confirmer livre la réponse au maillon, qui repart **dans son tour en
-    cours** : **aucun nouveau run n'est lancé**, et l'état du rang cesse d'être `attend`.
+    zone prend la même forme d'options, sa première ligne rappelant la question, chaque
+    option portant la **description** que le maillon a fournie quand il y en a une.
+    Choisir une option et presser **un seul `Entrée`** livre le libellé au maillon, qui
+    repart **dans son tour en cours** : **aucun nouveau run n'est lancé**, et l'état du
+    rang cesse d'être `attend réponse`. Un clic sur une option, lui, ne livre rien : il
+    ouvre l'aperçu, comme partout ailleurs.
     Les options d'une feature en attente, elles, viennent du **texte** de la question
     (forme `- (1) <libellé>`, une par ligne) — la convention que le lot impose à ce
-    dialogue-là ;
+    dialogue-là ; celles-là n'ont pas de description, et leur réponse passe par l'aperçu ;
   - la pipeline **attend une réponse sans choix** (ou vous avez choisi « autre ») :
-    `Réponse : <tampon>▏`. Les caractères imprimables s'ajoutent, un texte collé entre
+    `Réponse : <tampon>▏`, avec la question du maillon **toujours peinte au-dessus**
+    pendant la rédaction. Les caractères imprimables s'ajoutent, un texte collé entre
     d'un bloc (borné à 4 000 caractères, notice `message tronqué à 4000 caractères`
-    au-delà), `⌫` efface, `Entrée` ouvre le même aperçu — **jamais** un envoi direct —,
-    `Échap` y revient au tampon intact. Un tampon vide est refusé (`réponse vide`),
-    l'éditeur reste ouvert ;
+    au-delà), `⌫` efface. **Un seul `Entrée` livre** la réponse à une question `ask` en
+    vol — c'est le seul geste du panneau qui n'a pas d'aperçu, parce que la question
+    attend ; partout ailleurs (message à un run vivant, mise en file, reprise d'une
+    session), `Entrée` ouvre l'aperçu, et c'est le second `Entrée` qui livre. `Échap`
+    revient au tampon intact, et il le **conserve** : revenir à la liste puis rouvrir la
+    vue du même rang restitue le brouillon dans un éditeur libre — une livraison réussie,
+    elle, l'oublie. Un tampon vide est refusé (`réponse vide`), l'éditeur reste ouvert ;
   - la pipeline **travaille** et son run est **vivant** : le même éditeur, mais l'aperçu
     dit `Envoyer au maillon — injecté dans son tour en cours`. Le message part dans la
     boîte de réception du run, que le maillon consomme : il en tient compte **dans le
@@ -439,13 +484,17 @@ entièrement depuis le panneau.
 
 ```
 ────────────────────────────────────────────────────────────────
- Pipelines · 0 en cours
- Lot · mem0-omp · 3 features
+ Pipelines · 0 processus
+ Lot · mem0-omp · 3 features · 0 terminée · 1 bloquée · 0 échouée
+ · 0 annulée · 2 en cours
  ❯ isolation-worktree             /specs · attend validation · 1:20
-   base-qdrant ← isolation-worktree      /req · à venir · 0:12
+   base-qdrant ← isolation-worktree      /req · en attente · 0:12
    panneau-lot                           /impl · bloqué · 4:03
+   panneau-lot                           arrêt : revue bloquante
+ Hors lot · 0
  aucune pipeline en cours
  ──────────────────────────────────────────────────────────────
+ Historique · 0
  aucun historique
  a ajouter · l lancer · Entrée session
  v valider · c annuler · o rejoindre
@@ -456,8 +505,17 @@ entièrement depuis le panneau.
 La **seconde ligne de pied** est contextuelle : elle n'annonce que les touches qui
 s'appliquent à la ligne sélectionnée (`Entrée répondre`, `Entrée écrire`, `v valider`,
 `y accepter`, `R relancer`, `x retirer`, `c annuler` — `aucune action` si aucune ne
-s'applique). `d supprimer` n'apparaît que sur une entrée d'historique, le seul rang qu'il
-supprime.
+s'applique), et elle est peinte **dans tous les cas**. `d supprimer` n'apparaît que sur
+une entrée d'historique, le seul rang qu'il supprime ; `o rejoindre` que sur un rang qui a
+une session. `a ajouter` et `l lancer` n'apparaissent que si un pilote de lot existe dans
+la session : sans lui, les deux touches refusent et ne s'annoncent pas.
+
+Un état **bloqué** ou **échoué** porte sa raison sur un second rang de la même entrée
+(`arrêt : <motif>`) : `bloqué` ne dit pas pourquoi, le motif le dit. Une feature qui attend
+un jalon garde ce jalon dans sa colonne d'état (`attend validation`, `attend réponse`,
+`attend accord`) que son run ait publié son entrée ou non, et le temps affiché se mesure
+depuis l'instant **le plus ancien** des deux — publier une entrée ne fait jamais reculer
+l'horloge sous tes yeux.
 
 **Tout geste qui change l'état du lot s'annonce avant d'agir** : `l` (lancer), `x`
 (retirer), `R` (relancer), `v` (valider les specs), `y` (accepter la revue), `c`
@@ -482,14 +540,14 @@ s'affiche tel quel au lieu d'être avalé.
 - **Répondre** (`Entrée` sur la ligne, puis la zone de saisie de la vue) : dans un run
   lancé par le panneau, le maillon dispose d'un outil
   `ask` à options — **une question à la fois, 1 à 9 options**. La question s'affiche dans
-  la conversation, où tu sélectionnes une option ; la réponse repart dans le maillon
-  **sans lancer de nouveau run**, la question se résout dans le tour en cours, et la
-  chaîne reprend à la fin de ce tour. Un message tapé pendant que le maillon travaille lui
-  est **injecté dans le tour en cours**, même sans question posée. Quand un maillon a fini
-  son tour (état « attend réponse » ou « bloqué »), ta réponse le relance **dans sa
-  session** (`--resume`) : il reprend exactement là où il s'était arrêté. Hors lot, un run
-  n'est pas armé : le maillon garde ses questions en clair, reprises dans l'alerte durable
-  du transcript.
+  la conversation, où tu sélectionnes une option ; **un seul `Entrée`** livre la réponse,
+  qui repart dans le maillon **sans lancer de nouveau run** : la question se résout dans
+  le tour en cours, et la chaîne reprend à la fin de ce tour. Un message tapé pendant que
+  le maillon travaille lui est **injecté dans le tour en cours** (celui-là passe par
+  l'aperçu), même sans question posée. Quand un maillon a fini son tour (état « attend
+  réponse » ou « bloqué »), ta réponse le relance **dans sa session** (`--resume`) : il
+  reprend exactement là où il s'était arrêté. Hors lot, un run n'est pas armé : le maillon
+  garde ses questions en clair, reprises dans l'alerte durable du transcript.
 - **La livraison** : après ton accord, un dernier run met **un** commit (message
   conventionnel, versions bumpées si un plugin change) et écrit le corps de la PR ; le
   pilote **pousse la branche vers l'URL HTTPS du dépôt** (jamais `origin` en SSH) puis
