@@ -1319,16 +1319,21 @@ test("panneau/AC-7 : la liste dit l'état et le maillon, et laquelle attend une 
       "seule la ligne qui a une file l'annonce",
     );
 
-    // Le pied annonce ce qui est possible, dans l'ordre du contrat. Un état
-    // TERMINAL (bloqué, échoué, terminé, annulé) n'annonce pas `c annuler`.
+    // Le pied annonce ce qui est possible, dans l'ordre du contrat. Un état DÉJÀ
+    // clos (terminé, annulé) n'annonce pas `c annuler` ; une feature bloquée ou
+    // échouée le garde (PANEL-11 : au plafond de la boucle, `R` rouvrirait une
+    // boucle entière, ce n'est pas un abandon), et une feature bloquée annonce
+    // aussi `Entrée répondre` — sa réponse relance son maillon (PANEL-8).
     const features = model.lot!.features;
     assert.equal(lotFooterActions(features, 0), "Entrée écrire · c annuler");
     assert.equal(lotFooterActions(features, 1), "Entrée répondre · c annuler");
     assert.equal(lotFooterActions(features, 3), "x retirer · c annuler");
     assert.equal(lotFooterActions(features, 4), "v valider · c annuler");
     assert.equal(lotFooterActions(features, 5), "y accepter · c annuler");
-    assert.equal(lotFooterActions(features, 6), "R relancer");
+    assert.equal(lotFooterActions(features, 6), "Entrée répondre · R relancer · c annuler");
+    assert.equal(lotFooterActions(features, 7), "R relancer · c annuler");
     assert.equal(lotFooterActions(features, 8), "aucune action");
+    assert.equal(lotFooterActions(features, 9), "aucune action");
     assert.equal(
       lotFooterActions([feature("collecte", { origin: "session", state: "running", phase: "req" })], 0),
       "c annuler",
@@ -1723,7 +1728,7 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
     });
     assert.deepEqual(rowReply(feature("a", { state: "done", phase: "review" })), {
       kind: "closed",
-      reason: "rien à répondre : la feature est terminé",
+      reason: "rien à répondre : la feature est terminée",
     });
     // Une feature BLOQUÉE se relance par une réponse : sa zone est un éditeur
     // libre, et la réponse repart dans un run qui reprend son contexte (S-8 §2).
@@ -1738,12 +1743,18 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
     const worktree = mktmp("panneau-ac10-wt-");
     const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "dernier tour");
     const cases: Array<{ over: Partial<LotFeature>; reason: string }> = [
-      { over: { state: "done", phase: "review" }, reason: "lecture seule — la feature est terminée" },
-      { over: { state: "failed", phase: "impl", stopReason: "x" }, reason: "lecture seule — la feature est échouée" },
-      { over: { state: "cancelled", phase: "impl" }, reason: "lecture seule — la feature est annulée" },
+      // Les états qui n'ont plus rien à répondre passent par le libellé PARTAGÉ du
+      // refus d'écriture (`lotReplyRefusal`, lot.ts) : une seule phrase décide du
+      // texte, et elle est grammaticale dans tous les cas.
+      { over: { state: "done", phase: "review" }, reason: "lecture seule — rien à répondre : la feature est terminée" },
+      {
+        over: { state: "failed", phase: "impl", stopReason: "x" },
+        reason: "lecture seule — rien à répondre : la feature a échoué",
+      },
+      { over: { state: "cancelled", phase: "impl" }, reason: "lecture seule — rien à répondre : la feature est annulée" },
       // Une feature BLOQUÉE n'est plus en lecture seule : sa réponse la relance
       // (S-8 §2), et c'est un autre cas qui le prouve.
-      { over: { state: "pending" }, reason: "lecture seule — la feature n'a pas démarré" },
+      { over: { state: "pending" }, reason: "lecture seule — rien à répondre : la feature n'a pas encore démarré" },
       {
         over: { state: "pending", deps: ["bloqueur"] },
         reason: "lecture seule — en attente de bloqueur : L la lance, R la relance",

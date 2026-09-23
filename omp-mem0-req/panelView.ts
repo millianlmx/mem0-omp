@@ -1,7 +1,7 @@
 // Panneau : état de la vue de session et de sa zone de saisie.
 import type { KeybindingsManager } from "@oh-my-pi/pi-coding-agent";
 import type { PipelinePhase } from "./contract.ts";
-import { lotStateLabel, runnable } from "./lot.ts";
+import { lotReplyRefusal, runnable } from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
 import type { LotPanelActions } from "./lotController.ts";
 import type { HostComponents, SessionAssembly } from "./panelHost.ts";
@@ -43,8 +43,13 @@ export type PipelinesPanelDeps = {
   components: HostComponents | null;
   /** Racine du dépôt : c'est elle qui identifie le lot que le panneau pilote. */
   repoRoot?: string;
-  /** Les actions du lot ; absentes, le panneau reste en consultation (comportement d'avant les lots). */
-  lot?: LotPanelActions;
+  /**
+   * Les actions du lot ; absentes, le panneau reste en consultation (comportement
+   * d'avant les lots). `adopt` (PANEL-4) reprend un lot dont le pilote est mort : le
+   * panneau l'appelle au battement, parce que c'est le seul endroit qui relit le lot
+   * en continu.
+   */
+  lot?: LotPanelActions & { adopt?: () => boolean };
   /** Horloge du temps écoulé : injectée, le temps affiché est donc testable. */
   now?: () => number;
   /** Ordonnanceur du rafraîchissement ; renvoie de quoi l'arrêter. */
@@ -75,13 +80,15 @@ export type PipelinesPanelDeps = {
 
 
 /**
- * La sélection du panneau, mémorisée par RACINE DE DÉPÔT (S-5) : fermer puis
- * rouvrir rend le panneau sur la même ligne, sans commande à retaper. En mémoire
- * de process seulement — aucun fichier, aucune config, aucun partage entre
- * process — et l'index est re-borné au montage, donc une liste qui a changé ne
- * casse rien.
+ * La sélection du panneau, mémorisée par RACINE DE DÉPÔT (S-5) et par CLÉ DE RANG
+ * (PANEL-3) : fermer puis rouvrir rend le panneau sur la même ligne, sans commande à
+ * retaper — et une liste qui bouge toute seule (une entrée d'historique par fin de
+ * maillon, un run qui change de maillon et repasse en fin de liste) ne fait plus
+ * glisser la sélection sur la ligne voisine, ce qui faisait supprimer une entrée
+ * jamais visée. En mémoire de process seulement — aucun fichier, aucune config,
+ * aucun partage entre process.
  */
-export const panelSelections = new Map<string, number>();
+export const panelSelections = new Map<string, string>();
 
 
 /**
@@ -90,24 +97,20 @@ export const panelSelections = new Map<string, number>();
  * est plus honnête qu'un champ qui refuse.
  */
 export function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
-  switch (feature.state) {
-    case "done":
-      return "la feature est terminée";
-    case "failed":
-      return "la feature est échouée";
-    case "cancelled":
-      return "la feature est annulée";
-    case "pending":
-      return lot && !runnable(lot, feature)
-        ? `en attente de ${pendingDeps(lot, feature).join(",")} : L la lance, R la relance`
-        : "la feature n'a pas démarré";
-    case "waiting":
-      if (feature.waitKind === "specs") return "les spécifications attendent ta validation (v)";
-      if (feature.waitKind === "review") return "la revue attend ton accord (y)";
-      return `rien à répondre : la feature est ${lotStateLabel(feature.state)}`;
-    default:
-      return `rien à répondre : la feature est ${lotStateLabel(feature.state)}`;
+  if (feature.state === "pending" && lot && !runnable(lot, feature)) {
+    // Une feature qui attend ses dépendances nomme la TOUCHE qui la lance : c'est le
+    // seul état où le refus porte une action.
+    return `en attente de ${pendingDeps(lot, feature).join(",")} : L la lance, R la relance`;
   }
+  if (feature.state === "waiting") {
+    if (feature.waitKind === "specs") return "les spécifications attendent ta validation (v)";
+    if (feature.waitKind === "review") return "la revue attend ton accord (y)";
+  }
+  // Tous les autres états passent par le libellé PARTAGÉ du refus d'écriture : une
+  // seule phrase décide du texte, et elle est grammaticale dans tous les cas —
+  // l'ancien gabarit `la feature est ${lotStateLabel}` produisait « la feature est
+  // échouée », « la feature est attend ».
+  return lotReplyRefusal(feature.state);
 }
 
 
@@ -284,9 +287,11 @@ export function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, innerW: number
     const answerRows = serviceRow(`Réponse : ${zone.buffer}▏`, "text", innerW);
     rows.push(...answerRows);
     const verb = zone.queue ? "mettre en file" : "envoyer";
-    // Le rang d'aide dit l'effet RÉEL d'`Échap` (S-7) : il rend la liste, et le
-    // brouillon est conservé — « annuler » était faux.
-    rows.push(...serviceRow(`Entrée ${verb} · Échap revenir au panneau`, "dim", innerW));
+    // Le rang d'aide dit l'effet RÉEL d'`Échap` (S-7, VIEW-14) : devant une liste
+    // d'options il REMONTE aux options, et le brouillon est conservé — « revenir au
+    // panneau » était faux dans ce cas, et « annuler » l'était déjà.
+    const back = zone.options.length > 0 ? "Échap revenir aux options" : "Échap revenir au panneau";
+    rows.push(...serviceRow(`Entrée ${verb} · ${back}`, "dim", innerW));
     return { rows, focus: questionRows.length + answerRows.length - 1 };
   }
   const marker = (selected: boolean) => (selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1));
@@ -330,8 +335,12 @@ export function viewFooter(zone: ViewZone, overflow: boolean): string {
   }
   // Éditeur libre (et zone fermée) : le défilement de la transcription, la bascule
   // globale, la sortie — plus, quand la zone dépasse sa fenêtre, les deux touches
-  // qui la font défiler elle (S-2, S-7).
-  return `↑↓/molette défiler · ${expand} · Échap revenir au panneau${
+  // qui la font défiler elle (S-2, S-7). Devant une liste d'options, `Échap` REMONTE
+  // aux options (VIEW-14) : le pied dit la touche qu'il traite, jamais l'autre.
+  const back = zone.kind === "input" && zone.free && zone.options.length > 0
+    ? "Échap revenir aux options"
+    : "Échap revenir au panneau";
+  return `↑↓/molette défiler · ${expand} · ${back}${
     overflow ? " · PageUp/PageDown défiler la réponse" : ""
   }`;
 }
@@ -378,6 +387,13 @@ export type ViewTranscript = {
   followBottom: boolean;
   /** Le premier rang affiché, ancré : il ne bouge pas quand du contenu arrive (S-5). */
   offsetLines: number;
+  /**
+   * Le rang de SERVICE du maillon suivi (VIEW-1) : non nul quand la vue a REBÂTI sa
+   * transcription sur un fichier de session neuf — la chaîne a changé de maillon, et
+   * la vue le dit en toutes lettres au lieu de laisser croire qu'elle suit encore le
+   * précédent. `null` à l'ouverture : rien n'a encore changé sous les yeux.
+   */
+  link: string | null;
 };
 
 
@@ -388,6 +404,16 @@ export type PanelView =
       kind: "session";
       /** Le slug de la feature du lot visée ; `null` pour une entrée du magasin. */
       slug: string | null;
+      /**
+       * L'identité du rang du MAGASIN suivi (`running/<id>.json` ou
+       * `history/<id>.json`), `null` pour une feature du lot (VIEW-13) : un run
+       * vivant qui n'a pas encore publié de fichier de session n'a AUCUNE session à
+       * nommer, et le retrouver par son seul fichier faisait perdre la vue dès la
+       * première passe (« run en cours » + « session terminée »).
+       */
+      rowId: string | null;
+      /** Le cwd du rang suivi : il départage un rang du magasin sans session (VIEW-13). */
+      rowCwd: string | null;
       label: string;
       phase: string;
       state: string;

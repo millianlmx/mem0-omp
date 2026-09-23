@@ -576,3 +576,29 @@ export function reconcileStore(stateDir: string, snapshot: StoreSnapshot = readS
   const history = [...moved, ...snapshot.history].sort((a, b) => b.endedAt - a.endedAt).slice(0, HISTORY_READ_LIMIT);
   return { running: alive, history, unreadable: snapshot.unreadable };
 }
+
+
+/**
+ * L'entrée EN COURS d'un worktree, et seulement si son propriétaire vit encore :
+ * c'est la SEULE façon de savoir qu'un run travaille dans un worktree (S-2). Un
+ * run enfant ne meurt pas avec son pilote (`pi.exec` ne tue pas ses enfants à la
+ * sortie) : un pilote qui reprend un lot doit donc suivre une feature dont le run
+ * vit encore, au lieu de la relancer — deux agents dans le même worktree — ou de
+ * la juger sur le seul hash de son contrat, alors que l'orphelin travaille.
+ *
+ * `null` veut dire « personne ne travaille là », jamais « je n'ai pas regardé » :
+ * une entrée dont le pid est mort, un worktree inconnu ou un `worktree` vide en
+ * rendent aussi `null` (un worktree vide ne doit pas s'apparier au cwd).
+ */
+export function liveRunFor(
+  stateDir: string,
+  worktree: string,
+  snapshot: StoreSnapshot = readStore(stateDir),
+): RunningEntry | null {
+  if (worktree === "") return null;
+  const real = realpathOr(worktree);
+  for (const entry of snapshot.running) {
+    if (realpathOr(entry.cwd) === real && pidAlive(entry.owner.pid)) return entry;
+  }
+  return null;
+}

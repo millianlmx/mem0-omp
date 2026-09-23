@@ -2,12 +2,12 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { realpathOr } from "./git.ts";
-import { LOT_EDITOR_MAX, lotStateLabel, lotStateTerminal, rowReply } from "./lot.ts";
+import { LOT_EDITOR_MAX, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
-import { applyExpanded, buildSessionComponents, cursorGlyph, toolUi } from "./panelHost.ts";
+import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
 import type { HostComponent, PanelTheme, PanelTui, SessionAssembly } from "./panelHost.ts";
-import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, liveWriterPid, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelRowAt, panelRowCount, parseSgrMouse, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel } from "./panelRows.ts";
+import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, liveWriterPid, lotModeRows, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelIndexForKey, panelRowAt, panelRowCount, panelSelectionKey, parseSgrMouse, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel, staleGestureNotice } from "./panelRows.ts";
 import type { LotPanelMode, PanelGesture, PanelGlyphs, PanelModel, PanelRow, PanelRowRef, SgrMouseEvent } from "./panelRows.ts";
 import { SESSION_VIEW_MAX_ENTRIES, extendSessionTail, readSessionTail } from "./panelSession.ts";
 import type { SessionEntryLike, SessionTail } from "./panelSession.ts";
@@ -16,7 +16,7 @@ import type { HostKeybinding, PanelComponent, PanelKeybindings, PanelView, Pipel
 import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, ROW_PADDING_X, VIEW_ZONE_MAX_LINES, WINDOW_FOLLOW, serviceRow, textWindow } from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
 import type { WorktreeFate } from "./runs.ts";
-import { deleteHistoryEntry, dropInbox, panelInboxDirFor, panelInboxDirOf, pidAlive, writeDelivery } from "./store.ts";
+import { asStringOrNull, deleteHistoryEntry, dropInbox, panelInboxDirFor, panelInboxDirOf, pidAlive, writeDelivery } from "./store.ts";
 import type { PanelDelivery } from "./store.ts";
 
 
@@ -103,29 +103,101 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     let model = readPanelModel({
       stateDir: deps.stateDir,
       repoRoot: deps.repoRoot,
-      selection: panelSelections.get(selectionKey) ?? 0,
       notice,
       mode,
+      now: now(),
     });
+    // La CLÉ de rang mémorisée se résout sur le modèle FRAIS (PANEL-3) : l'index de la
+    // ligne qui la porte, ou la voisine bornée si elle a disparu.
+    model = { ...model, selection: panelIndexForKey(model, panelSelections.get(selectionKey), 0) };
 
-    /** Fige la sélection courante : c'est elle que le prochain montage restaurera (S-5). */
-    const remember = () => panelSelections.set(selectionKey, model.selection);
+    /** Fige la sélection courante : c'est sa CLÉ que le prochain montage restaurera (PANEL-3). */
+    const remember = () => {
+      const key = panelSelectionKey(model);
+      if (key !== null) panelSelections.set(selectionKey, key);
+    };
+
 
     /**
-     * Les boîtes où CE panneau a déposé une livraison (S-9) : quand le run qui les
-     * consommait disparaît du magasin, ses livraisons non consommées reviennent à
-     * l'utilisateur — notice, et dernier texte reposé dans la zone, prêt à
-     * repartir. On ne surveille que ce qu'on a écrit : un run tué avant toute
-     * écriture ne laisse rien à rendre, et sa boîte n'est pas ramassée
-     * (non-objectif explicite de S-9).
+     * Les boîtes où CE panneau a déposé une livraison (S-9), par DOSSIER et par CLÉ
+     * DE RANG (VIEW-3) : quand le run qui les consommait disparaît du magasin, ses
+     * livraisons non consommées reviennent à l'utilisateur — notice, et texte reposé
+     * dans le brouillon de SON rang. Sans la clé, le reste d'une boîte d'alpha
+     * atterrissait dans la zone de beta et partait au mauvais maillon. On ne surveille
+     * que ce qu'on a écrit, et jamais la boîte d'une feature de LOT : le pilote la
+     * récupère lui-même (`takeInbox`/`queueLeftovers`) pour le maillon suivant.
      */
-    const watchedBoxes = new Set<string>();
-    const collectLeftovers = () => {
-      if (watchedBoxes.size === 0) return;
+    const watchedBoxes = new Map<string, string>();
+    /**
+     * Les `toolCallId` d'`ask` DÉJÀ répondus (VIEW-10) : tant que le maillon n'a pas
+     * republié sa question, la zone ne se rebinde pas sur une question répondue — sans
+     * quoi un second `Entrée` renvoyait la même option, et un texte libre partait
+     * comme réponse à une question déjà close. Vidé quand la vue rebâtit sur une
+     * autre session (VIEW-1) : les appels d'un maillon ne valent que pour lui.
+     */
+    const answeredAsks = new Set<string>();
+
+    /**
+     * Le fichier de session que la VUE suit pour un rang (VIEW-1, VIEW-5) : celui du
+     * run VIVANT apparié quand il y en a un (c'est lui qui écrit), sinon — pour une
+     * feature du lot — la session de son DERNIER run, QUEL QUE SOIT SON SORT
+     * (`lastRunSessionFile`) : `feature.sessionFile` ne retient que les succès, donc
+     * une feature échouée montrait la conversation du dernier maillon réussi au lieu
+     * du run qui a planté.
+     */
+    const viewSessionFile = (row: PanelRowRef): string | null => {
+      if (!isLotFeature(row)) return asStringOrNull(row.sessionFile);
+      return (
+        asStringOrNull(model.live[row.slug]?.sessionFile) ??
+        asStringOrNull(row.lastRunSessionFile) ??
+        asStringOrNull(row.sessionFile)
+      );
+    };
+
+    /**
+     * Le rang vise-t-il la session COURANTE de ce process (VIEW-8) ? Y répondre
+     * ferait relancer `--resume` sur la session ouverte ici même : deux écrivains sur
+     * le même JSONL, et le tour de l'utilisateur avorté. La question se pose sur
+     * TOUS les fichiers qu'une écriture atteindrait (le run vivant, la session de la
+     * feature, celle du dernier run).
+     */
+    const ownSession = (files: Array<string | null>): boolean => {
+      const current = deps.currentSessionFile ?? null;
+      if (current === null) return false;
+      const real = realpathOr(current);
+      return files.some((file) => file !== null && realpathOr(file) === real);
+    };
+
+    /**
+     * Le motif du refus d'écrire dans un worktree OCCUPÉ (VIEW-2) : un run VIVANT d'un
+     * autre process y travaille (quel que soit son fichier de session), ou c'est le
+     * worktree d'une feature de lot non terminale. Deux agents dans le même arbre
+     * éditent les mêmes fichiers ET publient le même fichier d'entrée
+     * (`running/<runningIdFor(cwd)>.json`) : ils s'écrasent, et l'un des deux efface
+     * la boîte, le `pendingAsk` et la session vus par le panneau.
+     */
+    const busyWorktreeReason = (cwd: string | null): string | null => {
+      if (cwd === null || cwd === "") return null;
+      const real = realpathOr(cwd);
+      for (const entry of [...model.running, ...Object.values(model.live)]) {
+        if (entry.owner.pid === process.pid || !pidAlive(entry.owner.pid)) continue;
+        if (realpathOr(entry.cwd) === real) return "un maillon du lot travaille dans ce worktree";
+      }
+      const feature = features().find((candidate) => candidate.worktree !== "" && realpathOr(candidate.worktree) === real);
+      if (feature && !lotStateTerminal(feature.state)) return "un maillon du lot travaille dans ce worktree";
+      return null;
+    };
+    /** Les clés des entrées qui ne sont plus chargées : `merged` moins les `keep` dernières (VIEW-11). */
+    const evictedKeys = (merged: SessionEntryLike[], keep: number): string[] =>
+      merged.slice(0, Math.max(0, merged.length - keep)).map(entryKey);
+
+    const collectLeftovers = (): boolean => {
+      if (watchedBoxes.size === 0) return false;
       const live = [...model.running, ...Object.values(model.live)]
         .filter((entry) => pidAlive(entry.owner.pid))
         .map((entry) => panelInboxDirOf(entry));
-      for (const dir of [...watchedBoxes]) {
+      let changed = false;
+      for (const [dir, key] of [...watchedBoxes]) {
         if (!fs.existsSync(dir)) {
           watchedBoxes.delete(dir); // boîte consommée et retirée par son run
           continue;
@@ -135,11 +207,23 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         const texts = dropInbox(dir);
         if (texts.length === 0) continue;
         const last = (texts[texts.length - 1] as string).slice(0, LOT_EDITOR_MAX);
-        if (view.kind === "session" && view.zone.kind === "input" && view.zone.toolCallId === null) {
+        // Le reste appartient à SON rang (VIEW-3) : il va dans ses brouillons, et il
+        // ne se pose dans la zone ouverte que si c'est bien le rang affiché.
+        drafts.set(key, last);
+        const row = view.kind === "session" ? rowForView() : undefined;
+        if (
+          view.kind === "session" &&
+          row !== undefined &&
+          draftKey(row) === key &&
+          view.zone.kind === "input" &&
+          view.zone.toolCallId === null
+        ) {
           view = { ...view, zone: { ...view.zone, buffer: last, free: true } };
         }
         notice = `message non transmis — le run est terminé (${texts.length})`;
+        changed = true;
       }
+      return changed;
     };
 
     /**
@@ -157,7 +241,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       const merged = [...transcript.entries, ...read.entries];
       // Borne du cache d'entrées (S-8) : le plus ancien est évincé le premier, et
       // ce qui n'est plus chargé est ANNONCÉ (`… début tronqué`), jamais coupé en
-      // silence.
+      // silence. L'assemblage suit la MÊME borne (VIEW-11) : les composants des
+      // entrées évincées sont retirés et LIBÉRÉS, sans quoi 601 entrées faisaient
+      // 601 composants pour une borne annoncée de 500.
       const evicted = merged.length > SESSION_VIEW_MAX_ENTRIES;
       const entries = reset ? read.entries : evicted ? merged.slice(merged.length - SESSION_VIEW_MAX_ENTRIES) : merged;
       const truncated = read.truncated || evicted;
@@ -169,6 +255,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         truncated !== transcript.truncated ||
         more !== transcript.more;
       if (!changed) return false;
+      if (reset) disposeAssembly(transcript.assembly); // le fichier est réécrit : l'assemblage d'avant est abandonné
+      const previous = reset ? null : transcript.assembly;
+      if (evicted && previous) evictEntries(previous, evictedKeys(merged, entries.length));
       view = {
         ...view,
         transcript: {
@@ -178,15 +267,19 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           truncated,
           more,
           error: read.error,
-          // Les comptes de lignes repartent : le contenu a changé (les composants
-          // inchangés, eux, ne sont PAS reconstruits — c'est le cache qui le dit).
-          counts: [],
-          countsWidth: 0,
+          // Les comptes de lignes ne repartent QUE si le préfixe de l'assemblage a
+          // bougé (réécriture, éviction) : en ajout, les composants déjà mesurés
+          // gardent leur compte, et seuls les nouveaux sont mesurés (VIEW-11).
+          counts: reset || evicted ? [] : transcript.counts,
+          countsWidth: reset || evicted ? 0 : transcript.countsWidth,
           assembly: buildSessionComponents(entries, {
             components: kit,
             ui,
             cwd: transcript.cwd,
-            previous: reset ? null : transcript.assembly,
+            previous,
+            // `ctrl+o` survit à une réécriture (VIEW-12) : l'état global de pliage
+            // appartient à la vue, pas à l'assemblage qu'elle remplace.
+            expanded: transcript.assembly?.expanded,
           }),
         },
       };
@@ -203,6 +296,39 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       let changed = false;
       const row = rowForView();
       if (row) {
+        // La CHAÎNE a changé de maillon (VIEW-1) : chaque maillon d'un lot est un run
+        // SANS `--resume`, donc un fichier de session NEUF. La vue restait collée à
+        // celui de l'ouverture — titre « /impl », corps de la revue — et la
+        // progression du fix n'apparaissait jamais sans Échap + Entrée. On rebâtit
+        // sur le fichier courant ; le même calcul rattache une vue ouverte AVANT que
+        // le run ait publié sa session.
+        const file = viewSessionFile(row);
+        if (file !== view.transcript.sessionFile) {
+          disposeAssembly(view.transcript.assembly);
+          answeredAsks.clear(); // une autre session : d'autres appels `ask`
+          view = {
+            ...view,
+            transcript: {
+              sessionFile: file,
+              cwd: rowCwd(row) ?? view.transcript.cwd,
+              tail: null,
+              entries: [],
+              truncated: false,
+              more: false,
+              error: null,
+              assembly: null,
+              counts: [],
+              countsWidth: 0,
+              followBottom: true,
+              offsetLines: 0,
+              link:
+                file === null
+                  ? null
+                  : `nouveau maillon /${rowPhase(model, row)} — session ${path.basename(file)}`,
+            },
+          };
+          changed = true;
+        }
         const label = rowLabel(row);
         const phase = rowPhase(model, row);
         const state = rowStateLabel(model, row);
@@ -233,13 +359,37 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         selection: model.selection,
         notice,
         mode,
+        now: now(),
       });
+      // La sélection suit la CLÉ du rang, jamais son index (PANEL-3) : une entrée
+      // d'historique qui arrive en tête ne doit pas déplacer le curseur sur sa voisine.
+      model = { ...model, selection: panelIndexForKey(model, panelSelections.get(selectionKey), model.selection) };
+      // Un lot dont le pilote est MORT se reprend (PANEL-4) : sans ça, le panneau
+      // affichait un lot qui travaille (horloge comprise) alors que plus personne ne
+      // conduit la chaîne.
+      if (model.driver?.kind === "dead") deps.lot?.adopt?.();
+      // Un APERÇU qui décrit un état périmé se referme (PANEL-9) : entre l'ouverture et
+      // l'`Entrée`, la liste s'est relue et le pilote a pu agir — un aperçu périmé fait
+      // croire que le geste fera ce qu'il annonce.
+      if (mode.kind === "confirm") {
+        const stale = staleGestureNotice(mode.gesture, model.lot ?? null);
+        if (stale !== null) {
+          mode = { kind: "browse" };
+          notice = stale;
+          // Le modèle porte le mode et la notice que le RENDU peint : le refermer ici
+          // sans le corriger laisserait l'aperçu périmé à l'écran.
+          model = { ...model, mode, notice };
+        }
+      }
       // La LISTE change à chaque battement : son horloge (le temps écoulé) bouge à
       // la seconde. La VUE, elle, ne se repeint que si quelque chose a changé —
       // c'est la condition du « sans clignotement » (S-5).
       const changed = view.kind === "list" ? true : followView();
-      collectLeftovers();
-      if (changed) version += 1;
+      // Les restes de boîte modifient la vue (brouillon reposé, notice) APRÈS le
+      // calcul de `changed` (VIEW-3) : sans leur propre incrément de version, le
+      // rendu mémoïsé laissait l'écran inchangé alors que la zone avait changé.
+      const leftovers = collectLeftovers();
+      if (changed || leftovers) version += 1;
     };
     const redraw = () => {
       paint();
@@ -275,20 +425,47 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       return undefined;
     };
     /**
-     * Le rang que la vue suit d'un rendu à l'autre : son SLUG quand c'est une
-     * feature du lot (il survit à une session qui apparaît), sinon son fichier de
-     * session. Un rang disparu de la liste ne fait pas tomber la vue.
+     * Le rang que la vue suit d'un rendu à l'autre : son SLUG quand c'est une feature
+     * du lot (il survit à une session qui apparaît), sinon l'`id` de son entrée du
+     * magasin (VIEW-13 — un run vivant qui n'a pas encore publié de fichier n'a aucune
+     * session à nommer), puis son cwd, puis son fichier de session. Un rang disparu de
+     * la liste ne fait pas tomber la vue.
      */
     const rowForView = (): PanelRowRef | undefined => {
       if (view.kind !== "session") return undefined;
       const { slug } = view;
-      const sessionFile = view.transcript.sessionFile;
       if (slug !== null) {
         const feature = features().find((candidate) => candidate.slug === slug);
         if (feature) return feature;
       }
-      return sessionFile === null ? undefined : rowForSession(sessionFile);
+      const store = [...model.running, ...model.history];
+      const id = view.rowId;
+      if (id !== null) {
+        const found = store.find((entry) => entry.id === id);
+        if (found) return found;
+      }
+      const sessionFile = view.transcript.sessionFile;
+      if (sessionFile !== null) {
+        const found = rowForSession(sessionFile);
+        if (found) return found;
+      }
+      const cwd = view.rowCwd;
+      if (cwd !== null && cwd !== "") {
+        const real = realpathOr(cwd);
+        return store.find((entry) => realpathOr(entry.cwd) === real);
+      }
+      return undefined;
     };
+    /** La zone d'une question `ask` DÉJÀ répondue (VIEW-10) : une seule source du texte. */
+    const ASK_ANSWERED_REASON = "réponse envoyée — en attente du maillon";
+
+    /**
+     * Les annulations EN VOL, par slug (PANEL-10) : `cancel` est un geste long (git,
+     * archivage) et la liste se relit chaque seconde — sans cet état, la ligne
+     * réannonçait `c annuler` pendant l'attente et un second `c` relançait le geste.
+     */
+    const cancelling = new Set<string>();
+
     /**
      * La zone de saisie d'un RANG (S-9), dans cet ordre : la règle du pilote
      * (`rowReply`, appliquée au run vivant publié) pour une feature du lot ; pour
@@ -301,6 +478,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (!row) return { kind: "closed", reason: "session terminée" };
       if (isLotFeature(row)) {
         const slug = row.slug;
+        // C'est TA session (VIEW-8) : le pilote relancerait `--resume` sur le JSONL
+        // ouvert dans ce process, donc deux écrivains et le tour courant avorté.
+        if (ownSession([viewSessionFile(row), row.sessionFile, row.lastRunSessionFile ?? null])) {
+          return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
+        }
         const reply = rowReply(row, model.live[slug] ?? null);
         switch (reply.kind) {
           case "reply":
@@ -315,6 +497,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
               target: { kind: "lot", slug },
             });
           case "ask":
+            // Une question DÉJÀ répondue ne se rouvre pas (VIEW-10) : la zone dit
+            // qu'une réponse est partie, et attend la question suivante.
+            if (answeredAsks.has(reply.toolCallId)) {
+              return { kind: "closed", reason: ASK_ANSWERED_REASON };
+            }
             return inputZone({
               slug,
               phase: reply.phase,
@@ -363,6 +550,14 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         if (writer !== null) {
           return { kind: "closed", reason: `cette session appartient à un autre process (pid ${writer})` };
         }
+        // Le WORKTREE est occupé (VIEW-2) : un maillon du lot y travaille — deux
+        // agents dans le même arbre, et le même fichier d'entrée publié deux fois.
+        // Le refus ne regarde pas le fichier de session : le run du lot en a un
+        // AUTRE, donc l'ancienne garde ne le voyait pas.
+        const busy = busyWorktreeReason(rowCwd(row));
+        if (busy !== null) return { kind: "closed", reason: busy };
+        // C'est TA session (VIEW-8) : `--resume` sur le JSONL ouvert ici.
+        if (ownSession([file])) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
         if (!deps.sessionReply) return { kind: "closed", reason: "session terminée" };
         return inputZone({
           slug: row.label,
@@ -377,6 +572,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (dir === null) return { kind: "closed", reason: `cette session appartient à un autre process (pid ${row.owner.pid})` };
       const ask = row.pendingAsk ?? null;
       if (ask) {
+        // Une question déjà répondue ne se rouvre pas (VIEW-10) : la zone dit qu'une
+        // réponse est partie.
+        if (answeredAsks.has(ask.toolCallId)) return { kind: "closed", reason: ASK_ANSWERED_REASON };
         return inputZone({
           slug: row.label,
           phase: row.phase,
@@ -404,7 +602,23 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (view.kind !== "session" || view.zone.kind === "preview") return false;
       const next = zoneFor(rowForView());
       if (sameZoneSource(view.zone, next)) return false;
-      view = { ...view, zone: next };
+      const zone = view.zone;
+      let carried = next;
+      // Le BROUILLON survit au changement de source (VIEW-4) : un `ask` qui arrive,
+      // une boîte qui se publie ou un maillon qui se termine ne doivent pas effacer
+      // ce que l'utilisateur est en train de taper. Dans une zone d'éditeur, le
+      // tampon est REPORTÉ tel quel ; sinon il est sauvé dans les brouillons du rang,
+      // avec une notice qui dit où il est parti.
+      if (zone.kind === "input" && zone.buffer !== "") {
+        if (next.kind === "input") {
+          carried = { ...next, free: true, cursor: next.options.length, buffer: zone.buffer };
+        } else {
+          const row = rowForView();
+          if (row) drafts.set(draftKey(row), zone.buffer);
+          notice = "brouillon conservé — la zone a changé de source";
+        }
+      }
+      view = { ...view, zone: carried };
       return true;
     };
     /**
@@ -433,18 +647,21 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     };
 
     const remove = () => {
-      const index = model.selection - features().length;
-      // Un rang de lot ne se supprime pas : `x` le retire du lot (S-3) — le dire
-      // vaut mieux qu'une touche muette. Une sélection vide reste muette.
-      if (index < 0) {
-        if (selectedFeature()) showNotice("seules les entrées d'historique se suppriment");
+      // `d` vise le rang SÉLECTIONNÉ, résolu par sa CLÉ (PANEL-3) : calculer l'index
+      // d'historique par `selection - features().length` supprimait une autre entrée
+      // dès que la liste avait bougé entre le rendu et la touche. La clé vient du
+      // MODÈLE courant — `model.selection` est ce que le rendu peint et ce que `move`
+      // met à jour —, jamais de `panelSelections`, qui est la mémoire INTER-MONTAGES du
+      // dépôt : un montage sans dépôt (clé `""`) y lirait la clé d'un autre panneau.
+      const key = panelSelectionKey(model);
+      if (key === null || !key.startsWith("hist:")) {
+        // Un rang de lot ne se supprime pas : `x` le retire du lot (S-3) — le dire
+        // vaut mieux qu'une touche muette. Une sélection vide reste muette.
+        if (key !== null) showNotice("seules les entrées d'historique se suppriment");
         return;
       }
-      if (index < model.running.length) {
-        showNotice("seules les entrées d'historique se suppriment");
-        return;
-      }
-      const entry = model.history[index - model.running.length];
+      const id = key.slice("hist:".length);
+      const entry = model.history.find((candidate) => candidate.id === id);
       if (!entry) return;
       try {
         deleteHistoryEntry(deps.stateDir, entry.id);
@@ -513,6 +730,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       view = {
         kind: "session",
         slug: isLotFeature(row) ? row.slug : null,
+        rowId: isLotFeature(row) ? null : row.id,
+        rowCwd: rowCwd(row),
         label: rowLabel(row),
         phase: rowPhase(model, row),
         state: rowStateLabel(model, row),
@@ -530,6 +749,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           countsWidth: 0,
           followBottom: true,
           offsetLines: 0,
+          link: null,
         },
         zone,
       };
@@ -575,18 +795,33 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     let viewFixed = 4;
 
     /**
-     * Le rang d'ÉTAT du corps de la vue (S-3) : `aucune entrée lisible`, `pas de
-     * transcription`, `aucune entrée à afficher`, `… début tronqué` — un au plus, et
-     * il se lit EN TÊTE de la transcription, jamais à la place du contenu.
+     * Le rang d'ÉTAT du corps de la vue (S-3) : `nouveau maillon …`, `aucune entrée
+     * lisible`, `pas de transcription`, `aucune entrée à afficher`, `… début tronqué`
+     * — un au plus, et il se lit EN TÊTE de la transcription, jamais à la place du
+     * contenu.
      */
     const bodyStateRow = (innerW: number): PanelRow[] => {
       if (view.kind !== "session") return [];
       const transcript = view.transcript;
-      if (transcript.error !== null) return serviceRow(`aucune entrée lisible — ${transcript.error}`, "warning", innerW);
-      if (transcript.sessionFile === null) return serviceRow(`pas de transcription — ${view.state}`, "muted", innerW);
-      if (transcript.entries.length === 0) return serviceRow("aucune entrée à afficher", "muted", innerW);
-      if (transcript.truncated) return serviceRow("… début tronqué", "dim", innerW);
-      return [];
+      const rows: PanelRow[] = [];
+      // La vue a REBÂTI sa transcription sur un fichier neuf (VIEW-1) : elle nomme le
+      // maillon qu'elle suit — le titre le dit aussi, mais c'est ici que le
+      // changement de session se lit, au moment où il arrive.
+      if (transcript.link !== null) rows.push(...serviceRow(transcript.link, "dim", innerW));
+      if (transcript.error !== null) {
+        rows.push(...serviceRow(`aucune entrée lisible — ${transcript.error}`, "warning", innerW));
+        return rows;
+      }
+      if (transcript.sessionFile === null) {
+        rows.push(...serviceRow(`pas de transcription — ${view.state}`, "muted", innerW));
+        return rows;
+      }
+      if (transcript.entries.length === 0) {
+        rows.push(...serviceRow("aucune entrée à afficher", "muted", innerW));
+        return rows;
+      }
+      if (transcript.truncated) rows.push(...serviceRow("… début tronqué", "dim", innerW));
+      return rows;
     };
 
     /**
@@ -622,6 +857,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         ui,
         cwd: transcript.cwd,
         previous: null,
+        // Les blocs anciens naissent dans l'état GLOBAL de pliage (VIEW-12) : chargés
+        // repliés alors que `ctrl+o` est actif, ils mentaient sur l'état affiché.
+        expanded: transcript.assembly?.expanded,
       });
       const width = transcript.countsWidth > 0 ? transcript.countsWidth : 80;
       let added = 0;
@@ -661,6 +899,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const scrollView = (delta: number) => {
       if (view.kind !== "session") return;
       const transcript = view.transcript;
+      // Les comptes se REMESURENT avant de calculer la borne (VIEW-9) : une touche
+      // traitée entre un changement de contenu et le rendu (rafale de molette dans
+      // la même tranche stdin) trouvait `max = 0`, remettait `follow = true` et
+      // renvoyait la vue en bas — la position de lecture était perdue.
+      ensureCounts(transcript, lastWidth > 0 ? lastWidth : 80);
       const max = Math.max(0, transcriptRows() - viewRoom(panelHeight(tui)));
       const current = transcript.followBottom ? max : Math.min(Math.max(transcript.offsetLines, 0), max);
       const next = Math.min(Math.max(current + delta, 0), max);
@@ -670,7 +913,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (next === 0 && delta < 0) {
         const older = loadOlder(transcript);
         if (older) {
-          view = { ...view, transcript: { ...view.transcript, offsetLines: older.added, followBottom: false } };
+          // L'ancre est celle du rang REGARDÉ : ce qui vient d'être inséré devant
+          // (`added`) plus ce qui restait au-dessus de lui (`next`) — VIEW-9.
+          view = { ...view, transcript: { ...view.transcript, offsetLines: older.added + next, followBottom: false } };
           version += 1;
           tui.requestRender?.();
           return;
@@ -776,14 +1021,22 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // La zone est reposée AVANT l'appel — deux `Entrée` rapides ne livrent qu'une
       // fois — et VIDE : une livraison réussie oublie le brouillon (S-7), donc le
       // second `Entrée` n'a plus rien à envoyer. Une réponse à une question `ask`
-      // (livrée au PREMIER `Entrée`, S-1) perd en plus son identité de question :
-      // sans ça, le second `Entrée` expédierait une seconde fois l'option choisie.
-      // Un refus d'écriture, lui, repose la zone d'origine, tampon compris
-      // (`actView`).
-      setZone(input.toolCallId === null ? { ...input, buffer: "" } : { ...input, free: true, buffer: "" });
+      // (livrée au PREMIER `Entrée`, S-1) FERME la zone (VIEW-10) : la question est
+      // répondue, et un second `Entrée` ou un Échap + Entrée ne doit pas renvoyer la
+      // même option — le maillon n'a pas encore republié `pendingAsk`. Un refus
+      // d'écriture, lui, repose la zone d'origine, tampon compris (`actView`).
+      setZone(
+        input.toolCallId === null
+          ? { ...input, buffer: "" }
+          : { kind: "closed", reason: ASK_ANSWERED_REASON },
+      );
       /** Une livraison RÉUSSIE oublie le brouillon du rang (S-7). */
       const sent = () => {
         if (row) drafts.delete(draftKey(row));
+      };
+      /** Une réponse à un `ask` répondue ne se rouvre pas tant que la question vit (VIEW-10). */
+      const sentAsk = () => {
+        if (input.toolCallId !== null) answeredAsks.add(input.toolCallId);
       };
       if (target.kind === "session") {
         const reply = deps.sessionReply;
@@ -814,6 +1067,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             try {
               writeDelivery(target.dir, delivery);
               sent();
+              sentAsk();
               return null;
             } catch (err) {
               return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
@@ -822,7 +1076,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           input,
           input.toolCallId === null ? "message transmis au maillon" : "réponse transmise au maillon",
         );
-        watchedBoxes.add(target.dir);
+        // La boîte surveillée retient à quel RANG elle appartient (VIEW-3) : un reste
+        // non consommé revient au brouillon de ce rang, jamais à celui qu'on regarde.
+        // Une feature de LOT est exclue : son pilote récupère la boîte lui-même.
+        if (!(row !== undefined && isLotFeature(row))) watchedBoxes.set(target.dir, row !== undefined ? draftKey(row) : target.dir);
         return;
       }
       const actions = deps.lot;
@@ -940,6 +1197,65 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     };
 
     /**
+     * Les gestes du lot accessibles DEPUIS la vue (VIEW-15) : la raison de lecture
+     * seule nomme `v`/`y`, et la ligne nomme `R`/`c`/`o` — les traiter ici évite de
+     * sortir (Échap) puis de retrouver la ligne. L'aperçu est celui de la LISTE (le
+     * même mode `confirm`), rendu PAR-DESSUS la transcription : la vue reste ouverte,
+     * donc l'action se lit là où on a lu ce qu'on valide. Rend `true` quand la touche
+     * est prise — JAMAIS quand la zone est ouverte, où ces caractères sont du texte.
+     */
+    const viewGesture = (data: string): boolean => {
+      if (view.kind !== "session" || view.zone.kind !== "closed") return false;
+      if (data === "o") {
+        join();
+        return true;
+      }
+      // Seules les touches de GESTE sont concernées : toute autre touche reste à la
+      // vue (défilement, pliage, sortie).
+      if (data !== "v" && data !== "y" && data !== "R" && data !== "c" && data !== "l" && data !== "L") return false;
+      const row = rowForView();
+      if (!row || !isLotFeature(row)) return false;
+      const actions = deps.lot;
+      if (!actions) return false;
+      // Un lot piloté par un AUTRE process se consulte (PANEL-4) : ouvrir un aperçu
+      // que le pilote refusera ferait confirmer un geste impossible.
+      if (model.driver?.kind === "foreign") {
+        showNotice(`lot piloté par pid ${model.driver.pid} — consultation seule`);
+        return true;
+      }
+      const feature = row;
+      if (cancelling.has(feature.slug)) {
+        showNotice(`annulation en cours — ${feature.slug}`);
+        return true;
+      }
+      /** L'aperçu d'un geste : c'est lui que `Entrée` exécute, et `Échap` l'abandonne. */
+      const preview = (gesture: PanelGesture): boolean => {
+        setMode({ kind: "confirm", gesture, back: { kind: "browse" } });
+        return true;
+      };
+      if (data === "v" && feature.state === "waiting" && feature.waitKind === "specs") {
+        return preview({ kind: "validate", slug: feature.slug });
+      }
+      if (data === "y" && feature.state === "waiting" && feature.waitKind === "review") {
+        return preview({ kind: "accept", slug: feature.slug });
+      }
+      if (data === "R" && (feature.state === "blocked" || feature.state === "failed")) {
+        return preview({ kind: "relaunch", slug: feature.slug, phase: feature.phase });
+      }
+      // « L la lance » (la raison d'une feature en attente de ses dépendances) : la
+      // touche de lancement du lot, telle que la liste la traite.
+      if ((data === "l" || data === "L") && feature.state === "pending") {
+        return preview({ kind: "launch" });
+      }
+      if (data === "c" && lotStateCancellable(feature.state)) {
+        // Le devenir du worktree reste un premier pas (`1`/`2`/`3`), l'aperçu le suit.
+        setMode({ kind: "cancel", slug: feature.slug });
+        return true;
+      }
+      return false;
+    };
+
+    /**
      * Les touches de la VUE (S-2, S-3, S-4, S-6, S-8, S-10). L'aperçu est un état
      * à part — seuls `Entrée` et `Échap` y agissent, comme le mode `cancel` de la
      * liste. `ctrl+o` déplie/replie une entrée dans TOUS les états (ce n'est pas un
@@ -956,6 +1272,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         toggleExpanded();
         return;
       }
+      // Les gestes du lot depuis la vue (VIEW-15) : la zone FERMÉE ne prend aucune
+      // frappe, donc `v`/`y`/`o`/`R`/`c`/`l` y sont les touches du RANG, jamais du
+      // texte — et une touche annoncée est une touche traitée.
+      if (viewGesture(data)) return;
       const zone = view.zone;
       // La fenêtre de la TRANSCRIPTION, payée comme le rendu : les touches de
       // défilement s'y bornent, et la zone lui prend `PageUp`/`PageDown` quand elle
@@ -980,6 +1300,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           if (zone.kind === "input" && zone.buffer !== "") drafts.set(draftKey(row), zone.buffer);
           else drafts.delete(draftKey(row));
         }
+        // Quitter la vue LIBÈRE l'assemblage (VIEW-7) : une carte d'outil sans résultat
+        // reste inscrite au ticker de l'hôte, et demanderait un repaint toutes les
+        // 80 ms pour toute la vie du process — panneau fermé compris.
+        disposeAssembly(view.transcript.assembly);
         view = { kind: "list" };
         version += 1;
         tui.requestRender?.();
@@ -1150,10 +1474,27 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       setMode({ ...mode, scroll: { follow: next >= top, offset: next } });
     };
 
+    /**
+     * Le champ PRÉCÉDENT d'un ajout (PANEL-12) : le tampon en cours est rangé dans son
+     * étape, et celui de l'étape d'avant est RESTITUÉ — `Échap` ne perd plus la saisie.
+     */
+    const previousAddStep = (mode: Extract<LotPanelMode, { kind: "add" }>): LotPanelMode => {
+      if (mode.step === "deps") {
+        return { kind: "add", step: "description", draft: { ...mode.draft, deps: mode.buffer }, buffer: mode.draft.description };
+      }
+      return { kind: "add", step: "name", draft: { ...mode.draft, description: mode.buffer }, buffer: mode.draft.name };
+    };
+
     /** Les modes de saisie et l'aperçu. Rend `true` quand la touche est consommée. */
     const handleMode = (data: string): boolean => {
       if (mode.kind === "browse") return false;
       if (isKey(data, "tui.select.cancel")) {
+        // `Échap` dans un AJOUT rend le CHAMP PRÉCÉDENT avec son tampon (PANEL-12) :
+        // remonter en consultation faisait perdre les champs déjà saisis.
+        if (mode.kind === "add" && mode.step !== "name") {
+          setMode(previousAddStep(mode));
+          return true;
+        }
         // `Échap` quitte l'aperçu en rendant l'état ANTÉRIEUR — le tampon d'un
         // ajout ou d'une réponse est conservé (S-7, S-8).
         setMode(mode.kind === "confirm" ? mode.back : { kind: "browse" });
@@ -1188,7 +1529,22 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return true;
         }
         const back = mode.back;
+        const gesture = mode.gesture;
         setMode({ kind: "browse" });
+        if (gesture.kind === "cancel") {
+          // L'annulation est EN VOL tant que le pilote n'a pas rendu (PANEL-10) : la
+          // ligne le dit, et un second `c` ne relance pas le geste.
+          cancelling.add(gesture.slug);
+          act(async () => {
+            try {
+              return await run();
+            } finally {
+              cancelling.delete(gesture.slug);
+            }
+          });
+          showNotice(`annulation en cours — ${gesture.slug}`);
+          return true;
+        }
         // Un ajout refusé rouvre son champ : le motif s'affiche SANS faire retaper
         // les trois champs. Les autres gestes n'ont aucun état à reposer.
         act(run, back.kind === "add" ? back : undefined);
@@ -1268,9 +1624,18 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       const lot = deps.lot;
       // Toute action du lot exige le pilote : sans lui, le panneau reste en lecture.
       const requireLot = (): LotPanelActions | null => {
-        if (lot) return lot;
-        showNotice("lot indisponible dans cette session");
-        return null;
+        if (!lot) {
+          showNotice("lot indisponible dans cette session");
+          return null;
+        }
+        // Un lot piloté par un AUTRE process se consulte (PANEL-4) : le pied n'annonce
+        // déjà plus `a ajouter`/`l lancer`, et une touche qui reste ne doit pas ouvrir
+        // un aperçu que le pilote refusera.
+        if (model.driver?.kind === "foreign") {
+          showNotice(`lot piloté par pid ${model.driver.pid} — consultation seule`);
+          return null;
+        }
+        return lot;
       };
       /** Un geste qui change l'état du lot passe par son APERÇU — jamais direct (S-8). */
       const preview = (gesture: PanelGesture) => setMode({ kind: "confirm", gesture, back: { kind: "browse" } });
@@ -1289,6 +1654,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         const feature = selectedFeature();
         if (!feature) {
           showNotice("retrait possible sur une feature qui n'a pas démarré");
+          return;
+        }
+        // Le refus arrive AVANT l'aperçu (PANEL-8c) : ouvrir « Retirer alpha du lot ? »
+        // pour laisser le pilote refuser ensuite ferait confirmer un geste impossible.
+        if (feature.state !== "pending") {
+          showNotice(`« ${feature.slug} » a déjà démarré — c pour annuler`);
           return;
         }
         const actions = requireLot();
@@ -1331,8 +1702,18 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           showNotice("annulation impossible : sélectionne une feature du lot");
           return;
         }
-        if (lotStateTerminal(feature.state)) {
-          showNotice(`annulation impossible : la feature est ${lotStateLabel(feature.state)}`);
+        if (cancelling.has(feature.slug)) {
+          showNotice(`annulation en cours — ${feature.slug}`);
+          return;
+        }
+        // `c` accepte une feature bloquée ou échouée (PANEL-7) : `R` rouvre un crédit
+        // de correction entier, ce n'est pas un abandon — le pied annonce donc `c`
+        // dessus, et une touche annoncée doit être traitée.
+        if (!lotStateCancellable(feature.state)) {
+          // Le libellé par état vient du refus PARTAGÉ (`lotCancelRefusal`), jamais du
+          // gabarit `la feature est ${lotStateLabel}` qui produisait « la feature est
+          // terminé », « la feature est annulé ».
+          showNotice(lotCancelRefusal(feature.state));
           return;
         }
         const actions = requireLot();
@@ -1494,18 +1875,34 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // mot n'a qu'un endroit, la zone FERMÉE (`readOnlyReason`).
       if (view.live) title.push("run en cours");
       const noticeRows = notice ? serviceRow(notice, "warning", innerW, undefined, PANEL_NOTICE_MAX_LINES) : [];
-      const zone = viewZoneRows(view.zone, glyphs, innerW);
+      // Un geste ouvert depuis la vue (VIEW-15) : c'est son APERÇU qui prend la place
+      // de la zone — même texte, mêmes touches que dans la liste —, et son aide qui
+      // prend la place du pied. La transcription reste visible derrière.
+      const gesture = mode.kind === "browse" ? null : lotModeText(mode, model.lot ?? null);
+      // Les rangs de la zone : ceux de la SAISIE (options, éditeur, raison) — avec
+      // l'ancre que `viewZoneRows` calcule sur l'élément ACTIF, jamais sur la fin —
+      // ou, quand un geste est ouvert depuis la vue, son aperçu, déjà fenêtré.
+      const gestureRows = gesture === null ? null : lotModeRows(mode, model.lot ?? null, innerW, height);
+      const zone =
+        gestureRows === null
+          ? viewZoneRows(view.zone, glyphs, innerW)
+          : { rows: gestureRows, focus: gestureRows.length - 1 };
       // La zone est BORNÉE et défilante (S-2, S-4) : la fenêtre montre des lignes
       // consécutives, ancrée sur l'élément actif, et c'est SA hauteur que la
-      // transcription paie (`viewFixed`, juste après).
-      const zoneWindow = textWindow(zone.rows, VIEW_ZONE_MAX_LINES(height), zone.focus, zoneScrollOf(view.zone));
+      // transcription paie (`viewFixed`, juste après). L'aperçu d'un geste, lui, est
+      // déjà fenêtré par `lotModeRows` (même borne que la liste).
+      const zoneWindow =
+        gestureRows === null
+          ? textWindow(zone.rows, VIEW_ZONE_MAX_LINES(height), zone.focus, zoneScrollOf(view.zone))
+          : gestureRows;
       const state = bodyStateRow(innerW);
       const bodyRows: PanelRow[] = state;
       const head: PanelRow[] = [
         { text: "", tone: "border", rule: "frame" },
         ...serviceRow(title.join(" · "), "accent", innerW),
       ];
-      const footer = viewFooter(view.zone, zone.rows.length > zoneWindow.length);
+      const footer =
+        gesture === null ? viewFooter(view.zone, zone.rows.length > zoneWindow.length) : (gesture.help.join(" · "));
       const tail: PanelRow[] = [
         ...noticeRows,
         ...zoneWindow,
@@ -1581,6 +1978,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return;
         }
         if (view.kind === "session") {
+          // Un APERÇU de geste ouvert depuis la vue (VIEW-15) prend les touches :
+          // c'est le même mode `confirm` que la liste, rendu par-dessus la
+          // transcription, donc les mêmes touches l'exécutent et l'abandonnent.
+          if (mode.kind !== "browse" && handleMode(data)) return;
           handleViewKey(data);
           return;
         }
@@ -1590,6 +1991,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       refresh: redraw,
       dispose(): void {
         stop();
+        // Le panneau se ferme : l'assemblage de la vue ouverte est LIBÉRÉ (VIEW-7),
+        // comme à Échap — c'est le dernier endroit où ses composants sont atteignables.
+        if (view.kind === "session") disposeAssembly(view.transcript.assembly);
       },
     };
   };

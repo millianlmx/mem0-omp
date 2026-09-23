@@ -28,6 +28,19 @@ export type ArmedRunState = {
   askTool: boolean;
   /** L'armement a-t-il eu lieu ? (l'état `states` ci-dessus n'est pas partagé) */
   armed: boolean;
+  /**
+   * La session du PREMIER contexte armé — celle que l'entrée du run publie.
+   * Retenue ici et non dans `publish.ts` : un sous-agent (`task`) rebinde la
+   * fabrique dans le MÊME process, et publierait sa propre session dans l'entrée
+   * du worktree si la publication ne s'appuyait que sur le contexte courant.
+   */
+  sessionFile: string | null;
+  /**
+   * Le battement de ce process : un seul, remplacé au réarmement et jamais
+   * cloné — deux instances de l'extension (plugin installé + `-e`) partageraient
+   * sinon deux minuteries, dont l'une battrait avec un contexte périmé.
+   */
+  heartbeatStop: (() => void) | null;
 };
 
 const STATE_KEY = Symbol.for("omp-mem0-req.runState");
@@ -43,6 +56,8 @@ export const runState: ArmedRunState = (() => {
     pumpStop: null,
     askTool: false,
     armed: false,
+    sessionFile: null,
+    heartbeatStop: null,
   };
   host[STATE_KEY] = created;
   return created;

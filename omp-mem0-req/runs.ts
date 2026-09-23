@@ -1,5 +1,6 @@
 // Runs : argv d'un maillon, prompts, livraison, devenir du worktree.
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { contractHasSection } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
@@ -8,7 +9,7 @@ import type { GitRunner } from "./git.ts";
 import { lotRepoKey, lotStateTerminal, readLot, writeLot } from "./lot.ts";
 import type { Lot } from "./lot.ts";
 import type { SessionProbe } from "./panelSession.ts";
-import { reportStateWriteFailure } from "./publish.ts";
+import { isSubagentSession, reportStateWriteFailure } from "./publish.ts";
 import { buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { PIPELINE_PHASES, pidAlive, readStore } from "./store.ts";
 
@@ -40,6 +41,14 @@ export type LotRunSpec = {
    * le run part NON armé — exactement comme un run d'une version antérieure.
    */
   inbox?: string | null;
+  /**
+   * La BORNE DURE du run (epoch ms) — `--pipeline-deadline`. Ce n'est pas le délai
+   * de travail : le pilote le suspend tant qu'une question `ask` est en vol (le
+   * temps de l'utilisateur n'est pas du travail). C'est le filet de sécurité d'un
+   * pilote vivant mais bloqué — posé à `lancement + délai de travail + marge`.
+   * Absente, l'enfant n'a aucune échéance propre (runs d'une version antérieure).
+   */
+  deadline?: number;
 };
 
 
@@ -66,6 +75,9 @@ export function buildLotRunArgv(spec: LotRunSpec): string[] {
     spec.stateDir,
   ];
   if (spec.inbox) argv.push("--panel-inbox", spec.inbox);
+  if (typeof spec.deadline === "number" && Number.isFinite(spec.deadline)) {
+    argv.push("--pipeline-deadline", String(Math.trunc(spec.deadline)));
+  }
   if (spec.sessionFile) argv.push("--resume", spec.sessionFile);
   if (spec.selfPath) argv.push("-e", spec.selfPath);
   argv.push("--", spec.prompt);
@@ -73,18 +85,42 @@ export function buildLotRunArgv(spec: LotRunSpec): string[] {
 }
 
 
+/** Le répertoire d'installation des plugins OMP : `~/.omp/plugins`. */
+export function pluginsInstallRoot(home: string = os.homedir()): string {
+  return path.join(home, ".omp", "plugins");
+}
+
+
 /**
- * Le chemin de CETTE extension, pour qu'un run enfant charge exactement le code
- * qui vient de le lancer (en dev : le worktree de la feature). `null` si l'URL du
- * module n'est pas un fichier : l'enfant se rabat alors sur la découverte des
- * plugins — les chemins d'extension sont dédupliqués par chemin résolu, donc
- * passer les deux est sûr (`## Documentation` §2).
+ * Le chemin de CETTE extension, pour qu'un run enfant charge le MÊME code que son
+ * parent. C'est le cas en DÉVELOPPEMENT, où l'extension vit dans le worktree de la
+ * feature et n'est pas un plugin installé.
+ *
+ * Un plugin INSTALLÉ rend `null` : l'hôte le découvre déjà sous
+ * `~/.omp/plugins/node_modules/<plugin>/extension.ts` (un lien vers le cache),
+ * alors que Bun résout le lien de `import.meta.url` en
+ * `~/.omp/plugins/cache/plugins/.../extension.ts`. OMP déduplique les extensions
+ * par `path.resolve` — sans realpath — et importe chaque chemin avec un `?mtime=` :
+ * passer les deux charge l'extension DEUX FOIS, avec deux jeux de singletons —
+ * deux pompes sur la même boîte (une réponse `ask` consommée par la mauvaise est
+ * perdue) et deux entrées d'historique par run. `null` ne perd rien : la
+ * découverte suffit. Le chemin RÉEL décide (les liens sont résolus des deux côtés).
+ *
+ * Limite connue : `-e` ne fige PAS le code du parent. Le chemin du cache est
+ * réécrit par une mise à jour du plugin, sous les pieds d'un pilote déjà lancé :
+ * un run lancé avant la mise à jour charge alors la version nouvellement
+ * installée, et un `-e` qui visait un cache supprimé se rabat sur la découverte.
  */
-export function selfExtensionArg(metaUrl: string | undefined): string | null {
+export function selfExtensionArg(
+  metaUrl: string | undefined,
+  pluginsRoot: string = pluginsInstallRoot(),
+): string | null {
   if (typeof metaUrl !== "string" || !metaUrl.startsWith("file://")) return null;
   try {
     const file = decodeURIComponent(new URL(metaUrl).pathname);
-    return path.isAbsolute(file) ? file : null;
+    if (!path.isAbsolute(file)) return null;
+    if (isUnder(realpathOr(file), realpathOr(pluginsRoot))) return null;
+    return file;
   } catch {
     return null;
   }
@@ -450,20 +486,53 @@ export function workerModeOf(pi: FlagReader): WorkerMode | null {
 }
 
 
-/** La session du dernier run d'un cwd : celle qu'on reprend pour répondre (AC-12). */
-export function latestSessionFile(stateDir: string, cwd: string, sinceMs: number): string | null {
+/**
+ * La BORNE DURE d'un run armé (`--pipeline-deadline`, epoch ms), ou `null` quand
+ * le drapeau est absent ou illisible. C'est le filet de sécurité d'un run dont le
+ * pilote vit mais ne répond plus : le délai de travail, lui, appartient au pilote,
+ * qui le suspend tant qu'une question `ask` est en vol.
+ */
+export function pipelineDeadlineOf(pi: FlagReader): number | null {
+  if (typeof pi.getFlag !== "function") return null;
+  const raw = pi.getFlag("pipeline-deadline");
+  if (typeof raw !== "string" || raw.trim() === "") return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : null;
+}
+
+
+/**
+ * La session du dernier run d'un cwd : celle qu'on reprend pour répondre (AC-12).
+ * Trois exclusions, parce que la session retenue est celle que `--resume` va
+ * CONTINUER — se tromper, c'est faire écrire deux process dans le même `.jsonl` :
+ * une entrée plus ancienne que `sinceMs` (un run d'avant), une session dont l'id
+ * est dans `opts.excludeIds` (la session interactive de l'utilisateur, que le
+ * pilote connaît), et la session d'un SOUS-AGENT (`task`), dont l'en-tête porte
+ * `parentSession` — elle vit dans le worktree sans être celle du run.
+ */
+export function latestSessionFile(
+  stateDir: string,
+  cwd: string,
+  sinceMs: number,
+  opts: { excludeIds?: string[] } = {},
+): string | null {
   const real = realpathOr(cwd);
   const snapshot = readStore(stateDir);
+  const excluded = new Set(opts.excludeIds ?? []);
   const candidates: Array<{ file: string; at: number }> = [];
-  for (const entry of snapshot.running) {
-    if (entry.sessionFile && realpathOr(entry.cwd) === real && entry.updatedAt >= sinceMs) {
-      candidates.push({ file: entry.sessionFile, at: entry.updatedAt });
-    }
-  }
-  for (const entry of snapshot.history) {
-    if (entry.sessionFile && realpathOr(entry.cwd) === real && entry.endedAt >= sinceMs) {
-      candidates.push({ file: entry.sessionFile, at: entry.endedAt });
-    }
+  const seen: Array<{ file: string | null; id: string | null; at: number }> = [
+    ...snapshot.running
+      .filter((entry) => realpathOr(entry.cwd) === real)
+      .map((entry) => ({ file: entry.sessionFile, id: entry.sessionId, at: entry.updatedAt })),
+    ...snapshot.history
+      .filter((entry) => realpathOr(entry.cwd) === real)
+      .map((entry) => ({ file: entry.sessionFile, id: entry.sessionId, at: entry.endedAt })),
+  ];
+  for (const candidate of seen) {
+    if (!candidate.file || candidate.at < sinceMs) continue;
+    if (candidate.id !== null && excluded.has(candidate.id)) continue;
+    if (isSubagentSession(candidate.file)) continue;
+    candidates.push({ file: candidate.file, at: candidate.at });
   }
   candidates.sort((a, b) => b.at - a.at);
   return candidates[0]?.file ?? null;
@@ -503,6 +572,14 @@ export function lotDriverFor(stateDir: string, repoRoot: string, cwd: string): L
  * Rend `true` quand la main a été passée — la session de l'utilisateur n'annonce
  * alors plus rien.
  *
+ * La bascule n'a lieu que pour la COLLECTE de la feature, et une seule fois :
+ * la feature doit être au maillon `req` (sinon un maillon lancé à la main —
+ * `/specs` tapé par l'utilisateur pendant la collecte — ferait basculer la feature
+ * et le pilote relancerait ce même maillon), et `closing` doit valoir `true`
+ * quand l'appelant le fournit (l'utilisateur a dit « fin » : c'est ce qui clôt la
+ * collecte, cf. `saysFin`). Hors de ces cas, RIEN n'est écrit : la chaîne reste
+ * manuelle, et la feature garde son maillon.
+ *
  * Un lot conduit par un process VIVANT étranger n'est jamais réécrit ici (S-1,
  * invariant 2) : la bascule n'a pas lieu et la chaîne reste manuelle. Une écriture
  * impossible est signalée par la notice durable de `reportStateWriteFailure` — la
@@ -515,9 +592,12 @@ export function handOverCollecte(input: {
   cwd: string;
   contract: string;
   sessionFile: string | null;
+  /** L'utilisateur a-t-il dit « fin » pour cette collecte ? Absent = non vérifié. */
+  closing?: boolean;
   now?: number;
   notify?: (text: string) => void;
 }): boolean {
+  if (input.closing === false) return false;
   if (!contractHasSection(input.contract, "Besoins")) return false;
   const lot = readLot(input.stateDir, lotRepoKey(input.repoRoot));
   if (!lot) return false;

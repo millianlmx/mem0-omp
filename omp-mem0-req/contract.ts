@@ -15,7 +15,14 @@
 //   ## Documentation          doc externe rassemblée par /specs
 //   ## Spécifications         S-<n> (AC-<m>) : comportement observable
 //   ## Lots                   BR-<n> — type: ui | archi | aucun — sert AC-<m>
-//   ## Revue                  verdict de /review ; BLOQUANTS relus par /impl --fix
+//   ## Revue                  verdict de /review — écrit par /review SEUL
+//   ## Corrections            levées de /impl --fix (jamais dans `## Revue`)
+//
+// `## Revue` est le SEUL support du verdict : /impl --fix y lit les bloquants
+// (entrée), mais n'y écrit jamais — ses levées vont sous `## Corrections`. Sans
+// cette séparation, un /review qui rend la main sans écrire laissait juger la
+// feature sur le texte laissé par /impl --fix : le pilote lit le verdict APRÈS le
+// run de revue, et une section inchangée vaut « illisible ».
 export const CONTRACT_PATH = ".omp/pipeline/contract.md";
 
 
@@ -58,10 +65,22 @@ export function contractHasSection(contract: string, title: string): boolean {
 }
 
 
-/** Corps d'une section `## <titre>` : de son titre à la prochaine section `## `. */
+/**
+ * Corps d'une section `## <titre>` : de son titre à la prochaine section `## `.
+ * La DERNIÈRE occurrence fait foi : un maillon qui AJOUTE une section au lieu de
+ * remplacer l'ancienne (cas mesuré d'une `## Revue`) doit être lu — garder la
+ * première ferait juger la feature sur un verdict périmé, avec des bloquants
+ * fantômes jusqu'au plafond.
+ */
 export function contractSection(contract: string, title: string): string | null {
   const lines = contract.split("\n");
-  const head = lines.findIndex((line) => line.trim() === `## ${title}`);
+  let head = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if ((lines[i] as string).trim() === `## ${title}`) {
+      head = i;
+      break;
+    }
+  }
   if (head === -1) return null;
   const body: string[] = [];
   for (const line of lines.slice(head + 1)) {
@@ -100,9 +119,50 @@ export const VACUOUS: Record<string, true> = {
 };
 
 
+// Un jeton vacuous SUIVI de la chose absente, et rien d'autre. C'est ce qui
+// sépare « Aucun bloquant. » (propre) de « Aucune spec n'est couverte »
+// (bloquant) : la première s'arrête là, la seconde continue sur une phrase. Le
+// quantifié est donc borné à un vocabulaire de constat, jamais à une proposition.
+const VACUOUS_HEAD =
+  /^(aucun|aucune|néant|none|0|n\/a)\b\s*(\([^)]*\))?\s*(bloquants?|points?(\s+bloquants?)?|probl[èe]mes?|r[ée]serves?|remarques?|[ée]carts?)?\s*(identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?)?\s*[.!:;,—–-]*\s*$/i;
+
+
+/**
+ * Une ligne de champ qui ne consigne RIEN. Trois formes : vide, jeton seul
+ * (`aucun`, `néant`, `0`, `(aucun)`…), ou jeton suivi d'un constat (`Aucun
+ * bloquant.`, `aucun (tous levés)`, `0 (les 2 bloquants précédents sont levés)`).
+ * Une ligne BARRÉE (`~~…~~`) compte comme levée : c'est ainsi qu'une relecture
+ * annule un bloquant sans réécrire la phrase.
+ */
 export function isVacuous(line: string): boolean {
   const n = normalizeLine(line).replace(/[.!]$/, "").trim();
-  return n === "" || VACUOUS[n.toLowerCase()] === true;
+  if (n === "" || VACUOUS[n.toLowerCase()] === true) return true;
+  // Une ligne BARRÉE est une ligne LEVÉE, numérotée comprise : c'est ainsi qu'une
+  // relecture annule un bloquant sans réécrire la phrase. Une annotation APRÈS le
+  // barré (`~~…~~ ✅ levé`) laisse la ligne actionnable, donc bloquante : le
+  // numéro reste la marque d'un point à traiter.
+  if (/^(?:\d+[.)]\s+)?~~.*~~$/.test(n)) return true;
+  return VACUOUS_HEAD.test(n);
+}
+
+
+/**
+ * Le corps du champ `BLOQUANTS` de la DERNIÈRE `## Revue`, ou `null` si le champ
+ * est absent. Le corps s'arrête au libellé suivant (une RECOMMANDATION n'est pas
+ * un bloquant) et au titre de section suivant.
+ */
+function blockersField(section: string): string[] | null {
+  const lines = section.split("\n");
+  const at = lines.findIndex((line) => /^BLOQUANTS\s*(?::|：|$)/i.test(normalizeLine(line)));
+  if (at === -1) return null;
+  const head = normalizeLine(lines[at] as string);
+  const sep = /^BLOQUANTS\s*(?::|：)?/i.exec(head) as RegExpExecArray;
+  const body = [head.slice(sep[0].length)];
+  for (const line of lines.slice(at + 1)) {
+    if (line.trimStart().startsWith("## ") || isReviewLabel(line)) break;
+    body.push(line);
+  }
+  return body;
 }
 
 
@@ -115,17 +175,28 @@ export function isVacuous(line: string): boolean {
 export function reviewVerdict(contract: string): "blockers" | "clean" | "unreadable" {
   const section = contractSection(contract, "Revue");
   if (section === null) return "unreadable";
-  const lines = section.split("\n");
-  const at = lines.findIndex((line) => /^BLOQUANTS\s*(?::|：|$)/i.test(normalizeLine(line)));
-  if (at === -1) return "unreadable";
-  const head = normalizeLine(lines[at]!);
-  const sep = /^BLOQUANTS\s*(?::|：)?/i.exec(head)!;
-  const body = [head.slice(sep[0].length)];
-  for (const line of lines.slice(at + 1)) {
-    if (line.trimStart().startsWith("## ") || isReviewLabel(line)) break;
-    body.push(line);
-  }
+  const body = blockersField(section);
+  if (body === null) return "unreadable";
   return body.every(isVacuous) ? "clean" : "blockers";
+}
+
+
+/**
+ * Le nombre de bloquants NUMÉROTÉS du champ `BLOQUANTS` de la dernière `## Revue`.
+ * La directive de /review impose un bloquant par ligne numérotée (`1. …`) : c'est
+ * ce que ce compte lit — jamais une phrase, qui n'est pas un bloquant actionnable.
+ * Publié pour le panneau, il n'entre dans aucune décision du pilote.
+ */
+export function reviewBlockers(contract: string): number {
+  const section = contractSection(contract, "Revue");
+  if (section === null) return 0;
+  const body = blockersField(section);
+  if (body === null) return 0;
+  let count = 0;
+  for (const line of body) {
+    if (/^\d+[.)]\s+\S/.test(normalizeLine(line).trim())) count += 1;
+  }
+  return count;
 }
 
 

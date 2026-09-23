@@ -3,11 +3,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, toSlug } from "./git.ts";
-import { lotFeature, lotPathFor, lotRepoKey, lotStateLabel, lotStateTerminal, lotTotals, lotWaitLabel, readLot, runnable } from "./lot.ts";
+import { lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import type { PanelTui } from "./panelHost.ts";
-import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, PANEL_WRAP_MAX_LINES, ROW_PADDING_X, displayWidth, sectionSelection, serviceRow, textWindow, windowStart, wrapVisible } from "./panelWidth.ts";
+import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, PANEL_WRAP_MAX_LINES, ROW_PADDING_X, displayWidth, sectionSelection, serviceRow, textWindow, wrapVisible } from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
 import type { WorktreeFate } from "./runs.ts";
 import { asStringOrNull, elapsedLabel, pidAlive, reconcileStore } from "./store.ts";
@@ -95,6 +95,40 @@ export type PanelRow = {
 export type PanelGlyphs = { cursor: string };
 
 
+/**
+ * L'état du PILOTE d'un lot (PANEL-4), tel que le panneau le calcule : `self` —
+ * c'est cette session qui conduit ; `foreign` — un pid VIVANT et différent du
+ * nôtre conduit (le panneau consulte) ; `dead` — personne ne conduit, le lot est
+ * à l'arrêt et se reprend.
+ */
+export type PanelDriver = { kind: "self" } | { kind: "foreign"; pid: number } | { kind: "dead" };
+
+
+/**
+ * L'état du pilote d'un lot : notre pid, sinon la vivacité du propriétaire
+ * (`lotOwnerAlive`, battement compris — un pid réutilisé après un redémarrage
+ * n'est pas un pilote). Pur : il ne lit rien, il ne reprend rien.
+ */
+export function panelDriver(lot: Lot | null, now: number): PanelDriver | null {
+  if (lot === null) return null;
+  if (lot.owner.pid === process.pid) return { kind: "self" };
+  return lotOwnerAlive(lot.owner, now) ? { kind: "foreign", pid: lot.owner.pid } : { kind: "dead" };
+}
+
+
+/** Le mot du pilote dans l'en-tête du lot (PANEL-4) : jamais un silence. */
+export function driverLabel(driver: PanelDriver): string {
+  switch (driver.kind) {
+    case "self":
+      return "pilote : cette session";
+    case "foreign":
+      return `piloté par pid ${driver.pid} — consultation`;
+    case "dead":
+      return "pilote absent — l reprend";
+  }
+}
+
+
 export type PanelModel = {
   /**
    * Les entrées en cours NON appariées à une feature du lot : les runs d'autres
@@ -117,6 +151,13 @@ export type PanelModel = {
   lot?: Lot | null;
   /** Le mode de saisie courant (`browse` : aucune saisie en cours). */
   mode?: LotPanelMode;
+  /**
+   * QUI PILOTE le lot (PANEL-4) : `null` quand il n'y a pas de lot. Sans cet
+   * état, un lot à l'arrêt (pilote mort) se lisait comme un lot qui travaille —
+   * horloge qui tourne comprise —, et le panneau d'une autre session annonçait
+   * des gestes que le pilote refusait ensuite.
+   */
+  driver?: PanelDriver | null;
   /**
    * Index sur la liste concaténée
    * `[...features du lot, ...running NON appariés, ...history]`, borné, `-1` si vide.
@@ -195,6 +236,34 @@ export function gestureFeature(lot: Lot | null, slug: string): LotFeature | unde
 
 
 /**
+ * Le motif pour lequel l'aperçu d'un geste n'est PLUS valable (PANEL-9), ou `null`.
+ * Entre l'ouverture de l'aperçu et l'`Entrée` qui le confirme, la liste se relit
+ * (une fois par seconde) et le pilote agit : la feature peut avoir changé d'état ou
+ * quitté le lot. Un aperçu qui décrit un état périmé fait croire que le geste fera
+ * ce qu'il annonce — « valider les specs » d'une feature déjà annulée, par exemple.
+ * Pur : il décide, il ne referme rien lui-même.
+ */
+export function staleGestureNotice(gesture: PanelGesture, lot: Lot | null): string | null {
+  if (gesture.kind === "add") return null;
+  if (gesture.kind === "launch") return lot === null ? "lot indisponible — aperçu fermé" : null;
+  const feature = gestureFeature(lot, gesture.slug);
+  if (!feature) return `${gesture.slug} a quitté le lot — aperçu fermé`;
+  const holds =
+    gesture.kind === "validate"
+      ? feature.state === "waiting" && feature.waitKind === "specs"
+      : gesture.kind === "accept"
+        ? feature.state === "waiting" && feature.waitKind === "review"
+        : gesture.kind === "relaunch"
+          ? feature.state === "blocked" || feature.state === "failed"
+          : gesture.kind === "remove"
+            ? feature.state === "pending"
+            : feature.state !== "done" && feature.state !== "cancelled";
+  if (holds) return null;
+  return `${gesture.slug} a changé d'état (${lotStateLabel(feature.state)}) — aperçu fermé`;
+}
+
+
+/**
  * L'aperçu d'un geste de la liste (S-8) : le rang de tête (ce qui va se passer) et
  * son aide (les touches). Pur : il ne lit rien et n'écrit rien — c'est ce que le
  * panneau rend AVANT d'agir, et rien n'a encore changé quand il s'affiche.
@@ -267,7 +336,13 @@ export function replyPreview(input: {
 }): { head: string; hint: string } {
   const body = `« ${input.text} »`;
   if (input.mode === "steer") {
-    return { head: "Envoyer au maillon — injecté dans son tour en cours", hint: "Entrée envoyer · Échap revenir" };
+    // Le texte envoyé se LIT dans l'aperçu (VIEW-3) : on confirme ce qui part —
+    // « injecté dans son tour en cours » sans le message laissait confirmer à
+    // l'aveugle, et un reste de boîte partait au mauvais rang sans se voir.
+    return {
+      head: `Envoyer au maillon — injecté dans son tour en cours : ${body}`,
+      hint: "Entrée envoyer · Échap revenir",
+    };
   }
   if (input.mode === "ask") {
     return { head: `Répondre au maillon : ${input.text}`, hint: "Entrée envoyer · Échap revenir" };
@@ -387,6 +462,8 @@ export function readPanelModel(input: {
   selection?: number;
   notice?: string | null;
   mode?: LotPanelMode;
+  /** L'instant de la lecture : il départage le pilote (battement périmé). */
+  now?: number;
 }): PanelModel {
   const snapshot = reconcileStore(input.stateDir);
   const lotPath = input.repoRoot ? lotPathFor(input.stateDir, lotRepoKey(input.repoRoot)) : null;
@@ -424,6 +501,9 @@ export function readPanelModel(input: {
     live,
     history: snapshot.history,
     lot,
+    // Le pilote se lit ICI, à chaque passe : la reprise d'un lot orphelin
+    // (`adopt`) appartient au panneau monté, pas au modèle (PANEL-4).
+    driver: panelDriver(lot, input.now ?? Date.now()),
     mode: input.mode ?? { kind: "browse" },
     selection: clampSelection(input.selection ?? 0, count),
     notice: input.notice ?? null,
@@ -458,6 +538,44 @@ export function panelRowAt(model: PanelModel, selection: number): PanelRowRef | 
   const index = selection - features.length;
   if (index < model.running.length) return model.running[index];
   return model.history[index - model.running.length];
+}
+
+
+/**
+ * La CLÉ STABLE d'un rang (PANEL-3) : son identité, pas sa position. La liste est
+ * relue chaque seconde et son ordre bouge tout seul — une entrée d'historique
+ * arrive à chaque fin de maillon (la plus récente en tête), un run qui change de
+ * maillon repasse en fin de liste. Une sélection mémorisée par INDEX glissait donc
+ * sur la ligne voisine, et `d` supprimait une entrée que l'utilisateur n'avait
+ * jamais visée.
+ */
+export function panelRowKey(row: PanelRowRef): string {
+  if (isLotFeature(row)) return `feature:${row.slug}`;
+  return "finalState" in row ? `hist:${row.id}` : `run:${row.id}`;
+}
+
+
+/** La clé du rang SÉLECTIONNÉ, ou `null` (sélection vide). C'est elle qu'on mémorise. */
+export function panelSelectionKey(model: PanelModel): string | null {
+  const row = panelRowAt(model, model.selection);
+  return row ? panelRowKey(row) : null;
+}
+
+
+/**
+ * L'index du rang qui porte cette CLÉ, dans le modèle FRAIS : `fallback` (borné)
+ * quand la ligne a disparu — on retombe alors sur la voisine, jamais sur rien.
+ */
+export function panelIndexForKey(model: PanelModel, key: string | null | undefined, fallback = 0): number {
+  const count = panelRowCount(model);
+  if (count <= 0) return -1;
+  if (key !== null && key !== undefined) {
+    for (let i = 0; i < count; i += 1) {
+      const row = panelRowAt(model, i);
+      if (row && panelRowKey(row) === key) return i;
+    }
+  }
+  return clampSelection(fallback, count);
 }
 
 
@@ -525,6 +643,17 @@ export function rowPhase(model: PanelModel, row: PanelRowRef): PipelinePhase {
 
 
 /**
+ * L'état d'un run VIVANT dans les mots du panneau (PANEL-6) : une question `ask`
+ * en vol est une ATTENTE DE RÉPONSE, pas l'inactivité d'un agent — « attend » est
+ * le mot des runs qui n'attendent rien, et c'est celui qui cachait la question.
+ */
+export function liveStateLabel(live: Pick<RunningEntry, "state" | "pendingAsk">): string {
+  if (live.pendingAsk) return "attend réponse";
+  return live.state === "waiting" ? "attend" : "tourne";
+}
+
+
+/**
  * L'état d'un rang, dans les mots du panneau (S-1, S-9) : jamais un état inventé.
  * L'ordre est celui de S-9 — le JALON de la feature prime sur l'état de son run
  * apparié : une feature `waiting` dit ce qu'elle attend, que son run ait publié son
@@ -536,11 +665,11 @@ export function rowStateLabel(model: PanelModel, row: PanelRowRef): string {
     const wait = lotWaitLabel(row.waitKind);
     if (wait !== null) return wait;
     const live = model.live[row.slug];
-    if (live) return live.state === "waiting" ? "attend" : "tourne";
+    if (live) return liveStateLabel(live);
     return featureStateLabel(model.lot ?? null, row);
   }
   if ("finalState" in row) return row.finalState === "done" ? "terminé" : "échoué";
-  return row.state === "waiting" ? "attend" : "tourne";
+  return liveStateLabel(row);
 }
 
 
@@ -561,6 +690,18 @@ export function pendingDeps(lot: Lot, feature: LotFeature): string[] {
 
 
 /**
+ * Une feature que `l lancer` démarre (PANEL-8) : une feature `pending` que ses
+ * dépendances laissent partir, ou une feature `running` SANS run vivant — la passe
+ * du pilote relance celle-ci comme les autres, et l'annoncer comme « rien à
+ * lancer » était faux.
+ */
+export function isLaunchable(lot: Lot, feature: LotFeature, live?: RunningEntry | null): boolean {
+  if (feature.state === "pending") return runnable(lot, feature);
+  return feature.state === "running" && !live;
+}
+
+
+/**
  * `<slug> ← deps` : la ligne d'une feature dit de quoi elle dépend — et, quand des
  * messages attendent leur prochain run, combien (S-5/S-7) : la file se voit dans
  * la LISTE, sans ouvrir la vue.
@@ -573,10 +714,47 @@ export function lotFeatureLabel(feature: LotFeature): string {
 }
 
 
+/**
+ * Le TOUR de la boucle `/review` ⇄ `/impl --fix` (PANEL-5), quand il y a quelque
+ * chose à lire : un tour de CORRECTION en cours dit lequel et sur quel plafond
+ * (`fixes` passes consommées), une revue en cours dit son tour (`reviewRuns`).
+ * Pur : tout vient du lot, rien d'une horloge.
+ */
+export function reviewLoopLabel(lot: Lot, feature: LotFeature): string | null {
+  if (feature.state !== "running" && feature.state !== "waiting") return null;
+  if (feature.phase === "impl" && feature.fixes > 0) return `--fix · tour ${feature.fixes + 1}/${lot.reviewCap}`;
+  if (feature.phase === "review") return `tour ${feature.reviewRuns + 1}/${lot.reviewCap}`;
+  return null;
+}
+
+
+/**
+ * Le rang de la DERNIÈRE REVUE (PANEL-5) : le verdict BLOQUANT et son compte, tels
+ * que le pilote les a posés. C'est ce qui rend la boucle lisible AVANT son
+ * blocage — sans lui, chaque tour de correction se lisait comme un `/impl` neuf.
+ */
+export function reviewVerdictRow(feature: LotFeature): string | null {
+  if (feature.lastVerdict !== "blockers") return null;
+  const count = feature.lastBlockers ?? 0;
+  return `dernière revue : ${count} bloquant${count > 1 ? "s" : ""}`;
+}
+
+
+/** Le rang de l'URL de PR d'une feature livrée (PANEL-7) : le README la promet. */
+export function prRow(feature: LotFeature): string | null {
+  if (feature.state !== "done") return null;
+  const url = asStringOrNull(feature.prUrl);
+  return url === null ? null : `PR : ${url}`;
+}
+
+
 /** La colonne de droite : maillon, état (le jalon nommé quand il y en a un), temps. */
 export function lotFeatureRight(lot: Lot, feature: LotFeature, now: number): string {
   const state = featureStateLabel(lot, feature);
-  return `/${feature.phase} · ${state} · ${elapsedLabel((feature.endedAt ?? now) - feature.sinceAt)}`;
+  const loop = reviewLoopLabel(lot, feature);
+  const parts = [`/${feature.phase}`, state, elapsedLabel((feature.endedAt ?? now) - feature.sinceAt)];
+  if (loop !== null) parts.push(loop);
+  return parts.join(" · ");
 }
 
 
@@ -584,8 +762,11 @@ export function lotFeatureRight(lot: Lot, feature: LotFeature, now: number): str
  * La colonne de droite d'une ENTRÉE en cours : même format que celle d'un rang de
  * lot, pour qu'une feature appariée à son run ne change pas de forme (S-1).
  */
-export function entryRight(entry: { phase: PipelinePhase; state: PipelineRunState; phaseStartedAt: number }, now: number): string {
-  return `/${entry.phase} · ${entry.state === "waiting" ? "attend" : "tourne"} · ${elapsedLabel(now - entry.phaseStartedAt)}`;
+export function entryRight(
+  entry: { phase: PipelinePhase; state: PipelineRunState; phaseStartedAt: number; pendingAsk?: RunningEntry["pendingAsk"] },
+  now: number,
+): string {
+  return `/${entry.phase} · ${liveStateLabel(entry)} · ${elapsedLabel(now - entry.phaseStartedAt)}`;
 }
 
 
@@ -594,11 +775,14 @@ export function entryRight(entry: { phase: PipelinePhase; state: PipelineRunStat
  * feature prime sur l'état du run (même ordre que `rowStateLabel`), et le temps
  * part de l'instant le PLUS ANCIEN des deux — publier une entrée ne fait jamais
  * reculer l'horloge, le rang garde donc le même motif d'attente et un temps qui ne
- * recule pas.
+ * recule pas. Le tour de la boucle s'ajoute à la fin quand il y en a un (PANEL-5).
  */
-export function pairedRight(feature: LotFeature, live: RunningEntry, now: number): string {
-  const state = lotWaitLabel(feature.waitKind) ?? (live.state === "waiting" ? "attend" : "tourne");
-  return `/${live.phase} · ${state} · ${elapsedLabel(now - Math.min(feature.sinceAt, live.phaseStartedAt))}`;
+export function pairedRight(lot: Lot, feature: LotFeature, live: RunningEntry, now: number): string {
+  const state = lotWaitLabel(feature.waitKind) ?? liveStateLabel(live);
+  const loop = reviewLoopLabel(lot, feature);
+  const parts = [`/${live.phase}`, state, elapsedLabel(now - Math.min(feature.sinceAt, live.phaseStartedAt))];
+  if (loop !== null) parts.push(loop);
+  return parts.join(" · ");
 }
 
 
@@ -624,19 +808,24 @@ export function lotStateTone(state: LotFeatureState): PanelTone {
  * RÉPARTITION — les cinq comptes d'états, toujours présents, dans l'ordre du récap
  * de fin de lot (`lotTotals`) et avec la convention de pluriel du dépôt
  * (`1 terminée`, `2 terminées`). Le titre dit donc la répartition, jamais un
- * sous-ensemble.
+ * sous-ensemble. Il dit aussi QUI PILOTE (PANEL-4) : un lot à l'arrêt et un lot
+ * conduit ne se lisent pas de la même façon.
  */
-export function lotSectionTitle(lot: Lot): string {
+export function lotSectionTitle(lot: Lot, driver?: PanelDriver | null): string {
   const totals = lotTotals(lot);
   const counted = (n: number, label: string) => `${n} ${label}${n > 1 ? "s" : ""}`;
-  return [
-    `Lot · ${path.basename(lot.repoRoot)} · ${lot.features.length} features`,
+  const parts = [`Lot · ${path.basename(lot.repoRoot)} · ${lot.features.length} features`];
+  // Le pilote vient APRÈS la taille du lot : la RÉPARTITION reste la fin du titre
+  // (elle est le contrat de `lot-ask/AC-22`), et « qui conduit » se lit avant elle.
+  if (driver) parts.push(driverLabel(driver));
+  parts.push(
     counted(totals.done, "terminée"),
     counted(totals.blocked, "bloquée"),
     counted(totals.failed, "échouée"),
     counted(totals.cancelled, "annulée"),
     `${totals.live} en cours`,
-  ].join(" · ");
+  );
+  return parts.join(" · ");
 }
 
 
@@ -688,22 +877,33 @@ export function lotModeRows(mode: LotPanelMode, lot: Lot | null, innerW: number,
 }
 
 
-/** Les touches qui s'appliquent à la ligne sélectionnée, dans l'ordre du pied. */
-export function lotFooterActions(features: LotFeature[], selection: number): string {
+/**
+ * Les touches qui s'appliquent à la ligne sélectionnée, dans l'ordre du pied. Ce
+ * que la ligne ACCEPTE comme écriture vient de la règle unique (`rowReply`, S-11) :
+ * une attente de réponse, une feature BLOQUÉE (sa réponse relance le maillon) et
+ * une question `ask` en vol se répondent ; un run vivant armé reçoit un texte, et
+ * sans boîte il le met en file. `live` est facultatif — sans lui, la règle est
+ * celle d'avant le canal (une file), et l'appel à deux arguments reste valide.
+ */
+export function lotFooterActions(
+  features: LotFeature[],
+  selection: number,
+  live?: Record<string, RunningEntry | undefined> | null,
+): string {
   const feature = selection >= 0 && selection < features.length ? features[selection] : undefined;
   if (!feature) return "aucune action";
-  // La collecte d'une feature de lot se répond DANS la session, jamais au panneau
-  // (`rowReply` refuse cet état) : l'annoncer serait une touche morte — pour la
-  // réponse comme pour l'écriture, la zone de saisie de sa vue est fermée.
-  const collecte = feature.origin === "session" && feature.phase === "req";
   const actions: string[] = [];
-  if (!collecte && feature.state === "waiting" && feature.waitKind === "answer") actions.push("Entrée répondre");
-  if (!collecte && feature.state === "running") actions.push("Entrée écrire");
+  const reply = rowReply(feature, live?.[feature.slug] ?? null);
+  if (reply.kind === "reply" || reply.kind === "text" || reply.kind === "ask") actions.push("Entrée répondre");
+  else if (reply.kind === "steer" || reply.kind === "queue") actions.push("Entrée écrire");
   if (feature.state === "waiting" && feature.waitKind === "specs") actions.push("v valider");
   if (feature.state === "waiting" && feature.waitKind === "review") actions.push("y accepter");
   if (feature.state === "blocked" || feature.state === "failed") actions.push("R relancer");
   if (feature.state === "pending") actions.push("x retirer");
-  if (!lotStateTerminal(feature.state)) actions.push("c annuler");
+  // L'abandon reste ouvert sur tout état qui n'est pas DÉJÀ clos (PANEL-11) : au
+  // plafond de la boucle, `R` était la seule issue — et `R` remet les compteurs à
+  // zéro, donc rouvre une boucle entière au lieu d'abandonner la feature.
+  if (feature.state !== "done" && feature.state !== "cancelled") actions.push("c annuler");
   return actions.length > 0 ? actions.join(" · ") : "aucune action";
 }
 
@@ -713,22 +913,23 @@ export function lotFooterActions(features: LotFeature[], selection: number): str
  * qu'elle soit. Un rang de lot passe par `lotFooterActions` ; une entrée
  * d'historique est le seul rang que `d` supprime ; un rang « en cours » n'offre
  * aucune action de ligne — et une sélection vide n'annonce rien. La bascule `o`
- * s'ajoute à la fin dès que le rang a une session (S-3) : elle existe sur les
- * trois sections, elle doit donc s'annoncer partout où elle mène quelque part.
+ * s'ajoute à la fin dès que le rang a une session ET qu'aucun run VIVANT ne
+ * l'écrit déjà (PANEL-8 : la bascule refuserait, l'annoncer serait une touche
+ * morte).
  */
 export function panelFooterActions(model: PanelModel, runningCount: number): string {
   const features = model.lot?.features.length ?? 0;
   const selection = model.selection;
   const base =
     selection < features
-      ? lotFooterActions(model.lot?.features ?? [], selection)
+      ? lotFooterActions(model.lot?.features ?? [], selection, model.live)
       : selection < features + runningCount
         ? "aucune action"
         : selection < features + runningCount + model.history.length
           ? "d supprimer"
           : "aucune action";
   const row = panelRowAt(model, selection);
-  if (!row || rowSessionFile(model, row) === null) return base;
+  if (!row || rowSessionFile(model, row) === null || hasLiveWriter(model, row)) return base;
   // « aucune action » n'est pas une action : la ligne ne se contredit pas en
   // annonçant la bascule à côté d'un « aucune action ».
   return base === "aucune action" ? "o rejoindre" : `${base} · o rejoindre`;
@@ -769,6 +970,23 @@ export function noticeText(model: PanelModel): string | null {
 
 
 /**
+ * Une SECTION de la liste — le lot, les pipelines hors lot, l'historique : ses
+ * entrées (une par rang sélectionnable, chacune avec ses rangs de service), son
+ * indice de sélection (`-1` quand la sélection porte sur une autre section), la
+ * place en LIGNES qu'elle paie au budget (`room`) et la FENÊTRE qu'elle en tire
+ * (`plan`).
+ */
+type Section = { entries: PanelRow[][]; sel: number; name: string; room: number; plan: Plan };
+
+
+/** La fenêtre d'une section : les entrées montrées, et les marqueurs qui se paient. */
+type Plan = { start: number; end: number; above: boolean; below: boolean };
+
+
+const EMPTY_PLAN: Plan = { start: 0, end: 0, above: false, below: false };
+
+
+/**
  * Tous les rangs du panneau, DANS L'ORDRE : règle d'ouverture, titre, section du
  * lot, section « hors lot », séparateur, section « historique », notice (absente
  * si aucune), rangs de saisie, remplissage, pied (trois rangs), règle de
@@ -785,11 +1003,15 @@ export function noticeText(model: PanelModel): string | null {
  * Le panneau tient dans `budget` LIGNES — le pied compris, c'est lui que le TUI
  * couperait par le bas. Le budget compte des lignes de TERMINAL, donc des rangs
  * repliés : `linesOf` mesure ce que le `Text` occupera, et les rangs de cadre
- * (`frameRows`) sont comptés à leur hauteur repliée, pas pour un. Le minimum d'une
- * section non vide reste une entrée complète, jamais un demi-rang, et une section
- * tronquée le dit par son marqueur `… <n> de plus <section>`. Le surplus va par
- * priorité au lot (la salle de contrôle), puis aux pipelines en cours (vivants),
- * puis à l'historique, la plus récente d'abord.
+ * (`frameRows`) sont comptés à leur hauteur repliée, pas pour un. Une section
+ * tronquée le dit par son marqueur, placé DU CÔTÉ des lignes masquées
+ * (`… n au-dessus` / `… n de plus`) — jamais sous la liste quand elles sont
+ * au-dessus (PANEL-12). Le surplus va par priorité au lot (la salle de contrôle),
+ * puis aux pipelines en cours (vivants), puis à l'historique.
+ *
+ * La fenêtre de chaque section est construite AUTOUR de l'entrée sélectionnée
+ * (PANEL-1, PANEL-2) : la ligne sélectionnée est TOUJOURS peinte, et la hauteur
+ * rendue ne dépasse jamais le budget.
  */
 export function buildPanelRows(
   model: PanelModel,
@@ -813,11 +1035,17 @@ export function buildPanelRows(
   // d'état de feature n'y figure : « N en cours » se lisait comme le compte des
   // rangs « en cours ».
   const processes = runningCount + Object.keys(model.live).length;
+  // QUI PILOTE (PANEL-4) : l'en-tête du lot le dit, et un pilote ÉTRANGER retire
+  // les gestes du pied — le pilote les refuserait, les annoncer serait une touche
+  // morte.
+  const driver = model.driver ?? panelDriver(lot, opts.now);
+  const foreign = driver?.kind === "foreign";
+  const driveable = lot !== null && !foreign;
 
   // Les rangs de CADRE, construits d'abord : leur hauteur RÉELLE (repliée) est ce
   // que le budget doit réserver avant de servir la moindre entrée.
   const titleRows = serviceRow(`Pipelines · ${processes} processus`, "accent", innerW);
-  const lotHeaderRows = lot ? serviceRow(lotSectionTitle(lot), "accent", innerW) : [];
+  const lotHeaderRows = lot ? serviceRow(lotSectionTitle(lot, driver), "accent", innerW) : [];
   const outHeaderRows = serviceRow(`Hors lot · ${runningCount}`, "accent", innerW);
   const historyHeaderRows = serviceRow(`Historique · ${historyCount}`, "accent", innerW);
   // La notice est un rang de SERVICE : elle se replie, bornée à
@@ -827,11 +1055,13 @@ export function buildPanelRows(
   const noticeRows = notice ? serviceRow(notice, "warning", innerW, undefined, PANEL_NOTICE_MAX_LINES) : [];
   // Le pied a TOUJOURS trois rangs (S-7) : les touches du panneau, celles de la
   // LIGNE SÉLECTIONNÉE, et `Échap fermer`. `a` et `l` n'existent que si le panneau
-  // peut réellement conduire un lot (`canDrive` : le pilote est injecté) — sans
-  // lui, les deux touches refusent et ne s'annoncent donc pas.
-  const footTop = lot
-    ? "a ajouter · l lancer · Entrée session"
-    : `↑↓ naviguer · Entrée session${opts.canDrive === true ? " · a ajouter" : ""}`;
+  // peut réellement conduire le lot : un pilote injecté (`canDrive`), et personne
+  // d'autre à la barre (PANEL-4). `l` ne s'annonce pas non plus quand il n'y a
+  // rien à lancer (PANEL-8) — son aperçu le disait déjà.
+  const launchable = lot !== null && (lot.status === "draft" || lot.features.some((f) => isLaunchable(lot, f, model.live[f.slug])));
+  const footTop = driveable
+    ? `a ajouter · ${launchable ? "l lancer · " : ""}Entrée session`
+    : `↑↓ naviguer · Entrée session${opts.canDrive === true && lot === null ? " · a ajouter" : ""}`;
   const footRows = [
     ...serviceRow(footTop, "dim", innerW),
     ...serviceRow(panelFooterActions(model, runningCount), "dim", innerW),
@@ -870,7 +1100,7 @@ export function buildPanelRows(
         // Une feature appariée à son run prend son maillon, son état, son temps ET
         // son ton (S-1) : c'est le run qui travaille, c'est lui qui se lit.
         const live = model.live[feature.slug];
-        const right = live ? pairedRight(feature, live, opts.now) : lotFeatureRight(lot, feature, opts.now);
+        const right = live ? pairedRight(lot, feature, live, opts.now) : lotFeatureRight(lot, feature, opts.now);
         const tone: PanelTone = live
           ? live.state === "waiting"
             ? "warning"
@@ -883,12 +1113,19 @@ export function buildPanelRows(
           target: index,
           selected,
         }));
-        // La RAISON D'ARRÊT d'une feature bloquée ou échouée se lit dans la liste
-        // (S-9) : un second rang, même cible de clic et même surlignage que celui de
-        // la feature, replié en entier — « échoué » ne dit pas pourquoi.
+        // Ce que la ligne CACHE (PANEL-5, PANEL-7, S-9) s'ajoute APRÈS elle, dans la
+        // même entrée, avec la même cible de clic et le même surlignage : le verdict
+        // de la dernière revue, la raison d'arrêt d'une feature bloquée ou échouée,
+        // et l'URL de PR d'une feature livrée (le README la promet).
+        const verdict = reviewVerdictRow(feature);
+        if (verdict !== null) {
+          entry.push(...serviceRow(verdict, "error", innerW, { target: index, selected }));
+        }
         if ((feature.state === "blocked" || feature.state === "failed") && (feature.stopReason ?? "") !== "") {
           entry.push(...serviceRow(`arrêt : ${feature.stopReason}`, "error", innerW, { target: index, selected }));
         }
+        const pr = prRow(feature);
+        if (pr !== null) entry.push(...serviceRow(pr, "dim", innerW, { target: index, selected }));
         lotEntries.push(entry);
       });
     }
@@ -925,23 +1162,52 @@ export function buildPanelRows(
   const rowsOf = (entries: PanelRow[][]): number => entries.reduce((count, entry) => count + linesOf(entry), 0);
 
   /**
-   * Répartit une section dans `room` LIGNES : toutes ses entrées si elles tiennent,
-   * sinon autant d'entrées complètes que possible en gardant la dernière ligne pour
-   * le marqueur `… n de plus` — une section tronquée le dit toujours, elle ne
-   * disparaît jamais en silence (S-7), et elle ne montre jamais un demi-rang.
+   * La FENÊTRE d'une section dans `room` LIGNES (PANEL-1, PANEL-2) : elle naît de
+   * l'entrée SÉLECTIONNÉE — jamais de la tête —, grandit vers le haut puis vers le
+   * bas, et paie un rang par côté masqué. `sel < 0` (la sélection est ailleurs)
+   * repart de la tête. Une section qui n'a pas la place de montrer son entrée de
+   * tête ET de dire ce qu'elle cache se tait sur son entrée, jamais sur sa
+   * troncature ; celle de la SÉLECTION, elle, garde son entrée quoi qu'il arrive :
+   * c'est la ligne que l'utilisateur voit, et celle sur laquelle `d` agit.
    */
-  const take = (entries: PanelRow[][], room: number): { shown: number; marker: boolean } => {
-    if (entries.length === 0) return { shown: 0, marker: false };
-    if (room <= 0) return { shown: 0, marker: false };
-    if (rowsOf(entries) <= room) return { shown: entries.length, marker: false };
-    let used = 0;
-    let shown = 0;
-    for (const entry of entries) {
-      if (used + linesOf(entry) > room - 1) break;
-      used += linesOf(entry);
-      shown += 1;
+  const planSection = (entries: PanelRow[][], sel: number, room: number): Plan => {
+    const n = entries.length;
+    if (n === 0 || room <= 0) return EMPTY_PLAN;
+    const lines = entries.map(linesOf);
+    // Le coût d'une fenêtre : ses lignes, plus un rang par côté masqué.
+    const cost = (from: number, to: number): number => {
+      let sum = 0;
+      for (let i = from; i < to; i += 1) sum += lines[i] as number;
+      return sum + (from > 0 ? 1 : 0) + (to < n ? 1 : 0);
+    };
+    if (cost(0, n) <= room) return { start: 0, end: n, above: false, below: false };
+    const anchor = sel >= 0 ? sel : 0;
+    let start = anchor;
+    let end = anchor + 1;
+    for (;;) {
+      let grew = false;
+      if (start > 0 && cost(start - 1, end) <= room) {
+        start -= 1;
+        grew = true;
+      }
+      if (end < n && cost(start, end + 1) <= room) {
+        end += 1;
+        grew = true;
+      }
+      if (!grew) break;
     }
-    return { shown, marker: true };
+    // Un marqueur n'est peint que s'il est PAYÉ, le bas d'abord (le sens de
+    // lecture). Une section qui n'a pas la place de montrer son entrée de tête ET
+    // de dire ce qu'elle cache se tait sur son ENTRÉE, jamais sur sa troncature
+    // (revue n°3) — sauf celle de la SÉLECTION, qui garde sa ligne quoi qu'il
+    // arrive (PANEL-2).
+    const used = cost(start, end) - (start > 0 ? 1 : 0) - (end < n ? 1 : 0);
+    let spare = room - used;
+    const below = end < n && spare >= 1;
+    if (below) spare -= 1;
+    const above = start > 0 && spare >= 1;
+    if (sel < 0 && !below) return { start: 0, end: 0, above: false, below: true };
+    return { start, end, above, below };
   };
 
   let left = Math.max(0, opts.budget - frameRows);
@@ -951,28 +1217,95 @@ export function buildPanelRows(
     return paid;
   };
 
-  // 1. Le minimum de chaque section NON VIDE : une ENTRÉE complète (ses rangs de
-  //    repli compris), ou son marqueur. Réservé avant de servir la première
-  //    section, le budget servait auparavant les entrées du lot jusqu'à laisser la
-  //    section « en cours » sans un rang ni un marqueur : un pipeline vivant
-  //    disparaissait de l'écran alors que le titre en annonçait le compte
-  //    (BLOQUANT 4 de la revue n°3).
-  const lotRows = rowsOf(lotEntries);
-  const runningRows = rowsOf(runningEntries);
-  const historyRows = rowsOf(historyEntries);
-  const minLot = credit(lotEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, linesOf(lotEntries[0] as PanelRow[])) : 0);
-  const minRunning = credit(
-    runningEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, linesOf(runningEntries[0] as PanelRow[])) : 0,
-  );
-  const minHistory = credit(
-    historyEntries.length > 0 ? Math.min(PANEL_WRAP_MAX_LINES, linesOf(historyEntries[0] as PanelRow[])) : 0,
-  );
-  // 2. Le surplus, par priorité : le lot (la salle de contrôle), puis les
-  //    pipelines en cours (vivants), puis l'historique.
-  const lotShown = take(lotEntries, minLot + credit(Math.max(0, lotRows - minLot)));
-  const runningShown = take(runningEntries, minRunning + credit(Math.max(0, runningRows - minRunning)));
-  const historyShown = take(historyEntries, minHistory + credit(Math.max(0, historyRows - minHistory)));
-  // 3. Les rangs d'ÉTAT VIDE (« aucune pipeline en cours », « aucun historique »)
+  // Les trois sections, dans l'ordre de la liste ; la sélection se résout par
+  // section (`sectionSelection` rend `-1` quand elle porte sur une autre). `room`
+  // est la place, en LIGNES, que chacune paie au budget, et `plan` la fenêtre
+  // qu'elle en tire.
+  const sections: [Section, Section, Section] = [
+    { entries: lotEntries, sel: sectionSelection(model.selection, lotOffset, features), name: "le lot", room: 0, plan: EMPTY_PLAN },
+    {
+      entries: runningEntries,
+      sel: sectionSelection(model.selection - features, 0, runningCount),
+      name: "hors lot",
+      room: 0,
+      plan: EMPTY_PLAN,
+    },
+    {
+      entries: historyEntries,
+      sel: sectionSelection(model.selection - features - runningCount, 0, historyCount),
+      name: "l'historique",
+      room: 0,
+      plan: EMPTY_PLAN,
+    },
+  ];
+  const picked = sections.find((section) => section.entries.length > 0 && section.sel >= 0) ?? null;
+  // 1. L'entrée SÉLECTIONNÉE d'abord (PANEL-2) : sa section paie son entrée
+  //    entière. C'est ce qui garantit qu'une ligne sélectionnée est TOUJOURS
+  //    peinte — les flèches entrent dans les sections repliées, et `d` agit sur
+  //    cette ligne sans aperçu.
+  if (picked) picked.room = credit(linesOf(picked.entries[picked.sel] as PanelRow[]));
+  // 2. Puis le minimum « jamais muet » de chaque AUTRE section non vide : une
+  //    entrée complète (ses rangs de repli compris), ou son marqueur. Sans lui, le
+  //    budget servait les entrées du lot jusqu'à laisser la section « en cours »
+  //    sans un rang ni un marqueur : un pipeline vivant disparaissait de l'écran
+  //    alors que le titre en annonçait le compte (BLOQUANT 4, revue n°3).
+  for (const section of sections) {
+    if (section === picked || section.entries.length === 0) continue;
+    section.room = credit(Math.min(PANEL_WRAP_MAX_LINES, linesOf(section.entries[0] as PanelRow[])));
+  }
+  // 3. Les marqueurs de la section sélectionnée — un par côté masqué, s'il reste de
+  //    la place : ils disent ce que la fenêtre ne montre pas.
+  if (picked) picked.room += credit(2);
+  // 4. Le surplus, par priorité : le lot (la salle de contrôle), puis les pipelines
+  //    en cours (vivants), puis l'historique, la plus récente d'abord.
+  for (const section of sections) {
+    if (section.entries.length === 0) continue;
+    section.room += credit(Math.max(0, rowsOf(section.entries) - section.room));
+  }
+  for (const section of sections) section.plan = planSection(section.entries, section.sel, section.room);
+
+  /**
+   * Les rangs d'une section : son marqueur AU-DESSUS quand des lignes sont masquées
+   * avant la fenêtre, ses entrées, puis son marqueur EN DESSOUS (PANEL-12 : le
+   * décompte se lit du côté où les lignes manquent, jamais systématiquement sous
+   * la liste). Le marqueur du bas garde son texte d'origine.
+   *
+   * Les marqueurs se paient D'ABORD (ils disent ce qui manque), puis les rangs de
+   * liste : une entrée plus haute que la place laissée s'arrête à son premier rang
+   * — c'est celui qui porte le curseur quand c'est la sélection, et la ligne
+   * sélectionnée passe avant le budget (PANEL-2).
+   */
+  const pushSection = (section: Section): void => {
+    const plan = section.plan;
+    if (plan.above) {
+      rows.push(...serviceRow(`… ${plan.start} au-dessus dans ${section.name}`, "dim", innerW));
+    }
+    const space = section.room - (plan.above ? 1 : 0) - (plan.below ? 1 : 0);
+    const cursorAt = section.sel >= plan.start && section.sel < plan.end ? section.sel : -1;
+    let used = 0;
+    let stopped = false;
+    for (let i = plan.start; i < plan.end && !stopped; i += 1) {
+      const entry = section.entries[i] as PanelRow[];
+      for (let n = 0; n < entry.length; n += 1) {
+        const row = entry[n] as PanelRow;
+        const lines = Math.max(1, wrapVisible(row.text, innerW).length);
+        // Seul le rang qui PORTE le curseur est protégé : les rangs suivants de la
+        // même entrée (raison d'arrêt, verdict, URL) cèdent la place au budget.
+        const cursor = i === cursorAt && n === 0;
+        if (!cursor && used + lines > space) {
+          stopped = true;
+          break;
+        }
+        rows.push(row);
+        used += lines;
+      }
+    }
+    if (plan.below) {
+      rows.push(...serviceRow(`… ${section.entries.length - plan.end} de plus dans ${section.name}`, "dim", innerW));
+    }
+  };
+
+  // 5. Les rangs d'ÉTAT VIDE (« aucune pipeline en cours », « aucun historique »)
   //    se paient comme les autres : ce sont eux qui, oubliés du calcul, faisaient
   //    dépasser le budget d'un rang par section vide et coupaient le pied
   //    (BLOQUANT 3 de la revue n°3). Sans budget pour eux, le titre de section dit
@@ -984,27 +1317,20 @@ export function buildPanelRows(
 
   // Le cadre s'ouvre sur une règle de l'hôte, et le titre est le premier rang —
   // la disposition des blocs de commande d'OMP (`## Documentation` §1).
+  const [lotSection, runningSection, historySection] = sections;
   rows.push({ text: "", tone: "border", rule: "frame" });
   rows.push(...titleRows);
 
   if (lot) {
     rows.push(...lotHeaderRows);
-    const start = windowStart(sectionSelection(model.selection, lotOffset, features), lotShown.shown, lotEntries.length);
-    for (const entry of lotEntries.slice(start, start + lotShown.shown)) rows.push(...entry);
-    if (lotShown.marker) {
-      rows.push(...serviceRow(`… ${lotEntries.length - lotShown.shown} de plus dans le lot`, "dim", innerW));
-    }
+    pushSection(lotSection);
   }
 
   rows.push(...outHeaderRows);
   if (runningCount === 0) {
     if (runningEmpty) rows.push(...runningEmptyRows);
   } else {
-    const start = windowStart(sectionSelection(model.selection - features, 0, runningCount), runningShown.shown, runningCount);
-    for (const entry of runningEntries.slice(start, start + runningShown.shown)) rows.push(...entry);
-    if (runningShown.marker) {
-      rows.push(...serviceRow(`… ${runningCount - runningShown.shown} de plus hors lot`, "dim", innerW));
-    }
+    pushSection(runningSection);
   }
 
   rows.push({ text: "", tone: "border", rule: "separator" });
@@ -1013,15 +1339,26 @@ export function buildPanelRows(
   if (historyCount === 0) {
     if (historyEmpty) rows.push(...historyEmptyRows);
   } else {
-    const start = windowStart(
-      sectionSelection(model.selection - features - runningCount, 0, historyCount),
-      historyShown.shown,
-      historyCount,
-    );
-    for (const entry of historyEntries.slice(start, start + historyShown.shown)) rows.push(...entry);
-    if (historyShown.marker) {
-      rows.push(...serviceRow(`… ${historyCount - historyShown.shown} de plus dans l'historique`, "dim", innerW));
+    pushSection(historySection);
+  }
+
+  // GARDE-FOU (PANEL-1) : la comptabilité ci-dessus borne le corps, mais un rang
+  // qui se replierait au-delà de ce que `linesOf` a mesuré ne doit jamais pousser
+  // le pied hors de l'écran — c'est lui que l'hôte coupe par le bas. On retire les
+  // derniers rangs de LISTE, jamais le cadre, la notice, la saisie ni le pied, et
+  // jamais la ligne SÉLECTIONNÉE (PANEL-2).
+  const tailLines = noticeRows.length + modeRows.length + footRows.length + 1;
+  while (linesOf(rows) + tailLines > opts.budget) {
+    let at = -1;
+    for (let i = rows.length - 1; i >= 0; i -= 1) {
+      const row = rows[i] as PanelRow;
+      if (row.target !== undefined && row.selected !== true) {
+        at = i;
+        break;
+      }
     }
+    if (at < 0) break;
+    rows.splice(at, 1);
   }
 
   for (const row of noticeRows) rows.push(row);
@@ -1031,8 +1368,7 @@ export function buildPanelRows(
   // le pied reste ainsi collé au bas de l'écran, comme la règle basse d'avant. Il
   // n'existe que s'il reste de la place : au-delà du budget, rien n'est inséré et
   // le TUI coupe par le bas (terminal plus court que le panneau).
-  const used =
-    rows.reduce((lines, row) => lines + Math.max(1, wrapVisible(row.text, innerW).length), 0) + footRows.length + 1;
+  const used = linesOf(rows) + tailLines;
   if (opts.budget - used >= 1) rows.push({ text: "", tone: "dim", fill: true });
 
   for (const row of footRows) rows.push(row);

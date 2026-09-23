@@ -92,6 +92,13 @@ export type SessionEntryLike =
       display: boolean;
       attribution?: unknown;
     }
+  /**
+   * Le rang de REMPLACEMENT d'une ligne trop volumineuse (VIEW-6) : une ligne plus
+   * grosse que ce qu'on accepte de lire n'est pas chargée, mais elle est DITE — et
+   * son premier octet reste la borne de la fenêtre, donc les entrées qui la
+   * précèdent restent atteignables par le défilement.
+   */
+  | { type: "oversized"; at: number; id: string; timestamp: string; bytes: number }
   | { type: "other"; at: number; id: string; timestamp: string };
 
 
@@ -114,6 +121,40 @@ export const SESSION_BLOCK_BYTES = 256 * 1024;
 
 /** Ce que la fenêtre du premier chargement laisse aux trois sondes qui la débordent. */
 export const SESSION_FIRST_WINDOW_BYTES = SESSION_VIEW_READ_BYTES - SESSION_SENTINEL_BYTES * 3;
+
+
+/**
+ * Le rang de remplacement d'une ligne trop volumineuse (VIEW-6) : la vue ne charge
+ * pas la ligne, mais elle la NOMME et donne son premier octet — `tail.start` s'y
+ * place, donc les entrées antérieures restent atteignables.
+ */
+export function oversizedEntry(at: number, bytes: number): SessionEntryLike {
+  return { type: "oversized", at, id: "", timestamp: "", bytes };
+}
+
+
+/**
+ * Le dernier saut de ligne AVANT `before`, en reculant par blocs depuis `before`
+ * (jamais au-delà de `floor`) : rend son OFFSET en octets, ou `null` quand la ligne
+ * qui précède dépasse ce qu'on accepte de lire.
+ *
+ * La recherche est faite sur les OCTETS (`Buffer.lastIndexOf`) et non sur la chaîne
+ * décodée : un bloc lu à un offset arbitraire peut commencer au milieu d'un
+ * caractère multi-octets, et la longueur en octets d'un préfixe décodé serait
+ * alors fausse (VIEW-6).
+ */
+export function previousNewline(file: string, before: number, floor: number, read: SessionReader): number | null {
+  let at = before;
+  while (at > floor) {
+    const from = Math.max(floor, at - SESSION_BLOCK_BYTES);
+    const block = read(file, from, at - from);
+    if (block === null || block.byteLength === 0) return null;
+    const index = block.lastIndexOf(0x0a);
+    if (index >= 0) return from + index;
+    at = from;
+  }
+  return null;
+}
 
 
 /** Une sonde d'identité : un bloc du fichier, résumé par un digest. */
@@ -368,27 +409,118 @@ export function readSessionTail(
   // RECONSTRUCTION : la fenêtre part de la FIN du fichier, bornée par la première
   // peinture (S-8.1) — jamais l'intégralité d'un fichier de plusieurs mégaoctets.
   const window = Math.min(stat.size, SESSION_FIRST_WINDOW_BYTES);
-  const readFrom = stat.size - window;
+  let readFrom = stat.size - window;
   let start = readFrom;
-  const bytes = read(file, readFrom, window);
+  let bytes = read(file, readFrom, window);
   if (bytes === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
   let text = bytes.toString("utf8");
   if (start > 0) {
-    // La première ligne est celle qu'on a coupée : elle est abandonnée, et la
-    // fenêtre commence à la ligne complète suivante.
-    const newline = text.indexOf("\n");
-    if (newline < 0) {
-      return {
-        entries: [],
-        mode: "reset",
-        tail: null,
-        truncated: true,
-        more: true,
-        error: null,
-      };
+    // Les sauts de ligne se cherchent sur les OCTETS : un offset de chaîne décodée
+    // serait faux dès que le fichier porte un accent.
+    const first = bytes.indexOf(0x0a);
+    // La fenêtre ne porte AUCUNE ligne COMPLÈTE (VIEW-6) : elle commence au milieu
+    // d'une ligne et n'en contient aucune autre entière — c'est le cas d'une ligne
+    // plus grosse que la première peinture (résultat de `grep`, image, `hub`), ou
+    // d'une ligne encore en cours d'écriture. La fenêtre partait alors dans le vide :
+    // « aucune entrée à afficher », et le début devenait inatteignable.
+    if (first < 0 || bytes.indexOf(0x0a, first + 1) < 0) {
+      const floor = Math.max(0, stat.size - SESSION_VIEW_MAX_BYTES);
+      // On recule jusqu'au saut de ligne qui PRÉCÈDE la fenêtre, borné par
+      // `SESSION_VIEW_MAX_BYTES`.
+      let lineStart: number | null = null;
+      let line: Buffer | null = null;
+      let cursor = readFrom;
+      for (;;) {
+        const previous = previousNewline(file, cursor, floor, read);
+        if (previous === null) break;
+        const candidate = read(file, previous + 1, stat.size - previous - 1);
+        if (candidate === null) break;
+        const end = candidate.indexOf(0x0a);
+        // La ligne est TERMINÉE : sa taille dit si elle peut être chargée. Sinon c'est
+        // une fin d'écriture en cours : elle reste `pending`, et on recule encore.
+        if (end >= 0) {
+          lineStart = previous + 1;
+          line = candidate;
+          break;
+        }
+        cursor = previous;
+      }
+      if (lineStart === null || line === null) {
+        // Même au-delà de la borne, aucune ligne complète : la ligne dépasse ce qu'on
+        // accepte de lire. Elle n'est PAS chargée, un rang de remplacement la nomme, et
+        // la fenêtre commence au premier octet lu (`floor`) — ce qui précède reste à
+        // portée du défilement.
+        const head = read(file, floor, stat.size - floor);
+        if (head === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+        const sentinels = computeSentinels(file, stat.size, read, { start: floor, bytes: head });
+        if (sentinels === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+        const tail: SessionTail = {
+          path: file,
+          dev: stat.dev,
+          ino: stat.ino,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          start: floor,
+          offset: stat.size,
+          pending: head.toString("utf8"),
+          sentinels,
+        };
+        return {
+          entries: [oversizedEntry(floor, stat.size - floor)],
+          mode: "reset",
+          tail,
+          truncated: floor > 0,
+          more: floor > 0,
+          error: null,
+        };
+      }
+      const end = line.indexOf(0x0a);
+      if (end > SESSION_FIRST_WINDOW_BYTES) {
+        // La ligne est TERMINÉE mais plus grosse que la première peinture : elle n'est
+        // pas chargée — un rang de remplacement la nomme, à son premier octet — et les
+        // entrées qui la SUIVENT sont lues normalement. Celles qui la précèdent
+        // restent à une touche de défilement (`tail.start` est son premier octet).
+        const restStart = lineStart + end + 1;
+        const rest = line.subarray(end + 1).toString("utf8");
+        const restNl = rest.lastIndexOf("\n");
+        const complete = restNl >= 0 ? rest.slice(0, restNl + 1) : "";
+        const pending = restNl >= 0 ? rest.slice(restNl + 1) : rest;
+        const sentinels = computeSentinels(file, stat.size, read, { start: lineStart, bytes: line });
+        if (sentinels === null) return { entries: [], mode: "reset", tail: null, truncated: false, more: false, error: file };
+        let oversized: SessionEntryLike[] = [
+          oversizedEntry(lineStart, end),
+          ...(complete === "" ? [] : entriesOfText(complete, restStart)),
+        ];
+        if (oversized.length > SESSION_VIEW_MAX_ENTRIES) {
+          oversized = oversized.slice(oversized.length - SESSION_VIEW_MAX_ENTRIES);
+        }
+        const head = oversized[0];
+        const from = head ? head.at : lineStart;
+        const tail: SessionTail = {
+          path: file,
+          dev: stat.dev,
+          ino: stat.ino,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          start: from,
+          offset: stat.size,
+          pending,
+          sentinels,
+        };
+        return { entries: oversized, mode: "reset", tail, truncated: from > 0, more: from > 0, error: null };
+      }
+      // La ligne tient : la fenêtre repart à son PREMIER OCTET, donc sur une ligne
+      // complète, jamais sur une coupe.
+      start = lineStart;
+      readFrom = lineStart;
+      bytes = line;
+      text = line.toString("utf8");
+    } else {
+      // La première ligne est celle qu'on a coupée : elle est abandonnée, et la
+      // fenêtre commence à la ligne complète suivante.
+      start += first + 1;
+      text = text.slice(text.indexOf("\n") + 1);
     }
-    start += Buffer.byteLength(text.slice(0, newline + 1), "utf8");
-    text = text.slice(newline + 1);
   }
   const lastNewline = text.lastIndexOf("\n");
   const complete = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : "";
@@ -444,23 +576,67 @@ export function extendSessionTail(
     return { entries: [], mode: "prepend", tail: previous, truncated: false, more: false, error: null };
   }
   const floor = Math.max(0, previous.size - SESSION_VIEW_MAX_BYTES);
+  // La fenêtre a atteint la borne : il reste des octets, mais on ne les charge pas —
+  // le dire (`truncated`) vaut mieux que promettre un `Début` qui ne chargera rien.
+  if (previous.start <= floor) {
+    return { entries: [], mode: "prepend", tail: previous, truncated: true, more: false, error: null };
+  }
   const from = Math.max(floor, previous.start - SESSION_BLOCK_BYTES);
-  const bytes = read(file, from, previous.start - from);
+  let bytes = read(file, from, previous.start - from);
   if (bytes === null) return { entries: [], mode: "prepend", tail: previous, truncated: true, more: true, error: file };
-  let text = bytes.toString("utf8");
   let start = from;
+  let prefix: SessionEntryLike[] = [];
   if (from > 0) {
-    // Comme pour la fenêtre initiale : la première ligne est coupée, donc jetée.
-    const newline = text.indexOf("\n");
+    // Les offsets se comptent en OCTETS : `indexOf` sur le Buffer, jamais sur la
+    // chaîne décodée (un accent en fait deux).
+    let newline = bytes.indexOf(0x0a);
+    // Aucune ligne COMPLÈTE dans le bloc : pas de saut du tout, ou un seul — celui qui
+    // termine la ligne coupée au premier octet du bloc (VIEW-6). On recule alors
+    // jusqu'au saut de ligne précédent, borné par `SESSION_VIEW_MAX_BYTES`.
+    if (newline < 0 || bytes.indexOf(0x0a, newline + 1) < 0) {
+      const newlineOffset = previousNewline(file, from, floor, read);
+      if (newlineOffset === null) {
+        // La ligne dépasse la borne : elle n'est pas chargée, un rang de remplacement
+        // la nomme, et la fenêtre repart de `floor`.
+        const tail: SessionTail = { ...previous, start: floor };
+        return {
+          entries: [oversizedEntry(floor, previous.start - floor)],
+          mode: "prepend",
+          tail,
+          truncated: floor > 0,
+          more: false,
+          error: null,
+        };
+      }
+      start = newlineOffset + 1;
+      bytes = read(file, start, previous.start - start);
+      if (bytes === null) {
+        return { entries: [], mode: "prepend", tail: previous, truncated: true, more: true, error: file };
+      }
+      newline = bytes.indexOf(0x0a);
+    }
     if (newline < 0) {
+      // La ligne n'est pas TERMINÉE : c'est une fin d'écriture en cours, elle reste le
+      // `pending` de la fenêtre — il n'y a rien à prépendre au-dessus.
       return { entries: [], mode: "prepend", tail: previous, truncated: true, more: true, error: null };
     }
-    start += Buffer.byteLength(text.slice(0, newline + 1), "utf8");
-    text = text.slice(newline + 1);
+    if (start !== from && newline > SESSION_FIRST_WINDOW_BYTES) {
+      // Une ligne COMPLÈTE plus grosse que la première peinture n'est pas chargée
+      // (VIEW-6) : un rang de remplacement la nomme, et la fenêtre commence après elle.
+      prefix = [oversizedEntry(start, newline)];
+      start += newline + 1;
+      bytes = bytes.subarray(newline + 1);
+    } else if (start === from) {
+      // La première ligne du bloc est COUPÉE : elle est jetée — elle viendra d'un bloc
+      // plus ancien, où elle est entière (c'est la règle de la fenêtre initiale).
+      start += newline + 1;
+      bytes = bytes.subarray(newline + 1);
+    }
   }
+  const text = bytes.toString("utf8");
   const lastNewline = text.lastIndexOf("\n");
   const complete = lastNewline >= 0 ? text.slice(0, lastNewline + 1) : "";
-  const entries = complete === "" ? [] : entriesOfText(complete, start);
+  const entries = [...prefix, ...(complete === "" ? [] : entriesOfText(complete, start))];
   const tail: SessionTail = { ...previous, start: entries[0]?.at ?? start };
   return {
     entries,

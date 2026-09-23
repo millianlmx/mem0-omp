@@ -319,6 +319,68 @@ export function trackExpandable(assembly: SessionAssembly, component: HostExpand
 }
 
 
+/** La taille d'une entrée trop volumineuse : en Kio, ou en octets sous le Kio (VIEW-6). */
+export function sizeLabel(bytes: number): string {
+  const safe = Number.isFinite(bytes) ? Math.max(0, bytes) : 0;
+  return safe < 1024 ? `${Math.trunc(safe)} octets` : `${Math.round(safe / 1024)} Kio`;
+}
+
+
+/** La clé d'une entrée dans l'assemblage : son `id` ET son octet (S-8). */
+export function entryKey(entry: SessionEntryLike): string {
+  return entry.id !== "" ? `${entry.id}@${entry.at}` : `#${entry.at}`;
+}
+
+
+/** Libère un composant sans laisser son échec interrompre les autres (VIEW-7). */
+export function disposeComponent(component: HostComponent): void {
+  try {
+    component.dispose?.();
+  } catch {
+    /* un composant qui jette à la libération ne retient pas les autres */
+  }
+}
+
+
+/**
+ * Libère les composants d'un assemblage (VIEW-7). Une carte d'outil SANS résultat
+ * s'inscrit au ticker partagé de l'hôte et demande un repaint toutes les 80 ms tant
+ * qu'elle n'est pas disposée : sans cet appel, quitter la vue sur un `mem0_add` en
+ * vol laissait le process repeindre pour toujours, panneau fermé compris.
+ */
+export function disposeAssembly(assembly: SessionAssembly | null): void {
+  if (!assembly) return;
+  for (const component of assembly.components) disposeComponent(component);
+}
+
+
+/**
+ * Évince de l'assemblage les entrées qui ne sont plus chargées (VIEW-11) : leurs
+ * composants quittent l'ordre d'affichage, les repliables et les cartes d'outil, et
+ * sont LIBÉRÉS. L'assemblage reste ainsi borné comme la fenêtre d'entrées qui le
+ * nourrit — sans quoi 601 entrées faisaient 601 composants, et 601 `render` par
+ * rafraîchissement.
+ */
+export function evictEntries(assembly: SessionAssembly, keys: Iterable<string>): void {
+  const gone: HostComponent[] = [];
+  for (const key of keys) {
+    const components = assembly.byEntryId.get(key);
+    if (components === undefined) continue;
+    assembly.byEntryId.delete(key);
+    gone.push(...components);
+  }
+  if (gone.length === 0) return;
+  const dropped = new Set(gone);
+  assembly.components = assembly.components.filter((component) => !dropped.has(component));
+  assembly.expandables = assembly.expandables.filter((component) => !dropped.has(component));
+  for (const [id, card] of [...assembly.toolCards]) {
+    if (dropped.has(card)) assembly.toolCards.delete(id);
+  }
+  if (assembly.readGroup && dropped.has(assembly.readGroup)) assembly.readGroup = null;
+  for (const component of gone) disposeComponent(component);
+}
+
+
 /** Le groupe de lectures courant, ouvert au premier `read` d'une course (S-3, §6). */
 export function ensureReadGroup(assembly: SessionAssembly, kit: HostComponents): HostToolHandle {
   if (assembly.readGroup) return assembly.readGroup;
@@ -339,6 +401,14 @@ export function appendEntry(
   cwd: string,
 ): void {
   if (entry.type === "other") return; // entrée technique : aucun composant (S-3)
+  if (entry.type === "oversized") {
+    // Une ligne trop volumineuse n'est PAS chargée (VIEW-6) : elle est remplacée par
+    // un rang qui la nomme et dit sa taille — la transcription garde son ordre, et
+    // rien n'est coupé en silence.
+    assembly.readGroup = null;
+    assembly.components.push(new kit.Text(`entrée trop volumineuse (${sizeLabel(entry.bytes)}) — non chargée`, 1, 0));
+    return;
+  }
   if (entry.type === "custom_message") {
     assembly.readGroup = null;
     if (!entry.display) return;
@@ -535,7 +605,7 @@ export function buildSessionComponents(
     // serait une transcription menteuse. L'octet, lui, ne bouge jamais dans un
     // fichier qu'on ne fait que compléter (S-8) — c'est lui qui rend l'assemblage
     // incrémental.
-    const key = entry.id !== "" ? `${entry.id}@${entry.at}` : `#${entry.at}`;
+    const key = entryKey(entry);
     if (assembly.byEntryId.has(key)) continue;
     const before = assembly.components.length;
     try {

@@ -15,13 +15,14 @@ import { hostComponents } from "./panelHost.ts";
 import { diskProbe, joinEntry } from "./panelSession.ts";
 import type { SwitchCtx } from "./panelSession.ts";
 import type { PipelinesPanelDeps } from "./panelView.ts";
-import { armPipeline, closePipeline, ensureHeartbeat, pendingApprovals, pendingAsks, publishCurrentCwd, reportStateWriteFailure, resetStateWriteWarning, sessionFileOf, sessionIdOf } from "./publish.ts";
+import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, pendingApprovals, pendingAsks, publishCurrentCwd, reportStateWriteFailure, resetStateWriteWarning, sessionFileOf, sessionIdOf } from "./publish.ts";
 import type { PublishDeps } from "./publish.ts";
+import { runState } from "./runState.ts";
 import { SELF_MODULE_URL, buildConversationRunArgv, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
 import type { WorkerMode } from "./runs.ts";
 import { SYSTEM_DIRECTIVE_REQ, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { stateOfCwd } from "./state.ts";
-import { pipelineStateDir } from "./store.ts";
+import { deleteRunningEntry, pipelineStateDir, runningIdFor } from "./store.ts";
 import type { PipelineCtx } from "./store.ts";
 
 
@@ -145,6 +146,14 @@ export default function reqExtension(pi: ExtensionAPI) {
     type: "string",
     description: "Boîte de réception d'un run lancé par le panneau (/pipelines)",
   });
+  // Borne DURE d'un run enfant (epoch ms), posée par le pilote : le délai de
+  // `pi.exec` ne s'applique qu'au process parent, donc un enfant qui survit à un
+  // pilote tué n'aurait aucune échéance (l'outil ask attendrait indéfiniment).
+  // Le mécanisme principal reste le chien de garde sur le parent (`process.ppid`).
+  pi.registerFlag("pipeline-deadline", {
+    type: "string",
+    description: "Échéance absolue (epoch ms) d'un run de lot, au-delà de laquelle il rend la main",
+  });
 
   // Mode worker : ce process EST un maillon du lot. Il publie son état, exécute le
   // prompt reçu en argv et n'annonce rien — la chaîne appartient au pilote.
@@ -170,18 +179,28 @@ export default function reqExtension(pi: ExtensionAPI) {
     return workerMode()?.stateDir ?? pipelineStateDir();
   };
 
-  let lotController: { repoRoot: string; controller: LotController } | null = null;
+  // Un pilote PAR DÉPÔT (S-1) : rejoindre la session d'un autre dépôt puis
+  // revenir ne doit pas recréer un pilote — ses runs en vol, son registre de
+  // boîtes et ses fins de run vivent dans les Maps du contrôleur, donc un
+  // contrôleur neuf jugerait « pilote disparu » des runs qui tournent encore
+  // dans le même process (AC-19).
+  const lotControllers = new Map<string, LotController>();
+
+  /** Le dernier contexte de session vu : ce que consultent les pilotes. */
+  let liveCtxRef: ExtensionContext | undefined;
+  const liveCtx = (): ExtensionContext => liveCtxRef as ExtensionContext;
 
   /**
-   * Le pilote du dépôt de cette session, un par process : le lot n'a qu'un
-   * écrivain. Deux sessions du même dépôt ne se marchent pas dessus — la seconde
-   * ne reprend la main que si le pid de la première est mort.
+   * Le pilote du dépôt de cette session. Le lot n'a qu'un écrivain : deux
+   * sessions du même dépôt ne se marchent pas dessus — la seconde ne reprend la
+   * main que si le pid de la première est mort (ou son battement périmé).
    */
   const controllerFor = (ctx: ExtensionContext): LotController => {
+    liveCtxRef = ctx;
     const root = resolveFeatureRoot(ctx.cwd);
     const repoRoot = root.primary ?? root.dir;
-    if (lotController && lotController.repoRoot === repoRoot) return lotController.controller;
-    lotController?.controller.stop();
+    const known = lotControllers.get(repoRoot);
+    if (known) return known;
     const controller = createLotController({
       stateDir: storeDir(),
       repoRoot,
@@ -197,19 +216,25 @@ export default function reqExtension(pi: ExtensionAPI) {
       runGit: run,
       runGh,
       notify: notifyDurable,
-      toast: (text, tone) => ctx.ui?.notify?.(text, tone),
-      session: () => ({ file: sessionFileOf(ctx as PipelineCtx), id: sessionIdOf(ctx as PipelineCtx) }),
+      // Le pilote survit aux bascules de session (un contrôleur par dépôt) : ses
+      // sorties visibles et sa session d'écriture sont donc lues DYNAMIQUEMENT
+      // sur le dernier contexte vu, jamais figées sur celui qui l'a créé — sinon
+      // un toast s'adresserait à une session morte et l'owner du lot
+      // nommerait un fichier de session périmé.
+      toast: (text, tone) => liveCtx().ui?.notify?.(text, tone),
+      session: () => ({ file: sessionFileOf(liveCtx() as PipelineCtx), id: sessionIdOf(liveCtx() as PipelineCtx) }),
       selfPath: selfExtensionArg(SELF_MODULE_URL),
       schedule: (callback, ms) => {
         // Minuterie GÉRÉE : nettoyée au `session_shutdown`, jamais orpheline. Un
         // contexte dégradé (hors OMP complet) n'a pas de minuterie : le pilote
         // tourne alors à la demande (chaque action relance une passe).
+        const ctx = liveCtx();
         if (typeof ctx.setInterval !== "function" || typeof ctx.clearTimer !== "function") return () => {};
         const timer = ctx.setInterval(callback, ms);
         return () => ctx.clearTimer(timer);
       },
     });
-    lotController = { repoRoot, controller };
+    lotControllers.set(repoRoot, controller);
     return controller;
   };
 
@@ -342,8 +367,22 @@ export default function reqExtension(pi: ExtensionAPI) {
   // --- registre des pipelines : battement et republication -------------------
   // Le propriétaire SEUL écrit ses entrées : les lecteurs du magasin (le panneau,
   // y compris celui d'un autre processus) ne font que constater.
+  // Ce process est un RUN lancé par le panneau (S-9) : armé, mais pas un maillon
+  // de lot. Il publie son entrée et n'annonce rien — une notice de fin de maillon
+  // (« commande suivante : /review ») n'a aucun sens dans une session que
+  // l'utilisateur a lui-même reprise, et il meurt à la fin de son tour.
+  let runOnly = false;
+
   pi.on("session_start", async (_event, ctx) => {
     resetStateWriteWarning();
+    // Un SOUS-AGENT (`task`) rebinde la fabrique avec un runtime neuf et reçoit
+    // ce `session_start` : sans garde, il volerait le battement de son process
+    // (sa minuterie est nettoyée à sa fin), publierait SA session dans l'entrée
+    // du worktree, et adopterait le lot depuis une session jetable. Le fichier de
+    // session d'un sous-agent porte `parentSession` : c'est ce qui le distingue,
+    // et rien de ce qui suit ne le concerne.
+    if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
+    liveCtxRef = ctx;
     ensureHeartbeat(ctx as PipelineCtx, { notify: notifyDurable, stateDir: storeDir() });
     // Un run lancé par le panneau est ARMÉ (`--panel-inbox`) : il consomme sa
     // boîte et expose un vrai outil `ask` (S-6, S-7). Une session interactive n'a
@@ -359,17 +398,42 @@ export default function reqExtension(pi: ExtensionAPI) {
       armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, mode.phase);
       return;
     }
-    // Run de CONVERSATION (S-9) : aucun drapeau de lot, donc pas un worker — mais
-    // il publie son entrée, sinon son rang resterait un rang d'historique pendant
-    // tout le run et une seconde écriture lancerait un second run sur la même
-    // session.
+    // Run de CONVERSATION ou run de panneau (S-9) : aucun drapeau de lot, donc
+    // pas un maillon — mais il publie son entrée, sinon son rang resterait un
+    // rang d'historique pendant tout le run et une seconde écriture lancerait un
+    // second run sur la même session. Un process `-p` ne pilote RIEN : il meurt à
+    // la fin de son tour, donc adopter un lot depuis lui laisserait des runs
+    // orphelins (c'est le `return`, ici, qui l'interdit).
     if (armed) {
+      runOnly = true;
       const phase = conversationPhaseOf(pi);
       if (phase) armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, phase);
+      return;
     }
     // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend.
     const controller = controllerFor(ctx);
     if (controller.adopt()) controller.start();
+  });
+
+  // Fermer la session pilote ne doit pas laisser des runs VIVANTS derrière elle :
+  // `pi.exec` ne tue pas ses enfants à la sortie du process, et le délai d'un run
+  // n'existe que dans son `pi.exec` — un enfant survivant attendrait une réponse
+  // qu'aucun lot ne porte plus. On les tue donc explicitement, et la fin de
+  // chaque run clôt son entrée (la reprise du lot repart d'un état propre).
+  pi.on("session_shutdown", async () => {
+    try {
+      runState.pumpStop?.();
+      runState.pumpStop = null;
+    } catch {
+      /* une minuterie déjà nettoyée n'est pas une erreur */
+    }
+    for (const controller of lotControllers.values()) {
+      try {
+        controller.abortAll("session fermée");
+      } catch {
+        /* l'arrêt ne doit jamais jeter */
+      }
+    }
   });
 
   pi.on("agent_start", async (_event, ctx) => {
@@ -466,17 +530,6 @@ export default function reqExtension(pi: ExtensionAPI) {
         await run(["worktree", "remove", created.path], root.dir);
       };
 
-      // La feature entre dans le lot du dépôt AVANT la relocalisation : sa collecte
-      // se déroule dans cette session (`origin: "session"`), et le pilote prend la
-      // main à sa clôture (S-14). Si la collecte n'aboutit pas, la feature reste
-      // visible dans le panneau, en attente de cette session.
-      const lotDriver = controllerFor(ctx);
-      const refused = lotDriver.enrol({ slug, name: typed || slug, branch: created.branch, worktree: created.path });
-      // Un lot conduit par une session vivante ne s'écrit pas (S-1) : la feature
-      // n'y entre pas, et cette session le dit au lieu de laisser croire qu'elle
-      // est pilotée par le lot de l'autre (elle garde la chaîne manuelle, S-14).
-      if (refused) ctx.ui?.notify?.(`[req] ${refused} — cette feature garde la chaîne manuelle.`, "warning");
-
       if (typeof ctx.newSession !== "function") {
         await rollback();
         ctx.ui?.notify?.(
@@ -506,13 +559,30 @@ export default function reqExtension(pi: ExtensionAPI) {
         return;
       }
 
+      // La feature entre dans le lot APRÈS la relocalisation réussie : sa collecte
+      // se déroule dans cette session (`origin: "session"`), et le pilote prend la
+      // main à sa clôture (S-14). Inscrite AVANT, un échec de bascule laissait une
+      // feature fantôme dans le lot — en cours, sans fin possible, et sa branche
+      // restante interdisait de relancer /req sous le même nom.
+      const lotDriver = controllerFor(ctx);
+      const refused = lotDriver.enrol({ slug, name: typed || slug, branch: created.branch, worktree: created.path });
+      // Un lot conduit par une session vivante ne s'écrit pas (S-1) : la feature
+      // n'y entre pas, et cette session le dit au lieu de laisser croire qu'elle
+      // est pilotée par le lot de l'autre (elle garde la chaîne manuelle, S-14).
+      if (refused) ctx.ui?.notify?.(`[req] ${refused} — cette feature garde la chaîne manuelle.`, "warning");
+
       // La collecte suit le WORKTREE (clé = cwd), pas la session : la session
       // vient d'être remplacée, le worktree est l'identité de la feature.
       const st = stateOfCwd(created.path);
       st.reqMode = true;
+      st.closing = false;
       // Maillon armé après la bascule de session : l'annonce partira à la
       // retombée qui SUIT un « fin » de l'utilisateur, jamais pendant la collecte.
-      // L'armement publie AUSSI l'entrée du magasin : elle existe dès la commande.
+      // L'armement publie AUSSI l'entrée du magasin : elle existe dès la commande,
+      // et c'est la session d'APRÈS la bascule qui y est publiée (la session
+      // d'avant est celle du dépôt principal : elle ne conduit pas cette
+      // collecte).
+      liveCtxRef = ctx;
       armPipeline(pipelineDeps(ctx as PipelineCtx), created.path, "req");
       // Le pilote tourne : les AUTRES features du lot (s'il y en a) avancent
       // pendant cette collecte, et celle-ci sera prise en charge à sa clôture.
@@ -717,15 +787,32 @@ export default function reqExtension(pi: ExtensionAPI) {
   // la boucle infinie de la v0.4.5 — un `sendUserMessage` d'ici démarre un tour
   // dont la fin redéclenche ce hook. Corps sous try/catch : une annonce ne doit
   // jamais perturber la retombée.
-  pi.on("session_stop", async (_event, ctx) => {
+  pi.on("session_stop", async (event, ctx) => {
     try {
-      // Un run de lot : le maillon a rendu la main. Il clôt son entrée du magasin
-      // et n'annonce RIEN — la chaîne appartient au pilote (S-13).
-      if (workerMode()) {
+      // La retombée d'un SOUS-AGENT (`task`) n'est pas celle du maillon : elle
+      // clôturerait l'entrée du run vivant et annoncerait une fin de maillon qui
+      // n'a pas eu lieu (le sous-agent partage le cwd de son parent).
+      if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
+      // Un run (maillon de lot ou run lancé par le panneau) : il libère son entrée
+      // du magasin et n'annonce RIEN — la chaîne appartient au pilote (S-13), et
+      // une notice « commande suivante » n'a aucun sens dans une session reprise.
+      if (workerMode() || runOnly) {
+        // Un maillon de lot n'entre PAS dans l'historique : sa ligne du lot porte
+        // déjà son maillon, son état et sa raison d'arrêt, et chaque tour de la
+        // boucle /review ⇄ /impl --fix poussait une entrée « terminé » de plus —
+        // même pour une revue bloquante ou un run en erreur — dans une section
+        // bornée à vingt rangs, chassant les vraies sessions. Un run de
+        // CONVERSATION (S-9), lui, EST une session de l'utilisateur : il garde son
+        // entrée d'historique, et son issue réelle (un tour en erreur n'est pas
+        // « terminé »).
+        const failed = (event.last_assistant_message as { stopReason?: string } | undefined)?.stopReason;
+        const state = failed === "error" || failed === "aborted" ? "failed" : "done";
+        const deps = pipelineDeps(ctx as PipelineCtx);
         try {
-          closePipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "done");
+          if (workerMode()) deleteRunningEntry(deps.stateDir ?? pipelineStateDir(), runningIdFor(ctx.cwd));
+          else closePipeline(deps, ctx.cwd, state);
         } catch (err) {
-          reportStateWriteFailure(pipelineDeps(ctx as PipelineCtx), err);
+          reportStateWriteFailure(deps, err);
         }
         return;
       }
@@ -753,17 +840,29 @@ export default function reqExtension(pi: ExtensionAPI) {
 
       // BASCULE VERS LE LOT (S-14) : la collecte d'une feature de lot est close
       // (besoins écrits) — le pilote prend la main sur /specs, et cette session
-      // n'annonce plus rien pour elle.
+      // n'annonce plus rien pour elle. La bascule n'a de sens qu'à la CLÔTURE de
+      // la collecte : un /specs lancé à la main (autorisé tant qu'aucun lot ne
+      // pilote la feature) ne doit pas inscrire la feature au lot et faire
+      // relancer un second /specs par le pilote.
       const controller = controllerFor(ctx);
-      const handed = handOverCollecte({
-        stateDir: storeDir(),
-        repoRoot: repoRootOf(ctx.cwd),
-        cwd: ctx.cwd,
-        contract,
-        sessionFile: sessionFileOf(ctx as PipelineCtx),
-        notify: notifyDurable,
-      });
+      const handed =
+        phase === "req" &&
+        handOverCollecte({
+          stateDir: storeDir(),
+          repoRoot: repoRootOf(ctx.cwd),
+          cwd: ctx.cwd,
+          contract,
+          closing: st.closing === true,
+          sessionFile: sessionFileOf(ctx as PipelineCtx),
+          notify: notifyDurable,
+        });
       if (handed) {
+        // Le mode collecte s'ARRÊTE ici : la session de l'utilisateur reste dans
+        // le worktree, et une directive de collecte encore active la ferait
+        // réécrire `## Besoins` (et reposter le handoff) pendant que le pilote
+        // travaille dans le même worktree.
+        st.reqMode = false;
+        st.closing = false;
         try {
           closePipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, "done");
         } catch (err) {

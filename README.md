@@ -7,11 +7,20 @@ mem0-omp/                              racine = marketplace OMP
 ├── .omp-plugin/marketplace.json       catalogue (repli : .claude-plugin/)
 ├── omp-mem0-memory/                   le plugin mémoire
 │   ├── package.json                   déclare omp.extensions
-│   ├── extension.ts
+│   ├── extension.ts                   entrée : câblage et réexports
+│   ├── mem0Client.ts, recall.ts, summary.ts, attach.ts, brief.ts, bootstrap.ts,
+│   │   dedupe.ts, checkpoint.ts, phases.ts, state.ts, write.ts, config.ts,
+│   │   tools.ts, commands.ts          les modules (un par responsabilité)
 │   └── install.sh                     installation manuelle, hors marketplace
 ├── omp-mem0-req/                      le plugin pipeline (/req → /specs → /impl → /review)
 │   ├── package.json
-│   └── extension.ts
+│   ├── extension.ts                   entrée : commandes, événements, câblage
+│   ├── lotController.ts, lot.ts, chain.ts, contract.ts, seeds.ts
+│   │                                  le lot : pilote, modèle, chaîne, contrat, amorces
+│   ├── runs.ts, inbox.ts, publish.ts, store.ts, runState.ts, git.ts, state.ts
+│   │                                  runs, boîtes, magasin d'état, worktrees
+│   └── panel.ts, panelRows.ts, panelWidth.ts, panelView.ts, panelSession.ts,
+│       panelHost.ts                   le panneau /pipelines et la vue de session
 ├── mem0-stack/                        mem0 + Qdrant, en local
 │   └── mem0-http/                     l'API HTTP et sa config mem0
 ├── test/                              suite node --test
@@ -292,10 +301,12 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 ────────────────────────────────────────────────────────────────
  Pipelines · 2 processus
  Lot · mem0-omp · 3 features · 1 terminée · 0 bloquée · 0 échouée
- · 0 annulée · 2 en cours
- ❯ mem0-omp/panneau-des-pipelines      /impl · tourne · 3:12
+ · 0 annulée · 2 en cours · pilote : cette session
+ ❯ mem0-omp/panneau-des-pipelines      /impl · --fix · tour 2/3 · 3:12
+   dernière revue : 2 bloquant(s)
    mem0-omp/fetch-du-souvenir          /specs · attend réponse · 0:41
    mem0-omp/isolation-worktree         /review · terminé · 0:08
+   PR : https://github.com/…/pull/12
  Hors lot · 1
    autre-depot/fix-recall              /req · tourne · 0:12
  ──────────────────────────────────────────────────────────────
@@ -306,6 +317,12 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
  Échap fermer
 ────────────────────────────────────────────────────────────────
 ```
+
+L'en-tête du lot nomme **qui pilote** : `pilote : cette session` quand c'est la tienne,
+`piloté par pid N — consultation` quand une autre session conduit ce lot (les gestes qui
+écrivent ne sont alors plus annoncés, ils seraient refusés), `pilote absent — l reprend`
+quand le propriétaire a disparu — le lot est à l'arrêt, et rien ne le dit mieux que ces
+trois mots.
 
 Le panneau occupe **toute la largeur** du terminal (et toute sa hauteur) : rien n'est
 rendu dans une colonne de 80 caractères, et un redimensionnement se voit au rendu
@@ -326,16 +343,24 @@ fenêtres qui pourraient manger l'écran, et de les faire défiler.
   dépendances : elles restent sur le libellé (`base-qdrant ← isolation-worktree`), une
   seule fois. Quand le libellé et la colonne ne tiennent pas ensemble sur la largeur de
   contenu, l'entrée peint **deux rangs** : le libellé, puis l'état et le temps — jamais
-  coupés en deux.
+  coupés en deux. **Le tour de correction y figure** dès qu'il y en a un : `--fix · tour
+  2/3` pour un `/impl --fix`, `tour 2/3` pour une `/review` — sans quoi un tour de
+  correction se lisait comme un `/impl` neuf, et la boucle ne se suivait qu'à son blocage.
 - **La raison d'arrêt** d'une feature bloquée ou échouée est portée par la liste, sur un
   second rang de son entrée : `arrêt : run tué par le délai de 3600s`. `échoué` ne dit
-  pas pourquoi ; le motif, si.
+  pas pourquoi ; le motif, si. Deux autres seconds rangs existent : `dernière revue : n
+  bloquant(s)` — le verdict que la chaîne vient de lire dans le contrat — et `PR : <url>`
+  pour une feature livrée, l'URL que `gh` a imprimée.
 - **Le pied a toujours trois rangs** : les touches du panneau, celles de la **ligne
   sélectionnée** — `Entrée écrire`, `Entrée répondre`, `v valider`, `y accepter`,
   `R relancer`, `x retirer`, `c annuler`, `d supprimer` (le seul rang qu'il supprime est
   l'entrée d'historique), `o rejoindre` quand le rang a une session — puis `Échap
   fermer`. Rien n'y est annoncé qui n'agisse : sur un rang où `d` ne supprime rien,
-  `d supprimer` n'apparaît pas.
+  `d supprimer` n'apparaît pas ; `o rejoindre` disparaît quand un run écrit déjà cette
+  session (la vue reste lisible, mais la bascule n'a pas de sens), `l lancer` quand rien
+  n'est à lancer, et `c annuler` s'affiche aussi sur une feature **bloquée** ou
+  **échouée** — c'est la seule façon d'abandonner un pipeline arrêté par le plafond de
+  correction, en choisissant le sort de son worktree.
 
 Le cadre, les rangs, le curseur et les couleurs viennent des **composants pi-tui de
 l'hôte** — les mêmes que les écrans d'OMP (`DynamicBorder` pour les règles, `Text` pour
@@ -346,12 +371,22 @@ que d'afficher un écran à moitié peint.
 
 - **État** : `tourne` quand l'agent travaille, `attend` quand la pipeline est suspendue
   à une question — un `ask` en vol, une approbation d'outil en attente, ou l'agent qui a
-  rendu la main. L'état est calculé par le processus **propriétaire** de la pipeline,
-  jamais deviné par celui qui lit.
+  rendu la main. Une question `ask` **en vol** dit `attend réponse` (c'est une réponse qui
+  la débloque, pas une inactivité), et le pied annonce `Entrée répondre`. L'état est
+  calculé par le processus **propriétaire** de la pipeline, jamais deviné par celui qui lit.
+- **La sélection suit la LIGNE, pas son rang** : une fin de maillon qui insère une entrée
+  d'historique, un run qui change de maillon et se déplace dans la liste ne font plus
+  glisser le curseur sur la voisine — `Entrée`, `o` et `d` visent la ligne que tu avais
+  choisie, jamais celle qui a pris sa place. Et rien n'est peint hors budget : la ligne
+  sélectionnée est toujours visible, sur un terminal de 20 rangs comme de 60.
 - **Entrée** ouvre la **vue de session** de la ligne, dans le panneau : la transcription
   du fichier de session, du plus ancien au plus récent, relue en direct — un maillon qui
   travaille se voit avancer **sans rien toucher** (≤ 2 s), et remonter dans la vue fige la
-  position de lecture : le contenu qui arrive ne la déplace pas d'un rang. Le rendu est
+  position de lecture : le contenu qui arrive ne la déplace pas d'un rang. **La vue suit
+  le maillon COURANT** : quand la chaîne passe de `/review` à `/impl --fix`, la
+  transcription bascule sur la nouvelle session et l'annonce (`nouveau maillon /impl —
+  session …`) au lieu de laisser la revue à l'écran ; une feature échouée montre la
+  session du run qui a échoué, pas celle de son dernier succès. Le rendu est
   celui d'OMP, **par les composants d'OMP** : chaque entrée est confiée au composant de
   l'hôte qui la rend dans une vraie session — le markdown est mis en forme, un appel
   d'outil montre sa carte (et son **diff**, ajouts en `+`, suppressions en `-`) —, si bien
@@ -420,6 +455,14 @@ que d'afficher un écran à moitié peint.
     champ qui refuse. Une **session vivante dans un autre process** y tombe, avec son
     motif (`cette session appartient à un autre process (pid <n>)`) : rien n'entre dans un
     run qui ne nous écoute pas, et **rien n'est envoyé**.
+  Deux refus protègent l'arbre de travail lui-même : écrire dans une ligne dont un
+  **maillon du lot travaille déjà dans ce worktree** (`un maillon du lot travaille dans ce
+  worktree` — deux agents sur le même arbre se marcheraient dessus), et écrire dans une
+  ligne qui **est ta propre session** (`c'est ta session — réponds-y directement`, sinon
+  le pilote relancerait un run sur le fichier que tu as ouvert). Les jalons du lot sont
+  aussi accessibles **depuis la vue**, zone fermée : `v`, `y`, `R`, `c`, `o` y font
+  exactement ce qu'ils font dans la liste, et l'on revient à la transcription après
+  l'action — c'est là qu'on lit ce qu'on valide.
   Une question à choix se répond donc **sans quitter le panneau**, jusqu'à la clôture
   d'une collecte `/req` : la chaîne enchaîne ensuite toute seule sur le maillon suivant.
   Pendant qu'une conversation est ouverte, le lot continue d'enchaîner ses autres
@@ -533,10 +576,21 @@ s'affiche tel quel au lieu d'être avalé.
   deux features sans dépendance ne s'attendent jamais.
 - **La chaîne** : collecte → specs → implémentation → revue → livraison. Elle ne s'arrête
   que sur trois jalons : une **question** de l'agent, la **validation des specs** (`v`),
-  l'**accord de fin de revue** (`y`). Entre deux jalons, tu n'as rien à lancer.
+  l'**accord de fin de revue** (`y`). Entre deux jalons, tu n'as rien à lancer. Une question
+  posée **en texte** (pas par l'outil `ask`) arrête la chaîne de la même façon, quel que soit
+  le maillon : la feature passe *attend réponse*, et ta réponse la relance dans sa session.
 - **La boucle de correction** (`/impl --fix` → `/review`) tourne seule, dans la limite de
   `MEM0_PIPELINE_REVIEW_CAP` tours (3 par défaut) : au-delà, la feature passe *bloqué* au
-  lieu de boucler.
+  lieu de boucler. Deux garanties de fond : `/impl --fix` consigne ses levées dans une section
+  `## Corrections` et **n'écrit jamais** dans `## Revue` (seule `/review` écrit le verdict), et
+  une revue qui rend la main **sans réécrire** `## Revue` est jugée *illisible* — jamais
+  « propre » sur le verdict laissé par la correction précédente. Le verdict est lu dans la
+  **dernière** section `## Revue` du contrat, et « aucun bloquant » s'écrit de plusieurs
+  façons (`- BLOQUANTS : aucun`, `Aucun bloquant.`, `aucun (tous levés)`, `néant`…).
+- **Une question de l'agent ne consomme pas le budget du run** : le délai du maillon est
+  suspendu tant qu'une question est en vol, et une question qui arrive déclenche une alerte
+  (transcript + toast) avec son texte — sans elle, un maillon pouvait expirer en « délai
+  dépassé » pendant que tu réfléchissais.
 - **Répondre** (`Entrée` sur la ligne, puis la zone de saisie de la vue) : dans un run
   lancé par le panneau, le maillon dispose d'un outil
   `ask` à options — **une question à la fois, 1 à 9 options**. La question s'affiche dans
@@ -552,25 +606,37 @@ s'affiche tel quel au lieu d'être avalé.
   conventionnel, versions bumpées si un plugin change) et écrit le corps de la PR ; le
   pilote **pousse la branche vers l'URL HTTPS du dépôt** (jamais `origin` en SSH) puis
   ouvre la PR avec `gh` — son URL est consignée dans le panneau.
-- **Relancer** (`R`) repart du maillon courant d'une feature bloquée ou échouée, sans
-  toucher aux autres pipelines — et sans repartir tant qu'une dépendance de la feature
-  n'est pas terminée (`dépendance <nom> non terminée`). **Annuler** (`c`) te fait choisir
+- **Relancer** (`R`) repart du maillon courant d'une feature bloquée, échouée **ou
+  annulée** (dont le worktree est conservé), sans toucher aux autres pipelines — et sans
+  repartir tant qu'une dépendance de la feature n'est pas terminée
+  (`dépendance <nom> non terminée`). **Annuler** (`c`) te fait choisir
   le devenir du worktree :
   `1` conservé en place, `2` archivé (les fichiers ignorés — le contrat, les caches — sont
   copiés sous `~/.omp/pipeline-archive/…`, puis le worktree est retiré), `3` supprimé —
-  **la branche reste** dans les trois cas.
+  **la branche reste** dans les trois cas. Une feature *bloquée* ou *échouée* s'annule
+  aussi : c'est la seule façon d'abandonner un pipeline que le plafond de correction a
+  arrêté, en gardant la main sur son worktree.
 - **Dépendances** : une feature ne démarre qu'après la fin de celles dont elle dépend, et
-  reste *bloqué* si l'une d'elles échoue, se bloque ou est annulée.
+  reste *bloqué* si l'une d'elles échoue, se bloque ou est annulée — **mais elle repart
+  seule** dès que sa dépendance redevient saine (aucun `R` à donner). Le worktree d'une
+  dépendante part de la **branche de sa dépendance** : elle voit donc le code dont elle
+  dépend, sans attendre une fusion.
 - **Le récap** : quand le dernier pipeline atteint un état terminal, le lot poste son
-  décompte (terminées, bloquées, échouées, annulées) dans le transcript.
+  décompte (terminées, bloquées, échouées, annulées) dans le transcript ; si une relance
+  repart, le récap suivant décrit le VRAI état final.
 - **Où c'est piloté** : `<état>/lots/<sha1(realpath(dépôt))[:16]>.json`, écrit par **un
   seul** process, le pilote. Fermer ce process ne perd pas le lot : la première session
-  qui le rouvre le **reprend**, et les runs en cours (tués avec lui) sont relançables d'un
-  `R`.
+  qui le rouvre le **reprend**. Les runs en cours sont **tués** à la fermeture de la session
+  pilote (sinon ils survivraient sans pilote ni échéance), et une feature dont le run vit
+  encore n'est ni relancée ni jugée au moment de la reprise : la nouvelle session attend sa
+  fin. Le pilote est **un par dépôt** : rejoindre une session d'un autre dépôt puis revenir
+  ne casse pas le lot en cours. Un lot dont le battement du propriétaire est périmé (plus de
+  cinq périodes) est tenu pour abandonné même si son pid vit encore (pid réutilisé).
 - **Une feature ouverte par `/req`** suit exactement la même chaîne : sa collecte se
   déroule dans ta session (avec les questions à options d'`ask`), puis le lot prend la
   main dès `/specs`. `/specs`, `/impl` et `/review` restent utilisables à la main tant
-  qu'aucun lot ne pilote la feature.
+  qu'aucun lot ne pilote la feature. Une feature de lot ajoutée par `a` **ne démarre
+  qu'au `l`** : l'inscription d'une collecte `/req` ne lance pas les autres.
 
 ## Phases
 

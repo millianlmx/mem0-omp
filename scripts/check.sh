@@ -107,8 +107,13 @@ PY
 # Le tableau `commands` est ce que l'utilisateur lit pour savoir ce qu'il installe :
 # une commande déclarée sans `registerCommand` est un bouton mort, l'inverse une
 # commande invisible. Les deux ensembles doivent être identiques.
+#
+# Le balayage est RÉCURSIF sur les .ts du plugin : depuis le découpage en
+# modules, les commandes peuvent vivre dans n'importe lequel (extension.ts n'est
+# plus qu'une entrée de câblage).
 python3 - <<'PY'
 import json, os, re, sys
+from pathlib import Path
 cat = json.load(open(".omp-plugin/marketplace.json"))
 root = cat.get("metadata", {}).get("pluginRoot", "")
 ok = True
@@ -122,8 +127,10 @@ for p in cat["plugins"]:
     if not os.path.isfile(ext):
         print(f"  ✗ {p['name']} : {ext} introuvable — commandes invérifiables"); ok = False; continue
     declared = set(p.get("commands") or [])
-    registered = set(re.findall(r'registerCommand\(\s*["\']([^"\']+)["\']',
-                                open(ext, encoding="utf-8").read()))
+    registered = set()
+    for f in Path(d).rglob("*.ts"):
+        registered |= set(re.findall(r'registerCommand\(\s*["\']([^"\']+)["\']',
+                                     f.read_text(encoding="utf-8")))
     missing = sorted(declared - registered)
     extra = sorted(registered - declared)
     if missing:

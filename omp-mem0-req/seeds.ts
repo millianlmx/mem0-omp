@@ -150,7 +150,7 @@ Procédure OBLIGATOIRE, dans l'ordre :
 2. Traite CHAQUE point BLOQUANT de la revue, un par un. Ne touche qu'au code nécessaire pour le lever ; n'ajoute aucune fonctionnalité hors specs (pas de scope creep).
 3. Pour chaque bloquant levé, re-prouve le(s) CRITÈRE(S) D'ACCEPTATION concerné(s) (AC-<n>, Given/When/Then) : lance ou écris le test / smoke test correspondant, en portant \`AC-<n>\` dans son nom ou sa description — c'est ainsi que /review le retrouve par grep.
 4. Si un bloquant révèle une spec fausse ou contredite par le dépôt, NE devine pas : corrige la spec DANS LE CONTRAT (édite \`## Spécifications\`) et signale-le.
-5. À la fin : mets à jour la section \`## Revue\` du contrat (marque les bloquants levés), récapitule bloquant par bloquant (levé + preuve), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES.
+5. À la fin : consigne tes levées dans une section \`## Corrections\` du contrat (édite ce titre, crée-le s'il n'existe pas) — n'écris JAMAIS dans \`## Revue\`, qui est le verdict de /review et n'appartient qu'à lui : c'est /review qui le réécrit, et une levée écrite là ferait passer pour revu un code qui ne l'est pas. Récapitule bloquant par bloquant (levé + preuve), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES.
 
 Le livrable : chaque BLOQUANT de la revue est levé et re-prouvé. Relance /review pour reconfirmer.`;
 
@@ -190,7 +190,7 @@ Procédure OBLIGATOIRE, dans l'ordre :
 6. Traçabilité DANS LES DEUX SENS : (a) chaque spec (S-<n>) et chaque lot (BR-<n>) pointe vers un AC — un S ou un BR sans AC est une spec orpheline à signaler ; (b) chaque AC est couvert par au moins une spec — un AC non couvert est à signaler ; (c) chaque fichier du diff est couvert par au moins une spec — fichier modifié sans spec = changement non spécifié à signaler.
 7. Évalue les implications sécurité : nouvelles dépendances, exposition d'API, gestion des erreurs critiques.
 8. Vérifie les exigences non-fonctionnelles si listées dans les specs (performance, compatibilité).
-9. CONSIGNE le verdict dans le contrat : écris-le (write) dans ${CONTRACT_PATH} sous un titre \`## Revue\` (remplace une section \`## Revue\` existante, ne touche pas au reste). C'est ce que /impl --fix relira pour lever les bloquants. Ne le mets PAS en mémoire mem0.
+9. CONSIGNE le verdict dans le contrat : écris-le (write) dans ${CONTRACT_PATH} sous un titre \`## Revue\` (REMPLACE la section \`## Revue\` existante — ne l'ajoute pas à la suite, et ne touche à rien d'autre). C'est ce que /impl --fix relira pour lever les bloquants. Ne le mets PAS en mémoire mem0.
 
 Format du verdict (dans le contrat ET dans ta réponse) :
 - STATUT : APPROUVÉ / BLOQUANT / MINEUR

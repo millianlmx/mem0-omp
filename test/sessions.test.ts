@@ -1360,12 +1360,12 @@ test("sessions/AC-3 : les actions non interruptives du panneau ne touchent aucun
   assert.match(panel.screen(), /Nom : ▏/, "l'éditeur d'ajout s'ouvre");
   panel.component.handleInput("\u001b");
   panel.component.handleInput("x");
-  assert.match(panel.screen(200), /Retirer alpha du lot \?/, "le retrait passe par un aperçu");
-  panel.component.handleInput("\r");
   await flush();
-  // Le refus du pilote est le texte EXISTANT (S-3 : « refus et textes inchangés ») :
-  // `x` ne retire pas une feature qui a démarré, elle s'annule par `c`.
+  // Le refus arrive AVANT l'aperçu (PANEL-8c), avec le texte EXISTANT du pilote (S-3 :
+  // « refus et textes inchangés ») : `x` ne retire pas une feature qui a démarré, elle
+  // s'annule par `c` — ouvrir un aperçu pour un geste impossible ferait confirmer à vide.
   assert.match(panel.screen(200), /a déjà démarré — c pour annuler/);
+  assert.doesNotMatch(panel.screen(200), /Retirer alpha du lot \?/, "aucun aperçu pour un geste impossible");
 
   assert.deepEqual(switched, [], "aucune bascule n'a été tentée");
   assert.equal(runs.runs[0]!.aborted(), false, "le run d'alpha n'a pas été avorté");
@@ -1649,8 +1649,9 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
       // Le cadre porte maintenant trois en-têtes de section (`Lot`, `Hors lot`,
       // `Historique`) et trois rangs de pied (S-7, S-8) : son coût incompressible
       // passe de 8 à 11 rangs ici (le titre du lot se replie sur deux), donc le
-      // budget de ce test monte d'autant.
-      { width: 64, budget: 13, glyphs: GLYPHS, now: 0 },
+      // budget de ce test monte d'autant — plus deux rangs pour le marqueur de la
+      // section tronquée (PANEL-12), que la fenêtre réserve quand la place le permet.
+      { width: 64, budget: 16, glyphs: GLYPHS, now: 0 },
     );
 
   // Sélection sur le DERNIER rang : la fenêtre doit l'inclure, pas rester en tête.
@@ -1658,13 +1659,16 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   const text = rows.map((row) => row.text).join("\n");
   assert.match(text, /> g11/, "le rang sélectionné est rendu, même tout en bas");
   assert.doesNotMatch(text, /g0 /, "et la fenêtre ne montre pas le début");
-  assert.match(text, /… 11 de plus dans le lot/, "le marqueur compte le total caché, et nomme sa section");
-  assert.ok(rows.length <= 13, "le budget tient toujours");
+  // Le marqueur dit de quel CÔTÉ sont les rangs cachés (PANEL-12) : la sélection est
+  // en fin de section, donc ils sont au-dessus — et il compte ce qui manque (12
+  // features, 3 rendues).
+  assert.match(text, /… 9 au-dessus dans le lot/, "le marqueur compte le total caché, et nomme sa section");
+  assert.ok(rows.length <= 16, "le budget tient toujours");
 
   // Sélection en tête : la fenêtre revient au début, le marqueur reste unique.
   const head = render(0);
   assert.match(head.map((row) => row.text).join("\n"), /> g0/);
-  assert.equal(head.filter((row) => /de plus/.test(row.text)).length, 1, "un seul marqueur par section");
+  assert.equal(head.filter((row) => /(de plus|au-dessus|en dessous)/.test(row.text)).length, 1, "un seul marqueur par section");
 });
 
 // ---------------------------------------------------------------------------
@@ -1840,7 +1844,9 @@ test("le pied annonce Entrée session et la bascule o quand la ligne en a une", 
   const text = buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 0 })
     .map((row) => row.text)
     .join("\n");
-  assert.match(text, /a ajouter · l lancer · Entrée session/, "la bascule n'est plus annoncée sur Entrée");
+  // `l lancer` ne s'annonce que s'il y a quelque chose à lancer (PANEL-8) : cette
+  // feature attend une validation, donc le pied ne le propose pas.
+  assert.match(text, /a ajouter · Entrée session/, "la bascule n'est plus annoncée sur Entrée");
   assert.match(text, /v valider · c annuler · o rejoindre/, "la ligne qui a une session annonce sa bascule");
 
   // Les deux écritures d'une ligne de lot s'annoncent par leur état (S-11) : la
@@ -1860,14 +1866,14 @@ test("le pied annonce Entrée session et la bascule o quand la ligne en a une", 
   seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "running", phase: "impl" })]);
   assert.match(footerOf(0), /Entrée écrire/, "une feature en cours annonce Entrée écrire");
 
-  // Un rang « en cours » vivant n'offre aucune action de ligne : il annonce la seule
-  // qui existe pour lui.
+  // Un rang « en cours » VIVANT n'annonce pas `o` (PANEL-11) : la bascule refuse tant
+  // qu'un run écrit la session (elle le dit), donc l'annoncer serait une touche morte.
   liveEntry(stateDir, { cwd: mktmp("sessions-footer-other-"), label: "autre/vivant", sessionFile });
   const withRunning = readPanelModel({ stateDir, repoRoot, selection: 1 });
   const runningText = buildPanelRows(withRunning, { width: 64, budget: 18, glyphs: GLYPHS, now: 0 })
     .map((row) => row.text)
     .join("\n");
-  assert.match(runningText, /o rejoindre/, "le rang vivant annonce la bascule");
+  assert.doesNotMatch(runningText, /o rejoindre/, "un run vivant écrit la session : la bascule ne s'annonce pas");
   assert.doesNotMatch(runningText, /aucune action · o rejoindre/, "« aucune action » ne se contredit pas");
 
   // Une ligne sans session n'annonce pas `o` : ce serait une touche morte.

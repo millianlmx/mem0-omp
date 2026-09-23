@@ -6,6 +6,7 @@ import { LOT_EDITOR_MAX } from "./lot.ts";
 import { publishCurrentCwd } from "./publish.ts";
 import { runState } from "./runState.ts";
 import type { FlagReader } from "./runs.ts";
+import { pipelineDeadlineOf } from "./runs.ts";
 import { PANEL_INBOX_POLL_MS, PIPELINE_PHASES, consumeDelivery, readDeliveries } from "./store.ts";
 import type { PanelAskOption, PanelDelivery, PanelPendingAsk, PipelineCtx } from "./store.ts";
 
@@ -93,7 +94,37 @@ export function checkAsk(input: unknown): AskCheck {
 
 
 /** La réponse attendue d'une question en vol : une option choisie, ou un texte libre. */
-export type AskAnswer = { selected?: string; custom?: string };
+export type AskAnswer = {
+  selected?: string;
+  custom?: string;
+  /**
+   * La question n'aura pas de réponse : le run s'arrête (pilote disparu, échéance
+   * du drapeau atteinte, tour interrompu). Le canal est le MÊME que la réponse —
+   * `runState.askWaiters` est partagé par les instances de l'extension d'un même
+   * process, et c'est par lui que la pompe atteint la question en vol.
+   */
+  failed?: string;
+};
+
+
+// Le pid du PARENT au moment de l'armement : un run de lot est un `omp -p` lancé
+// par le pilote, donc `process.ppid` EST le pilote. Quand il meurt, l'enfant est
+// reparenté au lanceur de sessions (`ppid === 1`) — et il attendait une réponse
+// qu'aucun lot ne porte plus (RUNS-2). Le chien de garde est ici, dans le module
+// qui a armé, parce que c'est sa pompe qui tourne.
+let armedParentPid: number | null = null;
+
+
+/** Le motif d'arrêt d'un run armé : le pilote a disparu, ou l'échéance est passée. */
+export function runStopReason(pi: FlagReader): string | null {
+  const parent = armedParentPid ?? process.ppid;
+  if (process.ppid === 1 || process.ppid !== parent) return "pilote disparu — termine ton tour";
+  const deadline = pipelineDeadlineOf(pi);
+  if (deadline !== null && Date.now() >= deadline) {
+    return "délai du run atteint — termine ton tour et rends la main";
+  }
+  return null;
+}
 
 
 // La question EN VOL de ce process vit dans `runState.askWaiters`, une entrée par
@@ -101,6 +132,27 @@ export type AskAnswer = { selected?: string; custom?: string };
 // outil est `exclusive`, l'hôte peut néanmoins les enchaîner), et deux instances
 // de l'extension dans le même process — plugin installé + `-e` — partagent ainsi
 // la même table : la pompe de l'une résout la question posée par l'autre.
+
+
+/** Rejette toutes les questions en vol : aucune réponse ne viendra plus. */
+export function failInFlightAsks(reason: string): void {
+  for (const [toolCallId, settle] of [...runState.askWaiters]) {
+    runState.askWaiters.delete(toolCallId);
+    settle({ failed: reason });
+  }
+}
+
+
+/** Arrête le run armé : ses questions en vol sont rejetées, et sa pompe s'éteint. */
+function stopArmedRun(reason: string): void {
+  failInFlightAsks(reason);
+  try {
+    runState.pumpStop?.();
+  } catch {
+    /* minuterie déjà nettoyée par la session */
+  }
+  runState.pumpStop = null;
+}
 
 
 /** Le dossier armé de ce process (`--panel-inbox`), ou `null` : absent, vide ou relatif. */
@@ -138,6 +190,15 @@ export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask
  * d'objet (S-7). Ne lève jamais : la pompe travaille sur un timer.
  */
 export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string): void {
+  // Le chien de garde passe AVANT les livraisons : un run dont le pilote est mort
+  // (ou dont l'échéance du drapeau est passée) n'a plus personne à qui répondre —
+  // sa question en vol est rejetée, et sa pompe s'éteint au lieu de tourner
+  // indéfiniment sur une boîte que plus personne n'alimente (RUNS-2).
+  const stop = runStopReason(pi);
+  if (stop !== null) {
+    stopArmedRun(stop);
+    return;
+  }
   for (const entry of readDeliveries(dir)) {
     const delivery = entry.delivery;
     if (delivery === null) {
@@ -176,6 +237,9 @@ export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string): void
 export function armInbox(pi: ExtensionAPI, ctx: PipelineCtx): boolean {
   const dir = panelInboxFlagOf(pi);
   if (dir === null || typeof ctx.setInterval !== "function") return false;
+  // Le pilote de ce run est le parent du process : c'est lui qui répondra, et sa
+  // disparition (reparentage au lanceur de sessions) se lit dans `process.ppid`.
+  armedParentPid = process.ppid;
   runState.inbox = dir;
   runState.armed = true;
   if (runState.pumpStop !== null) return true;
@@ -246,6 +310,13 @@ export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string
     async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
       const checked = checkAsk(params);
       if (!checked.ok) return { content: [{ type: "text" as const, text: checked.error }], isError: true };
+      // Le run n'a plus personne pour répondre : le pilote est mort, ou l'échéance
+      // du drapeau est passée. Une question posée MAINTENANT resterait sans
+      // réponse jusqu'à la fin du process — le modèle doit rendre la main.
+      const stop = runStopReason(pi);
+      if (stop !== null) {
+        return { content: [{ type: "text" as const, text: `Error: ${stop}` }], isError: true };
+      }
       // Une seule question EN VOL à la fois : l'exécuteur de l'hôte peut lancer
       // deux appels `ask` dans le même tour, et le second écraserait le premier
       // (sa promesse ne serait jamais résolue, et le maillon attendrait jusqu'au
@@ -266,28 +337,44 @@ export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string
       const asked: PanelPendingAsk = { toolCallId, ...checked.ask };
       const publish = () =>
         publishCurrentCwd({ ctx: ctx as PipelineCtx, notify: deps.notify, stateDir: deps.stateDir });
-      const answer = await new Promise<AskAnswer>((resolve, reject) => {
-        const onAbort = () => {
-          runState.askWaiters.delete(toolCallId);
-          reject(new Error("ask interrompu : le run a été annulé"));
+      let answer: AskAnswer;
+      try {
+        answer = await new Promise<AskAnswer>((resolve, reject) => {
+          const onAbort = () => {
+            runState.askWaiters.delete(toolCallId);
+            reject(new Error("ask interrompu : le run a été annulé"));
+          };
+          const settle = (value: AskAnswer) => {
+            signal?.removeEventListener("abort", onAbort);
+            resolve(value);
+          };
+          runState.askWaiters.set(toolCallId, settle);
+          if (signal?.aborted === true) {
+            onAbort();
+            return;
+          }
+          signal?.addEventListener("abort", onAbort, { once: true });
+          runState.pendingAsk = asked;
+          publish();
+        });
+      } catch (err) {
+        // Le tour a été interrompu : la question n'est plus en vol, et le modèle
+        // reçoit le motif au lieu d'une promesse rejetée qui remonterait à l'hôte.
+        return {
+          content: [{ type: "text" as const, text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+          isError: true,
         };
-        const settle = (value: AskAnswer) => {
-          signal?.removeEventListener("abort", onAbort);
-          resolve(value);
-        };
-        runState.askWaiters.set(toolCallId, settle);
-        if (signal?.aborted === true) {
-          onAbort();
-          return;
-        }
-        signal?.addEventListener("abort", onAbort, { once: true });
-        runState.pendingAsk = asked;
-        publish();
-      }).finally(() => {
+      } finally {
         runState.askWaiters.delete(toolCallId);
         runState.pendingAsk = null;
         publish();
-      });
+      }
+      // Le run s'est arrêté PENDANT que la question était en vol (pilote disparu,
+      // échéance du drapeau) : la question est rejetée avec le motif, jamais
+      // laissée en attente d'une réponse qui ne viendra pas.
+      if (answer.failed !== undefined) {
+        return { content: [{ type: "text" as const, text: `Error: ${answer.failed}` }], isError: true };
+      }
       if (answer.selected !== undefined) {
         const chosen = asked.options.find((candidate) => candidate.label === answer.selected);
         if (!chosen) {
