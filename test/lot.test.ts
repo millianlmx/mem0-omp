@@ -503,13 +503,16 @@ test("l'argv d'un run porte le drapeau de phase, l'auto-approbation et le prompt
   assert.equal(resumed.includes("-e"), false, "sans chemin d'extension connu, pas de `-e`");
 });
 
-test("le préambule d'un run interdit `ask` et ne clôt jamais une collecte", () => {
+test("le préambule d'un run annonce `ask` et ne clôt jamais une collecte", () => {
   const collecte = buildLotPrompt({ kind: "collecte", phase: "req", slug: "iso", description: "une intention" });
   assert.match(collecte, /^\[req\]/, "le préambule d'une collecte est marqué comme notice du plugin");
   assert.match(collecte, /une intention/);
   assert.equal(saysFin(LOT_WORKER_DIRECTIVE), false, "aucune notice ne porte « fin » isolé");
   assert.equal(saysFin(collecte), false, "le préambule d'un run ne clôt pas une collecte");
-  assert.match(LOT_WORKER_DIRECTIVE, /`ask` n'est pas disponible/);
+  // Un run de lot est ARMÉ (`--panel-inbox`) : son maillon dispose d'un vrai outil
+  // `ask`, et la question en texte reste le repli. Le dire dans le préambule est ce
+  // qui fait poser la question au lieu de finir le tour sur une question en clair.
+  assert.match(LOT_WORKER_DIRECTIVE, /`ask` EST disponible/);
 
   const answer = buildLotPrompt({ kind: "answer", phase: "req", slug: "iso", text: "voici ma réponse" });
   assert.match(answer, /^\[réponse de l'utilisateur\] voici ma réponse/);
@@ -2628,6 +2631,7 @@ test("un run de lot arme son maillon au démarrage et clôt son entrée à la fi
     { deferFlags: true },
   );
   assert.deepEqual(app.flags.sort(), [
+    "panel-inbox",
     "pipeline-feature",
     "pipeline-lot",
     "pipeline-phase",

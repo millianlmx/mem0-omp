@@ -99,7 +99,7 @@ test("pipeline-state/AC-24 : la notice d'échec d'écriture d'état apparaît au
 });
 
 // ---------------------------------------------------------------------------
-// AC-25 — liste figée des 11 champs de `running/<id>.json`
+// AC-25 — liste figée des 13 champs de `running/<id>.json`
 // ---------------------------------------------------------------------------
 
 test("pipeline-state/AC-25 : la liste des champs écrits dans running/<id>.json est figée", () => {
@@ -115,6 +115,15 @@ test("pipeline-state/AC-25 : la liste des champs écrits dans running/<id>.json 
     sessionFile: "/tmp/session.jsonl",
     sessionId: "session-1",
     owner: { pid: process.pid },
+    // La boîte du run et la question en vol (S-6, S-7) : publiées par le run armé,
+    // lues par le panneau pour décider s'il peut écrire et quoi proposer.
+    inbox: "/tmp/inbox/feature-1",
+    pendingAsk: {
+      toolCallId: "call-1",
+      id: "auth",
+      question: "JWT ou cookie ?",
+      options: [{ label: "JWT", description: "jeton sans état" }, { label: "cookie" }],
+    },
   };
 
   writeRunningEntry(stateDir, entry);
@@ -134,6 +143,8 @@ test("pipeline-state/AC-25 : la liste des champs écrits dans running/<id>.json 
     "sessionFile",
     "sessionId",
     "owner",
+    "inbox",
+    "pendingAsk",
   ].sort();
   assert.deepEqual(Object.keys(payload).sort(), expected);
   assert.deepEqual(Object.keys(payload.owner as Record<string, unknown>), ["pid"]);

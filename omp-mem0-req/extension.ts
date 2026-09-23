@@ -514,6 +514,17 @@ export function buildSweepMessage(result: {
 export type PipelineRunState = "running" | "waiting";
 export type PipelineFinalState = "done" | "failed";
 
+/** Une option d'une question `ask` posée par un maillon (S-7). */
+export type PanelAskOption = { label: string; description?: string };
+
+/** La question `ask` EN VOL d'un run : ce que le panneau propose de sélectionner (S-7). */
+export type PanelPendingAsk = {
+  toolCallId: string;
+  id: string;
+  question: string;
+  options: PanelAskOption[];
+};
+
 /** Entrée `running/<id>.json` : une pipeline en cours, écrite par son propriétaire. */
 export type RunningEntry = {
   id: string;
@@ -526,6 +537,15 @@ export type RunningEntry = {
   sessionFile: string | null;
   sessionId: string | null;
   owner: { pid: number };
+  /**
+   * La BOÎTE de ce run (`--panel-inbox`), chemin absolu, ou `null` : c'est elle
+   * qui dit qu'un run vivant accepte une écriture (S-6). Un run lancé par une
+   * version antérieure n'a pas le champ — même lecture qu'un run non armé, donc
+   * la file `pendingTexts` d'avant.
+   */
+  inbox?: string | null;
+  /** La question `ask` en vol (S-7) ; `null` hors d'un appel `ask`. */
+  pendingAsk?: PanelPendingAsk | null;
 };
 
 /** Entrée `history/<id>.json` : une pipeline close, écrite une seule fois. */
@@ -650,6 +670,34 @@ function asStringOrNull(value: unknown): string | null {
   return typeof value === "string" && value !== "" ? value : null;
 }
 
+/**
+ * La question publiée d'un run : `undefined` quand la valeur est MAL typée (le
+ * fichier est alors rejeté, comme tout autre champ), `null` quand elle est absente
+ * ou nulle (un run sans question, cas de tous les runs d'avant cette feature).
+ */
+function asPendingAsk(raw: unknown): PanelPendingAsk | null | undefined {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const q = raw as Record<string, unknown>;
+  if (typeof q.toolCallId !== "string" || q.toolCallId === "") return undefined;
+  if (typeof q.id !== "string" || typeof q.question !== "string") return undefined;
+  if (!Array.isArray(q.options)) return undefined;
+  const options: PanelAskOption[] = [];
+  for (const raw of q.options) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+    const option = raw as Record<string, unknown>;
+    if (typeof option.label !== "string" || option.label === "") return undefined;
+    if (option.description !== undefined && typeof option.description !== "string") return undefined;
+    options.push(
+      typeof option.description === "string" && option.description !== ""
+        ? { label: option.label, description: option.description }
+        : { label: option.label },
+    );
+  }
+  if (options.length === 0) return undefined;
+  return { toolCallId: q.toolCallId, id: q.id, question: q.question, options };
+}
+
 /** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
 function asRunningEntry(raw: unknown): RunningEntry | null {
   if (!raw || typeof raw !== "object") return null;
@@ -661,6 +709,12 @@ function asRunningEntry(raw: unknown): RunningEntry | null {
   if (typeof e.phaseStartedAt !== "number" || typeof e.updatedAt !== "number") return null;
   const owner = e.owner;
   if (!owner || typeof owner !== "object" || !("pid" in owner) || typeof owner.pid !== "number") return null;
+  // Les deux champs de la feature (S-6, S-7) : absents d'une entrée écrite avant
+  // elle, donc `null` — jamais un refus, sinon un run d'une version antérieure
+  // disparaîtrait du panneau ; mal typés, ils font rejeter l'entrée comme les autres.
+  const pendingAsk = asPendingAsk(e.pendingAsk);
+  if (pendingAsk === undefined) return null;
+  if (e.inbox !== undefined && e.inbox !== null && typeof e.inbox !== "string") return null;
   return {
     id: e.id,
     cwd: e.cwd,
@@ -673,6 +727,8 @@ function asRunningEntry(raw: unknown): RunningEntry | null {
     sessionFile: asStringOrNull(e.sessionFile),
     sessionId: asStringOrNull(e.sessionId),
     owner: { pid: owner.pid },
+    inbox: asStringOrNull(e.inbox),
+    pendingAsk,
   };
 }
 
@@ -718,6 +774,136 @@ function writeJsonAtomic(file: string, payload: unknown): void {
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
   fs.renameSync(tmp, file);
+}
+
+// --- la boîte de réception d'un run : le seul canal vers un run VIVANT (S-6) --
+// Le run reste un process `omp -p` : aucune API de l'hôte n'atteint la session
+// d'un autre process, et un run meurt à la fin de son tour. Le canal est donc un
+// DOSSIER : le déposant (le pilote, le panneau) crée un fichier de livraison, le
+// consommateur (le run lui-même, `--panel-inbox`) le lit puis le SUPPRIME. Un
+// fichier par livraison, jamais un fichier partagé : personne ne réécrit ce qu'un
+// autre lit, et l'ordre lexicographique des noms est l'ordre chronologique.
+
+/** Cadence de consommation d'un run armé (S-6) : un `readdir` court, quatre fois par seconde. */
+export const PANEL_INBOX_POLL_MS = 250;
+
+/** Une livraison déposée dans la boîte d'un run : un texte, ou la réponse à un `ask` (S-6, S-7). */
+export type PanelDelivery =
+  | { version: 1; kind: "text"; text: string; sentAt: number }
+  | { version: 1; kind: "ask"; toolCallId: string; selected: string; sentAt: number }
+  | { version: 1; kind: "ask"; toolCallId: string; custom: string; sentAt: number };
+
+/** Une livraison relue : `delivery` vaut `null` quand le fichier est illisible ou de forme inconnue. */
+export type PanelDeliveryEntry = { file: string; delivery: PanelDelivery | null };
+
+/** `<stateDir>/inbox` : les boîtes des runs, à côté du magasin qu'elles servent. */
+const INBOX_ROOT = "inbox";
+
+/**
+ * La boîte d'un NOUVEAU run de ce cwd : `<stateDir>/inbox/<runningIdFor(cwd)>-<n>`,
+ * `n` étant le plus petit entier ≥ 1 dont le dossier n'existe pas. Déterministe —
+ * ni horloge ni aléatoire — pour que deux appels des deux côtés du lancement
+ * (le lanceur qui crée, le panneau qui surveille) tombent sur le même nom.
+ */
+export function panelInboxDirFor(stateDir: string, cwd: string): string {
+  const base = path.join(stateDir, INBOX_ROOT, runningIdFor(cwd));
+  for (let n = 1; ; n += 1) {
+    const candidate = `${base}-${n}`;
+    if (!fs.existsSync(candidate)) return candidate;
+  }
+}
+
+/**
+ * Dépose une livraison : dossier créé au besoin, écriture ATOMIQUE (temporaire
+ * puis `rename`, cf. `writeJsonAtomic`), nom d'ordre chronologique —
+ * `<epoch ms sur 16 chiffres>-<4 hex>.json`, suffixé `-1`, `-2` … si le nom est
+ * déjà pris (deux livraisons dans la même milliseconde). Lève en cas d'échec :
+ * c'est l'appelant qui décide du refus affiché, jamais une livraison partielle.
+ */
+export function writeDelivery(dir: string, delivery: PanelDelivery): void {
+  fs.mkdirSync(dir, { recursive: true });
+  const stamp = String(Math.max(0, Math.trunc(delivery.sentAt))).padStart(16, "0");
+  const salt = crypto.randomBytes(2).toString("hex");
+  let file = path.join(dir, `${stamp}-${salt}.json`);
+  for (let n = 1; fs.existsSync(file); n += 1) file = path.join(dir, `${stamp}-${salt}-${n}.json`);
+  writeJsonAtomic(file, delivery);
+}
+
+/** La forme d'une livraison relue : `null` si le JSON est illisible ou la forme inconnue. */
+function asDelivery(raw: unknown): PanelDelivery | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const d = raw as Record<string, unknown>;
+  if (d.version !== 1) return null;
+  const sentAt = typeof d.sentAt === "number" && Number.isFinite(d.sentAt) ? d.sentAt : 0;
+  if (d.kind === "text") {
+    return typeof d.text === "string" && d.text !== "" ? { version: 1, kind: "text", text: d.text, sentAt } : null;
+  }
+  if (d.kind !== "ask") return null;
+  if (typeof d.toolCallId !== "string" || d.toolCallId === "") return null;
+  const selected = typeof d.selected === "string" && d.selected !== "" ? d.selected : null;
+  const custom = typeof d.custom === "string" && d.custom !== "" ? d.custom : null;
+  // Exactement l'un des deux (S-7) : un fichier qui porte les deux n'est pas une
+  // réponse, c'est une forme inconnue — elle est ignorée, jamais devinée.
+  if (selected === null && custom === null) return null;
+  if (selected !== null && custom !== null) return null;
+  return selected !== null
+    ? { version: 1, kind: "ask", toolCallId: d.toolCallId, selected, sentAt }
+    : { version: 1, kind: "ask", toolCallId: d.toolCallId, custom: custom as string, sentAt };
+}
+
+/**
+ * Les livraisons d'une boîte, dans l'ordre chronologique (lexicographique). Un
+ * dossier absent ou illisible rend `[]`, et un fichier illisible est rendu tel
+ * quel (`delivery: null`) pour que le consommateur puisse le SUPPRIMER — laisser
+ * un fichier qu'on ne sait pas lire ferait tourner la pompe pour rien.
+ */
+export function readDeliveries(dir: string): PanelDeliveryEntry[] {
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const out: PanelDeliveryEntry[] = [];
+  for (const name of names.filter((n) => n.endsWith(".json")).sort()) {
+    const file = path.join(dir, name);
+    out.push({ file, delivery: asDelivery(readJsonFile(file)) });
+  }
+  return out;
+}
+
+/** Consommation : le fichier est supprimé, un fichier déjà absent est un succès silencieux. */
+export function consumeDelivery(file: string): void {
+  try {
+    fs.unlinkSync(file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
+}
+
+/**
+ * Les restes d'une boîte : les textes NON consommés, dans l'ordre des fichiers,
+ * puis le dossier est supprimé. Ne lève jamais — un dossier absent rend `[]`.
+ * Appelé par le déposant à la fin du run (S-8 §4, S-9) : un message confirmé par
+ * l'utilisateur n'est jamais perdu, il part au prochain run ou revient dans la
+ * zone. Une réponse `ask` non consommée, elle, meurt avec sa question.
+ */
+export function dropInbox(dir: string): string[] {
+  const texts: string[] = [];
+  for (const entry of readDeliveries(dir)) {
+    if (entry.delivery?.kind === "text") texts.push(entry.delivery.text);
+  }
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    /* dossier impossible à retirer : les textes sont rendus, rien n'est bloqué */
+  }
+  return texts;
+}
+
+/** La boîte publiée d'une entrée de magasin : `null` quand ce run n'accepte aucune écriture. */
+export function panelInboxDirOf(entry: RunningEntry): string | null {
+  return asStringOrNull(entry.inbox);
 }
 
 /**
@@ -852,6 +1038,14 @@ let liveCtx: PipelineCtx | undefined;
 let stateWriteWarned = false;
 let heartbeatStop: (() => void) | null = null;
 
+// La BOÎTE armée de ce process (`--panel-inbox`, S-6) : `null` pour une session
+// ordinaire, qui n'accepte donc aucune écriture d'un autre process. Publiée dans
+// l'entrée du run — c'est elle que le panneau lit pour décider s'il peut écrire.
+let armedInbox: string | null = null;
+// La question `ask` EN VOL de ce process (S-7) : publiée avec l'entrée, effacée à
+// la fin de l'appel, quelle que soit son issue.
+let pendingAsk: PanelPendingAsk | null = null;
+
 function armedCwds(): string[] {
   const out: string[] = [];
   for (const [cwd, st] of states) {
@@ -945,6 +1139,11 @@ export function publishRunning(deps: PublishDeps, cwd: string): void {
     sessionFile: same ? (sessionFileOf(ctx) ?? previous?.sessionFile ?? null) : (previous?.sessionFile ?? null),
     sessionId: same ? (sessionIdOf(ctx) ?? previous?.sessionId ?? null) : (previous?.sessionId ?? null),
     owner: { pid: process.pid },
+    // La boîte et la question en vol décrivent CE process : elles ne se reprennent
+    // pas de l'entrée précédente (une boîte n'est armée qu'au démarrage, et une
+    // question ne survit pas à la fin de son appel).
+    inbox: armedInbox,
+    pendingAsk,
   };
   st.entry = entry;
   try {
@@ -1043,6 +1242,274 @@ export function closePipeline(deps: PublishDeps, cwd: string, finalState: Pipeli
     st.entry = undefined;
     st.phaseStartedAt = undefined;
   }
+}
+
+// --- le run ARMÉ : consommer sa boîte et poser de vraies questions (S-6, S-7) -
+// Un run lancé par le panneau reçoit `--panel-inbox <dossier>` : c'est le seul
+// canal qui atteint une session VIVANTE (aucune API de l'hôte ne voit la session
+// d'un autre process). L'extension de l'ENFANT consomme les livraisons et les
+// injecte dans le tour en cours (`deliverAs: "steer"`), et enregistre — pour ce
+// run seulement — un outil `ask` dont la réponse arrive par la même boîte. Sans
+// le drapeau (toute session interactive), rien n'est armé : l'outil `ask` de
+// l'hôte garde la main, aucun timer ne tourne.
+
+/** Bornes de la question publiée (S-7) : ce qui tient dans une zone de panneau. */
+export const ASK_QUESTION_MAX = 400;
+export const ASK_LABEL_MAX = 120;
+export const ASK_DESCRIPTION_MAX = 200;
+export const ASK_OPTIONS_MAX = 9;
+
+export const ASK_TOOL_DESCRIPTION =
+  "Pose UNE question à l'utilisateur avec 1 à 9 options et attends sa réponse. " +
+  "La question s'affiche dans le panneau de la pipeline, où l'utilisateur choisit une option " +
+  "ou saisit sa propre réponse. Ta question doit être bloquante : pose-la seule, sans continuer le travail.";
+
+/** Une question validée, prête à publier (S-7). */
+export type AskQuestion = { id: string; question: string; options: PanelAskOption[] };
+
+/** Le verdict d'un appel `ask` : la question nettoyée, ou le résultat d'erreur rendu au modèle. */
+export type AskCheck = { ok: true; ask: AskQuestion } | { ok: false; error: string };
+
+/** Le nettoyage d'un texte publié : contrôles et `\r` → espace, puis clip à la borne. */
+function cleanAskText(text: string, max: number): string {
+  return text.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, max);
+}
+
+/**
+ * La validation d'un appel `ask` (S-7) : PURE, sans exception, et dans l'ordre
+ * des refus consignés — questions absentes, plusieurs questions, multi-sélection,
+ * nombre d'options, puis `id` et libellés. Le texte rendu au modèle est celui du
+ * contrat, mot pour mot : le maillon doit pouvoir comprendre et reformuler.
+ */
+export function checkAsk(input: unknown): AskCheck {
+  const record = input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  const questions = record.questions;
+  if (!Array.isArray(questions) || questions.length === 0) {
+    return { ok: false, error: "Error: questions must not be empty" };
+  }
+  if (questions.length > 1) return { ok: false, error: "Error: ask one question at a time" };
+  const raw = questions[0];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, error: "Error: questions must not be empty" };
+  }
+  const question = raw as Record<string, unknown>;
+  if (question.multi === true) return { ok: false, error: "Error: multi-select is not supported" };
+  const rawOptions = Array.isArray(question.options) ? question.options : [];
+  if (rawOptions.length === 0 || rawOptions.length > ASK_OPTIONS_MAX) {
+    return { ok: false, error: `Error: ask needs 1 to ${ASK_OPTIONS_MAX} options` };
+  }
+  const id = typeof question.id === "string" ? question.id.trim() : "";
+  if (id === "") return { ok: false, error: "Error: question id must not be empty" };
+  const options: PanelAskOption[] = [];
+  const labels = new Set<string>();
+  for (const raw of rawOptions) {
+    const option = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+    const label = typeof option.label === "string" ? cleanAskText(option.label, ASK_LABEL_MAX).trim() : "";
+    if (label === "") return { ok: false, error: `Error: option ${options.length + 1} has no label` };
+    if (labels.has(label)) return { ok: false, error: `Error: duplicate option label ${JSON.stringify(label)}` };
+    labels.add(label);
+    const description =
+      typeof option.description === "string" ? cleanAskText(option.description, ASK_DESCRIPTION_MAX).trim() : "";
+    options.push(description === "" ? { label } : { label, description });
+  }
+  const text = cleanAskText(typeof question.question === "string" ? question.question : "", ASK_QUESTION_MAX);
+  return { ok: true, ask: { id, question: text, options } };
+}
+
+/** La réponse attendue d'une question en vol : une option choisie, ou un texte libre. */
+export type AskAnswer = { selected?: string; custom?: string };
+
+// La question EN VOL de ce process : sa promesse et l'identifiant d'appel qui la
+// rattache à une livraison. Une seule à la fois — l'outil `ask` de l'hôte est
+// `concurrency: "exclusive"`, et notre pompe ne résout que par identifiant.
+let askWaiter: { toolCallId: string; resolve: (answer: AskAnswer) => void } | null = null;
+
+/** Le dossier armé de ce process (`--panel-inbox`), ou `null` : absent, vide ou relatif. */
+export function panelInboxFlagOf(pi: FlagReader): string | null {
+  if (typeof pi.getFlag !== "function") return null;
+  const raw = pi.getFlag("panel-inbox");
+  return typeof raw === "string" && path.isAbsolute(raw) ? raw : null;
+}
+
+/** Le maillon d'un run de conversation (`--pipeline-phase`), ou `null` s'il n'est pas déclaré. */
+export function conversationPhaseOf(pi: FlagReader): PipelinePhase | null {
+  if (typeof pi.getFlag !== "function") return null;
+  const raw = pi.getFlag("pipeline-phase");
+  return typeof raw === "string" && PIPELINE_PHASES.includes(raw as PipelinePhase)
+    ? (raw as PipelinePhase)
+    : null;
+}
+
+/** Une livraison de réponse atterrit-elle sur la question en vol ? Une seule fois, par identifiant. */
+function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask" }>): void {
+  const waiter = askWaiter;
+  if (!waiter || waiter.toolCallId !== delivery.toolCallId) return;
+  askWaiter = null;
+  waiter.resolve("selected" in delivery ? { selected: delivery.selected } : { custom: delivery.custom });
+}
+
+/**
+ * La pompe de la boîte : les livraisons dans l'ordre des noms, un fichier par
+ * livraison, supprimé dès qu'il a produit son effet. Un texte n'est PAS consommé
+ * tant que la session est au repos (le déposant le reprendra à la fin du run) ;
+ * une réponse `ask` est toujours consommée — sans question en vol elle n'a plus
+ * d'objet (S-7). Ne lève jamais : la pompe travaille sur un timer.
+ */
+export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string): void {
+  for (const entry of readDeliveries(dir)) {
+    const delivery = entry.delivery;
+    if (delivery === null) {
+      consumeDelivery(entry.file);
+      continue;
+    }
+    if (delivery.kind === "ask") {
+      resolveAskDelivery(delivery);
+      consumeDelivery(entry.file);
+      continue;
+    }
+    // `isIdle` absent ⇒ session considérée au repos : on ne réveille pas un run
+    // dont on ne sait rien, et le message part au run suivant (S-6).
+    if (ctx.isIdle?.() !== false) return;
+    try {
+      pi.sendUserMessage(delivery.text, { deliverAs: "steer" });
+    } catch {
+      return; // run en cours d'arrêt : le fichier reste, il n'est pas perdu
+    }
+    consumeDelivery(entry.file);
+  }
+}
+
+/** Le processus a-t-il déjà armé sa pompe ? (une seule minuterie par process) */
+let inboxStop: (() => void) | null = null;
+/** L'outil `ask` est-il déjà enregistré dans ce process ? */
+let askToolRegistered = false;
+
+/**
+ * Arme la consommation de la boîte de ce run (`--panel-inbox`) : une minuterie
+ * `ctx.setInterval` — jamais un `setInterval` brut, qui tuerait la session en
+ * jetant — et rien du tout hors d'un run armé. Rend `true` quand le run est
+ * effectivement armé : c'est ce que `session_start` publie dans l'entrée.
+ */
+export function armInbox(pi: ExtensionAPI, ctx: PipelineCtx): boolean {
+  const dir = panelInboxFlagOf(pi);
+  if (dir === null || typeof ctx.setInterval !== "function") return false;
+  if (inboxStop === null) {
+    const timer = ctx.setInterval(() => {
+      // Une pompe qui jette sur un timer détruirait la session (une exception non
+      // capturée est fatale, `## Documentation` §1) : aucun échec de lecture ne
+      // doit remonter au-delà de ce point.
+      try {
+        pumpInbox(pi, ctx, dir);
+      } catch {
+        /* boîte illisible : on retente à la prochaine passe */
+      }
+    }, PANEL_INBOX_POLL_MS);
+    inboxStop = () => {
+      try {
+        ctx.clearTimer?.(timer);
+      } catch {
+        /* minuterie déjà nettoyée par la session */
+      }
+    };
+  }
+  armedInbox = dir;
+  return true;
+}
+
+/** Le détail publié d'une réponse `ask` (S-7) : la question, ses options, ce qui a été répondu. */
+export type AskToolDetails = {
+  id: string;
+  question: string;
+  options: PanelAskOption[];
+  selected?: string;
+  custom?: string;
+};
+
+/**
+ * L'outil `ask` du maillon (S-7) : enregistré TARDIVEMENT (`session_start`), et
+ * seulement pour un run armé. Dans une session interactive, l'outil de l'hôte —
+ * avec son dialogue riche — garde la main : l'extension n'enregistre rien.
+ *
+ * Le schéma vient du builder injecté (`pi.arktype`, dialecte omptype) : aucun
+ * import de valeur depuis `@oh-my-pi/*`, comme tout le reste du dépôt.
+ */
+export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string) => void; stateDir: string }): void {
+  if (askToolRegistered) return;
+  askToolRegistered = true;
+  const option = pi.arktype({ label: "string", "description?": "string" });
+  const question = pi.arktype({
+    id: "string",
+    question: "string",
+    "header?": "string",
+    options: option.array(),
+    "multi?": "boolean",
+    "recommended?": "number",
+  });
+  pi.registerTool({
+    name: "ask",
+    label: "Ask",
+    description: ASK_TOOL_DESCRIPTION,
+    approval: "read",
+    // `essential` : la question part au premier niveau du schéma. Un outil
+    // `discoverable` serait démonté sous `xd://` (réglage `tools.xdev`, actif par
+    // défaut) et le maillon, qui n'a personne à qui demander, ne le trouverait pas.
+    loadMode: "essential",
+    parameters: pi.arktype({ questions: question.array() }),
+    async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+      const checked = checkAsk(params);
+      if (!checked.ok) return { content: [{ type: "text" as const, text: checked.error }], isError: true };
+      const asked: PanelPendingAsk = { toolCallId, ...checked.ask };
+      const publish = () =>
+        publishCurrentCwd({ ctx: ctx as PipelineCtx, notify: deps.notify, stateDir: deps.stateDir });
+      const answer = await new Promise<AskAnswer>((resolve, reject) => {
+        const onAbort = () => {
+          askWaiter = null;
+          reject(new Error("ask interrompu : le run a été annulé"));
+        };
+        const settle = (value: AskAnswer) => {
+          signal?.removeEventListener("abort", onAbort);
+          resolve(value);
+        };
+        askWaiter = { toolCallId, resolve: settle };
+        if (signal?.aborted === true) {
+          onAbort();
+          return;
+        }
+        signal?.addEventListener("abort", onAbort, { once: true });
+        pendingAsk = asked;
+        publish();
+      }).finally(() => {
+        pendingAsk = null;
+        publish();
+      });
+      if (answer.selected !== undefined) {
+        const chosen = asked.options.find((candidate) => candidate.label === answer.selected);
+        if (!chosen) {
+          return { content: [{ type: "text" as const, text: `Error: unknown option ${answer.selected}` }], isError: true };
+        }
+        const details: AskToolDetails = {
+          id: asked.id,
+          question: asked.question,
+          options: asked.options,
+          selected: chosen.label,
+        };
+        return {
+          content: [
+            { type: "text" as const, text: `Question : ${asked.question}\nRéponse de l'utilisateur : ${chosen.label}` },
+          ],
+          details,
+        };
+      }
+      const custom = (answer.custom ?? "").slice(0, LOT_EDITOR_MAX);
+      const details: AskToolDetails = { id: asked.id, question: asked.question, options: asked.options, custom };
+      return {
+        content: [
+          { type: "text" as const, text: `Question : ${asked.question}\nRéponse de l'utilisateur (texte libre) : ${custom}` },
+        ],
+        details,
+      };
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1192,16 +1659,12 @@ function replyOptionLabel(line: string): string | null {
 }
 
 /**
- * Les libellés d'options d'une question en attente, dans l'ordre, au plus
- * MAX_REPLY_OPTIONS. Pure : la question est le `waitPrompt` du lot, déjà lu.
- *
- * Seule la DERNIÈRE séquence contiguë de lignes d'options compte : les options
- * d'une question ancienne, séparées par du texte, ne sont pas offertes — le
- * panneau n'offre que ce à quoi la feature attend une réponse maintenant.
+ * Les bornes du DERNIER bloc contigu de lignes d'options d'un texte, ou `null`.
+ * Seule la dernière séquence compte : les options d'une question ancienne,
+ * séparées par du texte, ne sont pas offertes — le panneau n'offre que ce à quoi
+ * la feature attend une réponse maintenant.
  */
-export function parseReplyOptions(text: string | null): string[] {
-  if (text === null || text === "") return [];
-  const lines = text.split("\n");
+function optionBlock(lines: string[]): { first: number; last: number } | null {
   let last = -1;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     if (replyOptionLabel(lines[i] as string) !== null) {
@@ -1209,31 +1672,73 @@ export function parseReplyOptions(text: string | null): string[] {
       break;
     }
   }
-  if (last === -1) return [];
+  if (last === -1) return null;
   let first = last;
   while (first > 0 && replyOptionLabel(lines[first - 1] as string) !== null) first -= 1;
+  return { first, last };
+}
+
+/**
+ * Les libellés d'options d'une question en attente, dans l'ordre, au plus
+ * MAX_REPLY_OPTIONS. Pure : la question est le `waitPrompt` du lot, déjà lu.
+ */
+export function parseReplyOptions(text: string | null): string[] {
+  if (text === null || text === "") return [];
+  const lines = text.split("\n");
+  const block = optionBlock(lines);
+  if (block === null) return [];
   const options: string[] = [];
-  for (let i = first; i <= last && options.length < MAX_REPLY_OPTIONS; i += 1) {
+  for (let i = block.first; i <= block.last && options.length < MAX_REPLY_OPTIONS; i += 1) {
     const label = replyOptionLabel(lines[i] as string);
     if (label !== null) options.push(label);
   }
   return options;
 }
 
-/** Ce qu'un rang accepte comme écriture (S-11) : la règle unique, appliquée deux fois. */
+/**
+ * La QUESTION d'un prompt de maillon (S-7) : ses lignes, SANS le bloc d'options
+ * final — celui-ci est rendu juste après, numéroté et sélectionnable. Sans ça, la
+ * zone lirait deux fois la même liste, et le nombre de rangs de la question
+ * dépendrait du nombre d'options.
+ */
+export function questionOf(prompt: string | null): string | null {
+  if (prompt === null || prompt.trim() === "") return null;
+  const lines = prompt.split("\n");
+  const block = optionBlock(lines);
+  const head = (block === null ? lines : lines.slice(0, block.first)).join("\n").trim();
+  return head === "" ? null : head;
+}
+
+/**
+ * Ce qu'un rang accepte comme écriture (S-11, S-6, S-7, S-8) : la règle unique,
+ * appliquée deux fois — le panneau s'en sert pour poser sa zone de saisie, et
+ * `answer` l'applique pour exécuter. Pure : elle décide, elle n'écrit pas.
+ *
+ * Deux variantes sont nées du canal vers un run vivant : `steer` (un run armé
+ * reçoit le texte DANS son tour) et `ask` (il attend une réponse à sa question).
+ * `text` est la feature bloquée : elle n'a plus de run, sa réponse en relance un.
+ */
 export type RowReply =
   | { kind: "reply"; phase: PipelinePhase; question: string | null; options: string[] }
+  | { kind: "ask"; phase: PipelinePhase; question: string; options: string[]; toolCallId: string; inbox: string }
+  | { kind: "steer"; phase: PipelinePhase; inbox: string }
+  | { kind: "text"; phase: PipelinePhase }
   | { kind: "queue"; phase: PipelinePhase }
   | { kind: "closed"; reason: string };
 
+/** Ce que la règle d'écriture sait du run VIVANT d'une feature (S-6, S-7). */
+export type RowLiveWriter = { inbox?: string | null; pendingAsk?: PanelPendingAsk | null };
+
 /**
- * Ce qu'une feature du lot accepte, dans cet ordre (S-11) : la collecte d'une
- * feature ouverte par /req se répond DANS la session ; une feature qui attend une
- * réponse la reçoit ; une feature qui tourne met le texte en file ; tout autre
- * état est fermé. Pure — le panneau s'en sert pour poser sa zone de saisie, et
- * `answer` applique exactement la même règle pour exécuter.
+ * Ce qu'une feature du lot accepte, dans cet ordre (S-11, S-6, S-7, S-8) : la
+ * collecte d'une feature ouverte par /req se répond DANS la session ; une feature
+ * qui attend une réponse la reçoit ; une feature bloquée se relance par une
+ * réponse ; une feature qui tourne avec un run ARMÉ reçoit le message dans son
+ * tour (question `ask` en vol, sinon texte) ; une feature qui tourne sans boîte
+ * met le texte en file ; tout autre état est fermé. Le second argument est
+ * facultatif : sans lui, la règle est celle d'avant le canal (file).
  */
-export function rowReply(feature: LotFeature): RowReply {
+export function rowReply(feature: LotFeature, live?: RowLiveWriter | null): RowReply {
   if (feature.origin === "session" && feature.phase === "req") {
     return { kind: "closed", reason: "la collecte se déroule dans ta session — réponds-y directement" };
   }
@@ -1241,11 +1746,29 @@ export function rowReply(feature: LotFeature): RowReply {
     return {
       kind: "reply",
       phase: feature.phase,
-      question: feature.waitPrompt,
+      question: questionOf(feature.waitPrompt),
       options: parseReplyOptions(feature.waitPrompt),
     };
   }
-  if (feature.state === "running") return { kind: "queue", phase: feature.phase };
+  if (feature.state === "blocked") return { kind: "text", phase: feature.phase };
+  if (feature.state === "running") {
+    const inbox = asStringOrNull(live?.inbox);
+    if (inbox !== null) {
+      const ask = live?.pendingAsk ?? null;
+      if (ask) {
+        return {
+          kind: "ask",
+          phase: feature.phase,
+          question: ask.question,
+          options: ask.options.map((option) => option.label),
+          toolCallId: ask.toolCallId,
+          inbox,
+        };
+      }
+      return { kind: "steer", phase: feature.phase, inbox };
+    }
+    return { kind: "queue", phase: feature.phase };
+  }
   return { kind: "closed", reason: `rien à répondre : la feature est ${lotStateLabel(feature.state)}` };
 }
 
@@ -1645,6 +2168,12 @@ export type LotRunSpec = {
   stateDir: string;
   sessionFile?: string | null;
   selfPath?: string | null;
+  /**
+   * La boîte du run (S-6) : le dossier que l'enfant consomme pour recevoir un
+   * message en cours de tour et une réponse `ask`. Absente (création impossible),
+   * le run part NON armé — exactement comme un run d'une version antérieure.
+   */
+  inbox?: string | null;
 };
 
 /**
@@ -1669,6 +2198,7 @@ export function buildLotRunArgv(spec: LotRunSpec): string[] {
     "--pipeline-state-dir",
     spec.stateDir,
   ];
+  if (spec.inbox) argv.push("--panel-inbox", spec.inbox);
   if (spec.sessionFile) argv.push("--resume", spec.sessionFile);
   if (spec.selfPath) argv.push("-e", spec.selfPath);
   argv.push("--", spec.prompt);
@@ -1703,14 +2233,70 @@ const SELF_MODULE_URL: string | undefined = (() => {
 
 export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
 
+/** Ce qu'un run de conversation reprend (S-9) : un rang du panneau, sa session, sa boîte. */
+export type ConversationRunTarget = {
+  cwd: string;
+  sessionFile: string;
+  label: string;
+  phase: PipelinePhase;
+  inbox: string;
+};
+
 /**
- * Le préambule de tout run de lot. Deux règles non négociables : l'outil `ask`
- * n'existe pas en headless (l'agent finit son tour avec ses questions EN TEXTE,
- * cf. `## Documentation` §1) et la chaîne n'appartient pas à l'agent — le pilote
- * la décide (`nextChainAction`).
+ * L'argv exact d'un run de conversation (S-9) : `--resume` continue LE MÊME
+ * fichier de session — la réponse et la suite s'ajoutent à la conversation
+ * ouverte —, le texte de l'utilisateur suit `--` sans préfixe, et
+ * `--panel-inbox` arme le run pour qu'un second message l'atteigne en cours de
+ * tour. `--pipeline-phase` porte le maillon du rang : le run publie son entrée
+ * sous ce maillon, sans être un worker (aucun `--pipeline-lot`, donc aucune
+ * chaîne à conduire).
+ */
+export function buildConversationRunArgv(spec: {
+  ompBin: string;
+  target: ConversationRunTarget;
+  stateDir: string;
+  prompt: string;
+  selfPath?: string | null;
+}): string[] {
+  const argv = [
+    spec.ompBin,
+    "--cwd",
+    spec.target.cwd,
+    "-p",
+    "--auto-approve",
+    "--resume",
+    spec.target.sessionFile,
+    "--pipeline-phase",
+    spec.target.phase,
+    "--pipeline-state-dir",
+    spec.stateDir,
+    "--panel-inbox",
+    spec.target.inbox,
+  ];
+  if (spec.selfPath) argv.push("-e", spec.selfPath);
+  argv.push("--", spec.prompt);
+  return argv;
+}
+
+/**
+ * Les deux pré-contrôles d'un run de conversation (S-9), décidés SANS rien lancer :
+ * un cwd disparu ou une session introuvable serait un run qui échoue après coup,
+ * alors que le motif se lit tout de suite dans la zone du panneau.
+ */
+export function conversationRefusal(target: ConversationRunTarget, probe: SessionProbe): string | null {
+  if (!probe.isDirectory(target.cwd)) return "écriture impossible : le répertoire de travail du rang n'existe plus";
+  if (!probe.isSessionFile(target.sessionFile)) return "écriture impossible : la session du rang est introuvable";
+  return null;
+}
+
+/**
+ * Le préambule de tout run de lot. Trois règles non négociables : la question
+ * bloquante passe par l'outil `ask` quand le run en dispose (un run lancé par le
+ * panneau est armé, S-7) et par un texte numéroté sinon (S-8 §1), et la chaîne
+ * n'appartient pas à l'agent — le pilote la décide (`nextChainAction`).
  */
 export const LOT_WORKER_DIRECTIVE = `Mode lot : tu tournes dans un pipeline, sans interface.
-- L'outil \`ask\` n'est pas disponible. Termine ton tour par tes questions bloquantes EN TEXTE, numérotées et actionnables : elles s'affichent dans le panneau du lot et l'utilisateur y répond ; sa réponse te reviendra au tour suivant. Quand une question propose des choix, écris-les une par ligne sous la forme \`- (1) <libellé du choix>\` : c'est cette forme, et elle seule, que le panneau rend sélectionnable.
+- L'outil \`ask\` EST disponible dans ce run : pose-lui tes questions bloquantes, UNE à la fois, avec 1 à 9 options ; la question s'affiche dans le panneau de la pipeline et l'utilisateur y répond, dans le tour en cours. Si l'outil refuse (plusieurs questions, multi-sélection) ou si tu préfères le texte, termine ton tour par tes questions numérotées et actionnables : elles s'affichent aussi dans le panneau, et la réponse te reviendra au tour suivant. Quand une question propose des choix, écris-les une par ligne sous la forme \`- (1) <libellé du choix>\` : c'est cette forme, et elle seule, que le panneau rend sélectionnable.
 - N'annonce aucune commande et n'enchaîne aucun maillon de toi-même : la chaîne est pilotée par le lot.
 - Le contrat de cette feature vit dans .omp/pipeline/contract.md, relatif à ton répertoire de travail.`;
 
@@ -2138,6 +2724,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const archiveBase = deps.archiveBase ?? lotArchiveBaseDir();
   const inFlight = new Map<string, AbortController>();
   /**
+   * La boîte de chaque run EN VOL (S-6) : créée par le lanceur, consommée par
+   * l'enfant, vidée par `finishRun` — les textes jamais consommés reviennent à la
+   * feature (S-8 §4). Un slug absent n'a pas de boîte : son run n'accepte aucune
+   * écriture directe, et la file `pendingTexts` reste la règle.
+   */
+  const inboxes = new Map<string, string>();
+  /**
    * Ce que CE pilote sait des runs : `inflight` pendant, `settled` quand la fin a
    * été traitée. C'est ce qui distingue « le maillon n'a jamais tourné » (bascule
    * d'une collecte en session, feature reprise par un autre pilote) de « le run a
@@ -2237,6 +2830,53 @@ export function createLotController(deps: LotControllerDeps): LotController {
     return at;
   }
 
+  /**
+   * Les textes jamais consommés de la boîte d'un run, et le dossier retiré (S-8
+   * §4). Une réponse `ask` restée dans la boîte meurt avec sa question : elle est
+   * ignorée puis supprimée par `dropInbox`.
+   */
+  function takeInbox(slug: string): string[] {
+    const dir = inboxes.get(slug);
+    inboxes.delete(slug);
+    return dir === undefined ? [] : dropInbox(dir);
+  }
+
+  /**
+   * Les restes d'un run rejoignent la file de sa feature, dans l'ordre et sous les
+   * bornes existantes (S-5) : la file est un repli, jamais un débordement. Un
+   * texte qui ne rentre plus est abandonné — la file pleine refuse déjà les
+   * nouveaux messages, elle ne les empile pas.
+   */
+  function queueLeftovers(feature: LotFeature, texts: string[]): void {
+    if (texts.length === 0) return;
+    const queued = feature.pendingTexts;
+    let total = queued.reduce((count, message) => count + message.length, 0);
+    for (const raw of texts) {
+      const text = raw.trim();
+      if (text === "" || queued.length >= LOT_PENDING_MAX) continue;
+      if (total + text.length > LOT_PENDING_TOTAL_MAX) continue;
+      queued.push(text.slice(0, LOT_EDITOR_MAX));
+      total += text.length;
+    }
+    feature.pendingTexts = queued;
+  }
+
+  /**
+   * Le run VIVANT d'une feature, tel que la règle d'écriture le lit (S-6) : son
+   * entrée de magasin, où vit sa boîte. Un propriétaire mort n'écrit plus rien —
+   * le magasin n'est pas encore réconcilié, c'est ici qu'on le constate.
+   */
+  function liveWriterOf(feature: LotFeature): RowLiveWriter | null {
+    if (feature.worktree === "") return null;
+    const real = realpathOr(feature.worktree);
+    for (const entry of readStore(stateDir).running) {
+      if (!pidAlive(entry.owner.pid)) continue;
+      if (realpathOr(entry.cwd) !== real) continue;
+      return { inbox: panelInboxDirOf(entry), pendingAsk: entry.pendingAsk ?? null };
+    }
+    return null;
+  }
+
   /** Une transition qui appelle l'utilisateur est annoncée UNE fois (AC-11). */
   function emit(lot: Lot, feature: LotFeature, before: LotFeatureState): void {
     if (before === feature.state) return;
@@ -2328,6 +2968,19 @@ export function createLotController(deps: LotControllerDeps): LotController {
       messages: queued,
     });
     const sessionFile = launch.resume ? feature.sessionFile : null;
+    // La BOÎTE du run (S-6) : créée AVANT le lancement, sinon l'enfant démarre non
+    // armé et plus rien n'atteint son tour. Un dossier impossible à créer ne fait
+    // PAS échouer le lancement : le run part sans boîte, comme un run d'avant
+    // cette feature, et la file `pendingTexts` prend le relais.
+    let inbox: string | null = null;
+    try {
+      inbox = panelInboxDirFor(stateDir, feature.worktree);
+      fs.mkdirSync(inbox, { recursive: true });
+    } catch {
+      inbox = null;
+    }
+    if (inbox === null) inboxes.delete(feature.slug);
+    else inboxes.set(feature.slug, inbox);
     const argv = buildLotRunArgv({
       ompBin,
       worktree: feature.worktree,
@@ -2338,6 +2991,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       stateDir,
       sessionFile,
       selfPath: deps.selfPath ?? selfExtensionArg(SELF_MODULE_URL),
+      inbox,
     });
     const abort = new AbortController();
     inFlight.set(feature.slug, abort);
@@ -2400,6 +3054,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
   function finishRun(slug: string, phase: PipelinePhase, result: LotRunnerResult, startedAt: number): void {
     inFlight.delete(slug);
     watched.set(slug, "settled");
+    // Les restes de la boîte (S-8 §4) : un texte confirmé par l'utilisateur et
+    // jamais consommé n'est pas perdu, il part au prochain run de sa feature. Le
+    // dossier, lui, est retiré dans TOUS les cas — un run tué ou repris par un
+    // autre pilote ne laisse pas de boîte derrière lui.
+    const leftovers = takeInbox(slug);
     // Une annulation en cours décide SEULE du sort de sa feature (S-9) : le run
     // qu'elle vient de tuer ne la marque pas `failed`.
     if (cancelling.has(slug)) return;
@@ -2408,6 +3067,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (lot.owner.pid !== process.pid) return; // un autre pilote a repris : ne rien écrire
     const feature = lotFeature(lot, slug);
     if (!feature || feature.state !== "running" || feature.phase !== phase) return;
+    queueLeftovers(feature, leftovers);
     const outcome: ChainOutcome = result.code === 0 && !result.killed ? "ok" : "error";
     if (outcome === "ok") {
       // La session du run sert à répondre (AC-12) et à rejoindre la ligne.
@@ -3042,10 +3702,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
     },
 
     /**
-     * Livre une réponse (feature `waiting`+`answer`) ou met le texte en FILE
-     * (feature `running`) — la MÊME règle que `rowReply`, appliquée ici pour
-     * exécuter (S-5, S-11). Un tampon vide se refuse AVANT la règle. Aucun `await`
-     * entre la lecture et l'écriture : un seul écrivain.
+     * Livre une réponse — dans la boîte d'un run ARMÉ, dans la file d'un run sans
+     * boîte, ou par un nouveau run avec son contexte — la MÊME règle que
+     * `rowReply`, appliquée ici pour exécuter (S-5, S-6, S-8, S-11). Un tampon
+     * vide se refuse AVANT la règle. Aucun `await` entre la lecture et l'écriture :
+     * un seul écrivain.
      */
     async answer(slug, text) {
       const opened = open(slug);
@@ -3054,8 +3715,26 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (!feature) return `« ${slug} » n'est pas dans le lot`;
       const trimmed = text.trim();
       if (trimmed === "") return "réponse vide";
-      const reply = rowReply(feature);
+      const reply = rowReply(feature, liveWriterOf(feature));
       if (reply.kind === "closed") return reply.reason;
+      if (reply.kind === "steer") {
+        // Le run vit : le texte entre dans SON tour, aucun run n'est lancé et le
+        // lot n'est pas écrit — il n'y a rien à décider (S-6).
+        try {
+          writeDelivery(reply.inbox, {
+            version: 1,
+            kind: "text",
+            text: trimmed.slice(0, LOT_EDITOR_MAX),
+            sentAt: now(),
+          });
+          return null;
+        } catch (err) {
+          return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
+        }
+      }
+      if (reply.kind === "ask") {
+        return "le maillon attend une réponse à sa question : choisis une option dans sa conversation";
+      }
       if (reply.kind === "queue") {
         const queued = feature.pendingTexts;
         const total = queued.reduce((count, message) => count + message.length, 0);
@@ -3066,6 +3745,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         feature.updatedAt = now();
         return save(lot);
       }
+      // `reply` (feature en attente) et `text` (feature bloquée) : un run repart
+      // avec son contexte, et la PHASE est conservée (S-8 §1 et §2).
       return startPlanned(lot, feature, {
         slug,
         phase: feature.phase,
@@ -3086,7 +3767,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (!lot) return { kind: "closed", reason: "aucun lot pour ce dépôt" };
       const feature = lotFeature(lot, slug);
       if (!feature) return { kind: "closed", reason: `« ${slug} » n'est pas dans le lot` };
-      return rowReply(feature);
+      return rowReply(feature, liveWriterOf(feature));
     },
 
     async validate(slug) {
@@ -3281,11 +3962,13 @@ export type PanelRow = {
    */
   target?: number;
   /**
-   * L'index de l'OPTION que ce rang représente dans la zone de saisie de la vue
-   * (S-3) : c'est lui qui rend une option cliquable — la correspondance rang →
-   * option n'est jamais devinée à l'écran, comme pour `target`.
+   * La cible CLIQUABLE que ce rang représente dans la zone de saisie de la vue
+   * (S-3) : l'index de l'OPTION (la correspondance rang → option n'est jamais
+   * devinée à l'écran, comme pour `target`), ou le PLI d'une entrée longue (S-3)
+   * — le rang de mention d'une entrée repliée bascule CETTE entrée, n'importe
+   * laquelle, pas seulement la dernière.
    */
-  choice?: number;
+  choice?: number | { kind: "fold"; key: string };
 };
 
 /** Glyphes injectés : `theme.boxRound` + `theme.nav.cursor` en production. */
@@ -3439,17 +4122,29 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
 }
 
 /**
- * L'aperçu d'une livraison depuis la VUE (S-8) : la réponse à une question, ou la
- * mise en file quand un run est en vol. Même contrat que `gesturePreview` — c'est
- * la seule porte d'où part une écriture vers le lot.
+ * L'aperçu d'une livraison depuis la VUE (S-6, S-7, S-8) : la réponse à une
+ * question, le texte injecté dans un tour en cours, ou la mise en file quand un
+ * run est en vol. Même contrat que `gesturePreview` — c'est la seule porte d'où
+ * part une écriture vers le lot ou vers un run.
+ *
+ * `mode` ne vaut que pour une écriture dans une BOÎTE : `steer` (le message entre
+ * dans le tour en cours) ou `ask` (il répond à la question en vol). Sans lui, les
+ * deux formulations d'avant, à l'octet près.
  */
 export function replyPreview(input: {
   slug: string;
   phase: PipelinePhase;
   text: string;
   queue: boolean;
+  mode?: "steer" | "ask";
 }): { head: string; hint: string } {
   const body = `« ${input.text} »`;
+  if (input.mode === "steer") {
+    return { head: "Envoyer au maillon — injecté dans son tour en cours", hint: "Entrée envoyer · Échap revenir" };
+  }
+  if (input.mode === "ask") {
+    return { head: `Répondre au maillon : ${input.text}`, hint: "Entrée envoyer · Échap revenir" };
+  }
   if (input.queue) {
     return {
       head:
@@ -3656,25 +4351,31 @@ export function rowSessionFile(model: PanelModel, row: PanelRowRef): string | nu
 }
 
 /**
- * Un run VIVANT écrit-il la session de ce rang ? (S-1) C'est la question dont
- * dépendent les deux gardes de `o` et la mention « run en cours » de la vue : un
- * run d'un AUTRE process — le nôtre ne se concurrence pas lui-même — qui vise le
- * même fichier de session, ou, quand le run ne publie pas de fichier, le même cwd
- * (refus par prudence : c'est le worktree d'un run vivant).
+ * Le pid du process qui écrit DÉJÀ la session de ce rang, ou `null` (S-1) : c'est
+ * lui que le refus nomme, et c'est la question dont dépendent les deux gardes de
+ * `o` et la mention « run en cours » de la vue. Un run d'un AUTRE process — le
+ * nôtre ne se concurrence pas lui-même — qui vise le même fichier de session, ou,
+ * quand le run ne publie pas de fichier, le même cwd (refus par prudence : c'est
+ * le worktree d'un run vivant).
  */
-export function hasLiveWriter(model: PanelModel, row: PanelRowRef): boolean {
+export function liveWriterPid(model: PanelModel, row: PanelRowRef): number | null {
   const file = rowSessionFile(model, row);
   const cwd = rowCwd(row);
   for (const entry of [...model.running, ...Object.values(model.live)]) {
     if (entry.owner.pid === process.pid || !pidAlive(entry.owner.pid)) continue;
     const target = asStringOrNull(entry.sessionFile);
     if (target !== null) {
-      if (file !== null && realpathOr(target) === realpathOr(file)) return true;
+      if (file !== null && realpathOr(target) === realpathOr(file)) return entry.owner.pid;
       continue;
     }
-    if (cwd !== null && realpathOr(entry.cwd) === realpathOr(cwd)) return true;
+    if (cwd !== null && realpathOr(entry.cwd) === realpathOr(cwd)) return entry.owner.pid;
   }
-  return false;
+  return null;
+}
+
+/** Un run VIVANT écrit-il la session de ce rang ? C'est la question des deux gardes de `o`. */
+export function hasLiveWriter(model: PanelModel, row: PanelRowRef): boolean {
+  return liveWriterPid(model, row) !== null;
 }
 
 /**
@@ -4523,15 +5224,30 @@ export const SESSION_VIEW_MAX_ENTRIES = 500;
  * bornes (octets, entrées) restent ce qu'elles sont.
  */
 export const SESSION_VIEW_MAX_ROWS = 2000;
+/**
+ * Le seuil du repli d'office (S-3) : une entrée dont le RENDU dépasse cette borne
+ * est affichée repliée. Le repli se compte en rangs rendus (donc APRÈS le repli à
+ * la largeur), pas en lignes de source : c'est ce que l'utilisateur voit.
+ */
+export const SESSION_VIEW_FOLD_MIN = 12;
+/** Les rangs gardés d'une entrée repliée, avant le rang de mention (S-3). */
+export const SESSION_VIEW_FOLD_ROWS = 8;
 
-/** Une entrée de session RENDABLE : tout le reste du JSONL ne produit aucun rang. */
-export type SessionViewEntry =
+/**
+ * Une entrée de session RENDABLE : tout le reste du JSONL ne produit aucun rang.
+ * `key` identifie l'entrée d'un rendu à l'autre (S-3) : la fenêtre de lecture est
+ * une FIN de fichier, les index glissent, les clés non. `<id du JSONL>:<rang
+ * interne>` — une entrée `assistant` produit un rang de texte puis un par appel
+ * d'outil, chacun avec sa clé — ou `#<rang>` quand l'entrée n'a pas d'id.
+ */
+export type SessionViewEntry = { key: string } & (
   | { kind: "user"; text: string }
   | { kind: "assistant"; text: string }
   | { kind: "toolCall"; name: string; text: string }
   | { kind: "toolResult"; name: string; text: string }
   | { kind: "custom"; customType: string }
-  | { kind: "customMessage"; customType: string; text: string };
+  | { kind: "customMessage"; customType: string; text: string }
+);
 
 /** Le contenu lisible d'un fichier de session, ou le chemin en erreur (absent/illisible). */
 export type SessionView = { entries: SessionViewEntry[]; truncated: boolean } | { error: string };
@@ -4550,6 +5266,178 @@ function textOfContent(content: unknown): string {
 }
 
 /**
+ * Le rendu markdown d'un texte d'entrée (S-1) : PUR, ligne à ligne, sans état et
+ * sans accès disque — c'est un test qui le fige, pas le panneau. Le contrat est
+ * une correspondance stricte : un bloc de code (délimiteurs RETIRÉS, contenu
+ * décalé de deux espaces, tone `dim`), un titre (les `#` tombent, tone `accent`),
+ * une puce ou une liste ordonnée (préfixe normalisé, tone de l'entrée), puis
+ * l'emphase EN LIGNE des lignes restantes — sans jamais toucher un `*` ou un `_`
+ * isolé, que le texte brut utilise couramment.
+ *
+ * Non-objectifs assumés : tables, citations, liens, HTML, coloration syntaxique,
+ * ton intra-ligne (un rang porte UN ton, cf. `PanelRow`).
+ */
+export function markdownRows(text: string, tone: PanelTone = "text"): { text: string; tone: PanelTone }[] {
+  const rows: { text: string; tone: PanelTone }[] = [];
+  if (text === "") return rows;
+  let code = false;
+  for (const line of text.split("\n")) {
+    if (/^\s*```+/.test(line)) {
+      // Les délimiteurs — et l'info-chaîne de langue — ne s'affichent pas : un
+      // bloc non fermé laisse simplement le reste du texte en code (markdown).
+      code = !code;
+      continue;
+    }
+    if (code) {
+      rows.push({ text: `  ${line}`, tone: "dim" });
+      continue;
+    }
+    const heading = /^ {0,3}(#{1,6})\s+(.*)$/.exec(line);
+    if (heading) {
+      rows.push({ text: heading[2] ?? "", tone: "accent" });
+      continue;
+    }
+    const bullet = /^(\s*)[-*+]\s+(.*)$/.exec(line);
+    if (bullet) {
+      rows.push({ text: `${bullet[1] ?? ""}• ${bullet[2] ?? ""}`, tone });
+      continue;
+    }
+    const ordered = /^(\s*)(\d+)[.)]\s+(.*)$/.exec(line);
+    if (ordered) {
+      rows.push({ text: `${ordered[1] ?? ""}${ordered[2]}. ${ordered[3] ?? ""}`, tone });
+      continue;
+    }
+    rows.push({ text: inlineEmphasis(line), tone });
+  }
+  return rows;
+}
+
+/** L'emphase en ligne d'une ligne (S-1) : `` `x` ``, `**x**`, `__x__`, `*x*`, `_x_`. */
+function inlineEmphasis(line: string): string {
+  // Les délimiteurs n'encadrent que du texte NON VIDE sans espace de bord, ET aux
+  // FRONTIÈRES d'un mot : c'est ce qui distingue `*texte*` d'une multiplication,
+  // et `_ceci_` d'un identifiant comme `a_b_c`.
+  return line
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/(^|[^\w*])\*\*([^\s*](?:[^*]*[^\s*])?)\*\*(?![\w*])/g, "$1$2")
+    .replace(/(^|[^\w_])__([^\s_](?:[^_]*[^\s_])?)__(?![\w_])/g, "$1$2")
+    .replace(/(^|[^\w*])\*([^\s*](?:[^*]*[^\s*])?)\*(?![\w*])/g, "$1$2")
+    .replace(/(^|[^\w_])_([^\s_](?:[^_]*[^\s_])?)_(?![\w_])/g, "$1$2");
+}
+
+/** Borne du calcul de diff (cellules de la matrice) : au-delà, le repli est « tout d'un côté ». */
+const LINE_DIFF_MAX_CELLS = 250_000;
+
+/** Les lignes d'un texte : `""` n'a AUCUNE ligne — que des ajouts ou des suppressions. */
+function linesOf(text: string): string[] {
+  return text === "" ? [] : text.split("\n");
+}
+
+/** Une ligne de diff textuel avec SON marqueur (S-2) : `-`, `+`, ou contexte. */
+function diffMarkerLine(line: string): { text: string; tone: PanelTone } {
+  if (line.startsWith("-")) return { text: line, tone: "error" };
+  if (line.startsWith("+")) return { text: line, tone: "success" };
+  return { text: line, tone: "dim" };
+}
+
+/**
+ * Le diff ligne à ligne de deux textes (S-2) : plus longue sous-séquence commune,
+ * suppressions AVANT ajouts à égalité — l'ordre qu'un lecteur attend d'un diff. Un
+ * texte démesuré retombe sur « tout supprimé, tout ajouté », qui ne ment pas.
+ */
+export function lineDiff(oldText: string, newText: string): { text: string; tone: PanelTone }[] {
+  const before = linesOf(oldText);
+  const after = linesOf(newText);
+  if (before.length * after.length > LINE_DIFF_MAX_CELLS) {
+    return [
+      ...before.map((line) => ({ text: `- ${line}`, tone: "error" as const })),
+      ...after.map((line) => ({ text: `+ ${line}`, tone: "success" as const })),
+    ];
+  }
+  const width = after.length + 1;
+  const lcs = new Uint32Array((before.length + 1) * width);
+  for (let i = before.length - 1; i >= 0; i -= 1) {
+    for (let j = after.length - 1; j >= 0; j -= 1) {
+      lcs[i * width + j] =
+        before[i] === after[j]
+          ? (lcs[(i + 1) * width + j + 1] as number) + 1
+          : Math.max(lcs[(i + 1) * width + j] as number, lcs[i * width + j + 1] as number);
+    }
+  }
+  const rows: { text: string; tone: PanelTone }[] = [];
+  let i = 0;
+  let j = 0;
+  while (i < before.length && j < after.length) {
+    if (before[i] === after[j]) {
+      rows.push({ text: `  ${before[i]}`, tone: "dim" });
+      i += 1;
+      j += 1;
+      continue;
+    }
+    if ((lcs[(i + 1) * width + j] as number) >= (lcs[i * width + j + 1] as number)) {
+      rows.push({ text: `- ${before[i]}`, tone: "error" });
+      i += 1;
+    } else {
+      rows.push({ text: `+ ${after[j]}`, tone: "success" });
+      j += 1;
+    }
+  }
+  for (; i < before.length; i += 1) rows.push({ text: `- ${before[i]}`, tone: "error" });
+  for (; j < after.length; j += 1) rows.push({ text: `+ ${after[j]}`, tone: "success" });
+  return rows;
+}
+
+/** Les rangs d'une forme `patch` d'`edit` (S-2) : un rang par ligne de chaque `edits[]`. */
+function patchRows(file: string, edits: unknown[]): { text: string; tone: PanelTone }[] {
+  const rows: { text: string; tone: PanelTone }[] = [];
+  for (const raw of edits) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+    const edit = raw as Record<string, unknown>;
+    const op = typeof edit.op === "string" ? edit.op : "update";
+    if (typeof edit.diff === "string") {
+      // `op: "create"` porte le CONTENU dans `diff`, sans marqueur
+      // (`## Documentation` §3) : toutes ses lignes sont des ajouts.
+      for (const line of linesOf(edit.diff)) {
+        rows.push(op === "create" ? { text: `+ ${line}`, tone: "success" } : diffMarkerLine(line));
+      }
+    } else if (op === "delete") {
+      rows.push({ text: `- ${file} (supprimé)`, tone: "error" });
+    }
+    if (typeof edit.rename === "string" && edit.rename !== "") {
+      rows.push({ text: `→ ${file} → ${edit.rename}`, tone: "dim" });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Le diff d'un appel d'outil qui MODIFIE un fichier (S-2), ou `null` quand l'outil
+ * n'en est pas un — l'appel garde alors son rendu brut (`→ <nom> <arguments>`).
+ * Pur : les formes reconnues sont celles de l'hôte (`edit` replace, `edit` patch,
+ * `write`, cf. `## Documentation` §3), et la matière vient des ARGUMENTS de
+ * l'appel — les détails du résultat sont élagués par l'hôte, donc inutilisables.
+ */
+export function fileDiffRows(name: string, args: unknown): { text: string; tone: PanelTone }[] | null {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return null;
+  const call = args as Record<string, unknown>;
+  if (typeof call.path !== "string" || call.path === "") return null;
+  const head = { text: `→ ${name} ${call.path}`, tone: "dim" as const };
+  if (name === "edit") {
+    if (typeof call.old_string === "string" && typeof call.new_string === "string") {
+      if (call.old_string === call.new_string) return [head, { text: "  (aucun changement)", tone: "dim" }];
+      return [head, ...lineDiff(call.old_string, call.new_string)];
+    }
+    if (Array.isArray(call.edits)) return [head, ...patchRows(call.path, call.edits)];
+    return null;
+  }
+  if (name === "write") {
+    if (typeof call.content !== "string") return null;
+    return [head, ...linesOf(call.content).map((line) => ({ text: `+ ${line}`, tone: "success" as const }))];
+  }
+  return null;
+}
+
+/**
  * Une entrée du JSONL → zéro ou plusieurs entrées de vue (S-2). Pure : une entrée
  * technique (`title`, `model_usage`, `label`, …) ou inconnue ne rend RIEN, et rien
  * ici ne peut lever — un fichier en cours d'écriture est lu ligne par ligne.
@@ -4557,28 +5445,36 @@ function textOfContent(content: unknown): string {
  * Le TEXTE est porté ENTIER (S-1) : c'est le repli du rendu, qui connaît la
  * largeur, qui en fait des lignes — plus une troncature à la première ligne, qui
  * perdait tout ce qu'un agent écrit d'utile après son premier paragraphe.
+ *
+ * `start` est le rang GLOBAL de la première entrée produite : il ne sert qu'aux
+ * clés des entrées sans id (S-3), où l'identité est la position.
  */
-function sessionViewEntries(raw: unknown): SessionViewEntry[] {
+function sessionViewEntries(raw: unknown, start: number): SessionViewEntry[] {
   if (!raw || typeof raw !== "object") return [];
   const rec = raw as Record<string, unknown>;
+  const id = asStringOrNull(rec.id);
+  const key = (rank: number) => (id === null ? `#${start + rank}` : `${id}:${rank}`);
   if (rec.type === "custom_message") {
     const customType = asStringOrNull(rec.customType);
     if (!customType) return [];
-    return [{ kind: "customMessage", customType, text: textOfContent(rec.content).trim() }];
+    return [{ kind: "customMessage", customType, text: textOfContent(rec.content).trim(), key: key(0) }];
   }
   if (rec.type === "custom") {
     const customType = asStringOrNull(rec.customType);
-    return customType ? [{ kind: "custom", customType }] : [];
+    return customType ? [{ kind: "custom", customType, key: key(0) }] : [];
   }
   if (rec.type !== "message" || !rec.message || typeof rec.message !== "object") return [];
   const message = rec.message as Record<string, unknown>;
-  if (message.role === "user") return [{ kind: "user", text: textOfContent(message.content).trim() }];
+  if (message.role === "user") {
+    return [{ kind: "user", text: textOfContent(message.content).trim(), key: key(0) }];
+  }
   if (message.role === "toolResult") {
     return [
       {
         kind: "toolResult",
         name: asStringOrNull(message.toolName) ?? "?",
         text: textOfContent(message.content).trim(),
+        key: key(0),
       },
     ];
   }
@@ -4587,7 +5483,7 @@ function sessionViewEntries(raw: unknown): SessionViewEntry[] {
   // Un rang vide n'apprend rien : un tour qui n'a produit que des appels d'outil
   // se lit par ses appels, pas par une ligne « agent : » sans texte.
   const text = textOfContent(message.content).trim();
-  if (text !== "") out.push({ kind: "assistant", text });
+  if (text !== "") out.push({ kind: "assistant", text, key: key(0) });
   if (Array.isArray(message.content)) {
     for (const block of message.content) {
       if (!block || typeof block !== "object") continue;
@@ -4597,6 +5493,7 @@ function sessionViewEntries(raw: unknown): SessionViewEntry[] {
         kind: "toolCall",
         name: asStringOrNull(call.name) ?? "?",
         text: JSON.stringify(call.arguments ?? {}),
+        key: key(out.length),
       });
     }
   }
@@ -4639,7 +5536,7 @@ export function readSessionView(file: string): SessionView {
     } catch {
       continue; // ligne vide, tronquée par la borne, ou JSON mal formé
     }
-    for (const entry of sessionViewEntries(parsed)) entries.push(entry);
+    for (const entry of sessionViewEntries(parsed, entries.length)) entries.push(entry);
   }
   let truncated = tail.fromTail;
   if (entries.length > SESSION_VIEW_MAX_ENTRIES) {
@@ -4649,11 +5546,61 @@ export function readSessionView(file: string): SessionView {
   return { entries, truncated };
 }
 
+/** Les arguments d'un appel d'outil, tels que la vue les a sérialisés : `null` si le JSON est illisible. */
+function parsedArgs(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Les lignes LOGIQUES d'une entrée de la vue (S-1, S-2), avant le repli à la
+ * largeur : le markdown pour les entrées de texte, le diff d'un appel d'outil qui
+ * modifie un fichier, et le rendu d'avant (`→`, `←`, `·`) pour tout le reste.
+ */
+function sessionEntryLines(entry: SessionViewEntry): { text: string; tone: PanelTone }[] {
+  switch (entry.kind) {
+    case "user":
+      return withPrefix("▸ toi : ", markdownRows(entry.text, "text"), "text");
+    case "assistant":
+      return withPrefix("▸ agent : ", markdownRows(entry.text, "accent"), "accent");
+    case "customMessage":
+      return withPrefix(`· ${entry.customType} : `, markdownRows(entry.text, "dim"), "dim");
+    case "toolCall":
+      return fileDiffRows(entry.name, parsedArgs(entry.text)) ?? [{ text: `→ ${entry.name} ${entry.text}`, tone: "dim" }];
+    case "toolResult":
+      return [{ text: `← ${entry.name} ${entry.text}`, tone: "dim" }];
+    case "custom":
+      return [{ text: `· ${entry.customType}`, tone: "dim" }];
+  }
+}
+
+/**
+ * Le préfixe d'une entrée de texte, sur sa PREMIÈRE ligne seulement (S-1) : c'est
+ * ce qui laisse « toi : » / « agent : » nommer l'entrée sans décaler son contenu.
+ * Un texte vide garde son rang — un message vide se voit, il ne disparaît pas.
+ */
+function withPrefix(
+  prefix: string,
+  lines: { text: string; tone: PanelTone }[],
+  tone: PanelTone,
+): { text: string; tone: PanelTone }[] {
+  if (lines.length === 0) return [{ text: prefix.trimEnd(), tone }];
+  return lines.map((line, index) => (index === 0 ? { text: `${prefix}${line.text}`, tone: line.tone } : line));
+}
+
 /**
  * Les rangs d'une vue de session (S-2), du plus ancien au plus récent : un rang par
  * LIGNE de terminal — une entrée complète (S-1) occupe donc autant de lignes qu'il
  * en faut, sans autre borne que `SESSION_VIEW_MAX_ROWS` — et les états rendus
  * EXPLICITEMENT, jamais déduits d'une absence de rang.
+ *
+ * `expanded` porte les CLÉS des entrées dépliées (S-3) : une entrée longue est
+ * repliée d'office, garde ses premiers rangs, puis dit ce qu'elle cache et la
+ * touche qui la déplie — la mention porte le pli de CETTE entrée, donc le clic
+ * bascule celle qu'on vise.
  *
  * La liste rendue est COMPLÈTE (bornée par la lecture : ≤ 500 entrées, et par le
  * rendu : ≤ 2000 lignes) : c'est le composant qui en découpe la fenêtre visible et
@@ -4663,39 +5610,36 @@ export function readSessionView(file: string): SessionView {
  */
 export function buildSessionRows(
   view: SessionView,
-  opts: { width: number; budget: number; glyphs: PanelGlyphs; maxRows?: number },
+  opts: { width: number; budget: number; glyphs: PanelGlyphs; maxRows?: number; expanded?: readonly string[] },
 ): PanelRow[] {
   const width = Math.max(1, Math.floor(opts.width));
   const innerW = Math.max(0, width - 4);
-  const row = (content: string, tone: PanelTone): PanelRow[] => {
+  const row = (content: string, tone: PanelTone, choice?: PanelRow["choice"]): PanelRow[] => {
     const lines = innerW > 0 ? wrapVisible(content, innerW) : [""];
-    return lines.map((line) => ({ text: frame(opts.glyphs, line, width, innerW), tone }));
+    return lines.map((line) => {
+      const built: PanelRow = { text: frame(opts.glyphs, line, width, innerW), tone };
+      if (choice !== undefined) built.choice = choice;
+      return built;
+    });
   };
   if ("error" in view) return row(`aucune entrée lisible — ${view.error}`, "warning");
   if (view.entries.length === 0) return row("aucune entrée à afficher", "muted");
+  const expanded = opts.expanded ?? [];
   const rows: PanelRow[] = [];
   if (view.truncated) rows.push(...row("… début tronqué", "dim"));
   for (const entry of view.entries) {
-    switch (entry.kind) {
-      case "user":
-        rows.push(...row(`▸ toi : ${entry.text}`, "text"));
-        break;
-      case "assistant":
-        rows.push(...row(`▸ agent : ${entry.text}`, "accent"));
-        break;
-      case "toolCall":
-        rows.push(...row(`→ ${entry.name} ${entry.text}`, "dim"));
-        break;
-      case "toolResult":
-        rows.push(...row(`← ${entry.name} ${entry.text}`, "dim"));
-        break;
-      case "customMessage":
-        rows.push(...row(`· ${entry.customType} : ${entry.text}`, "dim"));
-        break;
-      case "custom":
-        rows.push(...row(`· ${entry.customType}`, "dim"));
-        break;
+    const lines = sessionEntryLines(entry);
+    if (lines.length > SESSION_VIEW_FOLD_MIN && !expanded.includes(entry.key)) {
+      for (const line of lines.slice(0, SESSION_VIEW_FOLD_ROWS)) rows.push(...row(line.text, line.tone));
+      rows.push(
+        ...row(`… ${lines.length - SESSION_VIEW_FOLD_ROWS} lignes repliées — ctrl+o déplier`, "dim", {
+          kind: "fold",
+          key: entry.key,
+        }),
+      );
+      continue;
     }
+    for (const line of lines) rows.push(...row(line.text, line.tone));
   }
   const max = opts.maxRows ?? SESSION_VIEW_MAX_ROWS;
   if (rows.length <= max) return rows;
@@ -4943,6 +5887,16 @@ export type PipelinesPanelDeps = {
    * (contexte dégradé), la garde ne se déclenche pas.
    */
   currentSessionFile?: string | null;
+  /**
+   * Reprend une session TERMINÉE hors lot par un nouveau run (S-9) : lance
+   * `omp --resume <session>` sur ce cwd, avec la boîte passée dans la cible, et
+   * rend `null` une fois le run parti — sinon le motif du refus, affiché dans la
+   * zone. Absente (panneau de consultation), un rang d'historique reste fermé.
+   */
+  sessionReply?: (
+    target: { cwd: string; sessionFile: string; label: string; phase: PipelinePhase; inbox: string },
+    text: string,
+  ) => Promise<string | null>;
 };
 
 /**
@@ -4967,8 +5921,6 @@ function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
       return "la feature est échouée";
     case "cancelled":
       return "la feature est annulée";
-    case "blocked":
-      return "la feature est bloquée : R la relance";
     case "pending":
       return lot && !runnable(lot, feature)
         ? `en attente de ${pendingDeps(lot, feature).join(",")} : L la lance, R la relance`
@@ -4983,15 +5935,27 @@ function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
 }
 
 /**
- * L'état de la zone de saisie d'une vue (S-3, S-4, S-8, S-10) : fermée (la raison
- * est écrite), ouverte (liste d'options, éditeur libre), ou en aperçu.
+ * Où part une livraison de la vue (S-6, S-9) : dans le lot (une réponse qui met
+ * en file ou relance un maillon), dans la BOÎTE d'un run vivant (un texte injecté
+ * dans son tour, ou la réponse à sa question), ou dans une session terminée (un
+ * nouveau run qui la reprend). C'est la cible qui décide du chemin d'écriture, et
+ * elle vient de la règle unique (`rowReply`, ou l'état du rang).
+ */
+type ViewTarget =
+  | { kind: "lot"; slug: string }
+  | { kind: "inbox"; dir: string }
+  | { kind: "session"; cwd: string; sessionFile: string; label: string };
+
+/**
+ * L'état de la zone de saisie d'une vue (S-3, S-4, S-6, S-7, S-8, S-10) : fermée
+ * (la raison est écrite), ouverte (liste d'options, éditeur libre), ou en aperçu.
  */
 type ViewInputZone = {
   kind: "input";
-  /** La feature du lot visée : c'est elle que la livraison nomme. */
+  /** Le libellé de la cible : c'est lui que la livraison nomme. */
   slug: string;
   phase: PipelinePhase;
-  /** Les options de la question en attente ; vide ⇒ éditeur libre (S-4). */
+  /** Les options proposées ; vide ⇒ éditeur libre (S-4). */
   options: string[];
   /** L'option courante ; `options.length` = la ligne « autre — saisir ma réponse ». */
   cursor: number;
@@ -5000,6 +5964,11 @@ type ViewInputZone = {
   buffer: string;
   /** La livraison part dans la FILE (run en vol, S-5) au lieu d'être une réponse. */
   queue: boolean;
+  /** La question en vol, affichée en tête de zone (S-7) ; `null` hors d'une question `ask`. */
+  question: string | null;
+  /** L'appel `ask` auquel la réponse répond (S-7) ; `null` pour un texte. */
+  toolCallId: string | null;
+  target: ViewTarget;
 };
 
 type ViewZone = { kind: "closed"; reason: string } | ViewInputZone | { kind: "preview"; input: ViewInputZone; text: string };
@@ -5009,22 +5978,61 @@ function sameZoneSource(a: ViewZone, b: ViewZone): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === "closed" && b.kind === "closed") return a.reason === b.reason;
   if (a.kind === "input" && b.kind === "input") {
-    return a.slug === b.slug && a.queue === b.queue && a.options.join("\u0000") === b.options.join("\u0000");
+    return (
+      a.slug === b.slug &&
+      a.queue === b.queue &&
+      a.question === b.question &&
+      a.toolCallId === b.toolCallId &&
+      a.target.kind === b.target.kind &&
+      a.options.join("\u0000") === b.options.join("\u0000")
+    );
   }
   return true; // deux aperçus : rien à rafraîchir, l'aperçu ne se réécrit pas sous les doigts
 }
 
 /** Une zone ouverte, dans son état initial : options s'il y en a, éditeur libre sinon. */
-function inputZone(slug: string, phase: PipelinePhase, options: string[], queue: boolean): ViewInputZone {
-  return { kind: "input", slug, phase, options, cursor: 0, free: options.length === 0, buffer: "", queue };
+function inputZone(input: {
+  slug: string;
+  phase: PipelinePhase;
+  options: string[];
+  queue: boolean;
+  target: ViewTarget;
+  question?: string | null;
+  toolCallId?: string | null;
+}): ViewInputZone {
+  return {
+    kind: "input",
+    slug: input.slug,
+    phase: input.phase,
+    options: input.options,
+    cursor: 0,
+    free: input.options.length === 0,
+    buffer: "",
+    queue: input.queue,
+    question: input.question ?? null,
+    toolCallId: input.toolCallId ?? null,
+    target: input.target,
+  };
 }
 
-/** L'aperçu d'une livraison, tel que la zone le rend (S-8) — une seule source du texte. */
+/** L'aperçu d'une livraison, tel que la zone le rend (S-6, S-7, S-8) — une seule source du texte. */
 function zonePreview(zone: { input: ViewInputZone; text: string }): { head: string; hint: string } {
-  return replyPreview({ slug: zone.input.slug, phase: zone.input.phase, text: zone.text, queue: zone.input.queue });
+  const input = zone.input;
+  if (input.target.kind === "inbox") {
+    // Une boîte : le message entre dans le TOUR en cours (texte), ou répond à la
+    // question en vol (`ask`) — deux formulations, jamais l'une pour l'autre.
+    return replyPreview({
+      slug: input.slug,
+      phase: input.phase,
+      text: zone.text,
+      queue: false,
+      mode: input.toolCallId === null ? "steer" : "ask",
+    });
+  }
+  return replyPreview({ slug: input.slug, phase: input.phase, text: zone.text, queue: input.queue });
 }
 
-/** Les rangs de la zone de saisie de la vue, selon son état (S-3, S-4, S-8, S-10). */
+/** Les rangs de la zone de saisie de la vue, selon son état (S-3, S-6, S-7, S-8, S-10). */
 function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, width: number, innerW: number): PanelRow[] {
   if (zone.kind === "closed") return framedRows(`lecture seule — ${zone.reason}`, "dim", glyphs, width, innerW);
   if (zone.kind === "preview") {
@@ -5042,6 +6050,11 @@ function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, width: number, innerW
     ];
   }
   const rows: PanelRow[] = [];
+  // La question ouvre la zone (S-7) : on répond à CE qui est demandé, pas à une
+  // liste d'options anonyme. Trois rangs au plus, comme les notices.
+  if (zone.question !== null) {
+    rows.push(...framedRows(`question : ${zone.question}`, "dim", glyphs, width, innerW));
+  }
   const marker = (selected: boolean) =>
     selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
   zone.options.forEach((option, index) => {
@@ -5071,13 +6084,15 @@ function viewZoneRows(zone: ViewZone, glyphs: PanelGlyphs, width: number, innerW
   return rows;
 }
 
-/** Le pied de la vue, selon l'état de sa zone (S-3, S-4, S-8). */
+/** Le pied de la vue, selon l'état de sa zone (S-3, S-4, S-6, S-8). */
 function viewFooter(zone: ViewZone): string {
   if (zone.kind === "preview") return zonePreview(zone).hint;
   if (zone.kind === "input" && !zone.free && zone.options.length > 0) {
     return "1-9/↑↓ choisir · PageUp/PageDown défiler · Échap revenir au panneau";
   }
-  return "↑↓/molette défiler · Échap revenir au panneau";
+  // Les deux états sans choix à faire — zone fermée, éditeur libre — partagent ce
+  // pied : le pli des entrées longues s'y annonce, puisqu'il y fonctionne.
+  return "↑↓/molette défiler · ctrl+o déplier/replier · Échap revenir au panneau";
 }
 
 /** L'état de vue du panneau : la liste, ou la transcription d'une session (S-2). */
@@ -5096,6 +6111,12 @@ type PanelView =
       live: boolean;
       /** Rangs remontés depuis la fin de la transcription : 0 = les plus récents. */
       scroll: number;
+      /**
+       * Les CLÉS des entrées dépliées (S-3), de la plus ancienne à la plus
+       * récente : une conversation s'ouvre REPLIÉE (`[]`), et le dépli vaut pour
+       * cette vue seulement — il ne survit pas à sa fermeture.
+       */
+      expanded: string[];
       /** La zone de saisie, ou sa raison d'être fermée (S-10). */
       zone: ViewZone;
     };
@@ -5160,6 +6181,37 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     /** Fige la sélection courante : c'est elle que le prochain montage restaurera (S-5). */
     const remember = () => panelSelections.set(selectionKey, model.selection);
 
+    /**
+     * Les boîtes où CE panneau a déposé une livraison (S-9) : quand le run qui les
+     * consommait disparaît du magasin, ses livraisons non consommées reviennent à
+     * l'utilisateur — notice, et dernier texte reposé dans la zone, prêt à
+     * repartir. On ne surveille que ce qu'on a écrit : un run tué avant toute
+     * écriture ne laisse rien à rendre, et sa boîte n'est pas ramassée
+     * (non-objectif explicite de S-9).
+     */
+    const watchedBoxes = new Set<string>();
+    const collectLeftovers = () => {
+      if (watchedBoxes.size === 0) return;
+      const live = [...model.running, ...Object.values(model.live)]
+        .filter((entry) => pidAlive(entry.owner.pid))
+        .map((entry) => panelInboxDirOf(entry));
+      for (const dir of [...watchedBoxes]) {
+        if (!fs.existsSync(dir)) {
+          watchedBoxes.delete(dir); // boîte consommée et retirée par son run
+          continue;
+        }
+        if (live.includes(dir)) continue; // le run vit encore : ses messages l'attendent
+        watchedBoxes.delete(dir);
+        const texts = dropInbox(dir);
+        if (texts.length === 0) continue;
+        const last = (texts[texts.length - 1] as string).slice(0, LOT_EDITOR_MAX);
+        if (view.kind === "session" && view.zone.kind === "input" && view.zone.toolCallId === null) {
+          view = { ...view, zone: { ...view.zone, buffer: last, free: true } };
+        }
+        notice = `message non transmis — le run est terminé (${texts.length})`;
+      }
+    };
+
     const paint = () => {
       model = readPanelModel({
         stateDir: deps.stateDir,
@@ -5186,6 +6238,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         // jamais au prix du tampon tant que la source n'a pas bougé (S-6).
         refreshZone();
       }
+      collectLeftovers();
     };
     const redraw = () => {
       paint();
@@ -5235,23 +6288,108 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       return sessionFile === null ? undefined : rowForSession(sessionFile);
     };
     /**
-     * La zone de saisie d'un rang (S-3, S-4, S-10, S-11) : la règle du pilote
-     * (`rowReply`) pour une feature du lot, les raisons de la vue pour tout autre
-     * rang — un rang non-lot n'accepte JAMAIS d'écriture, aucune API de l'hôte
-     * n'atteignant la session d'un autre process (`## Documentation` §1).
+     * La zone de saisie d'un RANG (S-9), dans cet ordre : la règle du pilote
+     * (`rowReply`, appliquée au run vivant publié) pour une feature du lot ; pour
+     * tout autre rang, ce que la vue sait de sa session — un run VIVANT ARMÉ
+     * accepte une écriture (sa boîte), une session terminée se reprend par un
+     * nouveau run, une session vivante sans boîte appartient à son process, et la
+     * nôtre se répond directement.
      */
     const zoneFor = (row: PanelRowRef | undefined): ViewZone => {
       if (!row) return { kind: "closed", reason: "session terminée" };
       if (isLotFeature(row)) {
-        const reply = rowReply(row);
-        if (reply.kind === "reply") return inputZone(row.slug, reply.phase, reply.options, false);
-        if (reply.kind === "queue") return inputZone(row.slug, reply.phase, [], true);
-        if (row.origin === "session" && row.phase === "req") return { kind: "closed", reason: reply.reason };
-        return { kind: "closed", reason: readOnlyReason(model.lot ?? null, row) };
+        const slug = row.slug;
+        const reply = rowReply(row, model.live[slug] ?? null);
+        switch (reply.kind) {
+          case "reply":
+            return inputZone({
+              slug,
+              phase: reply.phase,
+              options: reply.options,
+              queue: false,
+              question: reply.question,
+              target: { kind: "lot", slug },
+            });
+          case "ask":
+            return inputZone({
+              slug,
+              phase: reply.phase,
+              options: reply.options,
+              queue: false,
+              question: reply.question,
+              toolCallId: reply.toolCallId,
+              target: { kind: "inbox", dir: reply.inbox },
+            });
+          case "steer":
+            return inputZone({
+              slug,
+              phase: reply.phase,
+              options: [],
+              queue: false,
+              target: { kind: "inbox", dir: reply.inbox },
+            });
+          case "text":
+            return inputZone({
+              slug,
+              phase: reply.phase,
+              options: [],
+              queue: false,
+              target: { kind: "lot", slug },
+            });
+          case "queue":
+            return inputZone({
+              slug,
+              phase: reply.phase,
+              options: [],
+              queue: true,
+              target: { kind: "lot", slug },
+            });
+          case "closed":
+            if (row.origin === "session" && row.phase === "req") return { kind: "closed", reason: reply.reason };
+            return { kind: "closed", reason: readOnlyReason(model.lot ?? null, row) };
+        }
       }
-      if ("finalState" in row) return { kind: "closed", reason: "session terminée" };
+      if ("finalState" in row) {
+        const file = rowSessionFile(model, row);
+        if (file === null) return { kind: "closed", reason: "session terminée" };
+        // Une session DÉJÀ reprise par un run vivant ne se reprend pas une seconde
+        // fois : deux process sur un même fichier de session, c'est un conflit
+        // d'écriture garanti — même refus qu'un rang vivant (S-9).
+        const writer = liveWriterPid(model, row);
+        if (writer !== null) {
+          return { kind: "closed", reason: `cette session appartient à un autre process (pid ${writer})` };
+        }
+        if (!deps.sessionReply) return { kind: "closed", reason: "session terminée" };
+        return inputZone({
+          slug: row.label,
+          phase: row.phase,
+          options: [],
+          queue: false,
+          target: { kind: "session", cwd: row.cwd, sessionFile: file, label: row.label },
+        });
+      }
       if (row.owner.pid === process.pid) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
-      return { kind: "closed", reason: `cette session appartient à un autre process (pid ${row.owner.pid})` };
+      const dir = panelInboxDirOf(row);
+      if (dir === null) return { kind: "closed", reason: `cette session appartient à un autre process (pid ${row.owner.pid})` };
+      const ask = row.pendingAsk ?? null;
+      if (ask) {
+        return inputZone({
+          slug: row.label,
+          phase: row.phase,
+          options: ask.options.map((option) => option.label),
+          queue: false,
+          question: ask.question,
+          toolCallId: ask.toolCallId,
+          target: { kind: "inbox", dir },
+        });
+      }
+      return inputZone({
+        slug: row.label,
+        phase: row.phase,
+        options: [],
+        queue: false,
+        target: { kind: "inbox", dir },
+      });
     };
     /** Le rafraîchissement de la zone : elle suit l'état frais, jamais le tampon. */
     const refreshZone = () => {
@@ -5360,6 +6498,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         state: rowStateLabel(model, row),
         live: hasLiveWriter(model, row),
         scroll: 0,
+        // Une conversation s'ouvre REPLIÉE (S-3) : les entrées longues montrent
+        // leurs premiers rangs et disent ce qu'elles cachent — on déplie ce qu'on
+        // veut lire, une entrée à la fois.
+        expanded: [],
         zone,
       };
       tui.requestRender?.();
@@ -5421,32 +6563,77 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       setZone({ kind: "preview", input: zone, text });
     };
 
-    /** La livraison confirmée : une seule écriture, puis la zone suit l'état frais. */
+    /**
+     * La livraison confirmée : une seule écriture, puis la zone suit l'état frais.
+     * La CIBLE décide du chemin (S-6, S-7, S-9) — une boîte reçoit un fichier de
+     * livraison, une session terminée un nouveau run, le lot sa règle d'écriture.
+     */
     const deliver = (zone: { input: ViewInputZone; text: string }) => {
+      const input = zone.input;
+      const text = zone.text;
+      const target = input.target;
+      // L'aperçu se referme AVANT l'appel : deux `Entrée` rapides ne livrent qu'une fois.
+      setZone(input);
+      if (target.kind === "session") {
+        const reply = deps.sessionReply;
+        if (!reply) {
+          showNotice("session indisponible dans cette session");
+          return;
+        }
+        const inbox = panelInboxDirFor(deps.stateDir, target.cwd);
+        actView(
+          () =>
+            reply(
+              { cwd: target.cwd, sessionFile: target.sessionFile, label: target.label, phase: input.phase, inbox },
+              text,
+            ),
+          input,
+        );
+        return;
+      }
+      if (target.kind === "inbox") {
+        const delivery: PanelDelivery =
+          input.toolCallId === null
+            ? { version: 1, kind: "text", text, sentAt: now() }
+            : input.free
+              ? { version: 1, kind: "ask", toolCallId: input.toolCallId, custom: text, sentAt: now() }
+              : { version: 1, kind: "ask", toolCallId: input.toolCallId, selected: text, sentAt: now() };
+        actView(
+          async () => {
+            try {
+              writeDelivery(target.dir, delivery);
+              return null;
+            } catch (err) {
+              return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
+            }
+          },
+          input,
+          input.toolCallId === null ? "message transmis au maillon" : "réponse transmise au maillon",
+        );
+        watchedBoxes.add(target.dir);
+        return;
+      }
       const actions = deps.lot;
       if (!actions) {
         showNotice("lot indisponible dans cette session");
         return;
       }
-      const { slug } = zone.input;
-      const text = zone.text;
-      // L'aperçu se referme AVANT l'appel : deux `Entrée` rapides ne livrent qu'une fois.
-      setZone(zone.input);
-      actView(() => actions.answer(slug, text), zone.input);
+      actView(() => actions.answer(target.slug, text), input);
     };
 
     /**
      * Une livraison depuis la VUE : le cycle de `act`, transposé à la zone de
-     * saisie — succès ⇒ la zone se recalcule sur l'état frais, refus ⇒ la zone est
-     * REPOSÉE telle quelle (tampon compris) PUIS la notice s'affiche. L'ordre est
-     * imposé : `setZone` efface la notice.
+     * saisie — succès ⇒ la zone se recalcule sur l'état frais (et, quand l'effet
+     * n'est pas visible dans la liste, la notice d'accusé s'affiche), refus ⇒ la
+     * zone est REPOSÉE telle quelle (tampon compris) PUIS la notice s'affiche.
+     * L'ordre est imposé : `setZone` efface la notice.
      */
-    const actView = (run: () => Promise<string | null>, keep: ViewZone) => {
+    const actView = (run: () => Promise<string | null>, keep: ViewZone, success?: string) => {
       const settle = (reason: string | null) => {
         if (reason === null) {
           // La question n'est plus en attente : le modèle est RELU, donc la zone
           // suit l'état frais (éditeur libre, ou lecture seule) au rendu suivant.
-          notice = null;
+          notice = success ?? null;
           redraw();
           return;
         }
@@ -5478,15 +6665,94 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       openReplyPreview();
     };
 
+    /** Les clés des entrées REPLIÉES du dernier rendu : leur rang de mention porte le pli (S-3). */
+    const foldedKeys = (): string[] => {
+      const keys: string[] = [];
+      for (const row of drawnContent) {
+        const choice = row.choice;
+        if (choice !== undefined && typeof choice !== "number" && choice.kind === "fold") keys.push(choice.key);
+      }
+      return keys;
+    };
+
+    /** Bascule le pli d'UNE entrée : la sienne, désignée par sa clé (S-3). */
+    const toggleFold = (key: string) => {
+      if (view.kind !== "session") return;
+      const expanded = view.expanded;
+      view = expanded.includes(key)
+        ? { ...view, expanded: expanded.filter((candidate) => candidate !== key) }
+        : { ...view, expanded: [...expanded, key] };
+      // Le défilement n'est PAS réinitialisé : déplier ne déplace pas la fenêtre,
+      // qui reste ancrée sur la fin de la transcription.
+      tui.requestRender?.();
+    };
+
     /**
-     * Les touches de la VUE (S-2, S-3, S-4, S-8, S-10). L'aperçu est un état à part
-     * — seuls `Entrée` et `Échap` y agissent, comme le mode `cancel` de la liste.
-     * Dans la zone d'options, un caractère imprimable passe en éditeur libre en
+     * `ctrl+o` (S-3), le keybinding d'hôte `app.tools.expand` : sans entrée
+     * dépliée, il déplie la dernière entrée REPLIÉE de la fenêtre (la plus proche
+     * de la fin) ; sinon il replie l'entrée dépliée la plus récente. Les clés
+     * portent l'id de l'entrée JSONL — les id sont chronologiques — donc la plus
+     * grande clé est la plus récente.
+     */
+    const toggleLastFold = () => {
+      const expanded = view.kind === "session" ? view.expanded : [];
+      if (expanded.length === 0) {
+        const keys = foldedKeys();
+        const key = keys[keys.length - 1];
+        if (key !== undefined) toggleFold(key);
+        return;
+      }
+      toggleFold(expanded.reduce((a, b) => (b > a ? b : a)));
+    };
+
+    /**
+     * L'insertion dans un tampon (S-5) : la frappe d'un caractère, le RETOUR
+     * ARRIÈRE, et le COLLAGE — un fragment de plus d'un caractère reçu d'un coup.
+     * Les marqueurs d'encadrement du collage (`\x1b[200~`, `\x1b[201~`) et les
+     * autres séquences d'échappement tombent, les `\r` internes deviennent des
+     * sauts de ligne (un message peut être multi-ligne), les contrôles restants
+     * une espace. La borne `LOT_EDITOR_MAX` s'applique à TOUTES les portes en
+     * gardant le DÉBUT — on ne la dépasse jamais, et ce qui est écarté est DIT.
+     */
+    const insertInto = (data: string, buffer: string): { buffer: string; truncated: boolean } | null => {
+      if (data === "\x7f" || data === "\b") return { buffer: buffer.slice(0, -1), truncated: false };
+      if (data.length === 1) {
+        return data >= " " && buffer.length < LOT_EDITOR_MAX ? { buffer: buffer + data, truncated: false } : null;
+      }
+      const pasted = data
+        .replace(/\x1b\[20[01]~/g, "")
+        .replace(/\x1b\[[0-9;?]*[A-Za-z~]/g, "")
+        .replace(/\x1b[\s\S]/g, "")
+        .replace(/\r\n?/g, "\n")
+        .replace(/[\u0000-\u0009\u000b-\u001f\u007f]/g, " ");
+      if (pasted === "") return null;
+      const room = Math.max(0, LOT_EDITOR_MAX - buffer.length);
+      return { buffer: buffer + pasted.slice(0, room), truncated: pasted.length > room };
+    };
+
+    /** Une insertion bornée dans la zone : la notice de troncature suit l'insertion. */
+    const insertInZone = (zone: ViewInputZone, data: string, next: Partial<ViewInputZone>): void => {
+      const inserted = insertInto(data, zone.buffer);
+      if (inserted === null) return;
+      setZone({ ...zone, ...next, buffer: inserted.buffer });
+      if (inserted.truncated) showNotice(`message tronqué à ${LOT_EDITOR_MAX} caractères`);
+    };
+
+    /**
+     * Les touches de la VUE (S-2, S-3, S-4, S-6, S-8, S-10). L'aperçu est un état
+     * à part — seuls `Entrée` et `Échap` y agissent, comme le mode `cancel` de la
+     * liste. `ctrl+o` déplie/replie une entrée dans TOUS les états (ce n'est pas un
+     * caractère imprimable : il ne vole rien à l'éditeur). Dans la zone d'options,
+     * un caractère imprimable — ou un collage — passe en éditeur libre en
      * l'insérant ; `Échap` remonte de l'éditeur libre aux options s'il y en a, et
      * sort de la vue sinon. La transcription garde son ancrage et ses bornes.
      */
     const handleViewKey = (data: string): void => {
       if (view.kind !== "session") return;
+      if (isKey(data, "app.tools.expand")) {
+        toggleLastFold();
+        return;
+      }
       const zone = view.zone;
       if (zone.kind === "preview") {
         if (isKey(data, "tui.select.cancel")) setZone(zone.input);
@@ -5515,9 +6781,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             const index = Number(data) - 1;
             if (index < zone.options.length) setZone({ ...zone, cursor: index });
           } else if (data === "a") setZone({ ...zone, cursor: zone.options.length, free: true });
-          else if (data.length === 1 && data >= " ") {
-            // Une frappe qui n'est pas un choix : elle vaut réponse libre.
-            setZone({ ...zone, free: true, buffer: zone.buffer + data });
+          else {
+            // Une frappe — ou un collage — qui n'est pas un choix : elle vaut
+            // réponse libre (S-5).
+            insertInZone(zone, data, { free: true, cursor: zone.options.length });
           }
           return;
         }
@@ -5535,8 +6802,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           scrollView(-1);
           return;
         }
-        const next = edit(data, zone.buffer);
-        if (next !== null) setZone({ ...zone, buffer: next });
+        insertInZone(zone, data, {});
         return;
       }
       // La fenêtre est ancrée sur la FIN (le run en cours se voit avancer) : monter
@@ -5553,8 +6819,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      * Un rapport de souris est toujours CONSOMMÉ (S-4) : ce n'est jamais du clavier.
      * Dans la liste, le clic gauche prend la ligne visée (`PanelRow.target`, posé par
      * le constructeur de rangs) et la molette vaut ±1 cran ; en mode de saisie,
-     * l'éditeur en ligne garde le clavier ; dans la vue, la molette défile et le
-     * clic prend l'option visée (`PanelRow.choice`).
+     * l'éditeur en ligne garde le clavier ; dans la vue, la molette défile, le clic
+     * prend l'option visée et le clic sur un rang de mention bascule SON pli
+     * (`PanelRow.choice`).
      */
     const handleMouse = (event: SgrMouseEvent): void => {
       if (view.kind === "session") {
@@ -5565,7 +6832,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         if (!event.leftClick) return;
         const choice = drawn[event.row]?.choice;
         if (choice === undefined) return;
-        chooseOption(choice);
+        if (typeof choice === "number") chooseOption(choice);
+        else toggleFold(choice.key);
         return;
       }
       if (mode.kind !== "browse") return;
@@ -5581,13 +6849,6 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       model = { ...model, notice: null, selection: target };
       remember();
       tui.requestRender?.();
-    };
-
-    /** L'éditeur en ligne : les caractères imprimables s'ajoutent, retour arrière efface. */
-    const edit = (data: string, buffer: string): string | null => {
-      if (data === "\x7f" || data === "\b") return buffer.slice(0, -1);
-      if (data.length === 1 && data >= " " && buffer.length < LOT_EDITOR_MAX) return buffer + data;
-      return null;
     };
 
     /** Le geste d'un aperçu, exécuté sur le pilote — `null` s'il n'y en a pas. */
@@ -5682,8 +6943,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
         return true;
       }
-      const next = edit(data, mode.buffer);
-      if (next !== null) setMode({ ...mode, buffer: next });
+      const inserted = insertInto(data, mode.buffer);
+      if (inserted !== null) {
+        setMode({ ...mode, buffer: inserted.buffer });
+        if (inserted.truncated) showNotice(`message tronqué à ${LOT_EDITOR_MAX} caractères`);
+      }
       return true;
     };
 
@@ -5812,7 +7076,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       const content =
         view.sessionFile === null
           ? framedRows(`pas de transcription — ${view.state}`, "muted", glyphs, width, innerW)
-          : buildSessionRows(readSessionView(view.sessionFile), { width, budget: height, glyphs });
+          : buildSessionRows(readSessionView(view.sessionFile), {
+              width,
+              budget: height,
+              glyphs,
+              expanded: view.expanded,
+            });
       drawnContent = content;
       // La notice est rendue ICI aussi : un refus prononcé depuis la vue (« réponse
       // vide », refus du pilote) doit être lisible là où il a eu lieu, sinon il
@@ -6371,6 +7640,12 @@ export default function reqExtension(pi: ExtensionAPI) {
     type: "string",
     description: "Répertoire du magasin d'état des pipelines",
   });
+  // Le drapeau d'un run ARMÉ par le panneau (`/pipelines`) : sans lui, aucune
+  // écriture n'atteint une session vivante (cf. `## Documentation` §4).
+  pi.registerFlag("panel-inbox", {
+    type: "string",
+    description: "Boîte de réception d'un run lancé par le panneau (/pipelines)",
+  });
 
   // Mode worker : ce process EST un maillon du lot. Il publie son état, exécute le
   // prompt reçu en argv et n'annonce rien — la chaîne appartient au pilote.
@@ -6387,7 +7662,14 @@ export default function reqExtension(pi: ExtensionAPI) {
    * écritures du registre passent par ici — sans quoi un run de lot publierait
    * dans le magasin par défaut de la machine au lieu de celui de son lot.
    */
-  const storeDir = (): string => workerMode()?.stateDir ?? pipelineStateDir();
+  const storeDir = (): string => {
+    // Le drapeau fait autorité même HORS mode worker : un run de conversation
+    // (S-9) n'est pas un maillon, mais il doit publier dans le magasin de son
+    // panneau — sinon son rang ne redevient jamais vivant.
+    const flag = pi.getFlag("pipeline-state-dir");
+    if (typeof flag === "string" && path.isAbsolute(flag)) return workerMode()?.stateDir ?? flag;
+    return workerMode()?.stateDir ?? pipelineStateDir();
+  };
 
   let lotController: { repoRoot: string; controller: LotController } | null = null;
 
@@ -6449,8 +7731,9 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
     if (panelOpen) return;
     panelOpen = true;
+    const stateDir = storeDir();
     const deps: PipelinesPanelDeps = {
-      stateDir: storeDir(),
+      stateDir,
       repoRoot: (() => {
         const root = resolveFeatureRoot(ctx.cwd);
         return root.primary ?? root.dir;
@@ -6458,6 +7741,39 @@ export default function reqExtension(pi: ExtensionAPI) {
       lot: workerMode() ? undefined : controllerFor(ctx),
       // La session VIVANTE de ce process : viser sa propre session est refusé (S-3).
       currentSessionFile: sessionFileOf(ctx as PipelineCtx),
+      /**
+       * Reprendre une session TERMINÉE hors lot (S-9) : les deux refus d'abord
+       * (rien n'est lancé), la boîte ensuite, puis le run — jamais attendu, sa
+       * durée n'est pas celle du panneau, et sa fin se lit dans le magasin.
+       */
+      sessionReply: async (target, text) => {
+        const refusal = conversationRefusal(target, diskProbe);
+        if (refusal) return refusal;
+        const argv = buildConversationRunArgv({
+          ompBin: lotOmpBin(),
+          target,
+          stateDir,
+          prompt: text,
+          selfPath: selfExtensionArg(SELF_MODULE_URL),
+        });
+        try {
+          fs.mkdirSync(target.inbox, { recursive: true });
+        } catch (err) {
+          return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
+        }
+        try {
+          void Promise.resolve(
+            pi.exec(argv[0] ?? "omp", argv.slice(1), { cwd: target.cwd, timeout: lotRunTimeoutMs() }),
+          ).catch((err: unknown) => {
+            notifyDurable(
+              `[pipeline] run de conversation interrompu : ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+        } catch (err) {
+          return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
+        }
+        return null;
+      },
       join: (entry, close, showNotice) => {
         // `switchSession` vit sur le contexte de COMMANDE : le runtime appelle
         // `createCommandContext()` pour les commandes ET pour les raccourcis, donc
@@ -6513,7 +7829,13 @@ export default function reqExtension(pi: ExtensionAPI) {
   // y compris celui d'un autre processus) ne font que constater.
   pi.on("session_start", async (_event, ctx) => {
     resetStateWriteWarning();
-    ensureHeartbeat(ctx as PipelineCtx, { notify: notifyDurable });
+    ensureHeartbeat(ctx as PipelineCtx, { notify: notifyDurable, stateDir: storeDir() });
+    // Un run lancé par le panneau est ARMÉ (`--panel-inbox`) : il consomme sa
+    // boîte et expose un vrai outil `ask` (S-6, S-7). Une session interactive n'a
+    // jamais ce drapeau : rien n'est armé ici, et l'outil `ask` de l'hôte — avec
+    // son dialogue riche — garde la main.
+    const armed = armInbox(pi, ctx as PipelineCtx);
+    if (armed) registerAskTool(pi, { notify: notifyDurable, stateDir: storeDir() });
     // Un run de lot arme SON maillon et le publie : il apparaît dans /pipelines
     // dès le démarrage, et un maillon `req` reçoit la directive de collecte.
     const mode = workerMode();
@@ -6521,6 +7843,14 @@ export default function reqExtension(pi: ExtensionAPI) {
       stateOfCwd(ctx.cwd).reqMode = mode.phase === "req";
       armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, mode.phase);
       return;
+    }
+    // Run de CONVERSATION (S-9) : aucun drapeau de lot, donc pas un worker — mais
+    // il publie son entrée, sinon son rang resterait un rang d'historique pendant
+    // tout le run et une seconde écriture lancerait un second run sur la même
+    // session.
+    if (armed) {
+      const phase = conversationPhaseOf(pi);
+      if (phase) armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, phase);
     }
     // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend.
     const controller = controllerFor(ctx);

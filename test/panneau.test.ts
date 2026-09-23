@@ -1404,9 +1404,42 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
     // La règle de cible, appliquée par le pilote comme par l'affichage.
     assert.deepEqual(
       rowReply(feature("a", { state: "waiting", phase: "req", waitKind: "answer", waitPrompt: "- (1) oui" })),
-      { kind: "reply", phase: "req", question: "- (1) oui", options: ["oui"] },
+      { kind: "reply", phase: "req", question: null, options: ["oui"] },
+    );
+    assert.deepEqual(
+      rowReply(
+        feature("a", {
+          state: "waiting",
+          phase: "req",
+          waitKind: "answer",
+          waitPrompt: "Que fais-je ?\n- (1) oui\n- (2) non",
+        }),
+      ),
+      { kind: "reply", phase: "req", question: "Que fais-je ?", options: ["oui", "non"] },
+      "la question est le prompt SANS son bloc d'options (il est rendu juste après)",
     );
     assert.deepEqual(rowReply(feature("a", { state: "running", phase: "impl" })), { kind: "queue", phase: "impl" });
+    // Un run ARMÉ (il a publié sa boîte) reçoit le message DANS son tour, et une
+    // question `ask` en vol fait de la zone une liste d'options (S-6, S-7).
+    assert.deepEqual(rowReply(feature("a", { state: "running", phase: "impl" }), { inbox: "/tmp/box-1" }), {
+      kind: "steer",
+      phase: "impl",
+      inbox: "/tmp/box-1",
+    });
+    assert.deepEqual(
+      rowReply(feature("a", { state: "running", phase: "impl" }), {
+        inbox: "/tmp/box-1",
+        pendingAsk: { toolCallId: "call-1", id: "q1", question: "JWT ou cookie ?", options: [{ label: "JWT" }] },
+      }),
+      {
+        kind: "ask",
+        phase: "impl",
+        question: "JWT ou cookie ?",
+        options: ["JWT"],
+        toolCallId: "call-1",
+        inbox: "/tmp/box-1",
+      },
+    );
     assert.deepEqual(rowReply(feature("a", { origin: "session", state: "running", phase: "req" })), {
       kind: "closed",
       reason: "la collecte se déroule dans ta session — réponds-y directement",
@@ -1415,7 +1448,9 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
       kind: "closed",
       reason: "rien à répondre : la feature est terminé",
     });
-    assert.equal(rowReply(feature("a", { state: "blocked", phase: "impl" })).kind, "closed");
+    // Une feature BLOQUÉE se relance par une réponse : sa zone est un éditeur
+    // libre, et la réponse repart dans un run qui reprend son contexte (S-8 §2).
+    assert.deepEqual(rowReply(feature("a", { state: "blocked", phase: "impl" })), { kind: "text", phase: "impl" });
     assert.equal(rowReply(feature("a", { state: "pending" })).kind, "closed");
   }
 
@@ -1429,10 +1464,8 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
       { over: { state: "done", phase: "review" }, reason: "lecture seule — la feature est terminée" },
       { over: { state: "failed", phase: "impl", stopReason: "x" }, reason: "lecture seule — la feature est échouée" },
       { over: { state: "cancelled", phase: "impl" }, reason: "lecture seule — la feature est annulée" },
-      {
-        over: { state: "blocked", phase: "impl", stopReason: "x" },
-        reason: "lecture seule — la feature est bloquée : R la relance",
-      },
+      // Une feature BLOQUÉE n'est plus en lecture seule : sa réponse la relance
+      // (S-8 §2), et c'est un autre cas qui le prouve.
       { over: { state: "pending" }, reason: "lecture seule — la feature n'a pas démarré" },
       {
         over: { state: "pending", deps: ["bloqueur"] },
