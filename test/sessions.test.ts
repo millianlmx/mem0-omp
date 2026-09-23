@@ -18,23 +18,23 @@ import * as path from "node:path";
 
 import reqExtension, {
   buildPanelRows,
-  buildSessionRows,
   contractPathFor,
   createLotController,
   historyIdFor,
   joinEntry,
   lotPathFor,
   lotRepoKey,
+  displayWidth,
   panelBudget,
   parseSgrMouse,
   panelRowAt,
   pipelinesPanelFactory,
   readLot,
   readPanelModel,
-  readSessionView,
   readStore,
   rowSessionFile,
   runningIdFor,
+  wrapVisible,
   writeHistoryEntry,
   writeLot,
   writeRunningEntry,
@@ -254,38 +254,264 @@ function sessionName(file: string): string {
 // Panneau monté : la fabrique réelle, avec ses dépendances injectées
 // ---------------------------------------------------------------------------
 
-const GLYPHS: PanelGlyphs = {
-  topLeft: "+",
-  topRight: "+",
-  bottomLeft: "+",
-  bottomRight: "+",
-  horizontal: "-",
-  vertical: "|",
-  teeLeft: "+",
-  teeRight: "+",
-  cursor: ">",
-};
+const GLYPHS: PanelGlyphs = { cursor: ">" };
 
+/** Le thème neutre : `fg`/`bg` rendent le texte tel quel, donc les assertions lisent le texte NU. */
 const THEME = {
   fg: (_tone: string, text: string) => text,
-  boxRound: {
-    topLeft: "+",
-    topRight: "+",
-    bottomLeft: "+",
-    bottomRight: "+",
-    horizontal: "-",
-    vertical: "|",
-    teeLeft: "+",
-    teeRight: "+",
-  },
+  bg: (_tone: string, text: string) => text,
   nav: { cursor: ">" },
 };
+
+/**
+ * Le faux kit de composants de l'hôte (S-1) : le panneau et la vue ne composent
+ * plus aucune ligne eux-mêmes, donc les tests montent un kit qui JOURNALISE ses
+ * constructions et rend des lignes lisibles. Ce qui est prouvé ici, c'est ce que
+ * le panneau DEMANDE aux composants (quel composant, avec quelle entrée) ; le
+ * rendu des composants de l'hôte est celui d'OMP, prouvé par la fumée PTY (BR-7).
+ */
+function fakeKit() {
+  const built: string[] = [];
+  class FakeText {
+    #text: string;
+    #paddingX: number;
+    #background?: (text: string) => string;
+    #style?: (text: string) => string;
+    constructor(text = "", paddingX = 1, _paddingY = 0, background?: (text: string) => string) {
+      built.push("Text");
+      this.#text = text;
+      this.#paddingX = paddingX;
+      this.#background = background;
+    }
+    setText(text: string): boolean {
+      const changed = text !== this.#text;
+      this.#text = text;
+      return changed;
+    }
+    setStyleFn(style?: (text: string) => string): this {
+      this.#style = style;
+      return this;
+    }
+    render(width: number): readonly string[] {
+      if (this.#text.trim() === "") return [];
+      const content = Math.max(1, width - this.#paddingX * 2);
+      const styled = this.#style ? this.#style(this.#text) : this.#text;
+      return wrapVisible(styled, content).map((line) => {
+        const padded = `${" ".repeat(this.#paddingX)}${line}`;
+        const filled = padded + " ".repeat(Math.max(0, width - displayWidth(padded)));
+        return this.#background ? this.#background(filled) : filled;
+      });
+    }
+  }
+  class FakeBorder {
+    #color: (text: string) => string;
+    constructor(color?: (text: string) => string) {
+      built.push("DynamicBorder");
+      this.#color = color ?? ((text) => text);
+    }
+    render(width: number): readonly string[] {
+      return [this.#color("─".repeat(Math.max(1, width)))];
+    }
+  }
+  class FakeSpacer {
+    #lines: number;
+    constructor(lines = 1) {
+      built.push("Spacer");
+      this.#lines = lines;
+    }
+    setLines(lines: number): void {
+      this.#lines = lines;
+    }
+    render(): readonly string[] {
+      return new Array<string>(Math.max(0, this.#lines)).fill("");
+    }
+  }
+  class FakeContainer {
+    children: FakeText[] = [];
+    addChild(child: FakeText): void {
+      this.children.push(child);
+    }
+    render(width: number): readonly string[] {
+      return this.children.flatMap((child) => [...child.render(width)]);
+    }
+  }
+  /** Le texte d'un message, réduit à ses blocs `text` — la matière que la carte rend. */
+  const textOf = (message: Record<string, unknown>): string => {
+    const content = Array.isArray(message.content) ? message.content : [];
+    return content
+      .filter((block) => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+      .map((block) => String((block as Record<string, unknown>).text ?? ""))
+      .join(" ");
+  };
+  const resultText = (result: { content: Array<{ text?: string }> }): string =>
+    result.content.map((block) => block.text ?? "").join("\n");
+  /**
+   * Les lignes d'un composant de message : repliées à la largeur reçue et
+   * complétées, exactement comme le fait le composant de l'hôte — sans quoi les
+   * assertions de largeur ne prouveraient rien.
+   */
+  const frame = (lines: string[], width: number): readonly string[] =>
+    lines.flatMap((line) =>
+      wrapVisible(line, Math.max(1, width)).map((part) => part + " ".repeat(Math.max(0, width - displayWidth(part)))),
+    );
+  class FakeUser {
+    #text: string;
+    constructor(text: string, _options?: { synthetic?: boolean }) {
+      built.push("UserMessageComponent");
+      this.#text = text;
+    }
+    render(width: number): readonly string[] {
+      return frame(this.#text.split("\n").map((line) => `▸ toi : ${line}`), width);
+    }
+  }
+  class FakeAssistant {
+    #message: Record<string, unknown>;
+    #expanded = false;
+    constructor(message?: Record<string, unknown>) {
+      built.push("AssistantMessageComponent");
+      this.#message = message ?? {};
+    }
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    setImagesVisible(): void {}
+    setToolResultImagesVisible(): void {}
+    render(width: number): readonly string[] {
+      const text = textOf(this.#message);
+      if (text.trim() === "") return [];
+      const lines = text.split("\n").map((line) => `▸ agent : ${line}`);
+      if (this.#expanded || lines.length <= 2) return frame(lines, width);
+      return frame([lines[0] as string, `… ${lines.length - 1} lignes repliées — ctrl+o déplier`], width);
+    }
+  }
+  class FakeTool {
+    #name: string;
+    #args: unknown;
+    #result?: { content: Array<{ text?: string }>; isError?: boolean };
+    #expanded = false;
+    constructor(toolName: string, args: unknown, _options?: unknown, _tool?: unknown, _ui?: unknown, _cwd?: string) {
+      built.push("ToolExecutionComponent");
+      this.#name = toolName;
+      this.#args = args;
+    }
+    updateArgs(args: unknown): void {
+      this.#args = args;
+    }
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    updateResult(result: { content: Array<{ text?: string }>; isError?: boolean }): void {
+      this.#result = result;
+    }
+    render(width: number): readonly string[] {
+      const head = `→ ${this.#name} ${JSON.stringify(this.#args ?? {})}`;
+      if (!this.#result) return frame([head], width);
+      const lines = resultText(this.#result).split("\n");
+      const shown = this.#expanded ? lines : lines.slice(0, 1);
+      return frame([head, ...shown.map((line) => `← ${this.#name} ${line}`)], width);
+    }
+  }
+  class FakeReadGroup {
+    #calls: Array<{ id: string; args: unknown }> = [];
+    #results = new Map<string, string>();
+    #expanded = false;
+    constructor(_options?: unknown) {
+      built.push("ReadToolGroupComponent");
+    }
+    updateArgs(args: unknown, id?: string): void {
+      this.#calls.push({ id: id ?? "", args });
+    }
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    updateResult(result: { content: Array<{ text?: string }> }, _partial?: boolean, id?: string): void {
+      this.#results.set(id ?? "", resultText(result));
+    }
+    render(width: number): readonly string[] {
+      const lines: string[] = [];
+      for (const call of this.#calls) {
+        lines.push(`→ read ${JSON.stringify(call.args ?? {})}`);
+        const output = this.#results.get(call.id);
+        if (output === undefined) continue;
+        const parts = output.split("\n");
+        const shown = this.#expanded ? parts : parts.slice(0, 1);
+        for (const part of shown) lines.push(`← read ${part}`);
+      }
+      return frame(lines, width);
+    }
+  }
+  class FakeCustom {
+    #message: Record<string, unknown>;
+    #expanded = false;
+    constructor(message: unknown) {
+      built.push("CustomMessageComponent");
+      this.#message = (message ?? {}) as Record<string, unknown>;
+    }
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    render(width: number): readonly string[] {
+      const content = typeof this.#message.content === "string" ? this.#message.content : "";
+      return frame([`· ${String(this.#message.customType ?? "?")} : ${content}`], width);
+    }
+  }
+  class FakeBash {
+    #command: string;
+    #output = "";
+    constructor(command: string) {
+      built.push("BashExecutionComponent");
+      this.#command = command;
+    }
+    appendOutput(chunk: string): void {
+      this.#output += chunk;
+    }
+    setComplete(): void {}
+    setExpanded(): void {}
+    render(width: number): readonly string[] {
+      return frame([`$ ${this.#command}`, ...this.#output.split("\n")], width);
+    }
+  }
+  const summary = (name: string) =>
+    class {
+      constructor(_message: unknown) {
+        built.push(name);
+      }
+      setExpanded(): void {}
+      render(): readonly string[] {
+        return ["≡ résumé de session"];
+      }
+    };
+  const kit = {
+    Text: FakeText,
+    DynamicBorder: FakeBorder,
+    Container: FakeContainer,
+    Spacer: FakeSpacer,
+    theme: THEME,
+    UserMessageComponent: FakeUser,
+    AssistantMessageComponent: FakeAssistant,
+    ToolExecutionComponent: FakeTool,
+    ReadToolGroupComponent: FakeReadGroup,
+    CustomMessageComponent: FakeCustom,
+    BashExecutionComponent: FakeBash,
+    CompactionSummaryMessageComponent: summary("CompactionSummaryMessageComponent"),
+    BranchSummaryMessageComponent: summary("BranchSummaryMessageComponent"),
+  };
+  return { kit: kit as unknown as PipelinesPanelDeps["components"], built };
+}
 
 const KEYS = {
   matches: (data: string, action: string) =>
     (action === "tui.select.up" && data === "\u001b[A") ||
     (action === "tui.select.down" && data === "\u001b[B") ||
     (action === "tui.select.confirm" && data === "\r") ||
+    // Les touches de page de S-6 : le stub doit les connaître, sinon il les fait
+    // passer pour de la frappe et le test ne prouverait rien.
+    (action === "tui.select.pageUp" && data === "\u001b[5~") ||
+    (action === "tui.select.pageDown" && data === "\u001b[6~") ||
     (action === "tui.select.cancel" && (data === "\u001b" || data === "\u0003")),
 };
 
@@ -305,6 +531,7 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}): P
   const pending: Array<Promise<void>> = [];
   const deps: PipelinesPanelDeps = {
     stateDir,
+    components: fakeKit().kit,
     now: () => 1_700_000_000_000,
     schedule: (callback) => {
       scheduled.push(callback);
@@ -515,7 +742,7 @@ test("sessions/AC-6 : la ligne d'une feature en cours de travail est dans la sec
   const screen = text(rows);
 
   // La section du lot est celle qui précède le séparateur : la ligne y est.
-  const separator = rows.findIndex((row) => row.text.startsWith("+--") && row.tone === "border");
+  const separator = rows.findIndex((row) => row.rule === "separator");
   assert.ok(separator > 0, "le séparateur des sections est rendu");
   const lotSection = rows.slice(0, separator).map((row) => row.text).join("\n");
   assert.match(lotSection, /> alpha/, "la feature est dans la section du lot, sélectionnée");
@@ -714,7 +941,7 @@ test("sessions/AC-8 : un maillon terminé laisse une trace consultable, jamais u
   assert.equal(rowSessionFile(model, panelRowAt(model, 2)!), implSession, "chaque rang porte la session de SON maillon");
 
   // Aucun rang d'historique n'est vivant : la ligne vivante est celle du lot.
-  const separator = rows.findIndex((row) => row.tone === "border" && row.text.startsWith("+--"));
+  const separator = rows.findIndex((row) => row.rule === "separator");
   const historySection = rows.slice(separator + 1).map((row) => row.text).join("\n");
   assert.doesNotMatch(historySection, /specs/, "la feature qui avance ne laisse pas de ligne vivante en historique");
   assert.equal(model.running.length, 0, "son run est absorbé par le rang du lot");
@@ -732,6 +959,10 @@ function mkApp() {
   const mounted: Array<{ factory: never; options: never; close: () => void }> = [];
   const seeds: string[] = [];
   const pi = {
+    // `pi.pi` : le namespace du module d'entrée de l'hôte, d'où le panneau tire ses
+    // composants (S-1). Sans lui, le panneau refuse de s'ouvrir — c'est ce que
+    // vérifie le test du kit absent.
+    pi: fakeKit().kit,
     registerCommand(name: string, def: { handler: (args: string, ctx: never) => Promise<void> }) {
       handlers.set(name, def.handler);
     },
@@ -822,24 +1053,37 @@ test("sessions/AC-9 : le panneau occupe tout l'écran, le chat n'est pas visible
 
     let rows = component.render(64);
     assert.equal(rows.length, 24, "le cadre occupe exactement la hauteur du terminal");
-    for (const row of rows) assert.equal(row.length, 64, "chaque rang fait la largeur reçue");
-    assert.match(rows[rows.length - 1]!, /Échap fermer/, "la règle basse reste sur le dernier rang de l'écran");
+    for (const row of rows) assert.ok(row.length <= 64, "chaque rang tient dans la largeur reçue");
+    const rules = rows.filter((row) => /^─+$/.test(row));
+    assert.ok(rules.length >= 2, "les règles du cadre sont rendues");
+    for (const rule of rules) assert.equal(rule.length, 64, "une règle occupe exactement la largeur");
+    assert.match(rows[rows.length - 1]!, /^─+$/, "la règle basse reste sur le dernier rang de l'écran");
+    assert.ok(
+      rows.some((row) => /Échap fermer/.test(row)),
+      "le pied est rendu, juste au-dessus de la règle basse",
+    );
     const blanks = rows.filter((row) => row.trim() === "");
     assert.ok(blanks.length > 0, "le contenu est complété de rangs vides");
-    for (const blank of blanks) assert.equal(blank, " ".repeat(64), "un rang de remplissage est un rang d'espaces");
+    for (const blank of blanks) assert.equal(blank.trim(), "", "un rang de remplissage ne porte aucun texte");
 
     // Un écran plus haut : le remplissage suit. Un écran minuscule : le cadre et le
     // pied restent rendus, le contenu est tronqué, et rien n'est ajouté.
     tui.terminal.rows = 60;
     rows = component.render(80);
     assert.equal(rows.length, 60, "le remplissage suit la hauteur du terminal");
-    for (const row of rows) assert.equal(row.length, 80, "largeur respectée à toute hauteur");
-    assert.match(rows[rows.length - 1]!, /Échap fermer/);
+    for (const row of rows) assert.ok(row.length <= 80, "largeur respectée à toute hauteur");
+    assert.ok(
+      rows.some((row) => /Échap fermer/.test(row)),
+      "le pied survit à toute hauteur",
+    );
 
     tui.terminal.rows = 4;
     rows = component.render(64);
     assert.ok(rows.length <= panelBudget(4), "sous le plancher, le budget reste le plancher");
-    assert.match(rows[rows.length - 1]!, /Échap fermer/, "le pied survit à un terminal minuscule");
+    assert.ok(
+      rows.some((row) => /Échap fermer/.test(row)),
+      "le pied survit à un terminal minuscule",
+    );
     assert.equal(rows.filter((row) => row.trim() === "").length, 0, "aucun remplissage quand ça déborde déjà");
 
     tui.terminal = {};
@@ -985,7 +1229,9 @@ test("sessions/AC-1 : entrer dans la session d'un maillon vivant ne l'interrompt
   // `Entrée` : la vue s'ouvre dans le panneau.
   panel.component.handleInput("\r");
   assert.match(panel.screen(), /session session-alpha\.jsonl/, "la vue est ouverte dans le panneau");
-  assert.match(panel.screen(), /run en cours — lecture seule/, "elle annonce le run vivant");
+  // Le titre est un rang de service : à 64 colonnes il est TRONQUÉ, donc la marque
+  // du run vivant se lit à la largeur qui la porte.
+  assert.match(panel.screen(200), /run en cours — lecture seule/, "elle annonce le run vivant");
   assert.match(panel.screen(), /▸ toi : le maillon travaille/, "la transcription est lue");
   assert.equal(panel.closed(), 0, "le panneau n'est pas fermé par la vue");
   panel.component.handleInput("\u001b");
@@ -1161,86 +1407,51 @@ test("sessions/AC-4 : annuler un run n'arrête que lui, le reste du lot continue
 // Cas limites de la vue de session (S-2) — nommés, sans id de critère
 // ---------------------------------------------------------------------------
 
-test("la vue rend chaque état : succès, erreur, vide lisible, troncature, run vivant", () => {
-  const stateDir = mktmp("sessions-view-");
-  const opts = { width: 64, budget: 24, glyphs: GLYPHS };
+// S-4 — le dépliage GLOBAL, celui d'OMP
+// ---------------------------------------------------------------------------
 
-  // Succès : un rang par LIGNE de message — un message de plusieurs lignes occupe
-  // PLUSIEURS rangs (c'est la largeur qui replie, la vue ne tronque plus à la
-  // première ligne) — et les entrées techniques sont ignorées.
-  const file = path.join(stateDir, "session.jsonl");
-  writeSession(file, stateDir, [
-    { type: "thinking_level_change", id: "t", parentId: null, timestamp: "t", thinkingLevel: "max" },
-    userEntry("premier tour\nsuite ignorée"),
-    assistantEntry("je lis", [{ name: "read", arguments: { path: ".omp/pipeline/contract.md" } }]),
-    toolResultEntry("read", "contenu du contrat"),
-    customMessageEntry("pipeline", "la chaîne prend la main"),
-    { type: "custom", id: "c", parentId: null, timestamp: "t", customType: "tool_execution_start", data: { x: 1 } },
-    { type: "label", id: "l", parentId: null, timestamp: "t", targetId: "u", label: "jalon" },
+test("S-4 : ctrl+o déplie TOUTES les cartes de la vue, et les replie d'un coup", () => {
+  const stateDir = mktmp("sessions-fold-");
+  const repoRoot = mktmp("sessions-fold-repo-");
+  const worktree = mktmp("sessions-fold-wt-");
+  const sessionFile = path.join(stateDir, "session.jsonl");
+  const output = Array.from({ length: 6 }, (_, i) => `ligne de sortie ${i}`).join("\n");
+  const call = (id: string, file: string) => ({
+    type: "toolCall",
+    id,
+    name: "edit",
+    arguments: { path: file, old_string: "a", new_string: "b" },
+  });
+  const result = (id: string) => ({
+    type: "message",
+    id: `r-${id}`,
+    parentId: "a0",
+    timestamp: "t",
+    message: { role: "toolResult", toolCallId: id, toolName: "edit", content: [{ type: "text", text: output }], isError: false },
+  });
+  writeSession(sessionFile, worktree, [
+    { type: "message", id: "u0", parentId: null, timestamp: "t", message: { role: "user", content: [{ type: "text", text: "corrige" }] } },
+    { type: "message", id: "a0", parentId: "u0", timestamp: "t", message: { role: "assistant", content: [call("c0", "a.ts"), call("c1", "b.ts")] } },
+    result("c0"),
+    result("c1"),
   ]);
-  const view = readSessionView(file);
-  assert.ok(!("error" in view), "le fichier est lisible");
-  const rows = buildSessionRows(view, opts);
-  const text = rows.map((row) => row.text).join("\n");
-  assert.match(text, /▸ toi : premier tour/, "la première ligne du message utilisateur");
-  assert.match(text, /suite ignorée/, "et sa SUITE, sur son propre rang");
-  assert.match(text, /▸ agent : je lis/);
-  assert.match(text, /→ read \{"path":"\.omp\/pipeline\/contract\.md"\}/, "un rang par appel d'outil");
-  assert.match(text, /← read contenu du contrat/);
-  assert.match(text, /· pipeline : la chaîne prend la main/, "les notices du plugin restent visibles");
-  assert.match(text, /· tool_execution_start/, "une entrée `custom` se nomme sans ses données");
-  assert.doesNotMatch(text, /thinking_level_change|jalon/, "les entrées techniques ne rendent aucun rang");
-  assert.equal(rows.length, 7, "sept lignes : le message de deux lignes en occupe deux");
-  assert.equal(rows[0]!.tone, "text");
-  assert.equal(rows[1]!.tone, "text", "la suite d'un message garde le ton de son message");
-  assert.equal(rows.find((row) => /▸ agent : je lis/.test(row.text))!.tone, "accent");
-  for (const row of rows) assert.equal(row.text.length, 64, "chaque rang fait la largeur reçue");
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "running", phase: "impl" })]);
+  liveEntry(stateDir, { cwd: worktree, sessionFile, label: "repo/alpha", phase: "impl" });
 
-  // Erreur : fichier absent.
-  const missing = path.join(stateDir, "absent.jsonl");
-  const wide = { ...opts, width: 200 };
-  const error = buildSessionRows(readSessionView(missing), wide);
-  assert.equal(error.length, 1, "un rang unique pour l'erreur");
-  assert.match(error[0]!.text, new RegExp(`aucune entrée lisible — ${missing}`), "le chemin fautif est nommé");
-  assert.equal(error[0]!.tone, "warning");
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.handleInput("\r");
+  const collapsed = panel.screen();
+  assert.match(collapsed, /ligne de sortie 0/, "les cartes sont là, repliées d'office");
+  assert.doesNotMatch(collapsed, /ligne de sortie 5/, "et leur sortie est repliée");
 
-  // Vide lisible : le fichier existe, aucune entrée rendable.
-  const empty = path.join(stateDir, "vide.jsonl");
-  writeSession(empty, stateDir, [{ type: "thinking_level_change", id: "t", parentId: null, timestamp: "t" }]);
-  const emptyRows = buildSessionRows(readSessionView(empty), opts);
-  assert.equal(emptyRows.length, 1);
-  assert.match(emptyRows[0]!.text, /aucune entrée à afficher/);
-  assert.equal(emptyRows[0]!.tone, "muted");
+  // Une seule bascule, la touche de pliage d'OMP : TOUTES les cartes changent d'état.
+  panel.component.handleInput("\u000f");
+  const expanded = panel.screen();
+  assert.equal(expanded.split("ligne de sortie 5").length - 1, 2, "les DEUX cartes sont dépliées d'un coup");
 
-  // Dégradé : un fichier au-delà de la borne de lecture.
-  const big = path.join(stateDir, "gros.jsonl");
-  const filler = "x".repeat(400);
-  writeSession(
-    big,
-    stateDir,
-    Array.from({ length: 1200 }, (_, i) => userEntry(`${i} ${filler}`, `u${i}`)),
-  );
-  assert.ok(fs.statSync(big).size > 256 * 1024, "le fichier dépasse la borne de lecture");
-  const bigView = readSessionView(big);
-  assert.ok(!("error" in bigView));
-  assert.equal(bigView.truncated, true, "la lecture partielle le dit");
-  assert.ok(bigView.entries.length <= 500, `au plus 500 entrées (${bigView.entries.length})`);
-  assert.ok(bigView.entries.length > 0, "et le contenu lu est bien rendu");
-  const bigRows = buildSessionRows(bigView, opts);
-  const bigText = bigRows.map((row) => row.text).join("\n");
-  assert.match(bigRows[0]!.text, /… début tronqué/, "l'en-tête de troncature précède le contenu");
-  assert.ok(
-    bigRows.length >= bigView.entries.length + 1,
-    `au moins un rang par entrée lue, plus l'en-tête (${bigRows.length} rangs)`,
-  );
-  assert.match(bigText, /▸ toi : 1199 /, "les entrées rendues sont celles de la fin du fichier");
-
-  // Une ligne tronquée par la borne est ignorée, jamais fatale.
-  const cut = path.join(stateDir, "coupe.jsonl");
-  fs.writeFileSync(cut, `${JSON.stringify(userEntry("entier"))}\n{"type":"message","id":"coup`);
-  const cutRows = buildSessionRows(readSessionView(cut), opts);
-  assert.equal(cutRows.length, 1, "la ligne incomplète est ignorée");
-  assert.match(cutRows[0]!.text, /▸ toi : entier/);
+  panel.component.handleInput("\u000f");
+  assert.equal(panel.screen(), collapsed, "une seconde bascule rend exactement l'écran d'avant");
+  panel.component.dispose();
 });
 
 test("la vue n'écrit rien et ne bascule jamais : elle lit un fichier de session", async () => {
@@ -1300,24 +1511,55 @@ test("la vue n'écrit rien et ne bascule jamais : elle lit un fichier de session
   panel.component.dispose();
 });
 
-test("la vue suit un run vivant : le contenu relu apparaît sans rien toucher", () => {
-  const stateDir = mktmp("sessions-live-");
-  const file = path.join(stateDir, "session.jsonl");
-  writeSession(file, stateDir, [userEntry("début")]);
-  seedLot(stateDir, stateDir, []);
-  const panel = mountPanel(stateDir, { repoRoot: stateDir });
-  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0 };
-  assert.equal(buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 0 }).length > 0, true);
+// S-5 — le suivi live : l'ajout apparaît seul, la position de lecture ne bouge pas
+// ---------------------------------------------------------------------------
 
-  // Un fichier de session qui grandit entre deux rendus : la vue le relit.
-  const first = readSessionView(file);
-  assert.ok(!("error" in first));
-  assert.equal(first.entries.length, 1);
-  fs.appendFileSync(file, `${JSON.stringify(assistantEntry("la suite arrive"))}\n`);
-  const second = readSessionView(file);
-  assert.ok(!("error" in second));
-  assert.equal(second.entries.length, 2, "le nouveau tour est lu au rendu suivant");
-  assert.match(buildSessionRows(second, { width: 64, budget: 24, glyphs: GLYPHS }).map((r) => r.text).join("\n"), /la suite arrive/);
+test("S-5 : une entrée ajoutée apparaît sans touche, sans déplacer la lecture remontée", () => {
+  const stateDir = mktmp("sessions-suivi-");
+  const repoRoot = mktmp("sessions-suivi-repo-");
+  const worktree = mktmp("sessions-suivi-wt-");
+  const sessionFile = path.join(stateDir, "session.jsonl");
+  writeSession(
+    sessionFile,
+    worktree,
+    Array.from({ length: 40 }, (_, i) => userEntry(`tour ${i}`, `u${i}`)),
+  );
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "running", phase: "impl" })]);
+  liveEntry(stateDir, { cwd: worktree, sessionFile, label: "repo/alpha", phase: "impl" });
+
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.handleInput("\r");
+
+  // Ancré en bas : le dernier tour est visible d'emblée, et un rendu sans
+  // changement rend le MÊME tableau — c'est la condition du « sans clignotement ».
+  const bottom = panel.component.render(64);
+  assert.match(bottom.join("\n"), /tour 39/, "la vue s'ouvre ancrée sur la fin");
+  assert.equal(panel.component.render(64), bottom, "rien n'a changé : le tableau rendu est identique (aucune repeinture)");
+
+  // Un ajout au fichier : il apparaît au battement suivant, sans aucune touche.
+  fs.appendFileSync(sessionFile, `${JSON.stringify(userEntry("la suite arrive", "u40"))}\n`);
+  panel.component.refresh();
+  assert.match(panel.component.render(64).join("\n"), /la suite arrive/, "l'ajout apparaît sans touche");
+
+  // Remonté de quelques rangs : un ajout ne déplace pas la lecture d'un rang.
+  for (let i = 0; i < 5; i += 1) panel.component.handleInput("\u001b[A");
+  const before = panel.component.render(64);
+  assert.notEqual(before[2], bottom[2], "la vue a bien remonté");
+  fs.appendFileSync(sessionFile, `${JSON.stringify(userEntry("encore un tour", "u41"))}\n`);
+  panel.component.refresh();
+  assert.equal(panel.component.render(64)[2], before[2], "le premier rang affiché ne bouge pas");
+
+  // Une ligne partielle attend d'être complétée : elle apparaît alors UNE fois,
+  // entière — jamais deux, jamais tronquée. `Fin` réarme d'abord le suivi de queue.
+  panel.component.handleInput("\u001b[F");
+  const partial = JSON.stringify(userEntry("à moitié écrite", "u42"));
+  fs.appendFileSync(sessionFile, partial.slice(0, partial.length - 12));
+  panel.component.refresh();
+  assert.doesNotMatch(panel.component.render(64).join("\n"), /à moitié/, "une ligne partielle n'est pas rendue");
+  fs.appendFileSync(sessionFile, `${partial.slice(partial.length - 12)}\n`);
+  panel.component.refresh();
+  const completed = panel.component.render(64).join("\n");
+  assert.equal(completed.split("à moitié écrite").length - 1, 1, "elle apparaît une seule fois, entière");
   panel.component.dispose();
 });
 
@@ -1344,18 +1586,39 @@ test("le défilement de la vue remonte le temps, borné aux rangs rendus", () =>
   // à la transcription au lieu de déplacer un curseur d'options.
   assert.match(panel.screen(), /Réponse : ▏/, "la zone de saisie libre est ouverte");
 
-  // `↑` remonte d'un rang par cran, et la molette fait la même chose.
+  // `↑` remonte d'un rang par cran ; la molette, elle, vaut 3 rangs par cran
+  // (le facteur du lecteur plein écran de l'hôte, S-7).
   for (let i = 0; i < 40; i++) panel.component.handleInput("\u001b[A");
   assert.match(panel.screen(), /tour 0 /, "remonter assez haut atteint le début");
   panel.component.handleInput("\x1b[<65;10;5M"); // molette vers le bas
-  assert.match(panel.screen(), /tour 1 /, "la molette redescend d'un rang");
-  assert.doesNotMatch(panel.screen(), /tour 0 /, "le rang quitté sort de la fenêtre");
+  assert.match(panel.screen(), /tour 3 /, "la molette redescend de trois rangs");
+  assert.doesNotMatch(panel.screen(), /tour 0 /, "les rangs quittés sortent de la fenêtre");
 
   // Un cran en butée ne change rien : ni exception, ni dépassement.
   for (let i = 0; i < 40; i++) panel.component.handleInput("\u001b[A");
   assert.match(panel.screen(), /tour 0 /, "la butée haute est stable");
   for (let i = 0; i < 40; i++) panel.component.handleInput("\u001b[B");
   assert.match(panel.screen(), /tour 29/, "la butée basse rend la fin");
+
+  // Les autres touches de S-6 agissent MÊME dans l'éditeur libre (ce sont des
+  // séquences d'échappement, jamais des caractères) : début, fin, page haut/bas,
+  // et maj+flèches pour le défilement rapide.
+  panel.component.handleInput("\u001b[H");
+  assert.match(panel.screen(), /tour 0 /, "Début va au plus ancien rang");
+  panel.component.handleInput("\u001b[F");
+  assert.match(panel.screen(), /tour 29/, "Fin va au plus récent et réarme le suivi");
+  panel.component.handleInput("\u001b[5~"); // page haut
+  const afterPageUp = panel.screen();
+  assert.doesNotMatch(afterPageUp, /tour 29/, "Page haut remonte d'une fenêtre");
+  panel.component.handleInput("\u001b[6~"); // page bas
+  assert.match(panel.screen(), /tour 29/, "Page bas redescend d'une fenêtre, jusqu'au suivi");
+  panel.component.handleInput("\u001b[H");
+  panel.component.handleInput("\u001b[1;2B"); // maj+bas
+  assert.doesNotMatch(panel.screen(), /tour 0 /, "maj+bas descend de plusieurs rangs");
+  assert.match(panel.screen(), /tour 5 /, "cinq rangs quand la fenêtre est plus haute");
+  panel.component.handleInput("\u001b[1;2A"); // maj+haut
+  assert.match(panel.screen(), /tour 0 /, "maj+haut remonte d'autant, borné au début");
+
   assert.equal(panel.closed(), 0);
   panel.component.dispose();
 });
@@ -1369,7 +1632,7 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   const render = (selection: number) =>
     buildPanelRows(
       { running: [], live: {}, history: [], lot, selection, notice: null, unreadable: 0 },
-      { width: 64, budget: 8, glyphs: GLYPHS, now: 0 },
+      { width: 64, budget: 10, glyphs: GLYPHS, now: 0 },
     );
 
   // Sélection sur le DERNIER rang : la fenêtre doit l'inclure, pas rester en tête.
@@ -1378,7 +1641,7 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   assert.match(text, /> g11/, "le rang sélectionné est rendu, même tout en bas");
   assert.doesNotMatch(text, /g0 /, "et la fenêtre ne montre pas le début");
   assert.match(text, /… 11 de plus/, "le marqueur compte le total caché");
-  assert.ok(rows.length <= 8, "le budget tient toujours");
+  assert.ok(rows.length <= 10, "le budget tient toujours");
 
   // Sélection en tête : la fenêtre revient au début, le marqueur reste unique.
   const head = render(0);
@@ -1645,5 +1908,61 @@ test("le panneau ne publie ni ne clôt rien : la chaîne du lot ne dépend pas d
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state, "running", "le lot n'a pas bougé");
   assert.equal(runs.runs[0]!.aborted(), false, "aucun run n'a été arrêté");
   assert.equal(fs.existsSync(lotPathFor(stateDir, lotRepoKey(repoRoot))), true);
+  panel.component.dispose();
+});
+
+// ---------------------------------------------------------------------------
+// S-1 « Cas limites et erreurs » (critère AC-1) — la vue face à un composant qui
+// jette au RENDU. La vue monte les composants de l'hôte sur le JSONL d'un AUTRE
+// process : un `throw` y devient un rang lisible, jamais une sortie de l'overlay.
+// Le titre porte l'id de SPEC : l'invariant `criteria/AC-13` réserve `sessions/AC-1`
+// à un seul test (celui de la session d'un maillon vivant).
+// ---------------------------------------------------------------------------
+
+test("S-1 : la vue reste ouverte quand un composant de l'hôte jette au rendu", () => {
+  const stateDir = mktmp("sessions-throw-");
+  const repoRoot = mktmp("sessions-throw-repo-");
+  const worktree = mktmp("sessions-throw-wt-");
+  const sessionFile = path.join(stateDir, "session.jsonl");
+  writeSession(sessionFile, worktree, [userEntry("un tour", "u0"), assistantEntry("une réponse")]);
+  seedLot(stateDir, repoRoot, [feature("alpha", { worktree, sessionFile, state: "running", phase: "impl" })]);
+  liveEntry(stateDir, { cwd: worktree, sessionFile, label: "repo/alpha", phase: "impl" });
+
+  const { kit } = fakeKit();
+  /** La carte d'assistant d'une AUTRE version : elle ne jette qu'au RENDU. */
+  class AssistantMessageComponent {
+    setExpanded(): void {}
+    setImagesVisible(): void {}
+    setToolResultImagesVisible(): void {}
+    render(): readonly string[] {
+      throw new Error("bloc d'une autre version");
+    }
+  }
+  const broken = { ...kit, AssistantMessageComponent } as unknown as PipelinesPanelDeps["components"];
+  const panel = mountPanel(stateDir, { repoRoot, components: broken });
+
+  panel.component.handleInput("\r");
+  const screen = panel.screen(200);
+  assert.match(
+    screen,
+    /entrée illisible — AssistantMessageComponent : bloc d'une autre version/,
+    "le rang d'erreur nomme le composant fautif, à SA place",
+  );
+  assert.match(screen, /▸ toi : un tour/, "le reste de la transcription est peint");
+  assert.match(screen, /session session\.jsonl/, "la vue est toujours ouverte, avec son titre");
+  for (const line of panel.component.render(64)) {
+    assert.ok(displayWidth(line) <= 64, `aucun rang ne dépasse la largeur reçue — ${JSON.stringify(line)}`);
+  }
+
+  // Le panneau reste OUVERT et vivant : rendu mémoïsé, touches de la vue, puis
+  // retour à la liste — le rang d'erreur ne fige rien.
+  assert.equal(panel.closed(), 0, "l'overlay n'est jamais quitté");
+  assert.equal(panel.component.render(64), panel.component.render(64), "le rendu est stable d'un appel à l'autre");
+  for (const key of ["j", "k", "\u000f", "\u001b[5~", "\u001b[6~"]) {
+    assert.doesNotThrow(() => panel.component.handleInput(key), `la vue reste pilotable : ${JSON.stringify(key)}`);
+  }
+  assert.match(panel.screen(64), /entrée illisible — AssistantMessageComponent/, "et le rang d'erreur est toujours là");
+  panel.component.handleInput("\u001b");
+  assert.match(panel.screen(), /> alpha/, "Échap rend la main à la liste");
   panel.component.dispose();
 });

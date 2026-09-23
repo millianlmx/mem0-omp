@@ -30,37 +30,34 @@ import * as path from "node:path";
 import reqExtension, {
   armInbox,
   buildConversationRunArgv,
-  buildSessionRows,
   checkAsk,
+  consumeDelivery,
   conversationRefusal,
   createLotController,
   displayWidth,
-  fileDiffRows,
   lotRepoKey,
   LOT_EDITOR_MAX,
   LOT_VERSION,
-  markdownRows,
   panelInboxDirFor,
+  panelRowCount,
   pipelinesPanelFactory,
   pumpInbox,
   readDeliveries,
   readLot,
-  readSessionView,
+  readPanelModel,
   readStore,
-  SESSION_VIEW_FOLD_MIN,
-  SESSION_VIEW_FOLD_ROWS,
   writeDelivery,
   writeHistoryEntry,
   writeLot,
   writeRunningEntry,
   runningIdFor,
+  wrapVisible,
   type Lot,
   type LotFeature,
   type LotPanelActions,
   type LotRunnerResult,
   type PanelDelivery,
   type PanelGlyphs,
-  type PanelRow,
   type PipelinesPanelDeps,
   type RowReply,
   type RunningEntry,
@@ -220,32 +217,254 @@ function oneLineSession(file: string, cwd: string, text: string): string {
 // Le panneau monté : la VRAIE fabrique, avec ses dépendances injectées
 // ---------------------------------------------------------------------------
 
-const GLYPHS: PanelGlyphs = {
-  topLeft: "+",
-  topRight: "+",
-  bottomLeft: "+",
-  bottomRight: "+",
-  horizontal: "-",
-  vertical: "|",
-  teeLeft: "+",
-  teeRight: "+",
-  cursor: ">",
-};
+const GLYPHS: PanelGlyphs = { cursor: ">" };
 
+/** Le thème neutre : `fg`/`bg` rendent le texte tel quel, donc les assertions lisent le texte NU. */
 const THEME = {
   fg: (_tone: string, text: string) => text,
-  boxRound: {
-    topLeft: "+",
-    topRight: "+",
-    bottomLeft: "+",
-    bottomRight: "+",
-    horizontal: "-",
-    vertical: "|",
-    teeLeft: "+",
-    teeRight: "+",
-  },
+  bg: (_tone: string, text: string) => text,
   nav: { cursor: ">" },
 };
+
+/**
+ * Le faux kit de composants de l'hôte (S-1) : le panneau et la vue ne composent
+ * plus aucune ligne eux-mêmes, donc les tests montent un kit qui JOURNALISE ses
+ * constructions et rend des lignes lisibles. Ce qui est prouvé ici, c'est ce que
+ * le panneau DEMANDE aux composants (quel composant, avec quelle entrée) ; le
+ * rendu des composants de l'hôte est celui d'OMP, prouvé par la fumée PTY (BR-7).
+ */
+function fakeKit() {
+  const built: string[] = [];
+  class FakeText {
+    #text: string;
+    #paddingX: number;
+    #background?: (text: string) => string;
+    #style?: (text: string) => string;
+    constructor(text = "", paddingX = 1, _paddingY = 0, background?: (text: string) => string) {
+      built.push("Text");
+      this.#text = text;
+      this.#paddingX = paddingX;
+      this.#background = background;
+    }
+    setText(text: string): boolean {
+      const changed = text !== this.#text;
+      this.#text = text;
+      return changed;
+    }
+    setStyleFn(style?: (text: string) => string): this {
+      this.#style = style;
+      return this;
+    }
+    render(width: number): readonly string[] {
+      if (this.#text.trim() === "") return [];
+      const content = Math.max(1, width - this.#paddingX * 2);
+      const styled = this.#style ? this.#style(this.#text) : this.#text;
+      return wrapVisible(styled, content).map((line) => {
+        const padded = `${" ".repeat(this.#paddingX)}${line}`;
+        const filled = padded + " ".repeat(Math.max(0, width - displayWidth(padded)));
+        return this.#background ? this.#background(filled) : filled;
+      });
+    }
+  }
+  class FakeBorder {
+    #color: (text: string) => string;
+    constructor(color?: (text: string) => string) {
+      built.push("DynamicBorder");
+      this.#color = color ?? ((text) => text);
+    }
+    render(width: number): readonly string[] {
+      return [this.#color("─".repeat(Math.max(1, width)))];
+    }
+  }
+  class FakeSpacer {
+    #lines: number;
+    constructor(lines = 1) {
+      built.push("Spacer");
+      this.#lines = lines;
+    }
+    setLines(lines: number): void {
+      this.#lines = lines;
+    }
+    render(): readonly string[] {
+      return new Array<string>(Math.max(0, this.#lines)).fill("");
+    }
+  }
+  class FakeContainer {
+    children: FakeText[] = [];
+    addChild(child: FakeText): void {
+      this.children.push(child);
+    }
+    render(width: number): readonly string[] {
+      return this.children.flatMap((child) => [...child.render(width)]);
+    }
+  }
+  /** Le texte d'un message, réduit à ses blocs `text` — la matière que la carte rend. */
+  const textOf = (message: Record<string, unknown>): string => {
+    const content = Array.isArray(message.content) ? message.content : [];
+    return content
+      .filter((block) => block && typeof block === "object" && (block as Record<string, unknown>).type === "text")
+      .map((block) => String((block as Record<string, unknown>).text ?? ""))
+      .join(" ");
+  };
+  const resultText = (result: { content: Array<{ text?: string }> }): string =>
+    result.content.map((block) => block.text ?? "").join("\n");
+  /**
+   * Les lignes d'un composant de message : repliées à la largeur reçue et
+   * complétées, exactement comme le fait le composant de l'hôte — sans quoi les
+   * assertions de largeur ne prouveraient rien.
+   */
+  const frame = (lines: string[], width: number): readonly string[] =>
+    lines.flatMap((line) =>
+      wrapVisible(line, Math.max(1, width)).map((part) => part + " ".repeat(Math.max(0, width - displayWidth(part)))),
+    );
+  class FakeUser {
+    #text: string;
+    constructor(text: string, _options?: { synthetic?: boolean }) {
+      built.push("UserMessageComponent");
+      this.#text = text;
+    }
+    render(width: number): readonly string[] {
+      return frame(this.#text.split("\n").map((line) => `▸ toi : ${line}`), width);
+    }
+  }
+  class FakeAssistant {
+    #message: Record<string, unknown>;
+    #expanded = false;
+    constructor(message?: Record<string, unknown>) {
+      built.push("AssistantMessageComponent");
+      this.#message = message ?? {};
+    }
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    setImagesVisible(): void {}
+    setToolResultImagesVisible(): void {}
+    render(width: number): readonly string[] {
+      const text = textOf(this.#message);
+      if (text.trim() === "") return [];
+      const lines = text.split("\n").map((line) => `▸ agent : ${line}`);
+      if (this.#expanded || lines.length <= 2) return frame(lines, width);
+      return frame([lines[0] as string, `… ${lines.length - 1} lignes repliées — ctrl+o déplier`], width);
+    }
+  }
+  class FakeTool {
+    #name: string;
+    #args: unknown;
+    #result?: { content: Array<{ text?: string }>; isError?: boolean };
+    #expanded = false;
+    constructor(toolName: string, args: unknown, _options?: unknown, _tool?: unknown, _ui?: unknown, _cwd?: string) {
+      built.push("ToolExecutionComponent");
+      this.#name = toolName;
+      this.#args = args;
+    }
+    updateArgs(args: unknown): void {
+      this.#args = args;
+    }
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    updateResult(result: { content: Array<{ text?: string }>; isError?: boolean }): void {
+      this.#result = result;
+    }
+    render(width: number): readonly string[] {
+      const head = `→ ${this.#name} ${JSON.stringify(this.#args ?? {})}`;
+      if (!this.#result) return frame([head], width);
+      const lines = resultText(this.#result).split("\n");
+      const shown = this.#expanded ? lines : lines.slice(0, 1);
+      return frame([head, ...shown.map((line) => `← ${this.#name} ${line}`)], width);
+    }
+  }
+  class FakeReadGroup {
+    #calls: Array<{ id: string; args: unknown }> = [];
+    #results = new Map<string, string>();
+    #expanded = false;
+    constructor(_options?: unknown) {
+      built.push("ReadToolGroupComponent");
+    }
+    updateArgs(args: unknown, id?: string): void {
+      this.#calls.push({ id: id ?? "", args });
+    }
+    setArgsComplete(): void {}
+    setExecutionStarted(): void {}
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    updateResult(result: { content: Array<{ text?: string }> }, _partial?: boolean, id?: string): void {
+      this.#results.set(id ?? "", resultText(result));
+    }
+    render(width: number): readonly string[] {
+      const lines: string[] = [];
+      for (const call of this.#calls) {
+        lines.push(`→ read ${JSON.stringify(call.args ?? {})}`);
+        const output = this.#results.get(call.id);
+        if (output === undefined) continue;
+        const parts = output.split("\n");
+        const shown = this.#expanded ? parts : parts.slice(0, 1);
+        for (const part of shown) lines.push(`← read ${part}`);
+      }
+      return frame(lines, width);
+    }
+  }
+  class FakeCustom {
+    #message: Record<string, unknown>;
+    #expanded = false;
+    constructor(message: unknown) {
+      built.push("CustomMessageComponent");
+      this.#message = (message ?? {}) as Record<string, unknown>;
+    }
+    setExpanded(expanded: boolean): void {
+      this.#expanded = expanded;
+    }
+    render(width: number): readonly string[] {
+      const content = typeof this.#message.content === "string" ? this.#message.content : "";
+      return frame([`· ${String(this.#message.customType ?? "?")} : ${content}`], width);
+    }
+  }
+  class FakeBash {
+    #command: string;
+    #output = "";
+    constructor(command: string) {
+      built.push("BashExecutionComponent");
+      this.#command = command;
+    }
+    appendOutput(chunk: string): void {
+      this.#output += chunk;
+    }
+    setComplete(): void {}
+    setExpanded(): void {}
+    render(width: number): readonly string[] {
+      return frame([`$ ${this.#command}`, ...this.#output.split("\n")], width);
+    }
+  }
+  const summary = (name: string) =>
+    class {
+      constructor(_message: unknown) {
+        built.push(name);
+      }
+      setExpanded(): void {}
+      render(): readonly string[] {
+        return ["≡ résumé de session"];
+      }
+    };
+  const kit = {
+    Text: FakeText,
+    DynamicBorder: FakeBorder,
+    Container: FakeContainer,
+    Spacer: FakeSpacer,
+    theme: THEME,
+    UserMessageComponent: FakeUser,
+    AssistantMessageComponent: FakeAssistant,
+    ToolExecutionComponent: FakeTool,
+    ReadToolGroupComponent: FakeReadGroup,
+    CustomMessageComponent: FakeCustom,
+    BashExecutionComponent: FakeBash,
+    CompactionSummaryMessageComponent: summary("CompactionSummaryMessageComponent"),
+    BranchSummaryMessageComponent: summary("BranchSummaryMessageComponent"),
+  };
+  return { kit: kit as unknown as PipelinesPanelDeps["components"], built };
+}
 
 /** Le stub de touches : il résout AUSSI `app.tools.expand` (`ctrl+o`, S-3). */
 const KEYS = {
@@ -267,6 +486,7 @@ type PanelHarness = {
 function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}): PanelHarness {
   const deps: PipelinesPanelDeps = {
     stateDir,
+    components: fakeKit().kit,
     now: () => 1_700_000_000_000,
     schedule: () => () => {},
     join: () => {},
@@ -275,11 +495,6 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}): P
   const tui = { terminal: { rows: 24 }, requestRender: () => {} };
   const component = pipelinesPanelFactory(deps)(tui, THEME, KEYS, () => {});
   return { component, screen: (width = 80) => component.render(width).join("\n") };
-}
-
-/** Le texte des rangs, joint : ce que l'écran montre. */
-function text(rows: PanelRow[]): string {
-  return rows.map((row) => row.text).join("\n");
 }
 
 /** Une doublure de `LotPanelActions` qui COMPTE ses appels : rien ne part sans confirmation. */
@@ -382,7 +597,11 @@ function mkRunner(): RunnerHarness {
   return { runner, runs };
 }
 
-function mkCtl(repoRoot: string, runner: (input: RunInput) => Promise<LotRunnerResult>) {
+function mkCtl(
+  repoRoot: string,
+  runner: (input: RunInput) => Promise<LotRunnerResult>,
+  over: { now?: () => number } = {},
+) {
   const stateDir = path.join(mktmp("conversation-lot-"), "pipeline");
   const notices: string[] = [];
   const controller = createLotController({
@@ -393,7 +612,7 @@ function mkCtl(repoRoot: string, runner: (input: RunInput) => Promise<LotRunnerR
     notify: (line) => notices.push(line),
     toast: () => {},
     session: () => ({ file: null, id: null }),
-    now: () => 1_700_000_000_000,
+    now: over.now ?? (() => 1_700_000_000_000),
     schedule: () => () => {},
     worktreesBase: path.join(path.dirname(stateDir), "worktrees"),
     archiveBase: path.join(path.dirname(stateDir), "archive"),
@@ -422,6 +641,23 @@ function deliveryOf(dir: string, index = 0): Record<string, unknown> {
   const delivery = entries[index]?.delivery as PanelDelivery | null | undefined;
   assert.ok(delivery, `une livraison est attendue dans ${dir}`);
   return { ...delivery, sentAt: 0 };
+}
+
+/**
+ * L'empreinte du magasin : chaque fichier de `running/` et `history/` avec son
+ * contenu, triés. C'est elle qui doit être IDENTIQUE avant et après une écriture
+ * vers un maillon vivant (S-9, S-10) : une livraison ne crée, ne déplace et ne
+ * réécrit aucune entrée du magasin.
+ */
+function storeFingerprint(stateDir: string): string[] {
+  const out: string[] = [];
+  for (const dir of [path.join(stateDir, "running"), path.join(stateDir, "history")]) {
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir).sort()) {
+      out.push(`${path.basename(dir)}/${name}:${fs.readFileSync(path.join(dir, name), "utf8")}`);
+    }
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -512,204 +748,6 @@ function childCtx(cwd: string, idle: () => boolean) {
 function askOption(label: string): { label: string } {
   return { label };
 }
-
-// ---------------------------------------------------------------------------
-// S-1 — le rendu markdown des entrées de texte
-// ---------------------------------------------------------------------------
-
-test("conversation/AC-1 : les entrées de texte sont rendues en markdown, jamais en syntaxe brute", () => {
-  {
-    // La correspondance, ligne à ligne : c'est elle que la vue consomme.
-    const rows = markdownRows(
-      "# Titre\n\n- un\n- deux\n\n1. premier\n\n```ts\nconst x = 1;\n```\n\n**gras** et `code` et _italique_",
-      "text",
-    );
-    const texts = rows.map((row) => row.text);
-    assert.deepEqual(texts, [
-      "Titre",
-      "",
-      "• un",
-      "• deux",
-      "",
-      "1. premier",
-      "",
-      "  const x = 1;",
-      "",
-      "gras et code et italique",
-    ]);
-    assert.equal(rows[0]!.tone, "accent", "un titre porte le ton d'accentuation");
-    assert.equal(rows[7]!.tone, "dim", "le code est en retrait et estompé");
-    assert.equal(rows[2]!.tone, "text", "une puce garde le ton de l'entrée");
-  }
-  {
-    // Les cas limites : ce qui n'est PAS de la mise en forme reste du texte.
-    assert.deepEqual(markdownRows(""), [], "un texte vide ne rend aucun rang");
-    assert.equal(markdownRows("#titre")[0]!.text, "#titre", "un dièse sans espace n'ouvre pas un titre");
-    assert.equal(markdownRows("-item")[0]!.text, "-item", "un tiret sans espace n'ouvre pas une puce");
-    assert.equal(markdownRows("2 * 3 = 6 et a_b_c")[0]!.text, "2 * 3 = 6 et a_b_c", "un délimiteur isolé survit");
-    assert.deepEqual(
-      markdownRows("texte\n```\nsuite"),
-      [
-        { text: "texte", tone: "text" },
-        { text: "  suite", tone: "dim" },
-      ],
-      "un bloc non fermé garde tout ce qui suit en code",
-    );
-    assert.equal(markdownRows("# T", "accent")[0]!.tone, "accent");
-    assert.equal(markdownRows("du texte", "accent")[0]!.tone, "accent", "une ligne ordinaire suit le ton de l'entrée");
-  }
-  {
-    // Dans la VUE : une transcription réelle, rendue par le constructeur de rangs.
-    const stateDir = mktmp("conversation-ac1-");
-    const worktree = mktmp("conversation-ac1-wt-");
-    const session = path.join(stateDir, "sessions", "alpha.jsonl");
-    writeSession(session, worktree, [userEntry("# Titre\n- un\n- deux\n\n```\ncode\n```")]);
-    const rows = buildSessionRows(readSessionView(session), { width: 200, budget: 24, glyphs: GLYPHS });
-    const shown = text(rows);
-    assert.match(shown, /▸ toi : Titre/, "le titre est rendu, préfixé par l'entrée qui le porte");
-    assert.match(shown, /• un/);
-    assert.match(shown, /  code/);
-    assert.doesNotMatch(shown, /# Titre/, "le dièse du titre n'est plus rendu");
-    assert.doesNotMatch(shown, /```/, "les délimiteurs de bloc ne sont plus rendus");
-    assert.equal(rows.find((row) => row.text.includes("Titre"))!.tone, "accent");
-  }
-});
-
-// ---------------------------------------------------------------------------
-// S-2 — le diff d'un appel d'outil qui modifie un fichier
-// ---------------------------------------------------------------------------
-
-test("conversation/AC-2 : un appel d'outil qui modifie un fichier montre son diff", () => {
-  {
-    // Formes RÉELLES de l'hôte : `edit` replace (le diff ligne à ligne), `write`.
-    const replace = fileDiffRows("edit", { path: "src/a.ts", old_string: "un\ndeux", new_string: "un\ntrois" });
-    assert.deepEqual(replace, [
-      { text: "→ edit src/a.ts", tone: "dim" },
-      { text: "  un", tone: "dim" },
-      { text: "- deux", tone: "error" },
-      { text: "+ trois", tone: "success" },
-    ]);
-    const written = fileDiffRows("write", { path: "src/b.ts", content: "ligne 1\nligne 2" });
-    assert.deepEqual(written, [
-      { text: "→ write src/b.ts", tone: "dim" },
-      { text: "+ ligne 1", tone: "success" },
-      { text: "+ ligne 2", tone: "success" },
-    ]);
-  }
-  {
-    // `edit` patch : `create` porte un contenu sans marqueur, `delete` se dit en un
-    // rang, `rename` s'annonce, et un diff textuel garde SES marqueurs.
-    assert.deepEqual(fileDiffRows("edit", { path: "a.ts", edits: [{ op: "create", diff: "neuf" }] }), [
-      { text: "→ edit a.ts", tone: "dim" },
-      { text: "+ neuf", tone: "success" },
-    ]);
-    assert.deepEqual(fileDiffRows("edit", { path: "a.ts", edits: [{ op: "delete" }] }), [
-      { text: "→ edit a.ts", tone: "dim" },
-      { text: "- a.ts (supprimé)", tone: "error" },
-    ]);
-    assert.deepEqual(fileDiffRows("edit", { path: "a.ts", edits: [{ rename: "b.ts" }] }), [
-      { text: "→ edit a.ts", tone: "dim" },
-      { text: "→ a.ts → b.ts", tone: "dim" },
-    ]);
-    assert.deepEqual(fileDiffRows("edit", { path: "a.ts", edits: [{ diff: "@@ -1 +1 @@\n-avant\n+après" }] }), [
-      { text: "→ edit a.ts", tone: "dim" },
-      { text: "@@ -1 +1 @@", tone: "dim" },
-      { text: "-avant", tone: "error" },
-      { text: "+après", tone: "success" },
-    ]);
-  }
-  {
-    // Les cas limites : arguments non conformes ⇒ rendu brut (jamais d'exception),
-    // diff identique ⇒ un seul rang, outer que les outils de fichier ⇒ `null`.
-    assert.equal(fileDiffRows("edit", { path: "a.ts", old_string: "a", new_string: "a" })?.length, 2);
-    assert.deepEqual(fileDiffRows("edit", { path: "a.ts", old_string: "a", new_string: "a" })?.[1], {
-      text: "  (aucun changement)",
-      tone: "dim",
-    });
-    assert.equal(fileDiffRows("edit", { path: "a.ts", old_string: "", new_string: "x" })?.length, 2);
-    assert.equal(fileDiffRows("edit", { path: "a.ts", old_string: "x", new_string: "" })?.length, 2);
-    for (const bad of [null, "texte", 42, [], { path: 3 }, { path: "" }, { path: "a.ts" }, { path: "a.ts", edits: 3 }]) {
-      assert.equal(fileDiffRows("edit", bad), null, `arguments refusés : ${JSON.stringify(bad)}`);
-    }
-    assert.equal(fileDiffRows("read", { path: "a.ts" }), null, "un outil de lecture n'a pas de diff");
-    assert.equal(fileDiffRows("bash", { command: "ls" }), null);
-    assert.equal(fileDiffRows("write", { path: "a.ts", content: 3 }), null);
-  }
-  {
-    // Dans la VUE : le rang de l'appel porte le diff, jamais les arguments bruts.
-    const stateDir = mktmp("conversation-ac2-");
-    const worktree = mktmp("conversation-ac2-wt-");
-    const session = path.join(stateDir, "sessions", "alpha.jsonl");
-    writeSession(session, worktree, [
-      assistantEntry("je corrige", [
-        { name: "edit", arguments: { path: "src/a.ts", old_string: "deux", new_string: "trois" } },
-        { name: "read", arguments: { file: "src/a.ts" } },
-      ]),
-    ]);
-    const rows = buildSessionRows(readSessionView(session), { width: 200, budget: 24, glyphs: GLYPHS });
-    const shown = text(rows);
-    assert.match(shown, /→ edit src\/a\.ts/);
-    assert.match(shown, /- deux/);
-    assert.match(shown, /\+ trois/);
-    assert.equal(rows.find((row) => row.text.includes("- deux"))!.tone, "error");
-    assert.equal(rows.find((row) => row.text.includes("+ trois"))!.tone, "success");
-    assert.doesNotMatch(shown, /\{"path"/, "les arguments bruts ne sont plus rendus");
-    assert.match(shown, /→ read \{"file":"src\/a\.ts"\}/, "un outil de lecture garde son rendu d'avant");
-  }
-});
-
-// ---------------------------------------------------------------------------
-// S-3 — le repli d'office, et le dépliage une entrée à la fois
-// ---------------------------------------------------------------------------
-
-test("conversation/AC-3 : une entrée longue est repliée d'office, et ctrl+o la déplie puis la replie", () => {
-  const stateDir = mktmp("conversation-ac3-");
-  const worktree = mktmp("conversation-ac3-wt-");
-  const session = path.join(stateDir, "sessions", "alpha.jsonl");
-  const long = Array.from({ length: 20 }, (_, i) => `ligne ${i}`).join("\n");
-  const twelve = Array.from({ length: 12 }, (_, i) => `court ${i}`).join("\n");
-  writeSession(session, worktree, [userEntry(long, "u1"), userEntry(twelve, "u2")]);
-  closedEntry(stateDir, { cwd: worktree, sessionFile: session, updatedAt: 2 });
-
-  {
-    // Le contrat du repli : plus de 12 rangs ⇒ 8 rangs + la mention, et une entrée
-    // de 12 rangs exactement n'est PAS repliée (`>` strict).
-    assert.equal(SESSION_VIEW_FOLD_MIN, 12);
-    assert.equal(SESSION_VIEW_FOLD_ROWS, 8);
-    const view = readSessionView(session);
-    const folded = buildSessionRows(view, { width: 200, budget: 24, glyphs: GLYPHS });
-    assert.match(text(folded), /… 12 lignes repliées — ctrl\+o déplier/);
-    assert.equal(folded[SESSION_VIEW_FOLD_ROWS]!.tone, "dim");
-    assert.deepEqual(folded[SESSION_VIEW_FOLD_ROWS]!.choice, { kind: "fold", key: "u1:0" });
-    assert.equal(folded.length, SESSION_VIEW_FOLD_ROWS + 1 + 12, "l'entrée de 12 rangs reste entière");
-    const unfolded = buildSessionRows(view, { width: 200, budget: 24, glyphs: GLYPHS, expanded: ["u1:0"] });
-    assert.equal(unfolded.length, 20 + 12, "dépliée, l'entrée montre tous ses rangs");
-    assert.doesNotMatch(text(unfolded), /lignes repliées/);
-  }
-
-  {
-    // Dans la VUE : `ctrl+o` déplie la dernière entrée repliée, puis la replie ;
-    // le clic sur la mention bascule CELLE qu'on vise.
-    const panel = mountPanel(stateDir, { repoRoot: mktmp("conversation-ac3-repo-") });
-    panel.component.handleInput("\r");
-    assert.match(panel.screen(), /lignes repliées — ctrl\+o déplier/, "la conversation s'ouvre repliée");
-    panel.component.handleInput("\u000f");
-    assert.doesNotMatch(panel.screen(), /lignes repliées/, "ctrl+o déplie la dernière entrée repliée");
-    assert.match(panel.screen(), /ligne 19/);
-    panel.component.handleInput("\u000f");
-    assert.match(panel.screen(), /lignes repliées — ctrl\+o déplier/, "ctrl+o la replie");
-    const mention = panel.component.render(80).findIndex((row) => row.includes("lignes repliées"));
-    panel.component.handleInput(`\u001b[<0;5;${mention + 1}M`);
-    assert.doesNotMatch(panel.screen(), /lignes repliées/, "un clic sur la mention bascule son entrée");
-    // Le pli se juge sur la fenêtre DESSINÉE : chaque frappe est suivie d'un rendu
-    // (l'hôte rend entre deux touches), et le pli retombe alors sur la dernière
-    // entrée repliée — ici celle du haut.
-    panel.component.handleInput("\u000f");
-    assert.match(panel.screen(), /lignes repliées/, "replier la dernière dépliée laisse un repli dans la fenêtre");
-    panel.component.handleInput("\u000f");
-    assert.match(panel.screen(), /ligne 19/, "et le suivant la déplie à nouveau");
-  }
-});
 
 // ---------------------------------------------------------------------------
 // S-4 — la conversation est vivante
@@ -1126,6 +1164,158 @@ test("conversation/AC-10 : une session vivante d'un autre process refuse l'écri
 });
 
 // ---------------------------------------------------------------------------
+// S-9 / S-10 — les invariants du canal d'écriture (garde-fou B-3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Le montage commun des deux tests d'invariance : un maillon du lot ARMÉ (sa boîte
+ * est dans l'argv du run), une session sur le disque, et le panneau ouvert.
+ */
+async function armedMaillon(prefix: string) {
+  const { runner, runs } = mkRunner();
+  const repoRoot = mkRepo();
+  // Une horloge qui AVANCE d'une seconde par lecture : les livraisons sont
+  // horodatées comme dans la vie réelle, donc leur ordre lexicographique est leur
+  // ordre chronologique — c'est la propriété que S-10 exige du canal.
+  let clock = 1_700_000_000_000;
+  const { controller, stateDir } = mkCtl(repoRoot, runner, { now: () => (clock += 1000) });
+  const worktree = mktmp(`${prefix}-wt-`);
+  const sessionDir = path.join(stateDir, "sessions");
+  const session = oneLineSession(path.join(sessionDir, "alpha.jsonl"), worktree, "tour du maillon");
+  const sessionText = fs.readFileSync(session, "utf8");
+  writeContract(worktree, CONTRACT_SPECS);
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { origin: "session", state: "running", phase: "impl", worktree, sessionFile: session }),
+  ]);
+  controller.start();
+  await controller.tick();
+  const inbox = inboxOf(runs[0]!);
+  // Le panneau partage l'horloge du pilote : c'est ELLE qui horodate une livraison.
+  const panel = mountPanel(stateDir, { repoRoot, lot: controller, now: () => (clock += 1000) });
+  return { runs, repoRoot, stateDir, worktree, sessionDir, session, sessionText, inbox, panel };
+}
+
+test("S-9 : répondre à un ask ne touche ni le magasin, ni les sessions, ni la liste", async () => {
+  const { runs, repoRoot, stateDir, worktree, sessionDir, session, sessionText, inbox, panel } =
+    await armedMaillon("conversation-invariance");
+  liveEntry(stateDir, {
+    cwd: worktree,
+    sessionFile: session,
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    pendingAsk: { toolCallId: "call-1", id: "q", question: "On garde ?", options: [askOption("oui"), askOption("non")] },
+  });
+  // Le panneau relit le magasin au battement : la publication du maillon se voit
+  // ici par un rafraîchissement explicite (l'ordonnanceur du harnais est inerte).
+  panel.component.refresh();
+  const before = {
+    store: storeFingerprint(stateDir),
+    sessions: fs.readdirSync(sessionDir).sort(),
+    rows: panelRowCount(readPanelModel({ stateDir, repoRoot })),
+  };
+  assert.match(panel.screen(120), /attend/, "le maillon attend sa réponse");
+
+  // Répondre depuis la vue : l'option, l'aperçu, la livraison.
+  panel.component.handleInput("\r");
+  panel.component.handleInput("1");
+  panel.component.handleInput("\r");
+  panel.component.handleInput("\r");
+  await flush();
+
+  // (a) Une livraison `ask` apparaît dans la boîte du maillon VIVANT…
+  const delivered = readDeliveries(inbox);
+  assert.equal(delivered.length, 1, "une seule livraison, et dans la boîte du run");
+  assert.deepEqual({ ...(delivered[0]!.delivery as object), sentAt: 0 }, {
+    version: 1,
+    kind: "ask",
+    toolCallId: "call-1",
+    selected: "oui",
+    sentAt: 0,
+  });
+  // …et le maillon la consomme : la boîte se vide.
+  for (const entry of readDeliveries(inbox)) consumeDelivery(entry.file);
+  assert.equal(readDeliveries(inbox).length, 0, "la livraison est consommée par le maillon");
+
+  // (b) Le magasin et les sessions sont identiques — aucune entrée, aucun fichier.
+  assert.deepEqual(storeFingerprint(stateDir), before.store, "running/ et history/ inchangés, octet pour octet");
+  assert.deepEqual(fs.readdirSync(sessionDir).sort(), before.sessions, "aucun fichier de session créé");
+  assert.equal(fs.readFileSync(session, "utf8"), sessionText, "l'historique du maillon n'est pas retouché");
+  // (c) La liste ne gagne aucune entrée, et aucun process n'est lancé.
+  assert.equal(panelRowCount(readPanelModel({ stateDir, repoRoot })), before.rows, "la liste garde ses rangs");
+  assert.equal(runs.length, 1, "aucun run lancé : la réponse reprend la session existante");
+
+  // (d) Le rang cesse d'être « attend réponse » au battement suivant.
+  liveEntry(stateDir, { cwd: worktree, sessionFile: session, phase: "impl", state: "running", inbox });
+  panel.component.refresh();
+  assert.doesNotMatch(panel.screen(120), /attend/, "le rang cesse d'attendre");
+  panel.component.dispose();
+});
+
+test("S-10 : deux réponses de suite puis un message reprennent la MÊME session du maillon", async () => {
+  const { runs, repoRoot, stateDir, worktree, session, inbox, panel } = await armedMaillon("conversation-suite");
+  liveEntry(stateDir, {
+    cwd: worktree,
+    sessionFile: session,
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    pendingAsk: { toolCallId: "call-1", id: "q1", question: "On garde ?", options: [askOption("oui"), askOption("non")] },
+  });
+  panel.component.refresh();
+
+  // Première question, première réponse : l'écriture ne touche pas au magasin.
+  const store1 = storeFingerprint(stateDir);
+  panel.component.handleInput("\r");
+  panel.component.handleInput("1");
+  panel.component.handleInput("\r");
+  panel.component.handleInput("\r");
+  await flush();
+  assert.deepEqual(storeFingerprint(stateDir), store1, "la première réponse ne touche pas au magasin");
+
+  // Le maillon reprend son tour et pose SA question suivante : le rang republie.
+  liveEntry(stateDir, {
+    cwd: worktree,
+    sessionFile: session,
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    pendingAsk: { toolCallId: "call-2", id: "q2", question: "Et là ?", options: [askOption("plutôt ça"), askOption("plutôt ci")] },
+  });
+  panel.component.refresh();
+  assert.match(panel.screen(120), /Et là \?/, "la question suivante du MÊME maillon est proposée");
+
+  // Deuxième réponse : la seconde option, jamais un doublon de la première.
+  const store2 = storeFingerprint(stateDir);
+  panel.component.handleInput("2");
+  panel.component.handleInput("\r");
+  panel.component.handleInput("\r");
+  await flush();
+  assert.deepEqual(storeFingerprint(stateDir), store2, "la seconde réponse ne touche pas au magasin");
+
+  // Puis un message libre, sur le même maillon toujours vivant : `steer`.
+  liveEntry(stateDir, { cwd: worktree, sessionFile: session, phase: "impl", state: "running", inbox });
+  panel.component.refresh();
+  const store3 = storeFingerprint(stateDir);
+  for (const char of "continue comme ça") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  panel.component.handleInput("\r");
+  await flush();
+  assert.match(panel.screen(120), /message transmis au maillon/, "la notice accuse la livraison");
+  assert.deepEqual(storeFingerprint(stateDir), store3, "le message non plus ne touche pas au magasin");
+
+  // Trois livraisons, dans l'ordre chronologique : deux réponses et un message.
+  const deliveries = readDeliveries(inbox).map((entry) => ({ ...(entry.delivery as object), sentAt: 0 }));
+  assert.deepEqual(deliveries, [
+    { version: 1, kind: "ask", toolCallId: "call-1", selected: "oui", sentAt: 0 },
+    { version: 1, kind: "ask", toolCallId: "call-2", selected: "plutôt ci", sentAt: 0 },
+    { version: 1, kind: "text", text: "continue comme ça", sentAt: 0 },
+  ]);
+  assert.equal(runs.length, 1, "aucun run lancé : le maillon est vivant, sa session est reprise");
+  panel.component.dispose();
+});
+
+// ---------------------------------------------------------------------------
 // S-10 — le lot continue pendant la conversation
 // ---------------------------------------------------------------------------
 
@@ -1388,6 +1578,7 @@ test("une entrée de magasin sans les champs du canal reste lisible, une entrée
 
 test("S-1 : aucune ligne de la vue ne dépasse la largeur, repli compris", () => {
   const stateDir = mktmp("conversation-width-");
+  const repoRoot = mktmp("conversation-width-repo-");
   const worktree = mktmp("conversation-width-wt-");
   const session = path.join(stateDir, "sessions", "alpha.jsonl");
   const long = Array.from({ length: 20 }, (_, i) => `ligne très longue ${i} `.repeat(3)).join("\n");
@@ -1396,11 +1587,20 @@ test("S-1 : aucune ligne de la vue ne dépasse la largeur, repli compris", () =>
     assistantEntry("fini", [{ name: "edit", arguments: { path: "src/a.ts", old_string: "a", new_string: "b" } }]),
     toolResultEntry("read", long),
   ]);
-  const view = readSessionView(session);
+  seedLot(stateDir, repoRoot, [feature("alpha", { state: "running", phase: "impl", worktree, sessionFile: session })]);
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.handleInput("\r");
+
   for (const width of [20, 31, 64, 120]) {
-    for (const expanded of [[], ["a:0"], ["a:1"], ["a:1", "u"]]) {
-      for (const row of buildSessionRows(view, { width, budget: 24, glyphs: GLYPHS, expanded })) {
-        assert.equal(displayWidth(row.text), width, `largeur ${width}, dépliées ${JSON.stringify(expanded)}`);
+    // Le repli des rangs de CONTENU est celui des composants de l'hôte : la vue
+    // n'en compose aucun, elle borne ce qu'elle rend (S-1, critère 2).
+    for (const expanded of [false, true]) {
+      panel.component.handleInput("\u000f"); // ctrl+o : la bascule globale de dépliage
+      for (const line of panel.component.render(width)) {
+        assert.ok(
+          displayWidth(line) <= width,
+          `largeur ${width}, dépliées ${expanded} : ${JSON.stringify(line)}`,
+        );
       }
     }
   }
