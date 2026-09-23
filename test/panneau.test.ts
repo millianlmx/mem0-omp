@@ -46,10 +46,12 @@ import {
   LOT_VERSION,
   MAX_REPLY_OPTIONS,
   PANEL_WRAP_MAX_LINES,
+  panelInboxDirFor,
   parseReplyOptions,
   parseSgrMouse,
   pipelinesPanelFactory,
   readLot,
+  readDeliveries,
   readPanelModel,
   replyPreview,
   rowReply,
@@ -1297,7 +1299,7 @@ test("panneau/AC-7 : la liste dit l'état et le maillon, et laquelle attend une 
     const line = (slug: string) => rows.find((row) => new RegExp(`\\b${slug}\\b`).test(row.text))?.text ?? "";
     assert.match(line("alpha"), /\/impl · en cours · 0:00/);
     assert.match(line("beta"), /\/specs · attend réponse · 0:00/);
-    assert.match(line("gamma"), /\/req · en attente de alpha · 0:00/, "une feature retenue par ses dépendances le dit");
+    assert.match(line("gamma"), /\/req · en attente · 0:00/, "une feature retenue par ses dépendances le dit");
     assert.match(line("delta"), /\/req · à venir · 0:00/);
     assert.match(line("epsilon"), /\/specs · attend validation · 0:00/);
     assert.match(line("zeta"), /\/review · attend accord · 0:00/);
@@ -1479,7 +1481,9 @@ test("panneau/AC-8 : tout geste qui change l'état du lot s'annonce avant d'agir
     assert.match(preview, /Créer zeta \?/);
     assert.match(preview, /longue pour dépasser le cadre du/);
     assert.match(preview, /Entrée créer · Échap annuler/);
-    assert.match(preview, /…/, "le repli le dit quand il a coupé");
+    // Le repli est INTÉGRAL (S-2) : la FIN de la tête d'aperçu est peinte elle
+    // aussi — la description n'est plus coupée par « … ».
+    assert.match(preview, /0 dépendance\(s\)/, "la fin de la tête d'aperçu est peinte");
     for (const row of preview.split("\n")) {
       assert.ok(displayWidth(row) <= 40, `chaque rang tient dans le cadre : ${row}`);
     }
@@ -1652,12 +1656,17 @@ test("panneau/AC-9 : aucune ligne ne déborde — les lignes longues se replient
       now: 1_700_000_000_000,
     });
     const mine = rows.filter((row) => row.target === 0);
-    assert.equal(mine.length, 1, "un rang de liste = UN rang : le repli est celui du `Text` de l'hôte");
-    assert.equal(mine[0]!.tone, "success", "le rang garde son ton");
+    // L'entrée peint DEUX rangs quand le libellé et la colonne de droite ne tiennent
+    // pas ensemble (S-10) : le libellé, puis l'état et le temps — jamais coupés en
+    // deux, et portant la même cible de clic et le même ton.
+    assert.equal(mine.length, 2, "un libellé plus large que la ligne fait deux rangs");
     assert.ok(
       mine[0]!.text.includes(slug),
       "le libellé ENTIER est passé au composant, jamais coupé en amont",
     );
+    assert.match(mine[1]!.text, /\/impl · en cours · 0:00/, "l'état et le temps sont entiers, sur leur rang");
+    assert.equal(mine[0]!.tone, "success", "le rang garde son ton");
+    assert.equal(mine[1]!.tone, "success", "et son second rang aussi");
   }
 });
 
@@ -1701,7 +1710,9 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
         kind: "ask",
         phase: "impl",
         question: "JWT ou cookie ?",
-        options: ["JWT"],
+        // Les options publiées passent TELLES QUELLES (S-5) : la description est
+        // rendue par la zone, et la livraison n'envoie que le libellé.
+        options: [{ label: "JWT" }],
         toolCallId: "call-1",
         inbox: "/tmp/box-1",
       },
@@ -1853,4 +1864,470 @@ test("panneau/AC-10 : une pipeline qui ne tourne pas se consulte sans champ de s
       "un rang qui n'accepte rien garde la notice existante",
     );
   }
+});
+
+// ---------------------------------------------------------------------------
+// panneau-ask — les fenêtres de texte, la largeur, la hauteur et les rangs
+// ---------------------------------------------------------------------------
+//
+// Un test PAR critère de la feature, sous le slug `panneau-ask` (l'invariant
+// `criteria/AC-13` veut un id qualifié unique par test, et ce slug ne vit que dans
+// ce fichier). Le harnais est celui d'au-dessus : la VRAIE fabrique montée sur un
+// faux kit qui complète chaque ligne à la largeur reçue, comme le `Text` de l'hôte.
+
+/** Le temps `m:ss` (ou `h:mm:ss`) d'un rang de liste, en secondes. */
+function elapsedSeconds(line: string): number {
+  const match = /·\s(?:(\d+):)?(\d+):(\d\d)\s*$/.exec(line.trim());
+  assert.ok(match, `un temps est attendu sur ce rang : ${JSON.stringify(line)}`);
+  return Number(match[1] ?? 0) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+test("panneau-ask/AC-4 : une description plus longue qu'une ligne s'affiche en entier", () => {
+  const stateDir = mktmp("panneau-ask-ac4-");
+  const repoRoot = mktmp("panneau-ask-ac4-repo-");
+  seedLot(stateDir, repoRoot, [feature("alpha")]);
+  const { actions } = countingActions();
+  const panel = mountPanel(stateDir, { repoRoot, lot: actions });
+  panel.component.handleInput("a");
+  for (const char of "zeta") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  const long =
+    "une description volontairement plus longue que la largeur d'un rang de terminal et qui doit rester lisible jusqu'à son dernier mot";
+  for (const char of long) panel.component.handleInput(char);
+
+  const screen = panel.screen(64);
+  assert.match(screen, /Description : une description/);
+  assert.ok(!screen.includes("…"), `aucun caractère n'est perdu : pas de « … » de troncature\n${screen}`);
+  for (const word of long.split(" ")) {
+    assert.ok(screen.includes(word), `le mot « ${word} » est rendu`);
+  }
+  for (const line of screen.split("\n")) {
+    assert.ok(displayWidth(line) <= 64, `chaque rang tient dans le cadre : ${JSON.stringify(line)}`);
+  }
+  panel.component.dispose();
+});
+
+test("panneau-ask/AC-5 : tout texte long revient à la ligne au lieu d'être coupé", () => {
+  const stateDir = mktmp("panneau-ask-ac5-");
+  const repoRoot = mktmp("panneau-ask-ac5-repo-");
+  const long =
+    "un texte volontairement très long qui dépasse la largeur du cadre et qui doit rester lisible jusqu'à son dernier mot";
+  const words = long.split(" ");
+
+  // La NOTICE : un refus du pilote se lit en entier, sur autant de rangs qu'il faut.
+  const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot, notice: long }), {
+    width: 40,
+    budget: 30,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const notice = rows.filter((row) => row.tone === "warning");
+  assert.ok(notice.length > 1, "la notice occupe plusieurs rangs");
+  assert.ok(!notice.map((row) => row.text).join("\n").includes("…"), "la notice n'est jamais coupée");
+  for (const word of words) {
+    assert.ok(notice.some((row) => row.text.includes(word)), `le mot « ${word} » de la notice est rendu`);
+  }
+
+  // La QUESTION d'un `ask` et la RÉPONSE de l'éditeur libre : même règle.
+  const worktree = mktmp("panneau-ask-ac5-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: { toolCallId: "call-5", id: "q", question: long, options: [{ label: "oui" }] },
+  });
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+  const asked = panel.screen(60);
+  for (const word of words) {
+    assert.ok(asked.includes(word), `le mot « ${word} » de la question est rendu`);
+  }
+  // Une frappe passe à l'éditeur libre : la réponse tapée se replie en entier elle
+  // aussi (la première lettre n'est pas le raccourci `a`).
+  for (const char of long) panel.component.handleInput(char);
+  const answered = panel.screen(60);
+  for (const word of words) {
+    assert.ok(answered.includes(word), `le mot « ${word} » de la réponse est rendu`);
+  }
+  assert.match(answered, /Réponse : un texte/, "l'éditeur libre porte le tampon");
+  panel.component.dispose();
+});
+
+test("panneau-ask/AC-6 : un texte plus haut que sa fenêtre reste lisible jusqu'à sa première ligne", () => {
+  const stateDir = mktmp("panneau-ask-ac6-");
+  const repoRoot = mktmp("panneau-ask-ac6-repo-");
+  seedLot(stateDir, repoRoot, [feature("alpha")]);
+  const { actions } = countingActions();
+  const panel = mountPanel(stateDir, { repoRoot, lot: actions });
+  panel.component.handleInput("a");
+  for (const char of "zeta") panel.component.handleInput(char);
+  panel.component.handleInput("\r");
+  // Un tampon de plus de six lignes : la fenêtre du champ est bornée.
+  const first = "premier";
+  const long = [first, ...Array.from({ length: 80 }, (_, i) => `mot${i + 1}`)].join(" ");
+  for (const char of long) panel.component.handleInput(char);
+
+  const bottom = panel.screen(40);
+  assert.ok(bottom.includes("mot80"), "la DERNIÈRE ligne du tampon est peinte : le curseur est visible");
+  assert.ok(bottom.includes("Entrée champ suivant · Échap annuler"), "l'aide reste peinte sous la fenêtre");
+  assert.ok(!bottom.includes(first), "et la fenêtre ne montre pas le début");
+
+  // `PageUp` remonte la fenêtre jusqu'à la PREMIÈRE ligne du tampon.
+  for (let i = 0; i < 12; i++) panel.component.handleInput("\u001b[5~");
+  const top = panel.screen(40);
+  assert.ok(top.includes(first), `PageUp atteint la première ligne du tampon :\n${top}`);
+  assert.ok(!top.includes("mot80"), "et la fenêtre ne colle plus à la fin");
+  assert.ok(top.includes("Entrée champ suivant · Échap annuler"), "l'aide survit au défilement");
+
+  // `PageDown` redescend : le suivi de la fin du tampon est réarmé.
+  for (let i = 0; i < 12; i++) panel.component.handleInput("\u001b[6~");
+  assert.ok(panel.screen(40).includes("mot80"), "PageDown revient à la fin du tampon");
+  panel.component.dispose();
+
+  {
+    // La ZONE de la vue a la même règle : un run armé sans question ouvre un éditeur
+    // libre, et une réponse plus haute que la fenêtre de la zone (dix lignes) se
+    // défile jusqu'à sa première ligne.
+    const stateDir = mktmp("panneau-ask-ac6b-");
+    const repoRoot = mktmp("panneau-ask-ac6b-repo-");
+    const worktree = mktmp("panneau-ask-ac6b-wt-");
+    const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+    const inbox = panelInboxDirFor(stateDir, worktree);
+    liveEntry(stateDir, {
+      cwd: worktree,
+      label: "depot/alpha",
+      phase: "impl",
+      state: "running",
+      inbox,
+      sessionFile: session,
+    });
+    const panel = mountPanel(stateDir, { repoRoot });
+    panel.component.refresh();
+    panel.component.handleInput("\r");
+    const first = "premier";
+    const long = [first, ...Array.from({ length: 140 }, (_, i) => `mot${i + 1}`)].join(" ");
+    for (const char of long) panel.component.handleInput(char);
+
+    const bottom = panel.screen(60);
+    assert.ok(bottom.includes("mot140"), "la dernière ligne de la réponse est peinte");
+    assert.match(
+      bottom,
+      /PageUp\/PageDown défiler la réponse/,
+      "et le pied annonce les deux touches qui font défiler la zone",
+    );
+    assert.ok(!bottom.includes(first), "la fenêtre ne montre pas le début de la réponse");
+
+    for (let i = 0; i < 20; i++) panel.component.handleInput("\u001b[5~");
+    const top = panel.screen(60);
+    assert.ok(top.includes(first), `PageUp atteint la première ligne de la réponse :\n${top}`);
+    // Le PIED, lui, est hors fenêtre : il reste peint quoi qu'il arrive.
+    assert.match(top, /↑↓\/molette défiler · ctrl\+o déplier\/replier/);
+    assert.match(top, /PageUp\/PageDown défiler la réponse/);
+    panel.component.dispose();
+  }
+});
+
+test("panneau-ask/AC-7 : chaque ligne rendue occupe toute la largeur disponible", () => {
+  const stateDir = mktmp("panneau-ask-ac7-");
+  const repoRoot = mktmp("panneau-ask-ac7-repo-");
+  const slug = "une-feature-au-libelle-assez-long-pour-devoir-se-replier-sur-deux-lignes";
+  seedLot(stateDir, repoRoot, [feature(slug, { state: "running", phase: "impl" })]);
+  liveEntry(stateDir, { cwd: mktmp("panneau-ask-ac7-other-"), label: "autre/vivant", updatedAt: 2 });
+  const panel = mountPanel(stateDir, { repoRoot });
+
+  for (const width of [64, 120]) {
+    for (const line of panel.screen(width).split("\n")) {
+      // Le rang de REMPLISSAGE est une ligne vide (le `Spacer` de l'hôte) : tout le
+      // reste fait exactement la largeur reçue.
+      assert.ok(
+        line === "" || displayWidth(line) === width,
+        `la ligne fait exactement la largeur reçue : ${JSON.stringify(line)}`,
+      );
+    }
+  }
+  // Rien n'est perdu : le libellé ENTIER se retrouve dans les lignes rendues, aux
+  // deux largeurs — coupé dur au milieu d'un mot quand il le faut, jamais tronqué.
+  for (const width of [64, 120]) {
+    const screen = panel.screen(width);
+    assert.ok(
+      screen.replace(/[ \n]+/g, "").includes(slug),
+      `le libellé entier est rendu à ${width} colonnes`,
+    );
+    assert.ok(!screen.includes("…"), `aucun contenu n'est tronqué à ${width} colonnes`);
+  }
+  // À 120 colonnes, le libellé et sa colonne de droite tiennent ensemble sur un
+  // rang : la ligne du rang sélectionné porte les deux.
+  const wide = panel.screen(120).split("\n");
+  assert.ok(
+    wide.some((line) => line.includes(slug) && /\/impl · en cours · 0:00/.test(line)),
+    "à 120 colonnes, le libellé et son état tiennent sur le même rang",
+  );
+  panel.component.dispose();
+});
+
+test("panneau-ask/AC-8 : un redimensionnement recale le rendu sans geste", () => {
+  const stateDir = mktmp("panneau-ask-ac8-");
+  const repoRoot = mktmp("panneau-ask-ac8-repo-");
+  seedLot(stateDir, repoRoot, [feature("alpha", { state: "running", phase: "impl" })]);
+  const panel = mountPanel(stateDir, { repoRoot });
+
+  // La peinture suivante recompose à la NOUVELLE largeur, sans aucune touche : la
+  // clé de mémoïsation porte la largeur et la hauteur.
+  const narrow = panel.component.render(64);
+  const wide = panel.component.render(120);
+  assert.notDeepEqual(narrow, wide, "le rendu se recale sur la nouvelle largeur");
+  assert.equal(wide.length, panel.component.render(120).length, "et la hauteur suit la même géométrie");
+  for (const line of wide) {
+    assert.ok(line === "" || displayWidth(line) === 120, `chaque ligne fait la nouvelle largeur : ${line.length}`);
+  }
+
+  // La HAUTEUR : le remplissage suit la taille du terminal, au rendu suivant.
+  panel.tui.terminal.rows = 40;
+  const tall = panel.component.render(120);
+  assert.equal(tall.length, 40, "le cadre occupe exactement la hauteur du terminal");
+  assert.match(tall[tall.length - 1]!, /^─+$/, "la règle basse reste le dernier rang");
+  assert.ok(
+    tall.some((row) => /Échap fermer/.test(row)),
+    "le pied reste peint au-dessus de la règle basse",
+  );
+  panel.tui.terminal.rows = 24;
+  assert.equal(panel.component.render(120).length, 24, "redescendre recale aussi");
+  panel.component.dispose();
+});
+
+test("panneau-ask/AC-9 : la vue d'un ask à 30 options tient dans 24 rangs", () => {
+  const stateDir = mktmp("panneau-ask-ac9-");
+  const repoRoot = mktmp("panneau-ask-ac9-repo-");
+  const worktree = mktmp("panneau-ask-ac9-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: {
+      toolCallId: "call-9",
+      id: "q",
+      question: "Laquelle ?",
+      options: Array.from({ length: 30 }, (_, i) => ({ label: `option-${i + 1}` })),
+    },
+  });
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+
+  const drawn = panel.component.render(100);
+  assert.ok(drawn.length <= 24, `la vue tient dans 24 rangs (elle en fait ${drawn.length})`);
+  assert.match(drawn[drawn.length - 1]!, /^─+$/, "la règle basse est le dernier rang");
+  assert.match(drawn.join("\n"), /1-9\/↑↓ choisir/, "le pied est peint");
+  assert.match(drawn.join("\n"), /question : Laquelle \?/, "la question est peinte");
+
+  // L'option SÉLECTIONNÉE reste à l'écran quand on la déplace : la fenêtre s'ancre
+  // sur le bloc de l'option courante.
+  for (let step = 1; step <= 35; step++) {
+    panel.component.handleInput("\u001b[B");
+    const screen = panel.component.render(100).join("\n");
+    const cursor = Math.min(step, 30);
+    const expected = cursor < 30 ? `(${cursor + 1}) option-${cursor + 1}` : "autre — saisir ma réponse";
+    assert.ok(screen.includes(expected), `l'option sélectionnée reste à l'écran (pas ${step}) : ${expected}`);
+    assert.ok(panel.component.render(100).length <= 24, "et le cadre tient toujours dans 24 rangs");
+  }
+  panel.component.dispose();
+});
+
+test("panneau-ask/AC-15 : le pied d'une zone ask nomme ctrl+o, et son rang est cliquable", () => {
+  const stateDir = mktmp("panneau-ask-ac15-");
+  const repoRoot = mktmp("panneau-ask-ac15-repo-");
+  const worktree = mktmp("panneau-ask-ac15-wt-");
+  const session = path.join(stateDir, "sessions", "alpha.jsonl");
+  writeSession(session, worktree, [
+    userEntry("une question"),
+    assistantEntry("je lis", [{ name: "read", arguments: { file: "a" } }]),
+    toolResultEntry("read", "ligne un\nligne deux\nligne trois"),
+  ]);
+  const inbox = panelInboxDirFor(stateDir, worktree);
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    inbox,
+    sessionFile: session,
+    pendingAsk: { toolCallId: "call-15", id: "q", question: "Laquelle ?", options: [{ label: "oui" }] },
+  });
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.refresh();
+  panel.component.handleInput("\r");
+
+  const before = panel.component.render(100);
+  const footerAt = before.findIndex((line) => /ctrl\+o déplier\/replier/.test(line));
+  assert.ok(footerAt > 0, "le pied de la zone nomme la bascule globale");
+  assert.match(before.join("\n"), /1-9\/↑↓ choisir · PageUp\/PageDown défiler/, "et les touches de la zone");
+  assert.ok(!before.join("\n").includes("ligne trois"), "la carte de lecture est repliée");
+
+  // Le CLIC sur ce rang bascule le pliage, exactement comme la touche (S-7).
+  const footerRow = (): number => {
+    const at = panel.component.render(100).findIndex((line) => /ctrl\+o déplier\/replier/.test(line));
+    assert.ok(at > 0, "le rang du pied est peint");
+    return at;
+  };
+  panel.component.handleInput(`\u001b[<0;5;${footerRow() + 1}M`);
+  const after = panel.component.render(100).join("\n");
+  assert.match(after, /ligne trois/, "le clic sur le rang du pied a déplié les cartes");
+  panel.component.handleInput(`\u001b[<0;5;${footerRow() + 1}M`);
+  assert.ok(!panel.component.render(100).join("\n").includes("ligne trois"), "et un second clic les replie");
+  panel.component.dispose();
+});
+
+test("panneau-ask/AC-16 : Échap rend la liste sans détruire le brouillon", async () => {
+  const stateDir = mktmp("panneau-ask-ac16-");
+  const repoRoot = mktmp("panneau-ask-ac16-repo-");
+  const worktree = mktmp("panneau-ask-ac16-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { state: "blocked", phase: "impl", stopReason: "revue bloquante", worktree, sessionFile: session }),
+  ]);
+  const panel = mountPanel(stateDir, { repoRoot });
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(120), /Réponse : ▏/, "une feature bloquée s'écrit");
+  for (const char of "un brouillon") panel.component.handleInput(char);
+  assert.match(
+    panel.screen(120),
+    /Entrée envoyer · Échap revenir au panneau/,
+    "le rang d'aide dit l'effet RÉEL d'Échap, jamais « annuler »",
+  );
+
+  panel.component.handleInput("\u001b");
+  assert.match(panel.screen(120), /> alpha/, "Échap rend la liste");
+  panel.component.handleInput("\r");
+  assert.match(panel.screen(120), /Réponse : un brouillon▏/, "rouvrir la vue restitue le tampon");
+  panel.component.dispose();
+
+  {
+    // Une livraison RÉUSSIE oublie le brouillon (S-7).
+    const stateDir = mktmp("panneau-ask-ac16b-");
+    const worktree = mktmp("panneau-ask-ac16b-wt-");
+    const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+    const inbox = panelInboxDirFor(stateDir, worktree);
+    liveEntry(stateDir, {
+      cwd: worktree,
+      label: "depot/alpha",
+      phase: "impl",
+      state: "running",
+      inbox,
+      sessionFile: session,
+    });
+    const panel = mountPanel(stateDir, { repoRoot: mktmp("panneau-ask-ac16b-repo-") });
+    panel.component.refresh();
+    panel.component.handleInput("\r");
+    for (const char of "un message") panel.component.handleInput(char);
+    panel.component.handleInput("\r"); // l'aperçu du message injecté
+    panel.component.handleInput("\r"); // la livraison
+    await flush();
+    assert.equal(readDeliveries(inbox).length, 1, "le message est parti dans la boîte du run");
+    panel.component.handleInput("\u001b");
+    panel.component.handleInput("\r");
+    assert.match(panel.screen(120), /Réponse : ▏/, "une livraison réussie a oublié le brouillon");
+    panel.component.dispose();
+  }
+});
+
+test("panneau-ask/AC-18 : un rang de lot garde son jalon et un temps qui ne recule pas", () => {
+  const stateDir = mktmp("panneau-ask-ac18-");
+  const repoRoot = mktmp("panneau-ask-ac18-repo-");
+  const worktree = mktmp("panneau-ask-ac18-wt-");
+  const session = oneLineSession(path.join(stateDir, "sessions", "alpha.jsonl"), worktree, "tour du maillon");
+  const now = 1_700_000_000_000;
+  // La feature attend une réponse DEPUIS une minute.
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", {
+      state: "waiting",
+      phase: "impl",
+      waitKind: "answer",
+      waitPrompt: "On garde ?\n- (1) oui",
+      worktree,
+      sessionFile: session,
+      sinceAt: now - 60_000,
+    }),
+  ]);
+  const row = (): string => {
+    const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot }), {
+      width: 80,
+      budget: 24,
+      glyphs: GLYPHS,
+      now,
+    });
+    const mine = rows.find((entry) => entry.text.includes("alpha"));
+    assert.ok(mine, "le rang de la feature est rendu");
+    return mine.text;
+  };
+
+  const before = row();
+  assert.match(before, /attend réponse/, "le jalon est nommé avant la publication du run");
+  // Le run PUBLIE son entrée : la feature y est appariée, et l'instant de sa phase
+  // est PLUS RÉCENT que celui de la feature.
+  liveEntry(stateDir, {
+    cwd: worktree,
+    label: "depot/alpha",
+    phase: "impl",
+    state: "waiting",
+    sessionFile: session,
+    phaseStartedAt: now - 1_000,
+    updatedAt: now,
+  });
+  const after = row();
+  assert.match(after, /attend réponse/, "et il reste nommé après la publication");
+  assert.ok(
+    elapsedSeconds(after) >= elapsedSeconds(before),
+    `le temps ne recule pas : ${elapsedSeconds(before)}s puis ${elapsedSeconds(after)}s`,
+  );
+  assert.equal(elapsedSeconds(after), 60, "il se mesure depuis l'instant le PLUS ANCIEN des deux");
+});
+
+test("panneau-ask/AC-19 : la raison d'arrêt d'une feature échouée est portée par la liste", () => {
+  const stateDir = mktmp("panneau-ask-ac19-");
+  const repoRoot = mktmp("panneau-ask-ac19-repo-");
+  seedLot(stateDir, repoRoot, [
+    feature("alpha", { state: "failed", phase: "impl", stopReason: "run tué par le délai de 3600s" }),
+    feature("beta", { state: "blocked", phase: "impl", stopReason: "revue bloquante" }),
+    feature("gamma", { state: "failed", phase: "impl", stopReason: null }),
+  ]);
+  const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot }), {
+    width: 80,
+    budget: 30,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const text = rows.map((row) => row.text).join("\n");
+  assert.match(text, /arrêt : run tué par le délai de 3600s/, "le motif de l'échec est écrit, pas seulement « échoué »");
+  assert.match(text, /arrêt : revue bloquante/, "et celui du blocage");
+  assert.equal(text.split("arrêt :").length - 1, 2, "un `stopReason` nul n'ajoute aucun rang");
+
+  // Un motif de 200 caractères se replie en entier, jamais coupé par « … ».
+  const long = "raison ".repeat(28).trim();
+  seedLot(stateDir, repoRoot, [feature("delta", { state: "failed", phase: "impl", stopReason: long })]);
+  const longRows = buildPanelRows(readPanelModel({ stateDir, repoRoot }), {
+    width: 60,
+    budget: 30,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const stopRows = longRows.filter((row) => row.text.includes("arrêt :") || row.text.trim().startsWith("raison"));
+  assert.ok(stopRows.length > 1, "le motif occupe plusieurs rangs");
+  const stopText = stopRows.map((row) => row.text).join("\n");
+  assert.ok(!stopText.includes("…"), "il n'est jamais coupé");
+  assert.equal(
+    (stopText.match(/raison/g) ?? []).length,
+    28,
+    "les 28 mots du motif sont peints : il va jusqu'à son dernier mot",
+  );
 });

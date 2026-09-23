@@ -55,6 +55,7 @@ import reqExtension, {
   reconcileInterrupted,
   repoRootOf,
   resetStateWriteWarning,
+  runningIdFor,
   runnable,
   saysFin,
   selfExtensionArg,
@@ -62,6 +63,7 @@ import reqExtension, {
   worktreePathFor,
   writeHistoryEntry,
   writeLot,
+  writeRunningEntry,
   type AddFeatureInput,
   type HistoryEntry,
   type Lot,
@@ -2235,8 +2237,8 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   const heldRow = held.find((row) => row.text.includes("f2 ←"));
   assert.ok(heldRow, "le rang de la feature retenue rappelle ses dépendances");
   assert.ok(
-    heldRow.text.includes("/impl · en attente de f0"),
-    `l'état dit ce qui retient la feature : ${heldRow.text}`,
+    heldRow.text.includes("/impl · en attente"),
+    `l'état dit ce qui retient la feature, sans répéter les dépendances : ${heldRow.text}`,
   );
   const waitingRow = held.find((row) => row.text.includes("f3 "));
   assert.ok(waitingRow?.text.includes("attend réponse"), `l'attente de réponse se lit sur son rang : ${waitingRow?.text}`);
@@ -2279,10 +2281,12 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     sessionId: null,
     owner: { pid: 1 },
   };
-  // Le cadre de S-1 coûte 8 rangs de service (deux règles, le titre, le titre de
-  // section, le séparateur et les trois rangs de pied) : c'est le budget à partir
-  // duquel les deux sections non vides gardent chacune un rang.
-  for (const budget of [10, 12, 18]) {
+  // Le cadre coûte 11 rangs de service ici (deux règles, le titre, l'en-tête du lot
+  // — replié sur deux rangs par sa répartition —, celui de « hors lot », le
+  // séparateur, celui de l'historique et les trois rangs de pied, S-7/S-8) : c'est
+  // le budget à partir duquel les deux sections non vides gardent chacune un rang,
+  // plus un pour la seconde.
+  for (const budget of [13, 15, 21]) {
     const tight = buildPanelRows(
       { ...emptyModel, lot: { ...lot, features: many }, running: [courant], selection: 0 },
       { width: 64, budget, glyphs: GLYPHS, now: 1_700_000_000_000 },
@@ -2298,15 +2302,15 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     { ...emptyModel, lot: { ...lot, features: many }, running: [courant], selection: 0 },
     { width: 64, budget: 18, glyphs: GLYPHS, now: 1_700_000_000_000 },
   );
-  assert.match(rowsText(full), /… 4 de plus/, "le lot tronqué dit combien de features manquent");
+  assert.match(rowsText(full), /… 7 de plus dans le lot/, "le lot tronqué dit combien de features manquent");
 
-  // Le plancher : à trois sections non vides, `cadre + minima` vaut 11 (cadre 8 +
+  // Le plancher : à trois sections non vides, `cadre + minima` vaut 14 (cadre 11 +
   // un rang par section). Au ras du plancher, chacune garde un rang — le pipeline
   // VIVANT est nommé (c'est lui qu'un titre « N en cours » annonçait sans le
   // montrer), et le surplus tronqué se dit par un marqueur. En dessous du plancher,
   // la priorité décide (S-7) : c'est la seule dégradation admise.
   const historique2: HistoryEntry = { ...historique, id: "h2" };
-  for (const budget of [11, 12]) {
+  for (const budget of [14, 15]) {
     const tight = buildPanelRows(
       {
         ...emptyModel,
@@ -2378,15 +2382,23 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   panel.component.dispose();
 });
 
-test("sans lot, le panneau rend exactement ce qu'il rendait", () => {
+test("sans lot, le panneau rend le cadre, ses deux sections vides et son pied", () => {
   const rows = buildPanelRows(emptyModel, { width: 64, budget: 18, glyphs: GLYPHS, now: 0 });
-  // Deux règles de cadre, le titre, le séparateur, les deux états vides, le
-  // remplissage et les deux rangs de pied.
-  assert.equal(rows.length, 9);
-  assert.match(rowsText(rows), /Pipelines · 0 en cours/);
+  // Deux règles de cadre, le titre, les deux en-têtes de section, le séparateur,
+  // les deux états vides, le remplissage et les TROIS rangs de pied (S-7, S-8).
+  assert.equal(rows.length, 12);
+  assert.match(rowsText(rows), /Pipelines · 0 processus/);
+  assert.match(rowsText(rows), /Hors lot · 0/);
+  assert.match(rowsText(rows), /Historique · 0/);
   assert.match(rowsText(rows), /aucune pipeline en cours/);
   assert.match(rowsText(rows), /aucun historique/);
-  assert.match(rowsText(rows), /↑↓ naviguer · Entrée session · d supprimer · a ajouter/);
+  // Sans pilote de lot (`canDrive` absent), `a` et `l` refusent : rien ne les
+  // annonce. Le second rang dit ce qui s'applique à la ligne sélectionnée — ici,
+  // aucune sélection, donc rien.
+  assert.match(rowsText(rows), /↑↓ naviguer · Entrée session/);
+  assert.ok(!rowsText(rows).includes("a ajouter"), "aucune touche morte annoncée sans pilote");
+  assert.match(rowsText(rows), /aucune action/);
+  assert.ok(!rowsText(rows).includes("d supprimer"), "`d` ne supprime pas un rang en cours");
   assert.match(rowsText(rows), /Échap fermer/);
 });
 
@@ -2740,7 +2752,7 @@ test("`Entrée` répond au maillon qui attend depuis sa VUE, `R` le relance depu
   // S-5 : une feature qui TOURNE n'accepte plus de réponse — le texte part en FILE.
   // Le panneau relit le magasin (1 Hz en production) : la zone suit l'état frais.
   tick();
-  assert.match(screen(), /Entrée mettre en file · Échap annuler/);
+  assert.match(screen(), /Entrée mettre en file · Échap revenir au panneau/);
   for (const char of "suite du travail") component.handleInput(char);
   component.handleInput("\r");
   assert.match(
@@ -3073,4 +3085,232 @@ test("les totaux et l'état terminal parlent la même langue que le panneau", ()
   assert.equal(lotStateLabel("waiting"), "attend");
   assert.equal(lotWaitLabel("answer"), "attend réponse");
   assert.equal(lotWaitLabel(null), null);
+});
+
+// ---------------------------------------------------------------------------
+// lot-ask — ce que la LISTE annonce, nomme et mesure
+// ---------------------------------------------------------------------------
+//
+// Un test PAR critère de la feature, sous le slug `lot-ask` (l'invariant
+// `criteria/AC-13` veut un id qualifié unique par test, et ce slug ne vit que dans
+// ce fichier). Le harnais est celui d'au-dessus : des lots et un magasin écrits sur
+// disque, puis `buildPanelRows` sur le modèle relu.
+
+/** Une entrée EN COURS du magasin, telle qu'un autre process la publie. */
+function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
+  const entry: RunningEntry = {
+    id: runningIdFor(input.cwd),
+    cwd: path.resolve(input.cwd),
+    label: input.label ?? "depot/feature",
+    phase: "req",
+    state: "running",
+    phaseStartedAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    sessionFile: null,
+    sessionId: null,
+    // Un pid VIVANT et différent du nôtre : c'est le run d'un process enfant.
+    owner: { pid: process.ppid },
+    ...input,
+  };
+  writeRunningEntry(stateDir, entry);
+  return entry;
+}
+
+test("lot-ask/AC-14 : le pied n'annonce que les touches qui agissent", () => {
+  const stateDir = mktmp("lot-ask-ac14-");
+  const repoRoot = mktmp("lot-ask-ac14-repo-");
+  const otherDir = mktmp("lot-ask-ac14-other-");
+  const histDir = mktmp("lot-ask-ac14-hist-");
+  // Aucun lot dans ce dépôt : la liste ne porte que des rangs du magasin.
+  liveEntry(stateDir, {
+    cwd: otherDir,
+    label: "autre/vivant",
+    sessionFile: "/tmp/lot-ask-ac14-vivant.jsonl",
+    updatedAt: 2,
+  });
+  writeHistoryEntry(stateDir, {
+    id: "0123456789abcdef",
+    cwd: histDir,
+    label: "autre/vieux",
+    phase: "review",
+    finalState: "done",
+    sessionFile: "/tmp/lot-ask-ac14-vieux.jsonl",
+    sessionId: null,
+    phaseStartedAt: 1,
+    endedAt: 1,
+  });
+  const rowsFor = (selection: number, canDrive = true) =>
+    rowsText(
+      buildPanelRows(readPanelModel({ stateDir, repoRoot, selection }), {
+        width: 80,
+        budget: 24,
+        glyphs: GLYPHS,
+        now: 0,
+        canDrive,
+      }),
+    );
+
+  // Sur le rang EN COURS, sélectionné : la bascule `o` agit (le rang a une session),
+  // `d` n'y supprime rien — le pied ne l'annonce donc pas.
+  const running = rowsFor(0);
+  assert.match(running, /↑↓ naviguer · Entrée session · a ajouter/, "le premier rang annonce les touches du panneau");
+  assert.match(running, /o rejoindre/, "la bascule est annoncée sur un rang où elle agit");
+  assert.ok(!running.includes("d supprimer"), "`d` ne supprime pas un rang en cours : il n'est pas annoncé");
+
+  // Sur l'entrée d'HISTORIQUE : c'est le seul rang que `d` supprime, et il l'annonce.
+  // (Le comportement de `d` lui-même est prouvé par « la suppression ne s'applique
+  // qu'à l'historique », dans test/pipelines.test.ts.)
+  const history = rowsFor(1);
+  assert.match(history, /d supprimer · o rejoindre/, "`d` s'annonce là où il agit, avec la bascule du rang");
+
+  // Sans pilote de lot (`canDrive`), `a` et `l` refusent : rien ne les annonce.
+  const noDriver = rowsFor(0, false);
+  assert.match(noDriver, /↑↓ naviguer · Entrée session/, "le premier rang reste celui du panneau");
+  assert.ok(!noDriver.includes("a ajouter"), "sans pilote, `a` n'est pas annoncé");
+});
+
+test("lot-ask/AC-17 : chaque section est nommée et chaque marqueur attribué", () => {
+  const stateDir = mktmp("lot-ask-ac17-");
+  const repoRoot = mktmp("lot-ask-ac17-repo-");
+  const features = Array.from({ length: 12 }, (_, i) => feature(`g${i}`, { phase: "impl" }));
+  seedLot(stateDir, repoRoot, features);
+  liveEntry(stateDir, { cwd: mktmp("lot-ask-ac17-other-"), label: "autre/vivant", updatedAt: 2 });
+  const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot, selection: 0 }), {
+    width: 64,
+    budget: 16,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const lines = rows.map((row) => row.text);
+  const lotAt = lines.findIndex((line) => line.startsWith("Lot · "));
+  const outAt = lines.findIndex((line) => line.startsWith("Hors lot · "));
+  const histAt = lines.findIndex((line) => line.startsWith("Historique · "));
+  assert.ok(lotAt >= 0, "la section du lot est ouverte par un en-tête qui la nomme");
+  assert.ok(outAt > lotAt, "celle des pipelines hors lot suit, nommée elle aussi");
+  assert.ok(histAt > outAt, "et l'historique vient après le séparateur");
+  assert.match(lines[outAt]!, /^Hors lot · 1$/, "l'en-tête compte ses rangs");
+  assert.match(lines[histAt]!, /^Historique · 0$/, "et l'historique annonce son compte, même vide");
+
+  // La section du lot est TRONQUÉE : elle garde un marqueur, et ce marqueur nomme
+  // la section qu'il tronque — jamais un « … n de plus » orphelin.
+  const markerAt = lines.findIndex((line, i) => i > lotAt && i < outAt && line.startsWith("… "));
+  assert.ok(markerAt > lotAt, "la section tronquée garde son marqueur");
+  assert.match(lines[markerAt]!, /de plus dans le lot$/, "le marqueur nomme SA section");
+
+  // Les rangs d'un ensemble ne sont JAMAIS sous l'en-tête d'un autre : chaque rang
+  // sélectionnable tombe entre l'en-tête de sa section et le suivant.
+  const sepAt = rows.findIndex((row) => row.rule === "separator");
+  const targets = (from: number, to: number) =>
+    rows
+      .slice(from, to)
+      .map((row) => row.target)
+      .filter((target): target is number => target !== undefined);
+  const inLot = targets(lotAt, outAt);
+  assert.ok(inLot.length > 0, "le lot garde des rangs");
+  assert.ok(inLot.every((target) => target < features.length), "ils sont tous sous l'en-tête du LOT");
+  const outLot = targets(outAt, sepAt);
+  assert.deepEqual(outLot, [features.length], "le rang « hors lot » est sous SON en-tête");
+  assert.deepEqual(targets(histAt, rows.length), [], "et l'historique vide n'a aucun rang");
+});
+
+test("lot-ask/AC-20 : le titre et les rangs ne mesurent pas la même chose", () => {
+  const stateDir = mktmp("lot-ask-ac20-");
+  const repoRoot = mktmp("lot-ask-ac20-repo-");
+  // Douze features EN COURS dont aucun run n'est apparié : ce ne sont pas des
+  // processus. Un seul l'est : le pipeline vivant d'un autre dépôt.
+  seedLot(
+    stateDir,
+    repoRoot,
+    Array.from({ length: 12 }, (_, i) => feature(`g${i}`, { state: "running", phase: "impl" })),
+  );
+  liveEntry(stateDir, { cwd: mktmp("lot-ask-ac20-other-"), label: "autre/vivant", updatedAt: 2 });
+  const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot, selection: 0 }), {
+    width: 80,
+    budget: 30,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const title = rows.find((row) => row.text.startsWith("Pipelines · "))!;
+  assert.equal(title.text, "Pipelines · 1 processus", "le titre compte les PROCESSUS vivants, et le dit");
+  for (const word of ["en cours", "tourne", "attend", "terminé", "échoué", "bloqué"]) {
+    assert.ok(!title.text.includes(word), `le titre ne réemploie pas le vocabulaire d'état « ${word} »`);
+  }
+  const rowTexts = rows.filter((row) => row.target !== undefined).map((row) => row.text);
+  assert.ok(rowTexts.length > 0, "des rangs sont peints");
+  assert.ok(
+    rowTexts.every((text) => !/processus/.test(text)),
+    "aucun rang ne peut être lu comme la mesure du titre",
+  );
+  assert.ok(
+    rowTexts.some((text) => /\/impl · en cours/.test(text)),
+    "et les rangs disent bien leur état, dans leur propre vocabulaire",
+  );
+  assert.equal(
+    rows.filter((row) => row.text.includes("1 processus")).length,
+    1,
+    "le compte du titre n'est peint qu'au titre",
+  );
+});
+
+test("lot-ask/AC-21 : un libellé trop large garde maillon, état et temps groupés", () => {
+  const stateDir = mktmp("lot-ask-ac21-");
+  const repoRoot = mktmp("lot-ask-ac21-repo-");
+  seedLot(stateDir, repoRoot, [
+    feature("alpha"),
+    feature("beta"),
+    // Une dépendance assez large pour que libellé + colonne de droite ne tiennent
+    // pas ensemble sur la largeur de contenu.
+    feature("gamma", { state: "pending", phase: "impl", deps: ["alpha", "beta"] }),
+  ]);
+  const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot, selection: 0 }), {
+    width: 40,
+    budget: 24,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const mine = rows.filter((row) => row.target === 2);
+  assert.equal(mine.length, 2, "l'entrée peint deux rangs : le libellé, puis la colonne de droite");
+  assert.match(mine[0]!.text, /gamma ← alpha,beta/, "le libellé porte ses dépendances");
+  assert.equal(
+    mine[1]!.text,
+    "  /impl · en attente · 0:00",
+    "maillon, état et temps restent groupés et entiers sur leur propre rang",
+  );
+  assert.equal(
+    rows.filter((row) => row.text.includes("alpha,beta")).length,
+    1,
+    "la liste des dépendances n'apparaît qu'UNE fois sur le rang",
+  );
+  for (const row of rows) {
+    assert.ok(!row.text.includes("…"), `aucun mot d'état n'est coupé : ${row.text}`);
+    assert.ok(displayWidth(row.text) <= 38, `un rang tient dans la largeur de contenu : ${row.text}`);
+  }
+});
+
+test("lot-ask/AC-22 : le titre du lot porte sa répartition", () => {
+  const stateDir = mktmp("lot-ask-ac22-");
+  const repoRoot = mktmp("lot-ask-ac22-repo-");
+  seedLot(stateDir, repoRoot, [
+    feature("fini", { state: "done", phase: "release", endedAt: 1 }),
+    feature("bloque", { state: "blocked", phase: "impl", stopReason: "revue bloquante" }),
+    feature("casse", { state: "failed", phase: "impl", stopReason: "sortie non nulle" }),
+    ...Array.from({ length: 5 }, (_, i) => feature(`en-cours-${i}`, { state: "running", phase: "impl" })),
+  ]);
+  const rows = buildPanelRows(readPanelModel({ stateDir, repoRoot, selection: 0 }), {
+    width: 200,
+    budget: 40,
+    glyphs: GLYPHS,
+    now: 0,
+  });
+  const title = rows.find((row) => row.text.startsWith("Lot · "))!;
+  assert.match(title.text, /8 features/, "le titre nomme la taille du lot");
+  assert.match(title.text, /1 terminée\b/, "une terminée");
+  assert.match(title.text, /1 bloquée/, "une bloquée");
+  assert.match(title.text, /1 échouée/, "une échouée");
+  assert.match(title.text, /0 annulée/, "aucune annulée — le compte est présent quand même");
+  assert.match(title.text, /5 en cours/, "et cinq en cours");
+  assert.ok(
+    title.text.endsWith("0 annulée · 5 en cours"),
+    `les cinq comptes sont toujours là, dans l'ordre du récap de fin de lot : ${title.text}`,
+  );
 });
