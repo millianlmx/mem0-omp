@@ -107,8 +107,13 @@ PY
 # Le tableau `commands` est ce que l'utilisateur lit pour savoir ce qu'il installe :
 # une commande déclarée sans `registerCommand` est un bouton mort, l'inverse une
 # commande invisible. Les deux ensembles doivent être identiques.
+#
+# Le balayage est RÉCURSIF sur les .ts du plugin : depuis le découpage en
+# modules, les commandes peuvent vivre dans n'importe lequel (extension.ts n'est
+# plus qu'une entrée de câblage).
 python3 - <<'PY'
 import json, os, re, sys
+from pathlib import Path
 cat = json.load(open(".omp-plugin/marketplace.json"))
 root = cat.get("metadata", {}).get("pluginRoot", "")
 ok = True
@@ -122,8 +127,10 @@ for p in cat["plugins"]:
     if not os.path.isfile(ext):
         print(f"  ✗ {p['name']} : {ext} introuvable — commandes invérifiables"); ok = False; continue
     declared = set(p.get("commands") or [])
-    registered = set(re.findall(r'registerCommand\(\s*["\']([^"\']+)["\']',
-                                open(ext, encoding="utf-8").read()))
+    registered = set()
+    for f in Path(d).rglob("*.ts"):
+        registered |= set(re.findall(r'registerCommand\(\s*["\']([^"\']+)["\']',
+                                     f.read_text(encoding="utf-8")))
     missing = sorted(declared - registered)
     extra = sorted(registered - declared)
     if missing:
@@ -206,15 +213,25 @@ fi
 # Le contrôle passe par python3, jamais par `grep -P` : le grep BSD de macOS
 # rejette `-P` (et le lookahead sous `-E`), donc l'ancien contrôle échouait AVANT
 # toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
+#
+# Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
+# (`omp-mem0-req/*.ts`, `omp-mem0-req/panel/*.ts`) : ne contrôler que
+# `extension.ts` laisserait passer un import de valeur écrit dans un module.
 if command -v python3 >/dev/null 2>&1; then
 python3 - <<'PY'
 import re, sys
+from pathlib import Path
 pat = re.compile(r'^\s*import\s+(?!type\b)[^;]*from\s+["\']@oh-my-pi/', re.M)
 hits = []
-for f in ("omp-mem0-memory/extension.ts", "omp-mem0-req/extension.ts"):
-    src = open(f, encoding="utf-8").read()
+files = sorted(
+    f
+    for root in ("omp-mem0-memory", "omp-mem0-req")
+    for f in Path(root).rglob("*.ts")
+)
+for f in files:
+    src = f.read_text(encoding="utf-8")
     for m in pat.finditer(src):
-        hits.append((f, src.count("\n", 0, m.start()) + 1))
+        hits.append((str(f), src.count("\n", 0, m.start()) + 1))
 for f, line in hits:
     print(f"  ✗ import de valeur depuis @oh-my-pi/* — {f}:{line} ; "
           f"préfère 'import type', effacé à la compilation")

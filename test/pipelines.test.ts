@@ -674,6 +674,8 @@ test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
     live: {},
     history: [],
     lot: null,
+    // Sans lot, il n'y a pas de pilote à nommer (PANEL-4).
+    driver: null,
     mode: { kind: "browse" },
     selection: -1,
     notice: null,

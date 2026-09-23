@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Mémoire persistante par projet pour oh-my-pi, adossée à mem0 + Qdrant en local",
-    "version": "2.9.6"
+    "version": "2.9.7"
   },
   "plugins": [
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
       "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Le scope est celui du dépôt, worktrees git compris. Nécessite le stack mem0-stack en local.",
-      "version": "2.9.6",
+      "version": "2.9.7",
       "author": {
         "name": "MillianLMX"
       },
@@ -21,14 +21,29 @@
       "repository": "https://github.com/millianlmx/mem0-omp",
       "license": "MIT",
       "category": "productivity",
-      "keywords": ["memory", "mem0", "qdrant", "recall", "context"],
-      "commands": ["mem0-status", "mem0-init", "mem0-brief", "mem0-dedupe", "mem0-save", "add-phase", "set-phase", "remove-phase"]
+      "keywords": [
+        "memory",
+        "mem0",
+        "qdrant",
+        "recall",
+        "context"
+      ],
+      "commands": [
+        "mem0-status",
+        "mem0-init",
+        "mem0-brief",
+        "mem0-dedupe",
+        "mem0-save",
+        "add-phase",
+        "set-phase",
+        "remove-phase"
+      ]
     },
     {
       "name": "omp-mem0-req",
       "source": "./omp-mem0-req",
       "description": "Pipeline one-shot piloté par le critère d'acceptation. /req clarifie l'intention et fait valider les critères (Given/When/Then), /specs fige les specs tracées vers ces critères et les découpe en lots (briefs ui / archi), /impl prouve chaque critère par un test qui porte son id, /review le retrouve par grep ; l'état traverse les sessions par un fichier contrat déterministe (.omp/pipeline/contract.md), pas par la mémoire. Chaque feature vit dans son worktree git dédié (branche feat/<nom>). Le lot de features enchaîne les pipelines tout seul — un processus par maillon, en parallèle, jusqu'aux jalons (question de l'agent, validation des specs, accord de fin de revue), puis pousse la branche et ouvre la PR : le panneau /pipelines (ou alt+w) est sa salle de contrôle : il liste en plus les pipelines de tous les processus OMP de la machine, montre la conversation de chacune en direct, et permet de répondre à ses questions depuis sa vue (options sélectionnables ou texte libre) — un message adressé à une pipeline qui travaille part en file jusqu'à son prochain maillon.",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "author": {
         "name": "MillianLMX"
       },
@@ -36,8 +51,20 @@
       "repository": "https://github.com/millianlmx/mem0-omp",
       "license": "MIT",
       "category": "productivity",
-      "keywords": ["requirements", "gathering", "ask", "clarification", "panel"],
-      "commands": ["req", "specs", "impl", "review", "pipelines"]
+      "keywords": [
+        "requirements",
+        "gathering",
+        "ask",
+        "clarification",
+        "panel"
+      ],
+      "commands": [
+        "req",
+        "specs",
+        "impl",
+        "review",
+        "pipelines"
+      ]
     }
   ]
 }

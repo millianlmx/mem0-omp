@@ -243,6 +243,14 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     stopReason: null,
     fixes: 0,
     reviewRuns: 0,
+    // Champs publiés pour le panneau et compteurs de la revue : le lot les ÉCRIT,
+    // donc un lot relu les porte — un fixture qui les omettait ne serait plus
+    // identique à ce que `readLot` rend (l'invariant du lot est l'aller-retour).
+    unreadableRuns: 0,
+    reviewHash: null,
+    lastVerdict: null,
+    lastBlockers: 0,
+    lastRunSessionFile: null,
     contractHash: null,
     addedAt: at,
     sinceAt: at,
@@ -667,7 +675,7 @@ test("la chaîne route chaque maillon sur le seul contrat", () => {
 });
 
 test("les impasses de la chaîne sont bloquées, nommées, et jamais silencieuses", () => {
-  const base = { fixes: 0, reviewRuns: 1, cap: 3 };
+  const base = { fixes: 0, unreadableRuns: 1, cap: 3 };
   assert.deepEqual(nextChainAction({ ...base, phase: "specs", outcome: "ok", contract: CONTRACT_CLOSED }), {
     kind: "blocked",
     reason: "aucune spécification écrite par /specs",
@@ -683,9 +691,33 @@ test("les impasses de la chaîne sont bloquées, nommées, et jamais silencieuse
     "un verdict illisible relance la revue…",
   );
   assert.deepEqual(
-    nextChainAction({ ...base, reviewRuns: 4, phase: "review", outcome: "ok", contract: illisible }),
-    { kind: "blocked", reason: "verdict de revue illisible après 4 passes" },
-    "…mais jamais sans fin",
+    nextChainAction({ ...base, unreadableRuns: 3, phase: "review", outcome: "ok", contract: illisible }),
+    { kind: "blocked", reason: "verdict de revue illisible après 3 passes" },
+    "…mais jamais sans fin, et sur SON budget : 3 corrections ne bloquent pas une revue illisible",
+  );
+  // Une section `## Revue` que CE run n'a pas réécrite n'est pas un verdict : le
+  // texte lu viendrait d'un autre maillon, donc jamais `clean`.
+  assert.deepEqual(
+    nextChainAction({ ...base, phase: "review", outcome: "ok", contract: CONTRACT_CLEAN, reviewRewritten: false }),
+    { kind: "run", phase: "review", fix: false },
+    "une revue qui n'écrit rien n'est pas une revue propre",
+  );
+  // Une question en TEXTE de specs/impl/review arrête la chaîne sur une réponse.
+  assert.deepEqual(
+    nextChainAction({ ...base, phase: "impl", outcome: "ok", contract: CONTRACT_SPECS, question: "On fait comment ?" }),
+    { kind: "wait", waitKind: "answer" },
+    "une question en texte d'un maillon vaut une attente, pas un enchaînement",
+  );
+  assert.deepEqual(
+    nextChainAction({ ...base, phase: "review", outcome: "ok", contract: illisible, question: "Et là ?" }),
+    { kind: "wait", waitKind: "answer" },
+    "la question passe avant une nouvelle passe de revue",
+  );
+  // Le livrable prime sur la question : une sortie qui a écrit ses specs garde son jalon.
+  assert.deepEqual(
+    nextChainAction({ ...base, phase: "specs", outcome: "ok", contract: CONTRACT_SPECS, question: "…" }),
+    { kind: "wait", waitKind: "specs" },
+    "une sortie qui a produit son livrable n'est pas retenue par un bloc d'options",
   );
 });
 
@@ -1000,20 +1032,21 @@ test("une annulation nomme le worktree introuvable, et un retrait refusé bloque
   assert.equal(fs.existsSync(plain), true, "rien n'a été retiré");
 });
 
-test("ajouter une feature à un lot dont tout est terminé remplace le lot", async () => {
-  // S-1, cycle de vie : le récap du lot précédent a déjà été posté, la nouvelle
-  // feature ouvre un lot neuf — elle ne rejoint pas les terminées.
+test("ajouter une feature ne remplace le lot que si plus rien ne peut y repartir", async () => {
+  // S-1, cycle de vie : le récap du lot précédent a déjà été posté, et plus aucune
+  // de ses features n'est relançable (`done` ou `cancelled`) — la nouvelle feature
+  // ouvre un lot neuf, elle ne rejoint pas les terminées.
   const repoRoot = mkRepo();
   const { controller, stateDir } = mkCtl(repoRoot, { runner: mkRunner({ mode: "pending" }).runner });
   const previous = seedLot(
     stateDir,
     repoRoot,
-    [feature("un", { state: "done", endedAt: 1 }), feature("deux", { state: "failed", endedAt: 1 })],
+    [feature("un", { state: "done", endedAt: 1 }), feature("deux", { state: "cancelled", endedAt: 1 })],
     { recapAt: 1_700_000_000_100 },
   );
 
   assert.equal(await controller.add({ name: "trois", description: "", deps: [] }), null);
-  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  let lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.deepEqual(
     lot.features.map((f) => f.slug),
     ["trois"],
@@ -1023,6 +1056,31 @@ test("ajouter une feature à un lot dont tout est terminé remplace le lot", asy
   assert.equal(lot.status, "draft", "le nouveau lot n'est pas lancé pour autant");
   assert.equal(lot.launchedAt, null);
   assert.equal(lot.id, previous.id, "même dépôt, même lot courant");
+
+  // Une feature RELANÇABLE (bloquée, échouée, annulée avec son worktree) est
+  // CONSERVÉE : la remplacer la ferait disparaître du lot — sa relance deviendrait
+  // impossible, et son worktree resterait orphelin, sans plus personne pour le nommer.
+  const kept = seedLot(
+    stateDir,
+    repoRoot,
+    [
+      feature("un", { state: "done", endedAt: 1 }),
+      feature("bloquee", { state: "blocked", stopReason: "plafond atteint", endedAt: 1 }),
+    ],
+    { recapAt: 1_700_000_000_200 },
+  );
+  assert.equal(await controller.add({ name: "quatre", description: "", deps: [] }), null);
+  lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.deepEqual(
+    lot.features.map((f) => f.slug),
+    ["un", "bloquee", "quatre"],
+    "un lot qui porte une bloquée est conservé et complété",
+  );
+  assert.equal(lot.recapAt, null, "le récap du lot précédent ne décrit plus l'état final");
+  assert.equal(lot.status, "running", "le lot conservé reste lancé : la nouvelle feature démarre");
+  assert.equal(lot.features[1]!.state, "blocked", "la bloquée est intacte, donc relançable");
+  assert.equal(lot.features[1]!.stopReason, "plafond atteint");
+  assert.equal(kept.features[1]!.state, "blocked");
 });
 
 test("les refus d'ajout et de retrait sont nommés, et ne créent rien", async () => {
@@ -1043,7 +1101,7 @@ test("les refus d'ajout et de retrait sont nommés, et ne créent rien", async (
   git(["branch", "feat/prise"], repoRoot);
   assert.equal(
     await controller.add({ name: "prise", description: "", deps: [] }),
-    "la branche feat/prise existe déjà — choisis un autre nom",
+    "la branche feat/prise existe déjà — renomme la feature (un autre nom) ou supprime la branche (git branch -D feat/prise)",
   );
   assert.equal(await controller.remove("ghost"), "« ghost » n'est pas dans le lot");
 
@@ -1292,17 +1350,22 @@ test("lot/AC-5 : la chaîne enchaîne collecte, specs, implémentation et revue 
   await flush(4);
   assert.equal(runs.length, 3);
   assert.equal(runs[2]!.argv[runs[2]!.argv.indexOf("--pipeline-phase") + 1], "impl");
-  writeContract(worktree, CONTRACT_CLEAN);
   gate.shift()!(ok);
   await flush(6);
   assert.equal(runs.length, 4);
   assert.equal(phaseOf(runs[3]!), "review");
+  // La revue ÉCRIT son verdict pendant SON run : une section `## Revue` laissée
+  // telle quelle (ici absente) n'est pas un verdict de revue, et le pilote la
+  // relancerait au lieu d'ouvrir le jalon.
+  writeContract(worktree, CONTRACT_CLEAN);
   gate.shift()!(ok);
   await flush(6);
   lot = readLot(deps.stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "waiting");
   assert.equal(lot.features[0]!.waitKind, "review");
   assert.equal(lot.features[0]!.reviewRuns, 1);
+  assert.equal(lot.features[0]!.lastVerdict, "clean", "le verdict lu est publié pour le panneau");
+  assert.equal(lot.features[0]!.lastBlockers, 0);
 });
 
 test("lot/AC-4 : une feature ouverte par /req suit la même chaîne dès sa bascule", async () => {
@@ -1674,8 +1737,12 @@ test("lot/AC-13 : relancer une feature bloquée ne touche pas aux autres pipelin
 
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "running");
-  assert.equal(lot.features[0]!.fixes, 0, "la relance ouvre un nouveau crédit de correction");
-  assert.equal(lot.features[0]!.reviewRuns, 0);
+  assert.equal(
+    lot.features[0]!.fixes,
+    1,
+    "la relance ouvre un nouveau crédit, et le run de correction qu'elle lance est compté",
+  );
+  assert.equal(lot.features[0]!.reviewRuns, 0, "aucune revue n'a été lancée");
   assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /^\[reprise\]/);
   assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /\[impl --fix\]/, "la revue bloquante impose la correction");
   assert.deepEqual(lot.features[1]!, otherBefore, "l'autre pipeline est intact");
@@ -1719,7 +1786,7 @@ test("lot/AC-14 : annuler fait choisir le devenir du worktree et l'applique", as
   assert.ok(notices.some((n) => n.includes(`worktree retiré : ${path.resolve(retiree.worktree)}`)));
   assert.equal(
     await controller.cancel("retiree", "keep"),
-    "annulation impossible : la feature est annulé",
+    "annulation impossible : la feature est déjà annulée",
     "on n'annule pas deux fois",
   );
 });
@@ -2115,7 +2182,7 @@ test("le récap nomme le décompte exact et omet les catégories vides", () => {
     status: "running",
     reviewCap: 3,
     recapAt: 1,
-    owner: { pid: 1, sessionFile: null, sessionId: null },
+    owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 0,
     launchedAt: 0,
     features: [feature("alpha", { state: "done" }), feature("beta", { state: "blocked", stopReason: "boom" })],
@@ -2149,7 +2216,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     status: "running",
     reviewCap: 3,
     recapAt: null,
-    owner: { pid: 1, sessionFile: null, sessionId: null },
+    owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 0,
     launchedAt: 0,
     features: states.map(([state], index) =>
@@ -2294,9 +2361,14 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     const drawn = rowsText(tight);
     assert.ok(tight.length <= budget, `le panneau tient dans ${budget} rangs (il en fait ${tight.length})`);
     assert.ok(drawn.includes("mem0-omp/racine"), `le pipeline vivant n'est jamais muet (budget ${budget})`);
-    assert.match(drawn, /… \d+ de plus/, `la section tronquée garde son marqueur (budget ${budget})`);
+    assert.ok(drawn.includes("g0 "), `la ligne SÉLECTIONNÉE est TOUJOURS peinte (budget ${budget})`);
     assert.ok(drawn.includes("Échap fermer"), `c'est le pied que le budget protège (${budget})`);
     assert.equal(tight[tight.length - 1]!.rule, "frame", "le cadre se referme sur sa règle (S-1)");
+    // Le décompte de ce qui est masqué se paie quand la place le permet : à 13
+    // rangs, les deux sections n'ont que la place d'UNE entrée chacune, et c'est la
+    // ligne SÉLECTIONNÉE qui la prend (PANEL-2) — jamais le marqueur à sa place.
+    if (budget >= 15) assert.match(drawn, /… \d+ de plus/, `la section tronquée garde son marqueur (${budget})`);
+    else assert.ok(!drawn.includes("de plus"), `à ${budget} rangs, aucune place pour un marqueur`);
   }
   const full = buildPanelRows(
     { ...emptyModel, lot: { ...lot, features: many }, running: [courant], selection: 0 },
@@ -2414,7 +2486,7 @@ test("un lot vide et un lot non lancé le disent, avec la touche qui débloque",
         status: "draft",
         reviewCap: 3,
         recapAt: null,
-        owner: { pid: 1, sessionFile: null, sessionId: null },
+        owner: { pid: process.pid, sessionFile: null, sessionId: null },
         createdAt: 0,
         launchedAt: null,
         features: [],
@@ -2439,7 +2511,7 @@ test("un lot vide et un lot non lancé le disent, avec la touche qui débloque",
         status: "draft",
         reviewCap: 3,
         recapAt: null,
-        owner: { pid: 1, sessionFile: null, sessionId: null },
+        owner: { pid: process.pid, sessionFile: null, sessionId: null },
         createdAt: 0,
         launchedAt: null,
         features: [feature("alpha")],
@@ -2458,7 +2530,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
     status: "running",
     reviewCap: 3,
     recapAt: null,
-    owner: { pid: 1, sessionFile: null, sessionId: null },
+    owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 0,
     launchedAt: 0,
     features: [feature("alpha", { state: "waiting", waitKind: "answer", phase: "req" })],
@@ -2897,6 +2969,7 @@ test("un run de lot arme son maillon au démarrage et clôt son entrée à la fi
   );
   assert.deepEqual(app.flags.sort(), [
     "panel-inbox",
+    "pipeline-deadline",
     "pipeline-feature",
     "pipeline-lot",
     "pipeline-phase",
@@ -2928,10 +3001,17 @@ test("un run de lot arme son maillon au démarrage et clôt son entrée à la fi
     assert.equal(entry.phase, "specs");
     assert.equal(entry.state, "running");
 
-    await app.hooks.get("session_stop")!(undefined as never, ctx as never);
-    assert.equal(fs.existsSync(file), false, "l'entrée en cours est close à la fin du run");
-    const history = fs.readdirSync(path.join(stateDir, "history"));
-    assert.equal(history.length, 1);
+    // L'événement d'une retombée réelle porte `last_assistant_message` : le
+    // passer VIDE (et non absent) est ce que reçoit le hook — un handler qui lit
+    // l'événement ne doit pas être jugé sur un `undefined` que OMP ne produit pas.
+    await app.hooks.get("session_stop")!({}, ctx as never);
+    assert.equal(fs.existsSync(file), false, "l'entrée en cours est libérée à la fin du run");
+    // Un maillon de lot n'entre PAS dans l'historique : sa ligne du lot porte déjà
+    // son maillon et son issue, et chaque tour de la boucle /review ⇄ /impl --fix
+    // poussait une entrée « terminé » de plus (même pour une revue bloquante) dans
+    // une section bornée à vingt rangs. Un run de CONVERSATION, lui, garde la
+    // sienne — c'est une session de l'utilisateur (test suivant).
+    assert.equal(fs.existsSync(path.join(stateDir, "history")), false, "aucun historique pour un maillon");
     assert.equal(app.displayed.length, 0, "un run de lot n'annonce aucune commande");
   } finally {
     delete process.env.MEM0_PIPELINE_STATE_DIR;
@@ -2987,7 +3067,13 @@ test("la clôture d'une collecte passe la main au lot, sans annoncer de commande
     const enrolled = readLot(stateDir, lotRepoKey(repoRoot))!;
     assert.equal(enrolled.features[0]!.origin, "session");
     assert.equal(enrolled.features[0]!.phase, "req");
-    assert.equal(enrolled.status, "running", "la collecte en cours lance le lot");
+    // `enrol` n'ouvre PAS le lot : c'est la clôture de SA collecte qui le met en
+    // marche (S-14), sinon un `/req` dans un lot au brouillon démarrait aussi les
+    // pipelines ajoutés par `a` (CHAIN-11).
+    assert.equal(enrolled.status, "draft", "l'inscription n'ouvre pas le lot");
+    // « Lancée » se lit `!== false` : la clé n'est écrite que quand elle vaut
+    // `false`, donc un lot qui ne la porte pas se relit à l'identique.
+    assert.notEqual(enrolled.features[0]!.launched, false, "la feature de session est lancée, elle");
 
     // La collecte se clôt : « fin » puis retombée terminale, contrat écrit.
     await app.hooks.get("before_agent_start")!({ prompt: "fin", systemPrompt: [] }, { cwd: worktree } as never);
@@ -3150,11 +3236,13 @@ test("lot-ask/AC-14 : le pied n'annonce que les touches qui agissent", () => {
       }),
     );
 
-  // Sur le rang EN COURS, sélectionné : la bascule `o` agit (le rang a une session),
-  // `d` n'y supprime rien — le pied ne l'annonce donc pas.
+  // Sur le rang EN COURS, sélectionné : un run VIVANT d'un autre process écrit déjà
+  // sa session, donc `o` refuse (« run en cours — la session s'ouvre en lecture
+  // seule (Entrée) ») — le pied ne l'annonce pas (PANEL-8). `d` ne s'y annonce pas
+  // non plus : il ne supprime que l'historique.
   const running = rowsFor(0);
   assert.match(running, /↑↓ naviguer · Entrée session · a ajouter/, "le premier rang annonce les touches du panneau");
-  assert.match(running, /o rejoindre/, "la bascule est annoncée sur un rang où elle agit");
+  assert.ok(!running.includes("o rejoindre"), "`o` refuse sur un rang qu'un run vivant écrit : il n'est pas annoncé");
   assert.ok(!running.includes("d supprimer"), "`d` ne supprime pas un rang en cours : il n'est pas annoncé");
 
   // Sur l'entrée d'HISTORIQUE : c'est le seul rang que `d` supprime, et il l'annonce.

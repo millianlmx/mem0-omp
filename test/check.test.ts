@@ -161,14 +161,24 @@ test("check/AC-14 : une commande déclarée au catalogue sans registerCommand fa
 });
 
 test("check/AC-15 : une version d'entrée ou de metadata divergente fait échouer check.sh", () => {
+  // Les versions attendues sont LUES sur l'arbre, jamais écrites en dur : un bump
+  // de version ne doit pas transformer ce test en test de régression du chiffre.
+  const pkgVersion = JSON.parse(
+    fs.readFileSync(path.join(ROOT, "omp-mem0-memory", "package.json"), "utf8"),
+  ).version as string;
+  const catalogMeta = JSON.parse(
+    fs.readFileSync(path.join(ROOT, ".omp-plugin", "marketplace.json"), "utf8"),
+  ).metadata.version as string;
+  const bogus = "9.9.8";
+
   const diverged = copyRepo();
   editCatalogs(diverged, (cat) => {
-    entryOf(cat, "omp-mem0-memory").version = "2.9.7";
+    entryOf(cat, "omp-mem0-memory").version = bogus;
   });
   const entryOut = runCheck(diverged);
   assert.notEqual(entryOut.status, 0, output(entryOut));
   assert.ok(
-    output(entryOut).includes("omp-mem0-memory : version d'entrée 2.9.7 ≠ package.json 2.9.6"),
+    output(entryOut).includes(`omp-mem0-memory : version d'entrée ${bogus} ≠ package.json ${pkgVersion}`),
     output(entryOut),
   );
 
@@ -185,7 +195,7 @@ test("check/AC-15 : une version d'entrée ou de metadata divergente fait échoue
   if (DEPTH === 0) {
     const real = runCheck(ROOT);
     assert.equal(real.status, 0, output(real));
-    assert.ok(output(real).includes("metadata.version 2.9.6 nomme une version publiée"), output(real));
+    assert.ok(output(real).includes(`metadata.version ${catalogMeta} nomme une version publiée`), output(real));
   }
 });
 
