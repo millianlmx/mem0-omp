@@ -206,15 +206,25 @@ fi
 # Le contrôle passe par python3, jamais par `grep -P` : le grep BSD de macOS
 # rejette `-P` (et le lookahead sous `-E`), donc l'ancien contrôle échouait AVANT
 # toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
+#
+# Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
+# (`omp-mem0-req/*.ts`, `omp-mem0-req/panel/*.ts`) : ne contrôler que
+# `extension.ts` laisserait passer un import de valeur écrit dans un module.
 if command -v python3 >/dev/null 2>&1; then
 python3 - <<'PY'
 import re, sys
+from pathlib import Path
 pat = re.compile(r'^\s*import\s+(?!type\b)[^;]*from\s+["\']@oh-my-pi/', re.M)
 hits = []
-for f in ("omp-mem0-memory/extension.ts", "omp-mem0-req/extension.ts"):
-    src = open(f, encoding="utf-8").read()
+files = sorted(
+    f
+    for root in ("omp-mem0-memory", "omp-mem0-req")
+    for f in Path(root).rglob("*.ts")
+)
+for f in files:
+    src = f.read_text(encoding="utf-8")
     for m in pat.finditer(src):
-        hits.append((f, src.count("\n", 0, m.start()) + 1))
+        hits.append((str(f), src.count("\n", 0, m.start()) + 1))
 for f, line in hits:
     print(f"  ✗ import de valeur depuis @oh-my-pi/* — {f}:{line} ; "
           f"préfère 'import type', effacé à la compilation")
