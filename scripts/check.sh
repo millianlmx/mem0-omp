@@ -308,12 +308,31 @@ else
 fi
 
 echo "── Tests"
+
+# La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
+# pouvoir nommer le test tombé. Mesuré le 2026-09-24 (run 35994551671) : le job
+# ubuntu a rendu un simple « ✗ tests unitaires » pendant que macOS passait le
+# même arbre — un rouge indébogable, et pas seulement par manque de noms : un
+# processus tué (mémoire) n'écrit AUCUNE ligne TAP, donc le code de sortie est
+# la seule trace qui distingue « un test est tombé » de « le processus est mort ».
 if command -v node >/dev/null 2>&1; then
-  if node --test --experimental-strip-types test/*.test.ts >/dev/null 2>&1; then
+  tests_log="$(mktemp)"
+  # `--test-reporter=tap` est ÉPINGLÉ : le rapport par défaut dépend de la version
+  # de Node (spec dès que la sortie n'est plus un terminal en v26, TAP en v22) et
+  # le diagnostic ci-dessous lit un format, pas deux.
+  node --test --test-reporter=tap --experimental-strip-types test/*.test.ts >"$tests_log" 2>&1
+  tests_status=$?
+  if [ "$tests_status" -eq 0 ]; then
     pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
   else
+    printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
+    # Rapport TAP : les tests en échec, puis le bilan. Si la sortie n'en porte
+    # aucun (processus mort avant d'écrire), la fin du journal est la trace.
+    grep -E '^not ok|^# (tests|pass|fail|cancelled|skipped)' "$tests_log" ||
+      tail -n 30 "$tests_log"
     fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
   fi
+  rm -f "$tests_log"
 else
   echo "  · node absent, tests non exécutés"
 fi
