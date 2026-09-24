@@ -188,6 +188,56 @@ exact plutôt que sur une branche :
 "source": { "source": "github", "repo": "<ton-handle>/mem0-omp", "sha": "a1b2c3d4" }
 ```
 
+## Release automatique
+
+Un merge sur `main` déclenche `.github/workflows/release.yml`, qui exécute
+`scripts/release.ts` : le moteur décide du bump de chaque plugin touché d'après
+les commits conventionnels de la fusion, écrit les versions et `CHANGELOG.md`,
+prouve le résultat avec `./scripts/check.sh`, puis committe, pousse, tague et
+publie une release GitHub par plugin bumpé.
+
+```bash
+# Ce que la CI exécute — rejouable à la main, et sans rien écrire avec --dry-run :
+node --experimental-strip-types scripts/release.ts --before <sha> --after <sha> --dry-run
+```
+
+**Règles de décision** — `fix` ⇒ patch, `feat` ⇒ mineure, `!` avant le `:` ou
+footer `BREAKING CHANGE:` ⇒ majeure (quel que soit le type) ; les autres types
+(`docs`, `chore`, `ci`, `refactor`, `perf`, `test`, `build`, `style`) n'apportent
+rien. Un commit ne compte que pour les plugins dont il touche un fichier : un
+merge qui ne touche que `README.md`, `scripts/`, `test/` ou `.github/` ne bumpe
+rien et ne publie rien.
+
+**Ce que le moteur écrit** — `omp-mem0-*/package.json`, les deux catalogues
+(identiques octet pour octet ; `metadata.version` = la plus grande version du
+catalogue) et `CHANGELOG.md` à la racine. Rien d'autre. `check.sh` doit sortir 0,
+sinon aucun commit, aucun tag, aucune release n'est créé.
+
+**Idempotence** — le commit de release porte le trailer
+`Release-Event: <sha après>` ; un rejeu du même événement s'arrête sur
+`· merge déjà publié` sans rien écrire. Un plugin dont le tag de la version cible
+existe déjà est retiré du plan (`· déjà publié (tag …)`). Si la création de la
+release échoue après le push, la fusion reste marquée publiée : les commits
+manquants partent avec la release suivante, il n'y a pas de rattrapage
+automatique. Enfin, le push du workflow ne relance **aucun** workflow — les
+événements déclenchés par `GITHUB_TOKEN` ne créent pas de run —, d'où le
+`check.sh` lancé par le job de release lui-même.
+
+**Blocage du merge** — `main` exige les deux statuts de `check.yml`
+(`check (ubuntu-latest)` et `check (macos-latest)`), donc un job rouge bloque le
+merge. La commande est rejouable telle quelle (elle écrase la configuration
+existante) :
+
+```bash
+gh api --method PUT -H "Accept: application/vnd.github+json" \
+  repos/millianlmx/mem0-omp/branches/main/protection --input - <<'JSON'
+{"required_status_checks":{"strict":false,"contexts":["check (ubuntu-latest)","check (macos-latest)"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null}
+JSON
+```
+
+Les contextes sont les **noms affichés** des jobs de `check.yml` : renommer un OS
+de la matrice sans rejouer cette commande débloquerait le merge en silence.
+
 ## Alternatives
 
 **Chemin manuel, sans marketplace** — `omp-mem0-memory/install.sh` dépose

@@ -24,7 +24,10 @@ mem0-omp/                              racine = marketplace OMP
 ├── mem0-stack/                        mem0 + Qdrant, en local
 │   └── mem0-http/                     l'API HTTP et sa config mem0
 ├── test/                              suite node --test
-└── scripts/check.sh                   validation avant publication
+├── scripts/check.sh                   validation avant publication
+├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
+├── scripts/release.ts                 bump, changelog, tag et release au merge
+└── .github/workflows/                 check.yml (PR), release.yml (merge sur main)
 ```
 
 ## Ce que ça fait
@@ -682,6 +685,26 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `OMLX_EMBED_MODEL` | `bge-m3` | modèle d'embedding (dans `.env`) |
 
 Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le réseau.
+
+## CI et release
+
+Chaque PR passe `./scripts/check.sh` sur macOS **et** Ubuntu. La validation ne se
+contente pas de transpiler les extensions : `scripts/plugin-smoke.ts` charge
+**réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
+vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
+`mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
+service mem0 étant remplacé par un stub local, donc sans conteneur ni credential.
+Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux
+statuts : le merge est bloqué.
+
+Un merge sur `main` qui touche un plugin déclenche `.github/workflows/release.yml` :
+`scripts/release.ts` lit les commits conventionnels de la fusion (`fix` ⇒ patch,
+`feat` ⇒ mineure, rupture déclarée ⇒ majeure), bumpe les plugins touchés, met à
+jour `CHANGELOG.md`, puis committe, tague `<plugin>-v<version>` et publie une
+release GitHub portant les commandes d'installation et de mise à jour — plus une
+section « ce qui casse / quoi faire » quand le bump est majeur. Un merge sans
+fichier de plugin ne bumpe rien et ne publie rien. Les détails, les règles de
+décision et la commande de protection de branche sont dans `PUBLISHING.md`.
 
 ## Changements par rapport à la v1
 

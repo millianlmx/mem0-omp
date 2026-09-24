@@ -17,9 +17,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Installer les types de l'hôte
+      - name: Installer l'hôte OMP (types et SDK)
         run: |
-          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.2.6 @types/node@22
+          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.2.11 @types/node@22
           echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
+          echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
       - name: Valider le catalogue, le manifeste et l'extension
+        env:
+          # En CI, un prérequis manquant (bun, hôte) est un échec, jamais un skip :
+          # le harnais « plugins réels » ne doit pas pouvoir disparaître en silence.
+          MEM0_OMP_REQUIRE_SMOKE: "1"
         run: ./scripts/check.sh

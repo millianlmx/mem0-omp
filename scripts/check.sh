@@ -266,13 +266,83 @@ else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
 fi
 
+echo "── Plugins réels (OMP)"
+
+# Le harnais (scripts/plugin-smoke.ts) charge chaque plugin du catalogue dans un
+# VRAI OMP, vérifie ses commandes et invoque une commande (et un outil) en
+# contrôlant le résultat observé. C'est le seul contrôle qui attrape une
+# extension qui se transpile, passe tous les tests unitaires (faux `pi`) et ne
+# s'enregistre pas au runtime.
+#
+# Prérequis absents (bun, hôte OMP) ⇒ on l'annonce sans ✓ mensonger, comme pour
+# la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) : là, un
+# prérequis manquant est un échec, jamais un skip silencieux.
+smoke_host=""
+for candidate in "${MEM0_OMP_HOST_MODULES:-}" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
+  if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
+    smoke_host="$candidate"
+    break
+  fi
+done
+smoke_reason=""
+if ! command -v bun >/dev/null 2>&1; then
+  smoke_reason="bun absent"
+elif [ -z "$smoke_host" ]; then
+  smoke_reason="hôte OMP introuvable"
+fi
+if [ -n "$smoke_reason" ]; then
+  if [ "${MEM0_OMP_REQUIRE_SMOKE:-}" = "1" ]; then
+    fail "plugins réels : $smoke_reason"
+  else
+    echo "  · $smoke_reason, plugins réels non vérifiés"
+  fi
+else
+  smoke_out="$(bun scripts/plugin-smoke.ts 2>&1)"
+  smoke_status=$?
+  [ -n "$smoke_out" ] && printf '%s\n' "$smoke_out"
+  if [ "$smoke_status" -eq 0 ]; then
+    pass "les 2 plugins se chargent et répondent dans un vrai OMP"
+  else
+    fail "plugins réels — relance : bun scripts/plugin-smoke.ts"
+  fi
+fi
+
 echo "── Tests"
+
+# La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
+# pouvoir nommer le test tombé. Mesuré le 2026-09-24 (run 35994551671) : le job
+# ubuntu a rendu un simple « ✗ tests unitaires » pendant que macOS passait le
+# même arbre — un rouge indébogable, et pas seulement par manque de noms : un
+# processus tué (mémoire) n'écrit AUCUNE ligne TAP, donc le code de sortie est
+# la seule trace qui distingue « un test est tombé » de « le processus est mort ».
 if command -v node >/dev/null 2>&1; then
-  if node --test --experimental-strip-types test/*.test.ts >/dev/null 2>&1; then
+  tests_log="$(mktemp)"
+  # `--test-reporter=tap` est ÉPINGLÉ : le rapport par défaut dépend de la version
+  # de Node (spec dès que la sortie n'est plus un terminal en v26, TAP en v22) et
+  # le diagnostic ci-dessous lit un format, pas deux.
+  node --test --test-reporter=tap --experimental-strip-types test/*.test.ts >"$tests_log" 2>&1
+  tests_status=$?
+  if [ "$tests_status" -eq 0 ]; then
     pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
   else
+    printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
+    # D'abord TOUS les noms, ensuite la preuve : le bloc de diagnostic est borné,
+    # donc un plafond unique finissait par couper des noms de tests (mesuré le
+    # 2026-09-24 : six échecs, deux preuves visibles).
+    grep -E '^not ok' "$tests_log" | head -n 40
+    # Puis les blocs de diagnostic TAP — le message d'assertion porte la preuve
+    # (sortie du moteur, code de check.sh, diff), bornés à 60 lignes. Le bloc
+    # s'arrête à la première ligne qui repart en colonne 0 (enregistrement suivant).
+    awk '/^not ok/ { show = 1 } /^[^ ]/ && $0 !~ /^not ok/ { show = 0 } show' "$tests_log" | head -n 60
+    if ! grep -qE '^not ok' "$tests_log"; then
+      # Aucun test nommé : le processus est mort avant d'écrire (mémoire). La fin
+      # du journal est alors la seule trace.
+      tail -n 30 "$tests_log"
+    fi
+    grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
     fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
   fi
+  rm -f "$tests_log"
 else
   echo "  · node absent, tests non exécutés"
 fi

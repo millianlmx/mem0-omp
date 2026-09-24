@@ -1,0 +1,45 @@
+name: release
+
+# Un merge sur main (merge commit, squash ou rebase : les trois poussent sur main)
+# déclenche le moteur de release. Le commit de release lui-même ne relance rien :
+# les événements déclenchés par GITHUB_TOKEN ne créent aucun run de workflow.
+on:
+  push:
+    branches: [main]
+
+# Le défaut du dépôt est `read` : sans cette permission, le push du commit de
+# release, du tag et la création de la release échouent en 403.
+permissions:
+  contents: write
+
+# Deux merges rapprochés ne doivent pas se marcher dessus : le second attend le
+# premier (le moteur relit origin/main et repart de son état).
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # fetch-depth: 0 ne garantit pas les tags : on les demande explicitement,
+      # avec l'état de main, avant que le moteur ne lise origin/main.
+      - name: Récupérer les tags et l'état de main
+        run: git fetch --force --tags origin "+refs/heads/main:refs/remotes/origin/main"
+      # Aucune autre étape : le moteur écrit, prouve avec check.sh, committe,
+      # pousse, tague et publie. Le job de release lance check.sh lui-même parce
+      # que le push du commit de release ne relance pas check.yml.
+      - name: Décider, écrire, prouver et publier
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node --experimental-strip-types scripts/release.ts \
+            --before "${{ github.event.before }}" \
+            --after "${{ github.event.after }}"
