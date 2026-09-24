@@ -266,6 +266,47 @@ else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
 fi
 
+echo "── Plugins réels (OMP)"
+
+# Le harnais (scripts/plugin-smoke.ts) charge chaque plugin du catalogue dans un
+# VRAI OMP, vérifie ses commandes et invoque une commande (et un outil) en
+# contrôlant le résultat observé. C'est le seul contrôle qui attrape une
+# extension qui se transpile, passe tous les tests unitaires (faux `pi`) et ne
+# s'enregistre pas au runtime.
+#
+# Prérequis absents (bun, hôte OMP) ⇒ on l'annonce sans ✓ mensonger, comme pour
+# la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) : là, un
+# prérequis manquant est un échec, jamais un skip silencieux.
+smoke_host=""
+for candidate in "${MEM0_OMP_HOST_MODULES:-}" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
+  if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
+    smoke_host="$candidate"
+    break
+  fi
+done
+smoke_reason=""
+if ! command -v bun >/dev/null 2>&1; then
+  smoke_reason="bun absent"
+elif [ -z "$smoke_host" ]; then
+  smoke_reason="hôte OMP introuvable"
+fi
+if [ -n "$smoke_reason" ]; then
+  if [ "${MEM0_OMP_REQUIRE_SMOKE:-}" = "1" ]; then
+    fail "plugins réels : $smoke_reason"
+  else
+    echo "  · $smoke_reason, plugins réels non vérifiés"
+  fi
+else
+  smoke_out="$(bun scripts/plugin-smoke.ts 2>&1)"
+  smoke_status=$?
+  [ -n "$smoke_out" ] && printf '%s\n' "$smoke_out"
+  if [ "$smoke_status" -eq 0 ]; then
+    pass "les 2 plugins se chargent et répondent dans un vrai OMP"
+  else
+    fail "plugins réels — relance : bun scripts/plugin-smoke.ts"
+  fi
+fi
+
 echo "── Tests"
 if command -v node >/dev/null 2>&1; then
   if node --test --experimental-strip-types test/*.test.ts >/dev/null 2>&1; then
