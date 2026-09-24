@@ -70,6 +70,16 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: "test@example.com",
 };
 
+/**
+ * Config globale du MOTEUR (pas des dépôts jetables) : `useConfigOnly` interdit à
+ * git de DEVINER une identité — sans lui, il retombe sur le GECOS du compte, ce
+ * qui rendait une commande sans `-c user.*` verte sur macOS et rouge sur ubuntu
+ * (mesuré le 2026-09-24 : `git tag -a` sans identité, six critères rouges sur
+ * ubuntu, verts sur macOS). Une identité oubliée rougit donc sur les deux OS.
+ */
+const ENGINE_GIT_CONFIG = path.join(mktmp("release-git-conf-"), "global.conf");
+fs.writeFileSync(ENGINE_GIT_CONFIG, "[user]\n\tuseConfigOnly = true\n");
+
 function git(args: string[], cwd: string): string {
   const result = spawnSync("git", args, { cwd, env: GIT_ENV, encoding: "utf8" });
   assert.equal(result.status, 0, `git ${args.join(" ")} : ${result.stderr}`);
@@ -527,7 +537,10 @@ function runEngine(dir: string, before: string, after: string, bin: string, jour
       env: {
         ...process.env,
         GIT_CONFIG_NOSYSTEM: "1",
-        GIT_CONFIG_GLOBAL: "/dev/null",
+        // Pas `/dev/null` mais la config qui interdit l'identité devinée : voir
+        // ENGINE_GIT_CONFIG — c'est ce qui fait rougir sur macOS une commande qui
+        // oublie de porter son identité.
+        GIT_CONFIG_GLOBAL: ENGINE_GIT_CONFIG,
         GH_TOKEN: "jeton-de-test",
         GH_JOURNAL: journal,
         PATH: `${bin}:${process.env.PATH ?? ""}`,

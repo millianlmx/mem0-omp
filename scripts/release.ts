@@ -410,7 +410,8 @@ function commitAndPublish(plan: Plan, after: string, written: string[], options:
     `Release-Event: ${after}`,
     ...plan.planned.map((plugin) => `Released: ${plugin.name} ${plugin.to}`),
   ].join("\n");
-  // Identité posée par la commande : le runner n'a pas forcément de config git.
+  // Identité posée par la commande : le runner n'a pas forcément de config git,
+  // et les DEUX commandes qui en exigent une la portent (commit et tag annoté).
   const identity = [
     "-c",
     "user.name=github-actions[bot]",
@@ -422,8 +423,15 @@ function commitAndPublish(plan: Plan, after: string, written: string[], options:
   git(["push", "origin", "HEAD:refs/heads/main"]);
 
   // Tags d'abord (ordre imposé : commit → push → tags → releases).
+  //
+  // `-a` crée un objet tag : git exige une identité de TAGEUR, comme pour le
+  // commit — et la devine sinon depuis le compte (`user.useConfigOnly` non posé).
+  // Mesuré le 2026-09-24 : sans ces deux `-c`, le job ubuntu (aucune config git
+  // globale) rend « Committer identity unknown / empty ident name » et la release
+  // s'arrête AVANT tout tag, quand macOS passait — le compte `runner` y a un GECOS
+  // qui fournit un nom de repli.
   for (const plugin of plan.planned) {
-    git(["tag", "-a", plugin.tag, "-m", `${plugin.name} ${plugin.to}`, "HEAD"]);
+    git([...identity, "tag", "-a", plugin.tag, "-m", `${plugin.name} ${plugin.to}`, "HEAD"]);
     git(["push", "origin", plugin.tag]);
   }
 
