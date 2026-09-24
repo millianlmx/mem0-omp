@@ -326,10 +326,19 @@ if command -v node >/dev/null 2>&1; then
     pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
   else
     printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
-    # Rapport TAP : les tests en échec, puis le bilan. Si la sortie n'en porte
-    # aucun (processus mort avant d'écrire), la fin du journal est la trace.
-    grep -E '^not ok|^# (tests|pass|fail|cancelled|skipped)' "$tests_log" ||
+    # Rapport TAP : les tests en échec AVEC leur bloc de diagnostic — le message
+    # d'assertion porte la preuve (sortie du moteur, code de check.sh, diff), donc
+    # les noms seuls ne suffisent pas à débugger. Le bloc s'arrête à la première
+    # ligne qui repart en colonne 0 (l'enregistrement TAP suivant).
+    failures="$(awk '/^not ok/ { show = 1 } /^[^ ]/ && $0 !~ /^not ok/ { show = 0 } show' "$tests_log" | head -n 80)"
+    if [ -n "$failures" ]; then
+      printf '%s\n' "$failures"
+    else
+      # Aucun test nommé : le processus est mort avant d'écrire (mémoire). La fin
+      # du journal est alors la seule trace.
       tail -n 30 "$tests_log"
+    fi
+    grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
     fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
   fi
   rm -f "$tests_log"
