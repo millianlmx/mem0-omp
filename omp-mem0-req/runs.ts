@@ -49,6 +49,13 @@ export type LotRunSpec = {
    * Absente, l'enfant n'a aucune échéance propre (runs d'une version antérieure).
    */
   deadline?: number;
+  /**
+   * Le modèle de la feature (S-1) : poussé en `--model` sur les runs d'une feature
+   * qui en a un. Absent ou vide, l'argv est celui d'avant cette feature, à l'octet
+   * près — aucun `--model ""`, et jamais de drapeau de réflexion (le niveau reste
+   * celui de la config OMP, S-6).
+   */
+  model?: string | null;
 };
 
 
@@ -74,6 +81,9 @@ export function buildLotRunArgv(spec: LotRunSpec): string[] {
     "--pipeline-state-dir",
     spec.stateDir,
   ];
+  // Le modèle (S-1) : à sa place fixe, après l'état et avant la boîte, l'échéance,
+  // la reprise et l'extension. Absent ou vide, AUCUN élément n'est ajouté.
+  if (spec.model) argv.push("--model", spec.model);
   if (spec.inbox) argv.push("--panel-inbox", spec.inbox);
   if (typeof spec.deadline === "number" && Number.isFinite(spec.deadline)) {
     argv.push("--pipeline-deadline", String(Math.trunc(spec.deadline)));
@@ -147,6 +157,12 @@ export type ConversationRunTarget = {
   label: string;
   phase: PipelinePhase;
   inbox: string;
+  /**
+   * Le modèle de la feature dont ce rang est le worktree (S-5 §3) : poussé en
+   * `--model` sur le run de conversation. Absent (rang hors lot, ou feature sans
+   * modèle), l'argv est celui d'avant cette feature, à l'octet près.
+   */
+  model?: string | null;
 };
 
 
@@ -178,9 +194,11 @@ export function buildConversationRunArgv(spec: {
     spec.target.phase,
     "--pipeline-state-dir",
     spec.stateDir,
-    "--panel-inbox",
-    spec.target.inbox,
   ];
+  // Le modèle (S-5 §3) : même place que dans l'argv d'un maillon — après l'état,
+  // avant la boîte. Absent, aucun élément n'est ajouté.
+  if (spec.target.model) argv.push("--model", spec.target.model);
+  argv.push("--panel-inbox", spec.target.inbox);
   if (spec.selfPath) argv.push("-e", spec.selfPath);
   argv.push("--", spec.prompt);
   return argv;

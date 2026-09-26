@@ -11,6 +11,7 @@ import type { GitResult, GitRunner } from "./git.ts";
 import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { defaultSchedule } from "./panelView.ts";
+import { modelField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
 import { SELF_MODULE_URL, applyWorktreeFate, buildLotPrompt, buildLotRunArgv, lastLine, latestSessionFile, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget, selfExtensionArg } from "./runs.ts";
@@ -25,8 +26,10 @@ import type { PanelPendingAsk, RunningEntry } from "./store.ts";
 /**
  * `auditSession` : chemin absolu de la session /audit qui lance la feature (S-1).
  * Une feature /audit démarre tout de suite, même dans un lot au brouillon.
+ * `model` : le modèle choisi à la création (S-1) — absent ou vide, la feature naît
+ * sans modèle et suit le défaut OMP.
  */
-export type AddFeatureInput = { name: string; description: string; deps: string[]; auditSession?: string };
+export type AddFeatureInput = { name: string; description: string; deps: string[]; auditSession?: string; model?: string | null };
 
 
 /** Le refus d'une réponse à un `ask` (S-7) : la question se répond dans SA vue. */
@@ -90,7 +93,7 @@ export type LotController = LotPanelActions & {
    */
   abortAll(reason: string): void;
   /** Inscription d'une feature créée par /req (sa collecte se déroule en session). Rend le motif d'un refus. */
-  enrol(input: { slug: string; name: string; branch: string; worktree: string }): string | null;
+  enrol(input: { slug: string; name: string; branch: string; worktree: string; model?: string | null }): string | null;
 };
 
 
@@ -470,6 +473,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       stateDir,
       sessionFile,
       selfPath: deps.selfPath ?? selfExtensionArg(SELF_MODULE_URL),
+      // Le modèle (S-1) vient de la FEATURE, au moment du lancement : un seul
+      // chemin décide de la valeur, et elle est la même pour tous ses runs.
+      model: feature.model ?? null,
       inbox,
       deadline: at + runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
     });
@@ -1340,6 +1346,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
         // démarre son pipeline (S-14), pas le lancement du lot. Le lot, lui, reste
         // au brouillon : `a` n'a rien lancé, et `enrol` ne décide pas pour lui.
         launched: true,
+        // Le modèle (S-1) : écrit seulement s'il est exploitable — la clé n'existe
+        // pas pour « défaut OMP ».
+        ...modelField(input.model),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,
@@ -1405,6 +1414,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         contractHash: null,
         launched,
         ...(audit ? { auditSession: input.auditSession } : {}),
+        ...modelField(input.model),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,

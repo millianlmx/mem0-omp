@@ -5,6 +5,7 @@ import { realpathOr } from "./git.ts";
 import { AUDIT_RELAY_MILESTONE_REFUSAL, AUDIT_RELAY_REFUSAL, LOT_EDITOR_MAX, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
+import { DEFAULT_MODEL_CHOICE, featureModelOf, filterModelChoices } from "./models.ts";
 import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
 import type { HostComponent, PanelTheme, PanelTui, SessionAssembly } from "./panelHost.ts";
 import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, liveWriterPid, lotModeRows, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelIndexForKey, panelRowAt, panelRowCount, panelSelectionKey, parseSgrMouse, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel, staleGestureNotice } from "./panelRows.ts";
@@ -565,12 +566,22 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         // C'est TA session (VIEW-8) : `--resume` sur le JSONL ouvert ici.
         if (ownSession([file])) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
         if (!deps.sessionReply) return { kind: "closed", reason: "session terminée" };
+        const rowModel = featureModelOf(model.lot ?? null, row.cwd);
         return inputZone({
           slug: row.label,
           phase: row.phase,
           options: [],
           queue: false,
-          target: { kind: "session", cwd: row.cwd, sessionFile: file, label: row.label },
+          // Le modèle (S-5 §3) : celui de la feature dont ce rang est le worktree,
+          // lu dans le lot du panneau. Hors lot, ou feature sans modèle : la cible
+          // est exactement celle d'avant cette feature, sans clé `model`.
+          target: {
+            kind: "session",
+            cwd: row.cwd,
+            sessionFile: file,
+            label: row.label,
+            ...(rowModel === null ? {} : { model: rowModel }),
+          },
         });
       }
       if (row.owner.pid === process.pid) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
@@ -1053,7 +1064,16 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         const inbox = panelInboxDirFor(deps.stateDir, target.cwd);
         actView(async () => {
           const reason = await reply(
-            { cwd: target.cwd, sessionFile: target.sessionFile, label: target.label, phase: input.phase, inbox },
+            {
+              cwd: target.cwd,
+              sessionFile: target.sessionFile,
+              label: target.label,
+              phase: input.phase,
+              inbox,
+              // Le modèle du rang (S-5 §3) : `--model` suit la cible jusqu'à l'argv.
+              // Absent, la cible est celle d'avant cette feature, sans clé `model`.
+              ...(target.model ? { model: target.model } : {}),
+            },
             text,
           );
           if (reason === null) sent();
@@ -1473,10 +1493,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      */
     const scrollMode = (delta: number) => {
       if (mode.kind === "browse") return;
-      const parts = lotModeText(mode, model.lot ?? null);
-      if (parts === null) return;
       const innerW = Math.max(0, lastWidth - ROW_PADDING_X * 2);
-      const lines = serviceRow(parts.content, parts.tone, innerW).length;
+      const parts = lotModeText(mode, model.lot ?? null, innerW, glyphs);
+      if (parts === null) return;
+      const lines = parts.content.length;
       const max = LIST_MODE_MAX_LINES(panelHeight(tui));
       if (lines <= max) return;
       const top = lines - max;
@@ -1491,11 +1511,35 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      * étape, et celui de l'étape d'avant est RESTITUÉ — `Échap` ne perd plus la saisie.
      */
     const previousAddStep = (mode: Extract<LotPanelMode, { kind: "add" }>): LotPanelMode => {
-      if (mode.step === "deps") {
-        return { kind: "add", step: "description", draft: { ...mode.draft, deps: mode.buffer }, buffer: mode.draft.description };
+      if (mode.step === "model") {
+        // L'étape « Modèle » rend le champ des DÉPENDANCES avec son tampon (S-3) :
+        // la liste capturée reste sur le mode, l'étape se rouvre à l'identique.
+        return { kind: "add", step: "deps", draft: { ...mode.draft }, buffer: mode.draft.deps, choices: mode.choices };
       }
-      return { kind: "add", step: "name", draft: { ...mode.draft, description: mode.buffer }, buffer: mode.draft.name };
+      if (mode.step === "deps") {
+        return {
+          kind: "add",
+          step: "description",
+          draft: { ...mode.draft, deps: mode.buffer },
+          buffer: mode.draft.description,
+          choices: mode.choices,
+        };
+      }
+      return {
+        kind: "add",
+        step: "name",
+        draft: { ...mode.draft, description: mode.buffer },
+        buffer: mode.draft.name,
+        choices: mode.choices,
+      };
     };
+
+    /** Les dépendances d'un tampon de champ : des slugs séparés par des virgules. */
+    const parseDeps = (text: string): string[] =>
+      text
+        .split(",")
+        .map((part) => part.trim())
+        .filter((part) => part !== "");
 
     /** Les modes de saisie et l'aperçu. Rend `true` quand la touche est consommée. */
     const handleMode = (data: string): boolean => {
@@ -1573,6 +1617,45 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         });
         return true;
       }
+      // L'ÉTAPE « MODÈLE » (S-3) : une liste navigable et filtrable, clavier seul —
+      // la souris n'est traitée par aucun mode. `Entrée` valide le choix AFFICHÉ et
+      // ouvre l'aperçu ; `Échap` a déjà rendu le champ des dépendances, plus haut.
+      if (mode.step === "model") {
+        const shown = filterModelChoices(mode.choices ?? [], mode.query ?? "");
+        const last = Math.max(0, shown.length - 1);
+        const sel = Math.min(Math.max(mode.sel ?? 0, 0), last);
+        // Déplacer le curseur ou filtrer RÉARME l'ancre (S-3) : la fenêtre suit la
+        // ligne sélectionnée, et `PageUp`/`PageDown` ne la laissent pas hors champ.
+        if (isKey(data, "tui.select.up") || data === "k") {
+          setMode({ ...mode, sel: Math.max(0, sel - 1), scroll: undefined });
+          return true;
+        }
+        if (isKey(data, "tui.select.down") || data === "j") {
+          setMode({ ...mode, sel: Math.min(last, sel + 1), scroll: undefined });
+          return true;
+        }
+        if (confirm) {
+          const chosen = shown[sel] ?? DEFAULT_MODEL_CHOICE;
+          const model = chosen.value === "" ? null : chosen.value;
+          const input: AddFeatureInput = {
+            name: mode.draft.name,
+            description: mode.draft.description,
+            deps: parseDeps(mode.draft.deps),
+            ...(model !== null ? { model } : {}),
+          };
+          // Le choix n'écrit rien : il ouvre l'aperçu du geste, comme le dernier champ.
+          setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
+          return true;
+        }
+        const typed = insertInto(data, mode.query ?? "");
+        if (typed !== null) {
+          // Toute frappe imprimable est un FILTRE (jamais une touche de geste), et le
+          // curseur repart sur la première ligne de la liste filtrée — ancre réarmée.
+          setMode({ ...mode, query: typed.buffer, sel: 0, scroll: undefined });
+          if (typed.truncated) showNotice(`message tronqué à ${LOT_EDITOR_MAX} caractères`);
+        }
+        return true;
+      }
       if (confirm) {
         const draft = mode.draft;
         if (mode.step === "name") {
@@ -1580,20 +1663,36 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             showNotice("nom de feature requis");
             return true;
           }
-          setMode({ kind: "add", step: "description", draft: { ...draft, name: mode.buffer.trim() }, buffer: "" });
+          setMode({
+            kind: "add",
+            step: "description",
+            draft: { ...draft, name: mode.buffer.trim() },
+            buffer: "",
+            choices: mode.choices,
+          });
           return true;
         }
         if (mode.step === "description") {
-          setMode({ kind: "add", step: "deps", draft: { ...draft, description: mode.buffer.trim() }, buffer: "" });
+          setMode({
+            kind: "add",
+            step: "deps",
+            draft: { ...draft, description: mode.buffer.trim() },
+            buffer: "",
+            choices: mode.choices,
+          });
+          return true;
+        }
+        // Le champ des dépendances ouvre l'étape « Modèle » quand des modèles connus
+        // existent (S-3), et l'aperçu sinon : sans modèle connu, le flux d'aujourd'hui.
+        const withDeps = { ...draft, deps: mode.buffer };
+        if ((mode.choices ?? []).length > 0) {
+          setMode({ kind: "add", step: "model", draft: withDeps, buffer: "", choices: mode.choices, sel: 0, query: "" });
           return true;
         }
         const input: AddFeatureInput = {
-          name: draft.name,
-          description: draft.description,
-          deps: mode.buffer
-            .split(",")
-            .map((part) => part.trim())
-            .filter((part) => part !== ""),
+          name: withDeps.name,
+          description: withDeps.description,
+          deps: parseDeps(withDeps.deps),
         };
         // Le dernier champ n'écrit rien : il ouvre l'aperçu du geste (S-8).
         setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
@@ -1654,7 +1753,16 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (data === "a") {
         const actions = requireLot();
         if (!actions) return;
-        setMode({ kind: "add", step: "name", draft: { name: "", description: "", deps: "" }, buffer: "" });
+        // La liste des modèles connus est capturée ICI, une fois (S-3) : l'étape
+        // « Modèle » s'ouvre sur elle, et son absence (aucun modèle connu) laisse le
+        // flux à trois champs d'aujourd'hui.
+        setMode({
+          kind: "add",
+          step: "name",
+          draft: { name: "", description: "", deps: "", model: null },
+          buffer: "",
+          choices: deps.modelChoices?.() ?? [],
+        });
         return;
       }
       if (data === "l") {
@@ -1898,11 +2006,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // Un geste ouvert depuis la vue (VIEW-15) : c'est son APERÇU qui prend la place
       // de la zone — même texte, mêmes touches que dans la liste —, et son aide qui
       // prend la place du pied. La transcription reste visible derrière.
-      const gesture = mode.kind === "browse" ? null : lotModeText(mode, model.lot ?? null);
+      const gesture = mode.kind === "browse" ? null : lotModeText(mode, model.lot ?? null, innerW, glyphs);
       // Les rangs de la zone : ceux de la SAISIE (options, éditeur, raison) — avec
       // l'ancre que `viewZoneRows` calcule sur l'élément ACTIF, jamais sur la fin —
       // ou, quand un geste est ouvert depuis la vue, son aperçu, déjà fenêtré.
-      const gestureRows = gesture === null ? null : lotModeRows(mode, model.lot ?? null, innerW, height);
+      const gestureRows = gesture === null ? null : lotModeRows(mode, model.lot ?? null, innerW, height, glyphs);
       const zone =
         gestureRows === null
           ? viewZoneRows(view.zone, glyphs, innerW)

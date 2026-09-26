@@ -6,6 +6,8 @@ import { realpathOr, toSlug } from "./git.ts";
 import { AUDIT_RELAY_FOOTER, auditRelayOpen, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
+import { DEFAULT_MODEL_CHOICE, filterModelChoices } from "./models.ts";
+import type { ModelChoice } from "./models.ts";
 import type { PanelTui } from "./panelHost.ts";
 import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, PANEL_WRAP_MAX_LINES, ROW_PADDING_X, displayWidth, sectionSelection, serviceRow, textWindow, wrapVisible } from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
@@ -179,14 +181,22 @@ export type LotPanelMode =
   | { kind: "browse" }
   | {
       kind: "add";
-      step: "name" | "description" | "deps";
-      draft: { name: string; description: string; deps: string };
+      step: "name" | "description" | "deps" | "model";
+      draft: { name: string; description: string; deps: string; model: string | null };
       buffer: string;
       /**
        * La fenêtre du champ (S-2) : `follow` colle à la fin du tampon — là où le
        * curseur écrit —, `PageUp`/`PageDown` la remontent jusqu'à sa première ligne.
        */
       scroll?: TextWindow;
+      /**
+       * L'étape « Modèle » SEULE (S-3) : la liste capturée à l'ouverture du flux,
+       * l'index du curseur dans la liste AFFICHÉE (filtrée) et le filtre. Absente ou
+       * vide, l'étape n'existe pas — le flux reste celui d'aujourd'hui.
+       */
+      choices?: ModelChoice[];
+      sel?: number;
+      query?: string;
     }
   | { kind: "cancel"; slug: string; scroll?: TextWindow }
   | {
@@ -314,8 +324,18 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
       const slug = toSlug(gesture.input.name) ?? gesture.input.name.trim();
       const description = gesture.input.description.trim();
       const deps = `${gesture.input.deps.length} dépendance(s)`;
+      // Le modèle choisi s'annonce EN DERNIER (S-3 §5) : sans lui, la tête est
+      // exactement celle d'avant cette feature, à l'octet près.
+      const model = gesture.input.model;
       return {
-        head: [`Créer ${slug} ?`, description, deps].filter((part) => part !== "").join(" · "),
+        head: [
+          `Créer ${slug} ?`,
+          description,
+          deps,
+          typeof model === "string" && model !== "" ? `modèle ${model}` : "",
+        ]
+          .filter((part) => part !== "")
+          .join(" · "),
         hint: "Entrée créer · Échap annuler",
       };
     }
@@ -722,9 +742,12 @@ export function isLaunchable(lot: Lot, feature: LotFeature, live?: RunningEntry 
  */
 export function lotFeatureLabel(feature: LotFeature): string {
   const base = feature.deps.length > 0 ? `${feature.slug} ← ${feature.deps.join(",")}` : feature.slug;
+  // Le modèle (S-7) : un segment de plus, APRÈS `slug ← deps` et AVANT la file —
+  // et rien du tout quand la feature n'en a pas (le libellé d'alors, à l'octet près).
+  const withModel = typeof feature.model === "string" && feature.model !== "" ? `${base} · modèle ${feature.model}` : base;
   const queued = feature.pendingTexts.length;
-  if (queued === 0) return base;
-  return `${base} · ${queued} message${queued > 1 ? "s" : ""} en attente`;
+  if (queued === 0) return withModel;
+  return `${withModel} · ${queued} message${queued > 1 ? "s" : ""} en attente`;
 }
 
 
@@ -844,24 +867,31 @@ export function lotSectionTitle(lot: Lot, driver?: PanelDriver | null): string {
 
 
 /**
- * Le CONTENU et l'AIDE d'un mode de saisie (S-2) : le contenu se replie et se
- * FENÊTRE (`LIST_MODE_MAX_LINES`), l'aide se replie toujours EN ENTIER — elle
- * annonce les touches, elle n'est ni coupée ni fenêtrée. `browse` n'a ni l'un ni
- * l'autre. Une seule source pour le rendu et pour la fenêtre des touches de
- * défilement : les deux mesurent le MÊME texte.
+ * Le CONTENU et l'AIDE d'un mode de saisie (S-2) : `content` est le contenu DÉJÀ
+ * replié à la largeur (les rangs de service du mode, sélection et curseur compris),
+ * `focus` l'index de la ligne ACTIVE — celle sur laquelle la fenêtre s'ancre —, et
+ * `help` l'aide, repliée EN ENTIER (elle annonce les touches, elle n'est ni coupée
+ * ni fenêtrée). Une seule source pour le rendu et pour la fenêtre des touches de
+ * défilement : les deux mesurent les MÊMES rangs.
  */
-export function lotModeText(mode: LotPanelMode, lot: Lot | null): { content: string; tone: PanelTone; help: string[] } | null {
+export function lotModeText(
+  mode: LotPanelMode,
+  lot: Lot | null,
+  innerW: number,
+  glyphs: PanelGlyphs,
+): { content: PanelRow[]; focus: number; help: string[] } | null {
   if (mode.kind === "browse") return null;
   if (mode.kind === "confirm") {
     const preview = gesturePreview(mode.gesture, lot);
-    return { content: preview.head, tone: "warning", help: [preview.hint] };
+    const content = serviceRow(preview.head, "warning", innerW);
+    return { content, focus: content.length - 1, help: [preview.hint] };
   }
   if (mode.kind === "cancel") {
-    return {
-      content: `Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`,
-      tone: "warning",
-      help: ["la branche reste · 2 copie les ignorés · Échap annuler"],
-    };
+    const content = serviceRow(`Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`, "warning", innerW);
+    return { content, focus: content.length - 1, help: ["la branche reste · 2 copie les ignorés · Échap annuler"] };
+  }
+  if (mode.step === "model") {
+    return modelStepRows(mode, innerW, glyphs);
   }
   const field =
     mode.step === "name"
@@ -869,8 +899,53 @@ export function lotModeText(mode: LotPanelMode, lot: Lot | null): { content: str
       : mode.step === "description"
         ? "Description"
         : "Dépendances (slugs séparés par des virgules)";
-  const next = mode.step === "deps" ? "créer la feature" : "champ suivant";
-  return { content: `${field} : ${mode.buffer}▏`, tone: "text", help: [`Entrée ${next} · Échap annuler`] };
+  // Le champ des dépendances n'annonce « créer la feature » que s'il est le
+  // DERNIER : quand l'étape « Modèle » suit, il ouvre un champ de plus.
+  const next = mode.step === "deps" && (mode.choices ?? []).length === 0 ? "créer la feature" : "champ suivant";
+  const content = serviceRow(`${field} : ${mode.buffer}▏`, "text", innerW);
+  return { content, focus: content.length - 1, help: [`Entrée ${next} · Échap annuler`] };
+}
+
+
+/**
+ * Le CONTENU de l'étape « Modèle » (S-3) : la ligne d'en-tête (le filtre en cours
+ * d'écriture), puis UNE ligne par choix AFFICHÉ — celle du curseur porte le préfixe
+ * `glyphs.cursor` et `selected: true`, que le composant de l'hôte peint avec le fond
+ * `selectedBg` du thème actif. Un filtre sans résultat n'efface jamais l'écran : la
+ * liste garde « défaut OMP » en tête et la ligne le dit, en ton `dim`.
+ */
+function modelStepRows(
+  mode: Extract<LotPanelMode, { kind: "add" }>,
+  innerW: number,
+  glyphs: PanelGlyphs,
+): { content: PanelRow[]; focus: number; help: string[] } {
+  const query = mode.query ?? "";
+  const shown = filterModelChoices(mode.choices ?? [], query);
+  const sel = Math.min(Math.max(mode.sel ?? 0, 0), Math.max(0, shown.length - 1));
+  const header = serviceRow(`Modèle : ${query}▏`, "text", innerW);
+  const content: PanelRow[] = [...header];
+  let focus = header.length - 1;
+  shown.forEach((choice, index) => {
+    const selected = index === sel;
+    const prefix = selected ? `${glyphs.cursor} ` : " ".repeat(glyphs.cursor.length + 1);
+    const rows = serviceRow(
+      prefix + choice.label,
+      selected ? "accent" : "text",
+      innerW,
+      selected ? { selected: true } : undefined,
+    );
+    // Le curseur peut être replié sur plusieurs lignes : l'ancre est sa DERNIÈRE.
+    if (selected) focus = content.length + rows.length - 1;
+    content.push(...rows);
+  });
+  if (shown.length === 1 && query !== "") {
+    content.push(...serviceRow(`aucun modèle ne correspond à « ${query} »`, "dim", innerW));
+  }
+  return {
+    content,
+    focus,
+    help: ["Modèle : ↑ ↓ choisir · taper pour filtrer · Entrée champ suivant · Échap champ précédent"],
+  };
 }
 
 
@@ -880,12 +955,17 @@ export function lotModeText(mode: LotPanelMode, lot: Lot | null): { content: str
  * SERVICE : le budget du cadre les compte à leur hauteur repliée, et `PageUp` /
  * `PageDown` remontent la fenêtre du contenu quand elle déborde (S-2, BR-2).
  */
-export function lotModeRows(mode: LotPanelMode, lot: Lot | null, innerW: number, height: number): PanelRow[] {
+export function lotModeRows(
+  mode: LotPanelMode,
+  lot: Lot | null,
+  innerW: number,
+  height: number,
+  glyphs: PanelGlyphs,
+): PanelRow[] {
   if (mode.kind === "browse") return [];
-  const parts = lotModeText(mode, lot);
+  const parts = lotModeText(mode, lot, innerW, glyphs);
   if (parts === null) return [];
-  const content = serviceRow(parts.content, parts.tone, innerW);
-  const rows = textWindow(content, LIST_MODE_MAX_LINES(height), content.length - 1, mode.scroll);
+  const rows = textWindow(parts.content, LIST_MODE_MAX_LINES(height), parts.focus, mode.scroll);
   for (const line of parts.help) rows.push(...serviceRow(line, "dim", innerW));
   return rows;
 }
@@ -1045,7 +1125,7 @@ export function buildPanelRows(
   const notice = noticeText(model);
   // La fenêtre d'une région de saisie se mesure en hauteur de TERMINAL : le budget
   // reçu EST cette hauteur (`panelBudget`), avec son plancher.
-  const modeRows = lotModeRows(mode, lot, innerW, opts.budget);
+  const modeRows = lotModeRows(mode, lot, innerW, opts.budget, glyphs);
   const runningCount = model.running.length;
   const historyCount = model.history.length;
   const features = lot?.features.length ?? 0;

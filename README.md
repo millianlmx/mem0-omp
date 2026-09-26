@@ -265,6 +265,17 @@ fait désormais échouer la construction de l'image, pas la première requête.
   commande est en plus préremplie dans la zone de saisie, prête à valider par Entrée —
   et jamais par-dessus un brouillon déjà tapé.
 
+  **Le modèle se choisit au lancement de la feature.** `/req` demande, **avant toute
+  écriture** (ni branche, ni worktree, ni session), le modèle de la pipeline dans la liste
+  des modèles connus d'OMP — avec une réponse `défaut OMP (aucun modèle)` ; `Échap` annule
+  sans rien créer. Un seul modèle par feature, **figé à sa création** : aucun maillon ne le
+  change, aucune action du panneau ne le modifie. Le modèle choisi part en `--model` sur
+  **tous** les runs de la feature — sa collecte, chaque maillon, la poursuite d'un run après
+  une réponse, la relance d'une feature bloquée, les tours `/impl --fix` — et s'affiche sur
+  son rang du panneau (`… · modèle anthropic/claude-opus-4-7`). Sans modèle choisi, la ligne
+  de commande est **exactement** celle d'avant, et le niveau de réflexion n'est jamais
+  transmis : il reste celui de la config OMP.
+
   **Chaque feature vit dans son propre worktree git.** `/req <nom-de-feature>` crée
   `<base>/<dépôt>-<hash7>/<nom>` sur la branche `feat/<nom>` (base :
   `~/.omp/pipeline-worktrees`, ou `MEM0_PIPELINE_WORKTREES_DIR`) puis y relocalise la
@@ -288,9 +299,12 @@ fait désormais échouer la construction de l'image, pas la première requête.
 - `/audit [contexte]` (plugin `omp-mem0-req`) — ouvre une **session d'audit** du dépôt
   principal : l'agent l'analyse en lecture seule, affiche ses faiblesses et des features
   proposées, puis te demande laquelle lancer (ou « aucune ») et te fait **valider ou
-  amender l'intention** transmise à `/req` avant tout lancement. La pipeline de la
-  feature choisie tourne ensuite seule dans le lot, et ses questions et jalons sont
-  relayés dans cette session — voir « Pipelines lancées par /audit ».
+  amender l'intention** transmise à `/req` avant tout lancement. Le **modèle** de la
+  feature est demandé juste après, **une fois par feature créée** — deux features d'un
+  même audit peuvent donc recevoir deux modèles différents, et une feature rejouée est
+  refusée avant toute question. La pipeline de la feature choisie tourne ensuite seule
+  dans le lot, et ses questions et jalons sont relayés dans cette session — voir
+  « Pipelines lancées par /audit ».
 
 ## Pipelines en cours
 
@@ -350,7 +364,9 @@ fenêtres qui pourraient manger l'écran, et de les faire défiler.
   garde un marqueur qui **nomme la section qu'il tronque** (`… 4 de plus dans le lot`).
 - **La colonne de droite** d'un rang est `<maillon> · <état> · <temps>` — jamais les
   dépendances : elles restent sur le libellé (`base-qdrant ← isolation-worktree`), une
-  seule fois. Quand le libellé et la colonne ne tiennent pas ensemble sur la largeur de
+  seule fois. Le **modèle choisi** s'ajoute au libellé (`base-qdrant · modèle
+  anthropic/claude-opus-4-7`), une fois lui aussi, et disparaît quand la feature suit le
+  défaut OMP. Quand le libellé et la colonne ne tiennent pas ensemble sur la largeur de
   contenu, l'entrée peint **deux rangs** : le libellé, puis l'état et le temps — jamais
   coupés en deux. **Le tour de correction y figure** dès qu'il y en a un : `--fix · tour
   2/3` pour un `/impl --fix`, `tour 2/3` pour une `/review` — sans quoi un tour de
@@ -578,9 +594,16 @@ effet, tampon compris. Rien n'est écrit avant la confirmation, et un refus du p
 s'affiche tel quel au lieu d'être avalé.
 
 - **Ajouter** (`a`) : trois champs — nom, **Description** (elle amorce la collecte),
-  dépendances (slugs séparés par des virgules, vide admis). Le worktree de la feature est
-  créé au lancement (`feat/<nom>`), jamais à l'ajout. **Retirer** (`x`) enlève une feature
-  qui n'a pas encore démarré.
+  dépendances (slugs séparés par des virgules, vide admis) — puis, quand des modèles connus
+  existent, un quatrième : **Modèle**. La liste des modèles connus s'y affiche avec
+  `défaut OMP (aucun modèle)` en tête ; `↑`/`↓` (ou `k`/`j`) déplacent le curseur, une
+  frappe **filtre** la liste (Retour arrière l'efface, un filtre sans résultat le dit),
+  `PageUp`/`PageDown` font défiler la fenêtre, `Entrée` valide le choix affiché et `Échap`
+  rend le champ des dépendances, tampon compris. Le curseur partant sur la première ligne,
+  `Entrée` seul reproduit le comportement d'avant : la feature naît sans modèle. Le worktree
+  de la feature est créé au lancement (`feat/<nom>`), jamais à l'ajout. **Retirer** (`x`)
+  enlève une feature qui n'a pas encore démarré. Aucun autre geste du panneau ne touche au
+  modèle : il est figé à la création de la feature.
 - **Lancer** (`l`) : chaque feature démarre son maillon courant, **toutes en parallèle** —
   deux features sans dépendance ne s'attendent jamais.
 - **La chaîne** : collecte → specs → implémentation → revue → livraison. Elle ne s'arrête
