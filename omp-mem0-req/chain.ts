@@ -32,6 +32,18 @@ export function effectiveReviewVerdict(contract: string, reviewRewritten: boolea
 }
 
 
+/** Le motif de blocage d'une boucle revue ⇄ correction arrivée à son plafond (S-6). */
+export function reviewCapReason(cap: number): string {
+  return `plafond de ${cap} tours de correction atteint, revue toujours bloquante`;
+}
+
+
+/** Le motif est-il celui du plafond de la boucle revue ⇄ correction ? */
+export function isReviewCapReason(reason: string | null): boolean {
+  return reason !== null && /^plafond de \d+ tours de correction atteint, revue toujours bloquante$/.test(reason);
+}
+
+
 /**
  * Le maillon suivant, décidé par le seul contrat (+ l'issue du run, la question
  * qui a terminé sa sortie et les compteurs du plafond). Pure : c'est la même
@@ -100,7 +112,7 @@ export function nextChainAction(input: {
       if (verdict === "clean") return { kind: "wait", waitKind: "review" };
       if (verdict === "blockers") {
         if (fixes < cap) return { kind: "run", phase: "impl", fix: true };
-        return { kind: "blocked", reason: `plafond de ${cap} tours de correction atteint, revue toujours bloquante` };
+        return { kind: "blocked", reason: reviewCapReason(cap) };
       }
       // Illisible : la question en texte du run passe avant une nouvelle passe.
       if (asked !== null) return { kind: "wait", waitKind: "answer" };

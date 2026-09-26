@@ -5,7 +5,7 @@ import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr } from "./git.ts";
 import { clipTail } from "./panelWidth.ts";
-import { PIPELINE_PHASES, asStringOrNull, pidAlive, readJsonFile, writeJsonAtomic } from "./store.ts";
+import { PIPELINE_PHASES, asStringOrNull, pidAlive, readAuditRelay, readJsonFile, writeJsonAtomic } from "./store.ts";
 import type { PanelAskOption, PanelPendingAsk } from "./store.ts";
 
 
@@ -99,6 +99,13 @@ export type LotFeature = {
    * `!== false`, jamais `=== true`.
    */
   launched?: boolean;
+  /**
+   * Chemin ABSOLU du fichier de la session /audit qui a lancé la feature : ses
+   * questions et ses jalons sont relayés à cette session tant que son relais est
+   * ouvert (`auditRelayOpen`). Absent : feature de lot ordinaire. Jamais modifié
+   * par une transition.
+   */
+  auditSession?: string;
   addedAt: number;
   /** Instant d'entrée dans l'état courant : c'est lui que le panneau chronomètre. */
   sinceAt: number;
@@ -326,7 +333,17 @@ export type RowReply =
 
 
 /** Ce que la règle d'écriture sait du run VIVANT d'une feature (S-6, S-7). */
-export type RowLiveWriter = { inbox?: string | null; pendingAsk?: PanelPendingAsk | null };
+export type RowLiveWriter = { inbox?: string | null; pendingAsk?: PanelPendingAsk | null; auditRelay?: boolean };
+
+
+/** Refus d'écriture d'une question confiée à /audit, mot pour mot (S-3). */
+export const AUDIT_RELAY_REFUSAL = "question confiée à la session /audit — elle revient ici si cette session se ferme";
+
+/** Refus des touches `v`/`y` sur un jalon confié à /audit, mot pour mot (S-3). */
+export const AUDIT_RELAY_MILESTONE_REFUSAL = "jalon confié à la session /audit — il revient ici si cette session se ferme";
+
+/** Premier item du pied d'une feature relayée (S-3). */
+export const AUDIT_RELAY_FOOTER = "relayé à /audit";
 
 
 /**
@@ -339,6 +356,17 @@ export type RowLiveWriter = { inbox?: string | null; pendingAsk?: PanelPendingAs
  * facultatif : sans lui, la règle est celle d'avant le canal (file).
  */
 export function rowReply(feature: LotFeature, live?: RowLiveWriter | null): RowReply {
+  const reply = rowReplyOf(feature, live);
+  // Une question confiée à /audit ne se répond pas ici : c'est la session /audit
+  // qui la tranche (S-3). Les autres écritures (steer, file, texte) restent.
+  if (live?.auditRelay === true && (reply.kind === "ask" || reply.kind === "reply")) {
+    return { kind: "closed", reason: AUDIT_RELAY_REFUSAL };
+  }
+  return reply;
+}
+
+
+function rowReplyOf(feature: LotFeature, live?: RowLiveWriter | null): RowReply {
   if (feature.origin === "session" && feature.phase === "req") {
     return { kind: "closed", reason: "la collecte se déroule dans ta session — réponds-y directement" };
   }
@@ -521,6 +549,9 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // (version antérieure, ou feature lancée) se relit à l'identique, et le garde
     // `!== false` la traite comme lancée.
     ...(f.launched === false ? { launched: false } : {}),
+    // Même patron : écrite seulement quand elle porte un chemin absolu ; toute autre
+    // valeur est lue comme absente, sans rejeter la feature ni le lot.
+    ...(typeof f.auditSession === "string" && path.isAbsolute(f.auditSession) ? { auditSession: f.auditSession } : {}),
     contractHash: asStringOrNull(f.contractHash),
     addedAt: num(f.addedAt, 0),
     sinceAt: num(f.sinceAt, 0),
@@ -726,6 +757,23 @@ export const LOT_TICK_MS = 2000;
  * vivre avant lui (TDZ à l'import).
  */
 export const LOT_OWNER_STALE_MS = 5 * LOT_TICK_MS;
+
+/** Un relais /audit est périmé au même seuil qu'un propriétaire de lot (S-2). */
+export const AUDIT_RELAY_STALE_MS = LOT_OWNER_STALE_MS;
+
+
+/**
+ * Le relais /audit d'une feature est-il OUVERT (S-2) ? Le fichier de relais de sa
+ * session doit exister, être tenu par le PILOTE du lot (`ownerPid`) — seul à
+ * pouvoir exécuter les réponses —, vivant, et battre depuis moins de
+ * `AUDIT_RELAY_STALE_MS`. Une feature sans `auditSession` ne lit aucun fichier.
+ */
+export function auditRelayOpen(stateDir: string, feature: LotFeature, ownerPid: number, now: number): boolean {
+  if (feature.auditSession === undefined) return false;
+  const record = readAuditRelay(stateDir, feature.auditSession);
+  if (record === null || record.pid !== ownerPid || !pidAlive(record.pid)) return false;
+  return now - record.heartbeatAt <= AUDIT_RELAY_STALE_MS;
+}
 
 export const LOT_RUN_TIMEOUT_MS = 3_600_000;
 

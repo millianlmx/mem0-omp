@@ -285,6 +285,12 @@ fait désormais échouer la construction de l'image, pas la première requête.
   des pipelines : le **lot de features** du dépôt (ajouter, lancer, répondre, valider,
   accepter, relancer, annuler) au-dessus des pipelines en cours de toute la machine —
   voir ci-dessous.
+- `/audit [contexte]` (plugin `omp-mem0-req`) — ouvre une **session d'audit** du dépôt
+  principal : l'agent l'analyse en lecture seule, affiche ses faiblesses et des features
+  proposées, puis te demande laquelle lancer (ou « aucune ») et te fait **valider ou
+  amender l'intention** transmise à `/req` avant tout lancement. La pipeline de la
+  feature choisie tourne ensuite seule dans le lot, et ses questions et jalons sont
+  relayés dans cette session — voir « Pipelines lancées par /audit ».
 
 ## Pipelines en cours
 
@@ -640,6 +646,22 @@ s'affiche tel quel au lieu d'être avalé.
   main dès `/specs`. `/specs`, `/impl` et `/review` restent utilisables à la main tant
   qu'aucun lot ne pilote la feature. Une feature de lot ajoutée par `a` **ne démarre
   qu'au `l`** : l'inscription d'une collecte `/req` ne lance pas les autres.
+- **Pipelines lancées par `/audit`** : la feature choisie entre dans le lot (section
+  *Lot* du panneau, même pilote) et démarre aussitôt, même si le lot est au brouillon —
+  ses autres features attendent toujours `l`. Tant que la session `/audit` est la
+  session **courante** du process pilote, elle est le **relais** de cette feature :
+  chaque question d'un maillon et chaque jalon lui arrive comme un message `[audit]`.
+  Elle répond seule (`audit_reply`), valide « specs validées » et « revue propre »
+  (`audit_approve`) — la chaîne va alors jusqu'à la PR sans aucune touche — ou te
+  remonte l'élément dans sa session (`audit_escalate`) avec la question et les options
+  d'origine ; ta réponse part **mot pour mot** au maillon. Le plafond de la boucle revue
+  ⇄ correction te revient toujours, et aucune PR n'est ouverte avant ta décision.
+  Pendant le relais, le panneau affiche `relayé à /audit` et refuse d'y répondre ou
+  d'y valider. **Quitter ou fermer** la session `/audit` fait retomber questions et
+  jalons sur le panneau, comme pour une feature ordinaire (y compris une question
+  restée sans réponse) ; **y revenir** (`/resume`) lui rend le relais et lui réinjecte
+  ce qui attend encore. Rien n'est jamais fusionné. Le battement du relais vit dans
+  `<état>/audit/<sha1(session)[:16]>.json`.
 
 ## Phases
 

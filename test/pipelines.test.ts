@@ -672,6 +672,8 @@ test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
   assert.deepEqual(model, {
     running: [],
     live: {},
+    // Sans lot, aucune feature n'est confiée à une session /audit (audit S-3).
+    relayed: {},
     history: [],
     lot: null,
     // Sans lot, il n'y a pas de pilote à nommer (PANEL-4).

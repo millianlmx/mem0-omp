@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { realpathOr } from "./git.ts";
-import { LOT_EDITOR_MAX, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, rowReply } from "./lot.ts";
+import { AUDIT_RELAY_MILESTONE_REFUSAL, AUDIT_RELAY_REFUSAL, LOT_EDITOR_MAX, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
 import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
@@ -483,7 +483,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         if (ownSession([viewSessionFile(row), row.sessionFile, row.lastRunSessionFile ?? null])) {
           return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
         }
-        const reply = rowReply(row, model.live[slug] ?? null);
+        // Une question confiée à une session /audit ouverte se ferme ici (S-3) :
+        // la règle unique décide, le panneau ne fait que lui passer le relais.
+        const reply = rowReply(row, { ...(model.live[slug] ?? {}), auditRelay: model.relayed[slug] === true });
         switch (reply.kind) {
           case "reply":
             return inputZone({
@@ -536,7 +538,11 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
               target: { kind: "lot", slug },
             });
           case "closed":
-            if (row.origin === "session" && row.phase === "req") return { kind: "closed", reason: reply.reason };
+            // Le motif de la règle est gardé quand il dit OÙ répondre : la collecte
+            // en session, et la question confiée à la session /audit (S-3).
+            if ((row.origin === "session" && row.phase === "req") || reply.reason === AUDIT_RELAY_REFUSAL) {
+              return { kind: "closed", reason: reply.reason };
+            }
             return { kind: "closed", reason: readOnlyReason(model.lot ?? null, row) };
         }
       }
@@ -1228,6 +1234,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         showNotice(`annulation en cours — ${feature.slug}`);
         return true;
       }
+      // Un jalon confié à la session /audit ne se valide pas ici (S-3) : aucun
+      // aperçu, aucun appel au pilote, le geste est consommé.
+      if ((data === "v" || data === "y") && model.relayed[feature.slug] === true) {
+        showNotice(AUDIT_RELAY_MILESTONE_REFUSAL);
+        return true;
+      }
       /** L'aperçu d'un geste : c'est lui que `Entrée` exécute, et `Échap` l'abandonne. */
       const preview = (gesture: PanelGesture): boolean => {
         setMode({ kind: "confirm", gesture, back: { kind: "browse" } });
@@ -1668,6 +1680,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       if (data === "v") {
         const feature = selectedFeature();
+        if (feature && model.relayed[feature.slug] === true) {
+          showNotice(AUDIT_RELAY_MILESTONE_REFUSAL);
+          return;
+        }
         if (!feature || feature.state !== "waiting" || feature.waitKind !== "specs") {
           showNotice("rien à valider : la feature n'est pas au jalon des specs");
           return;
@@ -1678,6 +1694,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       if (data === "y") {
         const feature = selectedFeature();
+        if (feature && model.relayed[feature.slug] === true) {
+          showNotice(AUDIT_RELAY_MILESTONE_REFUSAL);
+          return;
+        }
         if (!feature || feature.state !== "waiting" || feature.waitKind !== "review") {
           showNotice("rien à accepter : la revue n'est pas propre");
           return;
