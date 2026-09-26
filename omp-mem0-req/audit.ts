@@ -9,6 +9,7 @@ import { cleanAskText } from "./inbox.ts";
 import { LOT_EDITOR_MAX, LOT_TICK_MS, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, readLot } from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
 import type { LotController } from "./lotController.ts";
+import { modelDialogChoice, modelDialogOptions, modelQuestionTitle } from "./models.ts";
 import { sessionFileOf } from "./publish.ts";
 import { repoRootOf } from "./runs.ts";
 import { liveRunFor, panelInboxDirOf, removeAuditRelay, writeAuditRelay, writeDelivery } from "./store.ts";
@@ -460,7 +461,16 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
         if (!armedOn(ctx) || ctx === undefined) return toolText(NOT_ARMED, true);
         if (!ctx.hasUI) return toolText(NEEDS_UI, true);
         const sessionFile = state.sessionFile as string;
-        const launched = state.repoRoot === null ? undefined : lotOf(state.repoRoot)?.features.find((f) => f.auditSession === sessionFile);
+        // Le refus « cette session /audit a déjà lancé … » vise la feature REJOUÉE,
+        // pas la session : deux features d'un même audit sont deux créations, donc
+        // deux questions de modèle et deux modèles possibles (B-2, AC-2). Sans cette
+        // distinction, la seconde proposition d'une même session était refusée quoi
+        // qu'elle contienne.
+        const proposed = new Set(checked.proposal.features.map((f) => f.slug));
+        const launched =
+          state.repoRoot === null
+            ? undefined
+            : lotOf(state.repoRoot)?.features.find((f) => f.auditSession === sessionFile && proposed.has(f.slug));
         if (launched) return toolText(`Error: cette session /audit a déjà lancé « ${launched.slug} »`, true);
         if (state.dialog) return toolText(DIALOG_OPEN, true);
         state.dialog = true;
@@ -490,7 +500,26 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
             const amended = await ctx.ui.editor(`Amende l'intention transmise à /req — ${slug}`, intention, { signal });
             if (amended !== undefined && amended.trim() !== "") intention = amended.trim().slice(0, LOT_EDITOR_MAX);
           }
-          const refusal = await deps.controllerFor(ctx).add({ name: slug, description: intention, deps: [], auditSession: sessionFile });
+          // Le modèle de la feature (S-4) : UNE question par feature créée, dans la
+          // section protégée par `state.dialog` (un seul dialogue à la fois) et
+          // AVANT `add` — c'est ce qui permet à son run de collecte de porter déjà
+          // `--model`. Sans modèle connu, aucune question : le flux d'aujourd'hui.
+          let model: string | null = null;
+          const modelOptions = modelDialogOptions(ctx.models?.list?.() ?? []);
+          if (modelOptions.length > 0) {
+            const chosen = modelDialogChoice(
+              await ctx.ui.select(modelQuestionTitle(slug), modelOptions, { signal }),
+            );
+            if (chosen === null) return toolText("Aucune pipeline lancée : modèle non choisi.");
+            model = chosen.model;
+          }
+          const refusal = await deps.controllerFor(ctx).add({
+            name: slug,
+            description: intention,
+            deps: [],
+            auditSession: sessionFile,
+            model: model ?? undefined,
+          });
           if (refusal !== null) return toolText(`Error: lancement refusé : ${refusal}`, true);
           scan();
           return toolText(

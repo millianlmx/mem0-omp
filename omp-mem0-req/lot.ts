@@ -106,6 +106,13 @@ export type LotFeature = {
    * par une transition.
    */
   auditSession?: string;
+  /**
+   * Le modèle de la feature (S-1) : le sélecteur canonique `provider/id`, EXACTEMENT
+   * la valeur passée à `--model` sur tous ses runs. Absent = défaut OMP (aucun
+   * `--model`). Écrit une seule fois, à la création de la feature, et plus jamais :
+   * aucune transition de la chaîne ni aucun geste du panneau ne le modifie.
+   */
+  model?: string;
   addedAt: number;
   /** Instant d'entrée dans l'état courant : c'est lui que le panneau chronomètre. */
   sinceAt: number;
@@ -552,6 +559,11 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // Même patron : écrite seulement quand elle porte un chemin absolu ; toute autre
     // valeur est lue comme absente, sans rejeter la feature ni le lot.
     ...(typeof f.auditSession === "string" && path.isAbsolute(f.auditSession) ? { auditSession: f.auditSession } : {}),
+    // Le modèle (S-1) : écrit seulement s'il est non vide après `trim()` — toute
+    // autre valeur (`""`, `42`, `null`) est lue comme ABSENTE, jamais un rejet. La
+    // valeur n'est pas revalidée contre le catalogue : un modèle retiré depuis le
+    // choix reste écrit et transmis, et c'est le run qui échoue.
+    ...(typeof f.model === "string" && f.model.trim() !== "" ? { model: f.model } : {}),
     contractHash: asStringOrNull(f.contractHash),
     addedAt: num(f.addedAt, 0),
     sinceAt: num(f.sinceAt, 0),

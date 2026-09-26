@@ -4,6 +4,7 @@ import type { PipelinePhase } from "./contract.ts";
 import { lotReplyRefusal, runnable } from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
 import type { LotPanelActions } from "./lotController.ts";
+import type { ModelChoice } from "./models.ts";
 import type { HostComponents, SessionAssembly } from "./panelHost.ts";
 import { pendingDeps, replyPreview } from "./panelRows.ts";
 import type { PanelGlyphs, PanelRow } from "./panelRows.ts";
@@ -50,6 +51,12 @@ export type PipelinesPanelDeps = {
    * en continu.
    */
   lot?: LotPanelActions & { adopt?: () => boolean };
+  /**
+   * Les modèles connus de la session (S-3), capturés à l'ouverture de l'étape
+   * « Modèle » du flux d'ajout. Absente ou vide, l'étape n'existe pas et le flux
+   * reste nom → description → dépendances → aperçu.
+   */
+  modelChoices?: () => ModelChoice[];
   /** Horloge du temps écoulé : injectée, le temps affiché est donc testable. */
   now?: () => number;
   /** Ordonnanceur du rafraîchissement ; renvoie de quoi l'arrêter. */
@@ -73,7 +80,15 @@ export type PipelinesPanelDeps = {
    * zone. Absente (panneau de consultation), un rang d'historique reste fermé.
    */
   sessionReply?: (
-    target: { cwd: string; sessionFile: string; label: string; phase: PipelinePhase; inbox: string },
+    target: {
+      cwd: string;
+      sessionFile: string;
+      label: string;
+      phase: PipelinePhase;
+      inbox: string;
+      /** Le modèle de la feature dont ce rang est le worktree (S-5 §3), ou absent. */
+      model?: string | null;
+    },
     text: string,
   ) => Promise<string | null>;
 };
@@ -124,7 +139,7 @@ export function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
 export type ViewTarget =
   | { kind: "lot"; slug: string }
   | { kind: "inbox"; dir: string }
-  | { kind: "session"; cwd: string; sessionFile: string; label: string };
+  | { kind: "session"; cwd: string; sessionFile: string; label: string; model?: string | null };
 
 
 /**

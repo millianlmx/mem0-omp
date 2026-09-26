@@ -11,6 +11,7 @@ import { lotOmpBin, lotRunTimeoutMs } from "./lot.ts";
 import type { Lot } from "./lot.ts";
 import { createLotController } from "./lotController.ts";
 import type { LotController } from "./lotController.ts";
+import { modelDialogChoice, modelDialogOptions, modelPanelChoices, modelQuestionTitle } from "./models.ts";
 import { pipelinesPanelFactory } from "./panel.ts";
 import { hostComponents } from "./panelHost.ts";
 import { diskProbe, joinEntry } from "./panelSession.ts";
@@ -272,14 +273,21 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
     panelOpen = true;
     const stateDir = storeDir();
+    const repoRoot = (() => {
+      const root = resolveFeatureRoot(ctx.cwd);
+      return root.primary ?? root.dir;
+    })();
     const deps: PipelinesPanelDeps = {
       stateDir,
       components,
-      repoRoot: (() => {
-        const root = resolveFeatureRoot(ctx.cwd);
-        return root.primary ?? root.dir;
-      })(),
+      repoRoot,
       lot: workerMode() ? undefined : controllerFor(ctx),
+      /**
+       * Les modèles connus de la session (S-3) : l'étape « Modèle » du flux d'ajout
+       * s'ouvre sur cette liste. Vide (aucun modèle connu, ou `ctx.models` d'un hôte
+       * plus ancien), l'étape n'existe pas et le flux reste celui d'aujourd'hui.
+       */
+      modelChoices: () => modelPanelChoices(ctx.models?.list?.() ?? []),
       // La session VIVANTE de ce process : viser sa propre session est refusé (S-3).
       currentSessionFile: sessionFileOf(ctx as PipelineCtx),
       /**
@@ -523,6 +531,25 @@ export default function reqExtension(pi: ExtensionAPI) {
         return;
       }
 
+      // Le modèle de la feature (S-2) : demandé ICI — après la validation du nom,
+      // AVANT toute écriture. Une annulation ne laisse donc ni branche, ni worktree,
+      // ni session derrière elle. Sans interface ou sans modèle connu, aucune
+      // question n'est posée : la feature naît sans modèle (défaut OMP).
+      let model: string | null = null;
+      if (ctx.hasUI) {
+        const options = modelDialogOptions(ctx.models?.list?.() ?? []);
+        if (options.length > 0) {
+          const chosen = modelDialogChoice(
+            await ctx.ui.select(modelQuestionTitle(slug), options, { signal: undefined }),
+          );
+          if (chosen === null) {
+            ctx.ui?.notify?.("[req] choix du modèle annulé — rien n'a été créé, relance /req.", "warning");
+            return;
+          }
+          model = chosen.model;
+        }
+      }
+
       const branch = branchFor(slug);
       if (await branchTaken(run, root.dir, branch)) {
         ctx.ui?.notify?.(`[req] la branche ${branch} existe déjà — choisis un autre nom.`, "warning");
@@ -581,7 +608,13 @@ export default function reqExtension(pi: ExtensionAPI) {
       // feature fantôme dans le lot — en cours, sans fin possible, et sa branche
       // restante interdisait de relancer /req sous le même nom.
       const lotDriver = controllerFor(ctx);
-      const refused = lotDriver.enrol({ slug, name: typed || slug, branch: created.branch, worktree: created.path });
+      const refused = lotDriver.enrol({
+        slug,
+        name: typed || slug,
+        branch: created.branch,
+        worktree: created.path,
+        model,
+      });
       // Un lot conduit par une session vivante ne s'écrit pas (S-1) : la feature
       // n'y entre pas, et cette session le dit au lieu de laisser croire qu'elle
       // est pilotée par le lot de l'autre (elle garde la chaîne manuelle, S-14).
@@ -981,6 +1014,7 @@ export * from "./git.ts";
 export * from "./inbox.ts";
 export * from "./lot.ts";
 export * from "./lotController.ts";
+export * from "./models.ts";
 export * from "./panel.ts";
 export * from "./panelHost.ts";
 export * from "./panelRows.ts";
