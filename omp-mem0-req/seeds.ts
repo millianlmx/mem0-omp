@@ -123,6 +123,34 @@ export function buildSpecsSeed(extra: string): string {
 
 
 // ---------------------------------------------------------------------------
+// /audit — analyse le dépôt en lecture seule, propose des features, lance la
+// pipeline de celle que l'utilisateur choisit, puis relaie questions et jalons.
+// ---------------------------------------------------------------------------
+
+export const AUDIT_DIRECTIVE = `Tu es l'auditeur de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :
+1. Analyse le dépôt en LECTURE SEULE (read, grep, glob, lsp, mem0_search) : architecture, dette, tests, sécurité, documentation, conventions. N'écris, ne modifie et ne commite AUCUN fichier.
+2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` (liste à puces, chaque faiblesse avec le fichier ou le module concerné), puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi.
+3. Appelle ENSUITE l'outil \`audit_propose\` avec exactement ces faiblesses et ces features (mêmes noms, mêmes intentions). C'est lui qui demande à l'utilisateur quelle pipeline lancer et lui fait valider l'intention : ne pose jamais ce choix toi-même.
+4. Si une pipeline est lancée, tu en deviens le relais : chaque question d'un maillon (/req, /specs, /impl, /review) et chaque jalon t'arrive dans un message \`[audit]\` qui porte un identifiant d'élément. Traite CHAQUE élément dans le tour où il arrive, par exactement un appel d'outil :
+   - Question : réponds toi-même avec \`audit_reply\` seulement si l'audit, le contrat de la feature et le dépôt te donnent la réponse sans supposition ; sinon \`audit_escalate\`. Une question sur l'intention métier que l'audit ne tranche pas va TOUJOURS à l'utilisateur.
+   - Jalon « specs validées » : lis \`## Spécifications\` et \`## Lots\` du contrat indiqué ; \`audit_approve\` si elles servent l'intention validée, sinon \`audit_escalate\`.
+   - Jalon « revue propre » : lis \`## Revue\` du contrat indiqué ; \`audit_approve\` si la revue ne laisse aucun doute, sinon \`audit_escalate\`.
+   - Plafond de la boucle revue ⇄ correction : TOUJOURS \`audit_escalate\`, jamais de décision seul.
+   Avant un \`audit_escalate\`, écris en une phrase pourquoi tu ne tranches pas. N'utilise jamais l'outil \`ask\` pour relayer une question : seul \`audit_escalate\` transmet la réponse de l'utilisateur mot pour mot.
+5. N'annonce aucune commande et ne lance aucun maillon de toi-même : la chaîne est pilotée par le lot.`;
+
+
+/** Amorce de la session /audit. Fonction pure : `extra` = contexte ajouté sur la ligne de commande. */
+export function buildAuditSeed(repoDir: string, extra: string): string {
+  return (
+    `[audit] Session d'audit du dépôt ${repoDir}.\n\n` +
+    (extra !== "" ? `Contexte ajouté : ${extra}\n\n` : "") +
+    AUDIT_DIRECTIVE
+  );
+}
+
+
+// ---------------------------------------------------------------------------
 // /impl — implémente d'un trait les specs ET les lots figés dans le contrat, et
 // prouve chaque critère d'acceptation par un test qui porte son id (AC-<n>),
 // retrouvable par grep à /review. Ne redéfinit rien : contrat sans specs → arrêt,

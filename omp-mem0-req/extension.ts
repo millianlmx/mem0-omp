@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createAuditRelay } from "./audit.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
 import type { NextStep } from "./contract.ts";
 import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";
@@ -20,7 +21,7 @@ import type { PublishDeps } from "./publish.ts";
 import { runState } from "./runState.ts";
 import { SELF_MODULE_URL, buildConversationRunArgv, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
 import type { WorkerMode } from "./runs.ts";
-import { SYSTEM_DIRECTIVE_REQ, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
+import { SYSTEM_DIRECTIVE_REQ, buildAuditSeed, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { stateOfCwd } from "./state.ts";
 import { deleteRunningEntry, pipelineStateDir, runningIdFor } from "./store.ts";
 import type { PipelineCtx } from "./store.ts";
@@ -238,6 +239,12 @@ export default function reqExtension(pi: ExtensionAPI) {
     return controller;
   };
 
+  // --- /audit : le relais des questions et jalons d'une pipeline /audit -------
+  // Armé seulement dans une session ouverte par `/audit` (ou qui a lancé une
+  // feature /audit encore vivante) : aucune autre session ne voit ses outils ni
+  // sa minuterie.
+  const auditRelay = createAuditRelay({ pi, stateDir: storeDir, controllerFor, notify: notifyDurable });
+
   // --- /pipelines et alt+w : le panneau des pipelines en cours --------------
   // Un seul panneau par processus : tant qu'un overlay est monté, une seconde
   // ouverture ne monte rien (aucun overlay empilé, aucun doublon).
@@ -413,6 +420,14 @@ export default function reqExtension(pi: ExtensionAPI) {
     // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend.
     const controller = controllerFor(ctx);
     if (controller.adopt()) controller.start();
+    auditRelay.sync(ctx);
+  });
+
+  // Une bascule de session (`/new`, `/resume`, `/req`, `/audit`…) ouvre ou ferme
+  // le relais /audit : il suit la session COURANTE du process (S-6).
+  pi.on("session_switch", async (_event, ctx) => {
+    if (isSubagentSession(sessionFileOf(ctx as PipelineCtx)) || workerMode() || runOnly) return;
+    auditRelay.sync(ctx);
   });
 
   // Fermer la session pilote ne doit pas laisser des runs VIVANTS derrière elle :
@@ -421,6 +436,7 @@ export default function reqExtension(pi: ExtensionAPI) {
   // qu'aucun lot ne porte plus. On les tue donc explicitement, et la fin de
   // chaque run clôt son entrée (la reprise du lot repart d'un état propre).
   pi.on("session_shutdown", async () => {
+    auditRelay.disarm();
     try {
       runState.pumpStop?.();
       runState.pumpStop = null;
@@ -597,6 +613,51 @@ export default function reqExtension(pi: ExtensionAPI) {
         },
         { triggerTurn: false },
       );
+    },
+  });
+
+  // --- /audit : audite le dépôt, propose des features, lance et relaie -------
+  // L'analyse est celle du modèle (cadrée par AUDIT_DIRECTIVE) ; le choix, la
+  // validation de l'intention et le lancement passent par l'outil `audit_propose`,
+  // armé avec le relais sur la session neuve.
+  pi.registerCommand("audit", {
+    description:
+      "Audite le dépôt, propose des features et lance la pipeline de celle que tu choisis — questions et jalons relayés dans cette session",
+    handler: async (args, ctx) => {
+      if (!ctx.hasUI) {
+        ctx.ui?.notify?.("[audit] indisponible hors session interactive", "warning");
+        return;
+      }
+      const root = resolveFeatureRoot(ctx.cwd);
+      if (root.primary) {
+        ctx.ui?.notify?.(
+          `[audit] déjà dans le worktree d'une feature (${root.dir}) — /audit s'ouvre depuis le dépôt principal (${root.primary})`,
+          "warning",
+        );
+        return;
+      }
+      if (!fs.existsSync(path.join(root.dir, ".git"))) {
+        ctx.ui?.notify?.(`[audit] ${root.dir} n'est pas un dépôt git`, "warning");
+        return;
+      }
+      const seed = buildAuditSeed(root.dir, String(args ?? "").trim());
+      await ctx.waitForIdle?.();
+      if (typeof ctx.newSession === "function") {
+        try {
+          await ctx.newSession();
+        } catch (err) {
+          ctx.ui?.notify?.(
+            `[audit] nouvelle session impossible (${(err as Error).message}) — audit dans la session courante.`,
+            "warning",
+          );
+        }
+      }
+      const sessionFile = sessionFileOf(ctx as PipelineCtx);
+      if (sessionFile !== null) {
+        auditRelay.markCreated(sessionFile);
+        auditRelay.sync(ctx);
+      }
+      pi.sendUserMessage(seed);
     },
   });
 
@@ -913,6 +974,7 @@ export default function reqExtension(pi: ExtensionAPI) {
   });
 }
 
+export * from "./audit.ts";
 export * from "./chain.ts";
 export * from "./contract.ts";
 export * from "./git.ts";

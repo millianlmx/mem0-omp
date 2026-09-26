@@ -2,13 +2,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { contractHashOf, effectiveReviewVerdict, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
+import { contractHashOf, effectiveReviewVerdict, isReviewCapReason, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
 import { reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { clipTail } from "./panelWidth.ts";
@@ -22,7 +22,11 @@ import type { PanelPendingAsk, RunningEntry } from "./store.ts";
 
 // --- le pilote : une passe = lire, décider, lancer (S-2, S-4, S-11) ----------
 
-export type AddFeatureInput = { name: string; description: string; deps: string[] };
+/**
+ * `auditSession` : chemin absolu de la session /audit qui lance la feature (S-1).
+ * Une feature /audit démarre tout de suite, même dans un lot au brouillon.
+ */
+export type AddFeatureInput = { name: string; description: string; deps: string[]; auditSession?: string };
 
 
 /** Le refus d'une réponse à un `ask` (S-7) : la question se répond dans SA vue. */
@@ -34,8 +38,12 @@ export type LotPanelActions = {
   add(input: AddFeatureInput): Promise<string | null>;
   launch(): Promise<string | null>;
   remove(slug: string): Promise<string | null>;
-  /** Livre la réponse (feature `waiting`+`answer`) ou met le texte en file (`running`). */
-  answer(slug: string, text: string): Promise<string | null>;
+  /**
+   * Livre la réponse (feature `waiting`+`answer`) ou met le texte en file (`running`).
+   * `from: "audit"` : le relais /audit lui-même répond — une question relayée
+   * n'est pas refusée (S-3).
+   */
+  answer(slug: string, text: string, options?: { from?: "audit" }): Promise<string | null>;
   /** Ce que cette feature accepte comme écriture — la MÊME règle que `answer` applique. */
   reply(slug: string): RowReply;
   validate(slug: string): Promise<string | null>;
@@ -275,12 +283,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * Le run VIVANT d'une feature, tel que la règle d'écriture le lit (S-6) : son
    * entrée de magasin, où vit sa boîte. `liveRunFor` porte la règle — même cwd
    * RÉEL et pid propriétaire vivant — donc un pilote mort n'écrit plus rien : le
-   * magasin n'est pas encore réconcilié, c'est ici qu'on le constate.
+   * magasin n'est pas encore réconcilié, c'est ici qu'on le constate. Le relais
+   * /audit de la feature (S-3) est lu contre le pilote du lot LU.
    */
-  function liveWriterOf(feature: LotFeature): RowLiveWriter | null {
+  function liveWriterOf(lot: Lot, feature: LotFeature): RowLiveWriter {
+    const auditRelay = auditRelayOpen(stateDir, feature, lot.owner.pid, now());
     const entry = liveEntryOf(feature.worktree);
-    if (!entry) return null;
-    return { inbox: panelInboxDirOf(entry), pendingAsk: entry.pendingAsk ?? null };
+    if (!entry) return { auditRelay };
+    return { inbox: panelInboxDirOf(entry), pendingAsk: entry.pendingAsk ?? null, auditRelay };
   }
 
   /** L'entrée du run VIVANT de ce worktree, ou `null` (S-1, S-6) — jamais pour un worktree vide. */
@@ -329,9 +339,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
   }
 
-  /** Une transition qui appelle l'utilisateur est annoncée UNE fois (AC-11). */
+  /**
+   * Une transition qui appelle l'utilisateur est annoncée UNE fois (AC-11). Une
+   * attente (question, jalon) ou un plafond de revue d'une feature dont le relais
+   * /audit est ouvert est confié à la session /audit : aucune alerte ici (S-3).
+   */
   function emit(lot: Lot, feature: LotFeature, before: LotFeatureState): void {
     if (before === feature.state) return;
+    const relayable =
+      feature.state === "waiting" || (feature.state === "blocked" && isReviewCapReason(feature.stopReason));
+    if (relayable && auditRelayOpen(stateDir, feature, lot.owner.pid, now())) return;
     const alert = buildLotAlert(repo, feature);
     if (!alert) return;
     notify(alert.text);
@@ -1010,7 +1027,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       }
       const ask = entry.pendingAsk ?? null;
       if (ask) askedSlugs.add(feature.slug);
-      if (ask && alertedAsk.get(feature.slug) !== ask.toolCallId) {
+      // Une question confiée à la session /audit n'est pas annoncée ici, et
+      // `alertedAsk` ne bouge pas : l'alerte part à la première passe qui suit la
+      // fermeture du relais (S-3).
+      if (ask && alertedAsk.get(feature.slug) !== ask.toolCallId && !auditRelayOpen(stateDir, feature, lot.owner.pid, now())) {
         alertedAsk.set(feature.slug, ask.toolCallId);
         const text =
           `[pipeline] ${repo}/${feature.slug} attend ta réponse (maillon /${feature.phase}) — /pipelines\n` +
@@ -1352,9 +1372,17 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // nouvelle feature repart le lot, donc c'est la VRAIE fin qui sera annoncée.
       lot.recapAt = null;
       // Ajoutée à un lot LANCÉ, elle démarre à la passe suivante (AC-2) ; ajoutée à
-      // un lot au BROUILLON, elle attend `l` comme les autres (CHAIN-11).
-      const launched = lot.status === "running";
+      // un lot au BROUILLON, elle attend `l` comme les autres (CHAIN-11). Une
+      // feature /audit démarre toujours : le lot au brouillon passe en marche dans
+      // la MÊME écriture, ses autres features attendent toujours `l` (S-1).
+      const audit = input.auditSession !== undefined;
+      const launched = audit || lot.status === "running";
       const at = now();
+      if (audit && lot.status === "draft") {
+        lot.status = "running";
+        lot.launchedAt = at;
+        lot.reviewCap = cap;
+      }
       lot.features.push({
         slug,
         name: input.description.trim(),
@@ -1376,6 +1404,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         lastRunSessionFile: null,
         contractHash: null,
         launched,
+        ...(audit ? { auditSession: input.auditSession } : {}),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,
@@ -1447,9 +1476,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
      * vide se refuse AVANT la règle. Aucun `await` entre la lecture et l'écriture :
      * un seul écrivain.
      */
-    async answer(slug, text) {
+    async answer(slug, text, options) {
       const trimmed = text.trim();
       if (trimmed === "") return "réponse vide";
+      // Le relais /audit répond lui-même : la question qu'il relaie n'est pas
+      // refusée comme « confiée à /audit » (S-3).
+      const fromAudit = options?.from === "audit";
       // Les cas qui n'écrivent PAS le lot se règlent SANS revendiquer la propriété
       // (F1) : la boîte d'un run vivant et la question en vol s'atteignent depuis
       // n'importe quelle session — exiger la propriété ici faisait annoncer
@@ -1457,8 +1489,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // une touche qui ne marchait pas.
       const known = read();
       const knownFeature = known ? lotFeature(known, slug) : undefined;
-      if (knownFeature) {
-        const direct = rowReply(knownFeature, liveWriterOf(knownFeature));
+      if (known && knownFeature) {
+        const live = liveWriterOf(known, knownFeature);
+        const direct = rowReply(knownFeature, fromAudit ? { ...live, auditRelay: false } : live);
         if (direct.kind === "closed") return direct.reason;
         if (direct.kind === "ask") return ASK_REPLY_REFUSAL;
         if (direct.kind === "steer") return deliverSteer(direct.inbox, trimmed);
@@ -1470,7 +1503,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
       if (!feature) return `« ${slug} » n'est pas dans le lot`;
-      const reply = rowReply(feature, liveWriterOf(feature));
+      const live = liveWriterOf(lot, feature);
+      const reply = rowReply(feature, fromAudit ? { ...live, auditRelay: false } : live);
       if (reply.kind === "closed") return reply.reason;
       if (reply.kind === "ask") return ASK_REPLY_REFUSAL;
       if (reply.kind === "steer") return deliverSteer(reply.inbox, trimmed);
@@ -1506,7 +1540,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (!lot) return { kind: "closed", reason: "aucun lot pour ce dépôt" };
       const feature = lotFeature(lot, slug);
       if (!feature) return { kind: "closed", reason: `« ${slug} » n'est pas dans le lot` };
-      return rowReply(feature, liveWriterOf(feature));
+      return rowReply(feature, liveWriterOf(lot, feature));
     },
 
     async validate(slug) {

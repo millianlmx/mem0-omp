@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, toSlug } from "./git.ts";
-import { lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
+import { AUDIT_RELAY_FOOTER, auditRelayOpen, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import type { PanelTui } from "./panelHost.ts";
@@ -143,6 +143,12 @@ export type PanelModel = {
    * qui lui donne son maillon, son état et son temps (S-1).
    */
   live: Record<string, RunningEntry>;
+  /**
+   * Les features dont les questions et les jalons sont CONFIÉS à une session
+   * /audit ouverte (S-3), indexées par slug : le panneau ne les propose pas à la
+   * réponse. Relu à chaque rafraîchissement ; `{}` sans lot.
+   */
+  relayed: Record<string, true>;
   history: HistoryEntry[];
   /**
    * Le lot du dépôt de la session, `null` s'il n'y en a pas : dans ce cas le
@@ -495,15 +501,23 @@ export function readPanelModel(input: {
     if (feature && !(feature.slug in live)) live[feature.slug] = entry;
     else running.push(entry);
   }
+  const at = input.now ?? Date.now();
+  const relayed: Record<string, true> = {};
+  if (lot) {
+    for (const feature of features) {
+      if (auditRelayOpen(input.stateDir, feature, lot.owner.pid, at)) relayed[feature.slug] = true;
+    }
+  }
   const count = features.length + running.length + snapshot.history.length;
   return {
     running,
     live,
+    relayed,
     history: snapshot.history,
     lot,
     // Le pilote se lit ICI, à chaque passe : la reprise d'un lot orphelin
     // (`adopt`) appartient au panneau monté, pas au modèle (PANEL-4).
-    driver: panelDriver(lot, input.now ?? Date.now()),
+    driver: panelDriver(lot, at),
     mode: input.mode ?? { kind: "browse" },
     selection: clampSelection(input.selection ?? 0, count),
     notice: input.notice ?? null,
@@ -884,20 +898,25 @@ export function lotModeRows(mode: LotPanelMode, lot: Lot | null, innerW: number,
  * une question `ask` en vol se répondent ; un run vivant armé reçoit un texte, et
  * sans boîte il le met en file. `live` est facultatif — sans lui, la règle est
  * celle d'avant le canal (une file), et l'appel à deux arguments reste valide.
+ * `relayed` : une feature confiée à une session /audit ouverte (S-3) annonce
+ * d'abord le relais, sans réponse à sa question ni `v`/`y`.
  */
 export function lotFooterActions(
   features: LotFeature[],
   selection: number,
   live?: Record<string, RunningEntry | undefined> | null,
+  relayed?: Record<string, true> | null,
 ): string {
   const feature = selection >= 0 && selection < features.length ? features[selection] : undefined;
   if (!feature) return "aucune action";
   const actions: string[] = [];
-  const reply = rowReply(feature, live?.[feature.slug] ?? null);
+  const audit = relayed?.[feature.slug] === true;
+  if (audit) actions.push(AUDIT_RELAY_FOOTER);
+  const reply = rowReply(feature, { ...(live?.[feature.slug] ?? {}), auditRelay: audit });
   if (reply.kind === "reply" || reply.kind === "text" || reply.kind === "ask") actions.push("Entrée répondre");
   else if (reply.kind === "steer" || reply.kind === "queue") actions.push("Entrée écrire");
-  if (feature.state === "waiting" && feature.waitKind === "specs") actions.push("v valider");
-  if (feature.state === "waiting" && feature.waitKind === "review") actions.push("y accepter");
+  if (!audit && feature.state === "waiting" && feature.waitKind === "specs") actions.push("v valider");
+  if (!audit && feature.state === "waiting" && feature.waitKind === "review") actions.push("y accepter");
   if (feature.state === "blocked" || feature.state === "failed") actions.push("R relancer");
   if (feature.state === "pending") actions.push("x retirer");
   // L'abandon reste ouvert sur tout état qui n'est pas DÉJÀ clos (PANEL-11) : au
@@ -922,7 +941,7 @@ export function panelFooterActions(model: PanelModel, runningCount: number): str
   const selection = model.selection;
   const base =
     selection < features
-      ? lotFooterActions(model.lot?.features ?? [], selection, model.live)
+      ? lotFooterActions(model.lot?.features ?? [], selection, model.live, model.relayed)
       : selection < features + runningCount
         ? "aucune action"
         : selection < features + runningCount + model.history.length

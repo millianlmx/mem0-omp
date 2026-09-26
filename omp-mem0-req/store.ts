@@ -379,6 +379,57 @@ export function writeDelivery(dir: string, delivery: PanelDelivery): void {
 }
 
 
+// --- le fichier de relais /audit : qui relaie les questions d'une feature /audit --
+// Une session /audit ARMÉE écrit ce fichier à chaque balayage (battement) ; le
+// pilote et le panneau le lisent pour savoir si une question ou un jalon est
+// confié à /audit. Un fichier par session /audit, écrit atomiquement, retiré au
+// désarmement : un lecteur ne voit jamais qu'un relais entier ou aucun.
+
+/** Le battement d'une session /audit armée (S-2). */
+export type AuditRelayRecord = { version: 1; sessionFile: string; pid: number; heartbeatAt: number };
+
+
+/** `<stateDir>/audit` : les fichiers de relais des sessions /audit armées. */
+export function auditRelayDir(stateDir: string): string {
+  return path.join(stateDir, "audit");
+}
+
+
+/** `<stateDir>/audit/<sha1(path.resolve(sessionFile)).slice(0,16)>.json`. */
+export function auditRelayPath(stateDir: string, sessionFile: string): string {
+  const id = crypto.createHash("sha1").update(path.resolve(sessionFile)).digest("hex").slice(0, 16);
+  return path.join(auditRelayDir(stateDir), `${id}.json`);
+}
+
+
+/** Le relais d'une session : `null` s'il est absent, illisible, d'une autre version ou d'une autre session. */
+export function readAuditRelay(stateDir: string, sessionFile: string): AuditRelayRecord | null {
+  const raw = readJsonFile(auditRelayPath(stateDir, sessionFile));
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  if (r.version !== 1) return null;
+  if (typeof r.sessionFile !== "string" || path.resolve(r.sessionFile) !== path.resolve(sessionFile)) return null;
+  if (typeof r.pid !== "number" || !Number.isInteger(r.pid) || r.pid <= 0) return null;
+  if (typeof r.heartbeatAt !== "number" || !Number.isFinite(r.heartbeatAt)) return null;
+  return { version: 1, sessionFile: r.sessionFile, pid: r.pid, heartbeatAt: r.heartbeatAt };
+}
+
+
+export function writeAuditRelay(stateDir: string, record: AuditRelayRecord): void {
+  writeJsonAtomic(auditRelayPath(stateDir, record.sessionFile), record);
+}
+
+
+/** Retrait du relais : un fichier déjà absent est un succès silencieux ; ne jette jamais. */
+export function removeAuditRelay(stateDir: string, sessionFile: string): void {
+  try {
+    fs.unlinkSync(auditRelayPath(stateDir, sessionFile));
+  } catch {
+    // absent ou inaccessible : rien à retirer
+  }
+}
+
+
 /** La forme d'une livraison relue : `null` si le JSON est illisible ou la forme inconnue. */
 export function asDelivery(raw: unknown): PanelDelivery | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
