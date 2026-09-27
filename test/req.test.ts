@@ -8,6 +8,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildReqHandoff,
+  buildReleaseSeed,
   buildSpecsSeed,
   buildImplSeed,
   buildReviewSeed,
@@ -323,4 +324,14 @@ test("aucune notice du plugin ne porte « fin » isolé, même quand elle cite u
 
 test("buildReviewSeed : impose la forme lisible du verdict (« BLOQUANTS : aucun »)", () => {
   assert.match(buildReviewSeed(""), /- BLOQUANTS : aucun/);
+});
+test("req/AC-3 : la livraison ne demande plus de bump manuel de version", () => {
+  const seed = buildReleaseSeed({ slug: "une-feature", branch: "feat/une-feature" });
+  // Le bump appartient au job de release, APRÈS la fusion : la directive de
+  // livraison ne doit plus l'exiger, ni passer des versions au message de commit.
+  assert.doesNotMatch(seed, /Bumpe les versions/);
+  assert.doesNotMatch(seed, /versions bumpées/);
+  assert.match(seed, /job de release/);
+  assert.match(seed, /scripts\/no-manual-bump\.sh/);
+  assert.match(seed, /NE TOUCHE AUCUN fichier porteur de version/);
 });

@@ -1,30 +1,58 @@
 name: release
 
 # Un merge sur main (merge commit, squash ou rebase : les trois poussent sur main)
-# déclenche le moteur de release. Le commit de release lui-même ne relance rien :
-# les événements déclenchés par GITHUB_TOKEN ne créent aucun run de workflow.
+# déclenche le moteur de release : il ouvre une PR de release (branche
+# release/<sha de l'événement>), attend que les deux statuts requis passent, la
+# fusionne en squash, puis pousse les tags et publie les releases GitHub. Le job
+# ne pousse JAMAIS sur main : la protection de branche exige deux statuts qu'un
+# commit neuf n'a pas encore, donc un push direct rendrait
+# `remote: error: GH006: Protected branch update failed for refs/heads/main.`
 on:
   push:
     branches: [main]
 
-# Le défaut du dépôt est `read` : sans cette permission, le push du commit de
-# release, du tag et la création de la release échouent en 403.
+# Plus rien n'écrit avec le GITHUB_TOKEN du dépôt : tout passe par le jeton
+# dédié (secret RELEASE_TOKEN), y compris le checkout.
 permissions:
-  contents: write
+  contents: read
 
 # Deux merges rapprochés ne doivent pas se marcher dessus : le second attend le
-# premier (le moteur relit origin/main et repart de son état).
+# premier (le moteur relit origin/main et repart de son état). `queue: max` :
+# jusqu'à 100 runs en attente (FIFO) — avec le défaut `single`, un merge
+# intermédiaire perdrait silencieusement son run et sa publication n'aurait
+# jamais lieu tant qu'aucun merge ne suit.
 concurrency:
   group: release-main
+  queue: max
   cancel-in-progress: false
 
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # L'attente des statuts requis (budget par défaut 1200 s) plus une publication
+    # par version, rattrapage compris.
+    timeout-minutes: 30
     steps:
+      # Première étape, avant tout checkout : sans le jeton dédié, rien ne peut
+      # être publié — les événements créés par le jeton du dépôt ne déclenchent
+      # aucun run, donc une PR de release ouverte avec lui resterait à « statuts
+      # requis manquants » pour toujours. Échouer ici évite un run à moitié fait,
+      # et il n'y a AUCUN repli sur le jeton du dépôt : le secret ci-dessous est la
+      # seule identité de publication (cf. PUBLISHING.md, § Jeton de release).
+      - name: Vérifier le jeton de release
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          if [ -z "$RELEASE_TOKEN" ]; then
+            echo "::error::secret RELEASE_TOKEN absent — le job de release ne peut pas publier. Crée-le (PUBLISHING.md, § Jeton de release), puis relance cette exécution."
+            exit 1
+          fi
       - uses: actions/checkout@v4
         with:
+          # `token` : l'identité DÉDIÉE. Ses push et sa PR déclenchent les
+          # workflows (donc check.yml sur la PR de release) ; ceux du
+          # GITHUB_TOKEN du dépôt n'en déclenchent aucun.
+          token: ${{ secrets.RELEASE_TOKEN }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -33,12 +61,14 @@ jobs:
       # avec l'état de main, avant que le moteur ne lise origin/main.
       - name: Récupérer les tags et l'état de main
         run: git fetch --force --tags origin "+refs/heads/main:refs/remotes/origin/main"
-      # Aucune autre étape : le moteur écrit, prouve avec check.sh, committe,
-      # pousse, tague et publie. Le job de release lance check.sh lui-même parce
-      # que le push du commit de release ne relance pas check.yml.
+      # Aucune autre étape : le moteur écrit, prouve avec check.sh, committe sur
+      # la branche de release, ouvre et fait fusionner la PR, tague et publie. Le
+      # job de release lance check.sh lui-même parce que la fusion de sa PR ne
+      # relance pas forcément check.yml avant qu'il n'ait fini.
       - name: Décider, écrire, prouver et publier
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           node --experimental-strip-types scripts/release.ts \
             --before "${{ github.event.before }}" \

@@ -14,9 +14,20 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # La garde anti-bump manuel compare la base et la tête de la PR : sans
+          # l'historique complet, `git merge-base` ne trouve pas la base.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      # Une ÉTAPE du job `check` existant, jamais un job séparé : les deux seuls
+      # statuts requis de `main` sont les deux déclinaisons de ce job, donc un job
+      # nouveau ne bloquerait rien. Le bump appartient au job de release ; une PR
+      # qui monte une version à la main échoue ici.
+      - name: Refuser un bump de version manuel dans la PR
+        if: github.event_name == 'pull_request'
+        run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
       - name: Installer l'hôte OMP (types et SDK)
         run: |
           npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.2.11 @types/node@22

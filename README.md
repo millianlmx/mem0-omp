@@ -23,10 +23,12 @@ mem0-omp/                              racine = marketplace OMP
 │       panelHost.ts                   le panneau /pipelines et la vue de session
 ├── mem0-stack/                        mem0 + Qdrant, en local
 │   └── mem0-http/                     l'API HTTP et sa config mem0
+├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
-├── scripts/release.ts                 bump, changelog, tag et release au merge
+├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
+├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR
 └── .github/workflows/                 check.yml (PR), release.yml (merge sur main)
 ```
 
@@ -638,7 +640,8 @@ s'affiche tel quel au lieu d'être avalé.
   reprend exactement là où il s'était arrêté. Hors lot, un run n'est pas armé : le maillon
   garde ses questions en clair, reprises dans l'alerte durable du transcript.
 - **La livraison** : après ton accord, un dernier run met **un** commit (message
-  conventionnel, versions bumpées si un plugin change) et écrit le corps de la PR ; le
+  conventionnel, aucune version touchée — le bump appartient au job de release, qui
+  le calcule après la fusion) et écrit le corps de la PR ; le
   pilote **pousse la branche vers l'URL HTTPS du dépôt** (jamais `origin` en SSH) puis
   ouvre la PR avec `gh` — son URL est consignée dans le panneau.
 - **Relancer** (`R`) repart du maillon courant d'une feature bloquée, échouée **ou
@@ -751,14 +754,18 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux
 statuts : le merge est bloqué.
 
-Un merge sur `main` qui touche un plugin déclenche `.github/workflows/release.yml` :
-`scripts/release.ts` lit les commits conventionnels de la fusion (`fix` ⇒ patch,
-`feat` ⇒ mineure, rupture déclarée ⇒ majeure), bumpe les plugins touchés, met à
-jour `CHANGELOG.md`, puis committe, tague `<plugin>-v<version>` et publie une
-release GitHub portant les commandes d'installation et de mise à jour — plus une
-section « ce qui casse / quoi faire » quand le bump est majeur. Un merge sans
-fichier de plugin ne bumpe rien et ne publie rien. Les détails, les règles de
-décision et la commande de protection de branche sont dans `PUBLISHING.md`.
+Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
+**jamais** directement sur `main` (la protection de branche refuse un commit neuf
+sans statuts) : il ouvre une PR de release, attend que les deux statuts passent,
+la fusionne en squash, puis pousse les tags `<plugin>-v<version>` et publie les
+releases GitHub. Les versions elles-mêmes sont décidées **par le job** — `fix` ⇒
+patch, `feat` ⇒ mineure, rupture déclarée ⇒ majeure, d'après les commits touchant
+chaque plugin — et non par la PR mergée : personne ne monte une version à la main
+(une PR qui le tente échoue en CI). `CHANGELOG.md` est écrit au même moment, une
+section datée par version publiée, et les versions historiques jamais publiées sont
+rattrapées par le même run. Le jeton dédié que ce job exige, ses permissions et sa
+création sont dans `PUBLISHING.md` § Jeton de release ; les règles de décision, le
+flux en six étapes et la commande de protection de branche aussi.
 
 ## Changements par rapport à la v1
 
