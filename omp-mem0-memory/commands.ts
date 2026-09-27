@@ -1,4 +1,5 @@
-// Les 8 commandes de l'extension : état et amorçage mémoire, brief, dédup, relance d'écriture, phases.
+// Les 9 commandes de l'extension : état et amorçage mémoire, brief, dédup, purge des
+// procédures, relance d'écriture, phases.
 import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { initPrompt, scanStack } from "./bootstrap.ts";
 import { BRIEF_REF_PATH, BRIEF_VERSION, checkBrief } from "./brief.ts";
@@ -16,11 +17,12 @@ import {
 import type { DedupeEntry } from "./dedupe.ts";
 import { mem0, mem0Fetch, memoryLine, rows } from "./mem0Client.ts";
 import { DEFAULT_PHASES, mutatePhases, phaseWriteError, phases } from "./phases.ts";
+import { planPurge, renderPurgePreview } from "./purge.ts";
 import { projectId, rootOf, stateOf } from "./state.ts";
 import type { Mem0Runtime } from "./state.ts";
 
 /**
- * Les 8 commandes, chacune avec sa description — recopiée dans le tableau
+ * Les 9 commandes, chacune avec sa description — recopiée dans le tableau
  * `commands` du catalogue marketplace, que scripts/check.sh compare à ces
  * appels. `pi` sert à mem0-init et mem0-save, qui démarrent un tour.
  */
@@ -242,6 +244,86 @@ export function registerMem0Commands(pi: ExtensionAPI, rt: Mem0Runtime): void {
           (deleted.length ? `\n  supprimés : ${deleted.join(", ")}` : "") +
           (failures.length ? `\n  ${failures.length} échec(s) : ${failures.join(" · ")}` : ""),
         failures.length ? "warning" : "info",
+      );
+    },
+  });
+
+  pi.registerCommand("mem0-purge-procedures", {
+    description:
+      "Liste les souvenirs procéduraux du projet (metadata.memory_type = \"procedural_memory\") " +
+      "avec leur id et leur texte intégral. Simulation par défaut, rien n'est supprimé : " +
+      "l'aperçu montre exactement ce qui partirait. --apply supprime la liste entière, sans " +
+      "exception ni moyen d'épargner un souvenir, et le rapport cite les ids supprimés. " +
+      "Ne touche que la scope du projet, jamais la mémoire transverse",
+    handler: async (args: string, ctx: ExtensionCommandContext) => {
+      const apply = String(args ?? "").includes("--apply");
+      const scope = projectId(ctx.cwd);
+
+      // Lignes réseau non validées : `unknown[]` plutôt qu'un `any[]` — `planPurge`
+      // porte les gardes de forme, la commande n'a rien à supposer.
+      let all: unknown[];
+      try {
+        all = rows(await mem0.getAll(scope));
+      } catch (err) {
+        ctx.ui.notify(`[mem0] injoignable sur ${MEM0_HTTP_URL} : ${(err as Error).message}`, "error");
+        return;
+      }
+
+      const { targets, anonymous } = planPurge(all);
+      const found = targets.length;
+
+      // `renderPurgePreview([])` vaut "": les segments vides sont écartés pour
+      // qu'une scope peuplée de procéduraux tous anonymes ne rende pas une ligne
+      // blanche à la place de l'aperçu — le compte, lui, reste dit.
+      if (found + anonymous === 0) {
+        ctx.ui.notify(
+          `[mem0] "${scope}" : aucun souvenir procédural — rien à purger (${all.length} souvenir(s) dans la scope).`,
+          "info",
+        );
+        return;
+      }
+
+      if (!apply) {
+        ctx.ui.notify(
+          [
+            `[mem0] "${scope}" : ${found + anonymous} souvenir(s) procédural(aux) sur ${all.length} — simulation, rien n'est supprimé.`,
+            targets.length ? renderPurgePreview(targets) : "",
+            anonymous ? `  ${anonymous} souvenir(s) procédural(aux) sans id — non supprimables.` : "",
+            `/mem0-purge-procedures --apply supprime ces ${found} souvenir(s).`,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          "info",
+        );
+        return;
+      }
+
+      // Un DELETE par cible, EN SÉRIE, sans borne ni épargne (B-2 : aucun moyen
+      // d'épargner un souvenir). L'échec est isolé par id : un id déjà disparu
+      // rend 500 côté serveur (delete unitaire, aucun lot), c'est un échec
+      // ordinaire — interrompre la boucle laisserait des procéduraux derrière.
+      const deleted: string[] = [];
+      const failures: string[] = [];
+      for (const target of targets) {
+        try {
+          await mem0.delete(target.id);
+          deleted.push(target.id);
+        } catch (err) {
+          failures.push(`[${target.id}] ${(err as Error).message}`);
+        }
+      }
+      // La base a changé sous le cache local : sommaire et agrafage seraient faux.
+      const st = stateOf(rt, ctx);
+      st.mem = null;
+      st.index = null;
+      // Les ids supprimés partent dans le rapport : c'est la seule trace, et elle
+      // est voulue — B-2 interdit tout fichier de trace.
+      ctx.ui.notify(
+        `[mem0] "${scope}" : ${deleted.length}/${found} souvenir(s) procédural(aux) supprimé(s)` +
+          (deleted.length ? `\n  supprimés : ${deleted.join(", ")}` : "") +
+          (anonymous ? `\n  ${anonymous} souvenir(s) procédural(aux) sans id — non supprimables.` : "") +
+          (failures.length ? `\n  ${failures.length} échec(s) : ${failures.join(" · ")}` : ""),
+        failures.length || anonymous ? "warning" : "info",
       );
     },
   });
