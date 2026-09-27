@@ -1,7 +1,7 @@
 // Tests de HANDLER du plugin MÉMOIRE (omp-mem0-memory/extension.ts).
 //
 // La suite ne couvrait que les fonctions pures exportées du plugin (selectRelevant,
-// buildIndex, planDedupe) : les corps des 8 commandes, des 4 tools et des hooks
+// buildIndex, planDedupe) : les corps des 9 commandes, des 4 tools et des hooks
 // n'étaient jamais exécutés, ni par esbuild (qui efface les types) ni par
 // `node --test`. C'est exactement par là qu'est passée, côté plugin frère, la
 // classe de bug « identifiant indéfini dans un handler → ReferenceError à
@@ -79,6 +79,12 @@ type Service = {
   health: { ok: boolean };
   /** Toutes les requêtes sortantes échouent (chemin d'erreur de /mem0-status). */
   offline: boolean;
+  /**
+   * Ids dont le `DELETE` rend 500 alors que la ligne est servie : modélise ce que
+   * le serveur fait d'un id disparu (`AsyncMemory.delete` lève, la route ne
+   * rattrape pas) — donc un id périmé entre la lecture et la boucle de purge.
+   */
+  failDelete: string[];
   calls: Call[];
 };
 
@@ -89,6 +95,7 @@ const service: Service = {
   globalSearch: [],
   health: { ok: true },
   offline: false,
+  failDelete: [],
   calls: [],
 };
 
@@ -99,6 +106,7 @@ function resetService(): void {
   service.globalSearch = [];
   service.health = { ok: true };
   service.offline = false;
+  service.failDelete = [];
   service.calls = [];
 }
 
@@ -117,6 +125,12 @@ function jsonResponse(payload: unknown): Response {
   return res as unknown as Response;
 }
 
+/** Doublure de `Response` en échec : `mem0Fetch` lit `ok`, `status` et `text()`. */
+function errorResponse(status: number, body: string): Response {
+  const res = { ok: false, status, json: async () => JSON.parse(body), text: async () => body };
+  return res as unknown as Response;
+}
+
 const realFetch = globalThis.fetch;
 
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
@@ -132,6 +146,25 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   }
   if (target.includes("/memory/search")) {
     return jsonResponse({ results: body?.agent_id === "_global" ? service.globalSearch : service.search });
+  }
+  // Vraie route `DELETE /memory/{id}` : elle retire la ligne et rend 500 quand
+  // l'id n'existe pas (`AsyncMemory.delete` lève, la route ne rattrape pas) —
+  // c'est ce qui fait échouer un id périmé entre la lecture et la suppression.
+  if (method === "DELETE") {
+    const id = decodeURIComponent(new URL(target).pathname.slice("/memory/".length));
+    if (service.failDelete.includes(id)) {
+      return errorResponse(500, `Memory with id ${id} not found`);
+    }
+    for (const scope of [service.project, service.global]) {
+      const at = scope.findIndex(
+        (m) => typeof m === "object" && m !== null && "id" in m && String(m.id) === id,
+      );
+      if (at >= 0) {
+        scope.splice(at, 1);
+        return jsonResponse({ ok: true });
+      }
+    }
+    return errorResponse(500, `Memory with id ${id} not found`);
   }
   return jsonResponse({ ok: true });
 }) as typeof fetch;
@@ -642,6 +675,178 @@ test("mem0-dedupe simule par défaut (aucun DELETE) et supprime seulement en --a
   assert.equal(deletes.length, 1);
   assert.match(deletes[0]!.url, /\/memory\/drop-1$/);
   assert.match(notices.at(-1)!.message, /1 doublon\(s\) supprimé\(s\)/);
+});
+
+// ---------------------------------------------------------------------------
+// /mem0-purge-procedures : purge des souvenirs procéduraux de la scope
+// ---------------------------------------------------------------------------
+
+/** Ligne servie par `GET /memory/all`, avec la métadonnée qui décide du type. */
+function memoryRow(id: string, memory: string, metadata: unknown = null) {
+  return { id, memory, metadata, hash: `h-${id}`, updated_at: "2026-09-27T00:00:00Z", agent_id: "plugin-handlers-fixture" };
+}
+
+const PROCEDURE = { memory_type: "procedural_memory" };
+
+test("purge/AC-1 : la simulation liste l'id et le texte des procéduraux, et rien des autres", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  const proc1 = "## Summary of the agent's execution history — première procédure";
+  const proc2 = "procédure deux : déployer le stack puis relire le contrat";
+  service.project = [
+    memoryRow("p-1", proc1, { ...PROCEDURE, tags: "audit" }),
+    memoryRow("p-2", proc2, PROCEDURE),
+    memoryRow("f-1", "fait sans métadonnée", null),
+    memoryRow("f-2", "fait portant une autre valeur de type", { memory_type: "fact" }),
+  ];
+
+  await app.commands.get("mem0-purge-procedures")!("", ctx);
+
+  assert.equal(notices.length, 1, "une seule notice");
+  const notice = notices[0]!;
+  assert.equal(notice.type, "info");
+  for (const [id, text] of [
+    ["p-1", proc1],
+    ["p-2", proc2],
+  ] as const) {
+    assert.ok(notice.message.includes(`[${id}]`), `l'id ${id} est cité`);
+    assert.ok(notice.message.includes(text), `le texte intégral de ${id} est affiché`);
+  }
+  for (const [id, text] of [
+    ["f-1", "fait sans métadonnée"],
+    ["f-2", "fait portant une autre valeur de type"],
+  ] as const) {
+    assert.ok(!notice.message.includes(`[${id}]`), `${id} n'est pas listé`);
+    assert.ok(!notice.message.includes(text), `le texte de ${id} n'apparaît pas`);
+  }
+  assert.match(notice.message, /2 souvenir\(s\) procédural\(aux\) sur 4/);
+  assert.match(notice.message, /simulation, rien n'est supprimé/);
+  const writes = service.calls.filter((c) => c.method !== "GET");
+  assert.equal(writes.length, 0, `aucune requête d'écriture en simulation (${JSON.stringify(writes)})`);
+});
+
+test("purge/AC-2 : une scope sans procédural annonce qu'il n'y a rien à purger, même en --apply", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  const purge = app.commands.get("mem0-purge-procedures")!;
+  service.project = [memoryRow("f-1", "fait sans métadonnée"), memoryRow("f-2", "fait typé autrement", { memory_type: "fact" })];
+
+  await purge("", ctx);
+  const simulated = notices.at(-1)!;
+  assert.match(simulated.message, /aucun souvenir procédural — rien à purger/);
+  assert.match(simulated.message, /2 souvenir\(s\) dans la scope/);
+
+  notices.length = 0;
+  await purge("--apply", ctx);
+  assert.equal(notices.at(-1)!.message, simulated.message, "--apply rend le MÊME rapport");
+
+  // Scope vide : même conclusion, le compte tombe à zéro.
+  service.project = [];
+  notices.length = 0;
+  await purge("--apply", ctx);
+  assert.match(notices.at(-1)!.message, /aucun souvenir procédural — rien à purger \(0 souvenir\(s\) dans la scope\)/);
+  assert.equal(callsTo("/memory/f-1", "DELETE").length, 0);
+  assert.equal(service.calls.filter((c) => c.method !== "GET").length, 0, "aucune écriture, ni en simulation ni en --apply");
+});
+
+test("purge/AC-3 : --apply supprime chaque procédural visé et cite les ids supprimés", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  service.project = [
+    memoryRow("p-1", "procédure une", PROCEDURE),
+    memoryRow("f-1", "fait sans métadonnée", null),
+    memoryRow("p-2", "procédure deux", PROCEDURE),
+  ];
+
+  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+
+  assert.equal(callsTo("/memory/p-1", "DELETE").length, 1, "un DELETE exactement, pour p-1");
+  assert.equal(callsTo("/memory/p-2", "DELETE").length, 1, "un DELETE exactement, pour p-2");
+  const notice = notices.at(-1)!;
+  assert.equal(notice.type, "info");
+  assert.match(notice.message, /2\/2 souvenir\(s\) procédural\(aux\) supprimé\(s\)/);
+  assert.match(notice.message, /supprimés : p-1, p-2/, "les ids dans l'ordre des cibles");
+
+  // Scope relue : plus aucun procédural — une seconde invocation le confirme.
+  notices.length = 0;
+  await app.commands.get("mem0-purge-procedures")!("", ctx);
+  assert.match(notices.at(-1)!.message, /aucun souvenir procédural — rien à purger \(1 souvenir\(s\) dans la scope\)/);
+});
+
+test("purge/AC-4 : la purge ne touche aucun non-procédural de la scope", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx } = mkCtx(repo);
+  const facts = [memoryRow("f-1", "fait sans métadonnée", null), memoryRow("f-2", "fait typé autrement", { memory_type: "fact" })];
+  service.project = [memoryRow("p-1", "procédure une", PROCEDURE), ...facts, memoryRow("p-2", "procédure deux", PROCEDURE)];
+  const total = service.project.length;
+
+  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+
+  for (const call of service.calls.filter((c) => c.method !== "GET")) {
+    const touched = `${call.url} ${JSON.stringify(call.body ?? "")}`;
+    assert.ok(!touched.includes("f-1") && !touched.includes("f-2"), `aucune écriture ne vise un fait : ${touched}`);
+    assert.ok(!touched.includes("fait sans métadonnée") && !touched.includes("fait typé autrement"), `aucune écriture ne porte un texte de fait : ${touched}`);
+  }
+  // Relu après suppression : mêmes lignes, mêmes ids, mêmes textes, même ordre.
+  assert.deepEqual<unknown[]>(service.project, facts);
+  assert.equal(service.project.length, total - 2, "le total ne baisse que du nombre de procéduraux");
+});
+
+test("purge/AC-5 : la purge ne vise que la scope du projet, jamais la mémoire transverse", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  const transverse = memoryRow("p-global", "procédure transverse", PROCEDURE);
+  service.global = [transverse];
+  service.project = [memoryRow("p-projet", "procédure du projet", PROCEDURE), memoryRow("f-projet", "fait du projet", null)];
+
+  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+
+  const deletes = service.calls.filter((c) => c.method === "DELETE");
+  assert.deepEqual<string[]>(
+    deletes.map((c) => new URL(c.url).pathname),
+    ["/memory/p-projet"],
+    "seul l'id lu dans la scope du projet reçoit un DELETE",
+  );
+  assert.match(notices.at(-1)!.message, /supprimés : p-projet/);
+  assert.deepEqual<unknown[]>(service.global, [transverse], "la procédure transverse est intacte");
+
+  const reads = service.calls.filter((c) => c.url.includes("/memory/all"));
+  assert.equal(reads.length, 1, "une seule lecture");
+  assert.match(reads[0]!.url, /agent_id=plugin-handlers-fixture/);
+  assert.equal(service.calls.filter((c) => c.url.includes("_global")).length, 0, "aucun appel à la scope transverse");
+});
+
+// Un id périmé (500 côté serveur) ne doit ni interrompre la boucle ni passer pour
+// une suppression réussie : la ligne « supprimés » est la seule trace, l'y mettre
+// ferait croire à une purge complète.
+test("mem0-purge-procedures isole un échec unitaire et ne le compte pas comme supprimé", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  service.project = [memoryRow("p-absent", "procédure périmée", PROCEDURE), memoryRow("p-present", "procédure vivante", PROCEDURE)];
+  // La ligne est servie mais le DELETE échoue : c'est l'id disparu entre la lecture et la boucle.
+  service.failDelete = ["p-absent"];
+
+  await app.commands.get("mem0-purge-procedures")!("--apply", ctx);
+
+  const notice = notices.at(-1)!;
+  assert.equal(notice.type, "warning");
+  assert.match(notice.message, /1\/2 souvenir\(s\) procédural\(aux\) supprimé\(s\)/);
+  assert.match(notice.message, /\n {2}supprimés : p-present$/m, "seul le succès figure dans les supprimés");
+  assert.match(notice.message, /1 échec\(s\) : \[p-absent\] mem0-http 500: /);
+  assert.equal(callsTo("/memory/p-absent", "DELETE").length, 1, "la cible en échec a bien reçu son DELETE");
+  assert.equal(callsTo("/memory/p-present", "DELETE").length, 1, "la boucle est allée au bout");
 });
 
 test("mem0-save envoie l'amorce d'écriture qui correspond à la session", async () => {

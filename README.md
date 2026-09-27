@@ -219,6 +219,17 @@ fait désormais échouer la construction de l'image, pas la première requête.
   fusionner à la main avec `mem0_update` plutôt que supprimer. Aucune paire n'est
   masquée. `--strict` ne traite que les recouvrements quasi totaux, `--scope global`
   cible la mémoire transverse. Avec `--apply`, le rapport liste les ids supprimés.
+- `/mem0-purge-procedures` — liste les souvenirs **procéduraux** du projet, c'est-à-dire
+  ceux dont la métadonnée porte `memory_type = "procedural_memory"` (écrits par
+  `mem0_add kind:"procedure"` avant que le serveur ne stocke ce texte mot pour mot).
+  **Simulation par défaut, rien n'est supprimé sans `--apply`.** L'aperçu montre l'id
+  et le **texte intégral** de chaque procédural — c'est lui qu'on détruit, un id ne se
+  relit pas — et dit combien de lignes de la scope sont visées au total. `--apply`
+  supprime la liste entière, **sans exception ni moyen d'épargner un souvenir**, et le
+  rapport cite les ids supprimés ; **aucun fichier de trace n'est écrit**, le rapport
+  affiché est la seule trace. Les procéduraux sans id utilisable sont annoncés mais non
+  supprimables (le `DELETE` est unitaire), et seule la scope du projet est visée : la
+  mémoire transverse n'est jamais touchée ici.
 - `/mem0-save` — demande à l'agent d'écrire maintenant ce que la session a produit
   de durable, sans attendre la fin de session.
 - `/add-phase NOM BRIEF` — enregistre une phase et le rôle d'agent associé.

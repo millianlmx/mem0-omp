@@ -33,6 +33,7 @@
         "mem0-init",
         "mem0-brief",
         "mem0-dedupe",
+        "mem0-purge-procedures",
         "mem0-save",
         "add-phase",
         "set-phase",

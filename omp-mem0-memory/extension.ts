@@ -47,7 +47,7 @@ export default function mem0MemoryExtension(pi: ExtensionAPI) {
   registerRecallRenderer(pi);
   registerMem0Tools(pi, rt);
 
-  // Les 8 commandes : la surface (nom + description, recopiée dans le
+  // Les 9 commandes : la surface (nom + description, recopiée dans le
   // catalogue marketplace) et le corps vivent ensemble dans commands.ts.
   registerMem0Commands(pi, rt);
 
@@ -126,6 +126,7 @@ export * from "./config.ts";
 export * from "./dedupe.ts";
 export * from "./mem0Client.ts";
 export * from "./phases.ts";
+export * from "./purge.ts";
 export * from "./recall.ts";
 export * from "./state.ts";
 export * from "./summary.ts";
