@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-memory 2.11.0 — 2026-09-27
+
+- feat(memory): /mem0-purge-procedures — inventorier et supprimer les souvenirs procéduraux (aucun bump) (#29) (927c63b)
+
 ## omp-mem0-memory 2.10.1 — 2026-09-27
 
 - fix(http,memory): une procédure est stockée mot pour mot, sans réécriture LLM (aucun bump) (bf8c1db)
