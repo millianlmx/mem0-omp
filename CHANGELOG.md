@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-memory 2.10.0 — 2026-09-27
+
+- feat(memory): masquage des secrets élargi (Anthropic, OpenAI projet, GitHub PAT, Slack, PEM entier, identifiants d'URL) (da6e8f8)
+
 ## omp-mem0-req 0.19.0 — 2026-09-27
 
 - feat(release,ci): la release passe par une PR auto-mergée — bump unique par le job, CHANGELOG et rattrapage (e68b3fb)
