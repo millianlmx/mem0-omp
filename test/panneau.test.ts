@@ -497,7 +497,7 @@ const KEYS = {
 };
 
 type PanelHarness = {
-  component: { render(width: number): string[]; handleInput(data: string): void; dispose(): void };
+  component: { render(width: number): string[]; handleInput(data: string): void; refresh(): void; dispose(): void };
   tui: { terminal: { rows?: number }; requestRender: () => void };
   screen: (width?: number) => string;
   closed: () => number;
@@ -586,7 +586,6 @@ function countingActions(): { actions: LotPanelActions; calls: string[] } {
 function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? "depot/feature",
     phase: "req",
     state: "running",
@@ -1542,8 +1541,8 @@ test("panneau/AC-8 : tout geste qui change l'état du lot s'annonce avant d'agir
       now: () => 1_700_000_000_000,
       schedule: () => () => {},
     });
-    assert.match(await other.answer("inconnue", "coucou"), /n'est pas dans le lot/);
-    assert.match(await other.answer("fini", "coucou"), /rien à répondre : la feature est terminé/);
+    assert.match((await other.answer("inconnue", "coucou")) ?? "", /n'est pas dans le lot/);
+    assert.match((await other.answer("fini", "coucou")) ?? "", /rien à répondre : la feature est terminé/);
     assert.deepEqual(other.reply("inconnue"), { kind: "closed", reason: "« inconnue » n'est pas dans le lot" });
     assert.deepEqual(other.reply("alpha"), { kind: "queue", phase: "impl" });
     assert.equal(await other.answer("alpha", "   "), "réponse vide", "un tampon vide se refuse avant la règle");

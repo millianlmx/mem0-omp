@@ -57,6 +57,7 @@ import reqExtension, {
   type LotRunnerResult,
   type ModelChoice,
   type PanelGlyphs,
+  type PipelinePhase,
   type PipelinesPanelDeps,
 } from "../omp-mem0-req/extension.ts";
 
@@ -1228,7 +1229,7 @@ test("modele/AC-4 : tous les runs de la feature — maillon, poursuite, relance,
     seedLot(stateDir, repoRoot, [
       feature("alpha", { model: MODEL_X, worktree, branch: "feat/alpha", state: "done", phase: "review", endedAt: T0 }),
     ]);
-    const seen: Array<{ cwd: string; sessionFile: string; label: string; phase: string; inbox: string; model?: string | null }> = [];
+    const seen: Array<{ cwd: string; sessionFile: string; label: string; phase: PipelinePhase; inbox: string; model?: string | null }> = [];
     const panel = mountPanel(stateDir, {
       repoRoot,
       sessionReply: async (target, text) => {

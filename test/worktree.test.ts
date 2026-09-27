@@ -377,7 +377,7 @@ test("helpers de chemin : nom, base, slug, gitfile", () => {
   assert.equal(toSlug("  V2.1_beta!!  "), "v2-1-beta");
   assert.equal(toSlug("----"), null);
   assert.equal(toSlug("   "), null);
-  assert.equal(toSlug("x".repeat(60)).length, 40);
+  assert.equal(toSlug("x".repeat(60))?.length, 40);
   assert.equal(toSlug(`${"y".repeat(39)}-trop`), "y".repeat(39), "la troncature ne laisse pas de tiret de queue");
 
   const env = (value?: string) => ({ MEM0_PIPELINE_WORKTREES_DIR: value });

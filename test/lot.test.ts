@@ -2206,7 +2206,7 @@ test("le récap nomme le décompte exact et omet les catégories vides", () => {
 // Le panneau
 // ---------------------------------------------------------------------------
 
-const emptyModel: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0 };
+const emptyModel: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0, relayed: {} };
 
 test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et son état", async () => {
   const states: Array<[LotFeatureState, string]> = [
@@ -2550,7 +2550,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   };
   const opts = { width: 64, budget: 18, glyphs: GLYPHS, now: 0 };
   const add = buildPanelRows(
-    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "" }, buffer: "une intention" } },
+    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "", model: null }, buffer: "une intention" } },
     opts,
   );
   assert.match(rowsText(add), /Description : une intention▏/);
@@ -2911,7 +2911,7 @@ test("les quatre drapeaux d'un run sont relus, et un drapeau incomplet ne fait p
 
 type FakePi = {
   handlers: Map<string, (args: string, ctx: never) => Promise<void>>;
-  hooks: Map<string, (event: never, ctx: never) => Promise<unknown>>;
+  hooks: Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>;
   flags: string[];
   displayed: Array<{ customType: string; content: string }>;
   seeds: string[];
@@ -2928,7 +2928,7 @@ type FakePi = {
  */
 function mkApp(flagValues: Record<string, string> = {}, options: { deferFlags?: boolean } = {}): FakePi {
   const handlers = new Map<string, (args: string, ctx: never) => Promise<void>>();
-  const hooks = new Map<string, (event: never, ctx: never) => Promise<unknown>>();
+  const hooks = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
   const flags: string[] = [];
   const displayed: Array<{ customType: string; content: string }> = [];
   const seeds: string[] = [];
@@ -2944,7 +2944,7 @@ function mkApp(flagValues: Record<string, string> = {}, options: { deferFlags?: 
     getFlag(name: string) {
       return live[name];
     },
-    on(name: string, def: (event: never, ctx: never) => Promise<unknown>) {
+    on(name: string, def: (event: unknown, ctx: unknown) => Promise<unknown>) {
       hooks.set(name, def);
     },
     // Un vrai git en doublure de `pi.exec`, comme le fait test/handlers.test.ts :
@@ -3199,7 +3199,6 @@ test("les totaux et l'état terminal parlent la même langue que le panneau", ()
 function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? "depot/feature",
     phase: "req",
     state: "running",

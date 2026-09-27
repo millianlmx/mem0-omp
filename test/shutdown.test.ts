@@ -193,6 +193,7 @@ function seedLot(stateDir: string, repoRoot: string): Lot {
     repoRoot,
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: null,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: at,
@@ -306,7 +307,9 @@ test("shutdown/AC-2 : la pompe de boîte du run armé survit à la fin d'un sous
   runState.askWaiters.set("call-1", (answer) => answers.push(answer));
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-1", selected: "oui", sentAt: 1 });
   pumpInbox(app.pi as never, ctx as never, inbox);
-  assert.deepEqual(answers, [{ selected: "oui" }], "la réponse déposée atteint la question en vol");
+  // `.slice()` : `assert.deepEqual` rétrécit le type de son premier argument, et
+  // `answers` doit rester `unknown[]` pour recevoir la réponse suivante.
+  assert.deepEqual(answers.slice(), [{ selected: "oui" }], "la réponse déposée atteint la question en vol");
   assert.deepEqual(readDeliveries(inbox), [], "son fichier de livraison est supprimé");
 
   await app.hooks.get("session_shutdown")!({ type: "session_shutdown" } as never, runCtx(worktree, subFile) as never);

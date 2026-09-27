@@ -143,6 +143,8 @@ type FakeComp = {
   kind: string;
   /** Les lignes rendues au DERNIER `render`. */
   lines: string[];
+  /** Le rendu d'un composant, à la largeur reçue : c'est ce que `Container` recompose. */
+  render(width: number): readonly string[];
   /** `Text` : le texte reçu (jamais mis au cadre par le panneau). */
   text?: string;
   /** `DynamicBorder` : la dernière largeur reçue. */

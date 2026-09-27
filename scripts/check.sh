@@ -256,11 +256,11 @@ if [ -f scripts/typecheck.sh ]; then
   if [ "$types_status" -eq 0 ]; then
     case "$types_out" in
       *"types de l'hôte absents"*) : ;;
-      *) pass "les types de l'hôte encaissent le type-check de omp-mem0-req" ;;
+      *) pass "les types de l'hôte encaissent le type-check des 2 plugins et des tests" ;;
     esac
   else
     errs="$(printf '%s\n' "$types_out" | grep -F 'error TS' | tr '\n' ' ')"
-    fail "type-check de omp-mem0-req : ${errs:-sortie non nulle sans erreur TS} (relance : ./scripts/typecheck.sh)"
+    fail "type-check : ${errs:-sortie non nulle sans erreur TS} (relance : ./scripts/typecheck.sh)"
   fi
 else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
