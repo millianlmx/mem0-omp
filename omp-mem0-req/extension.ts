@@ -443,7 +443,18 @@ export default function reqExtension(pi: ExtensionAPI) {
   // n'existe que dans son `pi.exec` — un enfant survivant attendrait une réponse
   // qu'aucun lot ne porte plus. On les tue donc explicitement, et la fin de
   // chaque run clôt son entrée (la reprise du lot repart d'un état propre).
-  pi.on("session_shutdown", async () => {
+  //
+  // L'événement n'est pourtant PAS « le pilote s'en va » : l'hôte l'émet à chaque
+  // `dispose()` de session. Un SOUS-AGENT (`task`) dispose la sienne à la fin de
+  // son run, et son runner — le même process — reçoit ce `session_shutdown`. Sans
+  // garde, il retirerait le battement du relais /audit et éteindrait la pompe de
+  // la boîte, posés sur `globalThis` (`runState.ts`, `audit.ts`) et bien vivants
+  // pour son parent : les trois bras ci-dessous ne concernent que la session qui
+  // se ferme VRAIMENT. Le fichier de session d'un sous-agent porte
+  // `parentSession` : c'est ce qui le distingue, et rien de tout cela ne le
+  // concerne — il n'a armé ni relais, ni pompe, ni contrôleur.
+  pi.on("session_shutdown", async (_event, ctx) => {
+    if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
     auditRelay.disarm();
     try {
       runState.pumpStop?.();
