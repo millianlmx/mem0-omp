@@ -21,7 +21,7 @@ process.env.HOME = HOME;
 // Le provisionnement DOIT avoir lieu : c'est le chemin qu'AC-4 exerce.
 delete process.env.MEM0_AUTOSETUP;
 
-const { default: mem0MemoryExtension, writeFileAtomic } = await import("../omp-mem0-memory/extension.ts");
+const { default: mem0MemoryExtension, writeFileAtomic, BRIEF_VERSION } = await import("../omp-mem0-memory/extension.ts");
 
 const tmpDirs: string[] = [HOME];
 
@@ -113,10 +113,12 @@ test("plugin-fs/AC-4 : provisionnement atomique — texte utilisateur intact, bl
   const agents = path.join(repo, "AGENTS.md");
   const body = fs.readFileSync(agents, "utf8");
   assert.ok(body.startsWith(user), "le texte utilisateur est intact après provisionnement");
-  assert.ok(body.includes("<!-- mem0:brief v4 -->"), "marqueur d'ouverture présent");
+  // Le marqueur est comparé à la version COURANTE du module, jamais à un
+  // littéral : sinon le test signale un faux périmé au premier bump du brief.
+  assert.ok(body.includes(`<!-- mem0:brief ${BRIEF_VERSION} -->`), "marqueur d'ouverture présent");
   assert.ok(body.includes("<!-- /mem0:brief -->"), "marqueur de fermeture présent");
   const ref = fs.readFileSync(path.join(repo, ".omp", "mem0-brief.md"), "utf8");
-  assert.ok(ref.includes("<!-- mem0:brief v4 -->"), "le fichier de référence est complet");
+  assert.ok(ref.includes(`<!-- mem0:brief ${BRIEF_VERSION} -->`), "le fichier de référence est complet");
   assert.ok(ref.trimEnd().endsWith("simplement faux."), "le fichier de référence est écrit jusqu'à sa dernière ligne");
   assert.ok(body.trimEnd().endsWith("<!-- /mem0:brief -->"), "le bloc écrit dans AGENTS.md est complet (fermeture en fin de fichier)");
   assert.deepEqual(tmpLeftovers(repo), [], "aucun AGENTS.md.tmp-* ni .omp/mem0-brief.md.tmp-* ne subsiste");
@@ -224,7 +226,7 @@ test("plugin-fs/AC-6 : /mem0-brief --update — bloc sans fermeture signalé san
   const ctx2 = mkCtx(repo2);
   await app.commands.get("mem0-brief")!("--update", ctx2 as never);
   const after = fs.readFileSync(agents2, "utf8");
-  assert.ok(after.includes("<!-- mem0:brief v4 -->"), "le bloc est réécrit en v4");
+  assert.ok(after.includes(`<!-- mem0:brief ${BRIEF_VERSION} -->`), `le bloc est réécrit en ${BRIEF_VERSION}`);
   assert.ok(after.includes("<!-- /mem0:brief -->"), "le marqueur de fermeture est présent");
   assert.ok(!after.includes("vieux bloc"), "l'ancien bloc a été remplacé");
   assert.ok(after.includes("## Section utilisateur"), "le contenu utilisateur qui suit le bloc est préservé");

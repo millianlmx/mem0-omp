@@ -12,7 +12,7 @@ import { writeFileAtomic } from "./write.ts";
 // autonome une fois copiée dans ~/.omp/extensions/.
 // ---------------------------------------------------------------------------
 
-export const BRIEF_VERSION = "v4";
+export const BRIEF_VERSION = "v5";
 
 export const BRIEF_REF_PATH = path.join(".omp", "mem0-brief.md");
 
@@ -129,7 +129,8 @@ défaut. Écris donc la phrase finale, pas une note à retravailler.
 - NON — \`L'équipe travaille sur une architecture single-app.\` (vague, non actionnable, et déjà dit ailleurs)
 
 Une méthode réutilisable en plusieurs étapes (déployer, débugger une catégorie
-d'erreur, checklist avant release) → \`mem0_add\` avec \`kind: "procedure"\`.
+d'erreur, checklist avant release) → \`mem0_add\` avec \`kind: "procedure"\` : le texte est conservé tel quel,
+sans réécriture ni fusion.
 
 ## Déduplication
 

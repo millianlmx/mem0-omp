@@ -18,6 +18,7 @@ ruptures silencieuses, qui ne se voient qu'à l'exécution de la route concerné
 """
 import inspect
 import sys
+import types
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
@@ -113,6 +114,81 @@ class StubMemory:
 
     async def update(self, *a, **k):
         return await self._record("update", a, k)
+
+
+# ---------------------------------------------------------------------------
+# Chemin RÉEL : la route écrit dans un VRAI AsyncMemory dont seuls le LLM,
+# l'embedder, le vector store et la base d'historique sont des doubles.
+#
+# Le double `StubMemory` ci-dessus borne les signatures mais n'exécute JAMAIS le
+# code de mem0 : il rend toujours `{"memory": "test"}`, donc il ne peut pas
+# distinguer « le texte fourni » de « le texte réécrit par le LLM ». Seul ce
+# chemin-ci voit la différence, et c'est lui qui porte la feature.
+# ---------------------------------------------------------------------------
+
+
+class LlmCanary:
+    """Témoin du chemin réécrivant. Le seul nombre d'appels attendu est ZÉRO.
+
+    `add(memory_type="procedural_memory")` fait résumer la « conversation » par le
+    LLM (`PROCEDURAL_MEMORY_SYSTEM_PROMPT`) et stocke SA réponse : c'est là que
+    naissaient le préfixe « ## Summary of the agent's execution history » et les
+    résumés hallucinés. Lever ici rend l'appel visible au lieu de le laisser
+    passer pour une reformulation anodine de mem0.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def generate_response(self, **kwargs):
+        self.calls.append(kwargs)
+        raise AssertionError("canari LLM appelé — le texte allait être réécrit")
+
+
+class RealEmbedder:
+    def embed(self, text, memory_action=None):
+        return [0.1, 0.2, 0.3]
+
+
+class RealVectorStore:
+    """Retient les payloads réellement insérés par `_create_memory`."""
+
+    def __init__(self) -> None:
+        self.payloads: list[dict] = []
+
+    def insert(self, vectors=None, ids=None, payloads=None):
+        self.payloads.extend(payloads or [])
+
+
+class RealDb:
+    """Base d'historique : `add_history` est appelé par `_create_memory`, on le trace."""
+
+    def __init__(self) -> None:
+        self.rows: list[tuple] = []
+
+    def add_history(self, *args, **kwargs):
+        self.rows.append((args, kwargs))
+
+    def close(self):
+        pass
+
+
+def real_memory(llm: LlmCanary, store: RealVectorStore, db: RealDb) -> AsyncMemory:
+    """Un vrai `AsyncMemory` sans réseau ni Qdrant (motif mesuré sur 2.1.0/2.2.1).
+
+    `__new__` court-circuite `__init__`/`from_config`, qui construiraient le
+    vector store Qdrant et le client oMLX. Les attributs posés sont exactement
+    ceux que `add(infer=False)` lit : `config.llm.config` (clé `enable_vision`,
+    lue avant l'embedding), le LLM, l'embedder, le vector store et la base.
+    """
+    mem = AsyncMemory.__new__(AsyncMemory)
+    mem.config = types.SimpleNamespace(llm=types.SimpleNamespace(config={}))
+    mem.llm = llm
+    mem.embedding_model = RealEmbedder()
+    mem.vector_store = store
+    mem.db = db
+    mem.custom_instructions = None
+    return mem
 
 
 def main() -> int:
@@ -272,6 +348,64 @@ def main() -> int:
 
         STORE = _fake_store(150, legacy=True)
         FAIL_AFTER_FIRST_PAGE = False
+
+        # ------------------------------------------------------------------
+        # Chemin RÉEL — S-1 : `/memory/add_procedure` écrit mot pour mot.
+        #
+        # Les deux critères de la feature se prouvent ici : c'est le seul endroit
+        # où le texte stocké est celui que le VRAI `AsyncMemory.add` a produit.
+        #
+        # `MEM0_TELEMETRY` est coupé le temps du cas : les deux appels de fin de
+        # `add()` (détection de seuil d'échelle, notice de premier lancement)
+        # interrogent PostHog. Le service, lui, les exécute — la télémétrie est
+        # active par défaut —, mais ce fichier promet de ne faire aucun appel
+        # réseau. Les deux retournent alors immédiatement.
+        # ------------------------------------------------------------------
+        steps = "Déployer : 1. tester 2. construire\n3. vérifier le healthcheck"
+        canary = LlmCanary()
+        store = RealVectorStore()
+        db = RealDb()
+
+        class RealMemoryFactory:
+            """`from_config` rend l'instance déjà construite : aucune connexion sortante."""
+
+            @classmethod
+            def from_config(cls, config):
+                return real_memory(canary, store, db)
+
+        with patch("http_server.AsyncMemory", RealMemoryFactory), patch(
+            "mem0.memory.telemetry.MEM0_TELEMETRY", False
+        ):
+            http_server._mem = None
+            # `raise_server_exceptions=False` : sans lui, la RÉGRESSION ferait
+            # exploser le test sur l'assertion du canari au lieu de laisser
+            # observer le 500 du chemin réécrivant (mesuré avant correctif :
+            # status 500, journal « Error generating procedural memory summary »).
+            real_client = TestClient(http_server.app, raise_server_exceptions=False)
+            resp = real_client.post("/memory/add_procedure", json={"steps": steps, "agent_id": "P"})
+            http_server._mem = None
+
+        payload = store.payloads[0] if store.payloads else {}
+        written = ((resp.json().get("results") or [{}])[0]) if resp.status_code == 200 else {}
+
+        ac1 = (
+            resp.status_code == 200
+            and payload.get("data") == steps
+            and written.get("memory") == steps
+            and canary.calls == []
+        )
+        check("procedure/AC-1 — la route écrit le texte reçu mot pour mot, sans appeler le LLM", resp, extra=ac1)
+        verify("AC-1 · payload.data écrit par mem0", payload.get("data"), steps)
+        verify("AC-1 · results[0].memory rendu", written.get("memory"), steps)
+        verify("AC-1 · appels au LLM", len(canary.calls), 0)
+        verify("AC-1 · historique mem0", db.rows[0][0][2] if db.rows else None, steps)
+
+        ac2 = "memory_type" not in payload
+        check("procedure/AC-2 — le souvenir écrit ne porte plus memory_type=procedural_memory", resp, extra=ac2)
+        verify("AC-2 · clé memory_type absente", "memory_type" in payload, False)
+        verify("AC-2 · scope conservé (user_id)", payload.get("user_id"), "moi")
+        verify("AC-2 · scope conservé (agent_id)", payload.get("agent_id"), "P")
+        verify("AC-2 · role du message", payload.get("role"), "user")
 
         print()
         print("Conforme." if failures == 0 else f"{failures} échec(s).")

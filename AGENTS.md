@@ -1,6 +1,6 @@
 # AGENTS.md
 
-<!-- mem0:brief v4 -->
+<!-- mem0:brief v5 -->
 ## Mémoire du projet
 
 Une mémoire persistante (mem0) est branchée sur ce projet. Un rappel automatique
