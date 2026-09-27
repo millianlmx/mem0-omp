@@ -181,14 +181,27 @@ async def add_memory(req: AddRequest, x_mem0_token: str | None = Header(default=
 
 @app.post("/memory/add_procedure")
 async def add_procedure(req: AddProcedureRequest, x_mem0_token: str | None = Header(default=None)):
+    """Écrit une procédure **telle quelle** (une procédure est stockée mot pour mot).
+
+    Cette route existait pour `add(..., memory_type="procedural_memory")`. Ce
+    chemin-là n'écrit PAS le texte reçu : mem0 le fait résumer par le LLM
+    (`_create_procedural_memory`, prompt « You are a memory summarization
+    system… ») et stocke SA réponse en posant `metadata.memory_type =
+    "procedural_memory"`. D'où le préfixe « ## Summary of the agent's execution
+    history » et les résumés hallucinés — et une écriture qui dépendait d'oMLX.
+
+    On écrit donc par le chemin `infer=False`, celui de `/memory/add` : aucun
+    appel LLM, `data` byte-identique au texte reçu, et aucune clé `memory_type`
+    dans le payload (donc la future purge par ce tag ne l'atteint pas).
+
+    La route est CONSERVÉE (jamais supprimée) pour la compatibilité descendante :
+    la pile se met à jour par `docker compose build mem0-http` et le plugin par
+    la marketplace, indépendamment l'un de l'autre — la supprimer ferait
+    répondre 404 à un plugin installé qui n'a pas encore été mis à jour.
+    """
     check_token(x_mem0_token)
     m = await get_memory()
-    return await m.add(
-        req.steps,
-        user_id=USER,
-        agent_id=req.agent_id,
-        memory_type="procedural_memory",
-    )
+    return await m.add(req.steps, user_id=USER, agent_id=req.agent_id, infer=False)
 
 
 @app.post("/memory/search")

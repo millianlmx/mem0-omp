@@ -110,10 +110,11 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       "Enregistre un point durable : stack ou choix technique du projet, convention, décision " +
       "d'architecture, bug + cause racine + correctif, exigence incontournable d'une feature, " +
       "préférence de travail. Une seule idée par appel, formulée pour être comprise dans six " +
-      "mois sans le contexte de cette conversation. Le texte est stocké tel quel, écris donc " +
-      "la phrase finale. Un souvenir proche est cherché d'abord : s'il en existe un, il est " +
-      "complété au lieu d'être dupliqué, et la version fusionnée t'est renvoyée — relis-la. " +
-      "N'enregistre rien de trivial ni de temporaire.",
+      "mois sans le contexte de cette conversation. Le texte est stocké mot pour mot, y compris " +
+      "pour une procédure (kind: \"procedure\") : écris donc la phrase finale. Un souvenir " +
+      "proche est cherché d'abord : s'il en existe un, il est complété au lieu d'être dupliqué, " +
+      "et la version fusionnée t'est renvoyée — relis-la. N'enregistre rien de trivial ni de " +
+      "temporaire.",
     parameters: z.object({
       text: z.string().describe("Le fait, autoportant. Ex: 'Auth : tokens de reset à usage unique, TTL 15 min (décision du 12/03).'"),
       kind: z
@@ -151,9 +152,11 @@ export function registerMem0Tools(pi: ExtensionAPI, rt: Mem0Runtime): void {
       const scope = params.scope === "global" ? GLOBAL_SCOPE : projectId(ctx?.cwd ?? process.cwd());
       const text = redact(params.text);
 
-      // Les procédures vivent dans un autre espace mem0 (memory_type
-      // procedural_memory) : la recherche de similarité ne les atteint pas, on
-      // ne tente donc pas de fusion.
+      // Une procédure est écrite MOT POUR MOT par le serveur (`POST
+      // /memory/add_procedure`, chemin `infer=False`) : aucun tag `memory_type`
+      // n'est posé, et elle vit dans le MÊME espace que les faits — la recherche
+      // de similarité l'atteint (mesuré). La fusion est tout de même ignorée :
+      // elle réécrirait le texte promis tel quel.
       if (params.kind === "procedure") {
         const result = await mem0.add(text, scope, { procedure: true });
         wrote(stateOf(rt, ctx));

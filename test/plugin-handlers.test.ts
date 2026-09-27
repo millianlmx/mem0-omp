@@ -61,7 +61,7 @@ process.env.HOME = HOME;
 // d'entrée du plugin (hook session_start), donc un comportement à exercer.
 delete process.env.MEM0_AUTOSETUP;
 
-const { default: mem0MemoryExtension } = await import("../omp-mem0-memory/extension.ts");
+const { default: mem0MemoryExtension, BRIEF_VERSION } = await import("../omp-mem0-memory/extension.ts");
 
 // ---------------------------------------------------------------------------
 // Doublure du service mem0 : enregistre chaque requête, sert des lignes choisies
@@ -170,10 +170,15 @@ type ToolExecute = (
   ctx: unknown,
 ) => Promise<ToolResult>;
 
+/** Définition telle que l'extension la déclare — `description` comprise. */
+type ToolDef = { name: string; description?: string };
+
 type App = {
   commands: Map<string, Handler>;
   hooks: Map<string, Hook>;
   tools: Map<string, ToolExecute>;
+  /** Définitions complètes des tools (ce que le modèle lit avant d'appeler). */
+  defs: Map<string, ToolDef>;
   /** Textes passés à `pi.sendUserMessage` (amorces de tour). */
   sent: string[];
 };
@@ -182,6 +187,7 @@ function mkApp(): App {
   const commands = new Map<string, Handler>();
   const hooks = new Map<string, Hook>();
   const tools = new Map<string, ToolExecute>();
+  const defs = new Map<string, ToolDef>();
   const sent: string[] = [];
 
   const pi = {
@@ -189,7 +195,12 @@ function mkApp(): App {
     setLabel: (_label: string) => {},
     registerMessageRenderer: (_type: string, _render: unknown) => {},
     on: (name: string, handler: Hook) => { hooks.set(name, handler); },
-    registerTool: (def: { name: string; execute: ToolExecute }) => { tools.set(def.name, def.execute); },
+    registerTool: (def: ToolDef & { execute: ToolExecute }) => {
+      // La description est conservée en plus du corps : c'est elle qui part sur
+      // le fil (`loadMode: "essential"`) et qui dit au modèle QUAND écrire quoi.
+      defs.set(def.name, def);
+      tools.set(def.name, def.execute);
+    },
     registerCommand: (name: string, def: { handler: Handler }) => { commands.set(name, def.handler); },
     // Le plugin mémoire ne poste aucun message d'affichage (son rappel est rendu
     // par l'hôte depuis la valeur de retour de `before_agent_start`) : la surface
@@ -199,7 +210,7 @@ function mkApp(): App {
   };
 
   mem0MemoryExtension(pi as unknown as Parameters<typeof mem0MemoryExtension>[0]);
-  return { commands, hooks, tools, sent };
+  return { commands, hooks, tools, defs, sent };
 }
 
 // ---------------------------------------------------------------------------
@@ -283,12 +294,30 @@ test("plugin-handlers/AC-12 : session_start provisionne le brief du dépôt temp
   // Le fichier de référence se reconnaît à son marqueur de VERSION (c'est lui que
   // /mem0-brief --update compare) ; le couple ouverture/fermeture délimite le bloc
   // inséré dans AGENTS.md, seule forme que le remplacement sous --force sait viser.
-  assert.match(fs.readFileSync(ref, "utf8"), /<!-- mem0:brief v4 -->/);
+  // La version est LUE sur la constante du module : pinnée en dur, ce test
+  // signalerait un faux périmé au premier bump du brief.
+  assert.match(fs.readFileSync(ref, "utf8"), new RegExp(`<!-- mem0:brief ${BRIEF_VERSION} -->`));
   const agentsText = fs.readFileSync(agents, "utf8");
-  assert.match(agentsText, /<!-- mem0:brief v4 -->/);
+  assert.match(agentsText, new RegExp(`<!-- mem0:brief ${BRIEF_VERSION} -->`));
   assert.match(agentsText, /<!-- \/mem0:brief -->/);
   assert.match(notices[0]!.message, /\[mem0\] brief mémoire posé sur "plugin-handlers-fixture"/);
   assert.equal(notices[0]!.type, "info");
+});
+
+// `plugin-handlers/AC-5` — la recommandation du brief est ce que l'agent lit
+// avant son premier `mem0_add` : elle doit annoncer le stockage tel quel d'une
+// procédure, sans quoi elle promet une réécriture que le serveur ne fait plus.
+test("plugin-handlers/AC-5 : le brief provisionné annonce kind:\"procedure\" comme un stockage conservé tel quel", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx } = mkCtx(repo);
+
+  await app.hooks.get("session_start")!({} as never, ctx as never);
+
+  const ref = fs.readFileSync(path.join(repo, ".omp", "mem0-brief.md"), "utf8");
+  assert.match(ref, /kind: "procedure"/);
+  assert.match(ref, /le texte est conservé tel quel/);
 });
 
 test("session_compact, auto_compaction_end et session_branch autorisent la réinjection des souvenirs", async () => {
@@ -404,7 +433,7 @@ test("un ctx dégradé (sans setInterval ni sessionManager) ne fait échouer auc
 // Tools d'écriture
 // ---------------------------------------------------------------------------
 
-test("mem0_add écrit en POST /memory/add dans la scope du projet, /memory/add_procedure pour une procédure", async () => {
+test("plugin-handlers/AC-3 : mem0_add accepte kind:\"procedure\" et l'écrit par POST /memory/add_procedure", async () => {
   resetService();
   const app = mkApp();
   const repo = mkRepo("plugin-handlers-fixture");
@@ -444,6 +473,23 @@ test("mem0_add écrit en POST /memory/add dans la scope du projet, /memory/add_p
   assert.equal(procedures[0]!.body?.["steps"], "Déployer : 1. tester 2. construire");
   assert.equal(callsTo("/memory/add").length, 0, "une procédure ne part pas par /memory/add");
   assert.match(res.content[0]!.text, /Procédure enregistrée dans "plugin-handlers-fixture"/);
+});
+
+// `plugin-handlers/AC-4` — la description d'un tool part sur le fil à chaque
+// requête (`loadMode: "essential"`) : c'est elle qui dit au modèle comment écrire.
+// Le serveur stocke désormais une procédure mot pour mot ; la description doit le
+// dire, sinon le contrat visible du tool annonce l'inverse de ce qui est écrit.
+test("plugin-handlers/AC-4 : la description de mem0_add annonce le stockage mot pour mot d'une procédure", async () => {
+  resetService();
+  const app = mkApp();
+  const def = app.defs.get("mem0_add");
+  assert.ok(def, "mem0_add doit être enregistré");
+  assert.ok(def.description, "mem0_add doit déclarer une description");
+  assert.match(def.description, /mot pour mot/);
+  assert.match(def.description, /kind: "procedure"/);
+  // Le reste de la promesse n'est pas sacrifié au passage : la phrase finale,
+  // seul garde-fou contre une note en vrac, reste annoncée.
+  assert.match(def.description, /écris donc la phrase finale/);
 });
 
 test("mem0_update réécrit par PUT /memory/<id> et périme le cache local", async () => {
@@ -559,14 +605,14 @@ test("mem0-brief rend l'état ref=/agents= et --update récrit le brief", async 
   const provision = "(created|present|outdated|skipped|failed)";
 
   await brief("", ctx);
-  assert.match(notices.at(-1)!.message, new RegExp(`^\\[mem0\\] brief v4 · .*plugin-handlers-repo-.* · \\.omp/mem0-brief\\.md=${provision} · AGENTS\\.md=${provision}`));
+  assert.match(notices.at(-1)!.message, new RegExp(`^\\[mem0\\] brief ${BRIEF_VERSION} · .*plugin-handlers-repo-.* · \\.omp/mem0-brief\\.md=${provision} · AGENTS\\.md=${provision}`));
   assert.equal(fs.existsSync(ref), true);
 
   // Un brief dont le marqueur de version a disparu : `--update` le réécrit.
   fs.writeFileSync(ref, "brief trafiqué", "utf8");
   notices.length = 0;
   await brief("--update", ctx);
-  assert.match(fs.readFileSync(ref, "utf8"), /<!-- mem0:brief v4 -->/);
+  assert.match(fs.readFileSync(ref, "utf8"), new RegExp(`<!-- mem0:brief ${BRIEF_VERSION} -->`));
   assert.match(notices.at(-1)!.message, /\.omp\/mem0-brief\.md=created/);
 });
 
