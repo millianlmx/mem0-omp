@@ -183,16 +183,26 @@ function requiredContexts(): string[] {
     .filter((entry) => entry !== "");
 }
 
-/** Les noms affichés des jobs de `check.yml` : `<id> (<os de la matrice>)`. */
+/**
+ * Les noms affichés des jobs qui produisent un statut requis : chaque OS de la
+ * matrice de `check.yml` (`<id> (<os>)`), plus le job de simulation de release,
+ * qui n'a PAS de matrice et expose donc exactement son identifiant.
+ */
 function workflowContexts(): string[] {
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
   const jobs = workflow.split(/^jobs:\s*$/m)[1] ?? "";
   const id = /^ {2}([A-Za-z0-9_-]+):$/m.exec(jobs);
   const matrix = /os:\s*\[([^\]]*)\]/.exec(jobs);
   assert.ok(id && matrix, `job ou matrice introuvable dans check.yml :\n${jobs}`);
-  return (matrix[1] ?? "")
+  const contexts = (matrix[1] ?? "")
     .split(",")
     .map((system) => `${id[1]} (${system.trim()})`);
+
+  const simulationFile = path.join(ROOT, ".github/workflows/release-simulation.yml");
+  const simulationJobs = fs.readFileSync(simulationFile, "utf8").split(/^jobs:\s*$/m)[1] ?? "";
+  const simulationId = /^ {2}([A-Za-z0-9_-]+):$/m.exec(simulationJobs);
+  assert.ok(simulationId, `job introuvable dans ${simulationFile} :\n${simulationJobs}`);
+  return [...contexts, simulationId[1] as string];
 }
 
 test("smoke/AC-1 : un plugin qui ne se charge pas ou ne répond pas fait échouer la CI, donc bloque le merge", async (t) => {
@@ -223,12 +233,13 @@ test("smoke/AC-1 : un plugin qui ne se charge pas ou ne répond pas fait échoue
   );
 
   // (3) Le job rouge BLOQUE le merge : `main` exige exactement les contextes de
-  // statut que `check.yml` produit — un OS renommé dans la matrice débloquerait
-  // le merge en silence.
+  // statut que les workflows produisent — un OS renommé dans la matrice, ou le job
+  // de simulation renommé, débloquerait le merge en silence.
   const required = requiredContexts();
   assert.deepEqual(required, workflowContexts());
   assert.ok(required.includes("check (ubuntu-latest)"), required.join(", "));
   assert.ok(required.includes("check (macos-latest)"), required.join(", "));
+  assert.ok(required.includes("release-simulation"), required.join(", "));
 });
 
 test("smoke/AC-2 : les deux plugins sont chargés et invoqués dans un vrai OMP, sans conteneur", async (t) => {

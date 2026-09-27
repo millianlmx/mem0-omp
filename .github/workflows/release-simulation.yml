@@ -1,0 +1,55 @@
+name: release-simulation
+
+# Simule, sur une copie jetable, la release qu'entraînerait la fusion de cette PR
+# (« plan de scripts/release.ts → écriture des versions, des deux catalogues et du
+# CHANGELOG.md → check.sh sur l'arbre écrit »), et l'expose comme statut requis
+# DÉDIÉ. Rien n'est poussé, aucun tag n'est posé, aucune PR n'est ouverte.
+#
+# `pull_request` sans `types:` : les types par défaut (`opened`, `synchronize`,
+# `reopened`) couvrent toute PR vers `main`. Le checkout par défaut fournit l'état
+# FUSIONNÉ (`GITHUB_REF = refs/pull/<n>/merge`) : la fusion n'est jamais
+# refabriquée par un script. Pas de `paths:` non plus : un filtre de chemins
+# laisserait le statut « Pending » et bloquerait le merge à tort.
+on:
+  pull_request:
+    branches: [main]
+
+# Le job ne fait que LIRE (le plan lit `origin/main` et les tags distants) : aucun
+# jeton d'écriture, aucun secret. Une PR de fork, dont le jeton est en lecture
+# seule, tourne donc à l'identique.
+permissions:
+  contents: read
+
+# Un push sur la PR annule le run précédent : seul le sha le plus récent décide.
+# Un run `cancelled` ne satisfait pas un statut requis, donc le statut reste
+# porté par le run du dernier sha — celui qui compte pour la fusion.
+concurrency:
+  group: "release-simulation-${{ github.event.pull_request.number }}"
+  cancel-in-progress: true
+
+jobs:
+  # Job SANS matrice et SANS `name:` : le contexte du statut est exactement
+  # l'identifiant du job, `release-simulation` (c'est ce nom que déclare la
+  # protection de branche, PUBLISHING.md § Blocage du merge). AUCUN `if:` : un job
+  # sauté rapporte « Success » et ne prouverait rien.
+  release-simulation:
+    runs-on: ubuntu-latest
+    # Une copie du dépôt, une écriture, puis `check.sh` complet.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `historyOfPlugin` parcourt l'historique de chaque `package.json` et la
+          # garde d'idempotence lit `origin/main` : sans l'historique complet, le
+          # plan est faux.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          # L'ENVIRONNEMENT DU JOB DE RELEASE, pas celui de `check.yml` : ni Bun, ni
+          # hôte OMP, ni `MEM0_OMP_REQUIRE_SMOKE`. Le verdict doit être celui de la
+          # release, jamais celui d'un gate plus strict.
+          node-version: "22"
+      # Aucune variable d'environnement, aucun secret : le script crée lui-même la
+      # copie jetable, y rejoue `scripts/release.ts --simulate` et rend son verdict.
+      - name: Simuler la release sur une copie jetable
+        run: bash scripts/release-simulation.sh

@@ -224,9 +224,11 @@ c'est seulement ensuite que les tags et les releases sont publiés.
    `./scripts/check.sh` (rouge ⇒ rien n'est committé) ;
 3. **PR** — poussée de la branche, puis PR vers `main` ouverte avec le jeton dédié
    (cf. § Jeton de release) ; une PR déjà ouverte pour la branche est réutilisée ;
-4. **Statuts requis** — le job attend que les deux statuts de `check.yml` passent
-   sur cette PR (`mergeStateStatus` ∈ `CLEAN`, `UNSTABLE`, `HAS_HOOKS`), et échoue
-   en le nommant après le budget d'attente ;
+4. **Statuts requis** — le job attend que les trois statuts requis passent sur
+   cette PR (`check (ubuntu-latest)`, `check (macos-latest)` et
+   `release-simulation`, ce dernier rejouant la release sur l'arbre écrit, cf.
+   § Simulation de release) — `mergeStateStatus` ∈ `CLEAN`, `UNSTABLE`,
+   `HAS_HOOKS` — et échoue en le nommant après le budget d'attente ;
 5. **Fusion** — squash avec un titre et un corps explicites, puis relecture du sha
    de fusion et vérification que l'arbre fusionné est bien celui qui a passé
    `check.sh` ;
@@ -270,23 +272,53 @@ dupliquée. Le plan de bump se recalcule depuis le commit d'apparition de la
 version courante, jamais depuis la seule plage de l'événement : un run annulé ou
 perdu est donc rattrapé par le run suivant, sans qu'aucun commit ne disparaisse.
 
-**Blocage du merge** — `main` exige les deux statuts de `check.yml`
-(`check (ubuntu-latest)` et `check (macos-latest)`), donc un job rouge bloque le
-merge. La commande est rejouable telle quelle (elle écrase la configuration
-existante) :
+**Blocage du merge** — `main` exige les trois statuts : les deux de `check.yml`
+(`check (ubuntu-latest)` et `check (macos-latest)`) et `release-simulation`, le
+job qui simule la release de la PR sur une copie jetable (cf. § Simulation de
+release) — donc un job rouge bloque le merge. La commande est rejouable telle
+quelle (elle écrase la configuration existante) :
 
 ```bash
 gh api --method PUT -H "Accept: application/vnd.github+json" \
   repos/millianlmx/mem0-omp/branches/main/protection --input - <<'JSON'
-{"required_status_checks":{"strict":false,"contexts":["check (ubuntu-latest)","check (macos-latest)"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null}
+{"required_status_checks":{"strict":false,"contexts":["check (ubuntu-latest)","check (macos-latest)","release-simulation"]},"enforce_admins":false,"required_pull_request_reviews":null,"restrictions":null}
 JSON
 ```
 
-Les contextes sont les **noms affichés** des jobs de `check.yml` : renommer un OS
-de la matrice sans rejouer cette commande débloquerait le merge en silence. Ce
-sont ces deux statuts que la PR de release doit obtenir avant d'être fusionnée —
-d'où le jeton dédié de la section suivante, plutôt qu'un `GITHUB_TOKEN` qui ne
+Les contextes sont les **noms affichés** des jobs : `check (ubuntu-latest)` et
+`check (macos-latest)` parce que le job `check` porte une matrice d'OS, et
+`release-simulation` parce qu'un job sans matrice et sans `name:` expose
+exactement l'identifiant de son job. Renommer un OS de la matrice ou le job de
+simulation sans rejouer cette commande débloquerait le merge en silence. Ce sont
+ces trois statuts que la PR de release doit obtenir avant d'être fusionnée — d'où
+le jeton dédié de la section suivante, plutôt qu'un `GITHUB_TOKEN` qui ne
 déclencherait aucun run.
+
+## Simulation de release
+
+Chaque PR vers `main` déclenche `.github/workflows/release-simulation.yml`, qui
+rejoue la release de la PR **sur une copie jetable** : `scripts/release-simulation.sh`
+crée un worktree git détaché du commit de fusion que GitHub fournit déjà pour la
+PR, `scripts/release.ts` y calcule le plan, y écrit les versions, les deux
+catalogues et `CHANGELOG.md` — exactement ce que le job de release écrirait — puis
+y lance `./scripts/check.sh`. Le verdict est celui de la release **entière** : un
+plan inexploitable ou une écriture fautive échoue avant `check.sh`, un `check.sh`
+rouge échoue après.
+
+Ce job ne fait **jamais** rien d'autre : rien n'est poussé, aucune branche n'est
+poussée, aucun tag n'est posé, aucune PR n'est ouverte, et l'arbre de la PR n'est
+pas modifié — l'appelant retrouve son arbre intact, `git status` propre. La copie
+jetable est supprimée à la fin, verte ou rouge. Son environnement est celui du job
+de release (Node 22 seul : ni Bun, ni hôte OMP), donc il juge la release avec les
+mêmes outils que la publication, jamais avec un gate plus strict : c'est ce qui
+permet à la PR de release du bot — celle qui porte déjà le commit `chore(release)`
+— de sortir verte au lieu d'échouer en faussement.
+
+Son statut, `release-simulation`, est **requis** sur `main` (cf. § Blocage du
+merge) : une PR dont la release simulée échouerait ne peut plus être fusionnée.
+Déclarer ce statut sur GitHub est une action **manuelle, hors pipeline** : aucune
+commande du dépôt ne modifie la protection de branche, cette section dit seulement
+ce qu'il faut y mettre.
 
 ## Jeton de release
 

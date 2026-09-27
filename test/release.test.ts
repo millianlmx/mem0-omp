@@ -485,6 +485,7 @@ const DROPPED_DIRS: Record<string, true> = {
 const DROPPED_TESTS: Record<string, true> = {
   "check.test.ts": true,
   "release.test.ts": true,
+  "release-simulation.test.ts": true,
   "bump-guard.test.ts": true,
   "smoke.test.ts": true,
   "sessions.test.ts": true,
@@ -938,6 +939,8 @@ type ScenarioSet = {
   backlog: BacklogBuilt;
   blocked: BlockedBuilt;
   noToken: NoTokenBuilt;
+  /** Dépôt vierge pour les cas d'arguments de `--simulate` : aucun run de moteur. */
+  argCases: Repo;
 };
 
 const SCENARIOS: ScenarioSet | null =
@@ -950,6 +953,7 @@ const SCENARIOS: ScenarioSet | null =
         backlog: buildBacklog("backlog"),
         blocked: buildBlocked("blocked"),
         noToken: buildNoToken("token"),
+        argCases: makeRepo("args", PATCH_STEPS),
       }
     : null;
 
@@ -1354,6 +1358,31 @@ test("release/AC-9 : sans RELEASE_TOKEN, le moteur s'arrête avant toute écritu
   assert.deepEqual(remoteHeads(repo.remote), before.heads, "aucune branche poussée");
   assert.deepEqual(remoteTags(repo.remote), before.tags, "aucun tag");
   assert.equal(remoteGit(repo.remote, ["rev-parse", "main"]).trim(), repo.after, "aucun commit");
+});
+
+test("release/S-1 : `--simulate` refuse `--dry-run` et nomme une `--main` fautive", (t) => {
+  const repo = scenario(SCENARIOS?.argCases, t);
+  if (repo === null) return;
+
+  // (1) `--simulate` écrit : il est incompatible avec `--dry-run`, qui n'écrit rien.
+  const conflict = runEngine(repo, { extra: ["--simulate", "--dry-run"] });
+  assert.equal(conflict.status, 1, output(conflict));
+  assert.ok(
+    output(conflict).includes("✗ --simulate et --dry-run sont incompatibles (--dry-run n'écrit rien)"),
+    output(conflict),
+  );
+
+  // (2) `--main` désigne la référence qui joue le rôle de `main` dans le plan :
+  // une référence inconnue échoue en nommant la commande git fautive.
+  const unknown = runEngine(repo, { extra: ["--simulate", "--main", "refs/inconnue"] });
+  assert.equal(unknown.status, 1, output(unknown));
+  assert.match(output(unknown), /✗ git (log|show)[^:]*: .*refs\/inconnue/, output(unknown));
+
+  // (3) Aucune des deux erreurs n'a écrit, poussé, tagué ni appelé `gh`.
+  assert.equal(fs.readFileSync(repo.journal, "utf8"), "", "aucun appel à gh");
+  assert.equal(remoteGit(repo.remote, ["rev-parse", "main"]).trim(), repo.after, "main inchangée");
+  assert.deepEqual(remoteHeads(repo.remote), ["refs/heads/main"], "aucune branche poussée");
+  assert.equal(changelogState(repo.dir), repo.changelogBefore, "aucune écriture locale");
 });
 
 test("le remote du harnais refuse tout push sur refs/heads/main (rôle GH006)", () => {
