@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.19.1 — 2026-09-27
+
+- fix(req): la fin d'un sous-agent ne désarme plus le relais /audit ni la pompe de boîte (ed2fd30)
+
 ## omp-mem0-memory 2.10.0 — 2026-09-27
 
 - feat(memory): masquage des secrets élargi (Anthropic, OpenAI projet, GitHub PAT, Slack, PEM entier, identifiants d'URL) (da6e8f8)
