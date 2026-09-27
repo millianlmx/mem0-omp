@@ -623,9 +623,18 @@ export function handOverCollecte(input: {
     (f) => f.origin === "session" && f.phase === "req" && realpathOr(f.worktree) === realpathOr(input.cwd),
   );
   if (!feature || lotStateTerminal(feature.state)) return false;
+  // La boucle du lot doit être armée APRÈS cette bascule, sinon la feature rendue
+  // `pending` ne partirait jamais : c'est l'appelant qui l'arme (`controller.start()`
+  // au site de bascule, extension.ts), et rien n'est fait ici — `runs.ts` ne
+  // connaît pas le contrôleur.
   const at = input.now ?? Date.now();
   feature.phase = "specs";
-  feature.state = "running";
+  // D'où la feature repart (S-3, S-14) : dans un lot au BROUILLON, elle passe
+  // `running` — `hasStartedFeature` en a besoin pour OUVRIR le lot, et un brouillon
+  // n'a par construction aucun créneau occupé. Dans un lot DÉJÀ en marche, elle
+  // passe `pending` : la passe la démarrera au premier créneau libre (le plafond de
+  // `MEM0_PIPELINE_SLOTS` s'applique à cette bascule comme à tout autre lancement).
+  feature.state = lot.status === "draft" ? "running" : "pending";
   feature.waitKind = null;
   feature.waitPrompt = null;
   feature.stopReason = null;

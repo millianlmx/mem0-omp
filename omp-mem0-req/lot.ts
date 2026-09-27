@@ -5,6 +5,9 @@ import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr } from "./git.ts";
 import { clipTail } from "./panelWidth.ts";
+// Type SEUL (`import type`) : la dépendance est effacée au chargement, donc aucun
+// cycle runtime avec `runs.ts`, qui importe ce module.
+import type { LotPromptKind } from "./runs.ts";
 import { PIPELINE_PHASES, asStringOrNull, pidAlive, readAuditRelay, readJsonFile, writeJsonAtomic } from "./store.ts";
 import type { PanelAskOption, PanelPendingAsk } from "./store.ts";
 
@@ -40,6 +43,23 @@ export type LotWaitKind = "answer" | "specs" | "review";
  * maillon `req` n'est pas clos. `panneau` : tout est run, collecte comprise.
  */
 export type LotOrigin = "session" | "panneau";
+
+
+/**
+ * Le lancement qu'un geste a demandé SANS qu'un créneau soit libre (S-3) : il est
+ * mémorisé sur la feature, qui redevient `pending`, et la passe le démarre dès
+ * qu'un run du lot rend son créneau — avec exactement l'argv, le prompt, la
+ * reprise de session et les compteurs du chemin immédiat. Rien n'est perdu :
+ * c'est la zone visée, le `fix`, le `kind`, le `resume` et le texte d'une réponse
+ * qui partent au démarrage réel.
+ */
+export type HeldLaunch = {
+  phase: PipelinePhase;
+  fix: boolean;
+  kind: LotPromptKind;
+  resume: boolean;
+  text?: string;
+};
 
 
 export type LotFeature = {
@@ -100,6 +120,14 @@ export type LotFeature = {
    */
   launched?: boolean;
   /**
+   * Le lancement RETENU par le plafond (S-3). Écrit SEULEMENT quand il porte un
+   * lancement, et détruit par toute transition qui sort de `pending` (`settle`,
+   * `cancel`, `remove`, démarrage) : un `held` incomplet est lu comme absent, il
+   * ne fait jamais rejeter la feature. Il survit à une reprise du lot (il est dans
+   * le fichier) comme à un déblocage par dépendance.
+   */
+  held?: HeldLaunch;
+  /**
    * Chemin ABSOLU du fichier de la session /audit qui a lancé la feature : ses
    * questions et ses jalons sont relayés à cette session tant que son relais est
    * ouvert (`auditRelayOpen`). Absent : feature de lot ordinaire. Jamais modifié
@@ -128,6 +156,14 @@ export type Lot = {
   status: "draft" | "running";
   /** Plafond de tours de correction, figé au premier lancement (S-5). */
   reviewCap: number;
+  /**
+   * Plafond de runs de features du lot MENÉS EN PARALLÈLE, figé au premier
+   * lancement comme `reviewCap` (S-2) : le pilotage ne relit jamais
+   * `MEM0_PIPELINE_SLOTS`, il compare à ce champ. Un créneau est occupé par une
+   * feature `running` hors collecte de session ; un lot écrit par une version
+   * antérieure se relit à `PIPELINE_SLOTS_DEFAULT`, sans migration.
+   */
+  slotCap: number;
   /** Instant du récap posté, `null` tant qu'il ne l'a pas été (S-12). */
   recapAt: number | null;
   /**
@@ -491,6 +527,30 @@ export function asReviewVerdict(value: unknown): "blockers" | "clean" | "unreada
 }
 
 
+/**
+ * Un lancement retenu (S-3), lu TOLÉRAMMENT : absent, hors vocabulaire ou
+ * incomplet (phase inconnue, `kind` inconnu, `fix`/`resume` non booléens, `text`
+ * non textuel) vaut « absent » — jamais un rejet de la feature, dont le schéma ne
+ * doit pas dépendre d'un champ d'attente. Le texte est rogné à la borne de
+ * l'éditeur, la même que celle qui l'a écrit.
+ */
+export function asHeldLaunch(raw: unknown): HeldLaunch | null {
+  if (!raw || typeof raw !== "object") return null;
+  const h = raw as Record<string, unknown>;
+  if (!PIPELINE_PHASES.includes(h.phase as PipelinePhase)) return null;
+  if (typeof h.fix !== "boolean" || typeof h.resume !== "boolean") return null;
+  if (h.kind !== "collecte" && h.kind !== "phase" && h.kind !== "relaunch" && h.kind !== "answer") return null;
+  if (h.text !== undefined && typeof h.text !== "string") return null;
+  return {
+    phase: h.phase as PipelinePhase,
+    fix: h.fix,
+    kind: h.kind,
+    resume: h.resume,
+    ...(typeof h.text === "string" ? { text: h.text.slice(0, LOT_EDITOR_MAX) } : {}),
+  };
+}
+
+
 /** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
 export function asLotFeature(raw: unknown): LotFeature | null {
   if (!raw || typeof raw !== "object") return null;
@@ -526,6 +586,7 @@ export function asLotFeature(raw: unknown): LotFeature | null {
         .map((t) => t.slice(0, LOT_EDITOR_MAX))
     : [];
   const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
+  const held = asHeldLaunch(f.held);
   return {
     slug: f.slug,
     name: f.name,
@@ -564,6 +625,9 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // valeur n'est pas revalidée contre le catalogue : un modèle retiré depuis le
     // choix reste écrit et transmis, et c'est le run qui échoue.
     ...(typeof f.model === "string" && f.model.trim() !== "" ? { model: f.model } : {}),
+    // Le lancement retenu (S-3) : écrit seulement quand il est exploitable — même
+    // patron que `launched` et `auditSession`, un `held` incomplet est absent.
+    ...(held ? { held } : {}),
     contractHash: asStringOrNull(f.contractHash),
     addedAt: num(f.addedAt, 0),
     sinceAt: num(f.sinceAt, 0),
@@ -600,6 +664,16 @@ export function asLot(raw: unknown): Lot | null {
     repoRoot: l.repoRoot,
     status: l.status,
     reviewCap: Math.max(1, Math.trunc(typeof l.reviewCap === "number" ? l.reviewCap : 1)),
+    // Le plafond de runs parallèles (S-2), lu TOLÉRAMMENT : un champ absent, non
+    // numérique ou non fini vaut `PIPELINE_SLOTS_DEFAULT`, une valeur hors bornes
+    // est ramenée dans `[1, 32]` — donc un lot d'une version antérieure se relit
+    // sans migration ni bump de `LOT_VERSION`, et aucune valeur ne bloque tout.
+    slotCap: envInt(
+      typeof l.slotCap === "number" ? String(l.slotCap) : undefined,
+      PIPELINE_SLOTS_DEFAULT,
+      1,
+      PIPELINE_SLOTS_MAX,
+    ),
     recapAt: typeof l.recapAt === "number" && Number.isFinite(l.recapAt) ? l.recapAt : null,
     owner: {
       pid: o.pid as number,
@@ -635,6 +709,53 @@ export function lotFeature(lot: Lot, slug: string): LotFeature | undefined {
 /** Une feature sans dépendance satisfaite n'a pas le droit de démarrer (S-10). */
 export function runnable(lot: Lot, feature: LotFeature): boolean {
   return feature.deps.every((dep) => lotFeature(lot, dep)?.state === "done");
+}
+
+
+/**
+ * Le nombre de créneaux OCCUPÉS (S-1) : les features du lot `running`, hors
+ * collecte de session (`origin === "session" && phase === "req"` — elle appartient
+ * à la session de l'utilisateur, ce n'est pas un run du pilote). Aucune autre
+ * source n'entre dans le compte : ni le magasin `running/`, ni le panneau, ni un
+ * autre dépôt. Un run HORS LOT ne consomme donc aucun créneau (AC-4).
+ */
+export function slotBusy(lot: Lot): number {
+  let busy = 0;
+  for (const feature of lot.features) {
+    if (feature.state !== "running") continue;
+    if (feature.origin === "session" && feature.phase === "req") continue;
+    busy += 1;
+  }
+  return busy;
+}
+
+
+/** Reste-t-il un créneau ? Le plafond effectif est `lot.slotCap`, jamais l'environnement. */
+export function hasFreeSlot(lot: Lot): boolean {
+  return slotBusy(lot) < lot.slotCap;
+}
+
+
+/** Le nombre de créneaux libres, jamais négatif : c'est lui qui borne une passe. */
+export function freeSlots(lot: Lot): number {
+  return Math.max(0, lot.slotCap - slotBusy(lot));
+}
+
+
+/**
+ * Une feature RUNNABLE retenue par le plafond, telle que la passe la verrait (S-1,
+ * S-3) : le lot TOURNE, elle est `pending` et lancée, ses dépendances sont
+ * satisfaites, et plus aucun créneau n'est libre. Ne teste PAS `feature.worktree` :
+ * une feature dont l'arbre n'est pas encore créé est retenue comme les autres.
+ */
+export function heldBySlots(lot: Lot, feature: LotFeature): boolean {
+  return (
+    lot.status === "running" &&
+    feature.state === "pending" &&
+    feature.launched !== false &&
+    runnable(lot, feature) &&
+    !hasFreeSlot(lot)
+  );
 }
 
 
@@ -834,6 +955,28 @@ export function envInt(raw: string | undefined, fallback: number, min: number, m
 /** `MEM0_PIPELINE_REVIEW_CAP` : plafond des tours de correction (défaut 3). */
 export function lotReviewCap(env: Record<string, string | undefined> = process.env): number {
   return envInt(env.MEM0_PIPELINE_REVIEW_CAP, PIPELINE_REVIEW_CAP_DEFAULT, 1, 20);
+}
+
+
+/** `MEM0_PIPELINE_SLOTS` : runs de features du lot menés en parallèle (défaut 4). */
+export const PIPELINE_SLOTS_DEFAULT = 4;
+
+/**
+ * Borne HAUTE du parallélisme : au-delà, on retombe sur une rafale de processus
+ * `omp` que rien ne justifie (et que l'utilisateur n'a pas demandée).
+ */
+export const PIPELINE_SLOTS_MAX = 32;
+
+
+/**
+ * `MEM0_PIPELINE_SLOTS` : le plafond de runs de features du lot menés en
+ * parallèle. Variable absente, vide ou illisible ⇒ 4 ; `0` ou négative ⇒ 1 ; au-delà
+ * de 32 ⇒ 32. Aucune valeur ne peut donc empêcher tout démarrage ni laisser le
+ * parallélisme illimité — il n'y a PAS de cas « 0 = illimité ». La valeur n'est lue
+ * qu'au premier lancement du lot : ensuite, le pilotage compare à `lot.slotCap`.
+ */
+export function lotSlots(env: Record<string, string | undefined> = process.env): number {
+  return envInt(env.MEM0_PIPELINE_SLOTS, PIPELINE_SLOTS_DEFAULT, 1, PIPELINE_SLOTS_MAX);
 }
 
 

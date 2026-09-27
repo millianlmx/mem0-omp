@@ -122,6 +122,7 @@ function seedLot(stateDir: string, repoRoot: string, features: LotFeature[], ove
     repoRoot,
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: null,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: NOW,

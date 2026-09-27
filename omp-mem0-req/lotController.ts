@@ -8,8 +8,8 @@ import { reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
-import type { Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { modelField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
@@ -74,6 +74,13 @@ export type LotControllerDeps = {
   ompBin?: string;
   selfPath?: string | null;
   reviewCap?: number;
+  /**
+   * Le plafond de runs parallèles du lot (S-2) : injecté par les tests, lu sinon
+   * sur `MEM0_PIPELINE_SLOTS`. Comme `reviewCap`, il n'est lu qu'à la CRÉATION ou
+   * au premier lancement du lot, puis FIGÉ dans `lot.slotCap` — le pilotage ne
+   * relit jamais l'environnement.
+   */
+  slots?: number;
   runTimeoutMs?: number;
 };
 
@@ -97,7 +104,12 @@ export type LotController = LotPanelActions & {
 };
 
 
-export type PlannedLaunch = { slug: string; phase: PipelinePhase; fix: boolean; kind: LotPromptKind; text?: string; resume: boolean };
+/**
+ * Un lancement décidé : la forme RETENUE (S-3) plus la feature visée. Une seule
+ * forme de lancement pour tous les chemins — un geste retenu rejoue exactement ce
+ * que le chemin immédiat aurait lancé.
+ */
+export type PlannedLaunch = HeldLaunch & { slug: string };
 
 
 /**
@@ -113,6 +125,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const repo = path.basename(realpathOr(deps.repoRoot)) || realpathOr(deps.repoRoot);
   const now = () => (deps.now ?? Date.now)();
   const cap = deps.reviewCap ?? lotReviewCap();
+  const slots = deps.slots ?? lotSlots();
   const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
   const ompBin = deps.ompBin ?? lotOmpBin();
   const worktreesBase = deps.worktreesBase ?? worktreesBaseDir();
@@ -367,11 +380,39 @@ export function createLotController(deps: LotControllerDeps): LotController {
   function settle(lot: Lot, feature: LotFeature, state: "blocked" | "failed", reason: string): void {
     const before = feature.state;
     feature.state = state;
+    // Tout ce qui sort de `pending` détruit le lancement retenu (S-3) : une
+    // feature bloquée ou échouée ne porte pas d'ordre de départ en attente.
+    delete feature.held;
     feature.stopReason = reason;
     feature.waitKind = null;
     feature.waitPrompt = null;
     feature.endedAt = touch(feature, now());
     emit(lot, feature, before);
+  }
+
+
+  /**
+   * Le corps d'ARMEMENT d'un lancement, partagé par les trois chemins qui mettent
+   * une feature en marche (le geste immédiat, la retenue rejouée par la passe, et
+   * le maillon suivant d'un run qui rend la main) : phase, état, attente effacée,
+   * compteurs du plafond, horloge. Les compteurs sont donc consommés au DÉMARRAGE
+   * réel, jamais à la retenue (S-3).
+   */
+  function arm(feature: LotFeature, launch: { phase: PipelinePhase; fix: boolean }): void {
+    delete feature.held;
+    feature.phase = launch.phase;
+    feature.state = "running";
+    feature.waitKind = null;
+    feature.waitPrompt = null;
+    feature.stopReason = null;
+    feature.endedAt = null;
+    // Les compteurs du plafond comptent AUSSI les runs lancés par une action (R,
+    // réponse, jalon) : sinon le plafond effectif valait cap+1 corrections, et une
+    // revue lancée par R n'était comptée nulle part (S-5).
+    feature.fixes += launch.fix ? 1 : 0;
+    feature.reviewRuns += launch.phase === "review" ? 1 : 0;
+    feature.unreadableRuns = (feature.unreadableRuns ?? 0) + (launch.phase === "review" ? 1 : 0);
+    touch(feature, now());
   }
 
   function freshLot(): Lot {
@@ -382,6 +423,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       repoRoot: realpathOr(deps.repoRoot),
       status: "draft",
       reviewCap: cap,
+      slotCap: slots,
       recapAt: null,
       owner: { pid: process.pid, sessionFile: null, sessionId: null },
       createdAt: at,
@@ -673,16 +715,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       reviewRewritten,
     });
     if (action.kind === "run") {
-      feature.fixes += action.fix ? 1 : 0;
-      feature.reviewRuns += action.phase === "review" ? 1 : 0;
-      feature.unreadableRuns = (feature.unreadableRuns ?? 0) + (action.phase === "review" ? 1 : 0);
-      feature.phase = action.phase;
-      feature.state = "running";
-      feature.waitKind = null;
-      feature.waitPrompt = null;
-      feature.stopReason = null;
-      feature.endedAt = null;
-      touch(feature, now());
+      // Le maillon suivant du MÊME run : le créneau est déjà tenu, donc aucun
+      // plafond ne s'applique ici — seul l'armement est partagé.
+      arm(feature, action);
       out.launches.push({
         slug: feature.slug,
         phase: action.phase,
@@ -897,7 +932,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // lot périmé (une fin de run peut tomber pendant l'attente du git).
     const created: Array<{ slug: string; result: { path?: string; branch?: string; error?: string } }> = [];
     if (initial.status === "running") {
+      // Phase A bornée par les créneaux LIBRES (S-1) : `git worktree add` est la
+      // seule attente de la passe, et préparer 28 arbres pour n'en lancer 4 ferait
+      // exactement la rafale que le plafond supprime — en retardant toutes les
+      // décisions de la passe. Un arbre créé pour une feature qui reste `pending`
+      // est CONSERVÉ : c'est son arbre, jamais passé à `discardWorktrees`.
+      let creating = freeSlots(initial);
       for (const feature of initial.features) {
+        if (creating <= 0) break;
         if (feature.state !== "pending" || feature.worktree !== "" || !runnable(initial, feature)) continue;
         // Une feature que `l` n'a pas lancée n'a pas de worktree à créer : elle
         // attend le lancement du lot (S-3, CHAIN-11).
@@ -926,6 +968,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
           created.push({ slug: feature.slug, result: { error: made.error } });
           continue;
         }
+        // L'arbre EXISTE : il consomme un créneau de préparation (un échec, lui,
+        // n'en consomme aucun — la feature passe `failed` et le reste avance).
+        creating -= 1;
         // La dépendance est la BASE du travail, pas seulement son ordre (S-10) :
         // `createFeatureWorktree` part de `HEAD` du dépôt principal, où le travail
         // d'une dépendance n'est pas encore — « terminée » veut dire PR ouverte,
@@ -985,6 +1030,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       lot.status = "running";
       lot.launchedAt = now();
       lot.reviewCap = cap;
+      lot.slotCap = slots;
       changed = true;
     }
 
@@ -1145,24 +1191,34 @@ export function createLotController(deps: LotControllerDeps): LotController {
       }
     }
 
-    // 3. Les features runnables démarrent, toutes dans la même passe (AC-18) — sauf
-    // celles qu'un ajout dans un lot au BROUILLON a mises de côté : elles attendent
-    // `l`, qui les marque lancées. Sans ce garde, un `/req` dans un lot brouillon
-    // démarrait tous les pipelines ajoutés par `a` (S-3, CHAIN-11).
+    // 3. Les features runnables démarrent, dans l'ordre du lot et DANS LA LIMITE
+    // DES CRÉNEAUX LIBRES (S-1, AC-1, AC-2) — sauf celles qu'un ajout dans un lot
+    // au BROUILLON a mises de côté : elles attendent `l`, qui les marque lancées.
+    // Sans ce garde, un `/req` dans un lot brouillon démarrait tous les pipelines
+    // ajoutés par `a` (S-3, CHAIN-11). Le parcours s'INTERROMPT dès que le
+    // compteur tombe à zéro : les suivantes restent `pending`, sans qu'aucune
+    // écriture ne les touche (leur horloge court depuis leur entrée en attente).
+    let free = freeSlots(lot);
     for (const feature of lot.features) {
       if (lot.status !== "running" || feature.state !== "pending") continue;
       if (feature.launched === false || !runnable(lot, feature) || feature.worktree === "") continue;
-      feature.state = "running";
-      feature.waitKind = null;
-      feature.stopReason = null;
-      touch(feature, now());
-      launches.push({
-        slug: feature.slug,
-        phase: feature.phase,
-        fix: false,
-        kind: feature.phase === "req" ? "collecte" : "phase",
-        resume: false,
-      });
+      if (free <= 0) break;
+      free -= 1;
+      // Un lancement RETENU (S-3) repart TEL QUEL : phase, `fix`, `kind`, `resume`
+      // et texte d'une réponse sont ceux du geste, et l'armement partagé consomme
+      // les compteurs du plafond au démarrage réel — pas à la retenue.
+      const held = feature.held;
+      const launch: PlannedLaunch = held
+        ? { ...held, slug: feature.slug }
+        : {
+            slug: feature.slug,
+            phase: feature.phase,
+            fix: false,
+            kind: feature.phase === "req" ? "collecte" : "phase",
+            resume: false,
+          };
+      arm(feature, launch);
+      launches.push(launch);
       changed = true;
     }
 
@@ -1218,25 +1274,48 @@ export function createLotController(deps: LotControllerDeps): LotController {
   /**
    * Une action du panneau qui démarre un run : l'état change, puis le run part.
    * Rend le motif du refus quand le lot n'a pas pu être écrit (rien ne partirait).
+   *
+   * LE PLAFOND PASSE ICI AUSSI (S-3) : sans créneau libre, le geste n'est ni perdu
+   * ni refusé — il est RETENU (la feature redevient `pending` avec son lancement
+   * mémorisé dans `held`) et la passe le démarre dès qu'un run rend son créneau,
+   * dans l'ordre du lot.
    */
   function startPlanned(lot: Lot, feature: LotFeature, launch: PlannedLaunch): string | null {
     // Une feature TERMINALE qui repart rouvre le lot : le récap déjà posté décrivait
     // un état final qui n'en est plus un (S-12). Sans cette remise à zéro, la vraie
     // fin ne serait jamais annoncée, et le seul récap resterait faux.
     if (lotStateTerminal(feature.state)) lot.recapAt = null;
-    feature.phase = launch.phase;
-    feature.state = "running";
-    feature.waitKind = null;
-    feature.waitPrompt = null;
-    feature.stopReason = null;
-    feature.endedAt = null;
-    // Les compteurs du plafond comptent AUSSI les runs lancés par une action (R,
-    // réponse, jalon) : sinon le plafond effectif valait cap+1 corrections, et une
-    // revue lancée par R n'était comptée nulle part (S-5).
-    feature.fixes += launch.fix ? 1 : 0;
-    feature.reviewRuns += launch.phase === "review" ? 1 : 0;
-    feature.unreadableRuns = (feature.unreadableRuns ?? 0) + (launch.phase === "review" ? 1 : 0);
-    touch(feature, now());
+    if (!hasFreeSlot(lot)) {
+      feature.phase = launch.phase;
+      feature.state = "pending";
+      feature.waitKind = null;
+      feature.waitPrompt = null;
+      feature.stopReason = null;
+      feature.endedAt = null;
+      feature.held = {
+        phase: launch.phase,
+        fix: launch.fix,
+        kind: launch.kind,
+        resume: launch.resume,
+        // Le texte d'une réponse est borné par la même borne que l'éditeur du
+        // panneau : un `held` ne fait jamais grossir le lot au-delà de ses règles.
+        ...(launch.text === undefined ? {} : { text: launch.text.slice(0, LOT_EDITOR_MAX) }),
+      };
+      touch(feature, now());
+      // Le récap a décrit un état final qui n'en est plus un : le lancement retenu
+      // repart le lot.
+      lot.recapAt = null;
+      // Sauvegarde AVANT tout : le geste retenu ne doit pas pouvoir se perdre — un
+      // échec d'écriture rend le motif de refus habituel, et rien ne part.
+      const refusal = save(lot);
+      if (refusal) return refusal;
+      // La boucle est armée et une passe suit : c'est elle qui démarrera la retenue
+      // dès qu'un créneau se libère, sans autre geste de l'utilisateur.
+      start();
+      void tick().catch(() => undefined);
+      return null;
+    }
+    arm(feature, launch);
     // Sauvegarde AVANT le lancement : un run qui rend la main tout de suite ne
     // doit pas écrire sa transition sur un lot plus vieux que celui-ci — et rien
     // ne part si le lot n'a pas pu être écrit.
@@ -1391,6 +1470,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         lot.status = "running";
         lot.launchedAt = at;
         lot.reviewCap = cap;
+        lot.slotCap = slots;
       }
       lot.features.push({
         slug,
@@ -1447,6 +1527,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         lot.status = "running";
         lot.launchedAt = at;
         lot.reviewCap = cap;
+        lot.slotCap = slots;
         changed = true;
       }
       for (const feature of lot.features) {
@@ -1719,6 +1800,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
         inFlight.get(slug)?.abort();
         const before = target.state;
         target.state = "cancelled";
+        // Une feature annulée n'a plus de destinataire : le lancement retenu tombe
+        // avec elle (S-3), comme sa file.
+        delete target.held;
         target.waitKind = null;
         target.waitPrompt = null;
         target.stopReason = null;

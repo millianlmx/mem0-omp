@@ -265,3 +265,24 @@ test("docs/AC-6 : PUBLISHING et le README décrivent le flux réel et le préreq
     assert.doesNotMatch(text, /GITHUB_TOKEN[^.]*publie/, "le jeton du dépôt n'est pas un repli de publication");
   }
 });
+
+test("docs/AC-23 : le README documente le plafond de runs parallèles du lot", () => {
+  const config = section(read("README.md"), "Config");
+
+  // La variable, son défaut et son rôle, au format exact des autres lignes.
+  assert.match(
+    config,
+    /^\| `MEM0_PIPELINE_SLOTS` \| `4` \| .+menés en parallèle.+$/m,
+    "la ligne du tableau « Config » porte la variable, son défaut et son rôle",
+  );
+  assert.match(
+    config,
+    /^\| `MEM0_PIPELINE_SLOTS` \| `4` \| .+attend un créneau/m,
+    "le rôle nomme le motif que /pipelines affiche",
+  );
+  assert.equal(
+    config.match(/MEM0_PIPELINE_SLOTS/g)?.length,
+    1,
+    "la variable n'est citée qu'une fois dans la section",
+  );
+});
