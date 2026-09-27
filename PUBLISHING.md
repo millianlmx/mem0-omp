@@ -9,6 +9,7 @@ commande d'ajout côté utilisateur.
 mem0-omp/                              ← racine du dépôt = marketplace
 ├── .omp-plugin/marketplace.json       ← catalogue, chemin lu par OMP
 ├── .claude-plugin/marketplace.json    ← copie, repli compatible Claude Code
+├── CHANGELOG.md                       ← journal des versions, écrit par le job de release
 ├── omp-mem0-memory/                   ← le plugin mémoire
 │   ├── package.json                   ← déclare omp.extensions
 │   ├── extension.ts
@@ -77,6 +78,11 @@ sous Windows (oh-my-pi#1292) ou qui importent le mauvais scope de package
 (oh-my-pi#1889).
 
 ## Publier
+
+Amorçage d'un dépôt neuf — **ce n'est pas le chemin de release** : le `git push`
+initial sur `main` n'est admis qu'ici, avant que les workflows existent côté
+GitHub. Ensuite, tout passe par la PR de release du job (cf. § Release
+automatique), et plus jamais par un push direct sur `main`.
 
 ```bash
 cd mem0-omp
@@ -149,25 +155,25 @@ verra `/mem0-status` en rouge et n'aura aucune idée de pourquoi.
 
 ## Mettre à jour
 
-Le catalogue est du contenu de dépôt : un `git push` suffit, il n'y a rien à
-republier ailleurs.
+Le catalogue est du contenu de dépôt : rien n'est à republier ailleurs, et surtout
+rien à pousser à la main.
 
-```bash
-# bump dans les 4 fichiers porteurs de version, puis
-./scripts/check.sh && git commit -am "chore: v2.4.0" && git push
-```
+**Ne monte plus les versions à la main.** Les quatre fichiers porteurs de version
+— `omp-mem0-memory/package.json`, `omp-mem0-req/package.json`,
+`.omp-plugin/marketplace.json` et `.claude-plugin/marketplace.json` (ces deux
+derniers doivent rester identiques octet pour octet) — sont écrits par le **job de
+release**, au moment de la fusion : il lit la dernière version publiée, déduit le
+niveau des commits conventionnels, applique le bump, puis écrit le tag et la
+release. Une PR qui modifie un de ces fichiers échoue en CI
+(`scripts/no-manual-bump.sh`, étape du job `check`) parce que son bump doublerait
+celui du job.
 
-Le bump se fait dans **quatre** fichiers : `omp-mem0-memory/package.json`,
-`omp-mem0-req/package.json`, `.omp-plugin/marketplace.json` et
-`.claude-plugin/marketplace.json` — les deux catalogues doivent rester identiques
-octet pour octet.
-
-L'invariant est celui que `./scripts/check.sh` vérifie, et c'est le seul qui
-compte : le champ `version` de chaque entrée de `plugins[]` **égale** la `version`
-du `package.json` du plugin visé, et `metadata.version` du catalogue **nomme une
-version publiée** — l'une des versions d'entrée. Ce dernier champ n'est pas un
-compteur libre : s'il ne correspond à aucune version de plugin, `/plugins list`
-affiche un numéro qui n'existe nulle part.
+L'invariant, lui, ne change pas, et c'est le seul qui compte : le champ `version`
+de chaque entrée de `plugins[]` **égale** la `version` du `package.json` du plugin
+visé, et `metadata.version` du catalogue **nomme une version publiée** — l'une des
+versions d'entrée. Ce dernier champ n'est pas un compteur libre : s'il ne
+correspond à aucune version de plugin, `/plugins list` affiche un numéro qui
+n'existe nulle part.
 
 Côté utilisateur :
 
@@ -191,10 +197,28 @@ exact plutôt que sur une branche :
 ## Release automatique
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`, qui exécute
-`scripts/release.ts` : le moteur décide du bump de chaque plugin touché d'après
-les commits conventionnels de la fusion, écrit les versions et `CHANGELOG.md`,
-prouve le résultat avec `./scripts/check.sh`, puis committe, pousse, tague et
-publie une release GitHub par plugin bumpé.
+`scripts/release.ts`. **Rien n'est jamais poussé directement sur `main`** : le
+commit de release est porté par une PR que le job ouvre puis fusionne lui-même, et
+c'est seulement ensuite que les tags et les releases sont publiés.
+
+1. **Plan** — le moteur relit `origin/main`, repère les versions jamais publiées
+   (rattrapage) et calcule le bump de chaque plugin touché depuis l'apparition de
+   sa version courante ;
+2. **Branche** — `release/<sha de l'événement>`, sur laquelle il écrit les
+   versions, les deux catalogues et `CHANGELOG.md`, puis prouve le résultat avec
+   `./scripts/check.sh` (rouge ⇒ rien n'est committé) ;
+3. **PR** — poussée de la branche, puis PR vers `main` ouverte avec le jeton dédié
+   (cf. § Jeton de release) ; une PR déjà ouverte pour la branche est réutilisée ;
+4. **Statuts requis** — le job attend que les deux statuts de `check.yml` passent
+   sur cette PR (`mergeStateStatus` ∈ `CLEAN`, `UNSTABLE`, `HAS_HOOKS`), et échoue
+   en le nommant après le budget d'attente ;
+5. **Fusion** — squash avec un titre et un corps explicites, puis relecture du sha
+   de fusion et vérification que l'arbre fusionné est bien celui qui a passé
+   `check.sh` ;
+6. **Tags et releases** — tous les tags `<plugin>-v<version>` d'abord, en une seule
+   poussée, puis une release GitHub par version, portant les commandes
+   d'installation et de mise à jour — et « ce qui casse / quoi faire » pour un bump
+   majeur.
 
 ```bash
 # Ce que la CI exécute — rejouable à la main, et sans rien écrire avec --dry-run :
@@ -210,18 +234,26 @@ rien et ne publie rien.
 
 **Ce que le moteur écrit** — `omp-mem0-*/package.json`, les deux catalogues
 (identiques octet pour octet ; `metadata.version` = la plus grande version du
-catalogue) et `CHANGELOG.md` à la racine. Rien d'autre. `check.sh` doit sortir 0,
-sinon aucun commit, aucun tag, aucune release n'est créé.
+catalogue) et `CHANGELOG.md` à la racine — une section datée
+`## <plugin> <version> — <AAAA-MM-JJ>` par version publiée, la plus récente en
+tête. Rien d'autre. `check.sh` doit sortir 0, sinon aucun commit, aucun tag,
+aucune release n'est créé.
 
-**Idempotence** — le commit de release porte le trailer
+**Rattrapage** — une version historique dont le tag manque sur le remote est
+publiée par le prochain run : son tag, sa release et son entrée de `CHANGELOG.md`,
+datée du commit où la version est apparue. Le premier run réel rattrape donc tout
+l'historique du dépôt — dans l'ordre chronologique d'apparition des versions, qui
+n'est pas l'ordre semver (une régression de version publiée est journalisée telle
+qu'elle a eu lieu).
+
+**Idempotence** — le commit de fusion porte le trailer
 `Release-Event: <sha après>` ; un rejeu du même événement s'arrête sur
-`· merge déjà publié` sans rien écrire. Un plugin dont le tag de la version cible
-existe déjà est retiré du plan (`· déjà publié (tag …)`). Si la création de la
-release échoue après le push, la fusion reste marquée publiée : les commits
-manquants partent avec la release suivante, il n'y a pas de rattrapage
-automatique. Enfin, le push du workflow ne relance **aucun** workflow — les
-événements déclenchés par `GITHUB_TOKEN` ne créent pas de run —, d'où le
-`check.sh` lancé par le job de release lui-même.
+`· merge déjà publié` et ne republie rien. Un plugin dont le tag de la version
+cible existe déjà est retiré du plan (`· déjà publié (tag …)`), une version déjà
+taguée n'est jamais republiée, et une entrée de journal déjà présente n'est jamais
+dupliquée. Le plan de bump se recalcule depuis le commit d'apparition de la
+version courante, jamais depuis la seule plage de l'événement : un run annulé ou
+perdu est donc rattrapé par le run suivant, sans qu'aucun commit ne disparaisse.
 
 **Blocage du merge** — `main` exige les deux statuts de `check.yml`
 (`check (ubuntu-latest)` et `check (macos-latest)`), donc un job rouge bloque le
@@ -236,7 +268,63 @@ JSON
 ```
 
 Les contextes sont les **noms affichés** des jobs de `check.yml` : renommer un OS
-de la matrice sans rejouer cette commande débloquerait le merge en silence.
+de la matrice sans rejouer cette commande débloquerait le merge en silence. Ce
+sont ces deux statuts que la PR de release doit obtenir avant d'être fusionnée —
+d'où le jeton dédié de la section suivante, plutôt qu'un `GITHUB_TOKEN` qui ne
+déclencherait aucun run.
+
+## Jeton de release
+
+Le job de release publie avec un jeton **dédié**, rangé dans le secret de dépôt
+`RELEASE_TOKEN` et lu par `.github/workflows/release.yml`. C'est ce jeton qui
+pousse la branche, ouvre la PR, la fusionne, pousse les tags et crée les releases.
+
+Il est **obligatoire** : les événements créés par le `GITHUB_TOKEN` du dépôt ne
+déclenchent aucun run de workflow, donc une PR de release ouverte avec lui resterait
+indéfiniment à « statuts requis manquants » (les deux `check.yml` ne s'exécuteraient
+jamais dessus) — l'auto-fusion ne pourrait pas aboutir. **Ni la pipeline ni le
+workflow ne peuvent le créer** : il se crée une fois, à la main, par le
+propriétaire du dépôt.
+
+### Créer le jeton (personal access token fine-grained)
+
+Settings → **Developer settings** → **Personal access tokens** → **Fine-grained
+tokens** → **Generate new token**, puis :
+
+| Champ | Valeur |
+|---|---|
+| Token name | `mem0-omp release` (libre) |
+| Expiration | 90 jours, et note la date : elle devra être renouvelée |
+| Resource owner | le compte propriétaire du dépôt |
+| Repository access | **Only select repositories** → `mem0-omp` |
+| Permissions | **Contents: Read and write**, **Pull requests: Read and write** — **Metadata: Read** est implicite, toujours incluse |
+
+Rien de plus : ces permissions minimales suffisent au flux complet. Un jeton à
+portée large (jeton classique `repo`, ou jeton d'organisation) est un risque
+inutile — le job n'en a pas besoin, et il ne doit accéder qu'à ce dépôt.
+
+### Le ranger en secret
+
+Settings → **Secrets and variables** → **Actions** → **New repository secret**,
+nom exact **`RELEASE_TOKEN`**, valeur = le jeton. C'est ce nom que lit
+`release.yml` ; un autre nom passe inaperçu jusqu'à l'échec du job.
+
+### Quand il manque ou expire
+
+Le jeton absent, vide ou expiré fait échouer le job **à sa première étape**, avant
+tout checkout, avec :
+
+```
+secret RELEASE_TOKEN absent — le job de release ne peut pas publier.
+Crée-le (PUBLISHING.md, § Jeton de release), puis relance cette exécution.
+```
+
+Il n'y a **aucun repli** sur le `GITHUB_TOKEN`. La marche à suivre : régénérer un
+jeton fine-grained (mêmes permissions, même dépôt), remplacer la valeur du secret,
+puis relancer l'exécution concernée — le run suivant rattrape de toute façon ce qui
+manque. Un jeton fine-grained inutilisé pendant un an est supprimé automatiquement
+par GitHub : un job de release qui tombe sans autre explication mérite un coup
+d'œil de ce côté.
 
 ## Alternatives
 

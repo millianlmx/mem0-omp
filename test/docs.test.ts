@@ -209,3 +209,59 @@ test("docs/AC-22 : le README conditionne l'exhaustivité du sommaire et décrit 
     "l'aménagement du cwd avant la bascule n'est pas décrit",
   );
 });
+
+test("docs/AC-6 : PUBLISHING et le README décrivent le flux réel et le prérequis du jeton", () => {
+  const doc = read("PUBLISHING.md");
+  const readme = read("README.md");
+
+  // (a) Le flux RÉELLEMENT exécuté : PR de bot auto-mergée après les statuts
+  // requis, bump par le job, journal, rattrapage, idempotence.
+  const release = section(doc, "Release automatique");
+  assert.match(release, /Rien n'est jamais poussé directement sur `main`/);
+  assert.match(release, /squash/);
+  assert.match(release, /[Ss]tatuts requis/);
+  assert.match(release, /CHANGELOG\.md/);
+  assert.match(release, /[Rr]attrapage/);
+  assert.match(release, /[Ii]dempotence/);
+  assert.doesNotMatch(release, /puis committe, pousse/, "l'ancien flux (push direct) doit avoir disparu");
+  assert.doesNotMatch(release, /pas de rattrapage automatique/, "le rattrapage existe désormais");
+  assert.doesNotMatch(release, /git push/, "aucune commande ne pousse main dans cette section");
+
+  // (b) Aucun bump manuel, et l'amorçage est le seul push admis sur main.
+  const update = section(doc, "Mettre à jour");
+  assert.match(update, /job de\s+release/);
+  assert.match(update, /no-manual-bump\.sh/);
+  assert.doesNotMatch(update, /git (commit|push)/, "la procédure de bump manuel doit avoir disparu");
+  const publish = section(doc, "Publier");
+  assert.match(publish, /amorçage/i, "le push initial est annoté comme amorçage");
+  assert.match(publish, /ce n'est pas le chemin de release/);
+
+  const ci = section(readme, "CI et release");
+  assert.match(ci, /directement sur `main`/, "le README dit que main n'est jamais poussé directement");
+  assert.match(ci, /job/);
+  assert.match(ci, /CHANGELOG\.md/);
+  assert.match(ci, /PUBLISHING\.md` § Jeton de release/, "le README renvoie au prérequis du jeton");
+
+  // (c) Le prérequis utilisateur, documenté pas à pas.
+  const token = section(doc, "Jeton de release");
+  for (const expected of [
+    "RELEASE_TOKEN",
+    "`.github/workflows/release.yml`",
+    "Contents",
+    "Pull requests",
+    "Only select repositories",
+    "Resource owner",
+    "Fine-grained",
+    "New repository secret",
+    "secret RELEASE_TOKEN absent — le job de release ne peut pas publier",
+  ]) {
+    assert.ok(token.includes(expected), `« ${expected} » absent de PUBLISHING.md § Jeton de release`);
+  }
+  assert.match(token, /ni la pipeline ni le\s+workflow ne peuvent le créer/i);
+  assert.match(token, /expir/i, "le renouvellement à l'expiration est documenté");
+
+  // Aucune mention du jeton du dépôt comme jeton de publication.
+  for (const text of [release, token]) {
+    assert.doesNotMatch(text, /GITHUB_TOKEN[^.]*publie/, "le jeton du dépôt n'est pas un repli de publication");
+  }
+});
