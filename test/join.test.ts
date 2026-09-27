@@ -144,21 +144,11 @@ function recorder() {
   };
 }
 
-const GLYPHS: PanelGlyphs = {
-  topLeft: "+",
-  topRight: "+",
-  bottomLeft: "+",
-  bottomRight: "+",
-  horizontal: "-",
-  vertical: "|",
-  teeLeft: "+",
-  teeRight: "+",
-  cursor: ">",
-};
+const GLYPHS: PanelGlyphs = { cursor: ">" };
 
 /** Le rang de notice du panneau à une largeur donnée (la troncature est un artefact de largeur). */
 function noticeRow(notice: string, width: number): string {
-  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice, unreadable: 0 };
+  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice, unreadable: 0, relayed: {} };
   return buildPanelRows(model, { width, budget: 18, glyphs: GLYPHS, now: 0 })
     .map((row) => row.text)
     .join("\n");

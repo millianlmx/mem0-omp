@@ -59,7 +59,6 @@ const AT = 1_700_000_000_000;
 function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? "depot/feature",
     phase: "req",
     state: "running",
@@ -782,7 +781,7 @@ test("fixview/AC-7 : Échap libère les composants de l'assemblage", () => {
   const screen = panel.screen();
   assert.match(screen, /▸ toi : lance/, "l'assemblage est peint");
   assert.match(screen, /→ mem0_add \[EN ATTENTE\]/, "la carte d'outil est en vol");
-  assert.deepEqual(released, [], "rien n'est libéré tant qu'on reste dans la vue");
+  assert.deepEqual<typeof released>(released, [], "rien n'est libéré tant qu'on reste dans la vue");
 
   panel.component.handleInput("\u001b");
   assert.ok(released.includes("UserMessageComponent"), "Échap libère les messages de l'assemblage");

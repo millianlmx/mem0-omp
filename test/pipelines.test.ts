@@ -76,7 +76,6 @@ function deadPid(): number {
 function mkRunning(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? pipelineLabel(input.cwd),
     phase: "req",
     state: "running",
@@ -95,7 +94,6 @@ function mkHistory(stateDir: string, input: Partial<HistoryEntry> & { cwd: strin
   const endedAt = input.endedAt ?? 5_000;
   const entry: HistoryEntry = {
     id: historyIdFor(input.cwd, endedAt),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? pipelineLabel(input.cwd),
     phase: "review",
     finalState: "done",
@@ -288,7 +286,7 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}) {
 test("pipelines/AC-1 : les rangs du panneau portent le cadre et le pied", () => {
   // Aucune entrée du tout : le panneau s'affiche quand même (titre, sections
   // vides, pied) — il ne se ferme pas tout seul.
-  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0 };
+  const model: PanelModel = { running: [], live: {}, history: [], selection: -1, notice: null, unreadable: 0, relayed: {} };
   const rows = buildPanelRows(model, { width: 64, budget: 18, glyphs: GLYPHS, now: 1_000 });
   const text = rowsText(rows);
 
@@ -774,6 +772,7 @@ test("le panneau se borne en hauteur : en cours prioritaires, marqueurs de tronc
     selection: 0,
     notice: null,
     unreadable: 0,
+    relayed: {},
   };
 
   // budget 14 ⇒ 5 rangs de contenu : 3 en cours (priorité) + 1 d'historique + le

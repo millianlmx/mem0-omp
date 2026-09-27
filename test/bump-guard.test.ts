@@ -100,7 +100,7 @@ function commitAll(dir: string, subject: string, body?: string): string {
 }
 
 /** Une branche de PR par-dessus `main`, puis la garde évaluée sur cette plage. */
-function withPullRequest(dir: string, change: () => string, subject = "fix: quelque chose"): SpawnSyncReturns<string> {
+function withPullRequest(dir: string, change: () => void, subject = "fix: quelque chose"): SpawnSyncReturns<string> {
   const base = git(["rev-parse", "HEAD"], dir).trim();
   git(["checkout", "-q", "-b", "pr"], dir);
   change();

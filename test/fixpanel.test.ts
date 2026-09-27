@@ -139,7 +139,6 @@ function seedLot(stateDir: string, repoRoot: string, features: LotFeature[], ove
 function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? "depot/feature",
     phase: "req",
     state: "running",

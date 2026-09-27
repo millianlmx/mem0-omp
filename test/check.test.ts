@@ -47,16 +47,22 @@ test.after(() => {
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function copyRepo(): string {
+function copyRepo(onlyTest?: string): string {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "check-copie-"));
   dirs.push(dir);
+  // Une copie ÉLAGUÉE ne garde qu'un fichier de test : `check.sh` y relance la
+  // suite, et les tests d'injection de type n'observent que la section `── Types`
+  // (patron de test/release.test.ts : ≈ 3 s au lieu de ≈ 33 s en pleine fidélité).
+  const only = onlyTest === undefined ? null : path.join("test", onlyTest);
   fs.cpSync(ROOT, dir, {
     recursive: true,
     filter: (src) => {
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
       if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true)) return false;
-      return rel !== RECURSIVE_FILE;
+      if (rel === RECURSIVE_FILE) return false;
+      if (only !== null && rel.startsWith(`test${path.sep}`) && rel !== only) return false;
+      return true;
     },
   });
   return dir;
@@ -434,4 +440,150 @@ test("mem0-http-hors-ci/AC-1 : la CI prépare l'environnement du test d'API avan
   const prepare = workflow.indexOf("bash scripts/mem0-http-test.sh --prepare");
   const check = workflow.indexOf("./scripts/check.sh");
   assert.ok(prepare !== -1 && check !== -1 && prepare < check, workflow);
+});
+
+// ---------------------------------------------------------------------------
+// S-1 à S-4 (AC-1, AC-2, AC-3, AC-4, AC-6, AC-7) — la couverture du type-check
+// ---------------------------------------------------------------------------
+//
+// Chaque test plante une erreur de type VALIDE À L'EXÉCUTION (`const q: number =
+// "boom"`) dans une copie JETABLE : `--experimental-strip-types` efface les
+// annotations, donc seule la section `── Types` de check.sh rougit (cf. `##
+// Documentation`, « Node.js 26.7.0 »). La copie est ÉLAGUÉE à un seul fichier de
+// test — ces contrôles n'observent que le type-check.
+
+/** Sans les types de l'hôte, `typecheck.sh` l'annonce et sort 0 : aucune preuve. */
+const HOST_TYPES_ABSENT = "types de l'hôte absents";
+
+const hostTypesAbsent = (out: string): boolean => out.includes(HOST_TYPES_ABSENT);
+
+test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait échouer check.sh en nommant le fichier", (t) => {
+  const dir = copyRepo("dedupe.test.ts");
+  const target = path.join(dir, "omp-mem0-memory/brief.ts");
+  fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
+
+  const bad = runCheck(dir);
+  if (hostTypesAbsent(output(bad))) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("✗ type-check : "), output(bad));
+  assert.ok(output(bad).includes("omp-mem0-memory/brief.ts("), output(bad));
+  assert.ok(output(bad).includes("error TS2322"), output(bad));
+});
+
+test("check/AC-2 : une erreur de type dans un fichier de test fait échouer check.sh en nommant le fichier", (t) => {
+  const dir = copyRepo("dedupe.test.ts");
+  const target = path.join(dir, "test/dedupe.test.ts");
+  fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
+
+  const bad = runCheck(dir);
+  if (hostTypesAbsent(output(bad))) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("test/dedupe.test.ts("), output(bad));
+  assert.ok(output(bad).includes("error TS2322"), output(bad));
+});
+
+test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de configuration", (t) => {
+  const dir = copyRepo("dedupe.test.ts");
+  fs.writeFileSync(path.join(dir, "omp-mem0-memory/zz-neuf.ts"), `export const q: number = "boom";\n`);
+  fs.writeFileSync(path.join(dir, "test/zz-neuf.ts"), `export const q: number = "boom";\n`);
+
+  // Les deux chemins sont exigés : le second prouve que le programme des tests
+  // tourne MALGRÉ l'échec du premier (aucun court-circuit entre les deux).
+  const bad = runCheck(dir);
+  if (hostTypesAbsent(output(bad))) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("omp-mem0-memory/zz-neuf.ts("), output(bad));
+  assert.ok(output(bad).includes("test/zz-neuf.ts("), output(bad));
+});
+
+test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle refusée)", (t) => {
+  const dir = copyRepo("dedupe.test.ts");
+  const target = path.join(dir, "omp-mem0-memory/brief.ts");
+  fs.writeFileSync(
+    target,
+    `const s: string | null = null;\nexport const n = s.length;\n${fs.readFileSync(target, "utf8")}`,
+  );
+
+  // Sonde de `strictNullChecks` : sans `strict`, `s.length` passerait. L'autre
+  // moitié d'AC-4 (« arbre non modifié, 0 erreur ») est portée par check/AC-18.
+  const bad = runCheck(dir);
+  if (hostTypesAbsent(output(bad))) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("omp-mem0-memory/brief.ts("), output(bad));
+  assert.ok(output(bad).includes("error TS18047"), output(bad));
+});
+
+test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée inutilisable échoue", () => {
+  // (a) Les deux jobs de la matrice exportent les types et exécutent check.sh :
+  // une erreur de type ne peut donc pas passer pour un « types absents ».
+  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
+  assert.ok(workflow.includes("MEM0_OMP_HOST_TYPES="), workflow);
+  assert.ok(workflow.includes("./scripts/check.sh"), workflow);
+
+  // (b) Une racine DÉCLARÉE fait autorité : inutilisable, elle échoue en la
+  // nommant, sans retomber sur une autre racine ni sur la ligne de dégradation.
+  const empty = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "host-types-vide-"));
+  dirs.push(empty);
+  const run = spawnSync("bash", ["scripts/typecheck.sh"], {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: { ...process.env, MEM0_OMP_HOST_TYPES: empty },
+  });
+  const out = output(run);
+  assert.notEqual(run.status, 0, out);
+  assert.ok(out.includes("MEM0_OMP_HOST_TYPES"), out);
+  assert.ok(!out.includes(HOST_TYPES_ABSENT), out);
+});
+
+test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.withResolvers)", (t) => {
+  const dir = copyRepo("dedupe.test.ts");
+  const target = path.join(dir, "test/dedupe.test.ts");
+  fs.writeFileSync(
+    target,
+    `export const pr = Promise.withResolvers<void>();\nconst bad: number = "boom";\n${fs.readFileSync(target, "utf8")}`,
+  );
+
+  // La seule erreur rapportée est l'erreur délibérée : le programme des tests est
+  // bien en lib ES2024, donc `withResolvers` n'y est PAS signalé (S-4).
+  const bad = runCheck(dir);
+  if (hostTypesAbsent(output(bad))) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("test/dedupe.test.ts("), output(bad));
+  assert.ok(output(bad).includes("error TS2322"), output(bad));
+  assert.ok(!output(bad).includes("withResolvers"), output(bad));
+});
+
+test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.sh", (t) => {
+  const dir = copyRepo("dedupe.test.ts");
+  for (const rel of ["omp-mem0-req/store.ts", "omp-mem0-memory/dedupe.ts"]) {
+    const target = path.join(dir, rel);
+    fs.writeFileSync(target, `export const pr = Promise.withResolvers<void>();\n${fs.readFileSync(target, "utf8")}`);
+  }
+
+  // Les deux plugins sont nommés : la frontière ES2023 est portée par le niveau de
+  // lib du programme des sources, pas par un scan de motif (S-4).
+  const bad = runCheck(dir);
+  if (hostTypesAbsent(output(bad))) {
+    t.skip("types de l'hôte absents — type-check non vérifié");
+    return;
+  }
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("omp-mem0-req/store.ts("), output(bad));
+  assert.ok(output(bad).includes("omp-mem0-memory/dedupe.ts("), output(bad));
+  assert.ok(output(bad).includes("error TS2550"), output(bad));
 });

@@ -93,7 +93,6 @@ const gitRunner = async (args: string[], cwd: string) => {
 function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? "depot/feature",
     phase: "req",
     state: "running",
@@ -517,7 +516,7 @@ const KEYS = {
 };
 
 type PanelHarness = {
-  component: { render(width: number): string[]; handleInput(data: string): void; dispose(): void };
+  component: { render(width: number): string[]; handleInput(data: string): void; refresh(): void; dispose(): void };
   tui: { terminal: { rows?: number }; requestRender: () => void };
   screen: (width?: number) => string;
   closed: () => number;
@@ -957,7 +956,7 @@ test("sessions/AC-8 : un maillon terminé laisse une trace consultable, jamais u
 function mkApp() {
   const handlers = new Map<string, (args: string, ctx: never) => Promise<void>>();
   const shortcuts = new Map<string, (ctx: never) => Promise<void> | void>();
-  const mounted: Array<{ factory: never; options: never; close: () => void }> = [];
+  const mounted: Array<{ factory: (...args: unknown[]) => unknown; options: never; close: () => void }> = [];
   const seeds: string[] = [];
   const pi = {
     // `pi.pi` : le namespace du module d'entrée de l'hôte, d'où le panneau tire ses
@@ -989,7 +988,7 @@ function mkApp() {
 
 /** Un contexte de session interactif : `ctx.ui.custom` monte et reste monté. */
 function mkCtx(cwd: string, over: { sessionFile?: string | null } = {}) {
-  const mounted: Array<{ factory: never; options: never; close: () => void }> = [];
+  const mounted: Array<{ factory: (...args: unknown[]) => unknown; options: never; close: () => void }> = [];
   const switched: string[] = [];
   const ctx = {
     cwd,
@@ -1048,7 +1047,7 @@ test("sessions/AC-9 : le panneau occupe tout l'écran, le chat n'est pas visible
     assert.equal(options.overlayOptions?.margin, 0, "sans marge");
 
     // Le RENDU : autant de rangs que l'écran en a, chacun de la largeur reçue.
-    const tui = { terminal: { rows: 24 }, requestRender: () => {} };
+    const tui = { terminal: { rows: 24 } as { rows?: number }, requestRender: () => {} };
     const component = mounted[0]!.factory(
       tui as never,
       THEME as never,
@@ -1646,7 +1645,7 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
 
   const render = (selection: number) =>
     buildPanelRows(
-      { running: [], live: {}, history: [], lot, selection, notice: null, unreadable: 0 },
+      { running: [], live: {}, history: [], lot, selection, notice: null, unreadable: 0, relayed: {} },
       // Le cadre porte maintenant trois en-têtes de section (`Lot`, `Hors lot`,
       // `Historique`) et trois rangs de pied (S-7, S-8) : son coût incompressible
       // passe de 8 à 11 rangs ici (le titre du lot se replie sur deux), donc le
@@ -1773,7 +1772,7 @@ test("les deux gardes de `o` refusent sans basculer, et nomment le chemin de lec
   panel.component.handleInput("o");
   await Promise.all(panel.pending);
   assert.match(panel.screen(200), /run en cours — la session s'ouvre en lecture seule \(Entrée\) ; o attend la fin du maillon/);
-  assert.deepEqual(switched, [], "aucune bascule");
+  assert.deepEqual<typeof switched>(switched, [], "aucune bascule");
   assert.equal(panel.closed(), 0);
 
   // Garde 2 : le fichier visé est la session COURANTE de ce process — basculer

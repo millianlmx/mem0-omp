@@ -95,7 +95,7 @@ type Displayed = { customType?: string; content: string; display?: boolean; attr
 /** Ce que l'extension enregistre auprès du `pi` factice, et ce qu'elle émet. */
 type FakeApp = {
   handlers: Map<string, (args: string, ctx: never) => Promise<void>>;
-  hooks: Map<string, (event: never, ctx: never) => Promise<unknown>>;
+  hooks: Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>;
   shortcuts: Map<string, (ctx: never) => Promise<void> | void>;
   seeds: string[];
   displayed: Displayed[];
@@ -175,7 +175,7 @@ function fakeHostKit(): Record<string, unknown> {
 
 function mkApp(): FakeApp {
   const handlers = new Map<string, (args: string, ctx: never) => Promise<void>>();
-  const hooks = new Map<string, (event: never, ctx: never) => Promise<unknown>>();
+  const hooks = new Map<string, (event: unknown, ctx: unknown) => Promise<unknown>>();
   const shortcuts = new Map<string, (ctx: never) => Promise<void> | void>();
   const seeds: string[] = [];
   const displayed: Displayed[] = [];
@@ -197,7 +197,7 @@ function mkApp(): FakeApp {
     getFlag(_name: string): string | undefined {
       return undefined;
     },
-    on(name: string, def: (event: never, ctx: never) => Promise<unknown>) {
+    on(name: string, def: (event: unknown, ctx: unknown) => Promise<unknown>) {
       hooks.set(name, def);
     },
     async exec(_command: string, args: string[], options?: { cwd?: string }) {
@@ -221,7 +221,7 @@ function mkCtx(
 ) {
   const notices: Array<{ message: string; type?: string }> = [];
   const moved: string[] = [];
-  const mounted: Array<{ factory: never; options: never; close: () => void }> = [];
+  const mounted: Array<{ factory: (...args: unknown[]) => unknown; options: never; close: () => void }> = [];
   let sessions = 0;
   let editor = options.editor ?? "";
   let editorWrites = 0;

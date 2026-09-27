@@ -549,7 +549,6 @@ function countingActions(): { actions: LotPanelActions; calls: string[] } {
 function liveEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: string }): RunningEntry {
   const entry: RunningEntry = {
     id: runningIdFor(input.cwd),
-    cwd: path.resolve(input.cwd),
     label: input.label ?? "depot/feature",
     phase: "req",
     state: "running",
@@ -668,6 +667,13 @@ function storeFingerprint(stateDir: string): string[] {
 // L'API de l'hôte EN DOUBLURE : c'est elle qui arme un run et enregistre `ask`
 // ---------------------------------------------------------------------------
 
+/** Ce que l'outil `ask` rend : le résultat d'outil de l'hôte, réduit à ce que les tests lisent. */
+type AskResult = {
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+  details?: unknown;
+};
+
 type FakeApp = {
   hooks: Map<string, (event: never, ctx: never) => Promise<unknown>>;
   /** L'objet `pi` réellement remis à l'extension : c'est lui que la pompe interroge. */
@@ -675,11 +681,7 @@ type FakeApp = {
   flags: string[];
   toolNames: string[];
   /** L'outil `ask` enregistré par l'extension, appelable directement. */
-  ask: (toolCallId: string, params: unknown, ctx: unknown, signal?: AbortSignal) => Promise<{
-    content: Array<{ type: string; text: string }>;
-    isError?: boolean;
-    details?: unknown;
-  }>;
+  ask: (toolCallId: string, params: unknown, ctx: unknown, signal?: AbortSignal) => Promise<AskResult>;
   /** Les messages injectés par la pompe, avec leurs options de livraison. */
   sent: Array<{ text: string; deliverAs?: string }>;
 };
@@ -690,8 +692,11 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
   const toolNames: string[] = [];
   const sent: Array<{ text: string; deliverAs?: string }> = [];
   const live: Record<string, string> = { ...flagValues };
-  let nudge: { name: string; run: (toolCallId: string, params: unknown, ctx: unknown, signal?: AbortSignal) => Promise<never> } | null =
-    null;
+  let nudge: {
+    name: string;
+    /** L'ordre de l'hôte : (toolCallId, params, signal, onUpdate, ctx). */
+    run: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+  } | null = null;
   const pi = {
     registerCommand() {},
     registerShortcut() {},
@@ -708,7 +713,10 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
       definition,
       array: () => ({ definition: [definition] }),
     }),
-    registerTool(definition: { name: string; execute: (...args: never[]) => Promise<never> }) {
+    registerTool(definition: {
+      name: string;
+      execute: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+    }) {
       toolNames.push(definition.name);
       if (definition.name === "ask") nudge = { name: definition.name, run: definition.execute };
     },
@@ -730,7 +738,7 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
     ask: (toolCallId, params, ctx, signal) => {
       assert.ok(nudge, "l'outil `ask` doit être enregistré par le run armé");
       // L'ordre de l'hôte : (toolCallId, params, signal, onUpdate, ctx).
-      return nudge.run(toolCallId, params, signal, undefined, ctx) as never;
+      return nudge.run(toolCallId, params, signal, undefined, ctx);
     },
   };
 }
@@ -1093,7 +1101,7 @@ test("conversation/AC-9 : une session terminée hors lot se reprend par un nouve
     for (const char of "reprends") panel.component.handleInput(char);
     panel.component.handleInput("\r");
     assert.match(panel.screen(), /Envoyer à depot\/alpha · \/impl : « reprends »/);
-    assert.deepEqual(seen, [], "rien ne part avant la confirmation");
+    assert.deepEqual<typeof seen>(seen, [], "rien ne part avant la confirmation");
     panel.component.handleInput("\r");
     await flush();
     assert.equal(seen.length, 1);

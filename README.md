@@ -751,8 +751,12 @@ Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le ré
 
 ## CI et release
 
-Chaque PR passe `./scripts/check.sh` sur macOS **et** Ubuntu. La validation ne se
-contente pas de transpiler les extensions : `scripts/plugin-smoke.ts` charge
+Chaque PR passe `./scripts/check.sh` sur macOS **et** Ubuntu. Le type-check y
+couvre les sources des **deux** plugins comme `test/` — deux programmes `tsc` :
+`tsconfig.json` pour les plugins (lib ES2023, donc une API ES2024 comme
+`Promise.withResolvers` y fait échouer le job) et `tsconfig.test.json` pour la
+suite (lib ES2024). La validation ne se contente pas de transpiler les
+extensions : `scripts/plugin-smoke.ts` charge
 **réellement** chaque plugin du catalogue dans un OMP (SDK épinglé sous Bun),
 vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 `mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le

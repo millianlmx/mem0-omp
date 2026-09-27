@@ -211,7 +211,9 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
   const toolNames: string[] = [];
   const sent: Array<{ text: string; deliverAs?: string }> = [];
   const live: Record<string, string> = { ...flagValues };
-  let askTool: ((...args: never[]) => Promise<never>) | null = null;
+  let askTool:
+    | ((toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>)
+    | null = null;
   const pi = {
     registerCommand() {},
     registerShortcut() {},
@@ -221,7 +223,10 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
       hooks.set(name, handler);
     },
     arktype: (definition: unknown) => ({ definition, array: () => ({ definition: [definition] }) }),
-    registerTool(definition: { name: string; execute: (...args: never[]) => Promise<never> }) {
+    registerTool(definition: {
+      name: string;
+      execute: (toolCallId: string, params: unknown, signal?: AbortSignal, onUpdate?: unknown, ctx?: unknown) => Promise<AskResult>;
+    }) {
       toolNames.push(definition.name);
       if (definition.name === "ask") askTool = definition.execute;
     },
@@ -241,7 +246,7 @@ function mkApp(flagValues: Record<string, string>): FakeApp {
     sent,
     ask: (toolCallId, params, ctx, signal) => {
       assert.ok(askTool, "l'outil `ask` doit être enregistré par le run armé");
-      return askTool(toolCallId, params as never, signal as never, undefined as never, ctx as never) as never;
+      return askTool(toolCallId, params, signal, undefined, ctx);
     },
   };
 }
