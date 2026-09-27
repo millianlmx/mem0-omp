@@ -26,6 +26,8 @@ import reqExtension, {
   contractPathFor,
   createLotController,
   handOverCollecte,
+  hasFreeSlot,
+  heldBySlots,
   ignoredPaths,
   lastLine,
   latestSessionFile,
@@ -35,6 +37,7 @@ import reqExtension, {
   lotPathFor,
   lotRepoKey,
   lotReviewCap,
+  lotSlots,
   lotRunTimeoutMs,
   lotStateDir,
   lotStateLabel,
@@ -59,6 +62,7 @@ import reqExtension, {
   runnable,
   saysFin,
   selfExtensionArg,
+  slotBusy,
   workerModeOf,
   worktreePathFor,
   writeHistoryEntry,
@@ -177,6 +181,8 @@ function mkCtl(
     git?: (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
     now?: () => number;
     reviewCap?: number;
+    /** Le plafond de runs parallèles (S-2) : absent, l'environnement décide. */
+    slots?: number;
     runs?: RecordedRun[];
     /** La boucle du pilote : par défaut inerte, fournie quand un test la pilote. */
     schedule?: (callback: () => void, ms: number) => () => void;
@@ -205,6 +211,7 @@ function mkCtl(
     worktreesBase: path.join(path.dirname(stateDir), "worktrees"),
     archiveBase: path.join(path.dirname(stateDir), "archive"),
     reviewCap: options.reviewCap ?? 3,
+    slots: options.slots,
   };
   // `gh` n'est fourni QUE si le test en fournit un : sans lui, la livraison doit
   // échouer faute de GitHub CLI, exactement comme sur une machine sans `gh`.
@@ -267,6 +274,7 @@ function seedLot(stateDir: string, repoRoot: string, features: LotFeature[], ove
     repoRoot,
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: null,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 1_700_000_000_000,
@@ -2181,6 +2189,7 @@ test("le récap nomme le décompte exact et omet les catégories vides", () => {
     repoRoot: "/r",
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: 1,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 0,
@@ -2215,6 +2224,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     repoRoot: "/r/mem0-omp",
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: null,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 0,
@@ -2485,6 +2495,7 @@ test("un lot vide et un lot non lancé le disent, avec la touche qui débloque",
         repoRoot: "/r/mem0-omp",
         status: "draft",
         reviewCap: 3,
+        slotCap: 4,
         recapAt: null,
         owner: { pid: process.pid, sessionFile: null, sessionId: null },
         createdAt: 0,
@@ -2510,6 +2521,7 @@ test("un lot vide et un lot non lancé le disent, avec la touche qui débloque",
         repoRoot: "/r/mem0-omp",
         status: "draft",
         reviewCap: 3,
+        slotCap: 4,
         recapAt: null,
         owner: { pid: process.pid, sessionFile: null, sessionId: null },
         createdAt: 0,
@@ -2529,6 +2541,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
     repoRoot: "/r/mem0-omp",
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: null,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 0,
@@ -3400,5 +3413,286 @@ test("lot-ask/AC-22 : le titre du lot porte sa répartition", () => {
   assert.ok(
     title.text.endsWith("0 annulée · 5 en cours"),
     `les cinq comptes sont toujours là, dans l'ordre du récap de fin de lot : ${title.text}`,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// Plafond de runs parallèles du lot (S-1, S-2, S-3)
+// ---------------------------------------------------------------------------
+
+test("slots/AC-1 : un lot ne démarre que le nombre de runs de son plafond", async () => {
+  const repoRoot = mkRepo();
+  const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: mkRunner({ mode: "pending" }).runner });
+  const slugs = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"];
+  seedLot(
+    stateDir,
+    repoRoot,
+    slugs.map((slug) => feature(slug)),
+    { slotCap: 2 },
+  );
+
+  await controller.tick();
+
+  assert.equal(runs.length, 2, "exactement le plafond de runs partent");
+  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.equal(lot.slotCap, 2, "le plafond effectif est celui FIGÉ dans le lot");
+  assert.deepEqual(
+    lot.features.map((f) => f.state),
+    ["running", "running", "pending", "pending", "pending", "pending"],
+  );
+  assert.deepEqual(
+    lot.features.filter((f) => f.state === "running").map((f) => f.slug),
+    ["alpha", "beta"],
+    "ce sont les premières dans l'ordre du lot",
+  );
+  assert.equal(slotBusy(lot), 2);
+  assert.equal(hasFreeSlot(lot), false);
+  for (const retained of lot.features.slice(2)) {
+    assert.equal(retained.worktree, "", "la passe ne prépare même pas l'arbre d'une retenue");
+    assert.equal(retained.held, undefined, "aucun geste n'a été demandé pour elle : rien à mémoriser");
+    assert.equal(heldBySlots(lot, retained), true, "elle est retenue par le plafond, pas par autre chose");
+    assert.ok(!runs.some((run) => run.argv.includes(retained.slug)), `aucun run ne porte ${retained.slug}`);
+  }
+});
+
+test("slots/AC-2 : un run qui se termine ouvre son créneau à la PREMIÈRE retenue", async () => {
+  const repoRoot = mkRepo();
+  const gated = mkRunner({ mode: "gate" });
+  const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: gated.runner });
+  seedLot(
+    stateDir,
+    repoRoot,
+    ["alpha", "beta", "gamma", "delta"].map((slug) => feature(slug)),
+    { slotCap: 2 },
+  );
+
+  await controller.tick();
+  assert.equal(runs.length, 2, "alpha et beta tournent, gamma et delta sont retenus");
+
+  // alpha échoue : son créneau se libère — et c'est gamma, la PREMIÈRE retenue
+  // dans l'ordre du lot, qui part (jamais delta).
+  gated.gate[0]!({ code: 1, killed: false, stdout: "", stderr: "boom" });
+  await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[2]!.state === "running");
+
+  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.deepEqual(
+    lot.features.map((f) => f.state),
+    ["failed", "running", "running", "pending"],
+  );
+  assert.equal(slotBusy(lot), 2, "le compte de runs en vol reste au plafond");
+  assert.ok(runs.at(-1)!.argv.includes("gamma"), "la première retenue démarre");
+  assert.ok(!runs.some((run) => run.argv.includes("delta")), "la seconde retenue attend un autre créneau");
+  assert.equal(lot.features[3]!.worktree, "", "et la passe ne lui a pas préparé d'arbre");
+  assert.equal(heldBySlots(lot, lot.features[3]!), true);
+});
+
+test("slots/AC-3 : à plafond plein, gestes et bascule de collecte sont RETENUS", async () => {
+  const repoRoot = mkRepo();
+  const gated = mkRunner({ mode: "gate" });
+  const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: gated.runner });
+  const collecte = path.join(mktmp("plafond-ac3-collecte-"), "feature");
+  fs.mkdirSync(collecte, { recursive: true });
+  writeContract(collecte, CONTRACT_CLOSED);
+  seedLot(
+    stateDir,
+    repoRoot,
+    [
+      feature("alpha", { worktree: mktmp("plafond-ac3-alpha-"), state: "running", phase: "impl" }),
+      feature("beta", {
+        worktree: mktmp("plafond-ac3-beta-"),
+        state: "waiting",
+        phase: "specs",
+        waitKind: "specs",
+      }),
+      feature("gamma", {
+        worktree: mktmp("plafond-ac3-gamma-"),
+        state: "failed",
+        phase: "impl",
+        stopReason: "boom",
+      }),
+      feature("delta", {
+        worktree: mktmp("plafond-ac3-delta-"),
+        state: "blocked",
+        phase: "impl",
+        stopReason: "question sans réponse",
+      }),
+      feature("solo", { worktree: collecte, origin: "session", state: "running", phase: "req" }),
+    ],
+    { slotCap: 1 },
+  );
+
+  // Le seul créneau du lot est pris par alpha (relancé par la passe : `running`
+  // sans run suivi). La collecte `solo`, elle, n'occupe aucun créneau.
+  await controller.tick();
+  assert.equal(runs.length, 1, "un seul run part : le plafond du lot est 1");
+
+  // Trois gestes qui démarrent un run, à plafond plein : tous ACCEPTÉS (retenus).
+  assert.equal(await controller.validate("beta"), null, "le geste est accepté, pas refusé");
+  assert.equal(await controller.relaunch("gamma"), null);
+  assert.equal(await controller.answer("delta", "le texte retenu"), null);
+  await flush(6);
+  assert.equal(runs.length, 1, "aucun run supplémentaire n'est parti avant qu'un créneau se libère");
+
+  const held = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.equal(held.features[1]!.state, "pending");
+  assert.equal(held.features[1]!.phase, "impl", "le lancement retenu porte sa phase cible");
+  assert.deepEqual(held.features[1]!.held, { phase: "impl", fix: false, kind: "phase", resume: false });
+  assert.equal(held.features[2]!.state, "pending", "une feature terminale relancée repasse `pending`");
+  assert.equal(held.features[2]!.held!.kind, "relaunch");
+  assert.equal(held.features[3]!.state, "pending", "répondre à une bloquée relance son maillon");
+  assert.deepEqual(
+    held.features[3]!.held,
+    { phase: "impl", fix: false, kind: "answer", resume: true, text: "le texte retenu" },
+    "le texte d'une réponse part avec le lancement retenu",
+  );
+  for (const feature of held.features.slice(1, 4)) {
+    assert.equal(feature.state, "pending");
+  }
+  assert.equal(slotBusy(held), 1, "une retenue ne consomme aucun créneau : le plafond tient toujours");
+  assert.equal(
+    await controller.validate("beta"),
+    "rien à valider : la feature n'est pas au jalon des specs",
+    "un second geste sur la même retenue est refusé : rien ne s'empile derrière elle",
+  );
+
+  // Le run en vol rend son créneau : la PREMIÈRE retenue (beta) part, avec le
+  // lancement mémorisé, et son `held` disparaît.
+  gated.gate[0]!({ code: 1, killed: false, stdout: "", stderr: "boom" });
+  await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[1]!.state === "running");
+
+  const after = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.equal(after.features[1]!.held, undefined, "le lancement retenu est consommé au démarrage réel");
+  assert.equal(after.features[1]!.phase, "impl");
+  assert.equal(phaseOf(runs.at(-1)!), "impl");
+  assert.ok(runs.at(-1)!.argv.includes("beta"), "la première retenue démarre");
+  assert.equal(slotBusy(after), 1, "un seul créneau : beta a pris celui d'alpha");
+  assert.equal(after.features[3]!.state, "pending", "delta reste retenu, avec son texte");
+  assert.equal(after.features[3]!.held!.text, "le texte retenu");
+
+  // La BASCULE de fin de collecte (S-14) dans un lot DÉJÀ en marche : la feature
+  // redevient `pending` /specs et ne lance rien tant qu'aucun créneau n'est libre.
+  const before = runs.length;
+  assert.equal(
+    handOverCollecte({
+      stateDir,
+      repoRoot,
+      cwd: collecte,
+      contract: CONTRACT_CLOSED,
+      sessionFile: "/tmp/plafond-ac3.jsonl",
+      closing: true,
+    }),
+    true,
+  );
+  const bascule = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.equal(bascule.features[4]!.state, "pending", "la bascule attend un créneau, elle ne démarre pas");
+  assert.equal(bascule.features[4]!.phase, "specs");
+  assert.equal(runs.length, before, "aucun run n'est parti : le créneau de beta est pris");
+  assert.equal(slotBusy(bascule), 1, "la collecte en session n'a jamais compté comme un créneau");
+});
+
+test("slots/AC-4 : un run hors lot ne consomme pas de créneau", async () => {
+  const repoRoot = mkRepo();
+  const gated = mkRunner({ mode: "gate" });
+  const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: gated.runner });
+  seedLot(stateDir, repoRoot, [feature("alpha"), feature("beta")], { slotCap: 1 });
+
+  // Un run HORS LOT (conversation, panneau) publie son entrée dans le même
+  // magasin : son worktree n'appartient à aucune feature du lot.
+  const elsewhere = mktmp("plafond-ac4-hors-lot-");
+  writeRunningEntry(stateDir, {
+    id: runningIdFor(elsewhere),
+    cwd: elsewhere,
+    label: "autre/hors-lot",
+    phase: "impl",
+    state: "running",
+    phaseStartedAt: 1_700_000_000_000,
+    updatedAt: 1_700_000_000_000,
+    sessionFile: null,
+    sessionId: null,
+    owner: { pid: process.ppid },
+  });
+
+  await controller.tick();
+  assert.equal(runs.length, 1, "alpha démarre malgré le run hors lot");
+  const one = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.equal(slotBusy(one), 1, "le compte ne lit QUE le lot : le run hors lot n'y entre pas");
+  assert.equal(heldBySlots(one, one.features[1]!), true);
+
+  // Le run du lot rend son créneau : la retenue part sans que le run hors lot
+  // n'ait rien libéré.
+  gated.gate[0]!({ code: 1, killed: false, stdout: "", stderr: "boom" });
+  await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[1]!.state === "running");
+
+  assert.equal(runs.length, 2);
+  assert.ok(runs.at(-1)!.argv.includes("beta"), "la retenue démarre : le run hors lot ne l'a pas retardée");
+  assert.equal(slotBusy(readLot(stateDir, lotRepoKey(repoRoot))!), 1);
+  assert.equal(hasFreeSlot(readLot(stateDir, lotRepoKey(repoRoot))!), false);
+});
+
+test("slots/AC-5 : MEM0_PIPELINE_SLOTS absent ou illisible vaut 4", async () => {
+  assert.equal(lotSlots({}), 4, "variable absente : le défaut, jamais l'illimité");
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "" }), 4, "vide vaut absente");
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "   " }), 4);
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "nettoie" }), 4);
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "NaN" }), 4);
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "Infinity" }), 4);
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "4.9" }), 4, "la partie entière est gardée");
+
+  // Un lot écrit avant cette feature (aucun `slotCap`) se relit à 4 : ni migration
+  // ni bump de `LOT_VERSION`.
+  const oldDir = mktmp("plafond-ac5-old-");
+  const oldRepo = mktmp("plafond-ac5-old-repo-");
+  const old = seedLot(oldDir, oldRepo, [feature("alpha")]);
+  const file = lotPathFor(oldDir, lotRepoKey(oldRepo));
+  const raw = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+  delete raw.slotCap;
+  fs.writeFileSync(file, JSON.stringify(raw), "utf8");
+  assert.equal(readLot(oldDir, lotRepoKey(oldRepo))!.slotCap, 4);
+  fs.writeFileSync(file, JSON.stringify({ ...old, slotCap: "onze" }), "utf8");
+  assert.equal(readLot(oldDir, lotRepoKey(oldRepo))!.slotCap, 4, "un champ non numérique ne fait pas rejeter le lot");
+
+  // e2e : six features runnables lancées avec l'environnement par DÉFAUT ⇒ quatre runs.
+  const repoRoot = mkRepo();
+  const previous = process.env.MEM0_PIPELINE_SLOTS;
+  delete process.env.MEM0_PIPELINE_SLOTS;
+  try {
+    const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: mkRunner({ mode: "pending" }).runner });
+    for (const name of ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]) {
+      assert.equal(await controller.add({ name, description: "", deps: [] }), null);
+    }
+    assert.equal(await controller.launch(), null);
+
+    const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+    assert.equal(lot.slotCap, 4, "le défaut est FIGÉ dans le lot au premier lancement");
+    assert.equal(runs.length, 4, "quatre runs partent, pas six");
+    assert.equal(lot.features.filter((f) => f.state === "pending").length, 2);
+    for (const retained of lot.features.filter((f) => f.state === "pending")) {
+      assert.equal(heldBySlots(lot, retained), true);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.MEM0_PIPELINE_SLOTS;
+    else process.env.MEM0_PIPELINE_SLOTS = previous;
+  }
+});
+
+test("slots/AC-6 : une valeur hors bornes est ramenée — jamais zéro feature", async () => {
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "0" }), 1, "pas de cas « 0 = illimité », pas de blocage total");
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "-7" }), 1);
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "1000" }), 32, "au-delà de 32, on retombe sur la borne haute");
+  assert.equal(lotSlots({ MEM0_PIPELINE_SLOTS: "999999" }), 32);
+
+  const repoRoot = mkRepo();
+  const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: mkRunner({ mode: "pending" }).runner, slots: 1 });
+  for (const name of ["alpha", "beta", "gamma"]) {
+    assert.equal(await controller.add({ name, description: "", deps: [] }), null);
+  }
+  assert.equal(await controller.launch(), null);
+
+  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  assert.equal(lot.slotCap, 1);
+  assert.equal(runs.length, 1, "un lot à un créneau démarre exactement une feature — jamais aucune");
+  assert.deepEqual(
+    lot.features.map((f) => f.state),
+    ["running", "pending", "pending"],
   );
 });

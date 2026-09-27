@@ -305,7 +305,8 @@ fait désormais échouer la construction de l'image, pas la première requête.
   plusieurs et valide (valider sans rien cocher ne lance rien). Pour chaque élément
   coché, tu **valides ou amendes l'intention** transmise à `/req`, puis tu choisis son
   **modèle** — une question par élément, chaque pipeline tourne avec le sien. Les
-  pipelines cochées démarrent **en parallèle** ; un élément qui dépend d'un autre élément
+  pipelines cochées démarrent **en parallèle dans la limite de `MEM0_PIPELINE_SLOTS`**
+  (les autres attendent un créneau) ; un élément qui dépend d'un autre élément
   choisi n'attaque qu'une fois celui-ci terminé. Redemande un lancement dans la même
   session pour lancer plus tard d'autres éléments : ceux déjà lancés n'y sont plus
   cochables. Questions et jalons sont relayés dans cette session — voir « Pipelines
@@ -609,8 +610,11 @@ s'affiche tel quel au lieu d'être avalé.
   de la feature est créé au lancement (`feat/<nom>`), jamais à l'ajout. **Retirer** (`x`)
   enlève une feature qui n'a pas encore démarré. Aucun autre geste du panneau ne touche au
   modèle : il est figé à la création de la feature.
-- **Lancer** (`l`) : chaque feature démarre son maillon courant, **toutes en parallèle** —
-  deux features sans dépendance ne s'attendent jamais.
+- **Lancer** (`l`) : chaque feature démarre son maillon courant, dans la limite de
+  `MEM0_PIPELINE_SLOTS` (4 par défaut) — au-delà, les features runnables restent `pending`
+  avec le motif *attend un créneau* dans `/pipelines`, et démarrent dans l'ordre du lot dès
+  qu'un run se termine. Deux features sans dépendance ne s'attendent jamais, tant qu'il reste
+  un créneau.
 - **La chaîne** : collecte → specs → implémentation → revue → livraison. Elle ne s'arrête
   que sur trois jalons : une **question** de l'agent, la **validation des specs** (`v`),
   l'**accord de fin de revue** (`y`). Entre deux jalons, tu n'as rien à lancer. Une question
@@ -678,7 +682,8 @@ s'affiche tel quel au lieu d'être avalé.
 - **Pipelines lancées par `/audit`** : chaque élément lancé entre dans le lot (section
   *Lot* du panneau, même pilote) et démarre sans attendre `l`, même si le lot est au
   brouillon — ses autres features attendent toujours `l`. Les éléments lancés ensemble
-  tournent **en parallèle** ; un élément qui dépend d'un autre élément choisi reste en
+  tournent en parallèle **dans la limite de `MEM0_PIPELINE_SLOTS`** (les autres attendent un
+  créneau) ; un élément qui dépend d'un autre élément choisi reste en
   attente (`slug ← dépendance`) jusqu'à ce que celui-ci soit terminé, puis part de sa
   branche.
   Tant que la session `/audit` est la session **courante** du process pilote, elle est
@@ -733,6 +738,7 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
 | `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`) et des lots (`lots/`), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
 | `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
+| `MEM0_PIPELINE_SLOTS` | `4` | runs de features du lot menés en parallèle (entier, 1-32) ; au-delà, les features runnables attendent un créneau (`attend un créneau` dans `/pipelines`) — les runs hors lot ne comptent pas |
 | `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget d'un run de maillon en millisecondes (10 s à 24 h) ; au-delà, la feature passe `échoué` |
 | `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` des runs du lot (chemin absolu si `omp` n'est pas dans le `PATH`) |
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |

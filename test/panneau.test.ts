@@ -38,6 +38,7 @@ import {
   contractPathFor,
   createLotController,
   displayWidth,
+  featureStateLabel,
   gesturePreview,
   lotFooterActions,
   lotRepoKey,
@@ -148,6 +149,7 @@ function seedLot(stateDir: string, repoRoot: string, features: LotFeature[], ove
     repoRoot,
     status: "running",
     reviewCap: 3,
+    slotCap: 4,
     recapAt: null,
     owner: { pid: process.pid, sessionFile: null, sessionId: null },
     createdAt: 1_700_000_000_000,
@@ -2341,4 +2343,110 @@ test("panneau-ask/AC-19 : la raison d'arrêt d'une feature échouée est portée
     28,
     "les 28 mots du motif sont peints : il va jusqu'à son dernier mot",
   );
+});
+
+// ---------------------------------------------------------------------------
+// S-4 — l'attente de créneau dans /pipelines
+// ---------------------------------------------------------------------------
+
+test("slots-ui/AC-7 : l'attente de créneau se dit, et l'aperçu cesse d'annoncer un départ", () => {
+  const opts = { width: 120, budget: 40, glyphs: GLYPHS, now: 1_700_000_000_000 };
+  const rowOf = (rows: PanelRow[], slug: string) =>
+    rows.find((row) => new RegExp(`\\b${slug}\\b`).test(row.text))?.text ?? "";
+  // Le même lot dans ses deux régimes : plafond atteint, puis créneau libre.
+  const shape = (slug: string) => [
+    feature("alpha", { state: "running", phase: "impl" }),
+    feature(slug, { phase: "req" }),
+    feature("dependante", { phase: "req", deps: ["alpha"] }),
+    feature("bloquee", { state: "blocked", phase: "impl", stopReason: "revue bloquante" }),
+    feature("jalon-specs", { state: "waiting", phase: "specs", waitKind: "specs" }),
+    feature("jalon-revue", { state: "waiting", phase: "review", waitKind: "review" }),
+  ];
+
+  // (1) PLAFOND ATTEINT : le créneau unique du lot est pris par alpha.
+  const cappedDir = mktmp("plafond-ui-ac7-capped-");
+  const cappedRepo = mktmp("plafond-ui-ac7-capped-repo-");
+  const capped = seedLot(cappedDir, cappedRepo, shape("retenue"), { slotCap: 1 });
+  const cappedRows = buildPanelRows(readPanelModel({ stateDir: cappedDir, repoRoot: cappedRepo }), opts);
+  assert.match(rowOf(cappedRows, "retenue"), /\/req · attend un créneau · 0:00/, "la retenue dit POURQUOI elle attend");
+  assert.match(
+    rowOf(cappedRows, "dependante"),
+    /\/req · en attente · 0:00/,
+    "une dépendance non satisfaite garde son libellé : les deux attentes sont distinctes",
+  );
+  assert.match(rowOf(cappedRows, "bloquee"), /\/impl · bloqué · 0:00/, "le motif ne remplace aucun état existant");
+  assert.equal(
+    cappedRows.filter((row) => /attend un créneau/.test(row.text)).length,
+    1,
+    "seule la feature effectivement retenue le dit",
+  );
+  assert.equal(
+    lotFooterActions(capped.features, 1),
+    "x retirer · c annuler",
+    "le rang d'une retenue garde ses touches (le motif n'en ajoute ni n'en retire)",
+  );
+
+  assert.deepEqual(gesturePreview({ kind: "launch" }, capped), {
+    head: "Lancer le lot ? · 0 feature(s) à venir démarrent · 1 retenue(s) par le plafond",
+    hint: "Entrée lancer · Échap annuler",
+  });
+  assert.deepEqual(gesturePreview({ kind: "relaunch", slug: "bloquee", phase: "impl" }, capped), {
+    head:
+      "Relancer bloquee ? · un nouveau run /impl démarrera dès qu'un créneau se libère · " +
+      "bloqué → attend un créneau",
+    hint: "Entrée relancer · Échap annuler",
+  });
+  assert.deepEqual(gesturePreview({ kind: "validate", slug: "jalon-specs" }, capped), {
+    head:
+      "Valider les specs de jalon-specs ? · le maillon /impl démarrera dès qu'un créneau se libère · " +
+      "attend validation → attend un créneau",
+    hint: "Entrée valider · Échap annuler",
+  });
+  assert.deepEqual(gesturePreview({ kind: "accept", slug: "jalon-revue" }, capped), {
+    head:
+      "Accepter la revue de jalon-revue ? · le maillon /release démarrera dès qu'un créneau se libère : " +
+      "commit, push et PR · attend accord → attend un créneau",
+    hint: "Entrée accepter · Échap annuler",
+  });
+
+  // (2) CRÉNEAU LIBRE : les chaînes d'avant cette feature, à l'octet près.
+  const freeDir = mktmp("plafond-ui-ac7-free-");
+  const freeRepo = mktmp("plafond-ui-ac7-free-repo-");
+  const free = seedLot(freeDir, freeRepo, shape("a-venir"), { slotCap: 4 });
+  const freeRows = buildPanelRows(readPanelModel({ stateDir: freeDir, repoRoot: freeRepo }), opts);
+  assert.match(rowOf(freeRows, "a-venir"), /\/req · à venir · 0:00/, "à créneau libre, une runnable reste « à venir »");
+  assert.equal(
+    freeRows.filter((row) => /attend un créneau/.test(row.text)).length,
+    0,
+    "aucun motif d'attente de créneau quand il y en a un",
+  );
+  assert.deepEqual(gesturePreview({ kind: "launch" }, free), {
+    head: "Lancer le lot ? · 1 feature(s) à venir démarrent",
+    hint: "Entrée lancer · Échap annuler",
+  });
+  assert.deepEqual(gesturePreview({ kind: "relaunch", slug: "bloquee", phase: "impl" }, free), {
+    head: "Relancer bloquee ? · un nouveau run /impl démarre · bloqué → en cours",
+    hint: "Entrée relancer · Échap annuler",
+  });
+  assert.deepEqual(gesturePreview({ kind: "validate", slug: "jalon-specs" }, free), {
+    head: "Valider les specs de jalon-specs ? · le maillon /impl démarre · attend validation → en cours",
+    hint: "Entrée valider · Échap annuler",
+  });
+  assert.deepEqual(gesturePreview({ kind: "accept", slug: "jalon-revue" }, free), {
+    head:
+      "Accepter la revue de jalon-revue ? · le maillon /release démarre : commit, push et PR · " +
+      "attend accord → en cours",
+    hint: "Entrée accepter · Échap annuler",
+  });
+
+  // (3) Un lot au BROUILLON ne dit jamais « attend un créneau » : rien n'a démarré.
+  const draft = seedLot(freeDir, freeRepo, [feature("a-venir", { phase: "req" })], {
+    slotCap: 1,
+    status: "draft",
+  });
+  assert.equal(featureStateLabel(draft, draft.features[0]!), "à venir");
+  assert.deepEqual(gesturePreview({ kind: "launch" }, draft), {
+    head: "Lancer le lot ? · 1 feature(s) à venir démarrent",
+    hint: "Entrée lancer · Échap annuler",
+  });
 });

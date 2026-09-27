@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, toSlug } from "./git.ts";
-import { AUDIT_RELAY_FOOTER, auditRelayOpen, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
+import { AUDIT_RELAY_FOOTER, auditRelayOpen, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import { DEFAULT_MODEL_CHOICE, filterModelChoices } from "./models.ts";
@@ -241,6 +241,11 @@ export function featureStateLabel(lot: Lot | null, feature: LotFeature): string 
   // de droite ne les répète jamais (S-10) — les dépendances n'apparaissent qu'UNE
   // fois sur le rang.
   if (feature.state === "pending" && lot && !runnable(lot, feature)) return "en attente";
+  // Runnable ET retenue par le plafond : le motif se dit (S-4, B-3) — distinct du
+  // « à venir » d'une feature qui part à la passe suivante, et distinct du
+  // « en attente » d'une dépendance (qui n'a pas à attendre un créneau, mais un
+  // amont).
+  if (lot && heldBySlots(lot, feature)) return "attend un créneau";
   return lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state);
 }
 
@@ -289,9 +294,16 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
   const state = feature ? featureStateLabel(lot, feature) : "état inconnu";
   switch (gesture.kind) {
     case "launch": {
-      const starting = (lot?.features ?? []).filter((f) => f.state === "pending" && (!lot || runnable(lot, f))).length;
+      const going = (lot?.features ?? []).filter((f) => f.state === "pending" && (!lot || runnable(lot, f))).length;
+      // Ce qui démarre RÉELLEMENT (S-4) : borné par les créneaux libres du lot.
+      const starting = Math.min(going, lot ? freeSlots(lot) : 0);
+      // Les RETENUES par le plafond : au-delà de cette passe, elles attendront le
+      // prochain créneau libéré. Le suffixe n'apparaît que s'il y en a.
+      const held = lot ? lot.features.filter((f) => heldBySlots(lot, f)).length : 0;
       return {
-        head: `Lancer le lot ? · ${starting} feature(s) à venir démarrent`,
+        head:
+          `Lancer le lot ? · ${starting} feature(s) à venir démarrent` +
+          (held > 0 ? ` · ${held} retenue(s) par le plafond` : ""),
         hint: "Entrée lancer · Échap annuler",
       };
     }
@@ -301,20 +313,37 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
         hint: "Entrée retirer · Échap annuler",
       };
     case "relaunch":
-      return {
-        head: `Relancer ${gesture.slug} ? · un nouveau run /${gesture.phase} démarre · ${state} → en cours`,
-        hint: "Entrée relancer · Échap annuler",
-      };
+      // À plafond plein, le geste est RETENU (S-3) : l'aperçu le dit au lieu
+      // d'annoncer un démarrage qui n'aura pas lieu (S-4).
+      return lot && !hasFreeSlot(lot)
+        ? {
+            head: `Relancer ${gesture.slug} ? · un nouveau run /${gesture.phase} démarrera dès qu'un créneau se libère · ${state} → attend un créneau`,
+            hint: "Entrée relancer · Échap annuler",
+          }
+        : {
+            head: `Relancer ${gesture.slug} ? · un nouveau run /${gesture.phase} démarre · ${state} → en cours`,
+            hint: "Entrée relancer · Échap annuler",
+          };
     case "validate":
-      return {
-        head: `Valider les specs de ${gesture.slug} ? · le maillon /impl démarre · ${state} → en cours`,
-        hint: "Entrée valider · Échap annuler",
-      };
+      return lot && !hasFreeSlot(lot)
+        ? {
+            head: `Valider les specs de ${gesture.slug} ? · le maillon /impl démarrera dès qu'un créneau se libère · ${state} → attend un créneau`,
+            hint: "Entrée valider · Échap annuler",
+          }
+        : {
+            head: `Valider les specs de ${gesture.slug} ? · le maillon /impl démarre · ${state} → en cours`,
+            hint: "Entrée valider · Échap annuler",
+          };
     case "accept":
-      return {
-        head: `Accepter la revue de ${gesture.slug} ? · le maillon /release démarre : commit, push et PR · ${state} → en cours`,
-        hint: "Entrée accepter · Échap annuler",
-      };
+      return lot && !hasFreeSlot(lot)
+        ? {
+            head: `Accepter la revue de ${gesture.slug} ? · le maillon /release démarrera dès qu'un créneau se libère : commit, push et PR · ${state} → attend un créneau`,
+            hint: "Entrée accepter · Échap annuler",
+          }
+        : {
+            head: `Accepter la revue de ${gesture.slug} ? · le maillon /release démarre : commit, push et PR · ${state} → en cours`,
+            hint: "Entrée accepter · Échap annuler",
+          };
     case "cancel":
       return {
         head: `Annuler ${gesture.slug} ? · ${state} → annulé · worktree ${fateLabel(gesture.fate)} · la branche reste`,
