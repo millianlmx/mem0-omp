@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-memory 2.10.1 — 2026-09-27
+
+- fix(http,memory): une procédure est stockée mot pour mot, sans réécriture LLM (aucun bump) (bf8c1db)
+
 ## omp-mem0-req 0.19.1 — 2026-09-27
 
 - fix(req): la fin d'un sous-agent ne désarme plus le relais /audit ni la pompe de boîte (ed2fd30)
