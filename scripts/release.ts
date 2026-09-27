@@ -9,6 +9,17 @@
 //   node --experimental-strip-types scripts/release.ts --before <sha> --after <sha>
 // et utilisable à la main avec `--dry-run` (calcule et imprime, n'écrit rien).
 //
+// Lancé par `.github/workflows/release-simulation.yml` (S-1) :
+//   node --experimental-strip-types scripts/release.ts --simulate --main HEAD \
+//     --before <sha> --after <sha>
+// `--simulate` écrit sur SON arbre (l'arbre de la PR simulée, dans une copie
+// jetable — scripts/release-simulation.sh) puis prouve la release avec
+// `check.sh` ; il ne committe, ne pousse, ne tague et n'ouvre jamais de PR. Le
+// verdict est celui de la release ENTIÈRE : un plan inexploitable sort avant
+// `check.sh`, un `check.sh` rouge est nommé comme tel. `--main` désigne la
+// référence qui joue le rôle de `main` dans le plan — elle n'a aucun effet sur
+// la publication, qui reste sur `origin/main`.
+//
 // Le fichier est importable : les fonctions pures (analyse des commits, plan,
 // historique des versions, bump semver, rendu du changelog et du corps de
 // release) sont testées sans réseau ni git par test/release.test.ts. Rien ne
@@ -498,6 +509,10 @@ type Args = {
   before: string;
   after: string;
   dryRun: boolean;
+  /** Mode simulation (S-1) : écrit sur son arbre puis prouve, ne publie jamais. */
+  simulate: boolean;
+  /** Référence qui joue le rôle de `main` dans le plan ; la publication reste sur `origin/main`. */
+  main: string;
   repo: string | null;
   mergeTimeout: number;
 };
@@ -512,6 +527,8 @@ function parseArgs(argv: string[]): Args {
     before: value("--before") ?? "",
     after: value("--after") ?? "",
     dryRun: argv.includes("--dry-run"),
+    simulate: argv.includes("--simulate"),
+    main: value("--main") ?? "origin/main",
     repo: value("--repo"),
     mergeTimeout: timeout === null ? 1200 : Number(timeout),
   };
@@ -531,11 +548,11 @@ function readCatalog(file: string): Catalog {
   return parsed;
 }
 
-/** Version d'un plugin lue sur `origin/main` — jamais dans l'arbre de travail. */
-function versionOnMain(dir: string): string {
-  const show = git(["show", `origin/main:${dir}/package.json`]);
+/** Version d'un plugin lue sur `main` — jamais dans l'arbre de travail. */
+function versionOnMain(dir: string, main: string): string {
+  const show = git(["show", `${main}:${dir}/package.json`]);
   const pkg = JSON.parse(show.stdout) as { version?: string };
-  if (typeof pkg.version !== "string") throw new Error(`${dir}/package.json sur origin/main : version absente`);
+  if (typeof pkg.version !== "string") throw new Error(`${dir}/package.json sur ${main} : version absente`);
   return pkg.version;
 }
 
@@ -566,18 +583,19 @@ function commitsIn(range: string[]): Commit[] {
 }
 
 /**
- * L'historique d'un plugin, reconstruit depuis `origin/main` : chaque commit qui
+ * L'historique d'un plugin, reconstruit depuis la référence `main` du plan
+ * (`origin/main` en publication, `HEAD` en simulation, S-1) : chaque commit qui
  * touche son `package.json`, dans l'ordre chronologique, et la version qu'il y
  * porte. La dernière entrée est la version courante, c'est elle qui ancre le
  * bump (convergence : jamais la seule plage `before..after`).
  */
-function historyOfPlugin(plugin: { name: string; dir: string }): PluginHistory {
+function historyOfPlugin(plugin: { name: string; dir: string }, main: string): PluginHistory {
   const listing = git([
     "log",
     "--reverse",
     "--no-merges",
     "--format=%H%x1f%aI",
-    "origin/main",
+    main,
     "--",
     `${plugin.dir}/package.json`,
   ]);
@@ -595,10 +613,10 @@ function historyOfPlugin(plugin: { name: string; dir: string }): PluginHistory {
   if (history.length === 0) {
     // Historique absent (clone superficiel) : la version courante reste la seule
     // entrée connue — et un `package.json` manquant échoue ici nommément (G-6).
-    const head = git(["rev-parse", "origin/main"]).stdout.trim();
+    const head = git(["rev-parse", main]).stdout.trim();
     history.push({
       sha: head,
-      version: versionOnMain(plugin.dir),
+      version: versionOnMain(plugin.dir, main),
       date: utcDate(git(["show", "-s", "--format=%aI", head]).stdout),
     });
   }
@@ -612,7 +630,7 @@ function historyOfPlugin(plugin: { name: string; dir: string }): PluginHistory {
   });
   const current = history[history.length - 1];
   const sinceCurrent =
-    current === undefined ? [] : changesBetween(commitsIn([`${current.sha}..origin/main`]), plugin.dir);
+    current === undefined ? [] : changesBetween(commitsIn([`${current.sha}..${main}`]), plugin.dir);
 
   return { name: plugin.name, dir: plugin.dir, history, ranges, sinceCurrent };
 }
@@ -694,6 +712,32 @@ function writeBumpedVersions(plan: Plan, catalog: Catalog): string[] {
     written.push(file);
   }
   return written;
+}
+
+/**
+ * Écritures de la release : `package.json` des plugins bumpés (ordre du
+ * catalogue), les DEUX catalogues (identiques octet pour octet) et `CHANGELOG.md`
+ * quand son contenu change. Source UNIQUE des deux chemins — `publish()` et
+ * `--simulate` — donc la simulation prouve EXACTEMENT ce que le job publierait.
+ * `written` porte les chemins écrits, dans cet ordre.
+ */
+function writeReleaseFiles(
+  plan: Plan,
+  catalog: Catalog,
+  existingChangelog: string | null,
+): { written: string[]; changelog: string } {
+  const changelog = insertChangelog(existingChangelog, plan.journal.map(renderChangelogEntry));
+  const written: string[] = [];
+  // Un rattrapage n'écrit rien : la version et l'entrée de journal existent déjà
+  // sur la référence ; seuls les tags manquent.
+  if (plan.releases.some((release) => release.kind === "bump")) {
+    written.push(...writeBumpedVersions(plan, catalog));
+  }
+  if (changelog !== (existingChangelog ?? "")) {
+    fs.writeFileSync(path.join(ROOT, CHANGELOG_FILE), changelog);
+    written.push(CHANGELOG_FILE);
+  }
+  return { written, changelog };
 }
 
 /** Le numéro de la PR ouverte d'une branche, `""` s'il n'y en a pas. */
@@ -845,13 +889,9 @@ async function publish(
   git(["checkout", "-B", branch, "origin/main"]);
   const changelogFile = path.join(ROOT, CHANGELOG_FILE);
   const existing = fs.existsSync(changelogFile) ? fs.readFileSync(changelogFile, "utf8") : null;
-  const next = insertChangelog(existing, plan.journal.map(renderChangelogEntry));
-  const written: string[] = [];
-  if (plan.releases.some((release) => release.kind === "bump")) written.push(...writeBumpedVersions(plan, readCatalog(CATALOGS[0])));
-  if (next !== (existing ?? "")) {
-    fs.writeFileSync(changelogFile, next);
-    written.push(CHANGELOG_FILE);
-  }
+  // Le catalogue est RELU après le checkout : le plan a lu l'arbre d'avant, les
+  // écritures partent de origin/main.
+  const { written } = writeReleaseFiles(plan, readCatalog(CATALOGS[0]), existing);
 
   let mergeSha: string | null = null;
   if (written.length > 0) {
@@ -955,8 +995,55 @@ async function publish(
   return 0;
 }
 
+/**
+ * Simulation (S-1) : écrit l'arbre de la release puis PROUVE que le job de
+ * publication l'accepterait, avec `check.sh` tel quel. Rien n'est committé,
+ * poussé, tagué ni ouvert — et l'écriture passe par `writeReleaseFiles`, donc la
+ * simulation prouve exactement ce que `publish()` écrirait.
+ *
+ * Verdict de la release ENTIÈRE : un plan inexploitable ou une écriture fautive
+ * sortent AVANT `check.sh` (le message de l'étape fautive est celui du moteur),
+ * un `check.sh` rouge est nommé comme tel.
+ */
+function simulate(plan: Plan, catalog: Catalog): number {
+  // Un arbre sale rendrait le verdict inexploitable : impossible de distinguer un
+  // rouge de la release d'un rouge des modifications locales. L'appelant utilise
+  // donc une copie jetable (scripts/release-simulation.sh).
+  if (gitQuiet(["status", "--porcelain"]).stdout.trim() !== "") {
+    console.error(
+      "✗ --simulate exige un arbre propre (git status) : simule dans une copie jetable (scripts/release-simulation.sh)",
+    );
+    return 1;
+  }
+
+  const changelogFile = path.join(ROOT, CHANGELOG_FILE);
+  const existing = fs.existsSync(changelogFile) ? fs.readFileSync(changelogFile, "utf8") : null;
+  const { written } = writeReleaseFiles(plan, catalog, existing);
+  if (written.length === 0) {
+    console.log("· aucune écriture : l'arbre simulé est déjà l'arbre de release");
+  } else {
+    console.log(`· écrit : ${written.join(", ")}`);
+  }
+
+  // `check.sh` est lancé TEL QUEL : la simulation doit voir ce que verrait la
+  // release, ni plus (pas de gate plus strict) ni moins.
+  const check = run("bash", ["scripts/check.sh"]);
+  if (check.code !== 0) {
+    const checkOutput = `${check.stdout}${check.stderr}`.trim();
+    if (checkOutput !== "") console.error(checkOutput);
+    console.error("✗ check.sh rouge sur l'arbre de release simulé — la release échouerait ici");
+    return 1;
+  }
+  console.log("✓ release simulée : check.sh vert sur l'arbre écrit");
+  return 0;
+}
+
 async function main(argv: string[]): Promise<number> {
   const args = parseArgs(argv);
+  if (args.simulate && args.dryRun) {
+    console.error("✗ --simulate et --dry-run sont incompatibles (--dry-run n'écrit rien)");
+    return 1;
+  }
   const range = `${args.before}..${args.after}`;
   if (args.before === "" || args.after === "") {
     console.error(`✗ plage ${range} inexploitable : --before et --after sont requis`);
@@ -976,11 +1063,16 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // Résolu avant toute écriture : sans lui, aucune note de release n'est rendue.
-  const ownerRepo =
-    args.repo ?? process.env.GITHUB_REPOSITORY ?? repoFromRemote(git(["remote", "get-url", "origin"]).stdout) ?? "";
-  if (ownerRepo === "") {
-    console.error("✗ dépôt introuvable (--repo, GITHUB_REPOSITORY ou remote origin)");
-    return 1;
+  // La simulation n'en a pas besoin — elle ne rend aucune note, et se passe donc
+  // aussi du remote (S-1).
+  let ownerRepo = "";
+  if (!args.simulate) {
+    ownerRepo =
+      args.repo ?? process.env.GITHUB_REPOSITORY ?? repoFromRemote(git(["remote", "get-url", "origin"]).stdout) ?? "";
+    if (ownerRepo === "") {
+      console.error("✗ dépôt introuvable (--repo, GITHUB_REPOSITORY ou remote origin)");
+      return 1;
+    }
   }
 
   let catalog: Catalog;
@@ -992,13 +1084,13 @@ async function main(argv: string[]): Promise<number> {
   }
 
   // S-2 : le jeton dédié est la SEULE identité de publication. `GH_TOKEN` posé ne
-  // suffit pas (aucun repli sur le `GITHUB_TOKEN` du dépôt), et `--dry-run` n'a
-  // pas besoin de jeton puisqu'il n'écrit ni ne publie rien.
-  if (!args.dryRun && (process.env.RELEASE_TOKEN ?? "") === "") {
+  // suffit pas (aucun repli sur le `GITHUB_TOKEN` du dépôt), et ni `--dry-run` ni
+  // `--simulate` n'ont besoin de jeton : ils n'écrivent rien de distant.
+  if (!args.dryRun && !args.simulate && (process.env.RELEASE_TOKEN ?? "") === "") {
     console.error("✗ RELEASE_TOKEN absent — le job de release ne peut pas publier (PUBLISHING.md, § Jeton de release)");
     return 1;
   }
-  if (!args.dryRun && (process.env.GH_TOKEN ?? "") === "") {
+  if (!args.dryRun && !args.simulate && (process.env.GH_TOKEN ?? "") === "") {
     console.error("✗ gh indisponible (GH_TOKEN ?)");
     return 1;
   }
@@ -1023,13 +1115,13 @@ async function main(argv: string[]): Promise<number> {
   // Idempotence (1) : le trailer du commit de release marque l'événement publié.
   // --grep SANS pathspec : avec `-- .`, le commit de release (vide) est exclu.
   const published =
-    git(["log", "--fixed-strings", `--grep=Release-Event: ${args.after}`, "--format=%H", "-n", "1", "origin/main"]).stdout.trim() !==
+    git(["log", "--fixed-strings", `--grep=Release-Event: ${args.after}`, "--format=%H", "-n", "1", args.main]).stdout.trim() !==
     "";
   if (published) console.log("· merge déjà publié");
 
   let histories: PluginHistory[];
   try {
-    histories = plugins.map(historyOfPlugin);
+    histories = plugins.map((plugin) => historyOfPlugin(plugin, args.main));
   } catch (error) {
     console.error(`✗ historique illisible : ${error instanceof Error ? error.message : String(error)}`);
     return 1;
@@ -1037,6 +1129,9 @@ async function main(argv: string[]): Promise<number> {
 
   const plan = planOf(histories, existingTags, eventDate, published);
   printPlan(plugins, plan, published);
+  // La simulation s'exécute MÊME quand le plan est vide : c'est le cas de la PR
+  // de release, dont l'arbre bumpé doit passer `check.sh` (S-1, AC-4).
+  if (args.simulate) return simulate(plan, catalog);
   if (plan.releases.length === 0) return 0;
   // `--dry-run` : le plan est imprimé, rien n'est écrit, rien n'est poussé.
   if (args.dryRun) return 0;

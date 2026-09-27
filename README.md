@@ -29,7 +29,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR
-└── .github/workflows/                 check.yml (PR), release.yml (merge sur main)
+└── .github/workflows/                 check.yml (PR), release-simulation.yml (PR), release.yml (merge sur main)
 ```
 
 ## Ce que ça fait
@@ -757,8 +757,15 @@ contente pas de transpiler les extensions : `scripts/plugin-smoke.ts` charge
 vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 `mem0_search` d'un côté, `/req` de l'autre, et exige le résultat observé — le
 service mem0 étant remplacé par un stub local, donc sans conteneur ni credential.
-Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux
-statuts : le merge est bloqué.
+Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
+ainsi que `release-simulation` : le merge est bloqué.
+
+Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
+release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
+écriture des versions, des deux catalogues et de `CHANGELOG.md`, puis
+`./scripts/check.sh` — sans rien pousser, sans tag et sans PR. Son statut,
+`release-simulation`, est requis : une PR dont la release simulée échouerait ne
+peut pas être fusionnée.
 
 La même PR exécute **hors du build d'image** le test d'API de mem0-http : la CI
 dérive du Dockerfile la version de Python (`actions/setup-python` la sert depuis
@@ -772,7 +779,7 @@ Sur un poste, l'environnement se prépare une fois :
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
 **jamais** directement sur `main` (la protection de branche refuse un commit neuf
-sans statuts) : il ouvre une PR de release, attend que les deux statuts passent,
+sans statuts) : il ouvre une PR de release, attend que les trois statuts passent,
 la fusionne en squash, puis pousse les tags `<plugin>-v<version>` et publie les
 releases GitHub. Les versions elles-mêmes sont décidées **par le job** — `fix` ⇒
 patch, `feat` ⇒ mineure, rupture déclarée ⇒ majeure, d'après les commits touchant
