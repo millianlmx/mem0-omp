@@ -20,6 +20,11 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+// Import STATIQUE assumé : mem0Client.ts ne lit que MEM0_HTTP_URL/MEM0_HTTP_TOKEN
+// à l'évaluation (aucun état d'extension, aucune écriture disque), donc il est
+// sans danger avant l'isolation du HOME. L'extension, elle, reste importée
+// dynamiquement pour cette raison.
+import { mem0, rows } from "../omp-mem0-memory/mem0Client.ts";
 
 // ---------------------------------------------------------------------------
 // Isolation : HOME temporaire AVANT l'import de l'extension
@@ -207,9 +212,16 @@ type CtxOptions = { hasUI?: boolean };
 
 function mkCtx(cwd: string, options: CtxOptions = {}) {
   const notices: Notice[] = [];
+  const confirms: Array<{ title: string; message: string }> = [];
   const ui = {
     notify: (message: string, type?: string) => { notices.push({ message, type }); },
     input: async (_label: string, _placeholder?: string) => "",
+    // Sans cette touche, `ctx.ui.confirm` lève dans /mem0-init : le message exact
+    // de la garde anti-doublon (le total réel) resterait inobservable.
+    confirm: async (title: string, message: string) => {
+      confirms.push({ title, message });
+      return false;
+    },
   };
   const ctx = {
     cwd,
@@ -220,7 +232,7 @@ function mkCtx(cwd: string, options: CtxOptions = {}) {
     sessionManager: { getSessionId: () => "plugin-handlers-session" },
     waitForIdle: async () => {},
   };
-  return { ctx, notices };
+  return { ctx, notices, confirms };
 }
 
 /** Dépôt temporaire : `.git` suffit à `resolveRoot`, package.json donne la scope. */
@@ -652,4 +664,132 @@ test("remove-phase retire la phase du registry persistant", async () => {
   await app.commands.get("remove-phase")!("remove-phase-fixture", ctx);
   assert.match(notices.at(-1)!.message, /\[mem0\] phase "remove-phase-fixture" désenregistrée\./);
   assert.equal("remove-phase-fixture" in phasesOnDisk(), false);
+});
+
+// ---------------------------------------------------------------------------
+// Plafond de lecture : au-delà de 100 souvenirs, les consommateurs du plugin
+// doivent voir l'ENSEMBLE complet
+//
+// Le serveur lit la scope par pages quadruplées et rend `{"total", "results"}`
+// (S-1) : ici on sert ce qu'il rend, et on vérifie qu'aucun consommateur du
+// plugin n'y remet un plafond. Le corpus est ordonné comme le renvoie le
+// serveur — updated_at décroissant — et ses `uniq(i)` ne se recouvrent qu'à 0,5
+// (le mot « souvenir » partagé, sous le seuil de balayage 0,75) : aucune paire
+// parasite ne vient polluer /mem0-dedupe.
+// ---------------------------------------------------------------------------
+
+/** Mot distinct par ligne, de plus de 3 caractères (seuil de `contentTokens`). */
+function uniq(i: number): string {
+  return `marqueur${String.fromCharCode(97 + (i % 26))}${String.fromCharCode(97 + Math.floor(i / 26))}`;
+}
+
+/** `n` lignes dont `updated_at` croît avec l'index : la DERNIÈRE est la plus récente. */
+function corpus(n: number): Array<{ id: string; memory: string; updated_at: string }> {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `m-${String(i).padStart(3, "0")}`,
+    memory: `souvenir ${i} ${uniq(i)}`,
+    updated_at: `2026-09-01T${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}:00Z`,
+  }));
+}
+
+test("plafond/AC-2 : mem0.getAll rend la scope entière, sans troncature ni réordonnancement", async () => {
+  resetService();
+  // Ordre du serveur : le plus récent d'abord.
+  service.project = [...corpus(150)].reverse();
+
+  const all = rows(await mem0.getAll("plafond-fixture"));
+
+  assert.equal(all.length, 150, "aucune ligne ne doit être perdue côté client");
+  assert.equal(all[0]!.id, "m-149", "la tête est le souvenir le plus récent de la scope");
+  assert.equal(all.at(-1)!.id, "m-000", "la queue est le plus ancien : l'ordre du serveur est préservé");
+  assert.ok(
+    all.some((m) => m.id === "m-149"),
+    "un souvenir situé au-delà des 100 premiers est présent dans le résultat",
+  );
+});
+
+test("plafond/AC-3 : sommaire injecté et /mem0-status comptent la scope entière", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  service.project = corpus(150);
+
+  const started = (await app.hooks.get("before_agent_start")!(
+    { prompt: "ok", systemPrompt: [] } as never,
+    ctx as never,
+  )) as { systemPrompt: string[] };
+  const injected = started.systemPrompt.join("\n");
+  assert.match(injected, /150 souvenir\(s\)/, "l'en-tête annonce le total réel");
+  assert.doesNotMatch(injected, /100 souvenir\(s\)/, "le compte plafonné de 100 ne doit plus apparaître");
+  const listed = injected.split("\n").filter((line) => line.startsWith("- ["));
+  assert.equal(listed.length, 60, "le seul plafond restant est celui d'AFFICHAGE (60 entrées)");
+  assert.match(listed[0]!, /^- \[m-149\]/, "la liste part du plus récent de l'ENSEMBLE complet");
+  assert.match(injected, /\(\+ 90 souvenir\(s\) plus anciens/, "les 90 hors liste sont annoncés");
+
+  notices.length = 0;
+  await app.commands.get("mem0-status")!("", ctx);
+  const status = notices.map((n) => n.message).find((m) => m.includes("ok="));
+  assert.ok(status, "la notice d'état doit être émise");
+  assert.match(status, /projet="plugin-handlers-fixture" 150 souvenir\(s\)/);
+});
+
+test("plafond/AC-6 : sous le seuil de 100, les comptes restent exacts", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  service.project = corpus(80);
+
+  const started = (await app.hooks.get("before_agent_start")!(
+    { prompt: "ok", systemPrompt: [] } as never,
+    ctx as never,
+  )) as { systemPrompt: string[] };
+  assert.match(started.systemPrompt.join("\n"), /80 souvenir\(s\)/);
+
+  await app.commands.get("mem0-status")!("", ctx);
+  const status = notices.map((n) => n.message).find((m) => m.includes("ok="));
+  assert.ok(status);
+  assert.match(status, /80 souvenir\(s\)/);
+});
+
+test("plafond/AC-4 : /mem0-dedupe voit les paires au-delà des 100 premiers", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices } = mkCtx(repo);
+  // Tête longue à l'index 120, texte court à l'index 121 dont TOUS les tokens
+  // sont déjà dans la tête : un quasi-doublon franc, posé au-delà des 100
+  // premiers (donc invisible tant que la lecture était plafonnée).
+  const store = corpus(150);
+  store[120] = {
+    ...store[120]!,
+    memory:
+      "Le cache local des souvenirs est invalidé après chaque écriture, et le sommaire du projet est reconstruit au tour suivant.",
+  };
+  store[121] = { ...store[121]!, memory: "Le cache local des souvenirs est invalidé après chaque écriture." };
+  service.project = store;
+
+  await app.commands.get("mem0-dedupe")!("", ctx);
+
+  const notice = notices.at(-1)!.message;
+  assert.match(notice, /sur 150 souvenir\(s\)/, "M est le total réel de la scope, pas 100");
+  assert.match(notice, /SUPPRIME \[m-121\]/, "la paire située au-delà de l'index 100 est nommée");
+  assert.equal(service.calls.filter((c) => c.method === "DELETE").length, 0, "la simulation n'écrit rien");
+});
+
+test("plafond/AC-7 : /mem0-init sans --force annonce le total réel, pas 100", async () => {
+  resetService();
+  const app = mkApp();
+  const repo = mkRepo("plugin-handlers-fixture");
+  const { ctx, notices, confirms } = mkCtx(repo, { hasUI: true });
+  service.project = corpus(150);
+
+  await app.commands.get("mem0-init")!("", ctx);
+
+  assert.equal(confirms.length, 1, "la garde anti-doublon doit demander confirmation");
+  assert.match(confirms[0]!.title, /^Réamorcer "plugin-handlers-fixture" \?$/);
+  assert.match(confirms[0]!.message, /Ce projet a déjà 150 souvenir\(s\)\./);
+  assert.match(notices.at(-1)!.message, /amorçage annulé \(150 souvenir\(s\) existants\)/);
+  assert.equal(callsTo("/memory/add").length, 0, "un refus n'écrit rien");
 });
