@@ -266,6 +266,44 @@ else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
 fi
 
+echo "── API mem0-http"
+
+# mem0-stack/mem0-http/test_api.py prouve que le serveur est conforme à l'API de
+# la version de mem0 RÉELLEMENT installée. Le Dockerfile l'exécute au build de
+# l'image ; ce contrôle l'exécute HORS du build, pour que la même rupture d'API
+# (paramètre retiré ou renommé côté mem0) fasse échouer la CI sans conteneur, sans
+# credential et sans socket. Le script appelé dérive ses exigences et sa version
+# de Python du Dockerfile : aucune liste n'est recopiée ici.
+#
+# La sortie du test n'est JAMAIS résumée : c'est elle qui nomme la route fautive
+# (le critère exige que le job rouge la nomme). Prérequis absents (environnement
+# Python non préparé) ⇒ on l'annonce sans ✓ mensonger, comme pour le type-check —
+# SAUF si MEM0_OMP_REQUIRE_HTTP_API=1 (posée par la CI) : là, un prérequis manquant
+# est un échec, jamais un skip silencieux.
+if [ -f scripts/mem0-http-test.sh ]; then
+  http_out="$(bash scripts/mem0-http-test.sh --run 2>&1)"
+  http_status=$?
+  [ -n "$http_out" ] && printf '%s\n' "$http_out"
+  case "$http_status" in
+    0)
+      pass "API mem0-http : test_api.py conforme (dépendances déclarées par le Dockerfile)"
+      ;;
+    2)
+      http_reason="$(printf '%s\n' "$http_out" | head -n 1)"
+      if [ "${MEM0_OMP_REQUIRE_HTTP_API:-}" = "1" ]; then
+        fail "API mem0-http — ${http_reason} (relance : bash scripts/mem0-http-test.sh --prepare)"
+      else
+        echo "  · ${http_reason} (prépare : bash scripts/mem0-http-test.sh --prepare)"
+      fi
+      ;;
+    *)
+      fail "API mem0-http — test_api.py a échoué (relance : bash scripts/mem0-http-test.sh --run)"
+      ;;
+  esac
+else
+  echo "  · scripts/mem0-http-test.sh absent, test d'API mem0-http non vérifié"
+fi
+
 echo "── Plugins réels (OMP)"
 
 # Le harnais (scripts/plugin-smoke.ts) charge chaque plugin du catalogue dans un

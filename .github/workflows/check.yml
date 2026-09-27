@@ -36,9 +36,25 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.0"
+      # Le test d'API mem0-http tourne HORS du build d'image : la version de
+      # Python est celle du `FROM python:…` du Dockerfile, jamais un chiffre écrit
+      # ici, et `actions/setup-python` la sert depuis le tool cache du runner
+      # (3.11.16 sur ubuntu-latest, 3.11.9 sur macos-latest) — aucun téléchargement.
+      - id: image_python
+        run: echo "version=$(bash scripts/mem0-http-test.sh --python-version)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ steps.image_python.outputs.version }}
+      # Les exigences viennent de la déclaration du Dockerfile (celle-là même que
+      # l'image installe) : une montée de plage change ce qui est testé, sans
+      # seconde liste à maintenir. Le venv vit hors du dépôt.
+      - name: Préparer l'environnement du test d'API mem0-http
+        run: bash scripts/mem0-http-test.sh --prepare
       - name: Valider le catalogue, le manifeste et l'extension
         env:
-          # En CI, un prérequis manquant (bun, hôte) est un échec, jamais un skip :
-          # le harnais « plugins réels » ne doit pas pouvoir disparaître en silence.
+          # En CI, un prérequis manquant (bun, hôte, environnement du test d'API)
+          # est un échec, jamais un skip : ni le harnais « plugins réels » ni le
+          # test d'API mem0-http ne doivent pouvoir disparaître en silence.
           MEM0_OMP_REQUIRE_SMOKE: "1"
+          MEM0_OMP_REQUIRE_HTTP_API: "1"
         run: ./scripts/check.sh
