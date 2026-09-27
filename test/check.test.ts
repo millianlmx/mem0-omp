@@ -64,13 +64,53 @@ function copyRepo(): string {
 
 const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
 
-function runCheck(cwd: string) {
+function runCheck(cwd: string, env: Record<string, string> = {}) {
   return spawnSync("bash", ["scripts/check.sh"], {
     cwd,
     encoding: "utf8",
-    env: NESTED_ENV,
+    env: { ...NESTED_ENV, ...env },
     timeout: 600_000,
   });
+}
+
+/** Un `bash scripts/mem0-http-test.sh …`, même convention d'environnement. */
+function runHttpScript(args: string[], cwd: string, env: Record<string, string> = {}) {
+  return spawnSync("bash", ["scripts/mem0-http-test.sh", ...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...NESTED_ENV, ...env },
+    timeout: 600_000,
+  });
+}
+
+/** Dossier temporaire suivi, retiré en fin de suite comme les copies du dépôt. */
+function tmpdir(prefix: string): string {
+  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), prefix));
+  dirs.push(dir);
+  return dir;
+}
+
+/** Doublure d'interpréteur du test d'API : un script bash, jamais un vrai Python. */
+function stubInterpreter(body: string): string {
+  const file = path.join(tmpdir("mem0-http-doublure-"), "python");
+  fs.writeFileSync(file, `#!/usr/bin/env bash\n${body}`);
+  fs.chmodSync(file, 0o755);
+  return file;
+}
+
+const executable = (file: string): boolean => {
+  try {
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Le venv par défaut du script : `${XDG_CACHE_HOME:-$HOME/.cache}/mem0-omp/mem0-http-venv`. */
+function defaultVenv(): string {
+  const cache = process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache");
+  return path.join(cache, "mem0-omp", "mem0-http-venv");
 }
 
 type CatalogEntry = { name: string; commands?: string[]; version?: string };
@@ -256,4 +296,142 @@ test("check/AC-18 : le type-check de omp-mem0-req contre les types de l'hôte es
   }
   assert.equal(run.status, 0, out);
   assert.ok(!out.includes("error TS"), out);
+});
+
+// ---------------------------------------------------------------------------
+// Le test d'API mem0-http (S-1..S-4). Le dossier de feature `mem0-http-hors-ci`
+// tient ses quatre critères ici, et nulle part ailleurs.
+// ---------------------------------------------------------------------------
+
+test("mem0-http-hors-ci/AC-2 : les exigences testées viennent du Dockerfile, sans seconde liste", () => {
+  // La plage attendue est LUE dans le Dockerfile, jamais écrite ici : une montée
+  // de version ne doit pas transformer ce cas en régression de chiffre.
+  const dockerfile = fs.readFileSync(path.join(ROOT, "mem0-stack/mem0-http/Dockerfile"), "utf8");
+  const declared = /"mem0ai[^"]*"/.exec(dockerfile);
+  assert.ok(declared, `plage mem0ai absente du Dockerfile :\n${dockerfile}`);
+  const range = declared[0].slice(1, -1);
+
+  const base = runHttpScript(["--requirements"], ROOT);
+  assert.equal(base.status, 0, output(base));
+  const lines = output(base).trim().split("\n");
+  assert.equal(lines[0], range, output(base));
+  for (const dep of ["fastapi", "httpx", "uvicorn[standard]"]) {
+    assert.ok(lines.includes(dep), `exigence ${dep} absente de --requirements : ${lines.join(" ")}`);
+  }
+
+  // Muter la déclaration du Dockerfile dans une copie change ce que le script
+  // teste — extraction et plan de préparation — sans toucher une autre liste.
+  const dir = copyRepo();
+  const dockerfileInCopy = path.join(dir, "mem0-stack", "mem0-http", "Dockerfile");
+  const source = fs.readFileSync(dockerfileInCopy, "utf8");
+  const mutated = source.replace(/"mem0ai[^"]*"/, '"mem0ai>=2.0.20,<2.0.21"');
+  assert.notEqual(mutated, source, "plage mem0ai introuvable dans la copie du Dockerfile");
+  fs.writeFileSync(dockerfileInCopy, mutated);
+
+  const venv = path.join(tmpdir("mem0-http-venv-"), "venv");
+  const reqs = runHttpScript(["--requirements"], dir);
+  assert.equal(reqs.status, 0, output(reqs));
+  assert.ok(output(reqs).includes("mem0ai>=2.0.20,<2.0.21"), output(reqs));
+  assert.ok(!output(reqs).includes(range), output(reqs));
+
+  const dry = runHttpScript(["--prepare", "--dry-run"], dir, { MEM0_HTTP_VENV: venv });
+  assert.equal(dry.status, 0, output(dry));
+  assert.ok(output(dry).includes("mem0ai>=2.0.20,<2.0.21"), output(dry));
+  assert.ok(!output(dry).includes(range), output(dry));
+});
+
+test("mem0-http-hors-ci/AC-4 : la section annonce « non exécuté » sans ✓ trompeur et propage l'échec", () => {
+  // (a) Aucun interpréteur : le venv est un chemin INEXISTANT. Un `MEM0_HTTP_VENV`
+  // vide retomberait sur le venv par défaut, c'est-à-dire celui que l'étape
+  // `--prepare` de la CI vient de construire — la garde ne serait pas exercée.
+  const absent = path.join(tmpdir("mem0-http-absent-"), "venv");
+  const noEnv = { MEM0_HTTP_VENV: absent, MEM0_HTTP_PYTHON: "", MEM0_OMP_REQUIRE_HTTP_API: "" };
+
+  const idle = runCheck(copyRepo(), noEnv);
+  assert.equal(idle.status, 0, output(idle));
+  assert.ok(output(idle).includes("non exécuté"), output(idle));
+  assert.ok(!output(idle).includes("✓ API mem0-http"), output(idle));
+
+  // (b) La même absence, durcie par la variable de la CI : c'est un échec.
+  const strict = runCheck(copyRepo(), { ...noEnv, MEM0_OMP_REQUIRE_HTTP_API: "1" });
+  assert.notEqual(strict.status, 0, output(strict));
+  assert.ok(output(strict).includes("✗"), output(strict));
+
+  // (c) Doublure silencieuse : la section est verte, et le test a bien été lancé
+  // depuis mem0-stack/mem0-http, avec `test_api.py` pour seul argument.
+  const log = path.join(tmpdir("mem0-http-journal-"), "journal.txt");
+  const silent = stubInterpreter(`printf 'cwd=%s\\nargv=%s\\n' "$PWD" "$*" > '${log}'\nexit 0\n`);
+  const copy = copyRepo();
+  const ok = runCheck(copy, { MEM0_HTTP_PYTHON: silent });
+  assert.equal(ok.status, 0, output(ok));
+  assert.ok(output(ok).includes("✓ API mem0-http : test_api.py conforme"), output(ok));
+  const logged = fs.readFileSync(log, "utf8");
+  const parsed = /^cwd=(.*)\nargv=(.*)\n$/.exec(logged);
+  assert.ok(parsed, `journal d'invocation inattendu : ${logged}`);
+  assert.equal(
+    fs.realpathSync(parsed[1]),
+    fs.realpathSync(path.join(copy, "mem0-stack", "mem0-http")),
+    logged,
+  );
+  assert.equal(parsed[2], "test_api.py", logged);
+
+  // (d) Doublure qui échoue : sa sortie est recopiée telle quelle (c'est elle qui
+  // nomme la route fautive) et check.sh rougit.
+  const failing = stubInterpreter("echo 'FAIL  /memory/x1  [200]'\nexit 1\n");
+  const bad = runCheck(copyRepo(), { MEM0_HTTP_PYTHON: failing });
+  assert.notEqual(bad.status, 0, output(bad));
+  assert.ok(output(bad).includes("FAIL  /memory/x1  [200]"), output(bad));
+});
+
+test("mem0-http-hors-ci/AC-3 : une rupture d'API de mem0 rend check.sh rouge en nommant la route", (t) => {
+  // L'interpréteur du test : celui de l'environnement, sinon le venv par défaut.
+  // Aucun des deux ⇒ on le dit et on ne prétend rien avoir vérifié.
+  const override = process.env.MEM0_HTTP_PYTHON ?? "";
+  const usable = (override !== "" && executable(override)) || executable(path.join(defaultVenv(), "bin", "python"));
+  if (!usable) {
+    t.skip("environnement du test d'API mem0-http absent — prépare-le : bash scripts/mem0-http-test.sh --prepare");
+    return;
+  }
+
+  // L'arbre sain d'abord : c'est l'autre moitié du critère (le vert côté sain).
+  const healthy = runCheck(copyRepo());
+  assert.equal(healthy.status, 0, output(healthy));
+  assert.ok(output(healthy).includes("✓ API mem0-http : test_api.py conforme"), output(healthy));
+
+  // Puis la rupture : `delete` appelé sous un nom de mot-clé que la vraie
+  // signature de mem0 refuse. StubMemory._record lie les arguments à cette
+  // signature, donc l'appel échoue exactement comme il échouerait en production.
+  const dir = copyRepo();
+  const server = path.join(dir, "mem0-stack", "mem0-http", "http_server.py");
+  const source = fs.readFileSync(server, "utf8");
+  const mutated = source.replace("m.delete(memory_id=memory_id)", "m.delete(id=memory_id)");
+  assert.notEqual(mutated, source, "appel m.delete(memory_id=…) introuvable dans http_server.py");
+  fs.writeFileSync(server, mutated);
+
+  const broken = runCheck(dir);
+  assert.notEqual(broken.status, 0, output(broken));
+  const text = output(broken);
+  for (const needle of ["test_api.py", "delete_memory", "/memory/x1"]) {
+    assert.ok(text.includes(needle), `${needle} absent de la sortie de check.sh :\n${text}`);
+  }
+});
+
+test("mem0-http-hors-ci/AC-1 : la CI prépare l'environnement du test d'API avant de lancer check.sh", () => {
+  const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
+
+  for (const needle of [
+    "bash scripts/mem0-http-test.sh --python-version",
+    "${{ steps.image_python.outputs.version }}",
+    "actions/setup-python@v7",
+    "bash scripts/mem0-http-test.sh --prepare",
+    'MEM0_OMP_REQUIRE_HTTP_API: "1"',
+  ]) {
+    assert.ok(workflow.includes(needle), `${needle} absent du workflow :\n${workflow}`);
+  }
+
+  // La préparation précède le lancement de check.sh : c'est ce qui rend
+  // l'exécution réelle structurelle au lieu d'être déclarative.
+  const prepare = workflow.indexOf("bash scripts/mem0-http-test.sh --prepare");
+  const check = workflow.indexOf("./scripts/check.sh");
+  assert.ok(prepare !== -1 && check !== -1 && prepare < check, workflow);
 });

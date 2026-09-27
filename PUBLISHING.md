@@ -68,7 +68,22 @@ de chaque entrée d'extension sur disque, **transpilation des deux `extension.ts
 **absence d'import de valeur depuis `@oh-my-pi/*` dans les deux**, cohérence du
 tableau `commands` de chaque entrée de catalogue avec les `registerCommand()`
 réellement appelés, **cohérence des versions** (voir « Mettre à jour »),
-type-check du plugin pipeline contre les types de l'hôte, et la suite de tests.
+type-check du plugin pipeline contre les types de l'hôte, **conformité du serveur
+mem0-http à l'API mem0 installée** (test_api.py exécuté hors du build d'image),
+et la suite de tests.
+
+Le test d'API de mem0-http tourne hors du build d'image, contre les dépendances
+déclarées par le Dockerfile — plage `mem0ai` comprise. C'est ce qui fait échouer
+la PR, et pas seulement la construction de l'image, quand une rupture d'API de
+mem0 rend une route du serveur inopérante. L'environnement Python vit hors du
+dépôt et se prépare une fois :
+
+```bash
+bash scripts/mem0-http-test.sh --prepare
+```
+
+Sans lui, la section annonce « non exécuté » plutôt qu'un ✓ trompeur. La CI, elle,
+l'exige (`MEM0_OMP_REQUIRE_HTTP_API=1`) : un « non exécuté » y est un échec.
 
 Le contrôle d'import mérite une explication : `import type { ExtensionAPI }` est
 effacé à la compilation, donc l'extension n'a aucune dépendance à résoudre au

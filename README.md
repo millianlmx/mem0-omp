@@ -754,6 +754,16 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux
 statuts : le merge est bloqué.
 
+La même PR exécute **hors du build d'image** le test d'API de mem0-http : la CI
+dérive du Dockerfile la version de Python (`actions/setup-python` la sert depuis
+le cache du runner) et la liste d'exigences installées, puis la section
+`── API mem0-http` les lance contre `test_api.py` — aucun conteneur, aucun
+credential, et la sortie du test est recopiée telle quelle, parce que c'est elle
+qui nomme la route fautive. Un serveur qui n'est plus conforme à l'API mem0
+installée fait donc échouer la PR, et pas seulement la construction de l'image.
+Sur un poste, l'environnement se prépare une fois :
+`bash scripts/mem0-http-test.sh --prepare`.
+
 Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
 **jamais** directement sur `main` (la protection de branche refuse un commit neuf
 sans statuts) : il ouvre une PR de release, attend que les deux statuts passent,
