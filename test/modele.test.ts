@@ -577,7 +577,8 @@ function resetAudit(): void {
   auditState.repoRoot = null;
   auditState.relayed.clear();
   auditState.stopTimer = null;
-  auditState.dialog = false;
+  auditState.dialogs = Promise.resolve();
+  auditState.launched.clear();
   auditState.foreignWarned = false;
   auditState.ctx = null;
 }
@@ -621,11 +622,11 @@ const textOf = (result: { content: { text: string }[] }) => result.content.map((
 
 /** Deux propositions DISTINCTES : deux features d'un même audit, deux modèles. */
 const PROPOSAL_ALPHA = {
-  weaknesses: ["lot.ts : aucune borne sur la file"],
+  weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
   features: [{ name: "alpha", intention: "Borner la file du lot.\nPérimètre : lot.ts." }],
 };
 const PROPOSAL_BETA = {
-  weaknesses: ["README.md : le modèle n'est pas documenté"],
+  weaknesses: [{ name: "modele-readme", intention: "README.md : le modèle n'est pas documenté" }],
   features: [{ name: "beta", intention: "Documenter le choix du modèle." }],
 };
 
@@ -898,7 +899,7 @@ test("modele/AC-2 : /audit sollicite une fois par feature créée, et deux featu
     // deux questions, deux modèles distincts dans le lot.
     const fx = mkAudit({
       models: KNOWN,
-      answers: ["alpha", "Valider et lancer", MODEL_X, "beta", "Valider et lancer", MODEL_Y],
+      answers: ["alpha", "Lancer la sélection", "Valider et lancer", MODEL_X, "beta", "Lancer la sélection", "Valider et lancer", MODEL_Y],
     });
     const first = await fx.call("audit_propose", PROPOSAL_ALPHA);
     assert.equal(first.isError, undefined, textOf(first));
@@ -930,18 +931,18 @@ test("modele/AC-2 : /audit sollicite une fois par feature créée, et deux featu
   }
 
   {
-    // ANNULATION du dialogue : aucune feature n'est créée, et le message est celui
-    // de la spec, mot pour mot.
-    const fx = mkAudit({ models: KNOWN, answers: ["alpha", "Valider et lancer", undefined] });
+    // ANNULATION du dialogue : aucune feature n'est créée, et le compte rendu le
+    // dit pour l'élément coché, mot pour mot.
+    const fx = mkAudit({ models: KNOWN, answers: ["alpha", "Lancer la sélection", "Valider et lancer", undefined] });
     const result = await fx.call("audit_propose", PROPOSAL_ALPHA);
-    assert.equal(textOf(result), "Aucune pipeline lancée : modèle non choisi.");
+    assert.equal(textOf(result), "Aucune pipeline lancée (0/1).\n- alpha : non lancée — modèle non choisi");
     assert.equal(fx.lot()?.features.length ?? 0, 0, "le lot reste inchangé");
     assert.equal(fx.runs.length, 0, "aucun run");
   }
 
   {
     // AUCUN modèle connu : aucune question, la feature naît sans modèle (défaut OMP).
-    const fx = mkAudit({ models: [], answers: ["alpha", "Valider et lancer"] });
+    const fx = mkAudit({ models: [], answers: ["alpha", "Lancer la sélection", "Valider et lancer"] });
     const result = await fx.call("audit_propose", PROPOSAL_ALPHA);
     assert.equal(result.isError, undefined, textOf(result));
     assert.equal(
@@ -955,8 +956,8 @@ test("modele/AC-2 : /audit sollicite une fois par feature créée, et deux featu
   }
 
   {
-    // Une feature NON créée (choix « aucune ») ne pose aucune question de modèle.
-    const fx = mkAudit({ models: KNOWN, answers: ["aucune"] });
+    // Un élément NON coché ne pose aucune question de modèle.
+    const fx = mkAudit({ models: KNOWN, answers: ["Lancer la sélection"] });
     await fx.call("audit_propose", PROPOSAL_ALPHA);
     assert.equal(
       fx.calls.filter((call) => call.kind === "select" && call.title.startsWith("Modèle de la pipeline")).length,
@@ -966,19 +967,23 @@ test("modele/AC-2 : /audit sollicite une fois par feature créée, et deux featu
   }
 
   {
-    // La feature REJOUÉE est refusée AVANT toute question ; une AUTRE feature de la
-    // même session /audit reste lançable (c'est ce qui permet deux modèles).
+    // La feature REJOUÉE n'est plus cochable : elle ne repose aucune question et
+    // son modèle ne bouge pas.
     const fx = mkAudit({
       models: KNOWN,
-      answers: ["alpha", "Valider et lancer", MODEL_X, "alpha", "Valider et lancer", MODEL_Y],
+      answers: ["alpha", "Lancer la sélection", "Valider et lancer", MODEL_X, "Lancer la sélection"],
     });
     await fx.call("audit_propose", PROPOSAL_ALPHA);
+    const before = fx.calls.length;
     const replay = await fx.call("audit_propose", PROPOSAL_ALPHA);
-    assert.equal(textOf(replay), "Error: cette session /audit a déjà lancé « alpha »");
+    const relaunch = fx.calls[before]!;
+    assert.deepEqual((relaunch.items as Array<{ label: string }>).map((item) => item.label), ["borne-file", "Lancer la sélection"]);
+    assert.ok(relaunch.title.endsWith("\nDéjà lancés (non cochables) : alpha"), relaunch.title);
+    assert.equal(textOf(replay), "Aucune pipeline lancée : aucun élément coché.");
     assert.equal(
       fx.calls.filter((call) => call.kind === "select" && call.title.startsWith("Modèle de la pipeline")).length,
       1,
-      "le refus tombe avant la seconde question",
+      "une seule question de modèle au total",
     );
     assert.equal(fx.lot()?.features.find((f) => f.slug === "alpha")?.model, MODEL_X, "et le modèle de la feature ne bouge pas");
   }

@@ -298,13 +298,16 @@ fait désormais échouer la construction de l'image, pas la première requête.
   voir ci-dessous.
 - `/audit [contexte]` (plugin `omp-mem0-req`) — ouvre une **session d'audit** du dépôt
   principal : l'agent l'analyse en lecture seule, affiche ses faiblesses et des features
-  proposées, puis te demande laquelle lancer (ou « aucune ») et te fait **valider ou
-  amender l'intention** transmise à `/req` avant tout lancement. Le **modèle** de la
-  feature est demandé juste après, **une fois par feature créée** — deux features d'un
-  même audit peuvent donc recevoir deux modèles différents, et une feature rejouée est
-  refusée avant toute question. La pipeline de la feature choisie tourne ensuite seule
-  dans le lot, et ses questions et jalons sont relayés dans cette session — voir
-  « Pipelines lancées par /audit ».
+  proposées — chacune nommée, avec ses dépendances —, puis te montre **une liste à
+  cocher** de tous ces éléments, faiblesses et features réunies : coches-en un ou
+  plusieurs et valide (valider sans rien cocher ne lance rien). Pour chaque élément
+  coché, tu **valides ou amendes l'intention** transmise à `/req`, puis tu choisis son
+  **modèle** — une question par élément, chaque pipeline tourne avec le sien. Les
+  pipelines cochées démarrent **en parallèle** ; un élément qui dépend d'un autre élément
+  choisi n'attaque qu'une fois celui-ci terminé. Redemande un lancement dans la même
+  session pour lancer plus tard d'autres éléments : ceux déjà lancés n'y sont plus
+  cochables. Questions et jalons sont relayés dans cette session — voir « Pipelines
+  lancées par /audit ».
 
 ## Pipelines en cours
 
@@ -669,22 +672,28 @@ s'affiche tel quel au lieu d'être avalé.
   main dès `/specs`. `/specs`, `/impl` et `/review` restent utilisables à la main tant
   qu'aucun lot ne pilote la feature. Une feature de lot ajoutée par `a` **ne démarre
   qu'au `l`** : l'inscription d'une collecte `/req` ne lance pas les autres.
-- **Pipelines lancées par `/audit`** : la feature choisie entre dans le lot (section
-  *Lot* du panneau, même pilote) et démarre aussitôt, même si le lot est au brouillon —
-  ses autres features attendent toujours `l`. Tant que la session `/audit` est la
-  session **courante** du process pilote, elle est le **relais** de cette feature :
-  chaque question d'un maillon et chaque jalon lui arrive comme un message `[audit]`.
-  Elle répond seule (`audit_reply`), valide « specs validées » et « revue propre »
+- **Pipelines lancées par `/audit`** : chaque élément lancé entre dans le lot (section
+  *Lot* du panneau, même pilote) et démarre sans attendre `l`, même si le lot est au
+  brouillon — ses autres features attendent toujours `l`. Les éléments lancés ensemble
+  tournent **en parallèle** ; un élément qui dépend d'un autre élément choisi reste en
+  attente (`slug ← dépendance`) jusqu'à ce que celui-ci soit terminé, puis part de sa
+  branche.
+  Tant que la session `/audit` est la session **courante** du process pilote, elle est
+  le **relais** de ces pipelines : chaque question d'un maillon et chaque jalon lui
+  arrive comme un message `[audit]` qui nomme sa feature et son maillon. Elle répond
+  seule (`audit_reply`), valide « specs validées » et « revue propre »
   (`audit_approve`) — la chaîne va alors jusqu'à la PR sans aucune touche — ou te
   remonte l'élément dans sa session (`audit_escalate`) avec la question et les options
-  d'origine ; ta réponse part **mot pour mot** au maillon. Le plafond de la boucle revue
-  ⇄ correction te revient toujours, et aucune PR n'est ouverte avant ta décision.
-  Pendant le relais, le panneau affiche `relayé à /audit` et refuse d'y répondre ou
-  d'y valider. **Quitter ou fermer** la session `/audit` fait retomber questions et
-  jalons sur le panneau, comme pour une feature ordinaire (y compris une question
-  restée sans réponse) ; **y revenir** (`/resume`) lui rend le relais et lui réinjecte
-  ce qui attend encore. Rien n'est jamais fusionné. Le battement du relais vit dans
-  `<état>/audit/<sha1(session)[:16]>.json`.
+  d'origine, précédées de `Question de /<maillon> — feature <nom>` ; ta réponse part
+  **mot pour mot** au maillon qui l'a posée. Quand plusieurs pipelines demandent en même
+  temps, leurs dialogues s'ouvrent **un à la fois**, dans l'ordre des demandes. Le
+  plafond de la boucle revue ⇄ correction te revient toujours, et aucune PR n'est
+  ouverte avant ta décision. Pendant le relais, le panneau affiche `relayé à /audit` et
+  refuse d'y répondre ou d'y valider. **Quitter ou fermer** la session `/audit` fait
+  retomber questions et jalons sur le panneau, comme pour une feature ordinaire (y
+  compris une question restée sans réponse) ; **y revenir** (`/resume`) lui rend le
+  relais et lui réinjecte ce qui attend encore. Rien n'est jamais fusionné. Le battement
+  du relais vit dans `<état>/audit/<sha1(session)[:16]>.json`.
 
 ## Phases
 

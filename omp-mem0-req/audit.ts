@@ -5,8 +5,17 @@ import { isReviewCapReason } from "./chain.ts";
 import { CONTRACT_PATH } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { toSlug } from "./git.ts";
-import { cleanAskText } from "./inbox.ts";
-import { LOT_EDITOR_MAX, LOT_TICK_MS, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, readLot } from "./lot.ts";
+import {
+  LOT_EDITOR_MAX,
+  LOT_TICK_MS,
+  lotFeature,
+  lotOwnerAlive,
+  lotReplaceable,
+  lotRepoKey,
+  parseReplyOptions,
+  questionOf,
+  readLot,
+} from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
 import type { LotController } from "./lotController.ts";
 import { modelDialogChoice, modelDialogOptions, modelQuestionTitle } from "./models.ts";
@@ -20,19 +29,25 @@ import type { PanelAskOption, PipelineCtx, RunningEntry } from "./store.ts";
 // ---------------------------------------------------------------------------
 // Le relais /audit — une session interactive qui tranche pour l'utilisateur.
 // ---------------------------------------------------------------------------
-// La session /audit lance UNE feature dans le lot (le pilote existant la
-// conduit) puis devient son RELAIS : chaque question d'un maillon et chaque jalon
-// lui est injecté comme un message `[audit]`, et elle y répond par ses outils
-// (`audit_reply`, `audit_approve`, `audit_escalate`). Le relais n'écrit JAMAIS le
-// lot : il livre une réponse `ask` dans la boîte du run (comme le panneau) ou
-// appelle les actions du pilote (qui exigent la propriété du lot — d'où la règle
-// « un relais ouvert est tenu par le pilote »).
+// La session /audit lance une ou plusieurs features dans le lot — les éléments
+// que l'utilisateur coche, lancés en parallèle dans l'ordre de leurs dépendances
+// (le pilote existant les conduit) — puis devient leur RELAIS : chaque question
+// d'un maillon et chaque jalon lui est injecté comme un message `[audit]`, et
+// elle y répond par ses outils (`audit_reply`, `audit_approve`, `audit_escalate`).
+// Le relais n'écrit JAMAIS le lot : il livre une réponse `ask` dans la boîte du
+// run (comme le panneau) ou appelle les actions du pilote (qui exigent la
+// propriété du lot — d'où la règle « un relais ouvert est tenu par le pilote »).
 //
 // Le relais est OUVERT tant que la session /audit est la session courante du
 // process pilote : un fichier de battement (`<stateDir>/audit/<id>.json`) le dit
 // au pilote et au panneau, qui cessent alors de proposer ces questions et ces
 // jalons. Quitter la session (ou la fermer) retire le fichier — tout retombe sur
 // le panneau ; y revenir le réécrit et ré-injecte ce qui attend encore.
+//
+// Les dialogues /audit passent par une FILE (`auditState.dialogs`) : l'hôte
+// exécute en même temps les appels d'outils d'un même tour, donc deux questions
+// escaladées ensemble — ou une proposition et une escalade — s'ouvrent l'une
+// après l'autre, dans l'ordre des appels, jamais l'une par-dessus l'autre.
 
 export type AuditItemKind = "ask" | "question" | "specs" | "review" | "cap";
 
@@ -64,8 +79,18 @@ export type AuditState = {
   /** Les éléments déjà injectés dans la session armée, par clé. */
   relayed: Map<string, AuditItem>;
   stopTimer: (() => void) | null;
-  /** Un dialogue /audit (choix, intention, escalade) est ouvert. */
-  dialog: boolean;
+  /**
+   * La file des dialogues /audit (S-5) : la QUEUE d'une chaîne FIFO de places.
+   * Chaque séquence de dialogues (proposition, escalade) s'y inscrit et n'ouvre
+   * rien avant que la place précédente soit libérée.
+   */
+  dialogs: Promise<void>;
+  /**
+   * Les slugs lancés par `audit_propose`, par session /audit (S-4). Jamais
+   * persisté ni vidé en cours de process : il garde « déjà lancé » un élément dont
+   * la feature a quitté le lot quand celui-ci a été remplacé.
+   */
+  launched: Map<string, Set<string>>;
   /** La notice « lot piloté ailleurs » est dite une fois par armement. */
   foreignWarned: boolean;
   ctx: ExtensionContext | null;
@@ -75,8 +100,16 @@ const AUDIT_STATE_KEY = Symbol.for("omp-mem0-req.auditState");
 
 export const auditState: AuditState = (() => {
   const host = globalThis as unknown as Record<symbol, AuditState | undefined>;
-  const existing = host[AUDIT_STATE_KEY];
-  if (existing) return existing;
+  // Un état posé par un chargement ANTÉRIEUR de l'extension dans le même process
+  // peut précéder la file et `launched` : il reçoit les champs manquants.
+  const existing = host[AUDIT_STATE_KEY] as
+    | (Omit<AuditState, "dialogs" | "launched"> & Partial<Pick<AuditState, "dialogs" | "launched">>)
+    | undefined;
+  if (existing) {
+    existing.dialogs ??= Promise.resolve();
+    existing.launched ??= new Map();
+    return existing as AuditState;
+  }
   const created: AuditState = {
     tools: false,
     created: new Set(),
@@ -84,7 +117,8 @@ export const auditState: AuditState = (() => {
     repoRoot: null,
     relayed: new Map(),
     stopTimer: null,
-    dialog: false,
+    dialogs: Promise.resolve(),
+    launched: new Map(),
     foreignWarned: false,
     ctx: null,
   };
@@ -220,45 +254,120 @@ export function buildRelayMessage(item: AuditItem): string {
 }
 
 
+/** La nature d'un élément proposé par /audit. */
+export type ProposalElementKind = "weakness" | "feature";
+
+/** Un élément lançable de la proposition : son slug, son intention, les slugs dont il dépend (S-1). */
+export type ProposalElement = { kind: ProposalElementKind; slug: string; intention: string; deps: string[] };
+
+/** Une proposition validée : les faiblesses dans l'ordre reçu, PUIS les features. */
+export type Proposal = { elements: ProposalElement[] };
+
 /**
- * La validation d'une proposition `audit_propose` (S-5) : PURE, sans exception,
+ * Le premier cycle de dépendances, parcouru en profondeur dans l'ordre des
+ * éléments puis des dépendances déclarées : la pile depuis l'élément retrouvé
+ * jusqu'à l'élément courant, puis cet élément à nouveau — ou `null`.
+ */
+function dependencyCycle(elements: readonly ProposalElement[]): string[] | null {
+  const bySlug = new Map(elements.map((element) => [element.slug, element]));
+  const done = new Set<string>();
+  const stack: string[] = [];
+  const visit = (slug: string): string[] | null => {
+    stack.push(slug);
+    for (const dep of bySlug.get(slug)?.deps ?? []) {
+      const onStack = stack.indexOf(dep);
+      if (onStack !== -1) return [...stack.slice(onStack), dep];
+      if (done.has(dep)) continue;
+      const cycle = visit(dep);
+      if (cycle !== null) return cycle;
+    }
+    stack.pop();
+    done.add(slug);
+    return null;
+  };
+  for (const element of elements) {
+    if (done.has(element.slug)) continue;
+    const cycle = visit(element.slug);
+    if (cycle !== null) return cycle;
+  }
+  return null;
+}
+
+/**
+ * La validation d'une proposition `audit_propose` (S-1) : PURE, sans exception,
  * première erreur rendue, dans l'ordre du contrat.
  */
-export function checkProposal(
-  input: unknown,
-):
-  | { ok: true; proposal: { weaknesses: string[]; features: { slug: string; intention: string }[] } }
-  | { ok: false; error: string } {
+export function checkProposal(input: unknown): { ok: true; proposal: Proposal } | { ok: false; error: string } {
+  const fail = (error: string) => ({ ok: false as const, error });
   const record = input && typeof input === "object" && !Array.isArray(input) ? (input as Record<string, unknown>) : {};
+  const elements: ProposalElement[] = [];
+  // Les `deps` bruts, à l'index de leur élément : validés une fois TOUS les
+  // slugs connus (une dépendance peut viser un élément déclaré plus loin).
+  const declared: unknown[] = [];
+  const seen = new Set<string>();
+  const collect = (raws: unknown[], kind: ProposalElementKind): string | null => {
+    for (const [index, raw] of raws.entries()) {
+      const n = index + 1;
+      const entry = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
+      const slug = entry !== null && typeof entry.name === "string" ? toSlug(entry.name) : null;
+      if (entry === null || slug === null) return `Error: ${kind} ${n} has an invalid name`;
+      if (seen.has(slug)) return `Error: duplicate element « ${slug} »`;
+      seen.add(slug);
+      const intention = typeof entry.intention === "string" ? entry.intention.trim() : "";
+      if (intention === "") return `Error: ${kind} ${n} has no intention`;
+      elements.push({ kind, slug, intention: intention.slice(0, LOT_EDITOR_MAX), deps: [] });
+      declared.push(entry.deps);
+    }
+    return null;
+  };
   const rawWeaknesses = record.weaknesses;
   if (!Array.isArray(rawWeaknesses) || rawWeaknesses.length < 1 || rawWeaknesses.length > 20) {
-    return { ok: false, error: "Error: weaknesses must list 1 to 20 items" };
+    return fail("Error: weaknesses must list 1 to 20 items");
   }
-  const weaknesses: string[] = [];
-  for (const [index, raw] of rawWeaknesses.entries()) {
-    const weakness = cleanAskText(typeof raw === "string" ? raw : "", 300).trim();
-    if (weakness === "") return { ok: false, error: `Error: weakness ${index + 1} is empty` };
-    weaknesses.push(weakness);
-  }
+  const weaknessError = collect(rawWeaknesses, "weakness");
+  if (weaknessError !== null) return fail(weaknessError);
   const rawFeatures = record.features;
   if (!Array.isArray(rawFeatures) || rawFeatures.length < 1 || rawFeatures.length > 8) {
-    return { ok: false, error: "Error: features must list 1 to 8 items" };
+    return fail("Error: features must list 1 to 8 items");
   }
-  const features: { slug: string; intention: string }[] = [];
-  const seen = new Set<string>();
-  for (const [index, raw] of rawFeatures.entries()) {
-    const n = index + 1;
-    const feature = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-    const slug = typeof feature.name === "string" ? toSlug(feature.name) : null;
-    if (slug === null) return { ok: false, error: `Error: feature ${n} has an invalid name` };
-    if (slug === "aucune") return { ok: false, error: `Error: feature ${n} is named « aucune », which is reserved` };
-    if (seen.has(slug)) return { ok: false, error: `Error: duplicate feature « ${slug} »` };
-    seen.add(slug);
-    const intention = typeof feature.intention === "string" ? feature.intention.trim().slice(0, LOT_EDITOR_MAX) : "";
-    if (intention === "") return { ok: false, error: `Error: feature ${n} has no intention` };
-    features.push({ slug, intention });
+  const featureError = collect(rawFeatures, "feature");
+  if (featureError !== null) return fail(featureError);
+  for (const [index, element] of elements.entries()) {
+    const raw = declared[index];
+    if (raw === undefined) continue;
+    if (!Array.isArray(raw) || raw.some((dep) => typeof dep !== "string")) {
+      return fail(`Error: « ${element.slug} » has invalid deps`);
+    }
+    for (const entry of raw as string[]) {
+      const dep = toSlug(entry);
+      if (dep === null || !seen.has(dep)) return fail(`Error: « ${element.slug} » depends on unknown « ${entry.trim()} »`);
+      if (dep === element.slug) return fail(`Error: « ${element.slug} » depends on itself`);
+      if (!element.deps.includes(dep)) element.deps.push(dep);
+    }
   }
-  return { ok: true, proposal: { weaknesses, features } };
+  const cycle = dependencyCycle(elements);
+  if (cycle !== null) return fail(`Error: dependency cycle « ${cycle.join(" → ")} »`);
+  return { ok: true, proposal: { elements } };
+}
+
+/**
+ * L'ordre des ajouts (S-4) : topologique et STABLE — répéter, prendre dans
+ * l'ordre reçu le premier élément non traité dont toutes les dépendances qui
+ * sont dans la liste sont déjà traitées. `checkProposal` exclut les cycles.
+ */
+function launchOrder<T extends { slug: string; deps: readonly string[] }>(items: readonly T[]): T[] {
+  const inList = new Set(items.map((item) => item.slug));
+  const placed = new Set<string>();
+  const order: T[] = [];
+  while (order.length < items.length) {
+    const next = items.find(
+      (item) => !placed.has(item.slug) && item.deps.every((dep) => !inList.has(dep) || placed.has(dep)),
+    );
+    if (next === undefined) break;
+    placed.add(next.slug);
+    order.push(next);
+  }
+  return order;
 }
 
 
@@ -270,7 +379,13 @@ function toolText(text: string, isError = false): ToolResult {
 
 const NOT_ARMED = "Error: aucune session /audit active dans ce process";
 const NEEDS_UI = "Error: /audit demande une session interactive";
-const DIALOG_OPEN = "Error: un dialogue /audit est déjà ouvert — attends la réponse de l'utilisateur";
+const LAUNCH_ID = "audit-launch";
+const LAUNCH_TITLE =
+  "Quelles pipelines lancer ? Coche un ou plusieurs éléments puis valide — valider sans rien cocher ne lance rien.";
+const LAUNCH_ACTION = "Lancer la sélection";
+const INTERRUPTED = "Aucune pipeline lancée : dialogue interrompu.";
+const notAnswered = (item: string) =>
+  `Error: l'utilisateur n'a pas répondu — ${item} reste en attente ; ne le tranche pas, rappelle audit_escalate quand il te le demande`;
 const FREE_TEXT = "Autre réponse (texte libre)";
 const ABANDON_FEATURE = "Abandonner la feature (worktree et branche conservés)";
 const gone = (item: string) => `Error: ${item} n'est plus en attente (déjà traité, ou retombé au panneau /pipelines)`;
@@ -421,9 +536,41 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     }
   }
 
-  /** La question d'un élément ask/question, pour l'utilisateur : ses options d'origine, rien d'ajouté. */
+  /**
+   * Une séquence de dialogues /audit, à SON tour dans la file (S-5). La place est
+   * prise tout de suite et chaînée derrière la précédente : libérée tôt (signal
+   * tombé pendant l'attente), elle ne laisse pourtant jamais un appel suivant
+   * passer avant la fin du précédent. `aborted` répond quand le `signal` tombe
+   * avant le tour — aucun dialogue ne s'ouvre alors.
+   */
+  async function inDialogTurn<T>(signal: AbortSignal | undefined, run: () => Promise<T>, aborted: () => T): Promise<T> {
+    const previous = state.dialogs;
+    let release = () => {};
+    const mine = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    state.dialogs = previous.then(() => mine);
+    try {
+      if (signal === undefined) await previous;
+      else if (!signal.aborted) {
+        let stop = () => {};
+        const interrupted = new Promise<void>((resolve) => {
+          stop = resolve;
+          signal.addEventListener("abort", stop, { once: true });
+        });
+        await Promise.race([previous, interrupted]);
+        signal.removeEventListener("abort", stop);
+      }
+      if (signal?.aborted === true) return aborted();
+      return await run();
+    } finally {
+      release();
+    }
+  }
+
+  /** La question d'un élément ask/question, pour l'utilisateur : son origine, puis ses options d'origine. */
   async function askUser(ctx: ExtensionContext, item: AuditItem, signal?: AbortSignal): Promise<string | undefined> {
-    const question = item.question ?? "(question sans texte)";
+    const question = `Question de /${item.phase} — feature ${item.slug}\n${item.question ?? "(question sans texte)"}`;
     const ui = ctx.ui;
     if (typeof ui.askDialog === "function") {
       const result = await ui.askDialog([{ id: item.key, question, options: item.options, multi: false }], { signal });
@@ -443,92 +590,228 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     return answer === undefined || answer.trim() === "" ? undefined : answer;
   }
 
+  /**
+   * La sélection de lancement (S-2) : les éléments cochés, dans l'ordre de
+   * `launchable`, et le texte libre du dialogue riche — `null` = abandon.
+   */
+  async function selectElements(
+    ctx: ExtensionContext,
+    title: string,
+    launchable: readonly ProposalElement[],
+    signal: AbortSignal | undefined,
+  ): Promise<{ checked: ProposalElement[]; free: string | null } | null> {
+    const options = launchable.map((element) => ({
+      label: element.slug,
+      description:
+        `${element.kind === "weakness" ? "faiblesse" : "feature"} — ${(element.intention.split("\n")[0] ?? "").slice(0, 200)}` +
+        (element.deps.length > 0 ? ` · après ${element.deps.join(", ")}` : ""),
+    }));
+    const ui = ctx.ui;
+    if (typeof ui.askDialog === "function") {
+      const result = await ui.askDialog([{ id: LAUNCH_ID, question: title, options, multi: true }], { signal });
+      if (!result || result.kind !== "submit") return null;
+      const first = result.results[0];
+      if (!first || first.timedOut === true) return null;
+      const picked = new Set(first.selectedOptions);
+      const free = first.customInput?.trim() ?? "";
+      return { checked: launchable.filter((element) => picked.has(element.slug)), free: free === "" ? null : free };
+    }
+    // Le repli de l'hôte (D-3) : une liste à cases, rouverte après chaque bascule
+    // avec le curseur sur l'élément basculé ; la ligne d'action n'a pas de case.
+    const marked = new Set<number>();
+    let cursor = 0;
+    for (;;) {
+      const checkedIndices = [...marked].sort((a, b) => a - b);
+      const answer = await ui.select(
+        title,
+        [...options, { label: LAUNCH_ACTION, description: `${checkedIndices.length} élément(s) coché(s)` }],
+        { signal, selectionMarker: "checkbox", checkedIndices, markableCount: launchable.length, initialIndex: cursor },
+      );
+      if (answer === undefined) return null;
+      if (answer === LAUNCH_ACTION) {
+        return { checked: launchable.filter((_, index) => marked.has(index)), free: null };
+      }
+      const index = launchable.findIndex((element) => element.slug === answer);
+      if (index === -1) continue;
+      if (marked.has(index)) marked.delete(index);
+      else marked.add(index);
+      cursor = index;
+    }
+  }
+
+  /**
+   * `audit_propose` à son tour de dialogue : sélection (S-2), intention puis
+   * modèle de chaque élément coché (S-3), ajouts et compte rendu (S-4).
+   */
+  async function propose(
+    ctx: ExtensionContext,
+    sessionFile: string,
+    repoRoot: string,
+    elements: readonly ProposalElement[],
+    signal: AbortSignal | undefined,
+  ): Promise<ToolResult> {
+    // Les éléments pris, lus À CE TOUR : deux propositions successives ne lancent
+    // jamais deux fois le même élément. `launched` garde ceux dont la feature a
+    // quitté un lot remplacé depuis.
+    const taken = new Set([
+      ...(lotOf(repoRoot)?.features.map((feature) => feature.slug) ?? []),
+      ...(state.launched.get(sessionFile) ?? []),
+    ]);
+    const launchable = elements.filter((element) => !taken.has(element.slug));
+    const excluded = elements
+      .filter((element) => taken.has(element.slug))
+      .map((element) => element.slug)
+      .join(", ");
+    if (launchable.length === 0) {
+      return toolText(`Aucune pipeline lancée : tous les éléments proposés sont déjà lancés (${excluded}).`);
+    }
+    const title = excluded === "" ? LAUNCH_TITLE : `${LAUNCH_TITLE}\nDéjà lancés (non cochables) : ${excluded}`;
+    // Un tour interrompu referme le dialogue ouvert, qui rend `undefined` comme un
+    // Échap : seul le signal les distingue (D-4). Relu par une fonction, car le
+    // compilateur garderait sinon le `false` du premier test à travers les `await`.
+    const interrupted = (): boolean => signal?.aborted === true;
+    const selection = await selectElements(ctx, title, launchable, signal);
+    if (interrupted()) return toolText(INTERRUPTED);
+    if (selection === null) return toolText("Aucune pipeline lancée : sélection abandonnée.");
+    const { checked, free } = selection;
+    const freeLine = free === null ? [] : [`Texte libre de l'utilisateur, non lancé : « ${free} »`];
+    if (checked.length === 0) return toolText(["Aucune pipeline lancée : aucun élément coché.", ...freeLine].join("\n"));
+
+    // S-3 — TOUS les dialogues avant le premier ajout : son run de collecte porte
+    // déjà `--model`, et un abandon tardif n'a rien écrit.
+    const modelOptions = modelDialogOptions(ctx.models?.list?.() ?? []);
+    const retained: { slug: string; intention: string; deps: string[]; model: string | null }[] = [];
+    const reasons = new Map<string, string>();
+    for (const element of checked) {
+      const { slug } = element;
+      let intention = element.intention;
+      let validated = false;
+      for (;;) {
+        const verdict = await ctx.ui.select(
+          `Intention transmise à /req — ${slug}\n${intention}`,
+          ["Valider et lancer", "Amender l'intention", "Abandonner"],
+          { signal },
+        );
+        if (verdict === "Valider et lancer") validated = true;
+        if (verdict !== "Amender l'intention") break;
+        const amended = await ctx.ui.editor(`Amende l'intention transmise à /req — ${slug}`, intention, { signal });
+        if (amended !== undefined && amended.trim() !== "") intention = amended.trim().slice(0, LOT_EDITOR_MAX);
+      }
+      if (!validated) {
+        reasons.set(slug, "intention non validée");
+        continue;
+      }
+      let model: string | null = null;
+      if (modelOptions.length > 0) {
+        const chosen = modelDialogChoice(await ctx.ui.select(modelQuestionTitle(slug), modelOptions, { signal }));
+        if (chosen === null) {
+          reasons.set(slug, "modèle non choisi");
+          continue;
+        }
+        model = chosen.model;
+      }
+      retained.push({ slug, intention, deps: element.deps, model });
+    }
+    if (interrupted()) return toolText(INTERRUPTED);
+
+    // S-4 — un ajout à la fois, dans l'ordre des dépendances. Chaque `add` est une
+    // écriture autonome du pilote : un refus n'annule jamais un ajout précédent.
+    // Les règles de dépendance du lot restent celles du pilote : on choisit
+    // seulement quelles dépendances lui passer.
+    const controller = deps.controllerFor(ctx);
+    const retainedSlugs = new Set(retained.map((element) => element.slug));
+    const started = new Map<string, string[]>();
+    let refused = false;
+    for (const element of launchOrder(retained)) {
+      const lot = lotOf(repoRoot);
+      const kept: string[] = [];
+      let missing: string | null = null;
+      for (const dep of element.deps) {
+        if (retainedSlugs.has(dep)) {
+          if (!started.has(dep)) {
+            missing = dep;
+            break;
+          }
+          kept.push(dep);
+          continue;
+        }
+        // Hors des retenus : attendue seulement si le lot la conduit encore (un lot
+        // remplaçable sera remplacé par cet ajout, une feature annulée ne finira pas).
+        const feature = lot !== null && !lotReplaceable(lot) ? lotFeature(lot, dep) : undefined;
+        if (feature !== undefined && feature.state !== "cancelled") kept.push(dep);
+      }
+      if (missing !== null) {
+        reasons.set(element.slug, `dépend de ${missing}, non lancée`);
+        continue;
+      }
+      const refusal = await controller.add({
+        name: element.slug,
+        description: element.intention,
+        deps: kept,
+        auditSession: sessionFile,
+        model: element.model ?? undefined,
+      });
+      if (refusal !== null) {
+        refused = true;
+        reasons.set(element.slug, `lancement refusé : ${refusal}`);
+        continue;
+      }
+      started.set(element.slug, kept);
+      let mine = state.launched.get(sessionFile);
+      if (mine === undefined) {
+        mine = new Set();
+        state.launched.set(sessionFile, mine);
+      }
+      mine.add(element.slug);
+    }
+    if (started.size > 0) scan();
+
+    const total = checked.length;
+    const lines = [
+      started.size > 0
+        ? `Pipelines lancées : ${started.size}/${total}.`
+        : refused
+          ? `Error: aucune pipeline lancée (0/${total}).`
+          : `Aucune pipeline lancée (0/${total}).`,
+    ];
+    for (const { slug } of checked) {
+      const kept = started.get(slug);
+      lines.push(
+        kept === undefined
+          ? `- ${slug} : non lancée — ${reasons.get(slug)}`
+          : `- ${slug} : lancée (branche feat/${slug})${kept.length > 0 ? `, démarre après ${kept.join(", ")}` : ""}`,
+      );
+    }
+    lines.push(...freeLine);
+    for (const { slug, intention } of retained) {
+      if (started.has(slug)) lines.push(`Intention transmise à /req — ${slug} :`, intention);
+    }
+    if (started.size > 0) lines.push("Les questions des maillons et les jalons te seront relayés par des messages [audit].");
+    return toolText(lines.join("\n"), started.size === 0 && refused);
+  }
+
   function registerAuditTools(): void {
+    const element = pi.arktype({ name: "string", intention: "string", "deps?": "string[]" });
     pi.registerTool({
       name: "audit_propose",
       label: "Audit — proposer",
       description:
-        "Soumet l'analyse de /audit (faiblesses et features proposées) : l'outil demande à l'utilisateur quelle pipeline lancer (ou « aucune »), lui fait valider ou amender l'intention transmise à /req, puis lance la pipeline de la feature choisie.",
+        "Soumet l'analyse de /audit — faiblesses et features, chacune nommée, avec ses dépendances (deps) : l'outil montre à l'utilisateur une liste à cocher de tous les éléments pas encore lancés, lui fait valider ou amender l'intention puis choisir le modèle de chaque élément coché, et lance leurs pipelines en parallèle (un élément attend la fin de ceux dont il dépend). Rappelle-le avec la même analyse pour lancer d'autres éléments plus tard.",
       approval: "read",
       loadMode: "essential",
-      parameters: pi.arktype({
-        weaknesses: "string[]",
-        features: pi.arktype({ name: "string", intention: "string" }).array(),
-      }),
+      parameters: pi.arktype({ weaknesses: element.array(), features: element.array() }),
       async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
         const checked = checkProposal(params);
         if (!checked.ok) return toolText(checked.error, true);
         if (!armedOn(ctx) || ctx === undefined) return toolText(NOT_ARMED, true);
         if (!ctx.hasUI) return toolText(NEEDS_UI, true);
         const sessionFile = state.sessionFile as string;
-        // Le refus « cette session /audit a déjà lancé … » vise la feature REJOUÉE,
-        // pas la session : deux features d'un même audit sont deux créations, donc
-        // deux questions de modèle et deux modèles possibles (B-2, AC-2). Sans cette
-        // distinction, la seconde proposition d'une même session était refusée quoi
-        // qu'elle contienne.
-        const proposed = new Set(checked.proposal.features.map((f) => f.slug));
-        const launched =
-          state.repoRoot === null
-            ? undefined
-            : lotOf(state.repoRoot)?.features.find((f) => f.auditSession === sessionFile && proposed.has(f.slug));
-        if (launched) return toolText(`Error: cette session /audit a déjà lancé « ${launched.slug} »`, true);
-        if (state.dialog) return toolText(DIALOG_OPEN, true);
-        state.dialog = true;
-        try {
-          const { features } = checked.proposal;
-          const choice = await ctx.ui.select(
-            "Quelle pipeline lancer ?",
-            [
-              ...features.map((f) => ({ label: f.slug, description: (f.intention.split("\n")[0] ?? "").slice(0, 200) })),
-              { label: "aucune", description: "ne lancer aucune pipeline" },
-            ],
-            { signal },
-          );
-          if (choice === "aucune") return toolText("Aucune pipeline lancée : réponse « aucune ».");
-          const feature = features.find((f) => f.slug === choice);
-          if (feature === undefined) return toolText("Aucune pipeline lancée : choix abandonné.");
-          const slug = feature.slug;
-          let intention = feature.intention;
-          for (;;) {
-            const verdict = await ctx.ui.select(
-              `Intention transmise à /req — ${slug}\n${intention}`,
-              ["Valider et lancer", "Amender l'intention", "Abandonner"],
-              { signal },
-            );
-            if (verdict === "Valider et lancer") break;
-            if (verdict !== "Amender l'intention") return toolText("Aucune pipeline lancée : intention non validée.");
-            const amended = await ctx.ui.editor(`Amende l'intention transmise à /req — ${slug}`, intention, { signal });
-            if (amended !== undefined && amended.trim() !== "") intention = amended.trim().slice(0, LOT_EDITOR_MAX);
-          }
-          // Le modèle de la feature (S-4) : UNE question par feature créée, dans la
-          // section protégée par `state.dialog` (un seul dialogue à la fois) et
-          // AVANT `add` — c'est ce qui permet à son run de collecte de porter déjà
-          // `--model`. Sans modèle connu, aucune question : le flux d'aujourd'hui.
-          let model: string | null = null;
-          const modelOptions = modelDialogOptions(ctx.models?.list?.() ?? []);
-          if (modelOptions.length > 0) {
-            const chosen = modelDialogChoice(
-              await ctx.ui.select(modelQuestionTitle(slug), modelOptions, { signal }),
-            );
-            if (chosen === null) return toolText("Aucune pipeline lancée : modèle non choisi.");
-            model = chosen.model;
-          }
-          const refusal = await deps.controllerFor(ctx).add({
-            name: slug,
-            description: intention,
-            deps: [],
-            auditSession: sessionFile,
-            model: model ?? undefined,
-          });
-          if (refusal !== null) return toolText(`Error: lancement refusé : ${refusal}`, true);
-          scan();
-          return toolText(
-            `Pipeline lancée : « ${slug} » (branche feat/${slug}). Intention transmise à /req :\n${intention}\n` +
-              "Les questions des maillons et les jalons te seront relayés par des messages [audit].",
-          );
-        } finally {
-          state.dialog = false;
-        }
+        const repoRoot = state.repoRoot as string;
+        return inDialogTurn(
+          signal,
+          () => propose(ctx, sessionFile, repoRoot, checked.proposal.elements, signal),
+          () => toolText(INTERRUPTED),
+        );
       },
     });
 
@@ -602,96 +885,92 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
       async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
         const { item: key } = params as { item: string };
         if (!armedOn(ctx) || ctx === undefined) return toolText(NOT_ARMED, true);
-        const item = findItem(key);
-        if (item === undefined) return toolText(gone(key), true);
+        if (findItem(key) === undefined) return toolText(gone(key), true);
         if (!ctx.hasUI) return toolText(NEEDS_UI, true);
-        if (state.dialog) return toolText(DIALOG_OPEN, true);
-        state.dialog = true;
-        try {
-          const contract = path.join(item.worktree, CONTRACT_PATH);
-          const controller = deps.controllerFor(ctx);
-          // `answer` : ce que l'utilisateur a rendu ; `act` : la livraison, exécutée
-          // APRÈS la revérification de l'élément.
-          let answer: string | undefined;
-          let act: (() => Promise<string | null>) | undefined;
-          switch (item.kind) {
-            case "ask":
-            case "question": {
-              answer = await askUser(ctx, item, signal);
-              const text = answer;
-              if (text !== undefined) {
-                act = async () =>
-                  item.kind === "ask" ? deliverAsk(item, text) : controller.answer(item.slug, text, { from: "audit" });
-              }
-              break;
-            }
-            case "specs": {
-              answer = await ctx.ui.select(
-                `Jalon « specs validées » — ${item.slug} : /audit a un doute, décide\nSpécifications : ${contract}`,
-                ["Valider les specs", ABANDON_FEATURE],
-                { signal },
-              );
-              if (answer === "Valider les specs") act = () => controller.validate(item.slug);
-              else if (answer === ABANDON_FEATURE) act = () => controller.cancel(item.slug, "keep");
-              break;
-            }
-            case "review": {
-              answer = await ctx.ui.select(
-                `Jalon « revue propre » — ${item.slug} : /audit a un doute, décide\nRevue : ${contract}`,
-                ["Accepter la revue et livrer (PR)", ABANDON_FEATURE],
-                { signal },
-              );
-              if (answer === "Accepter la revue et livrer (PR)") act = () => controller.accept(item.slug);
-              else if (answer === ABANDON_FEATURE) act = () => controller.cancel(item.slug, "keep");
-              break;
-            }
-            case "cap": {
-              const relaunch = "Relancer un cycle de correction";
-              const reply = "Répondre au maillon /review (texte libre)";
-              answer = await ctx.ui.select(
-                `Plafond de la boucle revue ⇄ correction — ${item.slug}\n${item.stopReason ?? ""}\nAucune PR ne sera ouverte avant ta décision.`,
-                [relaunch, reply, ABANDON_FEATURE],
-                { signal },
-              );
-              if (answer === relaunch) act = () => controller.relaunch(item.slug);
-              else if (answer === ABANDON_FEATURE) act = () => controller.cancel(item.slug, "keep");
-              else if (answer === reply) {
-                const text = await ctx.ui.input(`Réponse au maillon /review — ${item.slug}`, undefined, { signal });
-                answer = text;
-                if (text !== undefined && text.trim() !== "") {
-                  act = () => controller.answer(item.slug, text, { from: "audit" });
-                }
-              }
-              break;
-            }
-          }
-          if (act === undefined || answer === undefined) {
-            return toolText(
-              `Error: l'utilisateur n'a pas répondu — ${key} reste en attente ; ne le tranche pas, rappelle audit_escalate quand il te le demande`,
-              true,
-            );
-          }
-          if (findItem(key) === undefined) {
-            return toolText(`${gone(key)} — la réponse de l'utilisateur n'a pas été transmise`, true);
-          }
-          const refusal = await act();
-          if (refusal !== null) return toolText(`Error: ${refusal}`, true);
-          state.relayed.delete(key);
-          return toolText(`Réponse de l'utilisateur transmise mot pour mot à /${item.phase} — feature ${item.slug} : ${answer}`);
-        } catch (err) {
-          // Un dialogue interrompu (tour abandonné) vaut « non répondu ».
-          if (signal?.aborted === true) {
-            return toolText(
-              `Error: l'utilisateur n'a pas répondu — ${key} reste en attente ; ne le tranche pas, rappelle audit_escalate quand il te le demande`,
-              true,
-            );
-          }
-          throw err;
-        } finally {
-          state.dialog = false;
-        }
+        return inDialogTurn(
+          signal,
+          () => escalate(ctx, key, signal),
+          () => toolText(notAnswered(key), true),
+        );
       },
     });
+  }
+
+  /** `audit_escalate` à son tour de dialogue (S-5) : l'élément est relu, il a pu être traité entre-temps. */
+  async function escalate(ctx: ExtensionContext, key: string, signal: AbortSignal | undefined): Promise<ToolResult> {
+    const item = findItem(key);
+    if (item === undefined) return toolText(gone(key), true);
+    try {
+      const contract = path.join(item.worktree, CONTRACT_PATH);
+      const controller = deps.controllerFor(ctx);
+      // `answer` : ce que l'utilisateur a rendu ; `act` : la livraison, exécutée
+      // APRÈS la revérification de l'élément.
+      let answer: string | undefined;
+      let act: (() => Promise<string | null>) | undefined;
+      switch (item.kind) {
+        case "ask":
+        case "question": {
+          answer = await askUser(ctx, item, signal);
+          const text = answer;
+          if (text !== undefined) {
+            act = async () =>
+              item.kind === "ask" ? deliverAsk(item, text) : controller.answer(item.slug, text, { from: "audit" });
+          }
+          break;
+        }
+        case "specs": {
+          answer = await ctx.ui.select(
+            `Jalon « specs validées » — ${item.slug} : /audit a un doute, décide\nSpécifications : ${contract}`,
+            ["Valider les specs", ABANDON_FEATURE],
+            { signal },
+          );
+          if (answer === "Valider les specs") act = () => controller.validate(item.slug);
+          else if (answer === ABANDON_FEATURE) act = () => controller.cancel(item.slug, "keep");
+          break;
+        }
+        case "review": {
+          answer = await ctx.ui.select(
+            `Jalon « revue propre » — ${item.slug} : /audit a un doute, décide\nRevue : ${contract}`,
+            ["Accepter la revue et livrer (PR)", ABANDON_FEATURE],
+            { signal },
+          );
+          if (answer === "Accepter la revue et livrer (PR)") act = () => controller.accept(item.slug);
+          else if (answer === ABANDON_FEATURE) act = () => controller.cancel(item.slug, "keep");
+          break;
+        }
+        case "cap": {
+          const relaunch = "Relancer un cycle de correction";
+          const reply = "Répondre au maillon /review (texte libre)";
+          answer = await ctx.ui.select(
+            `Plafond de la boucle revue ⇄ correction — ${item.slug}\n${item.stopReason ?? ""}\nAucune PR ne sera ouverte avant ta décision.`,
+            [relaunch, reply, ABANDON_FEATURE],
+            { signal },
+          );
+          if (answer === relaunch) act = () => controller.relaunch(item.slug);
+          else if (answer === ABANDON_FEATURE) act = () => controller.cancel(item.slug, "keep");
+          else if (answer === reply) {
+            const text = await ctx.ui.input(`Réponse au maillon /review — ${item.slug}`, undefined, { signal });
+            answer = text;
+            if (text !== undefined && text.trim() !== "") {
+              act = () => controller.answer(item.slug, text, { from: "audit" });
+            }
+          }
+          break;
+        }
+      }
+      if (act === undefined || answer === undefined) return toolText(notAnswered(key), true);
+      if (findItem(key) === undefined) {
+        return toolText(`${gone(key)} — la réponse de l'utilisateur n'a pas été transmise`, true);
+      }
+      const refusal = await act();
+      if (refusal !== null) return toolText(`Error: ${refusal}`, true);
+      state.relayed.delete(key);
+      return toolText(`Réponse de l'utilisateur transmise mot pour mot à /${item.phase} — feature ${item.slug} : ${answer}`);
+    } catch (err) {
+      // Un dialogue interrompu (tour abandonné) vaut « non répondu ».
+      if (signal?.aborted === true) return toolText(notAnswered(key), true);
+      throw err;
+    }
   }
 
   return {
