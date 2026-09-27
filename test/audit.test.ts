@@ -42,6 +42,8 @@ import reqExtension, {
   type LotFeature,
   type LotRunnerResult,
   type AuditRelay,
+  type ModelRow,
+  type PipelinePhase,
 } from "../omp-mem0-req/extension.ts";
 import { runState } from "../omp-mem0-req/runState.ts";
 
@@ -237,7 +239,7 @@ const QUESTION = "Quelle base de données ?";
 const OPTIONS = [{ label: "Postgres", description: "robuste" }, { label: "SQLite" }];
 
 /** Publie le run VIVANT d'un worktree avec une question `ask` en vol ; rend sa boîte. */
-function publishAsk(stateDir: string, worktree: string, toolCallId: string, phase: "req" | "specs" = "specs"): string {
+function publishAsk(stateDir: string, worktree: string, toolCallId: string, phase: PipelinePhase = "specs"): string {
   const inbox = panelInboxDirFor(stateDir, worktree);
   fs.mkdirSync(inbox, { recursive: true });
   writeRunningEntry(stateDir, {
@@ -282,12 +284,13 @@ function resetAudit(): void {
   auditState.repoRoot = null;
   auditState.relayed.clear();
   auditState.stopTimer = null;
-  auditState.dialog = false;
+  auditState.dialogs = Promise.resolve();
+  auditState.launched.clear();
   auditState.foreignWarned = false;
   auditState.ctx = null;
 }
 
-type UiCall = { kind: string; title: string; items?: unknown; prefill?: string; questions?: unknown };
+type UiCall = { kind: string; title: string; items?: unknown; options?: unknown; prefill?: string; questions?: unknown };
 
 /**
  * Les dialogues de l'hôte : chaque appel est journalisé et consomme la réponse
@@ -302,7 +305,7 @@ function mkUi(answers: unknown[], withAskDialog = false) {
   };
   const ui: Record<string, unknown> = {
     notify: (title: string) => calls.push({ kind: "notify", title }),
-    select: (title: string, items: unknown) => next({ kind: "select", title, items }),
+    select: (title: string, items: unknown, options?: unknown) => next({ kind: "select", title, items, options }),
     input: (title: string) => next({ kind: "input", title }),
     editor: (title: string, prefill?: string) => next({ kind: "editor", title, prefill }),
   };
@@ -359,6 +362,7 @@ function mkAudit(
     reviewCap?: number;
     gh?: Gh;
     git?: Gh;
+    models?: ModelRow[];
   } = {},
 ): AuditFixture {
   resetAudit();
@@ -390,6 +394,7 @@ function mkAudit(
     sessionManager: { getSessionFile: () => sessionFile },
     setInterval: () => 0,
     clearTimer: () => {},
+    ...(options.models !== undefined ? { models: { list: () => options.models } } : {}),
   };
   relay.markCreated(sessionFile);
   relay.sync(ctx as never);
@@ -405,7 +410,10 @@ function mkAudit(
 }
 
 const PROPOSAL = {
-  weaknesses: ["lot.ts : aucune borne sur la file", "README.md : le relais n'est pas documenté"],
+  weaknesses: [
+    { name: "borne-file", intention: "lot.ts : aucune borne sur la file" },
+    { name: "relais-readme", intention: "README.md : le relais n'est pas documenté" },
+  ],
   features: [
     { name: "alpha", intention: "Borner la file du lot.\nPérimètre : lot.ts ; un test prouve la borne." },
     { name: "Beta Feature", intention: "Documenter le relais." },
@@ -489,7 +497,7 @@ async function withStateDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** La proposition validée telle quelle : choix de `alpha`, puis « Valider et lancer ». */
+/** La proposition validée telle quelle : `alpha` coché, la sélection lancée, puis « Valider et lancer ». */
 async function launchAlpha(fx: AuditFixture) {
   const result = await fx.call("audit_propose", PROPOSAL);
   assert.equal(result.isError, undefined, textOf(result));
@@ -539,35 +547,6 @@ test("audit/AC-1 : /audit ouvre une session neuve amorcée par la directive, et 
   assert.equal(calls.length, 0, "aucun dialogue sur une proposition refusée");
 });
 
-test("audit/AC-2 : le choix propose exactement une option par feature proposée, puis « aucune »", async () => {
-  const fx = mkAudit({ answers: [undefined] });
-  const result = await fx.call("audit_propose", PROPOSAL);
-
-  assert.equal(fx.calls.length, 1);
-  const choice = fx.calls[0]!;
-  assert.equal(choice.kind, "select");
-  assert.equal(choice.title, "Quelle pipeline lancer ?");
-  const items = choice.items as Array<{ label: string; description?: string }>;
-  assert.deepEqual(
-    items.map((item) => item.label),
-    ["alpha", "beta-feature", "gamma", "aucune"],
-  );
-  assert.equal(items[0]!.description, "Borner la file du lot.", "la description est la première ligne de l'intention");
-  assert.equal(textOf(result), "Aucune pipeline lancée : choix abandonné.");
-  assert.equal(fx.lot(), null);
-});
-
-test("audit/AC-3 : « aucune » ne lance rien et n'écrit aucun lot", async () => {
-  const fx = mkAudit({ answers: ["aucune"] });
-  const result = await fx.call("audit_propose", PROPOSAL);
-  await flush();
-
-  assert.equal(result.isError, undefined);
-  assert.equal(textOf(result), "Aucune pipeline lancée : réponse « aucune ».");
-  assert.equal(fx.lot(), null, "aucune feature n'entre dans le lot");
-  assert.equal(fx.runs.length, 0, "aucun run");
-});
-
 test("audit/AC-4 : l'intention est affichée, rien ne démarre avant sa validation, et l'intention amendée est celle que /req reçoit", async () => {
   const amended = "Borner la file du lot à 9 messages.\nGarder l'API v1 intacte.";
   const beforeValidation: Array<{ runs: number; lot: boolean }> = [];
@@ -577,11 +556,11 @@ test("audit/AC-4 : l'intention est affichée, rien ne démarre avant sa validati
     return answer;
   };
   fx = mkAudit({
-    answers: ["alpha", observe("Amender l'intention"), amended, observe("Valider et lancer")],
+    answers: ["alpha", "Lancer la sélection", observe("Amender l'intention"), amended, observe("Valider et lancer")],
   });
   const result = await launchAlpha(fx);
 
-  const [, firstValidation, editor, secondValidation] = fx.calls;
+  const [, , firstValidation, editor, secondValidation] = fx.calls;
   assert.equal(firstValidation!.title, `Intention transmise à /req — alpha\n${PROPOSAL.features[0]!.intention}`);
   assert.deepEqual(firstValidation!.items, ["Valider et lancer", "Amender l'intention", "Abandonner"]);
   assert.equal(editor!.kind, "editor");
@@ -601,13 +580,13 @@ test("audit/AC-4 : l'intention est affichée, rien ne démarre avant sa validati
   );
   assert.equal(
     textOf(result),
-    `Pipeline lancée : « alpha » (branche feat/alpha). Intention transmise à /req :\n${amended}\n` +
+    `Pipelines lancées : 1/1.\n- alpha : lancée (branche feat/alpha)\nIntention transmise à /req — alpha :\n${amended}\n` +
       "Les questions des maillons et les jalons te seront relayés par des messages [audit].",
   );
 });
 
 test("audit/AC-6 : la feature lancée par /audit est dans la section Lot, conduite par le pilote existant", async () => {
-  const fx = mkAudit({ answers: ["alpha", "Valider et lancer"] });
+  const fx = mkAudit({ answers: ["alpha", "Lancer la sélection", "Valider et lancer"] });
   // Un lot au BROUILLON : la feature /audit le fait passer en marche, sans lancer l'autre.
   fx.seed([feature("autre", { launched: false })], { status: "draft", launchedAt: null });
   await launchAlpha(fx);
@@ -761,7 +740,7 @@ test("audit/AC-13 : /audit valide les jalons sans doute — la chaîne repart sa
 test("audit/AC-5 : la pipeline enchaîne /req, /specs, /impl, /review jusqu'à une PR ouverte et non fusionnée, sans action de l'utilisateur", async () => {
   const pushes: string[][] = [];
   const fx = mkAudit({
-    answers: ["alpha", "Valider et lancer"],
+    answers: ["alpha", "Lancer la sélection", "Valider et lancer"],
     script: (run) => {
       switch (run.phase) {
         case "req":
@@ -831,7 +810,7 @@ test("audit/AC-5 : la pipeline enchaîne /req, /specs, /impl, /review jusqu'à u
   assert.ok(!fx.ctl.ghCalls.some((args) => args.includes("merge")), "aucune fusion");
   assert.deepEqual(pushes, [["push", "-u", GH + "/o/r.git", "feat/alpha"]]);
   assert.equal(fx.calls.length, uiAfterLaunch, "aucun dialogue après la validation de l'intention");
-  assert.equal(uiAfterLaunch, 2, "seuls le choix et la validation de l'intention ont été présentés");
+  assert.equal(uiAfterLaunch, 3, "seules la sélection (cocher, lancer) et la validation de l'intention ont été présentées");
   assert.ok(
     !fx.ctl.notices.some((n) => n.includes("attend")),
     `les attentes relayées ne sont pas annoncées au panneau : ${fx.ctl.notices.join(" | ")}`,
@@ -927,7 +906,7 @@ test("audit/AC-11 : une question escaladée montre son texte et ses options d'or
   const pending = fx.call("audit_escalate", { item: "ask:alpha:call-11" });
   await flush();
   assert.deepEqual(fx.calls[0]!.questions, [
-    { id: "ask:alpha:call-11", question: QUESTION, options: OPTIONS, multi: false },
+    { id: "ask:alpha:call-11", question: `Question de /specs — feature alpha\n${QUESTION}`, options: OPTIONS, multi: false },
   ]);
   assert.deepEqual(readDeliveries(inbox), [], "rien n'est livré tant que l'utilisateur n'a pas répondu");
 
@@ -987,7 +966,7 @@ test("audit/AC-12 : la réponse de l'utilisateur part mot pour mot au maillon qu
   ]);
   text.relay.scan();
   const answered = await text.call("audit_escalate", { item: `question:alpha:${T0}` });
-  assert.equal(text.calls[0]!.title, QUESTION);
+  assert.equal(text.calls[0]!.title, `Question de /specs — feature alpha\n${QUESTION}`);
   assert.deepEqual(text.calls[0]!.items, [{ label: "Postgres" }, { label: "SQLite" }, { label: "Autre réponse (texte libre)" }]);
   assert.equal(textOf(answered), `Réponse de l'utilisateur transmise mot pour mot à /specs — feature alpha : ${typed}`);
   await flush();
@@ -1155,4 +1134,498 @@ test("audit/AC-17 : la même session /audit rouverte reprend le relais et récup
   });
   assert.ok(!fs.existsSync(auditRelayPath(stateDir, auditFile)));
   assert.equal(ctl.controller.reply("alpha").kind, "reply");
+});
+
+// ---------------------------------------------------------------------------
+// audit-multi — la sélection à cases, le lancement en parallèle dans l'ordre des
+// dépendances, un modèle par élément, la relance, la file des dialogues
+// ---------------------------------------------------------------------------
+
+const LAUNCH_TITLE =
+  "Quelles pipelines lancer ? Coche un ou plusieurs éléments puis valide — valider sans rien cocher ne lance rien.";
+
+/** Les options de la sélection de `PROPOSAL`, tous ses éléments cochables. */
+const PROPOSAL_OPTIONS = [
+  { label: "borne-file", description: "faiblesse — lot.ts : aucune borne sur la file" },
+  { label: "relais-readme", description: "faiblesse — README.md : le relais n'est pas documenté" },
+  { label: "alpha", description: "feature — Borner la file du lot." },
+  { label: "beta-feature", description: "feature — Documenter le relais." },
+  { label: "gamma", description: "feature — Nettoyer les worktrees." },
+];
+
+/** La réponse « soumise » du dialogue riche de sélection : les libellés cochés, et le texte libre. */
+function submitted(selectedOptions: string[], customInput?: string) {
+  return {
+    kind: "submit",
+    results: [
+      { id: "audit-launch", question: "", options: [], multi: true, selectedOptions, ...(customInput === undefined ? {} : { customInput }) },
+    ],
+  };
+}
+
+const labelsOf = (call: UiCall) => (call.items as Array<{ label: string }>).map((item) => item.label);
+
+test("audit-multi/AC-1 : les 2 faiblesses et les 3 features proposées forment une seule liste à cases à cocher", async () => {
+  {
+    // Sans dialogue riche : le `select` à cases de l'hôte, les 5 éléments puis la
+    // ligne d'action, qui n'a pas de case.
+    const fx = mkAudit({ answers: [undefined] });
+    const result = await fx.call("audit_propose", PROPOSAL);
+    assert.equal(fx.calls.length, 1, "un seul dialogue : la sélection");
+    const selection = fx.calls[0]!;
+    assert.equal(selection.kind, "select");
+    assert.equal(selection.title, LAUNCH_TITLE);
+    assert.deepEqual(selection.items, [
+      ...PROPOSAL_OPTIONS,
+      { label: "Lancer la sélection", description: "0 élément(s) coché(s)" },
+    ]);
+    assert.deepEqual(selection.options, {
+      signal: undefined,
+      selectionMarker: "checkbox",
+      checkedIndices: [],
+      markableCount: 5,
+      initialIndex: 0,
+    });
+    assert.equal(result.isError, undefined);
+    assert.equal(textOf(result), "Aucune pipeline lancée : sélection abandonnée.");
+    assert.equal(fx.lot(), null);
+  }
+  {
+    // Le dialogue riche : UNE question multiple portant les 5 éléments.
+    const fx = mkAudit({ askDialog: true, answers: [undefined] });
+    const result = await fx.call("audit_propose", PROPOSAL);
+    assert.equal(fx.calls.length, 1);
+    assert.deepEqual(fx.calls[0]!.questions, [
+      { id: "audit-launch", question: LAUNCH_TITLE, options: PROPOSAL_OPTIONS, multi: true },
+    ]);
+    assert.equal(textOf(result), "Aucune pipeline lancée : sélection abandonnée.");
+  }
+  {
+    // Une seule liste, donc un nom unique dans TOUTE la proposition : une feature
+    // homonyme d'une faiblesse est refusée avant tout dialogue.
+    const fx = mkAudit();
+    const result = await fx.call("audit_propose", {
+      weaknesses: PROPOSAL.weaknesses,
+      features: [{ name: "Borne File", intention: "Borner la file." }],
+    });
+    assert.equal(result.isError, true);
+    assert.equal(textOf(result), "Error: duplicate element « borne-file »");
+    assert.equal(fx.calls.length, 0);
+  }
+});
+
+test("audit-multi/AC-2 : 3 éléments cochés parmi 5 lancent exactement 3 pipelines, aucune pour les autres", async () => {
+  const report = [
+    "Pipelines lancées : 3/3.",
+    "- relais-readme : lancée (branche feat/relais-readme)",
+    "- alpha : lancée (branche feat/alpha)",
+    "- gamma : lancée (branche feat/gamma)",
+    "Intention transmise à /req — relais-readme :",
+    "README.md : le relais n'est pas documenté",
+    "Intention transmise à /req — alpha :",
+    PROPOSAL.features[0]!.intention,
+    "Intention transmise à /req — gamma :",
+    "Nettoyer les worktrees.",
+    "Les questions des maillons et les jalons te seront relayés par des messages [audit].",
+  ].join("\n");
+  const assertLaunched = async (fx: AuditFixture) => {
+    await waitFor(() => fx.runs.length >= 3);
+    const features = fx.lot()!.features;
+    assert.deepEqual(
+      features.map((f) => f.slug),
+      ["relais-readme", "alpha", "gamma"],
+      "une feature par élément coché, aucune pour borne-file ni beta-feature",
+    );
+    for (const f of features) assert.equal(f.auditSession, fx.sessionFile);
+    assert.deepEqual(fx.runs.map((run) => run.phase), ["req", "req", "req"]);
+    const cwds = new Set(fx.runs.map((run) => path.basename(run.cwd)));
+    assert.equal(cwds.size, 3, "trois worktrees distincts");
+    assert.deepEqual(cwds, new Set(features.map((f) => path.basename(f.worktree))));
+  };
+
+  {
+    const fx = mkAudit({
+      askDialog: true,
+      answers: [submitted(["relais-readme", "alpha", "gamma"]), "Valider et lancer", "Valider et lancer", "Valider et lancer"],
+    });
+    const result = await fx.call("audit_propose", PROPOSAL);
+    assert.equal(result.isError, undefined, textOf(result));
+    assert.equal(textOf(result), report);
+    await assertLaunched(fx);
+  }
+  {
+    // Le repli : choisir un élément bascule sa case et rouvre la liste sur lui.
+    const fx = mkAudit({
+      answers: ["relais-readme", "alpha", "gamma", "Lancer la sélection", "Valider et lancer", "Valider et lancer", "Valider et lancer"],
+    });
+    const result = await fx.call("audit_propose", PROPOSAL);
+    assert.equal(textOf(result), report);
+    const selections = fx.calls.slice(0, 4).map((call) => call.options as { checkedIndices: number[]; initialIndex: number });
+    assert.deepEqual(selections.map((o) => o.checkedIndices), [[], [1], [1, 2], [1, 2, 4]]);
+    assert.deepEqual(selections.map((o) => o.initialIndex), [0, 1, 2, 4]);
+    assert.deepEqual((fx.calls[3]!.items as Array<{ description: string }>).at(-1)!.description, "3 élément(s) coché(s)");
+    await assertLaunched(fx);
+  }
+  {
+    // Choisir de nouveau un élément coché le décoche.
+    const fx = mkAudit({ answers: ["alpha", "gamma", "alpha", "Lancer la sélection", "Valider et lancer"] });
+    const result = await fx.call("audit_propose", PROPOSAL);
+    assert.ok(textOf(result).startsWith("Pipelines lancées : 1/1.\n- gamma : lancée (branche feat/gamma)\n"), textOf(result));
+    assert.deepEqual(fx.lot()!.features.map((f) => f.slug), ["gamma"]);
+  }
+  {
+    // Rien ne part avant la réponse au DERNIER dialogue : un tour interrompu
+    // pendant l'intention du second élément ne lance pas le premier, déjà validé.
+    const abort = new AbortController();
+    const fx = mkAudit({
+      askDialog: true,
+      answers: [
+        submitted(["alpha", "gamma"]),
+        "Valider et lancer",
+        () => {
+          abort.abort();
+          return undefined;
+        },
+      ],
+    });
+    const result = await fx.call("audit_propose", PROPOSAL, abort.signal);
+    await flush();
+    assert.equal(result.isError, undefined);
+    assert.equal(textOf(result), "Aucune pipeline lancée : dialogue interrompu.");
+    assert.equal(fx.lot(), null, "aucun lot écrit");
+    assert.equal(fx.runs.length, 0, "aucun run");
+  }
+});
+
+test("audit-multi/AC-3 : valider sans rien cocher ne lance aucune pipeline et n'affiche aucune erreur", async () => {
+  const validateEmpty = async (fx: AuditFixture) => {
+    const result = await fx.call("audit_propose", PROPOSAL);
+    await flush();
+    assert.equal(result.isError, undefined);
+    assert.equal(fx.lot(), null, "aucun lot écrit");
+    assert.equal(fx.runs.length, 0, "aucun run");
+    assert.equal(fx.calls.length, 1, "aucun autre dialogue, aucune notification");
+    return textOf(result);
+  };
+  assert.equal(await validateEmpty(mkAudit({ answers: ["Lancer la sélection"] })), "Aucune pipeline lancée : aucun élément coché.");
+  assert.equal(
+    await validateEmpty(mkAudit({ askDialog: true, answers: [submitted([])] })),
+    "Aucune pipeline lancée : aucun élément coché.",
+  );
+  // Le texte libre du dialogue riche est rapporté à l'agent, jamais lancé.
+  assert.equal(
+    await validateEmpty(mkAudit({ askDialog: true, answers: [submitted([], "  un audit de performance  ")] })),
+    "Aucune pipeline lancée : aucun élément coché.\nTexte libre de l'utilisateur, non lancé : « un audit de performance »",
+  );
+});
+
+test("audit-multi/AC-4 : deux éléments cochés sans dépendance entre eux tournent simultanément", async () => {
+  const proposal = {
+    weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
+    features: [
+      { name: "fa", intention: "Faire A." },
+      { name: "fb", intention: "Faire B." },
+    ],
+  };
+  // Le runner garde les runs EN VOL : aucun ne finit pendant le test.
+  const fx = mkAudit({ askDialog: true, answers: [submitted(["fa", "fb"]), "Valider et lancer", "Valider et lancer"] });
+  const result = await fx.call("audit_propose", proposal);
+  assert.ok(
+    textOf(result).startsWith("Pipelines lancées : 2/2.\n- fa : lancée (branche feat/fa)\n- fb : lancée (branche feat/fb)\n"),
+    textOf(result),
+  );
+  await waitFor(() => fx.runs.length >= 2);
+
+  const model = readPanelModel({ stateDir: fx.ctl.stateDir, repoRoot: fx.repoRoot, now: fx.clock.now });
+  const fa = model.lot?.features.find((f) => f.slug === "fa");
+  const fb = model.lot?.features.find((f) => f.slug === "fb");
+  assert.ok(fa && fb);
+  assert.deepEqual([fa.state, fb.state], ["running", "running"], "les deux sont en cours au même instant");
+  assert.deepEqual(
+    fx.runs.map((run) => [path.basename(run.cwd), run.phase]).sort(),
+    [
+      [path.basename(fa.worktree), "req"],
+      [path.basename(fb.worktree), "req"],
+    ].sort(),
+    "un run en vol dans chaque worktree",
+  );
+});
+
+test("audit-multi/AC-5 : un élément qui dépend d'un autre élément coché ne démarre qu'après la fin de celui-ci", async () => {
+  // Le dépendant est listé AVANT sa dépendance : l'ordre des ajouts suit les dépendances.
+  const proposal = {
+    weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
+    features: [
+      { name: "b", intention: "Bâtir sur A.", deps: ["a"] },
+      { name: "a", intention: "Poser A." },
+    ],
+  };
+
+  {
+    const fx = mkAudit({ askDialog: true, answers: [submitted(["b", "a"]), "Valider et lancer", "Valider et lancer"] });
+    const result = await fx.call("audit_propose", proposal);
+    const options = (fx.calls[0]!.questions as Array<{ options: Array<{ description: string }> }>)[0]!.options;
+    assert.deepEqual(
+      options.map((option) => option.description),
+      ["faiblesse — lot.ts : aucune borne sur la file", "feature — Bâtir sur A. · après a", "feature — Poser A."],
+      "la dépendance se lit dès la sélection",
+    );
+    assert.equal(
+      textOf(result),
+      [
+        "Pipelines lancées : 2/2.",
+        "- b : lancée (branche feat/b), démarre après a",
+        "- a : lancée (branche feat/a)",
+        "Intention transmise à /req — b :",
+        "Bâtir sur A.",
+        "Intention transmise à /req — a :",
+        "Poser A.",
+        "Les questions des maillons et les jalons te seront relayés par des messages [audit].",
+      ].join("\n"),
+    );
+    await waitFor(() => fx.runs.length >= 1);
+    // D'autres passes du pilote pendant que `a` tourne : `b` attend toujours.
+    await fx.ctl.controller.tick();
+    await fx.ctl.controller.tick();
+    await flush();
+    const a = fx.featureOf("a")!;
+    const waiting = fx.featureOf("b")!;
+    assert.deepEqual(waiting.deps, ["a"]);
+    assert.equal(a.state, "running");
+    assert.equal(waiting.state, "pending");
+    assert.deepEqual(fx.runs.map((run) => path.basename(run.cwd)), [path.basename(a.worktree)], "aucun run pour b");
+
+    // `a` terminée : `b` part à la passe suivante, dans SON worktree.
+    const lot = fx.lot()!;
+    writeLot(fx.ctl.stateDir, {
+      ...lot,
+      features: lot.features.map((f) => (f.slug === "a" ? { ...f, state: "done" as const, endedAt: fx.clock.now } : f)),
+    });
+    await fx.ctl.controller.tick();
+    await waitFor(() => fx.runs.length >= 2);
+    const started = fx.featureOf("b")!;
+    assert.equal(started.state, "running");
+    assert.notEqual(started.worktree, "");
+    assert.deepEqual(
+      fx.runs.map((run) => [path.basename(run.cwd), run.phase]),
+      [
+        [path.basename(a.worktree), "req"],
+        [path.basename(started.worktree), "req"],
+      ],
+    );
+  }
+
+  {
+    // La dépendance refusée par le pilote : son dépendant n'est pas lancé non plus.
+    const fx = mkAudit({ askDialog: true, answers: [submitted(["b", "a"]), "Valider et lancer", "Valider et lancer"] });
+    spawnSync("git", ["branch", "feat/a"], { cwd: fx.repoRoot, env: GIT_ENV });
+    const result = await fx.call("audit_propose", proposal);
+    assert.equal(result.isError, true);
+    const [header, bLine, aLine, ...rest] = textOf(result).split("\n");
+    assert.equal(header, "Error: aucune pipeline lancée (0/2).");
+    assert.equal(bLine, "- b : non lancée — dépend de a, non lancée");
+    assert.ok(aLine!.startsWith("- a : non lancée — lancement refusé : la branche feat/a existe déjà"), aLine);
+    assert.deepEqual(rest, []);
+    assert.equal(fx.lot(), null, "ni a ni b dans le lot");
+    assert.equal(fx.runs.length, 0);
+  }
+
+  {
+    // Les dépendances déclarées sont validées avant tout dialogue.
+    const fx = mkAudit();
+    const refusal = async (features: unknown[]) => {
+      const result = await fx.call("audit_propose", { weaknesses: [{ name: "w", intention: "constat" }], features });
+      assert.equal(result.isError, true);
+      return textOf(result);
+    };
+    assert.equal(await refusal([{ name: "a", intention: "A.", deps: ["zeta"] }]), "Error: « a » depends on unknown « zeta »");
+    assert.equal(await refusal([{ name: "a", intention: "A.", deps: ["A"] }]), "Error: « a » depends on itself");
+    assert.equal(await refusal([{ name: "a", intention: "A.", deps: "b" }]), "Error: « a » has invalid deps");
+    assert.equal(
+      await refusal([
+        { name: "a", intention: "A.", deps: ["b"] },
+        { name: "b", intention: "B.", deps: ["a"] },
+      ]),
+      "Error: dependency cycle « a → b → a »",
+    );
+    assert.equal(fx.calls.length, 0);
+  }
+});
+
+test("audit-multi/AC-6 : une question de modèle par élément coché, et chaque pipeline tourne avec le modèle choisi pour elle", async () => {
+  const fx = mkAudit({
+    askDialog: true,
+    models: [
+      { provider: "p", id: "x" },
+      { provider: "p", id: "y" },
+    ],
+    answers: [
+      submitted(["relais-readme", "alpha", "gamma"]),
+      "Valider et lancer",
+      "p/x",
+      "Valider et lancer",
+      "p/y",
+      "Valider et lancer",
+      "défaut OMP (aucun modèle)",
+    ],
+  });
+  const result = await fx.call("audit_propose", PROPOSAL);
+  assert.ok(textOf(result).startsWith("Pipelines lancées : 3/3.\n"), textOf(result));
+  assert.deepEqual(
+    fx.calls.slice(1).map((call) => call.title.split("\n")[0]),
+    [
+      "Intention transmise à /req — relais-readme",
+      "Modèle de la pipeline — relais-readme",
+      "Intention transmise à /req — alpha",
+      "Modèle de la pipeline — alpha",
+      "Intention transmise à /req — gamma",
+      "Modèle de la pipeline — gamma",
+    ],
+    "exactement 3 questions de modèle, chacune nommant son élément",
+  );
+
+  await waitFor(() => fx.runs.length >= 3);
+  const featureOf = (slug: string) => fx.featureOf(slug)!;
+  assert.equal(featureOf("relais-readme").model, "p/x");
+  assert.equal(featureOf("alpha").model, "p/y");
+  assert.equal("model" in featureOf("gamma"), false, "défaut OMP : aucune clé `model`");
+  const modelArg = (slug: string) => {
+    const argv = fx.runs.find((run) => path.basename(run.cwd) === path.basename(featureOf(slug).worktree))!.argv;
+    return argv.includes("--model") ? argv[argv.indexOf("--model") + 1] : null;
+  };
+  assert.deepEqual([modelArg("relais-readme"), modelArg("alpha"), modelArg("gamma")], ["p/x", "p/y", null]);
+});
+
+test("audit-multi/AC-7 : relancer depuis la même session /audit — les éléments lancés ne sont plus cochables, les autres le restent", async () => {
+  const fx = mkAudit({
+    answers: ["alpha", "Lancer la sélection", "Valider et lancer", "gamma", "Lancer la sélection", "Valider et lancer", undefined],
+  });
+  const first = await fx.call("audit_propose", PROPOSAL);
+  assert.ok(textOf(first).startsWith("Pipelines lancées : 1/1.\n- alpha : lancée (branche feat/alpha)\n"), textOf(first));
+
+  const before = fx.calls.length;
+  const second = await fx.call("audit_propose", PROPOSAL);
+  const relaunch = fx.calls[before]!;
+  assert.equal(relaunch.title, `${LAUNCH_TITLE}\nDéjà lancés (non cochables) : alpha`);
+  assert.deepEqual(labelsOf(relaunch), ["borne-file", "relais-readme", "beta-feature", "gamma", "Lancer la sélection"]);
+  assert.ok(textOf(second).startsWith("Pipelines lancées : 1/1.\n- gamma : lancée (branche feat/gamma)\n"), textOf(second));
+  assert.deepEqual(fx.lot()!.features.map((f) => f.slug), ["alpha", "gamma"], "alpha une seule fois, puis gamma");
+
+  // Tout est déjà lancé : aucun dialogue.
+  const dialogs = fx.calls.length;
+  const all = await fx.call("audit_propose", {
+    weaknesses: [{ name: "gamma", intention: "constat" }],
+    features: [{ name: "alpha", intention: "intention" }],
+  });
+  assert.equal(all.isError, undefined);
+  assert.equal(textOf(all), "Aucune pipeline lancée : tous les éléments proposés sont déjà lancés (gamma, alpha).");
+  assert.equal(fx.calls.length, dialogs);
+
+  // Le lot terminé est remplacé par un ajout hors /audit : alpha et gamma le
+  // quittent, mais restent lancés pour cette session.
+  const lot = fx.lot()!;
+  writeLot(fx.ctl.stateDir, {
+    ...lot,
+    features: lot.features.map((f) => ({ ...f, state: "done" as const, endedAt: fx.clock.now })),
+  });
+  assert.equal(await fx.ctl.controller.add({ name: "autre", description: "Hors audit.", deps: [] }), null);
+  assert.deepEqual(fx.lot()!.features.map((f) => f.slug), ["autre"], "le lot a été remplacé");
+  const third = await fx.call("audit_propose", PROPOSAL);
+  const replaced = fx.calls.at(-1)!;
+  assert.equal(replaced.title, `${LAUNCH_TITLE}\nDéjà lancés (non cochables) : alpha, gamma`);
+  assert.deepEqual(labelsOf(replaced), ["borne-file", "relais-readme", "beta-feature", "Lancer la sélection"]);
+  assert.equal(textOf(third), "Aucune pipeline lancée : sélection abandonnée.");
+});
+
+test("audit-multi/AC-8 : deux questions simultanées affichent leur origine, sont traitées l'une après l'autre, et chaque réponse va à sa pipeline", async () => {
+  const answerOf = (selected: string) => ({
+    kind: "submit",
+    results: [{ id: "x", question: QUESTION, options: ["Postgres", "SQLite"], multi: false, selectedOptions: [selected] }],
+  });
+  const setup = (answers: unknown[]) => {
+    const fx = mkAudit({ askDialog: true, answers });
+    const wtA = mkWorktree(CONTRACT_SPECS);
+    const wtB = mkWorktree(CONTRACT_SPECS);
+    fx.seed([
+      feature("alpha", { worktree: wtA, state: "running", phase: "specs", auditSession: fx.sessionFile }),
+      feature("beta", { worktree: wtB, state: "running", phase: "impl", auditSession: fx.sessionFile }),
+    ]);
+    const inboxA = publishAsk(fx.ctl.stateDir, wtA, "call-a", "specs");
+    const inboxB = publishAsk(fx.ctl.stateDir, wtB, "call-b", "impl");
+    fx.relay.scan();
+    return { fx, inboxA, inboxB };
+  };
+  const openedQuestions = (fx: AuditFixture) =>
+    fx.calls.filter((call) => call.kind === "askDialog").map((call) => (call.questions as Array<{ question: string }>)[0]!.question);
+  const deliveredTo = (inbox: string) => readDeliveries(inbox).map((entry) => ({ ...entry.delivery, sentAt: 0 }));
+
+  {
+    const first = Promise.withResolvers<unknown>();
+    const second = Promise.withResolvers<unknown>();
+    const { fx, inboxA, inboxB } = setup([() => first.promise, () => second.promise]);
+    assert.deepEqual(
+      fx.messages.map((m) => m.message.content.split("\n")[0]),
+      ["[audit] Question de /specs — feature alpha", "[audit] Question de /impl — feature beta"],
+    );
+
+    // Le modèle de /audit escalade les deux dans le même tour : deux appels concurrents.
+    const pendingA = fx.call("audit_escalate", { item: "ask:alpha:call-a" });
+    const pendingB = fx.call("audit_escalate", { item: "ask:beta:call-b" });
+    await flush();
+    assert.deepEqual(openedQuestions(fx), [`Question de /specs — feature alpha\n${QUESTION}`], "un seul dialogue ouvert");
+
+    first.resolve(answerOf("Postgres"));
+    const answeredA = await pendingA;
+    await flush();
+    assert.deepEqual(openedQuestions(fx), [
+      `Question de /specs — feature alpha\n${QUESTION}`,
+      `Question de /impl — feature beta\n${QUESTION}`,
+    ]);
+    second.resolve(answerOf("SQLite"));
+    const answeredB = await pendingB;
+
+    for (const result of [answeredA, answeredB]) {
+      assert.equal(result.isError, undefined, textOf(result));
+      assert.ok(!textOf(result).includes("dialogue /audit est déjà ouvert"), textOf(result));
+    }
+    assert.equal(textOf(answeredA), "Réponse de l'utilisateur transmise mot pour mot à /specs — feature alpha : Postgres");
+    assert.equal(textOf(answeredB), "Réponse de l'utilisateur transmise mot pour mot à /impl — feature beta : SQLite");
+    assert.deepEqual(deliveredTo(inboxA), [{ version: 1, kind: "ask", toolCallId: "call-a", selected: "Postgres", sentAt: 0 }]);
+    assert.deepEqual(deliveredTo(inboxB), [{ version: 1, kind: "ask", toolCallId: "call-b", selected: "SQLite", sentAt: 0 }]);
+  }
+
+  {
+    // Des appels avortés AVANT leur tour n'ouvrent aucun dialogue, et ne laissent
+    // pas l'appel suivant passer devant le dialogue encore ouvert.
+    const first = Promise.withResolvers<unknown>();
+    const { fx, inboxB } = setup([() => first.promise, answerOf("SQLite")]);
+    const pendingA = fx.call("audit_escalate", { item: "ask:alpha:call-a" });
+    const escalateAbort = new AbortController();
+    const abortedEscalate = fx.call("audit_escalate", { item: "ask:beta:call-b" }, escalateAbort.signal);
+    const proposeAbort = new AbortController();
+    const abortedPropose = fx.call("audit_propose", PROPOSAL, proposeAbort.signal);
+    const pendingB = fx.call("audit_escalate", { item: "ask:beta:call-b" });
+    await flush();
+    escalateAbort.abort();
+    proposeAbort.abort();
+
+    const escalated = await abortedEscalate;
+    assert.equal(escalated.isError, true);
+    assert.equal(
+      textOf(escalated),
+      "Error: l'utilisateur n'a pas répondu — ask:beta:call-b reste en attente ; ne le tranche pas, rappelle audit_escalate quand il te le demande",
+    );
+    const proposed = await abortedPropose;
+    assert.equal(proposed.isError, undefined);
+    assert.equal(textOf(proposed), "Aucune pipeline lancée : dialogue interrompu.");
+    await flush();
+    assert.equal(fx.calls.length, 1, "seul le premier dialogue est ouvert");
+
+    first.resolve(answerOf("Postgres"));
+    await pendingA;
+    const answeredB = await pendingB;
+    assert.equal(fx.calls.length, 2);
+    assert.equal(textOf(answeredB), "Réponse de l'utilisateur transmise mot pour mot à /impl — feature beta : SQLite");
+    assert.deepEqual(deliveredTo(inboxB), [{ version: 1, kind: "ask", toolCallId: "call-b", selected: "SQLite", sentAt: 0 }]);
+  }
 });

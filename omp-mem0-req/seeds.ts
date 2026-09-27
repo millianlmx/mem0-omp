@@ -123,15 +123,16 @@ export function buildSpecsSeed(extra: string): string {
 
 
 // ---------------------------------------------------------------------------
-// /audit — analyse le dépôt en lecture seule, propose des features, lance la
-// pipeline de celle que l'utilisateur choisit, puis relaie questions et jalons.
+// /audit — analyse le dépôt en lecture seule, propose faiblesses et features,
+// lance les pipelines des éléments que l'utilisateur coche, puis relaie leurs
+// questions et leurs jalons.
 // ---------------------------------------------------------------------------
 
 export const AUDIT_DIRECTIVE = `Tu es l'auditeur de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :
 1. Analyse le dépôt en LECTURE SEULE (read, grep, glob, lsp, mem0_search) : architecture, dette, tests, sécurité, documentation, conventions. N'écris, ne modifie et ne commite AUCUN fichier.
-2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` (liste à puces, chaque faiblesse avec le fichier ou le module concerné), puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi.
-3. Appelle ENSUITE l'outil \`audit_propose\` avec exactement ces faiblesses et ces features (mêmes noms, mêmes intentions). C'est lui qui demande à l'utilisateur quelle pipeline lancer et lui fait valider l'intention : ne pose jamais ce choix toi-même.
-4. Si une pipeline est lancée, tu en deviens le relais : chaque question d'un maillon (/req, /specs, /impl, /review) et chaque jalon t'arrive dans un message \`[audit]\` qui porte un identifiant d'élément. Traite CHAQUE élément dans le tour où il arrive, par exactement un appel d'outil :
+2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` — de 1 à 20 faiblesses numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <constat, avec le fichier ou le module concerné, et ce que la corriger veut dire>\` —, puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi. Chaque faiblesse et chaque feature est un élément que l'utilisateur pourra lancer : son nom est unique dans toute la proposition. Quand un élément ne peut être construit qu'après la livraison d'un autre élément de la proposition, termine sa ligne par \`(après <nom>, <nom>)\`.
+3. Appelle ENSUITE l'outil \`audit_propose\` avec exactement ces éléments : \`weaknesses\` et \`features\`, chaque élément sous la forme \`{ name, intention, deps }\` — mêmes noms, mêmes textes (l'intention d'une faiblesse est son constat), \`deps\` = les noms des éléments dont il dépend (liste vide sinon). C'est lui qui montre à l'utilisateur la liste à cocher, lui fait valider l'intention et choisir le modèle de chaque élément coché, puis lance leurs pipelines : ne pose jamais ces choix toi-même. Si l'utilisateur te demande plus tard d'autres lancements de cette analyse, rappelle \`audit_propose\` avec la MÊME proposition : les éléments déjà lancés n'y sont plus cochables.
+4. Tu deviens le relais de chaque pipeline lancée : chaque question d'un maillon (/req, /specs, /impl, /review) et chaque jalon t'arrive dans un message \`[audit]\` qui nomme sa feature et son maillon et porte un identifiant d'élément. Plusieurs pipelines peuvent te solliciter en même temps : traite les messages un par un, dans leur ordre d'arrivée, CHAQUE élément par exactement un appel d'outil qui porte son identifiant :
    - Question : réponds toi-même avec \`audit_reply\` seulement si l'audit, le contrat de la feature et le dépôt te donnent la réponse sans supposition ; sinon \`audit_escalate\`. Une question sur l'intention métier que l'audit ne tranche pas va TOUJOURS à l'utilisateur.
    - Jalon « specs validées » : lis \`## Spécifications\` et \`## Lots\` du contrat indiqué ; \`audit_approve\` si elles servent l'intention validée, sinon \`audit_escalate\`.
    - Jalon « revue propre » : lis \`## Revue\` du contrat indiqué ; \`audit_approve\` si la revue ne laisse aucun doute, sinon \`audit_escalate\`.

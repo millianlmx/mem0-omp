@@ -649,13 +649,14 @@ export default function reqExtension(pi: ExtensionAPI) {
     },
   });
 
-  // --- /audit : audite le dépôt, propose des features, lance et relaie -------
-  // L'analyse est celle du modèle (cadrée par AUDIT_DIRECTIVE) ; le choix, la
-  // validation de l'intention et le lancement passent par l'outil `audit_propose`,
-  // armé avec le relais sur la session neuve.
+  // --- /audit : audite le dépôt, propose faiblesses et features, lance et relaie
+  // L'analyse est celle du modèle (cadrée par AUDIT_DIRECTIVE) ; la liste à
+  // cocher, la validation de l'intention et le modèle de chaque élément coché, puis
+  // leur lancement passent par l'outil `audit_propose`, armé avec le relais sur la
+  // session neuve.
   pi.registerCommand("audit", {
     description:
-      "Audite le dépôt, propose des features et lance la pipeline de celle que tu choisis — questions et jalons relayés dans cette session",
+      "Audite le dépôt, propose faiblesses et features, et lance en parallèle les pipelines que tu coches — questions et jalons relayés dans cette session",
     handler: async (args, ctx) => {
       if (!ctx.hasUI) {
         ctx.ui?.notify?.("[audit] indisponible hors session interactive", "warning");
