@@ -6,6 +6,7 @@ Lancée en continu par docker-compose (uvicorn), écoute sur 0.0.0.0:8321.
 """
 import json
 import os
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, HTTPException
 from mem0 import AsyncMemory
@@ -53,6 +54,74 @@ def scope_filters(agent_id: str | None, run_id: str | None = None, extra: dict |
 def check_token(token: str | None) -> None:
     if HTTP_TOKEN and token != HTTP_TOKEN:
         raise HTTPException(status_code=401, detail="bad or missing X-Mem0-Token")
+
+
+# Page initiale de la lecture exhaustive de /memory/all. mem0 2.x n'a AUCUNE
+# pagination dans sa surface publique (aucun page/page_size/offset dans
+# mem0/memory/main.py) et `get_all(top_k=N)` TRONQUE à N : `top_k` est le plafond
+# du nombre de lignes rendues, pas une taille de page. Le seul lectorat exhaustif
+# passe donc par des `top_k` croissants — cette constante est le premier d'entre
+# eux, quadruplé tant que la page revient saturée. Aucune constante ne borne le
+# nombre de lignes : le plafond résiduel de 100 est justement ce qu'on supprime.
+MEMORY_PAGE = 500
+
+
+def memory_rows(page: object) -> list[dict]:
+    """Lignes d'une réponse de `get_all` (dict `{"results": [...]}` sinon liste nue)."""
+    if isinstance(page, dict):
+        found = page.get("results")
+        return list(found) if isinstance(found, list) else []
+    return list(page) if isinstance(page, list) else []
+
+
+def memory_order(memories: list[dict]) -> list[dict]:
+    """Trie par `updated_at` décroissant, sans muter l'entrée.
+
+    Qdrant rend les points dans l'ordre des id, PAS par date (le scroll jette
+    `next_page_offset`, cf. `mem0/vector_stores/qdrant.py`) : le tri exigé par
+    l'API est donc fait ici. Une ligne sans date exploitable (absente, non
+    chaîne, illisible par `fromisoformat`) est classée APRÈS toutes les lignes
+    datées, son ordre relatif préservé (tri stable) — elle est rendue, jamais
+    jetée. Un `datetime` naïf (pas de décalage) est interprété en UTC : le
+    comparer à un « aware » lèverait un TypeError.
+    """
+
+    def sort_key(row: dict) -> tuple[int, float]:
+        raw = row.get("updated_at") if isinstance(row, dict) else None
+        if isinstance(raw, str):
+            try:
+                when = datetime.fromisoformat(raw)
+            except ValueError:
+                return (0, 0.0)
+            if when.tzinfo is None:
+                when = when.replace(tzinfo=timezone.utc)
+            return (1, when.timestamp())
+        return (0, 0.0)
+
+    return sorted(memories, key=sort_key, reverse=True)
+
+
+async def read_all_memories(m: AsyncMemory, filters: dict) -> list[dict]:
+    """Toutes les lignes de la scope, sans plafond.
+
+    Page initiale `MEMORY_PAGE`, puis quadruplée tant que la page précédente
+    revient SATURÉE (autant de lignes que de `top_k` demandé) : c'est le seul
+    signal disponible pour distinguer « la scope est plus petite que la page »
+    de « la scope est plus grande et a été coupée ». L'escalade s'arrête aussi
+    dès qu'une page plus grande ne rend pas plus de lignes que la précédente
+    (scope vide, ou écriture concurrente qui a fait disparaître des lignes).
+    Toujours `m.get_all(...)` : descendre dans `m.vector_store` contournerait les
+    filtres d'entité et sortirait de la surface couverte par test_api.py.
+    """
+    top_k = MEMORY_PAGE
+    memories = memory_rows(await m.get_all(filters=filters, top_k=top_k))
+    while len(memories) == top_k:
+        top_k *= 4
+        page = memory_rows(await m.get_all(filters=filters, top_k=top_k))
+        if len(page) <= len(memories):
+            break
+        memories = page
+    return memories
 
 
 class AddRequest(BaseModel):
@@ -137,9 +206,16 @@ async def search_memories(req: SearchRequest, x_mem0_token: str | None = Header(
 
 @app.get("/memory/all")
 async def get_all_memories(agent_id: str | None = None, x_mem0_token: str | None = Header(default=None)):
+    """Toute la mémoire de la scope, triée par `updated_at` décroissant.
+
+    La réponse GAGNE la clé `total` (= `len(results)`) sans rien perdre : un
+    client antérieur qui lit `results` (ou une liste nue) reste fonctionnel.
+    Aucun paramètre de plafond n'est exposé — le client ne choisit pas la borne.
+    """
     check_token(x_mem0_token)
     m = await get_memory()
-    return await m.get_all(filters=scope_filters(agent_id), top_k=100)
+    memories = memory_order(await read_all_memories(m, scope_filters(agent_id)))
+    return {"total": len(memories), "results": memories}
 
 
 @app.put("/memory/{memory_id}")

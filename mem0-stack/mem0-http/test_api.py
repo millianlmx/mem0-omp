@@ -18,6 +18,7 @@ ruptures silencieuses, qui ne se voient qu'à l'exécution de la route concerné
 """
 import inspect
 import sys
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 try:
@@ -29,6 +30,45 @@ except ImportError as exc:  # pragma: no cover
     sys.exit(2)
 
 calls: list[tuple[str, dict]] = []
+
+_EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def _fake_store(n: int, legacy: bool = False) -> list[dict]:
+    """Base factice conforme au RÉEL : lignes ordonnées par id, pas par date.
+
+    Qdrant rend les points dans l'ordre des id alors que /memory/all doit trier
+    par `updated_at` décroissant : `updated_at` croît donc avec l'index, ce qui
+    met l'ordre du magasin à l'exact inverse de l'ordre attendu. Une implémentation
+    qui se contenterait de rendre la page telle quelle échoue sur le tri.
+
+    `legacy=True` retire `updated_at` de la PREMIÈRE ligne (la plus ancienne) :
+    elle doit être rendue en DERNIÈRE position sans perturber le reste du tri.
+    """
+    rows = []
+    for i in range(n):
+        when = _EPOCH + timedelta(minutes=i)
+        row = {
+            "id": f"m{i:04d}",
+            "memory": f"souvenir {i}",
+            "user_id": "moi",
+            "agent_id": "P",
+            "created_at": when.isoformat(),
+            "updated_at": when.isoformat(),
+        }
+        rows.append(row)
+    if legacy:
+        del rows[0]["updated_at"]
+    return rows
+
+
+# Ce que sert le double : 150 lignes, la première sans `updated_at`.
+STORE = _fake_store(150, legacy=True)
+
+# Panne injectée : la lecture échoue APRÈS la première page, donc en plein
+# escalade. La route doit alors remonter l'erreur, jamais rendre la première
+# page — ce serait exactement le plafond silencieux que cette feature supprime.
+FAIL_AFTER_FIRST_PAGE = False
 
 
 class StubMemory:
@@ -58,7 +98,12 @@ class StubMemory:
         return await self._record("search", a, k)
 
     async def get_all(self, *a, **k):
-        return await self._record("get_all", a, k)
+        # mem0 tronque à `top_k` (`output_limit`) : c'est cette troncature que la
+        # route doit neutraliser, et c'est elle qui rend un plafond falsifiable.
+        await self._record("get_all", a, k)
+        if FAIL_AFTER_FIRST_PAGE and sum(1 for n, _ in calls if n == "get_all") > 1:
+            raise RuntimeError("Qdrant indisponible (panne injectée en pleine escalade)")
+        return {"results": list(STORE[: int(k.get("top_k", 20))])}
 
     async def delete(self, *a, **k):
         return await self._record("delete", a, k)
@@ -71,6 +116,8 @@ class StubMemory:
 
 
 def main() -> int:
+    # Le double et la panne injectée sont réaffectés par les cas de plafond.
+    global STORE, FAIL_AFTER_FIRST_PAGE
     with patch("http_server.AsyncMemory", StubMemory):
         import http_server
 
@@ -147,6 +194,84 @@ def main() -> int:
         ok = calls[0][1].get("explain") is False
         print(f"{'PASS' if ok else 'FAIL'}  explain absent → False (compat ascendante) : {calls[0][1].get('explain')}")
         failures += 0 if ok else 1
+
+        def verify(label, got, want):
+            """Égalité vérifiée en MONTRANT la valeur observée.
+
+            Même exigence que les cas existants : un rouge doit pouvoir être
+            diagnostiqué sur place, sans relancer quoi que ce soit.
+            """
+            nonlocal failures
+            ok = got == want
+            print(f"{'PASS' if ok else 'FAIL'}  {label} : {got!r} (attendu {want!r})")
+            failures += 0 if ok else 1
+
+        # /memory/all doit rendre TOUTE la scope et trier par `updated_at`
+        # décroissant. Le magasin rend 150 lignes ordonnées par id — l'ordre
+        # INVERSE de la date : une page fixe en rendrait 100, et un rendu brut
+        # les présenterait dans le mauvais ordre.
+        resp = client.get("/memory/all?agent_id=P")
+        body = resp.json()
+        rows = body.get("results") or []
+        dated = [m["updated_at"] for m in rows if "updated_at" in m]
+        check("api/AC-1 — base de 150 lignes : total réel, tri décroissant, ligne sans date rendue", resp)
+        verify("total", body.get("total"), 150)
+        verify("len(results)", len(rows), 150)
+        verify("updated_at décroissants", all(a >= b for a, b in zip(dated, dated[1:])), True)
+        verify("m0149 présent (au-delà des 100 premiers)", any(m["id"] == "m0149" for m in rows), True)
+        verify("ligne sans updated_at rendue en dernier", rows[-1]["id"] if rows else None, "m0000")
+
+        # Scope vide : la forme annoncée doit tenir sans ligne (un rendu sans clé
+        # `results` casserait `rows()` côté client).
+        STORE = _fake_store(0)
+        resp = client.get("/memory/all?agent_id=P")
+        verify("scope vide : total", resp.json().get("total"), 0)
+        verify("scope vide : results", resp.json().get("results"), [])
+
+        # Le plafond résiduel ne se voit qu'AU-DELÀ de la page initiale : 1200
+        # lignes la saturent, donc l'escalade doit demander une page PLUS GRANDE.
+        # C'est cette assertion qui distingue « aucun plafond » d'« un grand
+        # plafond » : un `top_k` figé rend une liste plus courte que le total,
+        # et une page unique n'escalade jamais.
+        STORE = _fake_store(1200)
+        calls.clear()
+        resp = client.get("/memory/all?agent_id=P")
+        body = resp.json()
+        rows = body.get("results") or []
+        pages = [k.get("top_k") for n, k in calls if n == "get_all"]
+        check("api/AC-5 — base de 1200 lignes : page saturée ⇒ page suivante plus grande", resp)
+        verify("total", body.get("total"), 1200)
+        verify("len(results)", len(rows), 1200)
+        verify("pages demandées", len(pages) >= 2, True)
+        verify("top_k strictement croissants", all(a < b for a, b in zip(pages, pages[1:])), True)
+
+        # Page saturée alors qu'il n'y a RIEN au-delà : l'escalade doit s'arrêter
+        # après une seule page supplémentaire, jamais boucler.
+        STORE = _fake_store(500)
+        calls.clear()
+        resp = client.get("/memory/all?agent_id=P")
+        body = resp.json()
+        pages = [k.get("top_k") for n, k in calls if n == "get_all"]
+        verify("exactement 500 : total", body.get("total"), 500)
+        verify("exactement 500 : len(results)", len(body.get("results") or []), 500)
+        verify("exactement 500 : deux requêtes, pas de boucle", len(pages), 2)
+
+        # Panne en PLEINE escalade : la route remonte l'erreur (500) au lieu de
+        # rendre la première page — un résultat partiel serait le plafond muet.
+        STORE = _fake_store(1200)
+        FAIL_AFTER_FIRST_PAGE = True
+        calls.clear()
+        failing = TestClient(http_server.app, raise_server_exceptions=False)
+        resp = failing.get("/memory/all?agent_id=P")
+        verify("panne en cours d'escalade : code", resp.status_code, 500)
+        verify(
+            "panne en cours d'escalade : aucun résultat partiel",
+            any(f"m{i:04d}" in resp.text for i in (0, 499, 1199)),
+            False,
+        )
+
+        STORE = _fake_store(150, legacy=True)
+        FAIL_AFTER_FIRST_PAGE = False
 
         print()
         print("Conforme." if failures == 0 else f"{failures} échec(s).")
