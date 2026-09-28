@@ -385,6 +385,34 @@ else
   echo "  · node absent, tests non exécutés"
 fi
 
+echo "── App Swift"
+
+# L'assemblage du bundle .app vit dans scripts/swift-app.sh : check.sh l'appelle
+# et RECOPIE son verdict, comme pour `── Types`. Codes du script : 0 assemblé,
+# 2 « non exécuté » (hors macOS, un succès), tout autre échec. Sur un code 2, le
+# script a déjà dit « non exécuté » — aucune ✓ n'est affichée, sinon la section
+# mentirait sur ce qu'elle a vérifié.
+#
+# `MEM0_OMP_SKIP_SWIFT_APP=1` neutralise la section : le harnais de test lance
+# check.sh une dizaine de fois dans des copies jetables, qui paieraient sinon
+# chacune une compilation Swift complète (≈ 35 s). Une valeur vide vaut absence.
+if [ -f scripts/swift-app.sh ]; then
+  if [ -n "${MEM0_OMP_SKIP_SWIFT_APP:-}" ]; then
+    echo "  · ignorée (MEM0_OMP_SKIP_SWIFT_APP=1)"
+  else
+    swift_out="$(bash scripts/swift-app.sh 2>&1)"
+    swift_status=$?
+    [ -n "$swift_out" ] && printf '%s\n' "$swift_out"
+    case "$swift_status" in
+      0) pass "App Swift : compilation, tests et bundle .app assemblés" ;;
+      2) : ;;
+      *) fail "App Swift — scripts/swift-app.sh a échoué (relance : bash scripts/swift-app.sh)" ;;
+    esac
+  fi
+else
+  fail "App Swift — scripts/swift-app.sh absent"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   echo "Dépôt prêt à publier."

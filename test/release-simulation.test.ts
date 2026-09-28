@@ -124,6 +124,12 @@ const DROPPED_DIRS: Record<string, true> = {
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
+  // Artefacts Swift (≈ 400 Mo de .build), et la section « App Swift » est
+  // neutralisée dans la copie par MEM0_OMP_SKIP_SWIFT_APP (voir runSimulation).
+  ".build": true,
+  ".build-app": true,
+  ".build-tests": true,
+  build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
   "check.test.ts": true,
@@ -288,6 +294,9 @@ function runSimulation(repo: Repo): SpawnSyncReturns<string> {
       // La copie simulée relance `check.sh`, donc la suite : on le lui dit, pour
       // qu'un fichier de test gaté sur la profondeur ne se rejoue pas là-bas.
       MEM0_CHECK_DEPTH: String(DEPTH + 1),
+      // Et la section « App Swift » y compilerait pour de vrai sans rien prouver
+      // de la release simulée.
+      MEM0_OMP_SKIP_SWIFT_APP: "1",
       GH_JOURNAL: repo.journal,
       PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
     },
@@ -300,7 +309,12 @@ function runCheck(repo: Repo): SpawnSyncReturns<string> {
     cwd: repo.dir,
     encoding: "utf8",
     timeout: 900_000,
-    env: { ...childEnv(), GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
+    env: {
+      ...childEnv(),
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      MEM0_OMP_SKIP_SWIFT_APP: "1",
+    },
   });
 }
 

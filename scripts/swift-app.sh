@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# Assemble le bundle .app de la coque SwiftUI (S-5, BR-4).
+#
+# Pourquoi un script et pas `xcodebuild` : sur le poste de référence il n'y a que
+# les Command Line Tools, et `xcodebuild` y refuse de tourner (« requires Xcode »).
+# Le bundle est donc écrit à la main, depuis le binaire rendu par SwiftPM, aux
+# emplacements qu'Apple impose (Contents/Info.plist, Contents/MacOS/, Resources/).
+#
+# Le chemin du binaire n'est JAMAIS recopié : il est lu par `--show-bin-path`, que
+# ce toolchain installe sous `.build/out/Products/Release` (et non l'ancien
+# `.build/release`) — une valeur en dur casserait à la prochaine mise à jour.
+#
+# La signature de lien produite par SwiftPM ne scelle PAS le bundle
+# (`codesign --verify --strict` échoue : « code has no resources but signature
+# indicates they must be present »), donc on re-signe en ad hoc puis on vérifie.
+#
+# Codes de sortie : 0 bundle assemblé et signé, 1 échec, 2 non exécuté (hors macOS).
+set -uo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+ROOT="$PWD"
+PKG="$ROOT/omp-console"
+PLIST="$PKG/Bundle/Info.plist"
+BUNDLE="$PKG/build/OMP Console.app"
+
+# 2 = « non exécuté » : le bundle macOS ne s'assemble que sous macOS. check.sh
+# recopie ce verdict sans afficher de ✓ (S-6).
+if [ "$(uname -s)" != "Darwin" ]; then
+  echo "non exécuté : le bundle .app ne s'assemble que sous macOS ($(uname -s) détecté)"
+  exit 2
+fi
+
+if ! command -v swift >/dev/null 2>&1; then
+  echo "✗ swift introuvable — installe les Command Line Tools (xcode-select --install)"
+  exit 1
+fi
+
+if [ ! -f "$PLIST" ]; then
+  echo "✗ $PLIST manquant"
+  exit 1
+fi
+# `plutil` n'existe que sous macOS ; la garde `command -v` laisse la suite node
+# exercer la section avec une doublure `uname` sur un hôte Linux.
+if command -v plutil >/dev/null 2>&1; then
+  if ! plutil -lint "$PLIST" >/dev/null 2>&1; then
+    echo "✗ Info.plist invalide : $PLIST (relance : plutil -lint \"$PLIST\")"
+    exit 1
+  fi
+fi
+
+# Dossier de build DÉDIÉ : `swift test` doit être la PREMIÈRE commande écrite dans
+# son dossier, sinon la compilation échoue. Mesuré sur Swift 6.4 (CLT seuls) :
+# un `swift build -c release` (produit seul) suivi de `swift test -c release` dans
+# le MÊME dossier rend « plugin for module 'TestingMacros' not found » ; le même
+# test, premier dans un dossier neuf, passe. Un scratch séparé garantit donc que
+# ni un `swift build` de développement ni un autre outil ne corrompent le dossier.
+SCRATCH="$PKG/.build-app"
+
+# Les macros de Swift Testing ne sont pas toujours trouvées par SwiftPM : mesuré
+# sur ce toolchain, `swift test` échoue environ une fois sur trois en « plugin for
+# module 'TestingMacros' not found », de façon NON déterministe (même sur un
+# paquet minimal, même sans rien changer). Pointer explicitement le dossier des
+# plugins du toolchain rend la suite déterministe (6/6 après correction). Le
+# chemin est DÉRIVÉ du binaire swift, jamais recopié ; s'il n'existe pas (autre
+# installation), on ne passe pas le drapeau plutôt que d'échouer.
+SWIFT_BIN="$(xcrun --find swift 2>/dev/null || command -v swift)"
+PLUGIN_DIR="$(cd "$(dirname "$SWIFT_BIN")/../lib/swift/host/plugins/testing" 2>/dev/null && pwd)"
+if [ -n "${PLUGIN_DIR:-}" ]; then
+  PLUGIN_FLAGS=(-Xswiftc -plugin-path -Xswiftc "$PLUGIN_DIR")
+else
+  PLUGIN_FLAGS=()
+fi
+
+# 1) compilation release du produit ET de la suite, en une invocation, puis
+#    exécution des tests. La sortie est recopiée telle quelle : c'est elle qui
+#    nomme l'erreur de compilation ou le test tombé.
+test_out="$(cd "$PKG" && swift test -c release --scratch-path "$SCRATCH" ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
+test_status=$?
+[ -n "$test_out" ] && printf '%s\n' "$test_out"
+if [ "$test_status" -ne 0 ]; then
+  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --scratch-path .build-app -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
+  exit 1
+fi
+echo "  ✓ compilation release (OMPConsole) et tests release (Swift Testing)"
+
+# 2) dossier du binaire produit — lu, jamais recopié. `--show-bin-path` s'interroge
+#    sur un dossier de build JETABLE, puis le suffixe rendu par le toolchain est
+#    reporté sur le dossier réel : mesuré sur Swift 6.4 (CLT seuls),
+#    `swift build -c release --show-bin-path --scratch-path X` écrit une
+#    description de build dans X et corrompt le `swift test` suivant de X. Sur un
+#    dossier jetable, il ne touche donc jamais le dossier réel.
+probe="$(mktemp -d)"
+probe="$(cd "$probe" && pwd -P)"
+probe_path="$(cd "$PKG" && swift build -c release --show-bin-path --scratch-path "$probe" 2>/dev/null)"
+rm -rf "$probe"
+case "$probe_path" in
+  "$probe"/*) bin_dir="$SCRATCH/${probe_path#"$probe"/}" ;;
+  *) bin_dir="" ;;
+esac
+if [ -z "$bin_dir" ] || [ ! -x "$bin_dir/OMPConsole" ]; then
+  echo "✗ binaire introuvable ou non exécutable : ${bin_dir:-<chemin vide>}/OMPConsole"
+  exit 1
+fi
+
+# 3) assemblage du bundle aux emplacements imposés (D5). Le bundle précédent est
+#    retiré d'abord : le script est idempotent, sans résidu d'une exécution passée.
+rm -rf "$BUNDLE"
+mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
+cp "$PLIST" "$BUNDLE/Contents/Info.plist"
+cp "$bin_dir/OMPConsole" "$BUNDLE/Contents/MacOS/OMPConsole"
+chmod +x "$BUNDLE/Contents/MacOS/OMPConsole"
+echo "  ✓ bundle assemblé ($BUNDLE)"
+
+# 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
+#    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
+if ! command -v codesign >/dev/null 2>&1; then
+  echo "✗ codesign introuvable"
+  exit 1
+fi
+if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then
+  echo "✗ signature ad hoc échouée (relance : codesign --force --sign - \"$BUNDLE\")"
+  exit 1
+fi
+if ! codesign --verify --strict "$BUNDLE" >/dev/null 2>&1; then
+  echo "✗ vérification de signature échouée (relance : codesign --verify --strict \"$BUNDLE\")"
+  exit 1
+fi
+echo "  ✓ signature ad hoc vérifiée (codesign --verify --strict)"
+
+exit 0
