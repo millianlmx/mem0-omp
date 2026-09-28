@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 2/5 « Lire le réel »
-**Avancement** : 4/15 feature(s) fusionnée(s)
+**Statut** : en cours — segment 3/5 « Les vues »
+**Avancement** : 5/15 feature(s) fusionnée(s)
 
 ## But
 
@@ -22,15 +22,15 @@ L'app lit le magasin d'état partagé (~/.omp/agent/pipeline/ : running, history
 | 1 | `socle-app-swift` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/36 | opencode-go/deepseek-v4.1-flash | Poser la coquille de l'app macOS SwiftUI dans le dépôt, sous un dossier de premier niveau (nom de travail : omp-console) : paquet SwiftPM, cible macOS, fenêtre avec navigation latérale entre les futures vues (Kanban, Sessions, Fichiers, Projet). Un script assemble un bundle .app minimal (Info.plist, identifiant) pour rendre possibles la barre de menus et les notifications des features suivantes, et scripts/check.sh gagne une section « App Swift » exécutée sous macOS seulement — Ubuntu dit « non exécuté » au lieu d'échouer. La réussite se prouve par swift build et swift test verts, l'app lancée à la main qui s'ouvre, et check.sh vert sur macOS comme sur Ubuntu. |
 | 2 | `canal-de-commande-extension` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/34 | opencode-go/deepseek-v4.1-flash | Donner à un client externe (l'app) le moyen de faire agir le pilote d'un lot sans passer par le TUI : des fichiers de commande atomiques dans le magasin d'état, consommés par le process propriétaire du lot, pour lancer une feature, arrêter un run, valider un jalon (v/y), répondre à une question en vol, et ajouter ou retirer une feature. Chaque commande porte un identifiant et reçoit un accusé écrit dans le magasin (acceptée, ou refusée avec son motif) ; une commande rejouée n'a pas d'effet double, et un client muet ne bloque jamais le pilote. La réussite se prouve par des tests node --test du format, de la consommation, des refus et de l'idempotence, plus un aller-retour manuel où une commande déposée par un script fait démarrer un maillon réel. |
 
-### Segment 2 — Lire le réel (en cours)
+### Segment 2 — Lire le réel (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
 | 1 | `client-magasin-etat` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/37 | opencode-go/deepseek-v4.1-flash | La couche de données de l'app : des modèles Swift typés et tolérants du magasin d'état (running, history, lots, projects, inbox, audit) qui ignorent les fichiers temporaires et ne montrent jamais un JSON partiel, la résolution des chemins (MEM0_PIPELINE_STATE_DIR sinon ~/.omp/agent/pipeline), et une veille des répertoires (FSEvents ou DispatchSource) qui pousse les changements au lieu de sonder en boucle. La réussite se prouve par des tests sur des fixtures réelles du dépôt (entrées running et history, lot, projet) et sur les cas dégradés : fichier tronqué, propriétaire mort, répertoire absent. |
 | 2 | `lecteur-de-sessions-omp` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/38 | opencode-go/deepseek-v4.1-flash | Lire les fichiers de session OMP (JSONL, parfois écrits pendant la lecture) et en tirer un modèle de conversation : messages utilisateur et assistant, pensées, appels d'outil (nom, arguments, résultat, diffs), modèle et usage. La lecture reprend au dernier octet lu pour ne jamais re-parser un fichier entier, reconnaît les sessions de sous-agents et ne casse pas sur une ligne partiellement écrite. La réussite se prouve par des tests sur des sessions réelles du poste, dont une en cours d'écriture, et par un rendu fidèle vérifié sur une session de pipeline. |
-| 3 | `client-rpc-omp` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/39 | opencode-go/deepseek-v4.1-flash | Héberger une session OMP depuis l'app : lancer omp --mode rpc (et rpc-ui), parler le protocole JSONL (négociation de version, réponses corrélées, événements, dialogues extension_ui_request) et garder le process vivant et réconcilié (arrêt propre, réponses aux dialogues, reconnexion). C'est ce client qui permettra à l'app de conduire un projet et d'ouvrir des sessions sans terminal. La réussite se prouve par un aller-retour réel prompt → événements → dialogue répondu contre un vrai omp --mode rpc, et par les cas d'échec : binaire absent, process tué, frame illisible. |
+| 3 | `client-rpc-omp` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/39 | opencode-go/deepseek-v4.1-flash | Héberger une session OMP depuis l'app : lancer omp --mode rpc (et rpc-ui), parler le protocole JSONL (négociation de version, réponses corrélées, événements, dialogues extension_ui_request) et garder le process vivant et réconcilié (arrêt propre, réponses aux dialogues, reconnexion). C'est ce client qui permettra à l'app de conduire un projet et d'ouvrir des sessions sans terminal. La réussite se prouve par un aller-retour réel prompt → événements → dialogue répondu contre un vrai omp --mode rpc, et par les cas d'échec : binaire absent, process tué, frame illisible. |
 
-### Segment 3 — Les vues (à venir)
+### Segment 3 — Les vues (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
