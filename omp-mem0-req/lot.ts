@@ -432,6 +432,51 @@ export function isRelayRefusal(reason: string): boolean {
 }
 
 
+// --- les refus du lot, mot pour mot ------------------------------------------
+// Une seule source pour chaque motif : le geste du panneau, le relais et la
+// commande du canal (`commands.ts`) doivent dire EXACTEMENT la même chose — deux
+// littéraux jumeaux dans deux fichiers divergent à la première retouche, et c'est
+// le texte de l'accusé qui fait foi côté client (S-1).
+
+/** Aucun lot pour ce dépôt (S-3). */
+export const LOT_NONE_REFUSAL = "aucun lot pour ce dépôt";
+
+/** La feature visée n'est pas dans le lot. */
+export function lotFeatureMissingRefusal(slug: string): string {
+  return `« ${slug} » n'est pas dans le lot`;
+}
+
+/** Un ajout dont le slug est déjà dans le lot. */
+export function lotSlugPresentRefusal(slug: string): string {
+  return `« ${slug} » est déjà dans le lot`;
+}
+
+/** Un ajout dont la branche `feat/<slug>` existe déjà (hints git compris). */
+export function lotBranchTakenRefusal(branch: string): string {
+  return `la branche ${branch} existe déjà — renomme la feature (un autre nom) ou supprime la branche (git branch -D ${branch})`;
+}
+
+/** Une dépendance qui n'est pas dans le lot. */
+export function lotUnknownDepRefusal(dep: string): string {
+  return `dépendance inconnue : ${dep}`;
+}
+
+/** Une dépendance qui désigne la feature elle-même. */
+export function lotCyclicDepRefusal(slug: string): string {
+  return `dépendance circulaire : ${slug}`;
+}
+
+/** Le retrait d'une feature déjà démarrée (le hint TUI `c` en fait partie). */
+export function lotRemoveStartedRefusal(slug: string): string {
+  return `« ${slug} » a déjà démarré — c pour annuler`;
+}
+
+/** Le retrait d'une feature dont une feature EN ATTENTE dépend. */
+export function lotRemoveDependentRefusal(slug: string): string {
+  return `retrait refusé : ${slug} en dépend`;
+}
+
+
 /**
  * Ce qu'une feature du lot accepte, dans cet ordre (S-11, S-6, S-7, S-8) : la
  * collecte d'une feature ouverte par /req se répond DANS la session ; une feature

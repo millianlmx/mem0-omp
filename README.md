@@ -570,6 +570,14 @@ que d'afficher un écran à moitié peint.
   son propriétaire, remplacée atomiquement) et `<état>/history/<id>.json`, sous
   `~/.omp/agent/pipeline` — ou `MEM0_PIPELINE_STATE_DIR`. Aucun serveur, aucun démon :
   des fichiers, et rien d'autre.
+- **Le canal de commande** : `<état>/commands/` reçoit des commandes d'un client
+  extérieur (un fichier JSON par commande, écrit dans un temporaire puis renommé), et
+  le pilote propriétaire du dépôt visé les prend en charge en écrivant son accusé dans
+  `<état>/commands/acks/<id>.json` — `prise en charge` avant d'agir, ou `refusée` avec
+  son motif. Les commandes sont `launch` (créer le lot et lancer une feature), `add` et
+  `remove` (modifier la liste à chaud), `verdict` (`v` ou `y`, comme les touches du
+  panneau), `answer` (répondre à une question en vol d'un run) et `stop` (interrompre
+  le pilote). Un même identifiant rejoué ne produit ni second accusé ni second effet.
 
 ## Lot de features
 
@@ -826,7 +834,7 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
-| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`) et des lots (`lots/`), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
+| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`), des lots (`lots/`) et du canal de commande (`commands/` + `commands/acks/`), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
 | `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
 | `MEM0_PIPELINE_SLOTS` | `4` | runs de features du lot menés en parallèle (entier, 1-32) ; au-delà, les features runnables attendent un créneau (`attend un créneau` dans `/pipelines`) — les runs hors lot ne comptent pas |
 | `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget d'un run de maillon en millisecondes (10 s à 24 h) ; au-delà, la feature passe `échoué` |

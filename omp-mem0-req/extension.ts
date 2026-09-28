@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { createAuditRelay } from "./audit.ts";
+import { hasPendingCommands } from "./commands.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
 import type { NextStep } from "./contract.ts";
 import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";
@@ -456,9 +457,12 @@ export default function reqExtension(pi: ExtensionAPI) {
       if (phase) armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, phase);
       return;
     }
-    // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend.
+    // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend —
+    // et s'il n'y a pas de lot mais qu'une COMMANDE attend dans le canal, on arme
+    // quand même (S-10) : c'est ainsi qu'un client sans TUI fait naître un lot.
     const controller = controllerFor(ctx);
-    if (controller.adopt()) controller.start();
+    const root = resolveFeatureRoot(ctx.cwd);
+    if (controller.adopt() || hasPendingCommands(storeDir(), root.primary ?? root.dir)) controller.start();
     auditRelay.sync(ctx);
     // La session hôte d'un projet en cours (`omp --resume` de la session /project)
     // réarme son relais : le projet reprend là où il en était (S-4).
@@ -502,6 +506,9 @@ export default function reqExtension(pi: ExtensionAPI) {
     for (const controller of lotControllers.values()) {
       try {
         controller.abortAll("session fermée");
+        // Le canal s'arrête avec le pilote (S-1) : minuterie du pompage éteinte,
+        // et les accusés d'un lot TERMINÉ sont purgés (AC-12).
+        controller.stop();
       } catch {
         /* l'arrêt ne doit jamais jeter */
       }
@@ -1073,6 +1080,7 @@ export default function reqExtension(pi: ExtensionAPI) {
 
 export * from "./audit.ts";
 export * from "./chain.ts";
+export * from "./commands.ts";
 export * from "./contract.ts";
 export * from "./git.ts";
 export * from "./inbox.ts";
