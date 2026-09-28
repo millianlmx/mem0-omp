@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.21.0 — 2026-09-28
+
+- feat(req): canal de commande — piloter un lot depuis un process externe (aucun bump) (#34) (1ea8910)
+
 ## omp-mem0-req 0.20.0 — 2026-09-28
 
 - feat(req): /project — cadrage, plan de segments, PROJECT.md et relais des pipelines jusqu'aux PR (aucun bump) (#32) (47ece8b)
