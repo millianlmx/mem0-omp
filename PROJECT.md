@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 1/5 « Fondations »
-**Avancement** : 1/15 feature(s) fusionnée(s)
+**Statut** : en cours — segment 2/5 « Lire le réel »
+**Avancement** : 2/15 feature(s) fusionnée(s)
 
 ## But
 
@@ -15,14 +15,14 @@ L'app lit le magasin d'état partagé (~/.omp/agent/pipeline/ : running, history
 
 ## Plan
 
-### Segment 1 — Fondations (en cours)
+### Segment 1 — Fondations (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
-| 1 | `socle-app-swift` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/36 | opencode-go/deepseek-v4.1-flash | Poser la coquille de l'app macOS SwiftUI dans le dépôt, sous un dossier de premier niveau (nom de travail : omp-console) : paquet SwiftPM, cible macOS, fenêtre avec navigation latérale entre les futures vues (Kanban, Sessions, Fichiers, Projet). Un script assemble un bundle .app minimal (Info.plist, identifiant) pour rendre possibles la barre de menus et les notifications des features suivantes, et scripts/check.sh gagne une section « App Swift » exécutée sous macOS seulement — Ubuntu dit « non exécuté » au lieu d'échouer. La réussite se prouve par swift build et swift test verts, l'app lancée à la main qui s'ouvre, et check.sh vert sur macOS comme sur Ubuntu. |
+| 1 | `socle-app-swift` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/36 | opencode-go/deepseek-v4.1-flash | Poser la coquille de l'app macOS SwiftUI dans le dépôt, sous un dossier de premier niveau (nom de travail : omp-console) : paquet SwiftPM, cible macOS, fenêtre avec navigation latérale entre les futures vues (Kanban, Sessions, Fichiers, Projet). Un script assemble un bundle .app minimal (Info.plist, identifiant) pour rendre possibles la barre de menus et les notifications des features suivantes, et scripts/check.sh gagne une section « App Swift » exécutée sous macOS seulement — Ubuntu dit « non exécuté » au lieu d'échouer. La réussite se prouve par swift build et swift test verts, l'app lancée à la main qui s'ouvre, et check.sh vert sur macOS comme sur Ubuntu. |
 | 2 | `canal-de-commande-extension` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/34 | opencode-go/deepseek-v4.1-flash | Donner à un client externe (l'app) le moyen de faire agir le pilote d'un lot sans passer par le TUI : des fichiers de commande atomiques dans le magasin d'état, consommés par le process propriétaire du lot, pour lancer une feature, arrêter un run, valider un jalon (v/y), répondre à une question en vol, et ajouter ou retirer une feature. Chaque commande porte un identifiant et reçoit un accusé écrit dans le magasin (acceptée, ou refusée avec son motif) ; une commande rejouée n'a pas d'effet double, et un client muet ne bloque jamais le pilote. La réussite se prouve par des tests node --test du format, de la consommation, des refus et de l'idempotence, plus un aller-retour manuel où une commande déposée par un script fait démarrer un maillon réel. |
 
-### Segment 2 — Lire le réel (à venir)
+### Segment 2 — Lire le réel (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
