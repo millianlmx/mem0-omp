@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.20.0 — 2026-09-28
+
+- feat(req): /project — cadrage, plan de segments, PROJECT.md et relais des pipelines jusqu'aux PR (aucun bump) (#32) (47ece8b)
+
 ## omp-mem0-memory 2.11.0 — 2026-09-27
 
 - feat(memory): /mem0-purge-procedures — inventorier et supprimer les souvenirs procéduraux (aucun bump) (#29) (927c63b)
