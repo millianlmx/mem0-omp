@@ -615,8 +615,16 @@ function stub(bin: string, name: string, body: string): void {
 
 // AC-1 exige un vrai toolchain : la doublure de la section `── App Swift` (AC-5)
 // ne prouve pas que le paquet compile. Le test est donc joué sur le VRAI swift,
-// et sauté là où il n'existe pas (Ubuntu) ou dans une copie jetable.
+// et sauté dans une copie jetable ou hors macOS.
 test("socle-app-swift/AC-1 : le paquet omp-console compile en debug et en release", (t) => {
+  // L'AC-1 est écrit POUR macOS : la coque SwiftUI/Combine ne compile pas
+  // ailleurs. La garde est la PLATEFORME, pas la présence de `swift` — les
+  // runners ubuntu-latest embarquent un toolchain Swift, et s'y fier faisait
+  // rougir la CI (« no such module 'Combine' »).
+  if (process.platform !== "darwin") {
+    t.skip("macOS seul — la coque SwiftUI ne compile pas ailleurs");
+    return;
+  }
   if (process.env.MEM0_OMP_SKIP_SWIFT_APP === "1") {
     t.skip("copie jetable — la compilation réelle est vérifiée à la racine");
     return;
