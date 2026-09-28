@@ -51,6 +51,28 @@ Deux pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
   (reproduit sur un paquet minimal). Le `-plugin-path` explicite ci-dessus rend
   la suite déterministe.
 
+## Lire le magasin d'état
+
+`Sources/OMPConsole/Store/` est la **couche de lecture** du magasin d'état partagé
+(`~/.omp/agent/pipeline/`, ou `MEM0_PIPELINE_STATE_DIR`) : les six répertoires
+`running`, `history`, `lots`, `projects`, `inbox` et `audit` sont rendus en
+modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
+(`omp-mem0-req/store.ts`, `lot.ts`, `project.ts`).
+
+- `StoreReader` lit une racine et une horloge injectables ; une entrée au schéma
+  incomplet est **écartée et comptée**, jamais rendue partielle ; `availability`
+  distingue « magasin absent » de « magasin vide ».
+- `StoreWatcher` veille un store par **notification du système de fichiers**
+  (source vnode sur le répertoire, jamais de scrutation) et pousse un instantané
+  typé à ses abonnés (`AsyncStream`, multicast) ; `StoreHub` agrège les six en un
+  flux global. L'émission n'a lieu que si l'instantané a changé.
+- La couche est un **lecteur** : aucune API d'écriture n'est appelée, jamais — un
+  propriétaire mort est marqué (`isStale`), ni retiré ni déplacé vers `history/`.
+
+`commands/` ne fait pas partie du périmètre lu. Les vues (kanban, sessions,
+fichiers, projet) consommeront ces flux dans les features suivantes : aucune n'est
+branchée ici.
+
 ## Assembler le bundle `.app`
 
 Depuis la **racine** du dépôt :
@@ -89,7 +111,14 @@ omp-console/
 │   ├── ConsoleRootView.swift      fenêtre, barre latérale, détail
 │   ├── SectionViews.swift         les quatre vues de section
 │   ├── ConsoleSection.swift       les quatre sections et leurs libellés
-│   └── ConsoleModel.swift         l'état : la section courante
+│   ├── ConsoleModel.swift         l'état : la section courante
+│   └── Store/                     la couche de lecture du magasin d'état
+│       ├── PipelineStore.swift    racine du magasin et noms des six stores
+│       ├── StoreModels.swift      modèles typés et validation champ par champ
+│       ├── StoreSnapshot.swift    enveloppes d'un instantané
+│       ├── StoreReader.swift      balayage, filtrage, comptage des illisibles
+│       ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
+│       └── StoreHub.swift         le flux global, agrégat des six
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git
