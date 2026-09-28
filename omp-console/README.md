@@ -51,6 +51,50 @@ Deux pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
   (reproduit sur un paquet minimal). Le `-plugin-path` explicite ci-dessus rend
   la suite déterministe.
 
+## Recette : lire une vraie session
+
+Le paquet ne vend aucun produit exécutable : la recette du lecteur de sessions
+(`SessionReader`, `renderConversation`) passe donc par un test **désactivé par
+défaut**, qui ne tourne que si on le lui demande explicitement.
+
+```bash
+cd omp-console
+MEM0_SESSION_RECIPE="$HOME/.omp/agent/sessions/<bucket>/<horodatage>_<id>.jsonl" \
+MEM0_SESSION_RECIPE_OUT="/tmp/rendu-session.txt" \
+swift test --scratch-path .build-tests \
+  -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
+  --filter recette
+```
+
+`MEM0_SESSION_RECIPE` est le chemin de la session à lire ; `MEM0_SESSION_RECIPE_OUT`
+est le chemin du rendu à écrire (les deux sont requis). Le test n'affirme rien sur
+le contenu : il écrit le rendu et annonce les comptes à confronter.
+
+`--filter recette` (mesuré) porte sur le nom de FONCTION du test, pas sur son titre
+affiché : renommer `recetteManuelleRendUneVraieSession` sans garder « recette »
+dans le nom ferait sélectionner zéro test (sortie « Build complete! » seulement).
+
+À vérifier dans le fichier de sortie :
+
+1. la suite des têtes `== <i> …` est `1…n` sans trou ni répétition (aucune perte, aucun doublon,
+   ordre du fichier) — le nombre de référence est celui des entrées annoncé par la recette, car un
+   corps est rendu verbatim et peut citer une ligne qui ressemble à une tête de bloc ;
+2. les pensées (`-- thinking`), les appels d'outil (`-- tool`, `-- args`) avec
+   leur résultat (`== <i> tool-result …`) et leur diff (`-- diff`) apparaissent ;
+3. les marqueurs `compaction` et `branch-summary` apparaissent là où le fichier
+   les place ;
+4. pendant qu'un run écrit sa session, relancer la même commande sur son `.jsonl`
+   vivant : le rendu est produit sans erreur, la taille et la date du fichier
+   relevées avant et après la lecture sont inchangées, et le run poursuit et se
+   termine sans erreur ;
+5. consigner en revue les commandes exactes, les chemins, la taille du rendu, le
+   nombre d'entrées, le nombre d'ignorées et l'état du run après la lecture.
+
+La CI ne l'exécute **jamais** : ni `.github/workflows/check.yml` ni
+`scripts/swift-app.sh` ne posent ces variables, donc le test est rapporté
+« skipped ».
+
 ## Assembler le bundle `.app`
 
 Depuis la **racine** du dépôt :
@@ -89,7 +133,11 @@ omp-console/
 │   ├── ConsoleRootView.swift      fenêtre, barre latérale, détail
 │   ├── SectionViews.swift         les quatre vues de section
 │   ├── ConsoleSection.swift       les quatre sections et leurs libellés
-│   └── ConsoleModel.swift         l'état : la section courante
+│   ├── ConsoleModel.swift         l'état : la section courante
+│   └── Session/                   le lecteur de sessions (aucune vue, aucune E/S d'écriture)
+│       ├── SessionModel.swift     le modèle de conversation : des valeurs
+│       ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
+│       └── SessionRendering.swift le rendu texte du modèle (fonctions pures)
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git
