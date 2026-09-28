@@ -13,6 +13,7 @@ import { createLotController } from "./lotController.ts";
 import type { LotController } from "./lotController.ts";
 import { modelDialogChoice, modelDialogOptions, modelPanelChoices, modelQuestionTitle } from "./models.ts";
 import { pipelinesPanelFactory } from "./panel.ts";
+import { createProjectRelay } from "./projectRelay.ts";
 import { hostComponents } from "./panelHost.ts";
 import { diskProbe, joinEntry } from "./panelSession.ts";
 import type { SwitchCtx } from "./panelSession.ts";
@@ -122,6 +123,22 @@ export default function reqExtension(pi: ExtensionAPI) {
         code: res.killed ? 124 : res.code,
         stdout: res.stdout ?? "",
         stderr: res.killed ? `gh ${args[0]} : délai dépassé (${GH_TIMEOUT_MS} ms)` : (res.stderr ?? ""),
+      };
+    } catch (err) {
+      return { code: 127, stdout: "", stderr: (err as Error).message };
+    }
+  };
+
+  // git RÉSEAU (fetch, push du projet, `## Documentation` §2) : le même corps que
+  // `run`, avec le budget de `gh` — c'est du réseau, pas une commande locale.
+  const GIT_NET_TIMEOUT_MS = 60_000;
+  const runGitNet: GitRunner = async (args, cwd) => {
+    try {
+      const res = await pi.exec("git", args, { cwd, timeout: GIT_NET_TIMEOUT_MS });
+      return {
+        code: res.killed ? 124 : res.code,
+        stdout: res.stdout ?? "",
+        stderr: res.killed ? `git ${args[0]} : délai dépassé (${GIT_NET_TIMEOUT_MS} ms)` : (res.stderr ?? ""),
       };
     } catch (err) {
       return { code: 127, stdout: "", stderr: (err as Error).message };
@@ -245,6 +262,20 @@ export default function reqExtension(pi: ExtensionAPI) {
   // feature /audit encore vivante) : aucune autre session ne voit ses outils ni
   // sa minuterie.
   const auditRelay = createAuditRelay({ pi, stateDir: storeDir, controllerFor, notify: notifyDurable });
+
+  // --- /project : le relais des questions, jalons et échecs d'un projet --------
+  // Armé seulement dans la session de CADRAGE ouverte par `/project`, ou dans la
+  // session hôte d'un projet en cours du dépôt : aucune autre session ne voit ses
+  // outils ni sa minuterie. Son pilote tourne à chacun de ses balayages.
+  const projectRelay = createProjectRelay({
+    pi,
+    stateDir: storeDir,
+    controllerFor,
+    notify: notifyDurable,
+    runGit: run,
+    runGitNet,
+    runGh,
+  });
 
   // --- /pipelines et alt+w : le panneau des pipelines en cours --------------
   // Un seul panneau par processus : tant qu'un overlay est monté, une seconde
@@ -429,13 +460,18 @@ export default function reqExtension(pi: ExtensionAPI) {
     const controller = controllerFor(ctx);
     if (controller.adopt()) controller.start();
     auditRelay.sync(ctx);
+    // La session hôte d'un projet en cours (`omp --resume` de la session /project)
+    // réarme son relais : le projet reprend là où il en était (S-4).
+    projectRelay.sync(ctx);
   });
 
-  // Une bascule de session (`/new`, `/resume`, `/req`, `/audit`…) ouvre ou ferme
-  // le relais /audit : il suit la session COURANTE du process (S-6).
+  // Une bascule de session (`/new`, `/resume`, `/req`, `/audit`, `/project`…)
+  // ouvre ou ferme les relais /audit et /project : ils suivent la session COURANTE
+  // du process (S-6).
   pi.on("session_switch", async (_event, ctx) => {
     if (isSubagentSession(sessionFileOf(ctx as PipelineCtx)) || workerMode() || runOnly) return;
     auditRelay.sync(ctx);
+    projectRelay.sync(ctx);
   });
 
   // Fermer la session pilote ne doit pas laisser des runs VIVANTS derrière elle :
@@ -456,6 +492,7 @@ export default function reqExtension(pi: ExtensionAPI) {
   pi.on("session_shutdown", async (_event, ctx) => {
     if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
     auditRelay.disarm();
+    projectRelay.disarm();
     try {
       runState.pumpStop?.();
       runState.pumpStop = null;
@@ -706,6 +743,18 @@ export default function reqExtension(pi: ExtensionAPI) {
     },
   });
 
+  // --- /project : cerne le projet, fait valider son plan, lance ses segments ---
+  // Les refus passent AVANT toute écriture et tout `newSession` (S-1) ; le cadrage,
+  // le plan (`project_plan`) et le relais vivent dans projectRelay.ts, armés sur la
+  // session neuve.
+  pi.registerCommand("project", {
+    description:
+      "Cerne le projet par un dialogue, propose un plan de segments de features, puis lance chaque segment en pipelines parallèles jusqu'aux PR — questions et jalons relayés dans cette session",
+    handler: async (args, ctx) => {
+      await projectRelay.runProjectCommand(String(args ?? ""), ctx);
+    },
+  });
+
   // --- /specs : session de spécification ---------------------------------
   // newSession n'existe que sur le contexte de commande (pas sur celui d'un
   // event) — d'où une commande plutôt qu'une détection de mot-clé. Les besoins
@@ -836,6 +885,9 @@ export default function reqExtension(pi: ExtensionAPI) {
 
   // --- before_agent_start : directive + détection de « fin » -------------
   pi.on("before_agent_start", async (event, ctx) => {
+    // Le « fin » du cadrage /project (S-2 §4) : lu d'abord, sans rien changer au
+    // prompt système ni à la logique /req qui suit.
+    projectRelay.onProjectPrompt(event.prompt, ctx);
     const st = stateOfCwd(ctx.cwd);
     if (!st.reqMode) {
       return { systemPrompt: event.systemPrompt };
@@ -1033,8 +1085,12 @@ export * from "./panelRows.ts";
 export * from "./panelSession.ts";
 export * from "./panelView.ts";
 export * from "./panelWidth.ts";
+export * from "./project.ts";
+export * from "./projectDriver.ts";
+export * from "./projectRelay.ts";
 export * from "./publish.ts";
 export * from "./runs.ts";
+export * from "./relay.ts";
 export * from "./seeds.ts";
 export * from "./state.ts";
 export * from "./store.ts";

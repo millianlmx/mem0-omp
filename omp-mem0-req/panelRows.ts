@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, toSlug } from "./git.ts";
-import { AUDIT_RELAY_FOOTER, auditRelayOpen, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, rowReply, runnable } from "./lot.ts";
+import { auditRelayOpen, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, relayFooter, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import { DEFAULT_MODEL_CHOICE, filterModelChoices } from "./models.ts";
@@ -1007,8 +1007,8 @@ export function lotModeRows(
  * une question `ask` en vol se répondent ; un run vivant armé reçoit un texte, et
  * sans boîte il le met en file. `live` est facultatif — sans lui, la règle est
  * celle d'avant le canal (une file), et l'appel à deux arguments reste valide.
- * `relayed` : une feature confiée à une session /audit ouverte (S-3) annonce
- * d'abord le relais, sans réponse à sa question ni `v`/`y`.
+ * `relayed` : une feature confiée à une session /audit ou /project ouverte (S-3,
+ * S-6 §6) annonce d'abord le relais, sans réponse à sa question ni `v`/`y`.
  */
 export function lotFooterActions(
   features: LotFeature[],
@@ -1020,7 +1020,7 @@ export function lotFooterActions(
   if (!feature) return "aucune action";
   const actions: string[] = [];
   const audit = relayed?.[feature.slug] === true;
-  if (audit) actions.push(AUDIT_RELAY_FOOTER);
+  if (audit) actions.push(relayFooter(feature));
   const reply = rowReply(feature, { ...(live?.[feature.slug] ?? {}), auditRelay: audit });
   if (reply.kind === "reply" || reply.kind === "text" || reply.kind === "ask") actions.push("Entrée répondre");
   else if (reply.kind === "steer" || reply.kind === "queue") actions.push("Entrée écrire");

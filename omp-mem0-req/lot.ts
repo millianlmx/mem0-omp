@@ -128,12 +128,25 @@ export type LotFeature = {
    */
   held?: HeldLaunch;
   /**
-   * Chemin ABSOLU du fichier de la session /audit qui a lancé la feature : ses
+   * La CLÉ DE RELAIS de la feature : le chemin ABSOLU du fichier de la session
+   * /audit qui l'a lancée, ou la `relayKey` du projet /project qui l'a lancée. Ses
    * questions et ses jalons sont relayés à cette session tant que son relais est
    * ouvert (`auditRelayOpen`). Absent : feature de lot ordinaire. Jamais modifié
-   * par une transition.
+   * par une transition — le nom du champ reste celui d'origine (champ persisté).
    */
   auditSession?: string;
+  /**
+   * Le GENRE du relais (S-6) : `"project"` pour une feature lancée par /project —
+   * le panneau dit alors « /project » au lieu de « /audit ». Absent : relais
+   * /audit (ou aucun). Écrit à la création, jamais modifié.
+   */
+  relayKind?: "project";
+  /**
+   * Le sha de DÉPART du worktree (S-7) : la branche par défaut du distant,
+   * fraîchement récupérée pour le segment du projet. Absent : `HEAD` du dépôt
+   * principal (comportement d'avant). Écrit à la création, jamais modifié.
+   */
+  base?: string;
   /**
    * Le modèle de la feature (S-1) : le sélecteur canonique `provider/id`, EXACTEMENT
    * la valeur passée à `--model` sur tous ses runs. Absent = défaut OMP (aucun
@@ -388,6 +401,36 @@ export const AUDIT_RELAY_MILESTONE_REFUSAL = "jalon confié à la session /audit
 /** Premier item du pied d'une feature relayée (S-3). */
 export const AUDIT_RELAY_FOOTER = "relayé à /audit";
 
+/** Refus d'écriture d'une question confiée à /project, mot pour mot (S-6 §6). */
+export const PROJECT_RELAY_REFUSAL = "question confiée à la session /project — elle revient ici si cette session se ferme";
+
+/** Refus des touches `v`/`y` sur un jalon confié à /project, mot pour mot (S-6 §6). */
+export const PROJECT_RELAY_MILESTONE_REFUSAL = "jalon confié à la session /project — il revient ici si cette session se ferme";
+
+/** Premier item du pied d'une feature relayée à /project (S-6 §6). */
+export const PROJECT_RELAY_FOOTER = "relayé à /project";
+
+
+/** Le refus d'écriture d'une question relayée : le texte du GENRE de relais de la feature. */
+export function relayRefusal(feature: LotFeature): string {
+  return feature.relayKind === "project" ? PROJECT_RELAY_REFUSAL : AUDIT_RELAY_REFUSAL;
+}
+
+/** Le refus de `v`/`y` sur un jalon relayé, selon le genre de relais de la feature. */
+export function relayMilestoneRefusal(feature: LotFeature): string {
+  return feature.relayKind === "project" ? PROJECT_RELAY_MILESTONE_REFUSAL : AUDIT_RELAY_MILESTONE_REFUSAL;
+}
+
+/** Le premier item du pied d'une feature relayée, selon son genre de relais. */
+export function relayFooter(feature: LotFeature): string {
+  return feature.relayKind === "project" ? PROJECT_RELAY_FOOTER : AUDIT_RELAY_FOOTER;
+}
+
+/** Le motif d'un refus d'écriture est-il celui d'une question relayée (l'un des deux genres) ? */
+export function isRelayRefusal(reason: string): boolean {
+  return reason === AUDIT_RELAY_REFUSAL || reason === PROJECT_RELAY_REFUSAL;
+}
+
 
 /**
  * Ce qu'une feature du lot accepte, dans cet ordre (S-11, S-6, S-7, S-8) : la
@@ -400,10 +443,11 @@ export const AUDIT_RELAY_FOOTER = "relayé à /audit";
  */
 export function rowReply(feature: LotFeature, live?: RowLiveWriter | null): RowReply {
   const reply = rowReplyOf(feature, live);
-  // Une question confiée à /audit ne se répond pas ici : c'est la session /audit
-  // qui la tranche (S-3). Les autres écritures (steer, file, texte) restent.
+  // Une question relayée ne se répond pas ici : c'est la session /audit ou
+  // /project qui la tranche (S-3, S-6 §6). Les autres écritures (steer, file,
+  // texte) restent.
   if (live?.auditRelay === true && (reply.kind === "ask" || reply.kind === "reply")) {
-    return { kind: "closed", reason: AUDIT_RELAY_REFUSAL };
+    return { kind: "closed", reason: relayRefusal(feature) };
   }
   return reply;
 }
@@ -551,6 +595,15 @@ export function asHeldLaunch(raw: unknown): HeldLaunch | null {
 }
 
 
+/**
+ * Un sha de base de worktree valide (S-7) : 40 hexadécimaux minuscules (SHA-1) ou
+ * 64 (SHA-256) — la seule forme que le lot écrit et relit dans `LotFeature.base`.
+ */
+export function isLotBaseSha(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(value);
+}
+
+
 /** Validation champ par champ : un fichier au schéma incomplet est rejeté. */
 export function asLotFeature(raw: unknown): LotFeature | null {
   if (!raw || typeof raw !== "object") return null;
@@ -620,6 +673,10 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // Même patron : écrite seulement quand elle porte un chemin absolu ; toute autre
     // valeur est lue comme absente, sans rejeter la feature ni le lot.
     ...(typeof f.auditSession === "string" && path.isAbsolute(f.auditSession) ? { auditSession: f.auditSession } : {}),
+    // Le genre de relais et la base (S-7) : même patron — relus seulement s'ils
+    // valent exactement `"project"` / un sha complet, sinon absents (jamais un rejet).
+    ...(f.relayKind === "project" ? { relayKind: "project" as const } : {}),
+    ...(isLotBaseSha(f.base) ? { base: f.base } : {}),
     // Le modèle (S-1) : écrit seulement s'il est non vide après `trim()` — toute
     // autre valeur (`""`, `42`, `null`) est lue comme ABSENTE, jamais un rejet. La
     // valeur n'est pas revalidée contre le catalogue : un modèle retiré depuis le

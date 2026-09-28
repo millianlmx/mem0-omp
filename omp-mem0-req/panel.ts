@@ -2,7 +2,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { realpathOr } from "./git.ts";
-import { AUDIT_RELAY_MILESTONE_REFUSAL, AUDIT_RELAY_REFUSAL, LOT_EDITOR_MAX, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, rowReply } from "./lot.ts";
+import { LOT_EDITOR_MAX, isRelayRefusal, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, relayMilestoneRefusal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
 import { DEFAULT_MODEL_CHOICE, featureModelOf, filterModelChoices } from "./models.ts";
@@ -540,8 +540,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             });
           case "closed":
             // Le motif de la règle est gardé quand il dit OÙ répondre : la collecte
-            // en session, et la question confiée à la session /audit (S-3).
-            if ((row.origin === "session" && row.phase === "req") || reply.reason === AUDIT_RELAY_REFUSAL) {
+            // en session, et la question confiée à la session /audit ou /project
+            // (S-3, S-6 §6).
+            if ((row.origin === "session" && row.phase === "req") || isRelayRefusal(reply.reason)) {
               return { kind: "closed", reason: reply.reason };
             }
             return { kind: "closed", reason: readOnlyReason(model.lot ?? null, row) };
@@ -1254,10 +1255,10 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         showNotice(`annulation en cours — ${feature.slug}`);
         return true;
       }
-      // Un jalon confié à la session /audit ne se valide pas ici (S-3) : aucun
-      // aperçu, aucun appel au pilote, le geste est consommé.
+      // Un jalon confié à la session /audit ou /project ne se valide pas ici (S-3,
+      // S-6 §6) : aucun aperçu, aucun appel au pilote, le geste est consommé.
       if ((data === "v" || data === "y") && model.relayed[feature.slug] === true) {
-        showNotice(AUDIT_RELAY_MILESTONE_REFUSAL);
+        showNotice(relayMilestoneRefusal(feature));
         return true;
       }
       /** L'aperçu d'un geste : c'est lui que `Entrée` exécute, et `Échap` l'abandonne. */
@@ -1789,7 +1790,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (data === "v") {
         const feature = selectedFeature();
         if (feature && model.relayed[feature.slug] === true) {
-          showNotice(AUDIT_RELAY_MILESTONE_REFUSAL);
+          showNotice(relayMilestoneRefusal(feature));
           return;
         }
         if (!feature || feature.state !== "waiting" || feature.waitKind !== "specs") {
@@ -1803,7 +1804,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (data === "y") {
         const feature = selectedFeature();
         if (feature && model.relayed[feature.slug] === true) {
-          showNotice(AUDIT_RELAY_MILESTONE_REFUSAL);
+          showNotice(relayMilestoneRefusal(feature));
           return;
         }
         if (!feature || feature.state !== "waiting" || feature.waitKind !== "review") {

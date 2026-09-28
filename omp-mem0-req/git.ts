@@ -186,13 +186,16 @@ export async function branchTaken(run: GitRunner, primaryRoot: string, branch: s
 /**
  * Crée le worktree de la feature depuis le dépôt principal. Aucun `--force`,
  * aucun commit, aucune commande distante : `git worktree add -b feat/<slug> <chemin>
- * HEAD`. L'arbre est vierge (le refus de git est la garantie, jamais un `rm`).
+ * <base>`, où `<base>` est `HEAD` par défaut — ou le sha de départ d'une feature de
+ * projet (S-7 : la branche par défaut du distant, fraîchement récupérée). L'arbre
+ * est vierge (le refus de git est la garantie, jamais un `rm`).
  */
 export async function createFeatureWorktree(input: {
   run: GitRunner;
   primaryRoot: string;
   slug: string;
   baseDir: string;
+  base?: string;
 }): Promise<{ ok: true; path: string; branch: string } | { ok: false; error: string }> {
   const { run, primaryRoot, slug, baseDir } = input;
   const branch = branchFor(slug);
@@ -208,7 +211,7 @@ export async function createFeatureWorktree(input: {
     return { ok: false, error: (err as Error).message };
   }
 
-  const add = await run(["worktree", "add", "-b", branch, target, "HEAD"], primaryRoot);
+  const add = await run(["worktree", "add", "-b", branch, target, input.base ?? "HEAD"], primaryRoot);
   if (add.code !== 0) {
     return { ok: false, error: add.stderr.trim() || `git worktree add a échoué (code ${add.code})` };
   }
