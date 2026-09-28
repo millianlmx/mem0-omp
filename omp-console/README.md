@@ -2,9 +2,9 @@
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
 contrôle : une fenêtre, une barre latérale à quatre sections — **Kanban**,
-**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. Chaque vue
-n'affiche aujourd'hui qu'un contenu de remplacement : **aucune logique métier**
-n'y vit encore. Cible minimale : macOS 14.
+**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. La section
+**Kanban** affiche le tableau des pipelines (voir « Section Kanban » ci-dessous) ;
+les trois autres gardent un contenu de remplacement. Cible minimale : macOS 14.
 
 ## Prérequis
 
@@ -60,8 +60,11 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
 (`omp-mem0-req/store.ts`, `lot.ts`, `project.ts`).
 
 - `StoreReader` lit une racine et une horloge injectables ; une entrée au schéma
-  incomplet est **écartée et comptée**, jamais rendue partielle ; `availability`
-  distingue « magasin absent » de « magasin vide ».
+  incomplet est **écartée et nommée** (`discardedEntries` : le fichier
+  `<store>/<nom>` et la raison — `JSON illisible` ou `schéma incomplet ou
+  inconnu`), jamais rendue partielle ; `availability` distingue « magasin absent »
+  de « magasin vide » pour chaque store, et `StoreSnapshot.root` porte la
+  disponibilité de la **racine** elle-même.
 - `StoreWatcher` veille un store par **notification du système de fichiers**
   (source vnode sur le répertoire, jamais de scrutation) et pousse un instantané
   typé à ses abonnés (`AsyncStream`, multicast) ; `StoreHub` agrège les six en un
@@ -69,9 +72,126 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
 - La couche est un **lecteur** : aucune API d'écriture n'est appelée, jamais — un
   propriétaire mort est marqué (`isStale`), ni retiré ni déplacé vers `history/`.
 
-`commands/` ne fait pas partie du périmètre lu. Les vues (kanban, sessions,
-fichiers, projet) consommeront ces flux dans les features suivantes : aucune n'est
-branchée ici.
+`commands/` ne fait pas partie du périmètre lu. La section **Kanban** consomme ce
+flux global ; les sections Sessions, Fichiers et Projet restent à leurs features
+ultérieures.
+
+## Section Kanban
+
+`Sources/OMPConsole/Kanban/` est le **tableau des pipelines** : une ardoise unique
+mêlant **tous** les dépôts, peuplée depuis le seul magasin d'état partagé — les
+features de projet (`projects`), les features de lot (`lots`), les runs hors lot
+(`running`) et les vingt clôtures les plus récentes (`history`, même borne que
+`/pipelines`). C'est un **lecteur pur** : aucune API d'écriture n'est appelée, un
+propriétaire mort n'est ni déplacé vers `history/` ni retiré (à la différence du
+panneau `/pipelines`, qui réconcilie).
+
+### Les onze colonnes
+
+En-tête d'une colonne : `<libellé> (<n>)`. Chaque carte est rangée dans
+**exactement une** colonne ; les onze colonnes sont toujours affichées, même vides.
+
+| `KanbanColumn` (`rawValue`, identifiant AX) | Libellé |
+|---|---|
+| `en-attente` | En attente |
+| `en-cours` | En cours |
+| `question-en-vol` | Question en vol |
+| `pr-ouverte` | PR ouverte |
+| `fusionne` | Fusionné |
+| `echec` | Échec |
+| `jalon-specs` | Jalon specs |
+| `jalon-review` | Jalon review |
+| `bloquee` | Bloquée |
+| `terminee-sans-pr` | Terminée sans PR |
+| `annulee-retiree` | Annulée / retirée |
+
+### Les trois messages d'état
+
+| Situation | Message |
+|---|---|
+| aucun instantané reçu encore | `Chargement du magasin d'état…` |
+| la racine `<stateDir>` n'existe pas | `Magasin d'état absent : <stateDir>` |
+| la racine existe, aucune carte ni anomalie | `Magasin d'état vide : <stateDir>` |
+
+Un magasin qui ne contient que des fichiers illisibles rend le **tableau** (colonnes
+vides + bandeau), jamais « vide » : les anomalies ne sont jamais tues. Le panneau de
+détail sans sélection écrit `Aucune carte sélectionnée`.
+
+### Identifiants d'accessibilité
+
+| Identifiant | Surface |
+|---|---|
+| `kanban.board` | la racine du tableau (focus clavier) |
+| `kanban.column.<rawValue>` | une colonne |
+| `kanban.card.<id>` | une carte (`feature:<clé>:<slug>`, `project:<clé>:<slug>`, `run:<id>`, `history:<id>`) |
+| `kanban.banner` | le bandeau d'anomalies (absent s'il n'y en a aucune) |
+| `kanban.anomaly.<i>` | une ligne d'anomalie |
+| `kanban.detail` | le panneau de détail (carte sélectionnée) |
+| `kanban.detail.empty` | le panneau sans sélection |
+| `kanban.empty` | les deux messages « absent » / « vide » |
+| `kanban.loading` | le message de chargement |
+
+Clavier (le tableau a le focus) : `↓`/`↑` carte suivante/précédente, `→`/`←` première
+carte de la colonne suivante/précédente non vide. Clic simple sur une carte :
+sélection + surbrillance + panneau de détail. Sélectionner une carte ne change
+**jamais** de section : la barre latérale reste sur Kanban, et Sessions, Fichiers et
+Projet gardent leur contenu de remplacement.
+
+### Parité avec `/pipelines`
+
+Sur le même magasin, toute entité lue par `/pipelines` a sa carte au même état :
+
+| `/pipelines` | Tableau Kanban |
+|---|---|
+| rang de feature du lot | carte `feature:<clé>:<slug>`, dans la colonne de son état |
+| rang `running` non apparié | carte `run:<id>` |
+| rang `history` (20 plus récents) | carte `history:<id>` |
+| run apparié à une feature | **fusionné** : une feature = une carte |
+| colonne de droite `/phase · état · temps` | `phase`, `state`, `durée` de la carte |
+| rang `PR : <url>` (feature `done`) | `PR : <url>` de la carte |
+| en-tête « pilote : … mort » | marque `mort` + ligne de bandeau |
+| avis « N fichier(s) d'état illisible(s) » | une ligne de bandeau par fichier |
+
+Deux écarts **délibérés** : `/pipelines` réconcilie les propriétaires morts (le
+tableau, lui, marque la carte `mort` en `Échec` sur place), et les features de
+projet sans lot sont un ajout du tableau — elles font partie des sources (B-2).
+`inbox/` et `audit/` ne sont pas des cartes.
+
+### Recette : vivacité à l'écran
+
+Le paquet ne vend aucun produit exécutable : la preuve graphique passe par le bundle
+et une sonde AX (recette manuelle, jamais exécutée par la CI).
+
+```bash
+bash scripts/swift-app.sh                       # depuis la racine du dépôt
+MEM0_PIPELINE_STATE_DIR=/tmp/magasin-jetable \
+  nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" >/tmp/omp-console.log 2>&1 &
+```
+
+Lancer le binaire **directement** (pas `open`) : son `cwd` porte alors `.git`. Puis,
+avec une sonde AX (`AXUIElementCreateApplication(pid)` + parcours de
+`kAXChildrenAttribute`) :
+
+1. lire `kanban.card.<id>` deux fois à 2 s d'intervalle ⇒ la durée a augmenté ;
+2. publier un `running/<id>.json` de fixture dans le magasin jetable ⇒ la carte
+   apparaît ; le supprimer ⇒ elle disparaît ; réécrire son état ⇒ elle change de
+   colonne ;
+3. cliquer une carte (clic souris réel) ⇒ `kanban.detail` décrit la carte et la
+   surbrillance suit ; lire la barre latérale ⇒ la section reste **Kanban** ;
+4. relever `kanban.banner` / `kanban.anomaly.<i>` après avoir déposé un fichier
+   tronqué dans le magasin.
+
+Le magasin jetable est **obligatoire** : la recette ne touche jamais
+`~/.omp/agent/pipeline` de la machine.
+
+### Recette : parité avec `/pipelines`
+
+Sur le **même** magasin, ouvrir `/pipelines` dans une session OMP puis comparer rang
+par rang selon la table ci-dessus (dépôt, entités, colonnes, anomalies). Pour un
+propriétaire mort, laisser `/pipelines` réconcilier d'abord : le tableau voit alors
+l'entrée d'historique et la parité tient. Consigner les relevés dans la section
+`## Revue` du contrat.
+
 ## Recette : lire une vraie session
 
 Le paquet ne vend aucun produit exécutable : la recette du lecteur de sessions
@@ -241,13 +361,21 @@ omp-console/
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
 │   │   └── SessionRendering.swift le rendu texte du modèle (fonctions pures)
-│   └── Store/                     la couche de lecture du magasin d'état
-│       ├── PipelineStore.swift    racine du magasin et noms des six stores
-│       ├── StoreModels.swift      modèles typés et validation champ par champ
-│       ├── StoreSnapshot.swift    enveloppes d'un instantané
-│       ├── StoreReader.swift      balayage, filtrage, comptage des illisibles
-│       ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
-│       └── StoreHub.swift         le flux global, agrégat des six
+│   ├── Store/                     la couche de lecture du magasin d'état
+│   │   ├── PipelineStore.swift    racine du magasin et noms des six stores
+│   │   ├── StoreModels.swift      modèles typés et validation champ par champ
+│   │   ├── StoreSnapshot.swift    enveloppes d'un instantané
+│   │   ├── StoreReader.swift      balayage, filtrage, entrées écartées nommées
+│   │   ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
+│   │   └── StoreHub.swift         le flux global, agrégat des six
+│   └── Kanban/                    le tableau des pipelines (lecture seule)
+│       ├── KanbanModels.swift     colonnes, cartes, sources, marques, clé de dépôt
+│       ├── KanbanBoard.swift      construction pure de l'ardoise, textes de parité
+│       ├── KanbanAnomalies.swift  illisible, mort, doublon : bandeau et marques
+│       ├── KanbanModel.swift      abonnement au flux, sélection, clavier
+│       ├── KanbanView.swift       la section : bandeau, onze colonnes, clavier
+│       ├── KanbanCardView.swift   une carte cliquable (durée sous TimelineView)
+│       └── KanbanDetailView.swift le panneau de détail
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git
