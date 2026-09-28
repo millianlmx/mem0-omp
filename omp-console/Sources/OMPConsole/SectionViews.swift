@@ -41,11 +41,6 @@ struct SessionsView: ConsoleSectionView {
     var body: some View { PlaceholderPane(section: Self.section) }
 }
 
-struct FilesView: ConsoleSectionView {
-    static let section = ConsoleSection.files
-    var body: some View { PlaceholderPane(section: Self.section) }
-}
-
 struct ProjectView: ConsoleSectionView {
     static let section = ConsoleSection.project
     var body: some View { PlaceholderPane(section: Self.section) }
@@ -53,14 +48,19 @@ struct ProjectView: ConsoleSectionView {
 
 /// SEUL endroit qui associe une section à sa vue : le `switch` est exhaustif,
 /// donc ajouter un cas à `ConsoleSection` sans lui donner de vue ne compile pas.
+///
+/// `FilesView` vit avec sa feature (`Files/FilesView.swift`) et reçoit le modèle de
+/// la section : c'est la seule vue qui porte un état, donc la seule à qui la coque
+/// transmet quelque chose.
 struct SectionDetail: View {
     let section: ConsoleSection
+    let filesModel: FilesModel
 
     var body: some View {
         switch section {
         case .kanban: KanbanView()
         case .sessions: SessionsView()
-        case .files: FilesView()
+        case .files: FilesView(model: filesModel)
         case .project: ProjectView()
         }
     }

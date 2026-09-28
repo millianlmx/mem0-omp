@@ -23,11 +23,12 @@ import SwiftUI
 struct OMPConsoleApp: App {
     @StateObject private var model = ConsoleModel()
     @StateObject private var sessionModel = SessionConsoleModel()
+    @StateObject private var filesModel = FilesModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         WindowGroup("OMP Console") {
-            ConsoleRootView(model: model)
+            ConsoleRootView(model: model, filesModel: filesModel)
         }
 
         Window("Session OMP", id: "session") {

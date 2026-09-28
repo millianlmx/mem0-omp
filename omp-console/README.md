@@ -2,9 +2,10 @@
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
 contrôle : une fenêtre, une barre latérale à quatre sections — **Kanban**,
-**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. Chaque vue
-n'affiche aujourd'hui qu'un contenu de remplacement : **aucune logique métier**
-n'y vit encore. Cible minimale : macOS 14.
+**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. Trois sections
+affichent encore un contenu de remplacement ; la section **Fichiers** est la
+visionneuse de fichiers et de diffs (voir « Lire les fichiers et les diffs d'une
+cible »). Cible minimale : macOS 14.
 
 ## Prérequis
 
@@ -70,8 +71,67 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
   propriétaire mort est marqué (`isStale`), ni retiré ni déplacé vers `history/`.
 
 `commands/` ne fait pas partie du périmètre lu. Les vues (kanban, sessions,
-fichiers, projet) consommeront ces flux dans les features suivantes : aucune n'est
-branchée ici.
+fichiers, projet) consommeront ces flux dans les features suivantes : seule la
+section « Fichiers » en consomme pour l'instant le lot de la feature active.
+
+## Lire les fichiers et les diffs d'une cible
+
+La section **Fichiers** est une visionneuse **strictement en lecture** de l'arbre
+d'une cible git — le dépôt principal ou l'un des worktrees `feat/*` connus, une
+seule cible à la fois.
+
+1. **Choisir la cible** — le sélecteur « Cible » de l'en-tête. La cible par défaut
+   est celle du projet ouvert (la préférence partagée `session.projectRoot` avec la
+   fenêtre « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
+   base de comparaison : `HEAD` pour le principal, ou `base <sha7>` — la base
+   enregistrée de la feature dans le magasin d'état, à défaut la base de fusion avec
+   la branche par défaut du principal.
+2. **Parcourir l'arbre** — colonne de gauche : fichiers **suivis** et **non suivis**
+   de la cible, `.gitignore` appliqué. Un fichier suivi supprimé sur disque y reste,
+   avec le badge « supprimé » ; un fichier ignoré par git (le contrat de la
+   pipeline, par exemple) n'y figure jamais.
+3. **Lire un fichier** — un clic (ou ↑/↓) publie à droite son **diff** puis son
+   **contenu** : le diff couvre tout l'écart entre la cible et sa base (commits de la
+   branche **et** modifications non commitées) ; un fichier non suivi y apparaît
+   comme un ajout complet. Le diff est rendu en une seule colonne, hunks dans
+   l'ordre de git, retraits en rouge, ajouts en vert — et jamais par la couleur
+   seule : le `-` et le `+` de tête sont toujours là.
+4. **Les deux documents de pilotage, hors arbre** — les boutons **Contrat**
+   (`.omp/pipeline/contract.md` de la cible active, que git ignore donc qui ne peut
+   pas figurer dans l'arbre) et **PROJECT.md** (à la racine de la cible). Absents,
+   ils l'annoncent au lieu d'afficher un contenu vide ou celui d'une autre cible.
+5. **Suivre les changements** — la cible active est surveillée par **FSEvents** (un
+   seul descripteur récursif sur sa racine) : un fichier ajouté ou modifié met
+   l'arbre et le document à jour sans geste, au plus un rechargement par 300 ms
+   d'accalmie. Pas de scrutation périodique. **⌘R** (ou « Rafraîchir ») force un
+   rechargement immédiat.
+
+**Garanties de lecture seule.** Les seules commandes git employées sont
+`ls-files -z --cached`, `ls-files -z --others --exclude-standard`,
+`diff --no-color --no-ext-diff <base> -- <chemin>`,
+`diff --no-color --no-ext-diff --no-index -- /dev/null <chemin>`,
+`worktree list --porcelain`, `rev-parse --git-common-dir`, `rev-parse --abbrev-ref
+HEAD`, `symbolic-ref --short --quiet refs/remotes/origin/HEAD` et `merge-base` —
+toutes préfixées de `-C <répertoire> -c core.pager=cat`, jamais par un shell. Ni
+`git add` (donc jamais `-N`), ni `update-index`, ni `git status` (qui rafraîchit
+l'index), ni aucune autre commande d'écriture. Le contenu d'un fichier non suivi
+passe par `--no-index`, qui ne touche pas l'index : le fichier reste `??`. Les
+tests de la suite le vérifient sur une cible réelle, `git status --porcelain`,
+l'empreinte du fichier d'index et les empreintes de tous les fichiers à l'appui.
+
+**Mesure du 2026-09-28** (poste millian, Swift 6.4 CLT seuls, git 2.54.0) :
+`bash scripts/swift-app.sh` — compilation release et **177 tests verts**, bundle
+assemblé puis signature vérifiée ; `bash scripts/check.sh` — « Dépôt prêt à
+publier. ». Les deux recettes (session, cible) sont rapportées « skipped » : aucun
+script de CI ne pose leurs variables.
+
+Les gestes à l'écran (choisir une cible dans le sélecteur, déplier l'arbre, voir le
+diff coloré, ⌘R) restent une **vérification manuelle du poste** : dans un shell de
+pipeline sans session d'affichage, le bundle se lance et son état est vivant —
+l'application est bien au premier plan (`OMP Console` dans la barre de menus) et son
+arbre d'accessibilité expose sa fenêtre et ses quatre sections — mais la fenêtre
+n'est peinte sur aucun écran, donc une capture d'écran ne la montre pas.
+
 ## Recette : lire une vraie session
 
 Le paquet ne vend aucun produit exécutable : la recette du lecteur de sessions
@@ -111,6 +171,62 @@ dans le nom ferait sélectionner zéro test (sortie « Build complete! » seulem
    termine sans erreur ;
 5. consigner en revue les commandes exactes, les chemins, la taille du rendu, le
    nombre d'entrées, le nombre d'ignorées et l'état du run après la lecture.
+
+La CI ne l'exécute **jamais** : ni `.github/workflows/check.yml` ni
+`scripts/swift-app.sh` ne posent ces variables, donc le test est rapporté
+« skipped ».
+
+## Recette : lire une vraie cible
+
+La visionneuse n'a pas non plus de produit exécutable à elle : sa recette passe par
+le même véhicule — un test **désactivé par défaut**, qui n'écrit rien dans la cible
+et se contente de rendre ce que la section afficherait.
+
+```bash
+cd omp-console
+MEM0_FILES_RECIPE="$HOME/.omp/pipeline-worktrees/<lot>/<slug>" \
+MEM0_FILES_RECIPE_OUT="/tmp/rendu-visionneuse.txt" \
+swift test --scratch-path .build-tests \
+  -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
+  --filter recette
+```
+
+`MEM0_FILES_RECIPE` est le chemin de la cible à lire (un worktree de feature, ou le
+dépôt principal) ; `MEM0_FILES_RECIPE_OUT` est le chemin du rendu à écrire (les deux
+sont requis). Le test n'affirme rien sur le contenu : il écrit le rendu et annonce
+les comptes à confronter.
+
+Le rendu porte quatre sections : la **cible active** (libellé, chemin, branche,
+base), le **catalogue** des cibles connues, l'**arbre** (une ligne par entrée, avec
+son badge), le **diff** d'un fichier choisi et le **contenu** du premier fichier de
+l'arbre. Le fichier du diff est un fichier **non suivi** s'il en existe un (son diff
+est un ajout complet, garanti non vide), sinon le premier des 60 premiers fichiers
+suivis qui porte une différence — la borne est écrite dans le rendu : sur un dépôt de
+plusieurs milliers de fichiers, demander un diff à git pour chacun coûterait des
+minutes à une recette qui n'a rien de plus à prouver. Le contenu est écrit **tel
+quel** (aucune troncature dans le produit), borné à 200 lignes avec la marque
+explicite de ce qui a été omis.
+
+Mesure du 2026-09-28 (worktree `feat/visionneuse-de-fichiers-et-diffs`, contrat
+présent, fichiers non suivis créés par la feature) :
+
+```
+recette : …/visionneuse-de-fichiers-et-diffs → /tmp/rendu-visionneuse.txt ;
+15 cibles, 177 entrées, 17274 octets de rendu
+```
+
+À vérifier dans le fichier de sortie :
+
+1. la cible active est bien celle passée en argument, et sa base correspond à
+   `git -C <cible> rev-parse --abbrev-ref HEAD` / au sha enregistré de la feature
+   (le catalogue liste le principal et les worktrees `feat/*` du poste) ;
+2. l'arbre contient les fichiers suivis ET non suivis, à leur chemin relatif, et
+   aucun fichier ignoré (le contrat, un répertoire `build/`) ;
+3. le diff commence par `diff --git`, porte `--- /dev/null` et un hunk `@@ -0,0 +1,N @@`
+   pour un fichier non suivi, et chaque ligne ajoutée commence par `+` ;
+4. `git -C <cible> status --porcelain` reste identique avant et après la recette, et
+   aucun fichier de la cible n'a été modifié.
 
 La CI ne l'exécute **jamais** : ni `.github/workflows/check.yml` ni
 `scripts/swift-app.sh` ne posent ces variables, donc le test est rapporté
@@ -229,6 +345,7 @@ omp-console/
 │   ├── SectionViews.swift         les quatre vues de section
 │   ├── ConsoleSection.swift       les quatre sections et leurs libellés
 │   ├── ConsoleModel.swift         l'état : la section courante
+│   ├── ProjectRoot.swift          le projet ouvert, résolu en UN endroit (clé partagée)
 │   ├── SessionConsoleView.swift   fenêtre « Session OMP » (cinq zones, tous les états)
 │   ├── SessionConsoleModel.swift  projet, mode, prompt, dialogue, statut, actions
 │   ├── SessionHost.swift          session hébergée : poignée de main, corrélation,
@@ -241,13 +358,23 @@ omp-console/
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
 │   │   └── SessionRendering.swift le rendu texte du modèle (fonctions pures)
-│   └── Store/                     la couche de lecture du magasin d'état
-│       ├── PipelineStore.swift    racine du magasin et noms des six stores
-│       ├── StoreModels.swift      modèles typés et validation champ par champ
-│       ├── StoreSnapshot.swift    enveloppes d'un instantané
-│       ├── StoreReader.swift      balayage, filtrage, comptage des illisibles
-│       ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
-│       └── StoreHub.swift         le flux global, agrégat des six
+│   ├── Store/                     la couche de lecture du magasin d'état
+│   │   ├── PipelineStore.swift    racine du magasin et noms des six stores
+│   │   ├── StoreModels.swift      modèles typés et validation champ par champ
+│   │   ├── StoreSnapshot.swift    enveloppes d'un instantané
+│   │   ├── StoreReader.swift      balayage, filtrage, comptage des illisibles
+│   │   ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
+│   │   └── StoreHub.swift         le flux global, agrégat des six
+│   └── Files/                     la visionneuse de fichiers et de diffs (lecture seule)
+│       ├── GitCLI.swift           binaires, argv purs et exécution : la SEULE surface git
+│       ├── FilesTarget.swift      catalogue des cibles et base de comparaison
+│       ├── FilesTree.swift        l'arbre d'une cible (suivis, non suivis, supprimés)
+│       ├── FilesReader.swift      le contenu d'un fichier, exactement
+│       ├── FilesDiff.swift        le diff unifié découpé en lignes typées
+│       ├── TreeWatcher.swift      veille FSEvents récursive de la cible active
+│       ├── FilesModel.swift       l'état de la section : cible, arbre, document, veille
+│       ├── FilesText.swift        tous les textes de la section, en un endroit
+│       └── FilesView.swift        la section : en-tête, arbre, document, états
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git
