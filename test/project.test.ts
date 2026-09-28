@@ -634,9 +634,20 @@ async function withStateDir<T>(dir: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-/** La liste récursive des fichiers et dossiers d'un répertoire. */
+/**
+ * La liste récursive des fichiers et dossiers d'un répertoire, SANS l'intérieur de
+ * `.git` : git y écrit tout seul (maintenance en tâche de fond, verrous, index
+ * rafraîchi). MESURÉ en CI le 2026-09-28 : `.git/objects/maintenance.lock` est
+ * apparu entre les deux relevés d'AC-10 et a fait échouer une comparaison stricte
+ * alors que la commande n'avait rien écrit. `.git` reste contrôlé, mais à part :
+ * aucun `.git` créé, `HEAD`, l'index et l'arbre de travail inchangés.
+ */
 function listTree(dir: string): string[] {
-  return (fs.readdirSync(dir, { recursive: true }) as string[]).map(String).sort();
+  const insideGit = `.git${path.sep}`;
+  return (fs.readdirSync(dir, { recursive: true }) as string[])
+    .map(String)
+    .filter((entry) => entry !== ".git" && !entry.startsWith(insideGit))
+    .sort();
 }
 
 /** Le document PROJECT.md de la branche `omp-project` d'un dépôt (ou d'un distant nu). */
@@ -676,6 +687,7 @@ test("project/AC-10 : sans dépôt git, ou sans distant GitHub, /project refuse 
     const stateDir = path.join(mktmp("project-ac10-"), "pipeline");
     const treeBefore = listTree(dir);
     const remotesBefore = scenario.git ? git(dir, ["remote", "-v"]) : null;
+    const headBefore = scenario.git ? git(dir, ["rev-parse", "HEAD"]) : null;
     const { ui, calls } = mkUi([]);
     const current = { file: sessionFileIn(mktmp("project-ac10-s-"), "avant.jsonl") };
     const { ctx, sessions } = appCtx(dir, current, ui, path.join(dir, "jamais.jsonl"));
@@ -693,9 +705,12 @@ test("project/AC-10 : sans dépôt git, ou sans distant GitHub, /project refuse 
     assert.equal(sessions(), 0, `${scenario.label} : aucune session neuve`);
     assert.deepEqual(app.seeds, [], `${scenario.label} : aucune amorce`);
     assert.equal(fs.existsSync(path.join(stateDir, "projects")), false, `${scenario.label} : aucun projet`);
-    assert.deepEqual(listTree(dir), treeBefore, `${scenario.label} : aucun fichier créé ni modifié`);
-    if (scenario.git) assert.equal(git(dir, ["remote", "-v"]), remotesBefore, `${scenario.label} : distant inchangé`);
-    else assert.equal(fs.existsSync(path.join(dir, ".git")), false, `${scenario.label} : aucun dépôt créé`);
+    assert.deepEqual(listTree(dir), treeBefore, `${scenario.label} : aucun fichier créé ni modifié hors de .git`);
+    if (scenario.git) {
+      assert.equal(git(dir, ["remote", "-v"]), remotesBefore, `${scenario.label} : distant inchangé`);
+      assert.equal(git(dir, ["rev-parse", "HEAD"]), headBefore, `${scenario.label} : HEAD inchangé`);
+      assert.equal(git(dir, ["status", "--porcelain"]), "", `${scenario.label} : index et arbre de travail intacts`);
+    } else assert.equal(fs.existsSync(path.join(dir, ".git")), false, `${scenario.label} : aucun dépôt créé`);
   }
 });
 
