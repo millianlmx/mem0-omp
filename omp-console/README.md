@@ -51,6 +51,71 @@ Deux pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
   (reproduit sur un paquet minimal). Le `-plugin-path` explicite ci-dessus rend
   la suite déterministe.
 
+## Lire le magasin d'état
+
+`Sources/OMPConsole/Store/` est la **couche de lecture** du magasin d'état partagé
+(`~/.omp/agent/pipeline/`, ou `MEM0_PIPELINE_STATE_DIR`) : les six répertoires
+`running`, `history`, `lots`, `projects`, `inbox` et `audit` sont rendus en
+modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
+(`omp-mem0-req/store.ts`, `lot.ts`, `project.ts`).
+
+- `StoreReader` lit une racine et une horloge injectables ; une entrée au schéma
+  incomplet est **écartée et comptée**, jamais rendue partielle ; `availability`
+  distingue « magasin absent » de « magasin vide ».
+- `StoreWatcher` veille un store par **notification du système de fichiers**
+  (source vnode sur le répertoire, jamais de scrutation) et pousse un instantané
+  typé à ses abonnés (`AsyncStream`, multicast) ; `StoreHub` agrège les six en un
+  flux global. L'émission n'a lieu que si l'instantané a changé.
+- La couche est un **lecteur** : aucune API d'écriture n'est appelée, jamais — un
+  propriétaire mort est marqué (`isStale`), ni retiré ni déplacé vers `history/`.
+
+`commands/` ne fait pas partie du périmètre lu. Les vues (kanban, sessions,
+fichiers, projet) consommeront ces flux dans les features suivantes : aucune n'est
+branchée ici.
+## Recette : lire une vraie session
+
+Le paquet ne vend aucun produit exécutable : la recette du lecteur de sessions
+(`SessionReader`, `renderConversation`) passe donc par un test **désactivé par
+défaut**, qui ne tourne que si on le lui demande explicitement.
+
+```bash
+cd omp-console
+MEM0_SESSION_RECIPE="$HOME/.omp/agent/sessions/<bucket>/<horodatage>_<id>.jsonl" \
+MEM0_SESSION_RECIPE_OUT="/tmp/rendu-session.txt" \
+swift test --scratch-path .build-tests \
+  -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
+  --filter recette
+```
+
+`MEM0_SESSION_RECIPE` est le chemin de la session à lire ; `MEM0_SESSION_RECIPE_OUT`
+est le chemin du rendu à écrire (les deux sont requis). Le test n'affirme rien sur
+le contenu : il écrit le rendu et annonce les comptes à confronter.
+
+`--filter recette` (mesuré) porte sur le nom de FONCTION du test, pas sur son titre
+affiché : renommer `recetteManuelleRendUneVraieSession` sans garder « recette »
+dans le nom ferait sélectionner zéro test (sortie « Build complete! » seulement).
+
+À vérifier dans le fichier de sortie :
+
+1. la suite des têtes `== <i> …` est `1…n` sans trou ni répétition (aucune perte, aucun doublon,
+   ordre du fichier) — le nombre de référence est celui des entrées annoncé par la recette, car un
+   corps est rendu verbatim et peut citer une ligne qui ressemble à une tête de bloc ;
+2. les pensées (`-- thinking`), les appels d'outil (`-- tool`, `-- args`) avec
+   leur résultat (`== <i> tool-result …`) et leur diff (`-- diff`) apparaissent ;
+3. les marqueurs `compaction` et `branch-summary` apparaissent là où le fichier
+   les place ;
+4. pendant qu'un run écrit sa session, relancer la même commande sur son `.jsonl`
+   vivant : le rendu est produit sans erreur, la taille et la date du fichier
+   relevées avant et après la lecture sont inchangées, et le run poursuit et se
+   termine sans erreur ;
+5. consigner en revue les commandes exactes, les chemins, la taille du rendu, le
+   nombre d'entrées, le nombre d'ignorées et l'état du run après la lecture.
+
+La CI ne l'exécute **jamais** : ni `.github/workflows/check.yml` ni
+`scripts/swift-app.sh` ne posent ces variables, donc le test est rapporté
+« skipped ».
+
 ## Assembler le bundle `.app`
 
 Depuis la **racine** du dépôt :
@@ -171,7 +236,18 @@ omp-console/
 │   ├── RpcFrames.swift            trames JSONL : décodage, commandes, réponses
 │   ├── RpcChunkDecoder.swift      fragments v2 et lignes illisibles
 │   ├── RpcTransport.swift         process hébergé : tubes, signaux, sortie
-│   └── OmpBinary.swift            résolution du binaire `omp`
+│   ├── OmpBinary.swift            résolution du binaire `omp`
+│   ├── Session/                   le lecteur de sessions (aucune vue, aucune E/S d'écriture)
+│   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
+│   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
+│   │   └── SessionRendering.swift le rendu texte du modèle (fonctions pures)
+│   └── Store/                     la couche de lecture du magasin d'état
+│       ├── PipelineStore.swift    racine du magasin et noms des six stores
+│       ├── StoreModels.swift      modèles typés et validation champ par champ
+│       ├── StoreSnapshot.swift    enveloppes d'un instantané
+│       ├── StoreReader.swift      balayage, filtrage, comptage des illisibles
+│       ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
+│       └── StoreHub.swift         le flux global, agrégat des six
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git

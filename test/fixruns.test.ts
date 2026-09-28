@@ -368,7 +368,13 @@ test("fixruns/AC-2 : un process armé n'a qu'une pompe et qu'un seul outil `ask`
 // ---------------------------------------------------------------------------
 
 test("fixruns/AC-3 : l'ask en vol est rejeté à l'échéance de `--pipeline-deadline`", async () => {
-  const deadline = Date.now() + 20;
+  // Marge LARGE, volontairement : l'échéance est un instant d'horloge murale et
+  // `ask` refuse d'emblée quand elle est déjà passée (inbox.ts:122-124). Une marge
+  // de 20 ms expirait AVANT la publication sur un runner chargé — la CI macOS l'a
+  // fait rougir le 2026-09-28 (PR #38 : « la question est publiée » rendait
+  // `undefined`). La séquence testée est inchangée : la question part avant
+  // l'échéance, l'échéance la refuse.
+  const deadline = Date.now() + 500;
   const { app, ctx, inbox, stateDir, worktree } = armedFixture({ "pipeline-deadline": String(deadline) });
   assert.equal(pipelineDeadlineOf(app.pi as never), deadline, "le drapeau est lu comme une échéance");
   await app.hooks.get("session_start")!(undefined as never, ctx as never);
@@ -377,7 +383,7 @@ test("fixruns/AC-3 : l'ask en vol est rejeté à l'échéance de `--pipeline-dea
   await flush(2);
   assert.equal(publishedEntry(stateDir, worktree)?.pendingAsk?.toolCallId, "call-1", "la question est publiée");
 
-  await sleep(30);
+  await sleep(600);
   pumpInbox(app.pi as never, ctx as never, inbox);
   const refused = await pending;
   assert.equal(refused.isError, true);

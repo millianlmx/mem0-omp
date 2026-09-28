@@ -37,14 +37,12 @@ enum RpcMode: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Valeur JSON décodée, suffisante pour lire les trames du protocole.
-enum JSONValue: Equatable, Sendable {
-    case string(String)
-    case number(Double)
-    case bool(Bool)
-    case null
-    case array([JSONValue])
-    case object([String: JSONValue])
+/// Le type `JSONValue` vit avec le modèle de session (`Session/SessionModel.swift`) :
+/// la cible `OMPConsole` est unique, donc un seul type par nom dans le module. Les
+/// membres dont le protocole RPC a besoin — conversion depuis `JSONSerialization` et
+/// accès pratiques — sont donc ajoutés ici en EXTENSION, jamais en seconde
+/// déclaration (deux `enum JSONValue` dans le même module ne compilent pas).
+extension JSONValue {
 
     /// `init?` plutôt que `init` : une valeur non convertible (date, données)
     /// rend `nil`, et l'appelant garde la main sur ce qu'il en fait.
