@@ -481,6 +481,13 @@ const DROPPED_DIRS: Record<string, true> = {
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
+  // Artefacts Swift (≈ 400 Mo de .build) : rien à faire dans une copie, et la
+  // section « App Swift » y est neutralisée par MEM0_OMP_SKIP_SWIFT_APP (voir
+  // runEngine) pour ne pas y relancer une compilation.
+  ".build": true,
+  ".build-app": true,
+  ".build-tests": true,
+  build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
   "check.test.ts": true,
@@ -759,6 +766,9 @@ function runEngine(
     GH_REPO: REPO,
     GH_MERGE_DATE: MERGE_DATE,
     PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
+    // Le moteur lance `check.sh` sur la copie : la section « App Swift » y
+    // compilerait pour de vrai (~ 40 s) sans rien prouver de la release.
+    MEM0_OMP_SKIP_SWIFT_APP: "1",
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;

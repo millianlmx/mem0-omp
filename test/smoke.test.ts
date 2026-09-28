@@ -72,7 +72,7 @@ function runCheck(cwd: string) {
   return spawnSync("bash", ["scripts/check.sh"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1) },
+    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1" },
     timeout: 900_000,
   });
 }
@@ -85,6 +85,12 @@ const DROPPED_DIRS: Record<string, true> = {
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
+  // Artefacts Swift (≈ 400 Mo de .build) ; la section « App Swift » est
+  // neutralisée par MEM0_OMP_SKIP_SWIFT_APP dans runCheck.
+  ".build": true,
+  ".build-app": true,
+  ".build-tests": true,
+  build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
   "check.test.ts": true,

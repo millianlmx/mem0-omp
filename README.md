@@ -21,6 +21,7 @@ mem0-omp/                              racine = marketplace OMP
 │   │                                  runs, boîtes, magasin d'état, worktrees
 │   └── panel.ts, panelRows.ts, panelWidth.ts, panelView.ts, panelSession.ts,
 │       panelHost.ts                   le panneau /pipelines et la vue de session
+├── omp-console/                       la coque macOS (SwiftUI) de la salle de contrôle
 ├── mem0-stack/                        mem0 + Qdrant, en local
 │   └── mem0-http/                     l'API HTTP et sa config mem0
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
@@ -31,6 +32,10 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR
 └── .github/workflows/                 check.yml (PR), release-simulation.yml (PR), release.yml (merge sur main)
 ```
+
+La coque macOS (`omp-console/`, SwiftUI) a son propre document :
+`omp-console/README.md` explique comment la builder, la tester, assembler son
+bundle `.app` et ouvrir l'app.
 
 ## Ce que ça fait
 

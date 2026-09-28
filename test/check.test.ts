@@ -29,7 +29,14 @@ const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.js
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 
 /** Un `bash scripts/check.sh` dans une copie relance la suite : on le lui dit. */
-const NESTED_ENV = { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1) };
+// `MEM0_OMP_SKIP_SWIFT_APP=1` évite qu'une copie jetable paie une compilation
+// Swift complète (≈ 35 s) alors qu'elle vérifie une AUTRE section. Les deux tests
+// qui éprouvent la section « App Swift » neutralisent la variable (valeur vide).
+const NESTED_ENV = {
+  ...process.env,
+  MEM0_CHECK_DEPTH: String(DEPTH + 1),
+  MEM0_OMP_SKIP_SWIFT_APP: "1",
+};
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
 // racine de types jetable, le stockage vectoriel local (des dizaines de Mo) et
@@ -39,6 +46,10 @@ const EXCLUDED_DIRS: Record<string, true> = {
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
+  ".build": true,
+  ".build-app": true,
+  ".build-tests": true,
+  build: true,
 };
 const RECURSIVE_FILE = path.join("test", "check.test.ts");
 
@@ -586,4 +597,148 @@ test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.s
   assert.ok(output(bad).includes("omp-mem0-req/store.ts("), output(bad));
   assert.ok(output(bad).includes("omp-mem0-memory/dedupe.ts("), output(bad));
   assert.ok(output(bad).includes("error TS2550"), output(bad));
+});
+
+/** Dossier de doublures : chaque binaire y est un script bash, jamais le vrai. */
+function stubBin(prefix: string): { bin: string; log: string } {
+  const bin = path.join(tmpdir(prefix), "bin");
+  fs.mkdirSync(bin);
+  const log = path.join(path.dirname(bin), "journal.txt");
+  return { bin, log };
+}
+
+function stub(bin: string, name: string, body: string): void {
+  const file = path.join(bin, name);
+  fs.writeFileSync(file, `#!/usr/bin/env bash\n${body}\n`);
+  fs.chmodSync(file, 0o755);
+}
+
+// AC-1 exige un vrai toolchain : la doublure de la section `── App Swift` (AC-5)
+// ne prouve pas que le paquet compile. Le test est donc joué sur le VRAI swift,
+// et sauté dans une copie jetable ou hors macOS.
+test("socle-app-swift/AC-1 : le paquet omp-console compile en debug et en release", (t) => {
+  // L'AC-1 est écrit POUR macOS : la coque SwiftUI/Combine ne compile pas
+  // ailleurs. La garde est la PLATEFORME, pas la présence de `swift` — les
+  // runners ubuntu-latest embarquent un toolchain Swift, et s'y fier faisait
+  // rougir la CI (« no such module 'Combine' »).
+  if (process.platform !== "darwin") {
+    t.skip("macOS seul — la coque SwiftUI ne compile pas ailleurs");
+    return;
+  }
+  if (process.env.MEM0_OMP_SKIP_SWIFT_APP === "1") {
+    t.skip("copie jetable — la compilation réelle est vérifiée à la racine");
+    return;
+  }
+  if (spawnSync("swift", ["--version"], { encoding: "utf8" }).status !== 0) {
+    t.skip("swift absent — SwiftPM non vérifié");
+    return;
+  }
+  const pkg = path.join(ROOT, "omp-console");
+  // Scratch jetable : la compilation du test ne doit pas laisser derrière elle un
+  // dossier `.build` partagé avec l'assemblage du bundle.
+  const scratch = path.join(tmpdir("omp-console-build-"), ".build");
+  for (const args of [["build"], ["build", "-c", "release"]]) {
+    const r = spawnSync("swift", [...args, "--scratch-path", scratch], {
+      cwd: pkg,
+      encoding: "utf8",
+      timeout: 600_000,
+    });
+    assert.equal(r.status, 0, `swift ${args.join(" ")} : ${output(r)}`);
+  }
+});
+
+test("socle-app-swift/AC-6 : hors macOS la section « App Swift » dit « non exécuté » sans ✓ ni appel à swift", () => {
+  const { bin, log } = stubBin("app-swift-linux-");
+  stub(bin, "uname", "printf 'Linux\\n'");
+  // La doublure journalise : le journal doit rester VIDE (le script sort avant
+  // tout appel à swift), c'est ce qui prouve qu'aucune compilation n'a eu lieu.
+  stub(bin, "swift", `printf '%s\\n' "$*" >> '${log}'`);
+
+  const run = runCheck(copyRepo(), {
+    PATH: `${bin}:${process.env.PATH}`,
+    MEM0_OMP_SKIP_SWIFT_APP: "",
+  });
+  const out = output(run);
+  assert.equal(run.status, 0, out);
+  assert.ok(out.includes("non exécuté"), out);
+  assert.ok(!out.includes("✓ App Swift"), out);
+  assert.ok(!fs.existsSync(log), `swift ne doit jamais être appelé : ${fs.existsSync(log) ? fs.readFileSync(log, "utf8") : ""}`);
+});
+
+test("socle-app-swift/AC-5 : sur macOS la section compile, teste et assemble le bundle .app", () => {
+  const { bin, log } = stubBin("app-swift-darwin-");
+
+  stub(bin, "uname", "printf 'Darwin\\n'");
+  // La doublure swift journalise ses arguments : elle fabrique le binaire factice
+  // dans le dossier de build du test, et répond à `--show-bin-path` (interrogé par
+  // le script sur un dossier jetable) par le suffixe rendu par SwiftPM.
+  stub(
+    bin,
+    "swift",
+    `printf '%s\\n' "$*" >> '${log}'
+scratch=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--scratch-path" ]; then scratch="$a"; fi
+  prev="$a"
+done
+case "$*" in
+  *--show-bin-path*)
+    printf '%s\\n' "$scratch/out/Products/Release"
+    ;;
+  test*)
+    mkdir -p "$scratch/out/Products/Release"
+    printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
+    chmod +x "$scratch/out/Products/Release/OMPConsole"
+    ;;
+esac`,
+  );
+  stub(bin, "codesign", "exit 0");
+
+  const copy = copyRepo();
+  const run = runCheck(copy, {
+    PATH: `${bin}:${process.env.PATH}`,
+    MEM0_OMP_SKIP_SWIFT_APP: "",
+  });
+  const out = output(run);
+  assert.equal(run.status, 0, out);
+  assert.ok(out.includes("✓ App Swift"), out);
+
+  const bundle = path.join(copy, "omp-console", "build", "OMP Console.app");
+  const plist = path.join(bundle, "Contents", "Info.plist");
+  const binary = path.join(bundle, "Contents", "MacOS", "OMPConsole");
+  assert.ok(fs.existsSync(plist), out);
+  assert.ok(executable(binary), out);
+  assert.ok(fs.existsSync(path.join(bundle, "Contents", "Resources")), out);
+  assert.ok(fs.readFileSync(plist, "utf8").includes("com.omp.console"), out);
+
+  // Le journal prouve l'ordre : `swift test -c release` d'abord (une compilation
+  // release préalable dans le même dossier corromprait la résolution des macros
+  // de test), puis la lecture du dossier de sortie.
+  const logged = fs.readFileSync(log, "utf8").trim().split("\n");
+  assert.match(logged[0] ?? "", /^test -c release\b/, logged.join(" | "));
+  assert.ok(logged.some((line) => line.includes("--show-bin-path")), logged.join(" | "));
+});
+
+test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes et le README racine y renvoie", () => {
+  // L'invariant criteria/AC-13 exige qu'un slug de feature vive dans UN SEUL
+  // fichier de test : ce test vit donc ici, avec les autres `socle-app-swift`.
+  const shell = fs.readFileSync(path.join(ROOT, "omp-console", "README.md"), "utf8");
+
+  // Les quatre gestes exigés par B-4 : builder, tester, assembler, ouvrir.
+  assert.ok(shell.includes("swift build"), "omp-console/README.md : « swift build » absent");
+  assert.ok(shell.includes("swift test"), "omp-console/README.md : « swift test » absent");
+  assert.ok(shell.includes("scripts/swift-app.sh"), "omp-console/README.md : le script d'assemblage absent");
+  assert.ok(shell.includes("open "), "omp-console/README.md : la commande d'ouverture absente");
+  assert.ok(
+    shell.includes("omp-console/build/OMP Console.app"),
+    "omp-console/README.md : le chemin du bundle produit est absent",
+  );
+
+  // Le README racine cite la coque dans son arborescence et renvoie à son document.
+  const rootReadme = fs.readFileSync(path.join(ROOT, "README.md"), "utf8");
+  const tree = rootReadme.split("\n```").find((block) => block.includes("racine = marketplace OMP"));
+  assert.ok(tree !== undefined, "arborescence absente du README");
+  assert.ok(tree.includes("omp-console/"), "README : omp-console/ absent de l'arborescence");
+  assert.ok(rootReadme.includes("omp-console/README.md"), "README : aucun renvoi vers omp-console/README.md");
 });

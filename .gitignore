@@ -11,3 +11,9 @@ node_modules/
 # Contrat de pipeline /req→/specs→/impl→/review — artefact transitoire par feature
 .omp/pipeline/
 __pycache__/
+
+# Artefacts de build de la coque Swift : produits SwiftPM et bundle .app assemblé
+omp-console/.build/
+omp-console/.build-app/
+omp-console/.build-tests/
+omp-console/build/
