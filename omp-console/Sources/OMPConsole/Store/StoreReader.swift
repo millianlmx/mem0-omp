@@ -6,18 +6,14 @@
 
 import Foundation
 
-/// La valeur JSON brute d'un fichier, avec la distinction STRICTE booléen / nombre
-/// que `JSONSerialization` mélange (les deux sont des `NSNumber`). Le lecteur
-/// TypeScript rejette `true` là où il attend un nombre, et réciproquement (`typeof`
-/// distingue les deux) : sans cette distinction, un fichier falsifié se lirait.
-enum JSONValue: Sendable, Equatable {
-    case null
-    case bool(Bool)
-    case number(Double)
-    case string(String)
-    case array([JSONValue])
-    case object([String: JSONValue])
-
+/// Le type `JSONValue` vit avec le modèle de session (`Session/SessionModel.swift`) :
+/// la cible `OMPConsole` est unique, donc un seul type par nom. Il est étendu ici du
+/// parseur `JSONSerialization` dont la lecture du magasin a besoin, avec la
+/// distinction STRICTE booléen / nombre que `JSONSerialization` mélange (les deux
+/// sont des `NSNumber`). Le lecteur TypeScript rejette `true` là où il attend un
+/// nombre, et réciproquement (`typeof` distingue les deux) : sans cette distinction,
+/// un fichier falsifié se lirait.
+extension JSONValue {
     /// `nil` quand le contenu n'est pas du JSON : la lecture rend alors « écarté »,
     /// jamais un objet partiel.
     static func parse(_ data: Data) -> JSONValue? {
