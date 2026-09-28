@@ -8,8 +8,10 @@ import { reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOmpBin, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
+import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
+import type { CommandState, CommandView, PipelineCommand } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { modelField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
@@ -17,7 +19,7 @@ import { reportStateWriteFailure } from "./publish.ts";
 import { SELF_MODULE_URL, applyWorktreeFate, buildLotPrompt, buildLotRunArgv, lastLine, latestSessionFile, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget, selfExtensionArg } from "./runs.ts";
 import type { LotPromptKind, LotRunner, LotRunnerResult, WorktreeFate } from "./runs.ts";
 import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeDelivery } from "./store.ts";
-import type { PanelPendingAsk, RunningEntry } from "./store.ts";
+import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
 
 
 
@@ -101,6 +103,12 @@ export type LotController = LotPanelActions & {
   start(): void;
   stop(): void;
   tick(): Promise<void>;
+  /**
+   * Une passe du canal de commande (S-1) : les commandes stables du dépôt sont
+   * accusées puis appliquées. Exposé pour les tests (aucun minuteur) et pour tout
+   * appelant qui veut forcer une passe ; la boucle du pilote l'appelle seule.
+   */
+  pumpCommands(): Promise<void>;
   adopt(): boolean;
   /**
    * Tue tous les runs EN VOL (S-1), avec le motif affiché. Appelé à la fermeture
@@ -187,6 +195,28 @@ export function createLotController(deps: LotControllerDeps): LotController {
   let stopLoop: (() => void) | null = null;
   /** La file des passes : une seule à la fois, aucune perdue (cf. `tick`). */
   let tickQueue: Promise<void> = Promise.resolve();
+  /**
+   * La file du POMPAGE du canal de commande : une seule passe de pompage à la
+   * fois, comme `tickQueue` pour les passes du lot. Le pompage a son PROPRE
+   * minuteur et sa propre file : `add`/`launch` attendent une passe enchaînée
+   * derrière la leur, donc un pompage qui vivrait dans `pass()` s'auto-bloquerait
+   * (piège mesuré du dépôt).
+   */
+  let pumpQueue: Promise<void> = Promise.resolve();
+  let stopPump: (() => void) | null = null;
+  /**
+   * Les couples (slug, `toolCallId`) dont la réponse a été LIVRÉE par une commande
+   * `answer` : le run ne republie son état qu'à son battement suivant, donc c'est
+   * ce garde qui rend déterministe le refus « déjà reçu sa réponse » (S-11).
+   */
+  const answeredAsks = new Set<string>();
+  /**
+   * Les actions PUBLIQUES du contrôleur, liées après la construction de l'objet
+   * rendu : le pompage est le seul appelant INTERNE (il ne peut pas référencer le
+   * littéral en cours de création), et il ne tourne qu'après le retour de
+   * `createLotController`.
+   */
+  let api: LotController | null = null;
   /** Une seule notice pour un lot qu'un autre process conduit (S-1). */
   let foreignOwnerWarned = false;
 
@@ -463,14 +493,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
       start();
     }
     const lot = !existing || lotReplaceable(existing) ? freshLot() : existing;
-    if (lotFeature(lot, slug)) return `« ${slug} » est déjà dans le lot`;
+    if (lotFeature(lot, slug)) return lotSlugPresentRefusal(slug);
     const deps: string[] = [];
     for (const raw of depsRaw) {
       // Un slug non normalisable n'est jamais dans le lot : il tombe donc dans
       // le même refus que la dépendance absente (S-3), sans message de plus.
       const dep = toSlug(raw) ?? raw.trim();
-      if (dep === slug) return `dépendance circulaire : ${slug}`;
-      if (!lotFeature(lot, dep)) return `dépendance inconnue : ${dep}`;
+      if (dep === slug) return lotCyclicDepRefusal(slug);
+      if (!lotFeature(lot, dep)) return lotUnknownDepRefusal(dep);
       deps.push(dep);
     }
     return { lot, deps };
@@ -1258,18 +1288,257 @@ export function createLotController(deps: LotControllerDeps): LotController {
     await discardWorktrees(orphans);
   }
 
+  // --- le canal de commande : pompage, effets, purge (S-1 à S-14) -------------
+  // Le canal est POMPÉ par sa propre minuterie (S-1) et sa propre file : une
+  // commande peut lancer un lot (`add` + `launch`), donc l'appliquer depuis
+  // `pass()` s'auto-bloquerait sur la passe enchaînée derrière la sienne.
+
+  /** Le pompage demandé : une passe à la fois, aucune perdue (patron de `tick`). */
+  function pumpCommands(): Promise<void> {
+    const next = pumpQueue.then(() => pumpPass(), () => pumpPass());
+    pumpQueue = next.catch(() => undefined);
+    return next;
+  }
+
+  /** La clé d'un couple (feature, question) : une seule forme pour le garde de S-5. */
+  function askKey(slug: string, toolCallId: string): string {
+    return `${slug}\u0000${toolCallId}`;
+  }
+
+  /**
+   * L'accusé écrit sur le disque. Rend `false` quand l'écriture est impossible
+   * (disque) : la commande N'EST PAS retirée du canal et sera reprise à la passe
+   * suivante (S-1) — et rien n'est appliqué entre-temps (S-8).
+   */
+  function writeAck(raw: unknown, id: string, state: CommandState, reason: string | null): boolean {
+    try {
+      writeCommandAck(stateDir, commandAck(raw, id, state, reason, now()));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Ce que la décision d'UNE commande doit savoir, relu frais (S-11) : le lot, le
+   * motif du refus d'un pilote VIVANT étranger, les features dont le jalon est
+   * confié à une session de relais ouverte (un verdict seulement — c'est le seul
+   * geste que le relais s'approprie) et la question en vol du run vivant visé.
+   */
+  function commandViewOf(cmd: PipelineCommand, branchTakenNow: boolean): CommandView {
+    const lot = read();
+    const foreign = foreignOwner();
+    const relayed = new Set<string>();
+    if (lot && cmd.kind === "verdict") {
+      for (const feature of lot.features) {
+        if (auditRelayOpen(stateDir, feature, lot.owner.pid, now())) relayed.add(feature.slug);
+      }
+    }
+    const slug = cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" ? cmd.slug : null;
+    const feature = lot !== null && slug !== null ? lotFeature(lot, slug) : undefined;
+    const entry = feature === undefined ? null : liveEntryOf(feature.worktree);
+    return {
+      lot,
+      foreignReason: foreign === null ? null : foreignOwnerReason(foreign),
+      branchTaken: branchTakenNow,
+      relayed,
+      pendingAsk: entry?.pendingAsk ?? null,
+      askAnswered: cmd.kind === "answer" && slug !== null && answeredAsks.has(askKey(slug, cmd.toolCallId)),
+    };
+  }
+
+  /**
+   * La réponse à une question en vol (S-5) : une livraison `ask` dans la boîte
+   * PUBLIÉE par le run (`panelInboxDirOf`), jamais un chemin recalculé —
+   * `panelInboxDirFor` rend le premier dossier inexistant et deux calculs
+   * successifs divergent (piège mesuré). Le couple (slug, question) n'est inscrit
+   * dans `answeredAsks` QUE si la livraison a réussi : une écriture ratée laisse la
+   * question répondable par une commande neuve.
+   */
+  function deliverAskAnswer(cmd: Extract<PipelineCommand, { kind: "answer" }>): string | null {
+    const lot = read();
+    if (!lot) return LOT_NONE_REFUSAL;
+    const feature = lotFeature(lot, cmd.slug);
+    if (!feature) return lotFeatureMissingRefusal(cmd.slug);
+    const entry = liveEntryOf(feature.worktree);
+    const inbox = entry === null ? null : panelInboxDirOf(entry);
+    const sentAt = now();
+    const delivery: PanelDelivery =
+      cmd.selected !== undefined
+        ? { version: 1, kind: "ask", toolCallId: cmd.toolCallId, selected: cmd.selected, sentAt }
+        : { version: 1, kind: "ask", toolCallId: cmd.toolCallId, custom: cmd.custom ?? "", sentAt };
+    if (inbox === null) return "écriture impossible : ce run n'a plus de boîte";
+    try {
+      writeDelivery(inbox, delivery);
+    } catch (err) {
+      return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
+    }
+    answeredAsks.add(askKey(cmd.slug, cmd.toolCallId));
+    return null;
+  }
+
+  /**
+   * L'effet d'une commande prise en charge, par les MÊMES actions que le panneau et
+   * les relais — rien n'est réécrit ici (BR-2). Un refus rendu APRÈS l'accusé
+   * `taken` (course avec un autre écrivain, branche prise entre la décision et
+   * l'ajout) est signalé par une notice durable : l'accusé n'est jamais réécrit.
+   */
+  async function applyCommand(cmd: PipelineCommand): Promise<void> {
+    const actions = api;
+    if (actions === null) return;
+    switch (cmd.kind) {
+      case "launch": {
+        const added = await actions.add({ name: cmd.title, description: cmd.description, deps: cmd.deps ?? [] });
+        if (added !== null) {
+          notify(`[pipeline] commande launch : ${added}`);
+          return;
+        }
+        const started = await actions.launch();
+        if (started !== null) notify(`[pipeline] commande launch : ${started}`);
+        return;
+      }
+      case "add": {
+        const added = await actions.add({ name: cmd.title, description: cmd.description, deps: cmd.deps ?? [] });
+        if (added !== null) notify(`[pipeline] commande add : ${added}`);
+        return;
+      }
+      case "remove": {
+        const removed = await actions.remove(cmd.slug);
+        if (removed !== null) notify(`[pipeline] commande remove : ${removed}`);
+        return;
+      }
+      case "verdict": {
+        const done = cmd.verdict === "v" ? await actions.validate(cmd.slug) : await actions.accept(cmd.slug);
+        if (done !== null) notify(`[pipeline] commande verdict : ${done}`);
+        return;
+      }
+      case "answer": {
+        const delivered = deliverAskAnswer(cmd);
+        if (delivered !== null) notify(`[pipeline] commande answer : ${delivered}`);
+        return;
+      }
+      case "stop": {
+        // L'état « cohérent » de l'arrêt (S-3) : les runs en vol sont interrompus
+        // sans être attendus, et les features restent `running` avec leur hash de
+        // contrat — un pilote ultérieur les réconcilie.
+        actions.abortAll("commande d'arrêt");
+        stop();
+        return;
+      }
+    }
+  }
+
+  /**
+   * Une passe du canal : les commandes STABLES du dépôt, dans l'ordre
+   * lexicographique (chronologique), au plus `COMMAND_MAX_PER_PASS` — le reste
+   * attend la passe suivante. Chaque commande suit le même ordre (S-8) : décision
+   * pure sur une lecture FRAÎCHE → si refus, accusé `refused` PUIS retrait ; sinon
+   * accusé `taken`, PUIS l'effet, PUIS le retrait. Le fichier n'est jamais retiré
+   * avant que l'accusé soit sur le disque (B-7), et un accusé déjà présent fait
+   * réponse sans nouvel effet (S-9).
+   */
+  async function pumpPass(): Promise<void> {
+    const candidates = readCommands(stateDir, now());
+    if (candidates.length === 0) return;
+    const repo = realpathOr(deps.repoRoot);
+    let handled = 0;
+    for (const candidate of candidates) {
+      if (handled >= COMMAND_MAX_PER_PASS) break;
+      const cmd = candidate.unreadable ? null : asCommand(candidate.raw);
+      // (1) L'ADRESSAGE d'abord : une commande d'un autre dépôt est laissée telle
+      //     quelle, sans accusé ni retrait (S-10) — son pilote s'en chargera.
+      if (cmd !== null && realpathOr(cmd.repo) !== repo) continue;
+      // (2) Un accusé déjà écrit EST l'enregistrement du traitement (S-9) : le
+      //     fichier est retiré sans nouvel accusé et sans effet. Un accusé
+      //     ILLISIBLE est traité comme absent (`readCommandAck` rend `null`).
+      const knownId = cmd !== null ? cmd.id : commandIdOf(candidate.raw);
+      if (knownId !== null && readCommandAck(stateDir, knownId) !== null) {
+        removeCommandFile(candidate.file);
+        handled += 1;
+        continue;
+      }
+      // (3) Un JSON illisible n'a ni identifiant ni dépôt à qui répondre : aucun
+      //     accusé n'est possible (S-1 interdit d'en reconstruire un), mais le
+      //     refus est DIT et le fichier retiré — sans quoi la pompe le relirait à
+      //     chaque passe (S-13).
+      if (candidate.unreadable) {
+        notify(`[pipeline] commande refusée : ${COMMAND_UNREADABLE_REFUSAL} (${path.basename(candidate.file)})`);
+        removeCommandFile(candidate.file);
+        handled += 1;
+        continue;
+      }
+      if (cmd === null) {
+        // Hors schéma : l'accusé est possible dès que l'identifiant l'est.
+        if (knownId !== null && !writeAck(candidate.raw, knownId, "refused", commandShapeRefusal(candidate.raw))) {
+          continue;
+        }
+        removeCommandFile(candidate.file);
+        handled += 1;
+        continue;
+      }
+      // (4) Le contrôle de BRANCHE d'un ajout est un `git` : il est fait AVANT la
+      //     décision pour que celle-ci reste pure et garde l'ordre du tableau de
+      //     S-1 (contenu, slug, branche, dépendances, pilote étranger). Un `git`
+      //     en échec ne vaut pas « branche prise » : c'est `add` qui tranchera.
+      let branchTakenNow = false;
+      if (cmd.kind === "launch" || cmd.kind === "add") {
+        const slug = toSlug(cmd.title);
+        if (slug !== null) {
+          try {
+            branchTakenNow = await branchTaken(deps.runGit, deps.repoRoot, branchFor(slug));
+          } catch {
+            branchTakenNow = false;
+          }
+        }
+      }
+      const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow));
+      if (reason !== null) {
+        if (!writeAck(cmd, cmd.id, "refused", reason)) continue;
+        removeCommandFile(candidate.file);
+        handled += 1;
+        continue;
+      }
+      if (!writeAck(cmd, cmd.id, "taken", null)) continue;
+      try {
+        await applyCommand(cmd);
+      } catch {
+        /* l'accusé fait foi : le rejeu ne double pas l'effet (S-9) */
+      }
+      removeCommandFile(candidate.file);
+      handled += 1;
+    }
+  }
+
+  /** La purge d'AC-12 : un lot TERMINÉ n'a plus de canal — ses accusés sont retirés. */
+  function purgeAcksOnStop(): void {
+    const lot = read();
+    // Seul le PROPRIÉTAIRE purge : l'arrêt d'une session qui n'écrit pas ce lot ne
+    // touche pas le canal d'un autre pilote.
+    if (!lot || lot.owner.pid !== process.pid || !lotReplaceable(lot)) return;
+    purgeCommandAcks(stateDir, deps.repoRoot);
+  }
+
   /** Démarre la boucle (une passe par `LOT_TICK_MS`) et se réécrit propriétaire. */
   function start(): void {
     if (stopLoop) return;
     stopLoop = (deps.schedule ?? defaultSchedule)(() => {
       void tick().catch(() => undefined);
     }, LOT_TICK_MS);
+    stopPump = (deps.schedule ?? defaultSchedule)(() => {
+      void pumpCommands().catch(() => undefined);
+    }, COMMAND_POLL_MS);
+    // Le démarrage d'un pilote pompe IMMÉDIATEMENT, avant sa première passe
+    // (S-10) : une commande en attente est prise en charge dès l'armement.
+    void pumpCommands();
     void tick().catch(() => undefined);
   }
 
   function stop(): void {
     stopLoop?.();
     stopLoop = null;
+    stopPump?.();
+    stopPump = null;
+    purgeAcksOnStop();
   }
 
   /** Reprend un lot dont le pilote a disparu (S-1) — jamais un lot qui vit encore. */
@@ -1347,7 +1616,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
    */
   function open(slug?: string): { lot: Lot; feature?: LotFeature } | string {
     const lot = read();
-    if (!lot) return "aucun lot pour ce dépôt";
+    if (!lot) return LOT_NONE_REFUSAL;
     if (lot.owner.pid !== process.pid) {
       if (lotOwnerAlive(lot.owner, now())) return foreignOwnerReason(lot.owner.pid);
       const refusal = save(lot);
@@ -1356,15 +1625,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     if (slug === undefined) return { lot };
     const feature = lotFeature(lot, slug);
-    if (!feature) return `« ${slug} » n'est pas dans le lot`;
+    if (!feature) return lotFeatureMissingRefusal(slug);
     return { lot, feature };
   }
 
-  return {
+  const controller: LotController = {
     read,
     start,
     stop,
     tick,
+    pumpCommands,
     adopt,
 
     /**
@@ -1462,7 +1732,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (typeof early === "string") return early;
       const branch = branchFor(slug);
       if (await branchTaken(deps.runGit, deps.repoRoot, branch)) {
-        return `la branche ${branch} existe déjà — renomme la feature (un autre nom) ou supprime la branche (git branch -D ${branch})`;
+        return lotBranchTakenRefusal(branch);
       }
       // `branchTaken` a ATTENDU : le lot est donc relu ici, et l'ajout s'écrit
       // dans la foulée sans aucun `await` (S-1). Écrire le lot lu avant l'attente
@@ -1571,10 +1841,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
-      if (!feature) return `« ${slug} » n'est pas dans le lot`;
-      if (feature.state !== "pending") return `« ${slug} » a déjà démarré — c pour annuler`;
+      if (!feature) return lotFeatureMissingRefusal(slug);
+      if (feature.state !== "pending") return lotRemoveStartedRefusal(slug);
       const dependent = lot.features.find((other) => other.state === "pending" && other.deps.includes(slug));
-      if (dependent) return `retrait refusé : ${dependent.slug} en dépend`;
+      if (dependent) return lotRemoveDependentRefusal(dependent.slug);
       lot.features = lot.features.filter((other) => other.slug !== slug);
       return save(lot);
     },
@@ -1612,7 +1882,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
-      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (!feature) return lotFeatureMissingRefusal(slug);
       const live = liveWriterOf(lot, feature);
       const reply = rowReply(feature, fromRelay ? { ...live, auditRelay: false } : live);
       if (reply.kind === "closed") return reply.reason;
@@ -1647,9 +1917,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
      */
     reply(slug) {
       const lot = read();
-      if (!lot) return { kind: "closed", reason: "aucun lot pour ce dépôt" };
+      if (!lot) return { kind: "closed", reason: LOT_NONE_REFUSAL };
       const feature = lotFeature(lot, slug);
-      if (!feature) return { kind: "closed", reason: `« ${slug} » n'est pas dans le lot` };
+      if (!feature) return { kind: "closed", reason: lotFeatureMissingRefusal(slug) };
       return rowReply(feature, liveWriterOf(lot, feature));
     },
 
@@ -1657,7 +1927,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
-      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (!feature) return lotFeatureMissingRefusal(slug);
       if (feature.state !== "waiting" || feature.waitKind !== "specs") {
         return "rien à valider : la feature n'est pas au jalon des specs";
       }
@@ -1668,7 +1938,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
-      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (!feature) return lotFeatureMissingRefusal(slug);
       if (feature.state !== "waiting" || feature.waitKind !== "review") {
         return "rien à accepter : la revue n'est pas propre";
       }
@@ -1679,7 +1949,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
-      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (!feature) return lotFeatureMissingRefusal(slug);
       // Une feature ANNULÉE dont le worktree est conservé se relance : l'annulation
       // garde la branche dans les trois devenirs (S-9), donc refuser la relance
       // condamnait un travail intact — et la ré-ajouter sous le même nom butait sur
@@ -1708,12 +1978,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // La préparation du worktree a ATTENDU (`git`) : le lot est relu ici, et la
       // relance s'écrit dans la foulée sans aucun `await` (S-1).
       const fresh = read();
-      if (!fresh) return "aucun lot pour ce dépôt";
+      if (!fresh) return LOT_NONE_REFUSAL;
       if (fresh.owner.pid !== process.pid) {
         return foreignOwnerReason(fresh.owner.pid);
       }
       const target = lotFeature(fresh, slug);
-      if (!target) return `« ${slug} » n'est pas dans le lot`;
+      if (!target) return lotFeatureMissingRefusal(slug);
       if (!lotStateTerminal(target.state) || target.state === "done") {
         return "relance possible sur une feature bloquée, échouée ou annulée";
       }
@@ -1758,7 +2028,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { feature } = opened;
-      if (!feature) return `« ${slug} » n'est pas dans le lot`;
+      if (!feature) return lotFeatureMissingRefusal(slug);
       // Une bloquée ou une échouée s ABANDONNE (S-9) : `R` rouvre un crédit de
       // correction entier, ce n est pas un abandon. Seules `done` et `cancelled`
       // refusent encore.
@@ -1807,10 +2077,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
         }
         // Relecture, mutation, écriture : sans aucun `await` entre elles.
         const lot = read();
-        if (!lot) return "aucun lot pour ce dépôt";
+        if (!lot) return LOT_NONE_REFUSAL;
         if (lot.owner.pid !== process.pid) return foreignOwnerReason(lot.owner.pid);
         const target = lotFeature(lot, slug);
-        if (!target) return `« ${slug} » n'est pas dans le lot`;
+        if (!target) return lotFeatureMissingRefusal(slug);
         if (!lotStateCancellable(target.state)) {
           return lotCancelRefusal(target.state);
         }
@@ -1838,4 +2108,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
       }
     },
   };
+  // Les actions publiques sont liées ICI : le pompage (armé par `start`) est le
+  // seul appelant interne qui doit passer par elles.
+  api = controller;
+  return controller;
 }

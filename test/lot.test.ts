@@ -898,10 +898,12 @@ test("lot/AC-1 : un lot vide, trois features ajoutées puis lancées, trois pipe
 test("lot/AC-2 : une feature ajoutée à un lot lancé démarre sans toucher aux autres", async () => {
   const repoRoot = mkRepo();
   const ticks: Array<() => void> = [];
+  const cadences: number[] = [];
   const { controller, runs, stateDir } = mkCtl(repoRoot, {
     runner: mkRunner({ mode: "pending" }).runner,
-    schedule: (callback) => {
+    schedule: (callback, ms) => {
       ticks.push(callback);
+      cadences.push(ms);
       return () => {};
     },
   });
@@ -914,7 +916,10 @@ test("lot/AC-2 : une feature ajoutée à un lot lancé démarre sans toucher aux
   await controller.launch();
   const before = readLot(stateDir, lotRepoKey(repoRoot))!.features.slice(0, 2);
   assert.equal(runs.length, 2, "alpha et beta tournent, delta attend sa dépendance");
-  assert.equal(ticks.length, 1, "le lancement arme la boucle du lot (S-11)");
+  // La boucle du lot est armée à SA cadence (le pilote arme aussi le pompage du
+  // canal de commande, à la sienne : c'est la cadence qui dit quelle minuterie a
+  // été posée, pas le nombre de minuteries).
+  assert.ok(cadences.includes(LOT_TICK_MS), "le lancement arme la boucle du lot (S-11)");
 
   // AUCUN tick manuel : c'est `add` qui fait démarrer la nouvelle feature (AC-2).
   assert.equal(await controller.add({ name: "gamma", description: "", deps: [] }), null);
