@@ -322,6 +322,17 @@ fait désormais échouer la construction de l'image, pas la première requête.
   session pour lancer plus tard d'autres éléments : ceux déjà lancés n'y sont plus
   cochables. Questions et jalons sont relayés dans cette session — voir « Pipelines
   lancées par /audit ».
+- `/project [contexte]` (plugin `omp-mem0-req`) — conduit un **projet** entier, segment
+  par segment. D'abord un **cadrage** interactif : sur un dépôt qui a déjà du code,
+  l'agent le **lit avant sa première question**, puis cerne le but et la fonction du
+  projet par des questions à options ; le cadrage ne se clôt que sur ton « fin » ou sur
+  le **contrôle de complétude**. L'agent propose ensuite un **plan de segments** ordonnés
+  de features, que tu **corriges puis valides** — aucune pipeline ne démarre avant —,
+  avec le modèle de chaque feature. Le plan et son avancement vivent dans `PROJECT.md`,
+  seul fichier de la branche `omp-project`. Chaque segment part en pipelines parallèles
+  **dans la limite de `MEM0_PIPELINE_SLOTS`** jusqu'aux PR, et le segment suivant démarre
+  seul dès que **toutes** les PR du précédent sont fusionnées — par toi, jamais par
+  `/project`. Voir « Projet ».
 
 ## Pipelines en cours
 
@@ -713,6 +724,74 @@ s'affiche tel quel au lieu d'être avalé.
   compris une question restée sans réponse) ; **y revenir** (`/resume`) lui rend le
   relais et lui réinjecte ce qui attend encore. Rien n'est jamais fusionné. Le battement
   du relais vit dans `<état>/audit/<sha1(session)[:16]>.json`.
+
+## Projet
+
+`/project [contexte]` conduit un projet du **dépôt principal** (pas du worktree d'une
+feature), dans une session interactive — le contexte optionnel est transmis à l'agent.
+
+- **Refus** : un dossier sans dépôt git, ou un dépôt sans distant GitHub (`git remote
+  -v` : `origin` s'il désigne `github.com` en HTTPS, SSH ou `git@`, sinon le premier
+  remote qui le désigne ; GitHub Enterprise n'est pas reconnu), est refusé avec la
+  marche à suivre. `/project` ne crée **ni dépôt, ni distant, ni fichier** : les créer
+  reste à ta charge.
+- **Cadrage, puis plan** : une session neuve s'ouvre sur le cadrage. L'agent soumet son
+  plan par l'outil `project_plan` — but, fonction, segments ordonnés de features
+  (chacune un nom en kebab-case et une intention qui amorcera son `/req`). Si tu n'as pas
+  dit « fin », l'outil te demande d'abord si le cadrage est complet. Il te montre le
+  plan : **Valider**, **Corriger** (un éditeur où `## <segment>` ouvre un segment et
+  `- <nom> — <intention>` ajoute une feature ; l'ordre des lignes est l'ordre du plan ;
+  un texte illisible ou un nom déjà pris rouvre l'éditeur avec l'erreur) ou
+  **Abandonner** (rien n'est écrit). À la validation, tu choisis le modèle de chaque
+  feature, le document est écrit et le segment 1 part.
+- **Le document et sa branche** : `PROJECT.md` est le **seul** fichier de la branche
+  orpheline `omp-project` (worktree privé `<état>/projects/<sha1(realpath(dépôt))[:16]>.doc`). Il porte le but,
+  la fonction, chaque segment et ses features dans l'ordre, avec leur état, leur PR et
+  leur modèle ; les features retirées sont listées à part. Il est réécrit et **commité à
+  chaque changement d'état** — plan validé ou modifié, feature lancée, PR ouverte,
+  fusionnée, en échec, relancée ou retirée, projet arrêté, repris ou terminé — puis
+  poussé vers l'URL HTTPS du dépôt (`gh repo view`). Un commit ou un push impossible est
+  signalé une fois et ne bloque jamais les pipelines. Ne l'édite pas à la main.
+- **La base de chaque segment** : au démarrage d'un segment, la branche par défaut du
+  distant est récupérée en HTTPS (`git fetch <URL> +refs/heads/<défaut>:refs/omp-project/base`)
+  et **chaque feature du segment part de ce commit** — donc du code de toutes les PR
+  fusionnées du segment précédent, jamais du `HEAD` local. Distant injoignable ou vide :
+  le segment attend, et réessaie toutes les 60 s.
+- **Le relais `[project]`** : les features d'un projet sont des features du lot (section
+  *Lot* du panneau, même pilote, pipelines parallèles dans la limite de
+  `MEM0_PIPELINE_SLOTS`). Tant que la session `/project` est la session courante, chaque
+  question d'un maillon, chaque jalon et chaque échec lui arrive en message `[project]`.
+  Ses cinq outils : `project_plan` (le plan), `project_amend` (sa modification),
+  `project_reply` (répondre seule, quand le cadrage, le plan et le contrat donnent la
+  réponse), `project_approve` (« specs validées », « revue propre » : la chaîne va
+  jusqu'à la PR sans aucune touche) et `project_escalate` (te remonter l'élément ; ta
+  réponse part **mot pour mot**). Pendant le relais, le panneau affiche `relayé à
+  /project` et refuse d'y répondre ou d'y valider ; quitter ou fermer la session fait
+  retomber questions et jalons sur le panneau.
+- **Fusions** : `/project` sonde les PR du segment courant (`gh pr view`) au plus une fois
+  par minute. Il ne fusionne **jamais** : quand toutes les PR du segment sont fusionnées
+  (par toi), le segment suivant démarre seul ; quand le dernier l'est, le projet est
+  terminé.
+- **Échecs** : pipeline en erreur ou bloquée, plafond de la boucle revue ⇄ correction,
+  abandon, lancement refusé ou PR fermée sans fusion — la feature est **en échec**, aucun
+  segment suivant ne démarre, et l'échec te revient avec trois choix : **relancer** la
+  feature, la **retirer** du plan (le segment s'achève sans elle), ou **arrêter** le
+  projet (plus aucune pipeline n'est lancée ; celles en cours continuent sous
+  `/pipelines`).
+- **Évolution du plan** : `project_amend` propose la nouvelle liste des segments pas
+  encore démarrés — ajout, retrait ou modification de features, sur ta demande ou à
+  l'initiative de l'agent. Tu l'appliques, la corriges ou la rejettes : rien n'est
+  appliqué sans ta validation, et aucun segment ne démarre pendant le dialogue. Le
+  segment courant ne change jamais par cette voie.
+- **Arrêt et reprise** : relancer `/project` dans le dépôt — ou `/resume` de la session
+  `/project` — reprend le projet là où il en était (plan, avancement, questions en
+  attente), sans refaire le cadrage ni relancer une feature déjà lancée ou terminée. Un
+  projet arrêté propose de reprendre ou de repartir d'un nouveau cadrage ; un projet
+  terminé, d'en commencer un nouveau. Un projet déjà conduit par une autre session vivante
+  est refusé.
+- **Où c'est rangé** : le projet dans `<état>/projects/<sha1(realpath(dépôt))[:16]>.json`
+  (un par dépôt, écrit par la seule session qui le conduit), le battement de son relais
+  dans `<état>/audit/<sha1(clé)[:16]>.json`.
 
 ## Phases
 

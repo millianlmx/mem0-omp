@@ -65,7 +65,8 @@
         "impl",
         "review",
         "pipelines",
-        "audit"
+        "audit",
+        "project"
       ]
     }
   ]

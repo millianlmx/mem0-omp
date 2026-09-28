@@ -8,7 +8,7 @@ import { reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotCancelRefusal, lotFeature, lotOmpBin, lotOwnerAlive, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { modelField } from "./models.ts";
@@ -24,12 +24,23 @@ import type { PanelPendingAsk, RunningEntry } from "./store.ts";
 // --- le pilote : une passe = lire, décider, lancer (S-2, S-4, S-11) ----------
 
 /**
- * `auditSession` : chemin absolu de la session /audit qui lance la feature (S-1).
- * Une feature /audit démarre tout de suite, même dans un lot au brouillon.
+ * `auditSession` : la CLÉ DE RELAIS de la feature (S-1, S-6) — chemin absolu de la
+ * session /audit qui la lance, ou `relayKey` du projet /project qui la lance. Une
+ * feature relayée démarre tout de suite, même dans un lot au brouillon.
  * `model` : le modèle choisi à la création (S-1) — absent ou vide, la feature naît
  * sans modèle et suit le défaut OMP.
+ * `relayKind` : `"project"` pour une feature lancée par /project (textes du panneau).
+ * `base` : le sha de départ de son worktree (S-7) — absent, `HEAD` du dépôt principal.
  */
-export type AddFeatureInput = { name: string; description: string; deps: string[]; auditSession?: string; model?: string | null };
+export type AddFeatureInput = {
+  name: string;
+  description: string;
+  deps: string[];
+  auditSession?: string;
+  model?: string | null;
+  relayKind?: "project";
+  base?: string;
+};
 
 
 /** Le refus d'une réponse à un `ask` (S-7) : la question se répond dans SA vue. */
@@ -43,10 +54,10 @@ export type LotPanelActions = {
   remove(slug: string): Promise<string | null>;
   /**
    * Livre la réponse (feature `waiting`+`answer`) ou met le texte en file (`running`).
-   * `from: "audit"` : le relais /audit lui-même répond — une question relayée
-   * n'est pas refusée (S-3).
+   * `from: "audit"` / `"project"` : le relais lui-même répond — une question relayée
+   * n'est pas refusée (S-3, S-6).
    */
-  answer(slug: string, text: string, options?: { from?: "audit" }): Promise<string | null>;
+  answer(slug: string, text: string, options?: { from?: "audit" | "project" }): Promise<string | null>;
   /** Ce que cette feature accepte comme écriture — la MÊME règle que `answer` applique. */
   reply(slug: string): RowReply;
   validate(slug: string): Promise<string | null>;
@@ -864,6 +875,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       primaryRoot: deps.repoRoot,
       slug: feature.slug,
       baseDir: worktreesBase,
+      base: feature.base,
     });
     if (!created.ok) return created.error;
     feature.worktree = created.path;
@@ -963,6 +975,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
           primaryRoot: deps.repoRoot,
           slug: feature.slug,
           baseDir: worktreesBase,
+          // La base d'une feature de projet (S-7) : la branche par défaut du
+          // distant, récupérée pour son segment — sinon `HEAD`, comme avant.
+          base: feature.base,
         });
         if (!made.ok) {
           created.push({ slug: feature.slug, result: { error: made.error } });
@@ -1494,6 +1509,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
         contractHash: null,
         launched,
         ...(audit ? { auditSession: input.auditSession } : {}),
+        // Le genre de relais et la base (S-7) : écrits à la création, jamais
+        // modifiés — même patron que `auditSession`.
+        ...(input.relayKind === "project" ? { relayKind: "project" as const } : {}),
+        ...(isLotBaseSha(input.base) ? { base: input.base } : {}),
         ...modelField(input.model),
         addedAt: at,
         sinceAt: at,
@@ -1570,9 +1589,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
     async answer(slug, text, options) {
       const trimmed = text.trim();
       if (trimmed === "") return "réponse vide";
-      // Le relais /audit répond lui-même : la question qu'il relaie n'est pas
-      // refusée comme « confiée à /audit » (S-3).
-      const fromAudit = options?.from === "audit";
+      // Le relais (/audit ou /project) répond lui-même : la question qu'il relaie
+      // n'est pas refusée comme « confiée à la session » (S-3, S-6).
+      const fromRelay = options?.from === "audit" || options?.from === "project";
       // Les cas qui n'écrivent PAS le lot se règlent SANS revendiquer la propriété
       // (F1) : la boîte d'un run vivant et la question en vol s'atteignent depuis
       // n'importe quelle session — exiger la propriété ici faisait annoncer
@@ -1582,7 +1601,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const knownFeature = known ? lotFeature(known, slug) : undefined;
       if (known && knownFeature) {
         const live = liveWriterOf(known, knownFeature);
-        const direct = rowReply(knownFeature, fromAudit ? { ...live, auditRelay: false } : live);
+        const direct = rowReply(knownFeature, fromRelay ? { ...live, auditRelay: false } : live);
         if (direct.kind === "closed") return direct.reason;
         if (direct.kind === "ask") return ASK_REPLY_REFUSAL;
         if (direct.kind === "steer") return deliverSteer(direct.inbox, trimmed);
@@ -1595,7 +1614,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const { lot, feature } = opened;
       if (!feature) return `« ${slug} » n'est pas dans le lot`;
       const live = liveWriterOf(lot, feature);
-      const reply = rowReply(feature, fromAudit ? { ...live, auditRelay: false } : live);
+      const reply = rowReply(feature, fromRelay ? { ...live, auditRelay: false } : live);
       if (reply.kind === "closed") return reply.reason;
       if (reply.kind === "ask") return ASK_REPLY_REFUSAL;
       if (reply.kind === "steer") return deliverSteer(reply.inbox, trimmed);

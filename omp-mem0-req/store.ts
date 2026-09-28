@@ -379,13 +379,18 @@ export function writeDelivery(dir: string, delivery: PanelDelivery): void {
 }
 
 
-// --- le fichier de relais /audit : qui relaie les questions d'une feature /audit --
-// Une session /audit ARMÉE écrit ce fichier à chaque balayage (battement) ; le
-// pilote et le panneau le lisent pour savoir si une question ou un jalon est
-// confié à /audit. Un fichier par session /audit, écrit atomiquement, retiré au
-// désarmement : un lecteur ne voit jamais qu'un relais entier ou aucun.
+// --- le fichier de relais : qui relaie les questions d'une feature relayée ------
+// Une session /audit ou /project ARMÉE écrit ce fichier à chaque balayage
+// (battement) ; le pilote et le panneau le lisent pour savoir si une question ou
+// un jalon est confié à cette session. Un fichier par CLÉ DE RELAIS, écrit
+// atomiquement, retiré au désarmement : un lecteur ne voit jamais qu'un relais
+// entier ou aucun.
 
-/** Le battement d'une session /audit armée (S-2). */
+/**
+ * Le battement d'une session de relais armée (S-2). `sessionFile` porte la CLÉ DE
+ * RELAIS : le fichier de la session /audit, ou la `relayKey` d'un projet /project
+ * — le format du fichier est inchangé.
+ */
 export type AuditRelayRecord = { version: 1; sessionFile: string; pid: number; heartbeatAt: number };
 
 

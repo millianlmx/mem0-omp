@@ -150,6 +150,50 @@ export function buildAuditSeed(repoDir: string, extra: string): string {
   );
 }
 
+// ---------------------------------------------------------------------------
+// /project — cerne le projet (but, fonction), fait valider un plan de segments de
+// features, puis relaie les questions, jalons et échecs des pipelines lancées.
+// ---------------------------------------------------------------------------
+
+export const PROJECT_DIRECTIVE = `Tu conduis le projet de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :
+1. CADRAGE — cerne le BUT du projet (le résultat attendu, pour qui) et sa FONCTION (ce que le logiciel fait) par un dialogue avec l'utilisateur.
+   - Si le dépôt contient déjà du code, LIS-le AVANT ta première question (read, grep, glob, lsp, mem0_search) : architecture, modules, commandes, tests, ce qui existe et ce qui manque. Chaque question s'appuie sur un élément réel que tu nommes (fichier, module, commande ou test) ; n'avance rien que le dépôt ne montre pas. Sur un dépôt neuf, sans code, dis-le et questionne sur l'intention seule.
+   - Chaque question = un \`ask\` avec 2 à 4 options TRANCHÉES, plus une option « peu importe / à toi de voir ». Une question à la fois, et seulement si la réponse change le plan.
+   - Le cadrage ne se clôt QUE sur la validation explicite de l'utilisateur : il tape « fin », ou il choisit « Tout est bon, c'est complet. » au contrôle de complétude que \`project_plan\` lui présente. Pendant le cadrage, tu n'écris, ne modifies et ne commites AUCUN fichier.
+2. PLAN — propose des SEGMENTS ORDONNÉS : un segment regroupe des features qui se construisent EN MÊME TEMPS, sans dépendre l'une de l'autre ; ce qu'une feature exige d'une autre va dans un segment ULTÉRIEUR. Chaque feature a un nom en kebab-case, unique dans tout le plan, et une intention de 2 à 5 phrases (le besoin, le périmètre, ce qui prouvera la réussite) : elle amorcera son /req. Appelle \`project_plan\` avec { purpose, function, segments: [{ name, features: [{ name, intention }] }] } : c'est lui qui montre le plan à l'utilisateur, le lui fait corriger puis valider, lui fait choisir le modèle de chaque feature, écrit le document du projet et lance le premier segment. S'il rend « non validé », reprends le cadrage selon la réponse de l'utilisateur, puis rappelle-le.
+3. RELAIS — une fois le plan validé, tu es le relais de chaque pipeline lancée. Chaque question d'un maillon (/req, /specs, /impl, /review), chaque jalon et chaque échec t'arrive dans un message \`[project]\` qui nomme sa feature et porte un identifiant d'élément. Traite-les un par un, dans l'ordre d'arrivée, CHAQUE élément par exactement un appel d'outil qui porte son identifiant :
+   - Question : \`project_reply\` seulement si le cadrage, le plan, le document du projet, le contrat de la feature et le dépôt te donnent la réponse sans supposition ; sinon \`project_escalate\`. Une question sur l'intention métier que le cadrage ne tranche pas va TOUJOURS à l'utilisateur.
+   - Jalon « specs validées » : lis \`## Spécifications\` et \`## Lots\` du contrat indiqué ; \`project_approve\` si elles servent l'intention de la feature dans le plan, sinon \`project_escalate\`.
+   - Jalon « revue propre » : lis \`## Revue\` du contrat indiqué ; \`project_approve\` si la revue ne laisse aucun doute, sinon \`project_escalate\`.
+   - Échec d'une feature : TOUJOURS \`project_escalate\` — relancer, retirer ou arrêter est la décision de l'utilisateur, jamais la tienne.
+   Avant un \`project_escalate\`, écris en une phrase pourquoi tu ne tranches pas. N'utilise jamais l'outil \`ask\` pour relayer : seul \`project_escalate\` transmet la réponse de l'utilisateur mot pour mot.
+4. ÉVOLUTION DU PLAN — quand l'utilisateur demande d'ajouter, retirer ou modifier une feature, ou quand tu proposes toi-même un changement, appelle \`project_amend\` avec la liste COMPLÈTE des segments pas encore démarrés : l'outil fait valider la modification par l'utilisateur, et rien n'est appliqué sans cette validation.
+5. Tu ne fusionnes JAMAIS une PR, tu ne lances aucun maillon de toi-même et tu n'annonces aucune commande : un segment démarre seul quand toutes les PR du segment précédent ont été fusionnées par l'utilisateur.`;
+
+
+/** Amorce du cadrage /project. Fonction pure : `extra` = contexte ajouté sur la ligne de commande. */
+export function buildProjectSeed(repoDir: string, extra: string): string {
+  return (
+    `[project] Cadrage du projet du dépôt ${repoDir}.\n\n` +
+    (extra !== "" ? `Contexte ajouté : ${extra}\n\n` : "") +
+    PROJECT_DIRECTIVE
+  );
+}
+
+
+/**
+ * Amorce de la REPRISE d'un projet dont le plan est validé (S-4) : le document du
+ * projet (`renderProjectDoc`) tient lieu de mémoire — aucune question de cadrage.
+ */
+export function buildProjectResumeSeed(repoDir: string, extra: string, doc: string): string {
+  return (
+    `[project] Reprise du projet du dépôt ${repoDir} — le cadrage est clos et le plan validé : ne repose aucune question de cadrage.\n\n` +
+    (extra !== "" ? `Contexte ajouté : ${extra}\n\n` : "") +
+    `Document du projet (branche omp-project) :\n\n${doc}\n\n` +
+    PROJECT_DIRECTIVE
+  );
+}
+
 
 // ---------------------------------------------------------------------------
 // /impl — implémente d'un trait les specs ET les lots figés dans le contrat, et
