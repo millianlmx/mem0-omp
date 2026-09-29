@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 3/5 « Les vues »
-**Avancement** : 7/15 feature(s) fusionnée(s)
+**Statut** : en cours — segment 4/5 « Les gestes »
+**Avancement** : 8/15 feature(s) fusionnée(s)
 
 ## But
 
@@ -30,15 +30,15 @@ L'app lit le magasin d'état partagé (~/.omp/agent/pipeline/ : running, history
 | 2 | `lecteur-de-sessions-omp` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/38 | opencode-go/deepseek-v4.1-flash | Lire les fichiers de session OMP (JSONL, parfois écrits pendant la lecture) et en tirer un modèle de conversation : messages utilisateur et assistant, pensées, appels d'outil (nom, arguments, résultat, diffs), modèle et usage. La lecture reprend au dernier octet lu pour ne jamais re-parser un fichier entier, reconnaît les sessions de sous-agents et ne casse pas sur une ligne partiellement écrite. La réussite se prouve par des tests sur des sessions réelles du poste, dont une en cours d'écriture, et par un rendu fidèle vérifié sur une session de pipeline. |
 | 3 | `client-rpc-omp` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/39 | opencode-go/deepseek-v4.1-flash | Héberger une session OMP depuis l'app : lancer omp --mode rpc (et rpc-ui), parler le protocole JSONL (négociation de version, réponses corrélées, événements, dialogues extension_ui_request) et garder le process vivant et réconcilié (arrêt propre, réponses aux dialogues, reconnexion). C'est ce client qui permettra à l'app de conduire un projet et d'ouvrir des sessions sans terminal. La réussite se prouve par un aller-retour réel prompt → événements → dialogue répondu contre un vrai omp --mode rpc, et par les cas d'échec : binaire absent, process tué, frame illisible. |
 
-### Segment 3 — Les vues (en cours)
+### Segment 3 — Les vues (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
 | 1 | `kanban-des-pipelines` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/40 | opencode-go/deepseek-v4.1-flash | La vue principale : les features des lots et les runs de tous les dépôts en colonnes par état (en attente, en cours, question en vol, PR ouverte, fusionné, échec), chaque carte montrant dépôt, maillon, modèle, durée écoulée et URL de PR, avec sélection vers la session et les fichiers. La réussite se prouve par une comparaison avec /pipelines sur le même état (mêmes features, mêmes états) et par le traitement des cas dégradés : lot illisible, propriétaire mort, entrées en double — dits au lieu d'être inventés. |
-| 2 | `visionneuse-de-session` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/42 | opencode-go/deepseek-v4.1-flash | Rendre la conversation d'un run comme la vue de session du panneau : messages, appels d'outil repliables, diffs colorés, question ask en évidence, et suivi d'un run vivant en relisant seulement les octets neufs. La lecture vient du lecteur de sessions ; la vue ne réécrit jamais la session. La réussite se prouve par une session de pipeline réelle affichée fidèlement (mêmes faits que le TUI) et par une session en cours qui se met à jour sans recharger tout le fichier. |
+| 2 | `visionneuse-de-session` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/42 | opencode-go/deepseek-v4.1-flash | Rendre la conversation d'un run comme la vue de session du panneau : messages, appels d'outil repliables, diffs colorés, question ask en évidence, et suivi d'un run vivant en relisant seulement les octets neufs. La lecture vient du lecteur de sessions ; la vue ne réécrit jamais la session. La réussite se prouve par une session de pipeline réelle affichée fidèlement (mêmes faits que le TUI) et par une session en cours qui se met à jour sans recharger tout le fichier. |
 | 3 | `visionneuse-de-fichiers-et-diffs` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/41 | opencode-go/deepseek-v4.1-flash | Parcourir les fichiers d'un worktree de feature (et du dépôt principal) et voir le diff git du travail en cours, plus la lecture du contrat .omp/pipeline/contract.md et du document PROJECT.md. L'arbre vient de git (fichiers suivis et non suivis), le diff est celui du worktree contre sa base, et rien n'est modifié par cette vue. La réussite se prouve par le diff d'une feature réelle affiché à l'identique de git diff, et par un arbre qui correspond au contenu du worktree sur disque. |
 
-### Segment 4 — Les gestes (à venir)
+### Segment 4 — Les gestes (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
