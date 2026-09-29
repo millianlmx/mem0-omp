@@ -38,6 +38,16 @@ struct OMPConsoleApp: App {
         .commands {
             SessionCommands()
         }
+
+        // Troisième scène : la visionneuse de session. Elle présente une VALEUR
+        // (`ViewerTarget`), donc deux runs différents ouvrent deux fenêtres, et
+        // re-choisir un run déjà ouvert ramène SA fenêtre au premier plan
+        // (Documentation §1 : le système dédoublonne par valeur). La scène « Session
+        // OMP » (hébergement RPC, instance unique) reste distincte et n'est pas
+        // touchée : deux usages, deux scènes.
+        WindowGroup("Session", id: "viewer", for: ViewerTarget.self) { $target in
+            SessionViewerView(target: $target)
+        }
     }
 }
 

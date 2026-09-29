@@ -37,11 +37,22 @@ public struct SessionRead: Equatable, Sendable {
     public var skipped: [SkippedEntry]
     /// `nil` si tout est cohérent.
     public var issue: SessionIssue?
+    /// Nombre d'octets du fichier RÉELLEMENT consommés par cet appel : c'est la
+    /// seule mesure honnête du coût d'une relecture (un fait en cours d'écriture
+    /// n'est pas consommé). `0` dès qu'aucun octet n'est consommé — tous les
+    /// `issue`, et une absence de nouveauté.
+    public var bytesRead: Int
 
-    public init(added: [ConversationEntry], skipped: [SkippedEntry], issue: SessionIssue?) {
+    public init(
+        added: [ConversationEntry],
+        skipped: [SkippedEntry],
+        issue: SessionIssue?,
+        bytesRead: Int = 0
+    ) {
         self.added = added
         self.skipped = skipped
         self.issue = issue
+        self.bytesRead = bytesRead
     }
 }
 
@@ -114,7 +125,7 @@ public final class SessionReader {
         cursor += delta.consumed
         lastSize = stat.size
         identity = stat.identity
-        return SessionRead(added: delta.added, skipped: delta.skipped, issue: nil)
+        return SessionRead(added: delta.added, skipped: delta.skipped, issue: nil, bytesRead: delta.consumed)
     }
 
     // MARK: - Consommation des octets

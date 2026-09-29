@@ -202,8 +202,9 @@ propriétaire mort, laisser `/pipelines` réconcilier d'abord : le tableau voit 
 l'entrée d'historique et la parité tient. Consigner les relevés dans la section
 `## Revue` du contrat.
 `commands/` ne fait pas partie du périmètre lu. Les vues (kanban, sessions,
-fichiers, projet) consommeront ces flux dans les features suivantes : seule la
-section « Fichiers » en consomme pour l'instant le lot de la feature active.
+fichiers, projet) consommeront ces flux dans les features suivantes : les sections
+Kanban, Fichiers et Sessions en consomment le flux global ; Projet reste à sa feature
+ultérieure.
 
 ## Lire les fichiers et les diffs d'une cible
 
@@ -262,6 +263,63 @@ pipeline sans session d'affichage, le bundle se lance et son état est vivant �
 l'application est bien au premier plan (`OMP Console` dans la barre de menus) et son
 arbre d'accessibilité expose sa fenêtre et ses quatre sections — mais la fenêtre
 n'est peinte sur aucun écran, donc une capture d'écran ne la montre pas.
+fichiers, projet) consommeront ces flux dans les features suivantes : aucune n'est
+branchée ici.
+## Visionneuse de session
+
+La section **Sessions** de la barre latérale liste les runs du magasin d'état
+(les vivants d'abord, puis les runs clos) : chaque ligne est un bouton, et la
+cliquer ouvre la **conversation de la session de ce run** dans une fenêtre dédiée.
+
+- **Une fenêtre par session.** Re-choisir un run déjà ouvert ramène sa fenêtre au
+  premier plan (la valeur présentée est la session, pas l'entrée du magasin) ;
+  choisir un autre run en ouvre une seconde. Le titre de la fenêtre est
+  `« <libellé du run> — <étiquette de session> »`.
+- **Les faits essentiels y sont, une fois chacun, dans l'ordre du fichier** :
+  messages avec leur rôle (« vous », « agent »), nom et cible de chaque appel
+  d'outil, arguments, résultats, question `ask` et ses options, marqueurs de
+  compaction et de branche.
+- **Chaque appel d'outil se plie et se déplie individuellement** (replié par
+  défaut ; un appel `ask` entre déplié), avec le statut `⇒ en attente`,
+  `⇒ ok · N lignes` ou `⇒ erreur · N lignes`.
+- **Diffs colorés par contenu** : tout diff unifié reçu d'un outil est détecté dans
+  le texte du résultat, et le diff d'un appel d'édition d'OMP (`details.diff`) est
+  classé ligne à ligne. Ajout, suppression, contexte et en-têtes sont distingués —
+  par la couleur ET par la valeur d'accessibilité de chaque ligne (« ligne
+  ajoutée », « ligne supprimée », « contexte », « en-tête de diff »).
+- **Une question `ask` est mise en évidence, et ne se répond pas ici** : la
+  visionneuse affiche la question et ses options, sans aucun geste pour y répondre.
+- **Suivi automatique** : la vue ouvre le fil par la fin, puis suit les faits
+  nouveaux en relisant **seulement les octets neufs** (le lecteur tient un curseur
+  d'octets ; la veille est une source vnode sur le fichier, jamais une scrutation).
+  Un geste vers le haut suspend le suivi — la position ne bouge plus et le bouton
+  **« Revenir au direct »** apparaît ; l'activer reprend le suivi.
+- **États explicites** : « en attente des premiers faits » tant que le fichier
+  n'existe pas, « Session illisible : … Nouvelle tentative automatique. » s'il n'est
+  pas lisible, « Session vide — aucun fait. » s'il est vide. Le bandeau du haut
+  annonce en permanence `N faits · N ignorés · suivi|suivi suspendu`, plus l'état de
+  lecture et, le cas échéant, `· fichier réécrit — affichage reconstruit`.
+- **Lecture seule** : la visionneuse n'appelle aucune API d'écriture. Vérifier
+  tient en une commande : la taille et l'empreinte du `.jsonl` ne changent pas
+  pendant qu'on défile, qu'on plie ou que des faits arrivent.
+
+### Recette : journaliser une vraie session
+
+Même principe que la recette du lecteur — un test **désactivé par défaut** :
+
+```bash
+cd omp-console
+MEM0_VIEWER_RECIPE="$HOME/.omp/agent/sessions/<bucket>/<horodatage>_<id>.jsonl" \
+MEM0_VIEWER_RECIPE_OUT="/tmp/journal-visionneuse.txt" \
+swift test --scratch-path .build-tests \
+  -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
+  --filter recette
+```
+
+Le journal écrit une ligne par fait affiché (identité de ligne, rôle, texte, appels
+d'outil avec leur cible et leurs arguments, question `ask` et options, diffs), à
+confronter à la session de référence et au TUI.
 
 ## Recette : lire une vraie session
 
@@ -504,16 +562,27 @@ omp-console/
 │   │   ├── KanbanView.swift       la section : bandeau, onze colonnes, clavier
 │   │   ├── KanbanCardView.swift   une carte cliquable (durée sous TimelineView)
 │   │   └── KanbanDetailView.swift le panneau de détail
-│   └── Files/                     la visionneuse de fichiers et de diffs (lecture seule)
-│       ├── GitCLI.swift           binaires, argv purs et exécution : la SEULE surface git
-│       ├── FilesTarget.swift      catalogue des cibles et base de comparaison
-│       ├── FilesTree.swift        l'arbre d'une cible (suivis, non suivis, supprimés)
-│       ├── FilesReader.swift      le contenu d'un fichier, exactement
-│       ├── FilesDiff.swift        le diff unifié découpé en lignes typées
-│       ├── TreeWatcher.swift      veille FSEvents récursive de la cible active
-│       ├── FilesModel.swift       l'état de la section : cible, arbre, document, veille
-│       ├── FilesText.swift        tous les textes de la section, en un endroit
-│       └── FilesView.swift        la section : en-tête, arbre, document, états
+│   ├── Files/                     la visionneuse de fichiers et de diffs (lecture seule)
+│   │   ├── GitCLI.swift           binaires, argv purs et exécution : la SEULE surface git
+│   │   ├── FilesTarget.swift      catalogue des cibles et base de comparaison
+│   │   ├── FilesTree.swift        l'arbre d'une cible (suivis, non suivis, supprimés)
+│   │   ├── FilesReader.swift      le contenu d'un fichier, exactement
+│   │   ├── FilesDiff.swift        le diff unifié découpé en lignes typées
+│   │   ├── TreeWatcher.swift      veille FSEvents récursive de la cible active
+│   │   ├── FilesModel.swift       l'état de la section : cible, arbre, document, veille
+│   │   ├── FilesText.swift        tous les textes de la section, en un endroit
+│   │   └── FilesView.swift        la section : en-tête, arbre, document, états
+│   └── Viewer/                    la visionneuse de session (aucune écriture)
+│       ├── ViewerTarget.swift     la valeur d'une fenêtre : la session, et son titre
+│       ├── SessionSelectorModel.swift  les runs choisissables, depuis le magasin
+│       ├── SessionSelectorView.swift   la section « Sessions » : la liste
+│       ├── SessionRows.swift      faits affichables, en-tête d'appel, question `ask`
+│       ├── SessionDiffLines.swift diffs : classification et découpe des corps
+│       ├── SessionFileWatcher.swift  veille vnode du fichier de session
+│       ├── SessionViewerModel.swift  lignes, plis, suivi, états, journal d'octets
+│       ├── SessionViewerView.swift   bandeau, flux, états vides, « Revenir au direct »
+│       ├── SessionRowView.swift      le rendu d'un fait (dont les lignes de diff)
+│       └── ScrollBottomObserver.swift la géométrie du défilement et ses gestes
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git
