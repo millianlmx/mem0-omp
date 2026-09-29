@@ -583,6 +583,9 @@ que d'afficher un écran à moitié peint.
   `remove` (modifier la liste à chaud), `verdict` (`v` ou `y`, comme les touches du
   panneau), `answer` (répondre à une question en vol d'un run) et `stop` (interrompre
   le pilote). Un même identifiant rejoué ne produit ni second accusé ni second effet.
+  L'app **omp-console** est un de ces clients : elle dépose ses gestes par ce canal et
+  par les boîtes des runs, et affiche l'accusé du pilote (voir « Agir depuis le
+  Kanban » de `omp-console/README.md`).
 
 ## Lot de features
 

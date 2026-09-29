@@ -25,11 +25,17 @@ struct OMPConsoleApp: App {
     @StateObject private var sessionModel = SessionConsoleModel()
     @StateObject private var filesModel = FilesModel()
     @StateObject private var kanbanModel = KanbanModel()
+    @StateObject private var actionsModel = ActionsModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
         WindowGroup("OMP Console") {
-            ConsoleRootView(model: model, filesModel: filesModel, kanban: kanbanModel)
+            ConsoleRootView(
+                model: model,
+                filesModel: filesModel,
+                kanban: kanbanModel,
+                actions: actionsModel
+            )
         }
 
         Window("Session OMP", id: "session") {

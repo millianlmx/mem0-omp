@@ -52,10 +52,12 @@ struct SectionDetail: View {
     let section: ConsoleSection
     let filesModel: FilesModel
     @ObservedObject var kanban: KanbanModel
+    /// Le modèle d'action des gestes du Kanban (S-9), à l'échelle de l'app.
+    @ObservedObject var actions: ActionsModel
 
     var body: some View {
         switch section {
-        case .kanban: KanbanView(model: kanban)
+        case .kanban: KanbanView(model: kanban, actions: actions)
         case .sessions: SessionsView()
         case .files: FilesView(model: filesModel)
         case .project: ProjectView()

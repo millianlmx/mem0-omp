@@ -15,6 +15,8 @@ struct KanbanView: ConsoleSectionView {
     static let section = ConsoleSection.kanban
 
     @ObservedObject var model: KanbanModel
+    /// Le modèle d'action (S-9) : la zone d'action, le formulaire et le journal.
+    @ObservedObject var actions: ActionsModel
 
     var body: some View {
         Group {
@@ -47,10 +49,14 @@ struct KanbanView: ConsoleSectionView {
     /// vides — un tableau muet ne dit pas quel état manque.
     private func boardView(_ board: KanbanBoard) -> some View {
         VStack(alignment: .leading, spacing: 0) {
+            KanbanActionBar(model: actions, board: board, selectedCard: model.selectedCard)
             if !board.anomalies.isEmpty {
                 KanbanBannerView(anomalies: board.anomalies)
             }
             HStack(alignment: .top, spacing: 0) {
+                // La poignée clavier et `kanban.board` vivent sur la zone des
+                // COLONNES seulement (S-9) : une flèche ← / → dans un champ de
+                // saisie du détail déplace le curseur, jamais la colonne.
                 ScrollView(.horizontal) {
                     LazyHStack(alignment: .top, spacing: 12) {
                         ForEach(KanbanColumn.allCases, id: \.rawValue) { column in
@@ -63,19 +69,20 @@ struct KanbanView: ConsoleSectionView {
                     }
                     .padding(12)
                 }
+                .focusable()
+                // La fermeture prend ZÉRO argument (Doc-2, piège mesuré) et rend
+                // `.handled` : la frappe est consommée par le tableau.
+                .onKeyPress(.downArrow) { model.move(by: .next); return .handled }
+                .onKeyPress(.upArrow) { model.move(by: .previous); return .handled }
+                .onKeyPress(.rightArrow) { model.move(by: .nextColumn); return .handled }
+                .onKeyPress(.leftArrow) { model.move(by: .previousColumn); return .handled }
+                .accessibilityIdentifier("kanban.board")
                 Divider()
-                KanbanDetailView(model: model)
+                KanbanDetailView(model: model, actions: actions)
                     .frame(width: 320)
             }
+            KanbanJournalView(model: actions)
         }
-        .focusable()
-        // La fermeture prend ZÉRO argument (Doc-2, piège mesuré) et rend `.handled` :
-        // la frappe est consommée par le tableau, elle ne remonte pas à la fenêtre.
-        .onKeyPress(.downArrow) { model.move(by: .next); return .handled }
-        .onKeyPress(.upArrow) { model.move(by: .previous); return .handled }
-        .onKeyPress(.rightArrow) { model.move(by: .nextColumn); return .handled }
-        .onKeyPress(.leftArrow) { model.move(by: .previousColumn); return .handled }
-        .accessibilityIdentifier("kanban.board")
     }
 }
 
