@@ -2,10 +2,12 @@
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
 contrôle : une fenêtre, une barre latérale à quatre sections — **Kanban**,
-**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. Deux sections
+**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. Les quatre sections
 sont vivantes : **Kanban** affiche le tableau des pipelines (voir « Section Kanban »)
-et **Fichiers** la visionneuse de fichiers et de diffs (voir « Lire les fichiers et
-les diffs d'une cible ») ; Sessions et Projet gardent un contenu de remplacement.
+avec sa zone d'action (voir « Agir depuis le Kanban »), **Sessions** le sélecteur de
+sessions (voir « Visionneuse de session »), **Fichiers** la visionneuse de fichiers
+et de diffs (voir « Lire les fichiers et les diffs d'une cible ») et **Projet** la
+conduite de projet (voir « Fenêtre Projet (conduite) »).
 Cible minimale : macOS 14.
 
 ## Prérequis
@@ -82,9 +84,10 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
 - La couche est un **lecteur** : aucune API d'écriture n'est appelée, jamais — un
   propriétaire mort est marqué (`isStale`), ni retiré ni déplacé vers `history/`.
 
-`commands/` ne fait pas partie du périmètre lu. La section **Kanban** consomme ce
-flux global ; les sections Sessions, Fichiers et Projet restent à leurs features
-ultérieures.
+`commands/` ne fait pas partie du périmètre **lu** par la couche `Store/`. La
+section **Kanban** consomme le flux global en lecture, et c'est la couche
+`Actions/` (voir « Agir depuis le Kanban ») qui écrit — et seulement deux
+familles de fichiers : les livraisons d'un run et les commandes du canal.
 
 ## Section Kanban
 
@@ -92,9 +95,11 @@ ultérieures.
 mêlant **tous** les dépôts, peuplée depuis le seul magasin d'état partagé — les
 features de projet (`projects`), les features de lot (`lots`), les runs hors lot
 (`running`) et les vingt clôtures les plus récentes (`history`, même borne que
-`/pipelines`). C'est un **lecteur pur** : aucune API d'écriture n'est appelée, un
+`/pipelines`). Elle ne fait qu'afficher : aucune API d'écriture n'est appelée, un
 propriétaire mort n'est ni déplacé vers `history/` ni retiré (à la différence du
-panneau `/pipelines`, qui réconcilie).
+panneau `/pipelines`, qui réconcilie). Elle **n'écrit rien** : les gestes offerts
+depuis une carte passent par la couche `Actions/` (voir « Agir depuis le Kanban »),
+jamais par le tableau lui-même.
 
 ### Les onze colonnes
 
@@ -131,7 +136,7 @@ détail sans sélection écrit `Aucune carte sélectionnée`.
 
 | Identifiant | Surface |
 |---|---|
-| `kanban.board` | la racine du tableau (focus clavier) |
+| `kanban.board` | la zone des **colonnes** (focus clavier et flèches) |
 | `kanban.column.<rawValue>` | une colonne |
 | `kanban.card.<id>` | une carte (`feature:<clé>:<slug>`, `project:<clé>:<slug>`, `run:<id>`, `history:<id>`) |
 | `kanban.banner` | le bandeau d'anomalies (absent s'il n'y en a aucune) |
@@ -141,11 +146,13 @@ détail sans sélection écrit `Aucune carte sélectionnée`.
 | `kanban.empty` | les deux messages « absent » / « vide » |
 | `kanban.loading` | le message de chargement |
 
-Clavier (le tableau a le focus) : `↓`/`↑` carte suivante/précédente, `→`/`←` première
-carte de la colonne suivante/précédente non vide. Clic simple sur une carte :
-sélection + surbrillance + panneau de détail. Sélectionner une carte ne change
-**jamais** de section : la barre latérale reste sur Kanban, et Sessions, Fichiers et
-Projet gardent leur contenu de remplacement.
+Clavier : les flèches `↓`/`↑` (carte suivante/précédente) et `→`/`←` (colonne
+suivante/précédente non vide) sont attachées à la **zone des colonnes**
+(`kanban.board`) — jamais au panneau de détail, donc une flèche dans un champ de
+saisie de la zone d'action déplace le curseur, pas la colonne. Clic simple sur une
+carte : sélection + surbrillance + panneau de détail. Sélectionner une carte ne
+change **jamais** de section : la barre latérale reste sur Kanban, et Sessions,
+Fichiers et Projet gardent leur propre contenu.
 
 ### Parité avec `/pipelines`
 
@@ -201,10 +208,71 @@ par rang selon la table ci-dessus (dépôt, entités, colonnes, anomalies). Pour
 propriétaire mort, laisser `/pipelines` réconcilier d'abord : le tableau voit alors
 l'entrée d'historique et la parité tient. Consigner les relevés dans la section
 `## Revue` du contrat.
-`commands/` ne fait pas partie du périmètre lu. Les vues (kanban, sessions,
-fichiers, projet) consommeront ces flux dans les features suivantes : les sections
-Kanban, Fichiers et Sessions en consomment le flux global ; Projet reste à sa feature
-ultérieure.
+
+## Agir depuis le Kanban
+
+`Sources/OMPConsole/Actions/` est la **seule** couche qui écrit depuis l'app. Elle
+n'écrit jamais l'état du lot : ses deux familles de fichiers sont les livraisons
+d'un run (`<stateDir>/inbox/<boîte>/`) et les commandes du canal
+(`<stateDir>/commands/`). Tout geste est tracé dans le **journal des gestes** en bas
+de la section, avec l'accusé du pilote quand il y en a un — un refus est affiché
+verbatim, et une commande sans pilote reste « en attente dans le canal ».
+
+| Geste | Où | Écrit |
+|---|---|---|
+| Répondre à une question en vol (option ou texte libre) | zone d'action du détail | une livraison `ask` dans la boîte publiée du run |
+| Envoyer un texte à un run vivant sans question | zone d'action du détail | une livraison `text` dans la boîte publiée du run |
+| Valider les specs | zone d'action du détail (feature en attente specs) | `{kind:"verdict", verdict:"v"}` dans le canal |
+| Accepter la revue | zone d'action du détail (feature en attente revue) | `{kind:"verdict", verdict:"y"}` dans le canal |
+| Arrêter le lot | zone d'action du détail (carte portant un lot) | `{kind:"stop", repo}` dans le canal |
+| Lancer une feature | bandeau « Lancer une feature… » | `{kind:"launch", title, description, repo}` dans le canal |
+
+Règles d'aiguillage : une carte qui porte une **question en vol** offre la réponse
+(option **ou** texte libre, jamais les deux ensemble) ; un run vivant **sans**
+question offre l'envoi de texte ; une carte qui n'offre rien dit pourquoi (run non
+armé, ou aucun geste possible). Le dépôt du formulaire de lancement est **choisi**
+parmi les dépôts connus des cartes et le projet ouvert ; le slug est dérivé par le
+dépôt, jamais par l'app.
+
+### Identifiants d'accessibilité de l'action
+
+| Identifiant | Surface |
+|---|---|
+| `kanban.actions.bar` | le bandeau de lancement |
+| `kanban.launch.toggle` | le bouton « Lancer une feature… » |
+| `kanban.launch.title`, `.description`, `.repo`, `.submit`, `.cancel` | les contrôles du formulaire |
+| `kanban.actions` | la zone d'action sous les lignes du détail |
+| `kanban.actions.motif` | le motif quand la carte n'offre aucun geste |
+| `kanban.actions.option.<i>` | une option de la question en vol |
+| `kanban.actions.answerField`, `.answer` | le champ libre et le bouton « Répondre » |
+| `kanban.actions.steerField`, `.send` | le champ et le bouton d'envoi de texte |
+| `kanban.actions.validate`, `.accept` | les boutons de jalon |
+| `kanban.actions.stop` | le bouton « Arrêter le lot » |
+| `kanban.journal`, `kanban.journal.empty` | le journal des gestes |
+
+### Recette : agir depuis la carte
+
+Même bundle et même magasin jetable que la recette de vivacité (une sonde AX
+jetable : `AXUIElementCreateApplication(pid)` + parcours de `kAXChildrenAttribute`,
+plus des clics et des frappes réels par `CGEvent`).
+
+1. sélectionner une carte de feature en attente specs (clic réel) ⇒ la zone
+   d'action expose `kanban.actions`, `kanban.actions.validate`,
+   `kanban.actions.stop`, `kanban.actions.option.<i>`, `kanban.actions.answer`,
+   `kanban.actions.answerField` et `kanban.launch.toggle` ;
+2. cliquer « Valider les specs » ⇒ **un** fichier apparaît dans
+   `<magasin>/commands/` (`{"version":1,"id":"console-…","repo":"…","kind":"verdict",
+   "slug":"…","verdict":"v","sentAt":…}`) et `kanban.journal.empty` disparaît de
+   l'arbre (une ligne s'est ajoutée au journal) ;
+3. focaliser `kanban.actions.answerField`, y saisir un texte et presser `→` puis
+   `←` ⇒ la sélection du champ passe de `(0,0)` à `(1,0)` puis revient à `(0,0)`
+   alors que `kanban.actions.validate` reste présent : la colonne n'a pas bougé (le
+   tableau garde ses flèches hors des champs) ;
+4. déplacer la sélection au clavier jusqu'à une carte de run sans boîte ⇒
+   `kanban.actions.motif` porte le texte du run non armé.
+
+Le magasin jetable est **obligatoire** : la recette ne touche jamais
+`~/.omp/agent/pipeline` de la machine.
 
 ## Lire les fichiers et les diffs d'une cible
 
@@ -640,6 +708,13 @@ omp-console/
 │   │   ├── KanbanView.swift       la section : bandeau, onze colonnes, clavier
 │   │   ├── KanbanCardView.swift   une carte cliquable (durée sous TimelineView)
 │   │   └── KanbanDetailView.swift le panneau de détail
+│   ├── Actions/                   les gestes : la SEULE couche qui écrit
+│   │   ├── PipelineCommand.swift  livraisons et commandes, objets JSON exacts
+│   │   ├── PipelineWriter.swift   écriture atomique (rename), lecture des accusés
+│   │   ├── ActionsText.swift      tous les textes et les lignes de journal
+│   │   ├── KanbanActionPresentation.swift  aiguillage pur et dépôts lançables
+│   │   ├── ActionsModel.swift     journal borné, émissions, sondage des accusés
+│   │   └── KanbanActionViews.swift  bandeau, formulaire, zone d'action, journal
 │   ├── Files/                     la visionneuse de fichiers et de diffs (lecture seule)
 │   │   ├── GitCLI.swift           binaires, argv purs et exécution : la SEULE surface git
 │   │   ├── FilesTarget.swift      catalogue des cibles et base de comparaison

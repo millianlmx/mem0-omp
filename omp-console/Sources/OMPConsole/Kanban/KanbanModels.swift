@@ -79,6 +79,32 @@ struct KanbanSource: Sendable, Equatable {
 
 // --- carte et ardoise (S-4, S-5) ---------------------------------------------
 
+/// Le RUN d'une carte, réduit aux valeurs dont un geste a besoin (S-10) : son
+/// identité, son libellé (la cible d'un journal), la boîte PUBLIÉE par laquelle il
+/// accepte une écriture (`RunningEntry.inbox`, jamais recalculée) et sa question
+/// en vol.
+struct KanbanCardRun: Sendable, Equatable {
+    var id: String
+    var label: String
+    var inbox: String?
+    var pendingAsk: PanelPendingAsk?
+}
+
+/// Les valeurs des gestes d'une carte (S-10) : le dépôt, la feature de LOT quand
+/// elle existe, le jalon attendu, l'état de la feature et le run apparié. C'est la
+/// SEULE source de ces valeurs — aucun second appariement n'est écrit ailleurs, et
+/// rien n'est relu du magasin à l'heure du geste.
+struct KanbanCardAction: Sendable, Equatable {
+    /// `lot.repoRoot`, sinon `project.repoRoot`, sinon `nil`.
+    var repoRoot: String?
+    /// La feature de LOT seulement (nil pour une carte de projet seule ou de run).
+    var slug: String?
+    var waitKind: LotWaitKind?
+    var featureState: LotFeatureState?
+    /// Le run apparié (feature de lot) ou le run de la carte `run:`.
+    var run: KanbanCardRun?
+}
+
 /// Une carte du tableau : ce que la vue affiche et ce que le panneau de détail
 /// décrit. Les textes (`phaseText`, `modelText`, `prText`, `elapsedText`,
 /// `marksText`) sont des fonctions PURES du modèle — le test les vérifie sans
@@ -101,6 +127,10 @@ struct KanbanCard: Sendable, Equatable, Identifiable {
     var endMs: Double?
     var marks: [KanbanMark]
     var sources: [KanbanSource]
+    /// Les valeurs des gestes de la carte (S-10), `nil` pour une carte
+    /// d'historique. Valeur par défaut : les constructions littérales des tests
+    /// existants restent valides.
+    var action: KanbanCardAction? = nil
 
     /// `/<phase>` ou `absent` (S-4) : un run et une entrée d'historique portent
     /// toujours un maillon, une carte de projet seule jamais.

@@ -16,6 +16,9 @@ struct ConsoleRootView: View {
     /// Le modèle de la section « Kanban », même raison : l'ardoise et la sélection
     /// survivent au passage d'une section à l'autre.
     @ObservedObject var kanban: KanbanModel
+    /// Le modèle d'action du Kanban (S-9) : même raison, l'état des gestes et du
+    /// formulaire survit au passage d'une section à l'autre.
+    @ObservedObject var actions: ActionsModel
     /// Le modèle de conduite de projet : à l'échelle de l'app, comme les autres,
     /// pour que la session hébergée survive au changement de section.
     @ObservedObject var projectModel: ProjectConsoleModel
@@ -37,7 +40,13 @@ struct ConsoleRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } detail: {
-            SectionDetail(section: model.selection, filesModel: filesModel, kanban: kanban, projectModel: projectModel)
+            SectionDetail(
+                section: model.selection,
+                filesModel: filesModel,
+                kanban: kanban,
+                actions: actions,
+                projectModel: projectModel
+            )
         }
         .frame(minWidth: 760, minHeight: 480)
     }

@@ -42,11 +42,15 @@ struct SectionDetail: View {
     let section: ConsoleSection
     let filesModel: FilesModel
     @ObservedObject var kanban: KanbanModel
+    /// Le modèle d'action des gestes du Kanban (S-9), à l'échelle de l'app.
+    @ObservedObject var actions: ActionsModel
+    /// Le modèle de conduite de projet : à l'échelle de l'app, comme les autres,
+    /// pour que la session hébergée survive au changement de section.
     @ObservedObject var projectModel: ProjectConsoleModel
 
     var body: some View {
         switch section {
-        case .kanban: KanbanView(model: kanban)
+        case .kanban: KanbanView(model: kanban, actions: actions)
         case .sessions: SessionsView()
         case .files: FilesView(model: filesModel)
         case .project: ProjectView(model: projectModel)

@@ -22,6 +22,7 @@ struct OMPConsoleApp: App {
     @StateObject private var sessionModel = SessionConsoleModel()
     @StateObject private var filesModel = FilesModel()
     @StateObject private var kanbanModel = KanbanModel()
+    @StateObject private var actionsModel = ActionsModel()
     @StateObject private var projectModel = ProjectConsoleModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -31,6 +32,7 @@ struct OMPConsoleApp: App {
                 model: model,
                 filesModel: filesModel,
                 kanban: kanbanModel,
+                actions: actionsModel,
                 projectModel: projectModel
             )
         }

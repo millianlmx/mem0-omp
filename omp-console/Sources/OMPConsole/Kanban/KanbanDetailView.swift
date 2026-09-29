@@ -9,27 +9,38 @@ import SwiftUI
 
 struct KanbanDetailView: View {
     @ObservedObject var model: KanbanModel
+    /// Le modèle d'action : la zone de gestes rendue SOUS les lignes (S-9).
+    @ObservedObject var actions: ActionsModel
 
     var body: some View {
         if let card = model.selectedCard {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(
-                        Array(KanbanDetail.lines(
-                            for: card,
-                            nowMs: context.date.timeIntervalSince1970 * 1000
-                        ).enumerated()),
-                        id: \.offset
-                    ) { _, line in
-                        Text(line)
-                            .font(.callout)
-                            .textSelection(.enabled)
+            VStack(alignment: .leading, spacing: 8) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(
+                            Array(KanbanDetail.lines(
+                                for: card,
+                                nowMs: context.date.timeIntervalSince1970 * 1000
+                            ).enumerated()),
+                            id: \.offset
+                        ) { _, line in
+                            Text(line)
+                                .font(.callout)
+                                .textSelection(.enabled)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding()
-                .accessibilityIdentifier("kanban.detail")
+                Divider()
+                KanbanActionPane(model: actions, card: card)
+                Spacer(minLength: 0)
             }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // Conteneur : la zone d'action sous les lignes garde ses propres
+            // identifiants (`kanban.actions.*`).
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("kanban.detail")
         } else {
             Text(KanbanBoardState.emptySelectionText)
                 .foregroundStyle(.secondary)
