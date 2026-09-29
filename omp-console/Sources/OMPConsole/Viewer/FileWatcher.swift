@@ -1,6 +1,6 @@
-// La veille du fichier de session d'une fenêtre (S-3 de la feature
-// `visionneuse-de-session`) : une source vnode sur le fichier, jamais de
-// scrutation, et un réveil seulement quand le fichier a RÉELLEMENT changé.
+// La veille d'UN fichier quelconque (S-3 de `visionneuse-de-session`, réutilisée
+// par la veille du document de projet) : une source vnode sur le fichier, jamais
+// de scrutation, et un réveil seulement quand le fichier a RÉELLEMENT changé.
 //
 // Faits MESURÉS gouvernant ce fichier (Documentation §4, plus la sonde FSEvents du
 // 2026-09-29) :
@@ -37,7 +37,7 @@ import Foundation
 /// produirait aucun réveil, donc la reprise automatique de AC-13 resterait lettre
 /// morte — mesuré : `open(path, O_EVTONLY)` échoue même en EACCES sur un fichier
 /// sans droit de lecture.
-private struct SessionFileSnapshot: Equatable {
+private struct FileSnapshot: Equatable {
     var device: UInt64
     var inode: UInt64
     var size: Int
@@ -45,9 +45,9 @@ private struct SessionFileSnapshot: Equatable {
     var permissions: Int
 
     /// `nil` quand le chemin n'existe pas (ou plus).
-    static func read(_ path: String) -> SessionFileSnapshot? {
+    static func read(_ path: String) -> FileSnapshot? {
         guard let attributes = try? FileManager.default.attributesOfItem(atPath: path) else { return nil }
-        return SessionFileSnapshot(
+        return FileSnapshot(
             device: (attributes[.systemNumber] as? NSNumber)?.uint64Value ?? 0,
             inode: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value ?? 0,
             size: (attributes[.size] as? NSNumber)?.intValue ?? 0,
@@ -57,12 +57,12 @@ private struct SessionFileSnapshot: Equatable {
     }
 }
 
-/// La veille d'UN fichier de session. Une veille par fenêtre, jamais partagée.
+/// La veille d'UN fichier. Une veille par consommateur, jamais partagée.
 ///
 /// `@unchecked Sendable` : tout l'état mutable est confiné à `queue`, une file
 /// série — y compris les rappels de la source ET ceux du flux FSEvents, qui s'y
 /// exécutent (le flux est créé par `SetDispatchQueue`, jamais par une run loop).
-final class SessionFileWatcher: @unchecked Sendable {
+final class FileWatcher: @unchecked Sendable {
     /// Sert à reconnaître la file de la veille : un `queue.sync` depuis sa propre
     /// file interbloquerait, et `deinit` doit pouvoir s'en apercevoir.
     private static let queueKey = DispatchSpecificKey<Void>()
@@ -81,7 +81,7 @@ final class SessionFileWatcher: @unchecked Sendable {
     /// `O_EVTONLY` (voir `arm()`).
     private var directoryStream: FSEventStreamRef?
     private var watchedDirectory: String?
-    private var snapshot: SessionFileSnapshot?
+    private var snapshot: FileSnapshot?
     private var stopped = false
 
     init(path: String) {
@@ -92,7 +92,7 @@ final class SessionFileWatcher: @unchecked Sendable {
         let (stream, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
         self.changes = stream
         self.continuation = continuation
-        self.snapshot = SessionFileSnapshot.read(path)
+        self.snapshot = FileSnapshot.read(path)
         // Armer PUIS laisser l'appelant lire : personne d'autre ne détient encore
         // cette instance, l'appel direct est donc sûr et évite un aller-retour.
         arm()
@@ -138,7 +138,7 @@ final class SessionFileWatcher: @unchecked Sendable {
 
     /// Émet UN réveil si, et seulement si, l'instantané du fichier de session a changé.
     private func emitIfChanged() {
-        let fresh = SessionFileSnapshot.read(path)
+        let fresh = FileSnapshot.read(path)
         guard fresh != snapshot else { return }
         snapshot = fresh
         continuation.yield(())
@@ -239,7 +239,7 @@ final class SessionFileWatcher: @unchecked Sendable {
         // FSEvents ne retient donc pas son propriétaire).
         let callback: FSEventStreamCallback = { _, info, count, _, _, _ in
             guard let info, count > 0 else { return }
-            Unmanaged<SessionFileWatcher>.fromOpaque(info).takeUnretainedValue().handleDirectoryEvent()
+            Unmanaged<FileWatcher>.fromOpaque(info).takeUnretainedValue().handleDirectoryEvent()
         }
         let flags = FSEventStreamCreateFlags(
             kFSEventStreamCreateFlagFileEvents | kFSEventStreamCreateFlagNoDefer

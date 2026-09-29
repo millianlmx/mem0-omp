@@ -495,6 +495,71 @@ Si aucun candidat n'est exécutable, la fenêtre affiche « Binaire `omp` introu
 cherché dans PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin. » — aucune session
 fantôme n'est affichée comme vivante.
 
+## Fenêtre Projet (conduite)
+
+Menu **Fichier ▸ « Conduire un projet… »** (⌘⇧N) — ou le bouton du même nom dans
+la section **Projet** — ouvre la fenêtre **Projet**, qui héberge la conduite d'un
+projet par le pilote `/project` de l'extension : **une seule conduite à la fois**
+(la scène est à instance unique, et un second démarrage est refusé jusqu'à la
+clôture de la courante).
+
+1. **Choisir le dépôt et le nom** dans la feuille (dossier par `NSOpenPanel`,
+   dossiers seulement, nom par défaut = dernier composant du chemin).
+2. **Conduire** — l'app lance `omp --mode rpc-ui --cwd <dossier>` (mode
+   dialogues actifs, seul mode où l'outil `ask` de l'hôte existe) puis écrit
+   `/project <nom>`. Aucun terminal n'est ouvert, aucune commande n'est tapée.
+3. **Jouer l'utilisateur** — la saisie libre de la fenêtre écrit un `prompt`
+   (↩ ou ⌘↩), et toute demande adressée à l'utilisateur (cadrage, validation du
+   plan, escalade de lot) s'affiche comme un dialogue répondable : `select` (liste
+   d'options), `input`/`editor` (texte, avec le `prefill` du plan pour un `editor`),
+   `confirm`.
+4. **Suivre** — le volet **Plan** re-présente le JSON du magasin (segments, état
+   de chaque feature, modèle, lien de la PR quand elle existe), et le volet
+   **Document** rend `PROJECT.md`. Les deux se rafraîchissent sans action : le JSON
+   par la veille du magasin, le document par une veille de fichier.
+5. **Alerter** — quand le projet attend une réponse et que la fenêtre n'est pas au
+   premier plan, l'app émet **une** demande d'attention critique (`NSApp`) ; à la
+   fin du projet (toutes les features du dernier segment fusionnées ou retirées),
+   une demande informative unique. Aucune notification macOS, aucun vol de focus.
+6. **Clore** — bouton **Clore la conduite** (arrêt propre du process hébergé). Le
+   projet reste `running` côté pilote ; la reprise éventuelle est le fait du
+   pilote au prochain `/project`.
+
+**Ce que l'app n'écrit jamais** : ni `<stateDir>/projects/<clé>.json`, ni le
+worktree `.doc`, ni le lot. Elle ne réimplémente non plus aucune règle du pilote
+(plan, segments, jalons, PR) : elle affiche ce que le magasin porte et renvoie les
+réponses dans la session hébergée.
+
+Aucune reprise automatique : relancer l'app n'ouvre **aucune** session et n'arme
+**aucun** `/project` ; c'est toujours un geste de l'utilisateur.
+
+### Recette : conduire un projet depuis l'app
+
+1. Supprimer l'état restauré des fenêtres **avant** de lancer le bundle, pour
+   partir d'une app fraîche :
+
+   ```bash
+   rm -rf ~/Library/Saved\ Application\ State/com.omp.console.savedState
+   ```
+
+2. Assembler et lancer le bundle :
+
+   ```bash
+   bash scripts/swift-app.sh
+   open "omp-console/build/OMP Console.app"
+   ```
+
+3. ⌘⇧N, choisir un dépôt GitHub réel, saisir un nom, « Conduire ».
+4. Écrire la description du projet puis « fin » dans la barre de saisie : la
+   question suivante (validation du plan) s'affiche comme un dialogue.
+5. Choisir « Corriger le plan » : l'éditeur s'ouvre **prérempli** du plan ;
+   modifier, « Répondre », vérifier que le pilote redemande une revue.
+6. Laisser courir jusqu'à la première PR, puis vérifier dans le volet **Plan** le
+   segment, l'état « PR ouverte » et le lien cliquable de la PR, et dans le volet
+   **Document** le contenu publié de `PROJECT.md`.
+7. Mettre la fenêtre en arrière-plan : un dialogue en attente doit lever une
+   demande d'attention (icône de l'app dans le Dock qui rebondit).
+
 ## Harnais réel
 
 La suite de tests contient quatre tests **réels** qui lancent un vrai `omp` (donc
@@ -546,7 +611,20 @@ omp-console/
 │   ├── Session/                   le lecteur de sessions (aucune vue, aucune E/S d'écriture)
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
-│   │   └── SessionRendering.swift le rendu texte du modèle (fonctions pures)
+│   │   ├── SessionRendering.swift le rendu texte du modèle (fonctions pures)
+│   │   └── RpcPanes.swift         volets RPC partagés (transcription, dialogue, prompt)
+│   ├── Project/                   la conduite d'un projet depuis l'app
+│   │   ├── ProjectConduite.swift  identité, état et refus d'une conduite
+│   │   ├── ProjectConsoleModel.swift le modèle : armement, refus, clôture, dialogues, veille
+│   │   ├── ProjectPaths.swift     la clé de dépôt et le chemin de PROJECT.md
+│   │   ├── ProjectPlan.swift      le plan (segments, états, PR) : fonctions pures
+│   │   ├── ProjectDocMarkdown.swift le document rendu en blocs (fonction pure)
+│   │   ├── ProjectAttention.swift décision d'attention (pure) et adaptateur NSApp
+│   │   ├── ProjectWindowPresence.swift présence de la fenêtre + WindowAccessor
+│   │   ├── ProjectViewText.swift  tous les textes de la vue Projet
+│   │   ├── ProjectConsoleView.swift la fenêtre (en-tête, plan, document, session)
+│   │   ├── ProjectView.swift      la section « Projet » (même surface)
+│   │   └── ProjectLaunchSheet.swift la feuille « Conduire un projet… »
 │   ├── Store/                     la couche de lecture du magasin d'état
 │   │   ├── PipelineStore.swift    racine du magasin et noms des six stores
 │   │   ├── StoreModels.swift      modèles typés et validation champ par champ
@@ -578,7 +656,7 @@ omp-console/
 │       ├── SessionSelectorView.swift   la section « Sessions » : la liste
 │       ├── SessionRows.swift      faits affichables, en-tête d'appel, question `ask`
 │       ├── SessionDiffLines.swift diffs : classification et découpe des corps
-│       ├── SessionFileWatcher.swift  veille vnode du fichier de session
+│       ├── FileWatcher.swift      veille vnode d'UN fichier quelconque
 │       ├── SessionViewerModel.swift  lignes, plis, suivi, états, journal d'octets
 │       ├── SessionViewerView.swift   bandeau, flux, états vides, « Revenir au direct »
 │       ├── SessionRowView.swift      le rendu d'un fait (dont les lignes de diff)
