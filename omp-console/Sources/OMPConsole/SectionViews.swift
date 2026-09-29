@@ -31,11 +31,6 @@ struct PlaceholderPane: View {
     }
 }
 
-struct KanbanView: ConsoleSectionView {
-    static let section = ConsoleSection.kanban
-    var body: some View { PlaceholderPane(section: Self.section) }
-}
-
 struct SessionsView: ConsoleSectionView {
     static let section = ConsoleSection.sessions
     var body: some View { PlaceholderPane(section: Self.section) }
@@ -49,16 +44,17 @@ struct ProjectView: ConsoleSectionView {
 /// SEUL endroit qui associe une section à sa vue : le `switch` est exhaustif,
 /// donc ajouter un cas à `ConsoleSection` sans lui donner de vue ne compile pas.
 ///
-/// `FilesView` vit avec sa feature (`Files/FilesView.swift`) et reçoit le modèle de
-/// la section : c'est la seule vue qui porte un état, donc la seule à qui la coque
-/// transmet quelque chose.
+/// Deux sections portent un état et reçoivent donc le leur : Kanban (son ardoise) et
+/// Fichiers (sa cible et son document). Sessions et Projet gardent exactement leur
+/// contenu de remplacement.
 struct SectionDetail: View {
     let section: ConsoleSection
     let filesModel: FilesModel
+    @ObservedObject var kanban: KanbanModel
 
     var body: some View {
         switch section {
-        case .kanban: KanbanView()
+        case .kanban: KanbanView(model: kanban)
         case .sessions: SessionsView()
         case .files: FilesView(model: filesModel)
         case .project: ProjectView()

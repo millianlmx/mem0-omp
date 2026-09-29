@@ -122,6 +122,37 @@ func absentVersusEmptyStore() {
     #expect(fileSnapshot.relays.isEmpty)
 }
 
+@Test("kanban-des-pipelines/AC-14 : la RACINE du magasin se distingue de ses six stores")
+func rootAvailabilityIsDistinctFromStoreAvailability() {
+    // Racine absente : aucun répertoire n'est créé.
+    let absent = StoreFixture(stores: [])
+    #expect(!FileManager.default.fileExists(atPath: absent.root))
+    #expect(StoreReader(stateDir: absent.root, clock: fixtureClock).readAll().root == .absent)
+
+    // Racine présente, six répertoires vides : « magasin vide », pas « absent ».
+    let empty = StoreFixture()
+    let emptySnapshot = StoreReader(stateDir: empty.root, clock: fixtureClock).readAll()
+    #expect(emptySnapshot.root == .present)
+    #expect(emptySnapshot.running.entries.isEmpty)
+    #expect(emptySnapshot.running.discardedEntries.isEmpty)
+
+    // Racine présente, AUCUN répertoire de store (magasin jamais écrit) : la
+    // racine reste présente — le tableau doit dire « vide ».
+    let bare = StoreFixture(stores: [])
+    try? FileManager.default.createDirectory(atPath: bare.root, withIntermediateDirectories: true)
+    let bareSnapshot = StoreReader(stateDir: bare.root, clock: fixtureClock).readAll()
+    #expect(bareSnapshot.root == .present)
+    #expect(bareSnapshot.running.availability == .absent)
+    #expect(bareSnapshot.running.entries.isEmpty)
+
+    // La RACINE qui est un FICHIER n'est pas un répertoire : « absent ».
+    let byFile = StoreFixture(stores: [])
+    try? FileManager.default.createDirectory(atPath: byFile.root, withIntermediateDirectories: true)
+    byFile.publish(path: joinPath(byFile.root, "history"), contents: "{}")
+    #expect(StoreReader(stateDir: byFile.root, clock: fixtureClock).readAll().root == .present)
+    #expect(StoreReader(stateDir: joinPath(byFile.root, "history"), clock: fixtureClock).readAll().root == .absent)
+}
+
 @Test("client-magasin-etat/AC-8 : les noms d'entrée sont exactement 16 hexadécimaux et .json")
 func entryNameRecognition() {
     #expect(isStoreEntryName("0123456789abcdef.json"))

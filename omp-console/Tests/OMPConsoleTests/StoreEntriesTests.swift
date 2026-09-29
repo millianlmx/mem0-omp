@@ -236,6 +236,78 @@ func runningCoercions() throws {
     #expect(after.discarded == 1)
 }
 
+@Test("kanban-des-pipelines/AC-11 : une entrée écartée est NOMMÉE avec sa raison exacte")
+func discardedEntriesAreNamedWithReason() throws {
+    let fixture = StoreFixture()
+    // 1) Un contenu qui n'est pas du JSON (fichier vide : 0 octet).
+    let emptyId = fixtureId(0xa1)
+    fixture.put(.running, "\(emptyId).json", text: "")
+    // 2) Un contenu tronqué : non plus du JSON.
+    let truncatedId = fixtureId(0xa2)
+    fixture.put(.running, "\(truncatedId).json", text: "{\"version\":1,\"id\":\"tronq")
+    // 3) Un JSON valide à `version: 2` : schéma d'une autre version.
+    let futureId = fixtureId(0xa3)
+    var future = runningObject(
+        id: futureId,
+        cwd: "/tmp/worktree-a11",
+        phaseStartedAt: fixtureT0 - 5_000,
+        updatedAt: fixtureT0 - 1_000,
+        ownerPid: Double(getpid())
+    )
+    future["version"] = 2
+    fixture.publish(.running, "\(futureId).json", object: future)
+    // 4) Un JSON valide dont un champ obligatoire manque.
+    let incompleteId = fixtureId(0xa4)
+    var incomplete = runningObject(
+        id: incompleteId,
+        cwd: "/tmp/worktree-a11-b",
+        phaseStartedAt: fixtureT0 - 5_000,
+        updatedAt: fixtureT0 - 1_000,
+        ownerPid: Double(getpid())
+    )
+    incomplete.removeValue(forKey: "label")
+    fixture.publish(.running, "\(incompleteId).json", object: incomplete)
+    // 5) Un temporaire d'écriture atomique et un `.DS_Store` : ignorés SANS compte.
+    fixture.put(.running, "\(fixtureId(0xa5)).json.tmp-\(getpid())", text: "{\"version\":1}")
+    fixture.put(.running, ".DS_Store", text: "\u{0}")
+
+    let envelope = StoreReader(stateDir: fixture.root, clock: fixtureClock).readRunning()
+    #expect(envelope.entries.isEmpty)
+    #expect(envelope.discarded == 4)
+    // L'ORDRE est celui des noms triés, et la citation porte le store.
+    #expect(envelope.discardedEntries == [
+        DiscardedEntry(file: "running/\(emptyId).json", reason: .unparsable),
+        DiscardedEntry(file: "running/\(truncatedId).json", reason: .unparsable),
+        DiscardedEntry(file: "running/\(futureId).json", reason: .schema),
+        DiscardedEntry(file: "running/\(incompleteId).json", reason: .schema),
+    ])
+    // `discarded` est le compte des entrées NOMMÉES — une seule vérité.
+    #expect(envelope.discarded == envelope.discardedEntries.count)
+}
+
+@Test("kanban-des-pipelines/AC-11 : chaque store nomme le fichier écarté avec son répertoire")
+func discardedEntryCitationCarriesTheStore() throws {
+    let fixture = StoreFixture()
+    let lotKey = "0123456789abcdef"
+    fixture.put(.lots, "\(lotKey).json", text: "{ pas du json")
+    fixture.put(.projects, "\(fixtureId(0xb1)).json", text: "{}")
+    fixture.put(.history, "\(fixtureId(0xb2)).json", text: "nope")
+
+    let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
+    #expect(snapshot.lots.discardedEntries == [
+        DiscardedEntry(file: "lots/\(lotKey).json", reason: .unparsable),
+    ])
+    #expect(snapshot.projects.discardedEntries == [
+        DiscardedEntry(file: "projects/\(fixtureId(0xb1)).json", reason: .schema),
+    ])
+    #expect(snapshot.history.discardedEntries == [
+        DiscardedEntry(file: "history/\(fixtureId(0xb2)).json", reason: .unparsable),
+    ])
+    // `inbox/` conserve son uniformité : jamais d'écarté (S-5).
+    #expect(snapshot.inbox.discardedEntries.isEmpty)
+    #expect(snapshot.inbox.discarded == 0)
+}
+
 @Test("client-magasin-etat/AC-1 : tri et bornes de lecture (200 en cours, 20 en historique)")
 func readOrderAndLimits() {
     let fixture = StoreFixture()

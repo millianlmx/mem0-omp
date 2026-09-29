@@ -74,11 +74,18 @@ fi
 # 1) compilation release du produit ET de la suite, en une invocation, puis
 #    exécution des tests. La sortie est recopiée telle quelle : c'est elle qui
 #    nomme l'erreur de compilation ou le test tombé.
-test_out="$(cd "$PKG" && swift test -c release --scratch-path "$SCRATCH" ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
+#
+#    `--no-parallel` est MESURÉ (2026-09-29, fusion des trois features de « Les
+#    vues ») : la suite mêle des tests à VEILLE qui attendent sur le fil
+#    principal (modèles Kanban et Files, ~15 s par attente) et des tests de vue ;
+#    exécutée en parallèle, elle rend 10 à 15 échecs de DÉLAI (212 tests), alors
+#    qu'en série elle passe 212/212 en ~42 s. Le coût est assumé : la suite reste
+#    déterministe, et c'est elle qui garde la CI verte.
+test_out="$(cd "$PKG" && swift test -c release --scratch-path "$SCRATCH" --no-parallel ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
 test_status=$?
 [ -n "$test_out" ] && printf '%s\n' "$test_out"
 if [ "$test_status" -ne 0 ]; then
-  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --scratch-path .build-app -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
+  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --scratch-path .build-app --no-parallel -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
   exit 1
 fi
 echo "  ✓ compilation release (OMPConsole) et tests release (Swift Testing)"
