@@ -120,7 +120,7 @@ final class SessionViewerModel: ObservableObject {
     private var policy = FollowPolicy()
     /// Le budget de redemandes du défilement en cours (voir `reportBottomGap`).
     private var followRequestRetries = 0
-    private var watcher: SessionFileWatcher?
+    private var watcher: FileWatcher?
     private var watchTask: Task<Void, Never>?
 
     /// `watch: false` est la couture des tests qui ne veulent qu'un tirage manuel ;
@@ -133,7 +133,7 @@ final class SessionViewerModel: ObservableObject {
             // Armement PUIS lecture (Documentation §4) : la veille est en place
             // avant le premier `read()`, donc un octet écrit pendant la bascule
             // n'est pas perdu.
-            let watcher = SessionFileWatcher(path: target.sessionFile)
+            let watcher = FileWatcher(path: target.sessionFile)
             self.watcher = watcher
             let changes = watcher.changes
             watchTask = Task { [weak self] in
