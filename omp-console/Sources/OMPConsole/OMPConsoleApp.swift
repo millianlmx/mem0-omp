@@ -1,20 +1,17 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// Deux scènes, deux usages : la coque à barre latérale existante, et la fenêtre
-// « Session OMP » (S-9) qui héberge UNE session à la fois. `Window` — et non
-// `WindowGroup` — rend structurellement vrai l'invariant « jamais deux `omp`
-// hébergés » (AC-2) : la scène n'a qu'une instance, ouverte par ⌘N depuis le menu
-// Fichier.
+// Quatre scènes : la coque à barre latérale, la fenêtre « Session OMP » (S-9), la
+// visionneuse par run, et la fenêtre « Projet » (conduite). `Window` — et non
+// `WindowGroup` — rend structurellement vrai l'invariant « jamais deux conduites »
+// (AC-2) : la scène n'a qu'une instance.
 //
-// Le modèle de session vit sur la structure `App` (`@StateObject`), donc à
-// l'échelle de l'app et non de la fenêtre : fermer la fenêtre pendant une session
-// ne laisse pas un `omp` orphelin, et l'accroche de terminaison existe avant la
-// première ouverture.
+// Les modèles de session et de conduite vivent sur la structure `App`
+// (`@StateObject`), donc à l'échelle de l'app : fermer une fenêtre ne laisse pas un
+// `omp` orphelin, et l'accroche de terminaison existe avant la première ouverture.
 //
 // La terminaison passe par `applicationShouldTerminate` → `.terminateLater` (D3) :
-// c'est le seul moyen d'ATTENDRE la sortie du process hébergé avant de quitter,
-// au lieu de laisser un orphelin derrière soi (AC-16).
+// c'est le seul moyen d'ATTENDRE la sortie des process hébergés avant de quitter.
 
 import AppKit
 import SwiftUI
@@ -26,6 +23,7 @@ struct OMPConsoleApp: App {
     @StateObject private var filesModel = FilesModel()
     @StateObject private var kanbanModel = KanbanModel()
     @StateObject private var actionsModel = ActionsModel()
+    @StateObject private var projectModel = ProjectConsoleModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -34,18 +32,24 @@ struct OMPConsoleApp: App {
                 model: model,
                 filesModel: filesModel,
                 kanban: kanbanModel,
-                actions: actionsModel
+                actions: actionsModel,
+                projectModel: projectModel
             )
         }
 
         Window("Session OMP", id: "session") {
             SessionConsoleView(model: sessionModel)
         }
+
+        Window("Projet", id: "projet") {
+            ProjectConsoleView(model: projectModel)
+        }
         .commands {
             SessionCommands()
+            ProjectCommands(model: projectModel)
         }
 
-        // Troisième scène : la visionneuse de session. Elle présente une VALEUR
+        // Dernière scène : la visionneuse de session. Elle présente une VALEUR
         // (`ViewerTarget`), donc deux runs différents ouvrent deux fenêtres, et
         // re-choisir un run déjà ouvert ramène SA fenêtre au premier plan
         // (Documentation §1 : le système dédoublonne par valeur). La scène « Session
@@ -71,19 +75,39 @@ struct SessionCommands: Commands {
     }
 }
 
-/// Délégué de terminaison : il ne connaît pas la session, il appelle l'accroche
-/// que le modèle de session a posée. Sans session ouverte, le délégué laisse
-/// l'app quitter immédiatement.
+/// Menu Fichier ▸ « Conduire un projet… » (⌘⇧N) : ouvre la fenêtre « Projet » et
+/// présente la feuille de choix (S-1). Si une conduite est en cours, le modèle pose
+/// son refus (S-2) au lieu d'ouvrir la feuille.
+struct ProjectCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var model: ProjectConsoleModel
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button(ProjectViewText.startConduite) {
+                openWindow(id: "projet")
+                model.presentLaunchSheet()
+            }
+            .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+    }
+}
+
+/// Délégué de terminaison : il ne connaît pas les sessions, il appelle les
+/// accroches que les modèles ont posées. Sans accroche, l'app quitte
+/// immédiatement.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Posée par `SessionConsoleModel.init` ; `nil` tant qu'aucun modèle n'existe,
-    /// auquel cas il n'y a aucun process à attendre.
+    /// Posée par `SessionConsoleModel.init`.
     static var terminateSession: (() async -> Void)?
+    /// Posée par `ProjectConsoleModel.init`.
+    static var terminateProject: (() async -> Void)?
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard let terminateSession = Self.terminateSession else { return .terminateNow }
+        guard Self.terminateSession != nil || Self.terminateProject != nil else { return .terminateNow }
         Task { @MainActor in
-            await terminateSession()
+            await Self.terminateSession?()
+            await Self.terminateProject?()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater

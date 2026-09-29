@@ -17,7 +17,7 @@ func watcherEmitsOncePerAppend() async throws {
     defer { fixture.remove() }
     try fixture.write([ViewerLines.header()])
 
-    let watcher = SessionFileWatcher(path: fixture.path)
+    let watcher = FileWatcher(path: fixture.path)
     let seen = Recorder<Void>()
     let task = consume(watcher.changes, into: seen)
     defer {
@@ -54,7 +54,7 @@ func watcherEmitsWhenTheFileAppears() async throws {
     // Aucune écriture : le fichier n'existe pas et son répertoire, si.
     #expect(!FileManager.default.fileExists(atPath: fixture.path))
 
-    let watcher = SessionFileWatcher(path: fixture.path)
+    let watcher = FileWatcher(path: fixture.path)
     let seen = Recorder<Void>()
     let task = consume(watcher.changes, into: seen)
     defer {
@@ -87,7 +87,7 @@ func watcherSeesAPermissionChange() async throws {
     defer { fixture.remove() }
     try fixture.write([ViewerLines.header()])
 
-    let watcher = SessionFileWatcher(path: fixture.path)
+    let watcher = FileWatcher(path: fixture.path)
     let seen = Recorder<Void>()
     let task = consume(watcher.changes, into: seen)
     defer {
@@ -119,7 +119,7 @@ func watcherResumesOnAFileUnreadableAtArming() async throws {
     // son RÉPERTOIRE ne voit RIEN de lui (mesuré : ni `chmod` ni octets ajoutés).
     chmod(fixture.path, 0o000)
 
-    let watcher = SessionFileWatcher(path: fixture.path)
+    let watcher = FileWatcher(path: fixture.path)
     let seen = Recorder<Void>()
     let task = consume(watcher.changes, into: seen)
     defer {
@@ -146,7 +146,7 @@ func stoppingTheWatcherEndsTheStream() async throws {
     defer { fixture.remove() }
     try fixture.write([ViewerLines.header()])
 
-    let watcher = SessionFileWatcher(path: fixture.path)
+    let watcher = FileWatcher(path: fixture.path)
     let stream = watcher.changes
     watcher.stop()
 
