@@ -196,26 +196,36 @@ func historyObject(
 }
 
 /// Une feature de lot au format réel, tous les champs obligatoires présents.
+/// Les champs facultatifs ne sont écrits que quand ils portent une valeur : c'est
+/// ainsi que le dépôt écrit ses lots (`prUrl` absente, `model` absent…).
 func lotFeatureObject(
     slug: String = "client-magasin-etat",
     state: String = "running",
     phase: String = "impl",
-    origin: String = "session"
+    origin: String = "session",
+    worktree: String? = nil,
+    waitKind: String? = nil,
+    deps: [String] = [],
+    pendingTexts: [String] = [],
+    model: String? = nil,
+    prUrl: String? = nil,
+    sinceAt: Double = 1_790_437_807_752,
+    endedAt: Double? = nil
 ) -> [String: Any] {
-    [
+    var object: [String: Any] = [
         "slug": slug,
         "name": slug,
         "branch": "feat/\(slug)",
-        "worktree": "/Users/millian/.omp/pipeline-worktrees/mem0-omp-d0ef9a5/\(slug)",
-        "deps": [],
+        "worktree": worktree ?? "/Users/millian/.omp/pipeline-worktrees/mem0-omp-d0ef9a5/\(slug)",
+        "deps": deps,
         "origin": origin,
         "state": state,
         "phase": phase,
-        "waitKind": NSNull(),
+        "waitKind": waitKind ?? NSNull(),
         "waitPrompt": NSNull(),
         "sessionFile": NSNull(),
-        "pendingTexts": [],
-        "prUrl": NSNull(),
+        "pendingTexts": pendingTexts,
+        "prUrl": prUrl ?? NSNull(),
         "stopReason": NSNull(),
         "fixes": 0,
         "reviewRuns": 0,
@@ -226,15 +236,18 @@ func lotFeatureObject(
         "lastRunSessionFile": NSNull(),
         "contractHash": NSNull(),
         "addedAt": 1_790_436_998_531,
-        "sinceAt": 1_790_437_807_752,
-        "updatedAt": 1_790_437_807_752,
-        "endedAt": NSNull(),
+        "sinceAt": sinceAt,
+        "updatedAt": sinceAt,
+        "endedAt": endedAt ?? NSNull(),
     ]
+    if let model { object["model"] = model }
+    return object
 }
 
 /// Un lot au format réel (`lots/<repoKey>.json`).
 func lotObject(
     id: String = "d0ef9a50f7dc3a37",
+    repoRoot: String = "/Users/millian/Experiments/mem0-omp",
     features: [[String: Any]]? = nil,
     ownerPid: Double = Double(getpid()),
     heartbeatAt: Double? = nil,
@@ -245,7 +258,7 @@ func lotObject(
     return [
         "version": 1,
         "id": id,
-        "repoRoot": "/Users/millian/Experiments/mem0-omp",
+        "repoRoot": repoRoot,
         "status": status,
         "reviewCap": 3,
         "slotCap": 4,
@@ -263,23 +276,27 @@ func projectFeatureObject(
     status: String = "launched",
     prUrl: Any = NSNull(),
     failure: Any = NSNull(),
-    removedReason: Any = NSNull()
+    removedReason: Any = NSNull(),
+    model: String? = "opencode-go/deepseek-v4.1-flash",
+    updatedAt: Double = 1_790_597_813_850
 ) -> [String: Any] {
-    [
+    var object: [String: Any] = [
         "slug": slug,
         "intention": "La couche de données de l'app : des modèles Swift typés et tolérants du magasin d'état.",
-        "model": "opencode-go/deepseek-v4.1-flash",
         "status": status,
         "prUrl": prUrl,
         "failure": failure,
         "removedReason": removedReason,
-        "updatedAt": 1_790_597_813_850,
+        "updatedAt": updatedAt,
     ]
+    if let model { object["model"] = model }
+    return object
 }
 
 /// Un projet au format réel (`projects/<repoKey>.json`).
 func projectObject(
     repoKey: String = "d0ef9a50f7dc3a37",
+    repoRoot: String = "/Users/millian/Experiments/mem0-omp",
     segments: [[String: Any]]? = nil,
     current: Int = 1,
     hostSession: Any = "/Users/millian/.omp/agent/sessions/session.jsonl",
@@ -288,7 +305,7 @@ func projectObject(
     [
         "version": 1,
         "repoKey": repoKey,
-        "repoRoot": "/Users/millian/Experiments/mem0-omp",
+        "repoRoot": repoRoot,
         "relayKey": "/Users/millian/.omp/agent/pipeline/projects/\(repoKey)@1790585406349",
         "purpose": "Une salle de contrôle native macOS (SwiftUI) pour les pipelines mem0-omp.",
         "function": "L'app lit le magasin d'état partagé et conduit des projets, features et runs.",
@@ -337,6 +354,31 @@ func deadPid() -> Int {
     return Int(process.processIdentifier)
 }
 
+// --- outillage du tableau Kanban ---------------------------------------------
+
+/// L'ardoise d'une fixture, telle que le tableau la construit : lecture complète
+/// puis `KanbanBoard.build` — les deux étapes séparées, comme en production.
+func kanbanBoard(_ fixture: StoreFixture, nowMs: Double = fixtureT0) -> KanbanBoard {
+    let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
+    return KanbanBoard.build(snapshot: snapshot, nowMs: nowMs)
+}
+
+/// L'état publié pour une fixture : la dérivation complète (racine, vide, tableau).
+func kanbanState(_ fixture: StoreFixture, nowMs: Double = fixtureT0) -> KanbanBoardState {
+    let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
+    return KanbanBoardState.derive(snapshot: snapshot, nowMs: nowMs, stateDir: fixture.root)
+}
+
+/// Un répertoire RÉEL sous la fixture, avec son chemin réel : les comparaisons
+/// d'appariement passent par `realpath`, donc un test d'appariement doit disposer
+/// de chemins qui existent.
+@discardableResult
+func makeDirectory(_ fixture: StoreFixture, _ name: String) -> String {
+    let path = joinPath(fixture.root, name)
+    try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    return realpathOr(path)
+}
+
 // --- outillage d'attente des tests de veille ---------------------------------
 
 /// Un consommateur UNIQUE et de longue durée (doc §5) : il empile ce que le flux
@@ -377,6 +419,20 @@ func awaitTrue(timeout: Double = 1.0, _ condition: @Sendable () -> Bool) async -
     while Date() < deadline {
         if condition() { return true }
         try? await Task.sleep(for: .milliseconds(5))
+    }
+    return condition()
+}
+
+/// La même échéance, pour un état isolé au FIL PRINCIPAL (les modèles SwiftUI) :
+/// `awaitTrue` prend une fermeture `@Sendable` non isolée, qui ne peut pas lire un
+/// `@Published` d'une classe `@MainActor`.
+@MainActor
+@discardableResult
+func awaitMainTrue(timeout: Double = 2.0, _ condition: @MainActor () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(for: .milliseconds(10))
     }
     return condition()
 }

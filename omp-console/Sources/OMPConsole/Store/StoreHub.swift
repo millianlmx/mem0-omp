@@ -12,6 +12,11 @@ import Foundation
 /// les six veilles portent leur propre file.
 final class StoreHub: @unchecked Sendable {
     private let lock = NSLock()
+    /// La racine lue et l'horloge des lectures : conservées pour pouvoir recalculer
+    /// la disponibilité de la RACINE à chaque mise à jour (S-11), et pour qu'un
+    /// appelant puisse reconstruire un hub à l'identique après `stop()`.
+    let stateDir: String
+    let nowMs: @Sendable () -> Double
     private let running: StoreWatcher<RunningEnvelope>
     private let history: StoreWatcher<HistoryEnvelope>
     private let lots: StoreWatcher<LotEnvelope>
@@ -27,6 +32,8 @@ final class StoreHub: @unchecked Sendable {
         stateDir: String = PipelineStore.stateDir(),
         nowMs: @escaping @Sendable () -> Double = { StoreClock.live.nowMs() }
     ) {
+        self.stateDir = stateDir
+        self.nowMs = nowMs
         let running = StoreHub.watcher(.running, stateDir: stateDir, nowMs: nowMs) { reader in
             reader.readRunning()
         }
@@ -55,6 +62,7 @@ final class StoreHub: @unchecked Sendable {
         // puis abonnement : chaque flux pousse son instantané courant à
         // l'abonnement, donc aucun changement survenu entre les deux n'est perdu.
         self.aggregate = StoreSnapshot(
+            root: directoryAvailability(stateDir),
             running: running.current(),
             history: history.current(),
             lots: lots.current(),
@@ -181,6 +189,10 @@ final class StoreHub: @unchecked Sendable {
         }
         var next = aggregate
         update(&next)
+        // La disponibilité de la racine est RÉÉVALUÉE à chaque mise à jour (S-11) :
+        // un magasin créé (ou retiré) pendant la session se voit sans re-créer le
+        // hub, et le changement fait partie de la comparaison qui décide d'émettre.
+        next.root = directoryAvailability(stateDir)
         guard next != aggregate else {
             lock.unlock()
             return

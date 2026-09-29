@@ -70,7 +70,7 @@ struct StoreReader: Sendable {
 
     func readRunning() -> RunningEnvelope {
         let nowMs = clock.nowMs()
-        let (availability, entries, discarded) = scan(.running) { _, json in
+        let (availability, entries, discardedEntries) = scan(.running) { _, json in
             RunningEntry(json: json, nowMs: nowMs)
         }
         // Le plus ancien maillon d'abord (l'ordre d'arrivée) — puis la borne, qui
@@ -84,12 +84,12 @@ struct StoreReader: Sendable {
         return RunningEnvelope(
             availability: availability,
             entries: Array(sorted.prefix(PipelineStore.runningReadLimit)),
-            discarded: discarded
+            discardedEntries: discardedEntries
         )
     }
 
     func readHistory() -> HistoryEnvelope {
-        let (availability, entries, discarded) = scan(.history) { _, json in
+        let (availability, entries, discardedEntries) = scan(.history) { _, json in
             HistoryEntry(json: json)
         }
         // Le plus récent d'abord — puis la borne, qui garde donc les plus récents.
@@ -102,33 +102,33 @@ struct StoreReader: Sendable {
         return HistoryEnvelope(
             availability: availability,
             entries: Array(sorted.prefix(PipelineStore.historyReadLimit)),
-            discarded: discarded
+            discardedEntries: discardedEntries
         )
     }
 
     func readLots() -> LotEnvelope {
         let nowMs = clock.nowMs()
-        let (availability, lots, discarded) = scan(.lots) { _, json in
+        let (availability, lots, discardedEntries) = scan(.lots) { _, json in
             Lot(json: json, nowMs: nowMs)
         }
-        return LotEnvelope(availability: availability, lots: lots, discarded: discarded)
+        return LotEnvelope(availability: availability, lots: lots, discardedEntries: discardedEntries)
     }
 
     func readProjects() -> ProjectEnvelope {
-        let (availability, projects, discarded) = scan(.projects) { _, json in
+        let (availability, projects, discardedEntries) = scan(.projects) { _, json in
             Project(json: json)
         }
-        return ProjectEnvelope(availability: availability, projects: projects, discarded: discarded)
+        return ProjectEnvelope(availability: availability, projects: projects, discardedEntries: discardedEntries)
     }
 
     func readAudit() -> AuditEnvelope {
         let nowMs = clock.nowMs()
         // La clé d'identité d'un relais est le NOM du fichier (S-6) : c'est ici que
         // l'écart avec `readAuditRelay` — qui compare la session demandée — se voit.
-        let (availability, relays, discarded) = scan(.audit) { name, json in
+        let (availability, relays, discardedEntries) = scan(.audit) { name, json in
             AuditRelay(json: json, id: String(name.dropLast(".json".count)), nowMs: nowMs)
         }
-        return AuditEnvelope(availability: availability, relays: relays, discarded: discarded)
+        return AuditEnvelope(availability: availability, relays: relays, discardedEntries: discardedEntries)
     }
 
     /// Les boîtes d'un run : deux niveaux, donc pas le balayage générique. Un nom
@@ -155,13 +155,16 @@ struct StoreReader: Sendable {
             }
             boxes.append(InboxBox(name: name, path: boxPath, deliveries: deliveries))
         }
-        return InboxEnvelope(availability: directoryAvailability(dir), boxes: boxes, discarded: 0)
+        return InboxEnvelope(availability: directoryAvailability(dir), boxes: boxes, discardedEntries: [])
     }
 
     /// Une passe de lecture complète. Aucune écriture, jamais : les propriétaires
     /// morts ne sont ni déplacés vers `history/` ni retirés (S-7, S-10).
     func readAll() -> StoreSnapshot {
         StoreSnapshot(
+            // La RACINE est évaluée à chaque passe, pas une fois pour toutes (S-11) :
+            // un magasin créé pendant la session cesse d'être « absent ».
+            root: directoryAvailability(stateDir),
             running: readRunning(),
             history: readHistory(),
             lots: readLots(),
@@ -172,29 +175,33 @@ struct StoreReader: Sendable {
     }
 
     /// Le balayage commun aux cinq stores plats : noms conformes (`<16 hex>.json`)
-    /// triés, un fichier illisible ou au schéma invalide est ÉCARTÉ et compté. Tout
+    /// triés, un fichier illisible ou au schéma invalide est ÉCARTÉ et NOMMÉ. Tout
     /// autre nom — temporaire `<fichier>.tmp-<pid>`, `.DS_Store`, sous-répertoire —
     /// est ignoré sans être compté (S-8).
+    ///
+    /// La raison distingue les deux échecs du dépôt : `JSONValue.parse` qui rend
+    /// `nil` (`.unparsable`) et le validateur du store qui rend `nil` (`.schema`).
     private func scan<T>(
         _ store: PipelineStore,
         decode: (String, JSONValue) -> T?
-    ) -> (availability: StoreAvailability, entries: [T], discarded: Int) {
+    ) -> (availability: StoreAvailability, entries: [T], discardedEntries: [DiscardedEntry]) {
         let dir = PipelineStore.directory(store, stateDir: stateDir)
         var entries: [T] = []
-        var discarded = 0
+        var discardedEntries: [DiscardedEntry] = []
         for name in fileNames(dir).sorted() where isStoreEntryName(name) {
             let file = joinPath(dir, name)
+            let cited = "\(store.rawValue)/\(name)"
             guard let data = FileManager.default.contents(atPath: file), let json = JSONValue.parse(data) else {
-                discarded += 1
+                discardedEntries.append(DiscardedEntry(file: cited, reason: .unparsable))
                 continue
             }
             if let entry = decode(name, json) {
                 entries.append(entry)
             } else {
-                discarded += 1
+                discardedEntries.append(DiscardedEntry(file: cited, reason: .schema))
             }
         }
-        return (directoryAvailability(dir), entries, discarded)
+        return (directoryAvailability(dir), entries, discardedEntries)
     }
 }
 

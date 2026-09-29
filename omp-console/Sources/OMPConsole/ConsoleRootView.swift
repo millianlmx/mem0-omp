@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ConsoleRootView: View {
     @ObservedObject var model: ConsoleModel
+    @ObservedObject var kanban: KanbanModel
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -27,7 +28,7 @@ struct ConsoleRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } detail: {
-            SectionDetail(section: model.selection)
+            SectionDetail(section: model.selection, kanban: kanban)
         }
         .frame(minWidth: 760, minHeight: 480)
     }
