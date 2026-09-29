@@ -3,7 +3,7 @@
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
 **Statut** : en cours — segment 4/5 « Les gestes »
-**Avancement** : 9/15 feature(s) fusionnée(s)
+**Avancement** : 10/15 feature(s) fusionnée(s)
 
 ## But
 
@@ -42,7 +42,7 @@ L'app lit le magasin d'état partagé (~/.omp/agent/pipeline/ : running, history
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
-| 1 | `reponses-et-jalons` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/44 | opencode-go/deepseek-v4.1-flash | Répondre et agir depuis l'app : répondre à une question en vol (choisir une option ou écrire un texte libre) par les livraisons du magasin, envoyer un texte à un run vivant, valider ou refuser un jalon (v/y), lancer une feature, arrêter un run — chaque geste passant par le canal de commande et son accusé affiché. L'app n'écrit jamais l'état du lot : elle commande, et montre ce que le pilote a répondu. La réussite se prouve par un run réel en attente débloqué depuis l'app et un jalon validé depuis l'app qui fait avancer la chaîne sans toucher au TUI. |
+| 1 | `reponses-et-jalons` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/44 | opencode-go/deepseek-v4.1-flash | Répondre et agir depuis l'app : répondre à une question en vol (choisir une option ou écrire un texte libre) par les livraisons du magasin, envoyer un texte à un run vivant, valider ou refuser un jalon (v/y), lancer une feature, arrêter un run — chaque geste passant par le canal de commande et son accusé affiché. L'app n'écrit jamais l'état du lot : elle commande, et montre ce que le pilote a répondu. La réussite se prouve par un run réel en attente débloqué depuis l'app et un jalon validé depuis l'app qui fait avancer la chaîne sans toucher au TUI. |
 | 2 | `notifications-et-barre-de-menus` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/45 | opencode-go/deepseek-v4.1-flash | Prévenir sans regarder : notifications macOS (une question attend une réponse, un jalon est à valider, une feature a échoué, une PR du projet est fusionnée) déclenchées au plus une fois par évènement, et une barre de menus affichant les compteurs (runs en cours, runs en attente) qui ouvre la fenêtre. La réussite se prouve par des notifications déclenchées sur de vrais évènements du magasin et un compteur qui correspond à l'état affiché. |
 | 3 | `conduite-de-projet` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/43 | opencode-go/deepseek-v4.1-flash | Conduire un projet entier depuis l'app, sans session OMP ouverte à la main : héberger une session /project (client RPC) et y jouer le rôle de l'utilisateur — dire « fin » au cadrage, valider ou corriger le plan, répondre aux escalades, donner les jalons — puis suivre les segments, les PR et les fusions jusqu'à la fin du projet. Le pilote reste dans l'extension et PROJECT.md reste le document de vérité, lisible dans l'app ; l'app ne réimplémente ni les règles du plan ni la conduite des lots. La réussite se prouve par un projet réel conduit du cadrage à la première PR sans ouvrir un terminal, et par une question de maillon qui arrive bien dans l'app. |
 
