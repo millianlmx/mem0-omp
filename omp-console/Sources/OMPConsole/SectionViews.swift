@@ -1,6 +1,7 @@
 // Interface de la coque : fenêtre, barre latérale à quatre entrées, panneau de
 // détail. Les quatre vues ne partagent qu'un contrat — elles déclarent leur
-// section — et chacune rend un contenu de remplacement propre.
+// section — et trois d'entre elles sont VIVANTES (Kanban, Fichiers, Sessions) ;
+// Projet rend encore un contenu de remplacement.
 //
 // Aucun attribut macro SwiftUI n'est employé ici (`@State`, `@Preview`, …) :
 // sous les Command Line Tools seuls, ces macros échouent à la compilation (D3).
@@ -31,19 +32,9 @@ struct PlaceholderPane: View {
     }
 }
 
-struct KanbanView: ConsoleSectionView {
-    static let section = ConsoleSection.kanban
-    var body: some View { PlaceholderPane(section: Self.section) }
-}
-
 struct SessionsView: ConsoleSectionView {
     static let section = ConsoleSection.sessions
     var body: some View { SessionSelectorView() }
-}
-
-struct FilesView: ConsoleSectionView {
-    static let section = ConsoleSection.files
-    var body: some View { PlaceholderPane(section: Self.section) }
 }
 
 struct ProjectView: ConsoleSectionView {
@@ -53,14 +44,20 @@ struct ProjectView: ConsoleSectionView {
 
 /// SEUL endroit qui associe une section à sa vue : le `switch` est exhaustif,
 /// donc ajouter un cas à `ConsoleSection` sans lui donner de vue ne compile pas.
+///
+/// Kanban (son ardoise) et Fichiers (sa cible et son document) reçoivent leur
+/// modèle ; Sessions rend le sélecteur de runs, qui porte le sien. Projet garde
+/// exactement son contenu de remplacement.
 struct SectionDetail: View {
     let section: ConsoleSection
+    let filesModel: FilesModel
+    @ObservedObject var kanban: KanbanModel
 
     var body: some View {
         switch section {
-        case .kanban: KanbanView()
+        case .kanban: KanbanView(model: kanban)
         case .sessions: SessionsView()
-        case .files: FilesView()
+        case .files: FilesView(model: filesModel)
         case .project: ProjectView()
         }
     }
