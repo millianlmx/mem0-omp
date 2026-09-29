@@ -523,6 +523,144 @@ filtre : sur un poste qui a `omp`, ils exécutent donc une vraie session avec ap
 modèle, et prennent le temps d'un tour réel. `OMP_CONSOLE_OMP_BINARY=/nonexistent/omp`
 force le chemin « non exécuté » quand on veut la suite complète sans session réelle.
 
+## Notifications et barre de menus
+
+L'app est une **app de barre de menus** : fermer la fenêtre ne la quitte pas (seul
+**⌘Q** quitte), l'item de barre reste présent, et un clic sur cet item ramène la
+fenêtre visible et au premier plan. Le titre de l'item suit les compteurs —
+`<occupés>·<en attente>` (point médian U+00B7) dès que l'un des deux est non nul,
+l'icône seule sinon (`square.grid.2x2`) ; un menu déroulant n'est **pas** posé, un
+menu demanderait deux clics là où un seul doit ramener la fenêtre.
+
+### Les notifications
+
+Une notification macOS est émise quand un évènement du magasin survient, **au plus
+une fois par évènement** (déduplication persistée), et **seulement si la fenêtre de
+l'app n'est pas au premier plan** (mesuré par `NSApplication.isActive`). Les quatre
+besoins et leurs six familles :
+
+| Évènement | Source | Titre · corps |
+|---|---|---|
+| attend une réponse | `running/<id>.json`, `pendingAsk` en vol et propriétaire vivant | `<label> attend une réponse` · « Une question attend votre réponse. » |
+| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | `<name> attend une validation` · « Jalon specs : validez le contrat pour continuer. » |
+| attend une validation (revue) | idem avec `waitKind = review` | `<name> attend une validation` · « Jalon revue : validez la livraison pour continuer. » |
+| échoué (feature de lot) | feature de lot `failed` | `<name> a échoué` · « La feature `<slug>` a échoué. » |
+| échoué (run clos) | `history/<id>.json`, `finalState = failed` | `<label> a échoué` · « Le run a échoué. » |
+| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | `PR fusionnée : <slug>` · « La PR de `<slug>` est fusionnée. » |
+
+`<name>` est le `name` de la feature s'il n'est pas blanc, sinon son `slug` ; le
+`label` est celui que le dépôt écrit lui-même. Une PR absente de `projects/` n'émet
+rien (une PR non suivie), et une feature de **lot** `done` avec `prUrl` (colonne
+« PR ouverte » du Kanban) n'est pas une fusion. Les sources sont bornées comme le
+magasin : 200 entrées `running`, 20 rangs `history`, un lot et un projet par dépôt.
+
+### La bande d'état de la fenêtre
+
+Une bande informative est posée **au-dessus** du `NavigationSplitView`, donc visible
+dans les quatre sections. Aucun élément focusable, aucun geste : l'ordre de
+tabulation existant est inchangé.
+
+| État | Ligne des compteurs (`status.counters`) |
+|---|---|
+| aucun instantané reçu | `Chargement des compteurs…` |
+| racine du magasin absente | `Compteurs indisponibles — magasin d'état absent : <dir>` |
+| sinon | `occupés : <busy> · en attente : <waiting>` (les deux chiffres toujours là, y compris 0) |
+
+Une seconde ligne (`status.notifications`) apparaît **seulement** si l'autorisation
+de notification est refusée :
+`Notifications désactivées — autorisez OMP Console dans Réglages Système ▸ Notifications.`
+
+| Identifiant | Surface |
+|---|---|
+| `status.strip` | la bande |
+| `status.counters` | la ligne des compteurs |
+| `status.notifications` | la ligne de refus (absente de l'arbre si l'autorisation n'est pas refusée) |
+
+« Occupés » compte les cartes de la colonne **En cours** ; « en attente » les cartes
+« Question en vol », « Jalon specs » et « Jalon review » — deux catégories
+**exclusives**, calculées sur l'ardoise que la fenêtre affiche. La colonne « En
+attente » du Kanban (features `pending`, non lancées) n'est **pas** ce compteur. La
+bande et l'item de barre lisent le même état : leurs chiffres ne peuvent pas diverger.
+
+### Le registre persisté
+
+Les clés déjà notifiées vivent dans un fichier JSON :
+`{"version":1,"notified":{"<clé>":<millisecondes epoch>}}`.
+
+- Emplacement par défaut : `~/Library/Application Support/com.omp.console/notified-alerts.json`.
+- Surcharge : la variable **`MEM0_CONSOLE_ALERTS_DIR`** (chemin absolu retenu, `~`
+  développé ; un chemin relatif est ignoré).
+- Fichier absent, illisible, non JSON, d'une autre version ou au champ `notified`
+  mal typé ⇒ registre **vide**, jamais d'exception ; seules les clés font foi.
+- L'écriture précède la livraison, et a lieu **même fenêtre au premier plan**
+  (l'évènement est consommé : une relance ne le renotifiera pas). Aucune purge,
+  aucun TTL.
+
+### Recette manuelle
+
+Le paquet ne vend aucun produit exécutable : la livraison réelle d'une notification
+(bannière macOS) se prouve sur le **bundle** et une autorisation accordée. Aucun
+processus de test ne peut ni construire un `NSStatusItem` ni appeler
+`UNUserNotificationCenter` hors bundle (voir les trois pièges ci-dessous), donc le
+test `AlertsRecipeTests` (désactivé par défaut) s'arrête à un livreur enregistreur.
+
+```bash
+bash scripts/swift-app.sh                       # depuis la racine du dépôt
+MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
+  MEM0_CONSOLE_ALERTS_DIR=/tmp/ledger-alertes \
+  nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" >/tmp/omp-console.log 2>&1 &
+```
+
+1. Accorder le dialogue d'autorisation ; vérifier `status.counters` à
+   `occupés : 0 · en attente : 0` et l'item de barre à l'icône seule.
+2. Mettre une autre app au premier plan, puis produire un **vrai** évènement par un
+   **process de run réel** (`omp --mode rpc-ui` armé du magasin jetable, prompt
+   demandant une question à choix multiples) : une bannière apparaît, nomme le run,
+   et aucune seconde ne suit tant que la question est en vol. Relancer l'app avec le
+   même `MEM0_CONSOLE_ALERTS_DIR` ⇒ aucune bannière ; `notified-alerts.json` porte la
+   clé `answer:<id>:<toolCallId>`.
+3. Répéter fenêtre **au premier plan** ⇒ aucune bannière, mais la clé est enregistrée.
+4. Sur un pipeline réel, observer un jalon (`waitKind = specs|review`,
+   `state = waiting`) et une fusion (`projects/<clé>.json`, `status = merged`) : une
+   bannière par évènement, jamais deux.
+5. Refuser l'autorisation dans Réglages Système ▸ Notifications ▸ OMP Console,
+   rouvrir la fenêtre ⇒ `status.notifications` affiche la phrase ; la réaccorder ⇒ la
+   ligne disparaît (statut relu à l'activation de l'app).
+6. Fermer la fenêtre (bouton rouge) ⇒ l'app reste vivante, l'item de barre est là,
+   ⌘Q quitte ; presser l'item (sonde AX `AXPress`) ⇒ la fenêtre redevient visible et
+   au premier plan.
+
+### Trois pièges mesurés
+
+1. **Hors bundle, pas de centre de notifications.** `UNUserNotificationCenter.current()`
+   dans un binaire nu (ou un processus de `swift test`) tue le process sur une
+   exception Objective-C non rattrapable (`bundleProxyForCurrentProcess is nil`). La
+   garde d'instanciation est donc `Bundle.main.bundleURL.pathExtension == "app"`, et
+   **aucun** appel UserNotifications ne vit ailleurs que dans `AlertDelivery.swift`.
+2. **`NSStatusBar` interdit dans la suite.** `NSStatusBar.system.statusItem(withLength:)`
+   tue un processus de test (signal 6, pile `-[NSStatusBar _statusItemWithLength:withPriority:]`).
+   `StatusItemController` n'y est donc jamais construit : sa logique de titre est une
+   fonction pure (`StatusItemTitle`), et son câblage AppKit est prouvé par la recette.
+3. **`activate()` coopératif est refusé.** Sans intention utilisateur,
+   `NSApplication.activate()` rend la fenêtre visible mais pas clé ni principale ;
+   seule `activate(ignoringOtherApps: true)` (dépréciée avec le SDK du poste, assumé)
+   rétablit fenêtre clé/principale et app active.
+
+### Relevés mesurés (poste de référence, 2026-09-29)
+
+- `swift test` (suite complète, `--no-parallel`) : **265 tests verts**, la recette
+  `AlertsRecipeTests` rapportée « skipped » (aucun script de CI ne pose ses variables).
+- Recette en suite, lancée une fois à la main
+  (`MEM0_ALERTS_RECIPE_DIR=/tmp/alerts-recipe/magasin`,
+  `MEM0_ALERTS_RECIPE_OUT=/tmp/alerts-recipe/journal.txt`) : un process réel écrit
+  `running/00000000000000a1.json` (état `waiting` + `pendingAsk`), le vrai modèle
+  notifie **une** fois — clé `answer:00000000000000a1:call-1`, titre
+  `recette/attente attend une réponse`, corps `Une question attend votre réponse.`,
+  résultat `delivered` — et `notified-alerts.json` porte la clé. Le journal rappelle
+  qu'aucun `add` réel n'est prouvé hors bundle.
+- Les bannières réelles et le clic sur l'item de barre se consignent dans la section
+  `## Revue` du contrat : cette recette exige le bundle et une autorisation accordée.
+
 ## Structure du paquet
 
 ```
@@ -572,17 +710,26 @@ omp-console/
 │   │   ├── FilesModel.swift       l'état de la section : cible, arbre, document, veille
 │   │   ├── FilesText.swift        tous les textes de la section, en un endroit
 │   │   └── FilesView.swift        la section : en-tête, arbre, document, états
-│   └── Viewer/                    la visionneuse de session (aucune écriture)
-│       ├── ViewerTarget.swift     la valeur d'une fenêtre : la session, et son titre
-│       ├── SessionSelectorModel.swift  les runs choisissables, depuis le magasin
-│       ├── SessionSelectorView.swift   la section « Sessions » : la liste
-│       ├── SessionRows.swift      faits affichables, en-tête d'appel, question `ask`
-│       ├── SessionDiffLines.swift diffs : classification et découpe des corps
-│       ├── SessionFileWatcher.swift  veille vnode du fichier de session
-│       ├── SessionViewerModel.swift  lignes, plis, suivi, états, journal d'octets
-│       ├── SessionViewerView.swift   bandeau, flux, états vides, « Revenir au direct »
-│       ├── SessionRowView.swift      le rendu d'un fait (dont les lignes de diff)
-│       └── ScrollBottomObserver.swift la géométrie du défilement et ses gestes
+│   ├── Viewer/                    la visionneuse de session (aucune écriture)
+│   │   ├── ViewerTarget.swift     la valeur d'une fenêtre : la session, et son titre
+│   │   ├── SessionSelectorModel.swift  les runs choisissables, depuis le magasin
+│   │   ├── SessionSelectorView.swift   la section « Sessions » : la liste
+│   │   ├── SessionRows.swift      faits affichables, en-tête d'appel, question `ask`
+│   │   ├── SessionDiffLines.swift diffs : classification et découpe des corps
+│   │   ├── SessionFileWatcher.swift  veille vnode du fichier de session
+│   │   ├── SessionViewerModel.swift  lignes, plis, suivi, états, journal d'octets
+│   │   ├── SessionViewerView.swift   bandeau, flux, états vides, « Revenir au direct »
+│   │   ├── SessionRowView.swift      le rendu d'un fait (dont les lignes de diff)
+│   │   └── ScrollBottomObserver.swift la géométrie du défilement et ses gestes
+│   ├── Alerts/                    les notifications macOS et la bande d'état
+│   │   ├── AlertEvents.swift      dérivation des six familles, clés et textes purs
+│   │   ├── AlertDelivery.swift    livreur réel/no-op, autorisation (SEUL import UserNotifications)
+│   │   ├── AlertLedger.swift      registre persisté des clés, lecture tolérante
+│   │   ├── AlertsModel.swift      abonnement, décision, compteurs, autorisation
+│   │   └── AlertsStripView.swift  la bande de la fenêtre (textes purs, identifiants AX)
+│   └── MenuBar/                   l'item de barre de menus et ses compteurs
+│       ├── RunCounters.swift      occupés / en attente et l'état publié
+│       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
 ├── Tests/OMPConsoleTests/         la suite Swift Testing
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git

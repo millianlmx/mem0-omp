@@ -16,6 +16,10 @@ struct ConsoleRootView: View {
     /// Le modèle de la section « Kanban », même raison : l'ardoise et la sélection
     /// survivent au passage d'une section à l'autre.
     @ObservedObject var kanban: KanbanModel
+    /// Le modèle d'alertes : il porte les compteurs de la bande (S-9) et l'état
+    /// d'autorisation des notifications. Il vit à l'échelle de l'app (porté par le
+    /// délégué), comme les autres.
+    @ObservedObject var alerts: AlertsModel
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -27,14 +31,19 @@ struct ConsoleRootView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(ConsoleSection.allCases, selection: selection) { section in
-                Label(section.title, systemImage: section.systemImage)
-                    .tag(section)
+        VStack(spacing: 0) {
+            // La bande est AU-DESSUS du `NavigationSplitView`, donc visible dans les
+            // quatre sections et à l'ouverture de la fenêtre (S-9).
+            AlertsStripView(model: alerts)
+            NavigationSplitView {
+                List(ConsoleSection.allCases, selection: selection) { section in
+                    Label(section.title, systemImage: section.systemImage)
+                        .tag(section)
+                }
+                .navigationSplitViewColumnWidth(min: 160, ideal: 200)
+            } detail: {
+                SectionDetail(section: model.selection, filesModel: filesModel, kanban: kanban)
             }
-            .navigationSplitViewColumnWidth(min: 160, ideal: 200)
-        } detail: {
-            SectionDetail(section: model.selection, filesModel: filesModel, kanban: kanban)
         }
         .frame(minWidth: 760, minHeight: 480)
     }

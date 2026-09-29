@@ -16,4 +16,5 @@ __pycache__/
 omp-console/.build/
 omp-console/.build-app/
 omp-console/.build-tests/
+omp-console/.build-check/
 omp-console/build/

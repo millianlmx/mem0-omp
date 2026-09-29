@@ -29,7 +29,7 @@ struct OMPConsoleApp: App {
 
     var body: some Scene {
         WindowGroup("OMP Console") {
-            ConsoleRootView(model: model, filesModel: filesModel, kanban: kanbanModel)
+            ConsoleRootView(model: model, filesModel: filesModel, kanban: kanbanModel, alerts: appDelegate.alerts)
         }
 
         Window("Session OMP", id: "session") {
@@ -68,11 +68,34 @@ struct SessionCommands: Commands {
 /// Délégué de terminaison : il ne connaît pas la session, il appelle l'accroche
 /// que le modèle de session a posée. Sans session ouverte, le délégué laisse
 /// l'app quitter immédiatement.
+///
+/// Il POSSÈDE aussi le modèle d'alertes et l'item de barre de menus (S-2, S-9) :
+/// le modèle vit à l'échelle de l'app, et l'item est créé une seule fois au
+/// lancement.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Posée par `SessionConsoleModel.init` ; `nil` tant qu'aucun modèle n'existe,
     /// auquel cas il n'y a aucun process à attendre.
     static var terminateSession: (() async -> Void)?
+
+    /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
+    /// construisent donc pas).
+    lazy var alerts = AlertsModel()
+
+    private var statusItemController: StatusItemController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
+        // son titre suivra l'état publié, et l'autorisation sera demandée.
+        statusItemController = StatusItemController(model: alerts)
+        alerts.start()
+    }
+
+    /// B-7/AC-9 : fermer la fenêtre ne quitte PAS l'app (le comportement par défaut
+    /// mesuré, Doc-6, est écrit explicitement ici pour être testé).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let terminateSession = Self.terminateSession else { return .terminateNow }
