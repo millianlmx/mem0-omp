@@ -24,7 +24,9 @@ import Foundation
 
 @MainActor
 final class SessionConsoleModel: ObservableObject {
-    static let projectRootKey = "session.projectRoot"
+    /// Clé partagée avec la visionneuse de fichiers : elle vit dans `ProjectRoot`,
+    /// seul propriétaire de la préférence.
+    static let projectRootKey = ProjectRoot.defaultsKey
     static let modeKey = "session.mode"
 
     let host: SessionHost
@@ -84,25 +86,13 @@ final class SessionConsoleModel: ObservableObject {
 
     // MARK: - Persistance
 
-    /// Clé absente ⇒ repli mesuré : le cwd de l'app s'il est un dossier contenant
-    /// une entrée `.git`, sinon rien. Une clé PRÉSENTE mais invalide (dossier
-    /// supprimé) ne déclenche pas le repli : l'utilisateur a choisi, et S-9 exige
-    /// que ce choix ne soit pas réécrit tout seul.
+    /// La règle vit dans `ProjectRoot` : la fenêtre « Session OMP » et la
+    /// visionneuse de fichiers résolvent LE MÊME projet, avec la même préférence
+    /// (`ProjectRoot.defaultsKey`) et la même règle de repli. Une clé PRÉSENTE mais
+    /// invalide (dossier supprimé) ne déclenche pas le repli : l'utilisateur a
+    /// choisi, et S-9 exige que ce choix ne soit pas réécrit tout seul.
     private static func restoredProjectRoot(defaults: UserDefaults, fileManager: FileManager) -> URL? {
-        if let path = defaults.string(forKey: projectRootKey) {
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                return nil
-            }
-            return URL(fileURLWithPath: path)
-        }
-        let cwd = URL(fileURLWithPath: fileManager.currentDirectoryPath)
-        var isDirectory: ObjCBool = false
-        guard fileManager.fileExists(atPath: cwd.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            return nil
-        }
-        guard fileManager.fileExists(atPath: cwd.appendingPathComponent(".git").path) else { return nil }
-        return cwd
+        ProjectRoot.resolve(defaults: defaults, fileManager: fileManager)
     }
 
     // MARK: - Disponibilités (S-9)

@@ -9,6 +9,12 @@ import SwiftUI
 
 struct ConsoleRootView: View {
     @ObservedObject var model: ConsoleModel
+    /// Le modèle de la section « Fichiers » : il vit à l'échelle de l'app, comme les
+    /// autres, pour que la cible choisie et l'état de dépliage survivent au passage
+    /// d'une section à l'autre.
+    @ObservedObject var filesModel: FilesModel
+    /// Le modèle de la section « Kanban », même raison : l'ardoise et la sélection
+    /// survivent au passage d'une section à l'autre.
     @ObservedObject var kanban: KanbanModel
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
@@ -28,7 +34,7 @@ struct ConsoleRootView: View {
             }
             .navigationSplitViewColumnWidth(min: 160, ideal: 200)
         } detail: {
-            SectionDetail(section: model.selection, kanban: kanban)
+            SectionDetail(section: model.selection, filesModel: filesModel, kanban: kanban)
         }
         .frame(minWidth: 760, minHeight: 480)
     }
