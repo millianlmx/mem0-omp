@@ -38,7 +38,7 @@ struct KanbanView: ConsoleSectionView {
 
 struct SessionsView: ConsoleSectionView {
     static let section = ConsoleSection.sessions
-    var body: some View { PlaceholderPane(section: Self.section) }
+    var body: some View { SessionSelectorView() }
 }
 
 struct FilesView: ConsoleSectionView {
