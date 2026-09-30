@@ -71,8 +71,15 @@ final class ViewerSessionFixture {
 /// Échéance des preuves de la visionneuse, sur le FIL PRINCIPAL (les modèles y
 /// vivent) : elle attend qu'une condition devienne vraie, sans jamais bloquer la
 /// suite au-delà de l'échéance.
+///
+/// 5 s, pas 2 : la reprise après un `chmod` passe par la veille de repli
+/// (FSEvents sur le répertoire quand le fichier n'est pas ouvrable), dont la
+/// latence n'est pas bornée — mesuré sur `check (macos-latest)` : le
+/// `visionneuse-de-session/AC-13` de `unreadableFileIsReportedThenResumesByItself`
+/// a dépassé 2 s sur un runner chargé. L'échéance ne coûte rien quand la
+/// condition se réalise (sondage toutes les 5 ms).
 @MainActor
-func awaitViewer(_ timeout: Double = 2.0, _ condition: @MainActor () -> Bool) async -> Bool {
+func awaitViewer(_ timeout: Double = 5.0, _ condition: @MainActor () -> Bool) async -> Bool {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         if condition() { return true }

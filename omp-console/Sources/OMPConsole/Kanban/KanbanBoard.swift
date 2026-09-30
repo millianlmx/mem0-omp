@@ -163,7 +163,14 @@ extension KanbanBoard {
                         startMs: run.map { min(feature.sinceAt, $0.phaseStartedAt) } ?? feature.sinceAt,
                         endMs: feature.endedAt,
                         marks: [],
-                        sources: sources
+                        sources: sources,
+                        action: KanbanCardAction(
+                            repoRoot: lot.repoRoot,
+                            slug: feature.slug,
+                            waitKind: feature.waitKind,
+                            featureState: feature.state,
+                            run: run.map(cardRun)
+                        )
                     ),
                     run: run,
                     lot: lot,
@@ -200,7 +207,14 @@ extension KanbanBoard {
                         sources: [KanbanSource(
                             kind: .project,
                             ref: "projects/\(project.repoKey).json · feature « \(feature.slug) »"
-                        )]
+                        )],
+                        action: KanbanCardAction(
+                            repoRoot: project.repoRoot,
+                            slug: nil,
+                            waitKind: nil,
+                            featureState: nil,
+                            run: nil
+                        )
                     ),
                     run: nil,
                     lot: nil,
@@ -229,7 +243,14 @@ extension KanbanBoard {
                     startMs: entry.phaseStartedAt,
                     endMs: nil,
                     marks: [],
-                    sources: [KanbanSource(kind: .run, ref: "running/\(entry.id).json")]
+                    sources: [KanbanSource(kind: .run, ref: "running/\(entry.id).json")],
+                    action: KanbanCardAction(
+                        repoRoot: nil,
+                        slug: nil,
+                        waitKind: nil,
+                        featureState: nil,
+                        run: cardRun(entry)
+                    )
                 ),
                 run: entry,
                 lot: nil,
@@ -425,6 +446,12 @@ private func isDoublon(
         if dedup.doublonProjectFeatureKeys.contains(key) { return true }
     }
     return false
+}
+
+/// Le run d'une carte (S-10) : les valeurs publiées, jamais un chemin recalculé —
+/// `inbox` vient de `RunningEntry.inbox`, la question de `RunningEntry.pendingAsk`.
+func cardRun(_ entry: RunningEntry) -> KanbanCardRun {
+    KanbanCardRun(id: entry.id, label: entry.label, inbox: entry.inbox, pendingAsk: entry.pendingAsk)
 }
 
 /// Le nom du dépôt d'une carte de lot ou de projet : le dernier segment du chemin

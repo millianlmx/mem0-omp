@@ -355,3 +355,85 @@ func boardMatchesTheStoreEntities() {
     #expect(Set(board.cards.map(\.id)) == Set(expected.keys))
     #expect(board.anomalies.isEmpty)
 }
+
+// MARK: - S-10 : la carte porte les valeurs de ses gestes
+
+@Test("reponses-et-jalons/AC-1 : une carte de feature de lot porte slug, jalon, run et question")
+func lotFeatureCardCarriesItsAction() {
+    let fixture = StoreFixture()
+    let repoRoot = makeDirectory(fixture, "depot-alpha")
+    let worktree = makeDirectory(fixture, "worktree-alpha")
+    let repoKey = KanbanRepoKey.key(forRoot: repoRoot)
+    let box = fixture.createBox("run-1")
+    let ask: [String: Any] = [
+        "toolCallId": "call-1", "id": "q", "question": "On garde ?",
+        "options": [["label": "oui", "description": "on garde"]],
+    ]
+    fixture.publish(
+        .running, "\(fixtureId(1)).json",
+        object: runningObject(
+            id: fixtureId(1), cwd: worktree, phase: "specs", state: "waiting",
+            phaseStartedAt: fixtureT0, updatedAt: fixtureT0, ownerPid: Double(getpid()),
+            inbox: box, pendingAsk: ask
+        )
+    )
+    fixture.publish(
+        .lots, "\(repoKey).json",
+        object: lotObject(
+            id: repoKey, repoRoot: repoRoot,
+            features: [lotFeatureObject(
+                slug: "alpha", state: "waiting", phase: "specs", worktree: worktree, waitKind: "specs"
+            )]
+        )
+    )
+
+    let board = kanbanBoard(fixture)
+    let card = board.cards.first { $0.id.hasPrefix("feature:") }
+    let action = card?.action
+    #expect(action?.repoRoot == repoRoot)
+    #expect(action?.slug == "alpha")
+    #expect(action?.waitKind == .specs)
+    #expect(action?.featureState == .waiting)
+    #expect(action?.run?.inbox == box, "la boîte PUBLIÉE, jamais recalculée")
+    #expect(action?.run?.label == "mem0-omp/feature")
+    #expect(action?.run?.pendingAsk?.toolCallId == "call-1")
+    #expect(action?.run?.pendingAsk?.options == [PanelAskOption(label: "oui", description: "on garde")])
+}
+
+@Test("reponses-et-jalons/AC-3 : une carte de run hors lot porte son run et AUCUN slug")
+func unpairedRunCardCarriesItsAction() {
+    let fixture = StoreFixture()
+    let worktree = makeDirectory(fixture, "worktree-orphan")
+    let box = fixture.createBox("run-2")
+    fixture.publish(
+        .running, "\(fixtureId(2)).json",
+        object: runningObject(
+            id: fixtureId(2), cwd: worktree, label: "depot/orpheline",
+            phaseStartedAt: fixtureT0, updatedAt: fixtureT0, ownerPid: Double(getpid()), inbox: box
+        )
+    )
+
+    let board = kanbanBoard(fixture)
+    let card = board.cards.first { $0.id.hasPrefix("run:") }
+    #expect(card?.action?.slug == nil)
+    #expect(card?.action?.repoRoot == nil)
+    #expect(card?.action?.run?.inbox == box)
+    #expect(card?.action?.run?.pendingAsk == nil)
+}
+
+@Test("reponses-et-jalons/AC-5 : une carte d'historique ne porte aucun geste")
+func historyCardHasNoAction() {
+    let fixture = StoreFixture()
+    fixture.publish(
+        .history, "\(fixtureId(3)).json",
+        object: historyObject(
+            id: fixtureId(3), cwd: "/tmp/depot-historique",
+            phaseStartedAt: fixtureT0, endedAt: fixtureT0 + 1000
+        )
+    )
+
+    let board = kanbanBoard(fixture)
+    let card = board.cards.first { $0.id.hasPrefix("history:") }
+    #expect(card != nil)
+    #expect(card?.action == nil)
+}
