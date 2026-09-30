@@ -1,4 +1,4 @@
-// Les quatre sections de la coque, dans l'ordre d'affichage de la barre latérale.
+// Les cinq sections de la coque, dans l'ordre d'affichage de la barre latérale.
 //
 // Un enum plutôt qu'un tableau de vues : la section est l'identité PARTAGÉE entre
 // la liste, le détail, les tests et, plus tard, les features métier. L'ordre de
@@ -10,6 +10,7 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case sessions
     case files
     case project
+    case memory
 
     var id: String { rawValue }
 
@@ -20,6 +21,7 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .sessions: "Sessions"
         case .files: "Fichiers"
         case .project: "Projet"
+        case .memory: "Mémoire"
         }
     }
 
@@ -30,6 +32,7 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .sessions: "bubble.left.and.text.bubble.right"
         case .files: "doc.text"
         case .project: "target"
+        case .memory: "brain"
         }
     }
 
@@ -42,6 +45,7 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .sessions: "La liste des sessions OMP arrivera ici."
         case .files: "La visionneuse de fichiers et de diffs arrivera ici."
         case .project: "La vue Projet arrivera ici."
+        case .memory: "La mémoire du projet arrivera ici."
         }
     }
 }

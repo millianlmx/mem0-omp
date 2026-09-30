@@ -65,7 +65,11 @@ struct GitWorktree: Sendable, Equatable {
 }
 
 enum TargetCatalog {
-    static func list(git: GitCLI, store: StoreReader, projectRoot: String) async throws -> [FilesTarget] {
+    /// Le dépôt principal d'un projet, quel que soit le chemin d'où l'on part : la
+    /// SEULE formule (S-1), réemployée par le catalogue ET par la portée mémoire.
+    /// Depuis un worktree lié, `--git-common-dir` rend le `.git` du principal, dont
+    /// le parent EST le principal.
+    static func primaryRoot(git: GitCLI, projectRoot: String) async throws -> String {
         let project = canonicalPath(projectRoot)
         let common = try await git.run(GitCommand.gitCommonDir(), in: project)
         let commonPath = common.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -73,7 +77,11 @@ enum TargetCatalog {
             throw FilesError.notARepository(path: project)
         }
         let gitDir = resolvePath(commonPath, relativeTo: project)
-        let primary = canonicalPath((gitDir as NSString).deletingLastPathComponent)
+        return canonicalPath((gitDir as NSString).deletingLastPathComponent)
+    }
+
+    static func list(git: GitCLI, store: StoreReader, projectRoot: String) async throws -> [FilesTarget] {
+        let primary = try await primaryRoot(git: git, projectRoot: projectRoot)
 
         var targets = [
             FilesTarget(

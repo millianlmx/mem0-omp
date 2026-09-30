@@ -43,9 +43,17 @@ func watchRefreshesTreeAndDocument() async throws {
     })
 
     // 2) Le fichier AFFICHÉ est modifié : son contenu ET son diff suivent.
+    //
+    // Le diff s'attend comme le contenu : une écriture peut tomber PENDANT le
+    // `git diff` d'un rechargement déjà en vol (déclenché par l'étape 1), la lecture
+    // du contenu suivant l'écriture tandis que le diff la précède — la passe suivante
+    // corrige, mais une assertion synchrone la prend de vitesse sur un runner chargé
+    // (mesuré : `check (macos-latest)` de la PR #46, `FilesWatchTests.swift:48`).
     try scene.fixture.write("tracked.txt", "c\n", in: scene.worktree)
     #expect(await waitUntilFiles(timeout: .seconds(10)) { scene.model.content == .text("c\n") })
-    #expect(scene.model.diff?.hunks.flatMap { $0 }.contains { $0.text == "+c" } == true)
+    #expect(await waitUntilFiles(timeout: .seconds(10)) {
+        scene.model.diff?.hunks.flatMap { $0 }.contains { $0.text == "+c" } == true
+    })
 
     // 3) La veille elle-même n'écrit rien dans la cible (AC-13 maintenu pendant la
     // veille) : les fichiers sont inchangés à l'octet près, et l'état git ne porte que

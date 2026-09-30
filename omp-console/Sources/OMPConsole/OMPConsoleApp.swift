@@ -25,6 +25,7 @@ struct OMPConsoleApp: App {
     @StateObject private var actionsModel = ActionsModel()
     @StateObject private var projectModel = ProjectConsoleModel()
     @StateObject private var statsModel = StatsModel()
+    @StateObject private var memoryModel = MemoryModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
@@ -35,7 +36,8 @@ struct OMPConsoleApp: App {
                 kanban: kanbanModel,
                 alerts: appDelegate.alerts,
                 actions: actionsModel,
-                projectModel: projectModel
+                projectModel: projectModel,
+                memoryModel: memoryModel
             )
         }
 

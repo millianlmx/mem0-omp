@@ -26,6 +26,9 @@ struct ConsoleRootView: View {
     /// Le modèle de conduite de projet : à l'échelle de l'app, comme les autres,
     /// pour que la session hébergée survive au changement de section.
     @ObservedObject var projectModel: ProjectConsoleModel
+    /// Le modèle de la section « Mémoire » : même raison, la portée et la liste
+    /// survivent au passage d'une section à l'autre.
+    @ObservedObject var memoryModel: MemoryModel
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -39,7 +42,7 @@ struct ConsoleRootView: View {
     var body: some View {
         VStack(spacing: 0) {
             // La bande est AU-DESSUS du `NavigationSplitView`, donc visible dans les
-            // quatre sections et à l'ouverture de la fenêtre (S-9).
+            // cinq sections et à l'ouverture de la fenêtre (S-9).
             AlertsStripView(model: alerts)
             NavigationSplitView {
                 List(ConsoleSection.allCases, selection: selection) { section in
@@ -53,7 +56,8 @@ struct ConsoleRootView: View {
                     filesModel: filesModel,
                     kanban: kanban,
                     actions: actions,
-                    projectModel: projectModel
+                    projectModel: projectModel,
+                    memoryModel: memoryModel
                 )
             }
 

@@ -1,5 +1,5 @@
 // La bande d'état de la fenêtre (BR-4, S-9) : deux lignes informatives au-dessus du
-// `NavigationSplitView`, donc visibles dans les quatre sections.
+// `NavigationSplitView`, donc visibles dans les cinq sections.
 //
 // Purement informative : AUCUN élément focusable, aucun geste — l'ordre de tabulation
 // existant (barre latérale puis contenu) est inchangé. Tous les textes vivent dans

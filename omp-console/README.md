@@ -1,13 +1,15 @@
 # omp-console — la coque de la salle de contrôle
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
-contrôle : une fenêtre, une barre latérale à quatre sections — **Kanban**,
-**Sessions**, **Fichiers**, **Projet** — et un panneau de détail. Les quatre sections
-sont vivantes : **Kanban** affiche le tableau des pipelines (voir « Section Kanban »)
+contrôle : une fenêtre, une barre latérale à cinq sections — **Kanban**,
+**Sessions**, **Fichiers**, **Projet**, **Mémoire** — et un panneau de détail. Les
+cinq sections sont vivantes : **Kanban** affiche le tableau des pipelines (voir
+« Section Kanban »)
 avec sa zone d'action (voir « Agir depuis le Kanban »), **Sessions** le sélecteur de
 sessions (voir « Visionneuse de session »), **Fichiers** la visionneuse de fichiers
-et de diffs (voir « Lire les fichiers et les diffs d'une cible ») et **Projet** la
-conduite de projet (voir « Fenêtre Projet (conduite) »).
+et de diffs (voir « Lire les fichiers et les diffs d'une cible »), **Projet** la
+conduite de projet (voir « Fenêtre Projet (conduite) ») et **Mémoire** la mémoire du
+projet en lecture seule (voir « Consulter la mémoire du projet »).
 Cible minimale : macOS 14.
 
 ## Prérequis
@@ -329,7 +331,7 @@ Les gestes à l'écran (choisir une cible dans le sélecteur, déplier l'arbre, 
 diff coloré, ⌘R) restent une **vérification manuelle du poste** : dans un shell de
 pipeline sans session d'affichage, le bundle se lance et son état est vivant —
 l'application est bien au premier plan (`OMP Console` dans la barre de menus) et son
-arbre d'accessibilité expose sa fenêtre et ses quatre sections — mais la fenêtre
+arbre d'accessibilité expose sa fenêtre et ses cinq sections — mais la fenêtre
 n'est peinte sur aucun écran, donc une capture d'écran ne la montre pas.
 fichiers, projet) consommeront ces flux dans les features suivantes : aucune n'est
 branchée ici.
@@ -778,7 +780,7 @@ magasin : 200 entrées `running`, 20 rangs `history`, un lot et un projet par d�
 ### La bande d'état de la fenêtre
 
 Une bande informative est posée **au-dessus** du `NavigationSplitView`, donc visible
-dans les quatre sections. Aucun élément focusable, aucun geste : l'ordre de
+dans les cinq sections. Aucun élément focusable, aucun geste : l'ordre de
 tabulation existant est inchangé.
 
 | État | Ligne des compteurs (`status.counters`) |
@@ -869,7 +871,7 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 
 ### Relevés mesurés (poste de référence, 2026-09-29)
 
-- `swift test` (suite complète, `--no-parallel`) : **265 tests verts**, la recette
+- `swift test` (suite complète, `--no-parallel`) : **375 tests verts**, la recette
   `AlertsRecipeTests` rapportée « skipped » (aucun script de CI ne pose ses variables).
 - Recette en suite, lancée une fois à la main
   (`MEM0_ALERTS_RECIPE_DIR=/tmp/alerts-recipe/magasin`,
@@ -882,6 +884,75 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 - Les bannières réelles et le clic sur l'item de barre se consignent dans la section
   `## Revue` du contrat : cette recette exige le bundle et une autorisation accordée.
 
+## Consulter la mémoire du projet
+
+La section **Mémoire** est un **lecteur** de la mémoire du projet courant : elle
+cherche des souvenirs, montre le sommaire du projet et l'état du service, et ouvre
+un souvenir pour en lire le texte complet. `Sources/OMPConsole/Memory/` ne se lie
+jamais au service que par les traits de `MemoryServing`.
+
+**Lecture seule, par construction.** Le client ne construit que trois routes —
+`GET /health`, `GET /memory/all?agent_id=<portée>`, `POST /memory/search` — et le
+protocole `MemoryServing` n'expose aucune méthode d'écriture : aucun bouton, aucun
+menu, aucun raccourci n'ajoute, ne modifie ni ne supprime un souvenir.
+
+**Le service.** L'adresse vient de `MEM0_HTTP_URL` (`http://localhost:8321` par
+défaut), le jeton de `MEM0_HTTP_TOKEN` (vide par défaut, envoyé en en-tête
+`X-Mem0-Token` seulement s'il est non vide). Le bundle porte
+`NSAppTransportSecurity` → `NSAllowsLocalNetworking` : sous macOS 14, ATS refuse par
+défaut une connexion HTTP vers une IP littérale. Une variable posée mais **vide**
+est traitée comme absente. Les budgets d'inactivité sont ceux du plugin (20 s pour
+la recherche, 10 s pour les autres), et il n'y a **aucun sondage périodique** : la
+sonde part à l'apparition de la section, au bouton « Rafraîchir » et avant chaque
+recherche.
+
+**La portée** est calculée par le même algorithme que `projectId` du plugin mémoire
+(`omp-mem0-memory/state.ts`) : override `MEM0_PROJECT_ID`, sinon la racine du dépôt
+**principal** — un worktree de feature partage donc la portée du principal —, puis
+`package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis le premier
+`*.xcodeproj`, puis le nom du répertoire. `_global` n'est jamais envoyé : la section
+ne montre que la mémoire du projet. Sans portée calculable (aucun projet ouvert,
+`git` en échec), aucun appel de portée n'est émis et l'état « Aucun projet ouvert »
+renvoie vers la fenêtre « Session OMP ».
+
+**La recherche** reproduit `mem0_search` : pool sur-échantillonné
+`min(6 × 4, 50) = 24`, seuil de cosinus brut **0,55**, `explain` vrai, puis
+`selectRelevant` (cosinus seuls, décroissant, tronqué à 6). Les cosinus viennent de
+`score_details.semantic_score` — jamais du `score` renvoyé, que BM25 sature.
+
+**Les états**, chacun avec son texte (tous dans `MemoryText`) :
+
+| État | Rendu |
+|---|---|
+| aucune sonde encore | adresse seule en en-tête, `Chargement de la mémoire du projet…` |
+| portée incalculable | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌘N) |
+| service indisponible | « Service mem0-http indisponible » + l'adresse + la dernière erreur — jamais une liste vide, jamais « aucun souvenir » |
+| sommaire vide | « Aucun souvenir dans la mémoire du projet « <portée> ». » |
+| sommaire | `<n> souvenir(s)` puis les lignes, dans l'ordre du service |
+| recherche sans ligne | « La mémoire du projet ne contient aucun souvenir correspondant. » |
+| recherche sans score | « Le service n'annonce pas de score sémantique (score_details absent) — recherche impossible. » |
+| recherche sous le seuil | « Aucun souvenir ne dépasse le seuil de pertinence (0,55) pour cette recherche. » |
+| détail | l'identifiant en en-tête et le texte **complet** en police monospacée, sélectionnable, défilable |
+
+**Identifiants d'accessibilité** : `memoire.service`, `memoire.search.query`,
+`memoire.search.submit`, `memoire.summary.button`, `memoire.refresh`,
+`memoire.summary.count`, `memoire.list`, `memoire.list.row.<id>`,
+`memoire.detail`. Clavier : `Tab`/`Maj-Tab` dans l'ordre de mise en page, `Retour`
+dans le champ déclenche la recherche, les flèches haut/bas déplacent la sélection de
+la liste (le détail suit), `⌘R` rafraîchit.
+
+**Recette manuelle** (hors CI : aucun script ne pose ses variables) :
+
+```bash
+cd omp-console
+MEM0_MEMORY_RECIPE=1 MEM0_MEMORY_RECIPE_PROJECT=/chemin/du/projet \
+  swift test --filter recetteManuelleRendLaMemoireDuProjet
+```
+
+Elle relève sur le VRAI service la portée calculée, l'état, le compte du sommaire et
+ses trois premières lignes, puis les résultats d'une recherche — et n'écrit rien
+dans le projet.
+
 ## Structure du paquet
 
 ```
@@ -890,8 +961,8 @@ omp-console/
 ├── Sources/OMPConsole/
 │   ├── OMPConsoleApp.swift        point d'entrée (@main), scènes et menu
 │   ├── ConsoleRootView.swift      fenêtre, barre latérale, détail
-│   ├── SectionViews.swift         les quatre vues de section
-│   ├── ConsoleSection.swift       les quatre sections et leurs libellés
+│   ├── SectionViews.swift         les cinq vues de section
+│   ├── ConsoleSection.swift       les cinq sections et leurs libellés
 │   ├── ConsoleModel.swift         l'état : la section courante
 │   ├── ProjectRoot.swift          le projet ouvert, résolu en UN endroit (clé partagée)
 │   ├── SessionConsoleView.swift   fenêtre « Session OMP » (cinq zones, tous les états)
@@ -952,6 +1023,13 @@ omp-console/
 │   │   ├── FilesModel.swift       l'état de la section : cible, arbre, document, veille
 │   │   ├── FilesText.swift        tous les textes de la section, en un endroit
 │   │   └── FilesView.swift        la section : en-tête, arbre, document, états
+│   ├── Memory/                    la mémoire du projet, en lecture seule
+│   │   ├── MemoryScope.swift      la portée mem0 du projet (miroir du plugin)
+│   │   ├── MemoryService.swift    config, routes, lignes, erreurs, client HTTP
+│   │   ├── MemorySearch.swift     la sélection de pertinence (portée du plugin)
+│   │   ├── MemoryText.swift       tous les textes de la section, en un endroit
+│   │   ├── MemoryModel.swift      l'état : portée, liste, service, sélection
+│   │   └── MemoryView.swift       la section : en-tête, liste, détail, états
 │   ├── Viewer/                    la visionneuse de session (aucune écriture)
 │   │   ├── ViewerTarget.swift     la valeur d'une fenêtre : la session, et son titre
 │   │   ├── SessionSelectorModel.swift  les runs choisissables, depuis le magasin
