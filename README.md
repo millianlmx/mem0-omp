@@ -10,15 +10,19 @@ mem0-omp/                              racine = marketplace OMP
 │   ├── extension.ts                   entrée : câblage et réexports
 │   ├── mem0Client.ts, recall.ts, summary.ts, attach.ts, brief.ts, bootstrap.ts,
 │   │   dedupe.ts, checkpoint.ts, phases.ts, state.ts, write.ts, config.ts,
-│   │   tools.ts, commands.ts          les modules (un par responsabilité)
+│   │   tools.ts, commands.ts, purge.ts
+│   │                                  les modules (un par responsabilité)
 │   └── install.sh                     installation manuelle, hors marketplace
 ├── omp-mem0-req/                      le plugin pipeline (/req → /specs → /impl → /review)
 │   ├── package.json
 │   ├── extension.ts                   entrée : commandes, événements, câblage
 │   ├── lotController.ts, lot.ts, chain.ts, contract.ts, seeds.ts
 │   │                                  le lot : pilote, modèle, chaîne, contrat, amorces
-│   ├── runs.ts, inbox.ts, publish.ts, store.ts, runState.ts, git.ts, state.ts
-│   │                                  runs, boîtes, magasin d'état, worktrees
+│   ├── runs.ts, inbox.ts, publish.ts, store.ts, runState.ts, git.ts, state.ts,
+│   │   models.ts, audit.ts, commands.ts
+│   │                                  runs, boîtes, magasin d'état, worktrees, audit, modèles
+│   ├── project.ts, projectDriver.ts, projectRelay.ts, relay.ts
+│   │                                  la conduite de projet et le relais
 │   └── panel.ts, panelRows.ts, panelWidth.ts, panelView.ts, panelSession.ts,
 │       panelHost.ts                   le panneau /pipelines et la vue de session
 ├── omp-console/                       la coque macOS (SwiftUI) de la salle de contrôle
@@ -27,9 +31,13 @@ mem0-omp/                              racine = marketplace OMP
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
+├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
+├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
+├── scripts/mem0-http-test.sh          test d'API mem0-http hors conteneur, dérivé du Dockerfile
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR
+├── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
 └── .github/workflows/                 check.yml (PR), release-simulation.yml (PR), release.yml (merge sur main)
 ```
 
