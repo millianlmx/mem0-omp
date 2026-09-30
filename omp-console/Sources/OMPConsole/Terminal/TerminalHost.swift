@@ -12,9 +12,13 @@
 //      `OPOST|ONLCR` : c'est cette traduction `\n` → `\r\n` du noyau qui aligne les
 //      lignes de la TUI, laquelle n'émet aucun `CR` structurel (Doc-1 §2). `ISIG`
 //      vivant dans `c_lflag`, il tombe avec elle : Ctrl-C arrive comme l'octet 0x03.
-//   3. Dans le fils il n'y a QUE des appels C async-signal-safe (`chdir`, `execve`,
-//      `_exit`) : pas de runtime Swift, pas d'Objective-C, pas d'`atexit`. Tout ce
-//      qui s'alloue (`argv`, `envp`, le cwd) est construit AVANT le fork.
+//   3. Dans le fils il n'y a QUE des appels C async-signal-safe (`close`, `chdir`,
+//      `execve`, `_exit`) : pas de runtime Swift, pas d'Objective-C, pas d'`atexit`.
+//      Tout ce qui s'alloue (`argv`, `envp`, le cwd) est construit AVANT le fork.
+//      Le fils ferme en outre TOUT descripteur ≥ 3 — borné par `getdtablesize()` lu
+//      AVANT le fork (`closefrom(3)` n'est pas déclaré par le SDK macOS, Doc-5, et
+//      `getdtablesize` ne figure pas dans la liste async-signal-safe, Doc-3) : `omp`
+//      démarre avec 0, 1 et 2 seuls, sans liste blanche.
 //   4. Le maître est NON BLOQUANT et le lecteur attend dans `poll(2)` : une écriture
 //      qui ne passe pas ne fige pas le MainActor, et le lecteur rend la main sur
 //      demande — donc personne ne ferme un descripteur pendant qu'un fil y est
@@ -119,12 +123,29 @@ final class TerminalHost {
             free(workingDirectory)
         }
 
+        // La borne de la fermeture est lue AVANT le fork : `getdtablesize()` ne figure
+        // pas dans la liste des appels async-signal-safe (Doc-3), il n'a donc rien à
+        // faire dans le fils. Sa valeur est la borne EXACTE de la table, soit
+        // min(`RLIMIT_NOFILE` souple, `kern.maxfilesperproc`) — 184320 sur ce poste,
+        // donc 184319 = plus grand numéro qu'un `dup2` accepte (mesuré, Doc-4).
+        // Borner par `rlim_cur` ferait ≈ 860 000 `close` inutiles au-dessus de ce
+        // plafond réel.
+        let descriptorTableSize = getdtablesize()
+
         var master: Int32 = -1
         let child = forkpty(&master, nil, &attributes, &windowSize)
 
         if child == 0 {
             // Fil enfant : appels C seulement, et `_exit` (jamais `exit`, qui
             // déroulerait les `atexit` hérités du parent).
+            // Aucun descripteur hérité ne passe dans `omp` : l'enfant ne garde que 0, 1 et 2.
+            // (Le primaire du PTY n'est pas hérité au-delà de 2 — Doc-1 ; `close` d'un
+            // descripteur déjà fermé rend `EBADF`, c'est le cas NORMAL, jamais une erreur.)
+            var descriptor: Int32 = 3
+            while descriptor < descriptorTableSize {
+                close(descriptor)
+                descriptor += 1
+            }
             if chdir(workingDirectory) != 0 { _exit(127) }
             execve(arguments[0], &arguments, &variables)
             _exit(127)
