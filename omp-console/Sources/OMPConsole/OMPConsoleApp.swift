@@ -1,14 +1,16 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// Quatre scènes : la coque à barre latérale, la fenêtre « Session OMP » (S-9), la
-// visionneuse par run, et la fenêtre « Projet » (conduite). `Window` — et non
-// `WindowGroup` — rend structurellement vrai l'invariant « jamais deux conduites »
-// (AC-2) : la scène n'a qu'une instance.
+// Cinq scènes : la coque à barre latérale, la fenêtre « Terminal » (S-1), la
+// fenêtre « Session OMP » (S-9), la visionneuse par run, et la fenêtre « Projet »
+// (conduite). `Window` — et non `WindowGroup` — rend structurellement vrai
+// l'invariant « un seul terminal » (AC-2) comme « jamais deux conduites » (AC-2) :
+// la scène n'a qu'une instance.
 //
-// Les modèles de session et de conduite vivent sur la structure `App`
+// Les modèles de terminal, de session et de conduite vivent sur la structure `App`
 // (`@StateObject`), donc à l'échelle de l'app : fermer une fenêtre ne laisse pas un
-// `omp` orphelin, et l'accroche de terminaison existe avant la première ouverture.
+// `omp` orphelin, et les accroches de terminaison existent avant la première
+// ouverture.
 //
 // La terminaison passe par `applicationShouldTerminate` → `.terminateLater` (D3) :
 // c'est le seul moyen d'ATTENDRE la sortie des process hébergés avant de quitter.
@@ -20,6 +22,7 @@ import SwiftUI
 struct OMPConsoleApp: App {
     @StateObject private var model = ConsoleModel()
     @StateObject private var sessionModel = SessionConsoleModel()
+    @StateObject private var terminalModel = TerminalConsoleModel()
     @StateObject private var filesModel = FilesModel()
     @StateObject private var kanbanModel = KanbanModel()
     @StateObject private var actionsModel = ActionsModel()
@@ -42,11 +45,18 @@ struct OMPConsoleApp: App {
             SessionConsoleView(model: sessionModel)
         }
 
+        // La fenêtre de terminal (S-1) : instance unique, comme la session RPC —
+        // redemander son ouverture ramène celle-ci au premier plan.
+        Window(TerminalViewText.windowTitle, id: "terminal") {
+            TerminalConsoleView(model: terminalModel)
+        }
+
         Window("Projet", id: "projet") {
             ProjectConsoleView(model: projectModel)
         }
         .commands {
             SessionCommands()
+            TerminalCommands()
             ProjectCommands(model: projectModel)
         }
 
@@ -72,6 +82,21 @@ struct SessionCommands: Commands {
         CommandGroup(after: .newItem) {
             Button("Nouvelle session OMP") { openWindow(id: "session") }
                 .keyboardShortcut("n", modifiers: .command)
+        }
+    }
+}
+
+/// Menu Fichier ▸ « Ouvrir un terminal OMP… » (⌘T) : ouvre la scène à instance
+/// unique. Redemander l'ouverture ramène la fenêtre existante au premier plan sans
+/// lancer de second `omp` (AC-2) — la scène n'a qu'une instance, et le modèle refuse
+/// un second lancement.
+struct TerminalCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button(TerminalViewText.menuOpen) { openWindow(id: "terminal") }
+                .keyboardShortcut("t", modifiers: .command)
         }
     }
 }
@@ -107,6 +132,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var terminateSession: (() async -> Void)?
     /// Posée par `ProjectConsoleModel.init`.
     static var terminateProject: (() async -> Void)?
+    /// Posée par `TerminalConsoleModel.init` (S-8).
+    static var terminateTerminal: (() async -> Void)?
 
     /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
     /// construisent donc pas).
@@ -128,10 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard Self.terminateSession != nil || Self.terminateProject != nil else { return .terminateNow }
+        guard Self.terminateSession != nil || Self.terminateProject != nil || Self.terminateTerminal != nil else {
+            return .terminateNow
+        }
         Task { @MainActor in
+            // Les trois accroches sont INDÉPENDANTES (S-8) : leur ordre n'a pas
+            // d'importance, et chacune est bornée par sa propre escalade.
             await Self.terminateSession?()
             await Self.terminateProject?()
+            await Self.terminateTerminal?()
             NSApp.reply(toApplicationShouldTerminate: true)
         }
         return .terminateLater
