@@ -1110,7 +1110,8 @@ omp-console/
 │   ├── RpcTransport.swift         process hébergé : tubes, signaux, sortie
 │   ├── OmpBinary.swift            résolution du binaire `omp`
 │   ├── Terminal/                  la fenêtre de terminal : un vrai `omp` dans un PTY
-│   │   ├── TerminalHost.swift     le PTY : forkpty, termios brut d'entrée, écriture,
+│   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
+│   │   │                          hérités ≥ 3, termios brut d'entrée, écriture,
 │   │   │                          escalade SIGTERM/SIGKILL du groupe, récolte
 │   │   ├── TerminalHostError.swift les échecs du PTY et leur seule table de texte
 │   │   ├── TerminalEnvironment.swift l'environnement de l'enfant (TERM, COLORTERM, PATH)
