@@ -236,6 +236,19 @@ armé, ou aucun geste possible). Le dépôt du formulaire de lancement est **cho
 parmi les dépôts connus des cartes et le projet ouvert ; le slug est dérivé par le
 dépôt, jamais par l'app.
 
+Deux invariants durables de cette couche :
+
+- **Boîte confinée** : une livraison n'est publiée que dans `<stateDir>/inbox/` ou
+  sous lui. Un chemin hors zone — chemin absolu ailleurs, traversée `..`, lien
+  symbolique sortant, préfixe de nom (`<stateDir>/inbox-2`) — est refusé AVANT toute
+  création : ni dossier ni fichier, et le journal des gestes porte
+  `chemin refusé (<chemin>) : hors de <stateDir>/inbox`. La lecture, elle, ne juge
+  pas : l'entrée du run reste visible avec son `inbox` tel quel.
+- **Publication exclusive** : le contenu est écrit dans un temporaire créé en
+  `O_EXCL`, puis publié par `link(2)` — un nom déjà pris reçoit le nom suivant
+  (jamais d'écrasement), un lecteur ne voit jamais un fichier partiel, et un `EINTR`
+  est retenté.
+
 ### Identifiants d'accessibilité de l'action
 
 | Identifiant | Surface |
@@ -700,6 +713,12 @@ l'ordre du plan.
 - **Fusionner…** n'est disponible que si les trois statuts requis sont verts. Le clic
   relit la PR, puis demande une confirmation qui nomme la PR (numéro et titre) ; la
   fusion est un **squash** borné à la tête relue (`--match-head-commit`).
+- **Adresse refusée** : seules les adresses `https://github.com/<propriétaire>/<dépôt>/pull/<numéro>`
+  sont employées — hôte `github.com` exact (casse ignorée), numéro entier positif sans zéro
+  de tête. Toute autre forme (hôte étranger, `http://`, `/issues/`, espace ou `?` final,
+  préfixe `-`) est refusée AVANT tout lancement : `gh` n'est jamais exécuté, et le message
+  d'échec existant s'affiche à la place. L'URL passe toujours en argument **positionnel
+  derrière `--`**, après toutes les options.
 - **Le segment suivant n'est pas lancé par l'app** : c'est le pilote `/project` qui,
   au balayage suivant du relais (≤ 60 s + 2 s), marque la feature `merged` puis passe
   au segment suivant. Le volet **Plan** s'actualise alors sans aucun geste.
@@ -1180,7 +1199,7 @@ omp-console/
 │   │   └── KanbanDetailView.swift le panneau de détail
 │   ├── Actions/                   les gestes : la SEULE couche qui écrit
 │   │   ├── PipelineCommand.swift  livraisons et commandes, objets JSON exacts
-│   │   ├── PipelineWriter.swift   écriture atomique (rename), lecture des accusés
+│   │   ├── PipelineWriter.swift   publication exclusive (link) et boîte confinée
 │   │   ├── ActionsText.swift      tous les textes et les lignes de journal
 │   │   ├── KanbanActionPresentation.swift  aiguillage pur et dépôts lançables
 │   │   ├── ActionsModel.swift     journal borné, émissions, sondage des accusés

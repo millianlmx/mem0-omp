@@ -185,6 +185,61 @@ func makeProjectModel(
 
 // MARK: - Doubles du suivi de PR (BR-2)
 
+/// Un `gh` DOUBLURE sur disque : un script `sh` jetable qui rend le JSON attendu
+/// selon `$1 $2` et journalise son `argv` (une ligne par argument, dans l'ordre des
+/// invocations). Partagé par les preuves du service (`PRServiceTests`) et du modèle
+/// (`ProjectPRModelTests`), qui l'injectent comme binaire réel de `GhCLI`.
+struct GhStub {
+    let directory: URL
+    let script: URL
+    let log: URL
+
+    init(viewJSON: String?, checksJSON: String?, viewStderr: String? = nil, mergeSucceeds: Bool = true) throws {
+        directory = FileManager.default.temporaryDirectory.appendingPathComponent("gh-stub-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        script = directory.appendingPathComponent("gh")
+        log = directory.appendingPathComponent("args.log")
+
+        let view = directory.appendingPathComponent("view.json")
+        let checks = directory.appendingPathComponent("checks.json")
+        try Data((viewJSON ?? "{}").utf8).write(to: view)
+        try Data((checksJSON ?? "[]").utf8).write(to: checks)
+
+        var lines = [
+            "#!/bin/sh",
+            "printf '%s\\n' \"$@\" >> '#LOG#'",
+        ]
+        if let viewStderr {
+            let line = "if [ \"$1 $2\" = \"pr view\" ]; then printf '%s\\n' '#VIEWERR#' >&2; exit 1; fi"
+            lines.append(line.replacingOccurrences(of: "#VIEWERR#", with: viewStderr))
+        }
+        lines.append("case \"$1 $2\" in")
+        lines.append("  \"pr view\") cat '#VIEW#' ;;")
+        lines.append("  \"pr checks\") cat '#CHECKS#' ;;")
+        lines.append("  \"pr merge\") exit #MERGECODE# ;;")
+        lines.append("esac")
+        lines.append("exit 0")
+
+        var body = lines.joined(separator: "\n")
+        body = body
+            .replacingOccurrences(of: "#LOG#", with: log.path)
+            .replacingOccurrences(of: "#VIEW#", with: view.path)
+            .replacingOccurrences(of: "#CHECKS#", with: checks.path)
+            .replacingOccurrences(of: "#MERGECODE#", with: mergeSucceeds ? "0" : "1")
+        try Data(body.utf8).write(to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+    }
+
+    /// Les lignes du journal : une par argument, dans l'ordre des invocations ; vide
+    /// quand le script n'a JAMAIS tourné.
+    func logged() -> [String] {
+        (try? String(contentsOf: log, encoding: .utf8))?
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.isEmpty } ?? []
+    }
+}
+
 /// Un service de PR scripté : chaque `prUrl` reçoit une suite de résultats consommés
 /// dans l'ordre (le dernier se répète), et chaque fusion est journalisée.
 final class StubPRService: PRServicing, @unchecked Sendable {

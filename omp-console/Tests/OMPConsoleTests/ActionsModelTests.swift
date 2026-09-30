@@ -278,3 +278,45 @@ func stopTargetsTheRepository() throws {
     #expect(entry.targetLabel == fixture.root.split(separator: "/").last.map(String.init))
     #expect(entry.state == .awaitingAck)
 }
+
+// MARK: - confinement de la boîte (S-1, B-1) et échec d'écriture (B-3)
+
+@MainActor
+@Test("chemins-du-magasin-non-confines/AC-1 : une boîte hors zone est refusée ET journalisée, sans aucun fichier")
+func outOfZoneInboxIsRefusedAndJournalled() throws {
+    let fixture = StoreFixture()
+    let model = makeModel(fixture)
+    let outside = joinPath(NSTemporaryDirectory(), "omp-hors-\(UUID().uuidString)")
+
+    model.sendText(cardAction(repoRoot: fixture.root, inbox: outside), text: "avance")
+
+    guard case .failed(let reason)? = model.journal.first?.state else {
+        Issue.record("un refus de confinement doit produire une entrée d'échec")
+        return
+    }
+    #expect(reason == "chemin refusé (\(outside)) : hors de \(joinPath(fixture.root, "inbox"))")
+    #expect(ActionsText.journalLine(for: try #require(model.journal.first))
+        == "texte · depot/alpha · échec : \(reason)")
+    #expect(!FileManager.default.fileExists(atPath: outside), "aucun dossier hors zone n'est créé")
+}
+
+@MainActor
+@Test("chemins-du-magasin-non-confines/AC-7 : une boîte bloquée DANS la zone journalise un échec d'écriture")
+func blockedBoxInsideZoneJournalsFailure() throws {
+    let fixture = StoreFixture()
+    let model = makeModel(fixture)
+    let writer = PipelineWriter(stateDir: fixture.root)
+    try FileManager.default.createDirectory(atPath: writer.inboxRoot, withIntermediateDirectories: true)
+    let blocked = joinPath(writer.inboxRoot, "bloque")
+    try Data("x".utf8).write(to: URL(fileURLWithPath: blocked))
+
+    model.sendText(cardAction(repoRoot: fixture.root, inbox: joinPath(blocked, "run-1")), text: "avance")
+
+    guard case .failed(let reason)? = model.journal.first?.state else {
+        Issue.record("l'échec d'écriture doit produire une entrée d'échec")
+        return
+    }
+    #expect(reason.hasPrefix("écriture impossible ("))
+    #expect(ActionsText.journalLine(for: try #require(model.journal.first))
+        == "texte · depot/alpha · échec : \(reason)")
+}

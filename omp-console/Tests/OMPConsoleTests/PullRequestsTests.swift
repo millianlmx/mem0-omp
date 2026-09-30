@@ -203,3 +203,58 @@ func parseViewDecodesFields() throws {
     #expect(throws: PRParseError.self) { _ = try parsePRView("pas du json") }
     #expect(throws: PRParseError.self) { _ = try parsePRView(#"{"title": "T"}"#) }
 }
+
+// MARK: - validation textuelle de l'adresse (S-3, B-2)
+
+@Test("chemins-du-magasin-non-confines/AC-4 : la table des adresses de PR acceptées et refusées")
+func prURLValidationTableIsExact() {
+    let accepted = [
+        "https://github.com/o/r/pull/1",
+        "HTTPS://GitHub.COM/o/r/pull/12",
+        "https://github.com/proprietaire/depot.git/pull/4294967296",
+        "https://github.com/a-b_c.d/e-f_g.h/pull/1",
+    ]
+    for raw in accepted {
+        #expect(validatedPRURL(raw) == raw, "« \(raw) » doit être rendue INCHANGÉE")
+    }
+
+    let refused = [
+        "https://github.com/o/r/pull/1/",
+        "https://github.com/o/r/pull/0",
+        "https://github.com/o/r/pull/007",
+        "https://github.com/o/r/pull/1?x=1",
+        "https://github.com/o/r/pull/1#f",
+        "https://gitlab.com/o/r/pull/1",
+        "http://github.com/o/r/pull/1",
+        "https://github.com/o/r/issues/1",
+        "https://github.com/o//pull/1",
+        "https://github.com/o/r/pull/1 ",
+        "https://github.com:443/o/r/pull/1",
+        "https://user@github.com/o/r/pull/1",
+        "-R evil",
+        "",
+        "https://",
+        "https://github.com/o/r/pull/",
+        "https://gist.github.com/o/r/pull/1",
+        "https://github.com.evil.test/o/r/pull/1",
+        "https://github.com/o/r/pull/1%C2%A0",
+        "https://github.com/o/r/pull/١٢",
+        "https://github.com/o/r/pull/1/2",
+    ]
+    for raw in refused {
+        #expect(validatedPRURL(raw) == nil, "« \(raw) » doit être refusée")
+    }
+
+    // La validation est TEXTUELLE : aucune de ces formes ne dépend de `URL(string:)`,
+    // qui les normaliserait (§7).
+    #expect(validatedPRURL("https://github.com/o/r/pull/1 ") == nil)
+    #expect(URL(string: "https://github.com/o/r/pull/1 ") != nil, "URL() accepte ce que nous refusons")
+}
+
+@Test("chemins-du-magasin-non-confines/AC-4 : le refus porte le message d'erreur de la couche PR")
+func invalidPRURLCarriesItsMessage() {
+    let error = GhError.invalidPRURL(url: "https://gitlab.com/o/r/pull/1")
+    #expect(error.userMessage.contains("l'adresse de PR est refusée"))
+    #expect(error.userMessage.contains("https://gitlab.com/o/r/pull/1"))
+    #expect(error.failureDetail == error.userMessage, "aucun second message : `failureDetail` retombe sur `userMessage`")
+}
