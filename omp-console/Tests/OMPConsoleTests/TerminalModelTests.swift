@@ -395,9 +395,15 @@ func everyStateHasItsText() async throws {
 
     // Fermer la fenêtre est le chemin de sortie de l'utilisateur : l'état repart à
     // `idle` (S-7), donc au texte d'accueil, et non à une fin « subie ».
+    //
+    // Le texte s'attend, comme l'état : `statusText` rend « Lecture des worktrees… »
+    // tant que la liste des cibles est en cours de chargement (`openPicker()` plus
+    // haut), donc l'accueil n'arrive qu'une fois cette lecture terminée — sur un
+    // runner chargé elle est encore en vol (mesuré : `check (macos-latest)` de la
+    // PR #48, `TerminalModelTests.swift:400`).
     model.windowWillClose()
     #expect(await awaitMainTrue(timeout: 8) { model.state == .idle })
-    #expect(model.statusText == TerminalViewText.chooseHint)
+    #expect(await awaitMainTrue(timeout: 8) { model.statusText == TerminalViewText.chooseHint })
     #expect(model.emulator == nil)
 }
 
