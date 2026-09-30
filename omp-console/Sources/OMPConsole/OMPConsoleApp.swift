@@ -32,6 +32,7 @@ struct OMPConsoleApp: App {
                 model: model,
                 filesModel: filesModel,
                 kanban: kanbanModel,
+                alerts: appDelegate.alerts,
                 actions: actionsModel,
                 projectModel: projectModel
             )
@@ -96,12 +97,35 @@ struct ProjectCommands: Commands {
 /// Délégué de terminaison : il ne connaît pas les sessions, il appelle les
 /// accroches que les modèles ont posées. Sans accroche, l'app quitte
 /// immédiatement.
+///
+/// Il POSSÈDE aussi le modèle d'alertes et l'item de barre de menus (S-2, S-9) :
+/// le modèle vit à l'échelle de l'app, et l'item est créé une seule fois au
+/// lancement.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Posée par `SessionConsoleModel.init`.
     static var terminateSession: (() async -> Void)?
     /// Posée par `ProjectConsoleModel.init`.
     static var terminateProject: (() async -> Void)?
+
+    /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
+    /// construisent donc pas).
+    lazy var alerts = AlertsModel()
+
+    private var statusItemController: StatusItemController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
+        // son titre suivra l'état publié, et l'autorisation sera demandée.
+        statusItemController = StatusItemController(model: alerts)
+        alerts.start()
+    }
+
+    /// B-7/AC-9 : fermer la fenêtre ne quitte PAS l'app (le comportement par défaut
+    /// mesuré, Doc-6, est écrit explicitement ici pour être testé).
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        false
+    }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard Self.terminateSession != nil || Self.terminateProject != nil else { return .terminateNow }
