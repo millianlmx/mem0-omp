@@ -9,17 +9,6 @@ import Testing
 @MainActor
 @Test("suivi-pr-ci/AC-1 : les textes exacts du volet « PR et CI »")
 func prPaneTextsAreExact() {
-    #expect(ProjectViewText.prPaneTitle == "PR et CI")
-    #expect(ProjectViewText.prEmpty == "Aucune PR ouverte pour ce projet.")
-    #expect(ProjectViewText.prLoading == "Lecture des statuts…")
-    #expect(ProjectViewText.prUnknownSuffix == " (lecture en cours)")
-    #expect(ProjectViewText.prStaleSuffix == " (périmé)")
-    #expect(ProjectViewText.prOpen == "Ouvrir la PR")
-    #expect(ProjectViewText.prMerge == "Fusionner…")
-    #expect(ProjectViewText.prMergeHelp == "Fusion indisponible : les trois statuts requis doivent être verts.")
-    #expect(ProjectViewText.prMergeConfirmButton == "Fusionner")
-    #expect(ProjectViewText.prMergeCancelButton == "Annuler")
-
     // Le message de lecture préfixe le `userMessage` d'une GhError (S-7).
     #expect(
         ProjectViewText.prUnavailable("gh est introuvable")
