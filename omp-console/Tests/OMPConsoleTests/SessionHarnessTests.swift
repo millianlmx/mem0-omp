@@ -1,11 +1,26 @@
-// Harnais de preuve RÉEL et sa garde d'exécution (S-10, BR-5 step 5).
+// Harnais de preuve RÉEL et sa garde d'exécution (S-1, S-2, S-4).
 //
-// Les quatre tests réels lancent un VRAI `omp` (avec appel modèle) : ils sont donc
-// décorés `.enabled(if: SessionHarness.available(...))`, ce qui les rend « non
-// exécutés » — et la suite verte — là où `omp` est absent, notamment en CI, qui
-// n'installe aucun binaire `omp` (note de /project). La garde est la CONJONCTION de
-// la plateforme macOS et d'un `omp` résoluble : jamais la seule présence d'un
-// binaire, jamais la seule plateforme.
+// Les quatre tests réels lancent un VRAI `omp` (avec appel modèle). Ils sont
+// DÉSACTIVÉS par défaut : le trait `.enabled(if:)` ne porte QUE la présence de
+// `MEM0_HARNESS_RECIPE`, et aucun script du dépôt (`scripts/swift-app.sh`,
+// `scripts/check.sh`, `.github/workflows/`) ne pose cette variable. La présence
+// d'un `omp` sur la machine n'active donc plus rien. La résolubilité du binaire est
+// vérifiée DANS le corps du test (`SessionHarness.shouldRun`), jamais dans le
+// trait : une condition fausse de `.enabled(if:)` ne peut que skipper le test,
+// jamais le faire échouer.
+//
+// Recette manuelle, à la demande, hors intégration continue :
+//
+//   cd omp-console && MEM0_HARNESS_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
+//     --filter harness -Xswiftc -plugin-path \
+//     -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+//
+// `--filter harness` porte sur le nom de FONCTION du test (pas sur son titre
+// affiché) et sélectionne exactement les quatre : `harnessRoundTripDialogue`,
+// `harnessHeadlessMode`, `harnessMortEtRelance`, `harnessAucunOrphelin`. `omp` doit
+// être résoluble (`OmpBinaryResolver`, échappatoire `OMP_CONSOLE_OMP_BINARY`) :
+// variable posée sans `omp` ⇒ chaque test échoue explicitement, jamais un faux
+// succès ni un skip silencieux.
 //
 // Chaque test travaille dans un dossier temporaire : aucune extension du dépôt
 // n'est chargée. Chaque attente est bornée (30 s pour une poignée de main, 180 s
@@ -16,16 +31,48 @@ import Foundation
 import Testing
 @testable import OMPConsole
 
-/// Garde unique des tests réels (S-10). `false` hors macOS, et `false` dès qu'un
-/// `omp` exécutable n'est pas résoluble dans l'environnement donné.
+/// Garde unique des tests réels (S-1, S-2). L'activation est la PRÉSENCE de
+/// `recipeKey` ; la résolubilité d'`omp` est constatée par `shouldRun`, appelé en
+/// première instruction du test — pas par le trait, qui ne saurait que skipper.
 enum SessionHarness {
-    static func available(environment: [String: String]) -> Bool {
-        #if os(macOS)
-        if case .success = OmpBinaryResolver.resolve(environment: environment) { return true }
-        return false
-        #else
-        return false
-        #endif
+    /// Variable d'opt-in : le nom n'existe qu'ici et dans la documentation.
+    static let recipeKey = "MEM0_HARNESS_RECIPE"
+
+    enum Status: Equatable {
+        /// Variable d'opt-in absente : le test a été exécuté par erreur (trait retiré).
+        case disabled
+        /// Variable posée, mais aucun `omp` exécutable résoluble.
+        case missingBinary
+        /// Variable posée et `omp` résoluble : le test réel peut tourner.
+        case ready
+    }
+
+    /// Activé dès que la variable est PRÉSENTE (valeur vide comprise), jamais
+    /// d'après sa vacuité — même règle que les autres recettes du dépôt.
+    static func optedIn(environment: [String: String]) -> Bool {
+        environment[recipeKey] != nil
+    }
+
+    static func status(environment: [String: String]) -> Status {
+        guard optedIn(environment: environment) else { return .disabled }
+        if case .success = OmpBinaryResolver.resolve(environment: environment) { return .ready }
+        return .missingBinary
+    }
+
+    /// À appeler en PREMIÈRE instruction d'un test réel : `Issue.record` fait
+    /// échouer le test (sévérité `.error` par défaut), là où `Test.cancel` le
+    /// terminerait sans échec — proscrit.
+    static func shouldRun(environment: [String: String]) -> Bool {
+        switch status(environment: environment) {
+        case .ready:
+            return true
+        case .missingBinary:
+            Issue.record("\(recipeKey) est posée mais `omp` est introuvable : posez \(OmpBinaryResolver.overrideKey) sur un `omp` exécutable, ou retirez \(recipeKey) pour désactiver ce test réel.")
+            return false
+        case .disabled:
+            Issue.record("\(recipeKey) est absente alors que ce test réel s'exécute : le trait `.enabled(if:)` a été retiré.")
+            return false
+        }
     }
 }
 
@@ -89,33 +136,44 @@ N'appelle aucun autre outil. Quand tu recevras la réponse, réponds simplement 
 
 private let simplePrompt = "Réponds simplement « bonjour » et termine. N'appelle aucun outil."
 
-// MARK: - S-10 : la garde elle-même (AC-17)
+// MARK: - AC-4 (ex-`client-rpc-omp/AC-17`) : la garde elle-même
 
-@Test("client-rpc-omp/AC-17 : la garde est fausse quand omp est absent du PATH et du HOME")
-func guardIsFalseWithoutOmp() {
-    #expect(SessionHarness.available(environment: ["PATH": "/nonexistent", "HOME": "/nonexistent"]) == false)
-}
-
-@Test("client-rpc-omp/AC-17 : la garde est fausse quand la variable d'échappement pointe un binaire absent")
-func guardIsFalseWithOverride() {
-    var environment = ProcessInfo.processInfo.environment
-    environment[OmpBinaryResolver.overrideKey] = "/nonexistent/omp"
-    #expect(SessionHarness.available(environment: environment) == false)
-}
-
-@Test("client-rpc-omp/AC-17 : la garde est vraie quand le PATH porte un omp exécutable")
-func guardIsTrueWithExecutableBinary() throws {
+@Test("harnais-omp-reel-non-opt-in/AC-4 : sans variable d'opt-in, la garde est désactivée même avec un omp résoluble")
+func guardDisabledWithoutRecipe() throws {
     let binary = try makeFakeBinary(executable: true)
     let directory = (binary as NSString).deletingLastPathComponent
-    #expect(SessionHarness.available(environment: ["PATH": directory, "HOME": "/nonexistent"]) == true)
+    let environment = ["PATH": directory, "HOME": "/nonexistent"]
+    #expect(SessionHarness.status(environment: environment) == .disabled)
+    #expect(SessionHarness.optedIn(environment: environment) == false)
 }
 
-@Test("client-rpc-omp/AC-17 : la garde ne se contente pas d'un binaire non exécutable")
+@Test("harnais-omp-reel-non-opt-in/AC-4 : variable posée sans omp résoluble, la garde signale le binaire manquant")
+func guardMissingBinaryWithRecipe() {
+    var environment = ["PATH": "/nonexistent", "HOME": "/nonexistent"]
+    environment[SessionHarness.recipeKey] = "1"
+    #expect(SessionHarness.status(environment: environment) == .missingBinary)
+
+    environment[OmpBinaryResolver.overrideKey] = "/nonexistent/omp"
+    #expect(SessionHarness.status(environment: environment) == .missingBinary)
+}
+
+@Test("harnais-omp-reel-non-opt-in/AC-4 : variable posée et omp exécutable, la garde est prête")
+func guardReadyWithExecutableBinary() throws {
+    let binary = try makeFakeBinary(executable: true)
+    let directory = (binary as NSString).deletingLastPathComponent
+    var environment = ["PATH": directory, "HOME": "/nonexistent"]
+    environment[SessionHarness.recipeKey] = "1"
+    #expect(SessionHarness.status(environment: environment) == .ready)
+    #expect(SessionHarness.optedIn(environment: environment) == true)
+}
+
+@Test("harnais-omp-reel-non-opt-in/AC-4 : la garde ne se contente pas d'un binaire non exécutable")
 func guardRejectsNonExecutableBinary() throws {
     let binary = try makeFakeBinary(executable: false)
     var environment = ["PATH": "/nonexistent", "HOME": "/nonexistent"]
+    environment[SessionHarness.recipeKey] = "1"
     environment[OmpBinaryResolver.overrideKey] = binary
-    #expect(SessionHarness.available(environment: environment) == false)
+    #expect(SessionHarness.status(environment: environment) == .missingBinary)
 }
 
 // MARK: - AC-1, AC-5, AC-7, AC-15 : aller-retour réel avec dialogue
@@ -123,9 +181,10 @@ func guardRejectsNonExecutableBinary() throws {
 @MainActor
 @Test(
     "client-rpc-omp/AC-1 : une session rpc-ui réelle négocie, transcrit le tour, répond à un ask et s'arrête proprement",
-    .enabled(if: SessionHarness.available(environment: ProcessInfo.processInfo.environment))
+    .enabled(if: SessionHarness.optedIn(environment: ProcessInfo.processInfo.environment))
 )
 func harnessRoundTripDialogue() async throws {
+    guard SessionHarness.shouldRun(environment: ProcessInfo.processInfo.environment) else { return }
     let project = try makeHarnessProject()
     let transport = ProcessTransport()
     let host = SessionHost(transport: transport)
@@ -176,9 +235,10 @@ func harnessRoundTripDialogue() async throws {
 @MainActor
 @Test(
     "client-rpc-omp/AC-6 : une session rpc réelle a hasUI=false (pas d'ask), reçoit ses événements et s'arrête proprement",
-    .enabled(if: SessionHarness.available(environment: ProcessInfo.processInfo.environment))
+    .enabled(if: SessionHarness.optedIn(environment: ProcessInfo.processInfo.environment))
 )
 func harnessHeadlessMode() async throws {
+    guard SessionHarness.shouldRun(environment: ProcessInfo.processInfo.environment) else { return }
     let project = try makeHarnessProject()
     let transport = ProcessTransport()
     let host = SessionHost(transport: transport)
@@ -214,9 +274,10 @@ func harnessHeadlessMode() async throws {
 @MainActor
 @Test(
     "client-rpc-omp/AC-10 : un SIGKILL réel publie dead sans geste, et la relance reprend le même .jsonl",
-    .enabled(if: SessionHarness.available(environment: ProcessInfo.processInfo.environment))
+    .enabled(if: SessionHarness.optedIn(environment: ProcessInfo.processInfo.environment))
 )
 func harnessMortEtRelance() async throws {
+    guard SessionHarness.shouldRun(environment: ProcessInfo.processInfo.environment) else { return }
     let project = try makeHarnessProject()
     let transport = ProcessTransport()
     let host = SessionHost(transport: transport)
@@ -265,9 +326,10 @@ func harnessMortEtRelance() async throws {
 @MainActor
 @Test(
     "client-rpc-omp/AC-16 : la fermeture de l'app termine le process hébergé et ne laisse aucun orphelin",
-    .enabled(if: SessionHarness.available(environment: ProcessInfo.processInfo.environment))
+    .enabled(if: SessionHarness.optedIn(environment: ProcessInfo.processInfo.environment))
 )
 func harnessAucunOrphelin() async throws {
+    guard SessionHarness.shouldRun(environment: ProcessInfo.processInfo.environment) else { return }
     let project = try makeHarnessProject()
     let transport = ProcessTransport()
     let host = SessionHost(transport: transport)

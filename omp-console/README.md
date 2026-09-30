@@ -854,32 +854,42 @@ sonde AX :
 
 La suite de tests contient quatre tests **réels** qui lancent un vrai `omp` (donc
 font de vrais appels au modèle) et parcourent l'aller-retour complet : prompt →
-événements → dialogue `ask` répondu → fin de tour, le mode conducteur sans
-dialogues, un `SIGKILL` suivi d'une relance qui reprend le même `.jsonl`, et la
-fermeture de l'app sans orphelin.
+événements → dialogue `ask` répondu → fin de tour (`harnessRoundTripDialogue`), le
+mode conducteur sans dialogues (`harnessHeadlessMode`), un `SIGKILL` suivi d'une
+relance qui reprend le même `.jsonl` (`harnessMortEtRelance`), et la fermeture de
+l'app sans orphelin (`harnessAucunOrphelin`).
 
-Ces tests ne tournent que si **`omp` est résoluble** sur la machine (garde sur la
-plateforme macOS **et** la résolution du binaire). Ailleurs — notamment en
-intégration continue, où aucun binaire `omp` n'est installé — ils sont rapportés
-« skipped » et la suite reste verte. Leur nom de fonction commence par `harness`,
-donc :
+Ces quatre tests sont **désactivés par défaut** : leur seule activation est la
+présence de **`MEM0_HARNESS_RECIPE`**, et aucun script du dépôt
+(`scripts/swift-app.sh`, `bash scripts/check.sh`, `.github/workflows/`) ne pose
+cette variable. La présence d'un `omp` sur la machine n'active donc rien : sans la
+variable, les quatre sont rapportés « skipped » et aucun octet n'est envoyé à un
+modèle.
+
+Recette manuelle, à la demande :
 
 ```bash
-cd omp-console
-# Une boucle locale rapide, sans appel modèle et sans session réelle :
-swift test --scratch-path .build-tests \
-  -Xswiftc -plugin-path \
-  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
-  --skip harness
+cd omp-console && MEM0_HARNESS_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
+  --filter harness -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 ```
 
-`scripts/swift-app.sh` et `bash scripts/check.sh` lancent la suite **sans** ce
-filtre : sur un poste qui a `omp`, ils exécutent donc une vraie session avec appel
-modèle, et prennent le temps d'un tour réel. `OMP_CONSOLE_OMP_BINARY=/nonexistent/omp`
-force le chemin « non exécuté » quand on veut la suite complète sans session réelle.
+`--filter harness` porte sur le **nom de fonction** du test, pas sur son titre
+affiché (mesuré plus haut à propos de `--filter recette`) : il sélectionne
+exactement les quatre fonctions nommées ci-dessus. `--no-parallel` est requis : les
+quatre ouvrent de vraies sessions, et un run groupé est instable.
+
+`omp` doit être **résoluble** (`OmpBinaryResolver` ; échappatoire
+`OMP_CONSOLE_OMP_BINARY`). Variable posée sans `omp` résoluble ⇒ chaque test
+**échoue explicitement** (« `omp` est introuvable »), jamais un faux succès ni un
+skip silencieux : la variable est une demande d'exécution réelle, pas un filtre.
+
+`scripts/swift-app.sh` et `bash scripts/check.sh` lancent la suite **sans** la
+variable : quel que soit `omp` sur la machine, ils rapportent ces quatre tests
+« skipped » et la suite reste verte.
 
 Le harnais **du terminal** (`TerminalSmokeTests`) suit la même règle, avec sa propre
-garde : il ne tourne que si **`MEM0_TERMINAL_RECIPE`** est posée, donc jamais en
+variable : il ne tourne que si **`MEM0_TERMINAL_RECIPE`** est posée, donc jamais en
 intégration continue (voir « Fenêtre Terminal (terminal intégré) »).
 
 ## Notifications et barre de menus
