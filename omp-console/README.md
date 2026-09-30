@@ -601,6 +601,66 @@ réponses dans la session hébergée.
 Aucune reprise automatique : relancer l'app n'ouvre **aucune** session et n'arme
 **aucun** `/project` ; c'est toujours un geste de l'utilisateur.
 
+### PR et CI du projet
+
+Le volet **PR et CI** de la vue **Projet** affiche les PR ouvertes par le projet
+conduit — une ligne par feature au statut « PR ouverte » portant une `prUrl`, dans
+l'ordre du plan.
+
+- **Les trois statuts requis** — `check (ubuntu-latest)`, `check (macos-latest)`,
+  `release-simulation` — sont toujours affichés, chacun avec son état (vert / rouge /
+  en cours / ignoré). Un statut rouge affiche le lien de son run sous la forme
+  `run <identifiant>`.
+- **Rafraîchissement automatique** : tant que le volet est visible, l'app relit `gh`
+  une première fois puis toutes les 60 s, sans aucun geste de l'utilisateur ; une
+  lecture en échec marque la ligne « (périmé) » et affiche « Statuts indisponibles : … »
+  jusqu'à la première relecture réussie.
+- **Ouvrir la PR** ouvre l'URL de la ligne dans le navigateur par défaut.
+- **Fusionner…** n'est disponible que si les trois statuts requis sont verts. Le clic
+  relit la PR, puis demande une confirmation qui nomme la PR (numéro et titre) ; la
+  fusion est un **squash** borné à la tête relue (`--match-head-commit`).
+- **Le segment suivant n'est pas lancé par l'app** : c'est le pilote `/project` qui,
+  au balayage suivant du relais (≤ 60 s + 2 s), marque la feature `merged` puis passe
+  au segment suivant. Le volet **Plan** s'actualise alors sans aucun geste.
+
+L'app n'écrit rien : ni l'état du projet, ni le canal de commande. Elle lit `gh` avec
+les candidats d'installation connus (`/opt/homebrew/bin/gh`, `/usr/local/bin/gh`,
+`/usr/bin/gh`, ou le chemin imposé par `OMP_CONSOLE_GH_BINARY`), car une app lancée
+par le Finder n'hérite pas du `PATH` du shell.
+
+### Recette : suivre les PR et fusionner depuis l'app
+
+Prérequis : un projet conduit dont le segment courant porte une PR (volet **Plan** : au
+moins une feature « PR ouverte »).
+
+1. Assembler et lancer le bundle :
+
+   ```bash
+   bash scripts/swift-app.sh
+   open "omp-console/build/OMP Console.app"
+   ```
+
+2. Ouvrir la vue **Projet** : le volet **PR et CI** liste la PR, avec ses trois
+   statuts requis et leur état ; un statut rouge affiche `run <identifiant>`, lien
+   cliquable vers le journal du run.
+3. Cliquer **Ouvrir la PR** : le navigateur par défaut ouvre l'URL de la PR.
+4. Attendre que les trois statuts passent verts (le volet se rafraîchit seul, ≤ 60 s
+   après la fin de la CI) : **Fusionner…** devient actif.
+5. Cliquer **Fusionner…** : l'alerte nomme la PR (numéro et titre) ; confirmer par
+   **Fusionner**. L'alerte disparaît et les statuts se relisent.
+6. Constater l'état fusionné :
+
+   ```bash
+   gh pr view <url> --json state
+   ```
+
+7. Laisser passer ≤ 60 s + 2 s : le pilote marque la feature `merged`, la ligne
+   disparaît du volet **PR et CI** et le volet **Plan** passe le segment suivant
+   « en cours » — sans autre geste.
+
+Consigner dans la section `## Revue` du contrat le numéro de PR, le sha de fusion et
+l'horodatage du passage au segment suivant.
+
 ### Recette : conduire un projet depuis l'app
 
 1. Supprimer l'état restauré des fenêtres **avant** de lancer le bundle, pour
@@ -828,6 +888,11 @@ omp-console/
 │   │   ├── ProjectAttention.swift décision d'attention (pure) et adaptateur NSApp
 │   │   ├── ProjectWindowPresence.swift présence de la fenêtre + WindowAccessor
 │   │   ├── ProjectViewText.swift  tous les textes de la vue Projet
+│   │   ├── GhCLI.swift            binaires, argv purs et exécution de `gh` (seule surface GitHub)
+│   │   ├── PullRequests.swift     statuts requis, lignes et décodage : fonctions pures
+│   │   ├── PRService.swift        lecture et fusion d'une PR (protocole + service `gh`)
+│   │   ├── URLOpening.swift       ouvreur d'URL (NSWorkspace)
+│   │   ├── ProjectPRPane.swift    le volet « PR et CI » et ses lignes
 │   │   ├── ProjectConsoleView.swift la fenêtre (en-tête, plan, document, session)
 │   │   ├── ProjectView.swift      la section « Projet » (même surface)
 │   │   └── ProjectLaunchSheet.swift la feuille « Conduire un projet… »

@@ -26,6 +26,23 @@ struct ProjectConsoleView: View {
         )
     }
 
+    /// L'alerte de confirmation de fusion (S-5) : présentée si et seulement si le
+    /// modèle porte une proposition issue d'une relecture fraîche.
+    private var mergeBinding: Binding<Bool> {
+        Binding(
+            get: { model.pendingMerge != nil },
+            set: { if !$0 { model.cancelMerge() } }
+        )
+    }
+
+    private var mergeTitle: String {
+        model.pendingMerge.map { ProjectViewText.prMergeConfirmTitle(number: $0.number) } ?? ""
+    }
+
+    private var mergeMessage: String {
+        model.pendingMerge.map { ProjectViewText.prMergeConfirmMessage(title: $0.title) } ?? ""
+    }
+
     var body: some View {
         Group {
             if model.canStartConduite {
@@ -48,6 +65,14 @@ struct ProjectConsoleView: View {
             Button(ProjectViewText.launchCancel, role: .cancel) { model.dismissRefusal() }
         } message: {
             Text(model.refusal?.message ?? "")
+        }
+        .alert(mergeTitle, isPresented: mergeBinding) {
+            Button(ProjectViewText.prMergeConfirmButton) {
+                Task { @MainActor in await model.confirmMerge() }
+            }
+            Button(ProjectViewText.prMergeCancelButton, role: .cancel) { model.cancelMerge() }
+        } message: {
+            Text(mergeMessage)
         }
         .task { model.start() }
     }
@@ -89,6 +114,8 @@ struct ProjectConsoleView: View {
 
     private var sessionPanes: some View {
         VStack(alignment: .leading, spacing: 10) {
+            ProjectPRPane(model: model)
+
             HSplitView {
                 ProjectPlanPane(
                     sections: model.project.map(projectPlanSections) ?? [],
