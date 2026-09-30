@@ -565,6 +565,78 @@ Si aucun candidat n'est exécutable, la fenêtre affiche « Binaire `omp` introu
 cherché dans PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin. » — aucune session
 fantôme n'est affichée comme vivante.
 
+## Fenêtre Terminal (terminal intégré)
+
+Menu **Fichier ▸ « Ouvrir un terminal OMP… »** (⌘T) ouvre la fenêtre **Terminal**,
+instance unique : redemander l'ouverture ramène celle-ci au premier plan et ne lance
+jamais un second `omp`. Elle héberge **un seul programme** — un `omp` interactif
+(TUI plein écran) — dans un vrai PTY, sans shell intermédiaire.
+
+1. **Choisir le répertoire** — bouton « Choisir un répertoire… ». La feuille liste
+   **une entrée par worktree de feature du pipeline, plus le dépôt principal** : le
+   catalogue est exactement celui de la section **Fichiers** (`git rev-parse
+   --git-common-dir` puis `git worktree list --porcelain`). Aucun chemin ne se saisit
+   à la main, et rien n'est mémorisé.
+2. **Ouvrir** (↩) : `omp` démarre avec ce répertoire comme projet courant, dans un
+   PTY dont la taille est celle de la zone d'affichage.
+3. **Travailler** : la frappe part dans `omp` (flèches, Entrée, Tab, Échap,
+   Ctrl-C, Ctrl-D), l'affichage est celui du TUI — couleurs vraies, curseur, plein
+   écran — et suit le redimensionnement de la fenêtre.
+4. **Fermer la fenêtre** (bouton rouge, ⌘W) : le process est tué avec **tout son
+   groupe** (SIGTERM, puis SIGKILL après 2 s), sans confirmation, et l'app reste
+   ouverte et utilisable. **⌘Q** tue de la même façon les terminaux vivants : aucun
+   `omp` ne survit à la fermeture de l'app.
+
+Le terminal et la fenêtre **Session OMP** (session RPC `omp --mode rpc-ui`) vivent
+**en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
+deux sens, et ils peuvent même viser le même répertoire.
+
+États affichés : « Choisissez un répertoire… », « Lecture des worktrees… » (feuille
+ouverte), « Lancement d'omp… », « omp vivant (pid <n>) · <cible> », « omp s'est
+terminé (code|signal <n>). » avec le bouton **Relancer**, et l'erreur explicite en
+cas d'échec (« Binaire `omp` introuvable : … », « Répertoire introuvable : … »,
+« PTY indisponible (<errno>) : aucun process lancé. »). Aucun état n'est un
+rectangle vide.
+
+**Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
+scrollback : la ligne qui sort de l'écran est perdue), pas de sélection ni de copie,
+pas de collage, pas de souris transmise, pas d'IME ni de composition, pas de
+protocole clavier kitty/`modifyOtherKeys`, pas d'images (sixel, kitty), pas de
+protocole glyphes OSC 66, pas de recherche, pas de titre de fenêtre piloté par
+l'application hôte. Un seul terminal à la fois : la fenêtre n'a ni onglets ni
+partage de PTY.
+
+### Recette : prouver le terminal de bout en bout
+
+Le harnais réel (`TerminalSmokeTests`) lance un vrai `omp` dans un PTY 24×80 et
+fait passer ses octets dans l'émulateur ; il est **désactivé par défaut** :
+
+```bash
+cd omp-console
+MEM0_TERMINAL_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
+  --filter TerminalSmokeTests \
+  -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+```
+
+La recette graphique, elle, se fait sur le bundle assemblé
+(`omp-console/build/OMP Console.app`, voir « Assembler le bundle `.app` »), dans
+une session graphique où la fenêtre est réellement peinte et l'app au premier plan
+(dans un shell de pipeline sans session graphique, seuls la barre de menus et le
+titre des fenêtres sont observables — les gestes à l'intérieur de la fenêtre ne le
+sont pas) :
+
+1. Lancer `omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole` depuis la
+   racine du dépôt ;
+2. menu **Fichier ▸ « Ouvrir un terminal OMP… »**, puis « Choisir un répertoire… »,
+   choisir un worktree, « Ouvrir » ;
+3. vérifier `pgrep -fl -P <pid de l'app>` : un seul `omp`, enfant direct ;
+4. taper un prompt dans la fenêtre : la TUI y répond ; **Ctrl-C** interrompt `omp`
+   et l'app reste vivante ;
+5. redimensionner la fenêtre : la TUI se réaffiche à la nouvelle taille ;
+6. fermer la fenêtre : `pgrep -fl -P <pid de l'app>` ne rend plus rien ;
+7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun `omp` ne survit.
+
 ## Fenêtre Projet (conduite)
 
 Menu **Fichier ▸ « Conduire un projet… »** (⌘⇧N) — ou le bouton du même nom dans
@@ -745,6 +817,10 @@ swift test --scratch-path .build-tests \
 filtre : sur un poste qui a `omp`, ils exécutent donc une vraie session avec appel
 modèle, et prennent le temps d'un tour réel. `OMP_CONSOLE_OMP_BINARY=/nonexistent/omp`
 force le chemin « non exécuté » quand on veut la suite complète sans session réelle.
+
+Le harnais **du terminal** (`TerminalSmokeTests`) suit la même règle, avec sa propre
+garde : il ne tourne que si **`MEM0_TERMINAL_RECIPE`** est posée, donc jamais en
+intégration continue (voir « Fenêtre Terminal (terminal intégré) »).
 
 ## Notifications et barre de menus
 
@@ -973,6 +1049,19 @@ omp-console/
 │   ├── RpcChunkDecoder.swift      fragments v2 et lignes illisibles
 │   ├── RpcTransport.swift         process hébergé : tubes, signaux, sortie
 │   ├── OmpBinary.swift            résolution du binaire `omp`
+│   ├── Terminal/                  la fenêtre de terminal : un vrai `omp` dans un PTY
+│   │   ├── TerminalHost.swift     le PTY : forkpty, termios brut d'entrée, écriture,
+│   │   │                          escalade SIGTERM/SIGKILL du groupe, récolte
+│   │   ├── TerminalHostError.swift les échecs du PTY et leur seule table de texte
+│   │   ├── TerminalEnvironment.swift l'environnement de l'enfant (TERM, COLORTERM, PATH)
+│   │   ├── TerminalScreen.swift   la grille : cellules, attributs, marges, largeur UAX #11
+│   │   ├── TerminalEmulator.swift l'émulateur VT : CSI, SGR, chaînes, sondes, réponses
+│   │   ├── TerminalPalette.swift  palette 16/256/direct, défauts, réponse OSC 11
+│   │   ├── TerminalViewText.swift tous les textes de la fenêtre Terminal
+│   │   ├── TerminalRenderView.swift la zone de rendu (CoreText), le curseur, le clavier
+│   │   ├── TerminalConsoleModel.swift l'état : cible, cibles, process, fermeture, palette
+│   │   ├── TerminalConsoleView.swift la fenêtre (bandeau, zone de rendu, états)
+│   │   └── TerminalLaunchSheet.swift la feuille « Choisir un répertoire »
 │   ├── Session/                   le lecteur de sessions (aucune vue, aucune E/S d'écriture)
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
