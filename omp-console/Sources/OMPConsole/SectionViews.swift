@@ -14,23 +14,6 @@ protocol ConsoleSectionView: View {
     static var section: ConsoleSection { get }
 }
 
-/// Contenu de remplacement commun : titre et texte d'annonce de la section,
-/// cadré sur toute la surface disponible.
-struct PlaceholderPane: View {
-    let section: ConsoleSection
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Text(section.title)
-                .font(.largeTitle)
-            Text(section.placeholder)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding()
-    }
-}
-
 struct SessionsView: ConsoleSectionView {
     static let section = ConsoleSection.sessions
     var body: some View { SessionSelectorView() }

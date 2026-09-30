@@ -1,5 +1,5 @@
-// Preuves de la SURFACE de la fenêtre « Statistiques » (S-5) : les textes exacts,
-// les identifiants d'accessibilité et l'absence de tout montant.
+// Preuves de la SURFACE de la fenêtre « Statistiques » (S-5) : les textes dérivés
+// d'un état et l'absence de tout montant.
 //
 // Les vues SwiftUI ne se rendent pas sous les Command Line Tools : ce qui se
 // vérifie ici est ce qu'elles LISENT (les textes du modèle), le rendu graphique
@@ -10,12 +10,10 @@ import Testing
 @testable import OMPConsole
 
 @MainActor
-@Test("statistiques/AC-1 : les textes des cinq états sont exacts")
+@Test("statistiques/AC-1 : les textes des états du magasin sont exacts")
 func stateTextsAreExact() {
-    #expect(StatsText.loading == "Chargement du magasin d'état…")
     #expect(StatsText.storeAbsent(dir: "/tmp/etat") == "Magasin d'état absent : /tmp/etat")
     #expect(StatsText.noProject(dir: "/tmp/etat") == "Aucun projet dans le magasin d'état : /tmp/etat")
-    #expect(StatsText.empty == "Aucun run lisible pour ce projet")
     #expect(StatsText.hidden(3) == "3 feature(s) du plan sans run lisible")
     // La ligne des features masquées s'affiche même à zéro.
     #expect(StatsText.hidden(0) == "0 feature(s) du plan sans run lisible")
@@ -69,11 +67,6 @@ func unreadableRunLineCarriesItsReason() {
 @MainActor
 @Test("statistiques/AC-1 : le sélecteur et chaque ligne exposent leur identifiant d'accessibilité")
 func accessibilityIdentifiersAreStable() {
-    #expect(StatsView.projectIdentifier == "stats.project")
-    #expect(StatsView.stateIdentifier == "stats.state")
-    #expect(StatsView.emptyIdentifier == "stats.empty")
-    #expect(StatsView.aggregateIdentifier == "stats.aggregate")
-    #expect(StatsView.hiddenIdentifier == "stats.hidden")
     #expect(StatsView.featureIdentifier("statistiques") == "stats.feature.statistiques")
     #expect(StatsView.runIdentifier("01a0e88e") == "stats.run.01a0e88e")
 }

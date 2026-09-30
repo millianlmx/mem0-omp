@@ -35,17 +35,4 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .memory: "brain"
         }
     }
-
-    /// Contenu de remplacement de la vue : la coque n'a aucune logique métier,
-    /// chaque section annonce donc ce qui arrivera ici. Chaque texte est propre
-    /// à sa section (deux sections ne partagent jamais le même).
-    var placeholder: String {
-        switch self {
-        case .kanban: "Le tableau Kanban des pipelines arrivera ici."
-        case .sessions: "La liste des sessions OMP arrivera ici."
-        case .files: "La visionneuse de fichiers et de diffs arrivera ici."
-        case .project: "La vue Projet arrivera ici."
-        case .memory: "La mémoire du projet arrivera ici."
-        }
-    }
 }
