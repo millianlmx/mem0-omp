@@ -38,7 +38,7 @@ cd omp-console
 # déterministe du toolchain) : on pointe explicitement le dossier des plugins.
 # `--no-parallel` : la suite mêle des tests à VEILLE qui attendent sur le fil
 # principal (modèles Kanban et Files) et des tests de vue ; en parallèle elle
-# rend 10 à 15 échecs de délai, en série elle passe 212/212 (~42 s).
+# rend 10 à 15 échecs de délai ; mesuré le 2026-09-30 : en série 519 tests verts, 0 échec (~45,1 s).
 swift test --scratch-path .build-tests --no-parallel \
   -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"

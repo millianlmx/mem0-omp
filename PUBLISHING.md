@@ -17,11 +17,17 @@ mem0-omp/                              ← racine du dépôt = marketplace
 ├── omp-mem0-req/                      ← le plugin pipeline (/req → /specs → /impl → /review)
 │   ├── package.json                   ← déclare omp.extensions
 │   └── extension.ts
+├── omp-console/                       ← la coque macOS, hors publication marketplace
 ├── mem0-stack/                        ← le service mem0, à lancer séparément
 │   └── mem0-http/                     ← l'API HTTP et sa config mem0
 ├── test/                              ← suite de tests, hors publication
-├── scripts/check.sh
-└── .github/workflows/check.yml
+├── scripts/check.sh                   ← validation avant publication
+├── scripts/release.ts                 ← PR de release auto-mergée, tags et releases au merge
+├── scripts/no-manual-bump.sh          ← refuse un bump de version manuel dans une PR
+├── scripts/release-simulation.sh      ← simule la release d'une PR sur une copie jetable
+├── .github/workflows/check.yml        ← la CI des PR
+├── .github/workflows/release-simulation.yml  ← répète la release sur le commit de fusion de la PR
+└── .github/workflows/release.yml      ← le job de release au merge sur main
 ```
 
 Deux fichiers font tout le travail, et ce sont ceux qu'on rate le plus souvent :

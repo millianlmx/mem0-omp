@@ -18,6 +18,7 @@ const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
 type PluginEntry = {
   name: string;
+  description?: string;
   version?: string;
   homepage?: string;
   repository?: string;
@@ -27,6 +28,31 @@ type Catalog = { metadata?: { version?: string }; plugins: PluginEntry[] };
 
 const catalog = (rel = ".omp-plugin/marketplace.json"): Catalog =>
   JSON.parse(read(rel)) as Catalog;
+
+/**
+ * Violations de la règle de vocabulaire du sommaire : « sommaire exhaustif »
+ * interdit, et toute mention d'« exhaustif » conditionnée au seuil de troncature.
+ */
+function summaryWording(text: string, minimumMentions = 0): string[] {
+  const violations: string[] = [];
+  if (/sommaire exhaustif/i.test(text)) {
+    violations.push("« sommaire exhaustif » : affirmation inconditionnelle");
+  }
+  const mentions = [...text.matchAll(/exhaustif/gi)];
+  if (mentions.length < minimumMentions) {
+    violations.push(`${mentions.length} mention(s) d'« exhaustif » < ${minimumMentions}`);
+  }
+  for (const mention of mentions) {
+    const window = text.slice(mention.index, mention.index + 260);
+    if (!/60 entrées/.test(window)) {
+      violations.push("exhaustivité sans seuil de troncature");
+    }
+    if (!/tronqu|tant qu|au-delà/.test(window)) {
+      violations.push("exhaustivité sans condition ni mention de ce qui manque");
+    }
+  }
+  return violations;
+}
 
 // Les motifs de .gitignore qui sont des chemins littéraux (sans joker) sont
 // exclus du parcours : `node_modules/`, `mem0-stack/qdrant_storage/`, et
@@ -185,19 +211,10 @@ test("docs/AC-21 : PUBLISHING.md cite exactement les fichiers porteurs d'URL et 
 test("docs/AC-22 : le README conditionne l'exhaustivité du sommaire et décrit la bascule réelle", () => {
   const readme = read("README.md");
 
-  // (1) L'affirmation inconditionnelle a disparu.
-  assert.doesNotMatch(readme, /sommaire exhaustif/i);
-
-  // (2) Toute mention d'exhaustivité porte le seuil de troncature et ce qui se
-  // passe au-delà : le sommaire ne se prétend complet que tant qu'il n'est pas
-  // tronqué.
-  const mentions = [...readme.matchAll(/exhaustif/gi)];
-  assert.ok(mentions.length >= 2, "les deux affirmations de sommaire sont traitées");
-  for (const mention of mentions) {
-    const window = readme.slice(mention.index, mention.index + 260);
-    assert.match(window, /60 entrées/, "exhaustivité non conditionnée au seuil de troncature");
-    assert.match(window, /tronqu|tant qu|au-delà/, "ni condition ni mention de ce qui manque");
-  }
+  // (1) La règle de vocabulaire du sommaire (voir summaryWording) : au moins
+  // deux affirmations d'exhaustivité, aucune inconditionnelle, chacune portant
+  // le seuil de troncature et ce qui se passe au-delà.
+  assert.deepEqual(summaryWording(readme, 2), [], "le README sur-promet le sommaire");
 
   // (3) La bascule : cwd aménagé avant de basculer, en-tête de session exigé.
   const panel = readme.slice(readme.indexOf("## Pipelines en cours"));
@@ -285,4 +302,34 @@ test("docs/AC-23 : le README documente le plafond de runs parallèles du lot", (
     1,
     "la variable n'est citée qu'une fois dans la section",
   );
+});
+
+// AC-4 : ce que l'utilisateur lit à l'installation (la description des
+// catalogues) obéit à la même règle que le README, sans minimum de mentions :
+// une description sans « exhaustif » du tout est conforme.
+test("documentation-derivee/AC-4 : les descriptions des catalogues ne sur-promettent pas le sommaire", () => {
+  for (const rel of [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"]) {
+    for (const entry of catalog(rel).plugins) {
+      assert.deepEqual(
+        summaryWording(entry.description ?? "", 0),
+        [],
+        `${rel} / ${entry.name}`,
+      );
+    }
+  }
+});
+
+// AC-6 : la preuve est DANS le test — la règle échoue vraiment sur une copie
+// fautive, et passe sur une description sans « exhaustif ». Aucun catalogue
+// réel n'est modifié (copie JSON profonde).
+test("documentation-derivee/AC-6 : le contrôle de vocabulaire échoue sur une copie fautive", () => {
+  const copy = JSON.parse(JSON.stringify(catalog())) as Catalog;
+  const entry = copy.plugins.find((plugin) => plugin.name === "omp-mem0-memory");
+  assert.ok(entry !== undefined, "omp-mem0-memory absent du catalogue");
+
+  const fautive = `sommaire exhaustif ${entry.description ?? ""}`;
+  assert.ok(summaryWording(fautive, 0).length > 0, "« sommaire exhaustif » doit échouer");
+
+  const sansMention = (entry.description ?? "").replace(/exhaustif/gi, "");
+  assert.deepEqual(summaryWording(sansMention, 0), []);
 });

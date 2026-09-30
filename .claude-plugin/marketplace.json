@@ -12,7 +12,7 @@
     {
       "name": "omp-mem0-memory",
       "source": "./omp-mem0-memory",
-      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire exhaustif en prompt système, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Le scope est celui du dépôt, worktrees git compris. Nécessite le stack mem0-stack en local.",
+      "description": "Mémoire mem0 par projet : brief posé automatiquement, rappel filtré à chaque tour, sommaire du projet en prompt système, exhaustif tant qu'il n'est pas tronqué (60 entrées), au-delà de quoi il dit lui-même ce qui manque, agrafage aux résultats d'outils, checkpoint exploration, phases de fin de session (instructions déléguées à l'agent), /mem0-init pour amorcer un dépôt existant, revue (phase). Le scope est celui du dépôt, worktrees git compris. Nécessite le stack mem0-stack en local.",
       "version": "2.11.0",
       "author": {
         "name": "MillianLMX"
