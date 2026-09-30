@@ -326,8 +326,15 @@ seule cible à la fois.
 `diff --no-color --no-ext-diff <base> -- <chemin>`,
 `diff --no-color --no-ext-diff --no-index -- /dev/null <chemin>`,
 `worktree list --porcelain`, `rev-parse --git-common-dir`, `rev-parse --abbrev-ref
-HEAD`, `symbolic-ref --short --quiet refs/remotes/origin/HEAD` et `merge-base` —
-toutes préfixées de `-C <répertoire> -c core.pager=cat`, jamais par un shell. Ni
+`HEAD`, `symbolic-ref --short --quiet refs/remotes/origin/HEAD` et `merge-base` —
+toutes préfixées de `-C <répertoire> -c core.pager=cat`, jamais par un shell. **La
+liste blanche est refusée à l'exécution, avant tout lancement** : une sous-commande
+absente de la liste (`push`, `add`, `status`, `fetch`…), `worktree` sous une forme
+autre que `list` (`worktree add`, `worktree remove`, `worktree prune`…) ou
+`symbolic-ref` en écriture (`-d`, `--delete`, `-m`, ou deux positionnels) ne crée
+**aucun** process git et échoue par « git <sous-commande> n'est pas une commande de
+lecture autorisée — aucun process n'a été lancé. » Il n'existe ni exception, ni
+échappatoire, ni variable d'environnement pour l'assouplir. Ni
 `git add` (donc jamais `-N`), ni `update-index`, ni `git status` (qui rafraîchit
 l'index), ni aucune autre commande d'écriture. Le contenu d'un fichier non suivi
 passe par `--no-index`, qui ne touche pas l'index : le fichier reste `??`. Les
@@ -339,6 +346,13 @@ l'empreinte du fichier d'index et les empreintes de tous les fichiers à l'appui
 assemblé puis signature vérifiée ; `bash scripts/check.sh` — « Dépôt prêt à
 publier. ». Les deux recettes (session, cible) sont rapportées « skipped » : aucun
 script de CI ne pose leurs variables.
+
+**Mesure du 2026-09-30** (poste millian, Swift 6.4 CLT seuls, git 2.54.0) :
+`swift test --no-parallel` — **531 tests verts**, 11 rapportés « skipped » (les
+recettes réelles et le harnais `omp` ; aucun script ne pose leurs variables). Une
+échéance de commande `git` ou `gh` escalade désormais `SIGTERM` → 2 s de grâce →
+`SIGKILL` par l'exécuteur partagé `ProcessRunner`, et l'appel ne rend la main
+qu'une fois l'enfant mort et récolté.
 
 Les gestes à l'écran (choisir une cible dans le sélecteur, déplier l'arbre, voir le
 diff coloré, ⌘R) restent une **vérification manuelle du poste** : dans un shell de
@@ -550,8 +564,13 @@ peut pas exister deux `omp` hébergés).
 3. **Lancer la session** (⌘R), saisir un prompt (↩ pour envoyer, ⌘↩ pour
    « Envoyer »), **lire** la transcription brute des trames reçues et le journal.
 4. **Arrêter la session** (⌘.) ou quitter l'app : le process est terminé par la
-   fermeture de son stdin (fin propre du protocole), il n'en reste aucun orphelin,
-   et le fichier de session `.jsonl` reste sur disque, résumable.
+   fermeture de son stdin (fin propre du protocole), puis, s'il ne rend pas la main,
+   par la séquence d'arrêt volontaire de l'hôte — `stopGrace` de 5 s après la
+   fermeture de stdin, `SIGTERM`, `killGrace` de 2 s, `SIGKILL`, attente bornée 1 s.
+   Il n'en reste aucun orphelin, et le fichier de session `.jsonl` reste sur disque,
+   résumable. À l'échéance d'une commande `git` ou `gh`, l'escalade est sa propre
+   séquence : `SIGTERM`, 2 s de grâce, `SIGKILL`, l'attente restant bornée par
+   délai + grâce.
 
 États affichés dans la fenêtre : projet absent, `Aucune session`, `Lancement…`,
 `Session vivante (pid <n>, session <8 caractères>)`, dialogue en attente,
@@ -1143,8 +1162,10 @@ omp-console/
 │   │                              dialogues, mort, relance, arrêt propre
 │   ├── RpcFrames.swift            trames JSONL : décodage, commandes, réponses
 │   ├── RpcChunkDecoder.swift      fragments v2 et lignes illisibles
-│   ├── RpcTransport.swift         process hébergé : tubes, signaux, sortie,
+│   ├── RpcTransport.swift         session hébergée : protocole, stdin, signaux, sortie,
 │   │                              écriture bornée sans SIGPIPE
+│   ├── ProcessRunner.swift        l'exécuteur partagé : lancement, drainage, lignes,
+│   │                              escalade SIGTERM/SIGKILL
 │   ├── OmpBinary.swift            résolution du binaire `omp`
 │   ├── Terminal/                  la fenêtre de terminal : un vrai `omp` dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs

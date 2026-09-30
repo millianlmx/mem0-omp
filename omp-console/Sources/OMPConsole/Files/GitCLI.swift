@@ -1,15 +1,17 @@
 // Accès git de la visionneuse : la SEULE surface de lecture autorisée (S-8).
 //
-// Deux pièces séparées, et c'est ce qui rend l'invariant vérifiable :
-//  - `GitCommand` construit des `argv` PURS, sans rien exécuter — un test les fige
-//    et un autre refuse toute sous-commande hors de la liste blanche de S-8 ;
+// Trois pièces séparées, et c'est ce qui rend l'invariant vérifiable :
+//  - `GitCommand` construit des `argv` PURS, sans rien exécuter — un test les fige ;
+//  - `GitGuard` refuse tout `argv` hors de la liste blanche de S-8, AVANT toute
+//    création de `Process` — la liste blanche est REFUSÉE à l'exécution, jamais
+//    seulement vérifiée par un test ;
 //  - `GitCLI` exécute, en préfixant TOUJOURS `-C <répertoire> -c core.pager=cat`,
-//    jamais par un shell.
+//    jamais par un shell, et par l'exécuteur partagé `ProcessRunner`.
 //
 // Aucune sous-commande d'écriture (`add`, `update-index`, `status`, `checkout`,
 // `restore`, `commit`, `stash`, `apply`, `worktree add|remove|prune|repair`, `gc`,
 // `fetch`) n'est constructible ici : les constructeurs de `GitCommand` sont la
-// liste complète, et un test la confronte à la liste blanche de S-8.
+// liste complète, et la garde d'exécution ferme la porte à tout autre `argv`.
 
 import Foundation
 
@@ -118,6 +120,43 @@ let gitAllowedSubcommands: Set<String> = [
     "merge-base",
 ]
 
+/// La garde d'EXÉCUTION (S-4) : le nom de la sous-commande REFUSÉE, ou nil si
+/// l'argv est admis. Fonction pure, sans aucune E/S — c'est `GitCLI.run` qui
+/// l'appelle en PREMIER geste, avant de configurer le moindre `Process`.
+///
+/// Deux actions d'écriture se cachent derrière des sous-commandes admises :
+/// `worktree add|remove|prune|repair` (seule `list` lit) et `symbolic-ref` en
+/// écriture (deux positionnels, ou `-d`/`--delete`/`-m`/`--message`). L'argv reçu
+/// ici est celui SANS le préfixe `-C`/`-c` : il commence donc par la sous-commande.
+enum GitGuard {
+    static func refusedCommand(_ arguments: [String]) -> String? {
+        // 1. Aucune sous-commande : rien n'est admis.
+        guard let subcommand = arguments.first else { return "" }
+        // 2. La sous-commande doit être dans la liste blanche.
+        guard gitAllowedSubcommands.contains(subcommand) else { return subcommand }
+        // 3. `worktree` n'est admise que sous sa forme de LECTURE, `list`.
+        if subcommand == "worktree" {
+            guard arguments.count >= 2, arguments[1] == "list" else {
+                guard arguments.count >= 2 else { return "worktree" }
+                return "worktree " + arguments[1]
+            }
+            return nil
+        }
+        // 4. `symbolic-ref` n'est admise qu'en LECTURE : un marqueur d'écriture, ou
+        //    un nombre de positionnels (sous-commande exclue) différent de 1, la
+        //    refuse.
+        if subcommand == "symbolic-ref" {
+            let writeMarkers: Set<String> = ["-d", "--delete", "-m", "--message"]
+            if arguments.contains(where: { writeMarkers.contains($0) }) { return subcommand }
+            let positionals = arguments.dropFirst().filter { !$0.hasPrefix("-") }
+            if positionals.count != 1 { return subcommand }
+            return nil
+        }
+        // 5. Sinon admise.
+        return nil
+    }
+}
+
 struct GitOutput: Sendable, Equatable {
     var code: Int32
     var stdout: String
@@ -147,185 +186,34 @@ struct GitCLI: Sendable {
 
     /// Exécute une commande de S-8 dans `directory` (même répertoire de travail que
     /// `-C`, pour que `git ls-files` rende des chemins RELATIFS à la cible).
+    ///
+    /// La garde d'exécution passe EN PREMIER (S-4) : un `argv` refusé échoue ici,
+    /// sans qu'aucun process git n'ait été créé.
     func run(_ arguments: [String], in directory: String) async throws -> GitOutput {
         let command = arguments.first ?? ""
-        let process = Process()
-        process.executableURL = binary
-        process.arguments = ["-C", directory, "-c", "core.pager=cat"] + arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        process.environment = Self.environment()
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        process.standardInput = FileHandle.nullDevice
-
-        let drain = Drain()
-        let exit = Exit()
-        let control = Control(process: process)
-        process.terminationHandler = { finished in
-            exit.finish(code: finished.terminationStatus)
+        if let refused = GitGuard.refusedCommand(arguments) {
+            throw FilesError.gitCommandRefused(command: refused)
         }
 
+        let child = ProcessRunner.child(
+            binary: binary,
+            arguments: ["-C", directory, "-c", "core.pager=cat"] + arguments,
+            cwd: URL(fileURLWithPath: directory),
+            environment: Self.environment(),
+            input: .nullDevice
+        )
+
+        let run: ProcessRun
         do {
-            try process.run()
-        } catch {
-            throw FilesError.commandFailed(command: command, code: -1, detail: error.localizedDescription)
+            run = try await ProcessRunner.run(child, timeout: timeout)
+        } catch ProcessRunnerError.launchFailed(let detail) {
+            throw FilesError.commandFailed(command: command, code: -1, detail: detail)
         }
 
-        // Les deux tubes sont drainés EN PARALLÈLE, dans des fils détachés (patron
-        // `ProcessTransport.pump`) : lire un tube après l'autre bloquerait dès que
-        // le premier se remplit, le process attendant alors d'écrire sur le second.
-        Self.pump(outPipe.fileHandleForReading, into: drain, stderr: false)
-        Self.pump(errPipe.fileHandleForReading, into: drain, stderr: true)
-
-        // L'échéance : un process git qui ne rend pas la main est terminé, et
-        // l'appel le dit au lieu de laisser la vue bloquée.
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [control] in
-            guard control.isRunning else { return }
-            control.markTimedOut()
-            control.terminate()
-        }
-
-        let code = await exit.wait()
-        await drain.awaitEnd()
-        let output = drain.output
-
-        if control.timedOut {
+        if run.timedOut {
             throw FilesError.commandTimedOut(command: command, seconds: timeout)
         }
-        return GitOutput(code: code, stdout: output.stdout, stderr: output.stderr)
-    }
-
-    /// Découpe un tube jusqu'à EOF dans un fil détaché, puis signale sa fin.
-    /// `availableData` rend 0 octet à la fin du flux : c'est la seule condition de
-    /// sortie, et elle n'est atteinte que lorsque le process a fermé ses tubes.
-    private static func pump(_ handle: FileHandle, into drain: Drain, stderr: Bool) {
-        Thread.detachNewThread {
-            while true {
-                let chunk = handle.availableData
-                if chunk.isEmpty { break }
-                drain.append(chunk, stderr: stderr)
-            }
-            drain.end()
-        }
-    }
-}
-
-// MARK: - Ce que `run` partage avec ses fils
-
-/// Les deux tampons de sortie, gardés par un verrou : les fils de drain écrivent,
-/// le fil appelant lit, et personne d'autre n'y touche.
-final class Drain: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stdoutData = Data()
-    private var stderrData = Data()
-    private var pending = 2
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-
-    func append(_ data: Data, stderr: Bool) {
-        lock.lock()
-        if stderr { stderrData.append(data) } else { stdoutData.append(data) }
-        lock.unlock()
-    }
-
-    /// Appelée par chaque fil de drain ; le second réveille les attentes.
-    func end() {
-        lock.lock()
-        pending -= 1
-        let done = pending <= 0
-        let waiting = done ? waiters : []
-        if done { waiters = [] }
-        lock.unlock()
-        for waiter in waiting { waiter.resume() }
-    }
-
-    /// Attend que les DEUX tubes aient atteint EOF : sans cela, une sortie encore
-    /// en vol serait tronquée au moment où le process rend la main.
-    func awaitEnd() async {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if pending <= 0 {
-                lock.unlock()
-                continuation.resume()
-                return
-            }
-            waiters.append(continuation)
-            lock.unlock()
-        }
-    }
-
-    var output: (stdout: String, stderr: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (String(decoding: stdoutData, as: UTF8.self), String(decoding: stderrData, as: UTF8.self))
-    }
-}
-
-/// La fin du process, en attente asynchrone.
-final class Exit: @unchecked Sendable {
-    private let lock = NSLock()
-    private var code: Int32?
-    private var waiter: CheckedContinuation<Int32, Never>?
-
-    func finish(code: Int32) {
-        lock.lock()
-        self.code = code
-        let waiter = self.waiter
-        self.waiter = nil
-        lock.unlock()
-        waiter?.resume(returning: code)
-    }
-
-    func wait() async -> Int32 {
-        await withCheckedContinuation { continuation in
-            lock.lock()
-            if let code {
-                lock.unlock()
-                continuation.resume(returning: code)
-                return
-            }
-            waiter = continuation
-            lock.unlock()
-        }
-    }
-}
-
-/// Le process, vu du watchdog. `Process` n'est pas `Sendable`, mais `isRunning` et
-/// `terminate` sont les deux seules opérations employées, et elles sont sûres
-/// depuis n'importe quelle file.
-final class Control: @unchecked Sendable {
-    private let lock = NSLock()
-    private let process: Process
-    private var timedOutFlag = false
-
-    init(process: Process) {
-        self.process = process
-    }
-
-    func markTimedOut() {
-        lock.lock()
-        timedOutFlag = true
-        lock.unlock()
-    }
-
-    var timedOut: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return timedOutFlag
-    }
-
-    var isRunning: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return process.isRunning
-    }
-
-    func terminate() {
-        lock.lock()
-        let process = self.process
-        lock.unlock()
-        process.terminate()
+        return GitOutput(code: run.code, stdout: run.stdout, stderr: run.stderr)
     }
 }
 
@@ -336,6 +224,7 @@ enum FilesError: Error, Equatable, Sendable {
     case notARepository(path: String)
     case commandFailed(command: String, code: Int32, detail: String)
     case commandTimedOut(command: String, seconds: Double)
+    case gitCommandRefused(command: String)
     case targetGone(path: String)
     case watchFailed(path: String)
 
@@ -355,6 +244,8 @@ enum FilesError: Error, Equatable, Sendable {
             return "git \(command) a échoué (code \(code)) : \(detail)"
         case let .commandTimedOut(command, seconds):
             return "git \(command) n'a pas rendu la main en \(Int(seconds)) s — lecture abandonnée."
+        case let .gitCommandRefused(command):
+            return "git \(command) n'est pas une commande de lecture autorisée — aucun process n'a été lancé."
         case let .targetGone(path):
             return "\(path) n'existe plus — choisis une autre cible."
         case let .watchFailed(path):
