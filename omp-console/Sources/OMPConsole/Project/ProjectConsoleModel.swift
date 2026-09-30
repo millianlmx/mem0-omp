@@ -59,6 +59,19 @@ final class ProjectConsoleModel: ObservableObject {
     /// L'identifiant de la demande active, `nil` quand aucune ne l'est.
     @Published private(set) var attentionRequestID: Int?
 
+    // MARK: - Suivi des PR (BR-2)
+
+    /// Les lignes affichées, dans l'ordre du plan (S-1).
+    @Published private(set) var prRows: [ProjectPRRow] = []
+    /// L'échec de LECTURE du dernier rafraîchissement (S-7), jamais celui d'un geste.
+    @Published private(set) var prFailure: String?
+    /// L'échec ou le refus du DERNIER geste (S-4, S-5, S-6).
+    @Published private(set) var prActionFailure: String?
+    /// Une lecture est en cours (S-3 : jamais deux empilées).
+    @Published private(set) var isRefreshingPRs = false
+    /// La fusion proposée après une relecture fraîche (S-5), présentée en alerte.
+    @Published private(set) var pendingMerge: PRMergeProposal?
+
     // MARK: - Dépendances
 
     private let attention: AttentionRequesting
@@ -66,6 +79,10 @@ final class ProjectConsoleModel: ObservableObject {
     private let stateDir: String
     private let defaults: UserDefaults
     private let fileManager: FileManager
+    private let prService: (any PRServicing)?
+    private let prServiceFailure: String?
+    private let urlOpener: any URLOpening
+    private let prRefreshInterval: Duration
 
     private var hub: StoreHub
     private let makeHub: () -> StoreHub
@@ -78,6 +95,17 @@ final class ProjectConsoleModel: ObservableObject {
     /// L'identifiant du dialogue dont les contrôles ont déjà été initialisés.
     private var lastDialogID: String?
 
+    /// Ce que le modèle sait de chaque PR suivie, entre deux rafraîchissements (S-7).
+    private var prKnowledge: [String: PRKnowledge] = [:]
+    /// La signature (`slug|url`) de la liste suivie : un changement déclenche un
+    /// rafraîchissement immédiat (S-3).
+    private var prFollowedSignature: [String] = []
+    /// Le nombre de surfaces ouvertes : la boucle ne tourne que si au moins une l'est.
+    private var prWatchHolders = 0
+    private var prWatchTask: Task<Void, Never>?
+    /// Le corps de la PR relu, employé par la fusion (S-6) — jamais exposé à la vue.
+    private var pendingMergeBody = ""
+
     private var cancellables: Set<AnyCancellable> = []
 
     init(
@@ -85,6 +113,10 @@ final class ProjectConsoleModel: ObservableObject {
         attention: AttentionRequesting = SystemAttention(),
         presence: any WindowFrontmostReporting = ProjectWindowPresence(),
         stateDir: String = PipelineStore.stateDir(),
+        prService: (any PRServicing)? = nil,
+        urlOpener: any URLOpening = SystemURLOpener(),
+        prRefreshInterval: Duration = .seconds(60),
+        environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default
     ) {
@@ -98,6 +130,24 @@ final class ProjectConsoleModel: ObservableObject {
         let hub = StoreHub(stateDir: stateDir)
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: stateDir) }
+        self.urlOpener = urlOpener
+        self.prRefreshInterval = prRefreshInterval
+        // Un service `nil` déclenche la résolution de `gh` (patron `FilesModel`) :
+        // son échec ne lève pas, il pose le message de lecture.
+        if let prService {
+            self.prService = prService
+            self.prServiceFailure = nil
+        } else {
+            switch GhBinary.resolve(environment: environment, fileManager: fileManager) {
+            case let .success(binary):
+                self.prService = GhPRService(cli: GhCLI(binary: binary))
+                self.prServiceFailure = nil
+            case let .failure(error):
+                self.prService = nil
+                self.prServiceFailure = error.userMessage
+            }
+        }
+        self.prFailure = self.prServiceFailure
 
         // Statut, mort de session et attention suivent l'ÉTAT du host.
         host.$state
@@ -282,6 +332,11 @@ final class ProjectConsoleModel: ObservableObject {
         prompt = ""
         dialogText = ""
         selectedOptionIndex = nil
+        prFollowedSignature = []
+        pendingMerge = nil
+        pendingMergeBody = ""
+        prActionFailure = nil
+        clearPRs()
         state = .closed
         evaluateAttention()
     }
@@ -314,6 +369,9 @@ final class ProjectConsoleModel: ObservableObject {
         hub.stop()
         hubStopped = true
         disarmDocWatch()
+        prWatchTask?.cancel()
+        prWatchTask = nil
+        prWatchHolders = 0
         if let id = attentionRequestID {
             attention.cancel(id)
             attentionRequestID = nil
@@ -331,12 +389,239 @@ final class ProjectConsoleModel: ObservableObject {
     private func applyProject(_ snapshot: StoreSnapshot) {
         guard let identity else {
             project = nil
+            reconcilePRs(with: nil)
             return
         }
         let key = ProjectPaths.key(forRoot: identity.repoRoot.path)
         let found = snapshot.projects.projects.first { $0.repoKey == key }
         project = found
         if let found { expandedSegments.insert(found.current) }
+        reconcilePRs(with: found)
+    }
+
+    /// Réconcilie la connaissance des PR avec le plan : les slugs encore suivis avec
+    /// la MÊME `prUrl` sont gardés, les autres oubliés (S-1) ; un changement de la
+    /// liste suivie déclenche un rafraîchissement immédiat (S-3).
+    private func reconcilePRs(with project: Project?) {
+        let followed = followedPRs(of: project)
+        prunePRKnowledge(followed)
+        let signature = followed.map { "\($0.slug)|\($0.url)" }
+        let changed = signature != prFollowedSignature
+        prFollowedSignature = signature
+        prRows = projectPRRows(followed: followed, knowledge: prKnowledge)
+        if changed {
+            Task { [weak self] in await self?.refreshPRs() }
+        }
+    }
+
+    private func prunePRKnowledge(_ followed: [FollowedPR]) {
+        let urls = Dictionary(uniqueKeysWithValues: followed.map { ($0.slug, $0.url) })
+        prKnowledge = prKnowledge.filter { urls[$0.key] == $0.value.url }
+    }
+
+    // MARK: - Suivi des PR (BR-2)
+
+    /// Attache une surface à la veille (S-3). Idempotent : deux surfaces ouvertes ne
+    /// font tourner qu'UNE boucle.
+    func attachPRWatch() {
+        prWatchHolders += 1
+        guard prWatchTask == nil else { return }
+        prWatchTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.refreshPRs()
+                do {
+                    try await Task.sleep(for: self.prRefreshInterval)
+                } catch {
+                    return
+                }
+            }
+        }
+    }
+
+    /// Détache une surface : la boucle s'arrête quand la DERNIÈRE se ferme.
+    func detachPRWatch() {
+        prWatchHolders = max(0, prWatchHolders - 1)
+        guard prWatchHolders == 0 else { return }
+        prWatchTask?.cancel()
+        prWatchTask = nil
+    }
+
+    /// Un rafraîchissement : les lectures des PR suivies sont CONCURRENTES, l'ordre
+    /// d'affichage reste celui du plan. Aucun `gh` n'est lancé si l'état n'est pas
+    /// vivant, si le projet manque ou si la liste suivie est vide (S-3) ; un
+    /// rafraîchissement en cours n'est jamais empilé.
+    func refreshPRs() async {
+        guard !isRefreshingPRs else { return }
+        guard state == .live, let project else {
+            clearPRs()
+            return
+        }
+        let followed = followedPRs(of: project)
+        guard !followed.isEmpty else {
+            clearPRs()
+            return
+        }
+        isRefreshingPRs = true
+        defer { isRefreshingPRs = false }
+        prunePRKnowledge(followed)
+
+        guard let prService else {
+            prFailure = prServiceFailure
+            prRows = projectPRRows(followed: followed, knowledge: prKnowledge)
+            return
+        }
+        let directory = projectDirectory
+        // Les lectures sont CONCURRENTES et hors du fil principal. Chaque lecture
+        // dépose son résultat dans un collecteur verrouillé : la tâche détachée ne
+        // REND rien (mesuré sur ce toolchain, Swift 6.4 CLT + `swift test -c release` :
+        // un `Task`/`TaskGroup` qui rend un tuple portant une `String` corrompt
+        // aléatoirement cette chaîne — groupes rendant zéro résultat, puis SIGSEGV
+        // dans le hachage du dictionnaire de résultats).
+        let collector = PRReadCollector()
+        let reads = followed.map { pr -> Task<Void, Never> in
+            Task.detached {
+                do {
+                    collector.store(pr.slug, .success(try await prService.read(prUrl: pr.url, in: directory)))
+                } catch {
+                    collector.store(pr.slug, .failure(GhError.from(error, command: "pr view")))
+                }
+            }
+        }
+        for read in reads { await read.value }
+        let results = collector.results
+
+        // S-7 : une erreur de lecture ne fait jamais disparaître une ligne ; elle
+        // marque la connaissance périmée et remonte le message du PREMIER échec dans
+        // l'ordre du plan.
+        var firstFailure: String?
+        for pr in followed {
+            switch results[pr.slug] {
+            case let .success(snapshot):
+                prKnowledge[pr.slug] = PRKnowledge(snapshot: snapshot, freshness: .fresh, url: pr.url)
+            case let .failure(error):
+                if firstFailure == nil { firstFailure = error.userMessage }
+                let existing = prKnowledge[pr.slug]?.snapshot
+                prKnowledge[pr.slug] = PRKnowledge(
+                    snapshot: existing,
+                    freshness: existing == nil ? .unknown : .stale,
+                    url: pr.url
+                )
+            case .none:
+                break
+            }
+        }
+        prFailure = firstFailure
+        prRows = projectPRRows(followed: followed, knowledge: prKnowledge)
+    }
+
+    /// Ouvre l'URL d'une ligne dans le navigateur par défaut (S-4) : aucune
+    /// normalisation, aucun appel réseau.
+    func openPR(slug: String) {
+        prActionFailure = nil
+        guard let row = prRows.first(where: { $0.slug == slug }) else { return }
+        guard let url = ProjectPlanRowView.linkURL(row.url) else {
+            prActionFailure = ProjectViewText.prNotOpenable(url: row.url)
+            return
+        }
+        if !urlOpener.open(url) {
+            prActionFailure = ProjectViewText.prOpenFailed(number: row.number)
+        }
+    }
+
+    /// Relit la PR avant toute confirmation (S-5) : refuse si la relecture échoue ou
+    /// si l'un des trois statuts frais n'est pas vert.
+    func beginMerge(slug: String) async {
+        pendingMerge = nil
+        pendingMergeBody = ""
+        prActionFailure = nil
+        guard let row = prRows.first(where: { $0.slug == slug }) else { return }
+        guard let prService else {
+            prFailure = prServiceFailure
+            return
+        }
+        let directory = projectDirectory
+        do {
+            let snapshot = try await prService.read(prUrl: row.url, in: directory)
+            prKnowledge[slug] = PRKnowledge(snapshot: snapshot, freshness: .fresh, url: row.url)
+            prRows = projectPRRows(followed: followedPRs(of: project), knowledge: prKnowledge)
+            guard
+                snapshot.checks.count == RequiredCheck.allCases.count,
+                snapshot.checks.allSatisfy({ $0.state == .green })
+            else {
+                prActionFailure = ProjectViewText.prMergeRefused(number: row.number)
+                return
+            }
+            pendingMerge = PRMergeProposal(
+                slug: slug,
+                number: row.number,
+                title: snapshot.title,
+                url: row.url,
+                headOid: snapshot.headOid
+            )
+            pendingMergeBody = snapshot.body
+        } catch {
+            prFailure = GhError.from(error, command: "pr view").userMessage
+            markPRStale(slug)
+        }
+    }
+
+    /// Fusionne la PR proposée (S-6) : squash, sujet et corps de la PR, tête bornée
+    /// au sha de la relecture. Un rafraîchissement immédiat suit, succès comme échec.
+    func confirmMerge() async {
+        guard let proposal = pendingMerge else { return }
+        let body = pendingMergeBody
+        pendingMerge = nil
+        pendingMergeBody = ""
+        prActionFailure = nil
+        guard let prService else {
+            prFailure = prServiceFailure
+            return
+        }
+        do {
+            try await prService.merge(
+                prUrl: proposal.url,
+                title: proposal.title,
+                body: body,
+                headOid: proposal.headOid,
+                in: projectDirectory
+            )
+        } catch {
+            let failure = GhError.from(error, command: "pr merge")
+            prActionFailure = ProjectViewText.prMergeRejected(
+                detail: failure.failureDetail,
+                number: proposal.number
+            )
+        }
+        await refreshPRs()
+    }
+
+    /// Annule la proposition sans autre effet.
+    func cancelMerge() {
+        pendingMerge = nil
+        pendingMergeBody = ""
+    }
+
+    private var projectDirectory: String {
+        identity?.repoRoot.path ?? project?.repoRoot ?? ""
+    }
+
+    private func markPRStale(_ slug: String) {
+        guard let known = prKnowledge[slug] else { return }
+        prKnowledge[slug] = PRKnowledge(
+            snapshot: known.snapshot,
+            freshness: known.snapshot == nil ? .unknown : .stale,
+            url: known.url
+        )
+        prRows = projectPRRows(followed: followedPRs(of: project), knowledge: prKnowledge)
+    }
+
+    /// Aucune ligne, aucune connaissance, aucun message — l'état d'un projet absent
+    /// ou d'une liste vide (S-3).
+    private func clearPRs() {
+        prKnowledge = [:]
+        prRows = []
+        prFailure = nil
     }
 
     /// La présence de la fenêtre « Projet », alimentée par `WindowAccessor`.

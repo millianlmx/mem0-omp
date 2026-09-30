@@ -163,7 +163,11 @@ func makeProjectModel(
     host: SessionHost,
     stateDir: String,
     presence: (any WindowFrontmostReporting)? = nil,
-    attention: (any AttentionRequesting)? = nil
+    attention: (any AttentionRequesting)? = nil,
+    prService: (any PRServicing)? = nil,
+    urlOpener: (any URLOpening)? = nil,
+    prRefreshInterval: Duration = .seconds(60),
+    environment: [String: String] = [:]
 ) -> ProjectConsoleModel {
     let suite = UserDefaults(suiteName: "project-model-\(UUID().uuidString)") ?? .standard
     return ProjectConsoleModel(
@@ -171,8 +175,109 @@ func makeProjectModel(
         attention: attention ?? RecordingAttention(),
         presence: presence ?? StubPresence(),
         stateDir: stateDir,
+        prService: prService,
+        urlOpener: urlOpener ?? RecordingURLOpener(),
+        prRefreshInterval: prRefreshInterval,
+        environment: environment,
         defaults: suite
     )
+}
+
+// MARK: - Doubles du suivi de PR (BR-2)
+
+/// Un service de PR scripté : chaque `prUrl` reçoit une suite de résultats consommés
+/// dans l'ordre (le dernier se répète), et chaque fusion est journalisée.
+final class StubPRService: PRServicing, @unchecked Sendable {
+    struct MergeCall: Equatable, Sendable {
+        let prUrl: String
+        let title: String
+        let body: String
+        let headOid: String
+    }
+
+    private let lock = NSLock()
+    private var scripts: [String: [Result<PRSnapshot, GhError>]] = [:]
+    private var counts: [String: Int] = [:]
+    private var _merged: [MergeCall] = []
+    private var _directories: [String] = []
+    private var _reads: [String] = []
+
+    /// Posé, il fait échouer la fusion suivante (S-6).
+    var mergeError: GhError?
+    /// Délai artificiel d'une lecture, pour prouver qu'un rafraîchissement en cours
+    /// n'est pas empilé.
+    var readDelay: Duration = .zero
+
+    func script(_ prUrl: String, _ results: [Result<PRSnapshot, GhError>]) {
+        withLock {
+            scripts[prUrl] = results
+            counts[prUrl] = 0
+        }
+    }
+
+    func script(_ prUrl: String, _ snapshot: PRSnapshot) {
+        script(prUrl, [.success(snapshot)])
+    }
+
+    var merged: [MergeCall] { withLock { _merged } }
+    var readDirectories: [String] { withLock { _directories } }
+    var readURLs: [String] { withLock { _reads } }
+    func readCount(_ prUrl: String) -> Int { withLock { counts[prUrl] ?? 0 } }
+
+    func read(prUrl: String, in directory: String) async throws -> PRSnapshot {
+        let delay = withLock { readDelay }
+        if delay != .zero { try? await Task.sleep(for: delay) }
+        let result: Result<PRSnapshot, GhError>? = withLock {
+            _directories.append(directory)
+            _reads.append(prUrl)
+            let index = counts[prUrl] ?? 0
+            counts[prUrl] = index + 1
+            guard let list = scripts[prUrl], !list.isEmpty else { return nil }
+            return list[min(index, list.count - 1)]
+        }
+        guard let result else {
+            throw GhError.unreadableOutput(command: "pr view", detail: "aucun script pour \(prUrl)")
+        }
+        return try result.get()
+    }
+
+    func merge(prUrl: String, title: String, body: String, headOid: String, in directory: String) async throws {
+        let error: GhError? = withLock {
+            _directories.append(directory)
+            _merged.append(MergeCall(prUrl: prUrl, title: title, body: body, headOid: headOid))
+            return mergeError
+        }
+        if let error { throw error }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+/// Un ouvreur d'URL qui journalise les ouvertures et rend un booléen programmable.
+final class RecordingURLOpener: URLOpening, @unchecked Sendable {
+    private let lock = NSLock()
+    private var _opened: [URL] = []
+    var result: Bool = true
+
+    var opened: [URL] { withLock { _opened } }
+    var openCount: Int { opened.count }
+
+    func open(_ url: URL) -> Bool {
+        withLock {
+            _opened.append(url)
+            return result
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
 }
 
 /// L'échéance des preuves du fil principal.
