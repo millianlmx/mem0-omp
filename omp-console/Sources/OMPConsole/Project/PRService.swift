@@ -41,12 +41,15 @@ struct GhPRService: PRServicing {
     }
 
     /// `gh pr view` puis `gh pr checks`, dans cet ordre, avec `cwd = directory`.
+    /// L'adresse est VALIDÉE d'abord (S-3) : un `prUrl` non conforme lève
+    /// `invalidPRURL` et AUCUN `Process` n'est créé.
     func read(prUrl: String, in directory: String) async throws -> PRSnapshot {
-        let view = try await cli.run(GhCommand.prView(url: prUrl), in: directory)
+        guard let url = validatedPRURL(prUrl) else { throw GhError.invalidPRURL(url: prUrl) }
+        let view = try await cli.run(GhCommand.prView(url: url), in: directory)
         try Self.requireSuccess(view, command: "pr view")
         let parsed = try Self.parse { try parsePRView(view.stdout) }
 
-        let checks = try await cli.run(GhCommand.prChecks(url: prUrl), in: directory)
+        let checks = try await cli.run(GhCommand.prChecks(url: url), in: directory)
         try Self.requireSuccess(checks, command: "pr checks")
         let readings = try Self.parse { try parseChecks(checks.stdout) }
 
@@ -62,8 +65,9 @@ struct GhPRService: PRServicing {
     /// code non nul devient `commandFailed` avec la dernière ligne de `stderr` (le
     /// motif que GitHub a rendu).
     func merge(prUrl: String, title: String, body: String, headOid: String, in directory: String) async throws {
+        guard let url = validatedPRURL(prUrl) else { throw GhError.invalidPRURL(url: prUrl) }
         let output = try await cli.run(
-            GhCommand.prMerge(url: prUrl, title: title, body: body, headOid: headOid),
+            GhCommand.prMerge(url: url, title: title, body: body, headOid: headOid),
             in: directory
         )
         try Self.requireSuccess(output, command: "pr merge")

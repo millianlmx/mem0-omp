@@ -124,6 +124,32 @@ func inboxAvailabilityAndEmptyBox() {
     #expect(envelope.discarded == 0)
 }
 
+@Test("chemins-du-magasin-non-confines/AC-1 : une entrée dont la boîte sort de la zone reste rendue, jamais écartée")
+func outOfZoneInboxEntryStaysVisible() throws {
+    let fixture = StoreFixture()
+    let runId = fixtureId(0x71)
+    let hostile = "/tmp/ailleurs-\(runId)"
+    fixture.publish(
+        .running,
+        "\(runId).json",
+        object: runningObject(
+            id: runId,
+            cwd: "/tmp/worktree-hors-zone",
+            phaseStartedAt: fixtureT0 - 5_000,
+            updatedAt: fixtureT0 - 1_000,
+            ownerPid: Double(getpid()),
+            inbox: hostile
+        )
+    )
+
+    let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
+    let entry = try #require(snapshot.running.entries.first)
+    #expect(entry.id == runId)
+    #expect(entry.inbox == hostile, "le chemin lu n'est ni normalisé ni remplacé à la lecture")
+    #expect(snapshot.running.discarded == 0, "la lecture ne juge pas la boîte : le run reste visible")
+    #expect(snapshot.running.availability == .present)
+}
+
 @Test("client-magasin-etat/AC-6 : le relais audit est rendu avec sa session, son pid et son battement")
 func auditRelayIsTyped() throws {
     let fixture = StoreFixture()

@@ -50,20 +50,30 @@ enum GhBinary {
 
 /// Les trois `argv` de la fonctionnalité, et RIEN d'autre : la sous-commande est
 /// TOUJOURS `pr`, ses seconds mots sont exactement `view`, `checks`, `merge`.
+///
+/// L'URL est un argument POSITIONNEL, donc TOUJOURS précédée de `--` (fin des
+/// options, §1 mesuré sur gh 2.98.0 et §2 POSIX.1-2017 Guideline 10) : les options
+/// viennent AVANT le `--`, rien ne vient après l'URL. Une URL commençant par `-`
+/// ne peut donc plus être lue comme une option (elle est de toute façon refusée par
+/// `validatedPRURL`, S-3 — les deux protections sont indépendantes et cumulées).
 enum GhCommand {
     static func prView(url: String) -> [String] {
-        ["pr", "view", url, "--json", "title,headRefOid,body"]
+        ["pr", "view", "--json", "title,headRefOid,body", "--", url]
     }
 
     static func prChecks(url: String) -> [String] {
-        ["pr", "checks", url, "--json", "name,bucket,link"]
+        ["pr", "checks", "--json", "name,bucket,link", "--", url]
     }
 
     /// La SEULE écriture distante de la feature : un squash, borné à la tête lue
     /// (`--match-head-commit`). Jamais `--merge`/`--rebase`, jamais
     /// `--delete-branch`/`--auto`/`--admin` (S-6).
     static func prMerge(url: String, title: String, body: String, headOid: String) -> [String] {
-        ["pr", "merge", url, "--squash", "--subject", title, "--body", body, "--match-head-commit", headOid]
+        [
+            "pr", "merge",
+            "--squash", "--subject", title, "--body", body, "--match-head-commit", headOid,
+            "--", url,
+        ]
     }
 }
 
@@ -171,6 +181,7 @@ struct GhCLI: Sendable {
 /// vue affiche `userMessage`, elle ne compose jamais un message.
 enum GhError: Error, Equatable, Sendable {
     case ghNotFound(searched: [String], override: String?)
+    case invalidPRURL(url: String)
     case commandFailed(command: String, code: Int32, detail: String)
     case commandTimedOut(command: String, seconds: Double)
     case unreadableOutput(command: String, detail: String)
@@ -181,6 +192,8 @@ enum GhError: Error, Equatable, Sendable {
             let detail = override.map { "chemin imposé par \(GhBinary.overrideKey) : \($0)" }
                 ?? searched.joined(separator: ", ")
             return "gh est introuvable (cherché : \(detail)) — les statuts de PR ne peuvent pas être lus."
+        case let .invalidPRURL(url):
+            return "l'adresse de PR est refusée : \(url) — attendu https://github.com/<propriétaire>/<dépôt>/pull/<numéro>"
         case let .commandFailed(command, code, detail):
             return "gh \(command) a échoué (code \(code)) : \(detail)"
         case let .commandTimedOut(command, seconds):

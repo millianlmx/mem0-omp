@@ -146,6 +146,41 @@ struct PRMergeProposal: Equatable, Sendable {
     let headOid: String
 }
 
+/// L'adresse d'une PR ACCEPTÉE, ou `nil` : validation TEXTUELLE de la chaîne BRUTE,
+/// jamais un aller-retour par `URL` (docs §7 — `URL(string:)` normalise `%20`,
+/// l'espace final, les composants vides et la barre finale, et `HTTPS://GitHub.COM`
+/// conserve la casse de `.host` : autant de formes qu'un contrôle textuel doit
+/// refuser). Seul le schéma est insensible à la casse ; l'hôte est comparé à
+/// `github.com` en ignorant la casse, entièrement (ni sous-domaine, ni port, ni
+/// identifiants). Le rendu est la chaîne REÇUE, inchangée.
+func validatedPRURL(_ raw: String) -> String? {
+    guard raw.count > 8, raw.prefix(8).lowercased() == "https://" else { return nil }
+    let rest = String(raw.dropFirst(8))
+    let parts = rest.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+    guard parts.count == 5 else { return nil }
+    guard parts[0].lowercased() == "github.com" else { return nil }
+    guard parts[3] == "pull" else { return nil }
+    let owner = parts[1]
+    let repository = parts[2]
+    let number = parts[4]
+    guard !owner.isEmpty, owner.allSatisfy(isPRURLSegmentCharacter) else { return nil }
+    guard !repository.isEmpty, repository.allSatisfy(isPRURLSegmentCharacter) else { return nil }
+    guard !number.isEmpty, number.allSatisfy({ $0.isASCII && $0.isNumber }) else { return nil }
+    guard number.first != "0" else { return nil }
+    return raw
+}
+
+/// `[A-Za-z0-9._-]`, en ASCII seulement : un propriétaire ou un dépôt GitHub ne
+/// porte rien d'autre.
+private func isPRURLSegmentCharacter(_ character: Character) -> Bool {
+    guard character.isASCII else { return false }
+    return character.isLetter
+        || character.isNumber
+        || character == "."
+        || character == "_"
+        || character == "-"
+}
+
 /// Le dernier composant du chemin d'une URL http(s) quand c'est un nombre : c'est le
 /// numéro de PR, sans appel réseau.
 func pullRequestNumber(in url: String) -> Int? {

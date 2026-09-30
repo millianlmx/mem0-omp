@@ -6,9 +6,24 @@
 // Le contrat inter-langages est le LITTÉRAL du protocole : les mêmes chaînes sont
 // écrites ici et dans `test/reponses.test.ts`.
 
+import Darwin
 import Foundation
 import Testing
 @testable import OMPConsole
+
+/// Un compteur d'appels partagé par les fermetures `@Sendable` du seam
+/// `PipelineFileOps` : chaque cas d'`EINTR` ne doit se produire qu'UNE fois.
+private final class Attempts: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func next() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        value += 1
+        return value
+    }
+}
 
 /// Le motif du nom d'un fichier du canal : `<16 chiffres>-<4 hex minuscule>.json`,
 /// suffixé `-1`, `-2`… si le nom est pris (`COMMAND_FILE`, commands.ts:49).
@@ -143,9 +158,11 @@ func deliveryNameCollisionIsSuffixed() throws {
 func deliveryFailureHasStableMotif() throws {
     let fixture = StoreFixture()
     let writer = PipelineWriter(stateDir: fixture.root)
-    // Un FICHIER à la place du dossier : la création de la boîte échoue, errno
-    // porte le motif.
-    let blocked = joinPath(fixture.root, "bloque")
+    // Un FICHIER à la place du dossier, À L'INTÉRIEUR de la zone (S-1) : la garde
+    // de confinement passe, c'est la création du dossier qui échoue, errno porte le
+    // motif.
+    try FileManager.default.createDirectory(atPath: writer.inboxRoot, withIntermediateDirectories: true)
+    let blocked = joinPath(writer.inboxRoot, "bloque")
     try Data("x".utf8).write(to: URL(fileURLWithPath: blocked))
     let before = relativeTree(fixture.root)
 
@@ -161,6 +178,92 @@ func deliveryFailureHasStableMotif() throws {
     let reason = try #require(failure?.reason)
     #expect(reason.hasPrefix("écriture impossible ("), "le motif est stable : écriture impossible (<strerror>)")
     #expect(relativeTree(fixture.root) == before, "aucun fichier n'est écrit en cas d'échec")
+}
+
+// MARK: - confinement de la boîte (S-1, B-1)
+
+/// Tente une livraison et rend le motif du refus, `nil` si elle a réussi.
+private func refusalReason(_ writer: PipelineWriter, inbox: String) -> String? {
+    do {
+        _ = try writer.writeDelivery(inbox: inbox, delivery: .text(text: "un"), sentAt: 1, salt: "abcd")
+        return nil
+    } catch let error as PipelineWriteFailure {
+        return error.reason
+    } catch {
+        return "autre erreur : \(error)"
+    }
+}
+
+@Test("chemins-du-magasin-non-confines/AC-1 : toute boîte hors de <stateDir>/inbox/ est refusée sans rien écrire")
+func outOfZoneInboxesAreRefused() throws {
+    let fixture = StoreFixture()
+    let writer = PipelineWriter(stateDir: fixture.root)
+    let outside = joinPath(NSTemporaryDirectory(), "omp-hors-\(UUID().uuidString)")
+    let realOutside = joinPath(NSTemporaryDirectory(), "omp-cible-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(atPath: realOutside, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(atPath: realOutside) }
+
+    // Un lien symbolique, DANS la zone, vers un dossier hors zone.
+    try FileManager.default.createDirectory(atPath: writer.inboxRoot, withIntermediateDirectories: true)
+    let evade = joinPath(writer.inboxRoot, "evade")
+    try FileManager.default.createSymbolicLink(atPath: evade, withDestinationPath: realOutside)
+
+    let refused = [
+        "",
+        "inbox/run-1",
+        outside,
+        joinPath(fixture.root, "inbox/../hors"),
+        joinPath(fixture.root, "inbox-2"),
+        evade,
+        joinPath(evade, "../hors"),
+    ]
+    let before = relativeTree(fixture.root)
+    #expect(throws: PipelineWriteFailure.self) {
+        _ = try writer.writeDelivery(
+            inbox: outside, delivery: .text(text: "un"), sentAt: 1, salt: "abcd"
+        )
+    }
+    for inbox in refused {
+        let motif = try #require(refusalReason(writer, inbox: inbox), "« \(inbox) » doit être refusé")
+        #expect(motif == "chemin refusé (\(inbox)) : hors de \(writer.inboxRoot)")
+    }
+
+    #expect(relativeTree(fixture.root) == before, "un refus ne crée ni ne retire aucun fichier")
+    #expect(!FileManager.default.fileExists(atPath: outside), "aucun dossier hors zone n'est créé")
+    #expect(
+        (try FileManager.default.contentsOfDirectory(atPath: realOutside)).isEmpty,
+        "la cible du lien symbolique reste intacte"
+    )
+}
+
+@Test("chemins-du-magasin-non-confines/AC-2 : une boîte sous la zone est admise, aux mêmes chemins qu'avant")
+func inZoneInboxesAreAccepted() throws {
+    let fixture = StoreFixture()
+    let writer = PipelineWriter(stateDir: fixture.root)
+    fixture.createBox("run-1")
+
+    let direct = try writer.writeDelivery(
+        inbox: writer.inboxRoot, delivery: .text(text: "un"), sentAt: 1_700_000_000_000, salt: "abcd"
+    )
+    #expect(direct == joinPath(writer.inboxRoot, "0001700000000000-abcd.json"))
+
+    let box = joinPath(writer.inboxRoot, "run-1")
+    let inBox = try writer.writeDelivery(
+        inbox: box, delivery: .text(text: "deux"), sentAt: 1_700_000_000_000, salt: "abcd"
+    )
+    #expect(inBox == joinPath(box, "0001700000000000-abcd.json"))
+
+    let sub = joinPath(writer.inboxRoot, "run-1/sous")
+    let inSub = try writer.writeDelivery(
+        inbox: sub, delivery: .text(text: "trois"), sentAt: 1_700_000_000_000, salt: "abcd"
+    )
+    #expect(inSub == joinPath(sub, "0001700000000000-abcd.json"))
+    #expect(FileManager.default.fileExists(atPath: inSub), "le dossier est créé au besoin")
+
+    // Zone traversant un lien symbolique légitime (`/var` → `/private/var`, cas de
+    // `NSTemporaryDirectory()`) : les deux côtés passent par la même canonisation.
+    #expect(writer.isConfinedInbox(joinPath(fixture.root, "inbox/run-1")))
+    #expect(PipelineWriter.canonicalPath("../../hors") == nil, "un chemin relatif n'a pas de canonisation")
 }
 
 // MARK: - commandes et accusés (S-4)
@@ -315,4 +418,138 @@ func consoleIdMatchesTheChannelPattern() {
     #expect(!PipelineId.isValid("a/b"))
     #expect(!PipelineId.isValid(""))
     #expect(!PipelineId.isValid(String(repeating: "a", count: 65)))
+}
+
+// MARK: - publication exclusive (S-4, B-3)
+
+@Test("chemins-du-magasin-non-confines/AC-5 : une cible occupée n'est jamais écrasée, le nom suivant est publié")
+func occupiedTargetIsNeverOverwritten() throws {
+    let fixture = StoreFixture()
+    let box = fixture.createBox("run-1")
+    let writer = PipelineWriter(stateDir: fixture.root)
+    let occupied = joinPath(box, "0001700000000000-abcd.json")
+    try Data("contenu initial".utf8).write(to: URL(fileURLWithPath: occupied))
+    let before = try FileManager.default.attributesOfItem(atPath: occupied)
+
+    let path = try writer.writeDelivery(
+        inbox: box, delivery: .text(text: "nouveau"), sentAt: 1_700_000_000_000, salt: "abcd"
+    )
+
+    #expect(path == joinPath(box, "0001700000000000-abcd-1.json"), "le nom suivant est publié")
+    #expect(try String(contentsOfFile: occupied, encoding: .utf8) == "contenu initial")
+    let after = try FileManager.default.attributesOfItem(atPath: occupied)
+    #expect(
+        after[.modificationDate] as? Date == before[.modificationDate] as? Date,
+        "le fichier préexistant n'est pas modifié : contenu ET date intacts"
+    )
+
+    // Même règle pour une COMMANDE : deux écritures au même (sentAt, salt) donnent
+    // deux fichiers distincts, chacun avec son contenu.
+    let first = try writer.writeCommand(.stop(id: "c-1", repo: "/tmp/depot"), sentAt: 1, salt: "abcd")
+    let second = try writer.writeCommand(.stop(id: "c-2", repo: "/tmp/depot"), sentAt: 1, salt: "abcd")
+    #expect(first == joinPath(writer.commandDir, "0000000000000001-abcd.json"))
+    #expect(second == joinPath(writer.commandDir, "0000000000000001-abcd-1.json"))
+    #expect(object(first)?["id"] == .string("c-1"))
+    #expect(object(second)?["id"] == .string("c-2"))
+}
+
+@Test("chemins-du-magasin-non-confines/AC-6 : un EINTR à la création, à l'écriture et à la publication est retenté")
+func eintrIsRetriedAtEveryStep() throws {
+    let sentAt: Double = 1_700_000_000_000
+    let published = "0001700000000000-abcd.json"
+
+    // (1) création exclusive interrompue une fois ⇒ candidat suivant (§3).
+    do {
+        let fixture = StoreFixture()
+        let box = fixture.createBox("run-1")
+        var ops = PipelineFileOps.live
+        let attempts = Attempts()
+        ops.createExclusive = { path in
+            guard attempts.next() > 1 else { return (-1, EINTR) }
+            return PipelineFileOps.live.createExclusive(path)
+        }
+        let writer = PipelineWriter(stateDir: fixture.root, fileOps: ops)
+        let path = try writer.writeDelivery(
+            inbox: box, delivery: .text(text: "un"), sentAt: sentAt, salt: "abcd"
+        )
+        #expect(path == joinPath(box, published))
+        #expect(relativeTree(box) == [published], "aucun temporaire ne survit")
+    }
+
+    // (2) écriture interrompue une fois ⇒ la MÊME écriture est retentée (§6).
+    do {
+        let fixture = StoreFixture()
+        let box = fixture.createBox("run-1")
+        var ops = PipelineFileOps.live
+        let attempts = Attempts()
+        ops.write = { descriptor, data, offset in
+            guard attempts.next() > 1 else { return (-1, EINTR) }
+            return PipelineFileOps.live.write(descriptor, data, offset)
+        }
+        let writer = PipelineWriter(stateDir: fixture.root, fileOps: ops)
+        let path = try writer.writeDelivery(
+            inbox: box, delivery: .text(text: "un"), sentAt: sentAt, salt: "abcd"
+        )
+        #expect(path == joinPath(box, published))
+        #expect(object(path)?["text"] == .string("un"), "le contenu est complet après la reprise")
+        #expect(relativeTree(box) == [published])
+    }
+
+    // (3) publication interrompue une fois ⇒ `link` retenté (§4).
+    do {
+        let fixture = StoreFixture()
+        let box = fixture.createBox("run-1")
+        var ops = PipelineFileOps.live
+        let attempts = Attempts()
+        ops.link = { source, target in
+            guard attempts.next() > 1 else { return EINTR }
+            return PipelineFileOps.live.link(source, target)
+        }
+        let writer = PipelineWriter(stateDir: fixture.root, fileOps: ops)
+        let path = try writer.writeDelivery(
+            inbox: box, delivery: .text(text: "un"), sentAt: sentAt, salt: "abcd"
+        )
+        #expect(path == joinPath(box, published))
+        #expect(relativeTree(box) == [published])
+    }
+}
+
+@Test("chemins-du-magasin-non-confines/AC-7 : aucun nom libre et erreur d'E/S échouent en motif stable")
+func exhaustedNamesAndIOErrorsFail() throws {
+    // Aucun nom libre : la publication échoue après `uniqueNameLimit` collisions.
+    do {
+        let fixture = StoreFixture()
+        var ops = PipelineFileOps.live
+        ops.link = { _, _ in EEXIST }
+        let writer = PipelineWriter(stateDir: fixture.root, fileOps: ops)
+        var failure: PipelineWriteFailure?
+        do {
+            _ = try writer.writeCommand(.stop(id: "c-s", repo: "/tmp/depot"), sentAt: 1, salt: "abcd")
+        } catch let error as PipelineWriteFailure {
+            failure = error
+        }
+        #expect(PipelineWriter.uniqueNameLimit == 1000)
+        #expect(failure?.reason == "écriture impossible (aucun nom libre)")
+        #expect(
+            (try FileManager.default.contentsOfDirectory(atPath: writer.commandDir)).isEmpty,
+            "aucune cible publiée, aucun temporaire laissé"
+        )
+    }
+
+    // Erreur d'E/S à la création exclusive : le motif porte le `strerror`.
+    do {
+        let fixture = StoreFixture()
+        let box = fixture.createBox("run-1")
+        var ops = PipelineFileOps.live
+        ops.createExclusive = { _ in (-1, EIO) }
+        let writer = PipelineWriter(stateDir: fixture.root, fileOps: ops)
+        var failure: PipelineWriteFailure?
+        do {
+            _ = try writer.writeDelivery(inbox: box, delivery: .text(text: "un"), sentAt: 1, salt: "abcd")
+        } catch let error as PipelineWriteFailure {
+            failure = error
+        }
+        #expect(failure?.reason == "écriture impossible (\(String(cString: strerror(EIO))))")
+        #expect(relativeTree(box).isEmpty)
+    }
 }

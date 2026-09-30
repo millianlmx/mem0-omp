@@ -56,7 +56,7 @@ private func refreshAndSettle(_ model: ProjectConsoleModel) async {
 private func makePRModel(
     fixture: StoreFixture,
     repo: URL,
-    stub: StubPRService,
+    stub: any PRServicing,
     opener: RecordingURLOpener,
     interval: Duration = .milliseconds(20),
     features: [[String: Any]]
@@ -331,6 +331,39 @@ func readFailureMarksStaleThenClears() async throws {
     #expect(model.prRows.first?.freshness == .fresh)
     #expect(model.prRows.first?.checks.allSatisfy { $0.state == .green } == true)
     #expect(model.prFailure == nil)
+    model.stop()
+}
+
+// MARK: - Adresse refusée (AC-4)
+
+@MainActor
+@Test("chemins-du-magasin-non-confines/AC-4 : une prUrl non conforme pose le message d'échec PR sans lancer gh")
+func invalidPRURLShowsFailureWithoutRunningGH() async throws {
+    let repo = try makeGitRepository()
+    let fixture = StoreFixture()
+    let gh = try GhStub(viewJSON: "{}", checksJSON: "[]")
+    let opener = RecordingURLOpener()
+    let model = try await makePRModel(
+        fixture: fixture,
+        repo: repo,
+        stub: GhPRService(cli: GhCLI(binary: gh.script)),
+        opener: opener,
+        features: [prFeature("suivie", url: "https://gitlab.com/o/r/pull/1")]
+    )
+    await refreshAndSettle(model)
+
+    #expect(model.prRows.count == 1, "une lecture en échec ne fait jamais disparaître la ligne")
+    let failure = try #require(model.prFailure, "le refus devient le message d'échec PR")
+    #expect(failure.contains("l'adresse de PR est refusée"))
+    #expect(failure.contains("https://gitlab.com/o/r/pull/1"))
+    #expect(model.prRows.first?.freshness == .unknown, "jamais lue, jamais fraîche")
+    #expect(gh.logged().isEmpty, "gh n'est jamais lancé pour une adresse refusée")
+
+    // Le geste de fusion retombe sur le MÊME chemin d'échec, sans aucun `gh`.
+    await model.beginMerge(slug: "suivie")
+    #expect(model.pendingMerge == nil)
+    #expect(model.prFailure?.contains("l'adresse de PR est refusée") == true)
+    #expect(gh.logged().isEmpty)
     model.stop()
 }
 

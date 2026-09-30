@@ -10,34 +10,45 @@ import Testing
 
 /// Tous les `argv` que la fonctionnalité sait produire : c'est la liste COMPLÈTE.
 private let allGhCommands: [[String]] = [
-    GhCommand.prView(url: "https://exemple.test/pull/45"),
-    GhCommand.prChecks(url: "https://exemple.test/pull/45"),
-    GhCommand.prMerge(url: "https://exemple.test/pull/45", title: "t", body: "b", headOid: "abc"),
+    GhCommand.prView(url: "https://github.com/proprietaire/depot/pull/45"),
+    GhCommand.prChecks(url: "https://github.com/proprietaire/depot/pull/45"),
+    GhCommand.prMerge(
+        url: "https://github.com/proprietaire/depot/pull/45", title: "t", body: "b", headOid: "abc"
+    ),
 ]
 
-@Test("suivi-pr-ci/AC-1 : la lecture d'une PR est `gh pr view <url> --json title,headRefOid,body`")
+/// L'invariant de `--` (S-2), vérifié sur les trois commandes : l'URL est le
+/// DERNIER argument, immédiatement précédé du seul `--`, et aucune option ne suit
+/// le terminateur.
+private func expectOptionTerminator(_ argv: [String], url: String) {
+    #expect(argv.last == url, "l'URL est le dernier argument : \(argv)")
+    #expect(argv.count >= 2 && argv[argv.count - 2] == "--", "`--` précède l'URL : \(argv)")
+    #expect(argv.filter { $0 == "--" }.count == 1, "un seul `--` : \(argv)")
+    let tail = argv.drop(while: { $0 != "--" })
+    #expect(tail.count == 2, "rien ne suit l'URL : \(argv)")
+}
+
+@Test("suivi-pr-ci/AC-1 : la lecture d'une PR est `gh pr view --json … -- <url>`")
 func viewCommandIsExact() {
-    #expect(
-        GhCommand.prView(url: "https://exemple.test/pull/45")
-            == ["pr", "view", "https://exemple.test/pull/45", "--json", "title,headRefOid,body"]
-    )
+    let url = "https://github.com/proprietaire/depot/pull/45"
+    #expect(GhCommand.prView(url: url) == ["pr", "view", "--json", "title,headRefOid,body", "--", url])
 }
 
-@Test("suivi-pr-ci/AC-1 : les statuts sont lus par `gh pr checks <url> --json name,bucket,link`")
+@Test("suivi-pr-ci/AC-1 : les statuts sont lus par `gh pr checks --json … -- <url>`")
 func checksCommandIsExact() {
-    #expect(
-        GhCommand.prChecks(url: "https://exemple.test/pull/45")
-            == ["pr", "checks", "https://exemple.test/pull/45", "--json", "name,bucket,link"]
-    )
+    let url = "https://github.com/proprietaire/depot/pull/45"
+    #expect(GhCommand.prChecks(url: url) == ["pr", "checks", "--json", "name,bucket,link", "--", url])
 }
 
-@Test("suivi-pr-ci/AC-4 : la fusion est `gh pr merge <url> --squash --subject … --body … --match-head-commit …`")
+@Test("suivi-pr-ci/AC-4 : la fusion est `gh pr merge --squash … -- <url>`")
 func mergeCommandIsExact() {
+    let url = "https://github.com/proprietaire/depot/pull/45"
     #expect(
-        GhCommand.prMerge(url: "https://exemple.test/pull/45", title: "Mon titre", body: "Corps", headOid: "abc123")
+        GhCommand.prMerge(url: url, title: "Mon titre", body: "Corps", headOid: "abc123")
             == [
-                "pr", "merge", "https://exemple.test/pull/45",
+                "pr", "merge",
                 "--squash", "--subject", "Mon titre", "--body", "Corps", "--match-head-commit", "abc123",
+                "--", url,
             ]
     )
     // Aucune option interdite n'est constructible (S-6) : ni fusion non-squash, ni
@@ -46,6 +57,21 @@ func mergeCommandIsExact() {
     for banned in ["--merge", "--rebase", "--delete-branch", "-d", "--auto", "--admin"] {
         #expect(!argv.contains(banned), "« \(banned) » ne doit jamais figurer dans l'argv de fusion")
     }
+}
+
+@Test("chemins-du-magasin-non-confines/AC-3 : les trois argv placent l'URL en positionnel APRÈS `--`")
+func optionTerminatorPrecedesURL() {
+    let url = "https://github.com/proprietaire/depot/pull/45"
+    expectOptionTerminator(GhCommand.prView(url: url), url: url)
+    expectOptionTerminator(GhCommand.prChecks(url: url), url: url)
+    expectOptionTerminator(
+        GhCommand.prMerge(url: url, title: "t", body: "b", headOid: "abc"), url: url
+    )
+    // Une URL hostile commençant par `-` n'est plus interprétable comme une option :
+    // elle reste positionnelle derrière `--` (et S-3 la refuse de son côté).
+    let hostile = "-R evil"
+    #expect(GhCommand.prView(url: hostile) == ["pr", "view", "--json", "title,headRefOid,body", "--", hostile])
+    expectOptionTerminator(GhCommand.prView(url: hostile), url: hostile)
 }
 
 @Test("suivi-pr-ci/AC-1 : aucune sous-commande hors de `pr view|checks|merge` n'est produite")
