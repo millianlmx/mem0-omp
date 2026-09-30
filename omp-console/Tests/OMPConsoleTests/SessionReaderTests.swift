@@ -668,3 +668,22 @@ private func transcripts(in directory: URL) -> [String] {
     return found
 }
 
+
+// MARK: - Horodatage de l'entrée (feature statistiques, S-2)
+
+@Test("statistiques/AC-1 : une entrée porte son horodatage, avec ou sans fraction de seconde")
+func entriesCarryTheirParsedTimestamp() throws {
+    // Deux formes : `Date.ISO8601FormatStyle(includingFractionalSeconds: true)` lit
+    // les deux, là où un `ISO8601DateFormatter` unique en exigerait une seule.
+    let withFraction = #"{"type":"message","id":"e1","parentId":null,"timestamp":"2026-01-01T00:00:00.500Z","message":{"role":"user","content":[{"type":"text","text":"a"}]}}"#
+    let withoutFraction = #"{"type":"message","id":"e2","parentId":null,"timestamp":"2026-01-01T00:00:02Z","message":{"role":"user","content":[{"type":"text","text":"b"}]}}"#
+    try withFixture([Lines.header(), withFraction, withoutFraction]) { fixture in
+        let reader = SessionReader(path: fixture.path)
+        #expect(reader.read().issue == nil)
+        let entries = reader.conversation.entries
+        #expect(entries.count == 2)
+        // L'analyse passe par des secondes `Double` : on compare à la sous-milliseconde.
+        #expect(abs((entries[0].timestampMs ?? 0) - 1_767_225_600_500) < 0.01)
+        #expect(abs((entries[1].timestampMs ?? 0) - 1_767_225_602_000) < 0.01)
+    }
+}

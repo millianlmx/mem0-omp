@@ -70,37 +70,31 @@ final class SessionSelectorModel: ObservableObject {
     deinit { task?.cancel() }
 
     private func apply(_ snapshot: StoreSnapshot) {
-        var built: [RunChoice] = []
-        var seen: Set<String> = []
-
-        func append(_ sessionFile: String?, _ label: String, _ phase: PipelinePhase, _ state: RunChoiceState, _ isStale: Bool) {
-            guard let sessionFile, !sessionFile.isEmpty, !seen.contains(sessionFile) else { return }
-            seen.insert(sessionFile)
-            let tag = sessionTag(forSessionFile: sessionFile)
-            built.append(
-                RunChoice(
-                    id: sessionFile,
-                    sessionFile: sessionFile,
-                    label: label,
-                    phase: phase,
-                    state: state,
-                    isStale: isStale,
-                    sessionTag: tag,
-                    target: ViewerTarget(sessionFile: sessionFile, title: "\(label) — \(tag)")
-                )
+        // La règle d'appariement est celle de `storeRuns` (S-1) : elle a DÉMÉNAGÉ,
+        // elle n'est pas dupliquée. L'ordre et le dédoublonnage sont ceux du magasin.
+        choices = storeRuns(of: snapshot).map { run in
+            let state: RunChoiceState
+            let isStale: Bool
+            if let live = run.live {
+                state = .live(live.state)
+                isStale = live.isStale
+            } else {
+                // Une pipeline close n'est jamais périmée : elle est terminée.
+                state = .ended(run.finalState ?? .done)
+                isStale = false
+            }
+            let tag = sessionTag(forSessionFile: run.sessionFile)
+            return RunChoice(
+                id: run.sessionFile,
+                sessionFile: run.sessionFile,
+                label: run.label,
+                phase: run.phase,
+                state: state,
+                isStale: isStale,
+                sessionTag: tag,
+                target: ViewerTarget(sessionFile: run.sessionFile, title: "\(run.label) — \(tag)")
             )
         }
-
-        // L'ordre EST celui de l'enveloppe, à commencer par les runs vivants.
-        for entry in snapshot.running.entries {
-            append(entry.sessionFile, entry.label, entry.phase, .live(entry.state), entry.isStale)
-        }
-        for entry in snapshot.history.entries {
-            // Une pipeline close n'est jamais périmée : elle est terminée.
-            append(entry.sessionFile, entry.label, entry.phase, .ended(entry.finalState), false)
-        }
-
-        choices = built
         storeAbsent =
             snapshot.running.availability == .absent && snapshot.history.availability == .absent
         discarded = snapshot.running.discarded + snapshot.history.discarded

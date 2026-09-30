@@ -628,6 +628,94 @@ Aucune reprise automatique : relancer l'app n'ouvre **aucune** session et n'arme
 7. Mettre la fenêtre en arrière-plan : un dialogue en attente doit lever une
    demande d'attention (icône de l'app dans le Dock qui rebondit).
 
+## Fenêtre Statistiques
+
+Une fenêtre **en lecture seule**, ouverte par **Fichier ▸ Statistiques** (⌘⇧S),
+qui compte ce que les runs d'un projet ont consommé : tokens d'entrée et de sortie,
+durée murale (attente d'une réponse utilisateur comprise) et nombre de tours (un
+tour = un cycle complet prompt → réponse finale), par run puis agrégés par feature
+et par projet. **Aucun montant en dollars** n'y apparaît — le domaine `Stats` ne
+lit jamais `usage.cost`.
+
+Le tableau est celui du **projet affiché** : un sélecteur (`Projet`) en tête, puis
+la ligne d'agrégat du projet, le compte des features du plan sans run lisible, un
+bloc par feature listée et un rang par run. Une feature du plan n'est **listée**
+que si elle porte au moins un run **lisible** ; les autres sont **masquées** et
+comptées (`<n> feature(s) du plan sans run lisible`, affiché même à 0).
+
+### Les cinq états
+
+| État | Condition | Texte exact | AX |
+|---|---|---|---|
+| Chargement | aucun instantané reçu | `Chargement du magasin d'état…` | `stats.state` |
+| Magasin absent | racine `.absent` | `Magasin d'état absent : <stateDir>` | `stats.state` |
+| Aucun projet | racine présente, aucun `projects/*.json` | `Aucun projet dans le magasin d'état : <stateDir>` | `stats.state` |
+| Aucun run lisible | projet affiché, features vides | `Aucun run lisible pour ce projet` | `stats.empty` |
+| Tableau | projet affiché avec ≥ 1 feature listée | voir ci-dessous | — |
+
+Les textes du chargement et du magasin absent sont **repris mot pour mot** de
+`KanbanBoardState` (une seule formulation par situation dans l'app).
+
+### Identifiants d'accessibilité
+
+| Élément | Identifiant |
+|---|---|
+| Sélecteur de projet | `stats.project` |
+| Ligne d'agrégat | `stats.aggregate` |
+| Compte des features masquées | `stats.hidden` |
+| Bloc d'une feature | `stats.feature.<slug>` |
+| Rang d'un run | `stats.run.<tag>` (`tag` = `sessionTag(forSessionFile:)`) |
+
+### Forme d'une ligne
+
+- Agrégat : `Projet <libellé> — entrée <n> · sortie <n> · durée <d> · tours <n>`.
+- Feature : `<slug> — entrée <n> · sortie <n> · durée <d> · tours <n>`.
+- Run : `<tag> · /<phase> · entrée <n> · sortie <n> · durée <d> · tours <n> · modèle <m|absent>`.
+  Un run **illisible** remplace tout par `<tag> · /<phase> — session introuvable`
+  (fichier absent) ou `<tag> · /<phase> — session illisible : <message OS>`.
+
+`<n>` est un entier sans séparateur de milliers, `<d>` une durée `elapsedLabel`
+(`<m>:<ss>` ou `<h>:<mm>:<ss>`), une durée inconnue s'écrit `—`.
+
+### Mise à jour en direct
+
+Aucun geste n'est nécessaire : le magasin, la veille du fichier de session de
+chaque run **vivant** et l'horloge de rendu (`TimelineView`, une seconde) font
+monter seuls les tokens, les tours et les durées. Un run est **vivant** si le pid
+de son entrée `running` vit — jamais d'après le badge `isStale` du magasin
+(`publishRunning` n'écrit rien quand seul `updatedAt` change, donc un run vivant au
+repos est marqué périmé).
+
+### Non-objectifs
+
+Pas de colonne `cacheRead`/`cacheWrite`, aucun signe monétaire nulle part, aucun
+bouton d'export, de filtre, de tri ou de rafraîchissement, aucune ligne
+sélectionnable, aucune fenêtre par run ou par feature, aucune mémorisation du
+projet choisi entre deux lancements. Aucune écriture dans le magasin.
+
+### Recette : prouver la fenêtre par la sonde AX
+
+Le bundle est lancé **directement** (le cwd porte `.git`), un magasin jetable sous
+`/tmp` est posé par `MEM0_PIPELINE_STATE_DIR`, dans le **même** appel shell que la
+sonde AX :
+
+1. Construire `/tmp/<état>/` : un `projects/<clé>.json` (deux features au plan), un
+   `lots/<clé>.json` (worktree de l'une), une `history/*.json` par run pointant sur
+   une **copie** d'un vrai fichier de session, et une entrée `running/*.json` dont
+   `owner.pid` est le pid du shell de la sonde (vivant).
+2. Lancer `MEM0_PIPELINE_STATE_DIR=/tmp/<état> nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" &`,
+   puis interroger `AXUIElementCreateApplication(pid)` : `stats.project`,
+   `stats.aggregate`, `stats.hidden`, `stats.feature.<slug>`, `stats.run.<tag>`.
+3. Vérifier par calcul indépendant (python sur le `.jsonl` copié) que
+   `entrée`/`sortie`/`tours`/`durée` de la ligne égalent la session (AC-1), et
+   qu'aucune valeur AX ne porte `$` (AC-2).
+4. AC-3 : ajouter une entrée assistant avec `usage` à la session copiée ⇒ la ligne
+   et l'agrégat montent **sans geste** ; relever la durée du run vivant deux fois à
+   3 s d'intervalle ⇒ elle a augmenté alors qu'aucun octet n'a été écrit.
+5. AC-6 : écrire un second `projects/<autre clé>.json` avec sa propre feature,
+   choisir chaque projet dans `stats.project` ⇒ seules les features du projet
+   choisi sont présentes dans l'arbre AX.
+
 ## Harnais réel
 
 La suite de tests contient quatre tests **réels** qui lancent un vrai `omp` (donc
@@ -836,6 +924,7 @@ omp-console/
 │   │   ├── StoreModels.swift      modèles typés et validation champ par champ
 │   │   ├── StoreSnapshot.swift    enveloppes d'un instantané
 │   │   ├── StoreReader.swift      balayage, filtrage, entrées écartées nommées
+│   │   ├── StoreRuns.swift        l'appariement run ↔ sessionFile, source UNIQUE
 │   │   ├── StoreWatcher.swift     veille vnode d'un store et flux d'abonnés
 │   │   └── StoreHub.swift         le flux global, agrégat des six
 │   ├── Kanban/                    le tableau des pipelines (lecture seule)
@@ -880,6 +969,12 @@ omp-console/
 │   │   ├── AlertLedger.swift      registre persisté des clés, lecture tolérante
 │   │   ├── AlertsModel.swift      abonnement, décision, compteurs, autorisation
 │   │   └── AlertsStripView.swift  la bande de la fenêtre (textes purs, identifiants AX)
+│   ├── Stats/                     la fenêtre « Statistiques » (lecture seule)
+│   │   ├── StatsMetrics.swift     les métriques d'une session (fonctions pures)
+│   │   ├── StatsModels.swift      types du tableau et textes exacts de la vue
+│   │   ├── StatsBoard.swift       construction du tableau et totaux (fonctions pures)
+│   │   ├── StatsModel.swift       abonnement, lecteurs, veilles, sélection
+│   │   └── StatsView.swift        la fenêtre : sélecteur, agrégat, features, runs
 │   └── MenuBar/                   l'item de barre de menus et ses compteurs
 │       ├── RunCounters.swift      occupés / en attente et l'état publié
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item

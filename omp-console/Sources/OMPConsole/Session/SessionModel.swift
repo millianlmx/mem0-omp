@@ -189,10 +189,17 @@ public struct ConversationEntry: Equatable, Sendable {
 
     public var kind: Kind
 
-    public init(index: Int, offset: Int, kind: Kind) {
+    /// `timestamp` de l'entrée, analysé UNE fois à la classification (Doc-3) et
+    /// porté en millisecondes depuis l'époque. `nil` quand la clé est absente ou
+    /// non analysable. Valeur par défaut `nil` : les constructions littérales
+    /// existantes (tests) restent valides.
+    public var timestampMs: Double? = nil
+
+    public init(index: Int, offset: Int, kind: Kind, timestampMs: Double? = nil) {
         self.index = index
         self.offset = offset
         self.kind = kind
+        self.timestampMs = timestampMs
     }
 }
 

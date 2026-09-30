@@ -151,8 +151,13 @@ public final class SessionReader {
                 let entry = SkippedEntry(offset: offset, reason: reason)
                 skipped.append(entry)
                 model.skipped.append(entry)
-            case .entry(let kind):
-                let entry = ConversationEntry(index: model.entries.count + 1, offset: offset, kind: kind)
+            case .entry(let kind, let timestampMs):
+                let entry = ConversationEntry(
+                    index: model.entries.count + 1,
+                    offset: offset,
+                    kind: kind,
+                    timestampMs: timestampMs
+                )
                 added.append(entry)
                 model.entries.append(entry)
             case .header(let header):
@@ -228,9 +233,16 @@ public final class SessionReader {
 private enum ClassifiedLine {
     case silent
     case skipped(SkipReason)
-    case entry(ConversationEntry.Kind)
+    case entry(ConversationEntry.Kind, Double?)
     case header(SessionHeader)
 }
+
+/// L'analyseur d'horodatage PARTAGÉ (Doc-3) : `Date.ISO8601FormatStyle` est une
+/// `struct` `Sendable` — une `static let` est donc légale sous concurrence stricte
+/// Swift 6, contrairement à `ISO8601DateFormatter` (classe non `Sendable`) — et
+/// elle lit les formes AVEC ET SANS fraction de seconde, là où un formateur unique
+/// en exige une seule (mesuré le 2026-09-30, doc §3).
+private let sessionTimestampStyle = Date.ISO8601FormatStyle(includingFractionalSeconds: true)
 
 private enum LineClassifier {
     /// Les 16 types d'entrée de l'union `SessionEntry` (Doc-1), à l'exclusion des
@@ -261,11 +273,21 @@ private enum LineClassifier {
         switch type {
         case "session": return headerLine(object)
         case "title": return .silent
-        case "message": return messageLine(object)
-        case "compaction": return compactionLine(object)
-        case "branch_summary": return branchSummaryLine(object)
+        case "message": return messageLine(object, entryTimestamp(object))
+        case "compaction": return compactionLine(object, entryTimestamp(object))
+        case "branch_summary": return branchSummaryLine(object, entryTimestamp(object))
         default: return outOfScopeTypes.contains(type) ? .silent : .skipped(.unknownType)
         }
+    }
+
+    /// L'horodatage de l'entrée (clé `timestamp` de l'objet de ligne), analysé UNE
+    /// fois ici — jamais à chaque rendu (Doc-3). `nil` quand la clé est absente,
+    /// non-chaîne, ou non analysable : l'entrée compte alors pour les compteurs,
+    /// jamais pour les bornes de durée.
+    static func entryTimestamp(_ object: [String: Any]) -> Double? {
+        guard let text = object["timestamp"] as? String else { return nil }
+        guard let date = try? sessionTimestampStyle.parse(text) else { return nil }
+        return date.timeIntervalSince1970 * 1000
     }
 
     // MARK: Règle 5 — charges utiles indispensables
@@ -284,7 +306,7 @@ private enum LineClassifier {
         )
     }
 
-    private static func messageLine(_ object: [String: Any]) -> ClassifiedLine {
+    private static func messageLine(_ object: [String: Any], _ timestampMs: Double?) -> ClassifiedLine {
         guard let message = object["message"] as? [String: Any],
             let role = message["role"] as? String
         else { return .skipped(.malformed) }
@@ -293,11 +315,11 @@ private enum LineClassifier {
         // simplement hors périmètre (donc silencieuse, jamais « ignorée »).
         switch role {
         case "user":
-            return .entry(.user(UserTurn(text: bodyText(message["content"]))))
+            return .entry(.user(UserTurn(text: bodyText(message["content"]))), timestampMs)
         case "assistant":
-            return .entry(.assistant(assistantTurn(message)))
+            return .entry(.assistant(assistantTurn(message)), timestampMs)
         case "toolResult":
-            return .entry(.toolResult(toolResultTurn(message)))
+            return .entry(.toolResult(toolResultTurn(message)), timestampMs)
         default:
             return .silent
         }
@@ -340,7 +362,7 @@ private enum LineClassifier {
         )
     }
 
-    private static func compactionLine(_ object: [String: Any]) -> ClassifiedLine {
+    private static func compactionLine(_ object: [String: Any], _ timestampMs: Double?) -> ClassifiedLine {
         guard let summary = object["summary"] as? String else { return .skipped(.malformed) }
         return .entry(
             .compaction(
@@ -348,16 +370,18 @@ private enum LineClassifier {
                     summary: summary,
                     tokensBefore: (object["tokensBefore"] as? NSNumber)?.intValue
                 )
-            )
+            ),
+            timestampMs
         )
     }
 
-    private static func branchSummaryLine(_ object: [String: Any]) -> ClassifiedLine {
+    private static func branchSummaryLine(_ object: [String: Any], _ timestampMs: Double?) -> ClassifiedLine {
         guard let summary = object["summary"] as? String else { return .skipped(.malformed) }
         return .entry(
             .branchSummary(
                 BranchSummaryMarker(summary: summary, fromId: object["fromId"] as? String ?? "")
-            )
+            ),
+            timestampMs
         )
     }
 
