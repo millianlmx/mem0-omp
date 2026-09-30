@@ -24,6 +24,7 @@ struct OMPConsoleApp: App {
     @StateObject private var kanbanModel = KanbanModel()
     @StateObject private var actionsModel = ActionsModel()
     @StateObject private var projectModel = ProjectConsoleModel()
+    @StateObject private var statsModel = StatsModel()
     @StateObject private var memoryModel = MemoryModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -50,6 +51,14 @@ struct OMPConsoleApp: App {
         .commands {
             SessionCommands()
             ProjectCommands(model: projectModel)
+            StatsCommands()
+        }
+
+        // Fenêtre à instance unique (Doc-2) : `id: "statistiques"`, distinct des
+        // autres scènes. Le modèle vit sur la structure `App`, donc il survit à la
+        // fermeture de la fenêtre comme les autres.
+        Window("Statistiques", id: "statistiques") {
+            StatsView(model: statsModel)
         }
 
         // Dernière scène : la visionneuse de session. Elle présente une VALEUR
@@ -92,6 +101,18 @@ struct ProjectCommands: Commands {
                 model.presentLaunchSheet()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
+        }
+    }
+}
+
+/// Menu Fichier ▸ « Statistiques » (⌘⇧S) : ouvre la fenêtre à instance unique.
+struct StatsCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Statistiques") { openWindow(id: "statistiques") }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
         }
     }
 }
