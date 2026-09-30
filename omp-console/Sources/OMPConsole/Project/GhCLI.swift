@@ -115,65 +115,30 @@ struct GhCLI: Sendable {
     /// Exécute un `argv` de `GhCommand` dans `directory` (le répertoire de travail
     /// du contrat : la racine du projet conduit). Le nom employé dans les erreurs est
     /// la sous-commande (`pr view`, …).
+    ///
+    /// Aucune liste blanche ici : `gh` garde ses sous-commandes, `pr merge` comprise
+    /// (S-4, non-objectif).
     func run(_ arguments: [String], in directory: String) async throws -> GhOutput {
         let command = arguments.prefix(2).joined(separator: " ")
-        let process = Process()
-        process.executableURL = binary
-        process.arguments = arguments
-        process.currentDirectoryURL = URL(fileURLWithPath: directory)
-        process.environment = Self.environment()
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        process.standardOutput = outPipe
-        process.standardError = errPipe
-        process.standardInput = FileHandle.nullDevice
+        let child = ProcessRunner.child(
+            binary: binary,
+            arguments: arguments,
+            cwd: URL(fileURLWithPath: directory),
+            environment: Self.environment(),
+            input: .nullDevice
+        )
 
-        let drain = Drain()
-        let exit = Exit()
-        let control = Control(process: process)
-        process.terminationHandler = { finished in
-            exit.finish(code: finished.terminationStatus)
-        }
-
+        let run: ProcessRun
         do {
-            try process.run()
-        } catch {
-            throw GhError.commandFailed(command: command, code: -1, detail: error.localizedDescription)
+            run = try await ProcessRunner.run(child, timeout: timeout)
+        } catch ProcessRunnerError.launchFailed(let detail) {
+            throw GhError.commandFailed(command: command, code: -1, detail: detail)
         }
 
-        // Les deux tubes sont drainés EN PARALLÈLE (patron `GitCLI`), dans des fils
-        // détachés.
-        Self.pump(outPipe.fileHandleForReading, into: drain, stderr: false)
-        Self.pump(errPipe.fileHandleForReading, into: drain, stderr: true)
-
-        // L'échéance : un `gh` qui ne rend pas la main est terminé, et la lecture
-        // échoue au lieu de laisser la vue bloquée 60 s.
-        DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { [control] in
-            guard control.isRunning else { return }
-            control.markTimedOut()
-            control.terminate()
-        }
-
-        let code = await exit.wait()
-        await drain.awaitEnd()
-        let output = drain.output
-
-        if control.timedOut {
+        if run.timedOut {
             throw GhError.commandTimedOut(command: command, seconds: timeout)
         }
-        return GhOutput(code: code, stdout: output.stdout, stderr: output.stderr)
-    }
-
-    /// Découpe un tube jusqu'à EOF dans un fil détaché, puis signale sa fin.
-    private static func pump(_ handle: FileHandle, into drain: Drain, stderr: Bool) {
-        Thread.detachNewThread {
-            while true {
-                let chunk = handle.availableData
-                if chunk.isEmpty { break }
-                drain.append(chunk, stderr: stderr)
-            }
-            drain.end()
-        }
+        return GhOutput(code: run.code, stdout: run.stdout, stderr: run.stderr)
     }
 }
 

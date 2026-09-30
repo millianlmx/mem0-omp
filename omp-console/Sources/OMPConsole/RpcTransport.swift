@@ -110,36 +110,46 @@ final class ProcessTransport: RpcTransport {
     }
 
     func start(binary: URL, arguments: [String], cwd: URL) throws {
-        let process = Process()
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
+        // Le lancement et le découpage en lignes sont partagés (`ProcessRunner`) ;
+        // le transport garde ce qui lui est propre : son `Process` recréé à chaque
+        // lancement, son stdin alimenté, son `terminationHandler`, ses signaux et
+        // sa séquence d'arrêt (S-5, aucune escalade ici).
+        let child = ProcessRunner.child(
+            binary: binary,
+            arguments: arguments,
+            cwd: cwd,
+            // L'environnement est HÉRITÉ (S-1) : c'est lui qui porte `HOME`, donc la
+            // configuration `~/.omp` du process hébergé.
+            environment: ProcessInfo.processInfo.environment,
+            input: .pipe
+        )
+        let process = child.process
         self.process = process
-        self.stdinPipe = stdinPipe
+        self.stdinPipe = child.stdin
         stdinClosed = false
-
-        process.executableURL = binary
-        process.arguments = arguments
-        process.currentDirectoryURL = cwd
-        // L'environnement est HÉRITÉ (S-1) : c'est lui qui porte `HOME`, donc la
-        // configuration `~/.omp` du process hébergé.
-        process.standardInput = stdinPipe
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        stdinHandle = stdinPipe.fileHandleForWriting
-        // Les trois `Pipe` sont recréés à chaque `start`, donc les drapeaux le sont
+        stdinHandle = child.stdin?.fileHandleForWriting
+        // Le tube stdin est recréé à chaque `start`, donc les drapeaux le sont
         // aussi. Sur le fd d'écriture du tube stdin et sur lui seul : jamais de
         // SIGPIPE (drapeau par fd, jamais `signal(SIGPIPE, …)` global), puis fd non
         // bloquant pour que la boucle d'écriture borne son attente (S-1).
-        let stdinFD = stdinPipe.fileHandleForWriting.fileDescriptor
-        _ = fcntl(stdinFD, F_SETNOSIGPIPE, 1)
-        _ = fcntl(stdinFD, F_SETFL, O_NONBLOCK)
+        if let stdinFD = child.stdin?.fileHandleForWriting.fileDescriptor {
+            _ = fcntl(stdinFD, F_SETNOSIGPIPE, 1)
+            _ = fcntl(stdinFD, F_SETFL, O_NONBLOCK)
+        }
 
         let stdoutStream = AsyncStream<String> { continuation in
-            Self.pump(stdoutPipe.fileHandleForReading, into: continuation)
+            ProcessRunner.pumpLines(
+                child.stdout.fileHandleForReading,
+                yield: { continuation.yield($0) },
+                finish: { continuation.finish() }
+            )
         }
         let stderrStream = AsyncStream<String> { continuation in
-            Self.pump(stderrPipe.fileHandleForReading, into: continuation)
+            ProcessRunner.pumpLines(
+                child.stderr.fileHandleForReading,
+                yield: { continuation.yield($0) },
+                finish: { continuation.finish() }
+            )
         }
         stdoutTask = Task { @MainActor [weak self] in
             for await line in stdoutStream { self?.onLine?(line) }
@@ -208,31 +218,5 @@ final class ProcessTransport: RpcTransport {
     func signal(_ number: Int32) {
         guard let pid else { return }
         kill(pid, number)
-    }
-
-    /// Découpe un tube en lignes dans un fil détaché, puis alimente le flux.
-    /// Statique et `nonisolated` : il ne touche aucun état du MainActor.
-    private nonisolated static func pump(_ handle: FileHandle, into continuation: AsyncStream<String>.Continuation) {
-        Thread.detachNewThread {
-            var buffer = Data()
-            while true {
-                let chunk = handle.availableData
-                if chunk.isEmpty {
-                    if !buffer.isEmpty, let tail = String(data: buffer, encoding: .utf8) {
-                        continuation.yield(tail)
-                    }
-                    continuation.finish()
-                    return
-                }
-                buffer.append(chunk)
-                while let index = buffer.firstIndex(of: 0x0A) {
-                    let lineData = buffer[buffer.startIndex..<index]
-                    buffer.removeSubrange(buffer.startIndex...index)
-                    var text = String(data: Data(lineData), encoding: .utf8) ?? ""
-                    if text.hasSuffix("\r") { text.removeLast() }
-                    continuation.yield(text)
-                }
-            }
-        }
     }
 }
