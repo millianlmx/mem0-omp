@@ -1,6 +1,6 @@
-// Interface de la coque : fenêtre, barre latérale à quatre entrées, panneau de
-// détail. Les quatre vues déclarent leur section, et TOUTES sont désormais
-// vivantes (Kanban, Sessions, Fichiers, Projet).
+// Interface de la coque : fenêtre, barre latérale à cinq entrées, panneau de
+// détail. Les cinq vues déclarent leur section, et TOUTES sont vivantes (Kanban,
+// Sessions, Fichiers, Projet, Mémoire).
 //
 // Aucun attribut macro SwiftUI n'est employé ici (`@State`, `@Preview`, …) :
 // sous les Command Line Tools seuls, ces macros échouent à la compilation (D3).
@@ -47,6 +47,9 @@ struct SectionDetail: View {
     /// Le modèle de conduite de projet : à l'échelle de l'app, comme les autres,
     /// pour que la session hébergée survive au changement de section.
     @ObservedObject var projectModel: ProjectConsoleModel
+    /// Le modèle de la section « Mémoire » : même raison, la portée calculée, la
+    /// liste affichée et la sélection survivent au passage d'une section à l'autre.
+    @ObservedObject var memoryModel: MemoryModel
 
     var body: some View {
         switch section {
@@ -54,6 +57,7 @@ struct SectionDetail: View {
         case .sessions: SessionsView()
         case .files: FilesView(model: filesModel)
         case .project: ProjectView(model: projectModel)
+        case .memory: MemoryView(model: memoryModel)
         }
     }
 }

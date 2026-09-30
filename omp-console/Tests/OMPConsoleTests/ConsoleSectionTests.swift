@@ -1,4 +1,4 @@
-// Assertions 1, 2 et 4 de S-4 : le modèle des quatre sections.
+// Assertions 1, 2 et 4 de S-4 : le modèle des cinq sections.
 //
 // Les valeurs sont LUES au module (`allCases`, `title`, `placeholder`) au lieu
 // d'être recopiées dans une table parallèle : seule la liste ATTENDUE des titres
@@ -7,15 +7,15 @@
 import Testing
 @testable import OMPConsole
 
-@Test("socle-app-swift/AC-2 : l'ordre des sections est Kanban, Sessions, Fichiers, Projet")
+@Test("socle-app-swift/AC-2 : l'ordre des sections est Kanban, Sessions, Fichiers, Projet, Mémoire")
 func sectionTitlesInOrder() {
-    #expect(ConsoleSection.allCases.map(\.title) == ["Kanban", "Sessions", "Fichiers", "Projet"])
+    #expect(ConsoleSection.allCases.map(\.title) == ["Kanban", "Sessions", "Fichiers", "Projet", "Mémoire"])
 }
 
-@Test("socle-app-swift/AC-2 : les quatre sections ont un contenu de remplacement distinct")
+@Test("socle-app-swift/AC-2 : les cinq sections ont un contenu de remplacement distinct")
 func sectionPlaceholdersAreDistinct() {
     let placeholders = ConsoleSection.allCases.map(\.placeholder)
-    #expect(placeholders.count == 4)
+    #expect(placeholders.count == 5)
     #expect(Set(placeholders).count == placeholders.count)
 }
 
