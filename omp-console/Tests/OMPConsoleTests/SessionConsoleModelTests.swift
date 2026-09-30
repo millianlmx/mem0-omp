@@ -254,3 +254,41 @@ func modelGatesLaunchAndPrompt() async throws {
     #expect(await waitUntil { !model.hasPendingDialog })
     #expect(model.canSendPrompt)
 }
+
+// MARK: - transport-rpc-bloquant-sans-sigpipe : ce que l'utilisateur voit
+
+@MainActor
+@Test("transport-rpc-bloquant-sans-sigpipe/AC-3 : le modèle affiche le message exact d'une écriture impossible")
+func modelShowsWriteFailureMessage() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedRpcTransport()
+    transport.readyLine = readyLine()
+    transport.onWrite = { line in
+        guard let type = field("type", in: line), let id = field("id", in: line) else { return }
+        switch type {
+        case "negotiate_protocol":
+            transport.emit(responseLine(id: id, command: "negotiate_protocol", data: ["protocolVersion": 2]))
+        case "get_state":
+            transport.emit(responseLine(id: id, command: "get_state", data: ["sessionId": "session-abcdef12"]))
+        default:
+            break
+        }
+    }
+    let host = makeHost(transport)
+    let model = makeModel(host: host, projectRoot: project)
+
+    model.launch()
+    #expect(await waitUntil { host.state == .running })
+    #expect(model.canSendPrompt == false)
+
+    model.prompt = "bonjour"
+    #expect(model.canSendPrompt)
+    transport.writeFailure = .writeFailed(32)
+    model.sendPrompt()
+
+    // « l'utilisateur voit » : c'est le texte affiché par la fenêtre, produit par
+    // `SessionHostError.userMessage` et par elle seule.
+    let expected = "Écriture impossible vers la session : le process ne lit plus son entrée (EPIPE)."
+    #expect(await waitUntil { model.statusMessage == expected })
+    #expect(host.state == .running)
+}

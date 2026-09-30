@@ -36,6 +36,11 @@ final class ScriptedRpcTransport: RpcTransport {
     /// réponse qui devance le garde-fou de délai n'est pas perdue (S-3).
     var onWrite: ((String) -> Void)?
 
+    /// Échec d'écriture piloté : quand il est posé, `write` le lève AVANT
+    /// d'enregistrer quoi que ce soit — c'est ce qui rend prouvable un échec
+    /// d'écriture (EPIPE, échéance) sans lancer de process réel (BR-2).
+    var writeFailure: TransportFailure?
+
     /// Trame `ready` livrée pendant `start` : la poignée de main est ainsi délivrée
     /// dans le même tour que le lancement, sans course avec le test.
     var readyLine: String?
@@ -53,6 +58,7 @@ final class ScriptedRpcTransport: RpcTransport {
 
     func write(_ line: String) throws {
         guard isRunning else { throw TransportFailure.notRunning }
+        if let writeFailure { throw writeFailure }
         written.append(line)
         onWrite?(line)
     }

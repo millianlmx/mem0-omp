@@ -967,3 +967,108 @@ func quitTerminationMatchesStop() async throws {
     #expect(host.state == .stopped)
     #expect(host.pid == nil)
 }
+
+// MARK: - transport-rpc-bloquant-sans-sigpipe : échecs d'écriture (S-2 à S-4)
+
+@MainActor
+@Test("transport-rpc-bloquant-sans-sigpipe/AC-3 : une écriture EPIPE hors démarrage nomme l'échec et laisse l'état running jusqu'à la sortie détectée")
+func epipeOutsideStartNamesFailureAndKeepsRunning() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedRpcTransport()
+    let host = try await startedHost(transport, projectRoot: project)
+    let expected = SessionHostError.writeFailed("le process ne lit plus son entrée (EPIPE)")
+    transport.writeFailure = .writeFailed(32)
+
+    do {
+        try await host.send(prompt: "bonjour")
+        Issue.record("une écriture en échec doit lever")
+    } catch let error as SessionHostError {
+        #expect(error == expected)
+    }
+
+    // Aucun octet ajouté hors poignée de main, et surtout : l'état ne bascule pas.
+    #expect(transport.writtenCommands.isEmpty)
+    #expect(host.state == .running)
+    #expect(host.transcript.contains { $0.kind == .clientError && $0.text == "! \(expected.userMessage)" })
+    #expect(host.journal.contains { $0.kind == .clientError && $0.message == expected.userMessage })
+
+    // L'état d'arrivée vient de la détection de sortie (`terminationHandler`).
+    let exit = ProcessExit(status: 0, reason: .exited)
+    transport.emitExit(exit)
+    #expect(host.state == .dead(exit: exit))
+}
+
+@MainActor
+@Test("transport-rpc-bloquant-sans-sigpipe/AC-1 : une écriture qui expire est nommée et laisse l'état running")
+func writeTimeoutOutsideStartNamesFailure() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedRpcTransport()
+    let host = try await startedHost(transport, projectRoot: project)
+    let expected = SessionHostError.writeFailed("le process n'accepte plus d'octets (délai de 500 ms dépassé)")
+    transport.writeFailure = .writeTimedOut(milliseconds: 500)
+
+    do {
+        try await host.send(prompt: "bonjour")
+        Issue.record("une écriture dont l'échéance tombe doit lever")
+    } catch let error as SessionHostError {
+        #expect(error == expected)
+    }
+
+    #expect(host.state == .running)
+    #expect(host.transcript.contains { $0.kind == .clientError && $0.text == "! \(expected.userMessage)" })
+    #expect(host.journal.contains { $0.message == expected.userMessage })
+}
+
+@MainActor
+@Test("transport-rpc-bloquant-sans-sigpipe/AC-2 : une réponse de dialogue qui échoue laisse la file intacte et n'écrit rien")
+func failedDialogAnswerKeepsQueueAndWritesNothing() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedRpcTransport()
+    let host = try await startedHost(transport, projectRoot: project)
+
+    transport.emit(dialogLine(id: "d1", method: "confirm", extra: ["title": "Continuer ?"]))
+    #expect(await waitUntil { host.dialogQueue.count == 1 })
+    let transcriptCount = host.transcript.count
+    let writtenCount = transport.written.count
+    transport.writeFailure = .writeFailed(32)
+
+    do {
+        try host.answer(.confirmed(id: "d1", confirmed: true))
+        Issue.record("une écriture en échec doit lever")
+    } catch let error as SessionHostError {
+        #expect(error == .writeFailed("le process ne lit plus son entrée (EPIPE)"))
+    }
+
+    #expect(host.dialogQueue.count == 1)
+    #expect(host.transcript.count == transcriptCount)
+    #expect(transport.written.count == writtenCount)
+}
+
+@MainActor
+@Test("transport-rpc-bloquant-sans-sigpipe/AC-4 : un échec d'écriture à la négociation met la session en failed puis la démonte")
+func writeFailureDuringNegotiationFailsStart() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedRpcTransport()
+    installStandardResponder(transport)
+    transport.readyLine = readyLine()
+    transport.writeFailure = .writeFailed(32)
+    let host = makeHost(transport)
+
+    do {
+        try await host.start(mode: .rpcUI, projectRoot: project, resume: false)
+        Issue.record("une négociation dont l'écriture échoue doit faire échouer le démarrage")
+    } catch let error as SessionHostError {
+        #expect(error == .writeFailed("le process ne lit plus son entrée (EPIPE)"))
+    }
+
+    let expected = "Écriture impossible vers la session : le process ne lit plus son entrée (EPIPE)."
+    #expect(host.state == .failed(message: expected))
+    #expect(host.protocolVersion == nil)
+    #expect(host.transcript.contains { $0.kind == .clientError && $0.text == "! \(expected)" })
+    // `shutdownAfterFailure` : stdin fermé, puis escalade tant que le process vit.
+    #expect(transport.closeStdinCount == 1)
+
+    // La sortie qui suit ne remplace PAS l'échec de démarrage.
+    transport.emitExit(ProcessExit(status: 0, reason: .exited))
+    #expect(host.state == .failed(message: expected))
+}
