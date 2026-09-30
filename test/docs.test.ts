@@ -10,9 +10,11 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-// Assemblé, jamais littéral : ce fichier de test ne doit pas être lui-même une
-// occurrence de la chaîne cherchée, sinon l'ensemble calculé s'inclurait lui-même.
-const URL_MARK = ["github", "com/"].join(".");
+// URL de CE dépôt (hôte GitHub, un handle, puis mem0-omp), pas toute adresse GitHub : les
+// tests de la console citent des URL de PR fictives qui n'ont aucun handle à
+// remplacer. Assemblé, jamais littéral : ce fichier de test ne doit pas être
+// lui-même une occurrence, sinon l'ensemble calculé s'inclurait lui-même.
+const URL_MARK = new RegExp(["github", "com/"].join("\\.") + "[^/\\s]+/mem0-omp");
 
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), "utf8");
 
@@ -166,7 +168,7 @@ test("docs/AC-21 : PUBLISHING.md cite exactement les fichiers porteurs d'URL et 
 
   // (2) Fichiers porteurs d'une URL de dépôt : tout le dépôt, hors .git et
   // node_modules.
-  const withUrl = repoFiles().filter((file) => read(file).includes(URL_MARK));
+  const withUrl = repoFiles().filter((file) => URL_MARK.test(read(file)));
   assert.deepEqual(
     citedPaths(section(doc, "Avant de pousser")),
     withUrl,

@@ -49,7 +49,7 @@ rejetée à la validation, ou l'extension est silencieusement ignorée au runtim
 
 ```bash
 # 1. Remplace le handle GitHub dans les fichiers qui portent une URL de dépôt :
-grep -rl 'github.com/' . --exclude-dir=.git --exclude-dir=node_modules
+grep -rlE 'github\.com/[^/[:space:]]+/mem0-omp' . --exclude-dir=.git --exclude-dir=node_modules
 
 # 2. Valide
 ./scripts/check.sh
