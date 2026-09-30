@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 5/5 « Les extras »
-**Avancement** : 14/15 feature(s) fusionnée(s)
+**Statut** : terminé
+**Avancement** : 15/15 feature(s) fusionnée(s)
 
 ## But
 
@@ -46,11 +46,11 @@ L'app lit le magasin d'état partagé (~/.omp/agent/pipeline/ : running, history
 | 2 | `notifications-et-barre-de-menus` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/45 | opencode-go/deepseek-v4.1-flash | Prévenir sans regarder : notifications macOS (une question attend une réponse, un jalon est à valider, une feature a échoué, une PR du projet est fusionnée) déclenchées au plus une fois par évènement, et une barre de menus affichant les compteurs (runs en cours, runs en attente) qui ouvre la fenêtre. La réussite se prouve par des notifications déclenchées sur de vrais évènements du magasin et un compteur qui correspond à l'état affiché. |
 | 3 | `conduite-de-projet` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/43 | opencode-go/deepseek-v4.1-flash | Conduire un projet entier depuis l'app, sans session OMP ouverte à la main : héberger une session /project (client RPC) et y jouer le rôle de l'utilisateur — dire « fin » au cadrage, valider ou corriger le plan, répondre aux escalades, donner les jalons — puis suivre les segments, les PR et les fusions jusqu'à la fin du projet. Le pilote reste dans l'extension et PROJECT.md reste le document de vérité, lisible dans l'app ; l'app ne réimplémente ni les règles du plan ni la conduite des lots. La réussite se prouve par un projet réel conduit du cadrage à la première PR sans ouvrir un terminal, et par une question de maillon qui arrive bien dans l'app. |
 
-### Segment 5 — Les extras (en cours)
+### Segment 5 — Les extras (terminé)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
 | 1 | `statistiques` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/47 | opencode-go/deepseek-v4.1-flash | Montrer ce que ça coûte et ce que ça dure : tokens d'entrée et de sortie, modèle, durée et nombre de tours par run, agrégés par feature et par projet, lus dans les sessions et le magasin. La réussite se prouve par les totaux d'une feature réelle qui correspondent à ses sessions et un agrégat de projet égal à la somme de ses features. |
 | 2 | `memoire-mem0` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/46 | opencode-go/deepseek-v4.1-flash | La mémoire du projet dans l'app : rechercher les souvenirs, voir le sommaire du projet et l'état du service, en s'adressant au service mem0-http comme le fait le plugin mémoire. La réussite se prouve par une recherche qui ramène les mêmes souvenirs que l'outil en session, et par l'indisponibilité du service dite clairement au lieu d'être masquée. |
-| 3 | `suivi-pr-ci` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/49 | opencode-go/deepseek-v4.1-flash | Suivre les PR jusqu'au vert : statuts des checks (check ubuntu-latest, check macos-latest, release-simulation), ouverture de la PR dans le navigateur, et fusion depuis l'app avec confirmation — le geste de l'utilisateur, jamais automatique. La réussite se prouve par des statuts conformes à gh pr checks sur une PR réelle et par une fusion depuis l'app qui fait avancer le segment suivant d'un projet. |
+| 3 | `suivi-pr-ci` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/49 | opencode-go/deepseek-v4.1-flash | Suivre les PR jusqu'au vert : statuts des checks (check ubuntu-latest, check macos-latest, release-simulation), ouverture de la PR dans le navigateur, et fusion depuis l'app avec confirmation — le geste de l'utilisateur, jamais automatique. La réussite se prouve par des statuts conformes à gh pr checks sur une PR réelle et par une fusion depuis l'app qui fait avancer le segment suivant d'un projet. |
 | 4 | `terminal-integre` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/48 | opencode-go/deepseek-v4.1-flash | Un terminal dans l'app pour reprendre la main : ouvrir une session OMP interactive (PTY) dans une fenêtre, éventuellement sur le worktree d'une feature, la lire et y écrire. La réussite se prouve par une session OMP interactive réelle ouverte, qui répond et se ferme proprement depuis l'app. |
