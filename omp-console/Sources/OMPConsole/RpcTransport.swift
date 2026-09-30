@@ -15,6 +15,7 @@
 // flux), découpe en lignes et alimente un `AsyncStream` consommé sur le
 // MainActor. C'est le motif compilé en D5 sur ce toolchain (CLT seuls).
 
+import Darwin
 import Foundation
 
 /// Sortie du process, dans les deux formes que D2 impose de distinguer : une fin
@@ -34,7 +35,34 @@ struct ProcessExit: Equatable, Sendable {
 enum TransportFailure: Error, Equatable {
     case stdinClosed
     case notRunning
+    /// `write(2)` a échoué sur un `errno` autre que `EINTR`/`EAGAIN` (EPIPE = 32
+    /// quand plus personne ne lit l'entrée du process).
+    case writeFailed(Int32)
+    /// L'échéance d'écriture est tombée sans que le process accepte les octets.
+    case writeTimedOut(milliseconds: Int)
+
+    /// L'UNIQUE table de texte du transport : le host ne compose pas le message,
+    /// il traduit cette raison (S-2).
+    var userReason: String {
+        switch self {
+        case .stdinClosed:
+            return "l'entrée de la session est fermée"
+        case .notRunning:
+            return "aucun process n'est lancé"
+        case .writeFailed(32):
+            return "le process ne lit plus son entrée (EPIPE)"
+        case .writeFailed(let code):
+            return "erreur \(code)"
+        case .writeTimedOut(let milliseconds):
+            return "le process n'accepte plus d'octets (délai de \(milliseconds) ms dépassé)"
+        }
+    }
 }
+
+/// Échéance d'une écriture sur le tube d'entrée du transport RPC : même forme et
+/// même valeur que `terminalWriteGrace` (S-1). Une échéance par appel, jamais
+/// partagée ni prolongée.
+private let rpcWriteGrace: Duration = .milliseconds(500)
 
 @MainActor
 protocol RpcTransport: AnyObject {
@@ -99,6 +127,13 @@ final class ProcessTransport: RpcTransport {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
         stdinHandle = stdinPipe.fileHandleForWriting
+        // Les trois `Pipe` sont recréés à chaque `start`, donc les drapeaux le sont
+        // aussi. Sur le fd d'écriture du tube stdin et sur lui seul : jamais de
+        // SIGPIPE (drapeau par fd, jamais `signal(SIGPIPE, …)` global), puis fd non
+        // bloquant pour que la boucle d'écriture borne son attente (S-1).
+        let stdinFD = stdinPipe.fileHandleForWriting.fileDescriptor
+        _ = fcntl(stdinFD, F_SETNOSIGPIPE, 1)
+        _ = fcntl(stdinFD, F_SETFL, O_NONBLOCK)
 
         let stdoutStream = AsyncStream<String> { continuation in
             Self.pump(stdoutPipe.fileHandleForReading, into: continuation)
@@ -131,7 +166,35 @@ final class ProcessTransport: RpcTransport {
     func write(_ line: String) throws {
         guard isRunning else { throw TransportFailure.notRunning }
         guard !stdinClosed, let handle = stdinHandle else { throw TransportFailure.stdinClosed }
-        try handle.write(contentsOf: Data(line.utf8))
+
+        // Boucle bornée, sur les octets et dans l'ordre : `EINTR` relance sans
+        // consommer l'échéance, `EAGAIN` attend un `POLLOUT` de 20 ms, tout autre
+        // `errno` est un échec nommé — jamais un blocage du MainActor, jamais une
+        // perte silencieuse (S-1).
+        let bytes = Array(line.utf8)
+        let fd = handle.fileDescriptor
+        var offset = 0
+        let deadline = ContinuousClock.now + rpcWriteGrace
+        while offset < bytes.count {
+            let written = bytes.withUnsafeBytes { buffer in
+                Darwin.write(fd, buffer.baseAddress! + offset, bytes.count - offset)
+            }
+            if written > 0 {
+                offset += written
+                continue
+            }
+            if written < 0, errno == EINTR { continue }
+            if written < 0, errno == EAGAIN || errno == EWOULDBLOCK {
+                guard ContinuousClock.now < deadline else {
+                    let milliseconds = Int(rpcWriteGrace / .milliseconds(1))
+                    throw TransportFailure.writeTimedOut(milliseconds: milliseconds)
+                }
+                var descriptor = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                _ = Darwin.poll(&descriptor, 1, 20)
+                continue
+            }
+            throw TransportFailure.writeFailed(errno)
+        }
     }
 
     /// Fermeture de stdin = fin propre demandée au process (D1 : à la fermeture,

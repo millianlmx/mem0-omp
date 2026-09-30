@@ -547,6 +547,13 @@ bouton **Relancer**, qui reprend le même `.jsonl`), et l'erreur explicite en ca
 d'échec. Un prompt n'est jamais relancé tout seul après une mort : la relance est
 un clic.
 
+L'écriture d'un prompt est **bornée** (délai de 500 ms) et sans `SIGPIPE` : si le
+`omp` hébergé ne lit plus son entrée ou est mort, l'écriture échoue proprement —
+l'app ne meurt pas d'un `SIGPIPE` — et la fenêtre affiche « Écriture impossible
+vers la session : … ». La mort de la session reste annoncée par la sortie réelle du
+process : état `Process mort …` et bouton **Relancer** (l'échec d'écriture, lui, ne
+change pas l'état de la session).
+
 ### Trouver le binaire `omp`
 
 La variable d'environnement **`OMP_CONSOLE_OMP_BINARY`** fixe le chemin du binaire :
@@ -1107,7 +1114,8 @@ omp-console/
 │   │                              dialogues, mort, relance, arrêt propre
 │   ├── RpcFrames.swift            trames JSONL : décodage, commandes, réponses
 │   ├── RpcChunkDecoder.swift      fragments v2 et lignes illisibles
-│   ├── RpcTransport.swift         process hébergé : tubes, signaux, sortie
+│   ├── RpcTransport.swift         process hébergé : tubes, signaux, sortie,
+│   │                              écriture bornée sans SIGPIPE
 │   ├── OmpBinary.swift            résolution du binaire `omp`
 │   ├── Terminal/                  la fenêtre de terminal : un vrai `omp` dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, termios brut d'entrée, écriture,

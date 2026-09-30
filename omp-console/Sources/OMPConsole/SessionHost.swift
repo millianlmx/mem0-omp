@@ -76,6 +76,15 @@ enum SessionHostError: Error, Equatable, Sendable {
         }
     }
 
+    /// Traduction d'un échec d'écriture du transport, en liste close (S-2) : un
+    /// `SessionHostError` passe tel quel, un `TransportFailure` devient
+    /// `.writeFailed(userReason)`, tout le reste garde le comportement actuel.
+    static func writeFailure(_ error: Error) -> SessionHostError {
+        if let hostError = error as? SessionHostError { return hostError }
+        if let transportError = error as? TransportFailure { return .writeFailed(transportError.userReason) }
+        return .writeFailed(String(describing: error))
+    }
+
     /// `<n> s` des messages littéraux : entier quand c'est un entier.
     static func secondsText(_ seconds: Double) -> String {
         if seconds == seconds.rounded() { return String(Int(seconds)) }
@@ -297,7 +306,7 @@ final class SessionHost: ObservableObject {
             protocolVersion = 2
             state = .running
         } catch {
-            let hostError = (error as? SessionHostError) ?? SessionHostError.writeFailed(String(describing: error))
+            let hostError = SessionHostError.writeFailure(error)
             fail(message: hostError.userMessage)
             await shutdownAfterFailure()
             throw hostError
@@ -391,7 +400,7 @@ final class SessionHost: ObservableObject {
             } catch {
                 resolveFailure(
                     id: id,
-                    error: .writeFailed(String(describing: error))
+                    error: SessionHostError.writeFailure(error)
                 )
                 return
             }
@@ -547,7 +556,7 @@ final class SessionHost: ObservableObject {
         do {
             try transport.write(line)
         } catch {
-            throw SessionHostError.writeFailed(String(describing: error))
+            throw SessionHostError.writeFailure(error)
         }
         appendTranscript(.outbound, "→ " + line.trimmingCharacters(in: .newlines))
         dialogQueue.removeAll { $0.id == response.id }
