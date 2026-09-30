@@ -3,7 +3,7 @@
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
 **Statut** : en cours — segment 5/5 « Les extras »
-**Avancement** : 13/15 feature(s) fusionnée(s)
+**Avancement** : 14/15 feature(s) fusionnée(s)
 
 ## But
 
@@ -53,4 +53,4 @@ L'app lit le magasin d'état partagé (~/.omp/agent/pipeline/ : running, history
 | 1 | `statistiques` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/47 | opencode-go/deepseek-v4.1-flash | Montrer ce que ça coûte et ce que ça dure : tokens d'entrée et de sortie, modèle, durée et nombre de tours par run, agrégés par feature et par projet, lus dans les sessions et le magasin. La réussite se prouve par les totaux d'une feature réelle qui correspondent à ses sessions et un agrégat de projet égal à la somme de ses features. |
 | 2 | `memoire-mem0` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/46 | opencode-go/deepseek-v4.1-flash | La mémoire du projet dans l'app : rechercher les souvenirs, voir le sommaire du projet et l'état du service, en s'adressant au service mem0-http comme le fait le plugin mémoire. La réussite se prouve par une recherche qui ramène les mêmes souvenirs que l'outil en session, et par l'indisponibilité du service dite clairement au lieu d'être masquée. |
 | 3 | `suivi-pr-ci` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/49 | opencode-go/deepseek-v4.1-flash | Suivre les PR jusqu'au vert : statuts des checks (check ubuntu-latest, check macos-latest, release-simulation), ouverture de la PR dans le navigateur, et fusion depuis l'app avec confirmation — le geste de l'utilisateur, jamais automatique. La réussite se prouve par des statuts conformes à gh pr checks sur une PR réelle et par une fusion depuis l'app qui fait avancer le segment suivant d'un projet. |
-| 4 | `terminal-integre` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/48 | opencode-go/deepseek-v4.1-flash | Un terminal dans l'app pour reprendre la main : ouvrir une session OMP interactive (PTY) dans une fenêtre, éventuellement sur le worktree d'une feature, la lire et y écrire. La réussite se prouve par une session OMP interactive réelle ouverte, qui répond et se ferme proprement depuis l'app. |
+| 4 | `terminal-integre` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/48 | opencode-go/deepseek-v4.1-flash | Un terminal dans l'app pour reprendre la main : ouvrir une session OMP interactive (PTY) dans une fenêtre, éventuellement sur le worktree d'une feature, la lire et y écrire. La réussite se prouve par une session OMP interactive réelle ouverte, qui répond et se ferme proprement depuis l'app. |
