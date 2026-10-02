@@ -14,8 +14,6 @@ func prPaneTextsAreExact() {
         ProjectViewText.prUnavailable("gh est introuvable")
             == "Statuts indisponibles : gh est introuvable"
     )
-    // Le lien d'un run rouge.
-    #expect(ProjectViewText.prRunLink("109789011950") == "run 109789011950")
 }
 
 @MainActor

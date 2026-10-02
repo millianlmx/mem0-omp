@@ -76,8 +76,14 @@ final class ScriptedMemoryService: MemoryServing, @unchecked Sendable {
 
 // MARK: - Fabriques
 
-func memoryRow(id: String, text: String, score: Double? = nil, updatedAt: String? = nil) -> MemoryRow {
-    MemoryRow(id: id, text: text, updatedAt: updatedAt, semanticScore: score)
+func memoryRow(
+    id: String,
+    text: String,
+    score: Double? = nil,
+    updatedAt: String? = nil,
+    tags: [String] = []
+) -> MemoryRow {
+    MemoryRow(id: id, text: text, updatedAt: updatedAt, semanticScore: score, tags: tags)
 }
 
 /// Un modèle réel branché sur la doublure : portée FIXE (le projet ouvert n'est pas

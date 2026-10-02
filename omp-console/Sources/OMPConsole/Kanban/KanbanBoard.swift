@@ -3,10 +3,11 @@
 // et portant ce que l'entité porte vraiment (S-4).
 //
 // Le fichier porte aussi les textes de PARITÉ avec le panneau `/pipelines`
-// (Doc-5) : `elapsedLabel`, `lotStateLabel`, `lotWaitLabel`, `liveStateLabel` et
-// `lotFeatureLabel` reprennent MOT POUR MOT leurs homologues TypeScript, et les
-// commentaires nomment la fonction reproduite — la relecture se fait donc par
-// comparaison, pas par confiance.
+// (Doc-5) : `elapsedLabel`, `lotStateLabel`, `lotWaitLabel` et `liveStateLabel`
+// reprennent MOT POUR MOT leurs homologues TypeScript, et les commentaires nomment
+// la fonction reproduite — la relecture se fait donc par comparaison, pas par
+// confiance. Le titre d'une carte de lot, lui, est le seul slug : dépendances,
+// modèle et messages en file sont des détails du terminal, pas de la carte.
 
 import Foundation
 
@@ -69,15 +70,6 @@ func liveStateLabel(_ entry: RunningEntry) -> String {
     return entry.state == .waiting ? "attend" : "tourne"
 }
 
-/// `lotFeatureLabel` (panelRows.ts:772-786) : `slug ← deps`, puis ` · modèle <m>`,
-/// puis ` · <n> message(s) en attente` — dans cet ordre, et rien de plus.
-func lotFeatureLabel(_ feature: LotFeature) -> String {
-    let base = feature.deps.isEmpty ? feature.slug : "\(feature.slug) ← \(feature.deps.joined(separator: ","))"
-    let withModel = feature.model.map { "\(base) · modèle \($0)" } ?? base
-    let queued = feature.pendingTexts.count
-    guard queued > 0 else { return withModel }
-    return "\(withModel) · \(queued) message\(queued > 1 ? "s" : "") en attente"
-}
 
 // --- l'ardoise ---------------------------------------------------------------
 
@@ -151,7 +143,7 @@ extension KanbanBoard {
                             lot: lot, feature: feature, project: pair?.feature, run: run, history: nil
                         ),
                         repo: basename(repoReal),
-                        title: lotFeatureLabel(feature),
+                        title: feature.slug,
                         state: lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state),
                         // Le maillon : celui du run apparié, sinon celui de la feature.
                         phase: run?.phase ?? feature.phase,
@@ -169,7 +161,8 @@ extension KanbanBoard {
                             slug: feature.slug,
                             waitKind: feature.waitKind,
                             featureState: feature.state,
-                            run: run.map(cardRun)
+                            run: run.map(cardRun),
+                            waitPrompt: feature.waitPrompt
                         )
                     ),
                     run: run,

@@ -1,6 +1,6 @@
-// Preuves de la SURFACE de la section Kanban (BR-4) : les onze colonnes nommées et
-// ordonnées (AC-1), les messages d'état exacts (AC-14), et la déclaration de
-// section de la vue.
+// Preuves de la SURFACE de la section Kanban (BR-4) : les onze colonnes et leurs
+// identifiants (AC-1), la déclaration de section de la vue et le badge d'état
+// d'une carte.
 //
 // Les vues SwiftUI ne se rendent pas sous les Command Line Tools : ce qui se
 // vérifie ici est ce qu'elles LISENT (les colonnes du modèle, les messages), le
@@ -12,23 +12,10 @@ import Testing
 // `@MainActor` : `KanbanView` est une vue SwiftUI, donc isolée au fil principal
 // (Swift 6) — lire sa `section` statique depuis un test non isolé avertirait.
 @MainActor
-@Test("kanban-des-pipelines/AC-1 : les onze colonnes sont nommées d'après leur état et ordonnées")
-func columnsAreNamedAndOrdered() {
-    #expect(KanbanColumn.allCases.map(\.title) == [
-        "En attente",
-        "En cours",
-        "Question en vol",
-        "PR ouverte",
-        "Fusionné",
-        "Échec",
-        "Jalon specs",
-        "Jalon review",
-        "Bloquée",
-        "Terminée sans PR",
-        "Annulée / retirée",
-    ])
-    // Le `rawValue` EST l'identifiant d'accessibilité `kanban.column.<rawValue>` :
-    // une colonne renommée changerait l'identifiant lu par la sonde AX.
+@Test("kanban-des-pipelines/AC-1 : les onze colonnes sont ordonnées et identifiées")
+func columnsAreOrdered() {
+    // L'ordre des colonnes ordonne les cartes DANS une voie : le changer
+    // changerait l'ordre lu à l'écran et par le clavier.
     #expect(KanbanColumn.allCases.map(\.rawValue) == [
         "en-attente",
         "en-cours",
@@ -42,15 +29,6 @@ func columnsAreNamedAndOrdered() {
         "terminee-sans-pr",
         "annulee-retiree",
     ])
-}
-
-@MainActor
-@Test("kanban-des-pipelines/AC-14 : les messages d'état de la vue sont exacts et portent le chemin")
-func stateMessagesAreExact() {
-    #expect(KanbanBoardState.loadingText == "Chargement du magasin d'état…")
-    #expect(KanbanBoardState.absentText(dir: "/tmp/etat") == "Magasin d'état absent : /tmp/etat")
-    #expect(KanbanBoardState.emptyText(dir: "/tmp/etat") == "Magasin d'état vide : /tmp/etat")
-    #expect(KanbanBoardState.emptySelectionText == "Aucune carte sélectionnée")
 }
 
 @MainActor
@@ -68,42 +46,67 @@ func marksTextIsOrdered() {
     )
     #expect(card.marksText == "illisible, mort, doublon")
     #expect(card.phaseText == "/impl")
-    #expect(card.modelText == "modèle : absent")
-    #expect(card.prText == "PR : absente")
     // Une carte saine n'affiche aucune ligne de marques.
     var healthy = card
     healthy.marks = []
     #expect(healthy.marksText == nil)
 }
 
-@Test("kanban-des-pipelines/AC-7 : le panneau de détail décrit la carte ligne par ligne")
-func detailLinesMatchTheContract() {
-    let card = KanbanCard(
-        id: "feature:abc:s", column: .jalonSpecs, repo: "depot", title: "s ← amont",
-        state: "attend validation", phase: .specs, model: "opus", prUrl: nil,
-        startMs: 1_000, endMs: nil,
-        marks: [.mort],
-        sources: [
-            KanbanSource(kind: .lot, ref: "lots/abc.json · feature « s »"),
-            KanbanSource(kind: .run, ref: "running/deadbeef00000000.json"),
-        ]
+private func laneCard(_ column: KanbanColumn, id: String = "feature:k:export", marks: [KanbanMark] = []) -> KanbanCard {
+    let action = KanbanCardAction(
+        repoRoot: "/tmp/depot", slug: "export", waitKind: nil, featureState: .running, run: nil
     )
-    #expect(KanbanDetail.lines(for: card, nowMs: 4_000) == [
-        "depot · s ← amont",
-        "État : attend validation",
-        "Maillon : /specs",
-        "Modèle : opus",
-        "PR : absente",
-        "Durée : 0:03",
-        "Marques : mort",
-        "Sources :",
-        "  · lots/abc.json · feature « s »",
-        "  · running/deadbeef00000000.json",
-    ])
-    // Le panneau dit l'ABSENCE quand la carte n'a ni modèle ni URL.
-    var bare = card
-    bare.model = nil
-    bare.prUrl = nil
-    #expect(KanbanDetail.lines(for: bare, nowMs: 4_000)[3] == "Modèle : absent")
-    #expect(KanbanDetail.lines(for: bare, nowMs: 4_000)[4] == "PR : absente")
+    return KanbanCard(
+        id: id, column: column, repo: "depot", title: "export", state: "tourne",
+        phase: .impl, model: nil, prUrl: nil, startMs: 0, endMs: nil,
+        marks: marks, sources: [], action: action
+    )
+}
+
+@Test("pipelines/voies : chaque colonne de l'ardoise tombe dans la voie de son cours, une feature en pause reste en cours")
+func everyColumnHasItsLane() {
+    let expected: [KanbanColumn: KanbanLane] = [
+        .enAttente: .pasCommencees, .enCours: .enCours,
+        .questionEnVol: .aVous, .jalonSpecs: .aVous, .jalonReview: .aVous,
+        .prOuverte: .livrees, .fusionne: .livrees, .termineeSansPr: .livrees,
+        .echec: .arretees, .bloquee: .arretees, .annuleeRetiree: .arretees,
+    ]
+    for column in KanbanColumn.allCases {
+        var card = laneCard(column)
+        card.action = nil
+        #expect(KanbanLane.of(card) == expected[column], "colonne \(column.rawValue)")
+    }
+    // Le pilote est mort, la feature vit : « En pause », donc en cours — pas en échec.
+    let paused = laneCard(.echec, marks: [.mort])
+    #expect(KanbanLane.of(paused) == .enCours)
+    #expect(KanbanCardPresentation.badge(paused)?.tone == .paused)
+}
+
+@Test("pipelines/voies : les voies permanentes restent même vides, « Arrêtées » seulement si elle a des cartes")
+func lanesKeepPermanentOnes() {
+    let empty = KanbanBoard(cards: [], anomalies: [])
+    #expect(empty.lanes.map(\.lane) == [.pasCommencees, .enCours, .aVous, .livrees])
+    var failed = laneCard(.echec, id: "f")
+    failed.action = nil
+    let review = laneCard(.jalonReview, id: "r")
+    let question = laneCard(.questionEnVol, id: "q")
+    let board = KanbanBoard(cards: [review, failed, question], anomalies: [])
+    #expect(board.lanes.map(\.lane) == [.pasCommencees, .enCours, .aVous, .livrees, .arretees])
+    // Dans une voie : l'ordre des colonnes (question avant revue), pas celui de l'ardoise.
+    #expect(board.lanes.first { $0.lane == .aVous }?.cards.map(\.id) == ["q", "r"])
+}
+
+@Test("pipelines/cartes : le badge ne répète jamais la voie")
+func cardBadgeNeverRepeatsTheLane() {
+    var running = laneCard(.enCours)
+    #expect(KanbanCardPresentation.badge(running) == nil)
+    running.column = .enAttente
+    running.action = nil
+    #expect(KanbanCardPresentation.badge(running) == nil)
+    // « À vous » dans « À vous » : la nature de l'attente le remplace.
+    #expect(KanbanCardPresentation.badge(laneCard(.questionEnVol))?.text != KanbanLane.aVous.title)
+    #expect(KanbanCardPresentation.badge(laneCard(.jalonSpecs)) == ConsoleStatus.of(card: laneCard(.jalonSpecs)))
+    // La durée ne s'affiche que pour ce qui tourne ou attend.
+    #expect(KanbanCardPresentation.showsDuration(laneCard(.enCours)))
+    #expect(!KanbanCardPresentation.showsDuration(laneCard(.prOuverte)))
 }

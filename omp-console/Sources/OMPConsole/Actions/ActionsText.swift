@@ -11,47 +11,54 @@ import Foundation
 enum ActionsText {
     // --- libellés des gestes (la première colonne d'une ligne de journal) -----
     static let answerLabel = "réponse"
-    static let textLabel = "texte"
-    static let specsLabel = "jalon specs"
-    static let reviewLabel = "jalon revue"
+    static let textLabel = "message"
+    static let specsLabel = "validation des specs"
+    static let reviewLabel = "acceptation de la revue"
     static let launchLabel = "lancement"
     static let stopLabel = "arrêt"
+    static let resumeLabel = "reprise"
 
     // --- états du journal (S-4) ----------------------------------------------
-    static let awaitingAck = "en attente dans le canal"
+    static let awaitingAck = "envoyé au pilote"
     static let taken = "prise en charge"
     static let refused = "refusée"
-    static let delivered = "déposé"
+    static let delivered = "remis à l'agent"
+    /// Une commande restée sans accusé après `ActionsModel.ackTimeoutMs` (S-8 de
+    /// omp-console-redesign) : aucun pilote ne l'a prise — le plus souvent, le
+    /// plugin chargé par omp ne porte pas le canal.
+    static let unacknowledged =
+        "le pilote n'a pas répondu après 20 s — vérifiez que le plugin omp-mem0-req est installé"
 
     // --- zone d'action (S-9) -------------------------------------------------
-    static let launchToggle = "Lancer une feature…"
-    static let noGesture =
-        "Aucun geste depuis cette carte : elle ne porte ni run vivant ni jalon de lot."
-    static let questionTitle = "Question en vol"
-    static let answerFieldPlaceholder = "ou saisissez votre réponse"
+    static let noGesture = "Aucune action possible sur cette pipeline pour l'instant."
+    /// Le motif d'une exécution sans boîte publiée (S-9) : sans elle, aucune
+    /// écriture n'est possible.
+    static let notArmed = "Cette exécution n'accepte pas de message pour l'instant."
+    static let questionTitle = "Question de l'agent"
+    static let answerFieldPlaceholder = "Autre réponse…"
     static let answer = "Répondre"
-    static let steerTitle = "Envoyer un texte à ce run"
+    static let steerTitle = "Envoyer un message à l'agent"
     static let steerFieldLabel = "Votre message"
     static let send = "Envoyer"
     static let validate = "Valider les specs"
     static let accept = "Accepter la revue"
-    static let stop = "Arrêter le lot"
-
-    // --- formulaire de lancement (S-9) ---------------------------------------
-    static let titleLabel = "Titre"
-    static let descriptionLabel = "Description"
-    static let repoLabel = "Dépôt"
-    static let submit = "Lancer"
+    static let stop = "Arrêter…"
+    static let stopConfirm = "Arrêter"
+    static let stopConfirmMessage =
+        "Le pilote s'arrête et les pipelines en cours dans ce dépôt sont interrompues."
     static let cancel = "Annuler"
+    static let replyTitle = "Question de l'agent"
+    static let replyFieldPlaceholder = "Votre réponse"
+    static let resumeNote = "Le pilote de cette pipeline est arrêté."
+    static let resume = "Reprendre"
 
-    // --- journal (S-9) -------------------------------------------------------
-    static let journalTitle = "Gestes"
+    // --- journal (S-9, « Activité récente » de S-14) ------------------------
+    static let journalTitle = "Activité récente"
     static let journalEmpty = "Aucun geste pour l'instant."
 
-    /// Le motif d'un run sans boîte publiée (S-9) : sans elle, aucune écriture
-    /// n'est possible.
-    static func notArmed(_ label: String) -> String {
-        "Ce run (\(label)) n'accepte pas d'écriture : aucune boîte n'est publiée (run non armé)."
+    /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
+    static func stopConfirmTitle(repo: String) -> String {
+        "Arrêter les pipelines de \(repo) ?"
     }
 
     /// Le motif d'un refus du pilote : le texte EXACT du canal (AC-9), jamais
@@ -65,11 +72,6 @@ enum ActionsText {
         "échec : \(reason)"
     }
 
-    /// Le message d'un magasin sans aucun dépôt connu (S-7).
-    static func noRepos() -> String {
-        "Aucun dépôt connu : aucun lot dans le magasin et aucun projet ouvert."
-    }
-
     /// L'état d'une entrée de journal, en texte exact (S-4).
     static func stateText(_ state: ActionJournalState) -> String {
         switch state {
@@ -79,6 +81,7 @@ enum ActionsText {
         case .refused(let reason?): refused(reason)
         case .delivered: delivered
         case .failed(let reason): failed(reason)
+        case .unacknowledged: unacknowledged
         }
     }
 

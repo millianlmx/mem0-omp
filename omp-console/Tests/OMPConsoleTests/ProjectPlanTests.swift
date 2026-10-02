@@ -66,8 +66,14 @@ func planShowsSegmentsStatesAndPR() async throws {
     #expect(sections[1].removed.count == 1)
     #expect(sections[1].removed.first?.removedReason == "abandonnée par l'utilisateur")
 
-    #expect(projectStatusLine(of: project) == "en cours — segment 2/2 « Lire le réel »")
-    #expect(projectProgressLine(of: project) == "1/2 feature(s) fusionnée(s)")
+    // L'en-tête situe le segment courant (rang 1-basé, total, nom) et compte les
+    // fusionnées parmi les features non retirées.
+    let status = projectStatusLine(of: project)
+    #expect(status.contains("segment 2 sur 2"))
+    #expect(status.contains("Lire le réel"))
+    let counts = projectProgressCounts(of: project)
+    #expect(counts.merged == 1)
+    #expect(counts.total == 2)
 
     // Une URL non http(s) n'est pas cliquable ; une URL http(s) l'est.
     #expect(ProjectPlanRowView.linkURL("https://example.com/pull/1") != nil)
@@ -75,22 +81,19 @@ func planShowsSegmentsStatesAndPR() async throws {
 }
 
 @MainActor
-@Test("conduite-de-projet/AC-8 : le vocabulaire d'état est celui du pilote")
-func planUsesPilotVocabulary() async throws {
-    #expect(featureStateLabel(.planned, failure: nil) == "à venir")
-    #expect(featureStateLabel(.launched, failure: nil) == "lancée")
-    #expect(featureStateLabel(.pr, failure: nil) == "PR ouverte")
-    #expect(featureStateLabel(.merged, failure: nil) == "fusionnée")
-    #expect(featureStateLabel(.removed, failure: nil) == "retirée")
-    #expect(featureStateLabel(.failed, failure: nil) == "en échec")
+@Test("conduite-de-projet/AC-8 : une feature en échec porte son motif")
+func planFailedFeatureCarriesReason() async throws {
     let failure = ProjectFailure(kind: .lot, reason: "la compilation échoue", at: 1)
-    #expect(featureStateLabel(.failed, failure: failure) == "en échec — la compilation échoue")
+    let bare = featureStateLabel(.failed, failure: nil)
+    #expect(featureStateLabel(.failed, failure: failure) == "\(bare) — la compilation échoue")
+    // Un motif vide ne laisse pas de tiret orphelin.
+    #expect(featureStateLabel(.failed, failure: ProjectFailure(kind: .lot, reason: "", at: 1)) == bare)
 }
 
 @MainActor
-@Test("conduite-de-projet/AC-8 : un projet terminé se dit « terminé »")
+@Test("conduite-de-projet/AC-8 : un projet terminé ne cite plus de segment")
 func planShowsDoneStatus() async throws {
     var project = twoSegmentProject()
     project.status = .done
-    #expect(projectStatusLine(of: project) == "terminé")
+    #expect(projectStatusLine(of: project) == ProjectViewText.statusDone)
 }

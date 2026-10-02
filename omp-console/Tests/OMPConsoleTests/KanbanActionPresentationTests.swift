@@ -60,16 +60,14 @@ func unarmedRunHasMotif() {
     let armed = card(action(run: run, slug: nil, waitKind: nil, featureState: nil, repoRoot: nil))
 
     #expect(KanbanActionPresentation.zones(for: armed).isEmpty)
-    #expect(KanbanActionPresentation.motif(for: armed)
-        == "Ce run (depot/alpha) n'accepte pas d'écriture : aucune boîte n'est publiée (run non armé).")
+    #expect(KanbanActionPresentation.motif(for: armed) == ActionsText.notArmed)
 }
 
 @Test("reponses-et-jalons/AC-4 : une carte sans run ni jalon ne porte aucun geste")
 func cardWithoutRunHasNoGesture() {
     let bare = card(action(run: nil, slug: nil, waitKind: nil, featureState: nil, repoRoot: nil))
     #expect(KanbanActionPresentation.zones(for: bare).isEmpty)
-    #expect(KanbanActionPresentation.motif(for: bare)
-        == "Aucun geste depuis cette carte : elle ne porte ni run vivant ni jalon de lot.")
+    #expect(KanbanActionPresentation.motif(for: bare) == ActionsText.noGesture)
 
     let history = card(nil)
     #expect(KanbanActionPresentation.zones(for: history).isEmpty)
@@ -146,4 +144,44 @@ func launchDefaultSelection() {
         options: options, selectedRepoRoot: nil, projectRoot: nil
     ) == "/tmp/alpha")
     #expect(KanbanLaunchRepos.defaultSelection(options: [], selectedRepoRoot: nil, projectRoot: nil) == nil)
+}
+
+// MARK: - question en texte et reprise (S-10 de omp-console-redesign)
+
+@Test("omp-console-redesign/AC-6 : une feature en attente de réponse offre « Répondre » avec sa question, jamais en même temps qu'une question en vol")
+func textQuestionOffersReplyOnlyWithoutPendingAsk() {
+    var waiting = action(run: nil, waitKind: .answer, featureState: .waiting)
+    waiting.waitPrompt = "Quel format d'export ?"
+    #expect(KanbanActionPresentation.zones(for: card(waiting)) == [
+        .textQuestion(slug: "alpha", prompt: "Quel format d'export ?"),
+        .stopLot(repoRoot: "/tmp/depot"),
+    ])
+
+    // Une question `ask` EN VOL prime : sa zone, jamais la question en texte.
+    var inFlight = waiting
+    inFlight.run = KanbanCardRun(id: "r1", label: "depot/alpha", inbox: "/tmp/box", pendingAsk: ask)
+    let zones = KanbanActionPresentation.zones(for: card(inFlight))
+    #expect(zones.contains(.pendingQuestion(toolCallId: "call-1", question: "On garde ?", options: ask.options)))
+    #expect(!zones.contains { if case .textQuestion = $0 { true } else { false } })
+
+    // Une feature qui n'attend pas de réponse n'offre pas « Répondre ».
+    let running = action(run: nil, waitKind: nil, featureState: .running)
+    #expect(!KanbanActionPresentation.zones(for: card(running)).contains { if case .textQuestion = $0 { true } else { false } })
+}
+
+@Test("omp-console-redesign/AC-5 : une pipeline au pilote mort offre « Reprendre »")
+func deadPilotOffersResume() {
+    var dead = card(action(run: nil, featureState: .running))
+    dead.marks = [.mort]
+    #expect(KanbanActionPresentation.zones(for: dead).contains(.resume(repoRoot: "/tmp/depot")))
+    // Ordre : la reprise précède l'arrêt.
+    #expect(KanbanActionPresentation.zones(for: dead) == [.resume(repoRoot: "/tmp/depot"), .stopLot(repoRoot: "/tmp/depot")])
+
+    // Sans la marque, rien à reprendre.
+    #expect(!KanbanActionPresentation.zones(for: card(action(run: nil, featureState: .running))).contains(.resume(repoRoot: "/tmp/depot")))
+
+    // Une feature terminée n'a rien à reprendre, même au pilote mort.
+    var done = card(action(run: nil, featureState: .done))
+    done.marks = [.mort]
+    #expect(!KanbanActionPresentation.zones(for: done).contains(.resume(repoRoot: "/tmp/depot")))
 }

@@ -692,6 +692,56 @@ test("canal/S-5 : deux réponses au même couple (feature, question) — la seco
   );
 });
 
+test("omp-console-redesign/AC-6 : une commande reply répond à une feature en attente de réponse et relance son maillon", async () => {
+  const repo = mkRepo();
+  const stateDir = path.join(mktmp("cmd-state-"), "pipeline");
+  const worktree = path.join(mktmp("cmd-wt-"), "alpha");
+  fs.mkdirSync(worktree, { recursive: true });
+  const sessionFile = path.join(mktmp("cmd-session-"), "alpha.jsonl");
+  const observed: { ackAtRunStart: string | null } = { ackAtRunStart: null };
+  const { runner, runs } = mkRunner(() => {
+    observed.ackAtRunStart = readCommandAck(stateDir, "c-reply")?.state ?? null;
+    return null;
+  });
+  const { controller } = mkCtl(repo, { runner, stateDir });
+  seedLot(stateDir, repo, [
+    feature("alpha", {
+      state: "waiting",
+      waitKind: "answer",
+      waitPrompt: "Quelle base ?",
+      phase: "specs",
+      worktree,
+      branch: "feat/alpha",
+      sessionFile,
+    }),
+    feature("beta", { state: "running", phase: "impl", worktree: path.join(mktmp("cmd-wt-"), "beta"), branch: "feat/beta" }),
+  ]);
+  const reply = (id: string, slug: string, text: string): PipelineCommand =>
+    ({ version: 1, id, sentAt: at(), repo, kind: "reply", slug, text });
+
+  deposit(stateDir, reply("c-reply", "alpha", "Postgres, la base existante"));
+  await controller.pumpCommands();
+
+  assert.equal(observed.ackAtRunStart, "taken", "l'accusé est écrit AVANT la relance du maillon");
+  assert.equal(readCommandAck(stateDir, "c-reply")?.state, "taken");
+  assert.equal(runs.length, 1, "un seul run repart");
+  const run = runs[0]!;
+  assert.equal(`${slugOf(run)}:${phaseOf(run)}`, "alpha:specs", "la phase de la feature est conservée");
+  assert.equal(run.argv[run.argv.indexOf("--resume") + 1], sessionFile, "le run reprend la session du maillon");
+  assert.match(run.prompt, /Postgres, la base existante/, "le prompt porte la réponse");
+  assert.equal(stateOf(stateDir, repo, "alpha"), "running:");
+
+  deposit(stateDir, reply("c-running", "beta", "on continue"));
+  deposit(stateDir, reply("c-blank", "alpha", "  \n\t "));
+  await controller.pumpCommands();
+
+  assert.equal(readCommandAck(stateDir, "c-running")?.state, "refused");
+  assert.equal(readCommandAck(stateDir, "c-running")?.reason, "sans objet : la feature n'attend pas de réponse");
+  assert.equal(readCommandAck(stateDir, "c-blank")?.state, "refused");
+  assert.equal(readCommandAck(stateDir, "c-blank")?.reason, "réponse vide");
+  assert.equal(runs.length, 1, "aucun run n'est lancé par un refus");
+});
+
 // ---------------------------------------------------------------------------
 // AC-7, AC-8 — ajouter une feature à chaud (S-6)
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpat
 import type { GitResult, GitRunner } from "./git.ts";
 import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOmpBin, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
-import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
+import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { modelField } from "./models.ts";
@@ -1334,7 +1334,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         if (auditRelayOpen(stateDir, feature, lot.owner.pid, now())) relayed.add(feature.slug);
       }
     }
-    const slug = cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" ? cmd.slug : null;
+    const slug = commandSlugOf(cmd);
     const feature = lot !== null && slug !== null ? lotFeature(lot, slug) : undefined;
     const entry = feature === undefined ? null : liveEntryOf(feature.worktree);
     return {
@@ -1415,6 +1415,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       case "answer": {
         const delivered = deliverAskAnswer(cmd);
         if (delivered !== null) notify(`[pipeline] commande answer : ${delivered}`);
+        return;
+      }
+      case "reply": {
+        const replied = await actions.answer(cmd.slug, cmd.text);
+        if (replied !== null) notify(`[pipeline] commande reply : ${replied}`);
         return;
       }
       case "stop": {

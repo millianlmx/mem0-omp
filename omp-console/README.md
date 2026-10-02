@@ -1,26 +1,130 @@
 # omp-console — la coque de la salle de contrôle
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
-contrôle : une fenêtre, une barre latérale à cinq sections — **Kanban**,
-**Sessions**, **Fichiers**, **Projet**, **Mémoire** — et un panneau de détail. Les
-cinq sections sont vivantes : **Kanban** affiche le tableau des pipelines (voir
-« Section Kanban »)
-avec sa zone d'action (voir « Agir depuis le Kanban »), **Sessions** le sélecteur de
-sessions (voir « Visionneuse de session »), **Fichiers** la visionneuse de fichiers
-et de diffs (voir « Lire les fichiers et les diffs d'une cible »), **Projet** la
-conduite de projet (voir « Fenêtre Projet (conduite) ») et **Mémoire** la mémoire du
-projet en lecture seule (voir « Consulter la mémoire du projet »).
-Cible minimale : macOS 14.
+contrôle : **une seule fenêtre**, une barre latérale à neuf sections en deux
+groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Session OMP**,
+**Terminal**) et **Consultation** (**Sessions**, **Fichiers**, **Mémoire**,
+**Statistiques**), raccourcis ⌘1…⌘9 — et un panneau de détail. Rien n'ouvre de
+fenêtre annexe : l'app est utilisable entièrement en plein écran (une session
+ouverte depuis **Sessions** est poussée dans la section, avec un bouton retour).
+L'app s'ouvre sur l'**Accueil** (voir « Premiers pas ») ; **Pipelines** affiche
+le tableau des pipelines (voir « Section Kanban ») avec sa zone d'action (voir
+« Agir depuis Pipelines »), **Projet** le pilotage de projet (voir « Section
+Projet (pilotage) »), **Session OMP** la session hébergée (voir « Héberger une
+session OMP »), **Terminal** le terminal intégré (voir « Section Terminal »),
+**Sessions** le sélecteur de sessions (voir « Visionneuse de session »),
+**Fichiers** la visionneuse de fichiers et de diffs (voir « Lire les fichiers et
+les diffs d'une cible »), **Mémoire** la mémoire du projet en lecture seule (voir
+« Consulter la mémoire du projet ») et **Statistiques** la consommation des
+exécutions (voir « Section Statistiques »). Liquid Glass est réservé à la
+couche fonctionnelle que le système dessine (barre latérale, barres d'outils,
+feuilles, et la pilule d'état d'une session ouverte) ; le contenu emploie des
+surfaces opaques et les boutons standard `.bordered`/`.borderedProminent` (HIG
+Materials : « Don't use Liquid Glass in the content layer »).
+Cible minimale : macOS 26.
 
 ## Prérequis
 
-- macOS 14 ou plus récent.
+- macOS 26 ou plus récent.
 - Les Command Line Tools d'Apple : `swift --version` doit répondre.
 - **`xcodebuild` n'est ni requis ni utilisable** sur un poste sans Xcode : sur un
   poste équipé des seuls Command Line Tools, il refuse de tourner (« requires
   Xcode, but active developer directory is a CommandLineTools instance »). Tout
   passe par SwiftPM (`swift build`, `swift test`) et par l'assemblage du bundle
   décrit ci-dessous.
+
+## Premiers pas
+
+Sur un poste où OMP est installé et configuré, tout se fait depuis l'app, sans
+terminal :
+
+1. **Bienvenue** — au premier lancement d'une installation neuve (magasin vide ou
+   absent), une feuille présente l'app (son icône) en trois promesses ; son seul
+   bouton « Continuer » (↩ ou Échap) la ferme. Elle n'est montrée qu'une
+   fois (préférence `home.welcomeSeen`) ; Aide ▸ « Bienvenue dans OMP Console » la
+   rouvre. OMP introuvable ⇒ une feuille BLOQUANTE « OMP est requis » passe avant
+   tout : « Quitter », « Choisir l'emplacement… » (le programme `omp`, retenu dans
+   la préférence `omp.chosenPath`) ou « Vérifier à nouveau », emplacements cherchés
+   dans le pli « Détails » ; Échap ne la ferme pas. Sans historique, l'Accueil
+   propose « Nouvelle feature… » au lieu d'un tableau vide. Notifications refusées ⇒
+   un bandeau neutre en tête de l'Accueil, « Ouvrir les Réglages » ou « Ignorer »
+   (préférence `home.notificationsBannerDismissed`).
+2. **Nouvelle feature** (barre d'outils, menu Fichier ou ⌘N) — une feuille : le
+   dépôt (dépôts connus du tableau, ou « Choisir un dossier… », qui n'accepte
+   qu'une racine git), le titre (il devient la branche `feat/<titre>`) et le besoin.
+   « Lancer » (↩, bouton par défaut) dépose une commande `launch` dans le canal et revient à
+   l'Accueil, dont le bandeau suit l'accusé.
+3. **Le conducteur** — un dépôt sans pilote vivant est conduit par l'app : elle
+   démarre un `omp --mode rpc` sur ce dépôt APRÈS avoir déposé la commande (un
+   pilote n'arme le canal qu'à son démarrage), un seul par dépôt. Il vit tant que
+   l'app vit ; quitter pendant des maillons en cours demande confirmation.
+4. **À vous** — les questions de l'agent et les jalons arrivent en tête de
+   l'Accueil, en cartes (badge sur « Accueil ») : « Répondre… » ouvre la feuille
+   « Répondre » — une question `ask` en vol se répond par ses options ou un texte
+   libre, une question en **texte** d'un maillon terminé par un texte (commande
+   `reply`) ; « Valider les specs » et « Accepter la revue » agissent depuis la
+   carte. La PR livrée apparaît sous « Livrées récemment » avec « Ouvrir la PR ».
+5. **Reprendre** — une pipeline dont le pilote est mort (app quittée, session
+   fermée) est « En pause » sous « En cours » avec « Reprendre », qui relance un
+   conducteur ; celui-ci adopte le lot.
+
+Une commande sans accusé après 20 s est signalée dans « Activité récente » (Pipelines) et le
+bandeau : « aucun accusé après 20 s : aucun pilote n'a pris la commande — vérifiez
+le plugin omp-mem0-req (omp plugin list) ». Prérequis : le plugin `omp-mem0-req`
+chargé par `omp` doit porter le canal de commande **et** la commande `reply`
+(`ls -la ~/.omp/plugins/node_modules/omp-mem0-req` dit quelle copie est chargée ;
+`omp plugin link <chemin>/omp-mem0-req` charge une copie de travail, `omp plugin
+upgrade omp-mem0-req@mem0-omp` revient à la version publiée).
+
+### Recette : le conducteur réel
+
+La preuve qu'un conducteur hébergé par l'app prend en charge une commande déposée
+par l'app exige `omp` et un plugin `omp-mem0-req` qui porte le canal ; elle ne
+tourne que si **`MEM0_CONDUCTOR_RECIPE`** est posée (aucun appel modèle : le titre
+`!!!` est refusé par le pilote) :
+
+```bash
+cd omp-console && MEM0_CONDUCTOR_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
+  -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
+  --filter realConductorTakesACommandDepositedByTheApp
+```
+
+### Barres d'outils
+
+| Section | Barre d'outils (en plus de « Nouvelle feature… », `toolbar.newFeature`, inactif avec l'infobulle « OMP est requis » sans OMP) |
+|---|---|
+| Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
+| Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; menu « Options » (`session.mode`, choix « Dialogues »), « Détails techniques » (`session.details`) |
+| Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau est affiché |
+| Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
+
+Identifiants de l'Accueil et des feuilles : `home.loading`, `home.firstRun`
+(bouton `home.firstRun.start`), `home.ompMissing.background`, `home.dashboard`,
+`home.notificationsBanner` (`home.notifications.openSettings`,
+`home.notifications.ignore`), `home.launchBanner`, `home.attention.<carte>`
+(bouton `home.attention.<carte>.action`), `home.running.<carte>`,
+`home.resume.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
+feuille Bienvenue `welcome.sheet` (`welcome.continue`) ; feuille « OMP est requis »
+`home.ompMissing` (`home.ompMissing.quit`, `home.ompMissing.choose`,
+`home.ompMissing.retry`, `home.ompMissing.details`, `home.ompMissing.still`,
+`home.ompMissing.rejected`) ; feuille « Répondre » `answer.sheet` (`answer.question`,
+`kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
+« Nouvelle feature » `launch.sheet`,
+`launch.repo`, `launch.chooseFolder`, `launch.repoError`, `launch.title`,
+`launch.description`, `launch.cancel`, `launch.submit`. Une seule feuille à la
+fois, dans l'ordre : OMP est requis, Bienvenue, Nouvelle feature, Répondre
+(`MainSheetPolicy`).
+
+Lancer le bundle depuis un dépôt l'ouvre comme projet ; pour une capture sur un
+magasin de démonstration, sans écrire de préférence :
+
+```bash
+cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
+  "<chemin>/omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" -home.welcomeSeen YES
+```
+
+(`-home.welcomeSeen NO` remontre la bienvenue sur un magasin vide.)
 
 ## Builder
 
@@ -88,7 +192,7 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
 
 `commands/` ne fait pas partie du périmètre **lu** par la couche `Store/`. La
 section **Kanban** consomme le flux global en lecture, et c'est la couche
-`Actions/` (voir « Agir depuis le Kanban ») qui écrit — et seulement deux
+`Actions/` (voir « Agir depuis Pipelines ») qui écrit — et seulement deux
 familles de fichiers : les livraisons d'un run et les commandes du canal.
 
 ## Section Kanban
@@ -100,61 +204,91 @@ features de projet (`projects`), les features de lot (`lots`), les runs hors lot
 `/pipelines`). Elle ne fait qu'afficher : aucune API d'écriture n'est appelée, un
 propriétaire mort n'est ni déplacé vers `history/` ni retiré (à la différence du
 panneau `/pipelines`, qui réconcilie). Elle **n'écrit rien** : les gestes offerts
-depuis une carte passent par la couche `Actions/` (voir « Agir depuis le Kanban »),
+depuis une carte passent par la couche `Actions/` (voir « Agir depuis Pipelines »),
 jamais par le tableau lui-même.
 
-### Les onze colonnes
+### Les cinq voies
 
-En-tête d'une colonne : `<libellé> (<n>)`. Chaque carte est rangée dans
-**exactement une** colonne ; les onze colonnes sont toujours affichées, même vides.
+Les onze colonnes de l'ardoise (`KanbanColumn`, parité avec `/pipelines`) restent
+le modèle, mais l'écran les regroupe en **voies** (`KanbanLane`) qui suivent le
+cours d'une feature, de même largeur, sur toute la largeur de la fenêtre (elles
+ne défilent horizontalement que sous 240 pt par voie) :
 
-| `KanbanColumn` (`rawValue`, identifiant AX) | Libellé |
+| Voie (`kanban.lane.<rawValue>`) | Colonnes |
 |---|---|
-| `en-attente` | En attente |
-| `en-cours` | En cours |
-| `question-en-vol` | Question en vol |
-| `pr-ouverte` | PR ouverte |
-| `fusionne` | Fusionné |
-| `echec` | Échec |
-| `jalon-specs` | Jalon specs |
-| `jalon-review` | Jalon review |
-| `bloquee` | Bloquée |
-| `terminee-sans-pr` | Terminée sans PR |
-| `annulee-retiree` | Annulée / retirée |
+| Pas commencées (`pas-commencees`) | `en-attente` |
+| En cours (`en-cours`) | `en-cours`, et toute carte que « Reprendre » peut relancer (en pause) |
+| À vous (`a-vous`) | `question-en-vol`, `jalon-specs`, `jalon-review` |
+| Livrées (`livrees`) | `pr-ouverte`, `fusionne`, `terminee-sans-pr` |
+| Arrêtées (`arretees`, montrée seulement si elle a des cartes) | `echec`, `bloquee`, `annulee-retiree` |
 
-### Les trois messages d'état
+Dans une voie, les cartes suivent l'ordre des colonnes (question, puis specs, puis
+revue), puis l'ordre de l'ardoise. Une voie vide le dit en une phrase.
+
+Une carte montre son titre (sans le préfixe « dépôt/ » des runs hors lot), son
+dépôt (seulement quand l'ardoise mêle plusieurs dépôts), un badge quand la voie ne
+dit pas déjà son état (« Question », « Specs à valider », « En pause », « PR
+ouverte »…), la question de l'agent en aperçu, puis — pour une feature en cours ou
+qui vous attend — sa barre d'avancement en cinq segments, son étape et sa durée à
+la minute. Les cartes sont des surfaces opaques (`consoleCard`), jamais du verre.
+
+### Les messages d'état
 
 | Situation | Message |
 |---|---|
-| aucun instantané reçu encore | `Chargement du magasin d'état…` |
-| la racine `<stateDir>` n'existe pas | `Magasin d'état absent : <stateDir>` |
-| la racine existe, aucune carte ni anomalie | `Magasin d'état vide : <stateDir>` |
+| aucun instantané reçu encore | `Chargement des pipelines…` |
+| la racine `<stateDir>` n'existe pas, ou aucune carte ni anomalie | `Aucune pipeline pour l'instant.` |
 
-Un magasin qui ne contient que des fichiers illisibles rend le **tableau** (colonnes
-vides + bandeau), jamais « vide » : les anomalies ne sont jamais tues. Le panneau de
-détail sans sélection écrit `Aucune carte sélectionnée`.
+L'emplacement du magasin est un détail technique : il n'est jamais affiché.
+
+Un magasin qui ne contient que des fichiers illisibles rend le **tableau** (voies
+vides + bouton « n problème(s) », au vrai pluriel), jamais « vide » : les anomalies
+ne sont jamais tues. Le bouton `kanban.diagnosticButton` de la barre d'outils
+ouvre une bulle « Problèmes détectés » (`kanban.diagnostic`) qui les dit en
+phrases (« cache-sessions s'est arrêtée de façon inattendue. ») ; le fichier et le
+pid ne sont que dans son pli **Détails techniques**, replié par défaut. Le bouton
+« Activité » (`kanban.activityButton`) ouvre le journal des gestes dans une bulle.
+La section n'a plus de barre basse.
+
+### La feuille de détail
+
+L'inspecteur latéral a été retiré (refusé à la recette) : le tableau prend toute la
+largeur. Double-clic sur une carte, `↩` sur la carte sélectionnée ou le menu
+contextuel « Afficher les détails » ouvrent une **feuille** qui décrit la carte :
+en-tête (titre, « dépôt · étape », badge d'état), une **frise d'avancement**
+(Besoins, Specs, Implémentation, Revue, PR — fait, en cours, à venir ou en échec,
+`PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines »),
+**Informations** (étape, durée, modèle, lien de PR) et un pli **Détails
+techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
+« Fermer » (Échap) à droite. Le menu contextuel d'une carte expose aussi ses
+gestes (Répondre…, Valider les specs, Accepter la revue, Reprendre, Ouvrir la PR,
+Arrêter…).
 
 ### Identifiants d'accessibilité
 
 | Identifiant | Surface |
 |---|---|
-| `kanban.board` | la zone des **colonnes** (focus clavier et flèches) |
-| `kanban.column.<rawValue>` | une colonne |
+| `kanban.board` | la zone des **voies** (focus clavier et flèches) |
+| `kanban.lane.<rawValue>` | une voie |
 | `kanban.card.<id>` | une carte (`feature:<clé>:<slug>`, `project:<clé>:<slug>`, `run:<id>`, `history:<id>`) |
-| `kanban.banner` | le bandeau d'anomalies (absent s'il n'y en a aucune) |
-| `kanban.anomaly.<i>` | une ligne d'anomalie |
-| `kanban.detail` | le panneau de détail (carte sélectionnée) |
-| `kanban.detail.empty` | le panneau sans sélection |
-| `kanban.empty` | les deux messages « absent » / « vide » |
+| `kanban.activityButton` | le bouton « Activité » de la barre d'outils |
+| `kanban.diagnosticButton` | le bouton « n problème(s) » de la barre d'outils (absent sans anomalie) |
+| `kanban.diagnostic` | la bulle « Problèmes détectés » |
+| `kanban.anomaly.<i>` | une ligne d'anomalie dans la bulle |
+| `kanban.diagnostic.technical` | le pli « Détails techniques » de la bulle |
+| `kanban.detail` | la feuille de détail (carte sélectionnée) |
+| `kanban.detail.close` | le bouton « Fermer » de la feuille |
+| `kanban.detail.technical` | le pli « Détails techniques » de la feuille |
+| `kanban.empty` | le message « Aucune pipeline pour l'instant. » |
 | `kanban.loading` | le message de chargement |
 
-Clavier : les flèches `↓`/`↑` (carte suivante/précédente) et `→`/`←` (colonne
-suivante/précédente non vide) sont attachées à la **zone des colonnes**
-(`kanban.board`) — jamais au panneau de détail, donc une flèche dans un champ de
-saisie de la zone d'action déplace le curseur, pas la colonne. Clic simple sur une
-carte : sélection + surbrillance + panneau de détail. Sélectionner une carte ne
-change **jamais** de section : la barre latérale reste sur Kanban, et Sessions,
-Fichiers et Projet gardent leur propre contenu.
+Clavier : les flèches `↓`/`↑` (carte suivante/précédente, d'une voie à la
+suivante) et `→`/`←` (première carte de la voie suivante/précédente non vide) sont
+attachées à la **zone des voies** (`kanban.board`), comme `↩` qui ouvre la feuille
+de détail. Clic simple sur une carte : sélection (contour à la couleur
+d'accentuation). Sélectionner une carte ne change **jamais** de section : la barre
+latérale reste sur Pipelines, et Sessions, Fichiers et Projet gardent leur propre
+contenu.
 
 ### Parité avec `/pipelines`
 
@@ -166,10 +300,10 @@ Sur le même magasin, toute entité lue par `/pipelines` a sa carte au même ét
 | rang `running` non apparié | carte `run:<id>` |
 | rang `history` (20 plus récents) | carte `history:<id>` |
 | run apparié à une feature | **fusionné** : une feature = une carte |
-| colonne de droite `/phase · état · temps` | `phase`, `state`, `durée` de la carte |
-| rang `PR : <url>` (feature `done`) | `PR : <url>` de la carte |
-| en-tête « pilote : … mort » | marque `mort` + ligne de bandeau |
-| avis « N fichier(s) d'état illisible(s) » | une ligne de bandeau par fichier |
+| colonne de droite `/phase · état · temps` | étape, état et durée de la feuille de détail |
+| rang `PR : <url>` (feature `done`) | lien « Ouvrir la PR » de la feuille de détail |
+| en-tête « pilote : … mort » | marque `mort` + ligne du diagnostic |
+| avis « N fichier(s) d'état illisible(s) » | une ligne du diagnostic par fichier |
 
 Deux écarts **délibérés** : `/pipelines` réconcilie les propriétaires morts (le
 tableau, lui, marque la carte `mort` en `Échec` sur place), et les features de
@@ -197,8 +331,8 @@ avec une sonde AX (`AXUIElementCreateApplication(pid)` + parcours de
    colonne ;
 3. cliquer une carte (clic souris réel) ⇒ `kanban.detail` décrit la carte et la
    surbrillance suit ; lire la barre latérale ⇒ la section reste **Kanban** ;
-4. relever `kanban.banner` / `kanban.anomaly.<i>` après avoir déposé un fichier
-   tronqué dans le magasin.
+4. après avoir déposé un fichier tronqué dans le magasin, presser
+   `kanban.diagnosticButton` et relever `kanban.anomaly.<i>` dans `kanban.diagnostic`.
 
 Le magasin jetable est **obligatoire** : la recette ne touche jamais
 `~/.omp/agent/pipeline` de la machine.
@@ -211,30 +345,37 @@ propriétaire mort, laisser `/pipelines` réconcilier d'abord : le tableau voit 
 l'entrée d'historique et la parité tient. Consigner les relevés dans la section
 `## Revue` du contrat.
 
-## Agir depuis le Kanban
+## Agir depuis Pipelines
 
 `Sources/OMPConsole/Actions/` est la **seule** couche qui écrit depuis l'app. Elle
 n'écrit jamais l'état du lot : ses deux familles de fichiers sont les livraisons
 d'un run (`<stateDir>/inbox/<boîte>/`) et les commandes du canal
-(`<stateDir>/commands/`). Tout geste est tracé dans le **journal des gestes** en bas
-de la section, avec l'accusé du pilote quand il y en a un — un refus est affiché
-verbatim, et une commande sans pilote reste « en attente dans le canal ».
+(`<stateDir>/commands/`). Tout geste est tracé dans le pli **Activité récente** en
+bas de la section (une ligne par geste : symbole d'état, libellé, heure), avec
+l'accusé du pilote quand il y en a un — un
+refus est affiché verbatim, une commande sans pilote reste « en attente dans le
+canal », puis passe « aucun accusé après 20 s » (elle reste sondée : un accusé
+tardif la rattrape). Après un `launch`, un `verdict` ou un `reply` déposé, l'app
+fait conduire le dépôt s'il n'a pas de pilote vivant (voir « Premiers pas ») ; un
+conducteur qui ne démarre pas fait échouer l'entrée (« conducteur : … »).
 
 | Geste | Où | Écrit |
 |---|---|---|
-| Répondre à une question en vol (option ou texte libre) | zone d'action du détail | une livraison `ask` dans la boîte publiée du run |
-| Envoyer un texte à un run vivant sans question | zone d'action du détail | une livraison `text` dans la boîte publiée du run |
-| Valider les specs | zone d'action du détail (feature en attente specs) | `{kind:"verdict", verdict:"v"}` dans le canal |
-| Accepter la revue | zone d'action du détail (feature en attente revue) | `{kind:"verdict", verdict:"y"}` dans le canal |
-| Arrêter le lot | zone d'action du détail (carte portant un lot) | `{kind:"stop", repo}` dans le canal |
-| Lancer une feature | bandeau « Lancer une feature… » | `{kind:"launch", title, description, repo}` dans le canal |
+| Répondre à une question de l'agent (option ou texte libre) | section « Action » de la feuille de détail, menu contextuel « Répondre… » de la carte, ou feuille « Répondre » de l'Accueil | une livraison `ask` dans la boîte publiée du run |
+| Envoyer un message à l'agent (exécution vivante sans question) | section « Action » de la feuille de détail | une livraison `text` dans la boîte publiée du run |
+| Valider les specs | feuille de détail, menu contextuel ou carte « À vous » de l'Accueil (feature en attente specs) | `{kind:"verdict", verdict:"v"}` dans le canal |
+| Accepter la revue | feuille de détail, menu contextuel ou carte « À vous » (feature en attente revue) | `{kind:"verdict", verdict:"y"}` dans le canal |
+| Répondre à une question en texte d'un maillon terminé | feuille de détail ou feuille « Répondre » (feature en attente de réponse, sans question en vol) | `{kind:"reply", slug, text}` dans le canal |
+| Reprendre | feuille de détail, menu contextuel ou ligne « En cours » de l'Accueil (carte marquée `mort`, feature vivante) | rien : un conducteur démarre et adopte le lot |
+| Arrêter… | feuille de détail ou menu contextuel (carte portant un lot), après confirmation | `{kind:"stop", repo}` dans le canal |
+| Lancer une feature | feuille « Nouvelle feature » (barre d'outils, ⌘N) | `{kind:"launch", title, description, repo}` dans le canal |
 
 Règles d'aiguillage : une carte qui porte une **question en vol** offre la réponse
 (option **ou** texte libre, jamais les deux ensemble) ; un run vivant **sans**
 question offre l'envoi de texte ; une carte qui n'offre rien dit pourquoi (run non
-armé, ou aucun geste possible). Le dépôt du formulaire de lancement est **choisi**
-parmi les dépôts connus des cartes et le projet ouvert ; le slug est dérivé par le
-dépôt, jamais par l'app.
+armé, ou aucun geste possible). Le dépôt de la feuille de lancement est **choisi**
+parmi les dépôts connus des cartes, le projet ouvert et un dossier choisi à la main
+(racine git seulement) ; le slug est dérivé par le dépôt, jamais par l'app.
 
 Deux invariants durables de cette couche :
 
@@ -253,17 +394,16 @@ Deux invariants durables de cette couche :
 
 | Identifiant | Surface |
 |---|---|
-| `kanban.actions.bar` | le bandeau de lancement |
-| `kanban.launch.toggle` | le bouton « Lancer une feature… » |
-| `kanban.launch.title`, `.description`, `.repo`, `.submit`, `.cancel` | les contrôles du formulaire |
-| `kanban.actions` | la zone d'action sous les lignes du détail |
+| `kanban.actions` | la zone d'action (section « Action » de la feuille de détail) |
 | `kanban.actions.motif` | le motif quand la carte n'offre aucun geste |
 | `kanban.actions.option.<i>` | une option de la question en vol |
 | `kanban.actions.answerField`, `.answer` | le champ libre et le bouton « Répondre » |
 | `kanban.actions.steerField`, `.send` | le champ et le bouton d'envoi de texte |
+| `kanban.actions.reply.prompt`, `.reply.text`, `.reply.submit` | la question en texte, son champ et « Répondre » |
 | `kanban.actions.validate`, `.accept` | les boutons de jalon |
-| `kanban.actions.stop` | le bouton « Arrêter le lot » |
-| `kanban.journal`, `kanban.journal.empty` | le journal des gestes |
+| `kanban.actions.resume` | le bouton « Reprendre » |
+| `kanban.actions.stop` | le bouton « Arrêter… » (confirmation avant l'arrêt) |
+| `kanban.journal`, `kanban.journal.empty` | la bulle « Activité » |
 
 ### Recette : agir depuis la carte
 
@@ -271,17 +411,17 @@ Même bundle et même magasin jetable que la recette de vivacité (une sonde AX
 jetable : `AXUIElementCreateApplication(pid)` + parcours de `kAXChildrenAttribute`,
 plus des clics et des frappes réels par `CGEvent`).
 
-1. sélectionner une carte de feature en attente specs (clic réel) ⇒ la zone
-   d'action expose `kanban.actions`, `kanban.actions.validate`,
-   `kanban.actions.stop`, `kanban.actions.option.<i>`, `kanban.actions.answer`,
-   `kanban.actions.answerField` et `kanban.launch.toggle` ;
+1. ouvrir la feuille de détail d'une carte de feature en attente specs (double
+   clic, ou clic puis `↩`) ⇒ la zone d'action expose `kanban.actions`,
+   `kanban.actions.validate`, `kanban.actions.option.<i>`, `kanban.actions.answer`,
+   `kanban.actions.answerField`, et le pied de la feuille `kanban.actions.stop` ;
 2. cliquer « Valider les specs » ⇒ **un** fichier apparaît dans
    `<magasin>/commands/` (`{"version":1,"id":"console-…","repo":"…","kind":"verdict",
-   "slug":"…","verdict":"v","sentAt":…}`) et `kanban.journal.empty` disparaît de
-   l'arbre (une ligne s'est ajoutée au journal) ;
+   "slug":"…","verdict":"v","sentAt":…}`) et, bulle « Activité » ouverte,
+   `kanban.journal.empty` disparaît de l'arbre (une ligne s'est ajoutée au journal) ;
 3. focaliser `kanban.actions.answerField`, y saisir un texte et presser `→` puis
    `←` ⇒ la sélection du champ passe de `(0,0)` à `(1,0)` puis revient à `(0,0)`
-   alors que `kanban.actions.validate` reste présent : la colonne n'a pas bougé (le
+   alors que `kanban.actions.validate` reste présent : la voie n'a pas bougé (le
    tableau garde ses flèches hors des champs) ;
 4. déplacer la sélection au clavier jusqu'à une carte de run sans boîte ⇒
    `kanban.actions.motif` porte le texte du run non armé.
@@ -297,7 +437,7 @@ seule cible à la fois.
 
 1. **Choisir la cible** — le sélecteur « Cible » de l'en-tête. La cible par défaut
    est celle du projet ouvert (la préférence partagée `session.projectRoot` avec la
-   fenêtre « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
+   section « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
    base de comparaison : `HEAD` pour le principal, ou `base <sha7>` — la base
    enregistrée de la feature dans le magasin d'état, à défaut la base de fusion avec
    la branche par défaut du principal.
@@ -305,12 +445,22 @@ seule cible à la fois.
    de la cible, `.gitignore` appliqué. Un fichier suivi supprimé sur disque y reste,
    avec le badge « supprimé » ; un fichier ignoré par git (le contrat de la
    pipeline, par exemple) n'y figure jamais.
-3. **Lire un fichier** — un clic (ou ↑/↓) publie à droite son **diff** puis son
-   **contenu** : le diff couvre tout l'écart entre la cible et sa base (commits de la
-   branche **et** modifications non commitées) ; un fichier non suivi y apparaît
-   comme un ajout complet. Le diff est rendu en une seule colonne, hunks dans
-   l'ordre de git, retraits en rouge, ajouts en vert — et jamais par la couleur
-   seule : le `-` et le `+` de tête sont toujours là.
+3. **Lire un fichier** — un clic (ou ↑/↓) publie le document à droite, avec un
+   sélecteur « Affichage » (`files.document.mode`) quand plusieurs vues existent :
+   - un **Markdown** (`.md`, `.markdown`) est **rendu** en blocs complets — titres,
+     paragraphes (emphase, code, liens), listes imbriquées, citations, blocs de code
+     colorés, tableaux, séparateurs — dans une colonne de lecture
+     (`files.document.markdown`, `MarkdownDocument`) ; « Source » montre le texte ;
+   - tout autre fichier texte s'affiche dans une **visionneuse de code** à la Xcode
+     (`files.document.code`) : gouttière numérotée, police monospacée, coloration
+     lexicale (mots-clés, chaînes, commentaires, nombres, types, attributs —
+     `CodeHighlighter`) pour Swift, TypeScript/JavaScript, Python, shell, JSON et
+     YAML, texte brut numéroté sinon ;
+   - « Diff » montre l'écart entre la cible et sa base (commits de la branche **et**
+     modifications non commitées) ; un fichier non suivi y apparaît comme un ajout
+     complet. Le diff est rendu en une seule colonne, hunks dans l'ordre de git,
+     retraits en rouge, ajouts en vert — et jamais par la couleur seule : le `-` et
+     le `+` de tête sont toujours là.
 4. **Les deux documents de pilotage, hors arbre** — les boutons **Contrat**
    (`.omp/pipeline/contract.md` de la cible active, que git ignore donc qui ne peut
    pas figurer dans l'arbre) et **PROJECT.md** (à la racine de la cible). Absents,
@@ -365,20 +515,32 @@ branchée ici.
 ## Visionneuse de session
 
 La section **Sessions** de la barre latérale liste les runs du magasin d'état
-(les vivants d'abord, puis les runs clos) : chaque ligne est un bouton, et la
-cliquer ouvre la **conversation de la session de ce run** dans une fenêtre dédiée.
+**par jour** (« Aujourd'hui », « Hier », puis la date), le plus récent en tête
+(`SessionDays`) : chaque ligne porte le symbole de l'étape, le titre de la feature,
+« <dépôt> · <étape> », l'heure de début et l'état en un mot (« En cours », « À
+vous », « Interrompu », « Terminé », « Échec ») ; double-clic, `↩` ou « Ouvrir »
+du menu contextuel pousse la **conversation de la session de ce run** dans la
+section (bouton retour pour revenir à la liste). Sans run : « Aucune session »
+(`viewer.selector.empty`) ; des entrées écartées à la lecture sont comptées en
+pied de liste (`viewer.selector.footer`).
 
-- **Une fenêtre par session.** Re-choisir un run déjà ouvert ramène sa fenêtre au
-  premier plan (la valeur présentée est la session, pas l'entrée du magasin) ;
-  choisir un autre run en ouvre une seconde. Le titre de la fenêtre est
-  `« <libellé du run> — <étiquette de session> »`.
-- **Les faits essentiels y sont, une fois chacun, dans l'ordre du fichier** :
-  messages avec leur rôle (« vous », « agent »), nom et cible de chaque appel
-  d'outil, arguments, résultats, question `ask` et ses options, marqueurs de
-  compaction et de branche.
+- **Une session à la fois, dans la fenêtre principale.** En ouvrir une autre
+  remplace la première ; changer de section garde la session ouverte
+  (`ConsoleModel.sessionsPath`). Le titre de la fenêtre est le nom de la
+  feature, son sous-titre « <étape> · <dépôt> ».
+- **Une conversation, comme dans Messages** (`ConversationThread`, partagé avec la
+  section Session OMP) : les messages de l'utilisateur en bulles à droite, les
+  réponses de l'agent en texte pleine largeur (Markdown complet rendu : titres,
+  listes, blocs de code colorés, tableaux — `MarkdownBlocksView`), la
+  réflexion dans un pli « Réflexion », les marqueurs « Contexte compacté » /
+  « Résumé de branche » en séparateurs cliquables. Tout fait du fichier y est, une
+  fois, dans l'ordre du fichier.
 - **Chaque appel d'outil se plie et se déplie individuellement** (replié par
-  défaut ; un appel `ask` entre déplié), avec le statut `⇒ en attente`,
-  `⇒ ok · N lignes` ou `⇒ erreur · N lignes`.
+  défaut ; un appel `ask` entre déplié). Son en-tête le nomme par un verbe
+  (« Lecture », « Modification », « Commande »… ; un outil inconnu garde son nom)
+  suivi de sa cible, et un statut : sablier (en attente), coche verte (terminé),
+  croix rouge (erreur). Déplié, il montre arguments, résultat et diff dans un bloc
+  opaque ; les longues lignes défilent en largeur, le fil seulement en hauteur.
 - **Diffs colorés par contenu** : tout diff unifié reçu d'un outil est détecté dans
   le texte du résultat, et le diff d'un appel d'édition d'OMP (`details.diff`) est
   classé ligne à ligne. Ajout, suppression, contexte et en-têtes sont distingués —
@@ -389,13 +551,14 @@ cliquer ouvre la **conversation de la session de ce run** dans une fenêtre déd
 - **Suivi automatique** : la vue ouvre le fil par la fin, puis suit les faits
   nouveaux en relisant **seulement les octets neufs** (le lecteur tient un curseur
   d'octets ; la veille est une source vnode sur le fichier, jamais une scrutation).
-  Un geste vers le haut suspend le suivi — la position ne bouge plus et le bouton
-  **« Revenir au direct »** apparaît ; l'activer reprend le suivi.
-- **États explicites** : « en attente des premiers faits » tant que le fichier
-  n'existe pas, « Session illisible : … Nouvelle tentative automatique. » s'il n'est
-  pas lisible, « Session vide — aucun fait. » s'il est vide. Le bandeau du haut
-  annonce en permanence `N faits · N ignorés · suivi|suivi suspendu`, plus l'état de
-  lecture et, le cas échéant, `· fichier réécrit — affichage reconstruit`.
+  Un geste vers le haut suspend le suivi — le mot `viewer.status` « En direct »
+  disparaît et le bouton **« Revenir au direct »** apparaît ; l'activer reprend le
+  suivi.
+- **États explicites** : « En attente des premiers échanges » tant que le fichier
+  n'existe pas, un bandeau rouge « Session illisible : … Nouvelle tentative
+  automatique. » (`viewer.unreadable`) s'il n'est pas lisible, « Session vide » s'il
+  est vide (`viewer.placeholder`). Sous le fil, `viewer.notes` dit le nombre
+  d'entrées ignorées et « Fichier réécrit — affichage reconstruit » le cas échéant.
 - **Lecture seule** : la visionneuse n'appelle aucune API d'écriture. Vérifier
   tient en une commande : la taille et l'empreinte du `.jsonl` ne changent pas
   pendant qu'on défile, qu'on plie ou que des faits arrivent.
@@ -548,21 +711,25 @@ lsappinfo list | grep "OMP Console"
 
 ## Héberger une session OMP
 
-Menu **Fichier ▸ « Nouvelle session OMP »** (⌘N) ouvre la fenêtre **Session OMP**,
-qui héberge **une seule** session à la fois (la scène est à instance unique : il ne
-peut pas exister deux `omp` hébergés).
+La section **Session OMP** (⌘4, ou Fichier ▸ « Nouvelle session OMP » ⌥⌘N)
+héberge **une seule** session à la fois (le modèle est à instance unique et
+refuse un second lancement : il ne peut pas exister deux `omp` hébergés).
 
 1. **Choisir le projet** — bouton « Choisir un dossier… » (⌘O). Le dossier choisi
    devient le cwd passé au `omp` hébergé ; il est mémorisé, et il n'est jamais
    réécrit sans un geste de votre part.
-2. **Choisir le mode** — deux modes, une différence réelle :
+2. **Choisir le mode** — menu « Options » de la barre d'outils, choix
+   « Dialogues » ; deux modes, une différence réelle :
    - **`rpc-ui — dialogues actifs`** : le seul mode headless où l'outil `ask` de
      l'hôte existe. C'est le mode où un prompt peut déclencher une question à choix
      multiples, à laquelle la fenêtre répond.
    - **`rpc — sans dialogues`** : mode conducteur, sans `ask` côté hôte. Le prompt
      part, les événements arrivent, aucune question n'est posée.
-3. **Lancer la session** (⌘R), saisir un prompt (↩ pour envoyer, ⌘↩ pour
-   « Envoyer »), **lire** la transcription brute des trames reçues et le journal.
+3. **Lancer la session** (⌘R), écrire dans le composeur du bas (↩ ou le bouton ↑
+   envoient) et **lire la conversation** : le fichier de session publié par `omp`
+   est suivi et rendu par le même fil que la Visionneuse (bulles, verbes d'outil,
+   statut en mots). Une question de l'hôte s'ouvre en feuille « OMP vous demande »
+   (⌘. ou Échap l'annulent).
 4. **Arrêter la session** (⌘.) ou quitter l'app : le process est terminé par la
    fermeture de son stdin (fin propre du protocole), puis, s'il ne rend pas la main,
    par la séquence d'arrêt volontaire de l'hôte — `stopGrace` de 5 s après la
@@ -572,12 +739,20 @@ peut pas exister deux `omp` hébergés).
    séquence : `SIGTERM`, 2 s de grâce, `SIGKILL`, l'attente restant bornée par
    délai + grâce.
 
-États affichés dans la fenêtre : projet absent, `Aucune session`, `Lancement…`,
-`Session vivante (pid <n>, session <8 caractères>)`, dialogue en attente,
-`Arrêt en cours…`, `Session arrêtée`, `Process mort (code|signal <n>)` (avec un
-bouton **Relancer**, qui reprend le même `.jsonl`), et l'erreur explicite en cas
-d'échec. Un prompt n'est jamais relancé tout seul après une mort : la relance est
-un clic.
+La fenêtre dit son état en mots, dans son sous-titre (« <projet> · Prête »,
+« Démarrage… », « Active », « Arrêt… », « Arrêtée », « Interrompue », « Échec ») et
+par son contenu : « Aucune session » sans projet, « Prête à démarrer », le
+démarrage, « La session n'a pas démarré » avec le motif, puis la conversation ;
+une session morte garde sa conversation sous un bandeau « La session s'est
+arrêtée. Relancez-la pour reprendre la conversation. » (**Relancer** reprend le
+même `.jsonl`). Les détails techniques vivent dans l'inspecteur « Détails
+techniques » (`session.details`), en formulaire groupé : **Session** (projet, état,
+pid, identifiant de session, mode, statut détaillé), **Activité** (chaque trame du
+protocole résumée en français — « Réponse · get_state », « Appel d'outil · read »,
+« Question de l'hôte »… — par `RpcEventSummary`, les 200 plus récentes en haut),
+**Journal**, et les trames JSONL brutes derrière un pli « Trames brutes » fermé par
+défaut. Un prompt n'est jamais relancé tout seul après une mort : la relance est un
+clic.
 
 L'écriture d'un prompt est **bornée** (délai de 500 ms) et sans `SIGPIPE` : si le
 `omp` hébergé ne lit plus son entrée ou est mort, l'écriture échoue proprement —
@@ -593,7 +768,10 @@ quand elle est posée et non vide, c'est le **seul** candidat — pratique pour 
 `omp` hors des emplacements habituels, ou pour forcer un poste sans `omp` (utile
 avec le harnais ci-dessous).
 
-Sans elle, l'ordre de recherche est : chaque entrée de `PATH`, puis
+Sans elle, l'emplacement choisi dans la feuille « OMP est requis » (« Choisir
+l'emplacement… », préférence `omp.chosenPath`) passe en tête, avant `PATH`.
+
+Puis l'ordre de recherche est : chaque entrée de `PATH`, puis
 `~/.bun/bin/omp`, `/opt/homebrew/bin/omp`, `/usr/local/bin/omp` — le premier
 fichier **exécutable** gagne. Les trois emplacements explicites ne sont pas
 décoratifs : une app lancée par le Finder hérite du `PATH` de `launchd`
@@ -604,37 +782,41 @@ Si aucun candidat n'est exécutable, la fenêtre affiche « Binaire `omp` introu
 cherché dans PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin. » — aucune session
 fantôme n'est affichée comme vivante.
 
-## Fenêtre Terminal (terminal intégré)
+## Section Terminal (terminal intégré)
 
-Menu **Fichier ▸ « Ouvrir un terminal OMP… »** (⌘T) ouvre la fenêtre **Terminal**,
-instance unique : redemander l'ouverture ramène celle-ci au premier plan et ne lance
-jamais un second `omp`. Elle héberge **un seul programme** — un `omp` interactif
-(TUI plein écran) — dans un vrai PTY, sans shell intermédiaire.
+La section **Terminal** (⌘5) héberge **un seul programme** dans un vrai PTY (le
+modèle est à instance unique : jamais un second programme). Fermer la fenêtre
+principale tue le shell. Le programme hébergé est
+le **shell de connexion** de l'utilisateur (`$SHELL -l` s'il désigne un exécutable
+absolu, sinon `/bin/zsh -l`) ; `omp` se lance **à la demande** dans ce shell.
 
 1. **Choisir le répertoire** — bouton « Choisir un répertoire… ». La feuille liste
    **une entrée par worktree de feature du pipeline, plus le dépôt principal** : le
    catalogue est exactement celui de la section **Fichiers** (`git rev-parse
    --git-common-dir` puis `git worktree list --porcelain`). Aucun chemin ne se saisit
    à la main, et rien n'est mémorisé.
-2. **Ouvrir** (↩) : `omp` démarre avec ce répertoire comme projet courant, dans un
-   PTY dont la taille est celle de la zone d'affichage.
-3. **Travailler** : la frappe part dans `omp` (flèches, Entrée, Tab, Échap,
+2. **Ouvrir** (↩) : le shell démarre dans ce répertoire, dans un PTY dont la taille
+   est celle de la zone d'affichage, avec l'environnement de `TerminalEnvironment`
+   (`PATH` complété : `omp` y est trouvé même quand l'app est lancée par le Finder).
+3. **Lancer omp** (`terminal.launchOmp`, actif tant qu'un shell vit) tape `omp↩`
+   dans le shell ; la frappe part ensuite dans `omp` (flèches, Entrée, Tab, Échap,
    Ctrl-C, Ctrl-D), l'affichage est celui du TUI — couleurs vraies, curseur, plein
    écran — et suit le redimensionnement de la fenêtre.
-4. **Fermer la fenêtre** (bouton rouge, ⌘W) : le process est tué avec **tout son
-   groupe** (SIGTERM, puis SIGKILL après 2 s), sans confirmation, et l'app reste
-   ouverte et utilisable. **⌘Q** tue de la même façon les terminaux vivants : aucun
-   `omp` ne survit à la fermeture de l'app.
+4. **Fermer la fenêtre principale** (bouton rouge, ⌘W) : le process est tué avec
+   **tout son groupe** (SIGTERM, puis SIGKILL après 2 s), sans confirmation.
+   **⌘Q** tue de la même façon les terminaux vivants : aucun shell ni `omp` ne
+   survit à la fermeture de l'app.
 
-Le terminal et la fenêtre **Session OMP** (session RPC `omp --mode rpc-ui`) vivent
+Le terminal et la section **Session OMP** (session RPC `omp --mode rpc-ui`) vivent
 **en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
 deux sens, et ils peuvent même viser le même répertoire.
 
 États affichés : « Choisissez un répertoire… », « Lecture des worktrees… » (feuille
-ouverte), « Lancement d'omp… », « omp vivant (pid <n>) · <cible> », « omp s'est
-terminé (code|signal <n>). » avec le bouton **Relancer**, et l'erreur explicite en
-cas d'échec (« Binaire `omp` introuvable : … », « Répertoire introuvable : … »,
-« PTY indisponible (<errno>) : aucun process lancé. »). Aucun état n'est un
+ouverte), « Lancement du shell… », « shell vivant (pid <n>) · <cible> », « Le shell
+s'est terminé (code|signal <n>). » avec le bouton **Relancer**, et l'erreur
+explicite en cas d'échec (« Exécutable introuvable : … », « Répertoire
+introuvable : … », « PTY indisponible (<errno>) : aucun process lancé. »). Aucun
+état n'est un
 rectangle vide.
 
 **Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
@@ -647,8 +829,9 @@ partage de PTY.
 
 ### Recette : prouver le terminal de bout en bout
 
-Le harnais réel (`TerminalSmokeTests`) lance un vrai `omp` dans un PTY 24×80 et
-fait passer ses octets dans l'émulateur ; il est **désactivé par défaut** :
+Le harnais réel (`TerminalSmokeTests`) lance le vrai shell de l'utilisateur dans un
+PTY 24×80, y tape `omp↩` et fait passer les octets dans l'émulateur (sans `omp`
+résoluble, il échoue explicitement) ; il est **désactivé par défaut** :
 
 ```bash
 cd omp-console
@@ -668,43 +851,48 @@ sont pas) :
 1. Lancer `omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole` depuis la
    racine du dépôt ;
 2. menu **Fichier ▸ « Ouvrir un terminal OMP… »**, puis « Choisir un répertoire… »,
-   choisir un worktree, « Ouvrir » ;
-3. vérifier `pgrep -fl -P <pid de l'app>` : un seul `omp`, enfant direct ;
+   choisir un worktree, « Ouvrir » : le shell démarre ;
+3. « Lancer omp » ; vérifier `pgrep -fl -P <pid de l'app>` : un seul shell, enfant
+   direct, et `omp` enfant du shell ;
 4. taper un prompt dans la fenêtre : la TUI y répond ; **Ctrl-C** interrompt `omp`
    et l'app reste vivante ;
 5. redimensionner la fenêtre : la TUI se réaffiche à la nouvelle taille ;
 6. fermer la fenêtre : `pgrep -fl -P <pid de l'app>` ne rend plus rien ;
-7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun `omp` ne survit.
+7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun shell ni `omp` ne survit.
 
-## Fenêtre Projet (conduite)
+## Section Projet (pilotage)
 
-Menu **Fichier ▸ « Conduire un projet… »** (⌘⇧N) — ou le bouton du même nom dans
-la section **Projet** — ouvre la fenêtre **Projet**, qui héberge la conduite d'un
-projet par le pilote `/project` de l'extension : **une seule conduite à la fois**
-(la scène est à instance unique, et un second démarrage est refusé jusqu'à la
-clôture de la courante).
+Menu **Fichier ▸ « Piloter un projet… »** (⇧⌘N) — ou le bouton du même nom dans
+la section **Projet** — sélectionne la section et présente la feuille de choix ;
+le nom du projet est le sous-titre de la fenêtre. La section héberge le pilotage
+d'un projet par le pilote `/project` de l'extension : **un seul projet piloté à
+la fois** (un second démarrage est refusé jusqu'à l'arrêt du pilotage en cours).
 
 1. **Choisir le dépôt et le nom** dans la feuille (dossier par `NSOpenPanel`,
    dossiers seulement, nom par défaut = dernier composant du chemin).
-2. **Conduire** — l'app lance `omp --mode rpc-ui --cwd <dossier>` (mode
+2. **Piloter** — l'app lance `omp --mode rpc-ui --cwd <dossier>` (mode
    dialogues actifs, seul mode où l'outil `ask` de l'hôte existe) puis écrit
    `/project <nom>`. Aucun terminal n'est ouvert, aucune commande n'est tapée.
 3. **Jouer l'utilisateur** — la saisie libre de la fenêtre écrit un `prompt`
    (↩ ou ⌘↩), et toute demande adressée à l'utilisateur (cadrage, validation du
    plan, escalade de lot) s'affiche comme un dialogue répondable : `select` (liste
    d'options), `input`/`editor` (texte, avec le `prefill` du plan pour un `editor`),
-   `confirm`.
+   `confirm`. La feuille de dialogue affiche « Question n sur m » quand la question
+   se termine par « (n/m) ».
 4. **Suivre** — le volet **Plan** re-présente le JSON du magasin (segments, état
    de chaque feature, modèle, lien de la PR quand elle existe), et le volet
-   **Document** rend `PROJECT.md`. Les deux se rafraîchissent sans action : le JSON
-   par la veille du magasin, le document par une veille de fichier.
+   **Document** rend `PROJECT.md` avec le rendu Markdown commun de l'app (vrais
+   tableaux). Les deux se rafraîchissent sans action : le JSON par la veille du
+   magasin, le document par une veille de fichier. La dernière notification du
+   pilote (`notify`) s'affiche sous l'en-tête, décodée et rendue en Markdown —
+   jamais la trame JSON brute, réservée aux « Détails techniques ».
 5. **Alerter** — quand le projet attend une réponse et que la fenêtre n'est pas au
    premier plan, l'app émet **une** demande d'attention critique (`NSApp`) ; à la
    fin du projet (toutes les features du dernier segment fusionnées ou retirées),
    une demande informative unique. Aucune notification macOS, aucun vol de focus.
-6. **Clore** — bouton **Clore la conduite** (arrêt propre du process hébergé). Le
-   projet reste `running` côté pilote ; la reprise éventuelle est le fait du
-   pilote au prochain `/project`.
+6. **Arrêter** — bouton **Arrêter le pilotage**, après confirmation (arrêt propre
+   du process hébergé). Le projet reste `running` côté pilote ; la reprise
+   éventuelle est le fait du pilote au prochain `/project`.
 
 **Ce que l'app n'écrit jamais** : ni `<stateDir>/projects/<clé>.json`, ni le
 worktree `.doc`, ni le lot. Elle ne réimplémente non plus aucune règle du pilote
@@ -722,8 +910,8 @@ l'ordre du plan.
 
 - **Les trois statuts requis** — `check (ubuntu-latest)`, `check (macos-latest)`,
   `release-simulation` — sont toujours affichés, chacun avec son état (vert / rouge /
-  en cours / ignoré). Un statut rouge affiche le lien de son run sous la forme
-  `run <identifiant>`.
+  en cours / ignoré). Un statut rouge affiche le lien « Voir l'échec » vers le
+  journal de son exécution.
 - **Rafraîchissement automatique** : tant que le volet est visible, l'app relit `gh`
   une première fois puis toutes les 60 s, sans aucun geste de l'utilisateur ; une
   lecture en échec marque la ligne « (périmé) » et affiche « Statuts indisponibles : … »
@@ -760,8 +948,8 @@ moins une feature « PR ouverte »).
    ```
 
 2. Ouvrir la vue **Projet** : le volet **PR et CI** liste la PR, avec ses trois
-   statuts requis et leur état ; un statut rouge affiche `run <identifiant>`, lien
-   cliquable vers le journal du run.
+   statuts requis et leur état ; un statut rouge affiche « Voir l'échec », lien
+   cliquable vers le journal de l'exécution.
 3. Cliquer **Ouvrir la PR** : le navigateur par défaut ouvre l'URL de la PR.
 4. Attendre que les trois statuts passent verts (le volet se rafraîchit seul, ≤ 60 s
    après la fin de la CI) : **Fusionner…** devient actif.
@@ -796,7 +984,7 @@ l'horodatage du passage au segment suivant.
    open "omp-console/build/OMP Console.app"
    ```
 
-3. ⌘⇧N, choisir un dépôt GitHub réel, saisir un nom, « Conduire ».
+3. ⇧⌘N, choisir un dépôt GitHub réel, saisir un nom, « Piloter ».
 4. Écrire la description du projet puis « fin » dans la barre de saisie : la
    question suivante (validation du plan) s'affiche comme un dialogue.
 5. Choisir « Corriger le plan » : l'éditeur s'ouvre **prérempli** du plan ;
@@ -807,29 +995,34 @@ l'horodatage du passage au segment suivant.
 7. Mettre la fenêtre en arrière-plan : un dialogue en attente doit lever une
    demande d'attention (icône de l'app dans le Dock qui rebondit).
 
-## Fenêtre Statistiques
+## Section Statistiques
 
-Une fenêtre **en lecture seule**, ouverte par **Fichier ▸ Statistiques** (⌘⇧S),
+Une section **en lecture seule** (⌘9),
 qui compte ce que les runs d'un projet ont consommé : tokens d'entrée et de sortie,
 durée murale (attente d'une réponse utilisateur comprise) et nombre de tours (un
 tour = un cycle complet prompt → réponse finale), par run puis agrégés par feature
 et par projet. **Aucun montant en dollars** n'y apparaît — le domaine `Stats` ne
 lit jamais `usage.cost`.
 
-Le tableau est celui du **projet affiché** : un sélecteur (`Projet`) en tête, puis
-la ligne d'agrégat du projet, le compte des features du plan sans run lisible, un
-bloc par feature listée et un rang par run. Une feature du plan n'est **listée**
-que si elle porte au moins un run **lisible** ; les autres sont **masquées** et
-comptées (`<n> feature(s) du plan sans run lisible`, affiché même à 0).
+Le tableau de bord est celui du **projet affiché** (sélecteur `Projet` de la barre
+d'outils, nom du projet en sous-titre) : quatre tuiles (« Tokens envoyés »,
+« Tokens reçus », « Temps passé », « Tours ») totalisent le projet ; le graphique
+« Tokens par feature » montre, par feature listée, deux barres empilées
+(envoyés, reçus) ; le tableau « Runs » liste un run par ligne en sept colonnes
+(Feature, Étape, Modèle, Durée, Tours, Tokens, État), triable par un clic sur un
+en-tête (re-clic inverse ; sans tri, l'ordre est features puis runs). Une feature
+du plan n'est **listée** que si elle porte au moins un run **lisible** ; les autres
+sont **masquées** et comptées en pied (`<n> feature(s) du plan sans run lisible`,
+absent à 0).
 
 ### Les cinq états
 
 | État | Condition | Texte exact | AX |
 |---|---|---|---|
-| Chargement | aucun instantané reçu | `Chargement du magasin d'état…` | `stats.state` |
-| Magasin absent | racine `.absent` | `Magasin d'état absent : <stateDir>` | `stats.state` |
-| Aucun projet | racine présente, aucun `projects/*.json` | `Aucun projet dans le magasin d'état : <stateDir>` | `stats.state` |
-| Aucun run lisible | projet affiché, features vides | `Aucun run lisible pour ce projet` | `stats.empty` |
+| Chargement | aucun instantané reçu | `Chargement des pipelines…` | `stats.state` |
+| Magasin absent | racine `.absent` | `Aucune pipeline pour l'instant.` | `stats.state` |
+| Aucun projet | racine présente, aucun `projects/*.json` | `Les statistiques apparaîtront dès qu'un projet sera piloté.` | `stats.state` |
+| Aucune donnée | projet affiché, features vides | `Aucune donnée pour ce projet` | `stats.empty` |
 | Tableau | projet affiché avec ≥ 1 feature listée | voir ci-dessous | — |
 
 Les textes du chargement et du magasin absent sont **repris mot pour mot** de
@@ -840,21 +1033,18 @@ Les textes du chargement et du magasin absent sont **repris mot pour mot** de
 | Élément | Identifiant |
 |---|---|
 | Sélecteur de projet | `stats.project` |
-| Ligne d'agrégat | `stats.aggregate` |
+| Tuiles du projet | `stats.aggregate` |
+| Graphique « Tokens par feature » | `stats.chart` |
 | Compte des features masquées | `stats.hidden` |
-| Bloc d'une feature | `stats.feature.<slug>` |
-| Rang d'un run | `stats.run.<tag>` (`tag` = `sessionTag(forSessionFile:)`) |
+| Feature d'une ligne du tableau | `stats.run.<tag>` (`tag` = `sessionTag(forSessionFile:)`) |
 
 ### Forme d'une ligne
 
-- Agrégat : `Projet <libellé> — entrée <n> · sortie <n> · durée <d> · tours <n>`.
-- Feature : `<slug> — entrée <n> · sortie <n> · durée <d> · tours <n>`.
-- Run : `<tag> · /<phase> · entrée <n> · sortie <n> · durée <d> · tours <n> · modèle <m|absent>`.
-  Un run **illisible** remplace tout par `<tag> · /<phase> — session introuvable`
-  (fichier absent) ou `<tag> · /<phase> — session illisible : <message OS>`.
-
-`<n>` est un entier sans séparateur de milliers, `<d>` une durée `elapsedLabel`
-(`<m>:<ss>` ou `<h>:<mm>:<ss>`), une durée inconnue s'écrit `—`.
+Durées et tokens passent par les formateurs de Foundation en français
+(`ConsoleFormat` : « 14 min et 12 s », « 1,2 k ») ; une durée inconnue s'écrit
+`—`. Un run **illisible** garde sa ligne avec l'état « Illisible », son motif en
+infobulle (« session introuvable », « session illisible : <message OS> »), et reste
+exclu des sommes.
 
 ### Mise à jour en direct
 
@@ -868,7 +1058,7 @@ repos est marqué périmé).
 ### Non-objectifs
 
 Pas de colonne `cacheRead`/`cacheWrite`, aucun signe monétaire nulle part, aucun
-bouton d'export, de filtre, de tri ou de rafraîchissement, aucune ligne
+bouton d'export, de filtre ou de rafraîchissement, aucune ligne
 sélectionnable, aucune fenêtre par run ou par feature, aucune mémorisation du
 projet choisi entre deux lancements. Aucune écriture dans le magasin.
 
@@ -884,10 +1074,10 @@ sonde AX :
    `owner.pid` est le pid du shell de la sonde (vivant).
 2. Lancer `MEM0_PIPELINE_STATE_DIR=/tmp/<état> nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" &`,
    puis interroger `AXUIElementCreateApplication(pid)` : `stats.project`,
-   `stats.aggregate`, `stats.hidden`, `stats.feature.<slug>`, `stats.run.<tag>`.
-3. Vérifier par calcul indépendant (python sur le `.jsonl` copié) que
-   `entrée`/`sortie`/`tours`/`durée` de la ligne égalent la session (AC-1), et
-   qu'aucune valeur AX ne porte `$` (AC-2).
+   `stats.aggregate`, `stats.chart`, `stats.hidden`, `stats.run.<tag>`.
+3. Vérifier par calcul indépendant (python sur le `.jsonl` copié) que tokens,
+   tours et durée de la ligne égalent la session (AC-1), et qu'aucune valeur AX ne
+   porte `$` (AC-2).
 4. AC-3 : ajouter une entrée assistant avec `usage` à la session copiée ⇒ la ligne
    et l'agrégat montent **sans geste** ; relever la durée du run vivant deux fois à
    3 s d'intervalle ⇒ elle a augmenté alors qu'aucun octet n'a été écrit.
@@ -935,7 +1125,7 @@ variable : quel que soit `omp` sur la machine, ils rapportent ces quatre tests
 
 Le harnais **du terminal** (`TerminalSmokeTests`) suit la même règle, avec sa propre
 variable : il ne tourne que si **`MEM0_TERMINAL_RECIPE`** est posée, donc jamais en
-intégration continue (voir « Fenêtre Terminal (terminal intégré) »).
+intégration continue (voir « Section Terminal (terminal intégré) »).
 
 ## Notifications et barre de menus
 
@@ -968,33 +1158,19 @@ rien (une PR non suivie), et une feature de **lot** `done` avec `prUrl` (colonne
 « PR ouverte » du Kanban) n'est pas une fusion. Les sources sont bornées comme le
 magasin : 200 entrées `running`, 20 rangs `history`, un lot et un projet par dépôt.
 
-### La bande d'état de la fenêtre
+### Notifications refusées
 
-Une bande informative est posée **au-dessus** du `NavigationSplitView`, donc visible
-dans les cinq sections. Aucun élément focusable, aucun geste : l'ordre de
-tabulation existant est inchangé.
+Quand l'autorisation de notification est **refusée** (et seulement alors), l'Accueil
+montre en tête un bandeau neutre (`home.notificationsBanner`) :
+« Les notifications sont désactivées. », « Ouvrir les Réglages » (Réglages Système ▸
+Notifications) et « Ignorer », qui le masque pour de bon (préférence
+`home.notificationsBannerDismissed`). La fenêtre n'affiche plus de compteurs : ils
+vivent dans l'item de la barre des menus.
 
-| État | Ligne des compteurs (`status.counters`) |
-|---|---|
-| aucun instantané reçu | `Chargement des compteurs…` |
-| racine du magasin absente | `Compteurs indisponibles — magasin d'état absent : <dir>` |
-| sinon | `occupés : <busy> · en attente : <waiting>` (les deux chiffres toujours là, y compris 0) |
-
-Une seconde ligne (`status.notifications`) apparaît **seulement** si l'autorisation
-de notification est refusée :
-`Notifications désactivées — autorisez OMP Console dans Réglages Système ▸ Notifications.`
-
-| Identifiant | Surface |
-|---|---|
-| `status.strip` | la bande |
-| `status.counters` | la ligne des compteurs |
-| `status.notifications` | la ligne de refus (absente de l'arbre si l'autorisation n'est pas refusée) |
-
-« Occupés » compte les cartes de la colonne **En cours** ; « en attente » les cartes
-« Question en vol », « Jalon specs » et « Jalon review » — deux catégories
-**exclusives**, calculées sur l'ardoise que la fenêtre affiche. La colonne « En
-attente » du Kanban (features `pending`, non lancées) n'est **pas** ce compteur. La
-bande et l'item de barre lisent le même état : leurs chiffres ne peuvent pas diverger.
+Dans l'item de barre, « occupés » compte les cartes de la colonne **En cours** ; « en attente » les cartes
+« À vous », « Specs à valider » et « Revues à accepter » — deux catégories
+**exclusives**, calculées sur l'ardoise que la fenêtre affiche. La colonne « Pas
+commencées » de Pipelines (features `pending`, non lancées) n'est **pas** ce compteur.
 
 ### Le registre persisté
 
@@ -1025,8 +1201,7 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
   nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" >/tmp/omp-console.log 2>&1 &
 ```
 
-1. Accorder le dialogue d'autorisation ; vérifier `status.counters` à
-   `occupés : 0 · en attente : 0` et l'item de barre à l'icône seule.
+1. Accorder le dialogue d'autorisation ; vérifier l'item de barre à l'icône seule.
 2. Mettre une autre app au premier plan, puis produire un **vrai** évènement par un
    **process de run réel** (`omp --mode rpc-ui` armé du magasin jetable, prompt
    demandant une question à choix multiples) : une bannière apparaît, nomme le run,
@@ -1038,8 +1213,8 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
    `state = waiting`) et une fusion (`projects/<clé>.json`, `status = merged`) : une
    bannière par évènement, jamais deux.
 5. Refuser l'autorisation dans Réglages Système ▸ Notifications ▸ OMP Console,
-   rouvrir la fenêtre ⇒ `status.notifications` affiche la phrase ; la réaccorder ⇒ la
-   ligne disparaît (statut relu à l'activation de l'app).
+   rouvrir la fenêtre ⇒ l'Accueil montre `home.notificationsBanner` ; la réaccorder ⇒
+   le bandeau disparaît (statut relu à l'activation de l'app).
 6. Fermer la fenêtre (bouton rouge) ⇒ l'app reste vivante, l'item de barre est là,
    ⌘Q quitte ; presser l'item (sonde AX `AXPress`) ⇒ la fenêtre redevient visible et
    au premier plan.
@@ -1078,8 +1253,10 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 ## Consulter la mémoire du projet
 
 La section **Mémoire** est un **lecteur** de la mémoire du projet courant : elle
-cherche des souvenirs, montre le sommaire du projet et l'état du service, et ouvre
-un souvenir pour en lire le texte complet. `Sources/OMPConsole/Memory/` ne se lie
+cherche des souvenirs, montre le sommaire du projet et ouvre un souvenir pour en
+lire le texte complet. La recherche (champ système `.searchable`), « Sommaire » et
+« Rafraîchir » vivent dans la barre d'outils de la fenêtre ; l'état du service ne
+s'affiche que lorsqu'il est indisponible. `Sources/OMPConsole/Memory/` ne se lie
 jamais au service que par les traits de `MemoryServing`.
 
 **Lecture seule, par construction.** Le client ne construit que trois routes —
@@ -1104,7 +1281,7 @@ recherche.
 `*.xcodeproj`, puis le nom du répertoire. `_global` n'est jamais envoyé : la section
 ne montre que la mémoire du projet. Sans portée calculable (aucun projet ouvert,
 `git` en échec), aucun appel de portée n'est émis et l'état « Aucun projet ouvert »
-renvoie vers la fenêtre « Session OMP ».
+renvoie vers la section « Session OMP ».
 
 **La recherche** reproduit `mem0_search` : pool sur-échantillonné
 `min(6 × 4, 50) = 24`, seuil de cosinus brut **0,55**, `explain` vrai, puis
@@ -1115,22 +1292,23 @@ renvoie vers la fenêtre « Session OMP ».
 
 | État | Rendu |
 |---|---|
-| aucune sonde encore | adresse seule en en-tête, `Chargement de la mémoire du projet…` |
-| portée incalculable | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌘N) |
-| service indisponible | « Service mem0-http indisponible » + l'adresse + la dernière erreur — jamais une liste vide, jamais « aucun souvenir » |
-| sommaire vide | « Aucun souvenir dans la mémoire du projet « <portée> ». » |
-| sommaire | `<n> souvenir(s)` puis les lignes, dans l'ordre du service |
-| recherche sans ligne | « La mémoire du projet ne contient aucun souvenir correspondant. » |
-| recherche sans score | « Le service n'annonce pas de score sémantique (score_details absent) — recherche impossible. » |
-| recherche sous le seuil | « Aucun souvenir ne dépasse le seuil de pertinence (0,55) pour cette recherche. » |
-| détail | l'identifiant en en-tête et le texte **complet** en police monospacée, sélectionnable, défilable |
+| aucune sonde encore | `Chargement de la mémoire du projet…` |
+| portée incalculable | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
+| service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais « aucun souvenir » |
+| sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
+| sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
+| recherche sans ligne | « Aucun résultat » — « La mémoire du projet ne contient aucun souvenir correspondant. » |
+| recherche sans score | « Recherche impossible » — « Ce service de mémoire ne sait pas classer les souvenirs par pertinence. » |
+| recherche sous le seuil | « Aucun résultat » — « Aucun souvenir n'est assez proche de cette recherche. » |
+| détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée, pertinence (en recherche) |
 
-**Identifiants d'accessibilité** : `memoire.service`, `memoire.search.query`,
-`memoire.search.submit`, `memoire.summary.button`, `memoire.refresh`,
-`memoire.summary.count`, `memoire.list`, `memoire.list.row.<id>`,
-`memoire.detail`. Clavier : `Tab`/`Maj-Tab` dans l'ordre de mise en page, `Retour`
-dans le champ déclenche la recherche, les flèches haut/bas déplacent la sélection de
-la liste (le détail suit), `⌘R` rafraîchit.
+**Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
+`memoire.unavailable.detail`, `memoire.summary.count`, `memoire.search.results`,
+`memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
+`memoire.detail.copy`, `memoire.detail.technical`. Clavier : `Tab`/`Maj-Tab` dans
+l'ordre de mise en page, `Retour` dans le champ de recherche lance la recherche, le
+vider (ou sa croix) ramène au sommaire déjà lu sans requête, les flèches haut/bas
+déplacent la sélection de la liste (le détail suit), `⌘R` rafraîchit.
 
 **Recette manuelle** (hors CI : aucun script ne pose ses variables) :
 
@@ -1148,16 +1326,16 @@ dans le projet.
 
 ```
 omp-console/
-├── Package.swift                  manifeste SwiftPM (cible macOS 14, deux cibles)
+├── Package.swift                  manifeste SwiftPM (cible macOS 26, deux cibles)
 ├── Sources/OMPConsole/
 │   ├── OMPConsoleApp.swift        point d'entrée (@main), scènes et menu
-│   ├── ConsoleRootView.swift      fenêtre, barre latérale, détail
-│   ├── SectionViews.swift         les cinq vues de section
-│   ├── ConsoleSection.swift       les cinq sections et leurs libellés
-│   ├── ConsoleModel.swift         l'état : la section courante
+│   ├── ConsoleRootView.swift      fenêtre, barre latérale groupée, barre d'outils, feuille unique
+│   ├── SectionViews.swift         les neuf vues de section (Sessions : liste + visionneuse poussée)
+│   ├── ConsoleSection.swift       les neuf sections, leurs libellés et leurs groupes
+│   ├── ConsoleModel.swift         l'état : la section courante, la session ouverte dans Sessions
 │   ├── ProjectRoot.swift          le projet ouvert, résolu en UN endroit (clé partagée)
-│   ├── SessionConsoleView.swift   fenêtre « Session OMP » (cinq zones, tous les états)
-│   ├── SessionConsoleModel.swift  projet, mode, prompt, dialogue, statut, actions
+│   ├── SessionConsoleView.swift   section « Session OMP » : conversation, composeur, inspecteur
+│   ├── SessionConsoleModel.swift  projet, mode, prompt, dialogue, conversation, statut, actions
 │   ├── SessionHost.swift          session hébergée : poignée de main, corrélation,
 │   │                              dialogues, mort, relance, arrêt propre
 │   ├── RpcFrames.swift            trames JSONL : décodage, commandes, réponses
@@ -1167,31 +1345,53 @@ omp-console/
 │   ├── ProcessRunner.swift        l'exécuteur partagé : lancement, drainage, lignes,
 │   │                              escalade SIGTERM/SIGKILL
 │   ├── OmpBinary.swift            résolution du binaire `omp`
-│   ├── Terminal/                  la fenêtre de terminal : un vrai `omp` dans un PTY
+│   ├── OmpEnvironment.swift       l'environnement de tout `omp` hébergé (PATH)
+│   ├── Design/
+│   │   ├── ConsoleSurface.swift   surfaces du contenu : carte, bandeau, bouton proéminent (aucun verre)
+│   │   ├── ConsoleVocabulary.swift états en mots, étapes, formateurs (fonctions pures)
+│   │   ├── StatusBadge.swift      l'état en un mot : badge du contenu, pilule Liquid Glass d'une session
+│   │   └── MarkdownBlocksView.swift un Markdown rendu en blocs (Fichiers, conversation, Mémoire, Projet)
+│   ├── Home/                      la section Accueil et ses feuilles
+│   │   ├── HomeModel.swift        disponibilité d'OMP, bienvenue, réponse, bandeau masqué
+│   │   ├── HomePresentation.swift état de l'écran, listes, geste d'une carte (purs)
+│   │   ├── HomeText.swift         tous les textes de l'Accueil
+│   │   ├── HomeView.swift         les quatre états de l'écran
+│   │   ├── MainSheet.swift        la feuille due, une seule à la fois (politique pure)
+│   │   ├── WelcomeSheet.swift     la feuille « Bienvenue »
+│   │   ├── OmpRequiredSheet.swift la feuille bloquante « OMP est requis »
+│   │   └── AnswerSheet.swift      la feuille « Répondre »
+│   ├── Launch/                    la feuille « Nouvelle feature »
+│   │   ├── LaunchRepo.swift       dépôts proposés, garde « racine git » (purs)
+│   │   └── NewFeatureSheet.swift  la feuille
+│   ├── Conductor/
+│   │   └── ConductorPool.swift    les conducteurs : un `omp --mode rpc` par dépôt sans pilote
+│   ├── Terminal/                  la fenêtre de terminal : un shell de connexion dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
-│   │   │                          hérités ≥ 3, termios brut d'entrée, écriture,
+│   │   │                          hérités ≥ 3, écriture,
 │   │   │                          escalade SIGTERM/SIGKILL du groupe, récolte
+│   │   ├── TerminalShell.swift    le shell lancé ($SHELL -l, sinon /bin/zsh) et « Lancer omp »
 │   │   ├── TerminalHostError.swift les échecs du PTY et leur seule table de texte
-│   │   ├── TerminalEnvironment.swift l'environnement de l'enfant (TERM, COLORTERM, PATH)
+│   │   ├── TerminalEnvironment.swift l'environnement de l'enfant (TERM, COLORTERM ; PATH par OmpEnvironment)
 │   │   ├── TerminalScreen.swift   la grille : cellules, attributs, marges, largeur UAX #11
 │   │   ├── TerminalEmulator.swift l'émulateur VT : CSI, SGR, chaînes, sondes, réponses
 │   │   ├── TerminalPalette.swift  palette 16/256/direct, défauts, réponse OSC 11
 │   │   ├── TerminalViewText.swift tous les textes de la fenêtre Terminal
 │   │   ├── TerminalRenderView.swift la zone de rendu (CoreText), le curseur, le clavier
 │   │   ├── TerminalConsoleModel.swift l'état : cible, cibles, process, fermeture, palette
-│   │   ├── TerminalConsoleView.swift la fenêtre (bandeau, zone de rendu, états)
+│   │   ├── TerminalConsoleView.swift la fenêtre (barre d'outils, bandeau, zone de rendu, états)
 │   │   └── TerminalLaunchSheet.swift la feuille « Choisir un répertoire »
 │   ├── Session/                   le lecteur de sessions (aucune vue, aucune E/S d'écriture)
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
 │   │   ├── SessionRendering.swift le rendu texte du modèle (fonctions pures)
+│   │   ├── SessionConsoleText.swift les textes de la fenêtre Session OMP
+│   │   ├── RpcEventSummary.swift  les trames du protocole résumées en français (pur)
 │   │   └── RpcPanes.swift         volets RPC partagés (transcription, dialogue, prompt)
 │   ├── Project/                   la conduite d'un projet depuis l'app
 │   │   ├── ProjectConduite.swift  identité, état et refus d'une conduite
 │   │   ├── ProjectConsoleModel.swift le modèle : armement, refus, clôture, dialogues, veille
 │   │   ├── ProjectPaths.swift     la clé de dépôt et le chemin de PROJECT.md
 │   │   ├── ProjectPlan.swift      le plan (segments, états, PR) : fonctions pures
-│   │   ├── ProjectDocMarkdown.swift le document rendu en blocs (fonction pure)
 │   │   ├── ProjectAttention.swift décision d'attention (pure) et adaptateur NSApp
 │   │   ├── ProjectWindowPresence.swift présence de la fenêtre + WindowAccessor
 │   │   ├── ProjectViewText.swift  tous les textes de la vue Projet
@@ -1200,9 +1400,9 @@ omp-console/
 │   │   ├── PRService.swift        lecture et fusion d'une PR (protocole + service `gh`)
 │   │   ├── URLOpening.swift       ouvreur d'URL (NSWorkspace)
 │   │   ├── ProjectPRPane.swift    le volet « PR et CI » et ses lignes
-│   │   ├── ProjectConsoleView.swift la fenêtre (en-tête, plan, document, session)
+│   │   ├── ProjectConsoleView.swift la fenêtre (en-tête, PR, plan, document, conversation, feuille, inspecteur)
 │   │   ├── ProjectView.swift      la section « Projet » (même surface)
-│   │   └── ProjectLaunchSheet.swift la feuille « Conduire un projet… »
+│   │   └── ProjectLaunchSheet.swift la feuille « Piloter un projet… »
 │   ├── Store/                     la couche de lecture du magasin d'état
 │   │   ├── PipelineStore.swift    racine du magasin et noms des six stores
 │   │   ├── StoreModels.swift      modèles typés et validation champ par champ
@@ -1213,19 +1413,23 @@ omp-console/
 │   │   └── StoreHub.swift         le flux global, agrégat des six
 │   ├── Kanban/                    le tableau des pipelines (lecture seule)
 │   │   ├── KanbanModels.swift     colonnes, cartes, sources, marques, clé de dépôt
+│   │   ├── KanbanLanes.swift      les cinq voies de l'écran et ce qu'une carte montre (pur)
 │   │   ├── KanbanBoard.swift      construction pure de l'ardoise, textes de parité
-│   │   ├── KanbanAnomalies.swift  illisible, mort, doublon : bandeau et marques
-│   │   ├── KanbanModel.swift      abonnement au flux, sélection, clavier
-│   │   ├── KanbanView.swift       la section : bandeau, onze colonnes, clavier
-│   │   ├── KanbanCardView.swift   une carte cliquable (durée sous TimelineView)
-│   │   └── KanbanDetailView.swift le panneau de détail
+│   │   ├── KanbanAnomalies.swift  illisible, mort, doublon : diagnostic et marques
+│   │   ├── KanbanModel.swift      abonnement au flux, sélection, clavier, feuille de détail
+│   │   ├── KanbanText.swift       textes de la feuille de détail, d'Activité et des problèmes
+│   │   ├── PipelineProgress.swift l'avancement d'une carte en cinq étapes (pur)
+│   │   ├── PipelineProgressViews.swift barre d'avancement des cartes, frise de la feuille
+│   │   ├── KanbanView.swift       la section : voies, clavier, boutons de barre d'outils, feuille de détail
+│   │   ├── KanbanCardView.swift   une carte (sélection, double-clic, menu contextuel)
+│   │   └── KanbanDetailView.swift la feuille de détail d'une carte
 │   ├── Actions/                   les gestes : la SEULE couche qui écrit
 │   │   ├── PipelineCommand.swift  livraisons et commandes, objets JSON exacts
 │   │   ├── PipelineWriter.swift   publication exclusive (link) et boîte confinée
 │   │   ├── ActionsText.swift      tous les textes et les lignes de journal
 │   │   ├── KanbanActionPresentation.swift  aiguillage pur et dépôts lançables
-│   │   ├── ActionsModel.swift     journal borné, émissions, sondage des accusés
-│   │   └── KanbanActionViews.swift  bandeau, formulaire, zone d'action, journal
+│   │   ├── ActionsModel.swift     journal borné, émissions, accusés, feuille, pilote
+│   │   └── KanbanActionViews.swift  zone d'action, options de question, journal
 │   ├── Files/                     la visionneuse de fichiers et de diffs (lecture seule)
 │   │   ├── GitCLI.swift           binaires, argv purs et exécution : la SEULE surface git
 │   │   ├── FilesTarget.swift      catalogue des cibles et base de comparaison
@@ -1235,7 +1439,9 @@ omp-console/
 │   │   ├── TreeWatcher.swift      veille FSEvents récursive de la cible active
 │   │   ├── FilesModel.swift       l'état de la section : cible, arbre, document, veille
 │   │   ├── FilesText.swift        tous les textes de la section, en un endroit
-│   │   └── FilesView.swift        la section : en-tête, arbre, document, états
+│   │   ├── MarkdownDocument.swift un Markdown en blocs complets (pur)
+│   │   ├── CodeHighlighter.swift  langue d'un fichier et coloration lexicale (pure)
+│   │   └── FilesView.swift        la section : en-tête, arbre, document rendu ou code, diff
 │   ├── Memory/                    la mémoire du projet, en lecture seule
 │   │   ├── MemoryScope.swift      la portée mem0 du projet (miroir du plugin)
 │   │   ├── MemoryService.swift    config, routes, lignes, erreurs, client HTTP
@@ -1244,28 +1450,31 @@ omp-console/
 │   │   ├── MemoryModel.swift      l'état : portée, liste, service, sélection
 │   │   └── MemoryView.swift       la section : en-tête, liste, détail, états
 │   ├── Viewer/                    la visionneuse de session (aucune écriture)
-│   │   ├── ViewerTarget.swift     la valeur d'une fenêtre : la session, et son titre
+│   │   ├── ViewerTarget.swift     la session poussée dans Sessions, et son titre
 │   │   ├── SessionSelectorModel.swift  les runs choisissables, depuis le magasin
-│   │   ├── SessionSelectorView.swift   la section « Sessions » : la liste
+│   │   ├── SessionSelectorView.swift   la section « Sessions » : la liste par jour
+│   │   ├── SessionDays.swift      le regroupement des runs par jour (pur)
 │   │   ├── SessionRows.swift      faits affichables, en-tête d'appel, question `ask`
 │   │   ├── SessionDiffLines.swift diffs : classification et découpe des corps
 │   │   ├── FileWatcher.swift      veille vnode d'UN fichier quelconque
 │   │   ├── SessionViewerModel.swift  lignes, plis, suivi, états, journal d'octets
-│   │   ├── SessionViewerView.swift   bandeau, flux, états vides, « Revenir au direct »
+│   │   ├── SessionViewerView.swift   la visionneuse poussée : fil, pilule d'état, « Revenir au direct »
+│   │   ├── ConversationThread.swift  le fil de conversation partagé (suivi, états)
+│   │   ├── ConversationText.swift    textes du fil et verbes d'outil
 │   │   ├── SessionRowView.swift      le rendu d'un fait (dont les lignes de diff)
 │   │   └── ScrollBottomObserver.swift la géométrie du défilement et ses gestes
-│   ├── Alerts/                    les notifications macOS et la bande d'état
+│   ├── Alerts/                    les notifications macOS
 │   │   ├── AlertEvents.swift      dérivation des six familles, clés et textes purs
 │   │   ├── AlertDelivery.swift    livreur réel/no-op, autorisation (SEUL import UserNotifications)
 │   │   ├── AlertLedger.swift      registre persisté des clés, lecture tolérante
-│   │   ├── AlertsModel.swift      abonnement, décision, compteurs, autorisation
-│   │   └── AlertsStripView.swift  la bande de la fenêtre (textes purs, identifiants AX)
-│   ├── Stats/                     la fenêtre « Statistiques » (lecture seule)
+│   │   └── AlertsModel.swift      abonnement, décision, compteurs, autorisation
+│   ├── Stats/                     la section « Statistiques » (lecture seule)
 │   │   ├── StatsMetrics.swift     les métriques d'une session (fonctions pures)
 │   │   ├── StatsModels.swift      types du tableau et textes exacts de la vue
 │   │   ├── StatsBoard.swift       construction du tableau et totaux (fonctions pures)
-│   │   ├── StatsModel.swift       abonnement, lecteurs, veilles, sélection
-│   │   └── StatsView.swift        la fenêtre : sélecteur, agrégat, features, runs
+│   │   ├── StatsPresentation.swift barres et lignes du tableau de bord (purs)
+│   │   ├── StatsModel.swift       abonnement, lecteurs, veilles, sélection, tri
+│   │   └── StatsView.swift        la fenêtre : tuiles, graphique, tableau triable
 │   └── MenuBar/                   l'item de barre de menus et ses compteurs
 │       ├── RunCounters.swift      occupés / en attente et l'état publié
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item

@@ -54,6 +54,10 @@ final class FilesModel: ObservableObject {
     @Published private(set) var notice: String?
     @Published private(set) var errorMessage: String?
     @Published private(set) var isLoading = false
+    /// Ce que montre le document (S-18 R5) : rendu ou source d'un Markdown, contenu
+    /// d'un fichier de code, diff. Le choix survit au changement de fichier ; un
+    /// mode indisponible pour le document affiché se résout par `effective(in:)`.
+    @Published var documentMode: FilesDocumentMode = .content
 
     /// L'arbre de la vue (vide tant que rien n'est chargé).
     var nodes: [FilesNode] { tree?.nodes ?? [] }
@@ -447,5 +451,39 @@ final class FilesModel: ObservableObject {
             guard !Task.isCancelled, let self else { return }
             await self.refresh()
         }
+    }
+}
+
+extension FilesModel.Pane {
+    /// Le chemin relatif du document affiché, d'où se déduit sa langue.
+    var documentPath: String? {
+        switch self {
+        case .none: nil
+        case let .file(entry): entry.path
+        case .contract: FilesModel.contractRelativePath
+        case .projectDocument: FilesModel.projectDocumentRelativePath
+        }
+    }
+}
+
+/// Les vues d'un document (S-18 R5). `content` est le RENDU d'un Markdown et la
+/// visionneuse de code de tout autre fichier ; `source` n'existe que pour un
+/// Markdown ; `diff` que pour un fichier de l'arbre (les documents dédiés n'ont
+/// pas de diff).
+enum FilesDocumentMode: Hashable, Sendable {
+    case content
+    case source
+    case diff
+
+    static func available(isMarkdown: Bool, hasDiff: Bool) -> [FilesDocumentMode] {
+        var modes: [FilesDocumentMode] = [.content]
+        if isMarkdown { modes.append(.source) }
+        if hasDiff { modes.append(.diff) }
+        return modes
+    }
+
+    /// Le mode réellement montré : le choix s'il est offert, sinon le contenu.
+    func effective(in available: [FilesDocumentMode]) -> FilesDocumentMode {
+        available.contains(self) ? self : .content
     }
 }

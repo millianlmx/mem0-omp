@@ -134,4 +134,24 @@ if ! codesign --verify --strict "$BUNDLE" >/dev/null 2>&1; then
 fi
 echo "  ✓ signature ad hoc vérifiée (codesign --verify --strict)"
 
+# 5) version minimale du bundle ASSEMBLÉ (S-2 de omp-console-redesign) : Liquid
+#    Glass impose macOS 26, et la plist comme le binaire doivent le dire. Chaque
+#    vérification n'a lieu que si son outil existe (même garde que `plutil -lint`).
+if command -v plutil >/dev/null 2>&1; then
+  plist_minos=$(plutil -extract LSMinimumSystemVersion raw "$BUNDLE/Contents/Info.plist" 2>/dev/null)
+  if [ "$plist_minos" != "26.0" ]; then
+    echo "✗ version minimale du bundle : attendu 26.0, lu ${plist_minos:-rien}"
+    exit 1
+  fi
+fi
+if command -v otool >/dev/null 2>&1; then
+  binary_minos=$(otool -l "$BUNDLE/Contents/MacOS/OMPConsole" 2>/dev/null \
+    | awk '/cmd LC_BUILD_VERSION/ { found = 1 } found && $1 == "minos" { print $2; exit }')
+  if [ "$binary_minos" != "26.0" ]; then
+    echo "✗ version minimale du bundle : attendu 26.0, lu ${binary_minos:-rien}"
+    exit 1
+  fi
+fi
+echo "  ✓ version minimale du bundle : macOS 26.0"
+
 exit 0

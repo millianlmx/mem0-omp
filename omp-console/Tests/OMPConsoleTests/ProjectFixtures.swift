@@ -179,7 +179,8 @@ func makeProjectModel(
         urlOpener: urlOpener ?? RecordingURLOpener(),
         prRefreshInterval: prRefreshInterval,
         environment: environment,
-        defaults: suite
+        defaults: suite,
+        makeConversation: { SessionViewerModel(target: $0, watch: false) }
     )
 }
 

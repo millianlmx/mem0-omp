@@ -1,7 +1,11 @@
 // Les anomalies du magasin vues par le tableau (S-8, S-9, S-10) : la déduplication
-// des sources, les lignes du bandeau et les marques portées par les cartes.
+// des sources, les lignes de la bulle des problèmes et les marques portées par
+// les cartes.
 //
-// Trois règles, chacune avec ses textes EXACTS (testés à l'octet) :
+// Chaque anomalie porte DEUX textes : une phrase pour l'utilisateur, qui nomme la
+// pipeline quand c'est possible, et le détail technique EXACT (fichier, pid,
+// identité — testé à l'octet), affiché seulement sous « Détails techniques ».
+// Trois règles :
 //  - S-8 « entrée illisible » : une ligne par fichier écarté des quatre stores du
 //    tableau, avec sa raison — `JSONValue.parse` qui échoue n'est pas un schéma
 //    incomplet ;
@@ -60,6 +64,7 @@ struct KanbanDedup: Sendable {
                 doublonRunIDs.insert(kept.id)
                 collisions.append(collision(
                     identity: "cwd \(real)",
+                    name: entry.label,
                     a: "running/\(kept.id).json",
                     b: "running/\(entry.id).json"
                 ))
@@ -80,6 +85,7 @@ struct KanbanDedup: Sendable {
                 doublonHistoryIDs.insert(kept.id)
                 collisions.append(collision(
                     identity: identity,
+                    name: entry.label,
                     a: "history/\(kept.id).json",
                     b: "history/\(entry.id).json"
                 ))
@@ -99,6 +105,7 @@ struct KanbanDedup: Sendable {
                 doublonLotIDs.insert(kept.id)
                 collisions.append(collision(
                     identity: "cwd \(real)",
+                    name: nil,
                     a: lotRef(kept),
                     b: lotRef(lot)
                 ))
@@ -117,6 +124,7 @@ struct KanbanDedup: Sendable {
                 doublonProjectRepoKeys.insert(kept.repoKey)
                 collisions.append(collision(
                     identity: "cwd \(real)",
+                    name: nil,
                     a: projectRef(kept),
                     b: projectRef(project)
                 ))
@@ -140,6 +148,7 @@ struct KanbanDedup: Sendable {
                     doublonLotFeatureKeys.insert(key)
                     collisions.append(collision(
                         identity: "feature « \(feature.slug) »",
+                        name: feature.slug,
                         a: kept,
                         b: citation
                     ))
@@ -171,6 +180,7 @@ struct KanbanDedup: Sendable {
                         doublonProjectFeatureKeys.insert(key)
                         collisions.append(collision(
                             identity: "feature « \(feature.slug) »",
+                            name: feature.slug,
                             a: kept,
                             b: citation
                         ))
@@ -198,7 +208,7 @@ struct KanbanDedup: Sendable {
             doublonLotFeatureKeys: doublonLotFeatureKeys,
             doublonProjectFeatureKeys: doublonProjectFeatureKeys,
             anomalies: collisions
-                .sorted { ($0.identity, $0.anomaly.text) < ($1.identity, $1.anomaly.text) }
+                .sorted { ($0.identity, $0.anomaly.detail) < ($1.identity, $1.anomaly.detail) }
                 .map(\.anomaly)
         )
     }
@@ -209,7 +219,7 @@ struct KanbanDedup: Sendable {
 enum KanbanAnomalies {
     // --- S-8 : entrées illisibles --------------------------------------------
 
-    /// La raison telle que le bandeau l'écrit (S-8) : deux échecs distincts.
+    /// La raison telle que le détail technique l'écrit (S-8) : deux échecs distincts.
     static func reasonText(_ reason: DiscardReason) -> String {
         switch reason {
         case .unparsable: "JSON illisible"
@@ -217,8 +227,8 @@ enum KanbanAnomalies {
         }
     }
 
-    /// Une ligne par entrée écartée des QUATRE stores du tableau, dans l'ordre du
-    /// bandeau : `running`, `history`, `lots`, `projects`, puis par nom de fichier
+    /// Une ligne par entrée écartée des QUATRE stores du tableau, dans l'ordre de
+    /// la bulle : `running`, `history`, `lots`, `projects`, puis par nom de fichier
     /// (l'ordre de la couche de lecture). `inbox/` et `audit/` sont hors périmètre.
     static func illisibleLines(snapshot: StoreSnapshot) -> [KanbanAnomaly] {
         let groups = [
@@ -231,7 +241,8 @@ enum KanbanAnomalies {
             entries.map { entry in
                 KanbanAnomaly(
                     kind: .illisible,
-                    text: "entrée illisible — \(entry.file) : \(reasonText(entry.reason))"
+                    text: "Une entrée de pipeline est illisible.",
+                    detail: "entrée illisible — \(entry.file) : \(reasonText(entry.reason))"
                 )
             }
         }
@@ -268,30 +279,40 @@ enum KanbanAnomalies {
         for entry in running.sorted(by: { $0.id < $1.id }) where isDead(pid: entry.ownerPid) {
             lines.append(KanbanAnomaly(
                 kind: .mort,
-                text: mortText(target: "running/\(entry.id).json", pid: entry.ownerPid)
+                text: "\(entry.label) s'est arrêtée de façon inattendue.",
+                detail: mortText(target: "running/\(entry.id).json", pid: entry.ownerPid)
             ))
         }
         let deadLots = lots
             .filter { isDead(pid: $0.owner.pid) }
             .sorted { KanbanRepoKey.key(forRoot: $0.repoRoot) < KanbanRepoKey.key(forRoot: $1.repoRoot) }
         for lot in deadLots {
+            let repo = (realpathOr(lot.repoRoot) as NSString).lastPathComponent
             lines.append(KanbanAnomaly(
                 kind: .mort,
-                text: mortText(target: "lots/\(KanbanRepoKey.key(forRoot: lot.repoRoot)).json", pid: lot.owner.pid)
+                text: "Le pilote de \(repo) s'est arrêté de façon inattendue.",
+                detail: mortText(target: "lots/\(KanbanRepoKey.key(forRoot: lot.repoRoot)).json", pid: lot.owner.pid)
             ))
         }
         return lines
     }
 
+    /// Le détail technique d'une ligne `mort` : le fichier et le pid.
     static func mortText(target: String, pid: Int?) -> String {
         "propriétaire mort — \(target) : \(pid.map { "pid \($0)" } ?? "pid absent")"
     }
 
     // --- S-10 : doublon -------------------------------------------------------
 
-    /// `doublon — <source A> et <source B> : <identité>` (S-10).
-    static func doublonLine(a: String, b: String, identity: String) -> KanbanAnomaly {
-        KanbanAnomaly(kind: .doublon, text: "doublon — \(a) et \(b) : \(identity)")
+    /// La phrase nomme la pipeline quand l'identité en désigne une (`name`) ; le
+    /// détail reste `doublon — <source A> et <source B> : <identité>` (S-10).
+    static func doublonLine(a: String, b: String, identity: String, name: String?) -> KanbanAnomaly {
+        KanbanAnomaly(
+            kind: .doublon,
+            text: name.map { "Deux sources décrivent la même pipeline : \($0)." }
+                ?? "Deux sources décrivent la même pipeline.",
+            detail: "doublon — \(a) et \(b) : \(identity)"
+        )
     }
 }
 
@@ -305,8 +326,13 @@ private func projectRef(_ project: Project) -> String {
     "projects/\(project.repoKey).json"
 }
 
-private func collision(identity: String, a: String, b: String) -> (identity: String, anomaly: KanbanAnomaly) {
-    (identity, KanbanAnomalies.doublonLine(a: a, b: b, identity: identity))
+private func collision(
+    identity: String,
+    name: String?,
+    a: String,
+    b: String
+) -> (identity: String, anomaly: KanbanAnomaly) {
+    (identity, KanbanAnomalies.doublonLine(a: a, b: b, identity: identity, name: name))
 }
 
 /// Un nombre d'horodatage rendu sans décimale superflue : `1700000000000` plutôt

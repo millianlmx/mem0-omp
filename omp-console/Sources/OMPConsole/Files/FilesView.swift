@@ -1,5 +1,6 @@
-// La section « Fichiers » (BR-2) : l'en-tête (choix de cible, accès dédiés,
-// rafraîchissement), l'arbre à gauche, le document à droite.
+// La section « Fichiers » (BR-2) : la barre d'outils de la fenêtre (cible, accès
+// dédiés, mode du document, rafraîchissement), l'arbre à gauche, le document à
+// droite.
 //
 // Aucun attribut macro n'est employé ici (`@State`, `@Preview` ne compilent pas sous
 // les Command Line Tools, D3) : l'état vit dans `FilesModel` et les liens sont
@@ -18,56 +19,77 @@ struct FilesView: ConsoleSectionView {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
             if let notice = model.notice {
                 noticeBar(notice)
             }
-            Divider()
             content
         }
+        // La section vit dans la colonne de détail : ses éléments rejoignent la
+        // barre d'outils de la fenêtre et disparaissent avec elle.
+        .toolbar { toolbarContent }
         // Le premier chargement suit l'apparition de la section, et la veille est
         // libérée quand elle disparaît (S-7).
         .task { await model.refresh() }
         .onDisappear { model.suspend() }
     }
 
-    // MARK: - En-tête
+    // MARK: - Barre d'outils
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Picker(FilesText.targetPicker, selection: targetSelection) {
-                ForEach(model.targets) { target in
-                    Text(target.label)
-                        .tag(Optional(target.path))
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            targetPicker
+        }
+        if availableModes.count > 1 {
+            ToolbarItem(placement: .principal) {
+                modePicker
+            }
+        }
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                Button {
+                    model.openContract()
+                } label: {
+                    Label(FilesText.contractButton, systemImage: "doc.plaintext")
                 }
-            }
-            .frame(maxWidth: 300)
-            .disabled(model.targets.isEmpty)
-            .help(model.target?.path ?? "")
-
-            Button {
-                model.openContract()
+                Button {
+                    model.openProjectDocument()
+                } label: {
+                    Label(FilesText.projectButton, systemImage: "doc.richtext")
+                }
             } label: {
-                Label(FilesText.contractButton, systemImage: "doc.plaintext")
+                Label(FilesText.openMenu, systemImage: "doc.text")
             }
-
-            Button {
-                model.openProjectDocument()
-            } label: {
-                Label(FilesText.projectButton, systemImage: "doc.richtext")
-            }
-
+            .help(FilesText.openHelp)
+            .disabled(model.target == nil)
+            .accessibilityIdentifier("files.open")
+        }
+        ToolbarItem(placement: .primaryAction) {
             Button {
                 Task { await model.refresh() }
             } label: {
                 Label(FilesText.refresh, systemImage: "arrow.clockwise")
             }
+            .help(FilesText.refresh)
             .keyboardShortcut("r", modifiers: .command)
             .disabled(model.isLoading)
-
-            Spacer()
+            .accessibilityIdentifier("files.refresh")
         }
-        .padding(8)
+    }
+
+    private var targetPicker: some View {
+        Picker(FilesText.targetPicker, selection: targetSelection) {
+            ForEach(model.targets) { target in
+                Text(verbatim: target.label)
+                    .tag(Optional(target.path))
+            }
+        }
+        // MESURÉ (2026-10-01, sonde /tmp/pickerprobe) : la barre d'outils impose un
+        // style d'étiquette « icône seule » ; un Picker aux options texte s'y dessine
+        // VIDE. Le titre seul rend la cible choisie lisible.
+        .labelStyle(.titleOnly)
+        .disabled(model.targets.isEmpty)
+        .help(model.target.map { ConsoleFormat.path($0.path) } ?? FilesText.targetPicker)
+        .accessibilityIdentifier("files.target")
     }
 
     private func noticeBar(_ text: String) -> some View {
@@ -78,12 +100,13 @@ struct FilesView: ConsoleSectionView {
         }
         .font(.callout)
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .consoleBanner(tint: .orange)
+        .padding(8)
     }
 
-    /// La `List` exige une `Binding<String?>` : une écriture est résolue en entrée de
-    /// l'arbre par le modèle (une ligne sans fichier correspondant est ignorée).
+    /// Le Picker exige une `Binding<String?>` : une écriture est résolue en cible
+    /// par le modèle (un chemin sans cible correspondante est ignoré).
     private var targetSelection: Binding<String?> {
         Binding(
             get: { model.target?.path },
@@ -112,7 +135,7 @@ struct FilesView: ConsoleSectionView {
         } else if model.isLoading, model.tree == nil {
             VStack(spacing: 10) {
                 ProgressView()
-                Text(verbatim: FilesText.loading(model.target?.path ?? model.projectRoot?.path ?? ""))
+                Text(verbatim: FilesText.loading(loadingName))
                     .foregroundStyle(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -122,6 +145,13 @@ struct FilesView: ConsoleSectionView {
                 documentColumn
             }
         }
+    }
+
+    /// Le nom de ce qui se lit : la cible choisie, sinon le dossier du projet, en
+    /// chemin lisible (`~/…`) plutôt qu'absolu.
+    private var loadingName: String {
+        if let target = model.target { return target.label }
+        return model.projectRoot.map { ConsoleFormat.path($0.path) } ?? ""
     }
 
     // MARK: - L'arbre
@@ -138,7 +168,9 @@ struct FilesView: ConsoleSectionView {
                     FilesNodeRow(node: node, model: model)
                 }
             }
-            .listStyle(.sidebar)
+            // Un fond de contenu, pas celui d'une barre latérale : la seule barre
+            // latérale de la fenêtre est celle des sections.
+            .listStyle(.inset)
             .frame(minWidth: 220)
         }
     }
@@ -156,13 +188,11 @@ struct FilesView: ConsoleSectionView {
     // MARK: - Le document
 
     private var documentColumn: some View {
-        ScrollView([.horizontal, .vertical]) {
-            VStack(alignment: .leading, spacing: 0) {
-                documentHeader
-                Divider()
-                documentBody
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+            documentHeader
+            Divider()
+            documentBody
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(minWidth: 320)
     }
@@ -175,13 +205,15 @@ struct FilesView: ConsoleSectionView {
             HStack(spacing: 8) {
                 Text(verbatim: entry.path)
                     .font(.headline)
-                Text(verbatim: FilesText.badge(for: entry.kind))
-                    .foregroundStyle(.secondary)
-                if let base = model.diffBase {
-                    Text(verbatim: base.label)
+                if let badge = FilesText.badge(for: entry.kind) {
+                    Text(verbatim: badge)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
+                if mode == .diff, let comparison = model.diffBase.flatMap(FilesText.comparison) {
+                    Text(verbatim: comparison)
+                        .foregroundStyle(.secondary)
+                }
             }
             .padding(8)
         case .contract:
@@ -192,12 +224,47 @@ struct FilesView: ConsoleSectionView {
     }
 
     private func dedicatedHeader(_ title: String) -> some View {
-        HStack {
-            Text(verbatim: title)
-                .font(.headline)
-            Spacer()
+        Text(verbatim: title)
+            .font(.headline)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(8)
+    }
+
+    // MARK: - Les vues du document (S-18 R5)
+
+    private var language: CodeLanguage {
+        model.pane.documentPath.map(CodeLanguage.from(path:)) ?? .plain
+    }
+
+    private var availableModes: [FilesDocumentMode] {
+        var hasDiff = false
+        if case .file = model.pane { hasDiff = true }
+        return FilesDocumentMode.available(isMarkdown: language == .markdown, hasDiff: hasDiff)
+    }
+
+    private var mode: FilesDocumentMode {
+        model.documentMode.effective(in: availableModes)
+    }
+
+    /// Présent dans la barre d'outils seulement quand le document a plusieurs vues.
+    private var modePicker: some View {
+        Picker(FilesText.modePicker, selection: modeSelection) {
+            ForEach(availableModes, id: \.self) { mode in
+                Text(FilesText.title(of: mode, isMarkdown: language == .markdown))
+                    .tag(mode)
+            }
         }
-        .padding(8)
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .accessibilityIdentifier("files.document.mode")
+    }
+
+    private var modeSelection: Binding<FilesDocumentMode> {
+        Binding(
+            get: { mode },
+            set: { model.documentMode = $0 }
+        )
     }
 
     @ViewBuilder private var documentBody: some View {
@@ -207,9 +274,18 @@ struct FilesView: ConsoleSectionView {
                 .foregroundStyle(.secondary)
                 .padding(8)
         case .file:
-            diffSection
-            Divider()
-            contentSection(dedicated: nil)
+            if mode == .diff {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        diffSection
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8)
+                }
+                .background(Color(nsColor: .textBackgroundColor))
+            } else {
+                contentSection(dedicated: nil)
+            }
         case .contract:
             contentSection(dedicated: FilesModel.contractRelativePath)
         case .projectDocument:
@@ -224,17 +300,21 @@ struct FilesView: ConsoleSectionView {
             message(FilesText.baseUnavailable(reason: reason))
         } else if let diff = model.diff {
             if diff.isEmpty {
-                message(FilesText.noDifference(base: model.diffBase?.label ?? "HEAD"))
+                message(FilesText.noDifference)
             } else {
+                // L'en-tête de git (`diff --git`, `index <sha>..<sha>`, `---`, `+++`)
+                // ne dit rien au lecteur : seuls les hunks et les notes s'affichent.
+                let shown = diff.lines.filter { $0.kind != .header }
                 LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(diff.lines.enumerated()), id: \.offset) { _, line in
-                        Text(verbatim: line.text)
+                    ForEach(shown.indices, id: \.self) { index in
+                        Text(verbatim: shown[index].text)
                             .font(.system(.body, design: .monospaced))
-                            .foregroundStyle(lineStyle(line))
+                            .foregroundStyle(lineStyle(shown[index]))
                             .textSelection(.enabled)
-                            // Les lignes très longues ne sont pas repliées : la
-                            // colonne défile horizontalement.
-                            .fixedSize(horizontal: true, vertical: false)
+                            // Une ligne trop longue se replie : rien n'est rogné.
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
                     }
                 }
                 if diff.hasNoContent {
@@ -244,18 +324,17 @@ struct FilesView: ConsoleSectionView {
         }
     }
 
+    /// Un Markdown se lit RENDU (ou en source numérotée) ; tout autre texte passe
+    /// par la visionneuse de code. Les messages d'état sont ceux d'avant S-18.
     @ViewBuilder private func contentSection(dedicated: String?) -> some View {
         if let content = model.content {
             if let message = content.message(dedicated: dedicated) {
                 self.message(message)
             } else if case let .text(text) = content {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(lines(of: text).enumerated()), id: \.offset) { _, line in
-                        Text(verbatim: line)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: true, vertical: false)
-                    }
+                if language == .markdown, mode == .content {
+                    MarkdownDocumentView(blocks: FilesRenderMemo.blocks(text))
+                } else {
+                    CodeDocumentView(lines: FilesRenderMemo.lines(text, language: language))
                 }
             }
         }
@@ -273,9 +352,109 @@ struct FilesView: ConsoleSectionView {
         if let tint = line.tint { return Color(nsColor: tint) }
         return line.isSecondary ? Color.secondary : Color.primary
     }
+}
 
-    private func lines(of text: String) -> [String] {
-        text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+// MARK: - Mémo du rendu
+
+/// Le dernier document découpé, gardé d'une évaluation du corps à la suivante :
+/// le corps est réévalué à chaque publication du modèle, et relexer un gros
+/// fichier à chaque fois serait coûteux. Une seule entrée par nature suffit — la
+/// colonne n'affiche qu'un document.
+@MainActor
+private enum FilesRenderMemo {
+    private static var markdown: (source: String, blocks: [MarkdownBlock])?
+    private static var code: (source: String, language: CodeLanguage, lines: [[CodeToken]])?
+
+    static func blocks(_ text: String) -> [MarkdownBlock] {
+        if let markdown, markdown.source == text { return markdown.blocks }
+        let blocks = MarkdownDocument.blocks(text)
+        markdown = (text, blocks)
+        return blocks
+    }
+
+    static func lines(_ text: String, language: CodeLanguage) -> [[CodeToken]] {
+        if let code, code.language == language, code.source == text { return code.lines }
+        let lines = CodeHighlighter.lines(CodeHighlighter.tokens(text, language: language))
+        code = (text, language, lines)
+        return lines
+    }
+}
+
+// MARK: - Visionneuse de code
+
+/// Gouttière de numéros alignés à droite, texte monospacé coloré, défilement dans
+/// les deux sens ; seules les lignes visibles sont construites.
+private struct CodeDocumentView: View {
+    let lines: [[CodeToken]]
+
+    /// La largeur d'un chiffre de la police du corps (13 pt sur macOS).
+    private static let digitWidth: CGFloat = ("0" as NSString).size(
+        withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)]
+    ).width
+
+    var body: some View {
+        let gutter = CGFloat(max(2, String(lines.count).count)) * Self.digitWidth
+        // MESURÉ (recette du 2026-10-01) : dans un défilement 2D, une `LazyVStack`
+        // prend la largeur de ses lignes DÉJÀ construites ; une ligne plus longue
+        // déborde alors des deux côtés et tout le texte paraît poussé à droite. La
+        // largeur de la pile est donc fixée d'avance par la plus longue ligne
+        // (police monospacée : largeur = nombre de caractères × largeur d'un chiffre).
+        let longest = lines.map { line in line.reduce(0) { $0 + $1.text.count } }.max() ?? 0
+        let width = gutter + 14 + CGFloat(longest + 1) * Self.digitWidth
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(lines.indices, id: \.self) { index in
+                    HStack(alignment: .firstTextBaseline, spacing: 0) {
+                        Text(verbatim: String(index + 1))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                            .frame(width: gutter, alignment: .trailing)
+                            .padding(.trailing, 14)
+                            .accessibilityHidden(true)
+                        Text(CodePalette.attributed(lines[index], size: .body))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: width, alignment: .leading)
+                }
+            }
+            .frame(width: width, alignment: .leading)
+            .padding(.vertical, 8)
+            .padding(.leading, 8)
+            .padding(.trailing, 16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // MESURÉ (recette du 2026-10-01) : un contenu plus petit que la vue est
+        // CENTRÉ par un défilement 2D ; un fichier court flottait au milieu.
+        .defaultScrollAnchor(.topLeading, for: .alignment)
+        .defaultScrollAnchor(.topLeading, for: .initialOffset)
+        .background(Color(nsColor: .textBackgroundColor))
+        .accessibilityIdentifier("files.document.code")
+    }
+}
+
+// MARK: - Markdown rendu
+
+/// Une colonne de lecture d'au plus 760 pt, centrée, en typographie système.
+private struct MarkdownDocumentView: View {
+    let blocks: [MarkdownBlock]
+
+    var body: some View {
+        ScrollView(.vertical) {
+            // Paresseux : un `MarkdownBlocksView` par bloc, seuls les visibles
+            // sont construits (un long document ne bâtit pas tout d'un coup).
+            LazyVStack(alignment: .leading, spacing: 14) {
+                ForEach(blocks.indices, id: \.self) { index in
+                    MarkdownBlocksView(blocks: [blocks[index]])
+                }
+            }
+            .frame(maxWidth: 760, alignment: .leading)
+            .padding(.horizontal, 32)
+            .padding(.vertical, 24)
+            .frame(maxWidth: .infinity)
+        }
+        .accessibilityIdentifier("files.document.markdown")
     }
 }
 

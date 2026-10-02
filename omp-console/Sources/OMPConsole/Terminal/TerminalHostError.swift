@@ -2,18 +2,16 @@
 // de traduction vers le texte affiché de la fenêtre « Terminal » (S-10) : l'hôte
 // ne compose jamais de phrase, et la fenêtre ne reformule jamais ce qu'elle reçoit.
 //
-// `binaryNotFound` DÉLÈGUE à `SessionHostError.binaryNotFound(searched:override:)`
-// et n'écrit pas sa propre phrase : le binaire `omp` est le même pour la session
-// RPC et pour le terminal, donc son message d'absence doit l'être aussi — deux
-// formulations divergeraient à la première retouche.
+// Le programme hébergé est le shell de connexion (S-18 R6), plus `omp` : son
+// absence n'a donc rien à voir avec la résolution du binaire `omp`, et son message
+// vit dans `TerminalViewText` comme les autres.
 
 import Foundation
 
 enum TerminalHostError: Error, Equatable, Sendable {
-    /// Le chemin demandé n'est pas un fichier exécutable : `searched` porte le
-    /// chemin testé (un seul, celui de `start`) et `override` l'échappatoire
-    /// `OMP_CONSOLE_OMP_BINARY` quand c'est elle qui a désigné ce chemin.
-    case binaryNotFound(searched: [String], override: String?)
+    /// Le chemin demandé n'est pas un fichier exécutable (le chemin testé, celui de
+    /// `start`).
+    case executableNotFound(String)
     /// `forkpty` a échoué : `errno` tel que rendu par l'appel (EAGAIN, ENXIO…).
     case ptyUnavailable(Int32)
     /// Le répertoire de travail n'existe pas (S-1 : le fils sort en 127).
@@ -25,8 +23,8 @@ enum TerminalHostError: Error, Equatable, Sendable {
 
     var userMessage: String {
         switch self {
-        case .binaryNotFound(let searched, let override):
-            return SessionHostError.binaryNotFound(searched: searched, override: override).userMessage
+        case .executableNotFound(let path):
+            return TerminalViewText.executableMissing(path)
         case .ptyUnavailable(let code):
             return TerminalViewText.ptyUnavailable(code)
         case .cwdMissing(let path):

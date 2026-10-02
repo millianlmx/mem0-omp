@@ -107,8 +107,8 @@ private func makeModel(host: SessionHost, projectRoot: URL) -> SessionConsoleMod
 // MARK: - S-9 : statut de la session vivante
 
 @MainActor
-@Test("client-rpc-omp/AC-1 : le statut de running nomme la session dès que get_state a répondu")
-func statusNamesSessionOnceStateIsKnown() async throws {
+@Test("omp-console-redesign/HIG : le statut d'une session active ne répète pas l'état et ne montre ni pid ni identifiant")
+func runningStatusShowsNoTechnicalIdentity() async throws {
     let project = try makeProjectDirectory()
     let transport = ScriptedRpcTransport()
     let host = makeHost(transport)
@@ -116,8 +116,8 @@ func statusNamesSessionOnceStateIsKnown() async throws {
     #expect(model.projectRoot?.path == project.path)
     #expect(model.canLaunch)
 
-    // La poignée de main est répondue, la réponse de `get_state` est RETENUE : le
-    // statut doit donc d'abord nommer la seule chose connue, le pid.
+    // La poignée de main est répondue, la réponse de `get_state` est RETENUE :
+    // le statut est vérifié avant, puis après la publication de l'identifiant.
     var pendingStateId: String?
     transport.readyLine = readyLine()
     transport.onWrite = { line in
@@ -134,18 +134,21 @@ func statusNamesSessionOnceStateIsKnown() async throws {
 
     model.launch()
     #expect(await waitUntil { host.state == .running })
-    #expect(await waitUntil { model.statusMessage == "Session vivante (pid 4242)" })
+    #expect(await waitUntil { model.statusMessage == SessionConsoleModel.statusText(for: .running) })
+    #expect(model.statusNotice == nil)
+    #expect(!model.statusMessage.contains("4242"))
 
-    // `get_state` répond : `sessionId` est publié SANS changement d'état, c'est
-    // exactement le cas que l'abonnement au seul état laissait passer.
+    // `get_state` répond : `sessionId` est publié SANS changement d'état.
     let stateId = try #require(pendingStateId)
     transport.emit(responseLine(id: stateId, command: "get_state", data: [
         "sessionId": "session-abcdef12",
         "sessionFile": "/tmp/omp-model-\(UUID().uuidString).jsonl",
     ]))
 
-    #expect(await waitUntil { model.statusMessage == "Session vivante (pid 4242, session session-)" })
+    #expect(await waitUntil { host.sessionId == "session-abcdef12" })
     #expect(host.state == .running)
+    #expect(model.statusNotice == nil)
+    #expect(!model.statusMessage.contains("session-"))
 }
 
 // MARK: - S-9 : cible du raccourci ⌘.
@@ -291,4 +294,83 @@ func modelShowsWriteFailureMessage() async throws {
     let expected = "Écriture impossible vers la session : le process ne lit plus son entrée (EPIPE)."
     #expect(await waitUntil { model.statusMessage == expected })
     #expect(host.state == .running)
+    // L'échec ne répète pas l'état : l'inspecteur le montre.
+    #expect(model.statusNotice == expected)
+}
+
+// MARK: - omp-console-redesign S-15 : la conversation de Session OMP
+
+@MainActor
+@Test("omp-console-redesign/S-15 : la conversation de Session OMP suit le fichier de session de l'hôte")
+func conversationFollowsHostSessionFile() async throws {
+    let project = try makeProjectDirectory()
+    let transport = ScriptedRpcTransport()
+    let host = makeHost(transport)
+    let suite = UserDefaults(suiteName: "session-console-model-\(UUID().uuidString)") ?? .standard
+    suite.set(project.path, forKey: SessionConsoleModel.projectRootKey)
+    let model = SessionConsoleModel(
+        host: host,
+        defaults: suite,
+        makeConversation: { SessionViewerModel(target: $0, watch: false) }
+    )
+    let file = "/tmp/omp-conversation-\(UUID().uuidString).jsonl"
+
+    var pendingStateId: String?
+    transport.readyLine = readyLine()
+    transport.onWrite = { line in
+        guard let type = field("type", in: line), let id = field("id", in: line) else { return }
+        switch type {
+        case "negotiate_protocol":
+            transport.emit(responseLine(id: id, command: "negotiate_protocol", data: ["protocolVersion": 2]))
+        case "get_state":
+            pendingStateId = id
+        default:
+            break
+        }
+    }
+
+    // Avant la réponse de `get_state`, aucun fichier n'est connu : pas de conversation.
+    model.launch()
+    #expect(await waitUntil { host.state == .running && pendingStateId != nil })
+    #expect(model.conversation == nil)
+
+    let firstId = try #require(pendingStateId)
+    pendingStateId = nil
+    transport.emit(responseLine(id: firstId, command: "get_state", data: [
+        "sessionId": "session-abcdef12",
+        "sessionFile": file,
+    ]))
+    #expect(await waitUntil { model.conversation?.target.sessionFile == file })
+    let first = try #require(model.conversation)
+
+    // Un second `get_state` au MÊME fichier garde la même conversation.
+    let refresh = Task { @MainActor in await host.refreshState() }
+    #expect(await waitUntil { pendingStateId != nil })
+    let secondId = try #require(pendingStateId)
+    transport.emit(responseLine(id: secondId, command: "get_state", data: [
+        "sessionId": "session-abcdef12",
+        "sessionFile": file,
+    ]))
+    await refresh.value
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(model.conversation === first)
+    #expect(host.sessionFile == file)
+}
+
+@Test("omp-console-redesign/S-15 : l'état de la session se dit en mots")
+func sessionStateIsSaidInWords() {
+    let exit = ProcessExit(status: 9, reason: .uncaughtSignal)
+    let expected: [(SessionHost.State, String, String)] = [
+        (.idle, "Prête", "Aucun projet"),
+        (.launching, "Démarrage…", "Démarrage…"),
+        (.running, "Active", "Active"),
+        (.stopping, "Arrêt…", "Arrêt…"),
+        (.stopped, "Arrêtée", "Arrêtée"),
+        (.dead(exit: exit), "Interrompue", "Interrompue"),
+        (.failed(message: "omp introuvable"), "Échec", "Échec"),
+    ]
+    for (state, withProject, withoutProject) in expected {
+        #expect(SessionConsoleText.stateTitle(state, hasProject: true) == withProject)
+        #expect(SessionConsoleText.stateTitle(state, hasProject: false) == withoutProject)
+    }
 }

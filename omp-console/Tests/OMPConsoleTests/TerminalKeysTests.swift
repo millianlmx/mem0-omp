@@ -1,4 +1,4 @@
-// Preuves de la table clavier de S-5 : ce qui part dans omp, et ce qui n'y part
+// Preuves de la table clavier de S-5 : ce qui part dans le PTY, et ce qui n'y part
 // jamais. La fonction testée est PURE (`TerminalKeys.bytes`), donc ces preuves ne
 // dépendent ni d'une fenêtre, ni d'un process, ni d'un événement synthétique.
 
@@ -36,7 +36,7 @@ func arrowsUseNormalCursorKeys() {
     #expect(bytes("\u{F702}", 123) == Array("\u{1B}[D".utf8))   // ←
 }
 
-@Test("terminal-integre/AC-5 : Ctrl-C part comme l'octet 0x03 (ISIG désactivé)")
+@Test("terminal-integre/AC-5 : Ctrl-C part comme l'octet 0x03, la discipline de ligne décide du reste")
 func controlCIsSentAsAByte() {
     // Deux formes d'AppKit pour la même frappe : le caractère déjà interprété en
     // octet de contrôle, et la lettre nue.
@@ -49,7 +49,7 @@ func controlCIsSentAsAByte() {
 
 @Test("terminal-integre/AC-5 : les ponctuations de contrôle et Ctrl-D sont transmises")
 func controlPunctuationIsSent() {
-    #expect(bytes("d", 2, .control) == [0x04])      // Ctrl-D : omp peut terminer
+    #expect(bytes("d", 2, .control) == [0x04])      // Ctrl-D : fin de fichier pour le shell
     #expect(bytes("\\", 42, .control) == [0x1C])
     #expect(bytes("]", 30, .control) == [0x1D])
     #expect(bytes("^", 43, .control) == [0x1E])

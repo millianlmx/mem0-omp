@@ -11,7 +11,9 @@
 //
 // Les règles de dialogue et de gating sont celles de `SessionConsoleModel`
 // (`canAnswerDialog`, `dialogAppeared` pour le `prefill`) : elles sont REPRISES à
-// l'identique, pas réinventées.
+// l'identique, pas réinventées. La conversation suit le même patron (S-19 R3 de
+// omp-console-redesign) : le fichier de session publié par `get_state`, lu par un
+// `SessionViewerModel` — jamais les trames brutes, réservées à l'inspecteur.
 
 import AppKit
 import Combine
@@ -28,8 +30,14 @@ final class ProjectConsoleModel: ObservableObject {
     /// Le SEUL texte d'échec affiché : le `userMessage` d'une `SessionHostError`,
     /// ou le texte d'état de la session morte (`SessionConsoleModel.statusText`).
     @Published private(set) var statusMessage: String = ""
-    /// Dernière présentation `notify` du pilote (résumé du journal du host).
-    @Published private(set) var notice: String?
+    /// Le message de la dernière présentation `notify` du pilote, DÉCODÉ de sa
+    /// trame (les `\n` sont de vrais retours à la ligne) — jamais la trame brute.
+    @Published private(set) var notice: String? {
+        didSet { noticeBlocks = notice.map(MarkdownDocument.blocks) ?? [] }
+    }
+    /// La notice en blocs Markdown, analysée une fois par message : l'en-tête se
+    /// réévalue à chaque trame reçue.
+    private(set) var noticeBlocks: [MarkdownBlock] = []
     /// Le refus d'un second démarrage (S-2) — non nul ⇒ l'alerte est présentée.
     @Published private(set) var refusal: ConduiteRefusal?
 
@@ -38,8 +46,21 @@ final class ProjectConsoleModel: ObservableObject {
     @Published var prompt: String = ""
     @Published var dialogText: String = ""
     @Published var selectedOptionIndex: Int?
+    /// L'inspecteur « Détails techniques » (session, activité, journal, trames
+    /// brutes) est ouvert (S-19 R3, patron S-18 R8).
+    @Published var technicalShown = false
+    /// Le pli « Trames brutes » de l'inspecteur, fermé par défaut.
+    @Published var rawFramesShown = false
+    /// La confirmation « Arrêter le pilotage » est présentée.
+    @Published var isStopConfirmationPresented = false
 
-    // MARK: - Feuille « Conduire un projet… » (aucun `@State` sous CLT seuls)
+    // MARK: - Conversation (S-19 R3)
+
+    /// La conversation du fichier de session de l'hôte ; `nil` tant qu'aucun
+    /// fichier n'est connu.
+    @Published private(set) var conversation: SessionViewerModel?
+
+    // MARK: - Feuille « Piloter un projet… » (aucun `@State` sous CLT seuls)
 
     @Published var isLaunchSheetPresented: Bool = false
     @Published var draftRepository: URL?
@@ -50,7 +71,12 @@ final class ProjectConsoleModel: ObservableObject {
     @Published private(set) var project: Project? {
         didSet { evaluateAttention() }
     }
-    @Published private(set) var docText: String?
+    @Published private(set) var docText: String? {
+        didSet { docBlocks = docText.map(MarkdownDocument.blocks) }
+    }
+    /// `PROJECT.md` en blocs Markdown, analysé UNE fois par version du texte (la
+    /// vue se réévalue à chaque publication du modèle).
+    private(set) var docBlocks: [MarkdownBlock]?
     /// Les segments dépliés dans le volet « Plan » (aucun `@State` sous CLT seuls).
     @Published var expandedSegments: Set<Int> = []
 
@@ -106,6 +132,13 @@ final class ProjectConsoleModel: ObservableObject {
     /// Le corps de la PR relu, employé par la fusion (S-6) — jamais exposé à la vue.
     private var pendingMergeBody = ""
 
+    private let makeConversation: @MainActor (ViewerTarget) -> SessionViewerModel
+    private let activityCache = RpcActivityCache()
+    /// Le nom de la conduite en cours d'armement : le fichier de session est
+    /// publié PENDANT `host.start`, avant que `identity` ne soit posée.
+    private var conversationTitle = ""
+    /// L'entrée de journal `notify` déjà lue (`refreshNotice`).
+    private var lastNoticeEntryID: Int?
     private var cancellables: Set<AnyCancellable> = []
 
     init(
@@ -118,7 +151,8 @@ final class ProjectConsoleModel: ObservableObject {
         prRefreshInterval: Duration = .seconds(60),
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        makeConversation: @escaping @MainActor (ViewerTarget) -> SessionViewerModel = { SessionViewerModel(target: $0) }
     ) {
         let host = host ?? SessionHost()
         self.host = host
@@ -127,6 +161,7 @@ final class ProjectConsoleModel: ObservableObject {
         self.stateDir = stateDir
         self.defaults = defaults
         self.fileManager = fileManager
+        self.makeConversation = makeConversation
         let hub = StoreHub(stateDir: stateDir)
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: stateDir) }
@@ -182,6 +217,16 @@ final class ProjectConsoleModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // La conversation suit le FICHIER de session (patron `SessionConsoleModel`) :
+        // même fichier ⇒ même conversation, `nil` ⇒ plus de conversation. La
+        // valeur reçue est la NOUVELLE (`@Published` émet avant d'écrire).
+        host.$sessionFile
+            .removeDuplicates()
+            .sink { [weak self] file in
+                Task { @MainActor in self?.follow(sessionFile: file) }
+            }
+            .store(in: &cancellables)
+
         // La présence de la fenêtre est une entrée de la décision (S-9).
         presence.isFrontmostPublisher
             .removeDuplicates()
@@ -211,7 +256,18 @@ final class ProjectConsoleModel: ObservableObject {
 
     /// Le statut de session, formulé par `SessionConsoleModel` (référence BR-3).
     var sessionStatusText: String {
-        SessionConsoleModel.statusText(for: host.state, pid: host.pid, sessionId: host.sessionId)
+        SessionConsoleModel.statusText(for: host.state)
+    }
+
+    /// L'état de la session en un mot et un ton, pour le badge de l'en-tête.
+    var sessionStatus: ConsoleStatus {
+        .of(session: host.state, hasProject: true)
+    }
+
+    /// L'activité de l'inspecteur : les trames humanisées, la plus récente en haut
+    /// (patron S-18 R8). Chaque trame n'est résumée qu'une fois.
+    var activity: [RpcEventLine] {
+        activityCache.activity(host.transcript)
     }
 
     // MARK: - Armement (S-1)
@@ -249,6 +305,7 @@ final class ProjectConsoleModel: ObservableObject {
             statusMessage = ProjectViewText.notGitRepository
             return
         }
+        conversationTitle = normalized
         do {
             try await host.start(mode: .rpcUI, projectRoot: repoRoot, resume: false)
             try await host.send(prompt: "/project " + normalized)
@@ -272,7 +329,7 @@ final class ProjectConsoleModel: ObservableObject {
         let name = identity?.name ?? ""
         let path = identity?.repoRoot.path ?? ""
         refusal = ConduiteRefusal(
-            message: ProjectViewText.refusal(name: name, path: path),
+            message: ProjectViewText.refusal(name: name, path: ConsoleFormat.path(path)),
             repositoryName: name,
             repositoryPath: path
         )
@@ -303,7 +360,7 @@ final class ProjectConsoleModel: ObservableObject {
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = false
         panel.prompt = "Choisir"
-        panel.message = "Choisissez le dossier du projet à conduire."
+        panel.message = "Choisissez le dossier du projet à piloter."
         if let start = draftRepository { panel.directoryURL = start }
         guard panel.runModal() == .OK, let url = panel.url else { return }
         draftRepository = url
@@ -329,6 +386,7 @@ final class ProjectConsoleModel: ObservableObject {
         project = nil
         docText = nil
         identity = nil
+        notice = nil
         prompt = ""
         dialogText = ""
         selectedOptionIndex = nil
@@ -337,6 +395,8 @@ final class ProjectConsoleModel: ObservableObject {
         pendingMergeBody = ""
         prActionFailure = nil
         clearPRs()
+        conversation?.stop()
+        conversation = nil
         state = .closed
         evaluateAttention()
     }
@@ -735,13 +795,27 @@ final class ProjectConsoleModel: ObservableObject {
         }
     }
 
+    // MARK: - Conversation (S-19 R3)
+
+    private func follow(sessionFile file: String?) {
+        guard let file else {
+            conversation?.stop()
+            conversation = nil
+            return
+        }
+        guard file != conversation?.target.sessionFile else { return }
+        conversation?.stop()
+        let title = identity?.name ?? conversationTitle
+        conversation = makeConversation(ViewerTarget(sessionFile: file, title: title))
+    }
+
     // MARK: - Statut et attention
 
     private func hostStateChanged(_ hostState: SessionHost.State) {
         switch hostState {
         case .dead(let exit):
             if state == .live || state == .starting { state = .closed }
-            statusMessage = SessionConsoleModel.statusText(for: .dead(exit: exit), pid: nil, sessionId: nil)
+            statusMessage = SessionConsoleModel.statusText(for: .dead(exit: exit))
         case .stopped:
             if state == .live || state == .starting { state = .closed }
         case .failed(let message):
@@ -752,11 +826,38 @@ final class ProjectConsoleModel: ObservableObject {
         evaluateAttention()
     }
 
+    /// La notice suit le JOURNAL (qui publie peu) mais se lit dans la TRAME : le
+    /// journal n'en garde qu'un résumé brut tronqué. Seule une nouvelle entrée
+    /// `notify` relance la recherche.
     private func refreshNotice() {
         let last = host.journal.last { entry in
             entry.kind == .presentation && entry.message.hasPrefix("présentation notify")
         }
-        notice = last?.message
+        guard last?.id != lastNoticeEntryID else { return }
+        lastNoticeEntryID = last?.id
+        guard last != nil else {
+            notice = nil
+            return
+        }
+        // La trame est ajoutée à la transcription AVANT l'entrée du journal.
+        let frame = host.transcript.last { line in
+            line.kind == .inbound && line.text.contains("\"notify\"")
+        }
+        notice = frame.flatMap { Self.notifyMessage(frame: $0.text) }
+    }
+
+    /// PURE : le `message` d'une trame `extension_ui_request` de méthode `notify`,
+    /// décodé par JSON ; `nil` pour toute autre trame, une trame tronquée par le
+    /// host (JSON illisible) ou un message vide.
+    nonisolated static func notifyMessage(frame: String) -> String? {
+        guard let data = frame.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "extension_ui_request",
+              object["method"] as? String == "notify",
+              let message = object["message"] as? String
+        else { return nil }
+        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Applique `AttentionDecision.action(for:)` à chaque changement d'entrée

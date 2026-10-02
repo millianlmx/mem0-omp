@@ -1,31 +1,35 @@
 // L'hôte du PTY : le seul fichier qui ouvre un pseudo-terminal et qui possède le
-// cycle de vie du `omp` interactif (BR-1 ; AC-1, AC-3, AC-7, AC-8, AC-9).
+// cycle de vie du programme interactif — le shell de connexion de l'utilisateur
+// depuis S-18 R6 (BR-1 ; AC-1, AC-3, AC-7, AC-8, AC-9).
 //
 // Cinq décisions, mesurées sur ce poste (Doc-3) ou imposées par Doc-5 :
 //
-//   1. `forkpty` fait tout : `openpty`, `fork` et `login_tty`. `termp` et `winp`
-//      non nuls fixent la réplique AVANT que l'enfant ne s'exécute (la taille
-//      initiale est donc déjà la bonne quand `omp` démarre), et `login_tty` fait du
-//      fils un chef de session dont le groupe de process vaut son pid : `kill(-pid)`
-//      atteint omp ET ses descendants — c'est ce qui garantit AC-8/AC-9.
-//   2. Le mode brut ne touche QUE l'entrée (`c_iflag = 0`, `c_lflag = 0`) et garde
-//      `OPOST|ONLCR` : c'est cette traduction `\n` → `\r\n` du noyau qui aligne les
-//      lignes de la TUI, laquelle n'émet aucun `CR` structurel (Doc-1 §2). `ISIG`
-//      vivant dans `c_lflag`, il tombe avec elle : Ctrl-C arrive comme l'octet 0x03.
+//   1. `forkpty` fait tout : `openpty`, `fork` et `login_tty`. `winp` non nul fixe
+//      la taille de la réplique AVANT que l'enfant ne s'exécute (la taille initiale
+//      est donc déjà la bonne quand le shell démarre), et `login_tty` fait du fils
+//      un chef de session dont le groupe de process vaut son pid : `kill(-pid)`
+//      atteint le shell et ses descendants de même groupe ; un job au premier plan
+//      (omp lancé depuis le shell) reçoit `SIGHUP` du noyau quand le chef de session
+//      meurt — c'est ce qui garantit AC-8/AC-9.
+//   2. `termp` est NUL : la réplique naît avec les réglages par défaut du noyau
+//      (`ICANON`, `ECHO`, `ISIG`, `OPOST|ONLCR`), ceux d'un vrai terminal. Mesuré
+//      (S-18) : un mode brut posé ici était hérité par zsh, qui le rendait à ses
+//      commandes — Ctrl-C n'interrompait plus `sleep`. Une TUI (omp) pose elle-même
+//      son mode brut ; Ctrl-C lui arrive alors comme l'octet 0x03.
 //   3. Dans le fils il n'y a QUE des appels C async-signal-safe (`close`, `chdir`,
 //      `execve`, `_exit`) : pas de runtime Swift, pas d'Objective-C, pas d'`atexit`.
 //      Tout ce qui s'alloue (`argv`, `envp`, le cwd) est construit AVANT le fork.
 //      Le fils ferme en outre TOUT descripteur ≥ 3 — borné par `getdtablesize()` lu
 //      AVANT le fork (`closefrom(3)` n'est pas déclaré par le SDK macOS, Doc-5, et
-//      `getdtablesize` ne figure pas dans la liste async-signal-safe, Doc-3) : `omp`
-//      démarre avec 0, 1 et 2 seuls, sans liste blanche.
+//      `getdtablesize` ne figure pas dans la liste async-signal-safe, Doc-3) : le
+//      shell démarre avec 0, 1 et 2 seuls, sans liste blanche.
 //   4. Le maître est NON BLOQUANT et le lecteur attend dans `poll(2)` : une écriture
 //      qui ne passe pas ne fige pas le MainActor, et le lecteur rend la main sur
 //      demande — donc personne ne ferme un descripteur pendant qu'un fil y est
 //      bloqué.
 //   5. La sortie passe par une file PLAFONNÉE (Doc-5) : au-delà du plafond le
-//      lecteur PAUSE jusqu'à la vidange du MainActor. Sans ce plafond, un `omp`
-//      bavard remplirait la mémoire sans borne.
+//      lecteur PAUSE jusqu'à la vidange du MainActor. Sans ce plafond, une TUI
+//      bavarde remplirait la mémoire sans borne.
 
 import Darwin
 import Dispatch
@@ -52,7 +56,7 @@ final class TerminalHost {
     var onOutput: (([UInt8]) -> Void)?
     var onExit: ((TerminalExit) -> Void)?
 
-    /// Pid du fils DIRECT de l'app : celui que `forkpty` a rendu, sans shell
+    /// Pid du fils DIRECT de l'app : celui que `forkpty` a rendu (le shell), sans
     /// intermédiaire. `nil` hors exécution, et dès que l'enfant a été récolté.
     var pid: Int32? { childPID }
 
@@ -83,13 +87,12 @@ final class TerminalHost {
 
     // MARK: - Lancement (BR-1 étape 2)
 
-    /// Lance UN programme dans un PTY neuf. L'hôte ne compose aucun argument : le
-    /// modèle de process du terminal est un seul `omp`, jamais un shell.
-    func start(executable: URL, cwd: URL, columns: Int, rows: Int) throws {
-        // Même règle que `OmpBinaryResolver` : c'est le fichier EXÉCUTABLE qui
-        // gagne, jamais le seul fait d'exister.
+    /// Lance UN programme dans un PTY neuf : `argv` = le chemin de l'exécutable puis
+    /// `arguments` (le `-l` du shell de connexion, `TerminalShell.command`).
+    func start(executable: URL, arguments: [String] = [], cwd: URL, columns: Int, rows: Int) throws {
+        // C'est le fichier EXÉCUTABLE qui gagne, jamais le seul fait d'exister.
         guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-            throw TerminalHostError.binaryNotFound(searched: [executable.path], override: nil)
+            throw TerminalHostError.executableNotFound(executable.path)
         }
 
         teardownFinishedRun()
@@ -97,7 +100,7 @@ final class TerminalHost {
         let requested = memorizedSize ?? (max(1, columns), max(1, rows))
         memorizedSize = nil
 
-        var attributes = Self.rawInputTermios()
+        // `termp` reste NUL (décision 2) : seuls la taille et le chemin sont posés.
         var windowSize = winsize(
             ws_row: UInt16(clamping: requested.1),
             ws_col: UInt16(clamping: requested.0),
@@ -112,13 +115,13 @@ final class TerminalHost {
 
         // TOUT ce qui s'alloue est construit AVANT le fork : après, l'enfant ne peut
         // plus exécuter de code Swift (ni `String`, ni ARC, ni `autoreleasepool`).
-        var arguments = Self.cStrings([executable.path])
+        var argv = Self.cStrings([executable.path] + arguments)
         var variables = Self.cStrings(
             environment.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }
         )
         let workingDirectory = strdup(cwd.path)
         defer {
-            Self.freeCStrings(arguments)
+            Self.freeCStrings(argv)
             Self.freeCStrings(variables)
             free(workingDirectory)
         }
@@ -133,12 +136,12 @@ final class TerminalHost {
         let descriptorTableSize = getdtablesize()
 
         var master: Int32 = -1
-        let child = forkpty(&master, nil, &attributes, &windowSize)
+        let child = forkpty(&master, nil, nil, &windowSize)
 
         if child == 0 {
             // Fil enfant : appels C seulement, et `_exit` (jamais `exit`, qui
             // déroulerait les `atexit` hérités du parent).
-            // Aucun descripteur hérité ne passe dans `omp` : l'enfant ne garde que 0, 1 et 2.
+            // Aucun descripteur hérité ne passe dans le shell : l'enfant ne garde que 0, 1 et 2.
             // (Le primaire du PTY n'est pas hérité au-delà de 2 — Doc-1 ; `close` d'un
             // descripteur déjà fermé rend `EBADF`, c'est le cas NORMAL, jamais une erreur.)
             var descriptor: Int32 = 3
@@ -147,7 +150,7 @@ final class TerminalHost {
                 descriptor += 1
             }
             if chdir(workingDirectory) != 0 { _exit(127) }
-            execve(arguments[0], &arguments, &variables)
+            execve(argv[0], &argv, &variables)
             _exit(127)
         }
 
@@ -206,7 +209,7 @@ final class TerminalHost {
     // MARK: - Écriture (BR-1 étape 3)
 
     /// Écriture brute sur le maître, dans l'ORDRE des octets fournis : c'est la
-    /// frappe clavier qui part dans `omp`.
+    /// frappe clavier qui part dans le shell (ou dans la TUI qu'il a lancée).
     func write(_ bytes: [UInt8]) throws {
         guard childPID != nil, let pty else { throw TerminalHostError.notRunning }
         guard !bytes.isEmpty else { return }
@@ -284,7 +287,7 @@ final class TerminalHost {
 
         guard childPID != nil else {
             // Le fils a déjà été récolté : le groupe peut encore porter des
-            // descendants (arrière-plan d'une commande d'omp). Un `SIGKILL` de
+            // descendants (arrière-plan d'une commande du shell). Un `SIGKILL` de
             // groupe, sans grâce — il n'y a plus de propriétaire direct à ménager.
             Darwin.kill(-group, SIGKILL)
             return
@@ -411,23 +414,6 @@ final class TerminalHost {
         exitDelivered = false
         streamEnded = false
         deliveryScheduled = false
-    }
-
-    // MARK: - Termios (BR-1 étape 2, Doc-3)
-
-    /// Mode brut d'ENTRÉE seulement : `c_iflag = 0` et `c_lflag = 0` coupent `ICANON`,
-    /// `ECHO`, `ISIG` et `IEXTEN` (donc Ctrl-C arrive en `0x03`), tandis que
-    /// `OPOST|ONLCR` reste posé pour que le noyau traduise le `\n` de la TUI.
-    /// `VMIN = 1` / `VTIME = 0` : une lecture rend dès qu'un octet est là.
-    private static func rawInputTermios() -> termios {
-        var attributes = termios()
-        attributes.c_iflag = 0
-        attributes.c_oflag = tcflag_t(OPOST | ONLCR)
-        attributes.c_cflag = tcflag_t(CS8 | CREAD | CLOCAL)
-        attributes.c_lflag = 0
-        attributes.c_cc.16 = 1  // VMIN
-        attributes.c_cc.17 = 0  // VTIME
-        return attributes
     }
 
     // MARK: - Boucle de lecture (BR-1 étape 3)

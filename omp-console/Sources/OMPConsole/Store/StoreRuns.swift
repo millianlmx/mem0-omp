@@ -23,6 +23,8 @@ struct StoreRun: Equatable, Sendable {
     /// cwd de l'entrée gagnante.
     var cwd: String
     var phase: PipelinePhase
+    /// Début du run : `phaseStartedAt` de l'entrée gagnante.
+    var phaseStartedAt: Double
     /// Non nil ⇒ l'entrée gagnante est `running/`.
     var live: RunningEntry?
     /// Non nil ⇒ l'entrée gagnante est `history/`.
@@ -48,6 +50,7 @@ func storeRuns(of snapshot: StoreSnapshot) -> [StoreRun] {
                 label: entry.label,
                 cwd: entry.cwd,
                 phase: entry.phase,
+                phaseStartedAt: entry.phaseStartedAt,
                 live: entry,
                 finalState: nil
             )
@@ -60,6 +63,7 @@ func storeRuns(of snapshot: StoreSnapshot) -> [StoreRun] {
                 label: entry.label,
                 cwd: entry.cwd,
                 phase: entry.phase,
+                phaseStartedAt: entry.phaseStartedAt,
                 live: nil,
                 finalState: entry.finalState
             )

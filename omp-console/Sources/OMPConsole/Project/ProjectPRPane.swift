@@ -1,5 +1,7 @@
 // Le volet « PR et CI » de la vue « Projet » (BR-3) : une VStack bordée insérée
-// entre l'en-tête et le split Plan/Document.
+// entre l'en-tête et le split Plan/Document. Au-delà de quelques PR, la liste
+// défile dans une hauteur bornée : le volet ne pousse jamais Plan et Document
+// hors de la fenêtre.
 //
 // Aucun texte n'est composé ici : tous viennent de `ProjectViewText`, et la veille
 // est attachée à la vie de la vue (S-3).
@@ -26,20 +28,27 @@ struct ProjectPRPane: View {
                 Text(ProjectViewText.prEmpty)
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(model.prRows, id: \.slug) { row in
-                    PRRowView(row: row, model: model)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(model.prRows, id: \.slug) { row in
+                            PRRowView(row: row, model: model)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .frame(maxHeight: Self.rowsMaxHeight)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
             if let failure = model.prFailure {
                 Text(ProjectViewText.prUnavailable(failure))
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.callout)
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("projet.prs.message")
             }
             if let action = model.prActionFailure {
                 Text(action)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.callout)
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("projet.prs.action")
             }
@@ -53,6 +62,9 @@ struct ProjectPRPane: View {
         .onAppear { model.attachPRWatch() }
         .onDisappear { model.detachPRWatch() }
     }
+
+    /// La hauteur au-delà de laquelle la liste des PR défile.
+    private static let rowsMaxHeight: CGFloat = 160
 
     /// « Lecture des statuts… » : une lecture est en cours ET au moins une ligne n'a
     /// jamais été lue.
@@ -70,7 +82,7 @@ struct PRRowView: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
                 Text(row.headline)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.callout.weight(.medium))
                     .accessibilityIdentifier("projet.pr.\(row.slug).title")
                 if !freshnessSuffix.isEmpty {
                     Text(freshnessSuffix)
@@ -87,11 +99,11 @@ struct PRRowView: View {
             ForEach(row.checks, id: \.required) { check in
                 HStack(spacing: 6) {
                     Text(ProjectViewText.prCheckLine(name: check.required.name, state: check.state.label))
-                        .font(.system(.callout, design: .monospaced))
+                        .font(.callout)
                         .accessibilityIdentifier("projet.pr.\(row.slug).check.\(check.required.id)")
                     if check.state == .red, let link = check.link, let url = ProjectPlanRowView.linkURL(link),
-                       let identifier = runIdentifier(of: link) {
-                        Link(ProjectViewText.prRunLink(identifier), destination: url)
+                       runIdentifier(of: link) != nil {
+                        Link(ProjectViewText.prRunLink, destination: url)
                             .font(.caption)
                             .accessibilityIdentifier("projet.pr.\(row.slug).check.\(check.required.id).run")
                     }

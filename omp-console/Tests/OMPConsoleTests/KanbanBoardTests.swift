@@ -210,8 +210,7 @@ func modelIsWrittenOrAbsent() throws {
     let board = kanbanBoard(fixture)
     let feature = try #require(board.cards.first { $0.id.hasPrefix("feature:") })
     let run = try #require(board.cards.first { $0.id.hasPrefix("run:") })
-    #expect(feature.modelText == "modèle : opus")
-    #expect(run.modelText == "modèle : absent")
+    #expect(feature.model == "opus")
     #expect(run.model == nil)
 }
 
@@ -243,9 +242,8 @@ func prURLIsWrittenOrAbsent() throws {
     let board = kanbanBoard(fixture)
     let delivered = try #require(board.cards.first { $0.id.hasPrefix("feature:") })
     let closed = try #require(board.cards.first { $0.id.hasPrefix("history:") })
-    #expect(delivered.prText == "PR : https://exemple/pull/7")
+    #expect(delivered.prUrl == "https://exemple/pull/7")
     #expect(delivered.column == .prOuverte)
-    #expect(closed.prText == "PR : absente")
     #expect(closed.prUrl == nil)
 }
 

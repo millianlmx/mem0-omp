@@ -133,10 +133,6 @@ final class MemoryModel: ObservableObject {
         }
     }
 
-    var canSearch: Bool {
-        !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isLoading
-    }
-
     var canShowSummary: Bool {
         mode != .summary && !isLoading
     }
@@ -147,8 +143,14 @@ final class MemoryModel: ObservableObject {
 
     // MARK: - Geste : le champ de recherche
 
+    /// Le champ de recherche de la barre d'outils. Le vider (croix du champ ou
+    /// effacement) ramène la liste au sommaire DÉJÀ lu, sans aucune requête (S-1).
     func updateQuery(_ text: String) {
         query = text
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, mode != .summary {
+            mode = .summary
+            selectedId = nil
+        }
     }
 
     // MARK: - Gestes : les trois déclencheurs réseau
@@ -160,9 +162,10 @@ final class MemoryModel: ObservableObject {
         await perform { await self.probeAndReload() }
     }
 
-    /// Le bouton « Rechercher » (S-1) : la sonde précède CHAQUE recherche, et une
-    /// recherche demandée alors que le service est indisponible n'est jamais émise.
-    /// Une requête vide après trim n'émet RIEN et ramène la liste au sommaire.
+    /// La validation du champ de recherche (S-1) : la sonde précède CHAQUE
+    /// recherche, et une recherche demandée alors que le service est indisponible
+    /// n'est jamais émise. Une requête vide après trim n'émet RIEN et ramène la
+    /// liste au sommaire.
     func search() async {
         let requested = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !requested.isEmpty else {
@@ -177,9 +180,11 @@ final class MemoryModel: ObservableObject {
         await perform { await self.probeAndSearch(requested) }
     }
 
-    /// Le bouton « Sommaire » (S-3) : retour au sommaire, la requête restant dans le
-    /// champ. Le sommaire se recharge, sans sonde propre (S-6 n'en compte que trois).
+    /// Le bouton « Sommaire » de la barre d'outils (S-3) : retour au sommaire, le
+    /// champ de recherche vidé pour que ce qu'il affiche corresponde à la liste. Le
+    /// sommaire se recharge, sans sonde propre (S-6 n'en compte que trois).
     func showSummary() async {
+        query = ""
         mode = .summary
         await perform { await self.loadSummaryIfPossible() }
     }

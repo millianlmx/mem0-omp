@@ -1,10 +1,8 @@
 // Preuves de BR-1 (AC-1, AC-3, AC-7, AC-8, AC-9) : le PTY et le cycle de vie du
-// process, sans `omp` et sans fenêtre.
+// process, sans `omp`, sans shell du poste et sans fenêtre.
 //
-// Les enfants de substitution sont des SCRIPTS ÉCRITS PAR LE TEST. Ce n'est pas un
-// détail : l'hôte ne compose AUCUN argument (le modèle de process du terminal est un
-// seul programme, jamais un shell), donc le programme à exécuter doit être porté par
-// le chemin passé à `start` — un `sh -c …` n'aurait nulle part où aller.
+// Les enfants de substitution sont des SCRIPTS ÉCRITS PAR LE TEST, lancés sans
+// argument : le programme à exécuter est porté par le chemin passé à `start`.
 //
 // Rien ici ne dépend d'`omp` ni du poste : tout naît d'un enfant `/bin/sh` et d'une
 // taille de PTY choisie par le test.
@@ -107,15 +105,14 @@ func publishedPIDIsDirectChildAndReadsTheSizePassedToStart() async throws {
     #expect(host.isRunning == false)
 }
 
-// MARK: - AC-3 : le binaire introuvable
+// MARK: - AC-3 : l'exécutable introuvable
 
-@Test("terminal-integre/AC-3 : un chemin absent ou non exécutable lève binaryNotFound avec le message de SessionHostError")
+@Test("terminal-integre/AC-3 : un chemin absent ou non exécutable lève executableNotFound, sans lancer de process")
 @MainActor
-func missingBinaryRaisesBinaryNotFoundWithSessionHostMessage() async throws {
+func missingExecutableRaisesExecutableNotFound() async throws {
     let directory = try makeTemporaryDirectory()
-    // Présent mais NON exécutable : `isExecutableFile` tranche, jamais `fileExists`
-    // (même règle que `OmpBinaryResolver`).
-    let notExecutable = directory.appendingPathComponent("omp")
+    // Présent mais NON exécutable : `isExecutableFile` tranche, jamais `fileExists`.
+    let notExecutable = directory.appendingPathComponent("zsh")
     try Data("#!/bin/sh\nexit 0\n".utf8).write(to: notExecutable)
     let absent = directory.appendingPathComponent("absent-\(UUID().uuidString)")
 
@@ -130,17 +127,9 @@ func missingBinaryRaisesBinaryNotFoundWithSessionHostMessage() async throws {
             )
             Issue.record("aucune erreur levée pour \(path.path)")
         } catch let error as TerminalHostError {
-            guard case .binaryNotFound(let searched, let override) = error else {
-                Issue.record("erreur inattendue pour \(path.path) : \(error)")
-                continue
-            }
-            #expect(searched == [path.path])
-            #expect(override == nil)
-            // Une SEULE table de texte : celle de `SessionHostError`.
-            #expect(
-                error.userMessage
-                    == SessionHostError.binaryNotFound(searched: [path.path], override: nil).userMessage
-            )
+            #expect(error == .executableNotFound(path.path))
+            // Le message nomme le chemin refusé.
+            #expect(error.userMessage.contains(path.path))
         }
         // Aucun process n'a été lancé.
         #expect(host.pid == nil)
@@ -309,7 +298,10 @@ func quittingEscalatesToSIGKILL() async throws {
 @Test("terminal-integre/BR-1 : les octets écrits sur le maître arrivent au fils et sa réponse revient dans l'ordre")
 @MainActor
 func writeReachesChildAndEchoComesBack() async throws {
-    let script = try makeChildScript("exec /bin/cat")
+    // Le fils rend chaque ligne LUE préfixée : « fils:… » ne peut venir que de lui,
+    // jamais de l'écho de la discipline de ligne (le PTY naît en mode canonique,
+    // S-18).
+    let script = try makeChildScript("while read line; do printf 'fils:%s\\n' \"$line\"; done")
     let recorder = TerminalRecorder()
     let host = TerminalHost()
     host.onOutput = { recorder.append($0) }
@@ -321,17 +313,24 @@ func writeReachesChildAndEchoComesBack() async throws {
         rows: 24
     )
 
-    // Entrée (`0x0D`) : c'est l'octet que la touche Retour envoie (S-5).
+    // Entrée (`0x0D`) : c'est l'octet que la touche Retour envoie (S-5) ; `ICRNL`
+    // en fait la fin de ligne que le fils attend.
     try host.write(Array("bonjour\r".utf8))
-    let echoed = await waitUntil { recorder.text.contains("bonjour\r") }
+    let echoed = await waitUntil { recorder.text.contains("fils:bonjour") }
     #expect(echoed)
 
-    // `OPOST|ONLCR` est CONSERVÉ sur la réplique (Doc-3) : le `\n` écrit par le fils
-    // revient en `\r\n` sur le maître, sans quoi les lignes de la TUI seraient
-    // décalées (elle n'émet aucun `CR` structurel, Doc-1 §2).
+    // `OPOST|ONLCR` est posé sur la réplique (réglages par défaut du noyau) : le
+    // `\n` écrit par le fils revient en `\r\n` sur le maître, sans quoi les lignes
+    // de la TUI seraient décalées (elle n'émet aucun `CR` structurel, Doc-1 §2).
+    // « \r\n » est UN graphème Swift : la comparaison porte donc sur la paire.
     try host.write(Array("ligne\n".utf8))
-    let translated = await waitUntil { recorder.text.contains("ligne\r\n") }
+    let translated = await waitUntil { recorder.text.contains("fils:ligne\r\n") }
     #expect(translated)
+    // Dans l'ordre d'écriture.
+    let text = recorder.text
+    if let first = text.range(of: "fils:bonjour"), let second = text.range(of: "fils:ligne") {
+        #expect(first.lowerBound < second.lowerBound)
+    }
 
     await host.kill()
 }

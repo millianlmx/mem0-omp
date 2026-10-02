@@ -1,12 +1,12 @@
-// Preuves du MODÈLE de la fenêtre « Terminal » (S-1, S-6, S-7, S-8, S-9, S-10) :
-// le cycle de vie du process hébergé, le refus du double lancement, les états de
-// la fenêtre et la coexistence avec la session RPC.
+// Preuves du MODÈLE de la fenêtre « Terminal » (S-1, S-6, S-7, S-8, S-9, S-10 ;
+// S-18 R6) : le cycle de vie du shell hébergé, le refus du double lancement, les
+// états de la fenêtre, « Lancer omp » et la coexistence avec la session RPC.
 //
-// Les preuves ne dépendent PAS d'`omp` : le binaire est celui de l'échappatoire
-// documentée `OMP_CONSOLE_OMP_BINARY` (OmpBinaryResolver), donc un script jetable
-// qui fait exactement ce que le test observe — écrire une ligne, servir d'écho,
-// signaler un redimensionnement. Le vrai `omp` est prouvé par le harnais réel
-// (TerminalSmokeTests, désactivé par défaut).
+// Les preuves ne dépendent PAS d'`omp` ni du shell du poste : le shell est celui
+// que désigne `$SHELL` (`TerminalShell.command`), donc un script jetable qui fait
+// exactement ce que le test observe — écrire une ligne, servir d'écho, signaler un
+// redimensionnement. Le vrai shell et le vrai `omp` sont prouvés par le harnais
+// réel (TerminalSmokeTests, désactivé par défaut).
 
 import AppKit
 import Darwin
@@ -36,16 +36,20 @@ private func makeScript(_ body: String, in directory: String, named name: String
 }
 
 @MainActor
-private func makeTerminalModel(binary: URL, projectRoot: String, host: TerminalHost = TerminalHost()) -> TerminalConsoleModel {
+private func makeTerminalModel(
+    shell: URL,
+    projectRoot: String,
+    host: TerminalHost = TerminalHost(),
+    environment: [String: String] = ["PATH": "/usr/bin:/bin"]
+) -> TerminalConsoleModel {
     let suite = UserDefaults(suiteName: "terminal-console-model-\(UUID().uuidString)") ?? .standard
     suite.set(projectRoot, forKey: ProjectRoot.defaultsKey)
+    var environment = environment
+    environment["SHELL"] = shell.path
     return TerminalConsoleModel(
         host: host,
         defaults: suite,
-        environment: [
-            OmpBinaryResolver.overrideKey: binary.path,
-            "PATH": "/usr/bin:/bin",
-        ],
+        environment: environment,
         git: filesGit()
     )
 }
@@ -61,8 +65,8 @@ private func grid(_ model: TerminalConsoleModel) -> String {
     return (0..<screen.rows).map { screen.text(row: $0) }.joined(separator: "\n")
 }
 
-/// Le parent d'un pid, tel que le noyau le voit : c'est ainsi qu'on prouve qu'`omp`
-/// est un enfant DIRECT de l'app (AC-1), sans shell intermédiaire.
+/// Le parent d'un pid, tel que le noyau le voit : c'est ainsi qu'on prouve que le
+/// shell est un enfant DIRECT de l'app (AC-1), sans intermédiaire.
 private func parentProcess(of pid: Int32) -> Int32? {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/bin/ps")
@@ -89,9 +93,11 @@ private func processGroupIsGone(_ pid: Int32) -> Bool {
 @Test("terminal-integre/AC-1 : le programme hébergé est un enfant DIRECT et sa sortie s'affiche")
 func hostedProgramIsADirectChildAndItsOutputIsRendered() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript("printf 'OMP-READY\\n'\nexec /bin/cat", in: directory, named: "fake-omp")
+    // Le shell de substitution imprime ses arguments : `-l` prouve le shell de
+    // CONNEXION de S-18 R6, de bout en bout jusqu'à la grille.
+    let shell = try makeScript("printf 'SHELL-READY args=%s\\n' \"$*\"\nexec /bin/cat", in: directory, named: "fake-shell")
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     #expect(model.state == .idle)
     #expect(model.emulator == nil)
@@ -106,8 +112,9 @@ func hostedProgramIsADirectChildAndItsOutputIsRendered() async throws {
     // Enfant DIRECT de l'app : le parent du pid publié est le process de test.
     #expect(parentProcess(of: pid) == getpid())
     // Le PTY porte les octets jusqu'à la grille : l'écran n'est jamais vide.
-    #expect(await awaitMainTrue { grid(model).contains("OMP-READY") })
+    #expect(await awaitMainTrue { grid(model).contains("SHELL-READY args=-l") })
     #expect(model.emulator?.screen.cursorVisible == true)
+    await host.kill()
 }
 
 // MARK: - AC-2
@@ -117,9 +124,9 @@ func hostedProgramIsADirectChildAndItsOutputIsRendered() async throws {
 func reopeningDoesNotSpawnASecondProcess() async throws {
     let directory = try makeScratchDirectory()
     let other = try makeScratchDirectory()
-    let binary = try makeScript("printf 'READY\\n'\nexec /bin/cat", in: directory, named: "fake-omp")
+    let shell = try makeScript("printf 'READY\\n'\nexec /bin/cat", in: directory, named: "fake-shell")
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     model.start(target: makeTarget(directory, label: "première"))
     let firstPid = host.pid
@@ -140,34 +147,70 @@ func reopeningDoesNotSpawnASecondProcess() async throws {
     await host.kill()
 }
 
-// MARK: - AC-3
+// MARK: - AC-3 et S-18 R6 : `omp` n'est pas un prérequis du terminal
 
 @MainActor
-@Test("terminal-integre/AC-3 : un binaire introuvable affiche l'erreur, sans lancer de process")
-func missingBinaryShowsAnExplicitError() async throws {
+@Test("omp-console-redesign/S-18 : sans omp résoluble, le terminal lance quand même le shell")
+func missingOmpDoesNotPreventTheShell() async throws {
     let directory = try makeScratchDirectory()
-    let missing = (directory as NSString).appendingPathComponent("omp-introuvable")
+    let shell = try makeScript("printf 'READY\\n'\nexec /bin/cat", in: directory, named: "fake-shell")
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: URL(fileURLWithPath: missing), projectRoot: directory, host: host)
+    // Aucun `omp` nulle part : l'échappatoire pointe dans le vide, et ni `PATH` ni
+    // `HOME` ne mènent à un binaire.
+    let model = makeTerminalModel(
+        shell: shell,
+        projectRoot: directory,
+        host: host,
+        environment: [
+            OmpBinaryResolver.overrideKey: "/nonexistent/omp",
+            "PATH": "/nonexistent",
+            "HOME": "/nonexistent",
+        ]
+    )
 
     model.start(target: makeTarget(directory, label: "socle"))
 
-    let expected = SessionHostError.binaryNotFound(searched: [missing], override: missing).userMessage
-    #expect(model.state == .failed(expected))
-    // La fenêtre n'est JAMAIS vide (AC-3) : l'état porte le message d'erreur.
-    #expect(model.statusText == expected)
-    #expect(model.statusText.contains("Binaire `omp` introuvable"))
-    #expect(model.emulator == nil)
+    #expect(model.isRunning)
+    #expect(await awaitMainTrue { grid(model).contains("READY") })
+    await host.kill()
+}
+
+@MainActor
+@Test("omp-console-redesign/S-18 : « Lancer omp » tape omp dans le shell vivant, et seulement là")
+func launchOmpTypesTheCommandIntoTheLiveShell() async throws {
+    let directory = try makeScratchDirectory()
+    // Le shell de substitution lit UNE ligne et la rend préfixée : « lu:omp » ne
+    // peut venir que d'une ligne LUE (l'écho du PTY n'a pas de préfixe), donc la
+    // commande a été soumise par son Retour.
+    let shell = try makeScript("read line\nprintf 'lu:%s\\n' \"$line\"\nexec /bin/cat", in: directory, named: "fake-shell")
+    let host = TerminalHost()
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
+
+    // Aucun shell : le bouton est inactif et l'appel ne fait rien.
+    #expect(!model.canLaunchOmp)
+    model.launchOmp()
     #expect(host.pid == nil)
-    #expect(!host.isRunning)
+
+    model.start(target: makeTarget(directory, label: "socle"))
+    #expect(model.canLaunchOmp)
+    model.launchOmp()
+    #expect(await awaitMainTrue { grid(model).contains("lu:omp") })
+    #expect(model.windowSubtitle.hasPrefix(TerminalViewText.ompKind))
+    // Taper `omp` ne lance aucun second enfant de l'app : le shell reste LE process.
+    #expect(model.isRunning)
+
+    // Shell mort : plus rien à qui taper.
+    await host.kill()
+    #expect(await awaitMainTrue { !model.isRunning })
+    #expect(!model.canLaunchOmp)
 }
 
 @MainActor
 @Test("terminal-integre/AC-3 : un répertoire disparu refuse le lancement avec son message")
 func vanishedDirectoryRefusesTheLaunch() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript("exec /bin/cat", in: directory, named: "fake-omp")
-    let model = makeTerminalModel(binary: binary, projectRoot: directory)
+    let shell = try makeScript("exec /bin/cat", in: directory, named: "fake-shell")
+    let model = makeTerminalModel(shell: shell, projectRoot: directory)
     let gone = (directory as NSString).appendingPathComponent("disparu")
 
     model.start(target: makeTarget(gone, label: "disparu"))
@@ -183,21 +226,28 @@ func vanishedDirectoryRefusesTheLaunch() async throws {
 @Test("terminal-integre/AC-5 : la frappe atteint le programme, Ctrl-C ne tue ni l'app ni le process")
 func keyboardBytesReachTheProgram() async throws {
     let directory = try makeScratchDirectory()
-    // `cat -v` rend VISIBLE un octet de contrôle : « ^C » prouve que 0x03 a
-    // traversé le PTY au lieu d'être transformé en SIGINT par le noyau.
-    let binary = try makeScript("exec /bin/cat -v", in: directory, named: "fake-omp")
+    // Le shell de substitution se comporte comme un shell interactif : il lit des
+    // lignes et les rend préfixées (« lu:hello » ne peut venir que d'une ligne LUE,
+    // pas de l'écho du PTY), et il SURVIT à Ctrl-C en le traitant. Le PTY naît dans
+    // les réglages par défaut du noyau (S-18) : 0x03 y devient `SIGINT` pour le
+    // groupe au premier plan, que le piège rend visible.
+    let shell = try makeScript(
+        "trap 'echo INTERROMPU' INT\nwhile :; do\n  if read line; then printf 'lu:%s\\n' \"$line\"; fi\ndone",
+        in: directory,
+        named: "fake-shell"
+    )
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     model.start(target: makeTarget(directory, label: "socle"))
     #expect(await awaitMainTrue { model.isRunning })
 
     model.send(keys: TerminalKeys.bytes(characters: "hello", modifiers: [], keyCode: 0) ?? [])
     model.send(keys: TerminalKeys.bytes(characters: "\r", modifiers: [], keyCode: 36) ?? [])
-    #expect(await awaitMainTrue { grid(model).contains("hello") })
+    #expect(await awaitMainTrue { grid(model).contains("lu:hello") })
 
     model.send(keys: [0x03])
-    #expect(await awaitMainTrue { grid(model).contains("^C") })
+    #expect(await awaitMainTrue { grid(model).contains("INTERROMPU") })
     // Ni l'app ni le process ne meurent : l'état reste `running`.
     #expect(model.isRunning)
     #expect(host.isRunning)
@@ -210,13 +260,13 @@ func keyboardBytesReachTheProgram() async throws {
 @Test("terminal-integre/AC-7 : redimensionner prévient le programme et la grille suit")
 func resizeReachesBothTheProgramAndTheGrid() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript(
+    let shell = try makeScript(
         "trap 'stty size' WINCH\nstty size\nwhile :; do sleep 0.05; done",
         in: directory,
-        named: "fake-omp"
+        named: "fake-shell"
     )
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     model.viewDidMeasure(columns: 80, rows: 24)
     model.start(target: makeTarget(directory, label: "socle"))
@@ -240,9 +290,9 @@ func resizeReachesBothTheProgramAndTheGrid() async throws {
 @Test("terminal-integre/AC-8 : fermer la fenêtre tue le programme ET ses descendants")
 func closingTheWindowKillsTheWholeGroup() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript("sleep 300 & wait", in: directory, named: "fake-omp")
+    let shell = try makeScript("sleep 300 & wait", in: directory, named: "fake-shell")
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     model.start(target: makeTarget(directory, label: "socle"))
     guard case let .running(pid) = model.state else {
@@ -273,9 +323,9 @@ func closingTheWindowKillsTheWholeGroup() async throws {
 @Test("terminal-integre/AC-9 : quitter l'app tue les terminaux vivants")
 func quittingTheAppKillsLiveTerminals() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript("sleep 300 & wait", in: directory, named: "fake-omp")
+    let shell = try makeScript("sleep 300 & wait", in: directory, named: "fake-shell")
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     model.start(target: makeTarget(directory, label: "socle"))
     guard case let .running(pid) = model.state else {
@@ -298,9 +348,9 @@ func quittingTheAppKillsLiveTerminals() async throws {
 @Test("terminal-integre/AC-10 : un terminal et la session RPC vivent et meurent indépendamment")
 func terminalAndRpcSessionAreIndependent() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript("exec /bin/cat -v", in: directory, named: "fake-omp")
+    let shell = try makeScript("exec /bin/cat -v", in: directory, named: "fake-shell")
     let terminalHost = TerminalHost()
-    let terminal = makeTerminalModel(binary: binary, projectRoot: directory, host: terminalHost)
+    let terminal = makeTerminalModel(shell: shell, projectRoot: directory, host: terminalHost)
 
     // 1) Le terminal vit D'ABORD.
     terminal.start(target: makeTarget(directory, label: "socle"))
@@ -376,12 +426,13 @@ func terminalAndRpcSessionAreIndependent() async throws {
 @Test("terminal-integre/AC-1 : chaque état de la fenêtre porte un texte, jamais un rectangle vide")
 func everyStateHasItsText() async throws {
     let directory = try makeScratchDirectory()
-    let binary = try makeScript("printf 'READY\\n'\nexec /bin/cat", in: directory, named: "fake-omp")
+    let shell = try makeScript("printf 'READY\\n'\nexec /bin/cat", in: directory, named: "fake-shell")
     let host = TerminalHost()
-    let model = makeTerminalModel(binary: binary, projectRoot: directory, host: host)
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
 
     #expect(model.statusText == TerminalViewText.chooseHint)
-    #expect(model.targetLabel == TerminalViewText.noTarget)
+    #expect(model.windowTitle == TerminalViewText.windowTitle)
+    #expect(model.windowSubtitle.isEmpty)
 
     model.openPicker()
     #expect(model.statusText == TerminalViewText.listing || model.statusText == TerminalViewText.chooseHint)
@@ -391,7 +442,11 @@ func everyStateHasItsText() async throws {
         Issue.record("état attendu running, obtenu \(model.state)")
         return
     }
-    #expect(model.statusText == "omp vivant (pid \(pid)) · socle")
+    // La fenêtre porte le nom du répertoire, jamais le pid du shell.
+    #expect(model.windowTitle == (directory as NSString).lastPathComponent)
+    #expect(!model.statusText.contains(String(pid)))
+    #expect(!model.windowSubtitle.contains(String(pid)))
+    #expect(model.windowSubtitle.hasPrefix(TerminalViewText.shellKind))
 
     // Fermer la fenêtre est le chemin de sortie de l'utilisateur : l'état repart à
     // `idle` (S-7), donc au texte d'accueil, et non à une fin « subie ».

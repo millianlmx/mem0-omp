@@ -46,10 +46,10 @@ struct TerminalLaunchSheet: View {
                 }
                 Spacer(minLength: 0)
                 Button(TerminalViewText.cancel) { model.dismissPicker() }
-                    .keyboardShortcut(.escape, modifiers: [])
+                    .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("terminal.launch.cancel")
                 Button(TerminalViewText.open) { model.openSelectedTarget() }
-                    .keyboardShortcut(.return, modifiers: [])
+                    .keyboardShortcut(.defaultAction)
                     .disabled(!model.canOpenSelected)
                     .accessibilityIdentifier("terminal.launch.commit")
             }

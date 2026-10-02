@@ -64,7 +64,7 @@ func recetteManuelleRendUneVraieCible() async throws {
     let entries = model.tree?.entries ?? []
     line("== arbre (\(entries.count) entrées)")
     for entry in entries {
-        line("\(FilesText.badge(for: entry.kind)) \(entry.path)")
+        line("\(FilesText.badge(for: entry.kind) ?? "—") \(entry.path)")
     }
     line("")
 
@@ -97,7 +97,7 @@ func recetteManuelleRendUneVraieCible() async throws {
     }
 
     if let chosen {
-        line("== diff de \(chosen.path) [\(FilesText.badge(for: chosen.kind))] — base \(model.diffBase?.label ?? "—") (\(diffLines.count) lignes)")
+        line("== diff de \(chosen.path) [\(FilesText.badge(for: chosen.kind) ?? "—")] — base \(model.diffBase?.label ?? "—") (\(diffLines.count) lignes)")
         for diffLine in diffLines { line(diffLine.text) }
     } else {
         line("== aucun diff non vide dans les \(scanned) premiers fichiers examinés")

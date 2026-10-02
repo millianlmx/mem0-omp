@@ -42,7 +42,7 @@ struct ProjectPlanSection: Equatable, Sendable {
     let removed: [ProjectPlanRow]
 }
 
-/// Le libellé d'état d'une feature, vocabulaire EXACT du pilote (S-8).
+/// Le libellé d'état d'une feature, dans le vocabulaire commun de l'app (S-8).
 func featureStateLabel(_ status: ProjectFeatureStatus, failure: ProjectFailure?) -> String {
     if status == .failed {
         guard let reason = failure?.reason, !reason.isEmpty else { return ProjectViewText.featureFailed }
@@ -58,22 +58,19 @@ func featureStateLabel(_ status: ProjectFeatureStatus, failure: ProjectFailure?)
     }
 }
 
-/// L'en-tête d'état : « terminé », sinon « <en cours|arrêté> — segment i/N « nom » ».
+/// L'en-tête d'état : « Terminé », sinon « <En cours|Arrêté> — segment i sur N · nom ».
 func projectStatusLine(of project: Project) -> String {
     if project.status == .done { return ProjectViewText.statusDone }
     let word = project.status == .running ? ProjectViewText.statusRunning : ProjectViewText.statusStopped
-    let index = project.current + 1
     let name = project.segments[project.current].name
-    return "\(word) — segment \(index)/\(project.segments.count) « \(name) »"
+    return "\(word) — segment \(project.current + 1) sur \(project.segments.count) · \(name)"
 }
 
-/// « m/n feature(s) fusionnée(s) » : `m` = features fusionnées, `n` = features non
+/// « m features fusionnées sur n » : `m` = features fusionnées, `n` = features non
 /// retirées.
 func projectProgressLine(of project: Project) -> String {
-    let all = project.segments.flatMap(\.features)
-    let merged = all.filter { $0.status == .merged }.count
-    let live = all.filter { $0.status != .removed }.count
-    return "\(merged)/\(live) feature(s) fusionnée(s)"
+    let counts = projectProgressCounts(of: project)
+    return ProjectViewText.progress(merged: counts.merged, total: counts.total)
 }
 
 /// Le couple (fusionnées, non retirées), pour la bannière de fin (S-10).

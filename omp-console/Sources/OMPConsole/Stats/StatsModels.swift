@@ -1,8 +1,7 @@
-// Les types du tableau « Statistiques » et les TEXTES exacts de S-5 : des valeurs
-// pures, testables sans interface — la vue ne fait que les rendre.
-//
-// Un seul vocabulaire de durée (`elapsedLabel`) et de modèle (`absent`) est
-// réutilisé, jamais réinventé.
+// Les types du tableau « Statistiques » et ses TEXTES exacts (S-5 de
+// `statistiques`, S-17 de omp-console-redesign) : des valeurs pures, testables
+// sans interface — la vue ne fait que les rendre. Durées et tokens passent par
+// `ConsoleFormat`, jamais par un format maison.
 
 import Foundation
 
@@ -71,8 +70,10 @@ enum StatsViewState: Equatable, Sendable {
     case board(StatsBoard)
 }
 
-/// Les textes exacts de S-5. Le chargement et le magasin absent sont REPRIS MOT
-/// POUR MOT de `KanbanBoardState` : une seule formulation par situation dans l'app.
+/// Les textes exacts de la fenêtre. Le chargement et le magasin absent sont REPRIS
+/// MOT POUR MOT de `KanbanBoardState` : une seule formulation par situation dans
+/// l'app. Aucun chemin, aucune clé, aucun mot du protocole n'est montré (audit HIG
+/// du 2026-10-01) ; un « run » se dit « exécution ».
 enum StatsText {
     static let loading = KanbanBoardState.loadingText
 
@@ -80,53 +81,37 @@ enum StatsText {
         KanbanBoardState.absentText(dir: dir)
     }
 
-    static func noProject(dir: String) -> String {
-        "Aucun projet dans le magasin d'état : \(dir)"
-    }
+    static let noProject = "Les statistiques apparaîtront dès qu'un projet sera piloté."
 
-    static let empty = "Aucun run lisible pour ce projet"
+    static let empty = "Aucune donnée pour ce projet"
 
     static func hidden(_ count: Int) -> String {
-        "\(count) feature(s) du plan sans run lisible"
+        ConsoleFormat.count(count, "feature du plan sans données", "features du plan sans données")
     }
 
-    /// `Projet <libellé> — entrée <n> · sortie <n> · durée <d> · tours <n>`.
-    static func aggregate(label: String, totals: StatsTotals) -> String {
-        "Projet \(label) — \(totalsSuffix(totals))"
-    }
+    static let noStatsTitle = "Aucune statistique"
+    static let noProjectTitle = "Aucun projet"
 
-    /// `<slug> — entrée <n> · sortie <n> · durée <d> · tours <n>`.
-    static func feature(slug: String, totals: StatsTotals) -> String {
-        "\(slug) — \(totalsSuffix(totals))"
-    }
+    /// Les tuiles.
+    static let sentTokens = "Tokens envoyés"
+    static let receivedTokens = "Tokens reçus"
+    static let timeSpent = "Temps passé"
+    static let turns = "Tours"
 
-    /// `<tag> · /<phase> · entrée <n> · sortie <n> · durée <d> · tours <n> · modèle <m|absent>`.
-    static func run(
-        tag: String, phase: PipelinePhase, metrics: SessionMetrics, isLive: Bool, nowMs: Double
-    ) -> String {
-        let duration = durationMs(metrics, isLive: isLive, nowMs: nowMs).map { elapsedLabel(ms: $0) } ?? "—"
-        let model = metrics.model ?? "absent"
-        return "\(tag) · /\(phase.rawValue) · entrée \(metrics.input) · sortie \(metrics.output)"
-            + " · durée \(duration) · tours \(metrics.turns) · modèle \(model)"
-    }
+    /// Le graphique : un panneau par série, chacun à sa propre échelle.
+    static let chartTitle = "Tokens par feature"
+    static let sentKind = "envoyés"
+    static let receivedKind = "reçus"
 
-    /// `<tag> · /<phase> — <motif>` : un run illisible remplace tout.
-    static func unreadableRun(tag: String, phase: PipelinePhase, reason: String) -> String {
-        "\(tag) · /\(phase.rawValue) — \(reason)"
-    }
-}
-
-/// La ligne d'un run, mesurée ou illisible.
-func statsRunLine(_ run: RunStats, nowMs: Double) -> String {
-    let tag = sessionTag(forSessionFile: run.sessionFile)
-    switch run.metrics {
-    case .measured(let metrics):
-        return StatsText.run(
-            tag: tag, phase: run.phase, metrics: metrics, isLive: run.isLive, nowMs: nowMs
-        )
-    case .unreadable(let reason):
-        return StatsText.unreadableRun(tag: tag, phase: run.phase, reason: reason)
-    }
+    /// Le tableau et ses colonnes (noms courts, Doc-9).
+    static let tableTitle = "Exécutions"
+    static let columnFeature = "Feature"
+    static let columnStep = "Étape"
+    static let columnModel = "Modèle"
+    static let columnDuration = "Durée"
+    static let columnTurns = "Tours"
+    static let columnTokens = "Tokens"
+    static let columnState = "État"
 }
 
 /// Le motif d'un incident de lecture, DÉJÀ formulé pour l'affichage (S-5) ; `nil`
@@ -137,10 +122,4 @@ func statsUnreadableReason(_ issue: SessionIssue) -> String? {
     case .unreadable(let message): return "session illisible : \(message)"
     case .truncated, .replaced: return nil
     }
-}
-
-/// Le suffixe commun de la ligne d'agrégat et de la ligne de totaux d'une feature.
-private func totalsSuffix(_ totals: StatsTotals) -> String {
-    "entrée \(totals.input) · sortie \(totals.output) · durée \(elapsedLabel(ms: totals.durationMs))"
-        + " · tours \(totals.turns)"
 }
