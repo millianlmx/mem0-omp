@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.22.0 — 2026-10-02
+
+- feat(console,req,test,docs): OMP Console — refonte des écrans (une seule fenêtre) et commande reply du canal (f677513)
+
 ## omp-mem0-req 0.21.0 — 2026-09-28
 
 - feat(req): canal de commande — piloter un lot depuis un process externe (aucun bump) (#34) (1ea8910)
