@@ -19,7 +19,9 @@ func statsBasename(_ path: String) -> String {
 
 /// Les projets du magasin, dans l'ordre `projectOrder`, avec leur libellé de
 /// sélecteur : `basename(repoRoot)`, SAUF collision de ce libellé entre plusieurs
-/// projets, où TOUS les projets en collision affichent `basename (repoKey)` (S-5).
+/// projets, où TOUS les projets en collision affichent `basename (dossier parent)`
+/// — le dossier parent passe par `ConsoleFormat.path` ; la clé (une empreinte)
+/// n'est jamais montrée (S-5, audit HIG du 2026-10-01).
 func statsProjectOptions(_ snapshot: StoreSnapshot) -> [StatsProjectOption] {
     let ordered = snapshot.projects.projects.sorted(by: projectOrder)
     var counts: [String: Int] = [:]
@@ -28,8 +30,11 @@ func statsProjectOptions(_ snapshot: StoreSnapshot) -> [StatsProjectOption] {
     }
     return ordered.map { project in
         let base = statsBasename(project.repoRoot)
-        let label = (counts[base] ?? 0) > 1 ? "\(base) (\(project.repoKey))" : base
-        return StatsProjectOption(id: project.repoKey, label: label)
+        guard (counts[base] ?? 0) > 1 else {
+            return StatsProjectOption(id: project.repoKey, label: base)
+        }
+        let parent = ConsoleFormat.path((project.repoRoot as NSString).deletingLastPathComponent)
+        return StatsProjectOption(id: project.repoKey, label: "\(base) (\(parent))")
     }
 }
 

@@ -1,5 +1,6 @@
-// La zone de rendu du TUI d'omp : une grille de cellules peinte par CoreText, le
-// curseur, et la traduction clavier → octets du PTY (S-5, S-6, BR-3).
+// La zone de rendu du terminal (le shell, et la TUI d'omp qu'il lance) : une grille
+// de cellules peinte par CoreText, le curseur, et la traduction clavier → octets du
+// PTY (S-5, S-6, BR-3).
 //
 // Trois décisions structurent ce fichier :
 //
@@ -12,13 +13,13 @@
 //      principale (S-6) : `layout()` pose un drapeau, le tour suivant mesure.
 //
 // Le fond est peint avec la couleur de fond de la palette AVANT la grille : la
-// fenêtre n'a jamais de rectangle vide, même quand omp n'a encore rien écrit.
+// fenêtre n'a jamais de rectangle vide, même quand le shell n'a encore rien écrit.
 
 import AppKit
 import CoreText
 import SwiftUI
 
-/// La frappe transmise à omp : le jeu clavier **legacy** de Doc-1 §8, et rien
+/// La frappe transmise au PTY : le jeu clavier **legacy** de Doc-1 §8, et rien
 /// d'autre. Une entrée qui n'est pas dans la table n'est PAS transmise (`nil`).
 enum TerminalKeys {
     /// `nil` = aucun octet à envoyer (⌘, Option, F-touches, PageUp/Down,
@@ -34,7 +35,7 @@ enum TerminalKeys {
         case 36, 76: return [0x0D]                  // Retour, Entrée du pavé numérique
         case 51: return [0x7F]                      // Retour arrière
         case 48: return [0x09]                      // Tabulation
-        case 53: return [0x1B]                      // Échap (il part à omp, il ne ferme rien)
+        case 53: return [0x1B]                      // Échap (il part au PTY, il ne ferme rien)
         case 123: return escape("[D")               // ←
         case 124: return escape("[C")               // →
         case 125: return escape("[B")               // ↓
@@ -200,10 +201,17 @@ final class TerminalRenderView: NSView {
         return ceil(CTFontGetAscent(ctFont) + CTFontGetDescent(ctFont) + CTFontGetLeading(ctFont))
     }
 
-    /// La grille qui tient dans la zone d'affichage, bornée au minimum de S-6.
+    /// La marge intérieure, sur les quatre côtés : le texte ne colle jamais au
+    /// bord de la fenêtre. Elle est retirée de la zone mesurée, donc la dernière
+    /// rangée et la dernière colonne tiennent entières.
+    static let contentInset: CGFloat = 10
+
+    /// La grille qui tient dans la zone d'affichage, marges déduites, bornée au
+    /// minimum de S-6.
     func measuredGrid() -> (columns: Int, rows: Int) {
-        let columns = Int(floor(max(bounds.width, 0) / cellWidth))
-        let rows = Int(floor(max(bounds.height, 0) / cellHeight))
+        let inset = TerminalRenderView.contentInset
+        let columns = Int(floor(max(bounds.width - 2 * inset, 0) / cellWidth))
+        let rows = Int(floor(max(bounds.height - 2 * inset, 0) / cellHeight))
         return (max(columns, TerminalRenderView.minimumColumns), max(rows, TerminalRenderView.minimumRows))
     }
 
@@ -269,6 +277,7 @@ final class TerminalRenderView: NSView {
         context.textMatrix = .identity
 
         let descent = CTFontGetDescent(baseFont as CTFont)
+        let inset = TerminalRenderView.contentInset
         for row in 0..<rows {
             let line = TerminalRowRendering.line(
                 for: screen.line(row),
@@ -278,8 +287,8 @@ final class TerminalRenderView: NSView {
                 italic: italicFont
             )
             context.textPosition = CGPoint(
-                x: 0,
-                y: bounds.height - CGFloat(row + 1) * cellHeight + descent
+                x: inset,
+                y: bounds.height - inset - CGFloat(row + 1) * cellHeight + descent
             )
             CTLineDraw(line, context)
         }
@@ -287,8 +296,8 @@ final class TerminalRenderView: NSView {
 
         if screen.cursorVisible, screen.cursor.row < rows {
             let cell = CGRect(
-                x: CGFloat(screen.cursor.column) * cellWidth,
-                y: CGFloat(screen.cursor.row) * cellHeight,
+                x: inset + CGFloat(screen.cursor.column) * cellWidth,
+                y: inset + CGFloat(screen.cursor.row) * cellHeight,
                 width: cellWidth,
                 height: cellHeight
             )

@@ -392,6 +392,70 @@ func readerReportsOnlyNewBytes() throws {
     #expect(completed.bytesRead == partial.utf8.count + 1)
 }
 
+// MARK: - Audit HIG 2026-10-01
+
+@Test("omp-console-redesign/C11 : une réponse réécrite mot pour mot après un appel d'outil n'est montrée qu'une fois")
+func repeatedAssistantTextIsCollapsed() throws {
+    // La forme mesurée sur une session réelle : texte + `mem0_add`, résultat, puis
+    // le MÊME texte (blancs de tête compris) avec sa propre réflexion.
+    let answer = "Ce dépôt contient les plugins **mem0**."
+    func assistant(_ offset: Int, _ text: String, thinking: String? = nil, calls: [ToolCall] = []) -> ConversationEntry {
+        ConversationEntry(
+            index: offset,
+            offset: offset,
+            kind: .assistant(AssistantTurn(text: text, thinking: thinking, model: nil, usage: nil, toolCalls: calls))
+        )
+    }
+    var builder = SessionRowBuilder()
+    builder.append([
+        ConversationEntry(index: 0, offset: 0, kind: .user(UserTurn(text: "Décris le dépôt"))),
+        assistant(10, "\n\n" + answer, calls: [ToolCall(id: "c1", name: "mem0_add", arguments: .object(["text": .string("fait")]))]),
+        ConversationEntry(
+            index: 20,
+            offset: 20,
+            kind: .toolResult(ToolResultTurn(callId: "c1", name: "mem0_add", text: "Enregistré", diff: nil, isError: false))
+        ),
+        assistant(30, answer + "\n", thinking: "Terminé."),
+        // Sans réflexion, une troisième redite ne laisse aucune ligne.
+        assistant(40, answer),
+    ])
+    let texts = builder.rows.compactMap { row -> String? in
+        guard case .assistant(let content) = row.kind else { return nil }
+        return content.text
+    }
+    #expect(texts.filter { $0.contains(answer) }.count == 1)
+    // La redite garde sa réflexion, sans son texte ; l'appel d'outil reste.
+    #expect(builder.rows.map(\.id) == ["r0", "r10", "r10.c0", "r30"])
+    guard case .assistant(let collapsed) = builder.rows[3].kind else {
+        Issue.record("la redite devait garder sa ligne de réflexion")
+        return
+    }
+    #expect(collapsed.text.isEmpty)
+    #expect(collapsed.thinking == "Terminé.")
+
+    // Un NOUVEAU message de l'utilisateur ouvre un autre tour : la même réponse,
+    // redonnée à une autre question, s'affiche de nouveau.
+    builder.append([
+        ConversationEntry(index: 50, offset: 50, kind: .user(UserTurn(text: "Et encore ?"))),
+        assistant(60, answer),
+    ])
+    #expect(builder.rows.last?.id == "r60")
+}
+
+@Test("omp-console-redesign/audit HIG : la cible d'un appel montre un chemin court et une portée en français")
+func toolTargetsAreHumanized() {
+    let home = NSHomeDirectory()
+    let root = "/tmp/depot"
+    #expect(primaryArgument(name: "read", arguments: .object(["path": .string("/tmp/depot/Sources/A.swift")]), projectRoot: root) == "Sources/A.swift")
+    #expect(primaryArgument(name: "read", arguments: .object(["path": .string("\(home)/notes.md")]), projectRoot: root) == "~/notes.md")
+    #expect(primaryArgument(name: "grep", arguments: .object(["pattern": .string("foo"), "path": .string("/tmp/depot/Sources")]), projectRoot: root) == "foo @ Sources")
+    // Un outil mémoire se nomme par le texte du souvenir, une portée seule en français.
+    #expect(primaryArgument(name: "mem0_add", arguments: .object(["text": .string("Un fait"), "scope": .string("project"), "kind": .string("fact")])) == "Un fait")
+    #expect(primaryArgument(name: "outil", arguments: .object(["scope": .string("project")])) == "projet")
+    // Oublier un souvenir ne vise qu'un identifiant : aucune cible affichée.
+    #expect(primaryArgument(name: "mem0_forget", arguments: .object(["memory_id": .string("9ea808a1")])) == "")
+}
+
 // MARK: - Outillage local
 
 /// Des lignes assemblées pour un tour assistant donné, sans passer par un fichier.

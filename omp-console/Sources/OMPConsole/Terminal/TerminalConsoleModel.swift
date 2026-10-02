@@ -1,6 +1,7 @@
-// Le modèle de la fenêtre « Terminal » (S-1, S-7, S-8, S-9, S-10, BR-3) : l'état
-// de la fenêtre, le catalogue des répertoires choisis, et le câblage du process
-// hébergé au rendu.
+// Le modèle de la fenêtre « Terminal » (S-1, S-7, S-8, S-9, S-10, BR-3 ; S-18 R6) :
+// l'état de la fenêtre, le catalogue des répertoires choisis, et le câblage du
+// shell de connexion hébergé au rendu. `omp` se lance À LA DEMANDE, tapé dans ce
+// shell par « Lancer omp » : son binaire n'est pas un prérequis du terminal.
 //
 // Trois décisions structurent ce fichier :
 //
@@ -16,7 +17,7 @@
 //      chaque octet.
 //
 // Le modèle vit à l'échelle de l'APP (`@StateObject` sur la structure `App`) :
-// fermer la fenêtre ne laisse pas un `omp` orphelin, et l'accroche de terminaison
+// fermer la fenêtre ne laisse pas un shell orphelin, et l'accroche de terminaison
 // existe avant la première ouverture de la fenêtre.
 
 import AppKit
@@ -55,6 +56,9 @@ final class TerminalConsoleModel: ObservableObject {
     /// Le compteur de trames : la sortie du PTY ne change aucun état affichable,
     /// donc c'est lui qui réveille la vue (au plus une fois par tour de boucle).
     @Published private(set) var frameCount: Int = 0
+    /// « Lancer omp » a été tapé dans le shell vivant : le sous-titre dit « omp ».
+    /// Remis à faux à chaque nouveau shell.
+    @Published private(set) var ompLaunched = false
 
     // MARK: - Feuille de choix
 
@@ -185,6 +189,10 @@ final class TerminalConsoleModel: ObservableObject {
         return false
     }
 
+    /// « Lancer omp » n'a de sens que si un shell vit pour lire la commande. Le
+    /// binaire `omp` n'est PAS résolu ici : s'il manque, le shell le dit.
+    var canLaunchOmp: Bool { isRunning }
+
     // MARK: - Texte d'état (S-10)
 
     /// Chaque état a UN texte, et aucun n'est un rectangle vide. L'état `listing`
@@ -196,41 +204,50 @@ final class TerminalConsoleModel: ObservableObject {
             return TerminalViewText.chooseHint
         case .starting:
             return TerminalViewText.starting
-        case let .running(pid):
-            return TerminalViewText.running(pid: pid, target: target?.label)
-        case let .exited(exit):
-            return TerminalViewText.exited(exit)
+        case .running:
+            return TerminalViewText.running
+        case .exited:
+            return TerminalViewText.exited
         case let .failed(message):
             return message
         }
     }
 
-    /// Le libellé de la cible affiché dans le bandeau : « aucun répertoire » tant
+    /// Le titre de la fenêtre : le nom du répertoire du shell, « Terminal » tant
     /// qu'aucun n'a été choisi.
-    var targetLabel: String {
-        target?.label ?? TerminalViewText.noTarget
+    var windowTitle: String {
+        guard let target, state != .idle else { return TerminalViewText.windowTitle }
+        return URL(fileURLWithPath: target.path).lastPathComponent
+    }
+
+    /// Le sous-titre : le programme au premier plan et l'état en un mot.
+    var windowSubtitle: String {
+        let word: String?
+        switch state {
+        case .idle: word = nil
+        case .starting: word = TerminalViewText.stateStarting
+        case .running: word = TerminalViewText.stateRunning
+        case .exited: word = TerminalViewText.stateExited
+        case .failed: word = TerminalViewText.stateFailed
+        }
+        let kind = ompLaunched && isRunning ? TerminalViewText.ompKind : TerminalViewText.shellKind
+        return TerminalViewText.subtitle(kind: kind, state: word)
     }
 
     // MARK: - Lancement
 
-    /// Lance `omp` sur une cible du catalogue. Sans effet si un terminal vit déjà
-    /// (AC-2) : c'est ce refus, et non la scène, qui garantit qu'aucun second `omp`
-    /// n'est lancé.
+    /// Lance le shell de connexion (`TerminalShell.command`) sur une cible du
+    /// catalogue. Sans effet si un terminal vit déjà (AC-2) : c'est ce refus, et non
+    /// la scène, qui garantit qu'aucun second shell n'est lancé.
     func start(target: FilesTarget) {
         guard canStart else { return }
         self.target = target
+        ompLaunched = false
         guard isDirectory(target.path) else {
             state = .failed(TerminalViewText.cwdMissing(target.path))
             return
         }
-        let binary: URL
-        switch OmpBinaryResolver.resolve(environment: environment) {
-        case let .success(url):
-            binary = url
-        case let .failure(error):
-            state = .failed(error.userMessage)
-            return
-        }
+        let shell = TerminalShell.command(environment: environment, fileManager: fileManager)
 
         state = .starting
         let emulator = TerminalEmulator(columns: pendingColumns, rows: pendingRows, palette: palette)
@@ -240,7 +257,8 @@ final class TerminalConsoleModel: ObservableObject {
         self.emulator = emulator
         do {
             try host.start(
-                executable: binary,
+                executable: shell.executable,
+                arguments: shell.arguments,
                 cwd: URL(fileURLWithPath: target.path),
                 columns: pendingColumns,
                 rows: pendingRows
@@ -269,10 +287,20 @@ final class TerminalConsoleModel: ObservableObject {
         start(target: target)
     }
 
+    /// « Lancer omp » : la commande est TAPÉE dans le shell, par le chemin de la
+    /// frappe clavier — `omp` devient un job du shell, jamais un second enfant de
+    /// l'app.
+    func launchOmp() {
+        guard canLaunchOmp else { return }
+        send(keys: TerminalShell.launchOmpKeys)
+        ompLaunched = true
+    }
+
     // MARK: - Frappe et mesure
 
-    /// Une frappe de S-5, déjà traduite en octets. Le mode brut du PTY fait arriver
-    /// Ctrl-C comme `0x03` à omp (BR-1/Doc-3) : l'app n'interprète rien.
+    /// Une frappe de S-5, déjà traduite en octets. La discipline de ligne du PTY
+    /// fait de Ctrl-C un `SIGINT` pour le job au premier plan du shell, et une TUI
+    /// en mode brut (omp) le reçoit comme `0x03` (BR-1) : l'app n'interprète rien.
     func send(keys bytes: [UInt8]) {
         guard isRunning else { return }
         do {
@@ -307,8 +335,8 @@ final class TerminalConsoleModel: ObservableObject {
         publishFrame()
     }
 
-    /// Les réponses de l'émulateur aux sondes d'omp (DA1, CPR, OSC 11) partent sur
-    /// le maître du PTY, au fil du parsing (S-3).
+    /// Les réponses de l'émulateur aux sondes de la TUI (DA1, CPR, OSC 11) partent
+    /// sur le maître du PTY, au fil du parsing (S-3).
     private func reply(_ bytes: [UInt8]) {
         guard isRunning else { return }
         try? host.write(bytes)
@@ -428,8 +456,8 @@ final class TerminalConsoleModel: ObservableObject {
         window = nil
     }
 
-    /// Fermer la fenêtre tue la session omp — sans confirmation, sans alerte, et
-    /// sans toucher à la session RPC (S-7, AC-10).
+    /// Fermer la fenêtre tue le shell et ce qu'il a lancé — sans confirmation, sans
+    /// alerte, et sans toucher à la session RPC (S-7, AC-10).
     func windowWillClose() {
         detachWindow()
         Task { @MainActor in await self.shutdown() }

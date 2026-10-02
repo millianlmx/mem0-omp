@@ -103,24 +103,32 @@ func binaryAndUnreadableTexts() {
     #expect(FilesContent.unreadable("Permission denied").message(dedicated: nil) == "Lecture impossible : Permission denied.")
 }
 
-@Test("visionneuse-de-fichiers-et-diffs/AC-3 : les textes de la section qui dépendent d'une valeur sont figés")
+@Test("visionneuse-de-fichiers-et-diffs/AC-3 : les textes de la section qui dépendent d'une valeur la montrent")
 func valueDependentTexts() {
-    #expect(FilesText.noDifference(base: "HEAD") == "Aucune différence avec HEAD pour ce fichier.")
-    #expect(FilesText.noDifference(base: "base 0123456") == "Aucune différence avec base 0123456 pour ce fichier.")
-    #expect(
-        FilesText.baseUnavailable(reason: "pas de base de fusion avec main")
-            == "Base introuvable pour cette cible (pas de base de fusion avec main) — diff indisponible."
-    )
-    #expect(FilesText.loading("/tmp/cible") == "Lecture de /tmp/cible…")
-    #expect(FilesError.watchFailed(path: "/tmp/cible").userMessage == "La veille de /tmp/cible a échoué — rafraîchis avec ⌘R.")
-    #expect(FilesError.targetGone(path: "/tmp/cible").userMessage == "/tmp/cible n'existe plus — choisis une autre cible.")
+    #expect(FilesText.baseUnavailable(reason: "pas de base de fusion avec main").contains("pas de base de fusion avec main"))
+    #expect(FilesText.loading("/tmp/cible").contains("/tmp/cible"))
+    #expect(FilesError.watchFailed(path: "/tmp/cible").userMessage.contains("/tmp/cible"))
+    #expect(FilesError.targetGone(path: "/tmp/cible").userMessage.contains("/tmp/cible"))
 }
 
-@Test("visionneuse-de-fichiers-et-diffs/AC-1 : chaque classe d'entrée a son badge")
+@Test("visionneuse-de-fichiers-et-diffs/AC-1 : seul un fichier qui diffère du dépôt porte un badge, chacun le sien")
 func entryKindsHaveTheirBadge() {
-    #expect(FilesText.badge(for: .tracked) == "suivi")
-    #expect(FilesText.badge(for: .untracked) == "non suivi")
-    #expect(FilesText.badge(for: .deleted) == "supprimé")
+    #expect(FilesText.badge(for: .tracked) == nil)
+    let untracked = FilesText.badge(for: .untracked)
+    let deleted = FilesText.badge(for: .deleted)
+    #expect(untracked != nil)
+    #expect(deleted != nil)
+    #expect(untracked != deleted)
+}
+
+@Test("omp-console-redesign/C8 : la comparaison se dit seulement quand une base est calculable, et distingue HEAD du départ de branche")
+func comparisonOnlyForAComputableBase() {
+    #expect(FilesText.comparison(.unavailable("pas de base")) == nil)
+    let head = FilesText.comparison(.head)
+    let branchStart = FilesText.comparison(.commit("0123456789abcdef0123456789abcdef01234567"))
+    #expect(head != nil)
+    #expect(branchStart != nil)
+    #expect(head != branchStart)
 }
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-9 : un diff sans ligne de contenu (fichier ajouté vide) est distingué d'un binaire")

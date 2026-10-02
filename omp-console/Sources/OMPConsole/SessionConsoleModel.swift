@@ -1,5 +1,7 @@
 // Modèle de la fenêtre « Session OMP » (S-9) : projet, mode, prompt, dialogue,
-// statut, disponibilités.
+// statut, disponibilités — et la conversation lisible de la session hébergée
+// (S-15 de omp-console-redesign) : le fichier de session d'`omp`, publié par
+// `get_state`, suivi par un `SessionViewerModel` comme dans la visionneuse.
 //
 // Le modèle ne parle JAMAIS le protocole : il appelle le host et traduit ses
 // erreurs en texte via `SessionHostError.userMessage` — c'est le seul endroit qui
@@ -36,25 +38,36 @@ final class SessionConsoleModel: ObservableObject {
     @Published var prompt: String = ""
     @Published var dialogText: String = ""
     @Published var selectedOptionIndex: Int?
-    @Published var journalExpanded: Bool = true
+    /// Le pli « Trames brutes » de l'inspecteur, fermé par défaut (S-18 R8).
+    @Published var rawFramesShown = false
     @Published var statusMessage: String = ""
+    /// L'inspecteur « Détails techniques » (session, activité, journal, trames
+    /// brutes) est ouvert.
+    @Published var technicalShown = false
+    /// La conversation du fichier de session de l'hôte ; `nil` tant qu'aucun
+    /// fichier n'est connu.
+    @Published private(set) var conversation: SessionViewerModel?
 
     private let defaults: UserDefaults
     private let fileManager: FileManager
+    private let makeConversation: @MainActor (ViewerTarget) -> SessionViewerModel
     private var cancellables: Set<AnyCancellable> = []
+    private let activityCache = RpcActivityCache()
 
-    init(host: SessionHost? = nil, defaults: UserDefaults = .standard, fileManager: FileManager = .default) {
+    init(
+        host: SessionHost? = nil,
+        defaults: UserDefaults = .standard,
+        fileManager: FileManager = .default,
+        makeConversation: @escaping @MainActor (ViewerTarget) -> SessionViewerModel = { SessionViewerModel(target: $0) }
+    ) {
         let host = host ?? SessionHost()
         self.host = host
         self.defaults = defaults
         self.fileManager = fileManager
+        self.makeConversation = makeConversation
         self.mode = RpcMode(rawValue: defaults.string(forKey: Self.modeKey) ?? "") ?? .rpcUI
         self.projectRoot = Self.restoredProjectRoot(defaults: defaults, fileManager: fileManager)
-        self.statusMessage = Self.statusText(
-            for: host.state,
-            pid: host.pid,
-            sessionId: host.sessionId
-        )
+        self.statusMessage = Self.statusText(for: host.state)
 
         // Le statut suit l'ÉTAT, pas chaque trame : `removeDuplicates` évite qu'une
         // transcription qui grandit écrase le message d'une commande expirée
@@ -66,15 +79,15 @@ final class SessionConsoleModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // … et l'IDENTITÉ de session : `get_state` publie `sessionId` SANS changer
-        // d'état (S-2), donc l'abonnement à l'état seul laissait le statut sur
-        // « Session vivante (pid <n>) » alors que la session était déjà connue —
-        // S-9 exige « Session vivante (pid <n>, session <8 premiers>) » dès que
-        // `get_state` a répondu.
-        host.$sessionId
+        // … et le FICHIER de session : la conversation suit le fichier publié par
+        // `get_state`. Une relance reprise garde le même fichier, donc la même
+        // conversation ; un lancement neuf le remet à `nil`, puis en publie un
+        // autre. La valeur reçue est la NOUVELLE (`@Published` émet avant
+        // d'écrire) : elle est passée telle quelle, jamais relue sur l'hôte.
+        host.$sessionFile
             .removeDuplicates()
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.refreshStatus() }
+            .sink { [weak self] file in
+                Task { @MainActor in self?.follow(sessionFile: file) }
             }
             .store(in: &cancellables)
 
@@ -141,10 +154,27 @@ final class SessionConsoleModel: ObservableObject {
         }
     }
 
-    /// Note de relance de l'état `dead` (S-9).
+    /// Note de relance de l'état `dead` (S-9), dans l'inspecteur.
     var relaunchNote: String? {
         guard case .dead = host.state, let sessionFile = host.sessionFile else { return nil }
-        return "La relance reprend \(sessionFile)."
+        return SessionConsoleText.relaunchNote(sessionFile: ConsoleFormat.path(sessionFile))
+    }
+
+    /// L'état de la session en un mot (S-15), lu par les détails techniques.
+    var stateTitle: String {
+        SessionConsoleText.stateTitle(host.state, hasProject: projectRoot != nil)
+    }
+
+    /// Le statut, quand il dit AUTRE chose que l'état (l'échec d'une commande,
+    /// AC-13) ; `nil` quand il ne ferait que le répéter.
+    var statusNotice: String? {
+        statusMessage == Self.statusText(for: host.state) ? nil : statusMessage
+    }
+
+    /// L'activité de l'inspecteur : les trames humanisées, la plus récente en haut
+    /// (S-18 R8). Chaque trame n'est résumée qu'une fois.
+    var activity: [RpcEventLine] {
+        activityCache.activity(host.transcript)
     }
 
     /// Un dialogue en attente capte le raccourci d'arrêt : « ⌘. arrête la session
@@ -261,31 +291,41 @@ final class SessionConsoleModel: ObservableObject {
         await host.terminateForQuit()
     }
 
+    // MARK: - Conversation (S-15)
+
+    private func follow(sessionFile file: String?) {
+        guard let file else {
+            conversation?.stop()
+            conversation = nil
+            return
+        }
+        guard file != conversation?.target.sessionFile else { return }
+        conversation?.stop()
+        conversation = makeConversation(ViewerTarget(sessionFile: file, title: projectRoot?.lastPathComponent ?? ""))
+    }
+
     // MARK: - Statut
 
     private func refreshStatus() {
-        statusMessage = Self.statusText(for: host.state, pid: host.pid, sessionId: host.sessionId)
+        statusMessage = Self.statusText(for: host.state)
     }
 
-    static func statusText(for state: SessionHost.State, pid: Int32?, sessionId: String?) -> String {
+    /// Le statut détaillé d'un état : ni pid ni identifiant, qui ont leurs
+    /// propres lignes dans l'inspecteur.
+    static func statusText(for state: SessionHost.State) -> String {
         switch state {
         case .idle:
-            return "Aucune session"
+            return SessionConsoleText.Status.idle
         case .launching:
-            return "Lancement…"
+            return SessionConsoleText.Status.launching
         case .running:
-            guard let pid else { return "Session vivante" }
-            guard let sessionId else { return "Session vivante (pid \(pid))" }
-            return "Session vivante (pid \(pid), session \(sessionId.prefix(8)))"
+            return SessionConsoleText.Status.running
         case .stopping:
-            return "Arrêt en cours…"
+            return SessionConsoleText.Status.stopping
         case .stopped:
-            return "Session arrêtée"
-        case .dead(let exit):
-            switch exit.reason {
-            case .exited: return "Process mort (code \(exit.status))."
-            case .uncaughtSignal: return "Process mort (signal \(exit.status))."
-            }
+            return SessionConsoleText.Status.stopped
+        case .dead:
+            return SessionConsoleText.Status.dead
         case .failed(let message):
             return message
         }

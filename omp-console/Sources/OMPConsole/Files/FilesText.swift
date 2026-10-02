@@ -7,39 +7,48 @@
 import Foundation
 
 enum FilesText {
-    // En-tête
+    // Barre d'outils
     static let targetPicker = "Cible"
+    static let openMenu = "Ouvrir"
+    static let openHelp = "Ouvrir le contrat ou PROJECT.md"
     static let contractButton = "Contrat"
     static let projectButton = "PROJECT.md"
     static let refresh = "Rafraîchir"
 
-    // Badges
-    static let trackedBadge = "suivi"
-    static let untrackedBadge = "non suivi"
-    static let deletedBadge = "supprimé"
+    // Badges : un fichier suivi et inchangé n'en porte aucun.
+    static let untrackedBadge = "Nouveau"
+    static let deletedBadge = "Supprimé"
+
+    // Comparaison (affichée seulement en mode Modifications)
+    static let comparedToHead = "Comparé au dernier commit"
+    static let comparedToBranchStart = "Comparé au départ de la branche"
 
     // États
     static let noProjectTitle = "Aucun projet ouvert"
-    static let noProjectDescription = "Choisis-le dans la fenêtre « Session OMP » (⌘N)."
+    static let noProjectDescription = "Choisissez-le dans la section « Session OMP » (⌘4)."
     static let errorTitle = "Lecture impossible"
-    static let noFiles = "Aucun fichier suivi ni non suivi dans cette cible."
-    static let nothingSelected = "Choisis un fichier dans l'arbre, ou ouvre le contrat ou PROJECT.md."
-    static let missingFile = "Ce fichier n'existe plus sur le disque (suppression non commitée)."
+    static let noFiles = "Aucun fichier dans cette cible."
+    static let nothingSelected = "Choisissez un fichier dans l'arborescence."
+    static let missingFile = "Ce fichier a été supprimé du disque."
     static let emptyFile = "Fichier vide."
     static let emptyNewFile = "Nouveau fichier vide."
+    static let noDifference = "Aucune modification dans ce fichier."
     static let noContract = "Aucun contrat .omp/pipeline/contract.md dans cette cible."
     static let noProjectDocument = "Aucun PROJECT.md dans cette cible."
+
+    // Vues du document (S-18 R5)
+    static let modePicker = "Affichage"
+    static let renderedMode = "Rendu"
+    static let sourceMode = "Source"
+    static let contentMode = "Contenu"
+    static let diffMode = "Modifications"
 
     static func loading(_ path: String) -> String {
         "Lecture de \(path)…"
     }
 
-    static func noDifference(base: String) -> String {
-        "Aucune différence avec \(base) pour ce fichier."
-    }
-
     static func baseUnavailable(reason: String) -> String {
-        "Base introuvable pour cette cible (\(reason)) — diff indisponible."
+        "Comparaison indisponible pour cette cible (\(reason))."
     }
 
     static func binary(bytes: Int) -> String {
@@ -50,11 +59,23 @@ enum FilesText {
         "Lecture impossible : \(reason)."
     }
 
-    static func badge(for kind: FilesEntryKind) -> String {
+    /// Le badge d'une entrée, ou `nil` pour un fichier suivi : seul ce qui diffère
+    /// du dépôt mérite d'être signalé.
+    static func badge(for kind: FilesEntryKind) -> String? {
         switch kind {
-        case .tracked: trackedBadge
+        case .tracked: nil
         case .untracked: untrackedBadge
         case .deleted: deletedBadge
+        }
+    }
+
+    /// Ce à quoi le diff compare le fichier, en mots ; `nil` quand aucune base n'est
+    /// calculable (le corps du document le dit déjà).
+    static func comparison(_ base: FilesBase) -> String? {
+        switch base {
+        case .head: comparedToHead
+        case .commit: comparedToBranchStart
+        case .unavailable: nil
         }
     }
 
@@ -62,6 +83,16 @@ enum FilesText {
     /// un contenu vide muet.
     static func missingDedicatedDocument(_ relativePath: String) -> String {
         relativePath == FilesModel.contractRelativePath ? noContract : noProjectDocument
+    }
+
+    /// Le nom d'un mode : le contenu d'un Markdown est son RENDU, celui d'un fichier
+    /// de code est son contenu.
+    static func title(of mode: FilesDocumentMode, isMarkdown: Bool) -> String {
+        switch mode {
+        case .content: isMarkdown ? renderedMode : contentMode
+        case .source: sourceMode
+        case .diff: diffMode
+        }
     }
 }
 

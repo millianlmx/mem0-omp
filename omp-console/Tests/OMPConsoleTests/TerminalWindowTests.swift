@@ -108,11 +108,19 @@ func terminationGuardCoversTheThreeHooks() async {
     let savedSession = AppDelegate.terminateSession
     let savedProject = AppDelegate.terminateProject
     let savedTerminal = AppDelegate.terminateTerminal
+    let savedConductors = AppDelegate.terminateConductors
+    let savedBusy = AppDelegate.conductorsBusy
     defer {
         AppDelegate.terminateSession = savedSession
         AppDelegate.terminateProject = savedProject
         AppDelegate.terminateTerminal = savedTerminal
+        AppDelegate.terminateConductors = savedConductors
+        AppDelegate.conductorsBusy = savedBusy
     }
+    // Les accroches des conducteurs (posées par tout `ConductorPool` construit
+    // ailleurs dans la suite) ne doivent pas brouiller cette preuve.
+    AppDelegate.terminateConductors = nil
+    AppDelegate.conductorsBusy = nil
 
     AppDelegate.terminateSession = nil
     AppDelegate.terminateProject = nil
@@ -122,11 +130,16 @@ func terminationGuardCoversTheThreeHooks() async {
     // Fermer la dernière fenêtre ne quitte jamais l'app (AC-8).
     #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared) == false)
 
-    // L'accroche du TERMINAL seule suffit à faire ATTENDRE l'app (S-8).
+    // L'accroche du TERMINAL seule suffit à faire ATTENDRE l'app (S-8) : la
+    // première demande est annulée, l'accroche tourne, puis la terminaison est
+    // redemandée et passe (une feuille ouverte ne la bloque plus).
     var called = false
+    var requested = false
+    delegate.requestTermination = { requested = true }
     AppDelegate.terminateTerminal = { called = true }
-    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
-    #expect(await awaitMainTrue { called })
+    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateCancel)
+    #expect(await awaitMainTrue { called && requested })
+    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateNow)
 }
 
 @MainActor
@@ -136,11 +149,19 @@ func terminalHookIsIndependentFromTheOthers() async {
     let savedSession = AppDelegate.terminateSession
     let savedProject = AppDelegate.terminateProject
     let savedTerminal = AppDelegate.terminateTerminal
+    let savedConductors = AppDelegate.terminateConductors
+    let savedBusy = AppDelegate.conductorsBusy
     defer {
         AppDelegate.terminateSession = savedSession
         AppDelegate.terminateProject = savedProject
         AppDelegate.terminateTerminal = savedTerminal
+        AppDelegate.terminateConductors = savedConductors
+        AppDelegate.conductorsBusy = savedBusy
     }
+    // Les accroches des conducteurs (posées par tout `ConductorPool` construit
+    // ailleurs dans la suite) ne doivent pas brouiller cette preuve.
+    AppDelegate.terminateConductors = nil
+    AppDelegate.conductorsBusy = nil
 
     var sessionCalled = false
     var terminalCalled = false
@@ -148,6 +169,8 @@ func terminalHookIsIndependentFromTheOthers() async {
     AppDelegate.terminateProject = nil
     AppDelegate.terminateTerminal = { terminalCalled = true }
 
-    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateLater)
-    #expect(await awaitMainTrue { sessionCalled && terminalCalled })
+    var requested = false
+    delegate.requestTermination = { requested = true }
+    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateCancel)
+    #expect(await awaitMainTrue { sessionCalled && terminalCalled && requested })
 }

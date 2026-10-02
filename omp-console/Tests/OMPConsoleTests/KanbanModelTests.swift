@@ -45,16 +45,15 @@ func selectionIsSingleAndThePanelFollows() async throws {
 
     // La sélection est VIDE au premier affichage.
     #expect(model.selectedCardID == nil)
-    #expect(model.detailLines(nowMs: fixtureT0).isEmpty)
+    #expect(model.selectedCard == nil)
 
     model.select("run:\(runId)")
     #expect(model.selectedCardID == "run:\(runId)")
-    let first = model.detailLines(nowMs: fixtureT0)
-    #expect(first.first == "depot · depot/ouvert")
+    #expect(model.selectedCard?.title == "depot/ouvert")
 
     model.select("history:\(historyId)")
     #expect(model.selectedCardID == "history:\(historyId)")
-    #expect(model.detailLines(nowMs: fixtureT0).first == "depot · depot/clos")
+    #expect(model.selectedCard?.title == "depot/clos")
     // Cliquer la carte déjà sélectionnée la garde sélectionnée.
     model.select("history:\(historyId)")
     #expect(model.selectedCardID == "history:\(historyId)")
@@ -120,7 +119,7 @@ func vanishedCardClearsTheSelection() async {
 
     fixture.remove(.running, "\(runId).json")
     #expect(await awaitMainTrue { model.selectedCardID == nil })
-    #expect(model.detailLines(nowMs: fixtureT0).isEmpty)
+    #expect(model.selectedCard == nil)
 }
 
 // MARK: - AC-8 : aucun départ vers les sections voisines
@@ -135,14 +134,15 @@ func selectionDoesNotChangeTheSection() async {
     let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
     defer { model.stop() }
     let console = ConsoleModel()
+    let initial = console.selection
     model.start()
     #expect(await awaitMainTrue { model.state.card("run:\(runId)") != nil })
 
     model.select("run:\(runId)")
     // Le modèle du tableau ne connaît AUCUN `ConsoleModel` : la section courante
-    // reste Kanban, et rien n'ouvre Sessions ni Fichiers.
+    // reste celle de départ, et rien n'ouvre Sessions ni Fichiers.
     #expect(model.selectedCardID == "run:\(runId)")
-    #expect(console.selection == .kanban)
+    #expect(console.selection == initial)
 }
 
 // MARK: - AC-9 : la durée avance seule
@@ -168,16 +168,14 @@ func panelDurationGrowsOnlyWhileOpen() async throws {
     #expect(await awaitMainTrue { model.state.kanbanBoard?.cards.count == 2 })
 
     model.select("run:\(runId)")
-    let openNow = try #require(model.detailLines(nowMs: fixtureT0).first { $0.hasPrefix("Durée : ") })
-    let openLater = try #require(model.detailLines(nowMs: fixtureT0 + 2_000).first { $0.hasPrefix("Durée : ") })
-    #expect(openNow == "Durée : 0:05")
-    #expect(openLater == "Durée : 0:07")
+    let open = try #require(model.selectedCard)
+    #expect(open.elapsedMs(nowMs: fixtureT0) == 5_000)
+    #expect(open.elapsedMs(nowMs: fixtureT0 + 2_000) == 7_000)
 
     model.select("history:\(historyId)")
-    let closedNow = try #require(model.detailLines(nowMs: fixtureT0).first { $0.hasPrefix("Durée : ") })
-    let closedLater = try #require(model.detailLines(nowMs: fixtureT0 + 2_000).first { $0.hasPrefix("Durée : ") })
-    #expect(closedNow == "Durée : 0:07")
-    #expect(closedLater == closedNow)
+    let closed = try #require(model.selectedCard)
+    #expect(closed.elapsedMs(nowMs: fixtureT0) == 7_000)
+    #expect(closed.elapsedMs(nowMs: fixtureT0 + 2_000) == 7_000)
 }
 
 // MARK: - AC-10 : le tableau suit le magasin

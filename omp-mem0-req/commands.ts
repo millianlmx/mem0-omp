@@ -99,7 +99,7 @@ export function commandAckPath(stateDir: string, id: string): string {
 
 // --- schéma ------------------------------------------------------------------
 
-export type CommandKind = "launch" | "stop" | "verdict" | "answer" | "add" | "remove";
+export type CommandKind = "launch" | "stop" | "verdict" | "answer" | "reply" | "add" | "remove";
 
 /**
  * Une commande du canal. Le discriminant est `kind` (convention du magasin :
@@ -116,6 +116,7 @@ export type PipelineCommand =
   | { version: 1; id: string; sentAt: number; repo: string; kind: "verdict"; slug: string; verdict: "v" | "y" }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "answer"; slug: string;
       toolCallId: string; selected?: string; custom?: string }
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "reply"; slug: string; text: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "stop" };
 
 
@@ -139,6 +140,7 @@ const COMMAND_KINDS: Record<CommandKind, true> = {
   stop: true,
   verdict: true,
   answer: true,
+  reply: true,
   add: true,
   remove: true,
 };
@@ -217,6 +219,12 @@ export function asCommand(raw: unknown): PipelineCommand | null {
     return selected !== null
       ? { ...base, kind: "answer", slug, toolCallId: c.toolCallId, selected }
       : { ...base, kind: "answer", slug, toolCallId: c.toolCallId, custom: custom as string };
+  }
+  if (c.kind === "reply") {
+    // Le texte vide reste un schéma VALIDE : c'est la décision qui refuse « réponse vide ».
+    const text = asText(c.text);
+    if (text === null) return null;
+    return { ...base, kind: "reply", slug, text };
   }
   return null;
 }
@@ -455,8 +463,10 @@ export type CommandView = {
 
 
 /** Le slug qu'une commande vise dans le lot (`null` pour `launch`/`add`/`stop`). */
-function commandSlugOf(cmd: PipelineCommand): string | null {
-  return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" ? cmd.slug : null;
+export function commandSlugOf(cmd: PipelineCommand): string | null {
+  return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" || cmd.kind === "reply"
+    ? cmd.slug
+    : null;
 }
 
 
@@ -527,6 +537,15 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
     if (view.askAnswered) return `sans objet : la question « ${cmd.toolCallId} » a déjà reçu sa réponse`;
     if (view.pendingAsk === null || view.pendingAsk.toolCallId !== cmd.toolCallId) {
       return `sans objet : aucune question « ${cmd.toolCallId} » en vol`;
+    }
+    return null;
+  }
+  if (cmd.kind === "reply" && feature) {
+    // Une question en TEXTE d'un maillon terminé (Doc-5) : la question `ask` en vol
+    // d'un run vivant reste l'affaire de `answer`.
+    if (cmd.text.trim() === "") return "réponse vide";
+    if (feature.state !== "waiting" || feature.waitKind !== "answer") {
+      return "sans objet : la feature n'attend pas de réponse";
     }
     return null;
   }

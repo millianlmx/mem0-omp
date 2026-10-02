@@ -22,6 +22,16 @@ final class KanbanModel: ObservableObject {
     /// L'identifiant de la carte sélectionnée — jamais un ensemble (S-5).
     @Published var selectedCardID: String?
 
+    // État de vue de la section (S-14 de omp-console-redesign, `@State` interdit
+    // sous CLT) : la feuille de détail de la carte sélectionnée, la confirmation
+    // d'arrêt demandée depuis le menu contextuel d'une carte, la bulle des
+    // problèmes et les plis « Détails techniques » (feuille, bulle).
+    @Published var detailShown = false
+    @Published var stopRequest: KanbanCard?
+    @Published var diagnosticShown = false
+    @Published var technicalExpanded = false
+    @Published var diagnosticTechnicalExpanded = false
+
     /// Comment ouvrir un abonnement NEUF : un `StoreHub` arrêté ne se rouvre pas
     /// (`stopped` est définitif), donc `start()` après `stop()` construit un hub
     /// neuf sur le MÊME magasin.
@@ -65,26 +75,29 @@ final class KanbanModel: ObservableObject {
         selectedCardID = id
     }
 
+    /// Sélectionne une carte et ouvre sa feuille de détail (double clic, ↩, menu
+    /// contextuel).
+    func openDetail(_ id: String) {
+        select(id)
+        detailShown = true
+    }
+
     /// La carte sélectionnée, quand elle existe encore.
     var selectedCard: KanbanCard? {
         guard let id = selectedCardID else { return nil }
         return state.card(id)
     }
 
-    /// Les lignes du panneau de détail (S-5) : vides quand rien n'est sélectionné.
-    func detailLines(nowMs: Double) -> [String] {
-        guard let card = selectedCard else { return [] }
-        return KanbanDetail.lines(for: card, nowMs: nowMs)
-    }
-
-    /// Un pas de clavier, dans l'ordre TOTAL des cartes (S-5) : les colonnes dans
-    /// l'ordre de S-1 pour `nextColumn`/`previousColumn`, les cartes dans l'ordre
-    /// de leur source pour `next`/`previous`. Sans sélection, `next`/`nextColumn`
-    /// prennent la première carte et `previous`/`previousColumn` la dernière. Un
-    /// déplacement qui sort de l'ardoise ne change rien.
+    /// Un pas de clavier, dans l'ordre de l'ÉCRAN : les voies de gauche à droite
+    /// (`KanbanBoard.lanes`) pour `nextColumn`/`previousColumn`, les cartes de
+    /// haut en bas puis d'une voie à la suivante pour `next`/`previous`. Sans
+    /// sélection, `next`/`nextColumn` prennent la première carte et
+    /// `previous`/`previousColumn` la dernière. Un déplacement qui sort de
+    /// l'ardoise ne change rien.
     func move(by step: KanbanStep) {
         guard let board = state.kanbanBoard, !board.cards.isEmpty else { return }
-        let cards = board.cards
+        let lanes = board.lanes.filter { !$0.cards.isEmpty }
+        let cards = lanes.flatMap(\.cards)
         guard let current = selectedCardID, let index = cards.firstIndex(where: { $0.id == current }) else {
             selectedCardID = (step == .next || step == .nextColumn) ? cards.first?.id : cards.last?.id
             return
@@ -94,31 +107,18 @@ final class KanbanModel: ObservableObject {
             selectedCardID = cards[min(index + 1, cards.count - 1)].id
         case .previous:
             selectedCardID = cards[max(index - 1, 0)].id
-        case .nextColumn:
-            if let card = neighbouringColumn(of: cards[index], in: cards, forward: true) {
-                selectedCardID = card.id
-            }
-        case .previousColumn:
-            if let card = neighbouringColumn(of: cards[index], in: cards, forward: false) {
-                selectedCardID = card.id
+        case .nextColumn, .previousColumn:
+            guard let laneIndex = lanes.firstIndex(where: { $0.cards.contains { $0.id == current } }) else { return }
+            let target = step == .nextColumn ? laneIndex + 1 : laneIndex - 1
+            if lanes.indices.contains(target) {
+                selectedCardID = lanes[target].cards.first?.id
             }
         }
-    }
-
-    /// La première carte de la colonne suivante (ou précédente) NON VIDE, dans
-    /// l'ordre des colonnes de S-1 — `nil` s'il n'y en a aucune.
-    private func neighbouringColumn(of card: KanbanCard, in cards: [KanbanCard], forward: Bool) -> KanbanCard? {
-        let columns = KanbanColumn.allCases
-        guard let start = columns.firstIndex(of: card.column) else { return nil }
-        let candidates = forward ? Array(columns[(start + 1)...]) : Array(columns[..<start].reversed())
-        for column in candidates {
-            if let first = cards.first(where: { $0.column == column }) { return first }
-        }
-        return nil
     }
 
     /// Reconstruit l'ardoise pour un instantané neuf, et purge une sélection dont
-    /// la carte a disparu du magasin (pas de détail fantôme).
+    /// la carte a disparu du magasin (pas de détail fantôme : la feuille se ferme,
+    /// une confirmation d'arrêt en suspens aussi).
     private func apply(_ snapshot: StoreSnapshot, stateDir: String) {
         let next = KanbanBoardState.derive(
             snapshot: snapshot,
@@ -128,6 +128,10 @@ final class KanbanModel: ObservableObject {
         state = next
         if let selected = selectedCardID, next.card(selected) == nil {
             selectedCardID = nil
+            detailShown = false
+        }
+        if let request = stopRequest, next.card(request.id) == nil {
+            stopRequest = nil
         }
     }
 }

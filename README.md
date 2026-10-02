@@ -589,8 +589,10 @@ que d'afficher un écran à moitié peint.
   `<état>/commands/acks/<id>.json` — `prise en charge` avant d'agir, ou `refusée` avec
   son motif. Les commandes sont `launch` (créer le lot et lancer une feature), `add` et
   `remove` (modifier la liste à chaud), `verdict` (`v` ou `y`, comme les touches du
-  panneau), `answer` (répondre à une question en vol d'un run) et `stop` (interrompre
-  le pilote). Un même identifiant rejoué ne produit ni second accusé ni second effet.
+  panneau), `answer` (répondre à une question en vol d'un run), `reply` (répondre à une
+  question en texte d'un maillon terminé : le maillon repart sur sa session) et `stop`
+  (interrompre le pilote). Un même identifiant rejoué ne produit ni second accusé ni
+  second effet.
   L'app **omp-console** est un de ces clients : elle dépose ses gestes par ce canal et
   par les boîtes des runs, et affiche l'accusé du pilote (voir « Agir depuis le
   Kanban » de `omp-console/README.md`).

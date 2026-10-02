@@ -1,5 +1,5 @@
 // Modèles de valeur du tableau Kanban (S-1 … S-5, S-11) : les onze colonnes, une
-// carte, ses sources citables, ses marques, le bandeau d'anomalies et l'état
+// carte, ses sources citables, ses marques, les anomalies du magasin et l'état
 // publié par le modèle.
 //
 // Patron du dépôt (`Session/SessionModel.swift` = valeurs, `SessionRendering.swift`
@@ -14,12 +14,13 @@ import Foundation
 
 // --- colonnes (S-1) ----------------------------------------------------------
 
-/// Les onze colonnes du tableau, dans l'ORDRE D'AFFICHAGE. Le `rawValue` est
-/// l'identifiant employé par les identifiants d'accessibilité
-/// (`kanban.column.<rawValue>`) ; le libellé affiché vient de `title`.
+/// Les onze colonnes de l'ardoise, dans l'ordre de S-1 (parité avec
+/// `/pipelines`). L'écran ne les montre plus une à une : il les regroupe en
+/// voies (`KanbanLane`), et l'ordre de déclaration ordonne les cartes DANS une
+/// voie.
 ///
 /// C'est la SEULE liste des colonnes : ni la vue ni les tests n'en tiennent une
-/// seconde (l'ordre de déclaration EST l'ordre d'affichage, via `CaseIterable`).
+/// seconde.
 enum KanbanColumn: String, CaseIterable, Sendable {
     case enAttente = "en-attente"
     case enCours = "en-cours"
@@ -32,23 +33,6 @@ enum KanbanColumn: String, CaseIterable, Sendable {
     case bloquee = "bloquee"
     case termineeSansPr = "terminee-sans-pr"
     case annuleeRetiree = "annulee-retiree"
-
-    /// Le libellé exact de l'en-tête de colonne (S-1) : `<libellé> (<n>)`.
-    var title: String {
-        switch self {
-        case .enAttente: "En attente"
-        case .enCours: "En cours"
-        case .questionEnVol: "Question en vol"
-        case .prOuverte: "PR ouverte"
-        case .fusionne: "Fusionné"
-        case .echec: "Échec"
-        case .jalonSpecs: "Jalon specs"
-        case .jalonReview: "Jalon review"
-        case .bloquee: "Bloquée"
-        case .termineeSansPr: "Terminée sans PR"
-        case .annuleeRetiree: "Annulée / retirée"
-        }
-    }
 }
 
 // --- marques et sources (S-8, S-9, S-10) -------------------------------------
@@ -103,11 +87,15 @@ struct KanbanCardAction: Sendable, Equatable {
     var featureState: LotFeatureState?
     /// Le run apparié (feature de lot) ou le run de la carte `run:`.
     var run: KanbanCardRun?
+    /// La question en TEXTE d'un maillon terminé (`LotFeature.waitPrompt` de la
+    /// feature de lot appariée, aucune autre source) : ce que « Répondre » montre
+    /// quand la feature attend une réponse sans question `ask` en vol.
+    var waitPrompt: String? = nil
 }
 
-/// Une carte du tableau : ce que la vue affiche et ce que le panneau de détail
-/// décrit. Les textes (`phaseText`, `modelText`, `prText`, `elapsedText`,
-/// `marksText`) sont des fonctions PURES du modèle — le test les vérifie sans
+/// Une carte du tableau : ce que la vue affiche et ce que l'inspecteur décrit.
+/// Les textes (`phaseText`, `elapsedText`, `marksText`) et la durée
+/// (`elapsedMs`) sont des fonctions PURES du modèle — le test les vérifie sans
 /// rendre de vue, et la durée se recalcule depuis l'instant de rendu.
 struct KanbanCard: Sendable, Equatable, Identifiable {
     var id: String
@@ -118,8 +106,8 @@ struct KanbanCard: Sendable, Equatable, Identifiable {
     var state: String
     /// Le maillon, quand l'entité en porte un.
     var phase: PipelinePhase?
-    /// Le modèle, quand l'entité en porte un — `nil` n'est pas « absent » à
-    /// l'affichage, c'est `modelText` qui le dit.
+    /// Le modèle, quand l'entité en porte un — `nil` n'est pas « absent » :
+    /// l'inspecteur n'affiche alors aucune ligne de modèle.
     var model: String?
     var prUrl: String?
     var startMs: Double
@@ -136,41 +124,37 @@ struct KanbanCard: Sendable, Equatable, Identifiable {
     /// toujours un maillon, une carte de projet seule jamais.
     var phaseText: String { phase.map { "/\($0.rawValue)" } ?? "absent" }
 
-    /// La VALEUR du modèle : le modèle, ou `absent` — jamais une valeur inventée.
-    /// Le panneau de détail l'affiche derrière son propre libellé (`Modèle : …`).
-    var modelValueText: String { model ?? "absent" }
+    /// La durée écoulée en millisecondes, RECALCULÉE depuis l'instant de rendu
+    /// (Doc-1) : figée quand la carte est close, croissante sinon. La carte et
+    /// l'inspecteur la formatent par `ConsoleFormat.duration(ms:)`.
+    func elapsedMs(nowMs: Double) -> Double {
+        (endMs ?? nowMs) - startMs
+    }
 
-    /// La VALEUR de l'URL de PR : l'URL, ou `absente`.
-    var prValueText: String { prUrl ?? "absente" }
-
-    /// La ligne de CARTE `modèle : <valeur>` (S-4, BR-4).
-    var modelText: String { "modèle : \(modelValueText)" }
-
-    /// La ligne de CARTE `PR : <url>` (S-4, BR-4).
-    var prText: String { "PR : \(prValueText)" }
-
-    /// La durée écoulée, RECALCULÉE depuis l'instant de rendu (Doc-1) : figée
-    /// quand la carte est close, croissante sinon.
+    /// La durée au format de parité `elapsedLabel`.
     func elapsedText(nowMs: Double) -> String {
-        elapsedLabel(ms: (endMs ?? nowMs) - startMs)
+        elapsedLabel(ms: elapsedMs(nowMs: nowMs))
     }
 
     /// `illisible, mort, doublon` dans cet ordre, ou `nil` quand la carte est
-    /// saine (la vue n'affiche alors aucune ligne de marques).
+    /// saine (l'inspecteur n'affiche alors aucune ligne de marques).
     var marksText: String? {
         marks.isEmpty ? nil : marks.map(\.rawValue).joined(separator: ", ")
     }
 }
 
-/// Une anomalie du magasin, telle que le bandeau la nomme : sa nature (la marque
-/// correspondante) et son texte exact.
+/// Une anomalie du magasin, telle que la bulle des problèmes la nomme : sa nature
+/// (la marque correspondante), une phrase pour l'utilisateur qui nomme la
+/// pipeline, et le détail technique (fichier, pid, identité) qui ne s'affiche que
+/// sous « Détails techniques ».
 struct KanbanAnomaly: Sendable, Equatable {
     var kind: KanbanMark
     var text: String
+    var detail: String
 }
 
-/// L'ardoise : les cartes dans leur ORDRE TOTAL (S-5) et le bandeau d'anomalies
-/// (vide quand le magasin est sain).
+/// L'ardoise : les cartes dans leur ORDRE TOTAL (S-5) et les anomalies du
+/// magasin (vides quand il est sain).
 struct KanbanBoard: Sendable, Equatable {
     var cards: [KanbanCard]
     var anomalies: [KanbanAnomaly]
@@ -188,14 +172,15 @@ enum KanbanBoardState: Sendable, Equatable {
     case board(KanbanBoard)
 
     /// Le message du premier instantané (S-11).
-    static let loadingText = "Chargement du magasin d'état…"
+    static let loadingText = "Chargement des pipelines…"
 
-    /// Le message du panneau de détail sans sélection (S-5).
-    static let emptySelectionText = "Aucune carte sélectionnée"
+    /// Le message d'une section sans pipeline : magasin absent ou vide se disent
+    /// de la même façon — l'emplacement du magasin est un détail technique.
+    static let noPipelineText = "Aucune pipeline pour l'instant."
 
-    static func absentText(dir: String) -> String { "Magasin d'état absent : \(dir)" }
-
-    static func emptyText(dir: String) -> String { "Magasin d'état vide : \(dir)" }
+    /// Le message « magasin absent ». `dir` reste dans la signature (les
+    /// Statistiques l'appellent avec leur dossier) mais n'est plus affiché.
+    static func absentText(dir _: String) -> String { noPipelineText }
 
     /// L'ardoise, quand il y en a une.
     var kanbanBoard: KanbanBoard? {
@@ -218,31 +203,6 @@ enum KanbanStep: Sendable {
     case previous
     case nextColumn
     case previousColumn
-}
-
-// --- panneau de détail (S-5) -------------------------------------------------
-
-/// Le panneau de détail : les lignes EXACTES de la carte sélectionnée.
-///
-/// Les libellés `Modèle :` et `PR :` sont ceux du PANNEAU : ils portent la VALEUR
-/// (`opus`, `absent`, l'URL, `absente`) et non la ligne de carte — sinon le
-/// préfixe serait écrit deux fois (« Modèle : modèle : opus »). Les lignes de carte
-/// restent `card.modelText` / `card.prText` (BR-4).
-enum KanbanDetail {
-    static func lines(for card: KanbanCard, nowMs: Double) -> [String] {
-        var lines = [
-            "\(card.repo) · \(card.title)",
-            "État : \(card.state)",
-            "Maillon : \(card.phaseText)",
-            "Modèle : \(card.modelValueText)",
-            "PR : \(card.prValueText)",
-            "Durée : \(card.elapsedText(nowMs: nowMs))",
-            "Marques : \(card.marksText ?? "aucune")",
-            "Sources :",
-        ]
-        lines.append(contentsOf: card.sources.map { "  · \($0.ref)" })
-        return lines
-    }
 }
 
 // --- clé de dépôt et chemins réels (Doc-4) -----------------------------------

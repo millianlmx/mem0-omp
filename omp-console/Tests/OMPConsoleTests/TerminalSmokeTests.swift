@@ -1,6 +1,8 @@
-// Le harnais RÉEL de la fenêtre « Terminal » : il lance un VRAI `omp` dans un PTY
-// et fait passer ses octets dans l'émulateur. C'est la seule preuve qui exerce
-// l'aller-retour modèle (AC-6) et la vraie TUI plein écran (AC-1, AC-5, AC-7).
+// Le harnais RÉEL de la fenêtre « Terminal » : il lance le VRAI shell de connexion
+// du poste dans un PTY (`TerminalShell.command`, S-18 R6), y TAPE `omp` comme le
+// fait « Lancer omp », et fait passer les octets dans l'émulateur. C'est la seule
+// preuve qui exerce l'aller-retour modèle (AC-6), la vraie TUI plein écran (AC-1,
+// AC-5, AC-7) et la fermeture sans orphelin de la chaîne app → shell → omp.
 //
 // Il est DÉSACTIVÉ par défaut (`MEM0_TERMINAL_RECIPE`) : aucun script de CI ne pose
 // cette variable, donc la suite reste déterministe et sans appel modèle. Recette
@@ -9,6 +11,9 @@
 //   cd omp-console && MEM0_TERMINAL_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
 //     --filter realOmp -Xswiftc -plugin-path \
 //     -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+//
+// Variable posée sans `omp` résoluble (`OmpBinaryResolver`) ⇒ chaque test échoue
+// explicitement, jamais un faux succès.
 //
 // Trois pièges mesurés sur ce harnais, tous corrigés ici :
 //   — omp peint son premier cadre AVANT d'émettre ses sondes (DA1/OSC 11/CPR) : une
@@ -28,6 +33,21 @@ import Testing
 
 private var recipeEnabled: Bool {
     ProcessInfo.processInfo.environment["MEM0_TERMINAL_RECIPE"] != nil
+}
+
+private enum RecipeError: Error, CustomStringConvertible {
+    case ompMissing
+
+    var description: String {
+        "MEM0_TERMINAL_RECIPE est posée mais `omp` est introuvable : posez \(OmpBinaryResolver.overrideKey) sur un `omp` exécutable, ou retirez MEM0_TERMINAL_RECIPE."
+    }
+}
+
+/// Le process vit-il encore ? (`ESRCH` = disparu ; un zombie compte comme vivant
+/// tant qu'il n'est pas récolté, d'où l'attente bornée des appelants.)
+private func processExists(_ pid: Int32) -> Bool {
+    errno = 0
+    return kill(pid, 0) == 0 || errno == EPERM
 }
 
 /// Les caractères de cadre que seule une TUI dessine : un terminal qui afficherait
@@ -57,12 +77,38 @@ private final class RealTerminal {
         }
     }
 
+    /// Le shell de connexion du poste, puis `omp` tapé dedans (les octets mêmes de
+    /// « Lancer omp »). `omp` doit être résoluble : c'est le prérequis de la recette.
     func launch() throws {
-        guard case let .success(binary) = OmpBinaryResolver.resolve(environment: ProcessInfo.processInfo.environment) else {
-            throw TerminalHostError.binaryNotFound(searched: [], override: nil)
+        guard case .success = OmpBinaryResolver.resolve(environment: ProcessInfo.processInfo.environment) else {
+            throw RecipeError.ompMissing
         }
+        let shell = TerminalShell.command(environment: ProcessInfo.processInfo.environment, fileManager: .default)
         let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        try host.start(executable: binary, cwd: cwd, columns: emulator.screen.columns, rows: emulator.screen.rows)
+        try host.start(
+            executable: shell.executable,
+            arguments: shell.arguments,
+            cwd: cwd,
+            columns: emulator.screen.columns,
+            rows: emulator.screen.rows
+        )
+        try host.write(TerminalShell.launchOmpKeys)
+    }
+
+    /// Les enfants du shell (`pgrep -P`) : `omp` lancé depuis le shell en est un —
+    /// c'est un job du shell, pas un enfant de l'app.
+    func shellChildren() -> [Int32] {
+        guard let shell = host.pid else { return [] }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        process.arguments = ["-P", String(shell)]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return [] }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { Int32($0) }
     }
 
     /// Le texte de toute la grille : ce que la fenêtre peint.
@@ -175,7 +221,16 @@ func realOmpPaintsItsTUI() async throws {
     #expect(await terminal.poll(timeout: 10) { !terminal.replies.isEmpty })
     #expect(terminal.host.isRunning)
     #expect(terminal.paintedCharacters > 200)
+
+    // `omp` est un job du SHELL (S-18 R6) : un seul enfant de l'app (le shell), et
+    // fermer le terminal ne laisse aucun orphelin de la chaîne app → shell → omp.
+    let jobs = terminal.shellChildren()
+    #expect(!jobs.isEmpty, "omp doit tourner comme enfant du shell")
     await terminal.host.kill()
+    #expect(!terminal.host.isRunning)
+    for job in jobs {
+        #expect(await terminal.poll(timeout: 5) { !processExists(job) }, "le job \(job) du shell survit à la fermeture")
+    }
 }
 
 @MainActor
@@ -184,15 +239,26 @@ func realOmpReceivesTyping() async throws {
     let terminal = RealTerminal()
     try terminal.launch()
     #expect(await terminal.poll(timeout: 30) { terminal.hasBoxDrawing })
+    // omp lancé DEPUIS LE SHELL ne pose son mode brut qu'en cours d'amorçage : avant,
+    // le PTY est encore canonique (S-18), la frappe y est ÉCHOÉE par le noyau et
+    // Ctrl-C y est un `SIGINT` qui tue omp (mesuré : comme dans tout terminal). La
+    // preuve attend donc le REPOS du flux, comme AC-6.
+    #expect(await terminal.waitForRest())
+    let jobs = terminal.shellChildren()
+    #expect(!jobs.isEmpty, "omp doit tourner comme enfant du shell")
 
     terminal.send("hello-terminal")
     #expect(await terminal.poll(timeout: 15) { terminal.text.contains("hello-terminal") })
 
     terminal.send(bytes: [0x03])
     try? await Task.sleep(for: .seconds(1))
-    // Ni l'app ni le process ne meurent : Ctrl-C est arrivé comme un OCTET (le PTY
-    // est en mode brut d'entrée, ISIG désactivé).
+    // Ni le shell ni omp ne meurent : omp a posé son propre mode brut, Ctrl-C lui
+    // est donc arrivé comme un OCTET et non comme un `SIGINT` de la discipline de
+    // ligne (que le PTY garde pour les commandes ordinaires du shell, S-18).
     #expect(terminal.host.isRunning)
+    for job in jobs {
+        #expect(processExists(job), "omp (pid \(job)) est mort sur Ctrl-C")
+    }
     await terminal.host.kill()
 }
 

@@ -247,9 +247,9 @@ enum FilesError: Error, Equatable, Sendable {
         case let .gitCommandRefused(command):
             return "git \(command) n'est pas une commande de lecture autorisée — aucun process n'a été lancé."
         case let .targetGone(path):
-            return "\(path) n'existe plus — choisis une autre cible."
+            return "\(path) n'existe plus — choisissez une autre cible."
         case let .watchFailed(path):
-            return "La veille de \(path) a échoué — rafraîchis avec ⌘R."
+            return "La veille de \(path) a échoué — actualisez avec ⌘R."
         }
     }
 

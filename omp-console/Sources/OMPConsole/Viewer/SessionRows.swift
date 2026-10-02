@@ -111,19 +111,38 @@ private let primaryArgumentKeys = [
 /// Le champ d'intention, ignoré : il décrit pourquoi, pas quoi.
 private let intentField = "i"
 
+/// Les clés dont la valeur est un CHEMIN : affichées relatives à la racine du
+/// projet, ou sous `~` (`ConsoleFormat.path`), jamais en chemin absolu.
+private let pathArgumentKeys: Set<String> = ["path", "paths", "file_path", "filePath"]
+
+/// Les outils mémoire : leur cible est le TEXTE du souvenir (ou la recherche), pas
+/// la portée ni le type ; `mem0_forget` ne vise qu'un identifiant, sans cible.
+private let memoryTextTools: Set<String> = ["mem0_add", "mem0_update"]
+
+/// La portée d'un souvenir en français : la valeur brute (`project`) ne s'affiche pas.
+private let memoryScopeTitles = ["project": "projet", "global": "global"]
+
 /// Borne de l'en-tête d'appel, celle du TUI (`PRIMARY_ARG_MAX`).
 private let primaryArgumentMax = 120
 
 /// La cible affichée dans l'en-tête d'un appel d'outil : ce que l'appel vise.
-/// Règle reprise du TUI (Documentation §6), avec deux ajouts propres à la
-/// visionneuse — `ask` rend sa première question, et un appel sans argument
-/// exploitable rend `""`.
-func primaryArgument(name: String, arguments: JSONValue?) -> String {
+/// Règle reprise du TUI (Documentation §6), avec des ajouts propres à la
+/// visionneuse — `ask` rend sa première question, un appel sans argument
+/// exploitable rend `""`, un chemin passe par `ConsoleFormat.path` (relatif à
+/// `projectRoot` quand il est connu), un outil mémoire rend le texte du souvenir
+/// et une portée se dit en français.
+func primaryArgument(name: String, arguments: JSONValue?, projectRoot: String? = nil) -> String {
     guard let arguments, case .object(let object) = arguments else { return "" }
+
+    func value(_ key: String) -> String? {
+        if pathArgumentKeys.contains(key) { return pathText(object[key], projectRoot: projectRoot) }
+        if key == "scope", let scope = scalarText(object[key]) { return memoryScopeTitles[scope] ?? scope }
+        return scalarText(object[key])
+    }
 
     if name == "grep" {
         let pattern = scalarText(object["pattern"])
-        let paths = scalarText(object["path"]) ?? scalarText(object["paths"])
+        let paths = value("path") ?? value("paths")
         if let pattern, let paths { return oneLine("\(pattern) @ \(paths)") }
         if let pattern { return oneLine(pattern) }
         if let paths { return oneLine(paths) }
@@ -131,9 +150,11 @@ func primaryArgument(name: String, arguments: JSONValue?) -> String {
     if name == "ask", let question = askSpan(from: arguments)?.questions.first, !question.question.isEmpty {
         return oneLine(question.question)
     }
+    if name == "mem0_forget" { return "" }
+    if memoryTextTools.contains(name), let text = value("text") { return oneLine(text) }
 
     for key in primaryArgumentKeys {
-        if let value = scalarText(object[key]) { return oneLine(value) }
+        if let text = value(key) { return oneLine(text) }
     }
     // Repli : la première valeur texte non vide parmi les clés restantes. Le
     // dictionnaire Swift n'a AUCUN ordre, le tri est donc ce qui rend le repli
@@ -142,9 +163,28 @@ func primaryArgument(name: String, arguments: JSONValue?) -> String {
         .filter { !primaryArgumentKeys.contains($0) && $0 != intentField }
         .sorted()
     for key in rest {
-        if let value = scalarText(object[key]) { return oneLine(value) }
+        if let text = value(key) { return oneLine(text) }
     }
     return oneLine(renderJSON(arguments))
+}
+
+/// Un ou plusieurs chemins, chacun rendu par `ConsoleFormat.path`.
+private func pathText(_ value: JSONValue?, projectRoot: String?) -> String? {
+    switch value {
+    case .string(let path)?:
+        return path.isEmpty ? nil : ConsoleFormat.path(path, relativeTo: projectRoot)
+    case .array(let items)?:
+        guard !items.isEmpty else { return nil }
+        var parts: [String] = []
+        for item in items {
+            guard case .string(let path) = item else { return nil }
+            parts.append(ConsoleFormat.path(path, relativeTo: projectRoot))
+        }
+        let joined = parts.joined(separator: ", ")
+        return joined.isEmpty ? nil : joined
+    default:
+        return nil
+    }
 }
 
 /// Une valeur exploitable pour un en-tête : une chaîne non vide, ou un tableau
@@ -244,6 +284,16 @@ struct SessionRowBuilder {
     private var callRows: [String: Int] = [:]
     /// Les offsets d'entrée déjà consommés : l'anti-doublon.
     private var consumedOffsets: Set<Int> = []
+    /// Le dernier texte de l'agent (rogné) depuis le dernier message de
+    /// l'utilisateur. Mesuré sur les sessions réelles : l'agent réécrit parfois sa
+    /// réponse finale MOT POUR MOT après un dernier appel d'outil (texte + appel
+    /// `mem0_add`, puis le même texte seul) — les DONNÉES portent le doublon, le
+    /// fil ne le montre qu'une fois.
+    private var lastAssistantText: String?
+    /// La racine du projet de la session (le `cwd` de son en-tête) : les chemins
+    /// des appels d'outil s'affichent relatifs à elle. Posée avant `append` ; une
+    /// ligne déjà bâtie n'est pas réécrite.
+    var projectRoot: String?
 
     mutating func append(_ entries: [ConversationEntry]) {
         for entry in entries {
@@ -252,17 +302,27 @@ struct SessionRowBuilder {
 
             switch entry.kind {
             case .user(let turn):
+                lastAssistantText = nil
                 rows.append(
                     SessionRow(id: rowId(entry.offset), kind: .user(UserRow(text: turn.text)))
                 )
 
             case .assistant(let turn):
-                rows.append(
-                    SessionRow(
-                        id: rowId(entry.offset),
-                        kind: .assistant(AssistantRow(text: turn.text, thinking: turn.thinking))
+                let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let repeated = !text.isEmpty && text == lastAssistantText
+                if !text.isEmpty { lastAssistantText = text }
+                let thinking = turn.thinking.flatMap { $0.isEmpty ? nil : $0 }
+                // Un texte identique au précédent du même tour est REPLIÉ : la
+                // ligne ne garde que sa réflexion, ou disparaît s'il n'y en a pas.
+                // Ses appels d'outil restent, eux, tous affichés.
+                if !repeated || thinking != nil {
+                    rows.append(
+                        SessionRow(
+                            id: rowId(entry.offset),
+                            kind: .assistant(AssistantRow(text: repeated ? "" : turn.text, thinking: turn.thinking))
+                        )
                     )
-                )
+                }
                 for (index, call) in turn.toolCalls.enumerated() {
                     rows.append(SessionRow(id: callId(entry.offset, index), kind: .toolCall(callRow(call))))
                     if !call.id.isEmpty, callRows[call.id] == nil { callRows[call.id] = rows.count - 1 }
@@ -314,7 +374,7 @@ struct SessionRowBuilder {
         ToolCallRow(
             callId: call.id,
             name: call.name,
-            target: primaryArgument(name: call.name, arguments: call.arguments),
+            target: primaryArgument(name: call.name, arguments: call.arguments, projectRoot: projectRoot),
             // Le rendu des arguments est celui du dépôt (`renderJSON` : clés
             // triées, compact) : jamais une seconde mise en forme.
             argumentsJSON: renderJSON(call.arguments ?? .null),

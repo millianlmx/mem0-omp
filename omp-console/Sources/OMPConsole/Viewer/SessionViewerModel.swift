@@ -53,7 +53,10 @@ struct ScrollGeometry: Equatable, Sendable {
 ///
 /// TROIS formulations écartées, chacune par une MESURE du 2026-09-28 (sonde GUI sur
 /// le bundle réel, journal des distances au bas) :
-///   1. `onScrollGeometryChange` (Documentation §2) est macOS 15+ : hors portée ;
+///   1. `onScrollGeometryChange` (Documentation §2) était hors de portée en macOS 14,
+///      cible de l'époque ; la cible est aujourd'hui macOS 26, mais le mécanisme
+///      mesuré ci-dessous est CONSERVÉ tel quel (aucune nouvelle mesure ne le
+///      remplace) ;
 ///   2. `GeometryReader` + `PreferenceKey` en arrière-plan (Documentation §2) délivre
 ///      UN rapport puis plus jamais — le défilement est invisible ;
 ///   3. la DISTANCE et l'ORIGINE seules ne distinguent pas un geste de l'utilisateur
@@ -184,6 +187,11 @@ final class SessionViewerModel: ObservableObject {
 
     private func apply(_ delta: SessionRead) {
         let before = builder.rows.count
+        // Le `cwd` de l'en-tête est la racine des chemins affichés ; l'en-tête est
+        // lu dans le même `read()` que les premières entrées, donc avant elles.
+        if builder.projectRoot == nil, let cwd = reader.conversation.header?.cwd, !cwd.isEmpty {
+            builder.projectRoot = cwd
+        }
         builder.append(delta.added)
         rows = builder.rows
         seedFolds(createdFrom: before)
@@ -249,7 +257,15 @@ final class SessionViewerModel: ObservableObject {
             policy.following = geometry.gap <= viewerBottomSlackPoints
         }
         if !policy.pendingFollow { followRequestRetries = 0 }
-        following = policy.following
+        publishFollowing()
+    }
+
+    /// Publie le suivi SEULEMENT s'il change : `@Published` émet à CHAQUE
+    /// affectation, même d'une valeur égale, et la géométrie arrive à chaque pixel
+    /// de défilement — chaque émission réévaluait le fil et toutes ses lignes
+    /// visibles (S-18 R8, le « lag » d'une longue session).
+    private func publishFollowing() {
+        if following != policy.following { following = policy.following }
     }
 
     /// Un geste de DÉFILEMENT de l'utilisateur, dans son sens (`deltaY > 0` remonte
@@ -259,7 +275,7 @@ final class SessionViewerModel: ObservableObject {
         policy.pendingFollow = false
         followRequestRetries = 0
         policy.applyUserScroll(deltaY: deltaY)
-        following = policy.following
+        publishFollowing()
     }
 
     /// « Revenir au direct » : reprend le suivi et redemande un défilement. Tant

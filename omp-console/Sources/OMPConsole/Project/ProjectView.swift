@@ -1,5 +1,7 @@
-// La section « Projet » de la coque : elle rend EXACTEMENT la surface de la
-// fenêtre « Projet » (BR-3) — mêmes composants, mêmes états.
+// La section « Projet » de la coque : le pilotage d'un projet, dans la fenêtre
+// principale (plus de fenêtre « Projet » annexe depuis le 2026-10-02 : l'app
+// doit rester utilisable en plein écran). Le titre de la fenêtre reste celui de
+// la section ; le nom du projet est son sous-titre.
 
 import SwiftUI
 

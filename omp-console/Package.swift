@@ -1,13 +1,14 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 // Paquet SwiftPM de la coque macOS (salle de contrôle OMP). Aucune dépendance
 // externe : la coque n'affiche que des vues système, donc rien à résoudre et
-// pas de Package.resolved à maintenir. La cible minimale macOS 14 est celle des
-// postes de développement ; `platforms` la rend explicite au lieu de la subir.
+// pas de Package.resolved à maintenir. La cible minimale macOS 26 est imposée par
+// Liquid Glass ; `platforms` la rend explicite au lieu de la subir (et
+// `.macOS(.v26)` exige swift-tools-version 6.2).
 import PackageDescription
 
 let package = Package(
     name: "omp-console",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v26)],
     targets: [
         // Cible exécutable : le fichier d'entrée ne s'appelle PAS main.swift,
         // sinon `@main` est refusé.

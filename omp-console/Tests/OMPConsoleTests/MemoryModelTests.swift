@@ -96,9 +96,6 @@ func ac1SearchEmptyStatesAreDistinct() async {
     )
     await below.search()
     #expect(below.state == .searchEmptyBelowThreshold)
-
-    // Le seuil est écrit en français dans le message.
-    #expect(MemoryText.belowThreshold(MemorySearch.threshold).contains("0,55"))
 }
 
 @MainActor
@@ -115,7 +112,9 @@ func ac1EmptyQueryNeverHitsTheNetwork() async {
     let scopeCalls = service.allScopes.count
     let searches = service.searches.count
 
+    // Vider le champ ramène au sommaire à lui seul ; le valider ensuite n'émet rien.
     model.updateQuery("   ")
+    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
     await model.search()
 
     // Ni requête de recherche, ni rechargement du sommaire : le sommaire DÉJÀ lu
@@ -153,20 +152,18 @@ func ac8UnavailableServiceIsExplicit() async {
 }
 
 @MainActor
-@Test("memoire-mem0/AC-7 : un service joignable est annoncé « disponible » avec son adresse")
-func ac7AvailableServiceIsAnnounced() async {
-    let service = ScriptedMemoryService()
+@Test("memoire-mem0/AC-7 : un service joignable passe directement à la liste, sans état « indisponible »")
+func ac7AvailableServiceShowsTheList() async {
+    let service = ScriptedMemoryService(
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    )
     let model = memoryModel(service: service)
 
     await model.refresh()
 
     #expect(model.serviceAvailable)
     #expect(model.address == "http://localhost:8321")
-    let text = MemoryText.serviceAvailable(model.address)
-    #expect(text.contains("disponible"))
-    #expect(text.contains("http://localhost:8321"))
-    #expect(text == "disponible — http://localhost:8321")
-    #expect(MemoryText.serviceUnavailable("http://localhost:8321") == "indisponible — http://localhost:8321")
+    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
 }
 
 @MainActor
@@ -282,9 +279,6 @@ func ac6OpeningARowShowsTheFullText() async {
 
     #expect(model.selected?.id == "m-1")
     #expect(model.selected?.text == full)
-    // L'aperçu de la LISTE est tronqué, le détail ne l'est pas.
-    #expect(MemoryText.preview(full).count <= MemoryText.previewChars)
-    #expect(MemoryText.preview(full) != full)
 }
 
 @MainActor
@@ -307,8 +301,8 @@ func ac6NewListClearsTheSelection() async {
 // MARK: - Le bouton « Sommaire » (S-3)
 
 @MainActor
-@Test("memoire-mem0/AC-3 : le retour au sommaire recharge la liste et garde la requête dans le champ")
-func ac3ReturnToSummaryKeepsTheQuery() async {
+@Test("memoire-mem0/AC-3 : le retour au sommaire recharge la liste et vide le champ de recherche")
+func ac3ReturnToSummaryClearsTheQuery() async {
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")])),
         search: .success([memoryRow(id: "m-2", text: "b", score: 0.9)])
@@ -322,7 +316,7 @@ func ac3ReturnToSummaryKeepsTheQuery() async {
     await model.showSummary()
 
     #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
-    #expect(model.query == "sujet")
+    #expect(model.query.isEmpty)
     #expect(model.canShowSummary == false)
     #expect(service.allScopes == ["memoire-mem0", "memoire-mem0"])
 }

@@ -181,10 +181,14 @@ func projectLabelsHandleCollisions() {
     let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
     let options = statsProjectOptions(snapshot)
     #expect(options.count == 2)
+    // Le dossier parent départage, jamais la clé (une empreinte) du projet.
+    #expect(Set(options.map(\.label)).count == 2)
     for option in options {
         #expect(option.label.hasPrefix("collision ("))
-        #expect(option.label.hasSuffix("(\(option.id))"))
+        #expect(!option.label.contains(option.id))
     }
+    #expect(options.contains { $0.label.hasSuffix("dir-a)") })
+    #expect(options.contains { $0.label.hasSuffix("dir-b)") })
 }
 
 // MARK: - AC-4 / AC-5

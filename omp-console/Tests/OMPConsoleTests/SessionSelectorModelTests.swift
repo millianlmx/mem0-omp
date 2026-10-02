@@ -43,16 +43,17 @@ private func publishRunning(
 
 // MARK: - AC-1
 
-@Test("visionneuse-de-session/AC-1 : choisir un run du magasin porte SA session et un titre identifiable")
+@Test("visionneuse-de-session/AC-1 : choisir un run du magasin porte SA session, nommée par sa feature")
 @MainActor
 func choicesCarryTheSessionToDisplay() async throws {
     let fixture = StoreFixture()
     let id = fixtureId(0xA1)
+    let startedAt = (nowMs - 5_000).rounded()
     publishRunning(
         fixture,
         id: id,
         label: "mem0-omp/visionneuse-de-session",
-        phaseStartedAt: nowMs - 5_000,
+        phaseStartedAt: startedAt,
         sessionFile: liveSession
     )
 
@@ -68,10 +69,14 @@ func choicesCarryTheSessionToDisplay() async throws {
     #expect(choice.phase == .impl)
     #expect(choice.state == .live(.running))
     #expect(choice.isStale == false)
-    #expect(choice.sessionTag == "01a0e88e")
-    // Le titre de la fenêtre est identifiable : le run ET la session.
-    #expect(choice.target.title == "mem0-omp/visionneuse-de-session — 01a0e88e")
+    #expect(choice.repo == "mem0-omp")
+    #expect(choice.featureTitle == "visionneuse-de-session")
+    // La fenêtre se nomme par la feature, sans identifiant de session.
+    #expect(choice.target.title == "visionneuse-de-session")
     #expect(choice.target.sessionFile == liveSession)
+    // Le run est daté par son entrée, et la fenêtre porte « <étape> · <dépôt> ».
+    #expect(choice.startedAtMs == startedAt)
+    #expect(choice.target.subtitle == "Implémentation · mem0-omp")
 
     // L'étiquette de session, sur les formes réelles.
     #expect(sessionTag(forSessionFile: liveSession) == "01a0e88e")

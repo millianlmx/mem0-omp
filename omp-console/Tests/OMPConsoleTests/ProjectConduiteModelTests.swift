@@ -90,7 +90,8 @@ func conduiteRefusesSecondStart() async throws {
     await model.startConduite(repoRoot: repoB, name: "Beta")
     #expect(transport.startCount == 1)
     #expect(model.state == .live)
-    #expect(model.refusal?.message == ProjectViewText.refusal(name: "Alpha", path: repoA.path))
+    // Le chemin du message est formaté (`~/…`), jamais brut ; le champ garde le vrai.
+    #expect(model.refusal?.message == ProjectViewText.refusal(name: "Alpha", path: ConsoleFormat.path(repoA.path)))
     #expect(model.refusal?.repositoryName == "Alpha")
     #expect(model.refusal?.repositoryPath == repoA.path)
 
@@ -175,8 +176,9 @@ func conduiteNeverAnswersAPresentation() async throws {
     let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
     let countBefore = transport.written.count
 
-    transport.emit(projectDialogLine(id: "n1", method: "notify", extra: ["message": "[project] rien à faire"]))
-    #expect(await awaitProject { model.notice != nil })
+    transport.emit(projectDialogLine(id: "n1", method: "notify", extra: ["message": "[project] rien à faire\nligne 2"]))
+    // La notice est le message DÉCODÉ de la trame, jamais la trame JSON brute.
+    #expect(await awaitProject { model.notice == "[project] rien à faire\nligne 2" })
     #expect(transport.written.count == countBefore)
     model.stop()
 }

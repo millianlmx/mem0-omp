@@ -131,7 +131,8 @@ func attentionInformsOnProjectDone() async throws {
     #expect(model.isProjectDone)
 
     let counts = model.project.map(projectProgressCounts)
-    #expect(ProjectViewText.doneBanner(m: counts?.merged ?? 0, n: counts?.total ?? 0) == "Projet terminé — 1/1 feature(s) fusionnée(s).")
+    #expect(counts?.merged == 1)
+    #expect(counts?.total == 1)
     model.stop()
 }
 

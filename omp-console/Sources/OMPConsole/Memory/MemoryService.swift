@@ -61,12 +61,14 @@ struct MemoryHealth: Equatable, Sendable {
 }
 
 /// Une ligne de souvenir, réduite à ce que l'app affiche (S-1, S-3, S-5) : son
-/// identifiant, son texte COMPLET, sa date et son cosinus brut s'il en porte.
+/// identifiant, son texte COMPLET, sa date, son cosinus brut s'il en porte et ses
+/// étiquettes (`metadata.tags`, omp-console-redesign S-18 R7).
 struct MemoryRow: Identifiable, Equatable, Sendable {
     var id: String
     var text: String
     var updatedAt: String?
     var semanticScore: Double?
+    var tags: [String] = []
 }
 
 /// Le sommaire d'une portée (S-3) : le compte `total` du service et ses lignes,
@@ -133,12 +135,26 @@ enum MemoryJSON {
         return scalar(raw)
     }
 
+    /// `metadata.tags` tel que le serveur le stocke (`"a,b"`, http_server.py) :
+    /// découpé aux virgules, détouré, sans segment vide. Absent ou non textuel ⇒
+    /// aucune étiquette.
+    static func tags(_ json: Any) -> [String] {
+        guard let object = json as? [String: Any],
+              let metadata = object["metadata"] as? [String: Any],
+              let raw = metadata["tags"] as? String
+        else { return [] }
+        return raw.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     static func row(_ json: Any) -> MemoryRow {
         MemoryRow(
             id: identifier(json),
             text: line(json),
             updatedAt: updatedAt(json),
-            semanticScore: score(json)
+            semanticScore: score(json),
+            tags: tags(json)
         )
     }
 

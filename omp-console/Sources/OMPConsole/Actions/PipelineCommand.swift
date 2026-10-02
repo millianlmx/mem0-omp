@@ -33,11 +33,15 @@ enum MilestoneVerdict: String, Sendable, Equatable {
     case review = "y"
 }
 
-/// Une commande du canal. L'app n'émet QUE ces trois formes : ni `add`, ni
-/// `remove`, ni `answer` (hors périmètre B-1 … B-7).
+/// Une commande du canal. L'app n'émet QUE ces quatre formes : launch, verdict,
+/// reply, stop — ni `add`, ni `remove`, ni `answer` (une question en vol passe par
+/// une livraison dans la boîte du run). `reply` répond à une question en TEXTE
+/// d'un maillon terminé (feature `waiting` + `waitKind: "answer"`, S-9/S-10 de
+/// omp-console-redesign).
 enum OutgoingCommand: Sendable, Equatable {
     case launch(id: String, repo: String, title: String, description: String)
     case verdict(id: String, repo: String, slug: String, verdict: MilestoneVerdict)
+    case reply(id: String, repo: String, slug: String, text: String)
     case stop(id: String, repo: String)
 }
 
@@ -128,6 +132,7 @@ extension OutgoingCommand {
         switch self {
         case .launch(let id, _, _, _): id
         case .verdict(let id, _, _, _): id
+        case .reply(let id, _, _, _): id
         case .stop(let id, _): id
         }
     }
@@ -146,6 +151,11 @@ extension OutgoingCommand {
             return [
                 "version": 1, "id": id, "sentAt": at, "repo": repo,
                 "kind": "verdict", "slug": slug, "verdict": verdict.rawValue,
+            ]
+        case .reply(let id, let repo, let slug, let text):
+            return [
+                "version": 1, "id": id, "sentAt": at, "repo": repo,
+                "kind": "reply", "slug": slug, "text": text,
             ]
         case .stop(let id, let repo):
             return ["version": 1, "id": id, "sentAt": at, "repo": repo, "kind": "stop"]

@@ -23,11 +23,38 @@ enum StatusItemTitle {
     }
 }
 
+/// La fenêtre principale : la ramener au premier plan est partagé par l'item de
+/// barre de menus et par les commandes « Nouvelle feature… », les sections ⌘1…⌘6
+/// et « Bienvenue » (S-4 de omp-console-redesign).
+enum MainWindow {
+    /// L'identifiant de la scène `WindowGroup` de la fenêtre principale.
+    static let sceneID = "main"
+
+    /// La fenêtre principale redevient visible et au premier plan. Elle se
+    /// reconnaît à son identifiant AppKit, que SwiftUI dérive de celui de la scène
+    /// (`main-AppWindow-1`, mesuré) — pas à son titre, qui suit la section courante,
+    /// ni à son index dans `NSApp.windows`, qui contient aussi les fenêtres de l'item
+    /// de barre (mesuré, Doc-5). Une fenêtre fermée reste dans `NSApp.windows`
+    /// (invisible) : `makeKeyAndOrderFront` la ramène.
+    @MainActor
+    static func reveal() {
+        let prefix = "\(sceneID)-"
+        if let window = NSApp.windows.first(where: {
+            $0.canBecomeMain && ($0.identifier?.rawValue.hasPrefix(prefix) ?? false)
+        }) {
+            window.makeKeyAndOrderFront(nil)
+        }
+        // `activate(ignoringOtherApps:)` est DÉPRÉCIÉE avec le SDK du poste (Doc-7),
+        // mais c'est la seule des deux formes dont l'effet est MESURÉ (fenêtre clé et
+        // principale, app active) : `activate()` coopératif est refusé sans intention
+        // utilisateur (Doc-5). La dépréciation est assumée.
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 /// L'item UNIQUE de la barre de menus (créé une fois au lancement, jamais retiré).
 @MainActor
 final class StatusItemController: NSObject {
-    private static let windowTitle = "OMP Console"
-
     private let statusItem: NSStatusItem
     private let model: AlertsModel
     private var subscription: AnyCancellable?
@@ -54,18 +81,8 @@ final class StatusItemController: NSObject {
         statusItem.button?.title = StatusItemTitle.text(for: status)
     }
 
-    /// Un clic : la fenêtre principale redevient visible et au premier plan. Le tri de
-    /// « la fenêtre principale » se fait par `canBecomeMain` (+ titre) — jamais par
-    /// index dans `NSApp.windows`, qui contient aussi les fenêtres de l'item de barre
-    /// (mesuré, Doc-5).
+    /// Un clic : la fenêtre principale redevient visible et au premier plan.
     @objc private func revealWindow() {
-        if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.title == Self.windowTitle }) {
-            window.makeKeyAndOrderFront(nil)
-        }
-        // `activate(ignoringOtherApps:)` est DÉPRÉCIÉE avec le SDK du poste (Doc-7),
-        // mais c'est la seule des deux formes dont l'effet est MESURÉ (fenêtre clé et
-        // principale, app active) : `activate()` coopératif est refusé sans intention
-        // utilisateur (Doc-5). La dépréciation est assumée.
-        NSApp.activate(ignoringOtherApps: true)
+        MainWindow.reveal()
     }
 }

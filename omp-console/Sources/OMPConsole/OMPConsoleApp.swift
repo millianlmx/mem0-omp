@@ -1,19 +1,27 @@
 // Point d'entrée de la coque. Le fichier NE s'appelle PAS main.swift : `@main`
 // y est refusé (D5).
 //
-// Cinq scènes : la coque à barre latérale, la fenêtre « Terminal » (S-1), la
-// fenêtre « Session OMP » (S-9), la visionneuse par run, et la fenêtre « Projet »
-// (conduite). `Window` — et non `WindowGroup` — rend structurellement vrai
-// l'invariant « un seul terminal » (AC-2) comme « jamais deux conduites » (AC-2) :
-// la scène n'a qu'une instance.
+// UNE scène : la fenêtre principale à barre latérale. Session OMP, Terminal,
+// Projet, Statistiques et la visionneuse en sont des sections (ou une vue
+// poussée dans Sessions) — l'app reste utilisable en plein écran, où chaque
+// fenêtre annexe partait dans son propre espace (2026-10-02). « Un seul
+// terminal » et « jamais deux pilotages » (AC-2) tiennent par les modèles, à
+// instance unique sur la structure `App`, et par leurs refus de second
+// lancement.
 //
-// Les modèles de terminal, de session et de conduite vivent sur la structure `App`
+// Barre des menus (HIG Keyboards : ⌘N crée l'objet principal de l'app, aucun
+// raccourci standard n'est détourné) : Fichier ▸ « Nouvelle feature… » ⌘N,
+// « Nouvelle session OMP » ⌥⌘N, « Piloter un projet… » ⇧⌘N ; Présentation ▸ les
+// neuf sections ⌘1…⌘9.
+//
+// Les modèles de terminal, de session et de pilotage vivent sur la structure `App`
 // (`@StateObject`), donc à l'échelle de l'app : fermer une fenêtre ne laisse pas un
 // `omp` orphelin, et les accroches de terminaison existent avant la première
 // ouverture.
 //
-// La terminaison passe par `applicationShouldTerminate` → `.terminateLater` (D3) :
-// c'est le seul moyen d'ATTENDRE la sortie des process hébergés avant de quitter.
+// La terminaison passe par `applicationShouldTerminate` en DEUX temps (D3) : la
+// première demande est annulée le temps d'ATTENDRE la sortie des process hébergés,
+// puis la terminaison est redemandée et passe.
 
 import AppKit
 import SwiftUI
@@ -25,14 +33,29 @@ struct OMPConsoleApp: App {
     @StateObject private var terminalModel = TerminalConsoleModel()
     @StateObject private var filesModel = FilesModel()
     @StateObject private var kanbanModel = KanbanModel()
-    @StateObject private var actionsModel = ActionsModel()
+    @StateObject private var actionsModel: ActionsModel
     @StateObject private var projectModel = ProjectConsoleModel()
     @StateObject private var statsModel = StatsModel()
     @StateObject private var memoryModel = MemoryModel()
+    @StateObject private var homeModel = HomeModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    /// UN `ConductorPool` pour l'app (S-7 de omp-console-redesign) : il fait
+    /// conduire les dépôts sans pilote vivant, et ses accroches de terminaison
+    /// sont posées dès sa construction.
+    init() {
+        let pool = ConductorPool()
+        _actionsModel = StateObject(wrappedValue: ActionsModel(pilot: pool))
+    }
+
     var body: some Scene {
-        WindowGroup("OMP Console") {
+        // UNE seule scène : la fenêtre principale. Session OMP, Terminal, Projet,
+        // Statistiques et la visionneuse sont des sections (ou une vue poussée)
+        // de cette fenêtre — en plein écran, une fenêtre annexe partait dans son
+        // propre espace (demande du 2026-10-02). Sans titre de scène : la fenêtre
+        // porte celui de la section courante (`ConsoleRootView`), jamais le nom
+        // de l'app. L'identifiant sert à `MainWindow.reveal()` pour la retrouver.
+        WindowGroup(id: MainWindow.sceneID) {
             ConsoleRootView(
                 model: model,
                 filesModel: filesModel,
@@ -40,104 +63,95 @@ struct OMPConsoleApp: App {
                 alerts: appDelegate.alerts,
                 actions: actionsModel,
                 projectModel: projectModel,
-                memoryModel: memoryModel
+                memoryModel: memoryModel,
+                home: homeModel,
+                sessionModel: sessionModel,
+                terminalModel: terminalModel,
+                statsModel: statsModel
             )
         }
-
-        Window("Session OMP", id: "session") {
-            SessionConsoleView(model: sessionModel)
-        }
-
-        // La fenêtre de terminal (S-1) : instance unique, comme la session RPC —
-        // redemander son ouverture ramène celle-ci au premier plan.
-        Window(TerminalViewText.windowTitle, id: "terminal") {
-            TerminalConsoleView(model: terminalModel)
-        }
-
-        Window("Projet", id: "projet") {
-            ProjectConsoleView(model: projectModel)
-        }
         .commands {
-            SessionCommands()
-            TerminalCommands()
-            ProjectCommands(model: projectModel)
-            StatsCommands()
-        }
-
-        // Fenêtre à instance unique (Doc-2) : `id: "statistiques"`, distinct des
-        // autres scènes. Le modèle vit sur la structure `App`, donc il survit à la
-        // fermeture de la fenêtre comme les autres.
-        Window("Statistiques", id: "statistiques") {
-            StatsView(model: statsModel)
-        }
-
-        // Dernière scène : la visionneuse de session. Elle présente une VALEUR
-        // (`ViewerTarget`), donc deux runs différents ouvrent deux fenêtres, et
-        // re-choisir un run déjà ouvert ramène SA fenêtre au premier plan
-        // (Documentation §1 : le système dédoublonne par valeur). La scène « Session
-        // OMP » (hébergement RPC, instance unique) reste distincte et n'est pas
-        // touchée : deux usages, deux scènes.
-        WindowGroup("Session", id: "viewer", for: ViewerTarget.self) { $target in
-            SessionViewerView(target: $target)
+            NewItemCommands(console: model, actions: actionsModel, home: homeModel, project: projectModel)
+            SectionCommands(console: model)
+            // Présentation ▸ « Afficher la barre d'outils » / « Personnaliser la
+            // barre d'outils… » : la barre de la fenêtre principale est
+            // personnalisable.
+            ToolbarCommands()
+            WelcomeCommands(home: homeModel)
         }
     }
 }
 
-/// Menu Fichier ▸ « Nouvelle session OMP » (⌘N) : ouvre la scène à instance
-/// unique. `openWindow` est lu dans l'environnement de la commande (motif compilé
-/// en D5).
-struct SessionCommands: Commands {
-    @Environment(\.openWindow) private var openWindow
+/// Menu Fichier, à la place de « Nouvelle fenêtre » (la fenêtre principale est
+/// unique : une seconde n'aurait rien à montrer de plus). Chaque commande ramène
+/// la fenêtre principale.
+///
+/// - « Nouvelle feature… » (⌘N, l'objet principal de l'app) : présente la feuille
+///   de lancement. Inactive tant qu'OMP est introuvable.
+/// - « Nouvelle session OMP » (⌥⌘N) : la section « Session OMP ».
+/// - « Piloter un projet… » (⇧⌘N) : la section « Projet », puis la feuille de
+///   choix (S-1). Si un pilotage est en cours, le modèle pose son refus (S-2) au
+///   lieu d'ouvrir la feuille.
+struct NewItemCommands: Commands {
+    let console: ConsoleModel
+    @ObservedObject var actions: ActionsModel
+    @ObservedObject var home: HomeModel
+    @ObservedObject var project: ProjectConsoleModel
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button("Nouvelle session OMP") { openWindow(id: "session") }
-                .keyboardShortcut("n", modifiers: .command)
-        }
-    }
-}
-
-/// Menu Fichier ▸ « Ouvrir un terminal OMP… » (⌘T) : ouvre la scène à instance
-/// unique. Redemander l'ouverture ramène la fenêtre existante au premier plan sans
-/// lancer de second `omp` (AC-2) — la scène n'a qu'une instance, et le modèle refuse
-/// un second lancement.
-struct TerminalCommands: Commands {
-    @Environment(\.openWindow) private var openWindow
-
-    var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button(TerminalViewText.menuOpen) { openWindow(id: "terminal") }
-                .keyboardShortcut("t", modifiers: .command)
-        }
-    }
-}
-
-/// Menu Fichier ▸ « Conduire un projet… » (⌘⇧N) : ouvre la fenêtre « Projet » et
-/// présente la feuille de choix (S-1). Si une conduite est en cours, le modèle pose
-/// son refus (S-2) au lieu d'ouvrir la feuille.
-struct ProjectCommands: Commands {
-    @Environment(\.openWindow) private var openWindow
-    @ObservedObject var model: ProjectConsoleModel
-
-    var body: some Commands {
-        CommandGroup(after: .newItem) {
+        CommandGroup(replacing: .newItem) {
+            Button(HomeText.newFeature) {
+                MainWindow.reveal()
+                actions.launchFormShown = true
+            }
+            .keyboardShortcut("n", modifiers: .command)
+            .disabled(!home.canLaunch)
+            Button("Nouvelle session OMP") {
+                MainWindow.reveal()
+                console.select(.session)
+            }
+            .keyboardShortcut("n", modifiers: [.command, .option])
             Button(ProjectViewText.startConduite) {
-                openWindow(id: "projet")
-                model.presentLaunchSheet()
+                MainWindow.reveal()
+                console.select(.project)
+                project.presentLaunchSheet()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
         }
     }
 }
 
-/// Menu Fichier ▸ « Statistiques » (⌘⇧S) : ouvre la fenêtre à instance unique.
-struct StatsCommands: Commands {
-    @Environment(\.openWindow) private var openWindow
+/// Menu Présentation ▸ les neuf sections, dans l'ordre de la barre latérale
+/// (⌘1…⌘9) : ramène la fenêtre principale, puis y sélectionne la section.
+struct SectionCommands: Commands {
+    let console: ConsoleModel
 
     var body: some Commands {
-        CommandGroup(after: .newItem) {
-            Button("Statistiques") { openWindow(id: "statistiques") }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
+        CommandGroup(before: .sidebar) {
+            ForEach(Array(ConsoleSection.allCases.enumerated()), id: \.element) { index, section in
+                Button(section.title) {
+                    MainWindow.reveal()
+                    console.select(section)
+                }
+                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+            }
+            Divider()
+        }
+    }
+}
+
+/// Menu Aide ▸ « Bienvenue dans OMP Console » (S-4 de omp-console-redesign) : la
+/// bienvenue vue une fois reste facile à retrouver (HIG Onboarding). Ramène la
+/// fenêtre principale, puis redemande la feuille.
+struct WelcomeCommands: Commands {
+    @ObservedObject var home: HomeModel
+
+    var body: some Commands {
+        CommandGroup(replacing: .help) {
+            Button(HomeText.welcomeMenuItem) {
+                MainWindow.reveal()
+                home.requestWelcome()
+            }
         }
     }
 }
@@ -157,6 +171,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var terminateProject: (() async -> Void)?
     /// Posée par `TerminalConsoleModel.init` (S-8).
     static var terminateTerminal: (() async -> Void)?
+    /// Posée par `ConductorPool.init` : arrête tous les conducteurs.
+    static var terminateConductors: (() async -> Void)?
+    /// Posée par `ConductorPool.init` : vrai quand un conducteur mène des maillons
+    /// en cours — quitter les interromprait.
+    static var conductorsBusy: (() -> Bool)?
 
     /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
     /// construisent donc pas).
@@ -177,18 +196,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         false
     }
 
+    /// Vrai une fois les accroches de fermeture exécutées : la seconde demande de
+    /// terminaison passe alors sans attente.
+    private(set) var hooksDone = false
+    /// La seconde demande de terminaison, une fois les process arrêtés. Injectable :
+    /// un test ne doit pas terminer le process qui l'exécute.
+    var requestTermination: @MainActor () -> Void = { NSApp.terminate(nil) }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard Self.terminateSession != nil || Self.terminateProject != nil || Self.terminateTerminal != nil else {
+        if hooksDone { return .terminateNow }
+        // Des maillons conduits par l'app seraient interrompus : l'utilisateur
+        // tranche (S-7 de omp-console-redesign).
+        if Self.conductorsBusy?() == true, !Self.confirmQuitWhileConducting() {
+            return .terminateCancel
+        }
+        guard Self.terminateSession != nil || Self.terminateProject != nil || Self.terminateTerminal != nil
+            || Self.terminateConductors != nil else {
             return .terminateNow
         }
+        // MESURÉ (2026-10-01, bundle lancé) : avec `.terminateLater`, une feuille
+        // SwiftUI présentée (Bienvenue, OMP est requis, Nouvelle feature…) bloquait
+        // la sortie — AppKit attendait la réponse dans `_shouldTerminate` et l'app
+        // restait ouverte. Les accroches tournent donc HORS de cette attente :
+        // la demande est annulée, les process sont arrêtés, puis la terminaison
+        // est redemandée et passe aussitôt.
         Task { @MainActor in
-            // Les trois accroches sont INDÉPENDANTES (S-8) : leur ordre n'a pas
+            // Les accroches sont INDÉPENDANTES (S-8) : leur ordre n'a pas
             // d'importance, et chacune est bornée par sa propre escalade.
             await Self.terminateSession?()
             await Self.terminateProject?()
             await Self.terminateTerminal?()
-            NSApp.reply(toApplicationShouldTerminate: true)
+            await Self.terminateConductors?()
+            self.hooksDone = true
+            self.requestTermination()
         }
-        return .terminateLater
+        return .terminateCancel
     }
+
+    /// La confirmation de fermeture : « Quitter » (premier bouton) rend `true`.
+    private static func confirmQuitWhileConducting() -> Bool {
+        let alert = NSAlert()
+        alert.messageText = QuitText.title
+        alert.informativeText = QuitText.body
+        alert.addButton(withTitle: QuitText.quit)
+        alert.addButton(withTitle: QuitText.cancel)
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
+/// Les textes de la confirmation de fermeture (S-7 de omp-console-redesign).
+enum QuitText {
+    static let title = "Quitter OMP Console ?"
+    static let body =
+        "OMP Console pilote des pipelines en cours : quitter les interrompt. Vous pourrez les relancer avec « Reprendre » à la prochaine ouverture."
+    static let quit = "Quitter"
+    static let cancel = "Annuler"
 }

@@ -119,8 +119,11 @@ final class ProcessTransport: RpcTransport {
             arguments: arguments,
             cwd: cwd,
             // L'environnement est HÉRITÉ (S-1) : c'est lui qui porte `HOME`, donc la
-            // configuration `~/.omp` du process hébergé.
-            environment: ProcessInfo.processInfo.environment,
+            // configuration `~/.omp` du process hébergé. Seul son `PATH` est
+            // complété (S-3 de omp-console-redesign) : lancée par le Finder, l'app
+            // n'a que le `PATH` de launchd, où ni `bun` ni `omp` ne sont trouvables
+            // — ni pour ce process, ni pour les runs `omp -p` qu'un pilote lance.
+            environment: OmpEnvironment.child(base: ProcessInfo.processInfo.environment, executable: binary),
             input: .pipe
         )
         let process = child.process

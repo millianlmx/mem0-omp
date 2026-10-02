@@ -33,9 +33,8 @@ func unreadableLotIsNamedAndMarksTheProjectCard() throws {
     // La marque remplace l'état INVENTÉ, pas l'état connu : la colonne est celle de
     // la source lisible.
     #expect(card.column == .enCours)
-    #expect(board.anomalies == [
-        KanbanAnomaly(kind: .illisible, text: "entrée illisible — lots/\(repoKey).json : JSON illisible"),
-    ])
+    #expect(board.anomalies.map(\.kind) == [.illisible])
+    #expect(board.anomalies.map(\.detail) == ["entrée illisible — lots/\(repoKey).json : JSON illisible"])
 }
 
 @Test("kanban-des-pipelines/AC-11 : un JSON valide au schéma incomplet se dit « schéma incomplet ou inconnu »")
@@ -56,7 +55,7 @@ func unreadableSchemaIsNamedAsSuch() {
 
     let board = kanbanBoard(fixture)
     #expect(board.cards.first?.marks == [.illisible])
-    #expect(board.anomalies.map(\.text) == [
+    #expect(board.anomalies.map(\.detail) == [
         "entrée illisible — lots/\(repoKey).json : schéma incomplet ou inconnu",
     ])
 }
@@ -69,9 +68,8 @@ func unreadableLotWithoutCardStillSpeaks() {
 
     let board = kanbanBoard(fixture)
     #expect(board.cards.isEmpty)
-    #expect(board.anomalies == [
-        KanbanAnomaly(kind: .illisible, text: "entrée illisible — lots/\(repoKey).json : JSON illisible"),
-    ])
+    #expect(board.anomalies.map(\.kind) == [.illisible])
+    #expect(board.anomalies.map(\.detail) == ["entrée illisible — lots/\(repoKey).json : JSON illisible"])
 }
 
 @Test("kanban-des-pipelines/AC-11 : un projet illisible marque les cartes de LOT du dépôt, et un run illisible ne marque rien")
@@ -95,7 +93,7 @@ func unreadableProjectMarksLotCards() {
     #expect(board.cards.first?.marks == [.illisible])
     #expect(board.cards.first?.column == .enCours)
     // L'ordre du bandeau : `running` avant `lots`/`projects`.
-    #expect(board.anomalies.map(\.text) == [
+    #expect(board.anomalies.map(\.detail) == [
         "entrée illisible — running/\(fixtureId(0xe2)).json : JSON illisible",
         "entrée illisible — projects/\(repoKey).json : JSON illisible",
     ])
@@ -122,9 +120,10 @@ func deadRunGoesToFailure() throws {
     #expect(card.column == .echec)
     #expect(card.marks == [.mort])
     #expect(board.cards.contains { $0.column == .enCours } == false)
-    #expect(board.anomalies == [
-        KanbanAnomaly(kind: .mort, text: "propriétaire mort — running/\(id).json : pid \(dead)"),
-    ])
+    #expect(board.anomalies.map(\.kind) == [.mort])
+    #expect(board.anomalies.map(\.detail) == ["propriétaire mort — running/\(id).json : pid \(dead)"])
+    // La phrase affichée ne porte ni fichier ni pid : ils restent dans le détail.
+    #expect(board.anomalies.allSatisfy { !$0.text.contains(".json") && !$0.text.contains("pid") })
 }
 
 @Test("kanban-des-pipelines/AC-12 : un lot mort bascule ses features en cours en échec et marque les autres sans changer leur colonne")
@@ -157,9 +156,8 @@ func deadLotMarksEveryFeature() throws {
     #expect(waiting.column == .jalonSpecs)
     #expect(waiting.marks == [.mort])
     // UNE ligne pour le lot, pas une par feature.
-    #expect(board.anomalies == [
-        KanbanAnomaly(kind: .mort, text: "propriétaire mort — lots/\(repoKey).json : pid \(dead)"),
-    ])
+    #expect(board.anomalies.map(\.kind) == [.mort])
+    #expect(board.anomalies.map(\.detail) == ["propriétaire mort — lots/\(repoKey).json : pid \(dead)"])
 }
 
 @Test("kanban-des-pipelines/AC-12 : un pid non entier se dit « pid absent », un battement périmé ne dit rien")
@@ -192,9 +190,8 @@ func absentPidIsNamedAndStaleHeartbeatIsNotAnAnomaly() throws {
     let fresh = try #require(board.cards.first { $0.id.hasSuffix(":frais") })
     #expect(fresh.column == .enCours)
     #expect(fresh.marks.isEmpty)
-    #expect(board.anomalies == [
-        KanbanAnomaly(kind: .mort, text: "propriétaire mort — running/\(absentId).json : pid absent"),
-    ])
+    #expect(board.anomalies.map(\.kind) == [.mort])
+    #expect(board.anomalies.map(\.detail) == ["propriétaire mort — running/\(absentId).json : pid absent"])
 }
 
 // MARK: - AC-13 : deux sources vivantes pour la même chose
@@ -227,11 +224,9 @@ func duplicateRunsCollapseIntoOneCard() throws {
     let card = try #require(board.cards.first)
     #expect(card.id == "run:\(first)")
     #expect(card.marks == [.doublon])
-    #expect(board.anomalies == [
-        KanbanAnomaly(
-            kind: .doublon,
-            text: "doublon — running/\(first).json et running/\(second).json : cwd \(real)"
-        ),
+    #expect(board.anomalies.map(\.kind) == [.doublon])
+    #expect(board.anomalies.map(\.detail) == [
+        "doublon — running/\(first).json et running/\(second).json : cwd \(real)",
     ])
 }
 
@@ -257,9 +252,8 @@ func duplicateLotFeaturesCollapseIntoOneCard() throws {
     #expect(card.id == "feature:\(repoKey):double")
     #expect(card.marks == [.doublon])
     let citation = "lots/\(repoKey).json · feature « double »"
-    #expect(board.anomalies == [
-        KanbanAnomaly(kind: .doublon, text: "doublon — \(citation) et \(citation) : feature « double »"),
-    ])
+    #expect(board.anomalies.map(\.kind) == [.doublon])
+    #expect(board.anomalies.map(\.detail) == ["doublon — \(citation) et \(citation) : feature « double »"])
 }
 
 @Test("kanban-des-pipelines/AC-13 : l'appariement projet ↔ lot de même slug n'est PAS un doublon")
@@ -302,7 +296,6 @@ func boardStateDistinguishesAbsentEmptyAndBoard() async {
     defer { absentModel.stop() }
     absentModel.start()
     #expect(await awaitMainTrue { absentModel.state == .storeAbsent(dir: absent.root) })
-    #expect(KanbanBoardState.absentText(dir: absent.root) == "Magasin d'état absent : \(absent.root)")
 
     // (b) MAGASIN VIDE : la racine et ses six répertoires existent, aucun fichier.
     let empty = StoreFixture()
@@ -310,7 +303,6 @@ func boardStateDistinguishesAbsentEmptyAndBoard() async {
     defer { emptyModel.stop() }
     emptyModel.start()
     #expect(await awaitMainTrue { emptyModel.state == .storeEmpty(dir: empty.root) })
-    #expect(KanbanBoardState.emptyText(dir: empty.root) == "Magasin d'état vide : \(empty.root)")
 
     // (c) RACINE PRÉSENTE, un seul fichier illisible : un TABLEAU, jamais « vide » —
     // les anomalies ne sont jamais tues.

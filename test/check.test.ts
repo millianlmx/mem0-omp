@@ -694,6 +694,10 @@ case "$*" in
 esac`,
   );
   stub(bin, "codesign", "exit 0");
+  // Le binaire factice n'est pas un Mach-O : la doublure `otool` rend la commande
+  // LC_BUILD_VERSION qu'un vrai binaire porte (vérification de la version minimale
+  // du bundle assemblé, omp-console-redesign S-2).
+  stub(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
 
   const copy = copyRepo();
   const run = runCheck(copy, {

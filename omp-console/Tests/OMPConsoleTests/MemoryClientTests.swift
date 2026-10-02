@@ -172,6 +172,19 @@ func ac3RowGuardsAreLocal() {
     #expect(MemoryJSON.row(["id": "m", "memory": "x", "score_details": ["semantic_score": true]]).semanticScore == nil)
 }
 
+@Test("omp-console-redesign/S-18 : les étiquettes d'une ligne viennent de metadata.tags, absentes ⇒ aucune")
+func s18RowTagsComeFromMetadata() {
+    let row: [String: Any] = ["id": "m", "memory": "x", "metadata": ["tags": "a,b"]]
+    #expect(MemoryJSON.row(row).tags == ["a", "b"])
+    // Espaces détourés, segments vides écartés.
+    #expect(MemoryJSON.row(["id": "m", "memory": "x", "metadata": ["tags": " a , ,b,"]]).tags == ["a", "b"])
+    // Absentes, nulles ou non textuelles : aucune étiquette, la ligne reste lisible.
+    #expect(MemoryJSON.row(["id": "m", "memory": "x"]).tags == [])
+    #expect(MemoryJSON.row(["id": "m", "memory": "x", "metadata": NSNull()]).tags == [])
+    #expect(MemoryJSON.row(["id": "m", "memory": "x", "metadata": ["memory_type": "procedural_memory"]]).tags == [])
+    #expect(MemoryJSON.row(["id": "m", "memory": "x", "metadata": ["tags": ["a"]]]).tags == [])
+}
+
 // MARK: - S-6, S-7 : sonde, erreurs, config et jeton
 
 @Test("memoire-mem0/AC-7 : la sonde /health rend « disponible » quand le service répond ok")

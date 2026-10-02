@@ -1,13 +1,14 @@
-// La section « Mémoire » (BR-3) : l'en-tête (état du service, recherche, sommaire,
-// rafraîchissement), la liste à gauche, le détail à droite.
+// La section « Mémoire » (BR-3) : la recherche, le sommaire et le rafraîchissement
+// dans la barre d'outils de la fenêtre ; la liste à gauche, le détail à droite.
 //
 // Aucun attribut macro n'est employé ici (`@State`, `@Preview` ne compilent pas sous
 // les Command Line Tools) : l'état vit dans `MemoryModel` et les liens sont
 // construits à la main (`Binding(get:set:)`), comme la sélection de la coque.
 //
 // Tous les textes affichés viennent de `MemoryText` : une erreur, un texte — la vue
-// ne compose jamais un message, et un test peut donc les figer. Aucun contrôle
-// d'écriture n'existe ici (S-2) : ni bouton, ni menu contextuel, ni raccourci.
+// ne compose jamais un message. Aucun contrôle d'écriture n'existe ici (S-2) : ni
+// bouton, ni menu contextuel, ni raccourci ; « Copier » ne touche que le
+// presse-papiers.
 
 import AppKit
 import SwiftUI
@@ -18,69 +19,46 @@ struct MemoryView: ConsoleSectionView {
     @ObservedObject var model: MemoryModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            content
-        }
-        // Le premier chargement suit l'apparition de la section ; la requête en vol
-        // est annulée quand elle disparaît (S-6 : aucun sondage périodique).
-        .task { await model.refresh() }
-        .onDisappear { model.suspend() }
+        content
+            // Le champ de recherche standard, dans la barre d'outils : Retour lance
+            // la recherche, la croix (ou un champ vidé) ramène au sommaire.
+            .searchable(text: queryBinding, placement: .toolbar, prompt: Text(MemoryText.searchPrompt))
+            .onSubmit(of: .search) { Task { await model.search() } }
+            .toolbar { toolbarContent }
+            // Le premier chargement suit l'apparition de la section ; la requête en
+            // vol est annulée quand elle disparaît (S-6 : aucun sondage périodique).
+            .task { await model.refresh() }
+            .onDisappear { model.suspend() }
     }
 
-    // MARK: - En-tête
+    // MARK: - Barre d'outils
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: serviceText)
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("memoire.service")
-
-            HStack(spacing: 8) {
-                TextField(MemoryText.searchPlaceholder, text: queryBinding)
-                    .frame(maxWidth: 320)
-                    .onSubmit { Task { await model.search() } }
-                    .accessibilityIdentifier("memoire.search.query")
-
-                Button {
-                    Task { await model.search() }
-                } label: {
-                    Label(MemoryText.searchButton, systemImage: "magnifyingglass")
-                }
-                .disabled(!model.canSearch)
-                .accessibilityIdentifier("memoire.search.submit")
-
-                Button {
-                    Task { await model.showSummary() }
-                } label: {
-                    Label(MemoryText.summaryButton, systemImage: "list.bullet")
-                }
-                .disabled(!model.canShowSummary)
-                .accessibilityIdentifier("memoire.summary.button")
-
-                Button {
-                    Task { await model.refresh() }
-                } label: {
-                    Label(MemoryText.refresh, systemImage: "arrow.clockwise")
-                }
-                .keyboardShortcut("r", modifiers: .command)
-                .disabled(!model.canRefresh)
-                .accessibilityIdentifier("memoire.refresh")
-
-                Spacer()
+    /// Deux commandes sans rapport : `ToolbarSpacer(.fixed)` les sépare plutôt que
+    /// de les fondre dans un même verre. Aucun `.buttonStyle` : le verre est celui
+    /// du système.
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                Task { await model.showSummary() }
+            } label: {
+                Label(MemoryText.summaryButton, systemImage: "list.bullet")
             }
+            .help(MemoryText.summaryHelp)
+            .disabled(!model.canShowSummary)
+            .accessibilityIdentifier("memoire.summary.button")
         }
-        .padding(8)
-    }
-
-    /// Avant la première sonde, l'app ne SAIT rien : elle affiche l'adresse sans
-    /// conclure. Ensuite, l'état littéral de S-6.2 (AC-7, AC-8).
-    private var serviceText: String {
-        guard model.prepared else { return model.address }
-        return model.serviceAvailable
-            ? MemoryText.serviceAvailable(model.address)
-            : MemoryText.serviceUnavailable(model.address)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                Task { await model.refresh() }
+            } label: {
+                Label(MemoryText.refresh, systemImage: "arrow.clockwise")
+            }
+            .help(MemoryText.refreshHelp)
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(!model.canRefresh)
+            .accessibilityIdentifier("memoire.refresh")
+        }
     }
 
     private var queryBinding: Binding<String> {
@@ -110,40 +88,56 @@ struct MemoryView: ConsoleSectionView {
             )
 
         case let .unavailable(address, detail):
+            // L'indisponibilité dit d'abord quoi faire ; l'adresse du service et la
+            // dernière erreur (S-6.3) ne sont qu'un détail secondaire.
+            ContentUnavailableView {
+                Label(MemoryText.unavailableTitle, systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(MemoryText.unavailableDescription)
+            } actions: {
+                Button(MemoryText.retry) { Task { await model.refresh() } }
+                    .disabled(!model.canRefresh)
+                Text(verbatim: MemoryText.unavailableDetail(address: address, error: detail))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("memoire.unavailable.detail")
+            }
+
+        case let .summaryEmpty(scope):
             ContentUnavailableView(
-                MemoryText.unavailableTitle,
-                systemImage: "exclamationmark.triangle",
-                description: Text(verbatim: unavailableDescription(address, detail))
+                MemoryText.emptySummaryTitle,
+                systemImage: "brain",
+                description: Text(MemoryText.emptySummary(scope))
             )
 
-        case .summaryEmpty, .searchEmptyNoMatch, .searchEmptyNoScore, .searchEmptyBelowThreshold:
-            Text(verbatim: emptyMessage)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
+        case .searchEmptyNoMatch:
+            ContentUnavailableView(
+                MemoryText.noResultTitle,
+                systemImage: "magnifyingglass",
+                description: Text(MemoryText.noMatch)
+            )
+
+        case .searchEmptyBelowThreshold:
+            ContentUnavailableView(
+                MemoryText.noResultTitle,
+                systemImage: "magnifyingglass",
+                description: Text(MemoryText.belowThreshold)
+            )
+
+        case .searchEmptyNoScore:
+            ContentUnavailableView(
+                MemoryText.searchUnsupportedTitle,
+                systemImage: "exclamationmark.magnifyingglass",
+                description: Text(MemoryText.noSemanticScore)
+            )
 
         case let .summary(_, total, rows):
             pane(title: MemoryText.summaryCount(total), titleIdentifier: "memoire.summary.count", rows: rows)
 
         case let .search(query, rows):
             pane(title: MemoryText.searchResults(query), titleIdentifier: "memoire.search.results", rows: rows)
-        }
-    }
-
-    /// « l'adresse et la DERNIÈRE erreur rencontrée » (S-6.3) : une ligne chacun,
-    /// pour que ni l'une ni l'autre ne disparaisse.
-    private func unavailableDescription(_ address: String, _ detail: String) -> String {
-        detail.isEmpty ? address : "\(address)\n\(detail)"
-    }
-
-    private var emptyMessage: String {
-        switch model.state {
-        case let .summaryEmpty(scope): MemoryText.emptySummary(scope)
-        case .searchEmptyNoMatch: MemoryText.noMatch
-        case .searchEmptyNoScore: MemoryText.noSemanticScore
-        case .searchEmptyBelowThreshold: MemoryText.belowThreshold(MemorySearch.threshold)
-        default: ""
         }
     }
 
@@ -155,19 +149,25 @@ struct MemoryView: ConsoleSectionView {
                 Text(verbatim: title)
                     .font(.headline)
                     .foregroundStyle(.secondary)
-                    .padding(8)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                     .accessibilityIdentifier(titleIdentifier)
 
-                List(selection: selection) {
-                    ForEach(rows) { row in
-                        MemoryRowView(row: row)
-                            .tag(Optional(row.id))
+                // L'horloge de RENDU des dates relatives (S-18 R7) : la minute suffit
+                // à « il y a 4 minutes », et aucune date n'est figée au chargement.
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let nowMs = context.date.timeIntervalSince1970 * 1000
+                    List(selection: selection) {
+                        ForEach(rows) { row in
+                            MemoryRowView(row: row, nowMs: nowMs)
+                                .tag(Optional(row.id))
+                        }
                     }
+                    .listStyle(.inset)
+                    .accessibilityIdentifier("memoire.list")
                 }
-                .listStyle(.sidebar)
-                .accessibilityIdentifier("memoire.list")
-                .frame(minWidth: 220)
             }
+            .frame(minWidth: 260, idealWidth: 320)
 
             detailPane
         }
@@ -180,66 +180,138 @@ struct MemoryView: ConsoleSectionView {
         )
     }
 
-    private var detailPane: some View {
-        ScrollView([.horizontal, .vertical]) {
-            VStack(alignment: .leading, spacing: 0) {
-                detailHeader
-                Divider()
-                detailBody
+    @ViewBuilder private var detailPane: some View {
+        Group {
+            if let row = model.selected {
+                MemoryDetailView(row: row, scope: model.scope)
+            } else {
+                Text(verbatim: MemoryText.nothingSelected)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(minWidth: 320)
         .accessibilityIdentifier("memoire.detail")
     }
+}
 
-    @ViewBuilder private var detailHeader: some View {
-        if let row = model.selected {
-            HStack(spacing: 8) {
-                Text(verbatim: row.id)
-                    .font(.headline)
-                Spacer()
+/// Le détail d'un souvenir (S-18 R7, S-19 R2) : un vrai titre, la ligne de contexte
+/// (date relative · étiquettes), le texte COMPLET rendu en Markdown et
+/// sélectionnable, le bouton « Copier » ; l'identifiant, la portée et la
+/// pertinence restent repliés sous « Détails techniques ».
+private struct MemoryDetailView: View {
+    let row: MemoryRow
+    let scope: String?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                header
+                Divider()
+                if row.text.isEmpty {
+                    Text(verbatim: MemoryText.emptyRow)
+                        .foregroundStyle(.secondary)
+                } else {
+                    MarkdownBlocksView(markdown: row.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                technicalDetails
             }
-            .padding(8)
+            .padding(20)
+            .frame(maxWidth: 720, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    @ViewBuilder private var detailBody: some View {
-        if let row = model.selected {
-            if row.text.isEmpty {
-                Text(verbatim: MemoryText.emptyRow)
-                    .foregroundStyle(.secondary)
-                    .padding(8)
-            } else {
-                // Le texte COMPLET, à l'identique : ni troncature, ni reformatage —
-                // les lignes vides et les espaces de fin sont conservés (S-5).
-                Text(verbatim: row.text)
-                    .font(.system(.body, design: .monospaced))
+    private var header: some View {
+        let title = MemoryText.title(row.text)
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(verbatim: title.isEmpty ? MemoryText.emptyRow : title)
+                    .font(.title3.bold())
                     .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .padding(8)
+                    .accessibilityIdentifier("memoire.detail.title")
+                TimelineView(.periodic(from: .now, by: 60)) { context in
+                    let subtitle = MemoryText.subtitle(row: row, nowMs: context.date.timeIntervalSince1970 * 1000)
+                    if !subtitle.isEmpty {
+                        Text(verbatim: subtitle)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-        } else {
-            Text(verbatim: MemoryText.nothingSelected)
-                .foregroundStyle(.secondary)
-                .padding(8)
+            Spacer(minLength: 0)
+            Button {
+                let pasteboard = NSPasteboard.general
+                pasteboard.clearContents()
+                pasteboard.setString(row.text, forType: .string)
+            } label: {
+                Label(MemoryText.copy, systemImage: "doc.on.doc")
+            }
+            .help(MemoryText.copyHelp)
+            .disabled(row.text.isEmpty)
+            .accessibilityIdentifier("memoire.detail.copy")
         }
+    }
+
+    private var technicalDetails: some View {
+        DisclosureGroup(MemoryText.technicalDetails) {
+            VStack(alignment: .leading, spacing: 6) {
+                LabeledContent(MemoryText.identifierLabel) {
+                    Text(verbatim: row.id)
+                        .font(.callout.monospaced())
+                        .textSelection(.enabled)
+                }
+                if let scope {
+                    LabeledContent(MemoryText.scopeLabel) {
+                        Text(verbatim: scope)
+                            .textSelection(.enabled)
+                    }
+                }
+                if let score = row.semanticScore {
+                    LabeledContent(MemoryText.scoreLabel) {
+                        Text(verbatim: MemoryText.decimal(score))
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .padding(.top, 6)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .accessibilityIdentifier("memoire.detail.technical")
     }
 }
 
-/// Une ligne de la liste : l'identifiant et l'APERÇU du texte (S-1, S-3).
+/// Une ligne de la liste (S-19 R2) : le TITRE court du souvenir
+/// (`MemoryText.title`) sur au plus deux lignes, puis UNE ligne de contexte (date
+/// relative · étiquettes) composée par `MemoryText.subtitle`. Le texte complet
+/// n'est lu que dans le détail.
 private struct MemoryRowView: View {
     let row: MemoryRow
+    let nowMs: Double
 
     var body: some View {
-        let preview = MemoryText.preview(row.text)
-        VStack(alignment: .leading, spacing: 2) {
-            Text(verbatim: row.id)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(verbatim: preview)
+        let subtitle = MemoryText.subtitle(row: row, nowMs: nowMs)
+        let title = MemoryText.title(row.text)
+        VStack(alignment: .leading, spacing: 3) {
+            Text(verbatim: title.isEmpty ? MemoryText.emptyRow : title)
+                .font(.body.weight(.medium))
+                .foregroundStyle(title.isEmpty ? .secondary : .primary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+            if !subtitle.isEmpty {
+                Text(verbatim: subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
         }
-        .accessibilityLabel("\(row.id) — \(preview)")
+        .padding(.vertical, 6)
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("memoire.list.row.\(row.id)")
     }
 }

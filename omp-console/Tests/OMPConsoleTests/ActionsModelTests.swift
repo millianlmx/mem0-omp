@@ -54,7 +54,7 @@ func sendTextJournalsDelivered() throws {
     #expect(entry.kindLabel == ActionsText.textLabel)
     #expect(entry.targetLabel == "depot/alpha")
     #expect(entry.state == .delivered)
-    #expect(ActionsText.journalLine(for: entry) == "texte · depot/alpha · déposé")
+    #expect(ActionsText.journalLine(for: entry) == "\(ActionsText.textLabel) · depot/alpha · \(ActionsText.delivered)")
 
     let names = try FileManager.default.contentsOfDirectory(atPath: box)
     #expect(names == ["0001700000000000-abcd.json"])
@@ -123,7 +123,7 @@ func commandGoesToTaken() throws {
     let entry = try #require(model.journal.first)
     #expect(entry.id == "console-1700000000000-abcd")
     #expect(entry.state == .awaitingAck)
-    #expect(ActionsText.journalLine(for: entry) == "jalon specs · alpha · en attente dans le canal")
+    #expect(ActionsText.journalLine(for: entry) == "\(ActionsText.specsLabel) · alpha · \(ActionsText.awaitingAck)")
     #expect(FileManager.default.fileExists(atPath: writer.ackPath(id: entry.id)) == false)
 
     // Le pilote écrit l'accusé : la passe suivante bascule l'entrée.
@@ -136,7 +136,7 @@ func commandGoesToTaken() throws {
 
     #expect(model.journal.first?.state == .taken)
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "jalon specs · alpha · prise en charge")
+        == "\(ActionsText.specsLabel) · alpha · \(ActionsText.taken)")
 }
 
 @MainActor
@@ -156,11 +156,11 @@ func commandRefusalIsVerbatim() throws {
 
     #expect(model.journal.first?.state == .refused(reason: motif))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "jalon specs · alpha · refusée : \(motif)")
+        == "\(ActionsText.specsLabel) · alpha · refusée : \(motif)")
 }
 
 @MainActor
-@Test("reponses-et-jalons/AC-10 : sans accusé l'entrée reste « en attente dans le canal »")
+@Test("reponses-et-jalons/AC-10 : sans accusé l'entrée reste envoyée, sans prise en charge")
 func awaitingWithoutAckStays() throws {
     let fixture = StoreFixture()
     let model = makeModel(fixture)
@@ -176,7 +176,7 @@ func awaitingWithoutAckStays() throws {
 
     let entry = try #require(model.journal.first)
     #expect(entry.state == .awaitingAck)
-    #expect(ActionsText.journalLine(for: entry) == "jalon revue · alpha · en attente dans le canal")
+    #expect(ActionsText.journalLine(for: entry) == "\(ActionsText.reviewLabel) · alpha · \(ActionsText.awaitingAck)")
     // Le fichier de commande, lui, n'est jamais retiré par l'app.
     #expect(FileManager.default.fileExists(atPath: joinPath(writer.commandDir, "0001700000000000-abcd.json")))
 }
@@ -197,7 +197,7 @@ func commandFailureIsAFailureLine() throws {
     }
     #expect(reason.hasPrefix("écriture impossible ("))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "jalon specs · alpha · échec : \(reason)")
+        == "\(ActionsText.specsLabel) · alpha · échec : \(reason)")
 }
 
 @MainActor
@@ -296,7 +296,7 @@ func outOfZoneInboxIsRefusedAndJournalled() throws {
     }
     #expect(reason == "chemin refusé (\(outside)) : hors de \(joinPath(fixture.root, "inbox"))")
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "texte · depot/alpha · échec : \(reason)")
+        == "\(ActionsText.textLabel) · depot/alpha · échec : \(reason)")
     #expect(!FileManager.default.fileExists(atPath: outside), "aucun dossier hors zone n'est créé")
 }
 
@@ -318,5 +318,134 @@ func blockedBoxInsideZoneJournalsFailure() throws {
     }
     #expect(reason.hasPrefix("écriture impossible ("))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "texte · depot/alpha · échec : \(reason)")
+        == "\(ActionsText.textLabel) · depot/alpha · échec : \(reason)")
+}
+
+// MARK: - omp-console-redesign (S-7, S-8, S-10)
+
+/// Une horloge que le test avance à la main.
+private final class ManualClock: @unchecked Sendable {
+    var now: Double
+    init(_ now: Double) { self.now = now }
+    var storeClock: StoreClock { StoreClock { [unowned self] in self.now } }
+}
+
+/// Un pilote factice : il enregistre chaque dépôt sollicité et peut échouer.
+@MainActor
+private final class RecordingPilot: PipelinePilot {
+    var calls: [String] = []
+    var failure: Error?
+    func ensurePilot(repoRoot: String) async throws {
+        calls.append(repoRoot)
+        if let failure { throw failure }
+    }
+}
+
+@MainActor
+@Test("omp-console-redesign/AC-5 : une commande sans accusé après 20 s est signalée, puis rattrapée par un accusé tardif")
+func unacknowledgedCommandIsSignaledThenCaughtUp() throws {
+    let fixture = StoreFixture()
+    let clock = ManualClock(t0)
+    let model = ActionsModel(writer: PipelineWriter(stateDir: fixture.root), clock: clock.storeClock, salt: { "abcd" })
+    let writer = PipelineWriter(stateDir: fixture.root)
+
+    model.launch(title: "export", description: "un besoin", repoRoot: fixture.root)
+    let id = try #require(model.journal.first?.id)
+    #expect(model.journal.first?.state == .awaitingAck)
+
+    clock.now = t0 + 19_999
+    model.pollAcks()
+    #expect(model.journal.first?.state == .awaitingAck)
+
+    clock.now = t0 + 20_000
+    model.pollAcks()
+    let entry = try #require(model.journal.first)
+    #expect(entry.state == .unacknowledged)
+    #expect(ActionsText.journalLine(for: entry) == "lancement · export · \(ActionsText.unacknowledged)")
+
+    // Un accusé tardif rattrape l'entrée : elle est restée sondée.
+    try FileManager.default.createDirectory(atPath: writer.commandAckDir, withIntermediateDirectories: true)
+    try Data("{\"version\":1,\"id\":\"\(id)\",\"repo\":\"/x\",\"kind\":\"launch\",\"state\":\"taken\",\"reason\":null,\"at\":1}"
+        .utf8).write(to: URL(fileURLWithPath: writer.ackPath(id: id)))
+    clock.now = t0 + 25_000
+    model.pollAcks()
+    #expect(model.journal.first?.state == .taken)
+}
+
+@MainActor
+@Test("omp-console-redesign/AC-6 : « Répondre » dépose une commande reply exacte et sollicite le pilote")
+func replyWritesExactCommandAndSolicitsPilot() async throws {
+    let fixture = StoreFixture()
+    let pilot = RecordingPilot()
+    let model = ActionsModel(
+        writer: PipelineWriter(stateDir: fixture.root), clock: fixedClock, salt: { "abcd" }, pilot: pilot
+    )
+    let writer = PipelineWriter(stateDir: fixture.root)
+    var waiting = cardAction(repoRoot: fixture.root, inbox: nil, waitKind: .answer)
+    waiting.run = nil
+    waiting.waitPrompt = "Quel format ?"
+
+    // Texte blanc : aucun fichier, aucun geste, aucun pilote.
+    model.replyText = "  \n"
+    model.submitReply(waiting)
+    #expect(model.journal.isEmpty)
+    #expect((try? FileManager.default.contentsOfDirectory(atPath: writer.commandDir))?.isEmpty ?? true)
+    #expect(pilot.calls.isEmpty)
+
+    model.replyText = "CSV, séparateur point-virgule"
+    model.submitReply(waiting)
+    #expect(model.replyText.isEmpty, "le champ est vidé après l'envoi")
+    let entry = try #require(model.journal.first)
+    #expect(entry.kindLabel == ActionsText.answerLabel)
+    #expect(entry.targetLabel == "alpha")
+    #expect(entry.state == .awaitingAck)
+
+    let data = try #require(FileManager.default.contents(atPath: joinPath(writer.commandDir, "0001700000000000-abcd.json")))
+    guard case .object(let object)? = JSONValue.parse(data) else {
+        Issue.record("la commande déposée doit être un objet JSON")
+        return
+    }
+    #expect(Set(object.keys) == ["version", "id", "sentAt", "repo", "kind", "slug", "text"])
+    #expect(object["version"] == .number(1))
+    #expect(object["id"] == .string("console-1700000000000-abcd"))
+    #expect(object["sentAt"] == .number(t0))
+    #expect(object["repo"] == .string(realpathOr(fixture.root)))
+    #expect(object["kind"] == .string("reply"))
+    #expect(object["slug"] == .string("alpha"))
+    #expect(object["text"] == .string("CSV, séparateur point-virgule"))
+
+    await model.pilotTask?.value
+    #expect(pilot.calls == [fixture.root], "le pilote est sollicité une fois, pour le dépôt de la feature")
+}
+
+@MainActor
+@Test("omp-console-redesign/AC-5 : un conducteur qui ne démarre pas fait échouer l'entrée en attente, « Reprendre » journalise son résultat")
+func conductorFailureFailsPendingEntryAndResumeJournals() async throws {
+    let fixture = StoreFixture()
+    let pilot = RecordingPilot()
+    pilot.failure = SessionHostError.binaryNotFound(searched: ["/a/omp"], override: nil)
+    let model = ActionsModel(
+        writer: PipelineWriter(stateDir: fixture.root), clock: fixedClock, salt: { "abcd" }, pilot: pilot
+    )
+    let motif = "conducteur : \(SessionHostError.binaryNotFound(searched: ["/a/omp"], override: nil).userMessage)"
+
+    model.launch(title: "export", description: "un besoin", repoRoot: fixture.root)
+    await model.pilotTask?.value
+    #expect(model.journal.first?.state == .failed(reason: motif))
+
+    // « Reprendre » : aucune commande, une entrée « reprise » qui dit le résultat.
+    model.resume(cardAction(repoRoot: fixture.root, inbox: nil))
+    await model.pilotTask?.value
+    #expect(model.journal.first?.kindLabel == ActionsText.resumeLabel)
+    #expect(model.journal.first?.state == .failed(reason: motif))
+
+    pilot.failure = nil
+    model.resume(cardAction(repoRoot: fixture.root, inbox: nil))
+    await model.pilotTask?.value
+    #expect(model.journal.first?.state == .taken)
+    #expect(pilot.calls.count == 3)
+    // Arrêter un lot ne sollicite JAMAIS le pilote.
+    model.stopLot(cardAction(repoRoot: fixture.root, inbox: nil))
+    await model.pilotTask?.value
+    #expect(pilot.calls.count == 3)
 }

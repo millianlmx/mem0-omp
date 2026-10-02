@@ -1,17 +1,26 @@
-// La fenêtre « Projet » (BR-3) : en-tête, volets Plan et Document, session
-// hébergée (transcription, dialogue, saisie).
+// La vue « Projet » (BR-3 ; S-19 R3 de omp-console-redesign), au patron de
+// « Session OMP » : un en-tête (nom, dépôt, état en mots, arrêt, détails), le
+// volet « PR et CI », Plan | Document, puis la CONVERSATION de la session hébergée
+// (`ConversationThread`, sur le fichier de session d'`omp`) et un composeur. Les
+// dialogues de `/project` s'ouvrent en feuille ; les trames brutes, l'activité
+// résumée, le journal, le pid et l'identifiant de session vivent dans
+// l'inspecteur « Détails techniques » — jamais dans la vue principale.
 //
 // La section « Projet » de la coque rend EXACTEMENT cette vue (`ProjectView`),
-// pour qu'il n'existe pas deux surfaces à tenir synchronisées.
+// pour qu'il n'existe pas deux surfaces à tenir synchronisées ; seule la fenêtre
+// « Projet » prend le nom du projet pour titre.
 //
-// Aucun attribut macro SwiftUI : l'état de dépliage et l'état de la feuille vivent
-// dans le modèle. Les volets de session viennent de `Session/RpcPanes.swift`.
+// Aucun attribut macro SwiftUI : l'état de dépliage, des feuilles, des
+// confirmations et de l'inspecteur vit dans le modèle. Le dialogue vient de
+// `Session/RpcPanes.swift`.
 
 import AppKit
 import SwiftUI
 
 struct ProjectConsoleView: View {
     @ObservedObject var model: ProjectConsoleModel
+    // Le host est observé séparément : sa transcription, son journal et sa file
+    // de dialogues changent sans que le modèle publie quoi que ce soit.
     @ObservedObject var host: SessionHost
 
     init(model: ProjectConsoleModel) {
@@ -43,6 +52,10 @@ struct ProjectConsoleView: View {
         model.pendingMerge.map { ProjectViewText.prMergeConfirmMessage(title: $0.title) } ?? ""
     }
 
+    private func stop() {
+        Task { @MainActor in await model.closeConduite() }
+    }
+
     var body: some View {
         Group {
             if model.canStartConduite {
@@ -51,124 +64,323 @@ struct ProjectConsoleView: View {
                 conduite
             }
         }
-        .padding(12)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .frame(minWidth: 760, minHeight: 520)
+        .frame(minWidth: 480, minHeight: 420)
+        .navigationSubtitle(model.identity?.name ?? "")
         .background(WindowAccessor { model.attachWindow($0) })
         .sheet(isPresented: $model.isLaunchSheetPresented) {
             ProjectLaunchSheet(model: model)
         }
         .alert(ProjectViewText.refusalTitle, isPresented: refusalBinding) {
-            Button(ProjectViewText.closeConduite) {
-                Task { @MainActor in await model.closeConduite() }
-            }
             Button(ProjectViewText.launchCancel, role: .cancel) { model.dismissRefusal() }
+            Button(ProjectViewText.closeConduite, role: .destructive) { stop() }
         } message: {
             Text(model.refusal?.message ?? "")
         }
+        .confirmationDialog(
+            ProjectViewText.closeConfirmTitle,
+            isPresented: $model.isStopConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button(ProjectViewText.closeConduite, role: .destructive) { stop() }
+                .accessibilityIdentifier("projet.close.confirm")
+            Button(ProjectViewText.launchCancel, role: .cancel) {}
+        } message: {
+            Text(ProjectViewText.closeConfirmMessage)
+        }
         .alert(mergeTitle, isPresented: mergeBinding) {
+            Button(ProjectViewText.prMergeCancelButton, role: .cancel) { model.cancelMerge() }
             Button(ProjectViewText.prMergeConfirmButton) {
                 Task { @MainActor in await model.confirmMerge() }
             }
-            Button(ProjectViewText.prMergeCancelButton, role: .cancel) { model.cancelMerge() }
         } message: {
             Text(mergeMessage)
         }
         .task { model.start() }
     }
 
+    /// Aucun projet piloté : un état vide standard, une seule action proéminente.
+    /// Le message d'une session interrompue y reste lisible.
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(ProjectViewText.emptyTitle)
-                .font(.largeTitle)
-            Text(ProjectViewText.emptyHelp)
-                .foregroundStyle(.secondary)
+        ContentUnavailableView {
+            Label(ProjectViewText.emptyTitle, systemImage: "scope")
+        } description: {
+            VStack(spacing: 6) {
+                Text(ProjectViewText.emptyHelp)
+                if !model.statusMessage.isEmpty {
+                    Text(model.statusMessage)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("projet.error")
+                }
+            }
+        } actions: {
             Button(ProjectViewText.startConduite) { model.presentLaunchSheet() }
+                .buttonStyle(.borderedProminent)
                 .accessibilityIdentifier("projet.start")
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+    // MARK: - Pilotage
 
     private var conduite: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: 0) {
             ProjectHeaderView(model: model)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
             Divider()
-
-            switch model.state {
-            case .starting:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text(ProjectViewText.sessionStarting)
+            if model.state == .closing {
+                VStack(spacing: 10) {
+                    ProgressView()
+                    Text(ProjectViewText.sessionClosing)
                         .foregroundStyle(.secondary)
                 }
-                Spacer(minLength: 0)
-            case .closing:
-                Text(ProjectViewText.sessionClosing)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // Les deux volets défilent chacun : rien n'est coupé au bas de la
+                // fenêtre, quelle que soit la hauteur du plan ou de la conversation.
+                VSplitView {
+                    projectPanes
+                        .padding(12)
+                        .frame(minHeight: 220, idealHeight: 300, maxHeight: .infinity)
+                    conversationArea
+                        .frame(minHeight: 200, maxHeight: .infinity)
+                }
+            }
+            Divider()
+            composer
+        }
+        // Un seul dialogue à la fois : le PREMIER de la file ; la feuille ne se
+        // ferme que par une réponse ou une annulation, qui le retirent de la file.
+        .sheet(item: pendingDialog) { dialog in
+            ProjectDialogSheet(model: model, dialog: dialog)
+        }
+        .inspector(isPresented: $model.technicalShown) { inspector }
+    }
+
+    /// PR et CI, puis Plan | Document.
+    @ViewBuilder private var projectPanes: some View {
+        if model.state == .starting {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text(ProjectViewText.sessionStarting)
                     .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            default:
-                sessionPanes
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                ProjectPRPane(model: model)
+                HSplitView {
+                    ProjectPlanPane(
+                        sections: model.project.map(projectPlanSections) ?? [],
+                        project: model.project,
+                        expanded: $model.expandedSegments
+                    )
+                    .frame(minWidth: 260, maxHeight: .infinity)
+                    ProjectDocPane(blocks: model.docBlocks)
+                        .frame(minWidth: 260, maxHeight: .infinity)
+                }
             }
         }
     }
 
-    private var sessionPanes: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            ProjectPRPane(model: model)
+    // MARK: - Conversation (S-19 R3)
 
-            HSplitView {
-                ProjectPlanPane(
-                    sections: model.project.map(projectPlanSections) ?? [],
-                    project: model.project,
-                    expanded: $model.expandedSegments
-                )
-                ProjectDocPane(docText: model.docText)
-            }
-            .frame(minHeight: 180)
-
-            if let notice = model.notice {
-                Text(notice)
-                    .font(.system(.caption, design: .monospaced))
+    @ViewBuilder private var conversationArea: some View {
+        if let conversation = model.conversation {
+            ConversationThread(model: conversation)
+                .id(conversation.target.sessionFile)
+                .accessibilityIdentifier("projet.conversation")
+        } else if model.state == .starting {
+            VStack(spacing: 10) {
+                ProgressView()
+                Text(ProjectViewText.sessionStarting)
                     .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("projet.notice")
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView {
+                Label(ProjectViewText.conversationWaitingTitle, systemImage: "bubble.left.and.bubble.right")
+            } description: {
+                Text(ProjectViewText.conversationWaiting)
+            }
+            .controlSize(.small)
+        }
+    }
+
+    // MARK: - Composeur (patron « Session OMP »)
+
+    private var composerPlaceholder: String {
+        if model.hasPendingDialog { return ProjectViewText.composerBlocked }
+        return model.state == .live ? ProjectViewText.composerLive : ProjectViewText.composerIdle
+    }
+
+    private func send() {
+        Task { @MainActor in await model.sendText() }
+    }
+
+    private var composer: some View {
+        HStack(spacing: 8) {
+            TextField(composerPlaceholder, text: $model.prompt)
+                .textFieldStyle(.plain)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 9)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+                .disabled(model.state != .live || model.hasPendingDialog)
+                .onSubmit { if model.canSendText { send() } }
+                .accessibilityIdentifier("projet.prompt")
+            Button { send() } label: {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.canSendText ? Color.accentColor : Color.secondary)
+            .disabled(!model.canSendText)
+            .accessibilityLabel(SessionConsoleText.send)
+            .accessibilityIdentifier("projet.send")
+        }
+        .padding(12)
+    }
+
+    // MARK: - Dialogue en feuille
+
+    private var pendingDialog: Binding<RpcDialogRequest?> {
+        Binding(get: { host.dialogQueue.first }, set: { _ in })
+    }
+
+    // MARK: - Inspecteur « Détails techniques » (patron S-18 R8)
+
+    private var inspector: some View {
+        Form {
+            Section(SessionConsoleText.sectionSession) {
+                LabeledContent(ProjectViewText.launchRepository) {
+                    Text(model.identity?.repoRoot.path ?? SessionConsoleText.none)
+                        .textSelection(.enabled)
+                        .truncationMode(.middle)
+                }
+                LabeledContent(SessionConsoleText.fieldState, value: model.sessionStatus.text)
+                LabeledContent(
+                    SessionConsoleText.fieldPid,
+                    value: host.pid.map { String($0) } ?? SessionConsoleText.none
+                )
+                LabeledContent(SessionConsoleText.fieldSessionId) {
+                    Text(host.sessionId ?? SessionConsoleText.none)
+                        .font(.system(.callout, design: .monospaced))
+                        .textSelection(.enabled)
+                        .truncationMode(.middle)
+                }
+                Text(model.sessionStatusText)
+                    .font(.callout)
+                    .textSelection(.enabled)
             }
 
-            RpcTranscriptPane(idPrefix: "projet", lines: host.transcript)
-
-            if let dialog = host.dialogQueue.first {
-                Divider()
-                RpcDialogPane(
-                    idPrefix: "projet",
-                    dialog: dialog,
-                    dialogText: $model.dialogText,
-                    selectedOptionIndex: $model.selectedOptionIndex,
-                    canAnswer: model.canAnswerDialog,
-                    onAnswerSelected: { model.answerSelectedOption() },
-                    onAnswerText: { model.answerDialogText() },
-                    onConfirm: { model.confirmDialog($0) },
-                    onCancel: { model.cancelDialog() },
-                    onAppeared: { model.dialogAppeared($0) }
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.orange, lineWidth: model.awaitingUser ? 2 : 0)
-                )
+            Section(SessionConsoleText.sectionActivity) {
+                let activity = model.activity
+                if activity.isEmpty {
+                    Text(SessionConsoleText.noActivity)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(activity) { line in
+                    ProjectActivityRow(line: line)
+                }
             }
+            .accessibilityIdentifier("projet.activity")
 
-            Divider()
-            RpcPromptBar(
+            Section(SessionConsoleText.sectionJournal) {
+                if host.journal.isEmpty {
+                    Text(SessionConsoleText.noJournal)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(host.journal.reversed()) { entry in
+                    Text(SessionConsoleText.journalLine(entry))
+                        .font(.caption)
+                        .textSelection(.enabled)
+                }
+            }
+            .accessibilityIdentifier("projet.journal")
+
+            Section {
+                DisclosureGroup(SessionConsoleText.rawFrames, isExpanded: $model.rawFramesShown) {
+                    RpcTranscriptPane(idPrefix: "projet", lines: host.transcript)
+                        .frame(minHeight: 240)
+                }
+                .accessibilityIdentifier("projet.rawFrames")
+            }
+        }
+        .formStyle(.grouped)
+        .inspectorColumnWidth(min: 320, ideal: 420, max: 640)
+    }
+}
+
+// MARK: - Feuille de dialogue (S-19 R3)
+
+/// Un dialogue de `/project`, au patron de « Session OMP » : « OMP vous demande »,
+/// le compteur « Question n sur m » quand le titre se termine par « (n/m) », la
+/// question, puis — pour la revue du plan — le reste du titre RENDU en Markdown
+/// dans un bloc défilable d'au plus 360 pt, enfin la forme de réponse et sa
+/// rangée de boutons (à droite). Le plan reçu est montré EN ENTIER : seul le bloc
+/// défile, rien n'est coupé. Le fond est opaque : la fenêtre ne transparaît pas.
+struct ProjectDialogSheet: View {
+    @ObservedObject var model: ProjectConsoleModel
+    let dialog: RpcDialogRequest
+
+    static let bodyMaxHeight: CGFloat = 360
+
+    var body: some View {
+        let parts = ProjectDialogText.split(dialog.title)
+        let step = ProjectDialogText.step(parts.heading)
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(SessionConsoleText.dialogTitle)
+                    .font(.title3.bold())
+                if let counter = step.counter {
+                    Text(counter)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("projet.dialog.step")
+                }
+            }
+            Text(step.question)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("projet.dialog.title")
+            if let text = parts.body {
+                // `fixedSize` vertical : le bloc prend la hauteur de son contenu,
+                // bornée à 360 pt ; au-delà, il défile.
+                ScrollView {
+                    MarkdownBlocksView(markdown: text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                }
+                .frame(maxHeight: Self.bodyMaxHeight)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
+                .accessibilityIdentifier("projet.dialog.body")
+            }
+            RpcDialogPane(
                 idPrefix: "projet",
-                prompt: $model.prompt,
-                placeholder: model.state == .live
-                    ? "Saisissez un texte puis ↩."
-                    : "Lancez la conduite pour saisir un texte.",
-                isEditable: model.state == .live,
-                canSend: model.canSendText,
-                blockedByDialog: model.hasPendingDialog,
-                blockedNote: "Répondez au dialogue en cours pour débloquer le tour.",
-                onSend: { Task { @MainActor in await model.sendText() } }
+                dialog: dialog,
+                dialogText: $model.dialogText,
+                selectedOptionIndex: $model.selectedOptionIndex,
+                canAnswer: model.canAnswerDialog,
+                onAnswerSelected: { model.answerSelectedOption() },
+                onAnswerText: { model.answerDialogText() },
+                onConfirm: { model.confirmDialog($0) },
+                onCancel: { model.cancelDialog() },
+                onAppeared: { model.dialogAppeared($0) },
+                showsHeader: false,
+                showsTitle: false,
+                cancelTitle: ProjectViewText.dialogCancel
             )
         }
+        .padding(20)
+        .frame(width: parts.body == nil ? 480 : 620)
+        .background(.background)
+        .interactiveDismissDisabled(true)
+        .onExitCommand { model.cancelDialog() }
     }
 }
 
@@ -176,52 +388,76 @@ struct ProjectConsoleView: View {
 
 struct ProjectHeaderView: View {
     @ObservedObject var model: ProjectConsoleModel
+    // L'état en mots suit le host, qui publie sans passer par le modèle.
+    @ObservedObject var host: SessionHost
+
+    init(model: ProjectConsoleModel) {
+        self.model = model
+        self.host = model.host
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Text(model.identity?.name ?? "—")
-                    .font(.headline)
-                    .accessibilityIdentifier("projet.name")
-                Text(model.identity?.repoRoot.path ?? "")
-                    .font(.system(.callout, design: .monospaced))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier("projet.repo")
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.identity?.name ?? ProjectViewText.windowTitle)
+                        .font(.title2.weight(.semibold))
+                        .lineLimit(1)
+                        .accessibilityIdentifier("projet.name")
+                    if let repo = model.identity?.repoRoot.path {
+                        Text(ConsoleFormat.path(repo))
+                            .font(.callout)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(.secondary)
+                            .accessibilityIdentifier("projet.repo")
+                    }
+                }
                 Spacer(minLength: 8)
-                Button(ProjectViewText.closeConduite) {
-                    Task { @MainActor in await model.closeConduite() }
+                StatusPill(status: model.sessionStatus)
+                    .accessibilityIdentifier("projet.sessionStatus")
+                Button { model.technicalShown.toggle() } label: {
+                    Label(SessionConsoleText.details, systemImage: "info.circle")
+                        .labelStyle(.iconOnly)
+                }
+                .help(SessionConsoleText.details)
+                .accessibilityLabel(SessionConsoleText.details)
+                .accessibilityIdentifier("projet.details")
+                Button(ProjectViewText.closeConduite, role: .destructive) {
+                    model.isStopConfirmationPresented = true
                 }
                 .disabled(!model.canCloseConduite)
                 .accessibilityIdentifier("projet.close")
-                Button(ProjectViewText.startConduite) { model.presentLaunchSheet() }
-                    .disabled(!model.canStartConduite)
-                    .accessibilityIdentifier("projet.start")
             }
 
             if let project = model.project {
-                Text(projectStatusLine(of: project))
-                    .accessibilityIdentifier("projet.status")
-                Text(projectProgressLine(of: project))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(projectStatusLine(of: project))
+                        .accessibilityIdentifier("projet.status")
+                    Text("·")
+                        .foregroundStyle(.secondary)
+                    Text(projectProgressLine(of: project))
+                        .foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .lineLimit(1)
             }
 
-            Text(model.sessionStatusText)
-                .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .accessibilityIdentifier("projet.sessionStatus")
             if !model.statusMessage.isEmpty {
                 Text(model.statusMessage)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.callout)
                     .foregroundStyle(.red)
+                    .textSelection(.enabled)
                     .accessibilityIdentifier("projet.error")
+            }
+
+            if model.notice != nil {
+                notice
             }
 
             if model.awaitingUser {
                 Text(model.waitingDialogCount > 1
-                    ? "\(ProjectViewText.waitingBanner) \(ProjectViewText.waitingCount(model.waitingDialogCount))"
+                    ? ProjectViewText.waitingCount(model.waitingDialogCount)
                     : ProjectViewText.waitingBanner)
                     .font(.callout)
                     .foregroundStyle(.orange)
@@ -235,6 +471,53 @@ struct ProjectHeaderView: View {
             }
         }
     }
+
+    /// La dernière notification du pilote, DÉCODÉE et rendue en Markdown ; un
+    /// long message défile dans un bloc borné plutôt que de pousser la vue.
+    private var notice: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "info.circle")
+                .foregroundStyle(.secondary)
+            ScrollView {
+                MarkdownBlocksView(blocks: model.noticeBlocks)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 96)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("projet.notice")
+    }
+}
+
+// MARK: - Une ligne de l'activité
+
+/// Une trame humanisée : symbole, titre court, détail d'une ligne (même rendu
+/// que l'inspecteur de « Session OMP »).
+private struct ProjectActivityRow: View {
+    let line: RpcEventLine
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: line.symbol)
+                .foregroundStyle(.secondary)
+                .frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(line.title)
+                    .font(.callout)
+                if !line.detail.isEmpty {
+                    Text(line.detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
 }
 
 // MARK: - Volet « Plan »
@@ -247,7 +530,7 @@ struct ProjectPlanPane: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Plan")
+                Text(ProjectViewText.planTitle)
                     .font(.headline)
                 if project == nil {
                     Text(ProjectViewText.projectMissing)
@@ -258,7 +541,7 @@ struct ProjectPlanPane: View {
                 } else {
                     ForEach(sections, id: \.index) { section in
                         DisclosureGroup(isExpanded: binding(for: section.index)) {
-                            VStack(alignment: .leading, spacing: 6) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 ForEach(Array(section.features.enumerated()), id: \.offset) { _, row in
                                     ProjectPlanRowView(row: row)
                                 }
@@ -272,9 +555,20 @@ struct ProjectPlanPane: View {
                                 }
                             }
                             .padding(.leading, 8)
+                            .padding(.top, 4)
                         } label: {
-                            Text("Segment \(section.index + 1) — \(section.name) (\(section.state.label))")
-                                .font(.system(.callout, design: .monospaced))
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(ProjectViewText.segmentTitle(
+                                    index: section.index + 1,
+                                    count: sections.count,
+                                    name: section.name
+                                ))
+                                .font(.callout.weight(.medium))
+                                Spacer(minLength: 4)
+                                Text(section.state.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
@@ -298,9 +592,9 @@ struct ProjectPlanRowView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(row.slug)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(.callout)
                 Text("· \(row.stateLabel)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -313,9 +607,6 @@ struct ProjectPlanRowView: View {
                 if let prUrl = row.prUrl, let url = Self.linkURL(prUrl) {
                     Link("PR", destination: url)
                         .accessibilityIdentifier("projet.pr")
-                } else if row.prUrl != nil {
-                    Text(row.prUrl ?? ProjectViewText.noPR)
-                        .font(.caption)
                 }
             }
             if !row.intention.isEmpty {
@@ -341,18 +632,19 @@ struct ProjectPlanRowView: View {
 
 // MARK: - Volet « Document »
 
+/// `PROJECT.md` rendu par le composant Markdown commun de l'app (titres, listes,
+/// vrais tableaux), analysé une fois par version par le modèle.
 struct ProjectDocPane: View {
-    let docText: String?
+    let blocks: [MarkdownBlock]?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Document")
+                Text(ProjectViewText.docTitle)
                     .font(.headline)
-                if let docText {
-                    ForEach(Array(projectDocBlocks(markdown: docText).enumerated()), id: \.offset) { _, block in
-                        blockView(block)
-                    }
+                if let blocks {
+                    MarkdownBlocksView(blocks: blocks)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
                     Text(ProjectViewText.docMissing)
                         .foregroundStyle(.secondary)
@@ -360,30 +652,7 @@ struct ProjectDocPane: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(8)
-            .textSelection(.enabled)
         }
         .accessibilityIdentifier("projet.doc")
-    }
-
-    @ViewBuilder
-    private func blockView(_ block: ProjectDocBlock) -> some View {
-        switch block {
-        case .heading(let level, let text):
-            Text(text)
-                .font(level <= 1 ? .title : (level == 2 ? .title2 : .title3))
-                .fontWeight(.semibold)
-        case .paragraph(let attributed):
-            Text(attributed)
-        case .tableHeader(let cells):
-            Text(cells.joined(separator: "  |  "))
-                .font(.system(.callout, design: .monospaced))
-                .fontWeight(.semibold)
-        case .tableRow(let cells):
-            Text(projectDocRowText(cells))
-                .font(.system(.caption, design: .monospaced))
-        case .rawText(let text):
-            Text(text)
-                .font(.system(.body, design: .monospaced))
-        }
     }
 }

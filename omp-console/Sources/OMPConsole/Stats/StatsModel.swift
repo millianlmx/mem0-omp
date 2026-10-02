@@ -24,6 +24,8 @@ final class StatsModel: ObservableObject {
     @Published private(set) var projects: [StatsProjectOption] = []
     /// La clé du projet affiché. `nil` = le premier de l'ordre `projectOrder`.
     @Published private(set) var selectedKey: String?
+    /// Le tri du tableau des runs. Vide = l'ordre de S-1 (features puis runs).
+    @Published var sortOrder: [KeyPathComparator<StatsRow>] = []
 
     /// Comment ouvrir un abonnement NEUF : un `StoreHub` arrêté ne se rouvre pas.
     private let makeHub: () -> StoreHub

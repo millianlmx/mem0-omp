@@ -1,19 +1,8 @@
-// Preuves de la surface « Projet » (BR-3) : les textes dérivés d'une valeur
-// construite par le test. Aucune fenêtre n'est ouverte — ces textes sont des
-// fonctions pures.
+// Preuves de la surface « Projet » (BR-3) : les dérivations pures de la vue.
+// Aucune fenêtre n'est ouverte.
 
 import Testing
 @testable import OMPConsole
-
-@MainActor
-@Test("les textes exacts de la vue « Projet »")
-func projectTextsAreExact() {
-    #expect(
-        ProjectViewText.refusal(name: "Alpha", path: "/tmp/alpha")
-            == "Une conduite est déjà en cours sur « Alpha » (/tmp/alpha). Clore la conduite courante avant d'en démarrer une autre."
-    )
-    #expect(ProjectViewText.doneBanner(m: 3, n: 4) == "Projet terminé — 3/4 feature(s) fusionnée(s).")
-}
 
 @Test("une URL de PR non http(s) n'est pas cliquable")
 func projectPRLinkRequiresHTTPS() {

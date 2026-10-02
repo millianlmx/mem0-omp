@@ -1,32 +1,55 @@
-// Le rendu d'UNE ligne de conversation (S-6 de la feature `visionneuse-de-session`).
+// Le rendu d'UNE ligne de conversation (S-6 de la feature `visionneuse-de-session`,
+// restylé par S-15 de omp-console-redesign).
 //
 // Chaque forme de fait a son aspect, et CHAQUE état est traité :
-//   — un message porte son rôle (« vous », « agent ») et son texte ;
-//   — une réflexion est une sous-ligne REPLIÉE d'un message assistant ;
-//   — un appel d'outil a un en-tête cliquable (nom + cible + statut) et un corps
-//     replié par défaut (arguments, résultat, diff) ;
-//   — un résultat sans appel est un bloc autonome ;
+//   — un message de l'utilisateur est une bulle alignée à droite, teintée de
+//     l'accent ; un message de l'agent est un texte pleine largeur ; tous deux
+//     rendent leur Markdown EN LIGNE ;
+//   — une réflexion est une sous-ligne REPLIÉE d'un message de l'agent ;
+//   — un appel d'outil a un en-tête cliquable (symbole, verbe, cible, statut) et
+//     un corps replié par défaut (arguments, résultat, diff) dans un bloc opaque ;
+//   — un résultat sans appel porte le même en-tête ;
 //   — un appel `ask` est mis en évidence, déplié d'emblée, et n'offre AUCUN geste ;
-//   — un marqueur (compaction, résumé de branche) est une ligne discrète.
+//   — un marqueur (compaction, résumé de branche) est un séparateur centré qui
+//     déplie son résumé.
+//
+// Le fil ne défile qu'en hauteur : chaque texte monospacé du corps défile en
+// largeur dans son propre bloc, il n'est jamais tronqué.
 //
 // La distinction des lignes de diff ne repose pas sur la seule couleur : chaque
 // ligne garde son marqueur d'origine ET porte une valeur d'accessibilité
 // (« ligne ajoutée », « ligne supprimée », « contexte », « en-tête de diff »).
-//
-// Réutilisation exigée du dépôt : police monospacée `.system(.callout, design:
-// .monospaced)`, `.textSelection(.enabled)` pour les corps, composants système —
-// il n'existe aucun design system ici.
+// Le statut d'un appel d'outil, montré par un symbole, porte de même un libellé
+// d'accessibilité.
 
+import AppKit
 import SwiftUI
 
-struct SessionRowView: View {
+/// La ligne n'observe PAS le modèle (S-18 R8) : elle reçoit ses plis et le geste
+/// de repli, et se compare par valeur (`Equatable`, `.equatable()` côté fil). Une
+/// publication du modèle — un fait ajouté, un pli, le suivi — ne réévalue donc
+/// que les lignes dont la valeur a changé, pas toutes les lignes visibles.
+struct SessionRowView: View, Equatable {
     let row: SessionRow
-    @ObservedObject var model: SessionViewerModel
+    /// La ligne est dépliée (appel d'outil, résultat, marqueur).
+    let isOpen: Bool
+    /// La réflexion d'un message de l'agent est dépliée.
+    let isThinkingOpen: Bool
+    /// Replie ou déplie la clé donnée (`row.id` ou `thinkingKey(of:)`).
+    let onToggle: (String) -> Void
+
+    /// La clé de pli de la réflexion d'une ligne, distincte de celle de la ligne :
+    /// replier la réflexion ne touche pas la ligne du message.
+    static func thinkingKey(of rowId: String) -> String { "\(rowId).thinking" }
+
+    nonisolated static func == (lhs: SessionRowView, rhs: SessionRowView) -> Bool {
+        lhs.row == rhs.row && lhs.isOpen == rhs.isOpen && lhs.isThinkingOpen == rhs.isThinkingOpen
+    }
 
     var body: some View {
         switch row.kind {
         case .user(let content):
-            message(role: "vous", text: content.text)
+            user(content.text)
         case .assistant(let content):
             assistant(content)
         case .toolCall(let content):
@@ -40,40 +63,48 @@ struct SessionRowView: View {
 
     // MARK: - Messages
 
-    private func message(role: String, text: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(role)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            body(text)
+    private func user(_ text: String) -> some View {
+        HStack {
+            Spacer(minLength: 80)
+            Text(ConversationText.attributed(text))
+                .textSelection(.enabled)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.15), in: RoundedRectangle(cornerRadius: 14))
+                .accessibilityIdentifier("viewer.user.\(row.id)")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(6)
-        .background(Color.gray.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
     }
 
     private func assistant(_ content: AssistantRow) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let thinking = content.thinking, !thinking.isEmpty {
                 thinkingRow(thinking)
             }
-            message(role: "agent", text: content.text)
+            // Un message qui ne porte que de la réflexion a un texte blanc (souvent
+            // des sauts de ligne) : le rendre creuserait un vide dans le fil. Le
+            // texte de l'agent est rendu en BLOCS Markdown (S-19 R1), mémoïsés.
+            if !content.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                MarkdownBlocksView(blocks: ConversationText.blocks(content.text))
+                    .font(.body)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("viewer.assistant.\(row.id)")
+            }
         }
     }
 
-    /// Une sous-ligne repliable. Sa clé de pli est distincte de celle de la ligne
-    /// (« … .thinking ») : replier la réflexion ne touche pas la ligne du message.
+    /// Une sous-ligne repliable, sous sa propre clé de pli (`thinkingKey(of:)`).
     private func thinkingRow(_ thinking: String) -> some View {
-        let key = thinkingKey
-        let isOpen = model.isExpanded(key)
-        return VStack(alignment: .leading, spacing: 2) {
+        let isOpen = isThinkingOpen
+        return VStack(alignment: .leading, spacing: 4) {
             Button {
-                model.toggleFold(key)
+                onToggle(Self.thinkingKey(of: row.id))
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                        .font(.caption)
-                    Text("Réflexion")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text(ConversationText.thinking)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer(minLength: 0)
@@ -83,54 +114,50 @@ struct SessionRowView: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("viewer.thinking.\(row.id)")
-            if isOpen { body(thinking) }
+            if isOpen {
+                Text(ConversationText.attributed(thinking))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
-        .padding(.leading, 8)
     }
-
-    private var thinkingKey: String { "\(row.id).thinking" }
 
     // MARK: - Appels d'outil
 
     private func toolCall(_ content: ToolCallRow) -> some View {
-        let isOpen = model.isExpanded(row.id)
-        return VStack(alignment: .leading, spacing: 4) {
+        let title = content.target.isEmpty
+            ? ToolVerb.title(content.name)
+            : "\(ToolVerb.title(content.name)) · \(content.target)"
+        return VStack(alignment: .leading, spacing: 6) {
             Button {
-                model.toggleFold(row.id)
+                onToggle(row.id)
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: isOpen ? "chevron.down" : "chevron.right")
-                        .font(.caption)
-                    Text("\(content.name)(\(content.target))")
-                        .font(.system(.callout, design: .monospaced))
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .accessibilityIdentifier("viewer.toolcall.header.\(row.id)")
-                    Spacer(minLength: 8)
-                    Text(status(content))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
+                toolHeader(
+                    isOpen: isOpen,
+                    symbol: ToolVerb.symbol(content.name),
+                    title: title,
+                    result: content.result,
+                    headerId: "viewer.toolcall.header.\(row.id)"
+                )
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("viewer.toolcall.\(row.id)")
 
             if isOpen {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     if let ask = content.ask {
                         askBlock(ask)
                     }
                     section("Arguments") {
-                        body(content.argumentsJSON)
+                        monospaced(content.argumentsJSON)
                     }
                     if let result = content.result, hasResult(result) {
                         section("Résultat") { resultBody(result) }
                     }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 8)
+                .toolBody()
                 // Le corps est son PROPRE élément d'accessibilité : sans cela, son
                 // identifiant se propage aux textes qu'il contient et masque ceux
                 // des lignes de diff (« viewer.diff.<ligne>.<index> ») et du bloc
@@ -141,16 +168,58 @@ struct SessionRowView: View {
         }
     }
 
-    /// Le statut de l'en-tête : « en attente » tant qu'aucun résultat n'est arrivé,
-    /// puis le nombre de lignes du résultat — `0` pour un résultat vide.
-    private func status(_ content: ToolCallRow) -> String {
-        guard let result = content.result else { return "⇒ en attente" }
-        let lines = lineCount(result.text)
-        return result.isError ? "⇒ erreur · \(lines) lignes" : "⇒ ok · \(lines) lignes"
+    /// L'en-tête d'un appel : chevron, symbole, verbe (et cible), puis le statut —
+    /// en attente tant qu'aucun résultat n'est arrivé, terminé ou en erreur ensuite.
+    private func toolHeader(
+        isOpen: Bool,
+        symbol: String,
+        title: String,
+        result: ToolResultRow?,
+        headerId: String?
+    ) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: isOpen ? "chevron.down" : "chevron.right")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Image(systemName: symbol)
+                .foregroundStyle(.secondary)
+            if let headerId {
+                headerTitle(title).accessibilityIdentifier(headerId)
+            } else {
+                headerTitle(title)
+            }
+            Spacer(minLength: 8)
+            toolStatus(result)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
-    private func lineCount(_ text: String) -> Int {
-        text.isEmpty ? 0 : text.split(separator: "\n", omittingEmptySubsequences: false).count
+    private func headerTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    @ViewBuilder
+    private func toolStatus(_ result: ToolResultRow?) -> some View {
+        if let result {
+            if result.isError {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+                    .accessibilityLabel("erreur")
+            } else {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("terminé")
+            }
+        } else {
+            ProgressView()
+                .controlSize(.mini)
+                .accessibilityLabel("en cours")
+        }
     }
 
     private func hasResult(_ result: ToolResultRow) -> Bool {
@@ -158,16 +227,26 @@ struct SessionRowView: View {
     }
 
     private func standaloneResult(_ content: ToolResultRow) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(content.name ?? "outil") (sans appel)")
-                .font(.system(.callout, design: .monospaced))
-                .foregroundStyle(.secondary)
-            if hasResult(content) {
+        let name = content.name ?? "outil"
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                onToggle(row.id)
+            } label: {
+                toolHeader(
+                    isOpen: isOpen,
+                    symbol: ToolVerb.symbol(name),
+                    title: "\(ToolVerb.title(name)) \(ConversationText.withoutCall)",
+                    result: content,
+                    headerId: nil
+                )
+            }
+            .buttonStyle(.plain)
+            if isOpen, hasResult(content) {
                 section("Résultat") { resultBody(content) }
-                    .padding(.leading, 8)
+                    .toolBody()
+                    .accessibilityElement(children: .contain)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Question `ask`
@@ -191,7 +270,7 @@ struct SessionRowView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         Text(question.question)
-                            .font(.system(.callout, design: .monospaced))
+                            .font(.body)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("viewer.ask.\(row.id).question.\(index)")
@@ -226,21 +305,33 @@ struct SessionRowView: View {
     // MARK: - Marqueurs
 
     private func marker(_ content: MarkerRow) -> some View {
-        Text(markerText(content))
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.vertical, 2)
-    }
-
-    private func markerText(_ content: MarkerRow) -> String {
-        switch content {
-        case .compaction(_, let tokensBefore):
-            return tokensBefore.map { "Compaction — \($0) jetons avant" } ?? "Compaction"
-        case .branchSummary(_, let fromId):
-            return fromId.isEmpty
-                ? "Résumé de branche — depuis la racine"
-                : "Résumé de branche — depuis \(fromId)"
+        let (title, summary): (String, String) = switch content {
+        case .compaction(let summary, _): (ConversationText.compaction, summary)
+        case .branchSummary(let summary, _): (ConversationText.branchSummary, summary)
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            Button {
+                onToggle(row.id)
+            } label: {
+                HStack(spacing: 8) {
+                    Rectangle().fill(.quaternary).frame(height: 1)
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                    Rectangle().fill(.quaternary).frame(height: 1)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("viewer.marker.\(row.id)")
+            if isOpen, !summary.isEmpty {
+                Text(ConversationText.attributed(summary))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
     }
 
@@ -259,14 +350,17 @@ struct SessionRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Un corps monospacé et sélectionnable. Il ne se coupe PAS à la largeur de la
-    /// fenêtre : un fait long fait défiler plutôt que d'être tronqué (AC-3).
-    private func body(_ text: String) -> some View {
-        Text(text)
-            .font(.system(.callout, design: .monospaced))
-            .textSelection(.enabled)
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(maxWidth: .infinity, alignment: .leading)
+    /// Un corps monospacé et sélectionnable. Il ne se coupe PAS à la largeur du
+    /// fil : une ligne longue défile en largeur dans son bloc plutôt que d'être
+    /// tronquée (AC-3 de `visionneuse-de-session`).
+    private func monospaced(_ text: String) -> some View {
+        ScrollView(.horizontal) {
+            Text(text)
+                .font(.system(.callout, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func resultBody(_ result: ToolResultRow) -> some View {
@@ -282,7 +376,7 @@ struct SessionRowView: View {
     private func pieceView(_ piece: ResultPiece) -> some View {
         switch piece {
         case .text(let text):
-            body(text)
+            monospaced(text)
         case .diff(let lines):
             diffView(lines)
         }
@@ -317,18 +411,22 @@ struct SessionRowView: View {
         return pieces
     }
 
+    /// Un bloc de diff défile en largeur d'UN tenant : ses lignes restent alignées.
     private func diffView(_ lines: [NumberedDiffLine]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(lines) { numbered in
-                Text(numbered.line.text)
-                    .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(color(of: numbered.line.tone))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .accessibilityIdentifier("viewer.diff.\(row.id).\(numbered.index)")
-                    .accessibilityValue(toneLabel(numbered.line.tone))
+        ScrollView(.horizontal) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(lines) { numbered in
+                    Text(numbered.line.text)
+                        .font(.system(.callout, design: .monospaced))
+                        .foregroundStyle(color(of: numbered.line.tone))
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .accessibilityIdentifier("viewer.diff.\(row.id).\(numbered.index)")
+                        .accessibilityValue(toneLabel(numbered.line.tone))
+                }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func color(of tone: DiffTone) -> Color {
@@ -349,6 +447,16 @@ struct SessionRowView: View {
         case .context: return "contexte"
         case .section: return "en-tête de diff"
         }
+    }
+}
+
+private extension View {
+    /// Le corps déplié d'un appel : un bloc OPAQUE (le contenu ne prend jamais le
+    /// verre, Doc-1).
+    func toolBody() -> some View {
+        padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 

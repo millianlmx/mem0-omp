@@ -1,5 +1,5 @@
-// Les trois volets RPC partagés par la fenêtre « Session OMP » et la fenêtre
-// « Projet » (S-4, BR-3) : transcription, dialogue en attente, barre de prompt.
+// Les volets RPC partagés par la fenêtre « Session OMP » et la vue « Projet »
+// (S-4, BR-3) : transcription brute (inspecteur) et dialogue en attente.
 //
 // Ils sont paramétrés par un `idPrefix` (`"session"` / `"projet"`) et par des
 // `Binding`/callbacks : AUCUNE seconde implémentation du dialogue n'existe, et
@@ -11,7 +11,7 @@ import SwiftUI
 struct RpcTranscriptPane: View {
     let idPrefix: String
     let lines: [TranscriptLine]
-    var emptyText: String = "Aucun événement pour l'instant."
+    var emptyText: String = SessionConsoleText.noEvent
 
     var body: some View {
         ScrollViewReader { proxy in
@@ -44,6 +44,16 @@ struct RpcTranscriptPane: View {
 }
 
 /// Le dialogue en attente : le PREMIER de la file, avec sa forme de réponse.
+/// « Session OMP » et « Projet » le montrent en feuille, sous leur propre titre
+/// (S-15, S-19 R3 de omp-console-redesign) ; « Projet » rend lui-même le titre
+/// du dialogue (`showsTitle: false`) pour en séparer le corps multi-lignes.
+///
+/// Les options d'un `select` sont une liste de boutons radio : chaque ligne
+/// dit qu'elle se choisit, son libellé et sa description passent à la ligne
+/// plutôt que d'être coupés, et la liste grandit avec son contenu jusqu'à une
+/// hauteur maximale au-delà de laquelle elle défile. Les boutons tiennent sur
+/// UNE rangée alignée à droite : l'annulation, puis l'action par défaut (↩, ou
+/// ⌘↩ sous un éditeur multi-ligne), seule mise en avant.
 struct RpcDialogPane: View {
     let idPrefix: String
     let dialog: RpcDialogRequest
@@ -55,120 +65,151 @@ struct RpcDialogPane: View {
     let onConfirm: (Bool) -> Void
     let onCancel: () -> Void
     let onAppeared: (RpcDialogRequest) -> Void
+    var showsHeader: Bool = false
+    var showsTitle: Bool = true
+    var cancelTitle: String = SessionConsoleText.cancel
+    var cancelShortcut: KeyboardShortcut = KeyboardShortcut(.escape, modifiers: [])
 
-    private var optionSelection: Binding<Int?> {
-        Binding(get: { selectedOptionIndex }, set: { selectedOptionIndex = $0 })
-    }
+    /// La hauteur au-delà de laquelle la liste des options défile.
+    private static let optionsMaxHeight: CGFloat = 280
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Dialogue en attente")
-                .font(.headline)
-            Text(dialog.title)
-                .font(.system(.callout, design: .monospaced))
-                .accessibilityIdentifier("\(idPrefix).dialog.title")
+        VStack(alignment: .leading, spacing: 12) {
+            if showsHeader {
+                Text(SessionConsoleText.dialogTitle)
+                    .font(.headline)
+            }
+            if showsTitle {
+                Text(dialog.title)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("\(idPrefix).dialog.title")
+            }
             if let message = dialog.message {
                 Text(message)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            switch dialog.method {
-            case .select:
-                if dialog.options.isEmpty {
-                    Text("Aucune option proposée.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    List(selection: optionSelection) {
-                        ForEach(Array(dialog.options.enumerated()), id: \.offset) { index, option in
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(option)
-                                if let description = description(at: index) {
-                                    Text(description)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .tag(index)
-                        }
-                    }
-                    .frame(height: 120)
-                    .accessibilityIdentifier("\(idPrefix).dialog.options")
-                }
-                Button("Répondre") { onAnswerSelected() }
-                    .disabled(!canAnswer)
-                    .accessibilityIdentifier("\(idPrefix).dialog.answer")
+            answerField
 
-            case .confirm:
-                HStack(spacing: 8) {
-                    Button("Confirmer") { onConfirm(true) }
-                        .disabled(!canAnswer)
-                        .accessibilityIdentifier("\(idPrefix).dialog.answer")
-                    Button("Refuser") { onConfirm(false) }
-                        .disabled(!canAnswer)
-                }
-
-            case .input:
-                TextField(dialog.placeholder ?? "", text: $dialogText)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { onAnswerText() }
-                Button("Répondre") { onAnswerText() }
-                    .disabled(!canAnswer)
-                    .accessibilityIdentifier("\(idPrefix).dialog.answer")
-
-            case .editor:
-                TextEditor(text: $dialogText)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(height: 100)
-                Button("Répondre") { onAnswerText() }
-                    .disabled(!canAnswer)
-                    .accessibilityIdentifier("\(idPrefix).dialog.answer")
+            HStack(spacing: 8) {
+                Spacer()
+                Button(cancelTitle) { onCancel() }
+                    .keyboardShortcut(cancelShortcut)
+                    .accessibilityIdentifier("\(idPrefix).dialog.cancel")
+                defaultActions
             }
-
-            Button("Annuler ce dialogue") { onCancel() }
-                .keyboardShortcut(.escape, modifiers: [])
-                .accessibilityIdentifier("\(idPrefix).dialog.cancel")
         }
         .onAppear { onAppeared(dialog) }
         .onChange(of: dialog.id) { _, _ in onAppeared(dialog) }
     }
 
+    // MARK: - Champ de réponse
+
+    @ViewBuilder private var answerField: some View {
+        switch dialog.method {
+        case .select:
+            if dialog.options.isEmpty {
+                Text(SessionConsoleText.noOption)
+                    .foregroundStyle(.secondary)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(dialog.options.enumerated()), id: \.offset) { index, option in
+                            optionRow(index: index, option: option)
+                        }
+                    }
+                    .padding(4)
+                }
+                .scrollIndicators(.visible)
+                // La liste prend la hauteur de son contenu, plafonnée : au-delà,
+                // elle défile au lieu de couper les dernières options.
+                .frame(maxHeight: Self.optionsMaxHeight)
+                .fixedSize(horizontal: false, vertical: true)
+                .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("\(idPrefix).dialog.options")
+            }
+        case .confirm:
+            EmptyView()
+        case .input:
+            // ↩ déclenche « Répondre », le bouton par défaut : aucun `onSubmit`,
+            // qui enverrait la réponse une seconde fois.
+            TextField(dialog.placeholder ?? "", text: $dialogText)
+                .textFieldStyle(.roundedBorder)
+        case .editor:
+            TextEditor(text: $dialogText)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 100, maxHeight: 200)
+        }
+    }
+
+    /// Une option, en bouton radio : le rond plein marque l'option choisie.
+    private func optionRow(index: Int, option: String) -> some View {
+        let isSelected = selectedOptionIndex == index
+        return Button {
+            selectedOptionIndex = index
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(SessionConsoleText.optionLabel(option))
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let description = description(at: index) {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+        .accessibilityIdentifier("\(idPrefix).dialog.option.\(index)")
+    }
+
+    // MARK: - Actions
+
+    /// L'action par défaut, après l'annulation : « Répondre », ou « Refuser »
+    /// puis « Confirmer » pour une confirmation.
+    @ViewBuilder private var defaultActions: some View {
+        switch dialog.method {
+        case .select:
+            answerButton(action: onAnswerSelected, shortcut: .defaultAction)
+        case .input:
+            answerButton(action: onAnswerText, shortcut: .defaultAction)
+        case .editor:
+            // Sous un éditeur multi-ligne, ↩ est un saut de ligne : ⌘↩ répond.
+            answerButton(action: onAnswerText, shortcut: KeyboardShortcut(.return, modifiers: .command))
+        case .confirm:
+            Button(SessionConsoleText.decline) { onConfirm(false) }
+                .disabled(!canAnswer)
+                .accessibilityIdentifier("\(idPrefix).dialog.decline")
+            Button(SessionConsoleText.confirm) { onConfirm(true) }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canAnswer)
+                .accessibilityIdentifier("\(idPrefix).dialog.answer")
+        }
+    }
+
+    private func answerButton(action: @escaping () -> Void, shortcut: KeyboardShortcut) -> some View {
+        Button(SessionConsoleText.answer, action: action)
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(shortcut)
+            .disabled(!canAnswer)
+            .accessibilityIdentifier("\(idPrefix).dialog.answer")
+    }
+
     private func description(at index: Int) -> String? {
         guard dialog.optionDescriptions.indices.contains(index) else { return nil }
         return dialog.optionDescriptions[index]
-    }
-}
-
-/// La barre de saisie libre. La règle de disponibilité vient du modèle : ici, on
-/// n'affiche qu'un état et on remonte le geste.
-struct RpcPromptBar: View {
-    let idPrefix: String
-    @Binding var prompt: String
-    let placeholder: String
-    let isEditable: Bool
-    let canSend: Bool
-    let blockedByDialog: Bool
-    let blockedNote: String
-    let onSend: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                TextField(placeholder, text: $prompt)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { onSend() }
-                    .disabled(!isEditable || blockedByDialog)
-                    .accessibilityIdentifier("\(idPrefix).prompt")
-                Button("Envoyer") { onSend() }
-                    .disabled(!canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .accessibilityIdentifier("\(idPrefix).send")
-            }
-            if blockedByDialog {
-                Text(blockedNote)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
     }
 }

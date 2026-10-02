@@ -1,54 +1,90 @@
-// Une carte du tableau (BR-4) : le dépôt et le titre, l'état et le maillon, le
-// modèle, l'URL de PR, la durée et les marques. Elle est cliquable (sélection) et
-// accessible (identifiant + libellé).
+// Une carte du tableau (refonte du 2026-10-02) : le titre, le dépôt quand
+// l'ardoise en mêle plusieurs, la nature de l'attente en badge quand la voie ne
+// la dit pas déjà (« Question », « Specs à valider », « En pause », « PR
+// ouverte »…), la question de l'agent en aperçu, puis — pour une feature
+// vivante — son étape, sa barre d'avancement et sa durée. Un clic sélectionne, un
+// double clic ouvre le détail ; elle est accessible (identifiant + libellé).
 //
-// La DURÉE vit sous un `TimelineView(.periodic(from: .now, by: 1))` (Doc-1) : elle
-// est RECALCULÉE depuis `context.date`, jamais accumulée d'un cran à l'autre — le
-// système peut employer une cadence plus lente que l'intervalle demandé.
+// Surface de CONTENU (HIG Materials) : carte opaque `.consoleCard`, jamais de
+// verre. La DURÉE vit sous un `TimelineView(.periodic(from: .now, by: 30))` : à
+// la minute, elle n'a pas besoin d'un rendu par seconde.
 
 import SwiftUI
 
 struct KanbanCardView: View {
     let card: KanbanCard
     let selected: Bool
+    /// Le dépôt n'est écrit que si l'ardoise en mêle plusieurs.
+    let showsRepo: Bool
     let onTap: () -> Void
+    let onOpen: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("\(card.repo) · \(card.title)")
-                .font(.callout)
-                .bold()
-            Text("\(card.state) · \(card.phaseText)")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Text(card.modelText)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Text(card.prText)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                Text(card.elapsedText(nowMs: context.date.timeIntervalSince1970 * 1000))
-                    .font(.callout)
-                    .monospacedDigit()
+        let status = ConsoleStatus.of(card: card)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(KanbanCardPresentation.title(card))
+                    .font(.headline)
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                if let badge = KanbanCardPresentation.badge(card) {
+                    StatusBadge(status: badge)
+                        .fixedSize()
+                }
             }
-            if let marks = card.marksText {
-                Text("marques : \(marks)")
-                    .font(.callout)
-                    .foregroundStyle(.red)
+            if showsRepo {
+                Text(card.repo)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
+            if let preview = KanbanCardPresentation.preview(card) {
+                Text(preview)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            if KanbanCardPresentation.showsProgress(card) {
+                PipelineProgressBar(steps: PipelineProgress.steps(for: card))
+            }
+            footer
         }
-        .padding(8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(selected ? Color.accentColor.opacity(0.25) : Color.clear)
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(selected ? Color.accentColor : Color.secondary.opacity(0.3))
-        )
+        .consoleCard(selected: selected)
         // Le contenu EST la forme cliquable : sans elle, seuls les textes le sont.
-        .contentShape(Rectangle())
-        .onTapGesture { onTap() }
+        .contentShape(.rect(cornerRadius: ConsoleSurface.cardRadius))
+        .onTapGesture(count: 2) { onOpen() }
+        // Simultané : le simple clic sélectionne sans attendre le délai du double.
+        .simultaneousGesture(TapGesture().onEnded { onTap() })
+        .accessibilityElement(children: .combine)
         .accessibilityIdentifier("kanban.card.\(card.id)")
-        .accessibilityLabel("\(card.title), \(card.state)")
+        .accessibilityLabel("\(card.title), \(status.text)")
+        .accessibilityAddTraits(selected ? [.isSelected, .isButton] : .isButton)
+        .accessibilityAction(named: KanbanText.showDetails) { onOpen() }
+    }
+
+    /// L'étape à gauche, la durée à droite — chacune seulement si elle a un sens.
+    @ViewBuilder
+    private var footer: some View {
+        let showsPhase = KanbanCardPresentation.showsProgress(card)
+        let showsDuration = KanbanCardPresentation.showsDuration(card)
+        if showsPhase || showsDuration {
+            HStack(spacing: 6) {
+                if showsPhase, let phase = card.phase {
+                    Label(PhaseText.title(phase), systemImage: PhaseText.symbol(phase))
+                        .labelStyle(.titleAndIcon)
+                }
+                Spacer(minLength: 4)
+                if showsDuration {
+                    TimelineView(.periodic(from: .now, by: 30)) { context in
+                        Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
+                            .monospacedDigit()
+                    }
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
     }
 }

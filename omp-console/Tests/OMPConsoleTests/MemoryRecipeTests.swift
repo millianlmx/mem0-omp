@@ -48,9 +48,10 @@ func recetteManuelleRendLaMemoireDuProjet() async throws {
     guard health.isAvailable else { return }
 
     let page = try await service.all(scope: scope)
-    print("[recette] sommaire    : \(page.total) souvenir(s)")
+    print("[recette] sommaire    : \(MemoryText.summaryCount(page.total))")
+    let nowMs = Date().timeIntervalSince1970 * 1000
     for row in page.rows.prefix(3) {
-        print("[recette]   [\(row.id)] \(MemoryText.preview(row.text))")
+        print("[recette]   [\(row.id)] \(MemoryText.title(row.text)) — \(MemoryText.subtitle(row: row, nowMs: nowMs))")
     }
 
     let received = try await service.search(
@@ -63,8 +64,8 @@ func recetteManuelleRendLaMemoireDuProjet() async throws {
         floor: MemorySearch.threshold,
         limit: MemorySearch.defaultLimit
     )
-    print("[recette] recherche   : \(selection.candidates) candidat(s), \(selection.scored) score(s), \(selection.kept.count) retenu(s)")
+    print("[recette] recherche   : \(ConsoleFormat.count(selection.candidates, "candidat", "candidats")), \(ConsoleFormat.count(selection.scored, "score", "scores")), \(ConsoleFormat.count(selection.kept.count, "retenu", "retenus"))")
     for row in selection.kept {
-        print("[recette]   [\(row.id)] \(row.semanticScore.map { String(format: "%.3f", $0) } ?? "?") \(MemoryText.preview(row.text))")
+        print("[recette]   [\(row.id)] \(row.semanticScore.map { String(format: "%.3f", $0) } ?? "?") \(MemoryText.title(row.text)) — \(MemoryText.subtitle(row: row, nowMs: nowMs))")
     }
 }

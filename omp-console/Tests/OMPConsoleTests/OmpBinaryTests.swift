@@ -41,7 +41,7 @@ func firstExecutablePathEntryWins() throws {
         "PATH": "/nonexistent-first:\(directory.path)",
         "HOME": "/nonexistent-home",
         "OMP_CONSOLE_OMP_BINARY": "",
-    ])
+    ], chosen: nil)
 
     guard case .success(let url) = resolution else {
         Issue.record("résolution attendue en succès, obtenu \(resolution)")
@@ -126,6 +126,42 @@ func emptyOverrideIsIgnored() {
     var environment = ["PATH": "/a", "HOME": "/h"]
     environment["OMP_CONSOLE_OMP_BINARY"] = ""
     #expect(OmpBinaryResolver.candidates(environment: environment).first == "/a/omp")
+}
+
+@Test("omp-console-redesign/AC-7 : l'emplacement choisi passe avant PATH, jamais avant la variable d'échappement")
+func chosenPathComesAfterOverrideBeforePath() throws {
+    #expect(OmpBinaryResolver.candidates(environment: ["PATH": "/a", "HOME": "/h"], chosen: "/choisi/omp") == [
+        "/choisi/omp",
+        "/a/omp",
+        "/omp",
+        "/h/.bun/bin/omp",
+        "/opt/homebrew/bin/omp",
+        "/usr/local/bin/omp",
+    ])
+    #expect(OmpBinaryResolver.candidates(
+        environment: ["PATH": "/a", "OMP_CONSOLE_OMP_BINARY": "/x/omp"], chosen: "/choisi/omp"
+    ) == ["/x/omp"], "un chemin imposé reste le SEUL candidat")
+
+    // Un `omp` choisi hors des emplacements connus est trouvé.
+    let directory = try makeTemporaryDirectory()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let binary = try writeBinary(in: directory, executable: true)
+    let resolution = OmpBinaryResolver.resolve(
+        environment: ["PATH": "/nonexistent", "HOME": "/nonexistent"],
+        chosen: binary.path
+    )
+    guard case .success(let url) = resolution else {
+        Issue.record("l'emplacement choisi devait être retenu, obtenu \(resolution)")
+        return
+    }
+    #expect(url.path == binary.path)
+
+    // Une préférence vide est absente.
+    let suite = "omp-binary-tests-\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suite)!
+    defer { defaults.removePersistentDomain(forName: suite) }
+    defaults.set("", forKey: OmpBinaryResolver.chosenPathKey)
+    #expect(OmpBinaryResolver.chosenPath(defaults: defaults) == nil)
 }
 
 @Test("client-rpc-omp/AC-14 : le lancement réel d'un chemin inexploitable lève sans session vivante")

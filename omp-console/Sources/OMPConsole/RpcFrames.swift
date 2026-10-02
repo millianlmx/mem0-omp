@@ -27,14 +27,6 @@ enum RpcMode: String, CaseIterable, Identifiable, Sendable {
     case rpc = "rpc"
 
     var id: String { rawValue }
-
-    /// Libellé du sélecteur de mode de la fenêtre (S-9).
-    var title: String {
-        switch self {
-        case .rpcUI: "rpc-ui — dialogues actifs"
-        case .rpc: "rpc — sans dialogues"
-        }
-    }
 }
 
 /// Le type `JSONValue` vit avec le modèle de session (`Session/SessionModel.swift`) :

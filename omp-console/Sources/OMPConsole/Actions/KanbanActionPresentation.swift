@@ -8,11 +8,18 @@
 import Foundation
 
 /// Ce qu'une carte offre comme geste. L'ordre d'apparition est celui de
-/// `zones(for:)` : question **ou** steer, puis jalon, puis arrêt.
+/// `zones(for:)` : question **ou** steer, puis question en texte, puis jalon, puis
+/// reprise, puis arrêt.
 enum KanbanActionZone: Sendable, Equatable {
     case pendingQuestion(toolCallId: String, question: String, options: [PanelAskOption])
     case steer
+    /// Une question en TEXTE d'un maillon terminé : la réponse part en commande
+    /// `reply` (S-10 de omp-console-redesign).
+    case textQuestion(slug: String, prompt: String?)
     case milestone(slug: String, kind: LotWaitKind)
+    /// Le pilote du lot est mort alors que la feature vit encore : « Reprendre »
+    /// fait conduire le dépôt par l'app (S-7, S-10 de omp-console-redesign).
+    case resume(repoRoot: String)
     case stopLot(repoRoot: String)
 }
 
@@ -23,7 +30,10 @@ enum KanbanActionPresentation {
     /// 2. sinon un run dont la boîte est publiée ⇒ `.steer`, **jamais** une question ;
     /// 3. `run.inbox == nil` ⇒ ni l'un ni l'autre (le motif est celui de `motif(for:)`) ;
     /// 4. `run == nil` ⇒ ni l'un ni l'autre ;
-    /// puis un jalon (`waiting` + `.specs`/`.review`) et l'arrêt (une feature de lot).
+    /// puis une question en texte (`waiting` + `.answer` sans question `ask` en vol,
+    /// donc jamais en même temps qu'une question en vol), un jalon (`waiting` +
+    /// `.specs`/`.review`), la reprise (marque `mort` sur une feature vivante) et
+    /// l'arrêt (une feature de lot).
     static func zones(for card: KanbanCard) -> [KanbanActionZone] {
         guard let action = card.action else { return [] }
         var zones: [KanbanActionZone] = []
@@ -39,8 +49,16 @@ enum KanbanActionPresentation {
             }
         }
         if let slug = action.slug, action.featureState == .waiting,
+           action.waitKind == .answer, action.run?.pendingAsk == nil {
+            zones.append(.textQuestion(slug: slug, prompt: action.waitPrompt))
+        }
+        if let slug = action.slug, action.featureState == .waiting,
            let kind = action.waitKind, kind == .specs || kind == .review {
             zones.append(.milestone(slug: slug, kind: kind))
+        }
+        if card.marks.contains(.mort), action.slug != nil, let repoRoot = action.repoRoot,
+           let state = action.featureState, state == .pending || state == .running || state == .waiting {
+            zones.append(.resume(repoRoot: repoRoot))
         }
         // Le canal n'a PAS d'arrêt par run : `stop` est adressé au dépôt, donc le
         // bouton n'est offert que sur une carte portant un LOT (S-8).
@@ -51,14 +69,23 @@ enum KanbanActionPresentation {
     }
 
     /// Le motif à afficher, non nul SEULEMENT quand la carte n'offre aucune zone :
-    /// un run non armé dit pourquoi, toute autre carte sans geste dit qu'elle n'en
-    /// porte aucun.
+    /// une exécution non armée dit pourquoi, toute autre carte sans geste dit
+    /// qu'elle n'en porte aucun.
     static func motif(for card: KanbanCard) -> String? {
         guard zones(for: card).isEmpty else { return nil }
         if let run = card.action?.run, run.inbox == nil {
-            return ActionsText.notArmed(run.label)
+            return ActionsText.notArmed
         }
         return ActionsText.noGesture
+    }
+
+    /// La carte offre « Reprendre » (S-10) : son pilote est mort alors que la
+    /// feature vit encore.
+    static func resumable(_ card: KanbanCard) -> Bool {
+        zones(for: card).contains { zone in
+            if case .resume = zone { return true }
+            return false
+        }
     }
 }
 
