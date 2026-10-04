@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.23.0 — 2026-10-04
+
+- feat(req,console): deux modèles d'orchestration par feature — req+specs et impl+review (#59) (b959057)
+
 ## omp-mem0-req 0.22.0 — 2026-10-02
 
 - feat(console,req,test,docs): OMP Console — refonte des écrans (une seule fenêtre) et commande reply du canal (f677513)
