@@ -129,11 +129,11 @@ func missingOmpImposesItsSheetFirst() {
         for welcomeSeen in [false, true] {
             #expect(MainSheetPolicy.sheet(
                 omp: missing, board: state, welcomeSeen: welcomeSeen, welcomeRequested: true,
-                launchFormShown: true, answerCardID: "ask"
+                launchFormShown: true, answerCardID: "ask", contract: nil
             ) == .ompRequired)
             #expect(MainSheetPolicy.sheet(
                 omp: missing, board: state, welcomeSeen: welcomeSeen, welcomeRequested: false,
-                launchFormShown: false, answerCardID: nil
+                launchFormShown: false, answerCardID: nil, contract: nil
             ) == .ompRequired)
         }
     }
@@ -146,7 +146,8 @@ func missingOmpImposesItsSheetFirst() {
     func policy() -> MainSheet? {
         MainSheetPolicy.sheet(
             omp: home.omp, board: .storeEmpty(dir: "/s"), welcomeSeen: home.welcomeSeen,
-            welcomeRequested: home.welcomeRequested, launchFormShown: false, answerCardID: home.answerCardID
+            welcomeRequested: home.welcomeRequested, launchFormShown: false, answerCardID: home.answerCardID,
+            contract: nil
         )
     }
     #expect(home.recheckFailed == false, "aucun échec dit avant le premier « Vérifier à nouveau »")
@@ -210,7 +211,7 @@ func welcomeOpensOnceOnAFreshInstall() {
         MainSheetPolicy.sheet(
             omp: home.omp, board: board, welcomeSeen: home.welcomeSeen,
             welcomeRequested: home.welcomeRequested, launchFormShown: launchFormShown,
-            answerCardID: home.answerCardID
+            answerCardID: home.answerCardID, contract: nil
         )
     }
     #expect(policy(first, .storeEmpty(dir: "/s")) == .welcome)
@@ -240,7 +241,7 @@ func answerOpensTheCardSheetWhileItWaits() {
     func policy(_ board: KanbanBoardState, answerCardID: String?) -> MainSheet? {
         MainSheetPolicy.sheet(
             omp: available, board: board, welcomeSeen: true, welcomeRequested: false,
-            launchFormShown: false, answerCardID: answerCardID
+            launchFormShown: false, answerCardID: answerCardID, contract: nil
         )
     }
 

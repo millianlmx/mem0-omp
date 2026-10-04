@@ -37,6 +37,7 @@ struct OMPConsoleApp: App {
     @StateObject private var projectModel = ProjectConsoleModel()
     @StateObject private var statsModel = StatsModel()
     @StateObject private var memoryModel = MemoryModel()
+    @StateObject private var contractModel = ContractModel()
     @StateObject private var homeModel = HomeModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
@@ -64,6 +65,7 @@ struct OMPConsoleApp: App {
                 actions: actionsModel,
                 projectModel: projectModel,
                 memoryModel: memoryModel,
+                contract: contractModel,
                 home: homeModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,

@@ -240,3 +240,55 @@ func restartSubscribesAgain() async {
     model.start()
     #expect(await awaitMainTrue { model.state.card("run:\(runId)") != nil })
 }
+
+// MARK: - Le chaînage « Lire le contrat » depuis le détail (S-6, BR-3)
+
+/// Une carte de feature en attente de specs, avec son worktree.
+private func waitingCard(slug: String, worktree: String) -> KanbanCard {
+    KanbanCard(
+        id: "feature:cle:\(slug)", column: .jalonSpecs, repo: "depot", title: slug, state: "attend",
+        phase: .specs, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
+        action: KanbanCardAction(
+            repoRoot: "/tmp/kanban/depot",
+            worktree: worktree,
+            slug: slug,
+            waitKind: .specs,
+            featureState: .waiting,
+            run: nil
+        )
+    )
+}
+
+@MainActor
+@Test("contract-display-omp-console/AC-1 : « Lire le contrat » depuis le détail ferme le détail, et la demande se consomme UNE fois")
+func contractRequestClosesDetailAndIsConsumedOnce() {
+    let fixture = StoreFixture()
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let card = waitingCard(slug: "contrat", worktree: "/tmp/kanban/arbre-contrat")
+
+    model.openDetail(card.id)
+    #expect(model.detailShown)
+
+    // Poser la demande ferme le détail : la feuille Contrat n'est demandée qu'à
+    // la fermeture effective (l'`onDismiss` de KanbanView consomme).
+    model.requestContract(card)
+    #expect(model.detailShown == false)
+    #expect(model.pendingContract == card)
+    #expect(model.consumePendingContract() == card)
+    #expect(model.pendingContract == nil)
+    #expect(model.consumePendingContract() == nil, "une demande ne se consomme qu'une fois")
+}
+
+@MainActor
+@Test("contract-display-omp-console/AC-2 : la demande consommée porte la carte du jalon specs, worktree compris")
+func contractRequestCarriesTheSpecsCard() {
+    let fixture = StoreFixture()
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let card = waitingCard(slug: "specs-a-valider", worktree: "/tmp/kanban/arbre-specs")
+
+    model.requestContract(card)
+    let consumed = model.consumePendingContract()
+    #expect(consumed?.id == card.id)
+    #expect(consumed?.action?.worktree == "/tmp/kanban/arbre-specs")
+    #expect(ContractDocument.moment(for: card) == .specs)
+}

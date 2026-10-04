@@ -32,6 +32,12 @@ final class KanbanModel: ObservableObject {
     @Published var technicalExpanded = false
     @Published var diagnosticTechnicalExpanded = false
 
+    /// La demande de feuille Contrat posée depuis la feuille de DÉTAIL (S-6) : la
+    /// fenêtre ne présente jamais deux feuilles à la fois, donc le détail se ferme
+    /// d'abord et la feuille Contrat n'est ouverte qu'à sa fermeture effective
+    /// (`onDismiss` de `KanbanView`, qui consomme la demande).
+    private(set) var pendingContract: KanbanCard?
+
     /// Comment ouvrir un abonnement NEUF : un `StoreHub` arrêté ne se rouvre pas
     /// (`stopped` est définitif), donc `start()` après `stop()` construit un hub
     /// neuf sur le MÊME magasin.
@@ -80,6 +86,21 @@ final class KanbanModel: ObservableObject {
     func openDetail(_ id: String) {
         select(id)
         detailShown = true
+    }
+
+    /// « Lire le contrat » depuis la feuille de détail : pose la demande PUIS
+    /// ferme le détail. La feuille Contrat n'est demandée qu'à la fermeture
+    /// effective du détail (`onDismiss`), jamais en même temps que lui.
+    func requestContract(_ card: KanbanCard) {
+        pendingContract = card
+        detailShown = false
+    }
+
+    /// Rend la demande en attente et l'EFFACE : une demande ne se consomme
+    /// qu'une fois.
+    func consumePendingContract() -> KanbanCard? {
+        defer { pendingContract = nil }
+        return pendingContract
     }
 
     /// La carte sélectionnée, quand elle existe encore.

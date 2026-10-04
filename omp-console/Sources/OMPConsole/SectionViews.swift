@@ -70,6 +70,9 @@ struct SectionDetail: View {
     /// Le modèle de la section « Mémoire » : même raison, la portée calculée, la
     /// liste affichée et la sélection survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
+    /// Le modèle de la feuille Contrat (S-7) : l'Accueil et Pipelines ouvrent la
+    /// feuille depuis leurs gestes, la racine la présente.
+    @ObservedObject var contract: ContractModel
     /// Le modèle d'alertes : l'Accueil y montre l'état des notifications.
     @ObservedObject var alerts: AlertsModel
     /// Les modèles des sections Session OMP, Terminal et Statistiques, à
@@ -89,8 +92,8 @@ struct SectionDetail: View {
     @ViewBuilder
     private var content: some View {
         switch section {
-        case .home: HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts)
-        case .kanban: KanbanView(model: kanban, actions: actions)
+        case .home: HomeView(home: home, kanban: kanban, actions: actions, console: console, alerts: alerts, contract: contract)
+        case .kanban: KanbanView(model: kanban, actions: actions, contract: contract)
         case .sessions: SessionsView(console: console)
         case .session: SessionConsoleSectionView(model: sessionModel)
         case .terminal: TerminalSectionView(model: terminalModel)

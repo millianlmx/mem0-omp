@@ -81,6 +81,11 @@ struct KanbanCardRun: Sendable, Equatable {
 struct KanbanCardAction: Sendable, Equatable {
     /// `lot.repoRoot`, sinon `project.repoRoot`, sinon `nil`.
     var repoRoot: String?
+    /// Le worktree ABSOLU de la feature de lot (`""` tant qu'il n'est pas créé) :
+    /// c'est lui qui localise le contrat de pipeline. `nil` pour une carte de
+    /// projet seule ou de run — valeur par défaut, donc les constructions
+    /// littérales des tests restent valides.
+    var worktree: String? = nil
     /// La feature de LOT seulement (nil pour une carte de projet seule ou de run).
     var slug: String?
     var waitKind: LotWaitKind?

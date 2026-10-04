@@ -9,8 +9,8 @@
 // l'Accueil) ; titre de fenêtre = la section courante, jamais le nom de l'app
 // (HIG Toolbars) ; barre d'outils PERSONNALISABLE « Nouvelle feature… » ; TOUT
 // vit dans cette fenêtre (plein écran) ; UNE feuille à la fois (« OMP est
-// requis », « Bienvenue », « Nouvelle feature », « Répondre »), déduite par
-// `MainSheetPolicy` (S-5).
+// requis », « Bienvenue », « Nouvelle feature », « Répondre », « Contrat »),
+// déduite par `MainSheetPolicy` (S-5).
 //
 // La sélection est liée par une `Binding(get:set:)` construite à la main : le
 // modèle n'expose qu'un `select(_:)` (D3, `@State` interdit).
@@ -40,6 +40,9 @@ struct ConsoleRootView: View {
     /// Le modèle de la section « Mémoire » : même raison, la portée et la liste
     /// survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
+    /// Le modèle de la feuille Contrat (S-7) : la feuille est présentée par la
+    /// racine, comme les autres — une seule à la fois.
+    @ObservedObject var contract: ContractModel
     /// L'état de l'Accueil : la disponibilité d'OMP commande aussi la barre
     /// d'outils et la feuille.
     @ObservedObject var home: HomeModel
@@ -69,7 +72,8 @@ struct ConsoleRootView: View {
             welcomeSeen: home.welcomeSeen,
             welcomeRequested: home.welcomeRequested,
             launchFormShown: actions.launchFormShown,
-            answerCardID: home.answerCardID
+            answerCardID: home.answerCardID,
+            contract: contract.sheet
         )
     }
 
@@ -85,6 +89,7 @@ struct ConsoleRootView: View {
                 case .welcome: home.closeWelcome()
                 case .newFeature: actions.launchFormShown = false
                 case .answer: home.dismissAnswer(actions: actions)
+                case .contract: contract.close()
                 case .ompRequired, nil: break
                 }
             }
@@ -121,6 +126,7 @@ struct ConsoleRootView: View {
                 actions: actions,
                 projectModel: projectModel,
                 memoryModel: memoryModel,
+                contract: contract,
                 alerts: alerts,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
@@ -171,6 +177,8 @@ struct ConsoleRootView: View {
                 if let card = kanban.state.card(cardID) {
                     AnswerSheet(card: card, home: home, actions: actions)
                 }
+            case .contract(let sheet):
+                ContractSheetView(sheet: sheet)
             }
         }
         // L'Accueil et Pipelines lisent le même tableau : l'abonnement est ouvert

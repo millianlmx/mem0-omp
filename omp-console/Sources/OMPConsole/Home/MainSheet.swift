@@ -11,6 +11,7 @@ enum MainSheet: Identifiable, Equatable {
     case welcome
     case newFeature
     case answer(cardID: String)
+    case contract(ContractSheet)
 
     var id: String {
         switch self {
@@ -18,6 +19,7 @@ enum MainSheet: Identifiable, Equatable {
         case .welcome: "welcome"
         case .newFeature: "newFeature"
         case .answer(let cardID): "answer.\(cardID)"
+        case .contract(let sheet): "contract.\(sheet.id)"
         }
     }
 }
@@ -35,18 +37,21 @@ enum MainSheetPolicy {
     }
 
     /// La feuille due, dans l'ordre des règles : (1) OMP introuvable ; (2) la
-    /// bienvenue redemandée ; (3) la bienvenue jamais vue sur un magasin absent ou
-    /// vide ; (4) « Nouvelle feature » ; (5) « Répondre » tant que la carte existe et
-    /// attend une réponse ; (6) aucune.
+    /// feuille Contrat demandée (S-6 — elle passe avant tout le reste, comme
+    /// « OMP est requis ») ; (3) la bienvenue redemandée ; (4) la bienvenue jamais
+    /// vue sur un magasin absent ou vide ; (5) « Nouvelle feature » ; (6)
+    /// « Répondre » tant que la carte existe et attend une réponse ; (7) aucune.
     static func sheet(
         omp: OmpStatus,
         board: KanbanBoardState,
         welcomeSeen: Bool,
         welcomeRequested: Bool,
         launchFormShown: Bool,
-        answerCardID: String?
+        answerCardID: String?,
+        contract: ContractSheet?
     ) -> MainSheet? {
         if case .missing = omp { return .ompRequired }
+        if let contract { return .contract(contract) }
         if welcomeRequested { return .welcome }
         if !welcomeSeen {
             switch board {

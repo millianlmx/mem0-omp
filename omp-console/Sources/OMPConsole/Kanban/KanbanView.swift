@@ -34,6 +34,9 @@ struct KanbanView: ConsoleSectionView {
     /// Le modèle d'action (S-9) : la zone d'action du détail, le menu contextuel
     /// des cartes et le journal.
     @ObservedObject var actions: ActionsModel
+    /// La feuille Contrat (S-6) : le menu contextuel d'une carte l'ouvre
+    /// directement, la zone d'action du détail passe par la fermeture du détail.
+    @ObservedObject var contract: ContractModel
 
     var body: some View {
         Group {
@@ -134,7 +137,8 @@ struct KanbanView: ConsoleSectionView {
                             content: content,
                             showsRepo: showsRepo,
                             model: model,
-                            actions: actions
+                            actions: actions,
+                            contract: contract
                         )
                         .frame(width: laneWidth)
                         .frame(maxHeight: .infinity)
@@ -164,7 +168,13 @@ struct KanbanView: ConsoleSectionView {
         .sheet(isPresented: Binding(
             get: { model.detailShown && model.selectedCard != nil },
             set: { model.detailShown = $0 }
-        )) {
+        ), onDismiss: {
+            // La feuille Contrat n'est demandée qu'à la fermeture EFFECTIVE du
+            // détail (S-6) : jamais deux feuilles à la fois.
+            if let card = model.consumePendingContract() {
+                contract.open(card)
+            }
+        }) {
             if let card = model.selectedCard {
                 KanbanDetailView(model: model, actions: actions, card: card)
             }
@@ -193,6 +203,7 @@ private struct KanbanLaneView: View {
     let showsRepo: Bool
     @ObservedObject var model: KanbanModel
     @ObservedObject var actions: ActionsModel
+    @ObservedObject var contract: ContractModel
 
     var body: some View {
         let lane = content.lane
@@ -228,7 +239,7 @@ private struct KanbanLaneView: View {
                                 onOpen: { model.openDetail(card.id) }
                             )
                             .contextMenu {
-                                KanbanCardMenu(card: card, model: model, actions: actions)
+                                KanbanCardMenu(card: card, model: model, actions: actions, contract: contract)
                             }
                         }
                     }
@@ -253,10 +264,15 @@ private struct KanbanCardMenu: View {
     let card: KanbanCard
     @ObservedObject var model: KanbanModel
     @ObservedObject var actions: ActionsModel
+    @ObservedObject var contract: ContractModel
     @Environment(\.openURL) private var openURL
 
     var body: some View {
         Button(KanbanText.showDetails) { model.openDetail(card.id) }
+        // Aucune feuille n'est ouverte ici : la demande est directe (S-6).
+        if ContractDocument.moment(for: card) != nil {
+            Button(ContractText.open) { contract.open(card) }
+        }
         let zones = KanbanActionPresentation.zones(for: card)
         let prURL = card.prUrl.flatMap(ProjectPlanRowView.linkURL)
         if !zones.isEmpty || prURL != nil {
