@@ -37,7 +37,10 @@ struct OMPConsoleApp: App {
     @StateObject private var projectModel = ProjectConsoleModel()
     @StateObject private var statsModel = StatsModel()
     @StateObject private var memoryModel = MemoryModel()
-    @StateObject private var homeModel = HomeModel()
+    @StateObject private var homeModel: HomeModel
+    /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
+    /// de sa feuille, et son `onReady` revérifie OMP.
+    @StateObject private var setupModel: SetupModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     /// UN `ConductorPool` pour l'app (S-7 de omp-console-redesign) : il fait
@@ -46,6 +49,13 @@ struct OMPConsoleApp: App {
     init() {
         let pool = ConductorPool()
         _actionsModel = StateObject(wrappedValue: ActionsModel(pilot: pool))
+        // `onReady` revérifie OMP : le composant vient d'être installé par l'app
+        // elle-même (S-4), et c'est ce binaire-là qu'elle hébergera désormais.
+        let home = HomeModel()
+        _homeModel = StateObject(wrappedValue: home)
+        let setup = SetupModel.standard()
+        setup.onReady = { home.recheck() }
+        _setupModel = StateObject(wrappedValue: setup)
     }
 
     var body: some Scene {
@@ -65,6 +75,7 @@ struct OMPConsoleApp: App {
                 projectModel: projectModel,
                 memoryModel: memoryModel,
                 home: homeModel,
+                setup: setupModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel

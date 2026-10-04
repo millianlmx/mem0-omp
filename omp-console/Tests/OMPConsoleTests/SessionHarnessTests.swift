@@ -157,12 +157,14 @@ func guardMissingBinaryWithRecipe() {
     #expect(SessionHarness.status(environment: environment) == .missingBinary)
 }
 
-@Test("harnais-omp-reel-non-opt-in/AC-4 : variable posée et omp exécutable, la garde est prête")
+@Test("harnais-omp-reel-non-opt-in/AC-4 : variable posée et omp du composant exécutable, la garde est prête")
 func guardReadyWithExecutableBinary() throws {
     let binary = try makeFakeBinary(executable: true)
-    let directory = (binary as NSString).deletingLastPathComponent
-    var environment = ["PATH": directory, "HOME": "/nonexistent"]
+    // Depuis S-4, la garde ne découvre plus un `omp` du PATH : le seul chemin
+    // trouvable est celui du composant, ou l'échappatoire de test.
+    var environment = ["PATH": "/nonexistent", "HOME": "/nonexistent"]
     environment[SessionHarness.recipeKey] = "1"
+    environment[OmpBinaryResolver.overrideKey] = binary
     #expect(SessionHarness.status(environment: environment) == .ready)
     #expect(SessionHarness.optedIn(environment: environment) == true)
 }

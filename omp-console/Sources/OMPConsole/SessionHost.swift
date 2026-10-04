@@ -47,8 +47,10 @@ enum SessionHostError: Error, Equatable, Sendable {
             return "Aucune session vivante."
         case .emptyPrompt:
             return "Le prompt est vide."
-        case .binaryNotFound(_, let override):
-            var message = "Binaire `omp` introuvable : cherché dans PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin."
+        case .binaryNotFound(let searched, let override):
+            // S-4 : il n'existe qu'un emplacement — le composant que l'app
+            // installe. Le message le nomme, jamais un chemin système.
+            var message = "Binaire `omp` introuvable (cherché : \(searched.joined(separator: ", ")))."
             if let override { message += " Chemin demandé : \(override)" }
             return message
         case .incompatibleProtocol(let announced):

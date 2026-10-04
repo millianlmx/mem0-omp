@@ -34,20 +34,6 @@ enum HomeText {
     /// Aide ▸ « Bienvenue dans OMP Console ».
     static let welcomeMenuItem = "Bienvenue dans OMP Console"
 
-    // --- OMP requis -----------------------------------------------------------
-    static let ompMissingTitle = "OMP est requis"
-    static let ompMissingBody =
-        "OMP Console pilote vos pipelines à travers OMP, introuvable sur ce Mac. Installez OMP, ou indiquez où il se trouve, puis vérifiez à nouveau."
-    static let searchedDisclosure = "Détails"
-    static let searchedIntro = "Emplacements cherchés :"
-    static let stillMissing = "OMP est toujours introuvable."
-    static let chosenNotExecutable = "Ce fichier n'est pas un programme. Choisissez le programme omp."
-    static let recheck = "Vérifier à nouveau"
-    static let chooseLocation = "Choisir l'emplacement…"
-    static let chooseLocationPrompt = "Choisir"
-    static let chooseLocationMessage = "Choisissez le programme omp."
-    static let quit = "Quitter"
-
     // --- notifications désactivées --------------------------------------------
     static let notificationsDenied = "Les notifications sont désactivées."
     static let openSettings = "Ouvrir les Réglages"

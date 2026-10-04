@@ -43,7 +43,12 @@ mem0-omp/                              racine = marketplace OMP
 
 La coque macOS (`omp-console/`, SwiftUI) a son propre document :
 `omp-console/README.md` explique comment la builder, la tester, assembler son
-bundle `.app` et ouvrir l'app.
+bundle `.app` et ouvrir l'app. C'est l'app unique : elle installe et démarre
+elle-même ses composants (son `omp` 18.6.0, son podman 6.1.3, sa machine podman
+`omp-console` et les conteneurs `omp-console-qdrant` / `omp-console-mem0-http`),
+migre une seule fois la base mémoire existante — l'ancienne pile est arrêtée avant
+de prendre ses ports — et sa pile survit à la fermeture de l'app. `mem0-stack/`
+(ci-dessus) reste la voie MANUELLE, que l'app ne modifie pas.
 
 ## Ce que ça fait
 
