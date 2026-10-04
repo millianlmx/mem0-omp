@@ -1662,7 +1662,15 @@ test("la fenêtre d'une section tronquée contient le rang sélectionné", () =>
   const rows = render(11);
   const text = rows.map((row) => row.text).join("\n");
   assert.match(text, /> g11/, "le rang sélectionné est rendu, même tout en bas");
-  assert.doesNotMatch(text, /g0 /, "et la fenêtre ne montre pas le début");
+  // L'absence se juge sur les RANGS rendus, jamais sur le texte brut : le titre du
+  // lot porte le basename du dépôt (`sessions-window-repo-XXXXXX`), et un suffixe
+  // `mkdtemp` finissant par « g0 » faisait matcher `/g0 /` sur ce seul nom
+  // (échec de CI mesuré le 2026-10-04, PR de release #60).
+  assert.equal(
+    rows.filter((row) => /^\s*>?\s*g0\b/.test(row.text)).length,
+    0,
+    "et la fenêtre ne montre pas le début",
+  );
   // Le marqueur dit de quel CÔTÉ sont les rangs cachés (PANEL-12) : la sélection est
   // en fin de section, donc ils sont au-dessus — et il compte ce qui manque (12
   // features, 3 rendues).
