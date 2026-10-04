@@ -208,6 +208,8 @@ func lotFeatureObject(
     deps: [String] = [],
     pendingTexts: [String] = [],
     model: String? = nil,
+    modelReqSpecs: String? = nil,
+    modelImplReview: String? = nil,
     prUrl: String? = nil,
     sinceAt: Double = 1_790_437_807_752,
     endedAt: Double? = nil
@@ -241,6 +243,8 @@ func lotFeatureObject(
         "endedAt": endedAt ?? NSNull(),
     ]
     if let model { object["model"] = model }
+    if let modelReqSpecs { object["modelReqSpecs"] = modelReqSpecs }
+    if let modelImplReview { object["modelImplReview"] = modelImplReview }
     return object
 }
 
@@ -278,6 +282,8 @@ func projectFeatureObject(
     failure: Any = NSNull(),
     removedReason: Any = NSNull(),
     model: String? = "opencode-go/deepseek-v4.1-flash",
+    modelReqSpecs: String? = nil,
+    modelImplReview: String? = nil,
     updatedAt: Double = 1_790_597_813_850
 ) -> [String: Any] {
     var object: [String: Any] = [
@@ -290,6 +296,8 @@ func projectFeatureObject(
         "updatedAt": updatedAt,
     ]
     if let model { object["model"] = model }
+    if let modelReqSpecs { object["modelReqSpecs"] = modelReqSpecs }
+    if let modelImplReview { object["modelImplReview"] = modelImplReview }
     return object
 }
 

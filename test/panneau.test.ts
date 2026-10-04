@@ -546,6 +546,10 @@ function countingActions(): { actions: LotPanelActions; calls: string[] } {
       calls.push(`add:${input.name}`);
       return null;
     },
+    editModels: async (slug) => {
+      calls.push(`editModels:${slug}`);
+      return null;
+    },
     launch: async () => {
       calls.push("launch");
       return null;
@@ -1326,18 +1330,18 @@ test("panneau/AC-7 : la liste dit l'état et le maillon, et laquelle attend une 
     // boucle entière, ce n'est pas un abandon), et une feature bloquée annonce
     // aussi `Entrée répondre` — sa réponse relance son maillon (PANEL-8).
     const features = model.lot!.features;
-    assert.equal(lotFooterActions(features, 0), "Entrée écrire · c annuler");
-    assert.equal(lotFooterActions(features, 1), "Entrée répondre · c annuler");
-    assert.equal(lotFooterActions(features, 3), "x retirer · c annuler");
-    assert.equal(lotFooterActions(features, 4), "v valider · c annuler");
-    assert.equal(lotFooterActions(features, 5), "y accepter · c annuler");
-    assert.equal(lotFooterActions(features, 6), "Entrée répondre · R relancer · c annuler");
-    assert.equal(lotFooterActions(features, 7), "R relancer · c annuler");
-    assert.equal(lotFooterActions(features, 8), "aucune action");
-    assert.equal(lotFooterActions(features, 9), "aucune action");
+    assert.equal(lotFooterActions(features, 0), "Entrée écrire · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 1), "Entrée répondre · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 3), "x retirer · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 4), "v valider · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 5), "y accepter · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 6), "Entrée répondre · R relancer · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 7), "R relancer · m modèles · c annuler");
+    assert.equal(lotFooterActions(features, 8), "m modèles");
+    assert.equal(lotFooterActions(features, 9), "m modèles");
     assert.equal(
       lotFooterActions([feature("collecte", { origin: "session", state: "running", phase: "req" })], 0),
-      "c annuler",
+      "m modèles · c annuler",
       "la collecte en session n'annonce aucune écriture au panneau",
     );
     assert.match(
@@ -1345,7 +1349,7 @@ test("panneau/AC-7 : la liste dit l'état et le maillon, et laquelle attend une 
         .map((row) => row.text)
         .filter((line) => line !== "")
         .join("\n"),
-      /Entrée écrire · c annuler/,
+      /Entrée écrire · m modèles · c annuler/,
       "le pied suit l'état de la ligne sélectionnée",
     );
   }
@@ -2381,7 +2385,7 @@ test("slots-ui/AC-7 : l'attente de créneau se dit, et l'aperçu cesse d'annonce
   );
   assert.equal(
     lotFooterActions(capped.features, 1),
-    "x retirer · c annuler",
+    "x retirer · m modèles · c annuler",
     "le rang d'une retenue garde ses touches (le motif n'en ajoute ni n'en retire)",
   );
 

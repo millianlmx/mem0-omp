@@ -41,7 +41,7 @@ func kanbanViewDeclaresItsSection() {
 func marksTextIsOrdered() {
     let card = KanbanCard(
         id: "run:x", column: .echec, repo: "depot", title: "depot/x", state: "tourne",
-        phase: .impl, model: nil, prUrl: nil, startMs: 0, endMs: nil,
+        phase: .impl, models: nil, prUrl: nil, startMs: 0, endMs: nil,
         marks: [.illisible, .mort, .doublon], sources: []
     )
     #expect(card.marksText == "illisible, mort, doublon")
@@ -58,7 +58,7 @@ private func laneCard(_ column: KanbanColumn, id: String = "feature:k:export", m
     )
     return KanbanCard(
         id: id, column: column, repo: "depot", title: "export", state: "tourne",
-        phase: .impl, model: nil, prUrl: nil, startMs: 0, endMs: nil,
+        phase: .impl, models: nil, prUrl: nil, startMs: 0, endMs: nil,
         marks: marks, sources: [], action: action
     )
 }

@@ -15,7 +15,7 @@ private func card(
 ) -> KanbanCard {
     KanbanCard(
         id: id, column: column, repo: "depot", title: title ?? id, state: "x",
-        phase: .req, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: marks, sources: [],
+        phase: .req, models: nil, prUrl: nil, startMs: 0, endMs: nil, marks: marks, sources: [],
         action: action
     )
 }

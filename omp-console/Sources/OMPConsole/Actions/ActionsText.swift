@@ -56,6 +56,31 @@ enum ActionsText {
     static let journalTitle = "Activité récente"
     static let journalEmpty = "Aucun geste pour l'instant."
 
+    // --- modèles (B-1, B-3, B-4) --------------------------------------------
+    /// Le libellé du geste d'édition des deux modèles dans le journal.
+    static let modelsLabel = "modèles"
+    /// Les deux rubriques des feuilles de création et d'édition.
+    static let modelReqSpecsField = "Modèle req+specs"
+    static let modelImplReviewField = "Modèle impl+review"
+    /// Le bouton de la feuille d'édition qui émet la commande.
+    static let applyModelChanges = "Appliquer"
+    /// L'état de chargement du catalogue (les deux listes se réduisent à l'option
+    /// par défaut).
+    static let modelCatalogLoading = "chargement des modèles…"
+    /// Le bouton de relance après un échec de chargement.
+    static let modelCatalogRetry = "Réessayer"
+
+    /// Le titre de la feuille d'édition des modèles d'une feature.
+    static func modelsSheetTitle(_ slug: String) -> String {
+        "Modèles de \(slug)"
+    }
+
+    /// Le motif d'un catalogue indisponible (S-5) : les deux listes se réduisent à
+    /// l'option par défaut, l'édition reste possible avec les valeurs courantes.
+    static func modelCatalogUnavailable(_ reason: String) -> String {
+        "modèles indisponibles — \(reason)"
+    }
+
     /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
     static func stopConfirmTitle(repo: String) -> String {
         "Arrêter les pipelines de \(repo) ?"

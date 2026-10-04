@@ -16,7 +16,7 @@ private func vocabularyCard(
 ) -> KanbanCard {
     KanbanCard(
         id: column.rawValue, column: column, repo: "depot", title: "titre", state: "x",
-        phase: phase, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: marks, sources: [],
+        phase: phase, models: nil, prUrl: nil, startMs: 0, endMs: nil, marks: marks, sources: [],
         action: action
     )
 }

@@ -1453,7 +1453,7 @@ test("audit-multi/AC-5 : un élément qui dépend d'un autre élément coché ne
   }
 });
 
-test("audit-multi/AC-6 : une question de modèle par élément coché, et chaque pipeline tourne avec le modèle choisi pour elle", async () => {
+test("audit-multi/AC-6 : deux questions de modèle par élément coché, et chaque pipeline tourne avec le modèle de son groupe", async () => {
   const fx = mkAudit({
     askDialog: true,
     models: [
@@ -1464,9 +1464,12 @@ test("audit-multi/AC-6 : une question de modèle par élément coché, et chaque
       submitted(["relais-readme", "alpha", "gamma"]),
       "Valider et lancer",
       "p/x",
-      "Valider et lancer",
       "p/y",
       "Valider et lancer",
+      "défaut OMP (aucun modèle)",
+      "p/x",
+      "Valider et lancer",
+      "p/y",
       "défaut OMP (aucun modèle)",
     ],
   });
@@ -1476,25 +1479,36 @@ test("audit-multi/AC-6 : une question de modèle par élément coché, et chaque
     fx.calls.slice(1).map((call) => call.title.split("\n")[0]),
     [
       "Intention transmise à /req — relais-readme",
-      "Modèle de la pipeline — relais-readme",
+      "Modèle req+specs — relais-readme",
+      "Modèle impl+review — relais-readme",
       "Intention transmise à /req — alpha",
-      "Modèle de la pipeline — alpha",
+      "Modèle req+specs — alpha",
+      "Modèle impl+review — alpha",
       "Intention transmise à /req — gamma",
-      "Modèle de la pipeline — gamma",
+      "Modèle req+specs — gamma",
+      "Modèle impl+review — gamma",
     ],
-    "exactement 3 questions de modèle, chacune nommant son élément",
+    "exactement deux questions de modèle par élément, nommant chacune son groupe",
   );
 
   await waitFor(() => fx.runs.length >= 3);
   const featureOf = (slug: string) => fx.featureOf(slug)!;
-  assert.equal(featureOf("relais-readme").model, "p/x");
-  assert.equal(featureOf("alpha").model, "p/y");
-  assert.equal("model" in featureOf("gamma"), false, "défaut OMP : aucune clé `model`");
+  assert.equal(featureOf("relais-readme").modelReqSpecs, "p/x");
+  assert.equal(featureOf("relais-readme").modelImplReview, "p/y");
+  assert.equal("modelReqSpecs" in featureOf("alpha"), false, "défaut OMP : aucune clé req+specs");
+  assert.equal(featureOf("alpha").modelImplReview, "p/x");
+  assert.equal(featureOf("gamma").modelReqSpecs, "p/y");
+  assert.equal("modelImplReview" in featureOf("gamma"), false, "défaut OMP : aucune clé impl+review");
   const modelArg = (slug: string) => {
     const argv = fx.runs.find((run) => path.basename(run.cwd) === path.basename(featureOf(slug).worktree))!.argv;
     return argv.includes("--model") ? argv[argv.indexOf("--model") + 1] : null;
   };
-  assert.deepEqual([modelArg("relais-readme"), modelArg("alpha"), modelArg("gamma")], ["p/x", "p/y", null]);
+  for (const run of fx.runs) {
+    const slug = path.basename(run.cwd);
+    const feature = featureOf(slug);
+    const expected = run.phase === "req" || run.phase === "specs" ? feature.modelReqSpecs : feature.modelImplReview;
+    assert.equal(modelArg(slug), expected ?? null, `${slug} · ${run.phase} : le modèle de son groupe`);
+  }
 });
 
 test("audit-multi/AC-7 : relancer depuis la même session /audit — les éléments lancés ne sont plus cochables, les autres le restent", async () => {

@@ -598,8 +598,8 @@ struct ProjectPlanRowView: View {
                 Text("· \(row.stateLabel)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                if let model = row.model {
-                    Text("· \(model)")
+                if let models = row.models {
+                    Text("· \(models)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

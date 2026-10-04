@@ -318,7 +318,10 @@ func writeLaunchCommand() throws {
     let before = relativeTree(fixture.root)
 
     let path = try writer.writeCommand(
-        .launch(id: "c-l", repo: "/tmp/depot", title: "Ma feature", description: "l'intention"),
+        .launch(
+            id: "c-l", repo: "/tmp/depot", title: "Ma feature", description: "l'intention",
+            modelReqSpecs: nil, modelImplReview: nil
+        ),
         sentAt: 1_700_000_000_000, salt: "abcd"
     )
 
@@ -334,6 +337,26 @@ func writeLaunchCommand() throws {
     // Un seul fichier créé, dans `commands/` — et `acks/` n'existe pas encore.
     let added = Set(relativeTree(fixture.root)).subtracting(before)
     #expect(added == ["commands/0001700000000000-abcd.json"])
+}
+
+@Test("model-selector/AC-5 : une commande models porte le schéma exact, NSNull pour un groupe par défaut")
+func writeModelsCommand() throws {
+    let fixture = StoreFixture()
+    let writer = PipelineWriter(stateDir: fixture.root)
+    let path = try writer.writeCommand(
+        .models(id: "c-m", repo: "/tmp/depot", slug: "alpha", modelReqSpecs: "A", modelImplReview: nil),
+        sentAt: 1_700_000_000_000, salt: "abcd"
+    )
+    #expect(object(path) == [
+        "version": .number(1),
+        "id": .string("c-m"),
+        "sentAt": .number(1_700_000_000_000),
+        "repo": .string("/tmp/depot"),
+        "kind": .string("models"),
+        "slug": .string("alpha"),
+        "modelReqSpecs": .string("A"),
+        "modelImplReview": .null,
+    ])
 }
 
 @Test("reponses-et-jalons/AC-8 : une commande stop ne porte que son identité et son dépôt")
