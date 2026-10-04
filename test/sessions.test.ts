@@ -782,6 +782,10 @@ test("sessions/AC-7 : chaque action du panneau s'applique à la feature sélecti
       log.push(`add:${input.name}`);
       return null;
     },
+    editModels: async (slug) => {
+      log.push(`editModels:${slug}`);
+      return null;
+    },
     launch: async () => {
       log.push("launch");
       return null;
@@ -1847,7 +1851,7 @@ test("le pied annonce Entrée session et la bascule o quand la ligne en a une", 
   // `l lancer` ne s'annonce que s'il y a quelque chose à lancer (PANEL-8) : cette
   // feature attend une validation, donc le pied ne le propose pas.
   assert.match(text, /a ajouter · Entrée session/, "la bascule n'est plus annoncée sur Entrée");
-  assert.match(text, /v valider · c annuler · o rejoindre/, "la ligne qui a une session annonce sa bascule");
+  assert.match(text, /v valider · m modèles · c annuler · o rejoindre/, "la ligne qui a une session annonce sa bascule");
 
   // Les deux écritures d'une ligne de lot s'annoncent par leur état (S-11) : la
   // réponse pour une feature qui attend, l'écriture pour une feature en cours — la

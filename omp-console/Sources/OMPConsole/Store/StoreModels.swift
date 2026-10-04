@@ -409,7 +409,13 @@ struct LotFeature: Sendable, Equatable {
     var auditSession: String?
     var relayKind: ProjectRelayKind?
     var base: String?
+    /// ANCIEN modèle unique, conservé en LECTURE seule (il remplit les deux
+    /// groupes tant qu'il existe).
     var model: String?
+    /// Le sélecteur exact du groupe req+specs (`modelReqSpecs` du lot).
+    var modelReqSpecs: String?
+    /// Le sélecteur exact du groupe impl+review+release (`modelImplReview`).
+    var modelImplReview: String?
     var held: HeldLaunch?
     var contractHash: String?
     var addedAt: Double
@@ -478,6 +484,8 @@ extension LotFeature {
             relayKind: asString(f["relayKind"]) == ProjectRelayKind.project.rawValue ? .project : nil,
             base: asLotBaseSha(f["base"]),
             model: asNonBlankString(f["model"]),
+            modelReqSpecs: asNonBlankString(f["modelReqSpecs"]),
+            modelImplReview: asNonBlankString(f["modelImplReview"]),
             held: asHeldLaunch(f["held"]),
             contractHash: asStringOrNull(f["contractHash"]),
             addedAt: asNumber(f["addedAt"]) ?? 0,
@@ -486,6 +494,32 @@ extension LotFeature {
             endedAt: asNumber(f["endedAt"])
         )
     }
+}
+
+/// Les deux modèles d'une feature, RÉSOLUS : le groupe req+specs et le groupe
+/// impl+review (release comprise). Miroir console de `featureModelSlots`
+/// (`omp-mem0-req/models.ts`).
+///
+/// `resolve` rend `nil` quand la feature ne porte AUCUNE des trois clés — auquel
+/// cas l'affichage n'écrit aucune ligne de modèle (patron actuel). L'ancien
+/// `model` unique remplit les DEUX groupes tant qu'il existe (AC-4).
+struct ModelSlots: Sendable, Equatable {
+    var reqSpecs: String?
+    var implReview: String?
+
+    static func resolve(legacy: String?, reqSpecs: String?, implReview: String?) -> ModelSlots? {
+        let req = modelNonBlank(reqSpecs) ?? modelNonBlank(legacy)
+        let impl = modelNonBlank(implReview) ?? modelNonBlank(legacy)
+        guard req != nil || impl != nil else { return nil }
+        return ModelSlots(reqSpecs: req, implReview: impl)
+    }
+}
+
+/// Une chaîne non blanche, `nil` sinon — la garde de `modelSlotsField`
+/// (`models.ts:140-142`), appliquée ici à une valeur déjà décodée.
+private func modelNonBlank(_ value: String?) -> String? {
+    guard let value, !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+    return value
 }
 
 /// Un lot (`asLot`, lot.ts:742-795). `version` n'est pas rendu : c'est un marqueur
@@ -566,7 +600,12 @@ struct ProjectFailure: Sendable, Equatable {
 struct ProjectFeature: Sendable, Equatable {
     var slug: String
     var intention: String
+    /// ANCIEN modèle unique, conservé en LECTURE seule.
     var model: String?
+    /// Le sélecteur exact du groupe req+specs (`modelReqSpecs` du projet).
+    var modelReqSpecs: String? = nil
+    /// Le sélecteur exact du groupe impl+review+release (`modelImplReview`).
+    var modelImplReview: String? = nil
     var status: ProjectFeatureStatus
     var prUrl: String?
     var failure: ProjectFailure?
@@ -602,6 +641,8 @@ extension ProjectFeature {
             slug: slug,
             intention: intention,
             model: asNonBlankString(f["model"]),
+            modelReqSpecs: asNonBlankString(f["modelReqSpecs"]),
+            modelImplReview: asNonBlankString(f["modelImplReview"]),
             status: status,
             prUrl: asString(rawPrUrl),
             failure: failure,

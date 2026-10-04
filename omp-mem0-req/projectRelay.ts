@@ -8,6 +8,7 @@ import type { GitResult, GitRunner } from "./git.ts";
 import { AUDIT_RELAY_STALE_MS, LOT_EDITOR_MAX, lotFeature, lotRepoKey, readLot } from "./lot.ts";
 import type { LotController } from "./lotController.ts";
 import { modelDialogChoice, modelDialogOptions, modelQuestionTitle } from "./models.ts";
+import type { ModelSlots } from "./models.ts";
 import {
   PROJECT_DOC_BRANCH,
   PROJECT_DOC_FILE,
@@ -337,21 +338,30 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
   }
 
   /**
-   * Les modèles des features (S-3 §3) : une question par feature quand des modèles
-   * sont connus. Rend les choix, ou le slug de la première question abandonnée.
+   * Les modèles des features (S-2) : DEUX questions par feature quand des modèles
+   * sont connus — req+specs puis impl+review, dans cet ordre. Rend les choix, ou le
+   * slug de la première question abandonnée.
    */
   async function chooseModels(
     ctx: ExtensionContext,
     slugs: readonly string[],
     signal: AbortSignal | undefined,
-  ): Promise<{ models: Map<string, string | null> } | { missing: string }> {
+  ): Promise<{ models: Map<string, ModelSlots> } | { missing: string }> {
     const options = modelDialogOptions(ctx.models?.list?.() ?? []);
-    const models = new Map<string, string | null>();
+    const models = new Map<string, ModelSlots>();
     if (options.length === 0) return { models };
     for (const slug of slugs) {
-      const chosen = modelDialogChoice(await ctx.ui.select(modelQuestionTitle(slug), options, { signal }));
-      if (chosen === null) return { missing: slug };
-      models.set(slug, chosen.model);
+      const reqChoice = modelDialogChoice(
+        await ctx.ui.select(modelQuestionTitle(slug, "modelReqSpecs"), options, { signal }),
+      );
+      const implChoice =
+        reqChoice === null
+          ? null
+          : modelDialogChoice(
+              await ctx.ui.select(modelQuestionTitle(slug, "modelImplReview"), options, { signal }),
+            );
+      if (reqChoice === null || implChoice === null) return { missing: slug };
+      models.set(slug, { reqSpecs: reqChoice.model, implReview: implChoice.model });
     }
     return { models };
   }

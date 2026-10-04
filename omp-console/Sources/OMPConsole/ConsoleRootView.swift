@@ -175,7 +175,10 @@ struct ConsoleRootView: View {
         }
         // L'Accueil et Pipelines lisent le même tableau : l'abonnement est ouvert
         // une fois, par la racine, et n'est plus lié à l'apparition d'une section.
-        .onAppear { kanban.start() }
+        .onAppear {
+            kanban.start()
+            actions.loadModelCatalog()
+        }
         .frame(minWidth: 760, minHeight: 480)
     }
 }

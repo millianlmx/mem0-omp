@@ -7,12 +7,14 @@
 
 import Foundation
 
-/// Une feature prête à afficher : son libellé d'état, sa PR, son modèle.
+/// Une feature prête à afficher : son libellé d'état, sa PR, ses modèles.
 struct ProjectPlanRow: Equatable, Sendable {
     let slug: String
     let stateLabel: String
     let prUrl: String?
-    let model: String?
+    /// La forme canonique des deux modèles : `req+specs <A> · impl+review <B>`,
+    /// ou `nil` quand la feature n'en porte aucun.
+    let models: String?
     let intention: String
     /// Le motif d'une feature retirée (S-8 : « listées à part avec leur motif »).
     let removedReason: String?
@@ -102,7 +104,11 @@ private func row(for feature: ProjectFeature) -> ProjectPlanRow {
         slug: feature.slug,
         stateLabel: featureStateLabel(feature.status, failure: feature.failure),
         prUrl: feature.prUrl,
-        model: feature.model,
+        models: ModelSlots.resolve(
+            legacy: feature.model,
+            reqSpecs: feature.modelReqSpecs,
+            implReview: feature.modelImplReview
+        ).map(KanbanCardPresentation.modelsText),
         intention: feature.intention,
         removedReason: feature.removedReason
     )

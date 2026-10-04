@@ -38,6 +38,20 @@ struct KanbanCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            if let reqSpecs = KanbanCardPresentation.reqSpecsLine(card) {
+                Text(reqSpecs)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            if let implReview = KanbanCardPresentation.implReviewLine(card) {
+                Text(implReview)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
             if let preview = KanbanCardPresentation.preview(card) {
                 Text(preview)
                     .font(.callout)

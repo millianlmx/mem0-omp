@@ -6,8 +6,8 @@ import { realpathOr, toSlug } from "./git.ts";
 import { auditRelayOpen, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, readLot, relayFooter, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
-import { DEFAULT_MODEL_CHOICE, filterModelChoices } from "./models.ts";
-import type { ModelChoice } from "./models.ts";
+import { DEFAULT_MODEL_CHOICE, DEFAULT_MODEL_SHORT_LABEL, MODEL_GROUP_LABELS, featureModelSlots, filterModelChoices } from "./models.ts";
+import type { ModelChoice, ModelGroupKey } from "./models.ts";
 import type { PanelTui } from "./panelHost.ts";
 import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, PANEL_WRAP_MAX_LINES, ROW_PADDING_X, displayWidth, sectionSelection, serviceRow, textWindow, wrapVisible } from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
@@ -176,28 +176,57 @@ export type PanelModel = {
 };
 
 
-/** Les modes du panneau : consulter, ajouter, choisir le sort d'un worktree, confirmer. */
+/**
+ * Les deux étapes de liste de modèle d'un ajout (S-4) : une par groupe de phase,
+ * dans l'ordre du flux — `req+specs`, puis `impl+review`.
+ */
+export type AddModelStep = ModelGroupKey;
+
+/**
+ * L'état COMMUN d'une étape de liste de modèle (S-3, S-4) : la liste capturée à
+ * l'ouverture, l'index du curseur dans la liste AFFICHÉE (filtrée) et le filtre.
+ * L'étape n'existe que quand `choices` est non vide — le flux d'aujourd'hui sinon.
+ */
+export type ModelListState = {
+  choices?: ModelChoice[];
+  sel?: number;
+  query?: string;
+};
+
+/** Les modes du panneau : consulter, ajouter, éditer les modèles, choisir un sort, confirmer. */
 export type LotPanelMode =
   | { kind: "browse" }
   | {
       kind: "add";
-      step: "name" | "description" | "deps" | "model";
-      draft: { name: string; description: string; deps: string; model: string | null };
+      step: "name" | "description" | "deps" | AddModelStep;
+      draft: {
+        name: string;
+        description: string;
+        deps: string;
+        modelReqSpecs: string | null;
+        modelImplReview: string | null;
+      };
       buffer: string;
       /**
        * La fenêtre du champ (S-2) : `follow` colle à la fin du tampon — là où le
        * curseur écrit —, `PageUp`/`PageDown` la remontent jusqu'à sa première ligne.
        */
       scroll?: TextWindow;
+    } & ModelListState
+  | {
       /**
-       * L'étape « Modèle » SEULE (S-3) : la liste capturée à l'ouverture du flux,
-       * l'index du curseur dans la liste AFFICHÉE (filtrée) et le filtre. Absente ou
-       * vide, l'étape n'existe pas — le flux reste celui d'aujourd'hui.
+       * L'ÉDITION des modèles d'une feature (S-4, geste `m`) : les deux étapes de
+       * liste, pré-positionnées sur les valeurs RÉSOLUES de la feature. `draft`
+       * porte le choix retenu par étape (`null` = défaut OMP), et c'est lui qui
+       * compose l'aperçu du geste.
        */
-      choices?: ModelChoice[];
-      sel?: number;
-      query?: string;
-    }
+      kind: "editModels";
+      slug: string;
+      step: AddModelStep;
+      draft: { modelReqSpecs: string | null; modelImplReview: string | null };
+      buffer: string;
+      scroll?: TextWindow;
+    } & ModelListState
   | { kind: "cancel"; slug: string; scroll?: TextWindow }
   | {
       /**
@@ -225,7 +254,12 @@ export type PanelGesture =
   | { kind: "validate"; slug: string }
   | { kind: "accept"; slug: string }
   | { kind: "cancel"; slug: string; fate: WorktreeFate }
-  | { kind: "add"; input: AddFeatureInput };
+  | { kind: "add"; input: AddFeatureInput }
+  /**
+   * L'édition des deux modèles d'une feature (S-4, geste `m`) : la forme EXACTE de
+   * `LotPanelActions.editModels`. `null` = défaut OMP, à écrire comme une absence.
+   */
+  | { kind: "editModels"; slug: string; input: { modelReqSpecs: string | null; modelImplReview: string | null } };
 
 
 /** Le libellé du devenir d'un worktree, tel qu'il s'annonce dans l'aperçu. */
@@ -266,6 +300,11 @@ export function gestureFeature(lot: Lot | null, slug: string): LotFeature | unde
  */
 export function staleGestureNotice(gesture: PanelGesture, lot: Lot | null): string | null {
   if (gesture.kind === "add") return null;
+  // L'édition des modèles (S-4) ne dépend d'AUCUN état : seule la présence de la
+  // feature compte — elle peut avoir quitté le lot entre l'aperçu et `Entrée`.
+  if (gesture.kind === "editModels") {
+    return gestureFeature(lot, gesture.slug) ? null : `${gesture.slug} a quitté le lot — aperçu fermé`;
+  }
   if (gesture.kind === "launch") return lot === null ? "lot indisponible — aperçu fermé" : null;
   const feature = gestureFeature(lot, gesture.slug);
   if (!feature) return `${gesture.slug} a quitté le lot — aperçu fermé`;
@@ -353,22 +392,44 @@ export function gesturePreview(gesture: PanelGesture, lot: Lot | null): { head: 
       const slug = toSlug(gesture.input.name) ?? gesture.input.name.trim();
       const description = gesture.input.description.trim();
       const deps = `${gesture.input.deps.length} dépendance(s)`;
-      // Le modèle choisi s'annonce EN DERNIER (S-3 §5) : sans lui, la tête est
-      // exactement celle d'avant cette feature, à l'octet près.
-      const model = gesture.input.model;
+      // Les groupes RENSEIGNÉS s'annoncent EN DERNIER (S-4), dans l'ordre req+specs
+      // puis impl+review : un groupe laissé au défaut OMP est omis, et les deux omis
+      // rendent la tête d'aujourd'hui à l'octet près.
+      const reqSpecs = gesture.input.modelReqSpecs ?? null;
+      const implReview = gesture.input.modelImplReview ?? null;
+      const groups = [
+        reqSpecs !== null && reqSpecs !== "" ? `${MODEL_GROUP_LABELS.modelReqSpecs} ${reqSpecs}` : null,
+        implReview !== null && implReview !== "" ? `${MODEL_GROUP_LABELS.modelImplReview} ${implReview}` : null,
+      ].filter((part): part is string => part !== null);
       return {
-        head: [
-          `Créer ${slug} ?`,
-          description,
-          deps,
-          typeof model === "string" && model !== "" ? `modèle ${model}` : "",
-        ]
-          .filter((part) => part !== "")
-          .join(" · "),
+        head: [`Créer ${slug} ?`, description, deps, ...groups].filter((part) => part !== "").join(" · "),
         hint: "Entrée créer · Échap annuler",
       };
     }
+    case "editModels":
+      // Les DEUX groupes sont TOUJOURS nommés, défaut OMP compris (S-4) : on confirme
+      // l'état complet qui sera écrit, pas seulement ce qui change.
+      return {
+        head: `Modifier les modèles de ${gesture.slug} ? · ${modelSlotsLabel({
+          reqSpecs: gesture.input.modelReqSpecs,
+          implReview: gesture.input.modelImplReview,
+        })}`,
+        hint: "Entrée appliquer · Échap annuler",
+      };
   }
+}
+
+
+/**
+ * `req+specs <A> · impl+review <B>` — les DEUX groupes d'un état de modèles, un
+ * groupe vide nommé `défaut OMP` (S-4). Même composition pour le rang d'une feature
+ * et l'aperçu d'édition : la forme est décidée à un seul endroit.
+ */
+export function modelSlotsLabel(slots: { reqSpecs: string | null; implReview: string | null }): string {
+  return (
+    `${MODEL_GROUP_LABELS.modelReqSpecs} ${slots.reqSpecs ?? DEFAULT_MODEL_SHORT_LABEL} · ` +
+    `${MODEL_GROUP_LABELS.modelImplReview} ${slots.implReview ?? DEFAULT_MODEL_SHORT_LABEL}`
+  );
 }
 
 
@@ -771,9 +832,11 @@ export function isLaunchable(lot: Lot, feature: LotFeature, live?: RunningEntry 
  */
 export function lotFeatureLabel(feature: LotFeature): string {
   const base = feature.deps.length > 0 ? `${feature.slug} ← ${feature.deps.join(",")}` : feature.slug;
-  // Le modèle (S-7) : un segment de plus, APRÈS `slug ← deps` et AVANT la file —
-  // et rien du tout quand la feature n'en a pas (le libellé d'alors, à l'octet près).
-  const withModel = typeof feature.model === "string" && feature.model !== "" ? `${base} · modèle ${feature.model}` : base;
+  // Les modèles (S-4) : les deux groupes APRÈS `slug ← deps` et AVANT la file — et
+  // rien du tout quand `featureModelSlots` est `null`, soit le libellé d'aujourd'hui
+  // à l'octet près.
+  const slots = featureModelSlots(feature);
+  const withModel = slots === null ? base : `${base} · ${modelSlotsLabel(slots)}`;
   const queued = feature.pendingTexts.length;
   if (queued === 0) return withModel;
   return `${withModel} · ${queued} message${queued > 1 ? "s" : ""} en attente`;
@@ -919,8 +982,11 @@ export function lotModeText(
     const content = serviceRow(`Annuler ${mode.slug} ? worktree : 1 gardé · 2 archivé · 3 supprimé`, "warning", innerW);
     return { content, focus: content.length - 1, help: ["la branche reste · 2 copie les ignorés · Échap annuler"] };
   }
-  if (mode.step === "model") {
-    return modelStepRows(mode, innerW, glyphs);
+  if (mode.kind === "editModels") {
+    return modelListRows(mode, innerW, glyphs);
+  }
+  if (mode.step === "modelReqSpecs" || mode.step === "modelImplReview") {
+    return modelListRows({ step: mode.step, choices: mode.choices, sel: mode.sel, query: mode.query }, innerW, glyphs);
   }
   const field =
     mode.step === "name"
@@ -929,7 +995,7 @@ export function lotModeText(
         ? "Description"
         : "Dépendances (slugs séparés par des virgules)";
   // Le champ des dépendances n'annonce « créer la feature » que s'il est le
-  // DERNIER : quand l'étape « Modèle » suit, il ouvre un champ de plus.
+  // DERNIER : quand les étapes de modèle suivent, il ouvre un champ de plus.
   const next = mode.step === "deps" && (mode.choices ?? []).length === 0 ? "créer la feature" : "champ suivant";
   const content = serviceRow(`${field} : ${mode.buffer}▏`, "text", innerW);
   return { content, focus: content.length - 1, help: [`Entrée ${next} · Échap annuler`] };
@@ -937,21 +1003,22 @@ export function lotModeText(
 
 
 /**
- * Le CONTENU de l'étape « Modèle » (S-3) : la ligne d'en-tête (le filtre en cours
- * d'écriture), puis UNE ligne par choix AFFICHÉ — celle du curseur porte le préfixe
- * `glyphs.cursor` et `selected: true`, que le composant de l'hôte peint avec le fond
- * `selectedBg` du thème actif. Un filtre sans résultat n'efface jamais l'écran : la
- * liste garde « défaut OMP » en tête et la ligne le dit, en ton `dim`.
+ * Le CONTENU d'une étape de liste de modèle (S-3, S-4), ajout comme édition :
+ * l'en-tête `Modèle <groupe>` (le filtre en cours d'écriture), puis UNE ligne par
+ * choix AFFICHÉ — celle du curseur porte le préfixe `glyphs.cursor` et
+ * `selected: true`, que le composant de l'hôte peint avec le fond `selectedBg` du
+ * thème actif. Un filtre sans résultat n'efface jamais l'écran : la liste garde
+ * « défaut OMP » en tête et la ligne le dit, en ton `dim`.
  */
-function modelStepRows(
-  mode: Extract<LotPanelMode, { kind: "add" }>,
+function modelListRows(
+  mode: { step: AddModelStep } & ModelListState,
   innerW: number,
   glyphs: PanelGlyphs,
 ): { content: PanelRow[]; focus: number; help: string[] } {
   const query = mode.query ?? "";
   const shown = filterModelChoices(mode.choices ?? [], query);
   const sel = Math.min(Math.max(mode.sel ?? 0, 0), Math.max(0, shown.length - 1));
-  const header = serviceRow(`Modèle : ${query}▏`, "text", innerW);
+  const header = serviceRow(`Modèle ${MODEL_GROUP_LABELS[mode.step]} : ${query}▏`, "text", innerW);
   const content: PanelRow[] = [...header];
   let focus = header.length - 1;
   shown.forEach((choice, index) => {
@@ -970,10 +1037,13 @@ function modelStepRows(
   if (shown.length === 1 && query !== "") {
     content.push(...serviceRow(`aucun modèle ne correspond à « ${query} »`, "dim", innerW));
   }
+  // L'étape `impl+review` est la DERNIÈRE : `Entrée` y ouvre l'aperçu au lieu d'un
+  // champ suivant (S-4).
+  const next = mode.step === "modelImplReview" ? "aperçu" : "champ suivant";
   return {
     content,
     focus,
-    help: ["Modèle : ↑ ↓ choisir · taper pour filtrer · Entrée champ suivant · Échap champ précédent"],
+    help: [`Modèle : ↑ ↓ choisir · taper pour filtrer · Entrée ${next} · Échap champ précédent`],
   };
 }
 
@@ -1028,6 +1098,9 @@ export function lotFooterActions(
   if (!audit && feature.state === "waiting" && feature.waitKind === "review") actions.push("y accepter");
   if (feature.state === "blocked" || feature.state === "failed") actions.push("R relancer");
   if (feature.state === "pending") actions.push("x retirer");
+  // Les modèles s'éditent sur TOUTE feature du lot (S-4), quel que soit son état :
+  // la touche s'annonce donc avant `c`, seul geste qui, lui, dépend de l'état.
+  actions.push("m modèles");
   // L'abandon reste ouvert sur tout état qui n'est pas DÉJÀ clos (PANEL-11) : au
   // plafond de la boucle, `R` était la seule issue — et `R` remet les compteurs à
   // zéro, donc rouvre une boucle entière au lieu d'abandonner la feature.

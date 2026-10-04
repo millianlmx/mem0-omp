@@ -5,7 +5,8 @@ import { isReviewCapReason } from "./chain.ts";
 import { realpathOr, toSlug } from "./git.ts";
 import { LOT_EDITOR_MAX, isLotBaseSha, lotFeature, lotRepoKey } from "./lot.ts";
 import type { Lot } from "./lot.ts";
-import { modelField } from "./models.ts";
+import { modelSlotsField } from "./models.ts";
+import type { ModelSlots } from "./models.ts";
 import type { RelayItem } from "./relay.ts";
 import { readJsonFile, writeJsonAtomic } from "./store.ts";
 
@@ -33,8 +34,13 @@ export type ProjectFailure = { kind: ProjectFailureKind; reason: string; at: num
 export type ProjectFeature = {
   slug: string;
   intention: string;
-  /** Sélecteur canonique ; absent = défaut OMP. Écrit à la création de la feature seulement. */
-  model?: string;
+  /**
+   * Les deux modèles de la feature (S-2), un par groupe de phase ; absents = défaut
+   * OMP. Écrits à la création de la feature seulement, transportés tels quels vers
+   * le lot par `addToLot`.
+   */
+  modelReqSpecs?: string;
+  modelImplReview?: string;
   status: ProjectFeatureStatus;
   prUrl: string | null;
   /** Non nul ssi `status === "failed"`. */
@@ -148,7 +154,10 @@ function asProjectFeature(raw: unknown): ProjectFeature | null {
   return {
     slug: f.slug,
     intention: f.intention,
-    ...(typeof f.model === "string" && f.model.trim() !== "" ? { model: f.model } : {}),
+    ...(typeof f.modelReqSpecs === "string" && f.modelReqSpecs.trim() !== "" ? { modelReqSpecs: f.modelReqSpecs } : {}),
+    ...(typeof f.modelImplReview === "string" && f.modelImplReview.trim() !== ""
+      ? { modelImplReview: f.modelImplReview }
+      : {}),
     status,
     prUrl: f.prUrl as string | null,
     failure,
@@ -235,16 +244,16 @@ export function deleteProject(stateDir: string, repoKey: string): void {
 }
 
 
-/** Une feature neuve du plan, `planned`, avec son modèle (écrit une seule fois, ici). */
+/** Une feature neuve du plan, `planned`, avec ses deux modèles (S-2) — écrits une seule fois, ici. */
 export function newProjectFeature(
   feature: { slug: string; intention: string },
-  model: string | null,
+  models: ModelSlots | null,
   now: number,
 ): ProjectFeature {
   return {
     slug: feature.slug,
     intention: feature.intention,
-    ...modelField(model),
+    ...modelSlotsField(models === null ? {} : { modelReqSpecs: models.reqSpecs, modelImplReview: models.implReview }),
     status: "planned",
     prUrl: null,
     failure: null,
@@ -257,7 +266,7 @@ export function newProjectFeature(
 /** Le projet né d'un plan validé (S-3 §5) : en cours, au premier segment, sans base encore. */
 export function newProject(
   plan: PlanDraft,
-  models: ReadonlyMap<string, string | null>,
+  models: ReadonlyMap<string, ModelSlots>,
   input: { stateDir: string; repoRoot: string; hostSession: string | null; now: number },
 ): Project {
   const repoRoot = realpathOr(input.repoRoot);
@@ -498,15 +507,15 @@ export function renderProjectDoc(project: Project, repoName: string): string {
       "",
       `### Segment ${index + 1} — ${oneLine(segment.name)} (${state})`,
       "",
-      "| # | Feature | État | PR | Modèle | Intention |",
-      "|---|---|---|---|---|---|",
+      "| # | Feature | État | PR | Modèle req+specs | Modèle impl+review | Intention |",
+      "|---|---|---|---|---|---|---|",
     );
     let row = 0;
     for (const feature of segment.features) {
       if (feature.status === "removed") continue;
       row += 1;
       lines.push(
-        `| ${row} | \`${feature.slug}\` | ${cell(featureStateLabel(feature))} | ${cell(feature.prUrl ?? "—")} | ${cell(feature.model ?? "défaut OMP")} | ${cell(feature.intention)} |`,
+        `| ${row} | \`${feature.slug}\` | ${cell(featureStateLabel(feature))} | ${cell(feature.prUrl ?? "—")} | ${cell(feature.modelReqSpecs ?? "défaut OMP")} | ${cell(feature.modelImplReview ?? "défaut OMP")} | ${cell(feature.intention)} |`,
       );
     }
   }

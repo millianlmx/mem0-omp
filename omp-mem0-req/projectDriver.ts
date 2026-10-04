@@ -367,7 +367,10 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
         deps: [],
         auditSession: project.relayKey,
         relayKind: "project",
-        model: feature.model ?? null,
+        // Les deux modèles de la feature de plan (S-2) : transportés tels quels vers
+        // le lot — `undefined` (groupe au défaut) n'écrit aucune clé.
+        modelReqSpecs: feature.modelReqSpecs ?? null,
+        modelImplReview: feature.modelImplReview ?? null,
         base: sha,
       });
     } catch (err) {

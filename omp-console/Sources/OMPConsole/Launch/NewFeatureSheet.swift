@@ -100,6 +100,13 @@ struct NewFeatureSheet: View {
                 }
             }
 
+            ModelSlotsPicker(
+                catalog: actions.modelCatalog,
+                reqSpecs: $actions.launchModelReqSpecs,
+                implReview: $actions.launchModelImplReview,
+                onRetry: { actions.loadModelCatalog() }
+            )
+
             VStack(alignment: .leading, spacing: 6) {
                 Text(NewFeatureText.featureTitle).font(.headline)
                 TextField(NewFeatureText.titlePlaceholder, text: $actions.launchTitle)
@@ -141,7 +148,9 @@ struct NewFeatureSheet: View {
                     actions.launch(
                         title: actions.launchTitle,
                         description: actions.launchDescription,
-                        repoRoot: selected
+                        repoRoot: selected,
+                        modelReqSpecs: actions.launchModelReqSpecs,
+                        modelImplReview: actions.launchModelImplReview
                     )
                     actions.launchRepoError = nil
                     console.select(.home)

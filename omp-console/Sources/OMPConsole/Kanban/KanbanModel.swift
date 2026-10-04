@@ -28,6 +28,9 @@ final class KanbanModel: ObservableObject {
     // problèmes et les plis « Détails techniques » (feuille, bulle).
     @Published var detailShown = false
     @Published var stopRequest: KanbanCard?
+    /// La carte dont la feuille « Modèles » est ouverte (menu contextuel de
+    /// carte, inspecteur).
+    @Published var modelsSheetCard: KanbanCard?
     @Published var diagnosticShown = false
     @Published var technicalExpanded = false
     @Published var diagnosticTechnicalExpanded = false
@@ -132,6 +135,9 @@ final class KanbanModel: ObservableObject {
         }
         if let request = stopRequest, next.card(request.id) == nil {
             stopRequest = nil
+        }
+        if let sheet = modelsSheetCard, next.card(sheet.id) == nil {
+            modelsSheetCard = nil
         }
     }
 }

@@ -2283,7 +2283,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
     .slice(-3);
   assert.match(footer[0]!, /a ajouter · l lancer · Entrée session/);
   assert.ok(!footer[0]!.includes("d supprimer"), `aucune touche morte annoncée : ${footer[0]}`);
-  assert.match(footer[1]!, /x retirer · c annuler/, "la touche de retrait est annoncée sur la ligne qui la porte");
+  assert.match(footer[1]!, /x retirer · m modèles · c annuler/, "la touche de retrait est annoncée sur la ligne qui la porte");
 
   // S-11 : une ligne qui accepte une écriture l'annonce par `Entrée` (la touche `i`
   // n'existe plus — on répond dans la VUE du rang).
@@ -2427,6 +2427,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
       submitted.push(input);
       return "« delta » est déjà dans le lot";
     },
+    editModels: async () => null,
     launch: async () => null,
     remove: async () => null,
     answer: async () => null,
@@ -2555,7 +2556,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   };
   const opts = { width: 64, budget: 18, glyphs: GLYPHS, now: 0 };
   const add = buildPanelRows(
-    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "", model: null }, buffer: "une intention" } },
+    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "", modelReqSpecs: null, modelImplReview: null }, buffer: "une intention" } },
     opts,
   );
   assert.match(rowsText(add), /Description : une intention▏/);
@@ -2585,7 +2586,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
     for (const row of rows) assert.ok(displayWidth(row.text) <= 62, `un rang tient dans la largeur : ${row.text}`);
   }
   assert.match(rowsText(cancel), /Entrée répondre/, "le pied rappelle les touches applicables à la ligne");
-  assert.equal(lotFooterActions([feature("a", { state: "done" })], 0), "aucune action");
+  assert.equal(lotFooterActions([feature("a", { state: "done" })], 0), "m modèles");
 });
 
 test("les touches du panneau pilotent le lot, et les refus s'affichent sans rien faire", async () => {
