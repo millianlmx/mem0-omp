@@ -509,7 +509,7 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unc
         }
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: any Error?) {
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
         if let error { settle(.failure(error)) }
     }
 
