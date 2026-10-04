@@ -148,10 +148,21 @@ export type LotFeature = {
    */
   base?: string;
   /**
-   * Le modèle de la feature (S-1) : le sélecteur canonique `provider/id`, EXACTEMENT
-   * la valeur passée à `--model` sur tous ses runs. Absent = défaut OMP (aucun
-   * `--model`). Écrit une seule fois, à la création de la feature, et plus jamais :
-   * aucune transition de la chaîne ni aucun geste du panneau ne le modifie.
+   * Le modèle du groupe req+specs (S-1) : le sélecteur canonique `provider/id`,
+   * EXACTEMENT la valeur passée à `--model` sur les runs `req` et `specs`. Absent =
+   * groupe au défaut OMP (aucun `--model`). Écrit à la création, remplaçable à tout
+   * moment par « Modifier les modèles » (S-3) — jamais modifié par une transition.
+   */
+  modelReqSpecs?: string;
+  /**
+   * Le modèle du groupe impl+review (S-1) : appliqué aux runs `impl`, `review` et
+   * `release`. Mêmes règles d'écriture et de remplacement que `modelReqSpecs`.
+   */
+  modelImplReview?: string;
+  /**
+   * L'ANCIEN modèle unique, conservé en LECTURE seule (S-1, AC-4) : une feature
+   * créée avant cette feature le porte, et il remplit alors les DEUX groupes tant
+   * qu'il n'a pas été remplacé. Plus rien ne l'écrit ; `editModels` le supprime (S-3).
    */
   model?: string;
   addedAt: number;
@@ -722,10 +733,16 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // valent exactement `"project"` / un sha complet, sinon absents (jamais un rejet).
     ...(f.relayKind === "project" ? { relayKind: "project" as const } : {}),
     ...(isLotBaseSha(f.base) ? { base: f.base } : {}),
-    // Le modèle (S-1) : écrit seulement s'il est non vide après `trim()` — toute
-    // autre valeur (`""`, `42`, `null`) est lue comme ABSENTE, jamais un rejet. La
-    // valeur n'est pas revalidée contre le catalogue : un modèle retiré depuis le
-    // choix reste écrit et transmis, et c'est le run qui échoue.
+    // Les modèles (S-1) : chaque clé n'est écrite que si elle est non vide après
+    // `trim()` — toute autre valeur (`""`, `42`, `null`) est lue comme ABSENTE,
+    // jamais un rejet. Les valeurs ne sont pas revalidées contre le catalogue : un
+    // modèle retiré depuis le choix reste écrit et transmis, et c'est le run qui
+    // échoue.
+    ...(typeof f.modelReqSpecs === "string" && f.modelReqSpecs.trim() !== "" ? { modelReqSpecs: f.modelReqSpecs } : {}),
+    ...(typeof f.modelImplReview === "string" && f.modelImplReview.trim() !== ""
+      ? { modelImplReview: f.modelImplReview }
+      : {}),
+    // L'ancien modèle unique, relu pour la compatibilité seulement (AC-4).
     ...(typeof f.model === "string" && f.model.trim() !== "" ? { model: f.model } : {}),
     // Le lancement retenu (S-3) : écrit seulement quand il est exploitable — même
     // patron que `launched` et `auditSession`, un `held` incomplet est absent.

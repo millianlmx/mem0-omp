@@ -210,8 +210,8 @@ func modelIsWrittenOrAbsent() throws {
     let board = kanbanBoard(fixture)
     let feature = try #require(board.cards.first { $0.id.hasPrefix("feature:") })
     let run = try #require(board.cards.first { $0.id.hasPrefix("run:") })
-    #expect(feature.model == "opus")
-    #expect(run.model == nil)
+    #expect(feature.models == ModelSlots(reqSpecs: "opus", implReview: "opus"))
+    #expect(run.models == nil)
 }
 
 // MARK: - AC-6 : l'URL de PR, jamais fabriquée

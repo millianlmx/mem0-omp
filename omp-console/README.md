@@ -51,7 +51,10 @@ terminal :
    (préférence `home.notificationsBannerDismissed`).
 2. **Nouvelle feature** (barre d'outils, menu Fichier ou ⌘N) — une feuille : le
    dépôt (dépôts connus du tableau, ou « Choisir un dossier… », qui n'accepte
-   qu'une racine git), le titre (il devient la branche `feat/<titre>`) et le besoin.
+   qu'une racine git), les deux **modèles** (`Modèle req+specs` / `Modèle
+   impl+review`, chaque liste menée par `défaut OMP (aucun modèle)` puis les
+   sélecteurs de `omp models --json`), le titre (il devient la branche
+   `feat/<titre>`) et le besoin.
    « Lancer » (↩, bouton par défaut) dépose une commande `launch` dans le canal et revient à
    l'Accueil, dont le bandeau suit l'accusé.
 3. **Le conducteur** — un dépôt sans pilote vivant est conduit par l'app : elle
@@ -112,7 +115,10 @@ feuille Bienvenue `welcome.sheet` (`welcome.continue`) ; feuille « OMP est requ
 `kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
 « Nouvelle feature » `launch.sheet`,
 `launch.repo`, `launch.chooseFolder`, `launch.repoError`, `launch.title`,
-`launch.description`, `launch.cancel`, `launch.submit`. Une seule feuille à la
+`launch.description`, `launch.cancel`, `launch.submit` ; les deux sélecteurs de
+modèle `models.reqSpecs` / `models.implReview` (`models.loading`,
+`models.failure`, `models.retry`) ; feuille d'édition des modèles `models.sheet`
+(`models.cancel`, `models.apply`). Une seule feuille à la
 fois, dans l'ordre : OMP est requis, Bienvenue, Nouvelle feature, Répondre
 (`MainSheetPolicy`).
 
@@ -226,7 +232,9 @@ Dans une voie, les cartes suivent l'ordre des colonnes (question, puis specs, pu
 revue), puis l'ordre de l'ardoise. Une voie vide le dit en une phrase.
 
 Une carte montre son titre (sans le préfixe « dépôt/ » des runs hors lot), son
-dépôt (seulement quand l'ardoise mêle plusieurs dépôts), un badge quand la voie ne
+dépôt (seulement quand l'ardoise mêle plusieurs dépôts), ses deux **modèles**
+(`req+specs <A>` puis `impl+review <B>`, la valeur ou `défaut OMP`, une ligne par
+groupe renseigné, coupées au milieu), un badge quand la voie ne
 dit pas déjà son état (« Question », « Specs à valider », « En pause », « PR
 ouverte »…), la question de l'agent en aperçu, puis — pour une feature en cours ou
 qui vous attend — sa barre d'avancement en cinq segments, son étape et sa durée à
@@ -258,11 +266,15 @@ contextuel « Afficher les détails » ouvrent une **feuille** qui décrit la ca
 en-tête (titre, « dépôt · étape », badge d'état), une **frise d'avancement**
 (Besoins, Specs, Implémentation, Revue, PR — fait, en cours, à venir ou en échec,
 `PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines »),
-**Informations** (étape, durée, modèle, lien de PR) et un pli **Détails
+**Informations** (étape, durée, les deux modèles `req+specs` / `impl+review` avec
+un bouton **Modifier…**, lien de PR) et un pli **Détails
 techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
 « Fermer » (Échap) à droite. Le menu contextuel d'une carte expose aussi ses
-gestes (Répondre…, Valider les specs, Accepter la revue, Reprendre, Ouvrir la PR,
-Arrêter…).
+gestes (Afficher les détails, **Modifier les modèles…**, Répondre…, Valider les
+specs, Accepter la revue, Reprendre, Ouvrir la PR, Arrêter…). Le bouton
+**Modifier…** et l'entrée « Modifier les modèles… » ouvrent la feuille
+d'édition `models.sheet` (titre `Modèles de <slug>`, les deux sélecteurs
+pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
 
 ### Identifiants d'accessibilité
 
@@ -403,6 +415,7 @@ Deux invariants durables de cette couche :
 | `kanban.actions.validate`, `.accept` | les boutons de jalon |
 | `kanban.actions.resume` | le bouton « Reprendre » |
 | `kanban.actions.stop` | le bouton « Arrêter… » (confirmation avant l'arrêt) |
+| `kanban.actions.editModels` | le bouton « Modifier… » d'un modèle et l'entrée « Modifier les modèles… » du menu contextuel |
 | `kanban.journal`, `kanban.journal.empty` | la bulle « Activité » |
 
 ### Recette : agir depuis la carte

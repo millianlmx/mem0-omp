@@ -372,9 +372,15 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     if (checked.length === 0) return toolText(["Aucune pipeline lancée : aucun élément coché.", ...freeLine].join("\n"));
 
     // S-3 — TOUS les dialogues avant le premier ajout : son run de collecte porte
-    // déjà `--model`, et un abandon tardif n'a rien écrit.
+    // déjà ses `--model`, et un abandon tardif n'a rien écrit.
     const modelOptions = modelDialogOptions(ctx.models?.list?.() ?? []);
-    const retained: { slug: string; intention: string; deps: string[]; model: string | null }[] = [];
+    const retained: {
+      slug: string;
+      intention: string;
+      deps: string[];
+      modelReqSpecs: string | null;
+      modelImplReview: string | null;
+    }[] = [];
     const reasons = new Map<string, string>();
     for (const element of checked) {
       const { slug } = element;
@@ -395,16 +401,26 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
         reasons.set(slug, "intention non validée");
         continue;
       }
-      let model: string | null = null;
+      let modelReqSpecs: string | null = null;
+      let modelImplReview: string | null = null;
       if (modelOptions.length > 0) {
-        const chosen = modelDialogChoice(await ctx.ui.select(modelQuestionTitle(slug), modelOptions, { signal }));
-        if (chosen === null) {
+        const reqChoice = modelDialogChoice(
+          await ctx.ui.select(modelQuestionTitle(slug, "modelReqSpecs"), modelOptions, { signal }),
+        );
+        const implChoice =
+          reqChoice === null
+            ? null
+            : modelDialogChoice(
+                await ctx.ui.select(modelQuestionTitle(slug, "modelImplReview"), modelOptions, { signal }),
+              );
+        if (reqChoice === null || implChoice === null) {
           reasons.set(slug, "modèle non choisi");
           continue;
         }
-        model = chosen.model;
+        modelReqSpecs = reqChoice.model;
+        modelImplReview = implChoice.model;
       }
-      retained.push({ slug, intention, deps: element.deps, model });
+      retained.push({ slug, intention, deps: element.deps, modelReqSpecs, modelImplReview });
     }
     if (interrupted()) return toolText(INTERRUPTED);
 
@@ -443,7 +459,8 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
         description: element.intention,
         deps: kept,
         auditSession: sessionFile,
-        model: element.model ?? undefined,
+        modelReqSpecs: element.modelReqSpecs ?? undefined,
+        modelImplReview: element.modelImplReview ?? undefined,
       });
       if (refusal !== null) {
         refused = true;

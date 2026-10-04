@@ -5,7 +5,8 @@ import { realpathOr } from "./git.ts";
 import { LOT_EDITOR_MAX, isRelayRefusal, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, relayMilestoneRefusal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
-import { DEFAULT_MODEL_CHOICE, featureModelOf, filterModelChoices } from "./models.ts";
+import { DEFAULT_MODEL_CHOICE, featureModelOf, featureModelSlots, filterModelChoices } from "./models.ts";
+import type { ModelChoice } from "./models.ts";
 import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
 import type { HostComponent, PanelTheme, PanelTui, SessionAssembly } from "./panelHost.ts";
 import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, liveWriterPid, lotModeRows, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelIndexForKey, panelRowAt, panelRowCount, panelSelectionKey, parseSgrMouse, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel, staleGestureNotice } from "./panelRows.ts";
@@ -567,15 +568,15 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         // C'est TA session (VIEW-8) : `--resume` sur le JSONL ouvert ici.
         if (ownSession([file])) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
         if (!deps.sessionReply) return { kind: "closed", reason: "session terminée" };
-        const rowModel = featureModelOf(model.lot ?? null, row.cwd);
+        const rowModel = featureModelOf(model.lot ?? null, row.cwd, row.phase);
         return inputZone({
           slug: row.label,
           phase: row.phase,
           options: [],
           queue: false,
-          // Le modèle (S-5 §3) : celui de la feature dont ce rang est le worktree,
-          // lu dans le lot du panneau. Hors lot, ou feature sans modèle : la cible
-          // est exactement celle d'avant cette feature, sans clé `model`.
+          // Le modèle (S-1) : celui du GROUPE de la phase de ce rang, lu dans le lot
+          // du panneau. Hors lot, ou groupe au défaut OMP : la cible est exactement
+          // celle d'avant cette feature, sans clé `model`.
           target: {
             kind: "session",
             cwd: row.cwd,
@@ -1483,6 +1484,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return () => lot.cancel(gesture.slug, gesture.fate);
         case "add":
           return () => lot.add(gesture.input);
+        case "editModels":
+          return () => lot.editModels(gesture.slug, gesture.input);
       }
     };
 
@@ -1510,12 +1513,30 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     /**
      * Le champ PRÉCÉDENT d'un ajout (PANEL-12) : le tampon en cours est rangé dans son
      * étape, et celui de l'étape d'avant est RESTITUÉ — `Échap` ne perd plus la saisie.
+     * Les deux étapes de modèle (S-4) gardent le même patron : l'étape 2 rend
+     * l'étape 1 le filtre vidé et le curseur sur le choix retenu ; l'étape 1 rend
+     * le champ des DÉPENDANCES.
      */
     const previousAddStep = (mode: Extract<LotPanelMode, { kind: "add" }>): LotPanelMode => {
-      if (mode.step === "model") {
-        // L'étape « Modèle » rend le champ des DÉPENDANCES avec son tampon (S-3) :
-        // la liste capturée reste sur le mode, l'étape se rouvre à l'identique.
-        return { kind: "add", step: "deps", draft: { ...mode.draft }, buffer: mode.draft.deps, choices: mode.choices };
+      if (mode.step === "modelImplReview") {
+        return {
+          kind: "add",
+          step: "modelReqSpecs",
+          draft: { ...mode.draft },
+          buffer: "",
+          choices: mode.choices,
+          sel: modelChoiceIndex(mode.choices, mode.draft.modelReqSpecs),
+          query: "",
+        };
+      }
+      if (mode.step === "modelReqSpecs") {
+        return {
+          kind: "add",
+          step: "deps",
+          draft: { ...mode.draft },
+          buffer: mode.draft.deps,
+          choices: mode.choices,
+        };
       }
       if (mode.step === "deps") {
         return {
@@ -1535,12 +1556,40 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       };
     };
 
+    /**
+     * L'ÉTAPE PRÉCÉDENTE d'une édition (S-4) : `Échap` sur `impl+review` rend
+     * `req+specs`, filtre vidé et curseur sur le choix retenu ; `req+specs` rend la
+     * LISTE (rien n'est écrit).
+     */
+    const previousEditStep = (mode: Extract<LotPanelMode, { kind: "editModels" }>): LotPanelMode => {
+      return {
+        kind: "editModels",
+        slug: mode.slug,
+        step: "modelReqSpecs",
+        draft: { ...mode.draft },
+        buffer: "",
+        choices: mode.choices,
+        sel: modelChoiceIndex(mode.choices, mode.draft.modelReqSpecs),
+        query: "",
+      };
+    };
+
     /** Les dépendances d'un tampon de champ : des slugs séparés par des virgules. */
     const parseDeps = (text: string): string[] =>
       text
         .split(",")
         .map((part) => part.trim())
         .filter((part) => part !== "");
+
+    /**
+     * L'index du choix RETENU dans la liste capturée (S-4) : `null` ou vide rend la
+     * première ligne — l'option « défaut OMP », toujours en tête.
+     */
+    const modelChoiceIndex = (choices: ModelChoice[] | undefined, value: string | null): number => {
+      if (value === null || value === "") return 0;
+      const index = (choices ?? []).findIndex((choice) => choice.value === value);
+      return index < 0 ? 0 : index;
+    };
 
     /** Les modes de saisie et l'aperçu. Rend `true` quand la touche est consommée. */
     const handleMode = (data: string): boolean => {
@@ -1550,6 +1599,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         // remonter en consultation faisait perdre les champs déjà saisis.
         if (mode.kind === "add" && mode.step !== "name") {
           setMode(previousAddStep(mode));
+          return true;
+        }
+        // `Échap` dans une ÉDITION (S-4) : l'étape 2 rend l'étape 1 (filtre vidé,
+        // curseur sur le choix retenu) ; l'étape 1 rend la LISTE — rien n'est écrit.
+        if (mode.kind === "editModels" && mode.step === "modelImplReview") {
+          setMode(previousEditStep(mode));
           return true;
         }
         // `Échap` quitte l'aperçu en rendant l'état ANTÉRIEUR — le tampon d'un
@@ -1618,43 +1673,105 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         });
         return true;
       }
-      // L'ÉTAPE « MODÈLE » (S-3) : une liste navigable et filtrable, clavier seul —
-      // la souris n'est traitée par aucun mode. `Entrée` valide le choix AFFICHÉ et
-      // ouvre l'aperçu ; `Échap` a déjà rendu le champ des dépendances, plus haut.
-      if (mode.step === "model") {
-        const shown = filterModelChoices(mode.choices ?? [], mode.query ?? "");
+      // LES ÉTAPES DE LISTE DE MODÈLES (S-3, S-4) : une liste navigable et
+      // filtrable, clavier seul — la souris n'est traitée par aucun mode. `Entrée`
+      // valide le choix AFFICHÉ et ouvre l'étape suivante (ou l'aperçu) ; `Échap` a
+      // déjà rendu l'étape précédente, plus haut. L'ÉDITION partage la même
+      // mécanique : seuls le mode rendu et le geste de sortie diffèrent.
+      type ModelListMode =
+        | Extract<LotPanelMode, { kind: "add" }>
+        | Extract<LotPanelMode, { kind: "editModels" }>;
+
+      /** Le choix AFFICHÉ et sélectionné d'une étape : sa valeur, `null` pour le défaut OMP. */
+      const chosenModelValue = (m: { choices?: ModelChoice[]; sel?: number; query?: string }): string | null => {
+        const shown = filterModelChoices(m.choices ?? [], m.query ?? "");
+        const sel = Math.min(Math.max(m.sel ?? 0, 0), Math.max(0, shown.length - 1));
+        const value = (shown[sel] ?? DEFAULT_MODEL_CHOICE).value;
+        return value === "" ? null : value;
+      };
+
+      /**
+       * La navigation et le FILTRE d'une étape de liste (S-3, S-4) : rend `true`
+       * quand la touche est consommée, `false` quand c'est `Entrée` — à l'appelant
+       * de confirmer. Déplacer le curseur ou filtrer RÉARME l'ancre (S-3) : la
+       * fenêtre suit la ligne sélectionnée, et `PageUp`/`PageDown` ne la laissent pas
+       * hors champ. Toute frappe imprimable est un FILTRE, jamais une touche de geste.
+       */
+      const applyModelListKey = (m: ModelListMode): boolean => {
+        const shown = filterModelChoices(m.choices ?? [], m.query ?? "");
         const last = Math.max(0, shown.length - 1);
-        const sel = Math.min(Math.max(mode.sel ?? 0, 0), last);
-        // Déplacer le curseur ou filtrer RÉARME l'ancre (S-3) : la fenêtre suit la
-        // ligne sélectionnée, et `PageUp`/`PageDown` ne la laissent pas hors champ.
+        const sel = Math.min(Math.max(m.sel ?? 0, 0), last);
         if (isKey(data, "tui.select.up") || data === "k") {
-          setMode({ ...mode, sel: Math.max(0, sel - 1), scroll: undefined });
+          setMode({ ...m, sel: Math.max(0, sel - 1), scroll: undefined });
           return true;
         }
         if (isKey(data, "tui.select.down") || data === "j") {
-          setMode({ ...mode, sel: Math.min(last, sel + 1), scroll: undefined });
+          setMode({ ...m, sel: Math.min(last, sel + 1), scroll: undefined });
           return true;
         }
-        if (confirm) {
-          const chosen = shown[sel] ?? DEFAULT_MODEL_CHOICE;
-          const model = chosen.value === "" ? null : chosen.value;
-          const input: AddFeatureInput = {
-            name: mode.draft.name,
-            description: mode.draft.description,
-            deps: parseDeps(mode.draft.deps),
-            ...(model !== null ? { model } : {}),
-          };
-          // Le choix n'écrit rien : il ouvre l'aperçu du geste, comme le dernier champ.
-          setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
-          return true;
-        }
-        const typed = insertInto(data, mode.query ?? "");
+        if (confirm) return false;
+        const typed = insertInto(data, m.query ?? "");
         if (typed !== null) {
-          // Toute frappe imprimable est un FILTRE (jamais une touche de geste), et le
-          // curseur repart sur la première ligne de la liste filtrée — ancre réarmée.
-          setMode({ ...mode, query: typed.buffer, sel: 0, scroll: undefined });
+          setMode({ ...m, query: typed.buffer, sel: 0, scroll: undefined });
           if (typed.truncated) showNotice(`message tronqué à ${LOT_EDITOR_MAX} caractères`);
         }
+        return true;
+      };
+
+      if (mode.kind === "editModels") {
+        if (applyModelListKey(mode)) return true;
+        const draft = { ...mode.draft, [mode.step]: chosenModelValue(mode) };
+        if (mode.step === "modelReqSpecs") {
+          setMode({
+            kind: "editModels",
+            slug: mode.slug,
+            step: "modelImplReview",
+            draft,
+            buffer: "",
+            choices: mode.choices,
+            sel: modelChoiceIndex(mode.choices, draft.modelImplReview),
+            query: "",
+          });
+        } else {
+          // Les deux choix sont faits : l'aperçu du geste, seul endroit d'où part
+          // l'écriture (S-8). `back` = l'étape 2, où `Échap` revient.
+          setMode({
+            kind: "confirm",
+            gesture: {
+              kind: "editModels",
+              slug: mode.slug,
+              input: { modelReqSpecs: draft.modelReqSpecs, modelImplReview: draft.modelImplReview },
+            },
+            back: mode,
+          });
+        }
+        return true;
+      }
+      if (mode.step === "modelReqSpecs" || mode.step === "modelImplReview") {
+        if (applyModelListKey(mode)) return true;
+        const draft = { ...mode.draft, [mode.step]: chosenModelValue(mode) };
+        if (mode.step === "modelReqSpecs") {
+          setMode({
+            kind: "add",
+            step: "modelImplReview",
+            draft,
+            buffer: "",
+            choices: mode.choices,
+            sel: modelChoiceIndex(mode.choices, draft.modelImplReview),
+            query: "",
+          });
+          return true;
+        }
+        // L'étape 2 ferme le flux : ses deux choix forment l'aperçu du geste, et une
+        // valeur laissée au défaut n'ajoute aucune clé au lot (S-2).
+        const input: AddFeatureInput = {
+          name: draft.name,
+          description: draft.description,
+          deps: parseDeps(draft.deps),
+          ...(draft.modelReqSpecs !== null ? { modelReqSpecs: draft.modelReqSpecs } : {}),
+          ...(draft.modelImplReview !== null ? { modelImplReview: draft.modelImplReview } : {}),
+        };
+        setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
         return true;
       }
       if (confirm) {
@@ -1683,11 +1800,20 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           });
           return true;
         }
-        // Le champ des dépendances ouvre l'étape « Modèle » quand des modèles connus
-        // existent (S-3), et l'aperçu sinon : sans modèle connu, le flux d'aujourd'hui.
+        // Le champ des dépendances ouvre la PREMIÈRE étape de modèle quand des
+        // modèles connus existent (S-4), et l'aperçu sinon : sans modèle connu, le
+        // flux d'aujourd'hui, à l'octet près.
         const withDeps = { ...draft, deps: mode.buffer };
         if ((mode.choices ?? []).length > 0) {
-          setMode({ kind: "add", step: "model", draft: withDeps, buffer: "", choices: mode.choices, sel: 0, query: "" });
+          setMode({
+            kind: "add",
+            step: "modelReqSpecs",
+            draft: withDeps,
+            buffer: "",
+            choices: mode.choices,
+            sel: 0,
+            query: "",
+          });
           return true;
         }
         const input: AddFeatureInput = {
@@ -1754,15 +1880,47 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (data === "a") {
         const actions = requireLot();
         if (!actions) return;
-        // La liste des modèles connus est capturée ICI, une fois (S-3) : l'étape
-        // « Modèle » s'ouvre sur elle, et son absence (aucun modèle connu) laisse le
-        // flux à trois champs d'aujourd'hui.
+        // La liste des modèles connus est capturée ICI, une fois (S-4) : les deux
+        // étapes de modèle s'ouvrent sur elle, et son absence (aucun modèle connu)
+        // laisse le flux à trois champs d'aujourd'hui.
         setMode({
           kind: "add",
           step: "name",
-          draft: { name: "", description: "", deps: "", model: null },
+          draft: { name: "", description: "", deps: "", modelReqSpecs: null, modelImplReview: null },
           buffer: "",
           choices: deps.modelChoices?.() ?? [],
+        });
+        return;
+      }
+      if (data === "m") {
+        // La cible d'abord (S-4) : `m` est MUET hors d'une feature du lot, comme les
+        // autres gestes hors cible ; `requireLot` rend les notices existantes du lot
+        // absent et du lot piloté par un autre process.
+        const actions = requireLot();
+        if (!actions) return;
+        const feature = selectedFeature();
+        if (!feature) return;
+        const choices = deps.modelChoices?.() ?? [];
+        if (choices.length === 0) {
+          showNotice("aucun modèle connu — modèles inchangés");
+          return;
+        }
+        // Pré-positionnement sur les valeurs RÉSOLUES (S-4) : l'ancien `model` remplit
+        // les deux groupes tant qu'il existe ; aucune clé, les deux sont au défaut OMP.
+        const slots = featureModelSlots(feature);
+        const draft =
+          slots === null
+            ? { modelReqSpecs: null, modelImplReview: null }
+            : { modelReqSpecs: slots.reqSpecs, modelImplReview: slots.implReview };
+        setMode({
+          kind: "editModels",
+          slug: feature.slug,
+          step: "modelReqSpecs",
+          draft,
+          buffer: "",
+          choices,
+          sel: modelChoiceIndex(choices, draft.modelReqSpecs),
+          query: "",
         });
         return;
       }

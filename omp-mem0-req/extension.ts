@@ -586,22 +586,31 @@ export default function reqExtension(pi: ExtensionAPI) {
         return;
       }
 
-      // Le modèle de la feature (S-2) : demandé ICI — après la validation du nom,
-      // AVANT toute écriture. Une annulation ne laisse donc ni branche, ni worktree,
-      // ni session derrière elle. Sans interface ou sans modèle connu, aucune
-      // question n'est posée : la feature naît sans modèle (défaut OMP).
-      let model: string | null = null;
+      // Les DEUX modèles de la feature (S-2) : demandés ICI — après la validation
+      // du nom, AVANT toute écriture, dans l'ordre req+specs puis impl+review. Une
+      // annulation ne laisse donc ni branche, ni worktree, ni session derrière elle.
+      // Sans interface ou sans modèle connu, aucune question n'est posée : la
+      // feature naît sans clé de modèle (défaut OMP).
+      let modelReqSpecs: string | null = null;
+      let modelImplReview: string | null = null;
       if (ctx.hasUI) {
         const options = modelDialogOptions(ctx.models?.list?.() ?? []);
         if (options.length > 0) {
-          const chosen = modelDialogChoice(
-            await ctx.ui.select(modelQuestionTitle(slug), options, { signal: undefined }),
+          const reqChoice = modelDialogChoice(
+            await ctx.ui.select(modelQuestionTitle(slug, "modelReqSpecs"), options, { signal: undefined }),
           );
-          if (chosen === null) {
+          const implChoice =
+            reqChoice === null
+              ? null
+              : modelDialogChoice(
+                  await ctx.ui.select(modelQuestionTitle(slug, "modelImplReview"), options, { signal: undefined }),
+                );
+          if (reqChoice === null || implChoice === null) {
             ctx.ui?.notify?.("[req] choix du modèle annulé — rien n'a été créé, relance /req.", "warning");
             return;
           }
-          model = chosen.model;
+          modelReqSpecs = reqChoice.model;
+          modelImplReview = implChoice.model;
         }
       }
 
@@ -668,7 +677,8 @@ export default function reqExtension(pi: ExtensionAPI) {
         name: typed || slug,
         branch: created.branch,
         worktree: created.path,
-        model,
+        modelReqSpecs,
+        modelImplReview,
       });
       // Un lot conduit par une session vivante ne s'écrit pas (S-1) : la feature
       // n'y entre pas, et cette session le dit au lieu de laisser croire qu'elle

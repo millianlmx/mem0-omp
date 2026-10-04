@@ -99,7 +99,7 @@ export function commandAckPath(stateDir: string, id: string): string {
 
 // --- schéma ------------------------------------------------------------------
 
-export type CommandKind = "launch" | "stop" | "verdict" | "answer" | "reply" | "add" | "remove";
+export type CommandKind = "launch" | "stop" | "verdict" | "answer" | "reply" | "add" | "remove" | "models";
 
 /**
  * Une commande du canal. Le discriminant est `kind` (convention du magasin :
@@ -109,14 +109,18 @@ export type CommandKind = "launch" | "stop" | "verdict" | "answer" | "reply" | "
  */
 export type PipelineCommand =
   | { version: 1; id: string; sentAt: number; repo: string; kind: "launch";
-      title: string; description: string; deps?: string[] }
+      title: string; description: string; deps?: string[];
+      modelReqSpecs?: string | null; modelImplReview?: string | null }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "add";
-      title: string; description: string; deps?: string[] }
+      title: string; description: string; deps?: string[];
+      modelReqSpecs?: string | null; modelImplReview?: string | null }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "remove"; slug: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "verdict"; slug: string; verdict: "v" | "y" }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "answer"; slug: string;
       toolCallId: string; selected?: string; custom?: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "reply"; slug: string; text: string }
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "models"; slug: string;
+      modelReqSpecs: string | null; modelImplReview: string | null }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "stop" };
 
 
@@ -143,6 +147,7 @@ const COMMAND_KINDS: Record<CommandKind, true> = {
   reply: true,
   add: true,
   remove: true,
+  models: true,
 };
 
 
@@ -166,6 +171,27 @@ function asDeps(raw: unknown): string[] | undefined | null {
     if (typeof item !== "string") return null;
   }
   return raw as string[];
+}
+
+
+/**
+ * Les deux clés de modèle OPTIONNELLES d'une commande `launch`/`add` (S-2) : une
+ * clé ABSENTE n'est pas transmise (la feature naît sans elle — un client antérieur
+ * reste valide) ; une clé PRÉSENTE est `string` ou `null`, et toute autre forme
+ * rend `null` (refus de forme). Le contenu n'est pas validé contre le catalogue :
+ * une valeur inconnue est écrite telle quelle, et c'est le run qui échoue.
+ */
+function asOptionalModelSlots(
+  c: Record<string, unknown>,
+): { modelReqSpecs?: string | null; modelImplReview?: string | null } | null {
+  if (c.modelReqSpecs !== undefined && c.modelReqSpecs !== null && typeof c.modelReqSpecs !== "string") return null;
+  if (c.modelImplReview !== undefined && c.modelImplReview !== null && typeof c.modelImplReview !== "string") {
+    return null;
+  }
+  const out: { modelReqSpecs?: string | null; modelImplReview?: string | null } = {};
+  if (c.modelReqSpecs !== undefined) out.modelReqSpecs = c.modelReqSpecs as string | null;
+  if (c.modelImplReview !== undefined) out.modelImplReview = c.modelImplReview as string | null;
+  return out;
 }
 
 
@@ -197,12 +223,30 @@ export function asCommand(raw: unknown): PipelineCommand | null {
     if (title === null || description === null) return null;
     const deps = asDeps(c.deps);
     if (deps === null) return null;
+    // Les DEUX modèles de la feature (S-2) : optionnels au schéma, ils alimentent
+    // `AddFeatureInput` tels quels — `null` et l'absence n'écrivent aucune clé.
+    const slots = asOptionalModelSlots(c);
+    if (slots === null) return null;
     return deps === undefined
-      ? { ...base, kind, title, description }
-      : { ...base, kind, title, description, deps };
+      ? { ...base, kind, title, description, ...slots }
+      : { ...base, kind, title, description, deps, ...slots };
   }
   const slug = asStringOrNull(c.slug);
   if (slug === null) return null;
+  if (c.kind === "models") {
+    // Les DEUX clés sont OBLIGATOIRES : une clé absente serait un client qui croit
+    // ne pas toucher à un groupe sans le dire — forme refusée, aucun effet (S-3).
+    if (c.modelReqSpecs === undefined || c.modelImplReview === undefined) return null;
+    const slots = asOptionalModelSlots(c);
+    if (slots === null) return null;
+    return {
+      ...base,
+      kind: "models",
+      slug,
+      modelReqSpecs: slots.modelReqSpecs as string | null,
+      modelImplReview: slots.modelImplReview as string | null,
+    };
+  }
   if (c.kind === "remove") return { ...base, kind: "remove", slug };
   if (c.kind === "verdict") {
     if (c.verdict !== "v" && c.verdict !== "y") return null;
@@ -464,7 +508,8 @@ export type CommandView = {
 
 /** Le slug qu'une commande vise dans le lot (`null` pour `launch`/`add`/`stop`). */
 export function commandSlugOf(cmd: PipelineCommand): string | null {
-  return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" || cmd.kind === "reply"
+  return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" || cmd.kind === "reply" ||
+    cmd.kind === "models"
     ? cmd.slug
     : null;
 }

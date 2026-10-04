@@ -151,6 +151,30 @@ enum KanbanCardPresentation {
         return nil
     }
 
+    /// La ligne « req+specs <A> » d'une carte, `nil` quand elle ne porte aucun
+    /// modèle (aucune ligne n'est alors écrite).
+    static func reqSpecsLine(_ card: KanbanCard) -> String? {
+        guard let models = card.models else { return nil }
+        return modelLine(KanbanText.modelReqSpecs, models.reqSpecs)
+    }
+
+    /// La ligne « impl+review <B> » d'une carte, `nil` quand elle ne porte aucun
+    /// modèle.
+    static func implReviewLine(_ card: KanbanCard) -> String? {
+        guard let models = card.models else { return nil }
+        return modelLine(KanbanText.modelImplReview, models.implReview)
+    }
+
+    /// `<libellé> <valeur|défaut OMP>` — un groupe vide s'affiche « défaut OMP ».
+    static func modelLine(_ label: String, _ value: String?) -> String {
+        "\(label) \(value ?? KanbanText.modelDefault)"
+    }
+
+    /// La forme canonique d'une paire : `req+specs <A> · impl+review <B>`.
+    static func modelsText(_ models: ModelSlots) -> String {
+        "\(modelLine(KanbanText.modelReqSpecs, models.reqSpecs)) · \(modelLine(KanbanText.modelImplReview, models.implReview))"
+    }
+
     /// L'étape et l'avancement n'ont de sens que pour une feature vivante.
     static func showsProgress(_ card: KanbanCard) -> Bool {
         let lane = KanbanLane.of(card)

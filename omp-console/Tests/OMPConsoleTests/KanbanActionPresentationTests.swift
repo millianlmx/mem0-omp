@@ -9,7 +9,7 @@ import Testing
 private func card(_ action: KanbanCardAction?) -> KanbanCard {
     KanbanCard(
         id: "feature:x:alpha", column: .enCours, repo: "depot", title: "alpha", state: "en cours",
-        phase: .impl, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
+        phase: .impl, models: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
         action: action
     )
 }

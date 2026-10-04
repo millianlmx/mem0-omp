@@ -33,16 +33,22 @@ enum MilestoneVerdict: String, Sendable, Equatable {
     case review = "y"
 }
 
-/// Une commande du canal. L'app n'émet QUE ces quatre formes : launch, verdict,
-/// reply, stop — ni `add`, ni `remove`, ni `answer` (une question en vol passe par
-/// une livraison dans la boîte du run). `reply` répond à une question en TEXTE
-/// d'un maillon terminé (feature `waiting` + `waitKind: "answer"`, S-9/S-10 de
-/// omp-console-redesign).
+/// Une commande du canal. L'app n'émet QUE ces cinq formes : launch, verdict,
+/// reply, stop, models — ni `add`, ni `remove`, ni `answer` (une question en vol
+/// passe par une livraison dans la boîte du run). `reply` répond à une question en
+/// TEXTE d'un maillon terminé (feature `waiting` + `waitKind: "answer"`, S-9/S-10
+/// de omp-console-redesign). `models` remplace les deux modèles d'une feature
+/// (S-5) : les deux clés sont TOUJOURS présentes, `null` pour un groupe laissé sur
+/// le défaut OMP.
 enum OutgoingCommand: Sendable, Equatable {
-    case launch(id: String, repo: String, title: String, description: String)
+    case launch(
+        id: String, repo: String, title: String, description: String,
+        modelReqSpecs: String?, modelImplReview: String?
+    )
     case verdict(id: String, repo: String, slug: String, verdict: MilestoneVerdict)
     case reply(id: String, repo: String, slug: String, text: String)
     case stop(id: String, repo: String)
+    case models(id: String, repo: String, slug: String, modelReqSpecs: String?, modelImplReview: String?)
 }
 
 /// L'état d'un accusé : `taken` (l'effet suit) ou `refused` (le motif est dans
@@ -130,23 +136,29 @@ extension OutgoingCommand {
     /// L'identifiant porté par la commande — c'est lui qui nomme l'accusé.
     var id: String {
         switch self {
-        case .launch(let id, _, _, _): id
+        case .launch(let id, _, _, _, _, _): id
         case .verdict(let id, _, _, _): id
         case .reply(let id, _, _, _): id
         case .stop(let id, _): id
+        case .models(let id, _, _, _, _): id
         }
     }
 
     /// L'objet JSON EXACT de la commande : les schémas de `commands.ts:110-131`,
-    /// avec `deps` JAMAIS écrit (hors périmètre).
+    /// avec `deps` JAMAIS écrit (hors périmètre). `launch` n'écrit une clé de
+    /// modèle que quand elle est présente ; `models` écrit TOUJOURS les deux,
+    /// `NSNull` pour un groupe laissé sur le défaut OMP (S-5).
     func object(sentAt: Double) -> [String: Any] {
         let at = sentAtMillis(sentAt)
         switch self {
-        case .launch(let id, let repo, let title, let description):
-            return [
+        case .launch(let id, let repo, let title, let description, let modelReqSpecs, let modelImplReview):
+            var object: [String: Any] = [
                 "version": 1, "id": id, "sentAt": at, "repo": repo,
                 "kind": "launch", "title": title, "description": description,
             ]
+            if let modelReqSpecs { object["modelReqSpecs"] = modelReqSpecs }
+            if let modelImplReview { object["modelImplReview"] = modelImplReview }
+            return object
         case .verdict(let id, let repo, let slug, let verdict):
             return [
                 "version": 1, "id": id, "sentAt": at, "repo": repo,
@@ -159,6 +171,13 @@ extension OutgoingCommand {
             ]
         case .stop(let id, let repo):
             return ["version": 1, "id": id, "sentAt": at, "repo": repo, "kind": "stop"]
+        case .models(let id, let repo, let slug, let modelReqSpecs, let modelImplReview):
+            return [
+                "version": 1, "id": id, "sentAt": at, "repo": repo,
+                "kind": "models", "slug": slug,
+                "modelReqSpecs": modelReqSpecs ?? NSNull(),
+                "modelImplReview": modelImplReview ?? NSNull(),
+            ]
         }
     }
 }

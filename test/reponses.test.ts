@@ -599,6 +599,34 @@ test("reponses-et-jalons/AC-9 : un verdict sans objet est refusé, le lot reste 
 });
 
 // ---------------------------------------------------------------------------
+// Le canal : la commande `models`, littérale (le pendant de `editModels`)
+// ---------------------------------------------------------------------------
+
+test("le canal : une commande models littérale remplace les deux modèles d'une feature", async () => {
+  const repo = mkRepo();
+  const worktree = fs.realpathSync(mktmp("reponses-wt-"));
+  const { runner } = mkRunner(() => null);
+  const { controller, stateDir } = mkCtl(repo, { runner });
+  seedLot(stateDir, repo, [feature("alpha", { model: "legacy/old", worktree })]);
+
+  depositLiteral(stateDir, {
+    id: "console-m",
+    repo,
+    kind: "models",
+    slug: "alpha",
+    modelReqSpecs: "anthropic/claude-opus-4-7",
+    modelImplReview: null,
+  });
+  await controller.pumpCommands();
+
+  assert.equal(readCommandAck(stateDir, "console-m")?.state, "taken");
+  const alpha = readLot(stateDir, lotRepoKey(repo))!.features[0]!;
+  assert.equal(alpha.modelReqSpecs, "anthropic/claude-opus-4-7");
+  assert.equal("modelImplReview" in alpha, false, "un groupe nul efface la clé");
+  assert.equal("model" in alpha, false, "l'ancien modèle unique est supprimé au remplacement");
+});
+
+// ---------------------------------------------------------------------------
 // AC-10 — sans pilote, la commande attend dans le canal (S-4, S-11)
 // ---------------------------------------------------------------------------
 

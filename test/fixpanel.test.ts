@@ -302,6 +302,10 @@ function countingActions(remove?: (slug: string) => string | null): { actions: L
       calls.push(`add:${input.name}`);
       return null;
     },
+    editModels: async (slug) => {
+      calls.push(`editModels:${slug}`);
+      return null;
+    },
     launch: async () => {
       calls.push("launch");
       return null;
@@ -654,7 +658,7 @@ test("fixpanel/AC-7 : `o` n'est pas annoncé sur un run vivant, et `l` pas sans 
   // encore de session, donc rien ne s'annonce non plus.
   const libre = rowsFor(1);
   assert.ok(!libre.includes("o rejoindre"), "une feature sans session n'annonce pas la bascule");
-  assert.match(libre, /x retirer · c annuler/, "une feature à venir annonce son retrait et son abandon");
+  assert.match(libre, /x retirer · m modèles · c annuler/, "une feature à venir annonce son retrait et son abandon");
 
   // `l` n'est annoncé que s'il y a quelque chose à lancer : ici une feature
   // `pending` sans dépendance, donc oui.

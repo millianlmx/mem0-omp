@@ -509,6 +509,10 @@ function countingActions(): { actions: LotPanelActions; calls: string[] } {
       calls.push(`add:${input.name}`);
       return null;
     },
+    editModels: async (slug) => {
+      calls.push(`editModels:${slug}`);
+      return null;
+    },
     launch: async () => {
       calls.push("launch");
       return null;
