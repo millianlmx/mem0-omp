@@ -31,8 +31,12 @@ enum PodmanCommand {
 
     // MARK: - Machine
 
+    /// Sans `--format` : le défaut de `machine inspect` EST le JSON. `--format` y est
+    /// un TEMPLATE Go, pas la valeur spéciale « json » des autres commandes —
+    /// `--format json` imprime littéralement « json » (mesuré sur podman 6.1.3 le
+    /// 2026-10-05) et rend la machine indécodable, donc jugée absente.
     static func machineInspect(_ name: String) -> [String] {
-        ["machine", "inspect", name, "--format", "json"]
+        ["machine", "inspect", name]
     }
 
     static func machineInit(

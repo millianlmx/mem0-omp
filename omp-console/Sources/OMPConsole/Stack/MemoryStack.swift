@@ -185,10 +185,25 @@ final class MemoryStack {
 
     /// `machine init` puis l'état enregistré puis `machine start` : une machine
     /// initialisée est arrêtée, et les conteneurs ont besoin qu'elle tourne.
+    ///
+    /// Un `init` qui répond « already exists » n'est PAS un échec : la machine
+    /// existe (créée par un autre passage, ou restée invisible pour l'`inspect`
+    /// qui précède) et S-2 veut la garder — même tolérance que « already running »
+    /// pour `start`. La suite décide à partir de l'état réel, pas du message.
     private func initializeMachine() async throws {
-        try await performMachine(
-            PodmanCommand.machineInit(Self.machineName, image: manifest.machineImage)
-        )
+        let arguments = PodmanCommand.machineInit(Self.machineName, image: manifest.machineImage)
+        let result: ProcessRun
+        do {
+            result = try await invoke(arguments)
+        } catch {
+            throw MemoryStackError.machineFailed(detail: bounded(error.localizedDescription))
+        }
+        if result.code != 0 {
+            let detail = bounded(result.stderr.isEmpty ? result.stdout : result.stderr)
+            guard Self.isAlreadyExisting(detail) else {
+                throw MemoryStackError.machineFailed(detail: detail)
+            }
+        }
         try writeMachineState()
         try await startMachine()
     }
@@ -436,7 +451,7 @@ final class MemoryStack {
         guard result.code != 0 else { return result }
         let detail = bounded(result.stderr.isEmpty ? result.stdout : result.stderr)
         // « already exists » : un autre passage a créé la ressource — succès.
-        if toleratingAlreadyExists, detail.lowercased().contains("already exists") { return result }
+        if toleratingAlreadyExists, Self.isAlreadyExisting(detail) { return result }
         throw MemoryStackError.podmanFailed(command: PodmanCommand.label(of: arguments), detail: detail)
     }
 
@@ -503,6 +518,10 @@ final class MemoryStack {
 
     nonisolated static func isAlreadyRunning(_ detail: String) -> Bool {
         detail.lowercased().contains("already running")
+    }
+
+    nonisolated static func isAlreadyExisting(_ detail: String) -> Bool {
+        detail.lowercased().contains("already exists")
     }
 
     nonisolated static func isAddressInUse(_ detail: String) -> Bool {

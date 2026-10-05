@@ -14,9 +14,9 @@ private let paths = AppPaths(supportRoot: URL(fileURLWithPath: "/tmp/omp-br2-tes
 
 // MARK: - Machine
 
-@Test("all-in-one-app/AC-1 : `machine inspect` interroge la machine dédiée en JSON")
+@Test("all-in-one-app/AC-1 : `machine inspect` interroge la machine dédiée — le défaut de podman est le JSON, jamais `--format json` (template)")
 func machineInspectIsExact() {
-    #expect(PodmanCommand.machineInspect("omp-console") == ["machine", "inspect", "omp-console", "--format", "json"])
+    #expect(PodmanCommand.machineInspect("omp-console") == ["machine", "inspect", "omp-console"])
 }
 
 @Test("all-in-one-app/AC-1 : `machine init` porte l'image du manifeste et les 4 vCPU/4096 Mo/50 GiB de S-2")

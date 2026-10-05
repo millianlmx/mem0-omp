@@ -177,10 +177,17 @@ func defaultResolverOnlySeesTheAppComponent() throws {
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
 
-    // Un `PATH` et un `HOME` qui contiennent un omp ne comptent plus : la racine
-    // de support est vide, donc rien n'est trouvé.
+    // Un `PATH` et un `HOME` qui contiennent un omp ne comptent plus, et la racine
+    // de support est un chemin JETABLE vide (`OMP_CONSOLE_SUPPORT_ROOT`, jamais
+    // créé) : sans lui, le test dépendrait de l'installation réelle du poste, où
+    // l'app a posé son composant — donc rien n'est trouvé.
+    let emptyRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("home-tests-vide-\(UUID().uuidString)", isDirectory: true)
     let bare = HomeModel(
-        environment: { ["PATH": "/usr/bin", "HOME": "/nonexistent", "OMP_CONSOLE_OMP_BINARY": ""] },
+        environment: { [
+            "PATH": "/usr/bin", "HOME": "/nonexistent", "OMP_CONSOLE_OMP_BINARY": "",
+            AppPaths.supportRootEnvironmentKey: emptyRoot.path,
+        ] },
         defaults: defaults
     )
     #expect(bare.omp == .missing)

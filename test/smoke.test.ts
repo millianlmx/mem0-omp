@@ -89,6 +89,7 @@ const DROPPED_DIRS: Record<string, true> = {
   // neutralisée par MEM0_OMP_SKIP_SWIFT_APP dans runCheck.
   ".build": true,
   ".build-app": true,
+  ".build-run": true,
   ".build-tests": true,
   build: true,
 };
