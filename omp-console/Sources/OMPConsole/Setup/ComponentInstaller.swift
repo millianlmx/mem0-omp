@@ -38,8 +38,10 @@ enum ComponentInstallError: Error, Equatable, Sendable {
 @MainActor
 final class ComponentInstaller {
     /// Les noms de composant portés par les erreurs (figés par le contrat).
-    static let ompComponent = "OMP"
-    static let podmanComponent = "Podman"
+    /// `nonisolated` : `ComponentID.name` (le badge) les lit hors du fil
+    /// principal, et une constante est de toute façon immuable.
+    nonisolated static let ompComponent = "OMP"
+    nonisolated static let podmanComponent = "Podman"
 
     /// `pkgutil` est l'outil système d'extraction du pkg podman ; il n'est jamais
     /// un binaire omp/podman, donc il échappe légitimement à l'interdiction des
@@ -73,15 +75,44 @@ final class ComponentInstaller {
 
     // MARK: - Chemins des composants installés
 
+    /// Le chemin ATTENDU du binaire d'un composant — installé ou non (S-1,
+    /// BR-1). C'est l'UNIQUE composition de ces chemins dans l'app :
+    /// l'installateur y écrit, le badge y veille.
+    func binaryLocation(_ component: ComponentID) -> URL {
+        switch component {
+        case .omp:
+            paths.ompDir(manifest.ompVersion).appendingPathComponent("omp")
+        case .podman:
+            paths.podmanDir(manifest.podmanVersion).appendingPathComponent("bin/podman")
+        }
+    }
+
+    /// Un composant est installé si et seulement si son binaire est un fichier
+    /// EXÉCUTABLE (invariant S-1) : absent, dossier à la place du fichier,
+    /// fichier non exécutable ou ancêtre inaccessible ⇒ faux. Ne lève jamais.
+    ///
+    /// Le dossier est écarté EXPLICITEMENT : mesuré le 2026-10-05,
+    /// `isExecutableFile(atPath:)` dit vrai pour un dossier 0755 (y compris un
+    /// lien symbolique qui le vise), donc le prédicat seul ne suffit pas à
+    /// « dossier à la place du binaire ⇒ manquant » (Doc-2).
+    func isInstalled(_ component: ComponentID) -> Bool {
+        let path = binaryLocation(component).path
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), !isDirectory.boolValue else {
+            return false
+        }
+        return FileManager.default.isExecutableFile(atPath: path)
+    }
+
     /// Le binaire omp du manifeste, `nil` s'il est absent ou non exécutable — un
     /// fichier non exécutable ne compte jamais comme installé (invariant S-1).
     func installedOmpBinary() -> URL? {
-        executable(paths.ompDir(manifest.ompVersion).appendingPathComponent("omp"))
+        isInstalled(.omp) ? binaryLocation(.omp) : nil
     }
 
     /// Le binaire podman du manifeste (`bin/podman`), même invariant.
     func installedPodmanBinary() -> URL? {
-        executable(paths.podmanDir(manifest.podmanVersion).appendingPathComponent("bin/podman"))
+        isInstalled(.podman) ? binaryLocation(.podman) : nil
     }
 
     // MARK: - Installation
@@ -399,10 +430,6 @@ final class ComponentInstaller {
             .appendingPathComponent("omp-console-\(name)-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
-    }
-
-    private func executable(_ url: URL) -> URL? {
-        FileManager.default.isExecutableFile(atPath: url.path) ? url : nil
     }
 
     private func bounded(_ text: String) -> String {

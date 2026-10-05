@@ -4,9 +4,10 @@
 // qui y pose le verre (Liquid Glass, aucun fond maison).
 //
 // Organisation (S-4 de omp-console-redesign) : barre latérale groupée
-// « Pilotage » / « Consultation », badge des attentes sur l'Accueil — et rien en
-// bas de la barre latérale (HIG Sidebars : l'état des notifications vit dans
-// l'Accueil) ; titre de fenêtre = la section courante, jamais le nom de l'app
+// « Pilotage » / « Consultation », badge des attentes sur l'Accueil, et au PIED
+// de la barre latérale le badge d'état des composants embarqués (S-2) — aucune
+// autre décoration (HIG Sidebars : l'état des notifications vit dans l'Accueil) ;
+// titre de fenêtre = la section courante, jamais le nom de l'app
 // (HIG Toolbars) ; barre d'outils PERSONNALISABLE « Nouvelle feature… » ; TOUT
 // vit dans cette fenêtre (plein écran) ; UNE feuille à la fois (« OMP est
 // requis », « Bienvenue », « Nouvelle feature », « Répondre », « Contrat »),
@@ -49,6 +50,9 @@ struct ConsoleRootView: View {
     /// La préparation de l'app (S-5) : la feuille `.setup` et le bandeau de
     /// l'Accueil en dépendent.
     @ObservedObject var setup: SetupModel
+    /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
+    /// latérale le montre et se recalcule sans redémarrage.
+    @ObservedObject var components: ComponentPresenceModel
 
     /// Les modèles des sections Session OMP, Terminal et Statistiques : à
     /// l'échelle de l'app (`OMPConsoleApp`), comme les autres.
@@ -122,6 +126,14 @@ struct ConsoleRootView: View {
                 }
             }
             .navigationSplitViewColumnWidth(min: 180, ideal: 220)
+            // Le badge d'état des composants, ancré au pied de la barre latérale
+            // et aligné sur son bord gauche (S-2) : la `List` est rentrée de sa
+            // hauteur et garde ses dernières lignes lisibles. Replier la barre
+            // latérale masque le badge avec elle — c'est le coin gauche de la
+            // fenêtre, comportement assumé.
+            .safeAreaInset(edge: .bottom, alignment: .leading) {
+                ComponentBadge(status: components.presence.status)
+            }
         } detail: {
             SectionDetail(
                 section: model.selection,
