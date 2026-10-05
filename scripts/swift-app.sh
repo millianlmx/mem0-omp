@@ -116,6 +116,24 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 cp "$PLIST" "$BUNDLE/Contents/Info.plist"
 cp "$bin_dir/OMPConsole" "$BUNDLE/Contents/MacOS/OMPConsole"
 chmod +x "$BUNDLE/Contents/MacOS/OMPConsole"
+
+# 3 bis) le contexte de build de la pile mémoire est EMBARQUÉ dans le bundle (S-1,
+#    BR-1) : l'app construit son image mem0-http depuis ces quatre fichiers, donc
+#    ils voyagent avec elle. La source unique reste `mem0-stack/mem0-http/` ; un
+#    fichier manquant rendrait le bundle inutilisable, donc on échoue en le nommant.
+#    Package.swift ne porte AUCUNE ressource : la copie se fait ici, au bundle.
+STACK_SOURCE="$ROOT/mem0-stack/mem0-http"
+STACK_DEST="$BUNDLE/Contents/Resources/Stack/mem0-http"
+mkdir -p "$STACK_DEST"
+for stack_file in Dockerfile http_server.py memory_config.py test_api.py; do
+  if [ ! -f "$STACK_SOURCE/$stack_file" ]; then
+    echo "✗ ressource de pile manquante : $STACK_SOURCE/$stack_file"
+    exit 1
+  fi
+  cp "$STACK_SOURCE/$stack_file" "$STACK_DEST/$stack_file"
+done
+echo "  ✓ contexte de pile embarqué ($STACK_DEST)"
+
 echo "  ✓ bundle assemblé ($BUNDLE)"
 
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign

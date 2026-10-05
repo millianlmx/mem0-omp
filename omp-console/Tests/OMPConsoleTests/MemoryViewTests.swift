@@ -117,6 +117,8 @@ func ac2SectionHasNoWriteVocabulary() {
         MemoryText.emptyRow,
         MemoryText.noProjectTitle,
         MemoryText.unavailableTitle,
+        MemoryText.omlxUnauthorized,
+        MemoryText.omlxUnreachable(url: "http://127.0.0.1:8000/models"),
     ]
     for label in labels {
         let lowered = label.lowercased()
@@ -128,4 +130,28 @@ func ac2SectionHasNoWriteVocabulary() {
     }
     // Les trois routes du client sont deux lectures et une recherche (S-2).
     #expect(MemoryRoute.allCases.count == 3)
+}
+
+@Test("all-in-one-app/AC-6 : les textes des prérequis systèmes manquants sont figés (S-6)")
+func ac6PrerequisiteTextsAreFrozen() {
+    // oMLX : les deux phrases EXACTES de S-6, chaque état en une phrase.
+    #expect(
+        MemoryText.omlxUnreachable(url: "http://127.0.0.1:8000/models")
+            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
+    )
+    let unauthorized = "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN."
+    #expect(MemoryText.omlxUnauthorized == unauthorized)
+
+    // git et gh : la spec ne fait que FIGER que leurs messages existants nomment le
+    // prérequis au moment de l'usage — aucun comportement nouveau ici.
+    let git = FilesError.gitNotFound(searched: ["/nowhere/git"], override: nil, path: "/tmp/projet").userMessage
+    #expect(git.contains("git est introuvable"))
+    #expect(git.contains("/tmp/projet"))
+
+    let gh = GhError.ghNotFound(searched: ["/nowhere/gh"], override: nil).userMessage
+    #expect(gh.contains("gh est introuvable"))
+    // Un chemin imposé est nommé lui aussi, jamais avalé.
+    let ghOverride = GhError.ghNotFound(searched: ["/nowhere/gh"], override: "/custom/gh").userMessage
+    #expect(ghOverride.contains("OMP_CONSOLE_GH_BINARY"))
+    #expect(ghOverride.contains("/custom/gh"))
 }

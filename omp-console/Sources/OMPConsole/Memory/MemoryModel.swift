@@ -52,6 +52,10 @@ final class MemoryModel: ObservableObject {
     @Published private(set) var selectedId: String?
     @Published private(set) var serviceAvailable = false
     @Published private(set) var serviceError: String?
+    /// L'état du prérequis oMLX (S-6, AC-6) : publié comme les autres, `unknown`
+    /// tant que le service mem0 n'a pas été trouvé disponible — la sonde ne part
+    /// jamais dans ce cas, et le bandeau non plus.
+    @Published private(set) var omlx: OMLXStatus = .unknown
     @Published private(set) var isLoading = false
     /// Faux tant que la première sonde n'a pas rendu : la vue n'affiche pas
     /// « Aucun projet ouvert » avant de savoir (S-4, S-6).
@@ -64,16 +68,34 @@ final class MemoryModel: ObservableObject {
     private let scopeProvider: () async -> String?
     private var inFlight: Task<Void, Never>?
 
+    /// La configuration de la pile (S-2) : d'où vient l'URL sondée pour oMLX (S-6).
+    private let stackConfig: StackConfig
+    /// La session de la sonde oMLX : injectée pour que les tests la stubent sans
+    /// ouvrir de socket (les doublures `URLProtocol` du dépôt).
+    private let omlxSession: URLSession
+
+    /// L'URL RÉELLEMENT sondée pour oMLX — c'est elle que le bandeau nomme.
+    let omlxProbeURL: URL
+
     init(
         service: (any MemoryServing)? = nil,
         scope: (() async -> String?)? = nil,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         defaults: UserDefaults = .standard,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        paths: AppPaths = .standard(),
+        stackConfig: StackConfig? = nil,
+        omlxSession: URLSession = .shared
     ) {
         let config = MemoryServiceConfig.fromEnvironment(environment)
         self.service = service ?? HTTPMemoryService(config: config)
         self.address = config.baseURL.absoluteString
+        // `stack/env` absent (ou illisible) ⇒ les défauts de la pile : l'URL de
+        // sonde est alors `http://127.0.0.1:8000/models` (S-6, cas limite).
+        let stack = stackConfig ?? StackEnvStore.load(at: paths.stackEnv, fileManager: fileManager) ?? .defaults
+        self.stackConfig = stack
+        self.omlxProbeURL = stack.omlxProbeURL
+        self.omlxSession = omlxSession
         if let scope {
             self.scopeProvider = scope
         } else {
@@ -139,6 +161,26 @@ final class MemoryModel: ObservableObject {
 
     var canRefresh: Bool {
         !isLoading
+    }
+
+    // MARK: - Prérequis oMLX (S-6, AC-6)
+
+    /// Le bandeau oMLX de la section, ou `nil` quand il n'y a rien à nommer.
+    ///
+    /// Il n'apparaît QUE si le service mem0 est disponible (quand il est
+    /// indisponible, son propre message suffit — S-6) ET qu'oMLX est en défaut :
+    /// injoignable, ou jeton refusé. Joignable ou encore `unknown` ⇒ aucun bandeau.
+    /// C'est une LECTURE seule : aucun geste, aucune écriture.
+    var omlxBanner: String? {
+        guard serviceAvailable else { return nil }
+        switch omlx {
+        case .unreachable:
+            return MemoryText.omlxUnreachable(url: omlxProbeURL.absoluteString)
+        case .unauthorized:
+            return MemoryText.omlxUnauthorized
+        case .unknown, .reachable:
+            return nil
+        }
     }
 
     // MARK: - Geste : le champ de recherche
@@ -223,11 +265,17 @@ final class MemoryModel: ObservableObject {
         // La portée est résolue MÊME si le service est muet : elle ne coûte aucun
         // appel réseau, et sans elle l'état afficherait « Aucun projet ouvert » au
         // lieu de l'indisponibilité (S-4, S-6.3).
-        guard await resolveScope() != nil else {
-            prepared = true
-            return
+        if await resolveScope() != nil {
+            await loadCurrent()
         }
-        await loadCurrent()
+        // La sonde oMLX (S-6) vient APRÈS la sonde de santé, et SEULEMENT quand le
+        // service est disponible : sinon le message de la mémoire suffit, et la
+        // sonde n'aurait aucun sens. Elle est placée après la lecture de la liste
+        // pour que le prérequis ne bloque jamais la section ; son état est publié
+        // comme les autres, jamais levé.
+        if serviceAvailable {
+            omlx = await OMLXProbe.status(config: stackConfig, session: omlxSession)
+        }
         prepared = true
     }
 

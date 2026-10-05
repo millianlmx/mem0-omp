@@ -92,21 +92,20 @@ func attentionsAreHighlightedWithTheirQuestion() {
 }
 
 @MainActor
-@Test("omp-console-redesign/AC-7 : OMP introuvable donne l'écran « OMP est requis »")
-func missingOmpGivesOmpRequired() {
+@Test("all-in-one-app/AC-1 : OMP introuvable donne le fond « prépare ses composants », quel que soit le tableau")
+func missingOmpGivesPreparationBackground() {
     let home = HomeModel(
-        resolve: { _ in .failure(.binaryNotFound(searched: ["/a/omp", "/b/omp"], override: "/x/omp")) },
+        resolve: { _ in .failure(.binaryNotFound(searched: ["/a/omp"], override: nil)) },
         environment: { [:] }
     )
     #expect(home.canLaunch == false)
-    let expected = HomeState.ompMissing(searched: ["/a/omp", "/b/omp"], override: "/x/omp")
-    #expect(HomePresentation.state(omp: home.omp, board: .storeEmpty(dir: "/s")) == expected)
+    #expect(HomePresentation.state(omp: home.omp, board: .storeEmpty(dir: "/s")) == .ompMissing)
     let waiting = KanbanBoard(cards: [card("specs", column: .jalonSpecs)], anomalies: [])
-    #expect(HomePresentation.state(omp: home.omp, board: .board(waiting)) == expected)
+    #expect(HomePresentation.state(omp: home.omp, board: .board(waiting)) == .ompMissing)
 }
 
-/// Un résolveur qui échoue tant que `found` est faux : l'utilisateur installe OMP
-/// entre deux « Vérifier à nouveau ».
+/// Un résolveur qui échoue tant que `found` est faux : la préparation installe le
+/// composant entre deux `recheck()`.
 private final class SwitchingResolver {
     var found = false
 
@@ -118,80 +117,87 @@ private final class SwitchingResolver {
 }
 
 @MainActor
-@Test("omp-console-redesign/AC-7 : OMP introuvable impose la feuille « OMP est requis » avant toute autre")
-func missingOmpImposesItsSheetFirst() {
-    let missing = OmpStatus.missing(searched: ["/a/omp"], override: nil)
+@Test("all-in-one-app/AC-1 : la préparation impose sa feuille avant toute autre tant qu'elle n'est pas prête")
+func setupImposesItsSheetFirst() {
     let boards: [KanbanBoardState] = [
         .loading, .storeAbsent(dir: "/s"), .storeEmpty(dir: "/s"),
         .board(KanbanBoard(cards: [card("ask", column: .questionEnVol)], anomalies: [])),
     ]
-    for state in boards {
+    for board in boards {
         for welcomeSeen in [false, true] {
+            // Règle 1 : préparation en cours (ou en échec), feuille non ignorée.
             #expect(MainSheetPolicy.sheet(
-                omp: missing, board: state, welcomeSeen: welcomeSeen, welcomeRequested: true,
-                launchFormShown: true, answerCardID: "ask"
-            ) == .ompRequired)
+                omp: available, setup: .preparing(.machine), setupDismissed: false, board: board,
+                welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask"
+            ) == .setup)
+            // Règle 2 : préparation prête mais composant OMP absent.
             #expect(MainSheetPolicy.sheet(
-                omp: missing, board: state, welcomeSeen: welcomeSeen, welcomeRequested: false,
-                launchFormShown: false, answerCardID: nil
-            ) == .ompRequired)
+                omp: .missing, setup: .ready, setupDismissed: false, board: board,
+                welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask"
+            ) == .setup)
         }
     }
+    // Règle 1 bis : l'échec non ignoré garde la feuille.
+    #expect(MainSheetPolicy.sheet(
+        omp: available, setup: .failed(.components(.unsupportedMac)), setupDismissed: false,
+        board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
+        launchFormShown: false, answerCardID: nil
+    ) == .setup)
+    // Ignorée : les autres règles reprennent la main.
+    #expect(MainSheetPolicy.sheet(
+        omp: available, setup: .preparing(.machine), setupDismissed: true, board: .storeEmpty(dir: "/s"),
+        welcomeSeen: true, welcomeRequested: false, launchFormShown: true, answerCardID: nil
+    ) == .newFeature)
+    #expect(MainSheetPolicy.sheet(
+        omp: available, setup: .failed(.components(.unsupportedMac)), setupDismissed: true,
+        board: .storeEmpty(dir: "/s"), welcomeSeen: false, welcomeRequested: true,
+        launchFormShown: false, answerCardID: nil
+    ) == .welcome)
 
+    // `onReady` revérifie OMP : une fois le composant installé, l'Accueil ouvre.
     let resolver = SwitchingResolver()
     let suite = "home-tests-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
     let home = HomeModel(resolve: { resolver.resolve($0) }, environment: { [:] }, defaults: defaults)
-    func policy() -> MainSheet? {
-        MainSheetPolicy.sheet(
-            omp: home.omp, board: .storeEmpty(dir: "/s"), welcomeSeen: home.welcomeSeen,
-            welcomeRequested: home.welcomeRequested, launchFormShown: false, answerCardID: home.answerCardID
-        )
-    }
-    #expect(home.recheckFailed == false, "aucun échec dit avant le premier « Vérifier à nouveau »")
-    home.recheck()
-    #expect(home.recheckFailed)
-    #expect(policy() == .ompRequired)
-
+    #expect(home.omp == .missing)
     resolver.found = true
     home.recheck()
     #expect(home.canLaunch)
-    #expect(home.recheckFailed == false)
-    #expect(policy() != .ompRequired)
+    #expect(home.omp == .available(URL(fileURLWithPath: "/usr/local/bin/omp")))
 }
 
 @MainActor
-@Test("omp-console-redesign/AC-7 : « Choisir l'emplacement… » retient un programme et refuse un fichier ordinaire")
-func choosingOmpLocationPersistsAnExecutableOnly() throws {
-    let directory = FileManager.default.temporaryDirectory.appendingPathComponent("home-tests-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let plain = directory.appendingPathComponent("notes.txt")
-    try Data("texte".utf8).write(to: plain)
-    let binary = directory.appendingPathComponent("omp")
-    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binary)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
-
+@Test("all-in-one-app/AC-3 : la résolution par défaut ne voit que le composant de l'app, jamais le PATH du poste")
+func defaultResolverOnlySeesTheAppComponent() throws {
     let suite = "home-tests-\(UUID().uuidString)"
     let defaults = UserDefaults(suiteName: suite)!
     defer { defaults.removePersistentDomain(forName: suite) }
-    // La résolution RÉELLE (aucun résolveur injecté) : l'emplacement choisi doit
-    // être lu du même domaine de préférences que celui où il est écrit.
-    let home = HomeModel(environment: { ["PATH": "/nonexistent", "HOME": "/nonexistent"] }, defaults: defaults)
 
-    home.chooseOmp(path: plain.path)
-    #expect(home.chosenPathRejected)
-    #expect(defaults.string(forKey: OmpBinaryResolver.chosenPathKey) == nil, "un fichier refusé n'est pas retenu")
+    // Un `PATH` et un `HOME` qui contiennent un omp ne comptent plus : la racine
+    // de support est vide, donc rien n'est trouvé.
+    let bare = HomeModel(
+        environment: { ["PATH": "/usr/bin", "HOME": "/nonexistent", "OMP_CONSOLE_OMP_BINARY": ""] },
+        defaults: defaults
+    )
+    #expect(bare.omp == .missing)
+    #expect(bare.canLaunch == false)
 
-    home.chooseOmp(path: binary.path)
-    #expect(home.chosenPathRejected == false)
-    #expect(defaults.string(forKey: OmpBinaryResolver.chosenPathKey) == binary.path)
-    #expect(home.omp == .available(URL(fileURLWithPath: binary.path)))
+    // Le binaire du composant posé sous la racine de support EST la source.
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("home-tests-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+    let binary = paths.ompDir(ComponentManifest.current.ompVersion).appendingPathComponent("omp")
+    try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binary)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binary.path)
 
-    // Le lancement suivant le retrouve.
-    let next = HomeModel(environment: { ["PATH": "/nonexistent", "HOME": "/nonexistent"] }, defaults: defaults)
-    #expect(next.omp == .available(URL(fileURLWithPath: binary.path)))
+    let withComponent = HomeModel(
+        environment: { ["OMP_CONSOLE_SUPPORT_ROOT": root.path, "PATH": "/usr/bin"] },
+        defaults: defaults
+    )
+    #expect(withComponent.omp == .available(binary))
+    #expect(withComponent.canLaunch)
 }
 
 @MainActor
@@ -208,7 +214,7 @@ func welcomeOpensOnceOnAFreshInstall() {
     #expect(first.welcomeSeen == false)
     func policy(_ home: HomeModel, _ board: KanbanBoardState, launchFormShown: Bool = false) -> MainSheet? {
         MainSheetPolicy.sheet(
-            omp: home.omp, board: board, welcomeSeen: home.welcomeSeen,
+            omp: home.omp, setup: .ready, setupDismissed: false, board: board, welcomeSeen: home.welcomeSeen,
             welcomeRequested: home.welcomeRequested, launchFormShown: launchFormShown,
             answerCardID: home.answerCardID
         )
@@ -239,8 +245,8 @@ func welcomeOpensOnceOnAFreshInstall() {
 func answerOpensTheCardSheetWhileItWaits() {
     func policy(_ board: KanbanBoardState, answerCardID: String?) -> MainSheet? {
         MainSheetPolicy.sheet(
-            omp: available, board: board, welcomeSeen: true, welcomeRequested: false,
-            launchFormShown: false, answerCardID: answerCardID
+            omp: available, setup: .ready, setupDismissed: false, board: board, welcomeSeen: true,
+            welcomeRequested: false, launchFormShown: false, answerCardID: answerCardID
         )
     }
 

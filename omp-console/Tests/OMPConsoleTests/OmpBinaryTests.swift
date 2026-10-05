@@ -1,179 +1,133 @@
-// Preuves de S-1 : résolution du binaire `omp` et échec du lancement réel d'un
-// chemin inexploitable (AC-14, BR-5 step 3).
+// Preuves de S-4 : le seul binaire que l'app héberge est le composant qu'elle a
+// installé (ou l'échappatoire de test) — jamais un binaire système (AC-3).
 //
-// L'environnement est INJECTÉ : aucun test ne dépend du PATH réel du poste, sauf
-// celui qui crée son propre exécutable dans un dossier temporaire. C'est ce qui
-// rend la preuve du chemin « binaire introuvable » reproductible partout.
+// Aucun test ne dépend du PATH réel du poste : l'environnement est injecté et les
+// binaires sont créés dans des racines temporaires.
 
 import Foundation
 import Testing
 @testable import OMPConsole
 
-// MARK: - Outils
-
-/// Crée un dossier temporaire propre au test.
-private func makeTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("omp-binary-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    return url
+/// Une racine de support temporaire.
+private func makeRoot() throws -> URL {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent("omp-binary-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    return root
 }
 
-/// Écrit un fichier `omp` exécutable (ou non) dans un dossier.
+/// Le binaire du composant, exécutable ou non.
 @discardableResult
-private func writeBinary(in directory: URL, executable: Bool) throws -> URL {
-    let url = directory.appendingPathComponent("omp")
-    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
-    try FileManager.default.setAttributes(
-        [.posixPermissions: executable ? 0o755 : 0o644],
-        ofItemAtPath: url.path
+private func writeComponentBinary(paths: AppPaths, executable: Bool) throws -> URL {
+    let binary = paths.ompDir(ComponentManifest.current.ompVersion).appendingPathComponent("omp")
+    try FileManager.default.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binary)
+    try FileManager.default.setAttributes([.posixPermissions: executable ? 0o755 : 0o644], ofItemAtPath: binary.path)
+    return binary
+}
+
+/// Un `omp` système factice dans son propre dossier (ce que `PATH` trouverait).
+private func writeSystemBinary(executable: Bool = true) throws -> URL {
+    let directory = try makeRoot().appendingPathComponent("bun-bin")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let binary = directory.appendingPathComponent("omp")
+    try Data("#!/bin/sh\nexit 0\n".utf8).write(to: binary)
+    try FileManager.default.setAttributes([.posixPermissions: executable ? 0o755 : 0o644], ofItemAtPath: binary.path)
+    return binary
+}
+
+@Test("all-in-one-app/AC-3 : le composant est le seul candidat, même quand un omp système est dans le PATH")
+func componentIsTheOnlyCandidate() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+    let component = try writeComponentBinary(paths: paths, executable: true)
+    let system = try writeSystemBinary()
+    let environment = ["PATH": system.deletingLastPathComponent().path, "HOME": "/h"]
+
+    let candidates = OmpBinaryResolver.candidates(
+        environment: environment, paths: paths, manifest: .current
     )
-    return url
-}
+    #expect(candidates == [component.path], "un seul candidat : le composant de l'app")
 
-// MARK: - Cas
-
-@Test("client-rpc-omp/AC-14 : le premier candidat exécutable du PATH gagne")
-func firstExecutablePathEntryWins() throws {
-    let directory = try makeTemporaryDirectory()
-    let binary = try writeBinary(in: directory, executable: true)
-
-    let resolution = OmpBinaryResolver.resolve(environment: [
-        "PATH": "/nonexistent-first:\(directory.path)",
-        "HOME": "/nonexistent-home",
-        "OMP_CONSOLE_OMP_BINARY": "",
-    ], chosen: nil)
-
-    guard case .success(let url) = resolution else {
-        Issue.record("résolution attendue en succès, obtenu \(resolution)")
+    guard case .success(let resolved) = OmpBinaryResolver.resolve(
+        environment: environment, paths: paths, manifest: .current
+    ) else {
+        Issue.record("le composant installé doit résoudre")
         return
     }
-    #expect(url.path == binary.path)
+    #expect(resolved == component)
+    #expect(resolved.path != system.path)
 }
 
-@Test("client-rpc-omp/AC-14 : un chemin explicite non exécutable ne gagne jamais")
-func nonExecutableOverrideNeverWins() throws {
-    let directory = try makeTemporaryDirectory()
-    let binary = try writeBinary(in: directory, executable: false)
+@Test("all-in-one-app/AC-3 : sans composant, un omp système ne sauve pas la résolution")
+func systemBinaryNeverRescues() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+    let system = try writeSystemBinary()
+    let environment = ["PATH": system.deletingLastPathComponent().path, "HOME": "/h"]
 
-    let resolution = OmpBinaryResolver.resolve(environment: [
-        "PATH": "/nonexistent",
-        "HOME": "/nonexistent",
-        "OMP_CONSOLE_OMP_BINARY": binary.path,
-    ])
-
+    let searched = paths.ompDir(ComponentManifest.current.ompVersion).appendingPathComponent("omp").path
+    let resolution = OmpBinaryResolver.resolve(environment: environment, paths: paths, manifest: .current)
     guard case .failure(let error) = resolution else {
-        Issue.record("un fichier non exécutable ne doit pas être retenu")
+        Issue.record("un omp système ne doit jamais être retenu")
         return
     }
-    #expect(error == .binaryNotFound(searched: [binary.path], override: binary.path))
-    #expect(error.userMessage.contains("Binaire `omp` introuvable"))
-    #expect(error.userMessage.contains("Chemin demandé : \(binary.path)"))
+    #expect(error == .binaryNotFound(searched: [searched], override: nil))
 }
 
-@Test("client-rpc-omp/AC-14 : un chemin explicite absent échoue et le message le nomme")
-func missingOverrideFails() {
-    let resolution = OmpBinaryResolver.resolve(environment: [
-        "PATH": "/nonexistent",
-        "HOME": "/nonexistent",
-        "OMP_CONSOLE_OMP_BINARY": "/nonexistent/omp",
-    ])
+@Test("all-in-one-app/AC-3 : OMP_CONSOLE_OMP_BINARY est le seul candidat quand elle est posée")
+func overrideIsAlone() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+    let component = try writeComponentBinary(paths: paths, executable: true)
+    let override = try writeSystemBinary()
 
+    let environment = [OmpBinaryResolver.overrideKey: override.path, "PATH": "/usr/bin"]
+    #expect(OmpBinaryResolver.candidates(environment: environment, paths: paths, manifest: .current) == [override.path])
+    guard case .success(let resolved) = OmpBinaryResolver.resolve(
+        environment: environment, paths: paths, manifest: .current
+    ) else {
+        Issue.record("l'override exécutable doit résoudre")
+        return
+    }
+    #expect(resolved == override, "l'override passe avant le composant, jamais l'inverse")
+    #expect(resolved != component)
+
+    // Une variable vide est traitée comme absente : le composant reprend.
+    let empty = [OmpBinaryResolver.overrideKey: "", "PATH": "/usr/bin"]
+    #expect(OmpBinaryResolver.candidates(environment: empty, paths: paths, manifest: .current) == [component.path])
+}
+
+@Test("all-in-one-app/AC-3 : un composant non exécutable n'est jamais retenu")
+func nonExecutableComponentIsMissing() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+    let component = try writeComponentBinary(paths: paths, executable: false)
+
+    let resolution = OmpBinaryResolver.resolve(environment: [:], paths: paths, manifest: .current)
     guard case .failure(let error) = resolution else {
-        Issue.record("un chemin absent ne doit pas être retenu")
+        Issue.record("un fichier non exécutable ne doit pas résoudre")
         return
     }
-    #expect(error == .binaryNotFound(searched: ["/nonexistent/omp"], override: "/nonexistent/omp"))
-    #expect(error.userMessage == "Binaire `omp` introuvable : cherché dans PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin. Chemin demandé : /nonexistent/omp")
+    #expect(error == .binaryNotFound(searched: [component.path], override: nil))
 }
 
-@Test("client-rpc-omp/AC-14 : l'ordre des candidats est celui de S-1")
-func candidateOrderFollowsSpecification() {
-    let candidates = OmpBinaryResolver.candidates(environment: ["PATH": "/a:/b", "HOME": "/h"])
-    #expect(candidates == [
-        "/a/omp",
-        "/b/omp",
-        "/omp",
-        "/h/.bun/bin/omp",
-        "/opt/homebrew/bin/omp",
-        "/usr/local/bin/omp",
-    ])
-}
+@Test("all-in-one-app/AC-3 : un override absent échoue et le message le nomme")
+func missingOverrideFails() throws {
+    let root = try makeRoot()
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+    let missing = root.appendingPathComponent("absent/omp").path
 
-@Test("client-rpc-omp/AC-14 : un PATH absent laisse les candidats de repli")
-func missingPathKeepsFallbacks() {
-    let candidates = OmpBinaryResolver.candidates(environment: ["HOME": "/h"])
-    #expect(candidates == [
-        "/omp",
-        "/h/.bun/bin/omp",
-        "/opt/homebrew/bin/omp",
-        "/usr/local/bin/omp",
-    ])
-}
-
-@Test("client-rpc-omp/AC-14 : un HOME absent omet le candidat ~/.bun/bin")
-func missingHomeDropsBunCandidate() {
-    let candidates = OmpBinaryResolver.candidates(environment: ["PATH": "/a"])
-    #expect(candidates == [
-        "/a/omp",
-        "/omp",
-        "/opt/homebrew/bin/omp",
-        "/usr/local/bin/omp",
-    ])
-}
-
-@Test("client-rpc-omp/AC-14 : une variable d'échappement vide est traitée comme absente")
-func emptyOverrideIsIgnored() {
-    var environment = ["PATH": "/a", "HOME": "/h"]
-    environment["OMP_CONSOLE_OMP_BINARY"] = ""
-    #expect(OmpBinaryResolver.candidates(environment: environment).first == "/a/omp")
-}
-
-@Test("omp-console-redesign/AC-7 : l'emplacement choisi passe avant PATH, jamais avant la variable d'échappement")
-func chosenPathComesAfterOverrideBeforePath() throws {
-    #expect(OmpBinaryResolver.candidates(environment: ["PATH": "/a", "HOME": "/h"], chosen: "/choisi/omp") == [
-        "/choisi/omp",
-        "/a/omp",
-        "/omp",
-        "/h/.bun/bin/omp",
-        "/opt/homebrew/bin/omp",
-        "/usr/local/bin/omp",
-    ])
-    #expect(OmpBinaryResolver.candidates(
-        environment: ["PATH": "/a", "OMP_CONSOLE_OMP_BINARY": "/x/omp"], chosen: "/choisi/omp"
-    ) == ["/x/omp"], "un chemin imposé reste le SEUL candidat")
-
-    // Un `omp` choisi hors des emplacements connus est trouvé.
-    let directory = try makeTemporaryDirectory()
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let binary = try writeBinary(in: directory, executable: true)
     let resolution = OmpBinaryResolver.resolve(
-        environment: ["PATH": "/nonexistent", "HOME": "/nonexistent"],
-        chosen: binary.path
+        environment: [OmpBinaryResolver.overrideKey: missing], paths: paths, manifest: .current
     )
-    guard case .success(let url) = resolution else {
-        Issue.record("l'emplacement choisi devait être retenu, obtenu \(resolution)")
+    guard case .failure(let error) = resolution else {
+        Issue.record("un override absent doit échouer")
         return
     }
-    #expect(url.path == binary.path)
-
-    // Une préférence vide est absente.
-    let suite = "omp-binary-tests-\(UUID().uuidString)"
-    let defaults = UserDefaults(suiteName: suite)!
-    defer { defaults.removePersistentDomain(forName: suite) }
-    defaults.set("", forKey: OmpBinaryResolver.chosenPathKey)
-    #expect(OmpBinaryResolver.chosenPath(defaults: defaults) == nil)
-}
-
-@Test("client-rpc-omp/AC-14 : le lancement réel d'un chemin inexploitable lève sans session vivante")
-@MainActor
-func realLaunchOfInvalidPathThrows() throws {
-    let directory = try makeTemporaryDirectory()
-    let transport = ProcessTransport()
-    let missing = directory.appendingPathComponent("absent-omp")
-
-    #expect(throws: (any Error).self) {
-        try transport.start(binary: missing, arguments: [], cwd: directory)
-    }
-    #expect(transport.isRunning == false)
-    #expect(transport.pid == nil)
+    #expect(error == .binaryNotFound(searched: [missing], override: missing))
 }

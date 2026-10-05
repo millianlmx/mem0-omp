@@ -87,17 +87,27 @@ func memoryRow(
 }
 
 /// Un modèle réel branché sur la doublure : portée FIXE (le projet ouvert n'est pas
-/// celui du poste de test) et environnement VIDE (adresse par défaut).
+/// celui du poste de test), environnement VIDE (adresse par défaut), racine de
+/// support INEXISTANTE (donc `stack/env` absent ⇒ les défauts de la pile) et sonde
+/// oMLX STUBÉE — la suite n'ouvre aucune socket, et l'URL sondée est déterministe.
 @MainActor
 func memoryModel(
     service: ScriptedMemoryService,
     scope: String? = "memoire-mem0",
-    query: String? = nil
+    query: String? = nil,
+    paths: AppPaths? = nil,
+    stackConfig: StackConfig? = nil,
+    omlxSession: URLSession? = nil
 ) -> MemoryModel {
     let model = MemoryModel(
         service: service,
         scope: { scope },
-        environment: [:]
+        environment: [:],
+        paths: paths ?? AppPaths(
+            supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)
+        ),
+        stackConfig: stackConfig,
+        omlxSession: omlxSession ?? StubURLProtocol.session()
     )
     if let query { model.updateQuery(query) }
     return model

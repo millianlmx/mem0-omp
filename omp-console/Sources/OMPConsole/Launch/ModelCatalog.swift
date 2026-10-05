@@ -70,7 +70,7 @@ enum ModelCatalogLoader {
     static func loadDefault() async -> Result<[String], ModelCatalogError> {
         let environment = ProcessInfo.processInfo.environment
         let binary: URL
-        switch OmpBinaryResolver.resolve(environment: environment, chosen: OmpBinaryResolver.chosenPath()) {
+        switch OmpBinaryResolver.resolve(environment: environment) {
         case .success(let url): binary = url
         case .failure: return .failure(ModelCatalogError(reason: "omp introuvable"))
         }

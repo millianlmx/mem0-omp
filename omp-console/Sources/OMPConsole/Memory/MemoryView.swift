@@ -19,16 +19,44 @@ struct MemoryView: ConsoleSectionView {
     @ObservedObject var model: MemoryModel
 
     var body: some View {
-        content
-            // Le champ de recherche standard, dans la barre d'outils : Retour lance
-            // la recherche, la croix (ou un champ vidé) ramène au sommaire.
-            .searchable(text: queryBinding, placement: .toolbar, prompt: Text(MemoryText.searchPrompt))
-            .onSubmit(of: .search) { Task { await model.search() } }
-            .toolbar { toolbarContent }
-            // Le premier chargement suit l'apparition de la section ; la requête en
-            // vol est annulée quand elle disparaît (S-6 : aucun sondage périodique).
-            .task { await model.refresh() }
-            .onDisappear { model.suspend() }
+        VStack(spacing: 0) {
+            // Le prérequis système manquant est NOMMÉ au-dessus de la liste (S-6,
+            // AC-6) : lecture seule, aucun geste — oMLX n'est ni installé ni
+            // configuré par l'app.
+            if let banner = model.omlxBanner {
+                omlxBannerView(banner)
+            }
+            content
+        }
+        // Le champ de recherche standard, dans la barre d'outils : Retour lance
+        // la recherche, la croix (ou un champ vidé) ramène au sommaire.
+        .searchable(text: queryBinding, placement: .toolbar, prompt: Text(MemoryText.searchPrompt))
+        .onSubmit(of: .search) { Task { await model.search() } }
+        .toolbar { toolbarContent }
+        // Le premier chargement suit l'apparition de la section ; la requête en
+        // vol est annulée quand elle disparaît (S-6 : aucun sondage périodique).
+        .task { await model.refresh() }
+        .onDisappear { model.suspend() }
+    }
+
+    // MARK: - Prérequis oMLX (S-6, AC-6)
+
+    /// Le bandeau d'un prérequis système manquant : la phrase porte le sens, la
+    /// teinte orange ne fait que le souligner (jamais rouge — ce n'est pas une
+    /// erreur de l'app). Aucun bouton : l'app ne répare pas oMLX.
+    private func omlxBannerView(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: "exclamationmark.triangle")
+            Text(verbatim: text)
+            Spacer()
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .consoleBanner(tint: .orange)
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .accessibilityIdentifier("memory.omlxBanner")
     }
 
     // MARK: - Barre d'outils
