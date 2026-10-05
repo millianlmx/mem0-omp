@@ -55,7 +55,11 @@ enum SessionHarness {
 
     static func status(environment: [String: String]) -> Status {
         guard optedIn(environment: environment) else { return .disabled }
-        if case .success = OmpBinaryResolver.resolve(environment: environment) { return .ready }
+        // La racine de support se dérive de l'environnement REÇU (comme le fait
+        // HomeModel) : sinon la garde dépendrait de l'installation réelle du poste.
+        if case .success = OmpBinaryResolver.resolve(environment: environment, paths: .standard(environment: environment)) {
+            return .ready
+        }
         return .missingBinary
     }
 
@@ -151,6 +155,10 @@ func guardDisabledWithoutRecipe() throws {
 func guardMissingBinaryWithRecipe() {
     var environment = ["PATH": "/nonexistent", "HOME": "/nonexistent"]
     environment[SessionHarness.recipeKey] = "1"
+    // Racine de support JETABLE (jamais créée) : sans elle, le test dépendrait de
+    // l'installation réelle du poste, où l'app a posé son composant.
+    environment[AppPaths.supportRootEnvironmentKey] = FileManager.default.temporaryDirectory
+        .appendingPathComponent("harnais-vide-\(UUID().uuidString)", isDirectory: true).path
     #expect(SessionHarness.status(environment: environment) == .missingBinary)
 
     environment[OmpBinaryResolver.overrideKey] = "/nonexistent/omp"

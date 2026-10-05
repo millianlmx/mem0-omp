@@ -34,6 +34,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
+├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
 ├── scripts/mem0-http-test.sh          test d'API mem0-http hors conteneur, dérivé du Dockerfile
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR

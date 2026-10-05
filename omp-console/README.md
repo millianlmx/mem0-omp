@@ -755,6 +755,48 @@ sans cliquer (le processus doit être lancé) :
 lsappinfo list | grep "OMP Console"
 ```
 
+## Recompiler et relancer d'un coup
+
+Pour itérer sur le code de la coque sans payer la suite complète à chaque tour :
+
+```bash
+bash scripts/run-console.sh            # compilation release (sans la suite) + relance de l'app
+bash scripts/run-console.sh build      # compilation + assemblage du bundle, sans relancer
+bash scripts/run-console.sh --tests    # passe par la suite complète (scripts/swift-app.sh)
+```
+
+`run-console.sh` compile avec `scripts/swift-app.sh --no-tests` : même assemblage,
+même signature que la voie complète, mais dans le dossier de build `.build-run` —
+le dossier de test `.build-app` reste intact, car `swift test` doit y rester la
+première commande écrite. La relance suit la compilation, jamais l'inverse : en
+cas d'échec l'app en cours n'est pas touchée. Sinon l'instance en cours **de ce
+bundle** est arrêtée (`pkill` sur le chemin du binaire, TERM puis KILL au bout de
+3 s) et le bundle est rouvert avec `open` — une copie de fumée lancée depuis
+`/tmp` n'est jamais touchée.
+
+## Les hooks git : recompiler après un pull
+
+```bash
+bash scripts/run-console.sh install-hook    # pose .git/hooks/{post-merge,post-rewrite}
+```
+
+Après `git pull`, la recompilation se fait toute seule **si** les commits arrivés
+touchent une entrée de l'app : un `*.swift` sous `omp-console/Sources/`,
+`Package.swift`, `omp-console/Bundle/` ou `mem0-stack/mem0-http/` (embarqué dans
+le bundle). Un pull qui ne touche que les tests, la documentation ou le reste du
+dépôt ne déclenche rien — et ne paie que la lecture du diff. Le déclencheur est
+le couple post-merge (fusion, avance rapide) / post-rewrite (`pull.rebase=true`,
+le réglage **local** de ce dépôt) ; les deux comparent `ORIG_HEAD`, que git pose
+avant le pull, à `HEAD`.
+
+Deux limites assumées : la compilation ne tourne que dans l'**arbre principal**
+du dépôt — les worktrees du pipeline fusionnent souvent, et chacun paierait sinon
+sa propre compilation ; `MEM0_CONSOLE_HOOK_ALL_WORKTREES=1` force partout. Et les
+hooks vivent dans `.git/hooks`, jamais versionnés : après un clone, relancer
+`install-hook`. Un hook `post-merge`/`post-rewrite` déjà présent et **étranger**
+n'est jamais écrasé : le script refuse et n'écrit rien. `uninstall-hook` retire
+les seuls hooks posés par ce script.
+
 ## Composants de l'app
 
 L'app possède TOUT ce qui lui sert, sous une racine privée — elle ne consulte ni

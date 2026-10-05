@@ -59,6 +59,12 @@ func recetteReelleDeLaPile() async throws {
     print("[recette] étapes    : \(steps)")
     print("[recette] machine   : \(MemoryStack.machineName) (état \(paths.machineState.path))")
 
+    // DEUXIÈME passage, machine déjà vivante : c'est la reprise d'une app
+    // relancée — le chemin où `machine inspect --format json` rendait la machine
+    // invisible et où l'app échouait sur « already exists » (mesuré le 2026-10-05).
+    try await stack.ensureRunning { _ in }
+    print("[recette] reprise   : ok")
+
     // Les conteneurs existent VRAIMENT : preuve par podman, pas par l'app.
     let runner = CommandRunner.live
     let podmanEnvironment = PodmanCommand.environment(base: environment, paths: paths)

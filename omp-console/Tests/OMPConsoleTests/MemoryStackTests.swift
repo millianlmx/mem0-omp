@@ -20,6 +20,10 @@ final class FakePodman: @unchecked Sendable {
     var machineRunning = false
     var machineImage = ComponentManifest.current.machineImage
     var machineStartReportsAlreadyRunning = false
+    /// Fait échouer l'`inspect` alors que la machine existe : le cas MESURÉ du
+    /// 2026-10-05 (podman 6.1.3 rendait « json » sur `--format json`), que l'app
+    /// doit surmonter au lieu d'échouer sur « machine already exists ».
+    var machineInspectFails = false
     var machineInitStderr: String?
     var confPath: String?
     private(set) var confExistedAtFirstCall: Bool?
@@ -67,7 +71,7 @@ final class FakePodman: @unchecked Sendable {
     private func machine(_ arguments: [String]) -> ProcessRun {
         switch arguments[1] {
         case "inspect":
-            guard machinePresent else { return fail(125, "Error: no such machine") }
+            guard machinePresent, !machineInspectFails else { return fail(125, "Error: no such machine") }
             let state = machineRunning ? "running" : "stopped"
             return ok("""
             [{"Name":"omp-console","State":"\(state)","Running":\(machineRunning),"Image":"\(machineImage)"}]
@@ -352,6 +356,33 @@ func alreadyRunningIsSuccess() async throws {
     #expect(fake.machineRunning)
     #expect(fake.machineInitCount == 0)
     #expect(fake.containers["omp-console-mem0-http"]?.running == true)
+}
+
+@MainActor
+@Test("all-in-one-app/AC-1 : un `machine init` qui échoue « already exists » est un succès — la machine est gardée, enregistrée et démarrée")
+func alreadyExistingIsSuccess() async throws {
+    let sandbox = try StackSandbox()
+    defer { sandbox.remove() }
+    let fake = FakePodman()
+    // La machine existe MAIS l'inspect ne la voit pas (le cas mesuré du
+    // 2026-10-05 : `machine inspect --format json` rendait « json ») : l'app
+    // tente `init`, qui répond « already exists » — elle doit poursuivre.
+    fake.machinePresent = true
+    fake.machineInspectFails = true
+    fake.machineInitStderr = "Error: machine \"omp-console\" already exists"
+    let stack = sandbox.stack(run: fake.runner(), session: stubSession())
+
+    try await stack.ensureRunning { _ in }
+
+    #expect(fake.contains(["machine", "init"]))
+    #expect(fake.machineRunning)
+    #expect(fake.machineInitCount == 0)
+    #expect(fake.machineRemoveCount == 0)
+    let recorded = try JSONSerialization.jsonObject(
+        with: Data(contentsOf: sandbox.paths.machineState)
+    ) as? [String: Any]
+    #expect(recorded?["image"] as? String == ComponentManifest.current.machineImage)
+    #expect(fake.containers[MemoryStack.mem0Container]?.running == true)
 }
 
 @MainActor

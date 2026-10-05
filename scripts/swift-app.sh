@@ -15,6 +15,8 @@
 # indicates they must be present »), donc on re-signe en ad hoc puis on vérifie.
 #
 # Codes de sortie : 0 bundle assemblé et signé, 1 échec, 2 non exécuté (hors macOS).
+# Option `--no-tests` : compilation release seule (dossier `.build-run`), pour le
+# tour rapide de `scripts/run-console.sh` ; sans elle, comportement inchangé.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
@@ -22,6 +24,21 @@ ROOT="$PWD"
 PKG="$ROOT/omp-console"
 PLIST="$PKG/Bundle/Info.plist"
 BUNDLE="$PKG/build/OMP Console.app"
+
+# `--no-tests` : compilation release seule, sans la suite. C'est le tour rapide de
+# `scripts/run-console.sh` (reprise après un pull) ; il compile dans `.build-run`
+# et non dans `.build-app`, car `swift test` doit rester la PREMIÈRE commande
+# écrite dans son dossier (voir le commentaire du dossier de build plus bas).
+NO_TESTS=""
+for arg in "$@"; do
+  case "$arg" in
+    --no-tests) NO_TESTS=1 ;;
+    *)
+      echo "✗ argument inconnu : $arg (attendu : --no-tests, ou rien)"
+      exit 1
+      ;;
+  esac
+done
 
 # 2 = « non exécuté » : le bundle macOS ne s'assemble que sous macOS. check.sh
 # recopie ce verdict sans afficher de ✓ (S-6).
@@ -54,7 +71,10 @@ fi
 # le MÊME dossier rend « plugin for module 'TestingMacros' not found » ; le même
 # test, premier dans un dossier neuf, passe. Un scratch séparé garantit donc que
 # ni un `swift build` de développement ni un autre outil ne corrompent le dossier.
+# Le tour rapide (`--no-tests`) a donc son propre dossier, `.build-run` (lui aussi
+# ignoré par git) : le `swift build` qui y écrit ne peut jamais salir `.build-app`.
 SCRATCH="$PKG/.build-app"
+[ -n "$NO_TESTS" ] && SCRATCH="$PKG/.build-run"
 
 # Les macros de Swift Testing ne sont pas toujours trouvées par SwiftPM : mesuré
 # sur ce toolchain, `swift test` échoue environ une fois sur trois en « plugin for
@@ -74,7 +94,15 @@ fi
 # 1) compilation release du produit ET de la suite, en une invocation, puis
 #    exécution des tests. La sortie est recopiée telle quelle : c'est elle qui
 #    nomme l'erreur de compilation ou le test tombé.
-#
+if [ -n "$NO_TESTS" ]; then
+  # Tour rapide : compilation seule. La sortie reste sur le terminal (plusieurs
+  # minutes de compilation muette seraient une panne d'ergonomie).
+  if ! (cd "$PKG" && swift build -c release --scratch-path "$SCRATCH"); then
+    echo "✗ compilation release échouée (relance : cd omp-console && swift build -c release --scratch-path .build-run)"
+    exit 1
+  fi
+  echo "  ✓ compilation release (OMPConsole), sans la suite"
+else
 #    `--no-parallel` est MESURÉ (2026-09-29, fusion des trois features de « Les
 #    vues ») : la suite mêle des tests à VEILLE qui attendent sur le fil
 #    principal (modèles Kanban et Files, ~15 s par attente) et des tests de vue ;
@@ -89,6 +117,7 @@ if [ "$test_status" -ne 0 ]; then
   exit 1
 fi
 echo "  ✓ compilation release (OMPConsole) et tests release (Swift Testing)"
+fi
 
 # 2) dossier du binaire produit — lu, jamais recopié. `--show-bin-path` s'interroge
 #    sur un dossier de build JETABLE, puis le suffixe rendu par le toolchain est

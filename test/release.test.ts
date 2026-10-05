@@ -486,6 +486,7 @@ const DROPPED_DIRS: Record<string, true> = {
   // runEngine) pour ne pas y relancer une compilation.
   ".build": true,
   ".build-app": true,
+  ".build-run": true,
   ".build-tests": true,
   build: true,
 };

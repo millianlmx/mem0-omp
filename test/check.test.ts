@@ -48,6 +48,7 @@ const EXCLUDED_DIRS: Record<string, true> = {
   qdrant_storage: true,
   ".build": true,
   ".build-app": true,
+  ".build-run": true,
   ".build-tests": true,
   build: true,
 };
