@@ -145,7 +145,11 @@ modèle `models.reqSpecs` / `models.implReview` (`models.loading`,
 `models.failure`, `models.retry`) ; feuille d'édition des modèles `models.sheet`
 (`models.cancel`, `models.apply`). Une seule feuille à la
 fois, dans l'ordre : Préparation d'OMP Console, Contrat, Bienvenue, Nouvelle feature,
-Répondre (`MainSheetPolicy`).
+répondre (`MainSheetPolicy`).
+
+Le badge d'état des composants embarqués, au pied de la barre latérale, est
+`components.badge` (mot + point teinté, aucune interaction) ; son état ne dépend
+que de la présence des deux binaires sous la racine de l'app.
 
 Lancer le bundle depuis un dépôt l'ouvre comme projet ; pour une capture sur un
 magasin de démonstration, sans écrire de préférence :
@@ -765,6 +769,15 @@ et podman (S-1, S-4) :
 | disque et cache de la machine podman | `…/data/` (`XDG_DATA_HOME`) | |
 | pile mémoire | `…/stack/` (`qdrant_storage/`, `env`, `machine.json`, `migration.json`) | |
 
+- **Badge du coin inférieur gauche** — le pied de la barre latérale porte l'état
+  des composants embarqués (identifiant AX `components.badge`) : « Tout est
+  installé » (point vert), ou « OMP manquant », « Podman manquant », « OMP et
+  Podman manquants » (point orange). La présence se lit par le MÊME prédicat que
+  l'installateur — le binaire existe, est exécutable et n'est pas un dossier —
+  jamais l'état de marche : aucune version n'est exécutée. Deux veilles de
+  fichier (`FileWatcher`, jamais de scrutation) le recalculent sans redémarrer
+  l'app, et un changement de permission suffit ; il n'est ni cliquable ni
+  focusable, et replier la barre latérale le masque avec elle.
 - **Manifeste** — versions, URL et empreintes sont figées dans
   `ComponentManifest.current` (`Setup/ComponentManifest.swift`). L'installation
   est idempotente (un composant présent à la bonne version n'est ni retéléchargé
@@ -1497,6 +1510,8 @@ omp-console/
 │   │   ├── CommandRunner.swift    l'exécution d'une commande externe, injectable
 │   │   ├── ComponentManifest.swift les versions, URL et empreintes des composants
 │   │   ├── ComponentInstaller.swift téléchargement, SHA-256, pkgutil, `--version`, purge
+│   │   ├── ComponentPresence.swift présence des composants : lecture et veille (badge)
+│   │   ├── ComponentBadge.swift   le badge d'état, au pied de la barre latérale
 │   │   ├── SetupModel.swift       la chaîne composants → migration → pile → oMLX
 │   │   ├── SetupText.swift        tous les textes de la préparation, en un endroit
 │   │   └── SetupView.swift        la feuille : quatre lignes, états, boutons

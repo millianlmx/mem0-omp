@@ -42,6 +42,10 @@ struct OMPConsoleApp: App {
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
     /// de sa feuille, et son `onReady` revérifie OMP.
     @StateObject private var setupModel: SetupModel
+    /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
+    /// latérale le montre, et ses deux veilles vivent tant que l'app vit — le
+    /// badge se recalcule sans redémarrage.
+    @StateObject private var componentsModel = ComponentPresenceModel()
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     /// UN `ConductorPool` pour l'app (S-7 de omp-console-redesign) : il fait
@@ -78,6 +82,7 @@ struct OMPConsoleApp: App {
                 contract: contractModel,
                 home: homeModel,
                 setup: setupModel,
+                components: componentsModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel

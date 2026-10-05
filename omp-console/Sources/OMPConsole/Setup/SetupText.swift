@@ -25,6 +25,22 @@ enum SetupText {
     static let homeMissingBody =
         "L'installation d'OMP, du moteur de conteneurs et de la pile mémoire est en cours. Les fonctions qui en dépendent se débloquent à la fin."
 
+    // --- le badge des composants ---------------------------------------------
+    /// L'état positif du badge (S-1) : les deux composants embarqués sont
+    /// installés.
+    static let componentsAllInstalled = "Tout est installé"
+
+    /// Le mot du badge pour les composants manquants (S-1, AC-1/AC-2) : les noms
+    /// joints par « et », la marque du pluriel sur « manquants » — jamais
+    /// « manquant(s) » (convention de pluriel du dépôt).
+    static func componentsWord(_ missing: [ComponentID]) -> String {
+        switch missing.count {
+        case 0: return componentsAllInstalled
+        case 1: return "\(missing[0].name) manquant"
+        default: return missing.map(\.name).joined(separator: " et ") + " manquants"
+        }
+    }
+
     // --- les lignes de la feuille --------------------------------------------
     static let componentsRow = "Composants"
     static let migrationRow = "Migration de la mémoire"
