@@ -22,6 +22,10 @@ import SwiftUI
 /// `KanbanActionPresentation.zones(for:)`, ou le motif quand la carte n'offre rien.
 struct KanbanActionPane: View {
     @ObservedObject var model: ActionsModel
+    /// Le tableau (S-6) : depuis la feuille de détail — elle-même une feuille —
+    /// « Lire le contrat » ferme d'abord le détail, la feuille Contrat s'ouvrant à
+    /// sa fermeture effective.
+    @ObservedObject var kanban: KanbanModel
     let card: KanbanCard
     /// « Arrêter… » dans la zone ; la feuille de détail le rend elle-même, à
     /// gauche de sa rangée de boutons, loin des gestes de réponse.
@@ -46,6 +50,12 @@ struct KanbanActionPane: View {
                 ForEach(Array(zones.enumerated()), id: \.offset) { index, zone in
                     zoneView(zone, action: action, prominent: index == primary)
                 }
+            }
+            // Le geste de lecture du contrat (S-6), sous les zones de geste —
+            // seulement quand la carte porte un moment de validation.
+            if ContractDocument.moment(for: card) != nil {
+                Button(ContractText.open) { kanban.requestContract(card) }
+                    .accessibilityIdentifier("kanban.actions.contract")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

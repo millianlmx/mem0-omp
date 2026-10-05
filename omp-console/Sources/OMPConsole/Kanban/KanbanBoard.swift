@@ -177,6 +177,7 @@ extension KanbanBoard {
                         sources: sources,
                         action: KanbanCardAction(
                             repoRoot: lot.repoRoot,
+                            worktree: feature.worktree.isEmpty ? nil : feature.worktree,
                             slug: feature.slug,
                             waitKind: feature.waitKind,
                             featureState: feature.state,

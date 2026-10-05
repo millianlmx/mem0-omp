@@ -15,6 +15,7 @@ enum MainSheet: Identifiable, Equatable {
     case welcome
     case newFeature
     case answer(cardID: String)
+    case contract(ContractSheet)
 
     var id: String {
         switch self {
@@ -22,6 +23,7 @@ enum MainSheet: Identifiable, Equatable {
         case .welcome: "welcome"
         case .newFeature: "newFeature"
         case .answer(let cardID): "answer.\(cardID)"
+        case .contract(let sheet): "contract.\(sheet.id)"
         }
     }
 }
@@ -38,14 +40,12 @@ enum MainSheetPolicy {
         }
     }
 
-    /// La feuille due, dans l'ordre FIGÉ de S-5 :
-    /// 1. préparation en cours (ou en échec) et feuille non ignorée → `.setup` ;
-    /// 2. composant OMP manquant et feuille non ignorée → `.setup` ;
-    /// 3. la bienvenue redemandée → `.welcome` ;
-    /// 4. la bienvenue jamais vue sur un magasin absent ou vide → `.welcome` ;
-    /// 5. « Nouvelle feature » → `.newFeature` ;
-    /// 6. « Répondre » tant que la carte existe et attend une réponse ;
-    /// 7. aucune.
+    /// La feuille due, dans l'ordre FIGÉ : (1) préparation en cours (ou en échec),
+    /// feuille non ignorée → `.setup` ; (2) composant OMP manquant, feuille non
+    /// ignorée → `.setup` ; (3) la feuille Contrat demandée (S-6) ; (4) la
+    /// bienvenue redemandée → `.welcome` ; (5) la bienvenue jamais vue sur un
+    /// magasin absent ou vide → `.welcome` ; (6) « Nouvelle feature » → `.newFeature` ;
+    /// (7) « Répondre » tant que la carte existe et attend une réponse ; (8) aucune.
     static func sheet(
         omp: OmpStatus,
         setup: SetupState,
@@ -54,7 +54,8 @@ enum MainSheetPolicy {
         welcomeSeen: Bool,
         welcomeRequested: Bool,
         launchFormShown: Bool,
-        answerCardID: String?
+        answerCardID: String?,
+        contract: ContractSheet?
     ) -> MainSheet? {
         switch setup {
         case .idle, .preparing, .failed:
@@ -63,6 +64,7 @@ enum MainSheetPolicy {
             break
         }
         if case .missing = omp, !setupDismissed { return .setup }
+        if let contract { return .contract(contract) }
         if welcomeRequested { return .welcome }
         if !welcomeSeen {
             switch board {

@@ -27,7 +27,7 @@ struct KanbanDetailView: View {
                     header
                     PipelineStepper(steps: PipelineProgress.steps(for: card))
                     section(KanbanText.action) {
-                        KanbanActionPane(model: actions, card: card, showsStop: false)
+                        KanbanActionPane(model: actions, kanban: model, card: card, showsStop: false)
                     }
                     section(KanbanText.information) {
                         information

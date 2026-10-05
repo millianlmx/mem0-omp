@@ -37,6 +37,7 @@ struct OMPConsoleApp: App {
     @StateObject private var projectModel = ProjectConsoleModel()
     @StateObject private var statsModel = StatsModel()
     @StateObject private var memoryModel = MemoryModel()
+    @StateObject private var contractModel = ContractModel()
     @StateObject private var homeModel: HomeModel
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
     /// de sa feuille, et son `onReady` revérifie OMP.
@@ -74,6 +75,7 @@ struct OMPConsoleApp: App {
                 actions: actionsModel,
                 projectModel: projectModel,
                 memoryModel: memoryModel,
+                contract: contractModel,
                 home: homeModel,
                 setup: setupModel,
                 sessionModel: sessionModel,

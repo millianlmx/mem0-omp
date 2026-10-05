@@ -78,7 +78,9 @@ Tout se fait depuis l'app, sans terminal :
    « Répondre » — une question `ask` en vol se répond par ses options ou un texte
    libre, une question en **texte** d'un maillon terminé par un texte (commande
    `reply`) ; « Valider les specs » et « Accepter la revue » agissent depuis la
-   carte. La PR livrée apparaît sous « Livrées récemment » avec « Ouvrir la PR ».
+   carte, et « Lire le contrat » (secondaire) ouvre la feuille **Contrat** pour un
+   besoin ou des specs à valider. La PR livrée apparaît sous « Livrées récemment »
+   avec « Ouvrir la PR ».
 6. **Reprendre** — une pipeline dont le pilote est mort (app quittée, session
    fermée) est « En pause » sous « En cours » avec « Reprendre », qui relance un
    conducteur ; celui-ci adopte le lot.
@@ -127,19 +129,22 @@ prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
 `home.dashboard`,
 `home.notificationsBanner` (`home.notifications.openSettings`,
 `home.notifications.ignore`), `home.launchBanner`, `home.attention.<carte>`
-(bouton `home.attention.<carte>.action`), `home.running.<carte>`,
+(boutons `home.attention.<carte>.action` et `home.attention.<carte>.contract`),
+`home.running.<carte>`,
 `home.resume.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
 feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.retry`,
 `sheet.setup.close`) ; feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
 feuille « Répondre » `answer.sheet` (`answer.question`,
 `kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
+**Contrat** `contract.sheet` (corps `contract.sheet.body`, fermeture
+`contract.sheet.close`) ; feuille
 « Nouvelle feature » `launch.sheet`,
 `launch.repo`, `launch.chooseFolder`, `launch.repoError`, `launch.title`,
 `launch.description`, `launch.cancel`, `launch.submit` ; les deux sélecteurs de
 modèle `models.reqSpecs` / `models.implReview` (`models.loading`,
 `models.failure`, `models.retry`) ; feuille d'édition des modèles `models.sheet`
 (`models.cancel`, `models.apply`). Une seule feuille à la
-fois, dans l'ordre : Préparation d'OMP Console, Bienvenue, Nouvelle feature,
+fois, dans l'ordre : Préparation d'OMP Console, Contrat, Bienvenue, Nouvelle feature,
 Répondre (`MainSheetPolicy`).
 
 Lancer le bundle depuis un dépôt l'ouvre comme projet ; pour une capture sur un
@@ -285,13 +290,15 @@ largeur. Double-clic sur une carte, `↩` sur la carte sélectionnée ou le menu
 contextuel « Afficher les détails » ouvrent une **feuille** qui décrit la carte :
 en-tête (titre, « dépôt · étape », badge d'état), une **frise d'avancement**
 (Besoins, Specs, Implémentation, Revue, PR — fait, en cours, à venir ou en échec,
-`PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines »),
-**Informations** (étape, durée, les deux modèles `req+specs` / `impl+review` avec
-un bouton **Modifier…**, lien de PR) et un pli **Détails
+`PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines » —
+elle porte aussi « Lire le contrat » quand la carte attend un besoin ou des specs à
+valider : depuis cette feuille, le geste ferme d'abord le détail, puis la feuille
+**Contrat** s'ouvre), **Informations** (étape, durée, les deux modèles `req+specs` /
+`impl+review` avec un bouton **Modifier…**, lien de PR) et un pli **Détails
 techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
 « Fermer » (Échap) à droite. Le menu contextuel d'une carte expose aussi ses
-gestes (Afficher les détails, **Modifier les modèles…**, Répondre…, Valider les
-specs, Accepter la revue, Reprendre, Ouvrir la PR, Arrêter…). Le bouton
+gestes (Afficher les détails, Lire le contrat, **Modifier les modèles…**, Répondre…,
+Valider les specs, Accepter la revue, Reprendre, Ouvrir la PR, Arrêter…). Le bouton
 **Modifier…** et l'entrée « Modifier les modèles… » ouvrent la feuille
 d'édition `models.sheet` (titre `Modèles de <slug>`, les deux sélecteurs
 pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
@@ -396,6 +403,7 @@ conducteur qui ne démarre pas fait échouer l'entrée (« conducteur : … »).
 | Répondre à une question de l'agent (option ou texte libre) | section « Action » de la feuille de détail, menu contextuel « Répondre… » de la carte, ou feuille « Répondre » de l'Accueil | une livraison `ask` dans la boîte publiée du run |
 | Envoyer un message à l'agent (exécution vivante sans question) | section « Action » de la feuille de détail | une livraison `text` dans la boîte publiée du run |
 | Valider les specs | feuille de détail, menu contextuel ou carte « À vous » de l'Accueil (feature en attente specs) | `{kind:"verdict", verdict:"v"}` dans le canal |
+| Lire le contrat (besoin ou specs à valider) | carte « À vous » de l'Accueil (secondaire), zone d'action de la feuille de détail, menu contextuel de la carte | rien : la console lit `<worktree>/.omp/pipeline/contract.md` et ouvre la feuille Contrat |
 | Accepter la revue | feuille de détail, menu contextuel ou carte « À vous » (feature en attente revue) | `{kind:"verdict", verdict:"y"}` dans le canal |
 | Répondre à une question en texte d'un maillon terminé | feuille de détail ou feuille « Répondre » (feature en attente de réponse, sans question en vol) | `{kind:"reply", slug, text}` dans le canal |
 | Reprendre | feuille de détail, menu contextuel ou ligne « En cours » de l'Accueil (carte marquée `mort`, feature vivante) | rien : un conducteur démarre et adopte le lot |
@@ -435,6 +443,7 @@ Deux invariants durables de cette couche :
 | `kanban.actions.validate`, `.accept` | les boutons de jalon |
 | `kanban.actions.resume` | le bouton « Reprendre » |
 | `kanban.actions.stop` | le bouton « Arrêter… » (confirmation avant l'arrêt) |
+| `kanban.actions.contract` | le bouton « Lire le contrat » (carte attendant un besoin ou des specs à valider) |
 | `kanban.actions.editModels` | le bouton « Modifier… » d'un modèle et l'entrée « Modifier les modèles… » du menu contextuel |
 | `kanban.journal`, `kanban.journal.empty` | la bulle « Activité » |
 
@@ -1473,6 +1482,11 @@ omp-console/
 │   │   ├── MainSheet.swift        la feuille due, une seule à la fois (politique pure)
 │   │   ├── WelcomeSheet.swift     la feuille « Bienvenue »
 │   │   └── AnswerSheet.swift      la feuille « Répondre »
+│   ├── Contract/                  la feuille Contrat : lire le contrat d'une feature
+│   │   ├── ContractDocument.swift moment de validation, sections verbatim, chemin, lecture (purs)
+│   │   ├── ContractText.swift     tous les textes de la feuille
+│   │   ├── ContractModel.swift    chaque ouverture relit le fichier ; feuille affichée
+│   │   └── ContractSheetView.swift la feuille (sections, états, « Fermer »)
 │   ├── Launch/                    la feuille « Nouvelle feature »
 │   │   ├── LaunchRepo.swift       dépôts proposés, garde « racine git » (purs)
 │   │   └── NewFeatureSheet.swift  la feuille

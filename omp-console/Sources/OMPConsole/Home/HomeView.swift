@@ -31,6 +31,9 @@ struct HomeView: ConsoleSectionView {
     @ObservedObject var actions: ActionsModel
     @ObservedObject var console: ConsoleModel
     @ObservedObject var alerts: AlertsModel
+    /// La feuille Contrat (S-6) : la carte « À vous » d'un moment de validation
+    /// offre le geste secondaire « Lire le contrat ».
+    @ObservedObject var contract: ContractModel
     /// La préparation de l'app (S-5) : le fond « composants manquants » et le
     /// bandeau « Reprendre… » en dépendent.
     @ObservedObject var setup: SetupModel
@@ -212,6 +215,12 @@ struct HomeView: ConsoleSectionView {
             Spacer(minLength: 0)
             HStack {
                 Spacer()
+                // Le geste secondaire, à GAUCHE du geste principal : la
+                // proéminence de la carte reste au bouton principal.
+                if ContractDocument.moment(for: card) != nil {
+                    Button(ContractText.open) { contract.open(card) }
+                        .accessibilityIdentifier("home.attention.\(card.id).contract")
+                }
                 attentionButton(attention, prominent: prominent)
             }
         }
