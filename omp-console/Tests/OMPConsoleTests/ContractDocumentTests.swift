@@ -51,7 +51,7 @@ private func contractCard(
 ) -> KanbanCard {
     KanbanCard(
         id: id, column: .jalonSpecs, repo: "depot", title: "contrat", state: "attend",
-        phase: phase, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
+        phase: phase, models: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
         action: action
     )
 }

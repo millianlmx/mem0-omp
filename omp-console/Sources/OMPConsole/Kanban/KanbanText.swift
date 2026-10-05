@@ -13,7 +13,13 @@ enum KanbanText {
     static let technical = "Détails techniques"
     static let step = "Étape"
     static let duration = "Durée"
-    static let model = "Modèle"
+    /// Les deux groupes de modèle d'une feature (B-4) : le libellé court d'une
+    /// ligne d'affichage, et le libellé de l'option de choix (en tête des listes).
+    static let modelReqSpecs = "req+specs"
+    static let modelImplReview = "impl+review"
+    static let modelDefault = "défaut OMP"
+    static let editModels = "Modifier les modèles…"
+    static let editModelsShort = "Modifier…"
     static let pullRequest = "Pull request"
     static let repository = "Dépôt"
     static let activity = "Activité"

@@ -1,18 +1,23 @@
-// L'état propre à l'Accueil et à ses feuilles (S-5 de omp-console-redesign) : la
-// disponibilité d'OMP (et l'emplacement choisi à la main), la bienvenue (vue une
-// fois, redemandée par le menu Aide), la carte dont la feuille « Répondre » est
-// ouverte, le bandeau de lancement masqué et le bandeau « notifications
-// désactivées » ignoré. Le tableau vient de `KanbanModel`, jamais d'une seconde
-// lecture du magasin ; la feuille montrée se déduit par `MainSheetPolicy`.
+// L'état propre à l'Accueil et à ses feuilles (S-4, S-5) : la disponibilité
+// d'OMP — le seul binaire que l'app possède, jamais un binaire système —, la
+// bienvenue (vue une fois, redemandée par le menu Aide), la carte dont la feuille
+// « Répondre » est ouverte, le bandeau de lancement masqué et le bandeau
+// « notifications désactivées » ignoré. Le tableau vient de `KanbanModel`, jamais
+// d'une seconde lecture du magasin ; la feuille montrée se déduit par
+// `MainSheetPolicy`.
+//
+// `recheck()` est le seul geste de vérification : `SetupModel.onReady` l'appelle
+// quand l'app a fini d'installer ses composants, et il reste disponible pour les
+// cas où le binaire du composant est réinstallé après coup.
 
 import Combine
 import Foundation
 
-/// OMP trouvé (son binaire), ou introuvable (les emplacements cherchés et le
-/// chemin imposé par `OMP_CONSOLE_OMP_BINARY`, s'il y en a un).
+/// OMP trouvé (le binaire du composant de l'app), ou introuvable : l'app affiche
+/// alors sa préparation et propose « Réessayer » (S-5).
 enum OmpStatus: Equatable, Sendable {
     case available(URL)
-    case missing(searched: [String], override: String?)
+    case missing
 }
 
 @MainActor
@@ -31,12 +36,6 @@ final class HomeModel: ObservableObject {
     @Published private(set) var welcomeRequested = false
     /// La carte dont la feuille « Répondre » est ouverte.
     @Published var answerCardID: String?
-    /// Le dernier « Vérifier à nouveau » n'a toujours pas trouvé OMP.
-    @Published private(set) var recheckFailed = false
-    /// Le fichier choisi par « Choisir l'emplacement… » n'est pas exécutable.
-    @Published private(set) var chosenPathRejected = false
-    /// Le pli « Détails » de la feuille « OMP est requis ».
-    @Published var searchedExpanded = false
     /// « Ignorer » sur le bandeau des notifications désactivées (persisté).
     @Published private(set) var notificationsBannerDismissed: Bool
     /// Le bandeau de lancement masqué par l'utilisateur (identifiant d'entrée).
@@ -49,15 +48,16 @@ final class HomeModel: ObservableObject {
     private let environment: () -> [String: String]
     private let defaults: UserDefaults
 
-    /// Sans résolveur injecté, la résolution réelle honore l'emplacement choisi
-    /// lu dans `defaults` (le même domaine que celui où `chooseOmp` l'écrit).
+    /// Sans résolveur injecté, la résolution réelle ne consulte que le composant
+    /// de l'app (S-4) : `~/.bun/bin`, `PATH` et l'emplacement choisi à la main ne
+    /// sont plus jamais consultés.
     init(
         resolve: Resolver? = nil,
         environment: @escaping () -> [String: String] = { ProcessInfo.processInfo.environment },
         defaults: UserDefaults = .standard
     ) {
-        let resolve = resolve ?? { [defaults] env in
-            OmpBinaryResolver.resolve(environment: env, chosen: OmpBinaryResolver.chosenPath(defaults: defaults))
+        let resolve = resolve ?? { env in
+            OmpBinaryResolver.resolve(environment: env, paths: .standard(environment: env))
         }
         self.resolve = resolve
         self.environment = environment
@@ -73,23 +73,10 @@ final class HomeModel: ObservableObject {
         return false
     }
 
-    /// « Vérifier à nouveau » : l'utilisateur a peut-être installé OMP entre-temps.
+    /// « Vérifier à nouveau » : la préparation a peut-être installé (ou réinstallé)
+    /// le composant depuis le dernier contrôle.
     func recheck() {
-        chosenPathRejected = false
         omp = Self.status(resolve(environment()))
-        if case .missing = omp { recheckFailed = true } else { recheckFailed = false }
-    }
-
-    /// « Choisir l'emplacement… » : un fichier exécutable est retenu (préférence
-    /// `omp.chosenPath`, honorée par `OmpBinaryResolver`) puis la recherche est
-    /// relancée ; un fichier non exécutable est refusé sans rien retenir.
-    func chooseOmp(path: String, fileManager: FileManager = .default) {
-        guard fileManager.isExecutableFile(atPath: path) else {
-            chosenPathRejected = true
-            return
-        }
-        defaults.set(path, forKey: OmpBinaryResolver.chosenPathKey)
-        recheck()
     }
 
     /// « Continuer » ou Échap : la bienvenue ne revient plus d'elle-même.
@@ -127,12 +114,10 @@ final class HomeModel: ObservableObject {
         switch result {
         case .success(let url):
             return .available(url)
-        case .failure(.binaryNotFound(let searched, let override)):
-            return .missing(searched: searched, override: override)
         case .failure:
-            // Le résolveur ne rend que `binaryNotFound` ; toute autre erreur dit
-            // quand même qu'aucun binaire n'est utilisable.
-            return .missing(searched: [], override: nil)
+            // Le résolveur ne rend que `binaryNotFound` : aucun binaire du
+            // composant n'est utilisable, l'app le prépare (S-5).
+            return .missing
         }
     }
 }

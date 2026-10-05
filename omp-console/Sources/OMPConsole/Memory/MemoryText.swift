@@ -34,6 +34,22 @@ enum MemoryText {
     static let tokenRefused = "jeton refusé (401)"
     static let unreadableResponse = "réponse illisible"
 
+    // MARK: - Prérequis système (S-6, all-in-one-app/AC-6)
+
+    // oMLX est un prérequis SYSTÈME (embeddings de la recherche) : l'app ne
+    // l'installe ni ne le configure, elle le NOMME quand il manque. Une phrase, un
+    // état — le bandeau de la section n'en compose aucune.
+
+    /// oMLX ne répond pas à la sonde : l'URL est celle RÉELLEMENT sondée
+    /// (`StackConfig.omlxProbeURL`), pour que le diagnostic soit exploitable.
+    static func omlxUnreachable(url: String) -> String {
+        "oMLX est injoignable (\(url)) — la mémoire a besoin de ses embeddings pour chercher."
+    }
+
+    /// oMLX répond 401/403 : le jeton configuré est refusé, la recherche ne peut pas
+    /// obtenir ses embeddings (S-6).
+    static let omlxUnauthorized = "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN."
+
     /// L'adresse du service et la DERNIÈRE erreur (S-6.3), en détail secondaire de
     /// « Mémoire indisponible » : une ligne chacune, pour qu'aucune ne disparaisse.
     static func unavailableDetail(address: String, error: String) -> String {

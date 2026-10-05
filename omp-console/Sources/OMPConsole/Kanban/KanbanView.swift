@@ -179,6 +179,15 @@ struct KanbanView: ConsoleSectionView {
                 KanbanDetailView(model: model, actions: actions, card: card)
             }
         }
+        // La feuille « Modèles » demandée depuis le menu contextuel d'une carte :
+        // la racine (le tableau) la porte, sauf quand le détail est ouvert — c'est
+        // alors le détail qui l'imbrique.
+        .sheet(item: Binding(
+            get: { model.detailShown ? nil : model.modelsSheetCard },
+            set: { model.modelsSheetCard = $0 }
+        )) { card in
+            ModelsSheet(card: card, actions: actions)
+        }
         .kanbanStopConfirmation(
             repo: model.stopRequest?.repo ?? "",
             isPresented: Binding(
@@ -272,6 +281,13 @@ private struct KanbanCardMenu: View {
         // Aucune feuille n'est ouverte ici : la demande est directe (S-6).
         if ContractDocument.moment(for: card) != nil {
             Button(ContractText.open) { contract.open(card) }
+        }
+        if let action = card.action, action.slug != nil {
+            Button(KanbanText.editModels) {
+                actions.beginModelsEdit(card.models)
+                model.modelsSheetCard = card
+            }
+            .accessibilityIdentifier("kanban.actions.editModels")
         }
         let zones = KanbanActionPresentation.zones(for: card)
         let prURL = card.prUrl.flatMap(ProjectPlanRowView.linkURL)

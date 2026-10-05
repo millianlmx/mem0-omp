@@ -5,7 +5,9 @@ import Foundation
 
 /// L'écran de l'Accueil, dans l'ordre de ses règles.
 enum HomeState: Equatable, Sendable {
-    case ompMissing(searched: [String], override: String?)
+    /// Le composant OMP n'est pas (encore) installé : l'Accueil montre la
+    /// préparation en arrière-plan (S-5).
+    case ompMissing
     case loading
     case firstRun
     case dashboard(HomeDashboard)
@@ -45,8 +47,8 @@ enum HomePresentation {
     /// (1) OMP introuvable prime sur tout ; (2) chargement ; (3) magasin absent ou
     /// vide ⇒ première fois ; (4) tableau ⇒ tableau de bord.
     static func state(omp: OmpStatus, board: KanbanBoardState) -> HomeState {
-        if case .missing(let searched, let override) = omp {
-            return .ompMissing(searched: searched, override: override)
+        if case .missing = omp {
+            return .ompMissing
         }
         switch board {
         case .loading: return .loading

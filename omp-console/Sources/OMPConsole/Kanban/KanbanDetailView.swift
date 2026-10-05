@@ -45,6 +45,15 @@ struct KanbanDetailView: View {
         // (`kanban.actions.*`).
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("kanban.detail")
+        // La feuille « Modèles » demandée depuis l'inspecteur : imbriquée dans la
+        // feuille de détail (la racine ne présente pas de feuille par-dessus une
+        // autre).
+        .sheet(item: Binding(
+            get: { model.detailShown ? model.modelsSheetCard : nil },
+            set: { model.modelsSheetCard = $0 }
+        )) { card in
+            ModelsSheet(card: card, actions: actions)
+        }
     }
 
     /// « Arrêter… » (destructif, confirmé) à gauche, « Fermer » (Échap) à droite.
@@ -115,8 +124,19 @@ struct KanbanDetailView: View {
                     }
                 }
             }
-            if let value = card.model {
-                infoRow(KanbanText.model, value)
+            if let models = card.models {
+                infoRow(KanbanText.modelReqSpecs, models.reqSpecs ?? KanbanText.modelDefault)
+                infoRow(KanbanText.modelImplReview, models.implReview ?? KanbanText.modelDefault)
+            }
+            if let action = card.action, action.slug != nil {
+                GridRow {
+                    Button(KanbanText.editModelsShort) {
+                        actions.beginModelsEdit(card.models)
+                        model.modelsSheetCard = card
+                    }
+                    .accessibilityIdentifier("kanban.actions.editModels")
+                    .gridCellColumns(2)
+                }
             }
             if let prUrl = card.prUrl, let url = ProjectPlanRowView.linkURL(prUrl) {
                 GridRow {

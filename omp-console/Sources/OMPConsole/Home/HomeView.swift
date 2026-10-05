@@ -34,19 +34,26 @@ struct HomeView: ConsoleSectionView {
     /// La feuille Contrat (S-6) : la carte « À vous » d'un moment de validation
     /// offre le geste secondaire « Lire le contrat ».
     @ObservedObject var contract: ContractModel
+    /// La préparation de l'app (S-5) : le fond « composants manquants » et le
+    /// bandeau « Reprendre… » en dépendent.
+    @ObservedObject var setup: SetupModel
 
     var body: some View {
         Group {
             switch HomePresentation.state(omp: home.omp, board: kanban.state) {
             case .ompMissing:
-                ContentUnavailableView(
-                    HomeText.ompMissingTitle,
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(HomeText.ompMissingBody)
-                )
-                .accessibilityIdentifier("home.ompMissing.background")
+                VStack(spacing: 16) {
+                    setupBanner
+                    ContentUnavailableView(
+                        SetupText.homeMissingTitle,
+                        systemImage: "shippingbox",
+                        description: Text(SetupText.homeMissingBody)
+                    )
+                    .accessibilityIdentifier("home.ompMissing.background")
+                }
             case .loading:
                 VStack(spacing: 8) {
+                    setupBanner
                     ProgressView()
                     Text(KanbanBoardState.loadingText).foregroundStyle(.secondary)
                 }
@@ -66,6 +73,7 @@ struct HomeView: ConsoleSectionView {
 
     private var firstRunView: some View {
         VStack(spacing: 16) {
+            setupBanner
             notificationsBanner
             launchBanner
             ContentUnavailableView {
@@ -97,6 +105,7 @@ struct HomeView: ConsoleSectionView {
         let prominentID = HomePresentation.prominentAttentionID(dashboard)
         return ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 28) {
+                setupBanner
                 notificationsBanner
                 launchBanner
 
@@ -335,6 +344,22 @@ struct HomeView: ConsoleSectionView {
     }
 
     // MARK: - Bandeaux
+
+    /// Le bandeau de préparation (S-5) : visible seulement quand la feuille a été
+    /// fermée et que la préparation n'est pas finie — « Reprendre… » la ramène.
+    @ViewBuilder
+    private var setupBanner: some View {
+        if let text = SetupText.banner(state: setup.state, dismissed: setup.dismissed) {
+            HStack(spacing: 8) {
+                Text(text)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Button(SetupText.resume) { setup.present() }
+            }
+            .consoleBanner(tint: .orange)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("home.setupBanner")
+        }
+    }
 
     /// Les notifications refusées : un bandeau NEUTRE (pas une erreur), avec le
     /// chemin vers les Réglages et « Ignorer », persisté par `HomeModel`.

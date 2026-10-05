@@ -25,40 +25,55 @@ Cible minimale : macOS 26.
 
 ## Prérequis
 
-- macOS 26 ou plus récent.
+- macOS 26 ou plus récent, sur **Apple Silicon (arm64)** : l'app installe son
+  `omp` et son podman pour cette architecture, et refuse les autres.
 - Les Command Line Tools d'Apple : `swift --version` doit répondre.
 - **`xcodebuild` n'est ni requis ni utilisable** sur un poste sans Xcode : sur un
   poste équipé des seuls Command Line Tools, il refuse de tourner (« requires
   Xcode, but active developer directory is a CommandLineTools instance »). Tout
   passe par SwiftPM (`swift build`, `swift test`) et par l'assemblage du bundle
   décrit ci-dessous.
+- **Rien d'autre à installer** : ni `omp`, ni podman/Docker, ni la pile mémoire —
+  l'app installe et démarre tout ce qui lui manque au premier lancement (voir
+  « Composants de l'app »). Restent hors périmètre, mais SIGNALÉS par l'app quand
+  ils manquent : **oMLX** (natif, port 8000), **git** et **gh**.
 
 ## Premiers pas
 
-Sur un poste où OMP est installé et configuré, tout se fait depuis l'app, sans
-terminal :
+Tout se fait depuis l'app, sans terminal :
 
-1. **Bienvenue** — au premier lancement d'une installation neuve (magasin vide ou
+1. **La préparation** — au premier lancement, l'app installe ses composants (OMP
+   18.6.0, podman 6.1.3), migre la base mémoire existante si elle en trouve une,
+   monte sa pile mémoire et sonde oMLX. La feuille « Préparation d'OMP Console »
+   montre une ligne par étape (Composants, Migration de la mémoire, Pile mémoire,
+   Prérequis) avec son état et son détail ; « Fermer » (Échap) n'interrompt RIEN —
+   la préparation continue et l'Accueil garde un bandeau « Reprendre… » ; `↩`
+   déclenche le bouton proéminent. « Réessayer » n'apparaît qu'en cas d'échec,
+   proéminent, avec la cause en toutes lettres (« Pas de réseau : … », « empreinte
+   SHA-256 différente », « Ce Mac n'est pas pris en charge (arm64 requis) », …). En
+   cas de succès, la feuille se ferme d'elle-même. Rien ne dépend d'un `omp`
+   système.
+2. **Bienvenue** — au premier lancement d'une installation neuve (magasin vide ou
    absent), une feuille présente l'app (son icône) en trois promesses ; son seul
    bouton « Continuer » (↩ ou Échap) la ferme. Elle n'est montrée qu'une
    fois (préférence `home.welcomeSeen`) ; Aide ▸ « Bienvenue dans OMP Console » la
-   rouvre. OMP introuvable ⇒ une feuille BLOQUANTE « OMP est requis » passe avant
-   tout : « Quitter », « Choisir l'emplacement… » (le programme `omp`, retenu dans
-   la préférence `omp.chosenPath`) ou « Vérifier à nouveau », emplacements cherchés
-   dans le pli « Détails » ; Échap ne la ferme pas. Sans historique, l'Accueil
-   propose « Nouvelle feature… » au lieu d'un tableau vide. Notifications refusées ⇒
-   un bandeau neutre en tête de l'Accueil, « Ouvrir les Réglages » ou « Ignorer »
-   (préférence `home.notificationsBannerDismissed`).
-2. **Nouvelle feature** (barre d'outils, menu Fichier ou ⌘N) — une feuille : le
+   rouvre. Sans historique, l'Accueil propose « Nouvelle feature… » au lieu d'un
+   tableau vide. Notifications refusées ⇒ un bandeau neutre en tête de l'Accueil,
+   « Ouvrir les Réglages » ou « Ignorer » (préférence
+   `home.notificationsBannerDismissed`).
+3. **Nouvelle feature** (barre d'outils, menu Fichier ou ⌘N) — une feuille : le
    dépôt (dépôts connus du tableau, ou « Choisir un dossier… », qui n'accepte
-   qu'une racine git), le titre (il devient la branche `feat/<titre>`) et le besoin.
+   qu'une racine git), les deux **modèles** (`Modèle req+specs` / `Modèle
+   impl+review`, chaque liste menée par `défaut OMP (aucun modèle)` puis les
+   sélecteurs de `omp models --json`), le titre (il devient la branche
+   `feat/<titre>`) et le besoin.
    « Lancer » (↩, bouton par défaut) dépose une commande `launch` dans le canal et revient à
    l'Accueil, dont le bandeau suit l'accusé.
-3. **Le conducteur** — un dépôt sans pilote vivant est conduit par l'app : elle
+4. **Le conducteur** — un dépôt sans pilote vivant est conduit par l'app : elle
    démarre un `omp --mode rpc` sur ce dépôt APRÈS avoir déposé la commande (un
    pilote n'arme le canal qu'à son démarrage), un seul par dépôt. Il vit tant que
    l'app vit ; quitter pendant des maillons en cours demande confirmation.
-4. **À vous** — les questions de l'agent et les jalons arrivent en tête de
+5. **À vous** — les questions de l'agent et les jalons arrivent en tête de
    l'Accueil, en cartes (badge sur « Accueil ») : « Répondre… » ouvre la feuille
    « Répondre » — une question `ask` en vol se répond par ses options ou un texte
    libre, une question en **texte** d'un maillon terminé par un texte (commande
@@ -66,9 +81,16 @@ terminal :
    carte, et « Lire le contrat » (secondaire) ouvre la feuille **Contrat** pour un
    besoin ou des specs à valider. La PR livrée apparaît sous « Livrées récemment »
    avec « Ouvrir la PR ».
-5. **Reprendre** — une pipeline dont le pilote est mort (app quittée, session
+6. **Reprendre** — une pipeline dont le pilote est mort (app quittée, session
    fermée) est « En pause » sous « En cours » avec « Reprendre », qui relance un
    conducteur ; celui-ci adopte le lot.
+
+**La pile mémoire survit à ⌘Q** : l'app ne possède aucun site d'arrêt — les
+processus de la machine (`krunkit`, `gvproxy`) sont lancés par des invocations
+podman courtes, les conteneurs sont `--restart unless-stopped`. Fermer l'app (ou
+la voir plantée) ne coupe donc pas la mémoire : une session `omp` au terminal, ou
+un `omp -p`, sur un dépôt reçoit toujours son rappel par `http://localhost:8321`
+(le défaut du plugin `omp-mem0-memory`).
 
 Une commande sans accusé après 20 s est signalée dans « Activité récente » (Pipelines) et le
 bandeau : « aucun accusé après 20 s : aucun pilote n'a pris la commande — vérifiez
@@ -94,7 +116,7 @@ cd omp-console && MEM0_CONDUCTOR_RECIPE=1 swift test --scratch-path .build-tests
 
 ### Barres d'outils
 
-| Section | Barre d'outils (en plus de « Nouvelle feature… », `toolbar.newFeature`, inactif avec l'infobulle « OMP est requis » sans OMP) |
+| Section | Barre d'outils (en plus de « Nouvelle feature… », `toolbar.newFeature`, inactif avec l'infobulle « OMP Console prépare ses composants » sans composant OMP) |
 |---|---|
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; menu « Options » (`session.mode`, choix « Dialogues »), « Détails techniques » (`session.details`) |
@@ -102,23 +124,27 @@ cd omp-console && MEM0_CONDUCTOR_RECIPE=1 swift test --scratch-path .build-tests
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
 Identifiants de l'Accueil et des feuilles : `home.loading`, `home.firstRun`
-(bouton `home.firstRun.start`), `home.ompMissing.background`, `home.dashboard`,
+(bouton `home.firstRun.start`), `home.ompMissing.background` (fond « OMP Console
+prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
+`home.dashboard`,
 `home.notificationsBanner` (`home.notifications.openSettings`,
 `home.notifications.ignore`), `home.launchBanner`, `home.attention.<carte>`
 (boutons `home.attention.<carte>.action` et `home.attention.<carte>.contract`),
 `home.running.<carte>`,
 `home.resume.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
-feuille Bienvenue `welcome.sheet` (`welcome.continue`) ; feuille « OMP est requis »
-`home.ompMissing` (`home.ompMissing.quit`, `home.ompMissing.choose`,
-`home.ompMissing.retry`, `home.ompMissing.details`, `home.ompMissing.still`,
-`home.ompMissing.rejected`) ; feuille « Répondre » `answer.sheet` (`answer.question`,
+feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.retry`,
+`sheet.setup.close`) ; feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
+feuille « Répondre » `answer.sheet` (`answer.question`,
 `kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
 **Contrat** `contract.sheet` (corps `contract.sheet.body`, fermeture
 `contract.sheet.close`) ; feuille
 « Nouvelle feature » `launch.sheet`,
 `launch.repo`, `launch.chooseFolder`, `launch.repoError`, `launch.title`,
-`launch.description`, `launch.cancel`, `launch.submit`. Une seule feuille à la
-fois, dans l'ordre : OMP est requis, Contrat, Bienvenue, Nouvelle feature,
+`launch.description`, `launch.cancel`, `launch.submit` ; les deux sélecteurs de
+modèle `models.reqSpecs` / `models.implReview` (`models.loading`,
+`models.failure`, `models.retry`) ; feuille d'édition des modèles `models.sheet`
+(`models.cancel`, `models.apply`). Une seule feuille à la
+fois, dans l'ordre : Préparation d'OMP Console, Contrat, Bienvenue, Nouvelle feature,
 Répondre (`MainSheetPolicy`).
 
 Lancer le bundle depuis un dépôt l'ouvre comme projet ; pour une capture sur un
@@ -147,7 +173,7 @@ cd omp-console
 # déterministe du toolchain) : on pointe explicitement le dossier des plugins.
 # `--no-parallel` : la suite mêle des tests à VEILLE qui attendent sur le fil
 # principal (modèles Kanban et Files) et des tests de vue ; en parallèle elle
-# rend 10 à 15 échecs de délai ; mesuré le 2026-09-30 : en série 519 tests verts, 0 échec (~45,1 s).
+# rend 10 à 15 échecs de délai ; mesuré le 2026-10-04 : en série 701 tests verts, 0 échec (~54 s).
 swift test --scratch-path .build-tests --no-parallel \
   -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
@@ -231,7 +257,9 @@ Dans une voie, les cartes suivent l'ordre des colonnes (question, puis specs, pu
 revue), puis l'ordre de l'ardoise. Une voie vide le dit en une phrase.
 
 Une carte montre son titre (sans le préfixe « dépôt/ » des runs hors lot), son
-dépôt (seulement quand l'ardoise mêle plusieurs dépôts), un badge quand la voie ne
+dépôt (seulement quand l'ardoise mêle plusieurs dépôts), ses deux **modèles**
+(`req+specs <A>` puis `impl+review <B>`, la valeur ou `défaut OMP`, une ligne par
+groupe renseigné, coupées au milieu), un badge quand la voie ne
 dit pas déjà son état (« Question », « Specs à valider », « En pause », « PR
 ouverte »…), la question de l'agent en aperçu, puis — pour une feature en cours ou
 qui vous attend — sa barre d'avancement en cinq segments, son étape et sa durée à
@@ -265,11 +293,15 @@ en-tête (titre, « dépôt · étape », badge d'état), une **frise d'avanceme
 `PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines » —
 elle porte aussi « Lire le contrat » quand la carte attend un besoin ou des specs à
 valider : depuis cette feuille, le geste ferme d'abord le détail, puis la feuille
-**Contrat** s'ouvre), **Informations** (étape, durée, modèle, lien de PR) et un pli
-**Détails techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
+**Contrat** s'ouvre), **Informations** (étape, durée, les deux modèles `req+specs` /
+`impl+review` avec un bouton **Modifier…**, lien de PR) et un pli **Détails
+techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
 « Fermer » (Échap) à droite. Le menu contextuel d'une carte expose aussi ses
-gestes (Afficher les détails, Lire le contrat, Répondre…, Valider les specs,
-Accepter la revue, Reprendre, Ouvrir la PR, Arrêter…).
+gestes (Afficher les détails, Lire le contrat, **Modifier les modèles…**, Répondre…,
+Valider les specs, Accepter la revue, Reprendre, Ouvrir la PR, Arrêter…). Le bouton
+**Modifier…** et l'entrée « Modifier les modèles… » ouvrent la feuille
+d'édition `models.sheet` (titre `Modèles de <slug>`, les deux sélecteurs
+pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
 
 ### Identifiants d'accessibilité
 
@@ -412,6 +444,7 @@ Deux invariants durables de cette couche :
 | `kanban.actions.resume` | le bouton « Reprendre » |
 | `kanban.actions.stop` | le bouton « Arrêter… » (confirmation avant l'arrêt) |
 | `kanban.actions.contract` | le bouton « Lire le contrat » (carte attendant un besoin ou des specs à valider) |
+| `kanban.actions.editModels` | le bouton « Modifier… » d'un modèle et l'entrée « Modifier les modèles… » du menu contextuel |
 | `kanban.journal`, `kanban.journal.empty` | la bulle « Activité » |
 
 ### Recette : agir depuis la carte
@@ -718,6 +751,92 @@ sans cliquer (le processus doit être lancé) :
 lsappinfo list | grep "OMP Console"
 ```
 
+## Composants de l'app
+
+L'app possède TOUT ce qui lui sert, sous une racine privée — elle ne consulte ni
+`PATH`, ni `~/.bun/bin`, ni `/opt/homebrew/bin`, ni `/usr/local/bin` pour `omp`
+et podman (S-1, S-4) :
+
+| Quoi | Où | Version |
+|---|---|---|
+| binaire `omp` (binaire autonome GitHub, aucun `bun` requis) | `~/Library/Application Support/com.omp.console/components/omp/18.6.0/omp` | 18.6.0 (SHA-256 vérifié avant installation) |
+| podman (pkg extrait par `pkgutil --expand-full`, jamais installé) | `…/components/podman/6.1.3/{bin,lib,share}` | 6.1.3 |
+| configuration XDG de la machine podman | `…/config/` (`XDG_CONFIG_HOME`) | |
+| disque et cache de la machine podman | `…/data/` (`XDG_DATA_HOME`) | |
+| pile mémoire | `…/stack/` (`qdrant_storage/`, `env`, `machine.json`, `migration.json`) | |
+
+- **Manifeste** — versions, URL et empreintes sont figées dans
+  `ComponentManifest.current` (`Setup/ComponentManifest.swift`). L'installation
+  est idempotente (un composant présent à la bonne version n'est ni retéléchargé
+  ni réinstallé), vérifie le SHA-256 AVANT de déplacer, puis `omp --version` /
+  `bin/podman --version` APRÈS ; après succès, les autres versions sous
+  `components/omp/` et `components/podman/` sont purgées. Rien n'est écrit de
+  façon non atomique.
+- **Machine podman dédiée** — `omp-console`, image
+  `docker://quay.io/podman/machine-os:6.1`, 4 CPU, 4 Gio, 50 Gio de disque, avec
+  `helper_binaries_dir` pointé sur les `bin/` du composant ; sa configuration et
+  son disque vivent sous la racine de l'app, donc elle ne voit jamais une machine
+  podman système.
+- **Conteneurs** — réseau `omp-console-stack`, `omp-console-qdrant`
+  (`qdrant/qdrant:v1.19.0`, ports `127.0.0.1:6333/6334`) et
+  `omp-console-mem0-http` (image construite depuis le contexte embarqué
+  `Contents/Resources/Stack/mem0-http`, port `127.0.0.1:8321`), tous deux
+  `--restart unless-stopped`.
+- **Migration** (une fois par racine) — l'app découvre l'ancienne pile par l'API
+  Docker sur socket Unix (`~/.docker/run/docker.sock`, puis
+  `/var/run/docker.sock`), l'arrête (`mem0-qdrant`, `mem0-http`), copie
+  `qdrant_storage` (la source reste INTACTE, une base déjà présente n'est JAMAIS
+  recouverte), importe le `.env` voisin dans `stack/env` (0600) et écrit
+  `stack/migration.json` (informatif).
+- **`stack/env`** — mêmes clés que `mem0-stack/.env` : `QDRANT_API_KEY`,
+  `MEM0_HTTP_TOKEN`, `OMLX_BASE_URL`, `OMLX_API_TOKEN`, `OMLX_LLM_MODEL`,
+  `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS`. Sans fichier, les défauts de
+  `mem0-stack/.env.example` s'appliquent.
+- **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
+  (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
+  devient alors le seul candidat (les recettes s'en servent).
+
+### Recettes gatées de la préparation
+
+Aucune n'est posée par `scripts/swift-app.sh` ni par la CI (elles sont
+« skipped ») ; chacune échoue explicitement si son prérequis manque, jamais en
+silence. Depuis `omp-console/` :
+
+```bash
+# Composants : télécharge omp et podman dans une racine temporaire, exécute leurs --version
+MEM0_COMPONENTS_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recetteReelleInstalleLesDeuxComposants -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+
+# Pile : machine omp-console + conteneurs + /health, sur une racine de support
+MEM0_STACK_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recetteReelleDeLaPile -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+
+# Migration : arrête réellement l'ancienne pile, copie dans une racine temporaire
+MEM0_MIGRATION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recetteMigrationArreteEtCopieLAncienneBase -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+
+# Session composant + run terminal : session RPC réelle sur le composant, puis un
+# `omp -p` au terminal (sans l'app) dont la session porte un message mem0-recall
+MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter "sessionRunsOnTheAppComponent|terminalRunRecallsMemoryWithoutTheApp" \
+  -Xswiftc -plugin-path -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+```
+
+### Preuves manuelles (AC-3, AC-5)
+
+- **AC-3 — l'app n'utilise aucun binaire système** : renommez l'`omp` du système
+  (`mv ~/.bun/bin/omp ~/.bun/bin/omp.bak` — sans toucher à la racine de l'app),
+  ouvrez l'app, lancez une session ; elle vit, et le process lancé est
+  `…/com.omp.console/components/omp/18.6.0/omp`. Le renommage est réversible, et
+  la suppression du composant seul provoque la réinstallation par « Réessayer ».
+- **AC-5 — la pile survit à l'app** : quittez l'app (⌘Q), puis, dans un terminal
+  sur un dépôt : `omp -p "résume ce dépôt"`. Le run reçoit le rappel mémoire du
+  plugin (`mem0-recall` dans son fichier de session) parce que la pile de l'app
+  tourne toujours en arrière-plan.
+
 ## Héberger une session OMP
 
 La section **Session OMP** (⌘4, ou Fichier ▸ « Nouvelle session OMP » ⌥⌘N)
@@ -770,26 +889,21 @@ vers la session : … ». La mort de la session reste annoncée par la sortie r�
 process : état `Process mort …` et bouton **Relancer** (l'échec d'écriture, lui, ne
 change pas l'état de la session).
 
-### Trouver le binaire `omp`
+### Le binaire `omp` de l'app
 
-La variable d'environnement **`OMP_CONSOLE_OMP_BINARY`** fixe le chemin du binaire :
-quand elle est posée et non vide, c'est le **seul** candidat — pratique pour un
-`omp` hors des emplacements habituels, ou pour forcer un poste sans `omp` (utile
-avec le harnais ci-dessous).
+Un SEUL binaire est proposé à la session hébergée : le composant de l'app
+(`…/components/omp/18.6.0/omp`, S-4). `PATH`, `~/.bun/bin`, `/opt/homebrew/bin`,
+`/usr/local/bin` et l'ancienne préférence `omp.chosenPath` ne sont plus consultés :
+l'app n'utilise que ses composants, et la feuille « OMP est requis » n'existe plus
+(la préparation la remplace).
 
-Sans elle, l'emplacement choisi dans la feuille « OMP est requis » (« Choisir
-l'emplacement… », préférence `omp.chosenPath`) passe en tête, avant `PATH`.
-
-Puis l'ordre de recherche est : chaque entrée de `PATH`, puis
-`~/.bun/bin/omp`, `/opt/homebrew/bin/omp`, `/usr/local/bin/omp` — le premier
-fichier **exécutable** gagne. Les trois emplacements explicites ne sont pas
-décoratifs : une app lancée par le Finder hérite du `PATH` de `launchd`
-(`/usr/bin:/bin:/usr/sbin:/sbin`) et ne verrait donc jamais `~/.bun/bin`, où `omp`
-s'installe couramment.
-
-Si aucun candidat n'est exécutable, la fenêtre affiche « Binaire `omp` introuvable :
-cherché dans PATH, ~/.bun/bin, /opt/homebrew/bin, /usr/local/bin. » — aucune session
-fantôme n'est affichée comme vivante.
+- **`OMP_CONSOLE_OMP_BINARY`** (échappatoire de test) — posée et non vide, c'est le
+  SEUL candidat ; utile aux recettes pour pointer un `omp` de secours ou simuler un
+  poste sans composant.
+- Si le composant est absent ou non exécutable, la session refuse de démarrer et la
+  fenêtre nomme le chemin cherché (« Binaire `omp` introuvable (cherché : …) ») :
+  aucune session fantôme n'est affichée comme vivante. « Réessayer » sur la feuille
+  de préparation le réinstalle.
 
 ## Section Terminal (terminal intégré)
 
@@ -1361,13 +1475,12 @@ omp-console/
 │   │   ├── StatusBadge.swift      l'état en un mot : badge du contenu, pilule Liquid Glass d'une session
 │   │   └── MarkdownBlocksView.swift un Markdown rendu en blocs (Fichiers, conversation, Mémoire, Projet)
 │   ├── Home/                      la section Accueil et ses feuilles
-│   │   ├── HomeModel.swift        disponibilité d'OMP, bienvenue, réponse, bandeau masqué
+│   │   ├── HomeModel.swift        disponibilité du composant OMP, bienvenue, réponse, bandeau
 │   │   ├── HomePresentation.swift état de l'écran, listes, geste d'une carte (purs)
 │   │   ├── HomeText.swift         tous les textes de l'Accueil
-│   │   ├── HomeView.swift         les quatre états de l'écran
+│   │   ├── HomeView.swift         les quatre états, dont le fond « prépare ses composants »
 │   │   ├── MainSheet.swift        la feuille due, une seule à la fois (politique pure)
 │   │   ├── WelcomeSheet.swift     la feuille « Bienvenue »
-│   │   ├── OmpRequiredSheet.swift la feuille bloquante « OMP est requis »
 │   │   └── AnswerSheet.swift      la feuille « Répondre »
 │   ├── Contract/                  la feuille Contrat : lire le contrat d'une feature
 │   │   ├── ContractDocument.swift moment de validation, sections verbatim, chemin, lecture (purs)
@@ -1379,6 +1492,21 @@ omp-console/
 │   │   └── NewFeatureSheet.swift  la feuille
 │   ├── Conductor/
 │   │   └── ConductorPool.swift    les conducteurs : un `omp --mode rpc` par dépôt sans pilote
+│   ├── Setup/                     la préparation du premier lancement (S-1, S-5)
+│   │   ├── AppPaths.swift         la racine privée de l'app (composants, XDG, pile)
+│   │   ├── CommandRunner.swift    l'exécution d'une commande externe, injectable
+│   │   ├── ComponentManifest.swift les versions, URL et empreintes des composants
+│   │   ├── ComponentInstaller.swift téléchargement, SHA-256, pkgutil, `--version`, purge
+│   │   ├── SetupModel.swift       la chaîne composants → migration → pile → oMLX
+│   │   ├── SetupText.swift        tous les textes de la préparation, en un endroit
+│   │   └── SetupView.swift        la feuille : quatre lignes, états, boutons
+│   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-6)
+│   │   ├── PodmanCommand.swift    argv purs et environnement XDG d'une commande podman
+│   │   ├── StackConfig.swift      la config `stack/env` (mêmes clés que mem0-stack)
+│   │   ├── MemoryStack.swift      machine `omp-console`, conteneurs, attentes, `/health`
+│   │   ├── DockerSocket.swift     l'API Docker sur socket Unix (curl), décodage tolérant
+│   │   ├── StackMigration.swift   arrêt de l'ancienne pile, copie gardée, import `.env`
+│   │   └── OMLXProbe.swift        la sonde oMLX (budget 5 s, jamais bruyante)
 │   ├── Terminal/                  la fenêtre de terminal : un shell de connexion dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
 │   │   │                          hérités ≥ 3, écriture,

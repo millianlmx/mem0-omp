@@ -71,6 +71,24 @@ func liveStateLabel(_ entry: RunningEntry) -> String {
 }
 
 
+/// Les modèles RÉSOLUS d'une feature de lot, ou `nil` quand elle n'en porte aucun.
+private func modelSlots(of feature: LotFeature) -> ModelSlots? {
+    ModelSlots.resolve(
+        legacy: feature.model,
+        reqSpecs: feature.modelReqSpecs,
+        implReview: feature.modelImplReview
+    )
+}
+
+/// Les modèles RÉSOLUS d'une feature de projet, ou `nil`.
+private func modelSlots(of feature: ProjectFeature) -> ModelSlots? {
+    ModelSlots.resolve(
+        legacy: feature.model,
+        reqSpecs: feature.modelReqSpecs,
+        implReview: feature.modelImplReview
+    )
+}
+
 // --- l'ardoise ---------------------------------------------------------------
 
 extension KanbanBoard {
@@ -147,8 +165,9 @@ extension KanbanBoard {
                         state: lotWaitLabel(feature.waitKind) ?? lotStateLabel(feature.state),
                         // Le maillon : celui du run apparié, sinon celui de la feature.
                         phase: run?.phase ?? feature.phase,
-                        // Le modèle et la PR du projet priment (le plan fait autorité).
-                        model: firstNonEmpty(pair?.feature.model, feature.model),
+                        // Les modèles RÉSOLUS et la PR du projet priment (le plan
+                        // fait autorité) ; à défaut, ceux de la feature du lot.
+                        models: pair.flatMap { modelSlots(of: $0.feature) } ?? modelSlots(of: feature),
                         prUrl: firstNonEmpty(pair?.feature.prUrl, feature.prUrl),
                         // Une entrée publiée ne fait jamais reculer l'horloge : la
                         // durée part de l'instant le PLUS ANCIEN des deux.
@@ -193,7 +212,7 @@ extension KanbanBoard {
                         title: feature.slug,
                         state: projectStateLabel(feature.status),
                         phase: nil,
-                        model: feature.model,
+                        models: modelSlots(of: feature),
                         prUrl: firstNonEmpty(feature.prUrl),
                         startMs: feature.updatedAt,
                         endMs: nil,
@@ -232,7 +251,7 @@ extension KanbanBoard {
                     title: entry.label,
                     state: liveStateLabel(entry),
                     phase: entry.phase,
-                    model: nil,
+                    models: nil,
                     prUrl: nil,
                     startMs: entry.phaseStartedAt,
                     endMs: nil,
@@ -268,7 +287,7 @@ extension KanbanBoard {
                     title: entry.label,
                     state: entry.finalState == .done ? "terminée" : "échouée",
                     phase: entry.phase,
-                    model: nil,
+                    models: nil,
                     prUrl: nil,
                     startMs: entry.phaseStartedAt,
                     endMs: entry.endedAt,

@@ -43,7 +43,12 @@ mem0-omp/                              racine = marketplace OMP
 
 La coque macOS (`omp-console/`, SwiftUI) a son propre document :
 `omp-console/README.md` explique comment la builder, la tester, assembler son
-bundle `.app` et ouvrir l'app.
+bundle `.app` et ouvrir l'app. C'est l'app unique : elle installe et démarre
+elle-même ses composants (son `omp` 18.6.0, son podman 6.1.3, sa machine podman
+`omp-console` et les conteneurs `omp-console-qdrant` / `omp-console-mem0-http`),
+migre une seule fois la base mémoire existante — l'ancienne pile est arrêtée avant
+de prendre ses ports — et sa pile survit à la fermeture de l'app. `mem0-stack/`
+(ci-dessus) reste la voie MANUELLE, que l'app ne modifie pas.
 
 ## Ce que ça fait
 
@@ -291,16 +296,18 @@ fait désormais échouer la construction de l'image, pas la première requête.
   commande est en plus préremplie dans la zone de saisie, prête à valider par Entrée —
   et jamais par-dessus un brouillon déjà tapé.
 
-  **Le modèle se choisit au lancement de la feature.** `/req` demande, **avant toute
-  écriture** (ni branche, ni worktree, ni session), le modèle de la pipeline dans la liste
-  des modèles connus d'OMP — avec une réponse `défaut OMP (aucun modèle)` ; `Échap` annule
-  sans rien créer. Un seul modèle par feature, **figé à sa création** : aucun maillon ne le
-  change, aucune action du panneau ne le modifie. Le modèle choisi part en `--model` sur
-  **tous** les runs de la feature — sa collecte, chaque maillon, la poursuite d'un run après
-  une réponse, la relance d'une feature bloquée, les tours `/impl --fix` — et s'affiche sur
-  son rang du panneau (`… · modèle anthropic/claude-opus-4-7`). Sans modèle choisi, la ligne
-  de commande est **exactement** celle d'avant, et le niveau de réflexion n'est jamais
-  transmis : il reste celui de la config OMP.
+  **Les deux modèles se choisissent au lancement de la feature.** `/req` demande, **avant
+  toute écriture** (ni branche, ni worktree, ni session), **deux** modèles dans la liste des
+  modèles connus d'OMP — celui des maillons `req` et `specs`, puis celui de `impl`, `review`
+  et `release` —, avec à chaque fois la réponse `défaut OMP (aucun modèle)` ; `Échap` annule
+  sans rien créer. Les deux sont **modifiables à tout moment**, depuis OMP Console ou par le
+  geste `m` du panneau `/pipelines` : un run déjà lancé n'est ni interrompu ni relancé, tout
+  run suivant utilise la valeur courante. Chaque modèle part en `--model` sur les runs de
+  **son groupe** — la collecte et `/specs` pour le premier, `/impl`, `/review` et la
+  livraison pour le second — et les deux s'affichent sur son rang du panneau
+  (`… · req+specs anthropic/claude-opus-4-7 · impl+review défaut OMP`). Un groupe laissé sur
+  `défaut OMP` ne transmet aucun `--model`, et le niveau de réflexion n'est jamais transmis :
+  il reste celui de la config OMP.
 
   **Chaque feature vit dans son propre worktree git.** `/req <nom-de-feature>` crée
   `<base>/<dépôt>-<hash7>/<nom>` sur la branche `feat/<nom>` (base :
@@ -327,8 +334,9 @@ fait désormais échouer la construction de l'image, pas la première requête.
   proposées — chacune nommée, avec ses dépendances —, puis te montre **une liste à
   cocher** de tous ces éléments, faiblesses et features réunies : coches-en un ou
   plusieurs et valide (valider sans rien cocher ne lance rien). Pour chaque élément
-  coché, tu **valides ou amendes l'intention** transmise à `/req`, puis tu choisis son
-  **modèle** — une question par élément, chaque pipeline tourne avec le sien. Les
+  coché, tu **valides ou amendes l'intention** transmise à `/req`, puis tu choisis ses
+  **deux modèles** (`req+specs`, puis `impl+review`) — deux questions par élément, chaque
+  pipeline tourne avec les siens. Les
   pipelines cochées démarrent **en parallèle dans la limite de `MEM0_PIPELINE_SLOTS`**
   (les autres attendent un créneau) ; un élément qui dépend d'un autre élément
   choisi n'attaque qu'une fois celui-ci terminé. Redemande un lancement dans la même
@@ -341,7 +349,7 @@ fait désormais échouer la construction de l'image, pas la première requête.
   projet par des questions à options ; le cadrage ne se clôt que sur ton « fin » ou sur
   le **contrôle de complétude**. L'agent propose ensuite un **plan de segments** ordonnés
   de features, que tu **corriges puis valides** — aucune pipeline ne démarre avant —,
-  avec le modèle de chaque feature. Le plan et son avancement vivent dans `PROJECT.md`,
+  avec les deux modèles de chaque feature. Le plan et son avancement vivent dans `PROJECT.md`,
   seul fichier de la branche `omp-project`. Chaque segment part en pipelines parallèles
   **dans la limite de `MEM0_PIPELINE_SLOTS`** jusqu'aux PR, et le segment suivant démarre
   seul dès que **toutes** les PR du précédent sont fusionnées — par toi, jamais par
@@ -405,10 +413,12 @@ fenêtres qui pourraient manger l'écran, et de les faire défiler.
   garde un marqueur qui **nomme la section qu'il tronque** (`… 4 de plus dans le lot`).
 - **La colonne de droite** d'un rang est `<maillon> · <état> · <temps>` — jamais les
   dépendances : elles restent sur le libellé (`base-qdrant ← isolation-worktree`), une
-  seule fois. Le **modèle choisi** s'ajoute au libellé (`base-qdrant · modèle
-  anthropic/claude-opus-4-7`), une fois lui aussi, et disparaît quand la feature suit le
-  défaut OMP. Quand le libellé et la colonne ne tiennent pas ensemble sur la largeur de
-  contenu, l'entrée peint **deux rangs** : le libellé, puis l'état et le temps — jamais
+  seule fois. Les **deux modèles** s'ajoutent au libellé (`base-qdrant · req+specs
+  anthropic/claude-opus-4-7 · impl+review défaut OMP`), une fois eux aussi, et disparaissent
+  pour une feature née au défaut OMP ; `défaut OMP` nomme un groupe laissé vide, l'ancien
+  modèle unique d'une feature d'avant remplissant les deux. Quand le libellé et la colonne
+  ne tiennent pas ensemble sur la largeur de contenu, l'entrée peint **deux rangs** : le
+  libellé, puis l'état et le temps — jamais
   coupés en deux. **Le tour de correction y figure** dès qu'il y en a un : `--fix · tour
   2/3` pour un `/impl --fix`, `tour 2/3` pour une `/review` — sans quoi un tour de
   correction se lisait comme un `/impl` neuf, et la boucle ne se suivait qu'à son blocage.
@@ -640,24 +650,32 @@ depuis l'instant **le plus ancien** des deux — publier une entrée ne fait jam
 l'horloge sous tes yeux.
 
 **Tout geste qui change l'état du lot s'annonce avant d'agir** : `l` (lancer), `x`
-(retirer), `R` (relancer), `v` (valider les specs), `y` (accepter la revue), `c`
-(annuler, après le choix `1 gardé · 2 archivé · 3 supprimé`) et le dernier champ d'un
-`a` (ajouter) affichent d'abord un **aperçu** — le destinataire, la transition d'état, la
-conséquence — puis attendent `Entrée` pour agir. `Échap` revient en arrière sans aucun
+(retirer), `R` (relancer), `v` (valider les specs), `y` (accepter la revue), `m`
+(modèles), `c` (annuler, après le choix `1 gardé · 2 archivé · 3 supprimé`) et le dernier
+champ d'un `a` (ajouter) affichent d'abord un **aperçu** — le destinataire, la transition
+d'état, la conséquence — puis attendent `Entrée` pour agir. `Échap` revient en arrière
+sans aucun
 effet, tampon compris. Rien n'est écrit avant la confirmation, et un refus du pilote
 s'affiche tel quel au lieu d'être avalé.
 
 - **Ajouter** (`a`) : trois champs — nom, **Description** (elle amorce la collecte),
   dépendances (slugs séparés par des virgules, vide admis) — puis, quand des modèles connus
-  existent, un quatrième : **Modèle**. La liste des modèles connus s'y affiche avec
-  `défaut OMP (aucun modèle)` en tête ; `↑`/`↓` (ou `k`/`j`) déplacent le curseur, une
-  frappe **filtre** la liste (Retour arrière l'efface, un filtre sans résultat le dit),
-  `PageUp`/`PageDown` font défiler la fenêtre, `Entrée` valide le choix affiché et `Échap`
-  rend le champ des dépendances, tampon compris. Le curseur partant sur la première ligne,
-  `Entrée` seul reproduit le comportement d'avant : la feature naît sans modèle. Le worktree
-  de la feature est créé au lancement (`feat/<nom>`), jamais à l'ajout. **Retirer** (`x`)
-  enlève une feature qui n'a pas encore démarré. Aucun autre geste du panneau ne touche au
-  modèle : il est figé à la création de la feature.
+  existent, **deux étapes** : `Modèle req+specs` puis `Modèle impl+review`. La liste des
+  modèles connus s'y affiche avec `défaut OMP (aucun modèle)` en tête ; `↑`/`↓` (ou `k`/`j`)
+  déplacent le curseur, une frappe **filtre** la liste (Retour arrière l'efface, un filtre
+  sans résultat le dit), `PageUp`/`PageDown` font défiler la fenêtre, `Entrée` valide le
+  choix affiché (sur la seconde étape, il ouvre l'aperçu) et `Échap` rend l'étape précédente —
+  le champ des dépendances depuis la première —, tampon compris. Le curseur partant sur la
+  première ligne, `Entrée` seul reproduit le comportement d'avant : la feature naît sans
+  modèle. L'aperçu n'annonce que les groupes **renseignés**
+  (`Créer gamma ? · 0 dépendance(s) · req+specs anthropic/claude-opus-4-7`). Le worktree de la
+  feature est créé au lancement (`feat/<nom>`), jamais à l'ajout. **Modèles** (`m`) ouvre les
+  deux mêmes étapes, pré-positionnées sur les valeurs courantes, puis un aperçu
+  (`Modifier les modèles de gamma ? · req+specs … · impl+review défaut OMP`) : `Entrée`
+  applique, un refus du pilote s'affiche tel quel, et un run déjà lancé n'est ni interrompu
+  ni relancé — le run suivant relit la valeur courante. Sans modèle connu, `m` le dit
+  (`aucun modèle connu — modèles inchangés`) sans rien ouvrir. **Retirer** (`x`) enlève une
+  feature qui n'a pas encore démarré.
 - **Lancer** (`l`) : chaque feature démarre son maillon courant, dans la limite de
   `MEM0_PIPELINE_SLOTS` (4 par défaut) — au-delà, les features runnables restent `pending`
   avec le motif *attend un créneau* dans `/pipelines`, et démarrent dans l'ordre du lot dès
@@ -768,12 +786,12 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   plan : **Valider**, **Corriger** (un éditeur où `## <segment>` ouvre un segment et
   `- <nom> — <intention>` ajoute une feature ; l'ordre des lignes est l'ordre du plan ;
   un texte illisible ou un nom déjà pris rouvre l'éditeur avec l'erreur) ou
-  **Abandonner** (rien n'est écrit). À la validation, tu choisis le modèle de chaque
-  feature, le document est écrit et le segment 1 part.
+  **Abandonner** (rien n'est écrit). À la validation, tu choisis les deux modèles de chaque
+  feature (`req+specs`, puis `impl+review`), le document est écrit et le segment 1 part.
 - **Le document et sa branche** : `PROJECT.md` est le **seul** fichier de la branche
   orpheline `omp-project` (worktree privé `<état>/projects/<sha1(realpath(dépôt))[:16]>.doc`). Il porte le but,
   la fonction, chaque segment et ses features dans l'ordre, avec leur état, leur PR et
-  leur modèle ; les features retirées sont listées à part. Il est réécrit et **commité à
+  leurs deux modèles ; les features retirées sont listées à part. Il est réécrit et **commité à
   chaque changement d'état** — plan validé ou modifié, feature lancée, PR ouverte,
   fusionnée, en échec, relancée ou retirée, projet arrêté, repris ou terminé — puis
   poussé vers l'URL HTTPS du dépôt (`gh repo view`). Un commit ou un push impossible est

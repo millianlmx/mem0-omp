@@ -247,7 +247,7 @@ func restartSubscribesAgain() async {
 private func waitingCard(slug: String, worktree: String) -> KanbanCard {
     KanbanCard(
         id: "feature:cle:\(slug)", column: .jalonSpecs, repo: "depot", title: slug, state: "attend",
-        phase: .specs, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
+        phase: .specs, models: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
         action: KanbanCardAction(
             repoRoot: "/tmp/kanban/depot",
             worktree: worktree,

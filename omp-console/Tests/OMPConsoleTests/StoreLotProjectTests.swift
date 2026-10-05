@@ -115,7 +115,12 @@ func projectIsTyped() throws {
     #expect(merged.prUrl == "https://forge.example/pr/36")
     #expect(merged.failure == nil)
     #expect(merged.removedReason == nil)
-    #expect(merged.model == "opencode-go/deepseek-v4.1-flash")
+    #expect(ModelSlots.resolve(
+        legacy: merged.model, reqSpecs: merged.modelReqSpecs, implReview: merged.modelImplReview
+    ) == ModelSlots(
+        reqSpecs: "opencode-go/deepseek-v4.1-flash",
+        implReview: "opencode-go/deepseek-v4.1-flash"
+    ))
     let failed = try #require(project.segments.last?.features.last)
     #expect(failed.status == .failed)
     #expect(failed.failure?.kind == .pr)
@@ -196,6 +201,8 @@ func lotCoercions() throws {
     feature["base"] = String(repeating: "b", count: 64)
     feature["launched"] = false
     feature["model"] = "  opencode-go/deepseek-v4.1-flash  "
+    feature["modelReqSpecs"] = "  anthropic/claude-opus-4-7  "
+    feature["modelImplReview"] = ""
     feature["pendingTexts"] = [" premier ", 7, "", "deuxième"]
     feature["lastVerdict"] = "bizarre"
     feature["fixes"] = -3
@@ -213,6 +220,10 @@ func lotCoercions() throws {
     // Le modèle garde sa valeur d'origine, blancs compris (parité : seul le test de
     // vacuité rogne).
     #expect(typed.model == "  opencode-go/deepseek-v4.1-flash  ")
+    // Les deux clés neuves suivent la MÊME tolérance : valeur conservée telle
+    // quelle, blanc lu ABSENT.
+    #expect(typed.modelReqSpecs == "  anthropic/claude-opus-4-7  ")
+    #expect(typed.modelImplReview == nil)
     #expect(typed.pendingTexts == [" premier ", "deuxième"])
     #expect(typed.lastVerdict == nil)
     #expect(typed.fixes == 0)
@@ -328,4 +339,6 @@ func projectToleratedForms() throws {
     #expect(read.segments[0].features.first?.status == .removed)
     #expect(read.segments[0].features.first?.removedReason == "abandonnée")
     #expect(read.segments[0].features.last?.model == nil)
+    #expect(read.segments[0].features.last?.modelReqSpecs == nil)
+    #expect(read.segments[0].features.last?.modelImplReview == nil)
 }

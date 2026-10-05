@@ -111,9 +111,9 @@ struct KanbanCard: Sendable, Equatable, Identifiable {
     var state: String
     /// Le maillon, quand l'entité en porte un.
     var phase: PipelinePhase?
-    /// Le modèle, quand l'entité en porte un — `nil` n'est pas « absent » :
-    /// l'inspecteur n'affiche alors aucune ligne de modèle.
-    var model: String?
+    /// Les deux modèles RÉSOLUS de l'entité, quand elle en porte un — `nil` n'est
+    /// pas « absent » : l'inspecteur n'affiche alors aucune ligne de modèle.
+    var models: ModelSlots?
     var prUrl: String?
     var startMs: Double
     /// `nil` = carte ouverte : la durée court jusqu'à l'instant de rendu.

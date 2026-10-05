@@ -62,6 +62,17 @@ final class ActionsModel: ObservableObject {
     @Published var launchRepoRoot: String?
     /// Le refus du dernier dossier choisi (pas une racine git), `nil` sinon.
     @Published var launchRepoError: String?
+    /// Les deux choix de modèle de la feuille de lancement (`nil` = défaut OMP).
+    @Published var launchModelReqSpecs: String?
+    @Published var launchModelImplReview: String?
+
+    /// L'état du catalogue `omp models --json` (S-5), partagé par les deux
+    /// feuilles qui offrent les deux sélecteurs.
+    @Published private(set) var modelCatalog: ModelCatalogState = .loading
+    /// Les deux choix de la feuille d'édition des modèles d'une feature (S-5),
+    /// pré-positionnés sur les valeurs courantes résolues à l'ouverture.
+    @Published var editModelReqSpecs: String?
+    @Published var editModelImplReview: String?
 
     // État de la zone d'action : au plus UNE voie renseignée (S-3).
     @Published var answerSelectedLabel: String?
@@ -76,22 +87,28 @@ final class ActionsModel: ObservableObject {
     /// Qui fait conduire un dépôt sans pilote vivant (S-7) ; `nil` = aucun
     /// conducteur (les commandes attendent un pilote lancé ailleurs).
     private let pilot: PipelinePilot?
+    /// Le chargement du catalogue de modèles (S-5) ; injectable pour les tests.
+    private let loadModels: @Sendable () async -> Result<[String], ModelCatalogError>
     private var timer: Timer?
 
     /// La dernière sollicitation du pilote en vol : un test l'attend au lieu de
     /// deviner quand la tâche a fini.
     private(set) var pilotTask: Task<Void, Never>?
+    /// Le dernier chargement du catalogue en vol.
+    private(set) var modelCatalogTask: Task<Void, Never>?
 
     init(
         writer: PipelineWriter = PipelineWriter(),
         clock: StoreClock = .live,
         salt: @escaping @Sendable () -> String = ActionsModel.randomSalt,
-        pilot: PipelinePilot? = nil
+        pilot: PipelinePilot? = nil,
+        modelCatalogLoader: (@Sendable () async -> Result<[String], ModelCatalogError>)? = nil
     ) {
         self.writer = writer
         self.clock = clock
         self.salt = salt
         self.pilot = pilot
+        self.loadModels = modelCatalogLoader ?? { await ModelCatalogLoader.loadDefault() }
     }
 
     /// Quatre hexadécimaux minuscules : le nom d'un fichier du canal doit porter un
@@ -260,7 +277,15 @@ final class ActionsModel: ObservableObject {
     }
 
     /// Émet `{kind:"launch"}` : le slug est dérivé par le DÉPÔT, jamais par l'app.
-    func launch(title: String, description: String, repoRoot: String) {
+    /// Les deux modèles choisis (S-5) partent en clés optionnelles, omises quand
+    /// le groupe est laissé sur le défaut OMP.
+    func launch(
+        title: String,
+        description: String,
+        repoRoot: String,
+        modelReqSpecs: String? = nil,
+        modelImplReview: String? = nil
+    ) {
         guard !Self.isBlank(title), !Self.isBlank(description) else { return }
         let sentAt = clock.nowMs()
         let salt = salt()
@@ -268,7 +293,9 @@ final class ActionsModel: ObservableObject {
             id: PipelineId.console(sentAt: sentAt, salt: salt),
             repo: realpathOr(repoRoot),
             title: title,
-            description: description
+            description: description,
+            modelReqSpecs: Self.normalizedModel(modelReqSpecs),
+            modelImplReview: Self.normalizedModel(modelImplReview)
         )
         let written = emitCommand(
             kindLabel: ActionsText.launchLabel,
@@ -280,7 +307,64 @@ final class ActionsModel: ObservableObject {
         launchFormShown = false
         launchTitle = ""
         launchDescription = ""
+        launchModelReqSpecs = nil
+        launchModelImplReview = nil
         if written { solicitPilot(repoRoot: repoRoot, entryID: command.id) }
+    }
+
+    // --- modèles (S-5) -------------------------------------------------------
+
+    /// Lance le chargement du catalogue `omp models --json` et publie son état.
+    /// Les deux feuilles s'en servent ; un échec laisse l'édition possible.
+    func loadModelCatalog() {
+        modelCatalog = .loading
+        let loader = loadModels
+        modelCatalogTask = Task { @MainActor [weak self] in
+            let result = await loader()
+            guard let self else { return }
+            switch result {
+            case .success(let selectors): self.modelCatalog = .loaded(selectors)
+            case .failure(let error): self.modelCatalog = .failed(error.reason)
+            }
+        }
+    }
+
+    /// Pré-positionne la feuille d'édition sur les valeurs courantes RÉSOLUES
+    /// d'une feature (`nil` = défaut OMP).
+    func beginModelsEdit(_ slots: ModelSlots?) {
+        editModelReqSpecs = slots?.reqSpecs
+        editModelImplReview = slots?.implReview
+    }
+
+    /// Émet `{kind:"models"}` (S-5) : remplace les deux modèles d'une feature. Un
+    /// groupe laissé vide part en `null` — le pilote efface la clé.
+    func setModels(repoRoot: String, slug: String, modelReqSpecs: String?, modelImplReview: String?) {
+        guard !Self.isBlank(slug) else { return }
+        let sentAt = clock.nowMs()
+        let salt = salt()
+        let command = OutgoingCommand.models(
+            id: PipelineId.console(sentAt: sentAt, salt: salt),
+            repo: realpathOr(repoRoot),
+            slug: slug,
+            modelReqSpecs: Self.normalizedModel(modelReqSpecs),
+            modelImplReview: Self.normalizedModel(modelImplReview)
+        )
+        if emitCommand(
+            kindLabel: ActionsText.modelsLabel,
+            target: slug,
+            command: command,
+            sentAt: sentAt,
+            salt: salt
+        ) {
+            solicitPilot(repoRoot: repoRoot, entryID: command.id)
+        }
+    }
+
+    /// Un sélecteur de modèle : `nil` pour une valeur absente ou blanche (le
+    /// groupe est alors laissé sur le défaut OMP).
+    private static func normalizedModel(_ value: String?) -> String? {
+        guard let value, !isBlank(value) else { return nil }
+        return value
     }
 
     // --- sondage des accusés (S-4, S-8) --------------------------------------

@@ -19,4 +19,6 @@ omp-console/.build-tests/
 omp-console/.build-check/
 omp-console/.build-review/
 omp-console/.build-run/
+omp-console/.build-impl/
+omp-console/.build-recipe/
 omp-console/build/

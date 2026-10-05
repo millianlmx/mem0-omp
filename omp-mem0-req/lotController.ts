@@ -13,7 +13,7 @@ import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowRe
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
-import { modelField } from "./models.ts";
+import { featureModelForPhase, modelSlotsField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
 import { SELF_MODULE_URL, applyWorktreeFate, buildLotPrompt, buildLotRunArgv, lastLine, latestSessionFile, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget, selfExtensionArg } from "./runs.ts";
@@ -29,8 +29,9 @@ import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
  * `auditSession` : la CLÉ DE RELAIS de la feature (S-1, S-6) — chemin absolu de la
  * session /audit qui la lance, ou `relayKey` du projet /project qui la lance. Une
  * feature relayée démarre tout de suite, même dans un lot au brouillon.
- * `model` : le modèle choisi à la création (S-1) — absent ou vide, la feature naît
- * sans modèle et suit le défaut OMP.
+ * `modelReqSpecs` / `modelImplReview` : les deux modèles choisis à la création
+ * (S-1, S-2) — absents ou vides, le groupe correspondant naît au défaut OMP. La
+ * clé n'existe QUE pour une valeur exploitable (`modelSlotsField`).
  * `relayKind` : `"project"` pour une feature lancée par /project (textes du panneau).
  * `base` : le sha de départ de son worktree (S-7) — absent, `HEAD` du dépôt principal.
  */
@@ -39,7 +40,8 @@ export type AddFeatureInput = {
   description: string;
   deps: string[];
   auditSession?: string;
-  model?: string | null;
+  modelReqSpecs?: string | null;
+  modelImplReview?: string | null;
   relayKind?: "project";
   base?: string;
 };
@@ -52,6 +54,16 @@ const ASK_REPLY_REFUSAL = "le maillon attend une réponse à sa question : chois
 /** Ce que le panneau demande au pilote : chaque refus rend son motif, jamais une exception. */
 export type LotPanelActions = {
   add(input: AddFeatureInput): Promise<string | null>;
+  /**
+   * Remplace les deux modèles d'une feature (S-3). Rend `null`, ou le motif du
+   * refus. Une valeur blanche EFFACE la clé du groupe ; l'ancien modèle unique est
+   * supprimé (il ne resert plus de repli). Aucun autre champ de la feature ne
+   * change, et un run déjà lancé n'est ni interrompu ni relancé.
+   */
+  editModels(
+    slug: string,
+    input: { modelReqSpecs: string | null; modelImplReview: string | null },
+  ): Promise<string | null>;
   launch(): Promise<string | null>;
   remove(slug: string): Promise<string | null>;
   /**
@@ -119,7 +131,14 @@ export type LotController = LotPanelActions & {
    */
   abortAll(reason: string): void;
   /** Inscription d'une feature créée par /req (sa collecte se déroule en session). Rend le motif d'un refus. */
-  enrol(input: { slug: string; name: string; branch: string; worktree: string; model?: string | null }): string | null;
+  enrol(input: {
+    slug: string;
+    name: string;
+    branch: string;
+    worktree: string;
+    modelReqSpecs?: string | null;
+    modelImplReview?: string | null;
+  }): string | null;
 };
 
 
@@ -556,9 +575,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       stateDir,
       sessionFile,
       selfPath: deps.selfPath ?? selfExtensionArg(SELF_MODULE_URL),
-      // Le modèle (S-1) vient de la FEATURE, au moment du lancement : un seul
-      // chemin décide de la valeur, et elle est la même pour tous ses runs.
-      model: feature.model ?? null,
+      // Le modèle (S-1) vient de la FEATURE, au moment du lancement : le groupe de
+      // la PHASE du run décide de la clé, et l'ancien modèle unique en repli (AC-4).
+      model: featureModelForPhase(feature, launch.phase),
       inbox,
       deadline: at + runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
     });
@@ -1388,7 +1407,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (actions === null) return;
     switch (cmd.kind) {
       case "launch": {
-        const added = await actions.add({ name: cmd.title, description: cmd.description, deps: cmd.deps ?? [] });
+        const added = await actions.add({
+          name: cmd.title,
+          description: cmd.description,
+          deps: cmd.deps ?? [],
+          modelReqSpecs: cmd.modelReqSpecs ?? null,
+          modelImplReview: cmd.modelImplReview ?? null,
+        });
         if (added !== null) {
           notify(`[pipeline] commande launch : ${added}`);
           return;
@@ -1398,8 +1423,22 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return;
       }
       case "add": {
-        const added = await actions.add({ name: cmd.title, description: cmd.description, deps: cmd.deps ?? [] });
+        const added = await actions.add({
+          name: cmd.title,
+          description: cmd.description,
+          deps: cmd.deps ?? [],
+          modelReqSpecs: cmd.modelReqSpecs ?? null,
+          modelImplReview: cmd.modelImplReview ?? null,
+        });
         if (added !== null) notify(`[pipeline] commande add : ${added}`);
+        return;
+      }
+      case "models": {
+        const edited = await actions.editModels(cmd.slug, {
+          modelReqSpecs: cmd.modelReqSpecs,
+          modelImplReview: cmd.modelImplReview,
+        });
+        if (edited !== null) notify(`[pipeline] commande models : ${edited}`);
         return;
       }
       case "remove": {
@@ -1715,9 +1754,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
         // démarre son pipeline (S-14), pas le lancement du lot. Le lot, lui, reste
         // au brouillon : `a` n'a rien lancé, et `enrol` ne décide pas pour lui.
         launched: true,
-        // Le modèle (S-1) : écrit seulement s'il est exploitable — la clé n'existe
-        // pas pour « défaut OMP ».
-        ...modelField(input.model),
+        // Les modèles (S-2) : chaque clé n'existe que pour une valeur exploitable —
+        // « défaut OMP » ne s'écrit pas.
+        ...modelSlotsField(input),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,
@@ -1788,7 +1827,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
         // modifiés — même patron que `auditSession`.
         ...(input.relayKind === "project" ? { relayKind: "project" as const } : {}),
         ...(isLotBaseSha(input.base) ? { base: input.base } : {}),
-        ...modelField(input.model),
+        // Les modèles (S-2) : même garde qu'à l'enrôlement — une commande d'un
+        // client antérieur (clés absentes) crée une feature sans clé de modèle.
+        ...modelSlotsField(input),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,
@@ -1851,6 +1892,21 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const dependent = lot.features.find((other) => other.state === "pending" && other.deps.includes(slug));
       if (dependent) return lotRemoveDependentRefusal(dependent.slug);
       lot.features = lot.features.filter((other) => other.slug !== slug);
+      return save(lot);
+    },
+
+    async editModels(slug, input) {
+      const opened = open(slug);
+      if (typeof opened === "string") return opened;
+      const { lot, feature } = opened;
+      if (!feature) return lotFeatureMissingRefusal(slug);
+      // Les deux clés sont REMPLACÉES ensemble (S-3) : une valeur blanche EFFACE la
+      // clé, et l'ancien modèle unique est supprimé — il ne sert plus de repli. Le
+      // seul champ touché est le modèle : ni l'état, ni la phase, ni les compteurs.
+      delete feature.model;
+      delete feature.modelReqSpecs;
+      delete feature.modelImplReview;
+      Object.assign(feature, modelSlotsField(input));
       return save(lot);
     },
 

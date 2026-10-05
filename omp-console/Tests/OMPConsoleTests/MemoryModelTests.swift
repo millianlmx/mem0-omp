@@ -320,3 +320,100 @@ func ac3ReturnToSummaryClearsTheQuery() async {
     #expect(model.canShowSummary == false)
     #expect(service.allScopes == ["memoire-mem0", "memoire-mem0"])
 }
+
+// MARK: - Prérequis oMLX (S-6, all-in-one-app/AC-6)
+
+@MainActor
+@Test("all-in-one-app/AC-6 : connexion refusée → oMLX injoignable, nommé avec l'URL sondée")
+func ac6OMLXConnectionRefusedIsNamed() async {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(error: URLError(.cannotConnectToHost)))
+    let service = ScriptedMemoryService(
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    )
+    let model = memoryModel(service: service)
+
+    await model.refresh()
+
+    guard case .unreachable = model.omlx else {
+        Issue.record("une connexion refusée doit rendre `.unreachable`, pas \(model.omlx)")
+        return
+    }
+    #expect(
+        model.omlxBanner
+            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
+    )
+    // Le prérequis manquant n'efface JAMAIS la mémoire : la liste reste servie.
+    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+}
+
+@MainActor
+@Test("all-in-one-app/AC-6 : 401 → jeton refusé, texte exact du bandeau")
+func ac6OMLXUnauthorizedIsNamed() async {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 401))
+    let model = memoryModel(service: ScriptedMemoryService())
+
+    await model.refresh()
+
+    #expect(model.omlx == .unauthorized)
+    #expect(model.omlxBanner == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.")
+}
+
+@MainActor
+@Test("all-in-one-app/AC-6 : 200 → oMLX joignable, AUCUN bandeau")
+func ac6OMLXReachableShowsNoBanner() async {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 200, body: memoryJSON(["data": []])))
+    let model = memoryModel(service: ScriptedMemoryService())
+
+    await model.refresh()
+
+    #expect(model.omlx == .reachable)
+    #expect(model.omlxBanner == nil)
+}
+
+@MainActor
+@Test("all-in-one-app/AC-6 : service mem0 indisponible → AUCUNE sonde oMLX et aucun bandeau")
+func ac6UnavailableServiceNeverProbesOMLX() async {
+    // Une réponse joignable est ARMÉE : si la sonde partait, elle la consommerait.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 200))
+    let service = ScriptedMemoryService(
+        health: [MemoryHealth(isAvailable: false, errorMessage: "Connexion impossible")]
+    )
+    let model = memoryModel(service: service)
+
+    await model.refresh()
+
+    #expect(model.omlx == .unknown)
+    #expect(model.omlxBanner == nil)
+    #expect(StubURLProtocol.requests.isEmpty)
+}
+
+@MainActor
+@Test("all-in-one-app/AC-6 : `stack/env` absent → URL de sonde par défaut ; présent → il est lu")
+func ac6StackEnvDrivesTheProbeURL() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("omp-console-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let paths = AppPaths(supportRoot: root)
+
+    // Absent : les défauts de `StackConfig` — hôte 127.0.0.1, port 8000, /models.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 200))
+    let absent = memoryModel(service: ScriptedMemoryService(), paths: paths)
+    await absent.refresh()
+    #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:8000/models"])
+
+    // Présent : le port d'`OMLX_BASE_URL` est repris, l'hôte reste 127.0.0.1.
+    var config = StackConfig.defaults
+    config.omlxBaseURL = "http://host.containers.internal:9999/v1"
+    try StackEnvStore.write(config, to: paths.stackEnv)
+
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 200))
+    let present = memoryModel(service: ScriptedMemoryService(), paths: paths)
+    await present.refresh()
+    #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:9999/models"])
+}

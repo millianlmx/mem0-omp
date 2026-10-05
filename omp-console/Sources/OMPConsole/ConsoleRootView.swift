@@ -46,6 +46,9 @@ struct ConsoleRootView: View {
     /// L'état de l'Accueil : la disponibilité d'OMP commande aussi la barre
     /// d'outils et la feuille.
     @ObservedObject var home: HomeModel
+    /// La préparation de l'app (S-5) : la feuille `.setup` et le bandeau de
+    /// l'Accueil en dépendent.
+    @ObservedObject var setup: SetupModel
 
     /// Les modèles des sections Session OMP, Terminal et Statistiques : à
     /// l'échelle de l'app (`OMPConsoleApp`), comme les autres.
@@ -68,6 +71,8 @@ struct ConsoleRootView: View {
         if home.quitRequested { return nil }
         return MainSheetPolicy.sheet(
             omp: home.omp,
+            setup: setup.state,
+            setupDismissed: setup.dismissed,
             board: kanban.state,
             welcomeSeen: home.welcomeSeen,
             welcomeRequested: home.welcomeRequested,
@@ -86,11 +91,12 @@ struct ConsoleRootView: View {
             set: { newValue in
                 guard newValue == nil else { return }
                 switch currentSheet {
+                case .setup: setup.dismiss()
                 case .welcome: home.closeWelcome()
                 case .newFeature: actions.launchFormShown = false
                 case .answer: home.dismissAnswer(actions: actions)
                 case .contract: contract.close()
-                case .ompRequired, nil: break
+                case nil: break
                 }
             }
         )
@@ -128,6 +134,7 @@ struct ConsoleRootView: View {
                 memoryModel: memoryModel,
                 contract: contract,
                 alerts: alerts,
+                setup: setup,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel
@@ -157,7 +164,7 @@ struct ConsoleRootView: View {
                     Label(HomeText.newFeature, systemImage: "plus")
                 }
                 .disabled(!home.canLaunch)
-                .help(home.canLaunch ? HomeText.newFeature : HomeText.ompMissingTitle)
+                .help(home.canLaunch ? HomeText.newFeature : SetupText.homeMissingTitle)
                 .accessibilityIdentifier("toolbar.newFeature")
             }
             // L'action principale se déplace, mais ne se retire pas.
@@ -167,8 +174,8 @@ struct ConsoleRootView: View {
             if home.quitRequested { NSApp.terminate(nil) }
         }) { sheet in
             switch sheet {
-            case .ompRequired:
-                OmpRequiredSheet(home: home)
+            case .setup:
+                SetupView(setup: setup)
             case .welcome:
                 WelcomeSheet(home: home)
             case .newFeature:
@@ -183,7 +190,10 @@ struct ConsoleRootView: View {
         }
         // L'Accueil et Pipelines lisent le même tableau : l'abonnement est ouvert
         // une fois, par la racine, et n'est plus lié à l'apparition d'une section.
-        .onAppear { kanban.start() }
+        .onAppear {
+            kanban.start()
+            actions.loadModelCatalog()
+        }
         .frame(minWidth: 760, minHeight: 480)
     }
 }

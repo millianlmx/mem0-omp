@@ -47,7 +47,7 @@ private func sheetCard(
 ) -> KanbanCard {
     KanbanCard(
         id: "feature:cle:contrat", column: .jalonSpecs, repo: "depot", title: "contrat", state: "attend",
-        phase: phase, model: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
+        phase: phase, models: nil, prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: [],
         action: KanbanCardAction(
             repoRoot: "/tmp/contract-display/depot",
             worktree: worktree,
@@ -243,20 +243,20 @@ func missingSectionKeepsItsPlace() throws {
 @Test("contract-display-omp-console/AC-1 : la politique présente la feuille Contrat et sa remise à nil la referme")
 func policyPresentsAndClosesTheContract() {
     let available = OmpStatus.available(URL(fileURLWithPath: "/usr/local/bin/omp"))
-    let missing = OmpStatus.missing(searched: ["/a/omp"], override: nil)
+    let missing = OmpStatus.missing
     let sheet = ContractSheet(slug: "contrat", moment: .besoins, path: "/w/.omp/pipeline/contract.md", content: .missing)
     func policy(omp: OmpStatus, contract: ContractSheet?) -> MainSheet? {
         MainSheetPolicy.sheet(
-            omp: omp, board: .loading, welcomeSeen: true, welcomeRequested: true,
-            launchFormShown: true, answerCardID: "carte", contract: contract
+            omp: omp, setup: .ready, setupDismissed: false, board: .loading, welcomeSeen: true,
+            welcomeRequested: true, launchFormShown: true, answerCardID: "carte", contract: contract
         )
     }
     // Le contrat rend `.contract(<valeur>)` — et passe avant bienvenue, nouvelle
     // feature et « Répondre ».
     #expect(policy(omp: available, contract: sheet) == .contract(sheet))
     #expect(policy(omp: available, contract: nil) == .welcome, "sans demande, la politique reprend son cours")
-    // « OMP est requis » passe avant le contrat.
-    #expect(policy(omp: missing, contract: sheet) == .ompRequired)
+    // La préparation (composant OMP manquant) passe avant le contrat.
+    #expect(policy(omp: missing, contract: sheet) == .setup)
 }
 
 @Test("contract-display-omp-console/AC-2 : la feuille Contrat a son identité propre — deux moments, deux feuilles")
