@@ -19,7 +19,7 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
-| 1 | `noyau-partage-console` | lancée | — | opencode-go/deepseek-v4.1-flash | Extraire de la coque macOS une cible bibliothèque ConsoleCore sans dépendance AppKit ni UIKit : les modèles du magasin (Store/), le vocabulaire et les libellés figés (les *Text.swift), les tons d'état, et le contrat de l'API distante (types Codable, codes d'erreur, numéro de version du protocole). La coque macOS consomme cette cible sans changer de comportement — sa suite Swift reste verte, et les gardes du dépôt (section « App Swift » de scripts/check.sh, tests de docs) connaissent la nouvelle cible. La réussite se prouve par swift build et swift test verts pour macOS et par une cible qui ne compile aucune API AppKit/UIKit. |
+| 1 | `noyau-partage-console` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/67 | opencode-go/deepseek-v4.1-flash | Extraire de la coque macOS une cible bibliothèque ConsoleCore sans dépendance AppKit ni UIKit : les modèles du magasin (Store/), le vocabulaire et les libellés figés (les *Text.swift), les tons d'état, et le contrat de l'API distante (types Codable, codes d'erreur, numéro de version du protocole). La coque macOS consomme cette cible sans changer de comportement — sa suite Swift reste verte, et les gardes du dépôt (section « App Swift » de scripts/check.sh, tests de docs) connaissent la nouvelle cible. La réussite se prouve par swift build et swift test verts pour macOS et par une cible qui ne compile aucune API AppKit/UIKit. |
 
 ### Segment 2 — Le Mac expose, l'app iOS naît (à venir)
 
