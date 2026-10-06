@@ -1578,6 +1578,71 @@ dans le projet. `--filter recetteGraphe` exerce, lui, le cycle complet d'écritu
 le vrai service (créer, chercher, corriger, relier, détacher, supprimer) dans une
 portée dédiée `_graph-recipe`.
 
+## API distante
+
+La coque héberge une **API HTTP locale** pour un appareil du réseau local (un
+téléphone, une autre machine) : elle sert le magasin d'état, les sessions, les
+statistiques, la mémoire, et les gestes du tableau — et pousse ses changements par
+un flux temps réel.
+
+- **Transport** : HTTP/1.1 en clair, sur la **seule interface du réseau local**.
+  Le port par défaut est **8787** et le service est annoncé par **Bonjour** sous le
+  type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
+  protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
+  adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
+- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 1` et
+  chaque réponse le renvoie. Un client dont la version diffère est refusé par le code
+  partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie.
+- **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
+  `{"code":"XXXXXXXX","name":"<appareil>","protocolVersion":1}` et rend un jeton
+  d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres routes). Le code
+  est généré depuis la feuille « Appairage… » (menu de l'app, ⌥⌘A), affiché huit
+  caractères Crockford base32 groupés `XXXX-XXXX`, valable **120 secondes** et à
+  **usage unique** ; au-delà de 5 échecs, le code se verrouille et seul un code neuf
+  le déverrouille. Un code expiré disparaît de la feuille.
+- **Interrupteur** : « Service d'API distante », en tête de la feuille, est **actif
+  par défaut** et mémorisé (`remote.enabled`) ; le couper arrête le serveur et son
+  annonce Bonjour.
+- **Permission macOS** : la première opération Bonjour d'un bundle lancé depuis le
+  Finder déclenche l'alerte « Réseau local » (TN3179) ; la feuille explique le refus
+  et ouvre les Réglages Système. Un outil lancé depuis le Terminal (`swift test`,
+  `bun`) en est exempté — c'est ce qui rend la recette de découverte reproductible.
+- **Documents de projet** : `GET /v1/projects/{repoKey}/documents` sert `PROJECT.md`
+  (du magasin) et `contract.md` (de la racine du projet), chacun avec son état
+  (`text`, `missing`, `binary`, `unreadable`).
+- **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
+  `store`, `sessions`, `hosted` et `devices`, avec un battement de cœur toutes les
+  15 secondes. La révocation d'un appareil coupe son flux immédiatement.
+
+### Sonde CLI
+
+`scripts/omp-console-api.ts` est la sonde manuelle du dépôt (lecture, gestes, flux) :
+
+```bash
+bun scripts/omp-console-api.ts pair --code XXXX-XXXX --name iPhone
+bun scripts/omp-console-api.ts snapshot
+bun scripts/omp-console-api.ts sessions
+bun scripts/omp-console-api.ts watch --seconds 10
+bun scripts/omp-console-api.ts resume feature:<repoKey>:<slug>
+bun scripts/omp-console-api.ts forget
+```
+
+Le jeton vit au trousseau (service `com.omp.console.remote-api.cli`) et n'est jamais
+affiché. Codes de sortie : `0` succès, `1` refus (le code d'erreur partagé et le
+message du serveur sont imprimés tels quels), `2` prérequis absent (URL invalide,
+serveur injoignable).
+
+### Recettes
+
+```bash
+cd omp-console
+MEM0_REMOTE_RECIPE=1 swift test --filter AC-20    # CLI ↔ coque réelle, run vivant
+swift test --filter AC-1                          # annonce Bonjour + source locale
+```
+
+`AC-1` ne demande que `dns-sd` ; `AC-20` demande `omp` et `bun` — sans eux, la
+recette est **sautée**, jamais verte à tort.
+
 ## Structure du paquet
 
 ```
@@ -1757,6 +1822,25 @@ omp-console/
 │   │   ├── StatsPresentation.swift barres et lignes du tableau de bord (purs)
 │   │   ├── StatsModel.swift       abonnement, lecteurs, veilles, sélection, tri
 │   │   └── StatsView.swift        la fenêtre : tuiles, graphique, tableau triable
+│   ├── Remote/                    l'API distante du réseau local (S-1 … S-15)
+│   │   ├── HTTPMessage.swift      parseur incrémental HTTP/1.1 et sérialiseur de réponse
+│   │   ├── HTTPStatus.swift       table des statuts d'erreur et corps JSON
+│   │   ├── RemoteAddressPolicy.swift la garde d'acceptation : source locale seulement
+│   │   ├── RemoteServer.swift     `NWListener`, Bonjour, une requête par connexion
+│   │   ├── RemoteServiceState.swift l'état publié du service (coupé, actif, refusé, échec)
+│   │   ├── RemoteClock.swift      l'horloge injectable du service
+│   │   ├── PairingCode.swift      code Crockford, expiration, seuil d'échecs
+│   │   ├── DeviceRegistry.swift   les appareils appairés et la révocation
+│   │   ├── DeviceTokenStore.swift jetons au trousseau (session), doublure en mémoire
+│   │   ├── ConstantTime.swift     comparaison de secret à temps constant
+│   │   ├── RemoteGuard.swift      version de protocole puis jeton, dans cet ordre
+│   │   ├── Payloads.swift         charges utiles des routes et corps de requête
+│   │   ├── RemoteReads.swift      lectures : magasin, sessions, documents, stats, mémoire
+│   │   ├── RemoteActions.swift    gestes : cartes, feature, conduite, session, PR
+│   │   ├── RemoteRouter.swift     la table des routes, un seul point de réponse
+│   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
+│   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service
+│   │   └── PairingSheet.swift     la feuille d'appairage, ses états et ses textes
 │   └── MenuBar/                   l'item de barre de menus et ses compteurs
 │       ├── RunCounters.swift      occupés / en attente et l'état publié
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item

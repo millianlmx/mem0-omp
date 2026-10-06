@@ -8,7 +8,7 @@ import ConsoleCore
 import Foundation
 
 /// Les trois statuts requis d'une PR, dans l'ORDRE d'affichage de S-1.
-enum RequiredCheck: String, CaseIterable, Sendable {
+enum RequiredCheck: String, CaseIterable, Sendable, Codable {
     case ubuntu = "check (ubuntu-latest)"
     case macos = "check (macos-latest)"
     case releaseSimulation = "release-simulation"
@@ -28,7 +28,7 @@ enum RequiredCheck: String, CaseIterable, Sendable {
 }
 
 /// L'état affiché d'un statut.
-enum PRCheckState: String, Sendable {
+enum PRCheckState: String, Sendable, Codable {
     case green
     case red
     case pending
@@ -84,7 +84,7 @@ struct PRSnapshot: Equatable, Sendable {
 
 /// L'âge d'une connaissance : jamais lue, fraîche (dernière lecture réussie), ou
 /// périmée (dernière lecture en échec).
-enum PRFreshness: Equatable, Sendable {
+enum PRFreshness: String, Equatable, Sendable, Codable {
     case unknown
     case fresh
     case stale
@@ -109,14 +109,14 @@ struct FollowedPR: Equatable, Sendable {
 }
 
 /// Une ligne de statut prête à afficher.
-struct PRCheckRow: Equatable, Sendable {
+struct PRCheckRow: Equatable, Sendable, Codable {
     let required: RequiredCheck
     let state: PRCheckState
     let link: String?
 }
 
 /// Une ligne de PR prête à afficher (S-1).
-struct ProjectPRRow: Equatable, Sendable {
+struct ProjectPRRow: Equatable, Sendable, Codable {
     let slug: String
     let number: Int?
     let title: String?

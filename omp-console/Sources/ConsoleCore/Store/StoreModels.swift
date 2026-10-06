@@ -18,57 +18,57 @@ import Foundation
 
 // --- vocabulaire (`PIPELINE_PHASES`, `LOT_FEATURE_STATES`, `LOT_WAIT_KINDS`, …) ---
 
-public enum PipelinePhase: String, CaseIterable, Sendable {
+public enum PipelinePhase: String, CaseIterable, Sendable, Codable {
     case req, specs, impl, review, release
 }
 
-public enum PipelineRunState: String, Sendable {
+public enum PipelineRunState: String, Sendable, Codable {
     case running, waiting
 }
 
-public enum PipelineFinalState: String, Sendable {
+public enum PipelineFinalState: String, Sendable, Codable {
     case done, failed
 }
 
-public enum LotStatus: String, Sendable {
+public enum LotStatus: String, Sendable, Codable {
     case draft, running
 }
 
-public enum LotFeatureState: String, Sendable {
+public enum LotFeatureState: String, Sendable, Codable {
     case pending, running, waiting, blocked, failed, done, cancelled
 }
 
-public enum LotWaitKind: String, Sendable {
+public enum LotWaitKind: String, Sendable, Codable {
     case answer, specs, review
 }
 
-public enum LotOrigin: String, Sendable {
+public enum LotOrigin: String, Sendable, Codable {
     case session, panneau
 }
 
-public enum HeldLaunchKind: String, Sendable {
+public enum HeldLaunchKind: String, Sendable, Codable {
     case collecte, phase, relaunch, answer
 }
 
 /// Le verdict de revue publié dans le lot ; hors vocabulaire ⇒ `nil`, jamais un rejet.
-public enum ReviewVerdict: String, Sendable {
+public enum ReviewVerdict: String, Sendable, Codable {
     case blockers, clean, unreadable
 }
 
 /// `LotFeature.relayKind` : la seule valeur que le dépôt écrit.
-public enum ProjectRelayKind: String, Sendable {
+public enum ProjectRelayKind: String, Sendable, Codable {
     case project
 }
 
-public enum ProjectStatus: String, Sendable {
+public enum ProjectStatus: String, Sendable, Codable {
     case running, stopped, done
 }
 
-public enum ProjectFeatureStatus: String, Sendable {
+public enum ProjectFeatureStatus: String, Sendable, Codable {
     case planned, launched, pr, merged, failed, removed
 }
 
-public enum ProjectFailureKind: String, Sendable {
+public enum ProjectFailureKind: String, Sendable, Codable {
     case lot, launch, pr
 }
 
@@ -194,7 +194,7 @@ public func auditRelayIsStale(_ relay: AuditRelay, nowMs: Double) -> Bool {
 // --- `running/` et `history/` (S-2) ------------------------------------------
 
 /// Une option d'une question `ask` (`PanelAskOption`, store.ts:31).
-public struct PanelAskOption: Sendable, Equatable {
+public struct PanelAskOption: Sendable, Equatable, Codable {
     public var label: String
     /// Optionnelle : une description vide n'est pas rendue (parité `asPendingAsk`).
     public var description: String?
@@ -206,7 +206,7 @@ public struct PanelAskOption: Sendable, Equatable {
 }
 
 /// La question `ask` EN VOL d'un run (`PanelPendingAsk`, store.ts:35).
-public struct PanelPendingAsk: Sendable, Equatable {
+public struct PanelPendingAsk: Sendable, Equatable, Codable {
     public var toolCallId: String
     public var id: String
     public var question: String
@@ -222,7 +222,7 @@ public struct PanelPendingAsk: Sendable, Equatable {
 
 /// Entrée `running/<16 hex>.json` (`RunningEntry`, store.ts:40) : une pipeline en
 /// cours, écrite par son propriétaire.
-public struct RunningEntry: Sendable, Equatable {
+public struct RunningEntry: Sendable, Equatable, Codable {
     public var id: String
     public var cwd: String
     public var label: String
@@ -301,7 +301,7 @@ extension RunningEntry {
 
 /// Entrée `history/<16 hex>.json` (`HistoryEntry`, store.ts:62) : une pipeline
 /// close, écrite une seule fois. Jamais marquée périmée : elle est terminée.
-public struct HistoryEntry: Sendable, Equatable {
+public struct HistoryEntry: Sendable, Equatable, Codable {
     public var id: String
     public var cwd: String
     public var label: String
@@ -385,7 +385,7 @@ public func asPendingAskDecode(_ raw: JSONValue?) -> PendingAskDecode {
 
 /// Un lancement retenu (`asHeldLaunch`, lot.ts:620-640) : lu TOLÉRAMMENT — absent
 /// ou incomplet vaut « absent », jamais un rejet de la feature.
-public struct HeldLaunch: Sendable, Equatable {
+public struct HeldLaunch: Sendable, Equatable, Codable {
     public var phase: PipelinePhase
     public var fix: Bool
     public var kind: HeldLaunchKind
@@ -420,7 +420,7 @@ public func asHeldLaunch(_ raw: JSONValue?) -> HeldLaunch? {
 
 /// `Lot["owner"]` : `pid` numérique exigé (rejet sinon), les deux autres champs
 /// par la règle « chaîne ou rien », le battement seulement s'il est fini.
-public struct LotOwner: Sendable, Equatable {
+public struct LotOwner: Sendable, Equatable, Codable {
     public var pid: Int?
     public var sessionFile: String?
     public var sessionId: String?
@@ -435,7 +435,7 @@ public struct LotOwner: Sendable, Equatable {
 }
 
 /// Une feature d'un lot (`asLotFeature`, lot.ts:653-740).
-public struct LotFeature: Sendable, Equatable {
+public struct LotFeature: Sendable, Equatable, Codable {
     public var slug: String
     public var name: String
     public var branch: String
@@ -595,7 +595,7 @@ extension LotFeature {
 /// `resolve` rend `nil` quand la feature ne porte AUCUNE des trois clés — auquel
 /// cas l'affichage n'écrit aucune ligne de modèle (patron actuel). L'ancien
 /// `model` unique remplit les DEUX groupes tant qu'il existe (AC-4).
-public struct ModelSlots: Sendable, Equatable {
+public struct ModelSlots: Sendable, Equatable, Codable {
     public var reqSpecs: String?
     public var implReview: String?
 
@@ -621,7 +621,7 @@ private func modelNonBlank(_ value: String?) -> String? {
 
 /// Un lot (`asLot`, lot.ts:742-795). `version` n'est pas rendu : c'est un marqueur
 /// de schéma, pas un champ du modèle.
-public struct Lot: Sendable, Equatable {
+public struct Lot: Sendable, Equatable, Codable {
     public var id: String
     public var repoRoot: String
     public var status: LotStatus
@@ -695,7 +695,7 @@ extension Lot {
 // --- `projects/` (S-4) -------------------------------------------------------
 
 /// La base récupérée pour le segment courant (`Project["base"]`).
-public struct ProjectBase: Sendable, Equatable {
+public struct ProjectBase: Sendable, Equatable, Codable {
     public var segment: Int
     public var sha: String
 
@@ -706,7 +706,7 @@ public struct ProjectBase: Sendable, Equatable {
 }
 
 /// L'échec d'une feature de projet (`ProjectFailure`, project.ts:32).
-public struct ProjectFailure: Sendable, Equatable {
+public struct ProjectFailure: Sendable, Equatable, Codable {
     public var kind: ProjectFailureKind
     public var reason: String
     public var at: Double
@@ -719,7 +719,7 @@ public struct ProjectFailure: Sendable, Equatable {
 }
 
 /// Une feature d'un projet (`asProjectFeature`, project.ts:110-160).
-public struct ProjectFeature: Sendable, Equatable {
+public struct ProjectFeature: Sendable, Equatable, Codable {
     public var slug: String
     public var intention: String
     /// ANCIEN modèle unique, conservé en LECTURE seule.
@@ -788,7 +788,7 @@ extension ProjectFeature {
 }
 
 /// Un segment du plan (`ProjectSegment`).
-public struct ProjectSegment: Sendable, Equatable {
+public struct ProjectSegment: Sendable, Equatable, Codable {
     public var name: String
     public var features: [ProjectFeature]
 
@@ -799,7 +799,7 @@ public struct ProjectSegment: Sendable, Equatable {
 }
 
 /// Un projet (`asProject`, project.ts:166-217). `version` n'est pas rendu.
-public struct Project: Sendable, Equatable {
+public struct Project: Sendable, Equatable, Codable {
     public var repoKey: String
     public var repoRoot: String
     public var relayKey: String
@@ -890,6 +890,37 @@ public enum PanelDeliveryAnswer: Sendable, Equatable {
     case custom(String)
 }
 
+// `Codable` ÉCRIT À LA MAIN : ces deux énumérations portent des valeurs
+// associées, que le compilateur ne synthétise pas. La forme retenue est celle du
+// dépôt (`selected`/`custom`, `text`/`askAnswer`), pour que la charge utile de
+// l'API distante reste lisible par un client qui n'est pas Swift.
+extension PanelDeliveryAnswer: Codable {
+    private enum Kind: String, CodingKey { case selected, custom }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Kind.self)
+        if let value = try container.decodeIfPresent(String.self, forKey: .selected) {
+            self = .selected(value)
+            return
+        }
+        if let value = try container.decodeIfPresent(String.self, forKey: .custom) {
+            self = .custom(value)
+            return
+        }
+        throw DecodingError.dataCorrupted(
+            .init(codingPath: decoder.codingPath, debugDescription: "réponse ni selected ni custom")
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Kind.self)
+        switch self {
+        case .selected(let value): try container.encode(value, forKey: .selected)
+        case .custom(let value): try container.encode(value, forKey: .custom)
+        }
+    }
+}
+
 /// Une livraison déposée dans la boîte d'un run (`PanelDelivery`, store.ts:337).
 ///
 /// `sentAt` n'est pas porté : il n'est jamais un critère de forme (le dépôt le
@@ -898,6 +929,41 @@ public enum PanelDeliveryAnswer: Sendable, Equatable {
 public enum PanelDelivery: Sendable, Equatable {
     case text(String)
     case askAnswer(toolCallId: String, answer: PanelDeliveryAnswer)
+}
+
+extension PanelDelivery: Codable {
+    private enum Kind: String, CodingKey { case text, askAnswer }
+    private enum AskKeys: String, CodingKey { case toolCallId, answer }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Kind.self)
+        if let text = try container.decodeIfPresent(String.self, forKey: .text) {
+            self = .text(text)
+            return
+        }
+        if container.contains(.askAnswer) {
+            let ask = try container.nestedContainer(keyedBy: AskKeys.self, forKey: .askAnswer)
+            let toolCallId = try ask.decode(String.self, forKey: .toolCallId)
+            let answer = try ask.decode(PanelDeliveryAnswer.self, forKey: .answer)
+            self = .askAnswer(toolCallId: toolCallId, answer: answer)
+            return
+        }
+        throw DecodingError.dataCorrupted(
+            .init(codingPath: decoder.codingPath, debugDescription: "livraison ni text ni askAnswer")
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Kind.self)
+        switch self {
+        case .text(let value):
+            try container.encode(value, forKey: .text)
+        case .askAnswer(let toolCallId, let answer):
+            var ask = container.nestedContainer(keyedBy: AskKeys.self, forKey: .askAnswer)
+            try ask.encode(toolCallId, forKey: .toolCallId)
+            try ask.encode(answer, forKey: .answer)
+        }
+    }
 }
 
 /// `asDelivery` (store.ts:439-465). `nil` = fichier illisible ou de forme
@@ -923,7 +989,7 @@ public func asDelivery(_ raw: JSONValue?) -> PanelDelivery? {
 
 /// Une livraison relue : `payload == nil` quand le fichier est illisible ou de
 /// forme inconnue — l'entrée est rendue quand même, avec son nom de fichier.
-public struct InboxDelivery: Sendable, Equatable {
+public struct InboxDelivery: Sendable, Equatable, Codable {
     /// Chemin ABSOLU du fichier (parité `readDeliveries`, store.ts:467-482).
     public var file: String
     public var payload: PanelDelivery?
@@ -936,7 +1002,7 @@ public struct InboxDelivery: Sendable, Equatable {
 
 /// La boîte d'un run (`inbox/<runId>-<n>/`), ses livraisons dans l'ordre
 /// chronologique des noms de fichiers.
-public struct InboxBox: Sendable, Equatable {
+public struct InboxBox: Sendable, Equatable, Codable {
     public var name: String
     public var path: String
     public var deliveries: [InboxDelivery]
@@ -957,7 +1023,7 @@ public struct InboxBox: Sendable, Equatable {
 /// balayage de répertoire il n'y a pas de session demandée : la clé d'identité est
 /// le NOM du fichier (`sha1(sessionFile)[:16]`, store.ts:404), et les autres règles
 /// champ par champ sont reproduites telles quelles.
-public struct AuditRelay: Sendable, Equatable {
+public struct AuditRelay: Sendable, Equatable, Codable {
     /// Le nom du fichier sans `.json`.
     public var id: String
     public var sessionFile: String

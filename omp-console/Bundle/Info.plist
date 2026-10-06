@@ -26,6 +26,12 @@
 	<string>fr</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OMP Console expose une API locale sur votre réseau : elle permet à vos appareils d'appairer cette coque et de consulter l'état de vos pipelines. Rien ne quitte votre réseau local.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_ompconsole._tcp</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

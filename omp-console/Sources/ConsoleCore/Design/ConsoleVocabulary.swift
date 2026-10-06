@@ -15,12 +15,12 @@
 import Foundation
 
 /// Le ton d'un état : la couleur du badge le double, le mot le porte.
-public enum ConsoleTone: Equatable, Sendable {
+public enum ConsoleTone: String, Equatable, Sendable, Codable {
     case neutral, info, attention, success, danger, paused
 }
 
 /// L'état affiché d'une carte, d'un run ou d'un fil : un mot et un ton.
-public struct ConsoleStatus: Equatable, Sendable {
+public struct ConsoleStatus: Equatable, Sendable, Codable {
     public var text: String
     public var tone: ConsoleTone
 

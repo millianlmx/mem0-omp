@@ -30,13 +30,13 @@ import SwiftUI
 @main
 struct OMPConsoleApp: App {
     @StateObject private var model = ConsoleModel()
-    @StateObject private var sessionModel = SessionConsoleModel()
     @StateObject private var terminalModel = TerminalConsoleModel()
     @StateObject private var filesModel = FilesModel()
-    @StateObject private var kanbanModel = KanbanModel()
+    @StateObject private var sessionModel: SessionConsoleModel
+    @StateObject private var kanbanModel: KanbanModel
     @StateObject private var actionsModel: ActionsModel
-    @StateObject private var projectModel = ProjectConsoleModel()
-    @StateObject private var statsModel = StatsModel()
+    @StateObject private var projectModel: ProjectConsoleModel
+    @StateObject private var statsModel: StatsModel
     @StateObject private var memoryModel = MemoryModel()
     /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, comme
     /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
@@ -51,6 +51,10 @@ struct OMPConsoleApp: App {
     /// latérale le montre, et ses deux veilles vivent tant que l'app vit — le
     /// badge se recalcule sans redémarrage.
     @StateObject private var componentsModel = ComponentPresenceModel()
+    /// Le service d'API distante (BR-9) : à l'échelle de l'app, comme les autres —
+    /// il possède le registre des appareils, l'interrupteur persistant et la
+    /// feuille d'appairage.
+    @StateObject private var remoteModel: RemoteServiceModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     /// UN `ConductorPool` pour l'app (S-7 de omp-console-redesign) : il fait
@@ -58,13 +62,46 @@ struct OMPConsoleApp: App {
     /// sont posées dès sa construction.
     init() {
         let pool = ConductorPool()
-        _actionsModel = StateObject(wrappedValue: ActionsModel(pilot: pool))
+        let actions = ActionsModel(pilot: pool)
+        _actionsModel = StateObject(wrappedValue: actions)
+        let kanban = KanbanModel()
+        _kanbanModel = StateObject(wrappedValue: kanban)
+        let session = SessionConsoleModel()
+        _sessionModel = StateObject(wrappedValue: session)
+        let project = ProjectConsoleModel()
+        _projectModel = StateObject(wrappedValue: project)
+        let stats = StatsModel()
+        _statsModel = StateObject(wrappedValue: stats)
         // `onReady` revérifie OMP : le composant vient d'être installé par l'app
         // elle-même (S-4), et c'est ce binaire-là qu'elle hébergera désormais.
         let home = HomeModel()
         _homeModel = StateObject(wrappedValue: home)
+        // Le service d'API distante partage les modèles de l'app : ce que l'API
+        // sert à distance est l'état que la fenêtre montre. Il démarre à
+        // l'apparition de la racine ET sur `onReady` (S-14).
+        let remote = RemoteServiceModel(
+            storeHub: StoreHub(),
+            kanban: kanban,
+            actions: actions,
+            session: session,
+            project: project,
+            stats: stats
+        )
+        _remoteModel = StateObject(wrappedValue: remote)
+        // L'annonce Bonjour ne survit pas au process (S-14) : l'accroche de
+        // terminaison est posée dès la construction, comme celles des autres
+        // modèles.
+        AppDelegate.terminateRemoteService = { [weak remote] in
+            remote?.stop()
+        }
         let setup = SetupModel.standard()
-        setup.onReady = { home.recheck() }
+        // S-14 : le service ne démarre jamais tant que la préparation des composants
+        // n'est pas terminée — `onReady` en fait le démarrage différé.
+        remote.isSetupReady = { [weak setup] in setup?.state == .ready }
+        setup.onReady = {
+            home.recheck()
+            Task { await remote.startIfEnabled() }
+        }
         _setupModel = StateObject(wrappedValue: setup)
     }
 
@@ -89,6 +126,7 @@ struct OMPConsoleApp: App {
                 home: homeModel,
                 setup: setupModel,
                 components: componentsModel,
+                remote: remoteModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel
@@ -102,6 +140,7 @@ struct OMPConsoleApp: App {
             // personnalisable.
             ToolbarCommands()
             WelcomeCommands(home: homeModel)
+            RemoteCommands(remote: remoteModel)
         }
     }
 }
@@ -180,6 +219,22 @@ struct WelcomeCommands: Commands {
     }
 }
 
+/// Menu de l'application ▸ « Appairage… » (⌥⌘A, S-5) : ramène la fenêtre
+/// principale, puis demande la feuille d'appairage au service d'API distante.
+struct RemoteCommands: Commands {
+    @ObservedObject var remote: RemoteServiceModel
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button(PairingText.menuItem) {
+                MainWindow.reveal()
+                remote.requestPairingSheet()
+            }
+            .keyboardShortcut("a", modifiers: [.command, .option])
+        }
+    }
+}
+
 /// Délégué de terminaison : il ne connaît pas les sessions, il appelle les
 /// accroches que les modèles ont posées. Sans accroche, l'app quitte
 /// immédiatement.
@@ -200,6 +255,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Posée par `ConductorPool.init` : vrai quand un conducteur mène des maillons
     /// en cours — quitter les interromprait.
     static var conductorsBusy: (() -> Bool)?
+    /// Posée par `OMPConsoleApp.init` : arrête le service d'API distante et son
+    /// annonce Bonjour (S-14).
+    static var terminateRemoteService: (() async -> Void)?
 
     /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
     /// construisent donc pas).
@@ -235,7 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return .terminateCancel
         }
         guard Self.terminateSession != nil || Self.terminateProject != nil || Self.terminateTerminal != nil
-            || Self.terminateConductors != nil else {
+            || Self.terminateConductors != nil || Self.terminateRemoteService != nil else {
             return .terminateNow
         }
         // MESURÉ (2026-10-01, bundle lancé) : avec `.terminateLater`, une feuille
@@ -251,6 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await Self.terminateProject?()
             await Self.terminateTerminal?()
             await Self.terminateConductors?()
+            await Self.terminateRemoteService?()
             self.hooksDone = true
             self.requestTermination()
         }

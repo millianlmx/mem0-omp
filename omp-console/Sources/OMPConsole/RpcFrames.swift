@@ -137,7 +137,7 @@ struct RpcPromptResult: Equatable, Sendable {
 }
 
 /// Les quatre méthodes de dialogue auxquelles l'app répond (S-6).
-enum RpcDialogMethod: String, CaseIterable, Sendable {
+enum RpcDialogMethod: String, CaseIterable, Sendable, Codable {
     case select
     case confirm
     case input
@@ -151,7 +151,7 @@ enum RpcDialogMethod: String, CaseIterable, Sendable {
 }
 
 /// Demande de dialogue dépliée depuis une trame `extension_ui_request` (S-6).
-struct RpcDialogRequest: Identifiable, Equatable, Sendable {
+struct RpcDialogRequest: Identifiable, Equatable, Sendable, Codable {
     let id: String
     let method: RpcDialogMethod
     let title: String

@@ -249,7 +249,7 @@ func policyPresentsAndClosesTheContract() {
     func policy(omp: OmpStatus, contract: ContractSheet?) -> MainSheet? {
         MainSheetPolicy.sheet(
             omp: omp, setup: .ready, setupDismissed: false, board: .loading, welcomeSeen: true,
-            welcomeRequested: true, launchFormShown: true, answerCardID: "carte", contract: contract
+            welcomeRequested: true, launchFormShown: true, answerCardID: "carte", contract: contract, pairing: false
         )
     }
     // Le contrat rend `.contract(<valeur>)` — et passe avant bienvenue, nouvelle
