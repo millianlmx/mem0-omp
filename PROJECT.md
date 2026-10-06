@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 2/6 « Le Mac expose, l'app iOS naît »
-**Avancement** : 2/13 feature(s) fusionnée(s)
+**Statut** : en cours — segment 3/6 « L'app iOS parle au Mac »
+**Avancement** : 3/13 feature(s) fusionnée(s)
 
 ## But
 
@@ -21,14 +21,14 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 |---|---|---|---|---|---|
 | 1 | `noyau-partage-console` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/67 | opencode-go/deepseek-v4.1-flash | Extraire de la coque macOS une cible bibliothèque ConsoleCore sans dépendance AppKit ni UIKit : les modèles du magasin (Store/), le vocabulaire et les libellés figés (les *Text.swift), les tons d'état, et le contrat de l'API distante (types Codable, codes d'erreur, numéro de version du protocole). La coque macOS consomme cette cible sans changer de comportement — sa suite Swift reste verte, et les gardes du dépôt (section « App Swift » de scripts/check.sh, tests de docs) connaissent la nouvelle cible. La réussite se prouve par swift build et swift test verts pour macOS et par une cible qui ne compile aucune API AppKit/UIKit. |
 
-### Segment 2 — Le Mac expose, l'app iOS naît (en cours)
+### Segment 2 — Le Mac expose, l'app iOS naît (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
-| 1 | `api-distante-du-console` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/71 | opencode-go/deepseek-v4.1-flash | La coque macOS expose sur le réseau local une API pour un client distant, portée par les couches existantes (Store/, Actions/, ConductorPool, MemoryService) : annonce Bonjour, appairage par code affiché dans l'app avec un secret au trousseau et une liste d'appareils révocables, lecture (instantané du magasin, sessions et leur flux, documents de projet, statistiques, mémoire en relais de mem0-http y compris le graphe) et gestes (répondre à un ask, valider un jalon, lancer/arrêter un run, lancer une feature, conduire un projet, prompt et dialogues d'une session hébergée, PR et fusion confirmée). Un flux pousse les changements du magasin et des sessions vivantes au lieu du sondage, et rien n'est servi sans jeton d'appareil. La réussite se prouve par un client réel qui s'appaire, lit un run vivant et le fait avancer par un geste, et par le refus de toute requête sans jeton. |
+| 1 | `api-distante-du-console` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/71 | opencode-go/deepseek-v4.1-flash | La coque macOS expose sur le réseau local une API pour un client distant, portée par les couches existantes (Store/, Actions/, ConductorPool, MemoryService) : annonce Bonjour, appairage par code affiché dans l'app avec un secret au trousseau et une liste d'appareils révocables, lecture (instantané du magasin, sessions et leur flux, documents de projet, statistiques, mémoire en relais de mem0-http y compris le graphe) et gestes (répondre à un ask, valider un jalon, lancer/arrêter un run, lancer une feature, conduire un projet, prompt et dialogues d'une session hébergée, PR et fusion confirmée). Un flux pousse les changements du magasin et des sessions vivantes au lieu du sondage, et rien n'est servi sans jeton d'appareil. La réussite se prouve par un client réel qui s'appaire, lit un run vivant et le fait avancer par un geste, et par le refus de toute requête sans jeton. |
 | 2 | `coque-ios` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/69 | opencode-go/deepseek-v4.1-flash | L'app iOS naît dans le dépôt : un projet Xcode sous omp-console/ios/ (universel iPhone + iPad, iOS 26, groupes de fichiers synchronisés pour que les features suivantes ajoutent des écrans sans se disputer le .xcodeproj), branché sur ConsoleCore, avec la navigation adaptative de la coque macOS (barre latérale sur iPad, piles sur iPhone) et les sept sections prévues en écrans d'attente nommés. Les gardes et la CI apprennent à la compiler (xcodebuild via DEVELOPER_DIR, destinations simulateur) sans casser la règle CLT-only du macOS, et la documentation dit comment la lancer et l'installer. La réussite se prouve par un build CI vert, l'app lancée au simulateur (captures des sept écrans sur iPhone et iPad) et une installation sur un appareil réel. |
 
-### Segment 3 — L'app iOS parle au Mac (à venir)
+### Segment 3 — L'app iOS parle au Mac (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
