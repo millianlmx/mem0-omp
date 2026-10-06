@@ -10,6 +10,7 @@
 // fil ne défile plus qu'en hauteur, les longues lignes monospacées défilent dans
 // leur propre bloc (`SessionRowView`).
 
+import ConsoleCore
 import SwiftUI
 
 /// Le repère de FIN de fil : un zéro de hauteur après tout le contenu, y compris

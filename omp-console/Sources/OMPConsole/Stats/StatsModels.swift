@@ -3,6 +3,7 @@
 // sans interface — la vue ne fait que les rendre. Durées et tokens passent par
 // `ConsoleFormat`, jamais par un format maison.
 
+import ConsoleCore
 import Foundation
 
 /// L'état des métriques d'un run : mesuré, ou illisible avec son motif DÉJÀ

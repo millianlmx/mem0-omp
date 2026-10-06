@@ -21,6 +21,7 @@
 // Aucune autre écriture n'existe ici : ni `lots/`, ni `running/`, ni `history/`,
 // ni `projects/`, ni `audit/`, ni `commands/acks/` (S-11).
 
+import ConsoleCore
 import Darwin
 import Foundation
 

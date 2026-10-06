@@ -11,6 +11,7 @@ import Foundation
 import SwiftUI
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 // MARK: - Harnais clavier (BR-5)
 

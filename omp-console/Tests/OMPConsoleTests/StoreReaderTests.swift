@@ -7,6 +7,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("client-magasin-etat/AC-7 : MEM0_PIPELINE_STATE_DIR défini fait lire ce répertoire")
 func stateDirFromEnvironment() throws {

@@ -3,6 +3,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 private func feature(
     _ slug: String,

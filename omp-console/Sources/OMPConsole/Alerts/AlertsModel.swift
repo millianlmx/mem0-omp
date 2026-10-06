@@ -17,6 +17,7 @@
 
 import AppKit
 import Combine
+import ConsoleCore
 import Foundation
 
 @MainActor

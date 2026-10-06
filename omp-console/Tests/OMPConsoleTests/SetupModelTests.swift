@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 /// Ce que la préparation a émis, dans l'ordre — et l'état du modèle au moment de
 /// chaque émission. (Nom préfixé : `Recorder` existe déjà dans `StoreFixtures`.)

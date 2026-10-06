@@ -2,6 +2,7 @@
 // fonction PURE — l'instant de rendu et le calendrier sont des paramètres, la vue
 // passe `Calendar.current` et l'heure de son `TimelineView`.
 
+import ConsoleCore
 import Foundation
 
 /// Un jour civil de la liste : son identité « aaaa-MM-jj », son titre, ses runs

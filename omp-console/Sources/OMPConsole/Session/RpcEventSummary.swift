@@ -14,6 +14,7 @@
 // `RpcActivityCache` évite de réanalyser à chaque passe de rendu les 200 trames
 // affichées : une trame est résumée une fois, par identifiant.
 
+import ConsoleCore
 import Foundation
 
 /// Une trame humanisée.

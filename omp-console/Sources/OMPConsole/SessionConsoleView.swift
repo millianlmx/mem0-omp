@@ -23,6 +23,7 @@
 // La transcription et le dialogue viennent de `RpcPanes` : la fenêtre « Projet »
 // rend EXACTEMENT les mêmes, avec `idPrefix: "projet"`.
 
+import ConsoleCore
 import SwiftUI
 
 struct SessionConsoleView: View {

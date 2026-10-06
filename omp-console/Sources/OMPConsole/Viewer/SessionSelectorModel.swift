@@ -12,6 +12,7 @@
 //     un run vivant l'emporte donc sur son jumeau réconcilié dans `history/`.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 /// L'état d'un run tel qu'il est montré dans la liste.

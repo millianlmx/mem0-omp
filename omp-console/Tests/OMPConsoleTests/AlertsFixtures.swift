@@ -5,8 +5,9 @@
 // est un simple enregistreur, et la chaîne magasin → dérivation → décision est
 // exercée sur de vrais fichiers (S-9, AC-10).
 
-import Foundation
 @testable import OMPConsole
+import ConsoleCore
+import Foundation
 
 /// Un livreur ENREGISTREUR : ce que le modèle décide de livrer, et rien de plus. Il
 /// n'appelle jamais UserNotifications (mesuré : un seul appel tue un processus de

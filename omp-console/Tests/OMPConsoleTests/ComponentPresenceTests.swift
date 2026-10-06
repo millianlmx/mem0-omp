@@ -11,6 +11,7 @@ import Darwin
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 /// Une racine de support jetable sous `NSTemporaryDirectory()`.
 private final class ComponentsRoot {

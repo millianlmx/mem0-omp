@@ -10,6 +10,7 @@
 // Aucun attribut macro SwiftUI (`@State`, `@Preview`) : sous les Command Line
 // Tools seuls, ces macros n'existent pas.
 
+import ConsoleCore
 import SwiftUI
 
 struct ContractSheetView: View {

@@ -13,6 +13,7 @@
 // seul délai est l'anti-rebond de 300 ms qui suit un lot d'événements.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 @MainActor

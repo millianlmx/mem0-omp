@@ -1,0 +1,80 @@
+// Ce que le tableau de bord « Statistiques » rend (S-17 de omp-console-redesign) :
+// les barres du graphique et les lignes du tableau, en fonctions PURES du projet
+// affiché et de l'instant de rendu.
+//
+// Aucune somme n'est refaite ici : les barres lisent `featureTotals`, la durée
+// d'un run `durationMs` (StatsBoard.swift, StatsMetrics.swift) — une seule règle
+// de calcul par grandeur. Aucun montant n'est lu ni rendu (AC-2 de
+// `statistiques`).
+
+import Foundation
+
+/// Une barre du graphique : une feature, une série (« envoyés » ou « reçus »),
+/// un nombre de tokens.
+public struct StatsBar: Identifiable, Equatable {
+    public var id: String
+    public var feature: String
+    public var kind: String
+    public var tokens: Int
+
+    public init(id: String, feature: String, kind: String, tokens: Int) {
+        self.id = id
+        self.feature = feature
+        self.kind = kind
+        self.tokens = tokens
+    }
+}
+
+/// Une ligne du tableau : un run. Les champs numériques servent au tri, les
+/// champs `…Text` au rendu.
+public struct StatsRow: Identifiable, Equatable {
+    /// Le `sessionFile`.
+    public var id: String
+    public var tag: String
+    public var feature: String
+    public var phaseTitle: String
+    public var phaseOrder: Int
+    public var model: String
+    /// -1 quand la durée est inconnue (tri en tête en ordre croissant).
+    public var durationMs: Double
+    public var durationText: String
+    public var turns: Int
+    public var tokens: Int
+    public var tokensText: String
+    public var status: ConsoleStatus
+    public var unreadableReason: String?
+
+    public init(id: String, tag: String, feature: String, phaseTitle: String, phaseOrder: Int, model: String, durationMs: Double, durationText: String, turns: Int, tokens: Int, tokensText: String, status: ConsoleStatus, unreadableReason: String?) {
+        self.id = id
+        self.tag = tag
+        self.feature = feature
+        self.phaseTitle = phaseTitle
+        self.phaseOrder = phaseOrder
+        self.model = model
+        self.durationMs = durationMs
+        self.durationText = durationText
+        self.turns = turns
+        self.tokens = tokens
+        self.tokensText = tokensText
+        self.status = status
+        self.unreadableReason = unreadableReason
+    }
+}
+
+public enum StatsPresentation {
+
+    /// L'ordre des étapes du pipeline, pour trier la colonne « Étape ».
+    ///
+    /// PUBLIC : la coque garde `rows(_:nowMs:)`, qui remplit `phaseOrder` d'une
+    /// ligne — un membre appelé depuis la coque doit être visible de l'autre
+    /// module (c'était `private` tant que tout vivait dans le même).
+    public static func phaseOrder(_ phase: PipelinePhase) -> Int {
+        switch phase {
+        case .req: return 0
+        case .specs: return 1
+        case .impl: return 2
+        case .review: return 3
+        case .release: return 4
+        }
+    }
+}

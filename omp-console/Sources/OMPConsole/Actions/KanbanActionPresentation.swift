@@ -5,6 +5,7 @@
 // La règle d'aiguillage est EXHAUSTIVE et ne laisse jamais coexister une réponse à
 // une question et un envoi de texte libre (AC-4).
 
+import ConsoleCore
 import Foundation
 
 /// Ce qu'une carte offre comme geste. L'ordre d'apparition est celui de

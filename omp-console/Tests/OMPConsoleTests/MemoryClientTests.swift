@@ -10,6 +10,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 // MARK: - S-1 : la recherche
 

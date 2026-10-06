@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 /// Les identifiants des nœuds, dans l'ordre affiché : un souvenir par son id, une
 /// étiquette par `#nom` — la comparaison reste lisible sans littéraux d'énumération.

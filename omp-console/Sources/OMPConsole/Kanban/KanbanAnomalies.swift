@@ -18,6 +18,7 @@
 // `pidAlive` de la couche de lecture est la SEULE autorité de vivacité : ce
 // fichier ne réimplémente rien (BR-3).
 
+import ConsoleCore
 import Foundation
 
 /// Le résultat de la déduplication (S-10) : les entités RETENUES, les sources

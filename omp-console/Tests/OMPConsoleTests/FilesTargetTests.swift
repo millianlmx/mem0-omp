@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-2 : le catalogue rend le principal puis le worktree de feature, chacun avec sa base")
 func catalogListsPrimaryAndFeatureWorktree() async throws {

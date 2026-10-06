@@ -15,25 +15,35 @@ import Foundation
 
 /// Un run du magasin : une entrée `running/` ou `history/` portant un
 /// `sessionFile`.
-struct StoreRun: Equatable, Sendable {
+public struct StoreRun: Equatable, Sendable {
     /// Identité du run.
-    var sessionFile: String
+    public var sessionFile: String
     /// Label écrit par le dépôt.
-    var label: String
+    public var label: String
     /// cwd de l'entrée gagnante.
-    var cwd: String
-    var phase: PipelinePhase
+    public var cwd: String
+    public var phase: PipelinePhase
     /// Début du run : `phaseStartedAt` de l'entrée gagnante.
-    var phaseStartedAt: Double
+    public var phaseStartedAt: Double
     /// Non nil ⇒ l'entrée gagnante est `running/`.
-    var live: RunningEntry?
+    public var live: RunningEntry?
     /// Non nil ⇒ l'entrée gagnante est `history/`.
-    var finalState: PipelineFinalState?
+    public var finalState: PipelineFinalState?
+
+    public init(sessionFile: String, label: String, cwd: String, phase: PipelinePhase, phaseStartedAt: Double, live: RunningEntry?, finalState: PipelineFinalState?) {
+        self.sessionFile = sessionFile
+        self.label = label
+        self.cwd = cwd
+        self.phase = phase
+        self.phaseStartedAt = phaseStartedAt
+        self.live = live
+        self.finalState = finalState
+    }
 }
 
 /// Tous les runs du magasin, dans l'ordre de lecture des enveloppes et
 /// dédoublonnés par `sessionFile` (première occurrence gagnante).
-func storeRuns(of snapshot: StoreSnapshot) -> [StoreRun] {
+public func storeRuns(of snapshot: StoreSnapshot) -> [StoreRun] {
     var runs: [StoreRun] = []
     var seen: Set<String> = []
 
@@ -79,7 +89,7 @@ func storeRuns(of snapshot: StoreSnapshot) -> [StoreRun] {
 ///
 /// `worktree` vide ⇒ AUCUN run : une feature `pending` (worktree vide) n'absorbe
 /// jamais les runs du dépôt principal (parité `KanbanBoard.build`).
-func statsRuns(of snapshot: StoreSnapshot, worktree: String) -> [StoreRun] {
+public func statsRuns(of snapshot: StoreSnapshot, worktree: String) -> [StoreRun] {
     guard !worktree.isEmpty else { return [] }
     let target = realpathOr(worktree)
     return storeRuns(of: snapshot)
@@ -94,7 +104,7 @@ func statsRuns(of snapshot: StoreSnapshot, worktree: String) -> [StoreRun] {
 
 /// Un run est VIVANT si, et seulement si, son entrée gagnante est une entrée
 /// `running/` dont l'`ownerPid` est non nul et vivant.
-func storeRunIsLive(_ run: StoreRun) -> Bool {
+public func storeRunIsLive(_ run: StoreRun) -> Bool {
     guard let live = run.live, let pid = live.ownerPid else { return false }
     return pidAlive(pid)
 }

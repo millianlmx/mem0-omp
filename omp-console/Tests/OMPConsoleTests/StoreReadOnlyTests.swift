@@ -7,6 +7,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("client-magasin-etat/AC-14 : propriétaire mort et fichier tronqué — lecture et veille n'écrivent rien")
 func readingAndWatchingNeverWriteToTheStore() async {

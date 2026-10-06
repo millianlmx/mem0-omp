@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 private let modelT0: Double = 1_700_000_000_000
 private let modelClock = StoreClock { modelT0 }

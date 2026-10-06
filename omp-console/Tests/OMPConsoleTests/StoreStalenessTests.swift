@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("client-magasin-etat/AC-10 : pid mort et battement ancien sont MARQUÉS, jamais retirés ni déplacés")
 func runningStalenessIsMarkedOnly() throws {

@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 private let dedupSession =
     "/tmp/sessions/2026-09-28T15-07-55-136Z_01a0e88e-e980-4f5a-9d0d-2b0d2c0e9a11.jsonl"

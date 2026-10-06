@@ -9,6 +9,7 @@
 // HIG : un seul bouton proéminent (↩) — « Réessayer » sur l'échec, sinon
 // « Fermer » ; Échap ferme dans TOUS les états, et fermer n'interrompt rien.
 
+import ConsoleCore
 import SwiftUI
 
 /// Une ligne de la feuille.

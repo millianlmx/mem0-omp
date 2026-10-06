@@ -16,6 +16,7 @@
 // validation d'une saisie sont alignés à droite, sous leur champ. « Arrêter… »
 // demande toujours confirmation.
 
+import ConsoleCore
 import SwiftUI
 
 /// La zone d'action du détail : une vue par zone de

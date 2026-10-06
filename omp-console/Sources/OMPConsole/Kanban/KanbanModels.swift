@@ -8,6 +8,7 @@
 // `KanbanBoard.swift` et `KanbanAnomalies.swift`. Les textes d'une carte sont des
 // fonctions pures du modèle, donc vérifiables sans rendre une vue.
 
+import ConsoleCore
 import CryptoKit
 import Darwin
 import Foundation
@@ -223,16 +224,8 @@ enum KanbanRepoKey {
     }
 }
 
-/// `realpathOr` (git.ts:35-41) : le chemin RÉEL, sinon le chemin reçu tel quel —
-/// un chemin absent n'est pas une erreur, c'est « worktree introuvable », et une
-/// comparaison de préfixes doit porter sur des chemins réels (`/tmp` →
-/// `/private/tmp` sous macOS).
-func realpathOr(_ path: String) -> String {
-    var buffer = [CChar](repeating: 0, count: Int(PATH_MAX))
-    guard realpath(path, &buffer) != nil else { return path }
-    let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
-    return String(decoding: bytes, as: UTF8.self)
-}
+/// `realpathOr` vit dans `ConsoleCore` (`Support/RealPath.swift`) : `StoreRuns`
+/// l'appelle depuis la cible partagée, donc la déclaration y a déménagé.
 
 /// La clé d'identification d'une feature DANS son dépôt : `(dépôt réel, slug)`.
 /// C'est elle qui apparie une feature de projet à une feature de lot (S-2) et qui

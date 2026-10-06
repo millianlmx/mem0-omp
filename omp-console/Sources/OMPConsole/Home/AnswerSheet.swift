@@ -11,6 +11,7 @@
 // La question est un CONTENU : bloc opaque, jamais de verre (S-11).
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct AnswerSheet: View {

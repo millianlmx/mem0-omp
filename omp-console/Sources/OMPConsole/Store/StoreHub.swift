@@ -2,6 +2,7 @@
 // quand il change. Aucune veille supplémentaire — les six sources de `StoreWatcher`
 // sont les seules, et `commands/` n'est pas veillé (hors périmètre).
 
+import ConsoleCore
 import Foundation
 
 /// L'agrégat des six veilles. Le premier élément d'un abonnement est l'instantané

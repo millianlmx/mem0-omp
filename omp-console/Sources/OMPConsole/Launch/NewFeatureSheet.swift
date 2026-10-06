@@ -7,6 +7,7 @@
 // ou par `Binding(get:set:)`.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 /// Les textes de la feuille, en un endroit : la vue ne compose aucune phrase.

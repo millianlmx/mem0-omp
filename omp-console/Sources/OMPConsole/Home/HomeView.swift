@@ -21,6 +21,7 @@
 // bande rouge dans la barre latérale).
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct HomeView: ConsoleSectionView {

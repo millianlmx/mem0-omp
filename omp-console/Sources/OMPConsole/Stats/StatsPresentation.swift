@@ -1,44 +1,11 @@
-// Ce que le tableau de bord « Statistiques » rend (S-17 de omp-console-redesign) :
-// les barres du graphique et les lignes du tableau, en fonctions PURES du projet
-// affiché et de l'instant de rendu.
-//
-// Aucune somme n'est refaite ici : les barres lisent `featureTotals`, la durée
-// d'un run `durationMs` (StatsBoard.swift, StatsMetrics.swift) — une seule règle
-// de calcul par grandeur. Aucun montant n'est lu ni rendu (AC-2 de
-// `statistiques`).
+// Ce que la coque garde de la présentation « Statistiques » : les fonctions qui
+// nomment un type de la coque (`ProjectStats`, `RunStats`). Les types de valeur
+// rendus (`StatsBar`, `StatsRow`) et l'ordre des étapes vivent dans
+// `ConsoleCore/Stats/StatsPresentation.swift`.
 
-import Foundation
+import ConsoleCore
 
-/// Une barre du graphique : une feature, une série (« envoyés » ou « reçus »),
-/// un nombre de tokens.
-struct StatsBar: Identifiable, Equatable {
-    var id: String
-    var feature: String
-    var kind: String
-    var tokens: Int
-}
-
-/// Une ligne du tableau : un run. Les champs numériques servent au tri, les
-/// champs `…Text` au rendu.
-struct StatsRow: Identifiable, Equatable {
-    /// Le `sessionFile`.
-    var id: String
-    var tag: String
-    var feature: String
-    var phaseTitle: String
-    var phaseOrder: Int
-    var model: String
-    /// -1 quand la durée est inconnue (tri en tête en ordre croissant).
-    var durationMs: Double
-    var durationText: String
-    var turns: Int
-    var tokens: Int
-    var tokensText: String
-    var status: ConsoleStatus
-    var unreadableReason: String?
-}
-
-enum StatsPresentation {
+extension StatsPresentation {
     /// Deux barres par feature listée, dans l'ordre : « envoyés » puis « reçus ».
     static func bars(_ project: ProjectStats, nowMs: Double) -> [StatsBar] {
         project.features.flatMap { feature -> [StatsBar] in
@@ -96,16 +63,5 @@ enum StatsPresentation {
             row.unreadableReason = reason
         }
         return row
-    }
-
-    /// L'ordre des étapes du pipeline, pour trier la colonne « Étape ».
-    private static func phaseOrder(_ phase: PipelinePhase) -> Int {
-        switch phase {
-        case .req: return 0
-        case .specs: return 1
-        case .impl: return 2
-        case .review: return 3
-        case .release: return 4
-        }
     }
 }

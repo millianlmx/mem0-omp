@@ -5,6 +5,7 @@
 import Synchronization
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("omp-console-redesign/S-15 : un message rend son Markdown en ligne")
 func conversationRendersInlineMarkdown() {

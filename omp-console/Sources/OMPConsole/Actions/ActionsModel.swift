@@ -13,6 +13,7 @@
 // TypeScript) : aucun minuteur ne tourne à vide.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 /// L'état d'une entrée de journal (S-4) : en attente d'accusé, prise en charge,

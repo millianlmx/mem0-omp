@@ -6,6 +6,7 @@
 // aucun `@State` : l'état vit dans `HomeModel`.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct WelcomeSheet: View {

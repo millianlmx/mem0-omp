@@ -10,6 +10,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("memoire-mem0/AC-8 : l'indisponibilité garde l'adresse du service et la dernière erreur en détail secondaire")
 func ac8UnavailableDetailKeepsAddressAndError() {
