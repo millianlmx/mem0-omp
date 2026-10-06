@@ -541,6 +541,15 @@ esac`,
 });
 
 test("l'attente des marqueurs de la section « App Swift » : incrémental s'ils sont là, rouge sinon", (t) => {
+  if (process.platform !== "darwin") {
+    // Le scénario rejoue `socle-app-swift/AC-1`, écrit POUR macOS : sous Linux,
+    // AC-1 se saute, `node --test` rend 0 et les trois assertions de verdict
+    // n'ont plus rien à éprouver (mesuré sur le job ubuntu-latest du run
+    // 37497757815 : « notStrictEqual, expected 0, actual 0 »). La garde est la
+    // plateforme, comme dans AC-1 — jamais la présence de `swift`.
+    t.skip("macOS seul — le scénario rejoue socle-app-swift/AC-1");
+    return;
+  }
   if (DEPTH !== 0) {
     t.skip("copie imbriquée — l'attente des marqueurs est vérifiée à la racine");
     return;
