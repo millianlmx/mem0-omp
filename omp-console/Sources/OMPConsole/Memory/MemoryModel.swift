@@ -101,21 +101,9 @@ final class MemoryModel: ObservableObject {
         } else {
             // La portée suit le projet OUVERT : elle est résolue à chaque
             // chargement, jamais figée au lancement (la fenêtre « Session OMP »
-            // peut en changer).
+            // peut en changer). Même formule que le graphe.
             self.scopeProvider = {
-                guard let root = ProjectRoot.resolve(defaults: defaults, fileManager: fileManager) else {
-                    return nil
-                }
-                switch GitBinary.resolve(environment: environment, path: root.path, fileManager: fileManager) {
-                case let .success(binary):
-                    return await MemoryScope.scope(
-                        projectRoot: root.path,
-                        environment: environment,
-                        git: GitCLI(binary: binary)
-                    )
-                case .failure:
-                    return nil
-                }
+                await MemoryScope.currentProject(defaults: defaults, environment: environment, fileManager: fileManager)
             }
         }
     }

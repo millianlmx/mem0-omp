@@ -101,9 +101,10 @@ func s19MemoryTitleStopsAtColonWithoutCodeOrFullPath() {
     #expect(!MemoryText.title("``").isEmpty)
 }
 
-@Test("memoire-mem0/AC-2 : la section n'offre AUCUN libellé d'écriture")
-func ac2SectionHasNoWriteVocabulary() {
-    let labels = [
+@Test("graph-based-memeries-view/AC-4 : la LISTE n'offre AUCUN libellé d'écriture, le GRAPHE les porte")
+func ac4ListHasNoWriteVocabularyAndGraphDoes() {
+    // Les libellés du mode LISTE : la fiche y reste en lecture seule (AC-4).
+    let listLabels = [
         MemoryText.searchPrompt,
         MemoryText.summaryButton,
         MemoryText.summaryHelp,
@@ -120,7 +121,7 @@ func ac2SectionHasNoWriteVocabulary() {
         MemoryText.omlxUnauthorized,
         MemoryText.omlxUnreachable(url: "http://127.0.0.1:8000/models"),
     ]
-    for label in labels {
+    for label in listLabels {
         let lowered = label.lowercased()
         #expect(!lowered.contains("ajout"))
         #expect(!lowered.contains("supprim"))
@@ -128,8 +129,20 @@ func ac2SectionHasNoWriteVocabulary() {
         #expect(!lowered.contains("enregistrer"))
         #expect(!lowered.contains("éditer"))
     }
-    // Les trois routes du client sont deux lectures et une recherche (S-2).
-    #expect(MemoryRoute.allCases.count == 3)
+    // La bascule elle-même nomme le mode à atteindre, sans vocabulaire d'écriture.
+    #expect(MemoryText.graphButton == "Graphe")
+    #expect(MemoryText.listButton == "Liste")
+
+    // Le MODE GRAPHE, lui, écrit : ses libellés le disent (S-8, S-9, S-10, S-11).
+    #expect(MemoryText.edit.lowercased().contains("modifi"))
+    #expect(MemoryText.delete.lowercased().contains("supprim"))
+    #expect(MemoryText.save.lowercased().contains("enregistrer"))
+    #expect(MemoryText.createMemory.lowercased().contains("nouveau"))
+    #expect(MemoryText.deleteConfirm == "Supprimer")
+    #expect(MemoryText.detach == "Détacher")
+
+    // Quatre routes : deux lectures, une recherche, le graphe.
+    #expect(MemoryRoute.allCases.count == 4)
 }
 
 @Test("all-in-one-app/AC-6 : les textes des prérequis systèmes manquants sont figés (S-6)")

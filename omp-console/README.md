@@ -1428,19 +1428,27 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 - Les bannières réelles et le clic sur l'item de barre se consignent dans la section
   `## Revue` du contrat : cette recette exige le bundle et une autorisation accordée.
 
-## Consulter la mémoire du projet
+## Consulter et corriger la mémoire du projet
 
-La section **Mémoire** est un **lecteur** de la mémoire du projet courant : elle
-cherche des souvenirs, montre le sommaire du projet et ouvre un souvenir pour en
-lire le texte complet. La recherche (champ système `.searchable`), « Sommaire » et
-« Rafraîchir » vivent dans la barre d'outils de la fenêtre ; l'état du service ne
-s'affiche que lorsqu'il est indisponible. `Sources/OMPConsole/Memory/` ne se lie
-jamais au service que par les traits de `MemoryServing`.
+La section **Mémoire** lit la mémoire du service mem0-http et l'écrit : la **liste**
+montre le sommaire du projet courant et ouvre un souvenir pour en lire le texte
+complet ; le **graphe** montre TOUS les projets du service et permet d'écrire.
+`Sources/OMPConsole/Memory/` ne se lie jamais au service que par les traits de
+`MemoryServing`.
 
-**Lecture seule, par construction.** Le client ne construit que trois routes —
-`GET /health`, `GET /memory/all?agent_id=<portée>`, `POST /memory/search` — et le
-protocole `MemoryServing` n'expose aucune méthode d'écriture : aucun bouton, aucun
-menu, aucun raccourci n'ajoute, ne modifie ni ne supprime un souvenir.
+**Deux modes, une bascule.** Le bouton de la barre d'outils nomme le mode à
+ATTEINDRE : « Graphe » en liste, « Liste » en graphe. Le mode initial est la liste,
+et il ne change pas : sommaire, recherche, fiche et gestes y sont ceux d'avant.
+« Sommaire » ne concerne que la liste (désactivé en graphe), « Rafraîchir » (⌘R) agit
+sur le mode courant, et chaque mode garde SA requête de recherche.
+
+**Les routes.** Le client construit quatre routes de lecture — `GET /health`,
+`GET /memory/all` (avec `?agent_id=<portée>` pour la liste, SANS query pour le
+graphe, qui couvre alors toutes les portées), `POST /memory/search` (avec
+`agent_id` pour la liste, sans lui pour le graphe) et `GET /memory/graph` — plus les
+écritures du mode graphe : `POST /memory/add` (`infer: false` : le texte est stocké
+**mot pour mot**, aucun appel LLM), `PUT /memory/{id}` (le texte est écrit tel quel,
+`tags` remplace les étiquettes) et `DELETE /memory/{id}`.
 
 **Le service.** L'adresse vient de `MEM0_HTTP_URL` (`http://localhost:8321` par
 défaut), le jeton de `MEM0_HTTP_TOKEN` (vide par défaut, envoyé en en-tête
@@ -1448,45 +1456,98 @@ défaut), le jeton de `MEM0_HTTP_TOKEN` (vide par défaut, envoyé en en-tête
 `NSAppTransportSecurity` → `NSAllowsLocalNetworking` : sous macOS 14, ATS refuse par
 défaut une connexion HTTP vers une IP littérale. Une variable posée mais **vide**
 est traitée comme absente. Les budgets d'inactivité sont ceux du plugin (20 s pour
-la recherche, 10 s pour les autres), et il n'y a **aucun sondage périodique** : la
-sonde part à l'apparition de la section, au bouton « Rafraîchir » et avant chaque
-recherche.
+la recherche et le graphe, 10 s pour les autres), et il n'y a **aucun sondage
+périodique** : la sonde part à l'apparition de la section, au bouton « Rafraîchir »
+et avant chaque recherche.
+
+> La route `GET /memory/graph` et l'extension `PUT` (étiquettes) sont **nouvelles
+> côté service** : une pile construite avant cette version répond 404/405. Il faut
+> reconstruire l'image — `compose build mem0-http && compose up -d` (l'app affiche
+> sinon l'erreur du service dans l'état « Mémoire indisponible »).
 
 **La portée** est calculée par le même algorithme que `projectId` du plugin mémoire
 (`omp-mem0-memory/state.ts`) : override `MEM0_PROJECT_ID`, sinon la racine du dépôt
 **principal** — un worktree de feature partage donc la portée du principal —, puis
 `package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis le premier
-`*.xcodeproj`, puis le nom du répertoire. `_global` n'est jamais envoyé : la section
+`*.xcodeproj`, puis le nom du répertoire. `_global` n'est jamais envoyé : la liste
 ne montre que la mémoire du projet. Sans portée calculable (aucun projet ouvert,
-`git` en échec), aucun appel de portée n'est émis et l'état « Aucun projet ouvert »
-renvoie vers la section « Session OMP ».
+`git` en échec), la liste affiche « Aucun projet ouvert » et n'émet aucun appel de
+portée — le GRAPHE, lui, n'en dépend pas : il montre toutes les portées du service.
 
 **La recherche** reproduit `mem0_search` : pool sur-échantillonné
 `min(6 × 4, 50) = 24`, seuil de cosinus brut **0,55**, `explain` vrai, puis
 `selectRelevant` (cosinus seuls, décroissant, tronqué à 6). Les cosinus viennent de
-`score_details.semantic_score` — jamais du `score` renvoyé, que BM25 sature.
+`score_details.semantic_score` — jamais du `score` renvoyé, que BM25 sature. En mode
+GRAPHE, la même sélection s'applique mais **sans la troncature à 6** : le graphe
+garde tout le pool et se restreint aux souvenirs trouvés et à leurs liens.
+
+### Le mode graphe
+
+Chaque souvenir du service est un **nœud** (disque teinté par projet), les nœuds
+d'un même projet forment une grappe nommée à son centre, et les liens viennent de
+trois sources, jamais confondues :
+
+| Lien | Origine | Trait |
+|---|---|---|
+| dérivé sémantique | `GET /memory/graph` : voisins de cosinus ≥ **0,75**, au plus **8** par souvenir, calculés par le service sur les vecteurs déjà stockés (aucun appel oMLX) | plein, gris |
+| dérivé d'étiquette | chaque étiquette portée par ≥ 2 souvenirs AFFICHÉS devient un **nœud-étiquette** (`#étiquette`) relié à eux | plein, gris clair |
+| manuel | créé à la main dans la fiche (« Relier à… ») | **discontinu, accentué** |
+
+Le placement (Fruchterman-Reingold local, graine et itérations fixes) est
+déterministe et calculé hors du fil principal. Gestes : clic = sélection (fiche à
+droite) ou filtre d'étiquette sur un nœud-étiquette, clic dans le vide =
+désélection, glisser = déplacement, pincement = zoom centré sur le point du geste
+(borné 0,25–3,0), survol = mise en évidence du nœud et de ses liens ; clavier : Tab
+donne le focus au canevas, les flèches prennent le nœud le plus proche dans la
+direction, Échap désélectionne, ⌘0/⌘+/⌘− recadrent, agrandissent, réduisent. La
+barre de contrôles porte les menus « Projet » et « Étiquette » (défaut : tous), le
+bandeau de compte (`n souvenirs · p projets · l liens manuels`) et « Nouveau
+souvenir ».
+
+**Les écritures** vivent dans la fiche du mode graphe uniquement : « Modifier… »
+(texte pré-rempli **verbatim**, étiquettes en champ séparé par des virgules),
+« Supprimer… » (confirmation destructive), « Nouveau souvenir » (texte, étiquettes
+facultatives, projet choisi) et les liens manuels (« Relier à… », « Détacher »). Une
+écriture réussie recharge le graphe ET la liste. Les liens manuels sont un artefact
+de la VUE : ils vivent dans `<racine de support>/memory-links.json`
+(`{"version":1,"links":[{"a":…,"b":…}]}`, `a < b`, écriture atomique), ne sont
+jamais écrits dans mem0, et un lien dont un souvenir disparaît est élagué au
+rechargement suivant.
 
 **Les états**, chacun avec son texte (tous dans `MemoryText`) :
 
 | État | Rendu |
 |---|---|
-| aucune sonde encore | `Chargement de la mémoire du projet…` |
-| portée incalculable | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
-| service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais « aucun souvenir » |
+| aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
+| portée incalculable (liste) | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
+| service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
 | sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
 | recherche sans ligne | « Aucun résultat » — « La mémoire du projet ne contient aucun souvenir correspondant. » |
 | recherche sans score | « Recherche impossible » — « Ce service de mémoire ne sait pas classer les souvenirs par pertinence. » |
 | recherche sous le seuil | « Aucun résultat » — « Aucun souvenir n'est assez proche de cette recherche. » |
-| détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée, pertinence (en recherche) |
+| graphe vide | « Aucun souvenir » — « La mémoire du service ne contient aucun souvenir. » |
+| graphe, recherche sans résultat | « Aucun résultat » — « Aucun souvenir du service ne correspond à cette recherche. » |
+| graphe, filtres sans résultat | même état vide, menus toujours accessibles |
+| détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée de la ligne, pertinence (en recherche) ; en mode graphe, les actions d'écriture et le bloc « Liens manuels » |
 
 **Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
 `memoire.unavailable.detail`, `memoire.summary.count`, `memoire.search.results`,
 `memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
-`memoire.detail.copy`, `memoire.detail.technical`. Clavier : `Tab`/`Maj-Tab` dans
-l'ordre de mise en page, `Retour` dans le champ de recherche lance la recherche, le
-vider (ou sa croix) ramène au sommaire déjà lu sans requête, les flèches haut/bas
-déplacent la sélection de la liste (le détail suit), `⌘R` rafraîchit.
+`memoire.detail.copy`, `memoire.detail.technical` ; mode graphe :
+`memoire.graph.toggle`, `memoire.graph.canvas` (libellé = bandeau de compte),
+`memoire.graph.project`, `memoire.graph.tag`, `memoire.graph.zoomIn`,
+`memoire.graph.zoomOut`, `memoire.graph.recenter`, `memoire.graph.create`,
+`memoire.graph.edit`, `memoire.graph.delete`, `memoire.graph.link`,
+`memoire.graph.detach.<id>`, `memoire.graph.error`, `memoire.create.sheet`,
+`memoire.edit.sheet`, `memoire.link.sheet` (et `.text`, `.tags`, `.project`,
+`.cancel`, `.save`, `.error` sur chacune). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
+mise en page, `Retour` dans le champ de recherche lance la recherche du mode
+courant, le vider (ou sa croix) ramène la liste au sommaire et lève la restriction
+du graphe sans requête, les flèches haut/bas déplacent la sélection de la liste, les
+flèches du canevas sélectionnent le nœud voisin, `⌘R` rafraîchit, `⌘0`/`⌘+`/`⌘−`
+recadrent le graphe, `⎋` annule une feuille (ou désélectionne le canevas), `↩`
+valide la feuille active.
 
 **Recette manuelle** (hors CI : aucun script ne pose ses variables) :
 
@@ -1498,7 +1559,9 @@ MEM0_MEMORY_RECIPE=1 MEM0_MEMORY_RECIPE_PROJECT=/chemin/du/projet \
 
 Elle relève sur le VRAI service la portée calculée, l'état, le compte du sommaire et
 ses trois premières lignes, puis les résultats d'une recherche — et n'écrit rien
-dans le projet.
+dans le projet. `--filter recetteGraphe` exerce, lui, le cycle complet d'écriture sur
+le vrai service (créer, chercher, corriger, relier, détacher, supprimer) dans une
+portée dédiée `_graph-recipe`.
 
 ## Structure du paquet
 
@@ -1641,13 +1704,18 @@ omp-console/
 │   │   ├── MarkdownDocument.swift un Markdown en blocs complets (pur)
 │   │   ├── CodeHighlighter.swift  langue d'un fichier et coloration lexicale (pure)
 │   │   └── FilesView.swift        la section : en-tête, arbre, document rendu ou code, diff
-│   ├── Memory/                    la mémoire du projet, en lecture seule
+│   ├── Memory/                    la mémoire du projet : liste (lecture) et graphe (écriture)
 │   │   ├── MemoryScope.swift      la portée mem0 du projet (miroir du plugin)
-│   │   ├── MemoryService.swift    config, routes, lignes, erreurs, client HTTP
+│   │   ├── MemoryService.swift    config, routes, lignes, étiquettes, erreurs, client HTTP
 │   │   ├── MemorySearch.swift     la sélection de pertinence (portée du plugin)
 │   │   ├── MemoryText.swift       tous les textes de la section, en un endroit
-│   │   ├── MemoryModel.swift      l'état : portée, liste, service, sélection
-│   │   └── MemoryView.swift       la section : en-tête, liste, détail, états
+│   │   ├── MemoryModel.swift      l'état de la LISTE : portée, sommaire, recherche, sélection
+│   │   ├── MemoryGraph.swift      la dérivation pure du graphe : nœuds, liens, visibilité
+│   │   ├── MemoryGraphLayout.swift placement (Fruchterman-Reingold), vue écran, clic, scène
+│   │   ├── MemoryLinkStore.swift  les liens manuels, dans `<racine de support>/memory-links.json`
+│   │   ├── MemoryGraphModel.swift l'état du MODE GRAPHE : chargement, filtres, recherche, écritures
+│   │   ├── MemoryGraphView.swift  le graphe : contrôles, canevas, fiche, feuilles d'écriture
+│   │   └── MemoryView.swift       la section : bascule liste ⇄ graphe, liste, détail, états
 │   ├── Viewer/                    la visionneuse de session (aucune écriture)
 │   │   ├── ViewerTarget.swift     la session poussée dans Sessions, et son titre
 │   │   ├── SessionSelectorModel.swift  les runs choisissables, depuis le magasin

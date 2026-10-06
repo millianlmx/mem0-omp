@@ -74,6 +74,91 @@ enum MemoryText {
         "réponse \(code) du service (\(detail))"
     }
 
+    // MARK: - Mode graphe (S-1, S-2, S-5, S-6, S-7)
+
+    // La bascule nomme le mode à ATTEINDRE : en liste elle dit « Graphe », en
+    // graphe elle dit « Liste ».
+    static let graphButton = "Graphe"
+    static let graphHelp = "Afficher les souvenirs de tous les projets en graphe"
+    static let listButton = "Liste"
+    static let listHelp = "Revenir à la liste du projet courant"
+
+    static let graphLoading = "Chargement du graphe des souvenirs…"
+    static let emptyGraphDescription = "La mémoire du service ne contient aucun souvenir."
+    static let graphNoMatch = "Aucun souvenir du service ne correspond à cette recherche."
+
+    static let projectMenu = "Projet"
+    static let allProjects = "Tous les projets"
+    static let tagMenu = "Étiquette"
+    static let allTags = "Toutes les étiquettes"
+    /// La portée d'une ligne sans `agent_id` : elle reste affichée, jamais perdue.
+    static let noProjectScope = "Sans projet"
+
+    static let zoomIn = "Agrandir"
+    static let zoomInHelp = "Agrandir (⌘+)"
+    static let zoomOut = "Réduire"
+    static let zoomOutHelp = "Réduire (⌘−)"
+    static let recenter = "Recentrer"
+    static let recenterHelp = "Recadrer le graphe sur l'écran (⌘0)"
+
+    static let createMemory = "Nouveau souvenir"
+    static let createMemoryHelp = "Écrire un souvenir dans un projet"
+
+    /// Le libellé d'un nœud-étiquette, réutilisé par `tagList` (une seule formule
+    /// pour `#étiquette`).
+    static func tagLabel(_ tag: String) -> String {
+        "#\(tag)"
+    }
+
+    /// Le bandeau de compte du graphe : « 1 892 souvenirs · 17 projets · 2 liens
+    /// manuels » — chaque segment absent est omis.
+    static func graphCount(memories: Int, projects: Int, links: Int) -> String {
+        var segments = [ConsoleFormat.count(memories, "souvenir", "souvenirs")]
+        if projects > 0 {
+            segments.append(ConsoleFormat.count(projects, "projet", "projets"))
+        }
+        if links > 0 {
+            segments.append(ConsoleFormat.count(links, "lien manuel", "liens manuels"))
+        }
+        return segments.joined(separator: separator)
+    }
+
+    /// La portée affichée d'une ligne : son `agent_id`, ou « Sans projet ».
+    static func scopeLabel(_ scope: String?) -> String {
+        guard let scope, !scope.isEmpty else { return noProjectScope }
+        return scope
+    }
+
+    // MARK: - Écriture depuis le graphe (S-8, S-9, S-10, S-11)
+
+    static let edit = "Modifier…"
+    static let editHelp = "Corriger le texte et les étiquettes de ce souvenir"
+    static let editTitle = "Modifier le souvenir"
+    static let delete = "Supprimer…"
+    static let deleteHelp = "Supprimer ce souvenir de la mémoire"
+    static let deleteConfirmTitle = "Supprimer ce souvenir ?"
+    static let deleteConfirmMessage = "Le souvenir disparaît de la mémoire du service ; ses liens manuels sont supprimés."
+    static let deleteConfirm = "Supprimer"
+    static let cancel = "Annuler"
+    static let save = "Enregistrer"
+
+    static let createTitle = "Nouveau souvenir"
+    static let textLabel = "Texte"
+    static let tagsLabel = "Étiquettes"
+    static let tagsPlaceholder = "séparées par des virgules"
+    static let textPlaceholder = "Écrire un souvenir…"
+    static let noKnownProject = "Aucun projet connu — la mémoire est vide."
+
+    static let manualLinks = "Liens manuels"
+    static let linkTo = "Relier à…"
+    static let linkTitle = "Relier à un souvenir"
+    static let linkFilter = "Filtrer par texte"
+    static let noCandidate = "Aucun souvenir à relier."
+    static let detach = "Détacher"
+    static let noManualLink = "Aucun lien manuel."
+    static let linkNotSaved = "Le lien n'a pas pu être enregistré sur le disque."
+    static let link = "Relier"
+
     // MARK: - Ligne de la liste et détail (omp-console-redesign S-18 R7)
 
     /// Le séparateur des segments de la ligne de contexte.

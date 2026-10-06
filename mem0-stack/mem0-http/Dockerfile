@@ -18,8 +18,11 @@ COPY memory_config.py http_server.py test_api.py .
 # (SparseTextEmbedding("Qdrant/bm25"), chargé paresseusement dans
 # vector_stores/qdrant.py) : sans lui, mem0 loggue « BM25 keyword search disabled »
 # et écrit tous les points dense-only, donc la recherche hybride est inerte.
+# `numpy` est installé explicitement bien qu'il soit déjà tiré par mem0 : la
+# route `/memory/graph` en dépend directement (similarité cosinus par blocs), et
+# une exigence déclarée est visible de `scripts/mem0-http-test.sh --requirements`.
 RUN uv pip install --system --no-cache \
-      "mem0ai>=2.0,<3.0" fastembed qdrant-client openai fastapi "uvicorn[standard]" httpx
+      "mem0ai>=2.0,<3.0" fastembed qdrant-client numpy openai fastapi "uvicorn[standard]" httpx
 
 # Modèle BM25 cuit dans l'image plutôt que téléchargé au premier search.
 RUN python -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding(model_name='Qdrant/bm25')"

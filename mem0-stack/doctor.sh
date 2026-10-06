@@ -99,7 +99,7 @@ echo "── Conformité API mem0"
 if [ -z "$CONTAINER" ]; then
   echo "  · non exécuté — conteneur mem0-http absent"
 elif [ -n "${IMG:-}" ] && $CE run --rm "$IMG" python test_api.py >/tmp/mem0-api.log 2>&1; then
-  pass "les 9 routes sont conformes à la version de mem0 embarquée"
+  pass "les routes sont conformes à la version de mem0 embarquée"
 else
   fail "rupture d'API mem0" "tail -30 /tmp/mem0-api.log"
 fi

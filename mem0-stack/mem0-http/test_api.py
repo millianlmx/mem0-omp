@@ -26,6 +26,7 @@ try:
     from fastapi.testclient import TestClient
     from mem0 import AsyncMemory
     import mem0.memory.main as mem0_main
+    from qdrant_client import QdrantClient
 except ImportError as exc:  # pragma: no cover
     print(f"Dépendance manquante : {exc}. Lance ce test dans l'image.")
     sys.exit(2)
@@ -151,13 +152,30 @@ class RealEmbedder:
 
 
 class RealVectorStore:
-    """Retient les payloads réellement insérés par `_create_memory`."""
+    """Retient les payloads réellement insérés par `_create_memory`.
+
+    `get`/`update` servent le chemin de `PUT /memory/{id}` : le VRAI
+    `AsyncMemory.update` relit le payload existant (`vector_store.get`) puis
+    réécrit le point (`vector_store.update`). Sans eux, le cas « étiquettes
+    remplacées » ne pourrait pas observer le payload FINAL.
+    """
 
     def __init__(self) -> None:
         self.payloads: list[dict] = []
+        self.points: dict[str, object] = {}
+        self.updates: list[dict] = []
 
     def insert(self, vectors=None, ids=None, payloads=None):
+        for point_id, payload in zip(ids or [], payloads or []):
+            self.points[str(point_id)] = types.SimpleNamespace(payload=payload)
         self.payloads.extend(payloads or [])
+
+    def get(self, vector_id=None, *args, **kwargs):
+        return self.points.get(str(vector_id))
+
+    def update(self, vector_id=None, vector=None, payload=None, **kwargs):
+        self.updates.append({"vector_id": str(vector_id), "vector": vector, "payload": payload})
+        self.points[str(vector_id)] = types.SimpleNamespace(payload=payload)
 
 
 class RealDb:
@@ -173,6 +191,35 @@ class RealDb:
         pass
 
 
+class StubScrollClient:
+    """Client Qdrant enregistreur du lecteur de vecteurs du graphe (S-3).
+
+    Il LIE les arguments reçus à la vraie signature de `QdrantClient.scroll`
+    (motif de `StubMemory._record`) : un nom de paramètre inventé — `with_vector`
+    au lieu de `with_vectors`, mesuré en sonde réelle — échoue ici, pas en
+    production.
+    """
+
+    def __init__(self, pages: list[tuple]) -> None:
+        self.pages = list(pages)
+        self.calls: list[dict] = []
+
+    def scroll(self, **kwargs):
+        inspect.signature(QdrantClient.scroll).bind(self, **kwargs)
+        self.calls.append(kwargs)
+        if not self.pages:
+            return [], None
+        return self.pages.pop(0)
+
+
+class StubVectorStore:
+    """Le strict nécessaire de `m.vector_store` : le client et le nom de collection."""
+
+    def __init__(self, client: StubScrollClient, collection_name: str = "probe") -> None:
+        self.client = client
+        self.collection_name = collection_name
+
+
 def real_memory(llm: LlmCanary, store: RealVectorStore, db: RealDb) -> AsyncMemory:
     """Un vrai `AsyncMemory` sans réseau ni Qdrant (motif mesuré sur 2.1.0/2.2.1).
 
@@ -180,6 +227,9 @@ def real_memory(llm: LlmCanary, store: RealVectorStore, db: RealDb) -> AsyncMemo
     vector store Qdrant et le client oMLX. Les attributs posés sont exactement
     ceux que `add(infer=False)` lit : `config.llm.config` (clé `enable_vision`,
     lue avant l'embedding), le LLM, l'embedder, le vector store et la base.
+    `_entity_store = None` court-circuite la maintenance d'entités d'`update()`
+    (aucune extraction, aucun store d'entités) : c'est l'état d'une instance
+    fraîche avant son premier usage d'entités.
     """
     mem = AsyncMemory.__new__(AsyncMemory)
     mem.config = types.SimpleNamespace(llm=types.SimpleNamespace(config={}))
@@ -188,6 +238,7 @@ def real_memory(llm: LlmCanary, store: RealVectorStore, db: RealDb) -> AsyncMemo
     mem.vector_store = store
     mem.db = db
     mem.custom_instructions = None
+    mem._entity_store = None
     return mem
 
 
@@ -406,6 +457,184 @@ def main() -> int:
         verify("AC-2 · scope conservé (user_id)", payload.get("user_id"), "moi")
         verify("AC-2 · scope conservé (agent_id)", payload.get("agent_id"), "P")
         verify("AC-2 · role du message", payload.get("role"), "user")
+
+        # ------------------------------------------------------------------
+        # api/AC-8 — graphe de proximité sémantique (S-3) : cosinus, seuil,
+        # top_k, déduplication et tri par `graph_edges`, puis la route
+        # elle-même avec une doublure du lecteur de vecteurs (aucun Qdrant).
+        # ------------------------------------------------------------------
+
+        def unit(*pairs: tuple[int, float], dim: int = 12) -> list[float]:
+            """Un vecteur creux : les axes non nommés valent zéro."""
+            values = [0.0] * dim
+            for index, value in pairs:
+                values[index] = value
+            return values
+
+        def verify_close(label, got, want, tol=1e-9):
+            """Égalité flottante vérifiée en montrant la valeur observée."""
+            nonlocal failures
+            ok = isinstance(got, (int, float)) and abs(got - want) <= tol
+            print(f"{'PASS' if ok else 'FAIL'}  {label} : {got!r} (attendu ~{want!r})")
+            failures += 0 if ok else 1
+
+        pivot = unit((0, 1.0))
+        close = unit((0, 0.8), (1, 0.6))  # cos ≈ 0,8 ≥ 0,75
+        below = unit((0, 0.7), (1, 0.7141))  # cos ≈ 0,70 < 0,75
+
+        edges = http_server.graph_edges({"b": close, "a": pivot})
+        verify("AC-8 · cosinus ≥ seuil ⇒ UNE arête, source < target", [(e["source"], e["target"]) for e in edges], [("a", "b")])
+        verify_close("AC-8 · score = cosinus réel", edges[0]["score"], 0.8, tol=1e-6)
+        verify("AC-8 · cosinus < seuil ⇒ aucune arête", http_server.graph_edges({"a": pivot, "c": below}), [])
+        verify("AC-8 · moins de deux points ⇒ aucune arête", http_server.graph_edges({"a": pivot}), [])
+
+        # Le top_k est un plafond PAR souvenir : le pivot a 10 voisins
+        # au-dessus du seuil, mais les voisins se ressemblent entre eux (cos 1,0)
+        # et classent donc tous le pivot APRÈS leurs huit premiers — seuls les 8
+        # meilleurs voisins du pivot émettent une arête avec lui.
+        crowded = {"pivot": unit((0, 1.0))}
+        for index in range(1, 11):
+            crowded[f"n{index:02d}"] = unit((0, 0.8), (1, 0.6))
+        crowded_edges = http_server.graph_edges(crowded)
+        pivot_edges = [e for e in crowded_edges if "pivot" in (e["source"], e["target"])]
+        verify("AC-8 · > top_k voisins au-dessus du seuil ⇒ 8 arêtes pour ce souvenir", len(pivot_edges), 8)
+        verify(
+            "AC-8 · les 8 meilleurs, départagés par id",
+            sorted(e["source"] for e in pivot_edges),
+            [f"n{index:02d}" for index in range(1, 9)],
+        )
+
+        # Tri : score décroissant, puis source, puis target. Deux arêtes de MÊME
+        # score (« a–b » et « a–d ») montrent le départage par target.
+        tie_b = unit((0, 0.8), (1, 0.6))
+        tie_d = unit((0, 0.8), (2, 0.6))
+        tie_c = unit((0, 0.9), (1, 0.4))
+        tri = http_server.graph_edges({"d": tie_d, "c": tie_c, "b": tie_b, "a": unit((0, 1.0))})
+        verify(
+            "AC-8 · tri score décroissant puis source puis target",
+            [(e["source"], e["target"]) for e in tri],
+            [("b", "c"), ("a", "c"), ("a", "b"), ("a", "d")],
+        )
+        verify("AC-8 · rejoué ⇒ arêtes identiques", http_server.graph_edges({"d": tie_d, "c": tie_c, "b": tie_b, "a": unit((0, 1.0))}), tri)
+
+        # Les DEUX formes de vecteur portent le dense ; un point sans dense est
+        # ignoré des arêtes, jamais une exception.
+        verify("AC-8 · vecteur nommé : le dense est sous la clé \"\"", http_server.dense_vector({"": [1.0, 0.0], "bm25": object()}), [1.0, 0.0])
+        verify("AC-8 · vecteur nu (antérieur à l'hybridation)", http_server.dense_vector([1.0, 0.0]), [1.0, 0.0])
+        verify("AC-8 · sans clé \"\" ⇒ pas de dense", http_server.dense_vector({"bm25": object()}), None)
+        verify("AC-8 · liste vide ⇒ pas de dense", http_server.dense_vector([]), None)
+        verify("AC-8 · deux points sans dense ⇒ aucune arête", http_server.graph_edges({}), [])
+
+        # La route elle-même : doublure du lecteur de vecteurs (le StubMemory
+        # n'a pas de vector_store, la route ne doit donc jamais y toucher).
+        graph_vectors = {"m-1": pivot, "m-2": close}
+        with patch("http_server.read_dense_vectors", lambda m, filters: dict(graph_vectors)):
+            http_server._mem = None
+            resp = client.get("/memory/graph")
+            body = resp.json()
+        check("api/AC-8 — GET /memory/graph rend le total, le seuil, le top_k et les arêtes", resp)
+        verify("AC-8 · total", body.get("total"), 2)
+        verify("AC-8 · threshold", body.get("threshold"), 0.75)
+        verify("AC-8 · top_k", body.get("top_k"), 8)
+        verify("AC-8 · arêtes", [(e["source"], e["target"]) for e in body.get("edges") or []], [("m-1", "m-2")])
+
+        # Le LECTEUR lui-même : les arguments du scroll sont liés à la VRAIE
+        # signature de `QdrantClient.scroll` (motif de `StubMemory._record`) — le
+        # doublure ne peut donc pas valider un nom de paramètre inventé. C'est ce
+        # que la sonde réelle a pris en défaut (`with_vector` au lieu de
+        # `with_vectors` : AssertionError « Unknown arguments »).
+        pages = [
+            ([types.SimpleNamespace(id="m-1", vector={"": [1.0, 0.0], "bm25": object()})], "page-2"),
+            ([types.SimpleNamespace(id="m-2", vector=[1.0, 0.0])], None),
+        ]
+        scroll_client = StubScrollClient(pages)
+        reader = types.SimpleNamespace(vector_store=StubVectorStore(scroll_client))
+        read_vectors = http_server.read_dense_vectors(reader, {"user_id": "moi"})
+        verify("AC-8 · lecture paginée : deux pages, offset transmis", [c.get("offset") for c in scroll_client.calls], [None, "page-2"])
+        verify("AC-8 · les deux formes de vecteur portent le dense", read_vectors, {"m-1": [1.0, 0.0], "m-2": [1.0, 0.0]})
+        verify("AC-8 · with_payload/with_vectors demandés", (scroll_client.calls[0].get("with_payload"), scroll_client.calls[0].get("with_vectors")), (False, True))
+        verify("AC-8 · limit = GRAPH_PAGE", scroll_client.calls[0].get("limit"), http_server.GRAPH_PAGE)
+        verify(
+            "AC-8 · filtre Qdrant sur user_id",
+            [(c.key, c.match.value) for c in scroll_client.calls[0]["scroll_filter"].must],
+            [("user_id", "moi")],
+        )
+
+        with patch("http_server.read_dense_vectors", lambda m, filters: {"m-1": pivot}):
+            http_server._mem = None
+            resp = client.get("/memory/graph")
+        verify("AC-8 · 0 ou 1 point ⇒ edges vide", resp.json().get("edges"), [])
+
+        def explode(m, filters):
+            raise RuntimeError("Qdrant indisponible (panne injectée)")
+
+        with patch("http_server.read_dense_vectors", explode):
+            http_server._mem = None
+            failing_graph = TestClient(http_server.app, raise_server_exceptions=False)
+            resp = failing_graph.get("/memory/graph")
+        verify("AC-8 · échec Qdrant ⇒ 500, jamais une liste partielle", resp.status_code, 500)
+        verify("AC-8 · échec Qdrant ⇒ aucun contenu partiel", "edges" in resp.text, False)
+
+        # ------------------------------------------------------------------
+        # api/AC-9 / api/AC-10 — PUT /memory/{id} : `tags` présent remplace les
+        # étiquettes, absent ne les touche pas (compatibilité du plugin).
+        # ------------------------------------------------------------------
+        calls.clear()
+        client.put("/memory/x1", json={"text": "réécrit", "tags": "a,b"})
+        tagged = next(k for n, k in calls if n == "update")
+        verify("AC-10 · tags présent ⇒ metadata transmis", tagged.get("metadata"), {"tags": "a,b"})
+        verify("AC-10 · texte transmis en text=", tagged.get("text"), "réécrit")
+
+        calls.clear()
+        client.put("/memory/x1", json={"text": "sans étiquettes"})
+        untagged = next(k for n, k in calls if n == "update")
+        verify("AC-10 · tags absent ⇒ AUCUN metadata (compatibilité)", untagged.get("metadata"), None)
+        calls.clear()
+        client.put("/memory/x1", json={"text": "sans étiquettes", "tags": ""})
+        verify("AC-10 · tags \"\" transmis tel quel", next(k for n, k in calls if n == "update").get("metadata"), {"tags": ""})
+
+        # Chemin RÉEL : le payload FINAL, écrit par le vrai AsyncMemory.update.
+        canary_update = LlmCanary()
+        store_update = RealVectorStore()
+        db_update = RealDb()
+
+        class UpdateMemoryFactory:
+            """`from_config` rend l'instance déjà construite : aucune connexion sortante."""
+
+            @classmethod
+            def from_config(cls, config):
+                return real_memory(canary_update, store_update, db_update)
+
+        with patch("http_server.AsyncMemory", UpdateMemoryFactory), patch(
+            "mem0.memory.telemetry.MEM0_TELEMETRY", False
+        ):
+            http_server._mem = None
+            update_client = TestClient(http_server.app, raise_server_exceptions=False)
+            created = update_client.post(
+                "/memory/add",
+                json={"text": "texte d'origine", "agent_id": "P", "tags": "a,b", "infer": False},
+            )
+            memory_id = str(((created.json().get("results") or [{}])[0]).get("id"))
+            rewritten = "texte corrigé mot pour mot — **sans** réécriture"
+            resp = update_client.put(f"/memory/{memory_id}", json={"text": rewritten, "tags": "c"})
+            after_tags = dict(store_update.points[memory_id].payload)
+            second = "texte suivant, étiquettes inchangées"
+            update_client.put(f"/memory/{memory_id}", json={"text": second})
+            after_keep = dict(store_update.points[memory_id].payload)
+            http_server._mem = None
+
+        check("api/AC-9 — PUT écrit le texte reçu VERBATIM dans le payload mem0", resp)
+        check("api/AC-10 — PUT remplace les étiquettes et conserve le reste du payload", resp, extra=after_tags.get("tags") == "c")
+        verify("AC-9 · payload.data = texte reçu", after_tags.get("data"), rewritten)
+        verify("AC-9 · aucune réécriture par le LLM", len(canary_update.calls), 0)
+        verify("AC-10 · étiquettes remplacées", after_tags.get("tags"), "c")
+        verify("AC-10 · tags absent ⇒ étiquettes conservées", (after_keep.get("data"), after_keep.get("tags")), (second, "c"))
+        verify(
+            "AC-9 · historique : chaque ancienne valeur puis la nouvelle",
+            [row[0][1:3] for row in db_update.rows if row[0][3] == "UPDATE"],
+            [("texte d'origine", rewritten), (rewritten, second)],
+        )
+        verify("AC-9 · l'id et la portée survivent à la mise à jour", (after_keep.get("agent_id"), after_keep.get("user_id")), ("P", "moi"))
 
         print()
         print("Conforme." if failures == 0 else f"{failures} échec(s).")
