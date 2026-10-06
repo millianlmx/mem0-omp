@@ -564,7 +564,14 @@ test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans
   const { bin, log } = stubBin("ios-linux-");
   stub(bin, "uname", "printf 'Linux\\n'");
   stub(bin, "xcodebuild", `printf '%s\\n' "$*" >> '${log}'`);
-  const idle = runCheck(copyRepo(), { PATH: `${bin}:${process.env.PATH}`, MEM0_OMP_SKIP_IOS: "" });
+  const idle = runCheck(copyRepo(), {
+    PATH: `${bin}:${process.env.PATH}`,
+    MEM0_OMP_SKIP_IOS: "",
+    // La CI macOS pose MEM0_OMP_REQUIRE_IOS=1 pour TOUTE la suite : sans la
+    // neutraliser ici, la copie « Linux » hériterait du durcissement et la
+    // section rougirait — ce que ce cas ne teste pas.
+    MEM0_OMP_REQUIRE_IOS: "",
+  });
   const idleOut = output(idle);
   assert.equal(idle.status, 0, idleOut);
   assert.ok(idleOut.includes("── App iOS"), idleOut);
