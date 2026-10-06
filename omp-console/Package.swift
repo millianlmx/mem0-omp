@@ -13,6 +13,17 @@ import PackageDescription
 let package = Package(
     name: "omp-console",
     platforms: [.macOS(.v26), .iOS(.v26)],
+    // Les PRODUITS vending du paquet. `ConsoleCore` est celui que consomme l'app
+    // iOS par référence de paquet locale : sans produit déclaré, Xcode ne trouve
+    // rien à lier (« Missing package product 'ConsoleCore' » — mesuré sur la CI
+    // macos-latest, là où le build iOS tourne). `OMPConsole` est déclaré pour que
+    // `swift build` continue de compiler l'app macOS : sans aucun produit SwiftPM
+    // compile toutes les cibles, mais dès qu'une liste de produits existe, ce sont
+    // eux (et leurs dépendances) qui sont construits.
+    products: [
+        .library(name: "ConsoleCore", targets: ["ConsoleCore"]),
+        .executable(name: "OMPConsole", targets: ["OMPConsole"]),
+    ],
     targets: [
         // Cible bibliothèque PARTAGÉE macOS/iOS : les modèles et constantes pures
         // du magasin, le vocabulaire figé des sections et le socle du contrat de
