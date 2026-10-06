@@ -130,6 +130,7 @@ const DROPPED_DIRS: Record<string, true> = {
   ".build-app": true,
   ".build-run": true,
   ".build-tests": true,
+  ".build-ios": true,
   build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
@@ -296,8 +297,9 @@ function runSimulation(repo: Repo): SpawnSyncReturns<string> {
       // qu'un fichier de test gaté sur la profondeur ne se rejoue pas là-bas.
       MEM0_CHECK_DEPTH: String(DEPTH + 1),
       // Et la section « App Swift » y compilerait pour de vrai sans rien prouver
-      // de la release simulée.
+      // de la release simulée — la section « App iOS » de même.
       MEM0_OMP_SKIP_SWIFT_APP: "1",
+      MEM0_OMP_SKIP_IOS: "1",
       GH_JOURNAL: repo.journal,
       PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
     },
@@ -315,6 +317,7 @@ function runCheck(repo: Repo): SpawnSyncReturns<string> {
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
       MEM0_OMP_SKIP_SWIFT_APP: "1",
+      MEM0_OMP_SKIP_IOS: "1",
     },
   });
 }

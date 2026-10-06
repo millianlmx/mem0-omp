@@ -43,6 +43,7 @@ const EXCLUDED_DIRS: Record<string, true> = {
   ".build-run": true,
   ".build-tests": true,
   ".build-core": true,
+  ".build-ios": true,
   build: true,
 };
 
@@ -86,7 +87,7 @@ function runCheck(cwd: string, env: Record<string, string> = {}) {
   return spawnSync("bash", ["scripts/check.sh"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", ...env },
+    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1", ...env },
     timeout: 900_000,
   });
 }

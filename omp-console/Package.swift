@@ -4,11 +4,15 @@
 // pas de Package.resolved à maintenir. La cible minimale macOS 26 est imposée par
 // Liquid Glass ; `platforms` la rend explicite au lieu de la subir (et
 // `.macOS(.v26)` exige swift-tools-version 6.2).
+//
+// `.iOS(.v26)` est déclaré pour la cible partagée `ConsoleCore` : l'app iOS
+// (`omp-console/ios/`) la consomme par référence de paquet locale, et SwiftPM
+// refuse un produit dont la plateforme de la cible n'est pas déclarée.
 import PackageDescription
 
 let package = Package(
     name: "omp-console",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     targets: [
         // Cible bibliothèque PARTAGÉE macOS/iOS : les modèles et constantes pures
         // du magasin, le vocabulaire figé des sections et le socle du contrat de
