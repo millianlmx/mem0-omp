@@ -15,26 +15,48 @@ import Foundation
 final class ScriptedMemoryService: MemoryServing, @unchecked Sendable {
     struct Search: Equatable, Sendable {
         var query: String
-        var scope: String
+        var scope: String?
         var pool: Int
+    }
+
+    struct Add: Equatable, Sendable {
+        var text: String
+        var scope: String
+        var tags: [String]
+    }
+
+    struct Update: Equatable, Sendable {
+        var id: String
+        var text: String
+        var tags: [String]
     }
 
     private let lock = NSLock()
     private var healthQueue: [MemoryHealth]
     private var pageResult: Result<MemoryPage, MemoryServiceError>
     private var searchResult: Result<[MemoryRow], MemoryServiceError>
+    private var graphResult: Result<MemoryGraphEdges, MemoryServiceError>
+    private var writeFailure: MemoryServiceError?
     private var recordedHealth = 0
-    private var recordedAllScopes: [String] = []
+    private var recordedAllScopes: [String?] = []
     private var recordedSearches: [Search] = []
+    private var recordedGraph = 0
+    private var recordedAdds: [Add] = []
+    private var recordedUpdates: [Update] = []
+    private var recordedDeletes: [String] = []
 
     init(
         health: [MemoryHealth] = [MemoryHealth(isAvailable: true, errorMessage: nil)],
         page: Result<MemoryPage, MemoryServiceError> = .success(MemoryPage(total: 0, rows: [])),
-        search: Result<[MemoryRow], MemoryServiceError> = .success([])
+        search: Result<[MemoryRow], MemoryServiceError> = .success([]),
+        graph: Result<MemoryGraphEdges, MemoryServiceError> = .success(MemoryGraphEdges(total: 0, edges: [])),
+        writeFailure: MemoryServiceError? = nil
     ) {
         healthQueue = health
         pageResult = page
         searchResult = search
+        graphResult = graph
+        self.writeFailure = writeFailure
     }
 
     /// `NSLock.lock()`/`unlock()` sont interdits dans un contexte `async` (Swift 6) :
@@ -54,24 +76,58 @@ final class ScriptedMemoryService: MemoryServing, @unchecked Sendable {
         }
     }
 
-    func all(scope: String) async throws -> MemoryPage {
+    func all(scope: String?) async throws -> MemoryPage {
         try withLock {
             recordedAllScopes.append(scope)
             return try pageResult.get()
         }
     }
 
-    func search(query: String, scope: String, pool: Int) async throws -> [MemoryRow] {
+    func search(query: String, scope: String?, pool: Int) async throws -> [MemoryRow] {
         try withLock {
             recordedSearches.append(Search(query: query, scope: scope, pool: pool))
             return try searchResult.get()
         }
     }
 
+    func graph() async throws -> MemoryGraphEdges {
+        try withLock {
+            recordedGraph += 1
+            return try graphResult.get()
+        }
+    }
+
+    func add(text: String, scope: String, tags: [String]) async throws {
+        try withLock {
+            if let writeFailure { throw writeFailure }
+            recordedAdds.append(Add(text: text, scope: scope, tags: tags))
+        }
+    }
+
+    func update(id: String, text: String, tags: [String]) async throws {
+        try withLock {
+            if let writeFailure { throw writeFailure }
+            recordedUpdates.append(Update(id: id, text: text, tags: tags))
+        }
+    }
+
+    func delete(id: String) async throws {
+        try withLock {
+            if let writeFailure { throw writeFailure }
+            recordedDeletes.append(id)
+        }
+    }
+
     var healthCalls: Int { withLock { recordedHealth } }
-    var allScopes: [String] { withLock { recordedAllScopes } }
+    var allScopes: [String?] { withLock { recordedAllScopes } }
     var searches: [Search] { withLock { recordedSearches } }
-    var requestCount: Int { withLock { recordedHealth + recordedAllScopes.count + recordedSearches.count } }
+    var graphCalls: Int { withLock { recordedGraph } }
+    var adds: [Add] { withLock { recordedAdds } }
+    var updates: [Update] { withLock { recordedUpdates } }
+    var deletes: [String] { withLock { recordedDeletes } }
+    var requestCount: Int {
+        withLock { recordedHealth + recordedAllScopes.count + recordedSearches.count + recordedGraph }
+    }
 }
 
 // MARK: - Fabriques
@@ -81,9 +137,40 @@ func memoryRow(
     text: String,
     score: Double? = nil,
     updatedAt: String? = nil,
+    scope: String? = nil,
     tags: [String] = []
 ) -> MemoryRow {
-    MemoryRow(id: id, text: text, updatedAt: updatedAt, semanticScore: score, tags: tags)
+    MemoryRow(id: id, text: text, updatedAt: updatedAt, semanticScore: score, tags: tags, agentId: scope)
+}
+
+/// Un modèle de graphe réel branché sur la doublure : portée FIXE, racine de
+/// support JETABLE (les liens manuels y vivent) et placement à graine et itérations
+/// fixées par l'appelant — la suite reste rapide et déterministe.
+@MainActor
+func memoryGraphModel(
+    service: ScriptedMemoryService,
+    scope: String? = "memoire-mem0",
+    paths: AppPaths? = nil,
+    iterations: Int = 12
+) -> MemoryGraphModel {
+    MemoryGraphModel(
+        service: service,
+        environment: [:],
+        paths: paths ?? AppPaths(
+            supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)
+        ),
+        scope: { scope },
+        layoutIterations: iterations
+    )
+}
+
+/// Une racine de support JETABLE pour les tests qui écrivent (liens manuels) :
+/// l'appelant la supprime, elle n'existe jamais ailleurs.
+func memoryTemporaryPaths() -> AppPaths {
+    AppPaths(
+        supportRoot: FileManager.default.temporaryDirectory
+            .appendingPathComponent("omp-console-memory-\(UUID().uuidString)", isDirectory: true)
+    )
 }
 
 /// Un modèle réel branché sur la doublure : portée FIXE (le projet ouvert n'est pas

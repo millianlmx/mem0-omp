@@ -4,13 +4,16 @@ natif (TypeScript), sans passer par un transport MCP/stdio.
 
 Lancée en continu par docker-compose (uvicorn), écoute sur 0.0.0.0:8321.
 """
+import asyncio
 import json
 import os
 from datetime import datetime, timezone
 
+import numpy as np
 from fastapi import FastAPI, Header, HTTPException
 from mem0 import AsyncMemory
 from pydantic import BaseModel
+from qdrant_client import models as qdrant_models
 
 from memory_config import CONFIG, USER
 
@@ -124,6 +127,125 @@ async def read_all_memories(m: AsyncMemory, filters: dict) -> list[dict]:
     return memories
 
 
+# ---------------------------------------------------------------------------
+# Graphe des souvenirs (S-3) : les arêtes de proximité sémantique, calculées sur
+# les vecteurs DÉJÀ stockés dans Qdrant. Route de LECTURE seule : aucun appel
+# oMLX, aucune écriture, aucun seuil choisi par l'appelant.
+# ---------------------------------------------------------------------------
+
+# Un voisin est retenu à partir de ce cosinus, et au plus GRAPH_TOP_K par
+# souvenir (les meilleurs) : constantes du SERVICE, l'app ne les choisit pas.
+GRAPH_THRESHOLD = 0.75
+GRAPH_TOP_K = 8
+# Le scroll Qdrant est paginé (`next_page_offset`), et la similarité se calcule
+# par blocs de lignes pour borner la mémoire du service. Mesuré sur la pile
+# locale le 2026-10-06 : 1 892 points, ~0,5 s, réponse ~250 Ko pour 2 204 arêtes.
+GRAPH_PAGE = 1000
+GRAPH_BLOCK = 256
+
+
+def dense_vector(vector: object) -> list[float] | None:
+    """Le vecteur DENSE d'un point Qdrant, dans ses DEUX formes.
+
+    La collection rend `{"": [...], "bm25": {...}}` pour les points hybrides et
+    une liste nue pour les points antérieurs à l'hybridation : les deux portent
+    le dense. Un point sans clé `""` (ou au vecteur vide) n'a pas de dense — il
+    est écarté des arêtes, jamais une exception.
+    """
+    if isinstance(vector, dict):
+        vector = vector.get("")
+    if isinstance(vector, list) and vector:
+        return [float(value) for value in vector]
+    return None
+
+
+def read_dense_vectors(m: AsyncMemory, filters: dict) -> dict[str, list[float]]:
+    """Les vecteurs denses de la scope : id de souvenir → vecteur.
+
+    Le POINT Qdrant porte l'id du souvenir — mem0 insère `str(uuid4())` comme id
+    de point et ne pose aucune clé `id` dans le payload — donc la clé rendue est
+    directement celle des lignes de /memory/all. Lecture paginée jusqu'à
+    épuisement (`next_page_offset` absent) ; l'échec de Qdrant remonte tel quel,
+    jamais une liste partielle.
+    """
+    store = m.vector_store
+    conditions = [
+        qdrant_models.FieldCondition(key=key, match=qdrant_models.MatchValue(value=value))
+        for key, value in filters.items()
+    ]
+    query_filter = qdrant_models.Filter(must=conditions) if conditions else None
+    vectors: dict[str, list[float]] = {}
+    offset = None
+    while True:
+        points, offset = store.client.scroll(
+            collection_name=store.collection_name,
+            scroll_filter=query_filter,
+            limit=GRAPH_PAGE,
+            offset=offset,
+            with_payload=False,
+            with_vectors=True,
+        )
+        for point in points:
+            dense = dense_vector(point.vector)
+            if dense is not None:
+                vectors[str(point.id)] = dense
+        if offset is None:
+            break
+    return vectors
+
+
+def graph_edges(
+    vectors: dict[str, list[float]],
+    threshold: float = GRAPH_THRESHOLD,
+    top_k: int = GRAPH_TOP_K,
+) -> list[dict]:
+    """Les arêtes non orientées entre souvenirs proches (S-3), numpy pur.
+
+    Pour chaque souvenir, ses `top_k` meilleurs voisins de cosinus ≥ `threshold`.
+    Une arête n'est émise qu'UNE fois, `source < target` (ordre
+    lexicographique) ; le tri final est score décroissant, puis source, puis
+    target — déterministe. Un vecteur de norme nulle n'a pas de cosinus : il est
+    écarté, jamais un score inventé. Moins de deux souvenirs ⇒ aucune arête.
+    """
+    ids = sorted(vectors)
+    if len(ids) < 2:
+        return []
+    matrix = np.array([vectors[key] for key in ids], dtype=np.float64)
+    norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+    # Un vecteur nul ne peut pas être normalisé : il est mis hors jeu (`inf` ⇒
+    # cosinus nul), et ne peut donc jamais atteindre le seuil.
+    norms[norms == 0] = np.inf
+    unit = matrix / norms
+
+    edges: dict[tuple[str, str], float] = {}
+    for start in range(0, len(ids), GRAPH_BLOCK):
+        block = unit[start : start + GRAPH_BLOCK]
+        scores = block @ unit.T
+        for row in range(scores.shape[0]):
+            index = start + row
+            line = scores[row]
+            line[index] = -np.inf  # jamais son propre voisin
+            above = np.flatnonzero(line >= threshold)
+            if above.size == 0:
+                continue
+            # Les meilleurs d'abord ; à score égal, l'id décide (déterministe).
+            ranked = sorted(above.tolist(), key=lambda j: (-float(line[j]), ids[j]))
+            for j in ranked[:top_k]:
+                a, b = ids[index], ids[j]
+                source, target = (a, b) if a < b else (b, a)
+                score = float(line[j])
+                previous = edges.get((source, target))
+                if previous is None or score > previous:
+                    edges[(source, target)] = score
+
+    return [
+        {"source": source, "target": target, "score": score}
+        for (source, target), score in sorted(
+            edges.items(), key=lambda item: (-item[1], item[0][0], item[0][1])
+        )
+    ]
+
+
 class AddRequest(BaseModel):
     text: str
     agent_id: str | None = None
@@ -139,6 +261,10 @@ class AddProcedureRequest(BaseModel):
 
 class UpdateRequest(BaseModel):
     text: str
+    # Étiquettes REMPLACÉES quand le champ est présent (`""` les retire) ; ABSENT,
+    # les étiquettes existantes sont conservées — compatibilité du plugin, qui
+    # n'envoie que `text`.
+    tags: str | None = None
 
 
 class SearchRequest(BaseModel):
@@ -231,6 +357,25 @@ async def get_all_memories(agent_id: str | None = None, x_mem0_token: str | None
     return {"total": len(memories), "results": memories}
 
 
+@app.get("/memory/graph")
+async def memory_graph(x_mem0_token: str | None = Header(default=None)):
+    """Les arêtes de proximité sémantique entre les souvenirs de la scope (S-3).
+
+    `total` compte les souvenirs porteurs d'un vecteur dense ; les arêtes sont
+    calculées sur ces vecteurs, jamais réécrites. L'échec de la lecture Qdrant
+    remonte en 500 : la réponse est complète ou elle n'est pas.
+    """
+    check_token(x_mem0_token)
+    m = await get_memory()
+    vectors = await asyncio.to_thread(read_dense_vectors, m, scope_filters(None))
+    return {
+        "total": len(vectors),
+        "threshold": GRAPH_THRESHOLD,
+        "top_k": GRAPH_TOP_K,
+        "edges": graph_edges(vectors),
+    }
+
+
 @app.put("/memory/{memory_id}")
 async def update_memory(memory_id: str, req: UpdateRequest, x_mem0_token: str | None = Header(default=None)):
     """Réécriture intégrale d'un souvenir.
@@ -239,10 +384,14 @@ async def update_memory(memory_id: str, req: UpdateRequest, x_mem0_token: str | 
     complète l'entrée au lieu d'en créer une deuxième. `update()` conserve l'id et
     empile une révision dans l'historique, donc l'état précédent reste consultable
     via /memory/{id}/history.
+
+    `tags` présent (même `""`) remplace les étiquettes ; absent, elles ne sont pas
+    touchées — c'est le contrat du plugin, qui n'envoie que `text`.
     """
     check_token(x_mem0_token)
     m = await get_memory()
-    return await m.update(memory_id=memory_id, text=req.text)
+    metadata = {"tags": req.tags} if "tags" in req.model_fields_set else None
+    return await m.update(memory_id=memory_id, text=req.text, metadata=metadata)
 
 
 @app.delete("/memory/{memory_id}")

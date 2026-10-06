@@ -44,6 +44,32 @@ enum MemoryScope {
         return (primary as NSString).lastPathComponent
     }
 
+    // MARK: - Le projet ouvert
+
+    /// La portée du projet OUVERT, ou `nil` : aucune requête réseau (S-4), la portée
+    /// suit le projet de la fenêtre « Session OMP » et est donc résolue à chaque
+    /// chargement, jamais figée au lancement. UNE formule, partagée par la liste et
+    /// par le graphe.
+    ///
+    /// `@MainActor` : ses arguments (`UserDefaults`, `FileManager`) ne sont pas
+    /// `Sendable`, et les deux appelants sont déjà sur l'acteur principal.
+    @MainActor
+    static func currentProject(
+        defaults: UserDefaults = .standard,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        fileManager: FileManager = .default
+    ) async -> String? {
+        guard let root = ProjectRoot.resolve(defaults: defaults, fileManager: fileManager) else {
+            return nil
+        }
+        switch GitBinary.resolve(environment: environment, path: root.path, fileManager: fileManager) {
+        case let .success(binary):
+            return await scope(projectRoot: root.path, environment: environment, git: GitCLI(binary: binary))
+        case .failure:
+            return nil
+        }
+    }
+
     // MARK: - Manifestes
 
     /// `FileManager.default` est employé directement : le type n'est pas `Sendable`

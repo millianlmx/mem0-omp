@@ -34,18 +34,40 @@ struct MemoryServiceConfig: Equatable, Sendable {
 
 // MARK: - Routes (S-2)
 
-/// Les routes de la fonctionnalité, et RIEN d'autre (S-2) : deux lectures et une
-/// recherche. Aucun constructeur d'écriture n'existe dans ce module, et
-/// `HTTPMemoryService` ne bâtit ses URL qu'à partir de cette liste.
+/// Les routes de la fonctionnalité : trois lectures (dont le graphe) et une
+/// recherche. Les CHEMINS D'ÉCRITURE n'existent pas ici — ils se composent par
+/// identifiant, via `MemoryWritePath`, jamais par concaténation ad hoc.
 enum MemoryRoute: String, CaseIterable, Sendable {
     case health = "/health"
     case all = "/memory/all"
     case search = "/memory/search"
+    case graph = "/memory/graph"
 
     var method: String {
         switch self {
-        case .health, .all: "GET"
+        case .health, .all, .graph: "GET"
         case .search: "POST"
+        }
+    }
+}
+
+/// Les chemins d'ÉCRITURE (S-8, S-9, S-10) : le chemin d'un souvenir se compose par
+/// identifiant. `PUT` et `DELETE` partagent le même chemin, comme le service.
+enum MemoryWritePath: Equatable, Sendable {
+    case add
+    case memory(String)
+
+    var path: String {
+        switch self {
+        case .add: "/memory/add"
+        case let .memory(id): "/memory/\(id)"
+        }
+    }
+
+    var method: String {
+        switch self {
+        case .add: "POST"
+        case .memory: "PUT"
         }
     }
 }
@@ -61,14 +83,50 @@ struct MemoryHealth: Equatable, Sendable {
 }
 
 /// Une ligne de souvenir, réduite à ce que l'app affiche (S-1, S-3, S-5) : son
-/// identifiant, son texte COMPLET, sa date, son cosinus brut s'il en porte et ses
-/// étiquettes (`metadata.tags`, omp-console-redesign S-18 R7).
+/// identifiant, son texte COMPLET, sa date, son cosinus brut s'il en porte, ses
+/// étiquettes (`metadata.tags`, omp-console-redesign S-18 R7) et sa portée
+/// (`agent_id`, S-2 — la ligne d'un graphe porte la sienne).
 struct MemoryRow: Identifiable, Equatable, Sendable {
     var id: String
     var text: String
     var updatedAt: String?
     var semanticScore: Double?
     var tags: [String] = []
+    var agentId: String? = nil
+}
+
+/// Une arête de proximité sémantique rendue par le service (S-3) : deux ids de
+/// souvenirs et leur cosinus. `source < target` est garanti par le service.
+struct MemoryGraphEdge: Equatable, Sendable {
+    var source: String
+    var target: String
+    var score: Double
+}
+
+/// La réponse de `GET /memory/graph`, décodée TOLÉRAMMENT : une arête dont les
+/// extrémités ne sont pas deux chaînes et le score un nombre fini est ignorée — une
+/// réponse partiellement illisible ne fait pas tomber le graphe entier.
+struct MemoryGraphEdges: Equatable, Sendable {
+    var total: Int
+    var edges: [MemoryGraphEdge]
+
+    static func decode(_ json: Any) -> MemoryGraphEdges {
+        let object = json as? [String: Any]
+        let raw = object?["edges"] as? [Any] ?? []
+        var edges: [MemoryGraphEdge] = []
+        for entry in raw {
+            guard let edge = entry as? [String: Any],
+                  let source = edge["source"] as? String,
+                  let target = edge["target"] as? String,
+                  let score = edge["score"] as? NSNumber,
+                  !MemoryJSON.isBoolean(score) else { continue }
+            let value = score.doubleValue
+            guard value.isFinite else { continue }
+            edges.append(MemoryGraphEdge(source: source, target: target, score: value))
+        }
+        let total = object?["total"] as? Int ?? edges.count
+        return MemoryGraphEdges(total: total, edges: edges)
+    }
 }
 
 /// Le sommaire d'une portée (S-3) : le compte `total` du service et ses lignes,
@@ -148,13 +206,23 @@ enum MemoryJSON {
             .filter { !$0.isEmpty }
     }
 
+    /// `agent_id` de la ligne (S-2) : la portée du souvenir, absente ⇒ `nil` (la
+    /// ligne reste un nœud, regroupé sous « Sans projet »).
+    static func agentId(_ json: Any) -> String? {
+        guard let object = json as? [String: Any], let raw = object["agent_id"], !(raw is NSNull) else {
+            return nil
+        }
+        return raw as? String
+    }
+
     static func row(_ json: Any) -> MemoryRow {
         MemoryRow(
             id: identifier(json),
             text: line(json),
             updatedAt: updatedAt(json),
             semanticScore: score(json),
-            tags: tags(json)
+            tags: tags(json),
+            agentId: agentId(json)
         )
     }
 
@@ -171,6 +239,36 @@ enum MemoryJSON {
             return text
         }
         return "\(value)"
+    }
+}
+
+// MARK: - Étiquettes (S-8)
+
+/// La normalisation des étiquettes d'un souvenir, en UNE formule partagée par la
+/// feuille d'édition, celle de création et le client HTTP : découpage aux virgules,
+/// trim, segments vides retirés, doublons retirés (l'ordre d'apparition est
+/// conservé), jointure par « , ». `""` signifie « aucune étiquette ».
+enum MemoryTags {
+    /// Les étiquettes d'un champ de saisie, dans l'ordre d'apparition.
+    static func list(_ raw: String) -> [String] {
+        var seen: Set<String> = []
+        var kept: [String] = []
+        for segment in raw.split(separator: ",") {
+            let tag = segment.trimmingCharacters(in: .whitespaces)
+            guard !tag.isEmpty, seen.insert(tag).inserted else { continue }
+            kept.append(tag)
+        }
+        return kept
+    }
+
+    /// La forme envoyée au service : `"a,b"`, ou `""` pour aucune.
+    static func normalized(_ tags: [String]) -> String {
+        tags.joined(separator: ",")
+    }
+
+    /// La forme d'un champ de saisie : `"a, b"`.
+    static func display(_ tags: [String]) -> String {
+        tags.joined(separator: ", ")
     }
 }
 
@@ -215,20 +313,35 @@ enum MemoryServiceError: Error, Equatable, Sendable {
 
 // MARK: - Protocole et implémentation HTTP
 
-/// La surface du service, en LECTURE seule (S-2) : aucune méthode d'écriture
-/// n'existe — il n'y a rien à appeler pour ajouter, modifier ou supprimer.
+/// La surface du service : trois lectures (sommaire, recherche, graphe) et les
+/// écritures du mode graphe (créer, corriger, supprimer). Chaque écriture est une
+/// méthode nommée — la vue ne compose jamais une requête.
 protocol MemoryServing: Sendable {
     func health() async -> MemoryHealth
-    func search(query: String, scope: String, pool: Int) async throws -> [MemoryRow]
-    func all(scope: String) async throws -> MemoryPage
+    /// `scope` nul ⇒ AUCUNE query `agent_id` : toutes les portées du service (S-2).
+    func all(scope: String?) async throws -> MemoryPage
+    /// `scope` nul ⇒ recherche toutes portées (S-7) ; la liste, elle, passe
+    /// toujours la portée du projet.
+    func search(query: String, scope: String?, pool: Int) async throws -> [MemoryRow]
+    func graph() async throws -> MemoryGraphEdges
+    /// `POST /memory/add` avec `infer: false` : stockage mot pour mot, sans LLM.
+    /// `tags` vide ⇒ le champ n'est pas envoyé.
+    func add(text: String, scope: String, tags: [String]) async throws
+    /// `PUT /memory/{id}` : le texte est écrit TEL QUEL, `tags` remplace les
+    /// étiquettes (`""` les retire, S-8).
+    func update(id: String, text: String, tags: [String]) async throws
+    func delete(id: String) async throws
 }
 
 struct HTTPMemoryService: MemoryServing {
     let config: MemoryServiceConfig
     let session: URLSession
 
-    /// Budgets d'INACTIVITÉ, miroir de `TIMEOUT` (config.ts:13).
+    /// Budgets d'INACTIVITÉ, miroir de `TIMEOUT` (config.ts:13). Le graphe a le
+    /// sien (20 s) : il lit toute la collection et calcule les similarités côté
+    /// service, ce qui ne coûte pas le temps d'une lecture de liste.
     static let searchTimeout: TimeInterval = 20
+    static let graphTimeout: TimeInterval = 20
     static let otherTimeout: TimeInterval = 10
 
     init(config: MemoryServiceConfig, session: URLSession = .shared) {
@@ -248,9 +361,11 @@ struct HTTPMemoryService: MemoryServing {
         }
     }
 
-    func all(scope: String) async throws -> MemoryPage {
+    func all(scope: String?) async throws -> MemoryPage {
         var components = URLComponents(url: url(for: .all), resolvingAgainstBaseURL: false)
-        components?.queryItems = [URLQueryItem(name: "agent_id", value: scope)]
+        // Sans portée, AUCUNE query n'est posée : le service rend alors toutes les
+        // portées (`scope_filters` n'ajoute que `user_id`).
+        components?.queryItems = scope.map { [URLQueryItem(name: "agent_id", value: $0)] }
         guard let url = components?.url else {
             throw MemoryServiceError.malformedResponse("URL /memory/all invalide")
         }
@@ -258,26 +373,75 @@ struct HTTPMemoryService: MemoryServing {
         return MemoryPage.decode(json)
     }
 
-    func search(query: String, scope: String, pool: Int) async throws -> [MemoryRow] {
+    func search(query: String, scope: String?, pool: Int) async throws -> [MemoryRow] {
         // Le corps EXACT de S-1 : `limit` = pool sur-échantillonné, seuil du plugin,
-        // `explain` pour obtenir le cosinus brut, `filters` nul.
-        let body: [String: Any] = [
+        // `explain` pour obtenir le cosinus brut, `filters` nul. `agent_id` n'est
+        // posé que si une portée est demandée (S-7 : le graphe cherche partout).
+        var body: [String: Any] = [
             "query": query,
-            "agent_id": scope,
             "limit": pool,
             "filters": NSNull(),
             "threshold": MemorySearch.threshold,
             "explain": true,
         ]
+        if let scope { body["agent_id"] = scope }
         let json = try await send(url(for: .search), method: MemoryRoute.search.method, body: body, timeout: Self.searchTimeout)
         return MemoryJSON.rows(json).map(MemoryJSON.row)
     }
 
+    func graph() async throws -> MemoryGraphEdges {
+        let json = try await send(url(for: .graph), method: MemoryRoute.graph.method, body: nil, timeout: Self.graphTimeout)
+        return MemoryGraphEdges.decode(json)
+    }
+
+    func add(text: String, scope: String, tags: [String]) async throws {
+        var body: [String: Any] = [
+            "text": text,
+            "agent_id": scope,
+            // REQUIS : sans lui, mem0 ferait résumer le texte par le LLM au lieu de
+            // le stocker mot pour mot (S-10).
+            "infer": false,
+        ]
+        let normalized = MemoryTags.normalized(tags)
+        if !normalized.isEmpty { body["tags"] = normalized }
+        _ = try await send(
+            url(for: MemoryWritePath.add.path),
+            method: MemoryWritePath.add.method,
+            body: body,
+            timeout: Self.otherTimeout
+        )
+    }
+
+    func update(id: String, text: String, tags: [String]) async throws {
+        // `tags` est TOUJOURS posé (chaîne vide comprise) : c'est lui qui remplace
+        // les étiquettes, et la fiche les affiche telles qu'elle les a saisies.
+        let body: [String: Any] = ["text": text, "tags": MemoryTags.normalized(tags)]
+        _ = try await send(
+            url(for: MemoryWritePath.memory(id).path),
+            method: MemoryWritePath.memory(id).method,
+            body: body,
+            timeout: Self.otherTimeout
+        )
+    }
+
+    func delete(id: String) async throws {
+        _ = try await send(
+            url(for: MemoryWritePath.memory(id).path),
+            method: "DELETE",
+            body: nil,
+            timeout: Self.otherTimeout
+        )
+    }
+
     /// L'URL d'une route, quelle que soit la barre oblique finale de `MEM0_HTTP_URL`.
     private func url(for route: MemoryRoute) -> URL {
+        url(for: route.rawValue)
+    }
+
+    private func url(for path: String) -> URL {
         var base = config.baseURL.absoluteString
         while base.hasSuffix("/") { base.removeLast() }
-        return URL(string: base + route.rawValue) ?? config.baseURL
+        return URL(string: base + path) ?? config.baseURL
     }
 
     private func send(_ url: URL, method: String, body: [String: Any]?, timeout: TimeInterval) async throws -> Any {

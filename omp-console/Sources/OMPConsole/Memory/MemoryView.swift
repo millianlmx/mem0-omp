@@ -17,26 +17,52 @@ struct MemoryView: ConsoleSectionView {
     static let section = ConsoleSection.memory
 
     @ObservedObject var model: MemoryModel
+    /// Le modèle du MODE GRAPHE (S-1) : il vit à l'échelle de l'app, comme celui de
+    /// la liste, pour que la position, la sélection et les filtres survivent au
+    /// passage d'une section à l'autre.
+    @ObservedObject var graph: MemoryGraphModel
 
     var body: some View {
         VStack(spacing: 0) {
-            // Le prérequis système manquant est NOMMÉ au-dessus de la liste (S-6,
+            // Le prérequis système manquant est NOMMÉ au-dessus du contenu (S-6,
             // AC-6) : lecture seule, aucun geste — oMLX n'est ni installé ni
             // configuré par l'app.
             if let banner = model.omlxBanner {
                 omlxBannerView(banner)
             }
-            content
+            if graph.shown {
+                MemoryGraphView(model: graph)
+            } else {
+                content
+            }
         }
-        // Le champ de recherche standard, dans la barre d'outils : Retour lance
-        // la recherche, la croix (ou un champ vidé) ramène au sommaire.
+        // Le champ de recherche standard, dans la barre d'outils : chaque MODE garde
+        // SA requête (S-7) — un aller-retour ne perd ni celle de la liste ni celle du
+        // graphe. Retour lance la recherche, la croix (ou un champ vidé) ramène la
+        // liste au sommaire et lève la restriction du graphe.
         .searchable(text: queryBinding, placement: .toolbar, prompt: Text(MemoryText.searchPrompt))
-        .onSubmit(of: .search) { Task { await model.search() } }
+        .onSubmit(of: .search) {
+            Task {
+                if graph.shown {
+                    await graph.search()
+                } else {
+                    await model.search()
+                }
+            }
+        }
         .toolbar { toolbarContent }
         // Le premier chargement suit l'apparition de la section ; la requête en
         // vol est annulée quand elle disparaît (S-6 : aucun sondage périodique).
         .task { await model.refresh() }
-        .onDisappear { model.suspend() }
+        .onDisappear {
+            model.suspend()
+            graph.suspend()
+        }
+        // Chaque écriture du graphe recharge la LISTE : elle doit refléter le
+        // changement sans geste (AC-10, AC-11, AC-12).
+        .onChange(of: graph.mutations) { _, _ in
+            Task { await model.refresh() }
+        }
     }
 
     // MARK: - Prérequis oMLX (S-6, AC-6)
@@ -61,10 +87,23 @@ struct MemoryView: ConsoleSectionView {
 
     // MARK: - Barre d'outils
 
-    /// Deux commandes sans rapport : `ToolbarSpacer(.fixed)` les sépare plutôt que
-    /// de les fondre dans un même verre. Aucun `.buttonStyle` : le verre est celui
-    /// du système.
+    /// La bascule liste ⇄ graphe (S-1) : chaque libellé nomme le mode à ATTEINDRE.
+    /// « Sommaire » ne concerne que la liste (désactivé en mode graphe) ; « Rafraîchir »
+    /// agit sur le mode courant. `ToolbarSpacer(.fixed)` sépare les commandes sans
+    /// rapport plutôt que de les fondre dans un même verre.
     @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                Task { await toggleMode() }
+            } label: {
+                Label(
+                    graph.shown ? MemoryText.listButton : MemoryText.graphButton,
+                    systemImage: graph.shown ? "list.bullet" : "point.3.connected.trianglepath.dotted"
+                )
+            }
+            .help(graph.shown ? MemoryText.listHelp : MemoryText.graphHelp)
+            .accessibilityIdentifier("memoire.graph.toggle")
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 Task { await model.showSummary() }
@@ -72,27 +111,49 @@ struct MemoryView: ConsoleSectionView {
                 Label(MemoryText.summaryButton, systemImage: "list.bullet")
             }
             .help(MemoryText.summaryHelp)
-            .disabled(!model.canShowSummary)
+            .disabled(graph.shown || !model.canShowSummary)
             .accessibilityIdentifier("memoire.summary.button")
         }
         ToolbarSpacer(.fixed, placement: .primaryAction)
         ToolbarItem(placement: .primaryAction) {
             Button {
-                Task { await model.refresh() }
+                Task {
+                    if graph.shown {
+                        await graph.refresh()
+                    } else {
+                        await model.refresh()
+                    }
+                }
             } label: {
                 Label(MemoryText.refresh, systemImage: "arrow.clockwise")
             }
             .help(MemoryText.refreshHelp)
             .keyboardShortcut("r", modifiers: .command)
-            .disabled(!model.canRefresh)
+            .disabled(graph.shown ? graph.state == .loading : !model.canRefresh)
             .accessibilityIdentifier("memoire.refresh")
+        }
+    }
+
+    /// La bascule : activer charge le graphe s'il ne l'a jamais fait ; revenir à la
+    /// liste ne perd RIEN de son état (ni position, ni sélection, ni filtres).
+    private func toggleMode() async {
+        if graph.shown {
+            graph.hide()
+        } else {
+            await graph.activate()
         }
     }
 
     private var queryBinding: Binding<String> {
         Binding(
-            get: { model.query },
-            set: { model.updateQuery($0) }
+            get: { graph.shown ? graph.query : model.query },
+            set: { text in
+                if graph.shown {
+                    graph.updateQuery(text)
+                } else {
+                    model.updateQuery(text)
+                }
+            }
         )
     }
 
@@ -229,9 +290,14 @@ struct MemoryView: ConsoleSectionView {
 /// (date relative · étiquettes), le texte COMPLET rendu en Markdown et
 /// sélectionnable, le bouton « Copier » ; l'identifiant, la portée et la
 /// pertinence restent repliés sous « Détails techniques ».
-private struct MemoryDetailView: View {
+///
+/// Le pied est un `@ViewBuilder` : la LISTE n'en pose aucun (elle reste en lecture),
+/// le MODE GRAPHE y met ses actions et ses liens manuels (S-8, S-9, S-11). Le
+/// contenu de lecture, lui, est le même dans les deux modes (S-5).
+struct MemoryDetailView<Footer: View>: View {
     let row: MemoryRow
     let scope: String?
+    @ViewBuilder var footer: () -> Footer
 
     var body: some View {
         ScrollView {
@@ -246,6 +312,7 @@ private struct MemoryDetailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 technicalDetails
+                footer()
             }
             .padding(20)
             .frame(maxWidth: 720, alignment: .leading)
@@ -310,6 +377,13 @@ private struct MemoryDetailView: View {
         .font(.callout)
         .foregroundStyle(.secondary)
         .accessibilityIdentifier("memoire.detail.technical")
+    }
+}
+
+/// Le détail SANS pied : c'est celui de la LISTE, en lecture seule (AC-4).
+extension MemoryDetailView where Footer == EmptyView {
+    init(row: MemoryRow, scope: String?) {
+        self.init(row: row, scope: scope) { EmptyView() }
     }
 }
 

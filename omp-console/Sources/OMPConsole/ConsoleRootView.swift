@@ -41,6 +41,9 @@ struct ConsoleRootView: View {
     /// Le modèle de la section « Mémoire » : même raison, la portée et la liste
     /// survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
+    /// Le modèle du MODE GRAPHE de la mémoire (S-1) : à l'échelle de l'app, comme
+    /// celui de la liste.
+    @ObservedObject var memoryGraph: MemoryGraphModel
     /// Le modèle de la feuille Contrat (S-7) : la feuille est présentée par la
     /// racine, comme les autres — une seule à la fois.
     @ObservedObject var contract: ContractModel
@@ -144,6 +147,7 @@ struct ConsoleRootView: View {
                 actions: actions,
                 projectModel: projectModel,
                 memoryModel: memoryModel,
+                memoryGraph: memoryGraph,
                 contract: contract,
                 alerts: alerts,
                 setup: setup,

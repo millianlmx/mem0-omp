@@ -70,6 +70,9 @@ struct SectionDetail: View {
     /// Le modèle de la section « Mémoire » : même raison, la portée calculée, la
     /// liste affichée et la sélection survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
+    /// Le modèle du MODE GRAPHE de la mémoire (S-1) : à l'échelle de l'app, comme
+    /// celui de la liste.
+    @ObservedObject var memoryGraph: MemoryGraphModel
     /// Le modèle de la feuille Contrat (S-7) : l'Accueil et Pipelines ouvrent la
     /// feuille depuis leurs gestes, la racine la présente.
     @ObservedObject var contract: ContractModel
@@ -102,7 +105,7 @@ struct SectionDetail: View {
         case .stats: StatsSectionView(model: statsModel)
         case .files: FilesView(model: filesModel)
         case .project: ProjectView(model: projectModel)
-        case .memory: MemoryView(model: memoryModel)
+        case .memory: MemoryView(model: memoryModel, graph: memoryGraph)
         }
     }
 }

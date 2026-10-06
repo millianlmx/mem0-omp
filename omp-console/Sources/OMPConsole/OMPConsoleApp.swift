@@ -37,6 +37,10 @@ struct OMPConsoleApp: App {
     @StateObject private var projectModel = ProjectConsoleModel()
     @StateObject private var statsModel = StatsModel()
     @StateObject private var memoryModel = MemoryModel()
+    /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, comme
+    /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
+    /// sélection, ni les filtres.
+    @StateObject private var memoryGraphModel = MemoryGraphModel()
     @StateObject private var contractModel = ContractModel()
     @StateObject private var homeModel: HomeModel
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
@@ -79,6 +83,7 @@ struct OMPConsoleApp: App {
                 actions: actionsModel,
                 projectModel: projectModel,
                 memoryModel: memoryModel,
+                memoryGraph: memoryGraphModel,
                 contract: contractModel,
                 home: homeModel,
                 setup: setupModel,

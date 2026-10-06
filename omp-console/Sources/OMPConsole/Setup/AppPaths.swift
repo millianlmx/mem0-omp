@@ -76,6 +76,13 @@ struct AppPaths: Equatable, Sendable {
         stackRoot.appendingPathComponent("env")
     }
 
+    /// `<racine>/memory-links.json` : les liens MANUELS du graphe de la mémoire
+    /// (S-11). C'est un artefact de la vue, pas une donnée mem0 — il vit donc sous
+    /// la racine de l'app, comme le reste de son état.
+    var memoryLinks: URL {
+        supportRoot.appendingPathComponent(MemoryLinkStore.fileName)
+    }
+
     /// L'image de machine retenue au dernier `machine init` de l'app.
     var machineState: URL {
         stackRoot.appendingPathComponent("machine.json")

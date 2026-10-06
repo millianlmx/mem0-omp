@@ -87,17 +87,172 @@ func ac1SelectionMatchesSelectRelevant() {
     #expect(below.scored == 1)
 }
 
-// MARK: - S-2 : lecture seule
+// MARK: - Routes et écritures (S-2, S-3, S-8, S-9, S-10)
 
-@Test("memoire-mem0/AC-2 : la liste des routes constructibles est exactement /health, /memory/all et /memory/search")
-func ac2RoutesAreReadOnly() {
-    #expect(MemoryRoute.allCases.map(\.rawValue) == ["/health", "/memory/all", "/memory/search"])
+@Test("graph-based-memeries-view/AC-4 : la liste des routes et des chemins d'écriture est figée")
+func ac4RoutesAndWritePathsAreFrozen() {
+    #expect(MemoryRoute.allCases.map(\.rawValue) == ["/health", "/memory/all", "/memory/search", "/memory/graph"])
     #expect(MemoryRoute.health.method == "GET")
     #expect(MemoryRoute.all.method == "GET")
     #expect(MemoryRoute.search.method == "POST")
-    // Aucune route d'écriture n'existe : ni PUT, ni DELETE, ni /memory/add.
-    #expect(!MemoryRoute.allCases.contains { $0.rawValue.contains("add") })
+    #expect(MemoryRoute.graph.method == "GET")
     #expect(Set(MemoryRoute.allCases.map(\.method)).isSubset(of: ["GET", "POST"]))
+
+    // Les chemins d'écriture se composent par identifiant, et rien d'autre.
+    #expect(MemoryWritePath.add.path == "/memory/add")
+    #expect(MemoryWritePath.add.method == "POST")
+    #expect(MemoryWritePath.memory("m-1").path == "/memory/m-1")
+    #expect(MemoryWritePath.memory("m-1").method == "PUT")
+}
+
+@Test("graph-based-memeries-view/AC-1 : le graphe lit TOUTES les portées — aucune query `agent_id`")
+func ac1AllWithoutScopeHasNoQuery() async throws {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply(
+        "/memory/all",
+        .init(body: memoryJSON([
+            "total": 2,
+            "results": [
+                ["id": "m-1", "memory": "un", "agent_id": "projet-a", "metadata": ["tags": "t"]],
+                ["id": "m-2", "memory": "deux"],
+            ],
+        ]))
+    )
+    let service = stubbedHTTPMemoryService()
+
+    let page = try await service.all(scope: nil)
+
+    let request = try #require(StubURLProtocol.requests.first)
+    #expect(request.url?.path == "/memory/all")
+    #expect(request.url?.query == nil)
+    // `agent_id` présent ⇒ la portée de la ligne ; absent ⇒ nil, jamais "".
+    #expect(page.rows.map(\.agentId) == ["projet-a", nil])
+    #expect(page.rows[0].tags == ["t"])
+}
+
+@Test("graph-based-memeries-view/AC-17 : la recherche du graphe n'envoie AUCUN `agent_id`")
+func ac17SearchWithoutScopeHasNoAgentId() async throws {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/search", .init(body: memoryJSON(["results": []])))
+    let service = stubbedHTTPMemoryService()
+
+    _ = try await service.search(query: "sujet", scope: nil, pool: 24)
+
+    let request = try #require(StubURLProtocol.requests.first)
+    let body = try #require(memoryBody(request))
+    #expect(body["agent_id"] == nil)
+    #expect(body["query"] as? String == "sujet")
+    #expect(body["limit"] as? Int == 24)
+    #expect(body["threshold"] as? Double == 0.55)
+    #expect(body["explain"] as? Bool == true)
+    #expect(body["filters"] is NSNull)
+}
+
+@Test("graph-based-memeries-view/AC-8 : `GET /memory/graph` est lu et décodé, une arête illisible étant ignorée")
+func ac8GraphRouteIsDecoded() async throws {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply(
+        "/memory/graph",
+        .init(body: memoryJSON([
+            "total": 3,
+            "threshold": 0.75,
+            "top_k": 8,
+            "edges": [
+                ["source": "m-1", "target": "m-2", "score": 0.81],
+                ["source": "m-3", "target": "m-4"],
+                ["source": 5, "target": "m-5", "score": 0.9],
+                ["source": "m-6", "target": "m-7", "score": "0.9"],
+            ],
+        ]))
+    )
+    let service = stubbedHTTPMemoryService()
+
+    let graph = try await service.graph()
+
+    let request = try #require(StubURLProtocol.requests.first)
+    #expect(request.url?.path == "/memory/graph")
+    #expect(request.httpMethod == "GET")
+    #expect(graph.total == 3)
+    #expect(graph.edges == [MemoryGraphEdge(source: "m-1", target: "m-2", score: 0.81)])
+
+    // Une réponse vide (aucun souvenir) reste lisible.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/graph", .init(body: memoryJSON(["total": 0, "edges": []])))
+    #expect(try await stubbedHTTPMemoryService().graph().edges.isEmpty)
+}
+
+@Test("graph-based-memeries-view/AC-12 : la création envoie `infer: false` et n'omet `tags` que s'il est vide")
+func ac12AddBodyIsExact() async throws {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/add", .init(body: memoryJSON(["results": []])))
+    let service = stubbedHTTPMemoryService()
+
+    try await service.add(text: "souvenir neuf", scope: "projet-a", tags: ["t1", "t2"])
+
+    let request = try #require(StubURLProtocol.requests.first)
+    #expect(request.url?.path == "/memory/add")
+    #expect(request.httpMethod == "POST")
+    let body = try #require(memoryBody(request))
+    #expect(body["text"] as? String == "souvenir neuf")
+    #expect(body["agent_id"] as? String == "projet-a")
+    #expect(body["tags"] as? String == "t1,t2")
+    // REQUIS : sans lui, mem0 ferait résumer le texte par le LLM.
+    #expect(body["infer"] as? Bool == false)
+
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/add", .init(body: memoryJSON(["results": []])))
+    try await stubbedHTTPMemoryService().add(text: "sans étiquettes", scope: "p", tags: [])
+    let bareRequest = try #require(StubURLProtocol.requests.first)
+    let bare = try #require(memoryBody(bareRequest))
+    #expect(bare["tags"] == nil)
+}
+
+@Test("graph-based-memeries-view/AC-9 : la correction envoie le texte saisi et les étiquettes normalisées")
+func ac9UpdateBodyIsExact() async throws {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/m-1", .init(body: memoryJSON(["message": "ok"])))
+    let service = stubbedHTTPMemoryService()
+
+    try await service.update(id: "m-1", text: "texte corrigé", tags: ["t1", "t2"])
+
+    let request = try #require(StubURLProtocol.requests.first)
+    #expect(request.url?.path == "/memory/m-1")
+    #expect(request.httpMethod == "PUT")
+    let body = try #require(memoryBody(request))
+    #expect(body["text"] as? String == "texte corrigé")
+    #expect(body["tags"] as? String == "t1,t2")
+
+    // Aucune étiquette ⇒ `""`, jamais un champ absent (c'est lui qui les retire).
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/m-1", .init(body: memoryJSON(["message": "ok"])))
+    try await stubbedHTTPMemoryService().update(id: "m-1", text: "x", tags: [])
+    let clearedRequest = try #require(StubURLProtocol.requests.first)
+    let cleared = try #require(memoryBody(clearedRequest))
+    #expect(cleared["tags"] as? String == "")
+}
+
+@Test("graph-based-memeries-view/AC-11 : la suppression émet DELETE sur le chemin du souvenir, sans corps")
+func ac11DeleteBodyIsExact() async throws {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/m-1", .init(body: memoryJSON(["message": "ok"])))
+    let service = stubbedHTTPMemoryService()
+
+    try await service.delete(id: "m-1")
+
+    let request = try #require(StubURLProtocol.requests.first)
+    #expect(request.url?.path == "/memory/m-1")
+    #expect(request.httpMethod == "DELETE")
+    #expect(request.httpBody == nil)
+}
+
+@Test("graph-based-memeries-view/AC-11 : une écriture refusée lève une erreur porteuse de son texte")
+func ac11WriteFailureCarriesItsMessage() async {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/memory/m-1", .init(status: 500, body: Data("id inconnu".utf8)))
+
+    await #expect(throws: MemoryServiceError.unexpectedStatus(500, "id inconnu")) {
+        try await stubbedHTTPMemoryService().delete(id: "m-1")
+    }
 }
 
 // MARK: - S-3 : le sommaire
