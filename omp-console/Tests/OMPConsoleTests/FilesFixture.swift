@@ -15,6 +15,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 final class FilesFixture {
     /// Le dépôt principal (racine canonique).

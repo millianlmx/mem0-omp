@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @MainActor
 @Test("omp-console-redesign/S-19 : la conversation de Projet suit le fichier de session de l'hôte")

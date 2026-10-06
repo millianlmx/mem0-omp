@@ -11,8 +11,8 @@
 // ne récursera pas), et tout autre `test/*.test.ts` est retiré — un fichier de
 // test ajouté au dépôt n'est donc pas rejoué dans les copies tant qu'il n'y est
 // pas inscrit, c'est l'effet voulu. Les sections coûteuses y sont neutralisées
-// par `envDeCopie` (App Swift, Types, Plugins réels) : la copie paie ce qu'elle
-// mesure, pas une compilation Swift ni un type-check complet.
+// par `envDeCopie` (App Swift, App iOS, Types, Plugins réels) : la copie paie ce
+// qu'elle mesure, pas une compilation Swift ni un type-check complet.
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -67,7 +67,7 @@ export function copieDuDepot(prefixe: string, destination?: string): string {
 /**
  * L'environnement d'un enfant qui tourne DANS une copie : la profondeur
  * (`MEM0_CHECK_DEPTH`) pour que les tests gatés ne se rejouent pas là-bas, et la
- * neutralisation des trois sections coûteuses — `MEM0_OMP_SKIP_*`, valeur non
+ * neutralisation des quatre sections coûteuses — `MEM0_OMP_SKIP_*`, valeur non
  * vide = neutralisée, exactement comme dans `check.sh`. Un test qui éprouve une
  * de ces sections repose la sienne à `""` (valeur vide = absence).
  */
@@ -77,5 +77,6 @@ export function envDeCopie(depth: number): Record<string, string> {
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_TYPES: "1",
     MEM0_OMP_SKIP_SMOKE: "1",
+    MEM0_OMP_SKIP_IOS: "1",
   };
 }

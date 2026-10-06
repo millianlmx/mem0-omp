@@ -117,6 +117,7 @@ function childEnv(): NodeJS.ProcessEnv {
 // Le dépôt de fixture
 // ---------------------------------------------------------------------------
 
+
 /** Le hook du remote nu : refuser tout push sur `refs/heads/main`, comme la
  * protection de branche du vrai dépôt. La simulation ne pousse JAMAIS : ce hook
  * est la preuve que l'écriture distante n'a pas eu lieu. */

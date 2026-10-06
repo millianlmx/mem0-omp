@@ -25,7 +25,8 @@ mem0-omp/                              racine = marketplace OMP
 │   │                                  la conduite de projet et le relais
 │   └── panel.ts, panelRows.ts, panelWidth.ts, panelView.ts, panelSession.ts,
 │       panelHost.ts                   le panneau /pipelines et la vue de session
-├── omp-console/                       la coque macOS (SwiftUI) de la salle de contrôle
+├── omp-console/                       la coque macOS (SwiftUI), le noyau partagé et l'app iOS
+│   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
 ├── mem0-stack/                        mem0 + Qdrant, en local
 │   └── mem0-http/                     l'API HTTP et sa config mem0
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
@@ -44,7 +45,8 @@ mem0-omp/                              racine = marketplace OMP
 
 La coque macOS (`omp-console/`, SwiftUI) a son propre document :
 `omp-console/README.md` explique comment la builder, la tester, assembler son
-bundle `.app` et ouvrir l'app. C'est l'app unique : elle installe et démarre
+bundle `.app` et ouvrir l'app — il documente aussi l'app iOS, dont le projet Xcode
+vit sous `omp-console/ios/`. C'est l'app unique : elle installe et démarre
 elle-même ses composants (son `omp` 18.6.0, son podman 6.1.3, sa machine podman
 `omp-console` et les conteneurs `omp-console-qdrant` / `omp-console-mem0-http`),
 migre une seule fois la base mémoire existante — l'ancienne pile est arrêtée avant
@@ -899,7 +901,7 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
-Le Check lui-même lance désormais ses dix sections indépendantes en un seul
+Le Check lui-même lance désormais ses douze sections indépendantes en un seul
 passage concurrent, puis imprime chaque bloc dans l'ordre canonique inchangé ;
 aucune section n'est retirée ni allégée, et le code de sortie reste 1 si une
 seule a échoué. La section `── App Swift` compile le produit en **release**
@@ -910,14 +912,15 @@ le binaire release. La suite Swift n'est donc plus compilée deux fois : le test
 et `build-failed` — et recompile en incrémental. Dans une copie jetable du
 dépôt, seuls trois fichiers de test de garde sont rejoués
 (`test/dedupe.test.ts`, `test/criteria.test.ts`, `test/redaction.test.ts`),
-réunis sous la source unique `test/copie.ts` ; les sections `── Types` et
-`── Plugins réels (OMP)` peuvent y être neutralisées par `MEM0_OMP_SKIP_TYPES`
-et `MEM0_OMP_SKIP_SMOKE`, comme `MEM0_OMP_SKIP_SWIFT_APP` — ce qui n'arrive
-jamais dans l'arbre réel ni en CI. Le budget visé est **≤ 6 min** pour le run CI
-caches froids comme pour `./scripts/check.sh` sur un poste ; il se mesure en
-local avec `time ./scripts/check.sh`, en CI avec
-`gh run view <id> --json createdAt,updatedAt` et la durée de chaque job — le run
-étant borné par le plus lent des deux jobs requis.
+réunis sous la source unique `test/copie.ts` ; les sections `── Types`,
+`── Plugins réels (OMP)` et `── App iOS` peuvent y être neutralisées par
+`MEM0_OMP_SKIP_TYPES`, `MEM0_OMP_SKIP_SMOKE` et `MEM0_OMP_SKIP_IOS`, comme
+`MEM0_OMP_SKIP_SWIFT_APP` — ce qui n'arrive jamais dans l'arbre réel ni en CI.
+Le budget visé est **≤ 6 min** pour le run CI caches froids comme pour
+`./scripts/check.sh` sur un poste ; il se mesure en local avec
+`time ./scripts/check.sh`, en CI avec `gh run view <id> --json createdAt,updatedAt`
+et la durée de chaque job — le run étant borné par le plus lent des deux jobs
+requis.
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,

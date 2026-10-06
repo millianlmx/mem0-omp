@@ -9,6 +9,7 @@
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 private let closedSession = "/tmp/sessions/2026-09-28T09-00-00-000Z_01a0e88e.jsonl"
 private let missingSession = "/tmp/sessions/2026-09-28T10-00-00-000Z_02b1f99f.jsonl"

@@ -13,6 +13,7 @@
 // attend une réponse fait monter sa durée sans qu'un octet soit écrit.
 
 import Charts
+import ConsoleCore
 import SwiftUI
 
 struct StatsView: View {

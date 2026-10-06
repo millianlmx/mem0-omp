@@ -1,0 +1,400 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		E1E2E3E4E5E6E7E8E9EAEB1B /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
+		E1E2E3E4E5E6E7E8E9EAEB1C /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		E1E2E3E4E5E6E7E8E9EAEB1E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = E1E2E3E4E5E6E7E8E9EAEB01 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = E1E2E3E4E5E6E7E8E9EAEB08;
+			remoteInfo = OMPConsoleIOS;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OMPConsoleIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1E2E3E4E5E6E7E8E9EAEB07 /* OMPConsoleIOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OMPConsoleIOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = OMPConsoleIOS;
+			sourceTree = "<group>";
+		};
+		E1E2E3E4E5E6E7E8E9EAEB05 /* OMPConsoleIOSTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = OMPConsoleIOSTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		E1E2E3E4E5E6E7E8E9EAEB0C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1E2E3E4E5E6E7E8E9EAEB1B /* ConsoleCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB0D /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E1E2E3E4E5E6E7E8E9EAEB1C /* ConsoleCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		E1E2E3E4E5E6E7E8E9EAEB02 = {
+			isa = PBXGroup;
+			children = (
+				E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */,
+				E1E2E3E4E5E6E7E8E9EAEB05 /* OMPConsoleIOSTests */,
+				E1E2E3E4E5E6E7E8E9EAEB03 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		E1E2E3E4E5E6E7E8E9EAEB03 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */,
+				E1E2E3E4E5E6E7E8E9EAEB07 /* OMPConsoleIOSTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		E1E2E3E4E5E6E7E8E9EAEB08 /* OMPConsoleIOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E1E2E3E4E5E6E7E8E9EAEB11 /* Build configuration list for PBXNativeTarget "OMPConsoleIOS" */;
+			buildPhases = (
+				E1E2E3E4E5E6E7E8E9EAEB0A /* Sources */,
+				E1E2E3E4E5E6E7E8E9EAEB0C /* Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB0E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				E1E2E3E4E5E6E7E8E9EAEB04 /* OMPConsoleIOS */,
+			);
+			name = OMPConsoleIOS;
+			packageProductDependencies = (
+				E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */,
+			);
+			productName = OMPConsoleIOS;
+			productReference = E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		E1E2E3E4E5E6E7E8E9EAEB09 /* OMPConsoleIOSTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = E1E2E3E4E5E6E7E8E9EAEB12 /* Build configuration list for PBXNativeTarget "OMPConsoleIOSTests" */;
+			buildPhases = (
+				E1E2E3E4E5E6E7E8E9EAEB0B /* Sources */,
+				E1E2E3E4E5E6E7E8E9EAEB0D /* Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB0F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				E1E2E3E4E5E6E7E8E9EAEB1D /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				E1E2E3E4E5E6E7E8E9EAEB05 /* OMPConsoleIOSTests */,
+			);
+			name = OMPConsoleIOSTests;
+			packageProductDependencies = (
+				E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */,
+			);
+			productName = OMPConsoleIOSTests;
+			productReference = E1E2E3E4E5E6E7E8E9EAEB07 /* OMPConsoleIOSTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		E1E2E3E4E5E6E7E8E9EAEB01 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					E1E2E3E4E5E6E7E8E9EAEB08 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					E1E2E3E4E5E6E7E8E9EAEB09 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = E1E2E3E4E5E6E7E8E9EAEB08;
+					};
+				};
+			};
+			buildConfigurationList = E1E2E3E4E5E6E7E8E9EAEB10 /* Build configuration list for PBXProject "OMPConsoleIOS" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = E1E2E3E4E5E6E7E8E9EAEB02;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				E1E2E3E4E5E6E7E8E9EAEB19 /* XCLocalSwiftPackageReference ".." */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = E1E2E3E4E5E6E7E8E9EAEB03 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				E1E2E3E4E5E6E7E8E9EAEB08 /* OMPConsoleIOS */,
+				E1E2E3E4E5E6E7E8E9EAEB09 /* OMPConsoleIOSTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		E1E2E3E4E5E6E7E8E9EAEB0E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB0F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		E1E2E3E4E5E6E7E8E9EAEB0A /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB0B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		E1E2E3E4E5E6E7E8E9EAEB1D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = E1E2E3E4E5E6E7E8E9EAEB08 /* OMPConsoleIOS */;
+			targetProxy = E1E2E3E4E5E6E7E8E9EAEB1E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		E1E2E3E4E5E6E7E8E9EAEB13 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB14 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB15 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB16 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB17 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OMPConsoleIOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OMPConsoleIOS";
+			};
+			name = Debug;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB18 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OMPConsoleIOS.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OMPConsoleIOS";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		E1E2E3E4E5E6E7E8E9EAEB10 /* Build configuration list for PBXProject "OMPConsoleIOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E1E2E3E4E5E6E7E8E9EAEB13 /* Debug */,
+				E1E2E3E4E5E6E7E8E9EAEB14 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB11 /* Build configuration list for PBXNativeTarget "OMPConsoleIOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E1E2E3E4E5E6E7E8E9EAEB15 /* Debug */,
+				E1E2E3E4E5E6E7E8E9EAEB16 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB12 /* Build configuration list for PBXNativeTarget "OMPConsoleIOSTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E1E2E3E4E5E6E7E8E9EAEB17 /* Debug */,
+				E1E2E3E4E5E6E7E8E9EAEB18 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		E1E2E3E4E5E6E7E8E9EAEB19 /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ConsoleCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = E1E2E3E4E5E6E7E8E9EAEB01 /* Project object */;
+}

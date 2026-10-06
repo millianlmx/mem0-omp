@@ -10,6 +10,7 @@
 // dernier (S-5).
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct MemoryGraphView: View {

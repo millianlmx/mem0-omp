@@ -4,6 +4,7 @@
 
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("socle-app-swift/AC-2 : sélectionner une section change la vue courante")
 func selectingASectionChangesTheCurrentOne() {

@@ -9,6 +9,7 @@
 // clé de dépôt (jamais une seconde fonction de hachage), et les textes sont produits
 // par des fonctions pures, comme `liveStateLabel`/`lotWaitLabel` (KanbanBoard.swift).
 
+import ConsoleCore
 import Foundation
 
 /// La nature d'un évènement. L'ORDRE DE DÉCLARATION est l'ordre de livraison exigé

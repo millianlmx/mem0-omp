@@ -4,6 +4,7 @@
 // Les trois statuts REQUIS sont ceux de `PUBLISHING.md` § Blocage du merge : les
 // noms affichés des jobs, jamais des identifiants internes.
 
+import ConsoleCore
 import Foundation
 
 /// Les trois statuts requis d'une PR, dans l'ORDRE d'affichage de S-1.

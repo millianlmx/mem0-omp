@@ -8,6 +8,7 @@
 import Darwin
 import Foundation
 @testable import OMPConsole
+import ConsoleCore
 
 /// Un magasin de fixtures jetable : six répertoires (ou aucun), des écritures
 /// atomiques calquées sur `writeJsonAtomic` (store.ts:315-320), des relevés de

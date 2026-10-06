@@ -12,6 +12,7 @@
 // `TimelineView` (Doc-1), donc une carte ouverte avance sans que le magasin change.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 @MainActor

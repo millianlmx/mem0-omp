@@ -5,6 +5,7 @@
 
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 private func inbound(_ id: Int, _ text: String) -> TranscriptLine {
     TranscriptLine(id: id, kind: .inbound, text: text)

@@ -14,7 +14,7 @@
 // des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘9,
 // donc il n'existe pas de seconde liste à tenir synchronisée.
 
-enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case home
     case kanban
     case project
@@ -25,10 +25,10 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case memory
     case stats
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
     /// Libellé affiché dans la barre latérale, et titre de la fenêtre.
-    var title: String {
+    public var title: String {
         switch self {
         case .home: "Accueil"
         case .kanban: "Pipelines"
@@ -43,7 +43,7 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     }
 
     /// Symbole SF associé à la section.
-    var systemImage: String {
+    public var systemImage: String {
         switch self {
         case .home: "house"
         case .kanban: "square.grid.2x2"
@@ -58,7 +58,7 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     }
 
     /// Le groupe de la barre latérale.
-    var group: ConsoleSectionGroup {
+    public var group: ConsoleSectionGroup {
         switch self {
         case .home, .kanban, .project, .session, .terminal: .pilotage
         case .sessions, .files, .memory, .stats: .consultation
@@ -67,11 +67,11 @@ enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
 }
 
 /// Les groupes de la barre latérale, dans leur ordre d'affichage.
-enum ConsoleSectionGroup: CaseIterable, Sendable {
+public enum ConsoleSectionGroup: CaseIterable, Sendable {
     case pilotage
     case consultation
 
-    var title: String {
+    public var title: String {
         switch self {
         case .pilotage: "Pilotage"
         case .consultation: "Consultation"
@@ -79,7 +79,7 @@ enum ConsoleSectionGroup: CaseIterable, Sendable {
     }
 
     /// Les sections du groupe, dans l'ordre de `ConsoleSection.allCases`.
-    var sections: [ConsoleSection] {
+    public var sections: [ConsoleSection] {
         ConsoleSection.allCases.filter { $0.group == self }
     }
 }

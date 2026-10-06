@@ -11,7 +11,7 @@ import Foundation
 
 /// Les six répertoires du magasin d'état. `commands/` est HORS PÉRIMÈTRE (specs) :
 /// il ne fait pas partie du magasin lu par la salle de contrôle.
-enum PipelineStore: String, CaseIterable, Sendable {
+public enum PipelineStore: String, CaseIterable, Sendable {
     case running
     case history
     case lots
@@ -22,16 +22,30 @@ enum PipelineStore: String, CaseIterable, Sendable {
     /// Bornes d'une passe de lecture (parité `RUNNING_READ_LIMIT` /
     /// `HISTORY_READ_LIMIT`, store.ts:107-109) : au-delà, la lecture synchrone
     /// coûterait un rafraîchissement par seconde sans rien montrer de plus.
-    static let runningReadLimit = 200
-    static let historyReadLimit = 20
+    public static let runningReadLimit = 200
+    public static let historyReadLimit = 20
+
+    /// Le `home` par défaut : `FileManager.homeDirectoryForCurrentUser` est une API
+    /// macOS, refusée par le compilateur pour iOS — la cible partagée compile pour
+    /// les deux plateformes, et la racine du magasin local n'a pas de sens côté iOS
+    /// (l'app iOS n'a pas de magasin) ; `NSHomeDirectory()` y rend le conteneur de
+    /// l'app, jamais lu. Sous macOS la valeur est celle d'avant l'extraction (aucun
+    /// changement de comportement pour la coque).
+    public static let homeDirectory: String = {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser.path
+        #else
+        NSHomeDirectory()
+        #endif
+    }()
 
     /// Racine du magasin : `MEM0_PIPELINE_STATE_DIR` quand la variable porte un
     /// chemin exploitable (`~` développé, chemin ABSOLU retenu), sinon
     /// `<home>/.omp/agent/pipeline`. Un chemin RELATIF est ignoré — il dépendrait
     /// du cwd, donc de la session. Les deux entrées sont injectables (tests).
-    static func stateDir(
+    public static func stateDir(
         env: [String: String] = ProcessInfo.processInfo.environment,
-        home: String = FileManager.default.homeDirectoryForCurrentUser.path
+        home: String = homeDirectory
     ) -> String {
         let raw = (env["MEM0_PIPELINE_STATE_DIR"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw == "~" { return home }
@@ -41,13 +55,13 @@ enum PipelineStore: String, CaseIterable, Sendable {
     }
 
     /// Le répertoire d'un store dans une racine donnée.
-    static func directory(_ store: PipelineStore, stateDir: String) -> String {
+    public static func directory(_ store: PipelineStore, stateDir: String) -> String {
         joinPath(stateDir, store.rawValue)
     }
 }
 
 /// `path.join` de Node : le séparateur n'est jamais doublé, jamais absent.
-func joinPath(_ base: String, _ name: String) -> String {
+public func joinPath(_ base: String, _ name: String) -> String {
     if base.isEmpty { return name }
     return base.hasSuffix("/") ? base + name : base + "/" + name
 }
@@ -57,4 +71,4 @@ func joinPath(_ base: String, _ name: String) -> String {
 /// (lot.ts:997). Un seul nom côté Swift : aucune entrée ne doit battre avec son
 /// propre seuil, sinon un lot et son relais se périmeraient à des instants
 /// différents alors que le dépôt les fait battre ensemble.
-let lotOwnerStaleMs: Double = 10_000
+public let lotOwnerStaleMs: Double = 10_000

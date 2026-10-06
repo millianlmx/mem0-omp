@@ -475,6 +475,7 @@ test("plan : rattrapage + bump, ordres de publication et de journal, gardes d'id
 // Bout en bout : dépôt jetable, remote nu local, faux `gh`
 // ---------------------------------------------------------------------------
 
+
 /**
  * Le hook du remote nu : refuser TOUT push sur `refs/heads/main`, comme la
  * protection de branche du vrai dépôt (le refus s'écrit mot pour mot

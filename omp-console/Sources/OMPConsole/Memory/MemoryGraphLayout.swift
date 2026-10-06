@@ -6,6 +6,7 @@
 // mêmes positions — c'est la graine fixe et le nombre d'itérations fixe qui
 // l'imposent, pas l'article (Fruchterman & Reingold 1991).
 
+import ConsoleCore
 import CoreGraphics
 import Foundation
 

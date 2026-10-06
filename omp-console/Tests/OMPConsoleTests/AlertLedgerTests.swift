@@ -1,9 +1,10 @@
 // Preuves du registre persisté (BR-2, S-7) : la déduplication survit à une relance de
 // l'app (AC-5) et la lecture est tolérante à toutes les formes d'un fichier abîmé.
 
+@testable import OMPConsole
+import ConsoleCore
 import Foundation
 import Testing
-@testable import OMPConsole
 
 // MARK: - AC-5 : après relance, pas de renotification
 

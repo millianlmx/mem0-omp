@@ -8,6 +8,7 @@
 //
 // Fonctions PURES : la vue et le clavier lisent le même ordre.
 
+import ConsoleCore
 import Foundation
 
 enum KanbanLane: String, CaseIterable, Identifiable, Sendable {

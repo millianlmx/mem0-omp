@@ -6,10 +6,11 @@
 // Le contrat inter-langages est le LITTÉRAL du protocole : les mêmes chaînes sont
 // écrites ici et dans `test/reponses.test.ts`.
 
+@testable import OMPConsole
+import ConsoleCore
 import Darwin
 import Foundation
 import Testing
-@testable import OMPConsole
 
 /// Un compteur d'appels partagé par les fermetures `@Sendable` du seam
 /// `PipelineFileOps` : chaque cas d'`EINTR` ne doit se produire qu'UNE fois.

@@ -11,6 +11,7 @@
 // presse-papiers.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct MemoryView: ConsoleSectionView {

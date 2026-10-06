@@ -9,6 +9,7 @@
 // (`LotFeature.contractHash`) : la console lit donc le FICHIER, à l'instant de
 // l'ouverture, dans le worktree de la feature (`<worktree>/.omp/pipeline/contract.md`).
 
+import ConsoleCore
 import Foundation
 
 // --- moment et sections (S-1, S-2) -------------------------------------------

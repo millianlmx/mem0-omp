@@ -11,6 +11,7 @@
 //
 // L'avancement vient de `PipelineProgress.steps(for:)` (fonction PURE).
 
+import ConsoleCore
 import SwiftUI
 
 struct KanbanDetailView: View {

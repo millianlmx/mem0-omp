@@ -15,6 +15,7 @@
 // et rien n'est publié si l'état n'a pas bougé.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 /// Un composant embarqué de l'app, dans l'ordre où le badge les nomme.

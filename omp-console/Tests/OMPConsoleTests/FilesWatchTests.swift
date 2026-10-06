@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 /// Un compteur partagé entre le fil qui publie et le test qui lit.
 final class FilesCounter: @unchecked Sendable {

@@ -30,6 +30,7 @@ import Darwin
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 /// Garde unique des tests réels (S-1, S-2). L'activation est la PRÉSENCE de
 /// `recipeKey` ; la résolubilité d'`omp` est constatée par `shouldRun`, appelé en

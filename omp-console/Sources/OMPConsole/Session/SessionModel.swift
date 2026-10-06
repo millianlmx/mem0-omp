@@ -9,19 +9,13 @@
 //
 // Aucun comportement ici : que des types et leurs invariants.
 
-/// Valeur JSON générique. Les arguments d'un appel d'outil sont exposés tels
-/// quels, en dictionnaire : `JSONSerialization` ne garantit aucun ordre de clés
-/// (Doc-4), donc aucun ordre n'est promis ici — c'est le rendu qui trie.
-public indirect enum JSONValue: Equatable, Sendable {
-    case object([String: JSONValue])
-    case array([JSONValue])
-    case string(String)
-    case number(Double)
-    case bool(Bool)
-    case null
-}
+/// `JSONValue` (le socle JSON partagé) vit désormais dans `ConsoleCore`
+/// (`Session/JSONValue.swift`) : ce fichier le voit par `import ConsoleCore`.
+
+import ConsoleCore
 
 /// Usage d'une réponse, lu sur `message.usage`.
+
 public struct TokenUsage: Equatable, Sendable {
     public var input: Int
     public var output: Int

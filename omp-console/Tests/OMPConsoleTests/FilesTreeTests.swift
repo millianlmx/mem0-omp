@@ -7,6 +7,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-1 : l'arbre réunit suivis et non suivis, marque le supprimé et écarte le gitlink")
 func treeMergesTrackedUntrackedAndDeleted() {

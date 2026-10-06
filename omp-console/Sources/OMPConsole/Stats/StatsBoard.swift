@@ -3,6 +3,7 @@
 // prennent `nowMs` en paramètre, donc la durée d'un run vivant avance sans que le
 // magasin change.
 
+import ConsoleCore
 import Foundation
 
 /// Un feature du plan avec sa liste de runs (avant lecture des sessions).

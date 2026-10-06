@@ -17,6 +17,7 @@
 // partir de six formes fixes, et un encodeur qui ne peut pas échouer vaut mieux
 // qu'un `try?` silencieux sur le chemin qui écrit dans le tube.
 
+import ConsoleCore
 import CoreFoundation
 import Foundation
 

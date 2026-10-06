@@ -1,7 +1,7 @@
 // Tests de la feature `ci-check-speedup` (S-6). Le budget du Check (≤ 6 min)
 // repose sur trois mécanismes, et c'est EUX que ces tests prouvent :
 //
-//   1. les dix sections de `scripts/check.sh` tournent en UN SEUL PASSAGE
+//   1. les douze sections de `scripts/check.sh` tournent en UN SEUL PASSAGE
 //      CONCURRENT puis sont imprimées dans l'ordre canonique (S-2) ;
 //   2. la section « App Swift » compile le produit en release pendant qu'elle
 //      exécute la suite en debug, et dépose des marqueurs d'issue dans chacun de
@@ -26,7 +26,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 /** Profondeur d'imbrication : 0 = `node --test test/ci-check-speedup.test.ts`. */
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 
-/** Les dix sections, dans l'ordre canonique que le runner doit imprimer. */
+/** Les douze sections, dans l'ordre canonique que le runner doit imprimer. */
 const ENTETES = [
   "── Catalogue marketplace",
   "── Noms",
@@ -37,7 +37,9 @@ const ENTETES = [
   "── API mem0-http",
   "── Plugins réels (OMP)",
   "── Tests",
+  "── Noyau partagé",
   "── App Swift",
+  "── App iOS",
 ];
 
 const output = (r: SpawnSyncReturns<string>) => `${r.stdout ?? ""}${r.stderr ?? ""}`;
@@ -301,12 +303,12 @@ test("ci-check-speedup/AC-3 : la durée murale vaut max(sections) + surcoût, pa
 });
 
 // ---------------------------------------------------------------------------
-// AC-4 — aucune vérification perdue : les dix sections tournent toujours
+// AC-4 — aucune vérification perdue : les douze sections tournent toujours
 // ---------------------------------------------------------------------------
 
-test("ci-check-speedup/AC-4 : les dix sections s'exécutent, chacune avec son verdict, dans l'ordre canonique", () => {
+test("ci-check-speedup/AC-4 : les douze sections s'exécutent, chacune avec son verdict, dans l'ordre canonique", () => {
   // Doublures `uname`/`swift`/`codesign`/`otool` : la section « App Swift » doit
-  // TOURNER (donc compter parmi les dix) sans rien compiler.
+  // TOURNER (donc compter parmi les douze) sans rien compiler.
   const { bin } = stubBin("inventaire-bin-");
   stub(bin, "uname", "printf 'Darwin\\n'");
   stub(
@@ -331,7 +333,11 @@ esac`,
   stub(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
 
   const dir = copie("inventaire-");
-  // Toutes les neutralisations sont reposées à vide : c'est l'exécution réelle.
+  // Les neutralisations que la copie PEUT payer sont reposées à vide : c'est
+  // l'exécution réelle de ces sections. Seule « App iOS » reste éteinte — elle
+  // lancerait sinon `xcodebuild` pour de vrai dans la copie (et, sur un runner
+  // macOS où Xcode est utilisable, une compilation iOS complète de plus), alors
+  // que S-5 range cette neutralisation parmi celles du harnais.
   const run = runCheck(dir, {
     PATH: `${bin}:${process.env.PATH}`,
     MEM0_OMP_SKIP_SWIFT_APP: "",
@@ -350,9 +356,14 @@ esac`,
   for (const bloc of blocs) {
     assert.ok(verdictDe(bloc.lignes), `aucune ligne de verdict après « ${bloc.entete} » :\n${out}`);
   }
-  // Aucune section n'a été neutralisée dans cette exécution : ce que la copie
-  // neutralise est un dispositif de harnais, pas un allègement du Check.
-  assert.ok(!out.includes("ignorée ("), out);
+  // Une seule neutralisation subsiste, celle que le harnais pose : une section
+  // éteinte en dur dans check.sh (ou une section disparue avec son en-tête)
+  // apparaîtrait ici.
+  assert.deepEqual(
+    out.split("\n").filter((l) => l.includes("ignorée (")),
+    ["  · ignorée (MEM0_OMP_SKIP_IOS=1)"],
+    out,
+  );
 });
 
 // ---------------------------------------------------------------------------

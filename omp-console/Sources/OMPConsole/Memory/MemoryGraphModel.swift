@@ -15,6 +15,7 @@
 //    dans la feuille ouverte.
 
 import Combine
+import ConsoleCore
 import CoreGraphics
 import Foundation
 

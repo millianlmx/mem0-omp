@@ -6,6 +6,7 @@
 // Aucun texte n'est composé ici : tous viennent de `ProjectViewText`, et la veille
 // est attachée à la vie de la vue (S-3).
 
+import ConsoleCore
 import SwiftUI
 
 struct ProjectPRPane: View {

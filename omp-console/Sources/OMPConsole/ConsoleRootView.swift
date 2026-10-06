@@ -17,6 +17,7 @@
 // modèle n'expose qu'un `select(_:)` (D3, `@State` interdit).
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct ConsoleRootView: View {

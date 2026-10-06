@@ -15,6 +15,7 @@
 // Aucune E/S, aucun état de vue : le modèle de conversation entre, des lignes
 // sortent.
 
+import ConsoleCore
 import Foundation
 
 // MARK: - Question `ask`

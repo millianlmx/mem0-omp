@@ -3,7 +3,7 @@
 # installation marketplace de façon silencieuse — c'est-à-dire la totalité des
 # pièges, parce qu'OMP ne dit pas grand-chose quand une extension ne charge pas.
 #
-# Dix sections INDÉPENDANTES, lancées en UN SEUL PASSAGE CONCURRENT puis
+# Douze sections INDÉPENDANTES, lancées en UN SEUL PASSAGE CONCURRENT puis
 # imprimées dans l'ordre canonique (voir le runner en fin de fichier) : la durée
 # murale vaut max(sections) + surcoût au lieu de leur somme, sans retirer une
 # seule vérification. Chaque section garde son en-tête exact, ses lignes
@@ -488,8 +488,136 @@ section_swift() {
   return "$FAIL"
 }
 
+section_noyau_partage() {
+  echo "── Noyau partagé"
+
+  # `ConsoleCore` est la cible PARTAGÉE macOS/iOS : elle se compile seule avec les
+  # Command Line Tools (donc sans SDK iOS) et ne doit toucher AUCUNE API de
+  # plateforme. AppKit et UIKit ne se détectent pas à la compilation — chacun existe
+  # sur sa plateforme —, donc la portabilité se tient par un balayage de SOURCES :
+  # un `import AppKit` dans un fichier de la cible partagée fait rougir ce contrôle.
+  #
+  # Le balayage ignore les COMMENTAIRES (ligne `//` et blocs `/* … */`) : un exemple
+  # cité dans un en-tête n'est pas un import. `SwiftUI` et `Observation`, eux, sont
+  # disponibles des DEUX côtés — ils ne sont pas interdits.
+  #
+  # Ce contrôle ne demande que python3 (déjà requis par les sections précédentes) :
+  # ni macOS, ni toolchain Swift, donc il tourne aussi sous Ubuntu.
+  python3 - <<'PY'
+import os, re, sys
+
+ROOT = "omp-console/Sources/ConsoleCore"
+IMPORT = re.compile(r"^\s*import\s+(AppKit|UIKit|Cocoa)\b")
+
+if not os.path.isdir(ROOT):
+    print(f"  ✗ ConsoleCore absente de Sources/ : « {ROOT} » n'existe pas")
+    sys.exit(1)
+
+
+def code_part(line, in_block):
+    """La ligne débarrassée de ses commentaires ; rend aussi l'état de bloc."""
+    out = ""
+    i = 0
+    while i < len(line):
+        if in_block:
+            if line.startswith("*/", i):
+                in_block = False
+                i += 2
+            else:
+                i += 1
+            continue
+        if line.startswith("//", i):
+            break
+        if line.startswith("/*", i):
+            in_block = True
+            i += 2
+            continue
+        out += line[i]
+        i += 1
+    return out, in_block
+
+
+faults = []
+scanned = 0
+for dirpath, dirnames, filenames in os.walk(ROOT):
+    dirnames.sort()
+    for name in sorted(filenames):
+        if not name.endswith(".swift"):
+            continue
+        path = os.path.join(dirpath, name)
+        scanned += 1
+        in_block = False
+        with open(path, encoding="utf-8") as handle:
+            for number, line in enumerate(handle, 1):
+                code, in_block = code_part(line.rstrip("\n"), in_block)
+                found = IMPORT.match(code)
+                if found:
+                    faults.append((os.path.relpath(path), number, found.group(1)))
+
+for path, number, module in faults:
+    print(f"  ✗ la cible partagée ConsoleCore importe {module} : {path}:{number}")
+if faults:
+    sys.exit(1)
+print(f"  ✓ la cible partagée ConsoleCore n'importe ni AppKit ni UIKit ({scanned} fichiers balayés)")
+PY
+  [ $? -ne 0 ] && return 1
+  return "$FAIL"
+}
+
+section_ios() {
+  echo "── App iOS"
+
+  # La compilation et les tests de l'app iOS vivent dans scripts/ios-build.sh :
+  # check.sh l'appelle et RECOPIE son verdict, comme la section `── App Swift`. Le
+  # dépôt reste CLT-only : rien dans cette section n'exige Xcode sur un poste qui ne
+  # l'a pas — le script sort 2 (« non exécuté ») et aucune ✓ n'est affichée, sinon la
+  # section mentirait sur ce qu'elle a vérifié.
+  #
+  # `MEM0_OMP_SKIP_IOS=1` neutralise la section : le harnais de test lance check.sh
+  # une dizaine de fois dans des copies jetables, qui paieraient sinon chacune une
+  # compilation iOS complète. Une valeur vide vaut absence.
+  #
+  # `MEM0_OMP_REQUIRE_IOS=1` (posée par la CI macOS) fait échouer un « non exécuté » :
+  # en CI, Xcode manquant est un échec, jamais un skip silencieux.
+  if [ -f scripts/ios-build.sh ]; then
+    if [ -n "${MEM0_OMP_SKIP_IOS:-}" ]; then
+      echo "  · ignorée (MEM0_OMP_SKIP_IOS=1)"
+      return 2
+    fi
+    local ios_out ios_status ios_cause
+    ios_out="$(bash scripts/ios-build.sh 2>&1)"
+    ios_status=$?
+    [ -n "$ios_out" ] && printf '%s\n' "$ios_out"
+    case "$ios_status" in
+      0)
+        if printf '%s\n' "$ios_out" | grep -q "tests non exécutés"; then
+          ios_cause="$(printf '%s\n' "$ios_out" | sed -n 's/.*tests non exécutés : //p' | head -n 1)"
+          pass "App iOS : compilation (tests non exécutés : ${ios_cause:-cause inconnue})"
+        else
+          pass "App iOS : compilation et tests"
+        fi
+        ;;
+      2)
+        if [ "${MEM0_OMP_REQUIRE_IOS:-}" = "1" ]; then
+          fail "App iOS — Xcode inutilisable (relance : DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/ios-build.sh)"
+          return 1
+        fi
+        return 2
+        ;;
+      *)
+        fail "App iOS — scripts/ios-build.sh a échoué (relance : bash scripts/ios-build.sh)"
+        return 1
+        ;;
+    esac
+  else
+    fail "App iOS — scripts/ios-build.sh absent"
+    return 1
+  fi
+  return "$FAIL"
+}
+
 # ---------------------------------------------------------------------------
-# Le runner (BR-1). Les dix sections ne lisent rien de ce qu'une autre écrit et
+# Le runner (BR-1). Les douze sections ne lisent rien de ce qu'une autre écrit et
 # n'écrivent jamais dans le dossier d'une autre (`.typecheck` pour `── Types`,
 # `.build-*` pour `── App Swift`, journaux temporaires ailleurs) : elles peuvent
 # donc tourner en même temps. Chaque sous-shell écrit dans SON fichier, et les
@@ -514,7 +642,9 @@ ORDRE=(
   section_api_http
   section_plugins_reels
   section_tests
+  section_noyau_partage
   section_swift
+  section_ios
 )
 
 if [ -f scripts/swift-app.sh ] && [ -z "${MEM0_OMP_SKIP_SWIFT_APP:-}" ]; then

@@ -10,6 +10,7 @@
 // ne compose jamais un message, et un test peut donc les figer.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct FilesView: ConsoleSectionView {

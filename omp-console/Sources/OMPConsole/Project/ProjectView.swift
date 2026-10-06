@@ -3,6 +3,7 @@
 // doit rester utilisable en plein écran). Le titre de la fenêtre reste celui de
 // la section ; le nom du projet est son sous-titre.
 
+import ConsoleCore
 import SwiftUI
 
 struct ProjectView: ConsoleSectionView {

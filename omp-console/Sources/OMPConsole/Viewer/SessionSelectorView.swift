@@ -12,6 +12,7 @@
 // « Hier » au passage de minuit sans qu'un octet sur disque change. Aucun attribut
 // macro SwiftUI dans ce dépôt (Documentation §3) : la sélection vit dans le modèle.
 
+import ConsoleCore
 import SwiftUI
 
 /// Les textes de la section « Sessions ».

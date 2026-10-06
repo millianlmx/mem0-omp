@@ -23,6 +23,7 @@
 // d'accessibilité.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 /// La ligne n'observe PAS le modèle (S-18 R8) : elle reçoit ses plis et le geste

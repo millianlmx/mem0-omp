@@ -7,6 +7,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 /// La veille du store `running` sur une fixture, horloge fixe.
 private func runningWatcher(_ fixture: StoreFixture) -> StoreWatcher<RunningEnvelope> {

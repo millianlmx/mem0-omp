@@ -161,6 +161,21 @@ cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
 
 (`-home.welcomeSeen NO` remontre la bienvenue sur un magasin vide.)
 
+## Cibles
+
+Le paquet déclare trois cibles (une ligne par cible, `omp-console/Package.swift`) :
+
+- **OMPConsole** — la coque macOS : les vues, les modèles d'écran et les
+  adaptateurs au système (AppKit, SwiftUI, PTY, réseau). Cible exécutable ;
+  dépend de `ConsoleCore`.
+- **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
+  `OMPConsole` et de `ConsoleCore`.
+- **ConsoleCore** — la **cible partagée macOS/iOS** : les modèles et constantes
+  pures du magasin d'état, le vocabulaire figé des sections et le socle du
+  contrat de l'API distante. Aucune dépendance (ni interne, ni externe) : elle se
+  compile seule (`swift build --target ConsoleCore`) et n'importe ni AppKit ni
+  UIKit — la section « Noyau partagé » de `scripts/check.sh` le tient.
+
 ## Builder
 
 ```bash
@@ -1771,6 +1786,89 @@ omp-console/
 ## Plateforme
 
 La section `── App Swift` de `scripts/check.sh` ne tourne que sous macOS : elle
-compile le produit en release, lance la suite en debug et assemble le bundle. Sous
-Ubuntu, elle annonce « non exécuté » sans faire échouer la validation du dépôt ;
-les tests réels du harnais y sont eux aussi « skipped », faute de `omp`.
+compile le paquet, lance ses tests et assemble le bundle. Sous Ubuntu, elle
+annonce « non exécuté » sans faire échouer la validation du dépôt ; les tests réels
+du harnais y sont eux aussi « skipped », faute de `omp`.
+
+Il en va de même pour la section `── App iOS` : elle exige `xcodebuild`, donc
+macOS **et** Xcode utilisable. Partout ailleurs elle annonce « non exécuté » sans
+rougir — sauf en CI `macos-latest`, où `MEM0_OMP_REQUIRE_IOS=1` transforme cette
+absence en échec.
+
+## Coque iOS
+
+`omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle :
+sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
+sont hors périmètre), une seule navigation adaptative — barre latérale à deux
+groupes sur iPad, pile sur iPhone — et, pour l'instant, un écran d'attente par
+section. Elle n'a ni réseau, ni magasin local, ni badge d'attention.
+
+### Prérequis
+
+- **Xcode 27** installé, et sa licence acceptée : sans cela, toute invocation de
+  `xcodebuild` autre que `-version` échoue (« You have not agreed to the Xcode
+  license agreements »). Le déblocage est une action de l'utilisateur :
+
+  ```bash
+  sudo xcodebuild -license accept
+  ```
+
+- Sur un poste équipé des seuls Command Line Tools, `xcodebuild -version` répond
+  mais `xcodebuild -showsdks` échoue : c'est cette seconde commande que
+  `scripts/ios-build.sh` emploie comme sonde, et il conclut « non exécuté » plutôt
+  que d'échouer.
+
+### Ouvrir, compiler, tester
+
+```bash
+open omp-console/ios/OMPConsoleIOS.xcodeproj
+```
+
+En ligne de commande, `DEVELOPER_DIR` désigne l'installation d'Xcode quand
+`xcode-select` pointe les Command Line Tools :
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-build.sh
+```
+
+Le script compile l'app en destination générique, choisit un simulateur iOS ≥ 26
+et lance la suite Swift Testing de la cible `OMPConsoleIOSTests`. `--no-tests`
+s'arrête après la compilation. Codes de sortie : `0` compilé (et testé), `1`
+échec, `2` « non exécuté ».
+
+### Captures des sept écrans
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-shots.sh
+```
+
+Le script démarre un simulateur iPhone et un iPad, installe l'app, puis l'ouvre
+sur chacune des sept sections par son argument de lancement et capture l'écran :
+**14 PNG** dans `omp-console/build/ios-shots/` (dossier ignoré par git — les images
+sont des artefacts de PR, jamais committées).
+
+Pour ouvrir une section précise sur un simulateur déjà démarré :
+
+```bash
+xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section memory
+```
+
+(`-section <rawValue>` ; `home`, `kanban`, `project`, `session`, `sessions`,
+`memory`, `stats`.)
+
+### Installer sur un appareil réel
+
+Ce geste appartient à l'utilisateur : il n'est pas nécessaire à la validation du
+dépôt et ne bloque rien.
+
+1. Brancher l'**appareil** à ce Mac et l'activer (sur l'appareil : *Réglages ▸
+   Confidentialité et sécurité ▸ **Mode développeur***, puis redémarrer).
+2. Dans Xcode, choisir la cible `OMPConsoleIOS` et l'appareil dans le sélecteur de
+   destination.
+3. Ouvrir l'onglet *Signing & Capabilities* de la cible, cocher *Automatically
+   manage signing*, puis choisir son **compte** (Team). Si l'identifiant de bundle
+   du dépôt (`com.omp.console.ios`) est déjà pris, en choisir un **unique**.
+4. Lancer (⌘R). L'app s'installe et démarre.
+5. À la première exécution, approuver le certificat de développement sur
+   l'appareil : *Réglages ▸ Général ▸ VPN et gestion de l'appareil*.
+6. Relancer l'app — elle s'ouvre alors normalement.

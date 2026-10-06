@@ -4,6 +4,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-7 : le contenu rendu est exactement celui du disque, accents et fin de ligne comprises")
 func contentIsByteExact() throws {

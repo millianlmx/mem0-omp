@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @MainActor
 @Test("suivi-pr-ci/AC-1 : les textes exacts du volet « PR et CI »")

@@ -1,35 +1,11 @@
-// TOUS les textes de la préparation (S-5), en UN endroit — la vue affiche, elle ne
-// compose jamais une phrase (même convention que `HomeText`/`MemoryText`).
-//
-// Chaque phrase est FIGÉE par le contrat : les tests les relisent telles quelles,
-// et l'app ne peut pas dériver d'un mot sans faire rougir la suite.
+// Ce que la coque garde des textes de la préparation : les cinq fonctions qui
+// nomment un type de la coque (`ComponentID`, `SetupStep`, `OMLXStatus`,
+// `SetupFailure`, `SetupState`). Toutes les constantes et `percent(_:_:)` vivent
+// dans `ConsoleCore/Setup/SetupText.swift`.
 
-import Foundation
+import ConsoleCore
 
-enum SetupText {
-    // --- la feuille -----------------------------------------------------------
-    static let title = "Préparation d'OMP Console"
-    static let body =
-        "OMP Console installe ses composants — OMP, le moteur de conteneurs et la pile mémoire — puis les démarre. Cette étape n'a lieu qu'une fois."
-    /// Le bouton de reprise après échec (proéminent, seul geste principal).
-    static let retry = "Réessayer"
-    /// « Fermer » est toujours disponible : fermer n'interrompt rien.
-    static let close = "Fermer"
-    /// Le bouton du bandeau de l'Accueil quand la préparation a été ignorée.
-    static let resume = "Reprendre…"
-    /// L'état de succès (la feuille se ferme d'elle-même par la politique).
-    static let done = "Préparation terminée."
-
-    // --- l'Accueil sans composants -------------------------------------------
-    static let homeMissingTitle = "OMP Console prépare ses composants"
-    static let homeMissingBody =
-        "L'installation d'OMP, du moteur de conteneurs et de la pile mémoire est en cours. Les fonctions qui en dépendent se débloquent à la fin."
-
-    // --- le badge des composants ---------------------------------------------
-    /// L'état positif du badge (S-1) : les deux composants embarqués sont
-    /// installés.
-    static let componentsAllInstalled = "Tout est installé"
-
+extension SetupText {
     /// Le mot du badge pour les composants manquants (S-1, AC-1/AC-2) : les noms
     /// joints par « et », la marque du pluriel sur « manquants » — jamais
     /// « manquant(s) » (convention de pluriel du dépôt).
@@ -40,18 +16,6 @@ enum SetupText {
         default: return missing.map(\.name).joined(separator: " et ") + " manquants"
         }
     }
-
-    // --- les lignes de la feuille --------------------------------------------
-    static let componentsRow = "Composants"
-    static let migrationRow = "Migration de la mémoire"
-    static let stackRow = "Pile mémoire"
-    static let prerequisitesRow = "Prérequis"
-
-    // --- états d'oMLX (ligne Prérequis) --------------------------------------
-    static let omlxUnknown = "Non vérifié"
-    static let omlxReachable = "Disponible"
-    static let omlxUnauthorized = "Jeton refusé (401)"
-    static let omlxUnreachable = "Injoignable"
 
     /// Le détail d'une étape en cours. Les deux téléchargements affichent leur
     /// pourcentage seulement quand la taille totale est connue (`total == 0` ⇒
@@ -83,13 +47,6 @@ enum SetupText {
         case .prerequisites:
             return "Vérification des prérequis…"
         }
-    }
-
-    /// Le pourcentage d'un téléchargement, borné 0…100.
-    static func percent(_ downloaded: Int64, _ total: Int64) -> Int {
-        guard total > 0 else { return 0 }
-        let value = Int((Double(downloaded) / Double(total) * 100).rounded(.down))
-        return min(max(value, 0), 100)
     }
 
     /// Le mot d'état d'oMLX (S-5, ligne Prérequis).
