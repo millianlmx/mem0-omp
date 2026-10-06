@@ -51,7 +51,7 @@ extension SetupStep {
         switch self {
         case .omp, .ompInstall, .podman, .podmanInstall: .components
         case .legacyStop, .migrationCopy: .migration
-        case .machine, .images, .containers, .health: .stack
+        case .machine, .images, .containers, .health, .union: .stack
         case .prerequisites: .prerequisites
         }
     }
@@ -75,6 +75,9 @@ extension SetupFailure {
         case .components: .components
         case .migration: .migration
         case .stack: .stack
+        // L'arrêt refusé de l'ancienne pile appartient à la ligne « Migration de
+        // la mémoire », dont il est le geste explicite (S-6).
+        case .legacy: .migration
         }
     }
 }
@@ -110,9 +113,40 @@ enum SetupPresentation {
         }
     }
 
-    /// « Réessayer » n'apparaît que sur l'échec (le seul geste principal).
+    /// « Réessayer » : l'échec, et il RESTE visible pendant l'action de reprise
+    /// (il n'est alors plus le geste principal, S-6). Il n'a de raccourci que
+    /// lorsqu'il est proéminent (`showsTakeover` faux).
     static func showsRetry(_ state: SetupState) -> Bool {
-        if case .failed = state { return true }
+        switch state {
+        case .failed:
+            return true
+        case .preparing(.legacyStop):
+            // Pendant l'arrêt de l'ancienne pile, les deux boutons d'action restent
+            // affichés mais désactivés (BR-9).
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Le bouton de reprise de l'ancienne pile (S-6, BR-9) : affiché SEULEMENT sur
+    /// un conflit dont le propriétaire EST l'ancienne pile (`legacyContainer != nil`),
+    /// et maintenu — désactivé — pendant l'action qu'il a déclenchée.
+    static func showsTakeover(_ state: SetupState) -> Bool {
+        switch state {
+        case let .failed(.stack(.portConflict(_, owner))):
+            return owner.legacyContainer != nil
+        case .preparing(.legacyStop):
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Vrai pendant l'action de reprise : les boutons d'action sont désactivés, la
+    /// seule issue reste « Fermer » (BR-9).
+    static func isActing(_ state: SetupState) -> Bool {
+        if case .preparing(.legacyStop) = state { return true }
         return false
     }
 
@@ -165,11 +199,17 @@ struct SetupView: View {
             }
             HStack(spacing: 10) {
                 Spacer()
-                if SetupPresentation.showsRetry(setup.state) {
-                    Button(SetupText.retry) { setup.present() }
+                if SetupPresentation.showsTakeover(setup.state) {
+                    // Le geste de reprise (S-6) devient l'action par DÉFAUT (↩) ; il
+                    // reste affiché — désactivé — pendant l'action qu'il a déclenchée.
+                    Button(SetupText.takeover) { Task { await setup.takeOverLegacyStack() } }
                         .consoleButtonProminence(true)
                         .keyboardShortcut(.defaultAction)
-                        .accessibilityIdentifier("sheet.setup.retry")
+                        .disabled(SetupPresentation.isActing(setup.state))
+                        .accessibilityIdentifier("sheet.setup.takeover")
+                }
+                if SetupPresentation.showsRetry(setup.state) {
+                    retryButton
                 }
                 Button(SetupText.close) { setup.dismiss() }
                     .consoleButtonProminence(SetupPresentation.closeIsProminent(setup.state))
@@ -199,6 +239,23 @@ struct SetupView: View {
         .frame(width: 520)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("sheet.setup")
+    }
+
+    /// « Réessayer » : proéminent et porteur de ↩ quand la reprise n'est pas
+    /// affichée ; sinon VISIBLE mais SANS raccourci (la reprise porte ↩) — et
+    /// toujours désactivé pendant l'action de reprise.
+    @ViewBuilder private var retryButton: some View {
+        if SetupPresentation.showsTakeover(setup.state) {
+            Button(SetupText.retry) { setup.present() }
+                .disabled(SetupPresentation.isActing(setup.state))
+                .accessibilityIdentifier("sheet.setup.retry")
+        } else {
+            Button(SetupText.retry) { setup.present() }
+                .consoleButtonProminence(true)
+                .keyboardShortcut(.defaultAction)
+                .disabled(SetupPresentation.isActing(setup.state))
+                .accessibilityIdentifier("sheet.setup.retry")
+        }
     }
 }
 

@@ -37,7 +37,7 @@ private enum ComponentsFixture {
             ),
             machineImage: "docker://quay.io/podman/machine-os:6.1",
             qdrantImage: "docker.io/qdrant/qdrant:v1.19.0",
-            stackImageTag: "omp-console-mem0-http:1"
+            stackImageRepository: "omp-console-mem0-http"
         )
     }
 

@@ -195,6 +195,30 @@ struct MemoryView: ConsoleSectionView {
                     .accessibilityIdentifier("memoire.unavailable.detail")
             }
 
+        case let .foreignOwned(foreign):
+            // Quelqu'un répond sans notre jeton (S-4) : la section NOMME le
+            // propriétaire et le geste, et n'offre la reprise QUE si c'est
+            // l'ancienne pile (S-6, BR-9). Le bouton porte un libellé explicite
+            // (jamais une icône seule) ; il est atteignable au clavier, après le
+            // détail, et désactivé pendant l'action (`canRefresh`).
+            ContentUnavailableView {
+                Label(MemoryText.foreignTitle, systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(MemoryText.foreignDescription)
+            } actions: {
+                Text(verbatim: MemoryText.foreignOwnershipDetail(foreign))
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .textSelection(.enabled)
+                    .accessibilityIdentifier("memoire.foreignOwned.detail")
+                if foreign.isLegacy {
+                    Button(MemoryText.takeover) { Task { await model.takeOverLegacyStack() } }
+                        .disabled(!model.canRefresh)
+                        .accessibilityIdentifier("memoire.foreignOwned.takeover")
+                }
+            }
+
         case let .summaryEmpty(scope):
             ContentUnavailableView(
                 MemoryText.emptySummaryTitle,

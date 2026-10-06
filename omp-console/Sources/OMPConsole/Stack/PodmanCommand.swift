@@ -59,6 +59,19 @@ enum PodmanCommand {
         ["machine", "start", name]
     }
 
+    /// `info` : la source de vérité de la JOIGNABILITÉ de l'API de la machine
+    /// (S-3). Elle traverse connexion → socket → forwarder → API ; `machine
+    /// inspect` ne dit que l'état de la VM. Un exit 0 prouve que l'API répond.
+    static func info() -> [String] {
+        ["info"]
+    }
+
+    /// La réparation de S-3 : podman n'a PAS de `machine restart`, l'arrêt puis le
+    /// démarrage sont les deux gestes.
+    static func machineStop(_ name: String) -> [String] {
+        ["machine", "stop", name]
+    }
+
     /// `rm -f` : le `-f` évite l'invite interactive quand la machine tourne encore.
     static func machineRemove(_ name: String) -> [String] {
         ["machine", "rm", "-f", name]
@@ -132,13 +145,16 @@ enum PodmanCommand {
     /// Le `run` du conteneur mem0-http : ses dix variables viennent de
     /// `StackConfig` — jamais de l'environnement de l'app seule (invariant S-2) —
     /// et son hôte Qdrant est le conteneur voisin, résolu par le DNS du réseau
-    /// (`host.containers.internal` reste l'hôte du Mac, pour oMLX).
+    /// (`host.containers.internal` reste l'hôte du Mac, pour oMLX). Le jeton
+    /// d'installation suit IMMÉDIATEMENT `MEM0_HTTP_TOKEN` (position figée par
+    /// test, S-4) : c'est lui que `/health` rend dans son champ additif.
     static func mem0Run(
         name: String,
         image: String,
         network: String,
         qdrantHost: String,
-        config: StackConfig
+        config: StackConfig,
+        installationToken: String
     ) -> [String] {
         [
             "run", "-d",
@@ -155,7 +171,33 @@ enum PodmanCommand {
             "-e", "OMLX_EMBED_MODEL=\(config.omlxEmbedModel)",
             "-e", "EMBEDDING_DIMS=\(config.embeddingDims)",
             "-e", "MEM0_HTTP_TOKEN=\(config.mem0HttpToken)",
+            "-e", "OMP_INSTALLATION_TOKEN=\(installationToken)",
             "-e", "PYTHONUNBUFFERED=1",
+            image,
+        ]
+    }
+
+    /// Le `run` du conteneur LECTEUR de l'union (S-8) : une instance Qdrant
+    /// TEMPORAIRE (`--rm`) montée sur une copie de staging, publiée sur un port
+    /// dédié pour que la cible (celle de l'app) ne soit jamais confondue avec
+    /// elle. Aucune donnée de l'ancienne pile n'est montée par ce conteneur : il
+    /// ne voit que la copie.
+    static func readerRun(
+        name: String,
+        image: String,
+        network: String,
+        storage: URL,
+        hostPort: Int,
+        apiKey: String
+    ) -> [String] {
+        [
+            "run", "-d",
+            "--rm",
+            "--name", name,
+            "--network", network,
+            "-p", "127.0.0.1:\(hostPort):\(qdrantNetworkPort)",
+            "-v", "\(storage.path):/qdrant/storage",
+            "-e", "QDRANT__SERVICE__API_KEY=\(apiKey)",
             image,
         ]
     }
@@ -163,12 +205,20 @@ enum PodmanCommand {
     // MARK: - Environnement et configuration
 
     /// L'environnement de CHAQUE invocation podman : celui de l'app, plus les deux
-    /// racines XDG privées. C'est l'invariant d'isolation de S-2 — aucune commande
-    /// ne part sans elles.
+    /// racines XDG privées et le `TMPDIR` privé. C'est l'invariant d'isolation de
+    /// S-1/S-2 — aucune commande ne part sans eux.
+    ///
+    /// `TMPDIR` est ÉCRASÉ (jamais conservé) : podman en dérive tous les artefacts
+    /// runtime d'une `machine` qui ne vivent pas sous les XDG — `gvproxy.pid`,
+    /// `gvproxy.log` (noms NON préfixés par la machine), sockets et journaux de VM
+    /// — sous `$TMPDIR/podman/` (source `pkg/machine/env/dir_darwin.go`, et mesuré
+    /// le 2026-10-06 : les artefacts des deux machines cohabitaient). Avec le
+    /// `TMPDIR` privé de l'app, plus rien n'est partagé avec le podman système.
     static func environment(base: [String: String], paths: AppPaths) -> [String: String] {
         var environment = base
         environment["XDG_CONFIG_HOME"] = paths.configDir.path
         environment["XDG_DATA_HOME"] = paths.dataDir.path
+        environment["TMPDIR"] = paths.tmpDir.path
         return environment
     }
 
