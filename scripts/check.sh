@@ -2,6 +2,12 @@
 # Valide le dépôt avant publication. Attrape les pièges qui font échouer une
 # installation marketplace de façon silencieuse — c'est-à-dire la totalité des
 # pièges, parce qu'OMP ne dit pas grand-chose quand une extension ne charge pas.
+#
+# Dix sections INDÉPENDANTES, lancées en UN SEUL PASSAGE CONCURRENT puis
+# imprimées dans l'ordre canonique (voir le runner en fin de fichier) : la durée
+# murale vaut max(sections) + surcoût au lieu de leur somme, sans retirer une
+# seule vérification. Chaque section garde son en-tête exact, ses lignes
+# `  ✓ / ✗ / ·`, son dossier de travail propre et son verdict.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -9,25 +15,37 @@ FAIL=0
 fail() { echo "  ✗ $1"; FAIL=1; }
 pass() { echo "  ✓ $1"; }
 
-echo "── Catalogue marketplace"
+# ---------------------------------------------------------------------------
+# Les sections. Une fonction = un bloc du rapport : son en-tête, ses lignes de
+# verdict, et le verdict rendu en code de sortie —
+#   0 = exécutée, 2 = « non exécuté » (aucune ✓, jamais un échec), autre = échec.
+# Elles tournent chacune dans son sous-shell : `FAIL` y est local à la section,
+# et le runner agrège les codes.
+# ---------------------------------------------------------------------------
 
-for f in .omp-plugin/marketplace.json .claude-plugin/marketplace.json; do
-  if [ ! -f "$f" ]; then fail "$f manquant"; continue; fi
-  python3 -c "import json,sys; json.load(open('$f'))" 2>/dev/null \
-    && pass "$f est un JSON valide" || fail "$f est un JSON invalide"
-done
+section_catalogue() {
+  echo "── Catalogue marketplace"
 
-# OMP lit .omp-plugin/ ; Claude Code lit .claude-plugin/. Un dépôt peut publier
-# les deux, mais s'ils divergent l'un des deux publics installe autre chose.
-if diff -q .omp-plugin/marketplace.json .claude-plugin/marketplace.json >/dev/null 2>&1; then
-  pass "les deux catalogues sont identiques"
-else
-  fail "les catalogues .omp-plugin et .claude-plugin ont divergé"
-fi
+  for f in .omp-plugin/marketplace.json .claude-plugin/marketplace.json; do
+    if [ ! -f "$f" ]; then fail "$f manquant"; continue; fi
+    python3 -c "import json,sys; json.load(open('$f'))" 2>/dev/null \
+      && pass "$f est un JSON valide" || fail "$f est un JSON invalide"
+  done
 
-echo "── Noms"
+  # OMP lit .omp-plugin/ ; Claude Code lit .claude-plugin/. Un dépôt peut publier
+  # les deux, mais s'ils divergent l'un des deux publics installe autre chose.
+  if diff -q .omp-plugin/marketplace.json .claude-plugin/marketplace.json >/dev/null 2>&1; then
+    pass "les deux catalogues sont identiques"
+  else
+    fail "les catalogues .omp-plugin et .claude-plugin ont divergé"
+  fi
+  return "$FAIL"
+}
 
-python3 - <<'PY'
+section_noms() {
+  echo "── Noms"
+
+  python3 - <<'PY'
 import json, re, sys
 NAME = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}[a-z0-9]$")
 cat = json.load(open(".omp-plugin/marketplace.json"))
@@ -52,11 +70,14 @@ else:
     print("  ✓ owner.name présent")
 sys.exit(0 if ok else 1)
 PY
-[ $? -ne 0 ] && FAIL=1
+  [ $? -ne 0 ] && FAIL=1
+  return "$FAIL"
+}
 
-echo "── Plugins"
+section_plugins() {
+  echo "── Plugins"
 
-python3 - <<'PY'
+  python3 - <<'PY'
 import json, os, sys
 cat = json.load(open(".omp-plugin/marketplace.json"))
 root = cat.get("metadata", {}).get("pluginRoot", "")
@@ -102,16 +123,16 @@ for p in cat["plugins"]:
             print(f"    ✗ {e} introuvable sur disque"); ok = False
 sys.exit(0 if ok else 1)
 PY
-[ $? -ne 0 ] && FAIL=1
+  [ $? -ne 0 ] && FAIL=1
 
-# Le tableau `commands` est ce que l'utilisateur lit pour savoir ce qu'il installe :
-# une commande déclarée sans `registerCommand` est un bouton mort, l'inverse une
-# commande invisible. Les deux ensembles doivent être identiques.
-#
-# Le balayage est RÉCURSIF sur les .ts du plugin : depuis le découpage en
-# modules, les commandes peuvent vivre dans n'importe lequel (extension.ts n'est
-# plus qu'une entrée de câblage).
-python3 - <<'PY'
+  # Le tableau `commands` est ce que l'utilisateur lit pour savoir ce qu'il installe :
+  # une commande déclarée sans `registerCommand` est un bouton mort, l'inverse une
+  # commande invisible. Les deux ensembles doivent être identiques.
+  #
+  # Le balayage est RÉCURSIF sur les .ts du plugin : depuis le découpage en
+  # modules, les commandes peuvent vivre dans n'importe lequel (extension.ts n'est
+  # plus qu'une entrée de câblage).
+  python3 - <<'PY'
 import json, os, re, sys
 from pathlib import Path
 cat = json.load(open(".omp-plugin/marketplace.json"))
@@ -144,15 +165,18 @@ for p in cat["plugins"]:
               f"{len(registered)} enregistrée(s)")
 sys.exit(0 if ok else 1)
 PY
-[ $? -ne 0 ] && FAIL=1
+  [ $? -ne 0 ] && FAIL=1
+  return "$FAIL"
+}
 
-echo "── Versions"
+section_versions() {
+  echo "── Versions"
 
-# Ce que le catalogue annonce doit être ce que le package.json porte : une entrée
-# qui ment installe une version que l'utilisateur ne croit pas installer.
-# `metadata.version` est facultative, mais si elle est là elle doit NOMMER une
-# version publiée — sinon elle est invérifiable par construction.
-python3 - <<'PY'
+  # Ce que le catalogue annonce doit être ce que le package.json porte : une entrée
+  # qui ment installe une version que l'utilisateur ne croit pas installer.
+  # `metadata.version` est facultative, mais si elle est là elle doit NOMMER une
+  # version publiée — sinon elle est invérifiable par construction.
+  python3 - <<'PY'
 import json, os, sys
 cat = json.load(open(".omp-plugin/marketplace.json"))
 root = cat.get("metadata", {}).get("pluginRoot", "")
@@ -187,38 +211,41 @@ else:
     print(f"  ✓ metadata.version {meta} nomme une version publiée")
 sys.exit(0 if OK else 1)
 PY
-[ $? -ne 0 ] && FAIL=1
+  [ $? -ne 0 ] && FAIL=1
+  return "$FAIL"
+}
 
-echo "── Extension"
+section_extension() {
+  echo "── Extension"
 
-# Liste écrite en dur (et non déduite du catalogue) : la transpilation couvre les
-# extensions DU DÉPÔT, y compris si un plugin venait à disparaître du catalogue.
-if command -v npx >/dev/null 2>&1; then
-  TRANSPILED=1
-  for p in omp-mem0-memory omp-mem0-req; do
-    if npx --yes esbuild@0.24.0 "$p/extension.ts" --format=esm --outfile=/dev/null --log-level=error 2>&1; then
-      :
-    else
-      fail "$p/extension.ts ne se transpile pas"
-      TRANSPILED=0
-    fi
-  done
-  [ "$TRANSPILED" -eq 1 ] && pass "les 2 extensions se transpilent"
-else
-  echo "  · npx absent, transpilation non vérifiée (2 plugins)"
-fi
+  # Liste écrite en dur (et non déduite du catalogue) : la transpilation couvre les
+  # extensions DU DÉPÔT, y compris si un plugin venait à disparaître du catalogue.
+  if command -v npx >/dev/null 2>&1; then
+    local TRANSPILED=1
+    for p in omp-mem0-memory omp-mem0-req; do
+      if npx --yes esbuild@0.24.0 "$p/extension.ts" --format=esm --outfile=/dev/null --log-level=error 2>&1; then
+        :
+      else
+        fail "$p/extension.ts ne se transpile pas"
+        TRANSPILED=0
+      fi
+    done
+    [ "$TRANSPILED" -eq 1 ] && pass "les 2 extensions se transpilent"
+  else
+    echo "  · npx absent, transpilation non vérifiée (2 plugins)"
+  fi
 
-# Un import de valeur (non type-only) depuis @oh-my-pi/pi-* crée une dépendance
-# de résolution au runtime, qui casse selon la plateforme (cf. issue #1292).
-# Le contrôle passe par python3, jamais par `grep -P` : le grep BSD de macOS
-# rejette `-P` (et le lookahead sous `-E`), donc l'ancien contrôle échouait AVANT
-# toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
-#
-# Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
-# (`omp-mem0-req/*.ts`, `omp-mem0-req/panel/*.ts`) : ne contrôler que
-# `extension.ts` laisserait passer un import de valeur écrit dans un module.
-if command -v python3 >/dev/null 2>&1; then
-python3 - <<'PY'
+  # Un import de valeur (non type-only) depuis @oh-my-pi/pi-* crée une dépendance
+  # de résolution au runtime, qui casse selon la plateforme (cf. issue #1292).
+  # Le contrôle passe par python3, jamais par `grep -P` : le grep BSD de macOS
+  # rejette `-P` (et le lookahead sous `-E`), donc l'ancien contrôle échouait AVANT
+  # toute comparaison et affichait un « ✓ » mensonger (voir la doc §5).
+  #
+  # Le balayage est RÉCURSIF depuis que les extensions sont découpées en modules
+  # (`omp-mem0-req/*.ts`, `omp-mem0-req/panel/*.ts`) : ne contrôler que
+  # `extension.ts` laisserait passer un import de valeur écrit dans un module.
+  if command -v python3 >/dev/null 2>&1; then
+  python3 - <<'PY'
 import re, sys
 from pathlib import Path
 pat = re.compile(r'^\s*import\s+(?!type\b)[^;]*from\s+["\']@oh-my-pi/', re.M)
@@ -239,102 +266,136 @@ if hits:
     sys.exit(1)
 print("  ✓ aucun import de valeur depuis @oh-my-pi/* (2 plugins contrôlés)")
 PY
-[ $? -ne 0 ] && FAIL=1
-else
-  echo "  · python3 absent, contrôle d'import non vérifié"
-fi
+  [ $? -ne 0 ] && FAIL=1
+  else
+    echo "  · python3 absent, contrôle d'import non vérifié"
+  fi
+  return "$FAIL"
+}
 
-echo "── Types"
+section_types() {
+  echo "── Types"
 
-# Le type-check vit dans scripts/typecheck.sh (créé par BR-7) : check.sh l'appelle
-# et reste le seul porteur de la logique. Types de l'hôte absents ⇒ le script sort
-# 0 en l'annonçant : on recopie son verdict sans jamais afficher un « ✓ » trompeur.
-if [ -f scripts/typecheck.sh ]; then
-  types_out="$(bash scripts/typecheck.sh 2>&1)"
-  types_status=$?
-  [ -n "$types_out" ] && printf '%s\n' "$types_out"
-  if [ "$types_status" -eq 0 ]; then
-    case "$types_out" in
-      *"types de l'hôte absents"*) : ;;
-      *) pass "les types de l'hôte encaissent le type-check des 2 plugins et des tests" ;;
+  # `MEM0_OMP_SKIP_TYPES=1` neutralise la section : les harnais de test lancent
+  # check.sh une trentaine de fois dans des copies jetables, qui paieraient sinon
+  # chacune un type-check complet sans rien prouver de la section éprouvée. Une
+  # valeur vide vaut absence, et la CI ne pose jamais cette variable.
+  if [ -n "${MEM0_OMP_SKIP_TYPES:-}" ]; then
+    echo "  · ignorée (MEM0_OMP_SKIP_TYPES=1)"
+    return 2
+  fi
+
+  # Le type-check vit dans scripts/typecheck.sh (créé par BR-7) : check.sh l'appelle
+  # et reste le seul porteur de la logique. Types de l'hôte absents ⇒ le script sort
+  # 0 en l'annonçant : on recopie son verdict sans jamais afficher un « ✓ » trompeur.
+  if [ -f scripts/typecheck.sh ]; then
+    types_out="$(bash scripts/typecheck.sh 2>&1)"
+    types_status=$?
+    [ -n "$types_out" ] && printf '%s\n' "$types_out"
+    if [ "$types_status" -eq 0 ]; then
+      case "$types_out" in
+        *"types de l'hôte absents"*) return 2 ;;
+        *) pass "les types de l'hôte encaissent le type-check des 2 plugins et des tests" ;;
+      esac
+    else
+      errs="$(printf '%s\n' "$types_out" | grep -F 'error TS' | tr '\n' ' ')"
+      fail "type-check : ${errs:-sortie non nulle sans erreur TS} (relance : ./scripts/typecheck.sh)"
+      return 1
+    fi
+  else
+    echo "  · scripts/typecheck.sh absent, type-check non vérifié"
+    return 2
+  fi
+  return "$FAIL"
+}
+
+section_api_http() {
+  echo "── API mem0-http"
+
+  # mem0-stack/mem0-http/test_api.py prouve que le serveur est conforme à l'API de
+  # la version de mem0 RÉELLEMENT installée. Le Dockerfile l'exécute au build de
+  # l'image ; ce contrôle l'exécute HORS du build, pour que la même rupture d'API
+  # (paramètre retiré ou renommé côté mem0) fasse échouer la CI sans conteneur, sans
+  # credential et sans socket. Le script appelé dérive ses exigences et sa version
+  # de Python du Dockerfile : aucune liste n'est recopiée ici.
+  #
+  # La sortie du test n'est JAMAIS résumée : c'est elle qui nomme la route fautive
+  # (le critère exige que le job rouge la nomme). Prérequis absents (environnement
+  # Python non préparé) ⇒ on l'annonce sans ✓ mensonger, comme pour le type-check —
+  # SAUF si MEM0_OMP_REQUIRE_HTTP_API=1 (posée par la CI) : là, un prérequis manquant
+  # est un échec, jamais un skip silencieux.
+  if [ -f scripts/mem0-http-test.sh ]; then
+    http_out="$(bash scripts/mem0-http-test.sh --run 2>&1)"
+    http_status=$?
+    [ -n "$http_out" ] && printf '%s\n' "$http_out"
+    case "$http_status" in
+      0)
+        pass "API mem0-http : test_api.py conforme (dépendances déclarées par le Dockerfile)"
+        ;;
+      2)
+        http_reason="$(printf '%s\n' "$http_out" | head -n 1)"
+        if [ "${MEM0_OMP_REQUIRE_HTTP_API:-}" = "1" ]; then
+          fail "API mem0-http — ${http_reason} (relance : bash scripts/mem0-http-test.sh --prepare)"
+          return 1
+        fi
+        echo "  · ${http_reason} (prépare : bash scripts/mem0-http-test.sh --prepare)"
+        return 2
+        ;;
+      *)
+        fail "API mem0-http — test_api.py a échoué (relance : bash scripts/mem0-http-test.sh --run)"
+        return 1
+        ;;
     esac
   else
-    errs="$(printf '%s\n' "$types_out" | grep -F 'error TS' | tr '\n' ' ')"
-    fail "type-check : ${errs:-sortie non nulle sans erreur TS} (relance : ./scripts/typecheck.sh)"
+    echo "  · scripts/mem0-http-test.sh absent, test d'API mem0-http non vérifié"
+    return 2
   fi
-else
-  echo "  · scripts/typecheck.sh absent, type-check non vérifié"
-fi
+  return "$FAIL"
+}
 
-echo "── API mem0-http"
+section_plugins_reels() {
+  echo "── Plugins réels (OMP)"
 
-# mem0-stack/mem0-http/test_api.py prouve que le serveur est conforme à l'API de
-# la version de mem0 RÉELLEMENT installée. Le Dockerfile l'exécute au build de
-# l'image ; ce contrôle l'exécute HORS du build, pour que la même rupture d'API
-# (paramètre retiré ou renommé côté mem0) fasse échouer la CI sans conteneur, sans
-# credential et sans socket. Le script appelé dérive ses exigences et sa version
-# de Python du Dockerfile : aucune liste n'est recopiée ici.
-#
-# La sortie du test n'est JAMAIS résumée : c'est elle qui nomme la route fautive
-# (le critère exige que le job rouge la nomme). Prérequis absents (environnement
-# Python non préparé) ⇒ on l'annonce sans ✓ mensonger, comme pour le type-check —
-# SAUF si MEM0_OMP_REQUIRE_HTTP_API=1 (posée par la CI) : là, un prérequis manquant
-# est un échec, jamais un skip silencieux.
-if [ -f scripts/mem0-http-test.sh ]; then
-  http_out="$(bash scripts/mem0-http-test.sh --run 2>&1)"
-  http_status=$?
-  [ -n "$http_out" ] && printf '%s\n' "$http_out"
-  case "$http_status" in
-    0)
-      pass "API mem0-http : test_api.py conforme (dépendances déclarées par le Dockerfile)"
-      ;;
-    2)
-      http_reason="$(printf '%s\n' "$http_out" | head -n 1)"
-      if [ "${MEM0_OMP_REQUIRE_HTTP_API:-}" = "1" ]; then
-        fail "API mem0-http — ${http_reason} (relance : bash scripts/mem0-http-test.sh --prepare)"
-      else
-        echo "  · ${http_reason} (prépare : bash scripts/mem0-http-test.sh --prepare)"
-      fi
-      ;;
-    *)
-      fail "API mem0-http — test_api.py a échoué (relance : bash scripts/mem0-http-test.sh --run)"
-      ;;
-  esac
-else
-  echo "  · scripts/mem0-http-test.sh absent, test d'API mem0-http non vérifié"
-fi
-
-echo "── Plugins réels (OMP)"
-
-# Le harnais (scripts/plugin-smoke.ts) charge chaque plugin du catalogue dans un
-# VRAI OMP, vérifie ses commandes et invoque une commande (et un outil) en
-# contrôlant le résultat observé. C'est le seul contrôle qui attrape une
-# extension qui se transpile, passe tous les tests unitaires (faux `pi`) et ne
-# s'enregistre pas au runtime.
-#
-# Prérequis absents (bun, hôte OMP) ⇒ on l'annonce sans ✓ mensonger, comme pour
-# la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) : là, un
-# prérequis manquant est un échec, jamais un skip silencieux.
-smoke_host=""
-for candidate in "${MEM0_OMP_HOST_MODULES:-}" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
-  if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
-    smoke_host="$candidate"
-    break
+  # `MEM0_OMP_SKIP_SMOKE=1` neutralise la section (mêmes raisons que
+  # `MEM0_OMP_SKIP_TYPES`) ; la neutralisation l'emporte sur la garde de la CI,
+  # c'est le choix explicite du harnais qui copie. Une valeur vide vaut absence.
+  if [ -n "${MEM0_OMP_SKIP_SMOKE:-}" ]; then
+    echo "  · ignorée (MEM0_OMP_SKIP_SMOKE=1)"
+    return 2
   fi
-done
-smoke_reason=""
-if ! command -v bun >/dev/null 2>&1; then
-  smoke_reason="bun absent"
-elif [ -z "$smoke_host" ]; then
-  smoke_reason="hôte OMP introuvable"
-fi
-if [ -n "$smoke_reason" ]; then
-  if [ "${MEM0_OMP_REQUIRE_SMOKE:-}" = "1" ]; then
-    fail "plugins réels : $smoke_reason"
-  else
+
+  # Le harnais (scripts/plugin-smoke.ts) charge chaque plugin du catalogue dans un
+  # VRAI OMP, vérifie ses commandes et invoque une commande (et un outil) en
+  # contrôlant le résultat observé. C'est le seul contrôle qui attrape une
+  # extension qui se transpile, passe tous les tests unitaires (faux `pi`) et ne
+  # s'enregistre pas au runtime.
+  #
+  # Prérequis absents (bun, hôte OMP) ⇒ on l'annonce sans ✓ mensonger, comme pour
+  # la transpilation — SAUF si MEM0_OMP_REQUIRE_SMOKE=1 (posée par la CI) : là, un
+  # prérequis manquant est un échec, jamais un skip silencieux.
+  local smoke_host=""
+  local candidate
+  for candidate in "${MEM0_OMP_HOST_MODULES:-}" "./node_modules" "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules"; do
+    if [ -n "$candidate" ] && [ -f "$candidate/@oh-my-pi/pi-coding-agent/src/index.ts" ]; then
+      smoke_host="$candidate"
+      break
+    fi
+  done
+  local smoke_reason=""
+  if ! command -v bun >/dev/null 2>&1; then
+    smoke_reason="bun absent"
+  elif [ -z "$smoke_host" ]; then
+    smoke_reason="hôte OMP introuvable"
+  fi
+  if [ -n "$smoke_reason" ]; then
+    if [ "${MEM0_OMP_REQUIRE_SMOKE:-}" = "1" ]; then
+      fail "plugins réels : $smoke_reason"
+      return 1
+    fi
     echo "  · $smoke_reason, plugins réels non vérifiés"
+    return 2
   fi
-else
+  local smoke_out smoke_status
   smoke_out="$(bun scripts/plugin-smoke.ts 2>&1)"
   smoke_status=$?
   [ -n "$smoke_out" ] && printf '%s\n' "$smoke_out"
@@ -342,76 +403,153 @@ else
     pass "les 2 plugins se chargent et répondent dans un vrai OMP"
   else
     fail "plugins réels — relance : bun scripts/plugin-smoke.ts"
+    return 1
   fi
-fi
+  return "$FAIL"
+}
 
-echo "── Tests"
+section_tests() {
+  echo "── Tests"
 
-# La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
-# pouvoir nommer le test tombé. Mesuré le 2026-09-24 (run 35994551671) : le job
-# ubuntu a rendu un simple « ✗ tests unitaires » pendant que macOS passait le
-# même arbre — un rouge indébogable, et pas seulement par manque de noms : un
-# processus tué (mémoire) n'écrit AUCUNE ligne TAP, donc le code de sortie est
-# la seule trace qui distingue « un test est tombé » de « le processus est mort ».
-if command -v node >/dev/null 2>&1; then
-  tests_log="$(mktemp)"
-  # `--test-reporter=tap` est ÉPINGLÉ : le rapport par défaut dépend de la version
-  # de Node (spec dès que la sortie n'est plus un terminal en v26, TAP en v22) et
-  # le diagnostic ci-dessous lit un format, pas deux.
-  node --test --test-reporter=tap --experimental-strip-types test/*.test.ts >"$tests_log" 2>&1
-  tests_status=$?
-  if [ "$tests_status" -eq 0 ]; then
-    pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
-  else
-    printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
-    # D'abord TOUS les noms, ensuite la preuve : le bloc de diagnostic est borné,
-    # donc un plafond unique finissait par couper des noms de tests (mesuré le
-    # 2026-09-24 : six échecs, deux preuves visibles).
-    grep -E '^not ok' "$tests_log" | head -n 40
-    # Puis les blocs de diagnostic TAP — le message d'assertion porte la preuve
-    # (sortie du moteur, code de check.sh, diff), bornés à 60 lignes. Le bloc
-    # s'arrête à la première ligne qui repart en colonne 0 (enregistrement suivant).
-    awk '/^not ok/ { show = 1 } /^[^ ]/ && $0 !~ /^not ok/ { show = 0 } show' "$tests_log" | head -n 60
-    if ! grep -qE '^not ok' "$tests_log"; then
-      # Aucun test nommé : le processus est mort avant d'écrire (mémoire). La fin
-      # du journal est alors la seule trace.
-      tail -n 30 "$tests_log"
+  # La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
+  # pouvoir nommer le test tombé. Mesuré le 2026-09-24 (run 35994551671) : le job
+  # ubuntu a rendu un simple « ✗ tests unitaires » pendant que macOS passait le
+  # même arbre — un rouge indébogable, et pas seulement par manque de noms : un
+  # processus tué (mémoire) n'écrit AUCUNE ligne TAP, donc le code de sortie est
+  # la seule trace qui distingue « un test est tombé » de « le processus est mort ».
+  if command -v node >/dev/null 2>&1; then
+    local tests_log
+    tests_log="$(mktemp)"
+    # `--test-reporter=tap` est ÉPINGLÉ : le rapport par défaut dépend de la version
+    # de Node (spec dès que la sortie n'est plus un terminal en v26, TAP en v22) et
+    # le diagnostic ci-dessous lit un format, pas deux.
+    node --test --test-reporter=tap --experimental-strip-types test/*.test.ts >"$tests_log" 2>&1
+    local tests_status=$?
+    if [ "$tests_status" -eq 0 ]; then
+      pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+    else
+      printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
+      # D'abord TOUS les noms, ensuite la preuve : le bloc de diagnostic est borné,
+      # donc un plafond unique finissait par couper des noms de tests (mesuré le
+      # 2026-09-24 : six échecs, deux preuves visibles).
+      grep -E '^not ok' "$tests_log" | head -n 40
+      # Puis les blocs de diagnostic TAP — le message d'assertion porte la preuve
+      # (sortie du moteur, code de check.sh, diff), bornés à 60 lignes. Le bloc
+      # s'arrête à la première ligne qui repart en colonne 0 (enregistrement suivant).
+      awk '/^not ok/ { show = 1 } /^[^ ]/ && $0 !~ /^not ok/ { show = 0 } show' "$tests_log" | head -n 60
+      if ! grep -qE '^not ok' "$tests_log"; then
+        # Aucun test nommé : le processus est mort avant d'écrire (mémoire). La fin
+        # du journal est alors la seule trace.
+        tail -n 30 "$tests_log"
+      fi
+      grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
+      fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
+      rm -f "$tests_log"
+      return 1
     fi
-    grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
-    fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
-  fi
-  rm -f "$tests_log"
-else
-  echo "  · node absent, tests non exécutés"
-fi
-
-echo "── App Swift"
-
-# L'assemblage du bundle .app vit dans scripts/swift-app.sh : check.sh l'appelle
-# et RECOPIE son verdict, comme pour `── Types`. Codes du script : 0 assemblé,
-# 2 « non exécuté » (hors macOS, un succès), tout autre échec. Sur un code 2, le
-# script a déjà dit « non exécuté » — aucune ✓ n'est affichée, sinon la section
-# mentirait sur ce qu'elle a vérifié.
-#
-# `MEM0_OMP_SKIP_SWIFT_APP=1` neutralise la section : le harnais de test lance
-# check.sh une dizaine de fois dans des copies jetables, qui paieraient sinon
-# chacune une compilation Swift complète (≈ 35 s). Une valeur vide vaut absence.
-if [ -f scripts/swift-app.sh ]; then
-  if [ -n "${MEM0_OMP_SKIP_SWIFT_APP:-}" ]; then
-    echo "  · ignorée (MEM0_OMP_SKIP_SWIFT_APP=1)"
+    rm -f "$tests_log"
   else
+    echo "  · node absent, tests non exécutés"
+    return 2
+  fi
+  return "$FAIL"
+}
+
+section_swift() {
+  echo "── App Swift"
+
+  # L'assemblage du bundle .app vit dans scripts/swift-app.sh : check.sh l'appelle
+  # et RECOPIE son verdict, comme pour `── Types`. Codes du script : 0 assemblé,
+  # 2 « non exécuté » (hors macOS, un succès), tout autre échec. Sur un code 2, le
+  # script a déjà dit « non exécuté » — aucune ✓ n'est affichée, sinon la section
+  # mentirait sur ce qu'elle a vérifié.
+  #
+  # `MEM0_OMP_SKIP_SWIFT_APP=1` neutralise la section : le harnais de test lance
+  # check.sh une dizaine de fois dans des copies jetables, qui paieraient sinon
+  # chacune une compilation Swift complète (≈ 35 s). Une valeur vide vaut absence.
+  if [ -f scripts/swift-app.sh ]; then
+    if [ -n "${MEM0_OMP_SKIP_SWIFT_APP:-}" ]; then
+      echo "  · ignorée (MEM0_OMP_SKIP_SWIFT_APP=1)"
+      return 2
+    fi
+    local swift_out swift_status
     swift_out="$(bash scripts/swift-app.sh 2>&1)"
     swift_status=$?
     [ -n "$swift_out" ] && printf '%s\n' "$swift_out"
     case "$swift_status" in
-      0) pass "App Swift : compilation, tests et bundle .app assemblés" ;;
-      2) : ;;
-      *) fail "App Swift — scripts/swift-app.sh a échoué (relance : bash scripts/swift-app.sh)" ;;
+      0) pass "App Swift : produit release, suite debug et bundle .app assemblés" ;;
+      2) return 2 ;;
+      *) fail "App Swift — scripts/swift-app.sh a échoué (relance : bash scripts/swift-app.sh)"; return 1 ;;
     esac
+  else
+    fail "App Swift — scripts/swift-app.sh absent"
+    return 1
   fi
+  return "$FAIL"
+}
+
+# ---------------------------------------------------------------------------
+# Le runner (BR-1). Les dix sections ne lisent rien de ce qu'une autre écrit et
+# n'écrivent jamais dans le dossier d'une autre (`.typecheck` pour `── Types`,
+# `.build-*` pour `── App Swift`, journaux temporaires ailleurs) : elles peuvent
+# donc tourner en même temps. Chaque sous-shell écrit dans SON fichier, et les
+# blocs sont imprimés dans l'ordre canonique dès que la section est terminée —
+# un échec n'est ni masqué ni retardé par les sections suivantes. Un code 137/143
+# (section tuée) est un échec, comme avant.
+#
+# Partage des builds Swift (S-4) : les deux dossiers de scratch sont
+# DÉTERMINISTES, donc check.sh pose leurs chemins absolus avant de lancer les
+# sections (la section `── App Swift` les utilise, la section `── Tests` s'en
+# sert via `test/check.test.ts` pour recompiler en incrémental). Jamais depuis le
+# sous-shell d'une section : elle ne les transmettrait pas à sa voisine. Sous une
+# copie jetable (section neutralisée), ils ne sont pas posés du tout : une copie
+# ne pointe jamais vers les scratchs de l'arbre réel.
+ORDRE=(
+  section_catalogue
+  section_noms
+  section_plugins
+  section_versions
+  section_extension
+  section_types
+  section_api_http
+  section_plugins_reels
+  section_tests
+  section_swift
+)
+
+if [ -f scripts/swift-app.sh ] && [ -z "${MEM0_OMP_SKIP_SWIFT_APP:-}" ]; then
+  export MEM0_OMP_SWIFT_RELEASE_SCRATCH="$PWD/omp-console/.build-run"
+  export MEM0_OMP_SWIFT_TESTS_SCRATCH="$PWD/omp-console/.build-app"
+  # Les marqueurs d'issue sont effacés AVANT que les sections ne démarrent : sans
+  # ça, ceux du run précédent (par exemple un `build-failed` d'une compilation
+  # corrigée depuis) feraient échouer le test `socle-app-swift/AC-1` dès sa
+  # première sonde, et un `build-ok` périmé ferait recompiler contre un scratch
+  # dont personne ne répond encore. `scripts/swift-app.sh` les réécrit en fin de
+  # commande (`marquer_issue`), toujours un seul à la fois.
+  rm -f "$MEM0_OMP_SWIFT_RELEASE_SCRATCH/build-ok" "$MEM0_OMP_SWIFT_RELEASE_SCRATCH/build-failed"
+  rm -f "$MEM0_OMP_SWIFT_TESTS_SCRATCH/build-ok" "$MEM0_OMP_SWIFT_TESTS_SCRATCH/build-failed"
 else
-  fail "App Swift — scripts/swift-app.sh absent"
+  unset MEM0_OMP_SWIFT_RELEASE_SCRATCH MEM0_OMP_SWIFT_TESTS_SCRATCH
 fi
+
+section_dir="$(mktemp -d)"
+trap 'rm -rf "$section_dir"' EXIT
+
+pids=()
+for i in "${!ORDRE[@]}"; do
+  ( "${ORDRE[$i]}" ) >"$section_dir/$i.log" 2>&1 &
+  pids+=("$!")
+done
+
+for i in "${!ORDRE[@]}"; do
+  wait "${pids[$i]}"
+  section_status=$?
+  cat "$section_dir/$i.log"
+  case "$section_status" in
+    0|2) ;;   # exécutée, ou « non exécuté » : jamais un échec, jamais une ✓ en plus
+    *) FAIL=1 ;;
+  esac
+done
 
 echo
 if [ "$FAIL" -eq 0 ]; then

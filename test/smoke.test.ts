@@ -17,6 +17,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { copieDuDepot, envDeCopie } from "./copie.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 /** Profondeur d'imbrication : 0 = `node --test test/smoke.test.ts` à la main. */
@@ -28,12 +29,6 @@ const tmpDirs: string[] = [];
 test.after(() => {
   for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
 });
-
-function mktmp(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), prefix));
-  tmpDirs.push(dir);
-  return fs.realpathSync(dir);
-}
 
 /** La MÊME cascade de résolution d'hôte que le harnais (et scripts/typecheck.sh). */
 function hostRoot(): string | null {
@@ -72,65 +67,17 @@ function runCheck(cwd: string) {
   return spawnSync("bash", ["scripts/check.sh"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1" },
+    // Les sections coûteuses sont neutralisées pour la copie (App Swift, Types),
+    // sauf celle que ce harnais éprouve : les plugins réels, reposés à `""`.
+    env: { ...process.env, ...envDeCopie(DEPTH), MEM0_OMP_SKIP_SMOKE: "" },
     timeout: 900_000,
   });
 }
 
-// Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
-// racine de types jetable, le stockage vectoriel, les fichiers de test qui se
-// recopieraient, et les gros (le harnais n'a pas à rejouer la suite entière).
-const DROPPED_DIRS: Record<string, true> = {
-  ".git": true,
-  node_modules: true,
-  ".typecheck": true,
-  qdrant_storage: true,
-  // Artefacts Swift (≈ 400 Mo de .build) ; la section « App Swift » est
-  // neutralisée par MEM0_OMP_SKIP_SWIFT_APP dans runCheck.
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  build: true,
-};
-const DROPPED_TESTS: Record<string, true> = {
-  "check.test.ts": true,
-  "release.test.ts": true,
-  "smoke.test.ts": true,
-  "sessions.test.ts": true,
-  "panneau.test.ts": true,
-  "worktree.test.ts": true,
-  "tail.test.ts": true,
-  "transcript.test.ts": true,
-  "conversation.test.ts": true,
-  "conversation-ask.test.ts": true,
-  "lot.test.ts": true,
-  "lot-ask.test.ts": true,
-  "pipelines.test.ts": true,
-  "join.test.ts": true,
-  "handlers.test.ts": true,
-  "components.test.ts": true,
-  "plugin-handlers.test.ts": true,
-  "pipeline-state.test.ts": true,
-  "fixchain.test.ts": true,
-  "fixpanel.test.ts": true,
-  "fixruns.test.ts": true,
-  "fixview.test.ts": true,
-};
-
+/** Copie jetable du dépôt, aux tests de garde près (`test/copie.ts`). */
 function copyRepo(prefix: string): string {
-  const dir = mktmp(prefix);
-  fs.cpSync(ROOT, dir, {
-    recursive: true,
-    filter: (src) => {
-      const rel = path.relative(ROOT, src);
-      if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => DROPPED_DIRS[segment] === true)) return false;
-      const parts = rel.split(path.sep);
-      if (parts[0] === "test" && parts.length === 2 && DROPPED_TESTS[parts[1] ?? ""] === true) return false;
-      return true;
-    },
-  });
+  const dir = copieDuDepot(prefix);
+  tmpDirs.push(dir);
   return dir;
 }
 

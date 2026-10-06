@@ -24,6 +24,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { bumpVersion, insertChangelog, maxVersion, utcDate, versionTag } from "../scripts/release.ts";
+import { copieDuDepot, envDeCopie } from "./copie.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
@@ -116,63 +117,6 @@ function childEnv(): NodeJS.ProcessEnv {
 // Le dépôt de fixture
 // ---------------------------------------------------------------------------
 
-/** Ce qui n'a rien à faire dans la copie simulaire : l'historique, les
- * dépendances, la racine de types jetable, le stockage vectoriel local, et les
- * fichiers de test qui se recopieraient ou rejoueraient la même chose. */
-const DROPPED_DIRS: Record<string, true> = {
-  ".git": true,
-  node_modules: true,
-  ".typecheck": true,
-  qdrant_storage: true,
-  // Artefacts Swift (≈ 400 Mo de .build), et la section « App Swift » est
-  // neutralisée dans la copie par MEM0_OMP_SKIP_SWIFT_APP (voir runSimulation).
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  build: true,
-};
-const DROPPED_TESTS: Record<string, true> = {
-  "check.test.ts": true,
-  "release.test.ts": true,
-  "release-simulation.test.ts": true,
-  "bump-guard.test.ts": true,
-  "smoke.test.ts": true,
-  "sessions.test.ts": true,
-  "panneau.test.ts": true,
-  "worktree.test.ts": true,
-  "tail.test.ts": true,
-  "transcript.test.ts": true,
-  "conversation.test.ts": true,
-  "conversation-ask.test.ts": true,
-  "lot.test.ts": true,
-  "lot-ask.test.ts": true,
-  "pipelines.test.ts": true,
-  "join.test.ts": true,
-  "handlers.test.ts": true,
-  "components.test.ts": true,
-  "plugin-handlers.test.ts": true,
-  "pipeline-state.test.ts": true,
-  "fixchain.test.ts": true,
-  "fixpanel.test.ts": true,
-  "fixruns.test.ts": true,
-  "fixview.test.ts": true,
-};
-
-function copyRepo(dir: string): void {
-  fs.cpSync(ROOT, dir, {
-    recursive: true,
-    filter: (src) => {
-      const rel = path.relative(ROOT, src);
-      if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => DROPPED_DIRS[segment] === true)) return false;
-      const parts = rel.split(path.sep);
-      if (parts[0] === "test" && parts.length === 2 && DROPPED_TESTS[parts[1] ?? ""] === true) return false;
-      return true;
-    },
-  });
-}
-
 /** Le hook du remote nu : refuser tout push sur `refs/heads/main`, comme la
  * protection de branche du vrai dépôt. La simulation ne pousse JAMAIS : ce hook
  * est la preuve que l'écriture distante n'a pas eu lieu. */
@@ -233,7 +177,7 @@ type Repo = {
  */
 function makeRepo(kind: string, steps: Step[], prepare?: (dir: string) => void): Repo {
   const dir = mktmp(`release-sim-${kind}-`);
-  copyRepo(dir);
+  copieDuDepot(`release-sim-${kind}-`, dir);
   // Le scénario part de l'état « rien n'a jamais été publié » : le journal d'une
   // publication ANTÉRIEURE de l'arbre ne doit pas s'y inviter.
   fs.rmSync(path.join(dir, "CHANGELOG.md"), { force: true });
@@ -292,12 +236,11 @@ function runSimulation(repo: Repo): SpawnSyncReturns<string> {
       GIT_AUTHOR_EMAIL: "test@example.com",
       GIT_COMMITTER_NAME: "Test",
       GIT_COMMITTER_EMAIL: "test@example.com",
-      // La copie simulée relance `check.sh`, donc la suite : on le lui dit, pour
-      // qu'un fichier de test gaté sur la profondeur ne se rejoue pas là-bas.
-      MEM0_CHECK_DEPTH: String(DEPTH + 1),
-      // Et la section « App Swift » y compilerait pour de vrai sans rien prouver
-      // de la release simulée.
-      MEM0_OMP_SKIP_SWIFT_APP: "1",
+      // La copie simulée relance `check.sh`, donc la suite : `envDeCopie` le lui
+      // dit (profondeur) et lui neutralise les sections coûteuses (App Swift,
+      // Types, Plugins réels) — elles compileraient pour de vrai sans rien
+      // prouver de la release simulée.
+      ...envDeCopie(DEPTH),
       GH_JOURNAL: repo.journal,
       PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
     },
@@ -314,7 +257,7 @@ function runCheck(repo: Repo): SpawnSyncReturns<string> {
       ...childEnv(),
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: "/dev/null",
-      MEM0_OMP_SKIP_SWIFT_APP: "1",
+      ...envDeCopie(DEPTH),
     },
   });
 }

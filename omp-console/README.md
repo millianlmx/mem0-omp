@@ -192,8 +192,9 @@ Trois pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
 - `swift test` doit être la **première** commande écrite dans son dossier de
   build : un `swift build` préalable dans le même dossier fait échouer la
   compilation des tests (« plugin for module 'TestingMacros' not found »). D'où
-  le `--scratch-path .build-tests` dédié — `scripts/swift-app.sh` compile et
-  teste de son côté dans `omp-console/.build-app`.
+  le `--scratch-path .build-tests` dédié — `scripts/swift-app.sh` compile son
+  produit release dans `omp-console/.build-run` et teste de son côté dans
+  `omp-console/.build-app`, deux dossiers jamais partagés.
 - même sans build préalable, `swift test` échoue environ une fois sur trois en
   « plugin for module 'TestingMacros' not found », de façon non déterministe
   (reproduit sur un paquet minimal). Le `-plugin-path` explicite ci-dessus rend
@@ -538,7 +539,7 @@ tests de la suite le vérifient sur une cible réelle, `git status --porcelain`,
 l'empreinte du fichier d'index et les empreintes de tous les fichiers à l'appui.
 
 **Mesure du 2026-09-28** (poste millian, Swift 6.4 CLT seuls, git 2.54.0) :
-`bash scripts/swift-app.sh` — compilation release et **177 tests verts**, bundle
+`bash scripts/swift-app.sh` — produit release, **177 tests verts** et bundle
 assemblé puis signature vérifiée ; `bash scripts/check.sh` — « Dépôt prêt à
 publier. ». Les deux recettes (session, cible) sont rapportées « skipped » : aucun
 script de CI ne pose leurs variables.
@@ -735,10 +736,26 @@ Depuis la **racine** du dépôt :
 bash scripts/swift-app.sh
 ```
 
-Le script compile en release, lance la suite en release, écrit le bundle dans
-`omp-console/build/OMP Console.app`, le signe en ad hoc puis vérifie la
-signature (`codesign --verify --strict`). Sous une plateforme autre que macOS, il
-annonce « non exécuté » et sort en code 2 sans rien compiler.
+Le script lance **en parallèle** deux commandes qui ne partagent jamais leur
+dossier de scratch : le **produit** est compilé en release dans
+`omp-console/.build-run` (`swift build -c release --scratch-path .build-run`) et
+la **suite** est compilée puis exécutée en debug dans `omp-console/.build-app`
+(`swift test --scratch-path .build-app --no-parallel`, le dossier des plugins de
+test passé par `-Xswiftc -plugin-path`). Dès que la compilation release a réussi,
+le bundle est assemblé depuis ce binaire dans `omp-console/build/OMP Console.app`,
+avec son `Info.plist`, ses ressources et sa signature ad hoc, puis vérifié
+(`codesign --verify --strict`, `plutil`, `otool` pour le minimum OS 26.0). Chaque
+commande dépose un marqueur d'issue — `build-ok` ou `build-failed` — à la racine
+de son dossier de scratch : le test `socle-app-swift/AC-1` les attend pour
+réutiliser les builds du Check (compilation incrémentale, mesurée à 3 s, au lieu
+d'une recompilation à froid). La section est verte quand les deux commandes le
+sont, et affiche alors
+`✓ App Swift : produit release, suite debug et bundle .app assemblés`.
+`bash scripts/swift-app.sh --no-tests` (le tour rapide de `scripts/run-console.sh`)
+compile le seul produit release dans `.build-run`, sans la suite, et assemble le
+même bundle.
+Sous une plateforme autre que macOS, le script annonce « non exécuté » et sort en
+code 2 sans rien compiler.
 
 ## Ouvrir l'app
 
@@ -765,10 +782,11 @@ bash scripts/run-console.sh build      # compilation + assemblage du bundle, san
 bash scripts/run-console.sh --tests    # passe par la suite complète (scripts/swift-app.sh)
 ```
 
-`run-console.sh` compile avec `scripts/swift-app.sh --no-tests` : même assemblage,
-même signature que la voie complète, mais dans le dossier de build `.build-run` —
-le dossier de test `.build-app` reste intact, car `swift test` doit y rester la
-première commande écrite. La relance suit la compilation, jamais l'inverse : en
+`run-console.sh` compile avec `scripts/swift-app.sh --no-tests` : compilation
+release seule du produit dans le dossier de build `.build-run`, même assemblage et
+même signature que la voie complète — le dossier de test `.build-app` reste
+intact, car `swift test` doit y rester la première commande écrite. La relance suit
+la compilation, jamais l'inverse : en
 cas d'échec l'app en cours n'est pas touchée. Sinon l'instance en cours **de ce
 bundle** est arrêtée (`pkill` sur le chemin du binaire, TERM puis KILL au bout de
 3 s) et le bundle est rouvert avec `open` — une copie de fumée lancée depuis
@@ -1753,6 +1771,6 @@ omp-console/
 ## Plateforme
 
 La section `── App Swift` de `scripts/check.sh` ne tourne que sous macOS : elle
-compile le paquet, lance ses tests et assemble le bundle. Sous Ubuntu, elle
-annonce « non exécuté » sans faire échouer la validation du dépôt ; les tests réels
-du harnais y sont eux aussi « skipped », faute de `omp`.
+compile le produit en release, lance la suite en debug et assemble le bundle. Sous
+Ubuntu, elle annonce « non exécuté » sans faire échouer la validation du dépôt ;
+les tests réels du harnais y sont eux aussi « skipped », faute de `omp`.

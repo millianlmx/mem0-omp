@@ -29,6 +29,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { copieDuDepot, envDeCopie } from "./copie.ts";
+
 import {
   backlogOf,
   breakingText,
@@ -473,64 +475,6 @@ test("plan : rattrapage + bump, ordres de publication et de journal, gardes d'id
 // Bout en bout : dépôt jetable, remote nu local, faux `gh`
 // ---------------------------------------------------------------------------
 
-/** Ce qui n'a rien à faire dans la copie jetable : l'historique, les dépendances,
- * la racine de types jetable, le stockage vectoriel local, et les fichiers de test
- * qui se recopieraient ou rejoueraient la même chose. */
-const DROPPED_DIRS: Record<string, true> = {
-  ".git": true,
-  node_modules: true,
-  ".typecheck": true,
-  qdrant_storage: true,
-  // Artefacts Swift (≈ 400 Mo de .build) : rien à faire dans une copie, et la
-  // section « App Swift » y est neutralisée par MEM0_OMP_SKIP_SWIFT_APP (voir
-  // runEngine) pour ne pas y relancer une compilation.
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  build: true,
-};
-const DROPPED_TESTS: Record<string, true> = {
-  "check.test.ts": true,
-  "release.test.ts": true,
-  "release-simulation.test.ts": true,
-  "bump-guard.test.ts": true,
-  "smoke.test.ts": true,
-  "sessions.test.ts": true,
-  "panneau.test.ts": true,
-  "worktree.test.ts": true,
-  "tail.test.ts": true,
-  "transcript.test.ts": true,
-  "conversation.test.ts": true,
-  "conversation-ask.test.ts": true,
-  "lot.test.ts": true,
-  "lot-ask.test.ts": true,
-  "pipelines.test.ts": true,
-  "join.test.ts": true,
-  "handlers.test.ts": true,
-  "components.test.ts": true,
-  "plugin-handlers.test.ts": true,
-  "pipeline-state.test.ts": true,
-  "fixchain.test.ts": true,
-  "fixpanel.test.ts": true,
-  "fixruns.test.ts": true,
-  "fixview.test.ts": true,
-};
-
-function copyRepo(dir: string): void {
-  fs.cpSync(ROOT, dir, {
-    recursive: true,
-    filter: (src) => {
-      const rel = path.relative(ROOT, src);
-      if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => DROPPED_DIRS[segment] === true)) return false;
-      const parts = rel.split(path.sep);
-      if (parts[0] === "test" && parts.length === 2 && DROPPED_TESTS[parts[1] ?? ""] === true) return false;
-      return true;
-    },
-  });
-}
-
 /**
  * Le hook du remote nu : refuser TOUT push sur `refs/heads/main`, comme la
  * protection de branche du vrai dépôt (le refus s'écrit mot pour mot
@@ -694,7 +638,7 @@ function snapshot(repo: Repo): Snapshot {
  */
 function makeRepo(kind: string, steps: Step[], options: { tagCurrent?: boolean } = {}): Repo {
   const dir = mktmp(`release-${kind}-`);
-  copyRepo(dir);
+  copieDuDepot(`release-${kind}-`, dir);
   // Le scénario part de l'état « rien n'a jamais été publié » (celui de B-4) : le
   // journal d'une publication ANTÉRIEURE de l'arbre ne doit pas s'y inviter. Sans
   // ça, un run de release (qui lance `check.sh` après avoir écrit `CHANGELOG.md`)
@@ -767,9 +711,10 @@ function runEngine(
     GH_REPO: REPO,
     GH_MERGE_DATE: MERGE_DATE,
     PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
-    // Le moteur lance `check.sh` sur la copie : la section « App Swift » y
-    // compilerait pour de vrai (~ 40 s) sans rien prouver de la release.
-    MEM0_OMP_SKIP_SWIFT_APP: "1",
+    // Le moteur lance `check.sh` sur la copie : `envDeCopie` lui neutralise les
+    // sections coûteuses (App Swift compilerait pour de vrai, Types et Plugins
+    // réels n'y prouveraient rien de la release) et marque la profondeur.
+    ...envDeCopie(DEPTH),
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;

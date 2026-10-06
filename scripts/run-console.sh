@@ -3,10 +3,10 @@
 # recompilent après un pull.
 #
 # Pourquoi ce script : `scripts/swift-app.sh` fait la vérification COMPLÈTE
-# (suite release + bundle, ~1 min), ce qui est le bon geste avant un commit mais
-# trop lent pour « je veux l'app avec le dernier code ». Ce script fait le tour
-# court — compilation release seule, puis relance de l'app — et sait se brancher
-# en hooks git.
+# (produit release, suite debug et bundle, ~1 min), ce qui est le bon geste avant
+# un commit mais trop lent pour « je veux l'app avec le dernier code ». Ce script
+# fait le tour court — compilation release seule, puis relance de l'app — et sait
+# se brancher en hooks git.
 #
 # Modes :
 #   (défaut) run     compile (rapide) puis relance l'app
@@ -51,7 +51,7 @@ usage: bash scripts/run-console.sh [--tests] [run|build|hook|install-hook|uninst
 
   run (défaut)    compile en release puis relance l'app
   build           compile en release, sans relancer
-  --tests         suite release complète (scripts/swift-app.sh) au lieu du tour rapide
+  --tests         suite debug complète (scripts/swift-app.sh) au lieu du tour rapide
   hook            mode hook git : recompile après un pull qui a touché les entrées
                   de l'app ; aucun effet sinon
   install-hook    installe .git/hooks/post-merge et .git/hooks/post-rewrite

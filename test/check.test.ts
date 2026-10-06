@@ -21,6 +21,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { copieDuDepot, envDeCopie } from "./copie.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
@@ -28,55 +29,20 @@ const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.js
 /** Profondeur d'imbrication : 0 = `node --test test/check.test.ts` à la main. */
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 
-/** Un `bash scripts/check.sh` dans une copie relance la suite : on le lui dit. */
-// `MEM0_OMP_SKIP_SWIFT_APP=1` évite qu'une copie jetable paie une compilation
-// Swift complète (≈ 35 s) alors qu'elle vérifie une AUTRE section. Les deux tests
-// qui éprouvent la section « App Swift » neutralisent la variable (valeur vide).
-const NESTED_ENV = {
-  ...process.env,
-  MEM0_CHECK_DEPTH: String(DEPTH + 1),
-  MEM0_OMP_SKIP_SWIFT_APP: "1",
-};
-
-// Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
-// racine de types jetable, le stockage vectoriel local (des dizaines de Mo) et
-// le fichier de test qui recopierait la copie.
-const EXCLUDED_DIRS: Record<string, true> = {
-  ".git": true,
-  node_modules: true,
-  ".typecheck": true,
-  qdrant_storage: true,
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  build: true,
-};
-const RECURSIVE_FILE = path.join("test", "check.test.ts");
+/** Un `bash scripts/check.sh` dans une copie relance la suite : on le lui dit, et
+ * on lui neutralise les sections coûteuses (App Swift ≈ 35 s, Types, Plugins
+ * réels) — les tests qui éprouvent l'une d'elles reposent la sienne à `""`. */
+const NESTED_ENV = { ...process.env, ...envDeCopie(DEPTH) };
 
 const dirs: string[] = [];
 test.after(() => {
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-function copyRepo(onlyTest?: string): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "check-copie-"));
+/** Copie jetable du dépôt, aux tests de garde près (`test/copie.ts`). */
+function copyRepo(): string {
+  const dir = copieDuDepot("check-copie-");
   dirs.push(dir);
-  // Une copie ÉLAGUÉE ne garde qu'un fichier de test : `check.sh` y relance la
-  // suite, et les tests d'injection de type n'observent que la section `── Types`
-  // (patron de test/release.test.ts : ≈ 3 s au lieu de ≈ 33 s en pleine fidélité).
-  const only = onlyTest === undefined ? null : path.join("test", onlyTest);
-  fs.cpSync(ROOT, dir, {
-    recursive: true,
-    filter: (src) => {
-      const rel = path.relative(ROOT, src);
-      if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true)) return false;
-      if (rel === RECURSIVE_FILE) return false;
-      if (only !== null && rel.startsWith(`test${path.sep}`) && rel !== only) return false;
-      return true;
-    },
-  });
   return dir;
 }
 
@@ -461,20 +427,23 @@ test("mem0-http-hors-ci/AC-1 : la CI prépare l'environnement du test d'API avan
 // Chaque test plante une erreur de type VALIDE À L'EXÉCUTION (`const q: number =
 // "boom"`) dans une copie JETABLE : `--experimental-strip-types` efface les
 // annotations, donc seule la section `── Types` de check.sh rougit (cf. `##
-// Documentation`, « Node.js 26.7.0 »). La copie est ÉLAGUÉE à un seul fichier de
-// test — ces contrôles n'observent que le type-check.
+// Documentation`, « Node.js 26.7.0 »). La copie ne garde que les tests de garde
+// (`test/copie.ts`) — ces contrôles n'observent que le type-check.
 
 /** Sans les types de l'hôte, `typecheck.sh` l'annonce et sort 0 : aucune preuve. */
 const HOST_TYPES_ABSENT = "types de l'hôte absents";
 
+/** Ces tests éprouvent `── Types` : ils reposent sa neutralisation de copie. */
+const TYPES_ACTIFS = { MEM0_OMP_SKIP_TYPES: "" };
+
 const hostTypesAbsent = (out: string): boolean => out.includes(HOST_TYPES_ABSENT);
 
 test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait échouer check.sh en nommant le fichier", (t) => {
-  const dir = copyRepo("dedupe.test.ts");
+  const dir = copyRepo();
   const target = path.join(dir, "omp-mem0-memory/brief.ts");
   fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
 
-  const bad = runCheck(dir);
+  const bad = runCheck(dir, TYPES_ACTIFS);
   if (hostTypesAbsent(output(bad))) {
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
@@ -486,11 +455,11 @@ test("check/AC-1 : une erreur de type dans un module de omp-mem0-memory fait éc
 });
 
 test("check/AC-2 : une erreur de type dans un fichier de test fait échouer check.sh en nommant le fichier", (t) => {
-  const dir = copyRepo("dedupe.test.ts");
+  const dir = copyRepo();
   const target = path.join(dir, "test/dedupe.test.ts");
   fs.writeFileSync(target, `const q: number = "boom";\n${fs.readFileSync(target, "utf8")}`);
 
-  const bad = runCheck(dir);
+  const bad = runCheck(dir, TYPES_ACTIFS);
   if (hostTypesAbsent(output(bad))) {
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
@@ -501,13 +470,13 @@ test("check/AC-2 : une erreur de type dans un fichier de test fait échouer chec
 });
 
 test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de configuration", (t) => {
-  const dir = copyRepo("dedupe.test.ts");
+  const dir = copyRepo();
   fs.writeFileSync(path.join(dir, "omp-mem0-memory/zz-neuf.ts"), `export const q: number = "boom";\n`);
   fs.writeFileSync(path.join(dir, "test/zz-neuf.ts"), `export const q: number = "boom";\n`);
 
   // Les deux chemins sont exigés : le second prouve que le programme des tests
   // tourne MALGRÉ l'échec du premier (aucun court-circuit entre les deux).
-  const bad = runCheck(dir);
+  const bad = runCheck(dir, TYPES_ACTIFS);
   if (hostTypesAbsent(output(bad))) {
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
@@ -518,7 +487,7 @@ test("check/AC-3 : un .ts neuf des deux arbres est type-checké sans retouche de
 });
 
 test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle refusée)", (t) => {
-  const dir = copyRepo("dedupe.test.ts");
+  const dir = copyRepo();
   const target = path.join(dir, "omp-mem0-memory/brief.ts");
   fs.writeFileSync(
     target,
@@ -527,7 +496,7 @@ test("check/AC-4 : le type-check tourne en strict (valeur possiblement nulle ref
 
   // Sonde de `strictNullChecks` : sans `strict`, `s.length` passerait. L'autre
   // moitié d'AC-4 (« arbre non modifié, 0 erreur ») est portée par check/AC-18.
-  const bad = runCheck(dir);
+  const bad = runCheck(dir, TYPES_ACTIFS);
   if (hostTypesAbsent(output(bad))) {
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
@@ -560,7 +529,7 @@ test("check/AC-5 : la CI fournit les types de l'hôte et une racine déclarée i
 });
 
 test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.withResolvers)", (t) => {
-  const dir = copyRepo("dedupe.test.ts");
+  const dir = copyRepo();
   const target = path.join(dir, "test/dedupe.test.ts");
   fs.writeFileSync(
     target,
@@ -569,7 +538,7 @@ test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.with
 
   // La seule erreur rapportée est l'erreur délibérée : le programme des tests est
   // bien en lib ES2024, donc `withResolvers` n'y est PAS signalé (S-4).
-  const bad = runCheck(dir);
+  const bad = runCheck(dir, TYPES_ACTIFS);
   if (hostTypesAbsent(output(bad))) {
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
@@ -581,7 +550,7 @@ test("check/AC-6 : un fichier de test peut utiliser une API ES2024 (Promise.with
 });
 
 test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.sh", (t) => {
-  const dir = copyRepo("dedupe.test.ts");
+  const dir = copyRepo();
   for (const rel of ["omp-mem0-req/store.ts", "omp-mem0-memory/dedupe.ts"]) {
     const target = path.join(dir, rel);
     fs.writeFileSync(target, `export const pr = Promise.withResolvers<void>();\n${fs.readFileSync(target, "utf8")}`);
@@ -589,7 +558,7 @@ test("check/AC-7 : une API ES2024 dans un module de plugin fait échouer check.s
 
   // Les deux plugins sont nommés : la frontière ES2023 est portée par le niveau de
   // lib du programme des sources, pas par un scan de motif (S-4).
-  const bad = runCheck(dir);
+  const bad = runCheck(dir, TYPES_ACTIFS);
   if (hostTypesAbsent(output(bad))) {
     t.skip("types de l'hôte absents — type-check non vérifié");
     return;
@@ -635,16 +604,59 @@ test("socle-app-swift/AC-1 : le paquet omp-console compile en debug et en releas
     return;
   }
   const pkg = path.join(ROOT, "omp-console");
-  // Scratch jetable : la compilation du test ne doit pas laisser derrière elle un
-  // dossier `.build` partagé avec l'assemblage du bundle.
-  const scratch = path.join(tmpdir("omp-console-build-"), ".build");
-  for (const args of [["build"], ["build", "-c", "release"]]) {
+
+  // Partage des builds avec la section `── App Swift` (S-4) : quand check.sh la
+  // fait tourner, il exporte les deux dossiers de scratch et chaque commande y
+  // dépose son marqueur d'issue. Les deux configurations restent compilées, mais
+  // en INCRÉMENTAL (mesuré : 3 s au lieu de 79 s à froid).
+  //
+  // L'invariant est l'ordre : attendre les marqueurs AVANT tout `swift build`,
+  // sinon le test écrirait dans un scratch pendant qu'une commande y écrit.
+  const marqueurs: Array<readonly [string, string[]]> = [
+    [process.env.MEM0_OMP_SWIFT_RELEASE_SCRATCH ?? "", ["build", "-c", "release"]],
+    [process.env.MEM0_OMP_SWIFT_TESTS_SCRATCH ?? "", ["build"]],
+  ];
+  const partageables = marqueurs.every(([scratch]) => scratch !== "" && fs.existsSync(scratch));
+
+  if (partageables) {
+    // Échéance paramétrable : 900 s par défaut (le budget de la section), et
+    // quelques secondes pour les tests de cette attente (BR-3). Aucune attente
+    // infinie, et aucun faux vert : un marqueur `build-failed` fait échouer.
+    const echeance = Number(process.env.MEM0_OMP_SWIFT_MARK_TIMEOUT_MS ?? "900000");
+    const pas = Math.min(2000, Math.max(250, echeance));
+    const debut = Date.now();
+    const marqueur = (scratch: string, issue: string) => path.join(scratch, issue);
+    for (;;) {
+      const rate = marqueurs.find(([scratch]) => fs.existsSync(marqueur(scratch, "build-failed")));
+      if (rate !== undefined) {
+        assert.fail(
+          `socle-app-swift/AC-1 : la section « App Swift » a échoué — marqueur build-failed dans ${rate[0]}`,
+        );
+      }
+      if (marqueurs.every(([scratch]) => fs.existsSync(marqueur(scratch, "build-ok")))) break;
+      if (Date.now() - debut > echeance) {
+        assert.fail(
+          `socle-app-swift/AC-1 : échéance de ${echeance} ms dépassée sans les deux marqueurs build-ok ` +
+            `(section « App Swift ») — scratchs : ${marqueurs.map(([scratch]) => scratch).join(", ")}`,
+        );
+      }
+      spawnSync("sleep", [String(pas / 1000)]);
+    }
+  } else {
+    // Exécution `node --test` seule, ou scratchs absents : builds à froid dans un
+    // scratch jetable — la compilation du test ne doit pas laisser derrière elle
+    // un dossier `.build` partagé avec l'assemblage du bundle.
+    marqueurs[0] = [path.join(tmpdir("omp-console-build-"), ".build"), ["build", "-c", "release"]];
+    marqueurs[1] = [marqueurs[0][0], ["build"]];
+  }
+
+  for (const [scratch, args] of marqueurs) {
     const r = spawnSync("swift", [...args, "--scratch-path", scratch], {
       cwd: pkg,
       encoding: "utf8",
       timeout: 600_000,
     });
-    assert.equal(r.status, 0, `swift ${args.join(" ")} : ${output(r)}`);
+    assert.equal(r.status, 0, `swift ${args.join(" ")} (${scratch}) : ${output(r)}`);
   }
 });
 
@@ -670,9 +682,11 @@ test("socle-app-swift/AC-5 : sur macOS la section compile, teste et assemble le 
   const { bin, log } = stubBin("app-swift-darwin-");
 
   stub(bin, "uname", "printf 'Darwin\\n'");
-  // La doublure swift journalise ses arguments : elle fabrique le binaire factice
-  // dans le dossier de build du test, et répond à `--show-bin-path` (interrogé par
-  // le script sur un dossier jetable) par le suffixe rendu par SwiftPM.
+  // La doublure swift journalise ses arguments, fabrique le binaire factice dans
+  // le dossier de build demandé, et répond à `--show-bin-path` (interrogé par le
+  // script sur un dossier jetable) par le suffixe rendu par SwiftPM. Le binaire
+  // du produit release et celui de la suite diffèrent : le bundle doit venir du
+  // PREMIER (S-3).
   stub(
     bin,
     "swift",
@@ -689,7 +703,12 @@ case "$*" in
     ;;
   test*)
     mkdir -p "$scratch/out/Products/Release"
-    printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
+    printf '#!/usr/bin/env bash\\nexit 0\\n# suite debug\\n' > "$scratch/out/Products/Release/OMPConsole"
+    chmod +x "$scratch/out/Products/Release/OMPConsole"
+    ;;
+  build*)
+    mkdir -p "$scratch/out/Products/Release"
+    printf '#!/usr/bin/env bash\\nexit 0\\n# produit release\\n' > "$scratch/out/Products/Release/OMPConsole"
     chmod +x "$scratch/out/Products/Release/OMPConsole"
     ;;
 esac`,
@@ -707,7 +726,7 @@ esac`,
   });
   const out = output(run);
   assert.equal(run.status, 0, out);
-  assert.ok(out.includes("✓ App Swift"), out);
+  assert.ok(out.includes("✓ App Swift : produit release, suite debug et bundle .app assemblés"), out);
 
   const bundle = path.join(copy, "omp-console", "build", "OMP Console.app");
   const plist = path.join(bundle, "Contents", "Info.plist");
@@ -717,12 +736,31 @@ esac`,
   assert.ok(fs.existsSync(path.join(bundle, "Contents", "Resources")), out);
   assert.ok(fs.readFileSync(plist, "utf8").includes("com.omp.console"), out);
 
-  // Le journal prouve l'ordre : `swift test -c release` d'abord (une compilation
-  // release préalable dans le même dossier corromprait la résolution des macros
-  // de test), puis la lecture du dossier de sortie.
+  // Le journal prouve les DEUX invocations — la compilation release du produit
+  // dans `.build-run`, la suite en debug (`--no-parallel`, jamais `-c release`)
+  // dans `.build-app` — donc deux dossiers de scratch DISTINCTS. Leur ordre n'est
+  // pas garanti : les deux commandes tournent en parallèle.
   const logged = fs.readFileSync(log, "utf8").trim().split("\n");
-  assert.match(logged[0] ?? "", /^test -c release\b/, logged.join(" | "));
+  assert.ok(
+    logged.some((line) => /^build -c release\b/.test(line) && line.includes(".build-run")),
+    logged.join(" | "),
+  );
+  const suite = logged.find((line) => /^test\b/.test(line));
+  assert.ok(suite !== undefined, logged.join(" | "));
+  assert.ok(suite.includes("--scratch-path") && suite.includes(".build-app"), logged.join(" | "));
+  assert.ok(suite.includes("--no-parallel"), logged.join(" | "));
+  assert.ok(!suite.includes("-c release"), logged.join(" | "));
   assert.ok(logged.some((line) => line.includes("--show-bin-path")), logged.join(" | "));
+
+  // Chaque commande a déposé son marqueur d'issue (S-4) et le bundle porte le
+  // binaire du scratch release, pas celui de la suite.
+  for (const scratch of [".build-run", ".build-app"]) {
+    assert.ok(
+      fs.existsSync(path.join(copy, "omp-console", scratch, "build-ok")),
+      `${scratch} sans marqueur build-ok :\n${out}`,
+    );
+  }
+  assert.ok(fs.readFileSync(binary, "utf8").includes("# produit release"), out);
 });
 
 test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes et le README racine y renvoie", () => {

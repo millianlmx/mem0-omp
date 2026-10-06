@@ -33,7 +33,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/check.sh                   validation avant publication
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
-├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
+├── scripts/swift-app.sh               produit release, suite debug puis bundle .app de la coque SwiftUI
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
 ├── scripts/mem0-http-test.sh          test d'API mem0-http hors conteneur, dérivé du Dockerfile
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
@@ -898,6 +898,26 @@ vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 service mem0 étant remplacé par un stub local, donc sans conteneur ni credential.
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
+
+Le Check lui-même lance désormais ses dix sections indépendantes en un seul
+passage concurrent, puis imprime chaque bloc dans l'ordre canonique inchangé ;
+aucune section n'est retirée ni allégée, et le code de sortie reste 1 si une
+seule a échoué. La section `── App Swift` compile le produit en **release**
+(`omp-console/.build-run`) et compile puis exécute la suite en **debug**
+(`omp-console/.build-app`) **en parallèle**, avant d'assembler le bundle depuis
+le binaire release. La suite Swift n'est donc plus compilée deux fois : le test
+`socle-app-swift/AC-1` réutilise les deux builds du Check — marqueurs `build-ok`
+et `build-failed` — et recompile en incrémental. Dans une copie jetable du
+dépôt, seuls trois fichiers de test de garde sont rejoués
+(`test/dedupe.test.ts`, `test/criteria.test.ts`, `test/redaction.test.ts`),
+réunis sous la source unique `test/copie.ts` ; les sections `── Types` et
+`── Plugins réels (OMP)` peuvent y être neutralisées par `MEM0_OMP_SKIP_TYPES`
+et `MEM0_OMP_SKIP_SMOKE`, comme `MEM0_OMP_SKIP_SWIFT_APP` — ce qui n'arrive
+jamais dans l'arbre réel ni en CI. Le budget visé est **≤ 6 min** pour le run CI
+caches froids comme pour `./scripts/check.sh` sur un poste ; il se mesure en
+local avec `time ./scripts/check.sh`, en CI avec
+`gh run view <id> --json createdAt,updatedAt` et la durée de chaque job — le run
+étant borné par le plus lent des deux jobs requis.
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
