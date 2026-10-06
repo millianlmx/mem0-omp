@@ -22,3 +22,5 @@ omp-console/.build-run/
 omp-console/.build-impl/
 omp-console/.build-recipe/
 omp-console/build/
+# DerivedData de l'app iOS (xcodebuild -derivedDataPath omp-console/.build-ios)
+omp-console/.build-ios/

@@ -32,10 +32,13 @@ const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 // `MEM0_OMP_SKIP_SWIFT_APP=1` évite qu'une copie jetable paie une compilation
 // Swift complète (≈ 35 s) alors qu'elle vérifie une AUTRE section. Les deux tests
 // qui éprouvent la section « App Swift » neutralisent la variable (valeur vide).
+// `MEM0_OMP_SKIP_IOS=1` fait de même pour la section « App iOS » (BR-3) : sans
+// elle, chaque copie paierait un `xcodebuild` là où Xcode est utilisable.
 const NESTED_ENV = {
   ...process.env,
   MEM0_CHECK_DEPTH: String(DEPTH + 1),
   MEM0_OMP_SKIP_SWIFT_APP: "1",
+  MEM0_OMP_SKIP_IOS: "1",
 };
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
@@ -50,6 +53,7 @@ const EXCLUDED_DIRS: Record<string, true> = {
   ".build-app": true,
   ".build-run": true,
   ".build-tests": true,
+  ".build-ios": true,
   build: true,
 };
 const RECURSIVE_FILE = path.join("test", "check.test.ts");

@@ -72,7 +72,7 @@ function runCheck(cwd: string) {
   return spawnSync("bash", ["scripts/check.sh"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1" },
+    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1" },
     timeout: 900_000,
   });
 }
@@ -91,6 +91,7 @@ const DROPPED_DIRS: Record<string, true> = {
   ".build-app": true,
   ".build-run": true,
   ".build-tests": true,
+  ".build-ios": true,
   build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {

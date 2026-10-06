@@ -488,6 +488,7 @@ const DROPPED_DIRS: Record<string, true> = {
   ".build-app": true,
   ".build-run": true,
   ".build-tests": true,
+  ".build-ios": true,
   build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
@@ -768,8 +769,10 @@ function runEngine(
     GH_MERGE_DATE: MERGE_DATE,
     PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
     // Le moteur lance `check.sh` sur la copie : la section « App Swift » y
-    // compilerait pour de vrai (~ 40 s) sans rien prouver de la release.
+    // compilerait pour de vrai (~ 40 s) sans rien prouver de la release, et la
+    // section « App iOS » de même.
     MEM0_OMP_SKIP_SWIFT_APP: "1",
+    MEM0_OMP_SKIP_IOS: "1",
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;

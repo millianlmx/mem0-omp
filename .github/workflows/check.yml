@@ -57,4 +57,8 @@ jobs:
           # test d'API mem0-http ne doivent pouvoir disparaître en silence.
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_HTTP_API: "1"
+          # Sur macos-latest, Xcode est utilisable : un « non exécuté » de la
+          # section iOS y est un échec, jamais un skip silencieux. Ailleurs (Ubuntu),
+          # la variable est vide et la section annonce simplement son absence.
+          MEM0_OMP_REQUIRE_IOS: ${{ matrix.os == 'macos-latest' && '1' || '' }}
         run: ./scripts/check.sh

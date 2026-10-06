@@ -25,7 +25,8 @@ mem0-omp/                              racine = marketplace OMP
 │   │                                  la conduite de projet et le relais
 │   └── panel.ts, panelRows.ts, panelWidth.ts, panelView.ts, panelSession.ts,
 │       panelHost.ts                   le panneau /pipelines et la vue de session
-├── omp-console/                       la coque macOS (SwiftUI) de la salle de contrôle
+├── omp-console/                       la coque macOS (SwiftUI), le noyau partagé et l'app iOS
+│   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
 ├── mem0-stack/                        mem0 + Qdrant, en local
 │   └── mem0-http/                     l'API HTTP et sa config mem0
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
@@ -44,7 +45,8 @@ mem0-omp/                              racine = marketplace OMP
 
 La coque macOS (`omp-console/`, SwiftUI) a son propre document :
 `omp-console/README.md` explique comment la builder, la tester, assembler son
-bundle `.app` et ouvrir l'app. C'est l'app unique : elle installe et démarre
+bundle `.app` et ouvrir l'app — il documente aussi l'app iOS, dont le projet Xcode
+vit sous `omp-console/ios/`. C'est l'app unique : elle installe et démarre
 elle-même ses composants (son `omp` 18.6.0, son podman 6.1.3, sa machine podman
 `omp-console` et les conteneurs `omp-console-qdrant` / `omp-console-mem0-http`),
 migre une seule fois la base mémoire existante — l'ancienne pile est arrêtée avant

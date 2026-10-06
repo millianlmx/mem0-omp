@@ -486,6 +486,50 @@ else
   fail "App Swift — scripts/swift-app.sh absent"
 fi
 
+echo "── App iOS"
+
+# La compilation et les tests de l'app iOS vivent dans scripts/ios-build.sh :
+# check.sh l'appelle et RECOPIE son verdict, comme la section `── App Swift`. Le
+# dépôt reste CLT-only : rien dans cette section n'exige Xcode sur un poste qui ne
+# l'a pas — le script sort 2 (« non exécuté ») et aucune ✓ n'est affichée, sinon la
+# section mentirait sur ce qu'elle a vérifié.
+#
+# `MEM0_OMP_SKIP_IOS=1` neutralise la section : le harnais de test lance check.sh
+# une dizaine de fois dans des copies jetables, qui paieraient sinon chacune une
+# compilation iOS complète. Une valeur vide vaut absence.
+#
+# `MEM0_OMP_REQUIRE_IOS=1` (posée par la CI macOS) fait échouer un « non exécuté » :
+# en CI, Xcode manquant est un échec, jamais un skip silencieux.
+if [ -f scripts/ios-build.sh ]; then
+  if [ -n "${MEM0_OMP_SKIP_IOS:-}" ]; then
+    echo "  · ignorée (MEM0_OMP_SKIP_IOS=1)"
+  else
+    ios_out="$(bash scripts/ios-build.sh 2>&1)"
+    ios_status=$?
+    [ -n "$ios_out" ] && printf '%s\n' "$ios_out"
+    case "$ios_status" in
+      0)
+        if printf '%s\n' "$ios_out" | grep -q "tests non exécutés"; then
+          ios_cause="$(printf '%s\n' "$ios_out" | sed -n 's/.*tests non exécutés : //p' | head -n 1)"
+          pass "App iOS : compilation (tests non exécutés : ${ios_cause:-cause inconnue})"
+        else
+          pass "App iOS : compilation et tests"
+        fi
+        ;;
+      2)
+        if [ "${MEM0_OMP_REQUIRE_IOS:-}" = "1" ]; then
+          fail "App iOS — Xcode inutilisable (relance : DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer bash scripts/ios-build.sh)"
+        fi
+        ;;
+      *)
+        fail "App iOS — scripts/ios-build.sh a échoué (relance : bash scripts/ios-build.sh)"
+        ;;
+    esac
+  fi
+else
+  fail "App iOS — scripts/ios-build.sh absent"
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
   echo "Dépôt prêt à publier."
