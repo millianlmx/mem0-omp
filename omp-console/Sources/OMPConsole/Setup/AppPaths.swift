@@ -83,6 +83,17 @@ struct AppPaths: Equatable, Sendable {
         supportRoot.appendingPathComponent(MemoryLinkStore.fileName)
     }
 
+    /// `<racine>/remote` : l'état du service d'API distante (le registre des
+    /// appareils appairés ; les jetons, eux, vivent au trousseau).
+    var remoteDir: URL {
+        supportRoot.appendingPathComponent("remote", isDirectory: true)
+    }
+
+    /// `<racine>/remote/devices.json` : les appareils appairés, écrit en 0600.
+    var devicesFile: URL {
+        remoteDir.appendingPathComponent("devices.json")
+    }
+
     /// L'image de machine retenue au dernier `machine init` de l'app.
     var machineState: URL {
         stackRoot.appendingPathComponent("machine.json")

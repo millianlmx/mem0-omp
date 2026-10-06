@@ -105,8 +105,8 @@ enum SessionHostError: Error, Equatable, Sendable {
 /// Une ligne de la transcription brute (S-5) : la ligne JSONL reçue telle quelle,
 /// la commande émise, ou une erreur locale. `id` est strictement croissant sur la
 /// vie du host.
-struct TranscriptLine: Identifiable, Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
+struct TranscriptLine: Identifiable, Equatable, Sendable, Codable {
+    enum Kind: String, Equatable, Sendable, Codable {
         case inbound
         case outbound
         case clientError

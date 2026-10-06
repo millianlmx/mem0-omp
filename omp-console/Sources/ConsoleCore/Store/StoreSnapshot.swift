@@ -10,7 +10,7 @@ import Foundation
 /// « magasin absent » (le répertoire n'existe pas, ou n'est pas un répertoire)
 /// contre « magasin vide » (il existe, aucune entrée) : deux états distincts, un
 /// lecteur ne doit jamais les confondre (B-6, S-8).
-public enum StoreAvailability: Sendable, Equatable {
+public enum StoreAvailability: String, Sendable, Equatable, Codable {
     case absent
     case present
 }
@@ -18,7 +18,7 @@ public enum StoreAvailability: Sendable, Equatable {
 /// POURQUOI une entrée a été écartée (BR-1) : la raison exacte que le bandeau du
 /// tableau nomme (S-8). Un contenu qui n'est pas du JSON n'est pas la même chose
 /// qu'un JSON valide au schéma incomplet — les deux se disent séparément.
-public enum DiscardReason: Sendable, Equatable {
+public enum DiscardReason: String, Sendable, Equatable, Codable {
     /// `JSONValue.parse` a échoué : le contenu n'est pas du JSON.
     case unparsable
     /// Le JSON est valide mais le validateur du store a rendu `nil` (schéma
@@ -29,7 +29,7 @@ public enum DiscardReason: Sendable, Equatable {
 /// Une entrée écartée, NOMMÉE : le fichier (`<store>/<nom>`) et la raison. Le
 /// chemin porte le store parce qu'un bandeau qui n'aurait que le nom de fichier
 /// ne dirait pas OÙ regarder — et deux stores peuvent porter le même nom.
-public struct DiscardedEntry: Sendable, Equatable {
+public struct DiscardedEntry: Sendable, Equatable, Codable {
     /// `<store>/<fichier>` : `running/a1b2….json`, `lots/d0ef9a50f7dc3a37.json`…
     public var file: String
     public var reason: DiscardReason
@@ -42,7 +42,7 @@ public struct DiscardedEntry: Sendable, Equatable {
 
 /// `running/` : les pipelines en cours, triées par `phaseStartedAt` croissant puis
 /// `cwd` croissant, bornées à `PipelineStore.runningReadLimit`.
-public struct RunningEnvelope: Sendable, Equatable {
+public struct RunningEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var entries: [RunningEntry]
     public var discardedEntries: [DiscardedEntry]
@@ -59,7 +59,7 @@ public struct RunningEnvelope: Sendable, Equatable {
 
 /// `history/` : les pipelines closes, triées par `endedAt` décroissant puis `cwd`
 /// croissant, bornées à `PipelineStore.historyReadLimit`.
-public struct HistoryEnvelope: Sendable, Equatable {
+public struct HistoryEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var entries: [HistoryEntry]
     public var discardedEntries: [DiscardedEntry]
@@ -74,7 +74,7 @@ public struct HistoryEnvelope: Sendable, Equatable {
 }
 
 /// `lots/` : un lot par dépôt, fichiers triés par nom.
-public struct LotEnvelope: Sendable, Equatable {
+public struct LotEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var lots: [Lot]
     public var discardedEntries: [DiscardedEntry]
@@ -89,7 +89,7 @@ public struct LotEnvelope: Sendable, Equatable {
 }
 
 /// `projects/` : un projet par dépôt, fichiers triés par nom.
-public struct ProjectEnvelope: Sendable, Equatable {
+public struct ProjectEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var projects: [Project]
     public var discardedEntries: [DiscardedEntry]
@@ -106,7 +106,7 @@ public struct ProjectEnvelope: Sendable, Equatable {
 /// `inbox/` : les boîtes des runs, triées par nom. `discardedEntries` est toujours
 /// vide — une livraison illisible est RENDUE avec `payload == nil`, jamais écartée
 /// (S-5) ; le champ existe pour l'uniformité de l'enveloppe.
-public struct InboxEnvelope: Sendable, Equatable {
+public struct InboxEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var boxes: [InboxBox]
     public var discardedEntries: [DiscardedEntry]
@@ -121,7 +121,7 @@ public struct InboxEnvelope: Sendable, Equatable {
 }
 
 /// `audit/` : les relais battants, fichiers triés par nom.
-public struct AuditEnvelope: Sendable, Equatable {
+public struct AuditEnvelope: Sendable, Equatable, Codable {
     public var availability: StoreAvailability
     public var relays: [AuditRelay]
     public var discardedEntries: [DiscardedEntry]
@@ -143,7 +143,7 @@ public struct AuditEnvelope: Sendable, Equatable {
 /// distincte de la disponibilité des six stores — un magasin jamais écrit a une
 /// racine présente et six répertoires absents (ou vides), et le tableau doit dire
 /// « vide », pas « absent ».
-public struct StoreSnapshot: Sendable, Equatable {
+public struct StoreSnapshot: Sendable, Equatable, Codable {
     public var root: StoreAvailability
     public var running: RunningEnvelope
     public var history: HistoryEnvelope

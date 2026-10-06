@@ -15,7 +15,7 @@ import Foundation
 
 /// Un run du magasin : une entrée `running/` ou `history/` portant un
 /// `sessionFile`.
-public struct StoreRun: Equatable, Sendable {
+public struct StoreRun: Equatable, Sendable, Codable {
     /// Identité du run.
     public var sessionFile: String
     /// Label écrit par le dépôt.

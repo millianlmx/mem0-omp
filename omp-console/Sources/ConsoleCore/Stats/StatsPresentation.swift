@@ -11,7 +11,7 @@ import Foundation
 
 /// Une barre du graphique : une feature, une série (« envoyés » ou « reçus »),
 /// un nombre de tokens.
-public struct StatsBar: Identifiable, Equatable {
+public struct StatsBar: Identifiable, Equatable, Codable {
     public var id: String
     public var feature: String
     public var kind: String
@@ -27,7 +27,7 @@ public struct StatsBar: Identifiable, Equatable {
 
 /// Une ligne du tableau : un run. Les champs numériques servent au tri, les
 /// champs `…Text` au rendu.
-public struct StatsRow: Identifiable, Equatable {
+public struct StatsRow: Identifiable, Equatable, Codable {
     /// Le `sessionFile`.
     public var id: String
     public var tag: String

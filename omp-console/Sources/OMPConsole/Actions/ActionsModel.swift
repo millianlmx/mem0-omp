@@ -184,8 +184,14 @@ final class ActionsModel: ObservableObject {
 
     /// Le geste « Reprendre » (S-10) : aucune commande — le conducteur démarré
     /// adopte le lot à son `session_start`. Le journal dit le résultat.
-    func resume(_ action: KanbanCardAction) {
-        guard let pilot, let repoRoot = action.repoRoot else { return }
+    ///
+    /// Rend l'identifiant de l'entrée de journal du geste (`nil` quand aucun pilote
+    /// n'est configuré) : l'appelant qui doit attendre la FIN RÉELLE du geste
+    /// attend `pilotTask` puis relit CETTE entrée — jamais la tête du journal, qui
+    /// est partagé par tous les gestes et borné à 20 entrées (S-10).
+    @discardableResult
+    func resume(_ action: KanbanCardAction) -> String? {
+        guard let pilot, let repoRoot = action.repoRoot else { return nil }
         let at = clock.nowMs()
         let id = "resume-\(sentAtMillis(at))-\(salt())"
         let target = Self.repoName(repoRoot)
@@ -201,6 +207,7 @@ final class ActionsModel: ObservableObject {
                 id: id, kindLabel: ActionsText.resumeLabel, targetLabel: target, state: state, at: at
             ))
         }
+        return id
     }
 
     // --- émissions : livraisons (S-1, S-2) -----------------------------------
