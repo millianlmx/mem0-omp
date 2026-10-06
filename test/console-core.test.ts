@@ -276,8 +276,12 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
   assert.deepEqual(manifest.find((t) => t.name === "OMPConsoleTests")?.dependencies, ["OMPConsole", "ConsoleCore"]);
 
   // Preuve SwiftPM de D2 : la cible décrite est bien une bibliothèque sans
-  // `target_dependencies`. Hors copie seulement (elle exige un toolchain).
-  if (IN_COPY) return;
+  // `target_dependencies`. Hors copie, et sur macOS seulement : la garde est la
+  // PLATEFORME, pas la présence de `swift` — les runners ubuntu-latest embarquent
+  // un toolchain Swift, où le paquet ne compile pas (`StoreModels` importe
+  // `Darwin`), et s'y fier faisait rougir la CI (même piège que
+  // `socle-app-swift/AC-1`).
+  if (IN_COPY || process.platform !== "darwin") return;
   const probe = spawnSync("swift", ["--version"], { encoding: "utf8" });
   if (probe.status !== 0) return;
   const described = spawnSync("swift", ["package", "describe", "--type", "json"], {
@@ -306,8 +310,15 @@ test("noyau-partage-console/AC-2 : les sources de ConsoleCore n'importent ni App
     );
   }
 
-  // La cible SEULE, avec les Command Line Tools : hors copie et avec un toolchain.
+  // La cible SEULE, avec les Command Line Tools : la garde est la PLATEFORME, pas
+  // la présence de `swift` — les runners ubuntu-latest embarquent un toolchain
+  // Swift, où ConsoleCore ne compile pas (`StoreModels` importe `Darwin`) ; la
+  // sonde qui s'y fiait rougissait `check (ubuntu-latest)` et `release-simulation`.
   if (IN_COPY) return;
+  if (process.platform !== "darwin") {
+    console.log("  · hors macOS — compilation de ConsoleCore non vérifiée");
+    return;
+  }
   if (spawnSync("swift", ["--version"], { encoding: "utf8" }).status !== 0) {
     console.log("  · swift absent — compilation de ConsoleCore non vérifiée");
     return;
