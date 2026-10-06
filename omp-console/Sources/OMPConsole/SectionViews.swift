@@ -5,6 +5,7 @@
 // Aucun attribut macro SwiftUI n'est employé ici (`@State`, `@Preview`, …) :
 // sous les Command Line Tools seuls, ces macros échouent à la compilation (D3).
 
+import ConsoleCore
 import SwiftUI
 
 /// Contrat minimal d'une vue de section : se déclarer sur la section qu'elle sert.

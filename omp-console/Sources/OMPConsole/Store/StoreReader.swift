@@ -4,6 +4,7 @@
 // Aucune API d'écriture n'est appelée ici — la couche est un LECTEUR (B-10, S-10) :
 // `contentsOfDirectory` et `contents(atPath:)` seulement.
 
+import ConsoleCore
 import Foundation
 
 /// Le type `JSONValue` vit avec le modèle de session (`Session/SessionModel.swift`) :

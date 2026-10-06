@@ -9,6 +9,7 @@
 //  - `.manual` : créé à la main par l'utilisateur, persisté dans le fichier local
 //    (S-11).
 
+import ConsoleCore
 import Foundation
 
 // MARK: - Nœuds

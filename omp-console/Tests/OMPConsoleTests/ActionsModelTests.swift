@@ -5,9 +5,10 @@
 // Le sondage est appelé EXPLICITEMENT (`model.pollAcks()`), comme le dépôt appelle
 // `controller.pumpCommands()` : aucun minuteur ne tourne à vide dans un test.
 
+@testable import OMPConsole
+import ConsoleCore
 import Foundation
 import Testing
-@testable import OMPConsole
 
 private let t0: Double = 1_700_000_000_000
 private let fixedClock = StoreClock { t0 }

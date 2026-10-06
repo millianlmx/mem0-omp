@@ -7,6 +7,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 // MARK: - AC-11 : entrée illisible
 

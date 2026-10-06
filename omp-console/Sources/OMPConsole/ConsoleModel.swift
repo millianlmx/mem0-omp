@@ -12,6 +12,7 @@
 // qui rend la règle vérifiable et la sélection idempotente.
 
 import Combine
+import ConsoleCore
 
 final class ConsoleModel: ObservableObject {
     @Published private(set) var selection: ConsoleSection = .home

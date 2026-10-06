@@ -10,6 +10,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 // MARK: - Outils (trames JSONL et pilotage du transport scripté)
 

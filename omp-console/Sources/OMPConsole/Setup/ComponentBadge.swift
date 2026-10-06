@@ -11,6 +11,7 @@
 // calculer au `NavigationSplitView` ~1 958 pt de haut, hors écran. Le texte se
 // replie donc au besoin, sans jamais être tronqué (AC-2 exige les noms).
 
+import ConsoleCore
 import SwiftUI
 
 struct ComponentBadge: View {

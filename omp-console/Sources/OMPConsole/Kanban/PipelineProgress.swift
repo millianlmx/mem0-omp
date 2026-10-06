@@ -2,7 +2,10 @@
 // pipeline, chacune faite, en cours, à venir ou en échec. Fonction PURE de la
 // carte — l'inspecteur la rend, le test la vérifie sans vue.
 
+import ConsoleCore
+
 /// L'état d'une étape de l'avancement.
+
 enum PipelineStepState: Equatable {
     case done, current, upcoming, failed
 }

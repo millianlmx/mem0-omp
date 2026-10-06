@@ -8,6 +8,7 @@
 
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 // `@MainActor` : `KanbanView` est une vue SwiftUI, donc isolée au fil principal
 // (Swift 6) — lire sa `section` statique depuis un test non isolé avertirait.

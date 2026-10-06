@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 private let now: Double = 1_700_000_000_000
 

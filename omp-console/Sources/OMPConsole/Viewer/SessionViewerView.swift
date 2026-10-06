@@ -13,6 +13,7 @@
 // `SessionViewerModel`, et `@StateObject` — une vraie property wrapper — l'alloue
 // par session ouverte.
 
+import ConsoleCore
 import SwiftUI
 
 /// Le contenu d'UNE session : son modèle vit ici, et nulle part ailleurs.

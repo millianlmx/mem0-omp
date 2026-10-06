@@ -6,6 +6,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 // MARK: - Sommaire (S-3)
 

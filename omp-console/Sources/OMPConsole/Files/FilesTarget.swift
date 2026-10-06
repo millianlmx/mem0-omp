@@ -12,6 +12,7 @@
 // (mesuré) — sans canonisation, deux chemins du MÊME répertoire ne seraient jamais
 // égaux.
 
+import ConsoleCore
 import Foundation
 
 enum FilesBase: Sendable, Equatable {

@@ -4,6 +4,7 @@
 // (`KanbanRepoKey`). Elle n'est PAS recalculée ici — elle est déléguée, pour qu'il
 // n'existe pas deux formules à tenir synchronisées.
 
+import ConsoleCore
 import Foundation
 
 enum ProjectPaths {

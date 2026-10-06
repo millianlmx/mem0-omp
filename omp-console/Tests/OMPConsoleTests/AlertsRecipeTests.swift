@@ -8,9 +8,10 @@
 // `UNUserNotificationCenter` tue le process, Doc-3) — cette partie est prouvée par la
 // recette manuelle du README (S-10 b).
 
+@testable import OMPConsole
+import ConsoleCore
 import Foundation
 import Testing
-@testable import OMPConsole
 
 /// Un script jetable `#!/bin/sh` qui écrit lui-même l'entrée `running/`, puis reste
 /// vivant (`exec sleep`) pour que son pid soit VIVANT — sans quoi l'entrée serait

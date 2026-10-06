@@ -12,6 +12,7 @@
 // section, le bouton « Rafraîchir » et l'envoi d'une recherche (S-6).
 
 import Combine
+import ConsoleCore
 import Foundation
 
 @MainActor

@@ -24,6 +24,7 @@
 // puis la terminaison est redemandée et passe.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 @main

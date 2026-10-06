@@ -9,6 +9,7 @@
 // décodage reproduisent `memoryId` / `memoryLine` / `semanticScore`
 // (mem0Client.ts:82-111), et les budgets sont ceux de `TIMEOUT` (config.ts:13).
 
+import ConsoleCore
 import Foundation
 
 // MARK: - Configuration

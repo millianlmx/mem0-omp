@@ -14,6 +14,7 @@
 // se rouvre pas — un `start()` suivant en construit un neuf sur le même magasin.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 @MainActor

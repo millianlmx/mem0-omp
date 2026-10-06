@@ -8,6 +8,7 @@
 // absent, illisible, non JSON, d'une autre version ou au champ `notified` mal typé
 // vaut un registre VIDE — jamais une exception remontée à l'utilisateur.
 
+import ConsoleCore
 import Foundation
 
 struct AlertLedger: Sendable {

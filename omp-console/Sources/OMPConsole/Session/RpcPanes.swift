@@ -5,6 +5,7 @@
 // `Binding`/callbacks : AUCUNE seconde implémentation du dialogue n'existe, et
 // les règles de gating vivent dans les modèles, pas ici.
 
+import ConsoleCore
 import SwiftUI
 
 /// La transcription brute, défilante sur la dernière ligne.

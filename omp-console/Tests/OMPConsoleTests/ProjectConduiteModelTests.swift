@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 /// Monte un modèle vivant : poignée de main répondue, `/project` armé.
 @MainActor

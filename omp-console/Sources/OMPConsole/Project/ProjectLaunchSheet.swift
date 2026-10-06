@@ -5,6 +5,7 @@
 // Boutons à droite : « Annuler » (Échap) puis « Piloter » (↩), seul bouton
 // proéminent.
 
+import ConsoleCore
 import SwiftUI
 
 struct ProjectLaunchSheet: View {

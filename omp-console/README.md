@@ -161,6 +161,21 @@ cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
 
 (`-home.welcomeSeen NO` remontre la bienvenue sur un magasin vide.)
 
+## Cibles
+
+Le paquet déclare trois cibles (une ligne par cible, `omp-console/Package.swift`) :
+
+- **OMPConsole** — la coque macOS : les vues, les modèles d'écran et les
+  adaptateurs au système (AppKit, SwiftUI, PTY, réseau). Cible exécutable ;
+  dépend de `ConsoleCore`.
+- **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
+  `OMPConsole` et de `ConsoleCore`.
+- **ConsoleCore** — la **cible partagée macOS/iOS** : les modèles et constantes
+  pures du magasin d'état, le vocabulaire figé des sections et le socle du
+  contrat de l'API distante. Aucune dépendance (ni interne, ni externe) : elle se
+  compile seule (`swift build --target ConsoleCore`) et n'importe ni AppKit ni
+  UIKit — la section « Noyau partagé » de `scripts/check.sh` le tient.
+
 ## Builder
 
 ```bash

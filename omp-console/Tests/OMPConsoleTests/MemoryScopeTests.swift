@@ -9,6 +9,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("memoire-mem0/AC-4 : sans manifeste, la portée est le nom du répertoire du dépôt principal")
 func ac4ScopeFallsBackToTheRepositoryBasename() async throws {

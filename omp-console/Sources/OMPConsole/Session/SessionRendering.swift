@@ -8,9 +8,12 @@
 //
 // Trois fonctions PURES : aucune E/S, aucun état.
 
+import ConsoleCore
+
 /// Rend une valeur JSON de façon compacte et déterministe : clés TRIÉES, aucun
 /// espace superflu. `JSONSerialization` ne garantit aucun ordre de clés (Doc-4),
 /// donc le tri est explicite.
+
 public func renderJSON(_ value: JSONValue) -> String {
     switch value {
     case .object(let dictionary):

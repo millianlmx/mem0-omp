@@ -9,6 +9,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-13 : parcourir l'arbre, lire, diffuser et ouvrir le contrat ne change ni l'état git ni un fichier")
 func fullScenarioIsReadOnly() async throws {

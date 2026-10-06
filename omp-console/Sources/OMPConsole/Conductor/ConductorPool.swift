@@ -13,6 +13,7 @@
 // Tout vit sur le `@MainActor` : un hôte au plus par dépôt, sans verrou.
 
 import Combine
+import ConsoleCore
 import Foundation
 
 /// Qui garantit qu'un dépôt a un pilote vivant.

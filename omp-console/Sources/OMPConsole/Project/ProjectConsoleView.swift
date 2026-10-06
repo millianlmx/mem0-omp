@@ -15,6 +15,7 @@
 // `Session/RpcPanes.swift`.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct ProjectConsoleView: View {

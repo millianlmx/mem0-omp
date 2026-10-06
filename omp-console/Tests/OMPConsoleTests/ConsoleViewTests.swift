@@ -7,6 +7,7 @@
 
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 // `@MainActor` : les vues SwiftUI sont isolées au fil principal (Swift 6), donc
 // lire leur `section` statique depuis un test non isolé avertirait à la compilation.

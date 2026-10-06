@@ -21,6 +21,7 @@
 // Tools seuls, ces macros n'existent pas. `@ObservedObject` est une vraie property
 // wrapper, donc autorisée.
 
+import ConsoleCore
 import SwiftUI
 
 struct KanbanView: ConsoleSectionView {

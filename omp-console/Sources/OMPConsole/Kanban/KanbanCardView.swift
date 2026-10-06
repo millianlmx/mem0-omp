@@ -9,6 +9,7 @@
 // verre. La DURÉE vit sous un `TimelineView(.periodic(from: .now, by: 30))` : à
 // la minute, elle n'a pas besoin d'un rendu par seconde.
 
+import ConsoleCore
 import SwiftUI
 
 struct KanbanCardView: View {

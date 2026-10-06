@@ -15,6 +15,7 @@
 // d'émission exigée par AC-13 se déduit d'une comparaison d'instantanés, jamais
 // d'une fenêtre temporelle (qui fusionnerait aussi deux publications distinctes).
 
+import ConsoleCore
 import Darwin
 import Dispatch
 import Foundation

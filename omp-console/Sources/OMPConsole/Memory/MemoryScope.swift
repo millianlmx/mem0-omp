@@ -13,6 +13,7 @@
 // doit jamais ouvrir une seconde portée, sans quoi les souvenirs écrits depuis le
 // dépôt seraient introuvables depuis la feature.
 
+import ConsoleCore
 import Foundation
 
 enum MemoryScope {

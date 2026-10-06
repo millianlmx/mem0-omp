@@ -1,6 +1,7 @@
 // La présentation de l'Accueil (S-5 de omp-console-redesign) : fonctions PURES
 // de l'état d'OMP et de l'état du tableau — vérifiables sans rendre une vue.
 
+import ConsoleCore
 import Foundation
 
 /// L'écran de l'Accueil, dans l'ordre de ses règles.

@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 private let repoKey = "d0ef9a50f7dc3a37"
 

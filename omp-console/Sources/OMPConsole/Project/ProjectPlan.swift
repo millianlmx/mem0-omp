@@ -5,6 +5,7 @@
 // position par rapport à `current`, l'état d'une feature est le vocabulaire du
 // pilote, et rien d'autre.
 
+import ConsoleCore
 import Foundation
 
 /// Une feature prête à afficher : son libellé d'état, sa PR, ses modèles.

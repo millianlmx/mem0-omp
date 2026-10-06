@@ -12,6 +12,7 @@
 // autre fichier ouvert, l'ordre du fichier fait foi (l'arbre `parentId` n'est
 // jamais suivi).
 
+import ConsoleCore
 import Foundation
 
 /// Un incident de lecture, rendu à l'appelant au lieu d'être levé.

@@ -11,6 +11,7 @@
 //   Dans une barre d'outils, poser `.sharedBackgroundVisibility(.hidden)` sur
 //   l'article : la pilule est son propre verre.
 
+import ConsoleCore
 import SwiftUI
 
 struct StatusBadge: View {
