@@ -25,13 +25,27 @@ public enum PipelineStore: String, CaseIterable, Sendable {
     public static let runningReadLimit = 200
     public static let historyReadLimit = 20
 
+    /// Le `home` par défaut : `FileManager.homeDirectoryForCurrentUser` est une API
+    /// macOS, refusée par le compilateur pour iOS — la cible partagée compile pour
+    /// les deux plateformes, et la racine du magasin local n'a pas de sens côté iOS
+    /// (l'app iOS n'a pas de magasin) ; `NSHomeDirectory()` y rend le conteneur de
+    /// l'app, jamais lu. Sous macOS la valeur est celle d'avant l'extraction (aucun
+    /// changement de comportement pour la coque).
+    public static let homeDirectory: String = {
+        #if os(macOS)
+        FileManager.default.homeDirectoryForCurrentUser.path
+        #else
+        NSHomeDirectory()
+        #endif
+    }()
+
     /// Racine du magasin : `MEM0_PIPELINE_STATE_DIR` quand la variable porte un
     /// chemin exploitable (`~` développé, chemin ABSOLU retenu), sinon
     /// `<home>/.omp/agent/pipeline`. Un chemin RELATIF est ignoré — il dépendrait
     /// du cwd, donc de la session. Les deux entrées sont injectables (tests).
     public static func stateDir(
         env: [String: String] = ProcessInfo.processInfo.environment,
-        home: String = FileManager.default.homeDirectoryForCurrentUser.path
+        home: String = homeDirectory
     ) -> String {
         let raw = (env["MEM0_PIPELINE_STATE_DIR"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         if raw == "~" { return home }
