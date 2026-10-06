@@ -922,6 +922,34 @@ Le budget visé est **≤ 6 min** pour le run CI caches froids comme pour
 et la durée de chaque job — le run étant borné par le plus lent des deux jobs
 requis.
 
+**Mesures consignées (2026-10-06).** Sur le poste (M4 Pro, 14 cœurs, scratchs
+Swift vidés) : `time ./scripts/check.sh` → **159 s, sortie 0**, les douze sections
+exécutées, aucun `✗` — contre ≈ 464 s avant la feature. En CI (PR #70, run
+**37497757815**, head `430861d`, caches froids, aucune action de cache) :
+`check (ubuntu-latest)` **260 s** et `check (macos-latest)` **1021 s**, contre
+**579 s** et **1358 s** sur `main` (run 37496329439) — soit −55 % et −25 %.
+
+**Le budget de 6 min n'est pas tenu en CI, et la mesure dit pourquoi.** Sur un
+runner `macos-latest` (3 vCPU) le Check est **CPU-borné** : les durées *non
+contestées* de `main` étaient déjà de 573 s pour la suite node (`── Tests`),
+463 s pour `── App Swift` (compilation release sérielle, whole-module) et 242 s
+pour `── App iOS` — ≈ 1300 s de somme, et ≈ 400 s de plancher même en
+parallélisme parfait ; le run de la branche mesure 949 s de sections
+concurrentes. La cible de B-1 est donc à trancher (chiffres et options dans
+`.omp/pipeline/contract.md` → `## Corrections`) : aucune vérification n'a été
+retirée ni allégée.
+
+Rouges des deux runs de preuve, nommés : `graph-based-memeries-view/AC-3` — borne
+de mur d'horloge de 3 s — mesuré à **9,698 s** puis **8,315 s** en debug sur le
+runner (2,29-2,39 s isolé sur le poste), puis `socle-app-swift/AC-1` en cascade
+(marqueur `build-failed`) : le job macOS est donc rouge de façon
+**reproductible** tant que la suite Swift est compilée en debug sur 3 vCPU. La
+décision appartient à la feature `graph-based-memeries-view` (élargir la borne
+ou mesurer autre chose que le mur d'horloge), et elle conditionne la fusion de
+cette PR. Le job ubuntu, lui, était rouge au premier run pour une garde de
+plateforme manquante dans un test de cette feature, corrigée par `5ccb762` :
+**vert** au second (run **37500906653**, 273 s).
+
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
 écriture des versions, des deux catalogues et de `CHANGELOG.md`, puis
