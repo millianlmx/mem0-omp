@@ -14,6 +14,15 @@ import Combine
 import ConsoleCore
 import Foundation
 
+/// Ce qu'un abonné reçoit du flux d'UNE session vivante (S-8) : les entrées
+/// AJOUTÉES depuis la dernière trame, ou l'ordre de tout relire parce que le
+/// fichier a été tronqué ou remplacé. Le fichier n'est jamais porté par l'item :
+/// un abonné de `sessionFeed(forFile:)` ne reçoit QUE les trames de SON fichier.
+public enum RemoteSessionFeedItem: Equatable, Sendable {
+    case added([RemoteConversationEntry])
+    case rewrote
+}
+
 @MainActor
 public final class ConsoleClientModel: ObservableObject {
     // MARK: - État publié
@@ -75,6 +84,9 @@ public final class ConsoleClientModel: ObservableObject {
     private var lastFailure: ClientEndpoint?
     private var attempt = 0
     private var connection: Task<Void, Never>?
+    /// Les abonnés du flux d'une session vivante (S-8), par fichier. Un dictionnaire
+    /// de continuateurs, pas un `@Published` : chacun ne voit QUE son fichier.
+    private var sessionFeeds: [String: [UUID: AsyncStream<RemoteSessionFeedItem>.Continuation]] = [:]
 
     // MARK: - Cycle de vie
 
@@ -310,6 +322,44 @@ public final class ConsoleClientModel: ObservableObject {
             as: RemoteSessionPayload.self
         )
     }
+
+    // MARK: - Flux d'une session vivante
+
+    /// Le flux MULTICAST des nouveautés d'UN fichier de session (S-8). Chaque abonné
+    /// est indépendant : `AsyncStream` ne se consomme qu'une fois, donc la visionneuse
+    /// en prend un, et l'abandon retiré sur `onTermination`. Une trame d'un AUTRE
+    /// fichier n'est délivrée à personne.
+    ///
+    /// Le tampon est BORNÉ (`.bufferingNewest`) : un consommateur qui ne consomme plus
+    /// — app en arrière-plan — garde les derniers lots au lieu d'accumuler, et une
+    /// trame perdue de la sorte est rattrapée par la relecture qu'exige `.rewrote` ou
+    /// par une réouverture (S-8 : le rattrapage du trou hors ligne n'est pas un
+    /// objectif).
+    public func sessionFeed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem> {
+        let (stream, continuation) = AsyncStream<RemoteSessionFeedItem>.makeStream(
+            bufferingPolicy: .bufferingNewest(Self.sessionFeedBuffer)
+        )
+        let id = UUID()
+        // Une itération annulée termine le flux : on retire alors le continuateur.
+        // `onTermination` peut être appelé hors du fil principal — d'où le saut
+        // explicite vers l'acteur du modèle.
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor in self?.removeSessionFeed(file: file, id: id) }
+        }
+        sessionFeeds[file, default: [:]][id] = continuation
+        return stream
+    }
+
+    // MARK: - Fait observé par les tests : les abonnés du flux de session
+
+    /// Le nombre d'abonnés vivants, tous fichiers confondus. L'abandon d'un abonné
+    /// doit retirer son continuateur : c'est le seul fait observable de ce nettoyage.
+    var sessionFeedSubscriberCount: Int {
+        sessionFeeds.values.reduce(0) { $0 + $1.count }
+    }
+
+    /// Le nombre de lots conservés pour un abonné en retard (borne du tampon).
+    private static let sessionFeedBuffer = 64
 
     public func projects() async throws -> RemoteProjectsPayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/projects"), as: RemoteProjectsPayload.self)
@@ -803,6 +853,7 @@ public final class ConsoleClientModel: ObservableObject {
             if sessionUpdates.count > Self.sessionUpdateLimit {
                 sessionUpdates.removeLast(sessionUpdates.count - Self.sessionUpdateLimit)
             }
+            deliverSessionFeed(event)
         case .hosted(let event):
             hosted = event
         case .conduite(let payload):
@@ -813,6 +864,32 @@ public final class ConsoleClientModel: ObservableObject {
             journal = payload.entries
         case .unknown:
             break
+        }
+    }
+
+    /// Livre une trame `sessions` aux abonnés de SON fichier (S-8) : un incident
+    /// `truncated`/`replaced` commande une relecture complète, un `added` non vide
+    /// porte les nouvelles entrées, tout le reste ne délivre rien. Un `added` vide et
+    /// une trame d'un fichier sans abonné ne réveillent personne.
+    private func deliverSessionFeed(_ event: RemoteSessionsEvent) {
+        guard let subscribers = sessionFeeds[event.file], !subscribers.isEmpty else { return }
+        if event.issue == "truncated" || event.issue == "replaced" {
+            for continuation in subscribers.values { continuation.yield(.rewrote) }
+            return
+        }
+        guard let added = event.added, !added.isEmpty else { return }
+        for continuation in subscribers.values { continuation.yield(.added(added)) }
+    }
+
+    /// Retire le continuateur d'un abonné terminé. La clé du fichier disparaît avec
+    /// son dernier abonné : le registre ne garde aucune trace d'un fichier fermé.
+    private func removeSessionFeed(file: String, id: UUID) {
+        guard var subscribers = sessionFeeds[file] else { return }
+        subscribers[id] = nil
+        if subscribers.isEmpty {
+            sessionFeeds[file] = nil
+        } else {
+            sessionFeeds[file] = subscribers
         }
     }
 

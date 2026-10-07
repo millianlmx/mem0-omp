@@ -9,6 +9,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test(
     "lecteur-de-sessions-omp/AC-12 : recette manuelle — lecture et rendu d'une vraie session",

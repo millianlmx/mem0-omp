@@ -5,6 +5,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 private func parisCalendar() -> Calendar {
     var calendar = Calendar(identifier: .gregorian)

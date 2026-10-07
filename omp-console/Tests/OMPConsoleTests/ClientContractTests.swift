@@ -146,6 +146,26 @@ struct ClientContractTests {
         ))
     }
 
+    @Test("les charges utiles miroir de session portent les mêmes champs des deux côtés (BR-2)")
+    func sessionPayloadShapes() throws {
+        let entry = #"{"index":2,"offset":120,"timestampMs":1.5,"kind":"assistant","text":"x","thinking":"réflexion","model":"m","usage":{"input":1,"output":2,"cacheRead":3,"cacheWrite":4,"totalTokens":10,"cost":0.25},"toolCalls":[{"id":"c1","name":"read","arguments":{"path":"/a.txt","i":"lire"}}],"callId":"c1","name":"read","diff":"-a","isError":false,"tokensBefore":7,"fromId":"root"}"#
+        #expect(try contractSameShape(
+            entry,
+            client: ConsoleClient.RemoteConversationEntry.self,
+            host: OMPConsole.RemoteConversationEntry.self
+        ))
+        #expect(try contractSameShape(
+            #"{"id":"c1","name":"read","arguments":{"path":"/a.txt"}}"#,
+            client: ConsoleClient.RemoteToolCall.self,
+            host: OMPConsole.RemoteToolCall.self
+        ))
+        #expect(try contractSameShape(
+            #"{"header":{"id":"s1","cwd":"/tmp/p","version":1,"timestamp":"2026-01-01T00:00:00.000Z","parentSession":"s0"},"kind":"topLevel","entries":[\#(entry)],"skipped":[{"offset":5,"reason":"invalidJSON"}],"truncated":false,"unreadableReason":"ouverture en lecture refusée"}"#,
+            client: ConsoleClient.RemoteSessionPayload.self,
+            host: OMPConsole.RemoteSessionPayload.self
+        ))
+    }
+
     @Test("client-distant-ios/AC-1 : la coque est découverte par Bonjour et présentée sans saisie d'adresse")
     func discoversMacOverBonjour() async throws {
         let stack = try await RemoteStack.make()

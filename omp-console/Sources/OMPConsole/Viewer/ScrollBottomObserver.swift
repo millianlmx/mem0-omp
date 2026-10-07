@@ -15,13 +15,14 @@
 // MESURÉE : `hauteur du document - origine du clip - hauteur du clip`.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 /// Publie la géométrie du défilement (distance au bas et origine) à chaque
 /// déplacement comme à chaque réévaluation du contenu, ET le sens des gestes de
 /// défilement de l'utilisateur.
 struct ScrollBottomObserver: NSViewRepresentable {
-    let onGeometry: @MainActor (ScrollGeometry) -> Void
+    let onGeometry: @MainActor (ViewerScrollGeometry) -> Void
     let onUserScroll: @MainActor (CGFloat) -> Void
 
     func makeNSView(context: Context) -> NSView {
@@ -63,11 +64,11 @@ private final class ObserverBox: @unchecked Sendable {
 /// La vue invisible : elle ne fait que rattacher un observateur au `NSScrollView`
 /// qui la contient et rendre la distance au bas.
 final class ScrollObserverView: NSView {
-    var onGeometry: (@MainActor (ScrollGeometry) -> Void)?
+    var onGeometry: (@MainActor (ViewerScrollGeometry) -> Void)?
     var onUserScroll: (@MainActor (CGFloat) -> Void)?
 
     private let box = ObserverBox()
-    private var last: ScrollGeometry?
+    private var last: ViewerScrollGeometry?
     private var attempts = 0
 
     private var token: NSObjectProtocol? { box.token }
@@ -131,7 +132,7 @@ final class ScrollObserverView: NSView {
         guard let scrollView = enclosingScrollView else { return }
         let clip = scrollView.contentView
         let document = scrollView.documentView?.frame.height ?? 0
-        let geometry = ScrollGeometry(
+        let geometry = ViewerScrollGeometry(
             gap: document - clip.bounds.origin.y - clip.bounds.height,
             origin: clip.bounds.origin.y
         )

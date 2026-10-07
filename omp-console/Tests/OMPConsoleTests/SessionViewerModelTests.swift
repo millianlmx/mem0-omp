@@ -13,6 +13,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 // MARK: - Outillage
 
@@ -235,7 +236,7 @@ func scrollingUpSuspendsFollowing() async throws {
     // suspendu.
     model.reportUserScroll(deltaY: -30)
     #expect(model.following == false)
-    model.reportBottomGap(ScrollGeometry(gap: 0, origin: 4000))
+    model.reportBottomGap(ViewerScrollGeometry(gap: 0, origin: 4000))
     #expect(model.following == true)
 
     // « Revenir au direct » : le suivi reprend et un défilement est demandé.
@@ -249,10 +250,10 @@ func scrollingUpSuspendsFollowing() async throws {
     // le défilement : mesuré jusqu'à ~170 points sur le bundle réel). La demande
     // est alors REDEMANDÉE, un nombre borné de fois.
     let duringFollow = model.scrollRequest
-    model.reportBottomGap(ScrollGeometry(gap: 170, origin: 900))
+    model.reportBottomGap(ViewerScrollGeometry(gap: 170, origin: 900))
     #expect(model.following == true)
     #expect(model.scrollRequest == duringFollow + 1)
-    model.reportBottomGap(ScrollGeometry(gap: 0, origin: 1200))
+    model.reportBottomGap(ViewerScrollGeometry(gap: 0, origin: 1200))
     #expect(model.following == true)
 
     // Des faits arrivent PENDANT que le fil est remonté : la position ne bouge pas
@@ -270,7 +271,7 @@ func scrollingUpSuspendsFollowing() async throws {
     // le suivi finit par se suspendre plutôt que de lutter contre l'utilisateur.
     model.returnToLive()
     for _ in 0...viewerFollowRetries {
-        model.reportBottomGap(ScrollGeometry(gap: 400, origin: 100))
+        model.reportBottomGap(ViewerScrollGeometry(gap: 400, origin: 100))
     }
     #expect(model.following == false)
 }

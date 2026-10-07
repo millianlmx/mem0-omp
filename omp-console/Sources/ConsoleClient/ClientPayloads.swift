@@ -69,10 +69,16 @@ public struct RemoteUsage: Codable, Equatable, Sendable {
 public struct RemoteToolCall: Codable, Equatable, Sendable {
     public var id: String
     public var name: String
+    /// Les arguments bruts de l'appel (S-3). ABSENT de la charge utile quand l'appel
+    /// n'en porte pas — le client garde alors le nom seul, comme la coque macOS.
+    public var arguments: JSONValue?
 }
 
 public struct RemoteConversationEntry: Codable, Equatable, Sendable {
     public var index: Int
+    /// Premier octet de la ligne dans le fichier (S-3). Optionnel : un Mac d'avant la
+    /// feature n'en envoie aucun, et `SessionWire` retombe alors sur `index`.
+    public var offset: Int?
     public var timestampMs: Double?
     public var kind: String
     public var text: String?
@@ -94,6 +100,8 @@ public struct RemoteSessionPayload: Codable, Equatable, Sendable {
     public var entries: [RemoteConversationEntry]
     public var skipped: [RemoteSkippedEntry]
     public var truncated: Bool
+    /// Le motif OS d'un fichier illisible (S-4) ; `nil` quand la lecture est saine.
+    public var unreadableReason: String?
 }
 
 /// Une entrée du sélecteur de projet (S-1) : la clé du magasin, calculée par la

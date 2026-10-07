@@ -14,12 +14,12 @@
 // marqueur reste lisible — la distinction ne repose donc pas sur la seule couleur
 // (accessibilité).
 //
-// Aucune E/S, aucun état : que des fonctions pures.
+// Aucune E/S, aucun état : que des fonctions pures. PARTAGÉES par les deux coques.
 
 import Foundation
 
 /// La teinte d'une ligne de diff.
-enum DiffTone: String, Equatable, Sendable {
+public enum DiffTone: String, Equatable, Sendable {
     case added
     case removed
     case context
@@ -27,13 +27,18 @@ enum DiffTone: String, Equatable, Sendable {
 }
 
 /// Une ligne de diff : ce qu'elle dit (`text`) et comment elle se peint (`tone`).
-struct DiffLine: Equatable, Sendable {
-    var tone: DiffTone
-    var text: String
+public struct DiffLine: Equatable, Sendable {
+    public var tone: DiffTone
+    public var text: String
+
+    public init(tone: DiffTone, text: String) {
+        self.tone = tone
+        self.text = text
+    }
 }
 
 /// Un morceau de corps : du texte brut, ou un bloc de diff détecté.
-enum BodySegment: Equatable, Sendable {
+public enum BodySegment: Equatable, Sendable {
     case text(String)
     case diff([DiffLine])
 }
@@ -49,7 +54,7 @@ private let diffSectionPrefixes = [
 
 /// Classe CHAQUE ligne d'un diff. L'ordre de décision est strict : le premier
 /// motif qui matche gagne.
-func diffLines(in diff: String) -> [DiffLine] {
+public func diffLines(in diff: String) -> [DiffLine] {
     guard !diff.isEmpty else { return [] }
     return lines(of: diff).map { DiffLine(tone: tone(of: $0), text: $0) }
 }
@@ -112,7 +117,7 @@ private func diffBlockEnd(from index: Int, in pieces: [String]) -> Int? {
 /// Découpe un texte QUELCONQUE en alternance de texte brut et de blocs de diff
 /// unifié détectés. Les blocs sont maximaux et disjoints ; un texte sans aucun
 /// bloc rend un unique `.text` VERBATIM.
-func bodySegments(in text: String) -> [BodySegment] {
+public func bodySegments(in text: String) -> [BodySegment] {
     guard !text.isEmpty else { return [] }
     let pieces = splitLines(text)
     var segments: [BodySegment] = []

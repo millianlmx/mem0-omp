@@ -76,10 +76,18 @@ struct RemoteUsage: Codable, Equatable {
 struct RemoteToolCall: Codable, Equatable {
     var id: String
     var name: String
+    /// Les arguments bruts de l'appel (S-3) : le client iOS en dérive la cible et le
+    /// texte des arguments. `nil` quand l'appel n'en porte pas — le champ est alors
+    /// ABSENT de la charge utile (champ additif optionnel).
+    var arguments: JSONValue?
 }
 
 struct RemoteConversationEntry: Codable, Equatable {
     var index: Int
+    /// Premier octet de la ligne dans le fichier (S-3) : c'est de lui que le client
+    /// dérive les identités de lignes, stables entre deux lectures. Optionnel pour
+    /// qu'un Mac d'avant la feature reste décodable — l'app retombe alors sur `index`.
+    var offset: Int?
     var timestampMs: Double?
     var kind: String
     var text: String?
@@ -96,6 +104,7 @@ struct RemoteConversationEntry: Codable, Equatable {
 
     init(_ entry: ConversationEntry) {
         index = entry.index
+        offset = entry.offset
         timestampMs = entry.timestampMs
         switch entry.kind {
         case .user(let turn):
@@ -117,7 +126,9 @@ struct RemoteConversationEntry: Codable, Equatable {
                 )
             }
             if !turn.toolCalls.isEmpty {
-                toolCalls = turn.toolCalls.map { RemoteToolCall(id: $0.id, name: $0.name) }
+                toolCalls = turn.toolCalls.map {
+                    RemoteToolCall(id: $0.id, name: $0.name, arguments: $0.arguments)
+                }
             }
         case .toolResult(let turn):
             kind = "toolResult"
@@ -144,6 +155,10 @@ struct RemoteSessionPayload: Codable, Equatable {
     var entries: [RemoteConversationEntry]
     var skipped: [RemoteSkippedEntry]
     var truncated: Bool
+    /// Le motif OS d'un fichier illisible (S-4). `nil` quand la lecture est saine : le
+    /// client affiche alors le fil. Un fichier illisible reste un 200 — c'est
+    /// l'absence de ce champ ET de toute entrée qui distingue « vide » d'« illisible ».
+    var unreadableReason: String?
 }
 
 /// Une entrée du sélecteur de projet servi (S-1) : la clé du magasin (que le

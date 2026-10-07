@@ -76,7 +76,8 @@ final class RemoteReads {
     }
 
     /// Une session : lue depuis le DÉBUT du fichier, bornée aux dernières entrées.
-    /// Fichier absent → 404 ; fichier illisible → 200 avec `skipped` qui le dit.
+    /// Fichier absent → 404 ; fichier illisible → 200 avec `unreadableReason` qui le
+    /// dit (le motif OS), jamais une erreur ni une entrée factice.
     func session(_ file: String) throws -> RemoteSessionPayload {
         guard FileManager.default.fileExists(atPath: file) else {
             throw ConsoleAPIError.notFound("session introuvable")
@@ -84,11 +85,14 @@ final class RemoteReads {
         let reader = SessionReader(path: file)
         let read = reader.read()
         let conversation = reader.conversation
-        var skipped = conversation.skipped.map {
+        let skipped = conversation.skipped.map {
             RemoteSkippedEntry(offset: $0.offset, reason: Self.reason($0.reason))
         }
+        // Un incident d'ouverture est un MOTIF porté par la charge utile (S-4) : le
+        // client l'affiche au-dessus du fil, au lieu d'une entrée ignorée factice.
+        var unreadableReason: String?
         if case .unreadable(let reason) = (read.issue ?? nil) {
-            skipped.append(RemoteSkippedEntry(offset: 0, reason: "unreadable (\(reason))"))
+            unreadableReason = reason
         }
         let header = conversation.header.map {
             RemoteSessionHeader(
@@ -107,7 +111,8 @@ final class RemoteReads {
             kind: kind,
             entries: kept,
             skipped: skipped,
-            truncated: truncated
+            truncated: truncated,
+            unreadableReason: unreadableReason
         )
         // Borne d'OCTETS (S-7) : 2000 entrées volumineuses peuvent dépasser 2 Mio même
         // bornées en nombre ; on retire par moitié jusqu'à tenir, en le disant.
@@ -119,7 +124,8 @@ final class RemoteReads {
                 kind: kind,
                 entries: kept,
                 skipped: skipped,
-                truncated: truncated
+                truncated: truncated,
+                unreadableReason: unreadableReason
             )
         }
         return payload

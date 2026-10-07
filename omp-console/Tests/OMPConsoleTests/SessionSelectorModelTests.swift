@@ -8,6 +8,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 private let liveSession = "/tmp/sessions/2026-09-28T15-07-55-136Z_01a0e88e-e980-4f5a-9d0d-2b0d2c0e9a11.jsonl"
 private let otherSession = "/tmp/sessions/2026-09-28T16-00-00-000Z_01a0e99f-1111-2222-3333-444455556666.jsonl"

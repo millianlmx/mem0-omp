@@ -227,6 +227,86 @@ struct RemoteReadRoutesTests {
         #expect(payload.entries.count == RemoteLimits.sessionEntries)
     }
 
+    /// S-3 : la projection porte les ARGUMENTS d'un appel d'outil et l'OFFSET de
+    /// chaque entrée — les deux faits dont l'app iOS dérive ses lignes. Sans
+    /// `arguments`, la cible d'un appel disparaît ; sans `offset`, les identités de
+    /// lignes ne sont plus stables.
+    @Test func testSessionProjectionCarriesArgumentsAndOffsets() async throws {
+        let fixture = StoreFixture()
+        let sessionPath = joinPath(fixture.root, "sessions/faits.jsonl")
+        let header = ViewerLines.header(id: "faits")
+        try Self.writeSession(sessionPath, lines: [
+            header,
+            ViewerLines.user("lis le fichier", id: "u1"),
+            ViewerLines.assistant(
+                id: "a1",
+                text: "je lis",
+                calls: [
+                    ViewerLines.call(
+                        id: "c1",
+                        name: "read",
+                        arguments: ["path": "/tmp/projet/a.txt", "i": "lire"]
+                    )
+                ]
+            ),
+            ViewerLines.toolResult(id: "t1", callId: "c1", name: "read", body: "contenu"),
+        ])
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/sessions/\(Self.encoded(sessionPath))", token: token)
+        #expect(reply.status == 200)
+        let payload = try reply.json(RemoteSessionPayload.self)
+        #expect(payload.unreadableReason == nil)
+        #expect(payload.entries.map(\.kind) == ["user", "assistant", "toolResult"])
+
+        // L'offset est le premier octet de la LIGNE : la première entrée suit la
+        // ligne d'en-tête, et les offsets croissent strictement.
+        let offsets = payload.entries.compactMap(\.offset)
+        #expect(offsets.count == payload.entries.count, "chaque entrée porte son offset")
+        #expect(offsets.first == header.utf8.count + 1)
+        #expect(offsets == offsets.sorted())
+        #expect(Set(offsets).count == offsets.count)
+
+        // Les arguments traversent TELLS QUELS : ni re-rendus, ni perdus.
+        let call = payload.entries.compactMap { $0.toolCalls?.first }.first
+        #expect(call?.id == "c1")
+        #expect(call?.name == "read")
+        #expect(call?.arguments == .object(["path": .string("/tmp/projet/a.txt"), "i": .string("lire")]))
+        // Un résultat d'outil ne porte pas d'arguments : le champ est ABSENT.
+        #expect(payload.entries.first { $0.kind == "toolResult" }?.toolCalls == nil)
+    }
+
+    /// S-4 : un fichier PRÉSENT mais illisible donne 200 avec son motif OS, et
+    /// AUCUNE entrée ignorée factice — le motif est un champ, plus une ligne.
+    @Test func testUnreadableSessionIsReportedWithReason() async throws {
+        let fixture = StoreFixture()
+        let sessionPath = joinPath(fixture.root, "sessions/illisible.jsonl")
+        try FileManager.default.createDirectory(
+            atPath: joinPath(fixture.root, "sessions"),
+            withIntermediateDirectories: true
+        )
+        try Data().write(to: URL(fileURLWithPath: sessionPath))
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: sessionPath)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: sessionPath)
+        }
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/sessions/\(Self.encoded(sessionPath))", token: token)
+        #expect(reply.status == 200)
+        let payload = try reply.json(RemoteSessionPayload.self)
+        #expect(payload.unreadableReason == "ouverture en lecture refusée")
+        #expect(payload.entries.isEmpty)
+        #expect(payload.skipped.isEmpty, "le motif n'est plus une entrée ignorée factice")
+        #expect(payload.truncated == false)
+    }
+
     @Test func testDiscardedEntriesArePreserved() async throws {
         let fixture = StoreFixture()
         let broken = "\(fixtureId(9)).json"

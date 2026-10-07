@@ -1,25 +1,30 @@
 // La liste « Sessions » rangée par jour (S-16 de omp-console-redesign) : une
 // fonction PURE — l'instant de rendu et le calendrier sont des paramètres, la vue
-// passe `Calendar.current` et l'heure de son `TimelineView`.
+// passe `Calendar.current` et l'heure de son `TimelineView`. PARTAGÉE.
 
-import ConsoleCore
 import Foundation
 
 /// Un jour civil de la liste : son identité « aaaa-MM-jj », son titre, ses runs
 /// du plus récent au plus ancien.
-struct SessionDay: Identifiable, Equatable {
-    var id: String
-    var title: String
-    var choices: [RunChoice]
+public struct SessionDay: Identifiable, Equatable, Sendable {
+    public var id: String
+    public var title: String
+    public var choices: [RunChoice]
+
+    public init(id: String, title: String, choices: [RunChoice]) {
+        self.id = id
+        self.title = title
+        self.choices = choices
+    }
 }
 
-enum SessionDays {
-    static let todayTitle = "Aujourd'hui"
-    static let yesterdayTitle = "Hier"
+public enum SessionDays {
+    public static let todayTitle = "Aujourd'hui"
+    public static let yesterdayTitle = "Hier"
 
     /// Runs triés par `startedAtMs` décroissant (égalité : `sessionFile`
     /// décroissant), un groupe par jour civil de `calendar`, jours décroissants.
-    static func group(_ choices: [RunChoice], nowMs: Double, calendar: Calendar) -> [SessionDay] {
+    public static func group(_ choices: [RunChoice], nowMs: Double, calendar: Calendar) -> [SessionDay] {
         let sorted = choices.sorted { left, right in
             if left.startedAtMs != right.startedAtMs { return left.startedAtMs > right.startedAtMs }
             return left.sessionFile > right.sessionFile

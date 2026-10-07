@@ -423,7 +423,7 @@ struct SessionRowView: View, Equatable {
                         .textSelection(.enabled)
                         .fixedSize(horizontal: true, vertical: false)
                         .accessibilityIdentifier("viewer.diff.\(row.id).\(numbered.index)")
-                        .accessibilityValue(toneLabel(numbered.line.tone))
+                        .accessibilityValue(SessionDiffText.toneLabel(numbered.line.tone))
                 }
             }
         }
@@ -436,17 +436,6 @@ struct SessionRowView: View, Equatable {
         case .removed: return .red
         case .context: return .primary
         case .section: return .secondary
-        }
-    }
-
-    /// La valeur d'accessibilité d'une ligne de diff : la distinction ne repose
-    /// donc jamais sur la seule couleur.
-    private func toneLabel(_ tone: DiffTone) -> String {
-        switch tone {
-        case .added: return "ligne ajoutée"
-        case .removed: return "ligne supprimée"
-        case .context: return "contexte"
-        case .section: return "en-tête de diff"
         }
     }
 }
