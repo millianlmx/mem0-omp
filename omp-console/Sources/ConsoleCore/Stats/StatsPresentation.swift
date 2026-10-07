@@ -63,6 +63,12 @@ public struct StatsRow: Identifiable, Equatable, Codable {
 
 public enum StatsPresentation {
 
+    /// L'état vide d'un projet non choisi : le titre et la phrase que les deux
+    /// coques affichent mot pour mot (S-4 de design-ios). La coque macOS les lit
+    /// par `StatsText`, jamais une seconde déclaration du même mot.
+    public static let noProjectTitle = "Aucun projet"
+    public static let noProject = "Les statistiques apparaîtront dès qu'un projet sera piloté."
+
     /// L'ordre des étapes du pipeline, pour trier la colonne « Étape ».
     ///
     /// PUBLIC : la coque garde `rows(_:nowMs:)`, qui remplit `phaseOrder` d'une

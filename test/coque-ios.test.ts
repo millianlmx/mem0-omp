@@ -34,18 +34,14 @@ const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 const IN_COPY = DEPTH > 0 || process.env.MEM0_OMP_SKIP_SWIFT_APP === "1" || process.env.MEM0_OMP_SKIP_IOS === "1";
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, les
-// racines de build et de types jetables, le stockage vectoriel local.
+// racines de build et de types jetables, le stockage vectoriel local. Les
+// racines de build Swift (`--scratch-path .build-<quoi>`) sont reconnues par
+// PRÉFIXE : un scratch inconnu pèse des centaines de Mo.
 const EXCLUDED_DIRS: Record<string, true> = {
   ".git": true,
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  ".build-core": true,
-  ".build-ios": true,
   build: true,
 };
 
@@ -74,7 +70,9 @@ function copyRepo(): string {
     filter: (src) => {
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true)) return false;
+      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true || segment.startsWith(".build"))) {
+        return false;
+      }
       if (rel === path.join("test", "check.test.ts")) return false;
       return true;
     },
@@ -191,8 +189,11 @@ function allIOSSources(root: string): { file: string; code: string }[] {
   return swiftFiles(path.join(root, "omp-console", "ios")).map((file) => ({ file, code: code(file) }));
 }
 
-/** Le libellé d'attente unique de l'app iOS (S-4), recopié dans la garde. */
-const WAITING = "Cet écran arrive dans un prochain segment.";
+/**
+ * Le libellé d'attente que la coque iOS portait (coque-ios) et que design-ios a
+ * RETIRÉ : sa réapparition, où que ce soit, est une régression.
+ */
+const RETIRED_WAITING = "Cet écran arrive dans un prochain segment.";
 
 /**
  * Les dix-huit chaînes littérales interdites dans les sources de l'APP iOS : les
@@ -364,39 +365,28 @@ function navigationFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques de l'écran d'attente et de l'argument de lancement (S-4, AC-4). */
+/** Les manques des sept écrans et de l'argument de lancement (coque-ios/AC-4). */
 function waitingFaults(root: string): string[] {
   const faults: string[] = [];
-  const shell = path.join(root, "omp-console");
-  const BUILD_DIRS: Record<string, true> = {
-    ".build": true,
-    ".build-app": true,
-    ".build-run": true,
-    ".build-tests": true,
-    ".build-core": true,
-    ".build-ios": true,
-    build: true,
-  };
-  const isBuildDir = (rel: string) => rel.split(path.sep).some((segment) => BUILD_DIRS[segment] === true);
-  const countIn = (dir: string, exclude: (rel: string) => boolean) => {
-    let total = 0;
-    for (const file of allFiles(dir, exclude)) total += fs.readFileSync(file, "utf8").split(WAITING).length - 1;
-    return total;
-  };
-
-  const occurrences = countIn(shell, isBuildDir);
-  if (occurrences !== 1) faults.push(`le libellé d'attente apparaît ${occurrences} fois sous omp-console/ (1 attendue)`);
-  if (countIn(path.join(root, "omp-console", "Sources", "ConsoleCore"), () => false) > 0) {
-    faults.push("le libellé vit dans le noyau partagé ConsoleCore");
+  const appDir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
+  if (!fs.existsSync(path.join(appDir, "IOSSectionView.swift"))) faults.push("IOSSectionView.swift absent");
+  if (fs.existsSync(path.join(appDir, "SectionPlaceholderView.swift"))) {
+    faults.push("SectionPlaceholderView.swift toujours présent (l'écran d'attente a été remplacé)");
   }
 
-  const placeholder = path.join(root, "omp-console", "ios", "OMPConsoleIOS", "SectionPlaceholderView.swift");
-  if (!fs.existsSync(placeholder)) faults.push("SectionPlaceholderView.swift absent");
-  else {
-    const text = code(placeholder);
-    for (const reference of ["section.title", "section.systemImage", "IOSText.waiting"]) {
-      if (!text.includes(reference)) faults.push(`l'écran d'attente ne référence pas ${reference}`);
-    }
+  const shell = path.join(root, "omp-console");
+  // Tout `swift build/test --scratch-path .build-<quoi>` crée une racine de build
+  // dont les liens internes (`release`, `debug`) ne sont pas des fichiers : le
+  // filtre se fait par PRÉFIXE, sinon un scratch inconnu (`.build-review`, …)
+  // fait rougir cette garde sur une lecture de dossier (EISDIR).
+  let occurrences = 0;
+  for (const file of allFiles(shell, (rel) =>
+    rel.split(path.sep).some((segment) => segment === "build" || segment.startsWith(".build")),
+  )) {
+    occurrences += fs.readFileSync(file, "utf8").split(RETIRED_WAITING).length - 1;
+  }
+  if (occurrences !== 0) {
+    faults.push(`le libellé d'attente retiré apparaît ${occurrences} fois sous omp-console/ (0 attendue)`);
   }
 
   const app = appSources(root).map((s) => s.code).join("\n");
@@ -530,19 +520,25 @@ test("coque-ios/AC-3 : une seule navigation adaptative, sans barre d'onglets", (
   assert.ok(navigationFaults(copy).some((f) => f.includes("TabView")), "un TabView doit faire rougir la garde");
 });
 
-test("coque-ios/AC-4 : le libellé d'attente est unique et l'écran le référence", () => {
+test("coque-ios/AC-4 : les sept écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
   assert.deepEqual(waitingFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = copyRepo();
-  const target = path.join(copy, "omp-console", "io", "OMPConsoleIOS", "Double.swift");
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, `let double = "${WAITING}"\n`);
-  assert.ok(waitingFaults(copy).some((f) => f.includes("1 attendue")), "une copie du libellé doit faire rougir la garde");
+  fs.writeFileSync(
+    path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "SectionPlaceholderView.swift"),
+    "let écranDAttente = 0\n",
+  );
+  assert.ok(
+    waitingFaults(copy).some((f) => f.includes("SectionPlaceholderView")),
+    "un écran d'attente qui revient doit faire rougir la garde",
+  );
 
-  const sousNoyau = copyRepo();
-  const noyau = path.join(sousNoyau, "omp-console", "Sources", "ConsoleCore", "DoubleTexte.swift");
-  fs.writeFileSync(noyau, `let double = "${WAITING}"\n`);
-  assert.ok(waitingFaults(sousNoyau).some((f) => f.includes("noyau partagé")), "le libellé dans ConsoleCore doit faire rougir la garde");
+  const replant = copyRepo();
+  fs.writeFileSync(
+    path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "Double.swift"),
+    `let double = "${RETIRED_WAITING}"\n`,
+  );
+  assert.ok(waitingFaults(replant).some((f) => f.includes("retiré")), "le libellé retiré doit faire rougir la garde");
 });
 
 test("coque-ios/AC-5 : la section « App iOS » annonce « non exécuté » sans rougir, et durcit en CI", (t) => {

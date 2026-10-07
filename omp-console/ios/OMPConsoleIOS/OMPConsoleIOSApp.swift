@@ -2,17 +2,29 @@ import ConsoleCore
 import Foundation
 import SwiftUI
 
-/// Le point d'entrée de l'app iOS. La section ouverte au démarrage est résolue
-/// depuis les arguments de lancement (`-section <rawValue>`) : c'est ce qui
-/// permet au script de captures d'ouvrir chacune des sept sections. Aucun
-/// argument reconnu ⇒ l'Accueil.
+/// Le point d'entrée de l'app iOS. Deux crochets de recette sont lus dans les
+/// arguments de lancement :
+///
+/// - `-section <rawValue>` : la section ouverte au démarrage (script de captures) ;
+/// - `-ios.state <ready|error>` : l'état d'écran, pour capturer le bandeau
+///   d'erreur par un chemin RÉEL (S-3) — un crochet de recette, pas une
+///   fonctionnalité.
+///
+/// Aucun argument reconnu ⇒ l'Accueil et l'état `ready`.
 @main
 struct OMPConsoleIOSApp: App {
-    private let initialSection = IOSSection.resolve(ProcessInfo.processInfo.arguments)
+    private let initialSection: ConsoleSection
+    private let initialState: IOSScreenState
+
+    init() {
+        let arguments = ProcessInfo.processInfo.arguments
+        initialSection = IOSSection.resolve(arguments)
+        initialState = IOSScreenState.resolve(arguments)
+    }
 
     var body: some Scene {
         WindowGroup {
-            RootView(selection: initialSection)
+            RootView(selection: initialSection, state: initialState)
         }
     }
 }

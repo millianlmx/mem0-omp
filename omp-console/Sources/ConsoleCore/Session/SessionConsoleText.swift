@@ -50,6 +50,10 @@ public enum SessionConsoleText {
     /// L'état détaillé de l'inspecteur, sans pid ni identifiant.
     public enum Status {
         public static let idle = "Aucune session"
+        /// L'état d'une session jamais lancée faute de projet choisi : le mot que
+        /// la coque macOS rend par `stateTitle(.idle, hasProject: false)` et que
+        /// l'app iOS affiche en pastille (S-4 de design-ios).
+        public static let idleNoProject = "Aucun projet"
         public static let launching = "Démarrage…"
         public static let running = "Session active"
         public static let stopping = "Arrêt en cours…"

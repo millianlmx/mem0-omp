@@ -22,7 +22,7 @@ extension SessionConsoleText {
     /// L'état de la session hébergée en un mot.
     static func stateTitle(_ state: SessionHost.State, hasProject: Bool) -> String {
         switch state {
-        case .idle: return hasProject ? "Prête" : "Aucun projet"
+        case .idle: return hasProject ? "Prête" : SessionConsoleText.Status.idleNoProject
         case .launching: return "Démarrage…"
         case .running: return "Active"
         case .stopping: return "Arrêt…"

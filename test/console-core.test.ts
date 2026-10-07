@@ -32,18 +32,14 @@ const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 const IN_COPY = DEPTH > 0 || process.env.MEM0_OMP_SKIP_SWIFT_APP === "1";
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, les
-// racines de build et de types jetables, le stockage vectoriel local.
+// racines de build et de types jetables, le stockage vectoriel local. Les
+// racines de build Swift (`--scratch-path .build-<quoi>`) sont reconnues par
+// PRÉFIXE : un scratch inconnu pèse des centaines de Mo.
 const EXCLUDED_DIRS: Record<string, true> = {
   ".git": true,
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  ".build-core": true,
-  ".build-ios": true,
   build: true,
 };
 
@@ -72,7 +68,9 @@ function copyRepo(): string {
     filter: (src) => {
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true)) return false;
+      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true || segment.startsWith(".build"))) {
+        return false;
+      }
       if (rel === path.join("test", "check.test.ts")) return false;
       return true;
     },

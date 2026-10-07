@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Produit les quatorze captures de la coque iOS — sept écrans sur iPhone, sept sur
-# iPad (S-6, BR-4).
+# Produit les CINQUANTE-SIX captures de la coque iOS (S-6, BR-4) : sept écrans en
+# portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
+# défaut puis en Dynamic Type maximum.
 #
 # Les images sont des ARTEFACTS DE PR : elles vivent sous `omp-console/build/`
 # (ignoré par git) et ne sont jamais committées. Le script est reproductible : le
@@ -8,7 +9,24 @@
 # (`bootstatus -b`, idempotent), l'app est réinstallée et relancée pour chaque
 # section (`--terminate-running-process`).
 #
-# Codes de sortie : 0 les 14 captures produites, 1 échec, 2 « non exécuté »
+# LIMITE D'OUTILLAGE MESURÉE (2026-10-06, poste de référence) — il n'y a AUCUNE
+# ligne « iPad paysage » :
+#  · `simctl` n'a aucune sous-commande de rotation, et `Simulator.app` n'est pas
+#    installé (pas de `Applications/` dans Xcode) : la seule voie documentée est
+#    AppleScript/System Events, écartée ;
+#  · l'app ne peut pas tourner à la place : en mode fenêtré iPadOS refuse
+#    `requestGeometryUpdate` (« The current windowing mode does not allow for
+#    programmatic changes to interface orientation. »), et l'opt-out
+#    `UIRequiresFullScreen` est un choix PRODUIT (fin du Split View / Slide Over)
+#    qu'on ne prend pas pour un outil de capture.
+# L'app DÉCLARE portrait + paysages : elle reste utilisable en paysage sur un vrai
+# iPad, ce que la recette (`omp-console/ios/DESIGN.md`) fait vérifier à la main.
+#
+# Vérifications DURES avant de rendre 0 : 56 PNG, et les dimensions de CHAQUE
+# PNG (`sips`) — toutes PORTRAIT. Une capture inattendue fait sortir 1 avec le
+# fichier fautif.
+#
+# Codes de sortie : 0 les 56 captures produites, 1 échec, 2 « non exécuté »
 # (Xcode inutilisable, ou aucun runtime iOS ≥ 26 à nommer).
 set -uo pipefail
 
@@ -23,6 +41,16 @@ BUNDLE_ID="com.omp.console.ios"
 # jamais un libellé affiché : la liste des sections de l'app est filtrée du type
 # partagé, et ce script de développement se contente des valeurs brutes.
 sections=(home kanban project session sessions memory stats)
+
+# Les deux tailles de texte des passages : le défaut système, et le MAXIMUM de
+# Dynamic Type (`accessibility-extra-extra-extra-large`, D-1).
+TEXT_DEFAULT=large
+TEXT_AX=accessibility-extra-extra-extra-large
+
+# Renseignés après la sélection des simulateurs ; initialisés pour que le piège
+# de sortie puisse les lire même quand le script s'arrête avant.
+iphone=""
+ipad=""
 
 if [ "$(uname -s)" != "Darwin" ]; then
   echo "  · non exécuté : les captures iOS ne se produisent que sous macOS"
@@ -134,6 +162,17 @@ ipad="$(printf '%s\n' "$devices" | sed -n 2p)"
 rm -rf "$SHOTS"
 mkdir -p "$SHOTS"
 
+# L'état par défaut est rendu à la sortie, quelle qu'elle soit (idempotence) :
+# taille de texte du système et apparence claire.
+reset_simulators() {
+  for udid in ${iphone:-} ${ipad:-}; do
+    [ -n "$udid" ] || continue
+    xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
+    xcrun simctl ui "$udid" appearance light >/dev/null 2>&1 || true
+  done
+}
+trap reset_simulators EXIT
+
 for pair in "iphone:$iphone" "ipad:$ipad"; do
   label="${pair%%:*}"
   udid="${pair#*:}"
@@ -145,22 +184,72 @@ for pair in "iphone:$iphone" "ipad:$ipad"; do
     echo "  ✗ installation impossible sur le simulateur $label ($udid)" >&2
     exit 1
   fi
+done
+
+# Un passage complet : apparence de l'appareil posée une fois, puis une capture
+# par section, section par section.
+#   $1 libellé (iphone | ipad)
+#   $2 UDID
+#   $3 apparence (light | dark)
+#   $4 taille de texte (large | accessibility-extra-extra-extra-large)
+#   $5 suffixe de nom ("" | -ax)
+#   $@ arguments de lancement supplémentaires
+shoot() {
+  local label="$1"
+  local udid="$2"
+  local appearance="$3"
+  local size="$4"
+  local suffix="$5"
+  shift 5
+  xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
   for section in "${sections[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" >/dev/null 2>&1
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" "$@" >/dev/null 2>&1
     sleep 2
-    shot="$SHOTS/$label-$section.png"
+    shot="$SHOTS/$label-$section-$appearance$suffix.png"
     if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
       echo "  ✗ capture impossible ($shot)" >&2
       exit 1
     fi
     echo "$shot"
   done
+}
+
+# Passage 1 — sept écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
+# à la taille de texte par défaut : 28 captures.
+for appearance in light dark; do
+  shoot iphone "$iphone" "$appearance" "$TEXT_DEFAULT" ""
+  shoot ipad "$ipad" "$appearance" "$TEXT_DEFAULT" ""
+done
+
+# Passage 2 — sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
+# MAXIMUM : 28 captures `-ax`.
+for appearance in light dark; do
+  shoot iphone "$iphone" "$appearance" "$TEXT_AX" "-ax"
+  shoot ipad "$ipad" "$appearance" "$TEXT_AX" "-ax"
 done
 
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "14" ]; then
-  echo "  ✗ $count captures produites (14 attendues)" >&2
+if [ "$count" != "56" ]; then
+  echo "  ✗ $count captures produites (56 attendues)" >&2
   exit 1
 fi
-echo "  ✓ 14 captures dans $SHOTS"
+
+# Chaque capture est sondée : toutes sont PORTRAIT (aucune ligne paysage — voir
+# la limite d'outillage en tête de ce script et dans `omp-console/ios/DESIGN.md`).
+for shot in "$SHOTS"/*.png; do
+  name="$(basename "$shot")"
+  width="$(sips -g pixelWidth "$shot" 2>/dev/null | awk '/pixelWidth/ {print $2}')"
+  height="$(sips -g pixelHeight "$shot" 2>/dev/null | awk '/pixelHeight/ {print $2}')"
+  if [ -z "${width:-}" ] || [ -z "${height:-}" ]; then
+    echo "  ✗ dimensions illisibles pour $name" >&2
+    exit 1
+  fi
+  if [ "$width" -ge "$height" ]; then
+    echo "  ✗ capture inattendue en paysage : $name (${width}x${height})" >&2
+    exit 1
+  fi
+done
+
+echo "  ✓ 56 captures dans $SHOTS (dimensions vérifiées)"
 exit 0

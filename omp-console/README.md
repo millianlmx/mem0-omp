@@ -1866,8 +1866,13 @@ absence en échec.
 `omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle :
 sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
 sont hors périmètre), une seule navigation adaptative — barre latérale à deux
-groupes sur iPad, pile sur iPhone — et, pour l'instant, un écran d'attente par
-section. Elle n'a ni réseau, ni magasin local, ni badge d'attention.
+groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
+état vide RÉEL. Elle n'a ni réseau, ni magasin local, ni badge d'attention.
+
+Sa recette de design — surfaces, échelle typographique, marges, tons, politique
+du verre, états vide et erreur, Dynamic Type — vit dans
+`omp-console/ios/DESIGN.md`. Chaque règle y porte un marqueur `[test: …]`,
+`[capture: …]` ou `[garde: design-ios/AC-<n>]` : aucune prose non jugeable.
 
 ### Prérequis
 
@@ -1910,8 +1915,28 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-shots.sh
 
 Le script démarre un simulateur iPhone et un iPad, installe l'app, puis l'ouvre
 sur chacune des sept sections par son argument de lancement et capture l'écran :
-**14 PNG** dans `omp-console/build/ios-shots/` (dossier ignoré par git — les images
-sont des artefacts de PR, jamais committées).
+**56 PNG** dans `omp-console/build/ios-shots/` (dossier ignoré par git — les
+images sont des artefacts de PR, jamais committées) — sept écrans × {iPhone
+portrait, iPad portrait} × {clair, sombre} à taille de texte par défaut, plus
+sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffixe
+`-ax`). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g
+pixelHeight`) : toutes PORTRAIT — une capture inattendue ferait échouer le script.
+
+Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
+le poste de référence : `simctl` n'a aucune sous-commande de rotation,
+`Simulator.app` n'y est pas installé, et en mode fenêtré iPadOS refuse
+`UIWindowScene.requestGeometryUpdate` (« The current windowing mode does not
+allow for programmatic changes to interface orientation. ») ; l'opt-out
+`UIRequiresFullScreen` rendrait la demande possible mais coûterait le Split View
+et le Slide Over — un choix produit, pas un outil de capture. L'app DÉCLARE
+portrait et les deux paysages : elle reste utilisable en paysage sur un vrai
+iPad, à vérifier à la main sur l'appareil. Dès que `Simulator.app` est restauré
+sur le poste, la ligne pourra revenir avec ses quatorze captures.
+
+Un crochet de recette se pose en argument de lancement : `-section <rawValue>`
+ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
+`memory`, `stats`), et `-ios.state error` affiche le bandeau d'erreur sur les
+sept écrans — un crochet de recette, pas une fonctionnalité.
 
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
@@ -1919,8 +1944,12 @@ Pour ouvrir une section précise sur un simulateur déjà démarré :
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section memory
 ```
 
-(`-section <rawValue>` ; `home`, `kanban`, `project`, `session`, `sessions`,
-`memory`, `stats`.)
+La capture de l'état d'erreur (artefact de PR, hors des 56) :
+
+```bash
+xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section session -ios.state error
+xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-session.png
+```
 
 ### Installer sur un appareil réel
 

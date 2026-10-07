@@ -85,13 +85,9 @@ const DROPPED_DIRS: Record<string, true> = {
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
-  // Artefacts Swift (≈ 400 Mo de .build) ; la section « App Swift » est
+  // Artefacts Swift (≈ 400 Mo de .build) — toute racine `.build-<quoi>` est
+  // reconnue par PRÉFIXE dans le filtre — ; la section « App Swift » est
   // neutralisée par MEM0_OMP_SKIP_SWIFT_APP dans runCheck.
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  ".build-ios": true,
   build: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
@@ -126,7 +122,9 @@ function copyRepo(prefix: string): string {
     filter: (src) => {
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => DROPPED_DIRS[segment] === true)) return false;
+      if (rel.split(path.sep).some((segment) => DROPPED_DIRS[segment] === true || segment.startsWith(".build"))) {
+        return false;
+      }
       const parts = rel.split(path.sep);
       if (parts[0] === "test" && parts.length === 2 && DROPPED_TESTS[parts[1] ?? ""] === true) return false;
       return true;

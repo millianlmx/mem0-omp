@@ -15,17 +15,9 @@
 import ConsoleCore
 import SwiftUI
 
-/// Les textes de la section « Sessions ».
-enum SessionSelectorText {
-    static let emptyTitle = "Aucune session"
-    static let storeAbsent = "Aucune pipeline n'a encore été lancée sur ce Mac."
-    static let noRun = "Les sessions des pipelines apparaîtront ici."
-    static let open = "Ouvrir"
-
-    static func discarded(_ count: Int) -> String {
-        ConsoleFormat.count(count, "entrée illisible écartée", "entrées illisibles écartées")
-    }
-}
+// Les textes de la section vivent dans le noyau partagé
+// (`ConsoleCore/Viewer/SessionSelectorText.swift`, S-4 de design-ios) : la vue les
+// lit par l'import, elle n'en déclare aucun.
 
 struct SessionSelectorView: View {
     @StateObject private var selector = SessionSelectorModel()
