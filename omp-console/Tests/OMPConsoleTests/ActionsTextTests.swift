@@ -5,6 +5,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 private func entry(_ state: ActionJournalState, kind: String = "texte", target: String = "depot/alpha")
     -> ActionJournalEntry {

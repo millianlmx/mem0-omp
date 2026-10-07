@@ -8,7 +8,10 @@ import SwiftUI
 /// - `-section <rawValue>` : la section ouverte au démarrage (script de captures) ;
 /// - `-ios.state <ready|error>` : l'état d'écran, pour capturer le bandeau
 ///   d'erreur par un chemin RÉEL (S-3) — un crochet de recette, pas une
-///   fonctionnalité.
+///   fonctionnalité ;
+/// - `-home.recipe <état>` : l'état de l'Accueil forcé depuis la fixture
+///   partagée `HomeParity` (S-10, S-11), pour capturer les cinq états par un
+///   chemin RÉEL — un crochet de recette, pas une fonctionnalité.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -19,12 +22,14 @@ import SwiftUI
 struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
     private let initialState: IOSScreenState
+    private let recipe: IOSHomeRecipe?
     private let requestedSection: Bool
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
         initialSection = IOSSection.resolve(arguments)
         initialState = IOSScreenState.resolve(arguments)
+        recipe = IOSHomeRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -33,6 +38,7 @@ struct OMPConsoleIOSApp: App {
             RootView(
                 selection: initialSection,
                 state: initialState,
+                recipe: recipe,
                 autoPresentConnection: !requestedSection
             )
         }

@@ -5,65 +5,68 @@
 //
 // Le journal (S-4) se compose ICI, en une fonction pure : la vue affiche la ligne
 // rendue, elle ne l'assemble pas.
+//
+// VIT DANS `ConsoleCore` : les deux coques partagent le vocabulaire.
 
 import Foundation
 
-enum ActionsText {
+public enum ActionsText {
     // --- libellés des gestes (la première colonne d'une ligne de journal) -----
-    static let answerLabel = "réponse"
-    static let textLabel = "message"
-    static let specsLabel = "validation des specs"
-    static let reviewLabel = "acceptation de la revue"
-    static let launchLabel = "lancement"
-    static let stopLabel = "arrêt"
-    static let resumeLabel = "reprise"
+    public static let answerLabel = "réponse"
+    public static let textLabel = "message"
+    public static let specsLabel = "validation des specs"
+    public static let reviewLabel = "acceptation de la revue"
+    public static let launchLabel = "lancement"
+    public static let stopLabel = "arrêt"
+    public static let resumeLabel = "reprise"
 
     // --- états du journal (S-4) ----------------------------------------------
-    static let awaitingAck = "envoyé au pilote"
-    static let taken = "prise en charge"
-    static let refused = "refusée"
-    static let delivered = "remis à l'agent"
+    public static let awaitingAck = "envoyé au pilote"
+    public static let taken = "prise en charge"
+    public static let refused = "refusée"
+    public static let delivered = "remis à l'agent"
     /// Une commande restée sans accusé après `ActionsModel.ackTimeoutMs` (S-8 de
     /// omp-console-redesign) : aucun pilote ne l'a prise — le plus souvent, le
     /// plugin chargé par omp ne porte pas le canal.
-    static let unacknowledged =
+    public static let unacknowledged =
         "le pilote n'a pas répondu après 20 s — vérifiez que le plugin omp-mem0-req est installé"
 
     // --- zone d'action (S-9) -------------------------------------------------
-    static let answer = "Répondre"
-    static let steerTitle = "Envoyer un message à l'agent"
-    static let steerFieldLabel = "Votre message"
-    static let replyTitle = "Question de l'agent"
-    static let resumeNote = "Le pilote de cette pipeline est arrêté."
+    public static let answer = "Répondre"
+    public static let steerTitle = "Envoyer un message à l'agent"
+    public static let steerFieldLabel = "Votre message"
+    public static let replyTitle = "Question de l'agent"
+    public static let resumeNote = "Le pilote de cette pipeline est arrêté."
 
     // --- journal (S-9, « Activité récente » de S-14) ------------------------
-    static let journalTitle = "Activité récente"
-    static let journalEmpty = "Aucun geste pour l'instant."
+    public static let journalTitle = "Activité récente"
+    public static let journalEmpty = "Aucun geste pour l'instant."
 
     // --- modèles (B-1, B-3, B-4) --------------------------------------------
     /// Le libellé du geste d'édition des deux modèles dans le journal.
-    static let modelsLabel = "modèles"
+    public static let modelsLabel = "modèles"
     /// Le bouton de la feuille d'édition qui émet la commande.
-    static let applyModelChanges = "Appliquer"
+    public static let applyModelChanges = "Appliquer"
 
     /// Le titre de la feuille d'édition des modèles d'une feature.
-    static func modelsSheetTitle(_ slug: String) -> String {
+    public static func modelsSheetTitle(_ slug: String) -> String {
         "Modèles de \(slug)"
     }
 
+
     /// Le motif d'un refus du pilote : le texte EXACT du canal (AC-9), jamais
     /// recomposé.
-    static func refused(_ reason: String) -> String {
+    public static func refused(_ reason: String) -> String {
         "refusée : \(reason)"
     }
 
     /// Le motif d'un échec d'écriture local : `<strerror>` porté par l'erreur.
-    static func failed(_ reason: String) -> String {
+    public static func failed(_ reason: String) -> String {
         "échec : \(reason)"
     }
 
     /// L'état d'une entrée de journal, en texte exact (S-4).
-    static func stateText(_ state: ActionJournalState) -> String {
+    public static func stateText(_ state: ActionJournalState) -> String {
         switch state {
         case .awaitingAck: awaitingAck
         case .taken: taken
@@ -76,7 +79,7 @@ enum ActionsText {
     }
 
     /// La ligne EXACTE d'une entrée : `<libellé du geste> · <cible> · <état>`.
-    static func journalLine(for entry: ActionJournalEntry) -> String {
+    public static func journalLine(for entry: ActionJournalEntry) -> String {
         "\(entry.kindLabel) · \(entry.targetLabel) · \(stateText(entry.state))"
     }
 }

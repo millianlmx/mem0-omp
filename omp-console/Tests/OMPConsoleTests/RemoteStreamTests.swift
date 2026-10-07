@@ -2,6 +2,7 @@
 // vrai serveur, qui reçoit ce qui change SANS émettre de nouvelle requête de
 // lecture — ni pour le magasin, ni pour une session vivante.
 
+import Combine
 import ConsoleCore
 import Foundation
 import Testing
@@ -279,7 +280,6 @@ func conduiteDialogIsPushed() async throws {
 
     // Une conduite VIVE avant l'ouverture du flux : la trame d'ouverture la dit.
     await stack.project.startConduite(repoRoot: URL(fileURLWithPath: repoRoot), name: "Projet")
-
     let collector = SSECollector()
     collector.start(stack.request("GET", "/v1/stream", token: token))
     defer { collector.stop() }
@@ -302,4 +302,94 @@ func conduiteDialogIsPushed() async throws {
         "l'escalade doit être poussée sur le flux"
     )
     #expect(pushed.contains("d-1"), "trame reçue : \(pushed.prefix(300))")
+}
+
+/// Une valeur que le fournisseur d'un évènement relit à chaque émission.
+@MainActor
+private final class StreamBox<T> {
+    var value: T
+    init(_ value: T) { self.value = value }
+}
+
+@MainActor
+@Test("ios-accueil/AC-16 : à l'ouverture, `components` et `journal` suivent `hello`, `store` et `devices`")
+func openingFramesIncludeComponentsAndJournal() async throws {
+    let stack = try await RemoteStack.make(
+        components: { RemoteComponentsPayload(ompInstalled: true, ompPath: "/tmp/omp/bin/omp", setupBanner: nil) },
+        journal: { [] }
+    )
+    defer { stack.stop() }
+    let token = try await stack.pair()
+
+    let collector = SSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+
+    for name in ["hello", "store", "conduite", "devices", "components", "journal"] {
+        _ = await collector.waitFor(name)
+    }
+    // L'ordre d'ouverture fusionné : la trame `conduite` (ios-projet) précède
+    // `devices`, et `components`/`journal` (ios-accueil) suivent `devices`.
+    #expect(
+        Array(collector.events.map(\.name).prefix(6)) == ["hello", "store", "conduite", "devices", "components", "journal"],
+        "l'ordre d'ouverture réel doit être hello, store, conduite, devices, components, journal"
+    )
+    let components = try #require(collector.events.first { $0.name == "components" }?.data)
+    let componentsPayload = try JSONDecoder().decode(RemoteComponentsPayload.self, from: Data(components.utf8))
+    #expect(componentsPayload.ompInstalled)
+    #expect(componentsPayload.ompPath == "/tmp/omp/bin/omp")
+    let journal = try #require(collector.events.first { $0.name == "journal" }?.data)
+    let journalPayload = try JSONDecoder().decode(RemoteJournalPayload.self, from: Data(journal.utf8))
+    #expect(journalPayload.entries.isEmpty)
+}
+
+@MainActor
+@Test("ios-accueil/AC-13 : un changement des composants ou du journal est poussé sans nouvelle requête")
+func componentsAndJournalChangesArePushed() async throws {
+    let componentsBox = StreamBox(
+        RemoteComponentsPayload(ompInstalled: true, ompPath: nil, setupBanner: nil)
+    )
+    let entry = ActionJournalEntry(
+        id: "cmd-1", kindLabel: ActionsText.launchLabel, targetLabel: "Titre", state: .awaitingAck, at: 1
+    )
+    let journalBox = StreamBox<[ActionJournalEntry]>([])
+    let componentsSubject = PassthroughSubject<Void, Never>()
+    let journalSubject = PassthroughSubject<Void, Never>()
+
+    let stack = try await RemoteStack.make(
+        components: { componentsBox.value },
+        journal: { journalBox.value },
+        componentsChanges: componentsSubject.eraseToAnyPublisher(),
+        journalChanges: journalSubject.eraseToAnyPublisher()
+    )
+    defer { stack.stop() }
+    let token = try await stack.pair()
+
+    let collector = SSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+    _ = await collector.waitFor("components")
+    _ = await collector.waitFor("journal")
+
+    // 1. La présence change : la trame `components` repart avec la charge complète.
+    componentsBox.value = RemoteComponentsPayload(
+        ompInstalled: false, ompPath: nil, setupBanner: "Préparation incomplète."
+    )
+    componentsSubject.send()
+    let pushedComponents = try #require(
+        await collector.waitFor("components", occurrence: 2),
+        "un changement de composants doit être poussé (échec=\(collector.failure ?? "aucun"))"
+    )
+    #expect(pushedComponents.contains("\"ompInstalled\":false"))
+    #expect(pushedComponents.contains("Préparation incomplète."))
+
+    // 2. Le journal change : la trame `journal` repart.
+    journalBox.value = [entry]
+    journalSubject.send()
+    let pushedJournal = try #require(
+        await collector.waitFor("journal", occurrence: 2),
+        "un changement de journal doit être poussé (échec=\(collector.failure ?? "aucun"))"
+    )
+    #expect(pushedJournal.contains("\"kindLabel\":\"lancement\""))
+    #expect(pushedJournal.contains("cmd-1"))
 }

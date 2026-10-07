@@ -5,6 +5,7 @@
 // Aucun test ne touche le vrai trousseau, ni `~/.omp/agent/pipeline` : tout vit
 // sous `NSTemporaryDirectory()`.
 
+import Combine
 import ConsoleCore
 import Foundation
 @testable import OMPConsole
@@ -89,7 +90,13 @@ struct RemoteStack {
         clock: MutableRemoteClock = MutableRemoteClock(),
         projectModel: ProjectConsoleModel? = nil,
         actionsModel: ActionsModel? = nil,
-        sessionModel: SessionConsoleModel? = nil
+        sessionModel: SessionConsoleModel? = nil,
+        components: @escaping @MainActor () -> RemoteComponentsPayload = {
+            RemoteComponentsPayload(ompInstalled: true, ompPath: nil, setupBanner: nil)
+        },
+        journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
+        componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
+        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
     ) async throws -> RemoteStack {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("omp-console-remote-\(UUID().uuidString)", isDirectory: true)
@@ -110,7 +117,17 @@ struct RemoteStack {
         let actions = actionsModel ?? ActionsModel()
         let session = sessionModel ?? SessionConsoleModel()
         let project = projectModel ?? ProjectConsoleModel()
-        let streams = RemoteStreamHub(storeHub: hub, registry: registry, session: session, project: project, clock: clock.clock)
+        let streams = RemoteStreamHub(
+            storeHub: hub,
+            registry: registry,
+            session: session,
+            project: project,
+            clock: clock.clock,
+            components: components,
+            journal: journal,
+            componentsChanges: componentsChanges,
+            journalChanges: journalChanges
+        )
         // Le câblage de PRODUCTION (`RemoteServiceModel`) : le registre publie
         // l'évènement `devices` par le flux. Sans lui, l'ordre RÉEL des trames
         // d'ouverture resterait invisible aux tests (S-13).
@@ -124,7 +141,10 @@ struct RemoteStack {
             memoryConfig: config,
             memoryLinks: root.appendingPathComponent("memory-links.json"),
             environment: [:],
-            clock: clock.clock
+            clock: clock.clock,
+            kanban: kanban,
+            actions: actions,
+            components: components
         )
         let remoteActions = RemoteActions(
             kanban: kanban,

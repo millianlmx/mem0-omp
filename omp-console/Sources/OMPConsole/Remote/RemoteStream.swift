@@ -10,6 +10,7 @@
 // l'évènement est ABANDONNÉ pour ce client — jamais de blocage du serveur, jamais
 // de coupure des autres flux.
 
+import Combine
 import ConsoleCore
 import Foundation
 
@@ -89,6 +90,15 @@ final class RemoteStreamHub {
     private let session: SessionConsoleModel
     private let project: ProjectConsoleModel
     private let clock: RemoteClock
+    /// L'état des composants et de la préparation (S-4), fourni par la racine.
+    private let components: @MainActor () -> RemoteComponentsPayload
+    /// Le journal des gestes (S-5), fourni par le modèle d'actions.
+    private let journal: @MainActor () -> [ActionJournalEntry]
+    /// Les changements réels — un seul abonnement par évènement, comme les autres
+    /// sources : l'instantané initial part à l'activation, ces flux ne poussent
+    /// que sur mutation.
+    private let componentsChanges: AnyPublisher<Void, Never>
+    private let journalChanges: AnyPublisher<Void, Never>
 
     private var subscribers: [UUID: Subscriber] = [:]
     private var tasks: [Task<Void, Never>] = []
@@ -102,13 +112,23 @@ final class RemoteStreamHub {
         registry: DeviceRegistry,
         session: SessionConsoleModel,
         project: ProjectConsoleModel,
-        clock: RemoteClock = .live
+        clock: RemoteClock = .live,
+        components: @escaping @MainActor () -> RemoteComponentsPayload = {
+            RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
+        },
+        journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
+        componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
+        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
     ) {
         self.storeHub = storeHub
         self.registry = registry
         self.session = session
         self.project = project
         self.clock = clock
+        self.components = components
+        self.journal = journal
+        self.componentsChanges = componentsChanges
+        self.journalChanges = journalChanges
     }
 
     // MARK: - Abonnements
@@ -132,6 +152,10 @@ final class RemoteStreamHub {
         deliver(subscriber, SSE.frame("store", storeHub.current()))
         deliver(subscriber, SSE.frame("conduite", RemoteActions.conduitePayload(project)))
         registry.markConnected(subscriber.deviceId, true)
+        // APRÈS `devices` (publié par `markConnected` via `changeHandler`) : l'ordre
+        // d'ouverture est `hello`, `store`, `devices`, `components`, `journal` (S-4).
+        deliver(subscriber, SSE.frame("components", components()))
+        deliver(subscriber, SSE.frame("journal", RemoteJournalPayload(entries: journal())))
         refreshWatchedRuns()
     }
 
@@ -195,6 +219,24 @@ final class RemoteStreamHub {
                 try? await Task.sleep(nanoseconds: UInt64(Self.heartbeatSeconds * 1_000_000_000))
                 guard let self, !Task.isCancelled else { return }
                 self.broadcast(SSE.heartbeat)
+            }
+        })
+
+        // Composants et préparation (S-4) : un changement réel pousse la charge
+        // utile complète, jamais un delta.
+        let components = componentsChanges
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in components.values {
+                guard let self else { return }
+                self.broadcast(SSE.frame("components", self.components()))
+            }
+        })
+        // Journal des gestes (S-5) : idem.
+        let journal = journalChanges
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in journal.values {
+                guard let self else { return }
+                self.broadcast(SSE.frame("journal", RemoteJournalPayload(entries: self.journal())))
             }
         })
 

@@ -11,14 +11,8 @@
 // cas où le binaire du composant est réinstallé après coup.
 
 import Combine
+import ConsoleCore
 import Foundation
-
-/// OMP trouvé (le binaire du composant de l'app), ou introuvable : l'app affiche
-/// alors sa préparation et propose « Réessayer » (S-5).
-enum OmpStatus: Equatable, Sendable {
-    case available(URL)
-    case missing
-}
 
 @MainActor
 final class HomeModel: ObservableObject {

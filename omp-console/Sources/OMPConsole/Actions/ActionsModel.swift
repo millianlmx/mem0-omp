@@ -16,29 +16,9 @@ import Combine
 import ConsoleCore
 import Foundation
 
-/// L'état d'une entrée de journal (S-4) : en attente d'accusé, prise en charge,
-/// refusée (avec le motif du pilote ou sans), déposée, en échec d'écriture, ou
-/// restée sans accusé au-delà de `ActionsModel.ackTimeoutMs` (S-8 de
-/// omp-console-redesign).
-enum ActionJournalState: Sendable, Equatable {
-    case awaitingAck
-    case taken
-    case refused(reason: String?)
-    case delivered
-    case failed(reason: String)
-    case unacknowledged
-}
-
-/// Une entrée du journal des gestes : le libellé du geste (`réponse`, `texte`,
-/// `jalon specs`, `jalon revue`, `lancement`, `arrêt`), la cible (label du run,
-/// slug, titre, nom du dépôt) et l'état.
-struct ActionJournalEntry: Identifiable, Sendable, Equatable {
-    let id: String
-    let kindLabel: String
-    let targetLabel: String
-    var state: ActionJournalState
-    let at: Double
-}
+// `ActionJournalState` et `ActionJournalEntry` vivent désormais dans le noyau
+// partagé (`ConsoleCore/Actions/ActionJournal.swift`) : les deux coques emploient
+// les mêmes types, `Codable` (S-1, S-5).
 
 @MainActor
 final class ActionsModel: ObservableObject {

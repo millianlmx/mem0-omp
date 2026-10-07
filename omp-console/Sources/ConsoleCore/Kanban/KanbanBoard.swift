@@ -8,6 +8,8 @@
 // la fonction reproduite — la relecture se fait donc par comparaison, pas par
 // confiance. Le titre d'une carte de lot, lui, est le seul slug : dépendances,
 // modèle et messages en file sont des détails du terminal, pas de la carte.
+//
+// VIT DANS `ConsoleCore` : les deux coques partagent la dérivation.
 
 import Foundation
 

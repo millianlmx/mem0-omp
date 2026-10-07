@@ -7,6 +7,7 @@
 
 import ConsoleCore
 import Combine
+import ConsoleCore
 import Foundation
 
 /// La feuille Contrat affichée : le moment, le chemin lu et le contenu de CETTE

@@ -7,6 +7,8 @@
 // dans « En échec ».
 //
 // Fonctions PURES : la vue et le clavier lisent le même ordre.
+//
+// VIT DANS `ConsoleCore` : les deux coques partagent le regroupement.
 
 import Foundation
 
@@ -84,6 +86,11 @@ public struct KanbanLaneContent: Identifiable, Equatable {
     public var cards: [KanbanCard]
 
     public var id: String { lane.rawValue }
+
+    public init(lane: KanbanLane, cards: [KanbanCard]) {
+        self.lane = lane
+        self.cards = cards
+    }
 }
 
 extension KanbanBoard {

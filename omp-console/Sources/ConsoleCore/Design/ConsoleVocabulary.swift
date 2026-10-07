@@ -5,11 +5,11 @@
 // Fonctions PURES : les écrans (Accueil, Pipelines, Sessions, Statistiques,
 // conversation) les appellent, aucun ne compose son propre libellé d'état.
 //
-// VIT DANS `ConsoleCore` : ce fichier ne nomme aucun type de la coque (il ne
-// dépend que de `PipelinePhase` et de Foundation), donc la coque iOS le réutilise
-// tel quel. Les trois `ConsoleStatus.of(card:)`/`of(run:)`/`of(session:)`, qui
-// prennent des types de la coque, restent déclarés par elle — en extension, dans
-// `Sources/OMPConsole/Design/ConsoleVocabulary.swift`, pour qu'il n'existe jamais
+// VIT DANS `ConsoleCore` : ce fichier ne nomme aucun type de la coque, donc la
+// coque iOS le réutilise tel quel. `ConsoleStatus.of(card:)` ne nomme que des types
+// du noyau et vit ici ; `of(run:)` et `of(session:)`, qui nomment `RunChoice` et
+// `SessionHost.State`, restent déclarés par la coque — en extension, dans
+// `Sources/OMPConsole/Design/ConsoleVocabulary.swift` — pour qu'il n'existe jamais
 // deux définitions du même type.
 
 import Foundation
@@ -27,6 +27,34 @@ public struct ConsoleStatus: Equatable, Sendable, Codable {
     public init(text: String, tone: ConsoleTone) {
         self.text = text
         self.tone = tone
+    }
+}
+
+/// L'état d'une carte de l'ardoise (S-3) : il ne nomme que des types du noyau
+/// (`KanbanCard`, `KanbanCardAction`), donc il est partagé par les deux coques.
+/// Les deux autres fabriques — `of(run:)` et `of(session:)` — nomment des types de
+/// la coque macOS et restent déclarées par elle, en extension.
+extension ConsoleStatus {
+    /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
+    /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
+    /// vit encore).
+    public static func of(card: KanbanCard) -> ConsoleStatus {
+        if KanbanActionPresentation.resumable(card) {
+            return ConsoleStatus(text: "En pause", tone: .paused)
+        }
+        switch card.column {
+        case .enAttente: return ConsoleStatus(text: "Pas commencée", tone: .neutral)
+        case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
+        case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
+        case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
+        case .fusionne: return ConsoleStatus(text: "Fusionnée", tone: .success)
+        case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
+        case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
+        case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
+        case .bloquee: return ConsoleStatus(text: "Bloquée", tone: .danger)
+        case .termineeSansPr: return ConsoleStatus(text: "Terminée", tone: .neutral)
+        case .annuleeRetiree: return ConsoleStatus(text: "Annulée", tone: .neutral)
+        }
     }
 }
 
@@ -119,31 +147,5 @@ public enum ConsoleFormat {
     public static func time(ms: Double) -> String {
         Date(timeIntervalSince1970: ms / 1000)
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
-    }
-}
-
-extension ConsoleStatus {
-    /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
-    /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
-    /// vit encore). VIT DANS `ConsoleCore` : elle ne nomme que `KanbanCard` et
-    /// `KanbanActionPresentation`, tous deux partagés — les DEUX coques affichent
-    /// donc le même mot d'état.
-    public static func of(card: KanbanCard) -> ConsoleStatus {
-        if KanbanActionPresentation.resumable(card) {
-            return ConsoleStatus(text: "En pause", tone: .paused)
-        }
-        switch card.column {
-        case .enAttente: return ConsoleStatus(text: "Pas commencée", tone: .neutral)
-        case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
-        case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
-        case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
-        case .fusionne: return ConsoleStatus(text: "Fusionnée", tone: .success)
-        case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
-        case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
-        case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
-        case .bloquee: return ConsoleStatus(text: "Bloquée", tone: .danger)
-        case .termineeSansPr: return ConsoleStatus(text: "Terminée", tone: .neutral)
-        case .annuleeRetiree: return ConsoleStatus(text: "Annulée", tone: .neutral)
-        }
     }
 }

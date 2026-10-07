@@ -30,6 +30,9 @@ struct StreamModelTests {
         #expect(await eventually { harness.model.state == .searching })
         harness.discovery.emit([mac])
         #expect(await eventually { harness.model.state == .connected(endpoint: macEndpoint) })
+        // La connexion déclenche le rafraîchissement des faits de l'Accueil
+        // (S-8) : on l'attend, puis on mesure la trame `store` seule.
+        #expect(await eventually { harness.transport.count(method: "GET", path: "/v1/components") >= 1 })
         let before = harness.transport.requestCount
         let snapshot = ClientFixtures.snapshot()
         harness.transport.push(ClientFixtures.storeFrame(snapshot))

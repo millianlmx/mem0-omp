@@ -236,8 +236,14 @@ function recipeFaults(root: string): string[] {
 test("ios-pipelines/AC-1 : l'ardoise de l'app est la dérivation PARTAGÉE, la même que macOS", () => {
   assert.deepEqual(boardFaults(ROOT), [], "l'arbre réel doit être sain");
   // Le contrat est gitignoré : un lecteur s'abrite sous existsSync, jamais un échec.
+  // Un worktree VOISIN porte le contrat d'une AUTRE feature : on n'éprouve le nôtre
+  // que lorsqu'il se nomme lui-même (précédent client-distant-ios/AC-20).
   if (fs.existsSync(CONTRACT)) {
-    assert.match(fs.readFileSync(CONTRACT, "utf8"), /feature `ios-pipelines`/, "le contrat doit être celui de la feature");
+    const contract = fs.readFileSync(CONTRACT, "utf8");
+    if (contract.includes("feature `ios-pipelines`")) {
+      assert.match(contract, /## Besoins/, "le contrat de la feature porte ses besoins");
+      assert.match(contract, /## Critères d'acceptation/, "le contrat de la feature porte ses critères");
+    }
   }
 
   const copy = copyRepo();

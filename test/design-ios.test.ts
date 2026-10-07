@@ -471,6 +471,8 @@ function macOSFaults(root: string): string[] {
   if (!stats.includes("static let noProject = StatsPresentation.noProject")) {
     faults.push("StatsText.noProject ne lit pas StatsPresentation");
   }
+  // `KanbanModels.swift` vit désormais dans ConsoleCore (feature ios-accueil,
+  // BR-1 : l'ardoise est partagée par les deux coques).
   const kanban = coreCode(root, "Kanban/KanbanModels.swift");
   if (!kanban.includes("static let noPipelineText = KanbanText.noPipeline")) {
     faults.push("KanbanBoardState.noPipelineText ne lit pas KanbanText.noPipeline");
