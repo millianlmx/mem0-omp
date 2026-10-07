@@ -1,8 +1,10 @@
-// Les preuves de la route des STATISTIQUES (S-8) : l'état publié du modèle de la
-// section, rien d'autre. L'API ne recalcule rien et ne relit aucun fichier.
+// Les preuves de la route des STATISTIQUES (S-1, S-2) : le tableau du projet
+// DEMANDÉ, dérivé par les mêmes fonctions pures que la fenêtre macOS.
 //
 // Le magasin et les sessions sont RÉELS (fixtures sous `NSTemporaryDirectory()`),
-// le modèle est celui de la production et c'est son état publié que l'on compare.
+// l'horloge est INJECTÉE (`RemoteClock`) et la charge utile est confrontée à
+// `featureTotals` du tableau publié par un `StatsModel` sur le MÊME magasin, au
+// MÊME instant : c'est la parité de la fenêtre Statistiques macOS (AC-4).
 
 import ConsoleCore
 import Foundation
@@ -54,8 +56,8 @@ struct RemoteStatsRouteTests {
     }
 
     /// Publie un projet (une feature), son lot (le worktree) et un run `running/`
-    /// apparié : c'est la forme que `StatsModel` attend pour dresser un tableau.
-    private static func publishRun(
+    /// apparié : c'est la forme que la dérivation attend pour dresser un tableau.
+    private static func publishFeature(
         _ fixture: StoreFixture,
         seed: Int,
         repoRoot: String,
@@ -99,13 +101,13 @@ struct RemoteStatsRouteTests {
         )
     }
 
-    private static func makeRepo(_ fixture: StoreFixture) throws -> String {
-        let root = joinPath(fixture.root, "depot")
+    private static func makeRepo(_ fixture: StoreFixture, _ name: String) throws -> String {
+        let root = joinPath(fixture.root, name)
         try FileManager.default.createDirectory(atPath: root, withIntermediateDirectories: true)
         return root
     }
 
-    /// Attend que le modèle publie un TABLEAU (le magasin est lu à `start()`).
+    /// Attend que le modèle macOS publie un TABLEAU (le magasin est lu à `start()`).
     private static func board(_ model: StatsModel) async -> StatsBoard? {
         let ready = await awaitMainTrue {
             if case .board = model.state { return true }
@@ -115,101 +117,124 @@ struct RemoteStatsRouteTests {
         return board
     }
 
-    // MARK: - AC-7
+    // MARK: - AC-1 : le tableau du projet demandé, par feature
 
-    @Test("api-distante-du-console/AC-7 : l'appareil appairé obtient les statistiques de la coque")
-    func statisticsOfTheConsole() async throws {
+    @Test("ios-statistiques/AC-1, AC-2 : la route sert le tableau du projet demandé, une entrée par feature")
+    func servesTheRequestedProject() async throws {
         let fixture = StoreFixture()
-        let repoRoot = try Self.makeRepo(fixture)
+        let repoRoot = try Self.makeRepo(fixture, "depot")
         let sessionPath = joinPath(fixture.root, "session.jsonl")
         try Self.writeSession(sessionPath, lines: Self.sessionLines())
-        Self.publishRun(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
 
         let stack = try await RemoteStack.make(stateDir: fixture.root)
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        stack.stats.start()
-        let board = try #require(await Self.board(stack.stats))
-
         let reply = try await stack.call("GET", "/v1/stats", token: token)
         #expect(reply.status == 200)
         let payload = try reply.json(RemoteStatsPayload.self)
 
-        // Le MÊME libellé de projet que la coque (et celui du dépôt de la fixture).
-        #expect(payload.project == board.project.label)
+        // Le profil du projet : sa clé et son libellé de sélecteur, jamais un chemin.
+        #expect(payload.projectKey == ProjectPaths.key(forRoot: repoRoot))
         #expect(payload.project == (repoRoot as NSString).lastPathComponent)
+        #expect(payload.projects.map(\.label) == [payload.project])
+        #expect(payload.projects.map(\.key) == [payload.projectKey])
 
-        // Les MÊMES lignes, mesurées sur la session réellement écrite.
-        let expected = StatsPresentation.rows(board.project, nowMs: stack.clock.nowMs)
-        #expect(payload.rows.map(\.id) == expected.map(\.id))
-        let row = try #require(payload.rows.first { $0.id == sessionPath })
-        #expect(row.turns == 2)
-        #expect(row.tokens == 240)
-        #expect(row.unreadableReason == nil)
-
-        // `totals` = la somme des lignes rendues.
-        #expect(payload.totals.turns == payload.rows.reduce(0) { $0 + $1.turns })
-        #expect(payload.totals.input + payload.totals.output == payload.rows.reduce(0) { $0 + $1.tokens })
-        #expect(payload.totals.turns == 2)
-        #expect(payload.totals.durationMs >= 0)
-        #expect(payload.truncated == false)
+        // Une entrée par feature LISTÉE, mesurée sur la session réellement écrite :
+        // 2 tours (deux `user`), 200 d'entrée, 40 de sortie.
+        let feature = try #require(payload.features.first)
+        #expect(payload.features.count == 1)
+        #expect(feature.slug == "feature-a")
+        #expect(feature.turns == 2)
+        #expect(feature.input == 200)
+        #expect(feature.output == 40)
+        #expect(feature.model == "opencode-go/deepseek-v4.1-flash")
+        #expect(feature.liveRuns == 1)
+        #expect(feature.durationMs >= 0)
+        #expect(payload.hiddenPlanFeatures == 0)
     }
 
-    // MARK: - Complémentaires
+    // MARK: - AC-3 : le total du projet, somme des features servies
 
-    @Test func testLoadingIsUnavailable() async throws {
+    @Test("ios-statistiques/AC-3 : la charge utile ne porte que des features, leur somme est le total")
+    func servedFeaturesCarryTheirOwnTotals() async throws {
         let fixture = StoreFixture()
+        let repoRoot = try Self.makeRepo(fixture, "depot")
+        let sessionPath = joinPath(fixture.root, "session.jsonl")
+        try Self.writeSession(sessionPath, lines: Self.sessionLines())
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
+
         let stack = try await RemoteStack.make(stateDir: fixture.root)
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        // Le modèle n'a JAMAIS été démarré : son état publié est `.loading`.
         let reply = try await stack.call("GET", "/v1/stats", token: token)
-        #expect(reply.status == 503)
-        #expect(reply.errorCode == "unavailable")
-        #expect(reply.errorMessage == "les statistiques ne sont pas encore prêtes")
-    }
-
-    @Test func testNoProjectServesAnEmptyTable() async throws {
-        let fixture = StoreFixture()
-        let stack = try await RemoteStack.make(stateDir: fixture.root)
-        defer { stack.stop() }
-        let token = try await stack.pair()
-
-        stack.stats.start()
-        let noProject = await awaitMainTrue {
-            if case .noProject = stack.stats.state { return true }
-            return false
-        }
-        #expect(noProject)
-
-        let reply = try await stack.call("GET", "/v1/stats", token: token)
-        #expect(reply.status == 200)
         let payload = try reply.json(RemoteStatsPayload.self)
-        #expect(payload.project == "")
-        #expect(payload.rows.isEmpty)
-        #expect(payload.totals.turns == 0)
-        #expect(payload.totals.input == 0)
-        #expect(payload.totals.output == 0)
+        // Rien d'autre que des features ne porte de totaux : le client somme les
+        // features LISTÉES (AC-3) — aucun agrégat servi en plus.
+        #expect(payload.features.reduce(0) { $0 + $1.turns } == 2)
+        #expect(payload.features.reduce(0) { $0 + $1.input } == 200)
+        #expect(payload.features.reduce(0) { $0 + $1.output } == 40)
     }
 
-    @Test func testUnreadableRunKeepsItsReason() async throws {
+    // MARK: - AC-5 : une feature sans run lisible est comptée masquée
+
+    @Test("ios-statistiques/AC-5 : une feature sans run lisible est comptée masquée, jamais servie à zéro")
+    func hiddenPlanFeatureIsCounted() async throws {
         let fixture = StoreFixture()
-        let repoRoot = try Self.makeRepo(fixture)
-        let missing = joinPath(fixture.root, "sessions/absente.jsonl")
+        let repoRoot = try Self.makeRepo(fixture, "depot")
+        let worktreeA = try Self.makeRepo(fixture, "depot/wt-a")
+        let worktreeB = try Self.makeRepo(fixture, "depot/wt-b")
         let good = joinPath(fixture.root, "sessions/bonne.jsonl")
+        let missing = joinPath(fixture.root, "sessions/absente.jsonl")
         try Self.writeSession(good, lines: Self.sessionLines())
 
-        Self.publishRun(fixture, seed: 20, repoRoot: repoRoot, worktree: repoRoot, sessionFile: good)
-        // Un SECOND run de la même feature, dont la session n'existe pas : sa ligne
-        // garde son motif, et la feature reste listée grâce au run lisible.
+        // Le plan porte DEUX features, chacune dans son worktree : l'une avec un run
+        // lisible, l'autre dont le seul run n'a pas de session écrite.
+        let key = ProjectPaths.key(forRoot: repoRoot)
+        fixture.publish(
+            .projects,
+            "\(fixtureId(10)).json",
+            object: projectObject(
+                repoKey: key,
+                repoRoot: repoRoot,
+                segments: [[
+                    "name": "Segment",
+                    "features": [projectFeatureObject(slug: "feature-a"), projectFeatureObject(slug: "feature-b")],
+                ]],
+                current: 0
+            )
+        )
+        fixture.publish(
+            .lots,
+            "\(fixtureId(11)).json",
+            object: lotObject(
+                repoRoot: repoRoot,
+                features: [
+                    lotFeatureObject(slug: "feature-a", worktree: worktreeA),
+                    lotFeatureObject(slug: "feature-b", worktree: worktreeB),
+                ]
+            )
+        )
         fixture.publish(
             .running,
-            "\(fixtureId(23)).json",
+            "\(fixtureId(12)).json",
             object: runningObject(
-                id: fixtureId(23),
-                cwd: repoRoot,
+                id: fixtureId(12),
+                cwd: worktreeA,
+                phaseStartedAt: fixtureT0,
+                updatedAt: fixtureT0,
+                ownerPid: Double(getpid()),
+                sessionFile: good
+            )
+        )
+        fixture.publish(
+            .running,
+            "\(fixtureId(13)).json",
+            object: runningObject(
+                id: fixtureId(13),
+                cwd: worktreeB,
                 phaseStartedAt: fixtureT0,
                 updatedAt: fixtureT0,
                 ownerPid: Double(getpid()),
@@ -221,16 +246,133 @@ struct RemoteStatsRouteTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
+        let reply = try await stack.call("GET", "/v1/stats", token: token)
+        #expect(reply.status == 200)
+        let payload = try reply.json(RemoteStatsPayload.self)
+        #expect(payload.features.map(\.slug) == ["feature-a"])
+        #expect(payload.hiddenPlanFeatures == 1)
+        // Le run illisible n'entre dans AUCUNE somme (S-2).
+        #expect(payload.features.reduce(0) { $0 + $1.turns } == 2)
+    }
+
+    // MARK: - AC-4 : parité avec le tableau publié par la fenêtre macOS
+
+    @Test("ios-statistiques/AC-4 : chaque feature servie égale le tableau de StatsModel, au même instant")
+    func parityWithTheMacWindow() async throws {
+        let fixture = StoreFixture()
+        let repoRoot = try Self.makeRepo(fixture, "depot")
+        let sessionPath = joinPath(fixture.root, "session.jsonl")
+        try Self.writeSession(sessionPath, lines: Self.sessionLines())
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        // Le MÊME magasin, la MÊME horloge injectée : la fenêtre macOS d'un côté,
+        // la route de l'autre.
         stack.stats.start()
-        #expect(await Self.board(stack.stats) != nil)
+        let board = try #require(await Self.board(stack.stats))
+        let nowMs = stack.clock.nowMs
 
         let reply = try await stack.call("GET", "/v1/stats", token: token)
         #expect(reply.status == 200)
         let payload = try reply.json(RemoteStatsPayload.self)
-        let unreadable = try #require(payload.rows.first { $0.id == missing })
-        #expect(unreadable.unreadableReason != nil)
-        let readable = try #require(payload.rows.first { $0.id == good })
-        #expect(readable.unreadableReason == nil)
-        #expect(readable.turns == 2)
+
+        #expect(payload.projectKey == board.project.repoKey)
+        #expect(payload.project == board.project.label)
+        #expect(payload.hiddenPlanFeatures == board.project.hiddenPlanFeatures)
+        #expect(payload.features.map(\.slug) == board.project.features.map(\.slug))
+        for feature in payload.features {
+            let expected = try #require(board.project.features.first { $0.slug == feature.slug })
+            let totals = featureTotals(expected, nowMs: nowMs)
+            #expect(feature.input == totals.input)
+            #expect(feature.output == totals.output)
+            #expect(feature.turns == totals.turns)
+            #expect(feature.durationMs == totals.durationMs)
+            #expect(feature.liveRuns == featureLiveRuns(expected))
+            #expect(feature.model == featureModel(expected))
+        }
+    }
+
+    // MARK: - Sélection de projet et repli
+
+    @Test("ios-statistiques/AC-1 : `?project=<clé>` choisit le projet, une clé inconnue retombe sur le premier")
+    func selectingAProjectFallsBackToTheFirst() async throws {
+        let fixture = StoreFixture()
+        let repoA = try Self.makeRepo(fixture, "depotA")
+        let repoB = try Self.makeRepo(fixture, "depotB")
+        let sessionA = joinPath(fixture.root, "a.jsonl")
+        let sessionB = joinPath(fixture.root, "b.jsonl")
+        try Self.writeSession(sessionA, lines: Self.sessionLines())
+        try Self.writeSession(sessionB, lines: Self.sessionLines())
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoA, worktree: repoA, sessionFile: sessionA, slug: "feature-a")
+        Self.publishFeature(fixture, seed: 20, repoRoot: repoB, worktree: repoB, sessionFile: sessionB, slug: "feature-b")
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+        let keyA = ProjectPaths.key(forRoot: repoA)
+        let keyB = ProjectPaths.key(forRoot: repoB)
+
+        // Sans paramètre : le PREMIER projet de l'ordre (`repoRoot` croissant).
+        let first = try await stack.call("GET", "/v1/stats", token: token)
+        let defaultPayload = try first.json(RemoteStatsPayload.self)
+        #expect(defaultPayload.projectKey == keyA)
+        #expect(defaultPayload.projects.map(\.key) == [keyA, keyB])
+
+        // Le projet B demandé : c'est lui qui est servi, et TOUS les projets restent
+        // annoncés (le sélecteur ne perd pas une option).
+        let second = try await stack.call("GET", "/v1/stats?project=\(keyB)", token: token)
+        let chosen = try second.json(RemoteStatsPayload.self)
+        #expect(chosen.projectKey == keyB)
+        #expect(chosen.features.map(\.slug) == ["feature-b"])
+        #expect(chosen.projects.map(\.key) == [keyA, keyB])
+
+        // Une clé qui ne désigne plus aucun projet : repli sur le premier, jamais
+        // une erreur, et `projectKey` porte la clé RÉELLEMENT servie.
+        let unknown = try await stack.call("GET", "/v1/stats?project=inconnue", token: token)
+        #expect(unknown.status == 200)
+        let fallback = try unknown.json(RemoteStatsPayload.self)
+        #expect(fallback.projectKey == keyA)
+        #expect(fallback.features.map(\.slug) == ["feature-a"])
+    }
+
+    @Test("ios-statistiques/AC-1 : un magasin sans projet sert une charge utile nulle, jamais une erreur")
+    func emptyStoreServesAnEmptyPayload() async throws {
+        let fixture = StoreFixture()
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/stats", token: token)
+        #expect(reply.status == 200)
+        let payload = try reply.json(RemoteStatsPayload.self)
+        #expect(payload.projectKey == nil)
+        #expect(payload.project == "")
+        #expect(payload.projects.isEmpty)
+        #expect(payload.features.isEmpty)
+        #expect(payload.hiddenPlanFeatures == 0)
+    }
+
+    // MARK: - AC-7 : aucun champ monétaire
+
+    @Test("ios-statistiques/AC-7 : la charge utile ne porte aucun champ monétaire")
+    func payloadCarriesNoMoney() async throws {
+        let fixture = StoreFixture()
+        let repoRoot = try Self.makeRepo(fixture, "depot")
+        let sessionPath = joinPath(fixture.root, "session.jsonl")
+        try Self.writeSession(sessionPath, lines: Self.sessionLines())
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/stats", token: token)
+        let text = reply.text.lowercased()
+        for token in ["cost", "montant", "dollar", "prix", "usd", "€", "$"] {
+            #expect(!text.contains(token), "la charge utile porte « \(token) »")
+        }
     }
 }

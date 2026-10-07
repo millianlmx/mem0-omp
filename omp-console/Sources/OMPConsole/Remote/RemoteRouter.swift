@@ -168,7 +168,7 @@ final class RemoteRouter {
         case "documents":
             return try json(reads.documents(repoKey: parameters["repoKey"] ?? ""))
         case "stats":
-            return try json(reads.statistics())
+            return try json(reads.statistics(project: request.query["project"]))
         case "devices":
             return try json(reads.devices())
         case "models":

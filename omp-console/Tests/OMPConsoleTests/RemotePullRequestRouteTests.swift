@@ -169,7 +169,6 @@ private func makeStack(
     let reads = RemoteReads(
         hub: hub,
         registry: registry,
-        stats: stats,
         service: memory,
         memoryConfig: config,
         memoryLinks: support.appendingPathComponent("memory-links.json"),

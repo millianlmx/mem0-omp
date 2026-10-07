@@ -3,9 +3,10 @@ import ConsoleCore
 import SwiftUI
 
 /// L'écran UNIQUE des sept sections (S-2, BR-3) : il rend le contenu pur de
-/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les trois sections
-/// à écran réel : Pipelines (`PipelinesScreen`), Projet (`IOSProjectScreen`) et
-/// Mémoire (`IOSMemoryScreen`, nourrie par le client partagé).
+/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les quatre sections
+/// à écran réel : Pipelines (`PipelinesScreen`), Projet (`IOSProjectScreen`),
+/// Mémoire (`IOSMemoryScreen`) et Statistiques (`IOSStatsScreen`), nourries par le
+/// client partagé.
 ///
 /// Ordre du rendu (sections à contenu) : panneau → titre → pastille → carte de
 /// l'état vide → bandeau. Aucune phrase n'est composée ici : les mots viennent du
@@ -35,6 +36,8 @@ struct IOSSectionView: View {
                 .font(.title2)
             if section == .project {
                 IOSProjectScreen(client: client)
+            } else if section == .stats {
+                IOSStatsScreen(client: client)
             } else {
                 if let status = content?.status {
                     IOSStatusChip(status: status)

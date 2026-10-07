@@ -136,7 +136,6 @@ struct RemoteStack {
         let reads = RemoteReads(
             hub: hub,
             registry: registry,
-            stats: stats,
             service: memory,
             memoryConfig: config,
             memoryLinks: root.appendingPathComponent("memory-links.json"),

@@ -2,9 +2,10 @@
 // documents, les statistiques, la mémoire et la liste des appareils.
 //
 // Aucune lecture disque propre à l'API : tout vient des couches existantes —
-// `StoreHub.current()`, `storeRuns(of:)`, `SessionReader`, `StatsModel.state`,
-// `MemoryServing`, `DeviceRegistry`. C'est ce qui garantit que l'API dit l'état
-// RÉEL de la coque à l'instant de la requête (AC-6).
+// `StoreHub.current()`, `storeRuns(of:)`, `SessionReader`, la dérivation partagée
+// des statistiques (`statsBoard`/`featureTotals`), `MemoryServing`,
+// `DeviceRegistry`. C'est ce qui garantit que l'API dit l'état RÉEL de la coque à
+// l'instant de la requête (AC-6).
 
 import ConsoleCore
 import Foundation
@@ -13,7 +14,9 @@ import Foundation
 final class RemoteReads {
     let hub: StoreHub
     let registry: DeviceRegistry
-    let stats: StatsModel
+    /// Le cache de lecteurs des statistiques (D-4) : possédé par l'API, il ne
+    /// consomme que les octets AJOUTÉS depuis le relevé précédent.
+    private let cache = SessionMetricsCache()
     let service: any MemoryServing
     let memoryConfig: MemoryServiceConfig
     let memoryLinks: URL
@@ -31,7 +34,6 @@ final class RemoteReads {
     init(
         hub: StoreHub,
         registry: DeviceRegistry,
-        stats: StatsModel,
         service: any MemoryServing,
         memoryConfig: MemoryServiceConfig,
         memoryLinks: URL,
@@ -45,7 +47,6 @@ final class RemoteReads {
     ) {
         self.hub = hub
         self.registry = registry
-        self.stats = stats
         self.service = service
         self.memoryConfig = memoryConfig
         self.memoryLinks = memoryLinks
@@ -142,56 +143,55 @@ final class RemoteReads {
 
     // MARK: - Statistiques
 
-    func statistics() throws -> RemoteStatsPayload {
-        switch stats.state {
-        case .loading:
-            throw ConsoleAPIError.unavailable("les statistiques ne sont pas encore prêtes")
-        case .noProject:
+    /// Le tableau du projet DEMANDÉ (S-1, S-2), dérivé par les MÊMES fonctions
+    /// pures que la fenêtre macOS (`statsBoard`/`featureTotals`) : l'API ne lit
+    /// plus l'état publié de `StatsModel`, elle dérive à l'instant de la requête.
+    ///
+    /// `project` absent, vide ou inconnu ⇒ le PREMIER projet de `projectOrder`
+    /// (`statsDisplayedProject`), jamais une erreur. Un relevé ne lit QUE les
+    /// runs du projet demandé et libère les lecteurs des autres.
+    func statistics(project: String?) throws -> RemoteStatsPayload {
+        let snapshot = hub.current()
+        let board = statsBoard(snapshot: snapshot, selectedKey: project, read: cache.metrics)
+
+        var retained: Set<String> = []
+        if let project = statsDisplayedProject(snapshot, selectedKey: project) {
+            for planFeature in statsPlan(of: snapshot, project: project) {
+                for run in planFeature.runs { retained.insert(run.sessionFile) }
+            }
+        }
+        cache.release(keeping: retained)
+
+        guard let board else {
             return RemoteStatsPayload(
+                projectKey: nil,
                 project: "",
-                totals: RemoteStatsTotals(input: 0, output: 0, turns: 0, durationMs: 0),
-                rows: [],
-                truncated: false
+                projects: [],
+                features: [],
+                hiddenPlanFeatures: 0
             )
-        case .storeAbsent, .empty:
-            let label = stats.projects.first { $0.id == stats.selectedKey }?.label ?? ""
-            return RemoteStatsPayload(
-                project: label,
-                totals: RemoteStatsTotals(input: 0, output: 0, turns: 0, durationMs: 0),
-                rows: [],
-                truncated: false
-            )
-        case .board(let board):
-            let nowMs = clock.nowMs()
-            let rows = StatsPresentation.rows(board.project, nowMs: nowMs)
-            let totals = projectTotals(board.project, nowMs: nowMs)
-            let statsTotals = RemoteStatsTotals(
+        }
+
+        let nowMs = clock.nowMs()
+        let features = board.project.features.map { feature -> RemoteStatsFeature in
+            let totals = featureTotals(feature, nowMs: nowMs)
+            return RemoteStatsFeature(
+                slug: feature.slug,
                 input: totals.input,
                 output: totals.output,
                 turns: totals.turns,
-                durationMs: totals.durationMs
+                durationMs: totals.durationMs,
+                liveRuns: featureLiveRuns(feature),
+                model: featureModel(feature)
             )
-            var kept = Array(rows.prefix(RemoteLimits.statsRows))
-            var truncated = rows.count > kept.count
-            var payload = RemoteStatsPayload(
-                project: board.project.label,
-                totals: statsTotals,
-                rows: kept,
-                truncated: truncated
-            )
-            // Borne d'OCTETS (S-7) : même règle que les entrées de session.
-            while (try? HTTPJSON.encode(payload))?.count ?? 0 > RemoteLimits.responseBody, kept.count > 0 {
-                kept = Array(kept.dropFirst(max(1, kept.count / 2)))
-                truncated = true
-                payload = RemoteStatsPayload(
-                    project: board.project.label,
-                    totals: statsTotals,
-                    rows: kept,
-                    truncated: truncated
-                )
-            }
-            return payload
         }
+        return RemoteStatsPayload(
+            projectKey: board.project.repoKey,
+            project: board.project.label,
+            projects: statsProjectOptions(snapshot).map { RemoteStatsProject(key: $0.id, label: $0.label) },
+            features: features,
+            hiddenPlanFeatures: board.project.hiddenPlanFeatures
+        )
     }
 
     // MARK: - Catalogue des modèles (S-14)

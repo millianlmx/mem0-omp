@@ -90,7 +90,6 @@ func makeRemoteServiceModel(
             attention: RecordingAttention(),
             prService: StubPRService()
         ),
-        stats: StatsModel(stateDir: dir),
         registry: store,
         makeListener: { _ in listener }
     )

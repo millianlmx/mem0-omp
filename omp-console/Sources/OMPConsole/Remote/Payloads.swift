@@ -13,7 +13,6 @@ import Foundation
 enum RemoteLimits {
     static let responseBody = 2 * 1024 * 1024
     static let sessionEntries = 2000
-    static let statsRows = 2000
     /// Le sommaire mémoire, borné en NOMBRE comme ses voisines : au-delà, la
     /// charge dépasserait la borne de corps et le client refuserait la réponse.
     static let memoryRows = 2000
@@ -147,18 +146,33 @@ struct RemoteSessionPayload: Codable, Equatable {
     var truncated: Bool
 }
 
-struct RemoteStatsTotals: Codable, Equatable {
+/// Une entrée du sélecteur de projet servi (S-1) : la clé du magasin (que le
+/// client ne calcule jamais) et son libellé affichable.
+struct RemoteStatsProject: Codable, Equatable, Sendable {
+    var key: String
+    var label: String
+}
+
+/// Les totaux d'une feature LISTÉE, par relevé (S-1) : des scalaires seulement.
+/// `liveRuns` fait avancer la durée côté client, sans trafic (S-5).
+struct RemoteStatsFeature: Codable, Equatable, Sendable {
+    var slug: String
     var input: Int
     var output: Int
     var turns: Int
     var durationMs: Double
+    var liveRuns: Int
+    var model: String?
 }
 
-struct RemoteStatsPayload: Codable, Equatable {
+/// Le tableau du projet AFFICHÉ (S-1) : le projet, tous les projets du magasin
+/// pour le sélecteur, les features LISTÉES et le compte des features masquées.
+struct RemoteStatsPayload: Codable, Equatable, Sendable {
+    var projectKey: String?
     var project: String
-    var totals: RemoteStatsTotals
-    var rows: [StatsRow]
-    var truncated: Bool
+    var projects: [RemoteStatsProject]
+    var features: [RemoteStatsFeature]
+    var hiddenPlanFeatures: Int
 }
 
 struct RemoteDeviceRow: Codable, Equatable {

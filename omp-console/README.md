@@ -2117,3 +2117,52 @@ MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
 ```
 
 
+### Statistiques depuis l'iPad
+
+La section **Statistiques** de l'app est en **lecture seule** : elle affiche la
+consommation des runs du projet choisi, par feature — slug, modèle, durée, tours,
+tokens envoyés et tokens reçus — puis la ligne « Total du projet », somme des
+features LISTÉES. Aucun montant, aucun geste de pilotage d'un run. Les mots
+affichés (« Tokens envoyés », « Temps passé », « Tours », « Total du projet ») sont
+ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
+
+Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
+
+1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
+   « Connecté à … », et la section Statistiques montre un bref indicateur
+   d'activité puis son tableau. *(hors appairage, la section affiche le bandeau
+   d'attente « Non appairé » / « Mac absent — … » et n'émet aucun relevé)*
+2. **Choisir un projet** — le sélecteur en haut de la section propose les projets
+   connus du Mac, dans l'ordre de la coque (le libellé du dépôt, jamais une clé) ;
+   il affiche celui que le Mac sert. Choisir un autre projet : quelques secondes
+   plus tard le tableau devient celui de ce projet.
+3. **Comparer avec le Mac** — ouvrir la fenêtre **Statistiques** macOS sur le même
+   projet : chaque feature de l'app porte les MÊMES tokens d'entrée et de sortie,
+   le même modèle, la même durée et le même nombre de tours ; la ligne « Total du
+   projet » égale la somme des tuiles macOS.
+4. **Vérifier le masquage** — une feature du plan sans run lisible n'apparaît pas
+   comme une ligne à zéro : elle est comptée en pied, « N feature(s) du plan sans
+   données », exactement comme sur macOS.
+5. **Observer un run vivant, sans aucun geste** — pendant qu'une feature tourne
+   sur le Mac, rester sur la section : sa durée (et le total du projet) avancent à
+   la seconde, sans toucher à l'écran et sans que le Mac reçoive une requête par
+   seconde (le client ne relit qu'à l'apparition, au changement de projet, à un
+   nouvel état du magasin et à une mise à jour de session).
+6. **Vérifier l'absence de geste** — aucune ligne de feature n'est cliquable :
+   démarrer, reprendre ou arrêter un run reste le geste des sections Pipelines et
+   Projet. Aucun montant en argent n'est affiché nulle part.
+7. **État dégradé** — couper le Mac (ou l'interrupteur du service d'API) : la
+   section passe au bandeau `attention` portant l'état de la connexion et son
+   affichage cesse d'avancer ; un échec de relevé affiche un bandeau `danger`
+   portant le message servi et un bouton « Réessayer ».
+
+Recette OUTILLÉE : le test Swift gated `iosStatistiquesRecipe`
+(`omp-console/Tests/OMPConsoleTests/IOSStatistiquesRecipeTests.swift`) exerce
+contre une coque réelle les parties automatisables — relevé du projet, parité avec
+le tableau publié par la fenêtre macOS, masquage d'une feature sans run lisible,
+avancement d'une durée vivante et absence de montant dans la charge utile. Il est
+gardé par la variable `MEM0_REMOTE_RECIPE` et se lance par :
+
+```bash
+MEM0_REMOTE_RECIPE=1 swift test --filter iosStatistiquesRecipe
+```

@@ -2,8 +2,8 @@
 // de `Sources/OMPConsole/Remote/Payloads.swift` est recopié ici sous le MÊME nom,
 // avec les MÊMES noms de propriétés stockées — les clés JSON sont celles du dépôt.
 //
-// Les modèles PUBLICS de `ConsoleCore` (`StoreSnapshot`, `StoreRun`, `Project`,
-// `StatsRow`) sont réutilisés TELS QUELS, jamais recopiés.
+// Les modèles PUBLICS de `ConsoleCore` (`StoreSnapshot`, `StoreRun`, `Project`)
+// sont réutilisés TELS QUELS, jamais recopiés.
 
 import ConsoleCore
 import Foundation
@@ -96,18 +96,109 @@ public struct RemoteSessionPayload: Codable, Equatable, Sendable {
     public var truncated: Bool
 }
 
-public struct RemoteStatsTotals: Codable, Equatable, Sendable {
+/// Une entrée du sélecteur de projet (S-1) : la clé du magasin, calculée par la
+/// coque, jamais par le client.
+public struct RemoteStatsProject: Codable, Equatable, Sendable {
+    public var key: String
+    public var label: String
+
+    public init(key: String, label: String) {
+        self.key = key
+        self.label = label
+    }
+}
+
+/// Les totaux d'une feature LISTÉE, tels que le Mac les a mesurés au relevé (S-1).
+public struct RemoteStatsFeature: Codable, Equatable, Sendable {
+    public var slug: String
     public var input: Int
     public var output: Int
     public var turns: Int
     public var durationMs: Double
+    public var liveRuns: Int
+    public var model: String?
+
+    public init(slug: String, input: Int, output: Int, turns: Int, durationMs: Double, liveRuns: Int, model: String?) {
+        self.slug = slug
+        self.input = input
+        self.output = output
+        self.turns = turns
+        self.durationMs = durationMs
+        self.liveRuns = liveRuns
+        self.model = model
+    }
 }
 
-public struct RemoteStatsPayload: Codable, Equatable {
+/// Le tableau du projet affiché (S-1) : le projet, TOUS les projets du magasin
+/// (options du sélecteur), les features listées et le compte des features du plan
+/// sans run lisible. Aucun champ monétaire n'y figure (S-6).
+public struct RemoteStatsPayload: Codable, Equatable, Sendable {
+    public var projectKey: String?
     public var project: String
-    public var totals: RemoteStatsTotals
-    public var rows: [StatsRow]
-    public var truncated: Bool
+    public var projects: [RemoteStatsProject]
+    public var features: [RemoteStatsFeature]
+    public var hiddenPlanFeatures: Int
+
+    public init(
+        projectKey: String?,
+        project: String,
+        projects: [RemoteStatsProject],
+        features: [RemoteStatsFeature],
+        hiddenPlanFeatures: Int
+    ) {
+        self.projectKey = projectKey
+        self.project = project
+        self.projects = projects
+        self.features = features
+        self.hiddenPlanFeatures = hiddenPlanFeatures
+    }
+}
+
+/// Une somme de colonnes, calculée CÔTÉ CLIENT depuis un relevé : ce n'est pas un
+/// type du fil, le Mac ne l'envoie jamais.
+public struct RemoteStatsTotals: Equatable, Sendable {
+    public var input: Int
+    public var output: Int
+    public var turns: Int
+    public var durationMs: Double
+
+    public static let zero = RemoteStatsTotals(input: 0, output: 0, turns: 0, durationMs: 0)
+
+    public init(input: Int, output: Int, turns: Int, durationMs: Double) {
+        self.input = input
+        self.output = output
+        self.turns = turns
+        self.durationMs = durationMs
+    }
+}
+
+public extension RemoteStatsFeature {
+    /// Les totaux de la feature `elapsedMs` après la réception du relevé (S-5) :
+    /// la durée avance d'un milliseconde par milliseconde et par run VIVANT, sans
+    /// un octet de trafic ; les tokens et les tours ne changent pas (ils ne
+    /// bougent qu'à l'écriture d'une session, donc à un relevé).
+    func totals(elapsedMs: Double) -> RemoteStatsTotals {
+        let elapsed = elapsedMs.isFinite ? max(0, elapsedMs) : 0
+        return RemoteStatsTotals(
+            input: input,
+            output: output,
+            turns: turns,
+            durationMs: durationMs + Double(liveRuns) * elapsed
+        )
+    }
+}
+
+public extension RemoteStatsPayload {
+    /// Le total du projet : la somme des features LISTÉES (AC-3), au même instant.
+    func totals(elapsedMs: Double) -> RemoteStatsTotals {
+        features.reduce(into: RemoteStatsTotals.zero) { totals, feature in
+            let computed = feature.totals(elapsedMs: elapsedMs)
+            totals.input += computed.input
+            totals.output += computed.output
+            totals.turns += computed.turns
+            totals.durationMs += computed.durationMs
+        }
+    }
 }
 
 public struct RemoteDeviceRow: Codable, Equatable, Sendable {
