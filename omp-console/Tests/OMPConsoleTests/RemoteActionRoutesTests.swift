@@ -578,3 +578,246 @@ func closingAnotherProjectsConduiteIsConflict() async throws {
     #expect(closed.errorCode == "conflict")
     #expect(fixture.stack.project.state == .live, "la conduite vive n'est pas touchée")
 }
+
+// MARK: - S-8/S-9/S-10/S-11 : dépôts connus, conduite, escalades
+
+/// Un dépôt git jetable présent UNIQUEMENT comme lot dans le magasin (jamais
+/// cadré), une conduite armée par un host scripté, la pile distante complète.
+@MainActor
+private struct ConduiteFixture {
+    let store: StoreFixture
+    let stack: RemoteStack
+    let token: String
+    let transport: ScriptedRpcTransport
+    let repoRoot: String
+    let repoKey: String
+}
+
+@MainActor
+private func makeConduiteFixture() async throws -> ConduiteFixture {
+    let store = StoreFixture()
+    let repoRoot = store.root + "/depot"
+    try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
+    // Un LOT seul : ce dépôt n'est JAMAIS cadré (aucun projet dans le magasin).
+    store.publish(.lots, "\(fixtureId(0xD1)).json", object: lotObject(id: fixtureId(0xD1), repoRoot: repoRoot))
+
+    let transport = ScriptedRpcTransport()
+    transport.readyLine = projectReadyLine()
+    wireProjectAutoResponses(transport)
+    makeProjectTransportRenderOnClose(transport)
+    let project = makeProjectModel(host: makeScriptedProjectHost(transport), stateDir: store.root)
+    let stack = try await RemoteStack.make(stateDir: store.root, projectModel: project)
+    return ConduiteFixture(
+        store: store,
+        stack: stack,
+        token: try await stack.pair(),
+        transport: transport,
+        repoRoot: repoRoot,
+        repoKey: realProjectKey(repoRoot)
+    )
+}
+
+@MainActor
+@Test("conduite : un dépôt jamais cadré est accepté et l'état réduit porte son repoKey")
+func conduiteStartsOnANeverFramedRepo() async throws {
+    let fixture = try await makeConduiteFixture()
+    defer { fixture.stack.stop() }
+
+    // Avant : aucune conduite vive, donc pas d'identité dans l'état réduit.
+    let before = try await fixture.stack.call("GET", "/v1/conduite", token: fixture.token)
+    #expect(before.status == 200)
+    let idle = try before.json(RemoteConduiteStatePayload.self)
+    #expect(idle.state == "none")
+    #expect(idle.repoKey == nil)
+    #expect(idle.name == nil)
+    #expect(idle.repoRoot == nil)
+    #expect(idle.dialogs.isEmpty)
+
+    let started = try await fixture.stack.call(
+        "POST", "/v1/projects/\(fixture.repoKey)/conduite",
+        token: fixture.token,
+        json: ["name": "depuis l'app"]
+    )
+    #expect(started.status == 200, "POST → \(started.status) \(started.text)")
+    #expect(try started.json(RemoteConduitePayload.self).state == "live")
+
+    let live = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
+        .json(RemoteConduiteStatePayload.self)
+    #expect(live.state == "live")
+    #expect(live.repoKey == fixture.repoKey, "le client ne calcule jamais le repoKey")
+    #expect(live.name == "depuis l'app")
+    #expect(live.repoRoot == realpathOr(fixture.repoRoot))
+    #expect(live.status != nil, "la pastille vient de la même source que l'en-tête macOS")
+
+    // Fermeture sur l'IDENTITÉ VIVE : ce dépôt n'est pourtant dans aucun projet du
+    // magasin, la route ne doit donc PAS le chercher dans le magasin (S-10).
+    let closed = try await fixture.stack.call(
+        "DELETE", "/v1/projects/\(fixture.repoKey)/conduite",
+        token: fixture.token
+    )
+    #expect(closed.status == 200, "DELETE → \(closed.status) \(closed.text)")
+    #expect(try closed.json(RemoteConduitePayload.self).state == "closed")
+
+    let gone = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
+        .json(RemoteConduiteStatePayload.self)
+    #expect(gone.state == "closed")
+    #expect(gone.repoKey == nil)
+
+    // Un second DELETE est un 409 : plus aucune conduite vive.
+    let again = try await fixture.stack.call(
+        "DELETE", "/v1/projects/\(fixture.repoKey)/conduite",
+        token: fixture.token
+    )
+    #expect(again.status == 409, "second DELETE → \(again.status) \(again.text)")
+    #expect(again.errorCode == "conflict")
+}
+
+@MainActor
+@Test("conduite : un dépôt inconnu est un 404 et un nom blanc un 400")
+func conduiteRefusesUnknownRepoAndBlankName() async throws {
+    let fixture = try await makeConduiteFixture()
+    defer { fixture.stack.stop() }
+
+    let unknown = try await fixture.stack.call(
+        "POST", "/v1/projects/inconnu/conduite",
+        token: fixture.token,
+        json: ["name": "x"]
+    )
+    #expect(unknown.status == 404, "404 attendu, obtenu \(unknown.status) \(unknown.text)")
+    #expect(unknown.errorCode == "not_found")
+    #expect(unknown.errorMessage == "dépôt inconnu")
+
+    let blank = try await fixture.stack.call(
+        "POST", "/v1/projects/\(fixture.repoKey)/conduite",
+        token: fixture.token,
+        json: ["name": "   "]
+    )
+    #expect(blank.status == 400, "400 attendu, obtenu \(blank.status) \(blank.text)")
+    #expect(blank.errorCode == "bad_request")
+    #expect(fixture.stack.project.state == .none)
+}
+
+@MainActor
+@Test("escalades : les quatre formes atteignent la coque et une escalade périmée est un 409")
+func dialogAnswerRoutes() async throws {
+    let fixture = try await makeConduiteFixture()
+    defer { fixture.stack.stop() }
+    let started = try await fixture.stack.call(
+        "POST", "/v1/projects/\(fixture.repoKey)/conduite",
+        token: fixture.token,
+        json: ["name": "projet"]
+    )
+    #expect(started.status == 200)
+
+    // select : la file poussée porte l'escalade ENTIÈRE.
+    fixture.transport.emit(projectDialogLine(
+        id: "d-select",
+        method: "select",
+        extra: ["title": "Le plan", "options": ["Valider le plan", "Corriger le plan"]]
+    ))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-select" })
+    let pushed = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
+        .json(RemoteConduiteStatePayload.self)
+    #expect(pushed.dialogs.map(\.id) == ["d-select"])
+    #expect(pushed.dialogs.first?.method == .select)
+
+    // Un libellé hors des options est un 400, et l'escalade RESTE en file.
+    let outOfRange = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-select",
+        token: fixture.token,
+        json: ["kind": "value", "value": "Autre"]
+    )
+    #expect(outOfRange.status == 400, "400 attendu, obtenu \(outOfRange.status) \(outOfRange.text)")
+    #expect(outOfRange.errorCode == "bad_request")
+    #expect(fixture.stack.project.pendingDialog?.id == "d-select")
+
+    let selected = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-select",
+        token: fixture.token,
+        json: ["kind": "value", "value": "Corriger le plan"]
+    )
+    #expect(selected.status == 202, "select → \(selected.status) \(selected.text)")
+    #expect(projectField("value", in: fixture.transport.writtenCommands.last ?? "") == "Corriger le plan")
+
+    // editor : une valeur VIDE est ACCEPTÉE (parité `canAnswerDialog`).
+    fixture.transport.emit(projectDialogLine(id: "d-editor", method: "editor", extra: ["title": "Corrige", "prefill": "plan"]))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-editor" })
+    let empty = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-editor",
+        token: fixture.token,
+        json: ["kind": "value", "value": ""]
+    )
+    #expect(empty.status == 202, "editor → \(empty.status) \(empty.text)")
+
+    // confirm : `confirmed: false` envoie le refus.
+    fixture.transport.emit(projectDialogLine(id: "d-confirm", method: "confirm", extra: ["title": "Sûr ?"]))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-confirm" })
+    let declined = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-confirm",
+        token: fixture.token,
+        json: ["kind": "confirmed", "confirmed": false]
+    )
+    #expect(declined.status == 202)
+    #expect(projectJsonObject(fixture.transport.writtenCommands.last ?? "")?["confirmed"] as? Bool == false)
+
+    // input : une saisie blanche est un 400, une saisie réelle un 202.
+    fixture.transport.emit(projectDialogLine(id: "d-input", method: "input", extra: ["title": "Nom", "placeholder": "texte"]))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-input" })
+    let blank = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-input",
+        token: fixture.token,
+        json: ["kind": "value", "value": "   "]
+    )
+    #expect(blank.status == 400)
+    #expect(blank.errorMessage == "texte vide")
+    let typed = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-input",
+        token: fixture.token,
+        json: ["kind": "value", "value": "socle"]
+    )
+    #expect(typed.status == 202)
+
+    // Une escalade PÉRIMÉE (id qui n'est plus la tête) est un 409, avant tout acte.
+    fixture.transport.emit(projectDialogLine(id: "d-annule", method: "input", extra: ["title": "Dernier", "placeholder": "texte"]))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-annule" })
+    let stale = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-autre",
+        token: fixture.token,
+        json: ["kind": "cancelled"]
+    )
+    #expect(stale.status == 409, "409 attendu, obtenu \(stale.status) \(stale.text)")
+    #expect(stale.errorCode == "conflict")
+    #expect(stale.errorMessage == "l'escalade a changé depuis la demande")
+    #expect(fixture.stack.project.pendingDialog?.id == "d-annule", "l'escalade n'est pas consommée")
+
+    let cancelled = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-annule",
+        token: fixture.token,
+        json: ["kind": "cancelled"]
+    )
+    #expect(cancelled.status == 202)
+
+    // Un kind hors du vocabulaire est un 400.
+    fixture.transport.emit(projectDialogLine(id: "d-kind", method: "input", extra: ["title": "Encore", "placeholder": "texte"]))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-kind" })
+    let unknownKind = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-kind",
+        token: fixture.token,
+        json: ["kind": "autre"]
+    )
+    #expect(unknownKind.status == 400)
+    #expect(unknownKind.errorCode == "bad_request")
+    // Elle reste en file : on l'annule pour prouver que la file poussée se vide
+    // après CHAQUE réponse.
+    let cleanup = try await fixture.stack.call(
+        "POST", "/v1/conduite/dialogs/d-kind",
+        token: fixture.token,
+        json: ["kind": "cancelled"]
+    )
+    #expect(cleanup.status == 202)
+
+    // La file poussée est repartie à vide après chaque réponse.
+    let final = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
+        .json(RemoteConduiteStatePayload.self)
+    #expect(final.dialogs.isEmpty)
+}

@@ -9,6 +9,7 @@
 // n'élargit jamais le parent.
 
 import AppKit
+import ConsoleCore
 import SwiftUI
 
 struct MarkdownBlocksView: View {

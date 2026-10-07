@@ -176,11 +176,91 @@ public struct RemoteConduitePayload: Codable, Equatable, Sendable {
     public var state: String
 }
 
+/// Un dépôt connu de la coque (miroir de `remote.RemoteRepoRow`, S-8) : `repoKey`
+/// est CALCULÉ par la coque, jamais par le client.
+public struct RemoteRepoRow: Codable, Equatable, Sendable {
+    public var repoKey: String
+    public var repoRoot: String
+    public var name: String
+
+    public init(repoKey: String, repoRoot: String, name: String) {
+        self.repoKey = repoKey
+        self.repoRoot = repoRoot
+        self.name = name
+    }
+}
+
+/// La liste des dépôts connus de la coque (S-8).
+public struct RemoteReposPayload: Codable, Equatable, Sendable {
+    public var rows: [RemoteRepoRow]
+
+    public init(rows: [RemoteRepoRow]) {
+        self.rows = rows
+    }
+}
+
+/// L'état de session RÉDUIT de la conduite (S-11, miroir de
+/// `remote.RemoteConduiteStatePayload`) : la file d'escalades entière, l'identité
+/// quand elle est connue, la pastille `status` et le `state` qui la classe.
+public struct RemoteConduiteStatePayload: Codable, Equatable, Sendable {
+    public var state: String
+    /// L'identité VIVE de la conduite (S-1/S-8) : `nil` quand `state` est
+    /// `"none"` ou `"closed"` — le client ne calcule jamais ce `repoKey`.
+    public var repoKey: String?
+    public var name: String?
+    public var repoRoot: String?
+    public var status: ConsoleStatus?
+    public var dialogs: [RpcDialogRequest]
+
+    public init(
+        state: String,
+        repoKey: String? = nil,
+        name: String? = nil,
+        repoRoot: String? = nil,
+        status: ConsoleStatus? = nil,
+        dialogs: [RpcDialogRequest] = []
+    ) {
+        self.state = state
+        self.repoKey = repoKey
+        self.name = name
+        self.repoRoot = repoRoot
+        self.status = status
+        self.dialogs = dialogs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case state, repoKey, name, repoRoot, status, dialogs
+    }
+
+    /// Décodage TOLÉRANT à une coque plus ancienne : seule `state` est exigée, la
+    /// file absente vaut vide (le client ignore ce qu'il ne comprend pas, sans
+    /// couper le flux). L'encodage, lui, reste synthétisé (mêmes clés que la coque).
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        state = try container.decode(String.self, forKey: .state)
+        repoKey = try container.decodeIfPresent(String.self, forKey: .repoKey)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
+        repoRoot = try container.decodeIfPresent(String.self, forKey: .repoRoot)
+        status = try container.decodeIfPresent(ConsoleStatus.self, forKey: .status)
+        dialogs = try container.decodeIfPresent([RpcDialogRequest].self, forKey: .dialogs) ?? []
+    }
+}
+
 /// Les statuts requis d'une PR, miroir de la coque.
 public enum RequiredCheck: String, CaseIterable, Codable, Sendable {
     case ubuntu = "check (ubuntu-latest)"
     case macos = "check (macos-latest)"
     case releaseSimulation = "release-simulation"
+
+    /// L'identifiant d'accessibilité et de test (miroir de `project.RequiredCheck.id`),
+    /// jamais le nom GitHub, qui porte espaces et parenthèses.
+    public var id: String {
+        switch self {
+        case .ubuntu: "ubuntu"
+        case .macos: "macos"
+        case .releaseSimulation: "release-simulation"
+        }
+    }
 }
 
 /// L'état affiché d'un statut de PR.
@@ -189,6 +269,16 @@ public enum PRCheckState: String, Codable, Sendable {
     case red
     case pending
     case ignored
+
+    /// Le mot affiché, lu de `core.PRCheckText` (miroir de `project.PRCheckState.label`).
+    public var label: String {
+        switch self {
+        case .green: PRCheckText.green
+        case .red: PRCheckText.red
+        case .pending: PRCheckText.pending
+        case .ignored: PRCheckText.ignored
+        }
+    }
 }
 
 /// L'âge d'une connaissance de PR.
@@ -289,6 +379,21 @@ public struct RemoteFeatureRequest: Codable, Equatable, Sendable {
 
 public struct RemoteConduiteRequest: Codable, Equatable, Sendable {
     public var name: String
+}
+
+/// La réponse à une escalade de la conduite (S-4/S-5, miroir de
+/// `remote.RemoteDialogAnswerRequest`) : `value` pour `editor`/`select`/`input`,
+/// `confirmed` pour `confirm`, `cancelled` pour une annulation.
+public struct RemoteDialogAnswerRequest: Codable, Equatable, Sendable {
+    public var kind: String
+    public var value: String?
+    public var confirmed: Bool?
+
+    public init(kind: String, value: String? = nil, confirmed: Bool? = nil) {
+        self.kind = kind
+        self.value = value
+        self.confirmed = confirmed
+    }
 }
 
 public struct RemoteMergeRequest: Codable, Equatable, Sendable {

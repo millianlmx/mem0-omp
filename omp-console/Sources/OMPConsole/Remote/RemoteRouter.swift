@@ -72,6 +72,8 @@ final class RemoteRouter {
         .of("GET", "v1/memory/search", "memory.search"),
         .of("GET", "v1/memory/graph", "memory.graph"),
         .of("GET", "v1/stream", "stream"),
+        .of("GET", "v1/repos", "repos"),
+        .of("GET", "v1/conduite", "conduite.get"),
         .of("POST", "v1/pair", "pair"),
         .of("POST", "v1/cards/:id/answer", "card.answer"),
         .of("POST", "v1/cards/:id/reply", "card.reply"),
@@ -80,6 +82,7 @@ final class RemoteRouter {
         .of("POST", "v1/cards/:id/resume", "card.resume"),
         .of("POST", "v1/cards/:id/stop", "card.stop"),
         .of("POST", "v1/features", "feature.launch"),
+        .of("POST", "v1/conduite/dialogs/:id", "conduite.dialog"),
         .of("POST", "v1/projects/:repoKey/conduite", "conduite.start"),
         .of("DELETE", "v1/projects/:repoKey/conduite", "conduite.close"),
         .of("GET", "v1/session", "hosted.get"),
@@ -167,6 +170,10 @@ final class RemoteRouter {
             return try json(reads.devices())
         case "models":
             return try json(await reads.models())
+        case "repos":
+            return try json(RemoteReposPayload(rows: actions.knownRepos()))
+        case "conduite.get":
+            return try json(actions.conduite())
         case "memory":
             return try json(await reads.memory(scope: request.query["scope"], limit: request.query["limit"]))
         case "memory.search":
@@ -211,6 +218,8 @@ final class RemoteRouter {
             return try json(try await actions.startConduite(repoKey: parameters["repoKey"] ?? "", body: request.body))
         case "conduite.close":
             return try json(try await actions.closeConduite(repoKey: parameters["repoKey"] ?? ""))
+        case "conduite.dialog":
+            return try json(try await actions.answerDialog(id: parameters["id"] ?? "", body: request.body), code: 202)
         case "hosted.get":
             return try json(actions.hostedSession())
         case "hosted.prompt":

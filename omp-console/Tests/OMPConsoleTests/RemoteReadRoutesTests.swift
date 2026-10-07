@@ -306,4 +306,55 @@ struct RemoteReadRoutesTests {
         #expect(contract.content == nil)
         #expect(contract.reason != nil)
     }
+
+    // MARK: - S-8 : les dépôts connus
+
+    @Test("les dépôts connus sont triés, dédoublonnés et filtrés par la règle racine git")
+    func knownReposAreSortedDedupedAndGitFiltered() async throws {
+        let fixture = StoreFixture()
+        // Deux racines git RÉELLES (le filtre exige `<chemin>/.git`).
+        let alpha = joinPath(fixture.root, "alpha")
+        let beta = joinPath(fixture.root, "beta")
+        let plain = joinPath(fixture.root, "plain")
+        for path in [alpha, beta] {
+            try FileManager.default.createDirectory(atPath: joinPath(path, ".git"), withIntermediateDirectories: true)
+        }
+        try FileManager.default.createDirectory(atPath: plain, withIntermediateDirectories: true)
+
+        // alpha n'a qu'un LOT (jamais cadré) ; beta qu'un PROJET ; alpha EST AUSSI un
+        // projet pour prouver le dédoublonnage ; plain n'est pas une racine git.
+        fixture.publish(.lots, "\(fixtureId(0xB1)).json", object: lotObject(id: fixtureId(0xB1), repoRoot: alpha))
+        fixture.publish(.lots, "\(fixtureId(0xB2)).json", object: lotObject(id: fixtureId(0xB2), repoRoot: plain))
+        fixture.publish(.projects, "\(fixtureId(0xB3)).json", object: projectObject(
+            repoKey: ProjectPaths.key(forRoot: beta),
+            repoRoot: beta
+        ))
+        fixture.publish(.projects, "\(fixtureId(0xB4)).json", object: projectObject(
+            repoKey: ProjectPaths.key(forRoot: alpha),
+            repoRoot: alpha
+        ))
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/repos", token: token)
+        #expect(reply.status == 200)
+        let payload = try reply.json(RemoteReposPayload.self)
+        #expect(payload.rows.map(\.repoRoot) == [realpathOr(alpha), realpathOr(beta)])
+        #expect(payload.rows.map(\.name) == ["alpha", "beta"])
+        #expect(payload.rows.map(\.repoKey) == [ProjectPaths.key(forRoot: alpha), ProjectPaths.key(forRoot: beta)])
+    }
+
+    @Test("un magasin sans dépôt connu rend une liste vide, jamais une erreur")
+    func noKnownRepoIsAnEmptyList() async throws {
+        let fixture = StoreFixture()
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/repos", token: token)
+        #expect(reply.status == 200)
+        #expect(try reply.json(RemoteReposPayload.self).rows.isEmpty)
+    }
 }

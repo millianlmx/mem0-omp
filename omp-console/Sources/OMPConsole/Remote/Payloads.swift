@@ -171,6 +171,18 @@ struct RemoteDevicesPayload: Codable, Equatable {
     var devices: [RemoteDeviceRow]
 }
 
+/// Un dépôt connu de la coque (S-8) : sa clé (que le client ne calcule jamais),
+/// son chemin réel et son nom.
+struct RemoteRepoRow: Codable, Equatable, Sendable {
+    let repoKey: String
+    let repoRoot: String
+    let name: String
+}
+
+struct RemoteReposPayload: Codable, Equatable, Sendable {
+    let rows: [RemoteRepoRow]
+}
+
 // MARK: - Mémoire
 
 struct RemoteMemoryRow: Codable, Equatable {
@@ -239,6 +251,18 @@ struct RemotePairPayload: Codable, Equatable {
 
 struct RemoteConduitePayload: Codable, Equatable {
     var state: String
+}
+
+/// L'état réduit de la conduite (S-11, S-9) : le vocabulaire de `ConduiteState`,
+/// la pastille de session, l'identité quand elle existe, et la file d'escalades
+/// ENTIÈRE (jamais un delta). Le miroir de dialogue est celui de `GET /v1/session`.
+struct RemoteConduiteStatePayload: Codable, Equatable, Sendable {
+    let state: String          // "none"|"starting"|"live"|"closing"|"closed"
+    let repoKey: String?       // identité vive ; nil quand state ∈ {"none","closed"}
+    let name: String?
+    let repoRoot: String?
+    let status: ConsoleStatus? // ConsoleCore, présent des deux côtés
+    let dialogs: [RpcDialogRequest] // file ENTIÈRE à chaque fois, jamais un delta
 }
 
 struct RemotePullRequestsPayload: Codable, Equatable {
@@ -310,6 +334,14 @@ struct RemoteFeatureRequest: Decodable, Equatable {
 
 struct RemoteConduiteRequest: Decodable, Equatable {
     var name: String
+}
+
+/// Le corps de `POST /v1/conduite/dialogs/{id}` (S-4, S-5) : `kind` vaut `value`,
+/// `confirmed` ou `cancelled` ; `value`/`confirmed` ne vivent que pour leur kind.
+struct RemoteDialogAnswerRequest: Codable, Equatable, Sendable {
+    let kind: String
+    let value: String?
+    let confirmed: Bool?
 }
 
 struct RemoteMergeRequest: Decodable, Equatable {

@@ -622,6 +622,7 @@ struct ProjectPlanRowView: View {
             }
         }
     }
+
 }
 
 // MARK: - Volet « Document »

@@ -172,7 +172,7 @@ public enum KanbanCardPresentation {
 
     /// La forme canonique d'une paire : `req+specs <A> · impl+review <B>`.
     public static func modelsText(_ models: ModelSlots) -> String {
-        "\(modelLine(KanbanText.modelReqSpecs, models.reqSpecs)) · \(modelLine(KanbanText.modelImplReview, models.implReview))"
+        KanbanText.modelsLine(models)
     }
 
     /// L'étape et l'avancement n'ont de sens que pour une feature vivante.

@@ -63,7 +63,7 @@ final class RemoteServiceModel: ObservableObject {
         self.makeListener = factory
         self.listener = factory { _, _ in .respond(HTTPResponse.error(.notFound("route inconnue"))) }
 
-        let hub = RemoteStreamHub(storeHub: storeHub, registry: self.registry, session: session, clock: clock)
+        let hub = RemoteStreamHub(storeHub: storeHub, registry: self.registry, session: session, project: project, clock: clock)
         let reads = RemoteReads(
             hub: storeHub,
             registry: self.registry,

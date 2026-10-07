@@ -1,6 +1,7 @@
 // Le rendu du contenu de la section « Fichiers » (S-18 R5), figé sans rendre de
 // vue : le Markdown découpé en blocs, le code découpé en jetons colorables.
 
+import ConsoleCore
 import Foundation
 import Testing
 

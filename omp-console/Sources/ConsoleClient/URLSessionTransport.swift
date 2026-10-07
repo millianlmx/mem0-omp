@@ -92,10 +92,20 @@ public struct URLSessionTransport: ClientTransport {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 var buffer = Data()
+                // Coalescence bornée : `AsyncBytes` livre octet par octet, donc on
+                // tamponne — mais une trame SSE COMPLÈTE (terminée par une ligne
+                // vide `\n\n`) est livrée sans attendre. Sans cette borne, une
+                // petite trame (< 256 octets) resterait dans le tampon jusqu'à ce
+                // qu'un autre évènement le pousse au-delà du seuil : une escalade
+                // de projet, publiée alors que le pilote attend précisément une
+                // réponse, n'apparaîtrait qu'au battement de cœur suivant (15 s).
+                var previousWasNewline = false
                 do {
                     for try await byte in bytes {
                         buffer.append(byte)
-                        if buffer.count >= 256 {
+                        let frameEnd = byte == 0x0A && previousWasNewline
+                        previousWasNewline = byte == 0x0A
+                        if frameEnd || buffer.count >= 256 {
                             continuation.yield(buffer)
                             buffer.removeAll(keepingCapacity: true)
                         }

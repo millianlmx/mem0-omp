@@ -786,6 +786,15 @@ final class ProjectConsoleModel: ObservableObject {
         selectedOptionIndex = nil
     }
 
+    /// Répond à l'escalade `dialogId` SI et seulement si elle est encore la tête de
+    /// la file. Le contrôle et l'écriture sont dans la MÊME exécution synchrone :
+    /// la file ne peut pas glisser entre les deux (S-4, S-5).
+    func answer(dialogId: String, response: RpcDialogResponse) -> Bool {
+        guard host.dialogQueue.first?.id == dialogId else { return false }
+        answer(response)
+        return true
+    }
+
     private func answer(_ response: RpcDialogResponse) {
         do {
             try host.answer(response)

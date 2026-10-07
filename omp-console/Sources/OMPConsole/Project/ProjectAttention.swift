@@ -6,6 +6,7 @@
 // qui rend tenable l'invariant « UNE seule demande active à la fois ».
 
 import AppKit
+import ConsoleCore
 import Foundation
 
 /// Deux intensités : `critical` pour une attente de l'utilisateur, `informational`

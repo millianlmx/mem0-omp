@@ -4,30 +4,41 @@
 // Aucune règle du pilote n'est réimplémentée : l'état d'un segment se déduit de sa
 // position par rapport à `current`, l'état d'une feature est le vocabulaire du
 // pilote, et rien d'autre.
+//
+// Cible PARTAGÉE macOS/iOS : ce découpage est consommé tel quel par l'app iOS
+// (S-1), donc aucune règle du plan n'est recalculée côté app.
 
-import ConsoleCore
 import Foundation
 
 /// Une feature prête à afficher : son libellé d'état, sa PR, ses modèles.
-struct ProjectPlanRow: Equatable, Sendable {
-    let slug: String
-    let stateLabel: String
-    let prUrl: String?
+public struct ProjectPlanRow: Equatable, Sendable {
+    public let slug: String
+    public let stateLabel: String
+    public let prUrl: String?
     /// La forme canonique des deux modèles : `req+specs <A> · impl+review <B>`,
     /// ou `nil` quand la feature n'en porte aucun.
-    let models: String?
-    let intention: String
+    public let models: String?
+    public let intention: String
     /// Le motif d'une feature retirée (S-8 : « listées à part avec leur motif »).
-    let removedReason: String?
+    public let removedReason: String?
+
+    init(slug: String, stateLabel: String, prUrl: String?, models: String?, intention: String, removedReason: String?) {
+        self.slug = slug
+        self.stateLabel = stateLabel
+        self.prUrl = prUrl
+        self.models = models
+        self.intention = intention
+        self.removedReason = removedReason
+    }
 }
 
 /// L'état d'un segment, déduit de `Project.current`.
-enum ProjectSegmentState: Equatable, Sendable {
+public enum ProjectSegmentState: Equatable, Sendable {
     case merged
     case current
     case upcoming
 
-    var label: String {
+    public var label: String {
         switch self {
         case .merged: ProjectViewText.segmentMerged
         case .current: ProjectViewText.segmentCurrent
@@ -37,16 +48,24 @@ enum ProjectSegmentState: Equatable, Sendable {
 }
 
 /// Un segment prêt à afficher : ses features vivantes, ses features retirées.
-struct ProjectPlanSection: Equatable, Sendable {
-    let index: Int
-    let name: String
-    let state: ProjectSegmentState
-    let features: [ProjectPlanRow]
-    let removed: [ProjectPlanRow]
+public struct ProjectPlanSection: Equatable, Sendable {
+    public let index: Int
+    public let name: String
+    public let state: ProjectSegmentState
+    public let features: [ProjectPlanRow]
+    public let removed: [ProjectPlanRow]
+
+    init(index: Int, name: String, state: ProjectSegmentState, features: [ProjectPlanRow], removed: [ProjectPlanRow]) {
+        self.index = index
+        self.name = name
+        self.state = state
+        self.features = features
+        self.removed = removed
+    }
 }
 
 /// Le libellé d'état d'une feature, dans le vocabulaire commun de l'app (S-8).
-func featureStateLabel(_ status: ProjectFeatureStatus, failure: ProjectFailure?) -> String {
+public func featureStateLabel(_ status: ProjectFeatureStatus, failure: ProjectFailure?) -> String {
     if status == .failed {
         guard let reason = failure?.reason, !reason.isEmpty else { return ProjectViewText.featureFailed }
         return "\(ProjectViewText.featureFailed) — \(reason)"
@@ -62,7 +81,7 @@ func featureStateLabel(_ status: ProjectFeatureStatus, failure: ProjectFailure?)
 }
 
 /// L'en-tête d'état : « Terminé », sinon « <En cours|Arrêté> — segment i sur N · nom ».
-func projectStatusLine(of project: Project) -> String {
+public func projectStatusLine(of project: Project) -> String {
     if project.status == .done { return ProjectViewText.statusDone }
     let word = project.status == .running ? ProjectViewText.statusRunning : ProjectViewText.statusStopped
     let name = project.segments[project.current].name
@@ -71,19 +90,19 @@ func projectStatusLine(of project: Project) -> String {
 
 /// « m features fusionnées sur n » : `m` = features fusionnées, `n` = features non
 /// retirées.
-func projectProgressLine(of project: Project) -> String {
+public func projectProgressLine(of project: Project) -> String {
     let counts = projectProgressCounts(of: project)
     return ProjectViewText.progress(merged: counts.merged, total: counts.total)
 }
 
 /// Le couple (fusionnées, non retirées), pour la bannière de fin (S-10).
-func projectProgressCounts(of project: Project) -> (merged: Int, total: Int) {
+public func projectProgressCounts(of project: Project) -> (merged: Int, total: Int) {
     let all = project.segments.flatMap(\.features)
     return (all.filter { $0.status == .merged }.count, all.filter { $0.status != .removed }.count)
 }
 
 /// Les sections du plan, dans l'ordre du plan.
-func projectPlanSections(of project: Project) -> [ProjectPlanSection] {
+public func projectPlanSections(of project: Project) -> [ProjectPlanSection] {
     project.segments.enumerated().map { index, segment in
         let state: ProjectSegmentState = index < project.current
             ? .merged
@@ -109,7 +128,7 @@ private func row(for feature: ProjectFeature) -> ProjectPlanRow {
             legacy: feature.model,
             reqSpecs: feature.modelReqSpecs,
             implReview: feature.modelImplReview
-        ).map(KanbanCardPresentation.modelsText),
+        ).map(KanbanText.modelsLine),
         intention: feature.intention,
         removedReason: feature.removedReason
     )

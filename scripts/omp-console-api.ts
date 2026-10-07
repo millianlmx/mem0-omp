@@ -87,6 +87,9 @@ commandes :
   session
   prs <repoKey>
   merge <repoKey> <slug> --confirm <headOid>
+  repos                                            dépôts connus de la coque
+  conduite-state                                   état réduit de la conduite
+  answer-dialog <id> (--value <v>|--confirm|--decline|--cancel)
   forget                                           supprime l'appairage du trousseau
 
 options :
@@ -588,6 +591,46 @@ async function cmdMerge(pairing: Pairing | null, rest: string[]): Promise<void> 
   console.log(`fusionnée : #${data["number"] ?? "?"} ${data["url"] ?? ""}`.trim());
 }
 
+async function cmdRepos(pairing: Pairing | null): Promise<void> {
+  const data = asRecord(await callJson("GET", "/v1/repos", { pairing }));
+  const rows = asArray(data["rows"]);
+  console.log(`dépôts : ${rows.length}`);
+  for (const row of rows) {
+    const repo = asRecord(row);
+    console.log(`  ${repo["name"] ?? "?"} — ${repo["repoRoot"] ?? "?"} (${repo["repoKey"] ?? "?"})`);
+  }
+}
+
+async function cmdConduiteState(pairing: Pairing | null): Promise<void> {
+  const data = asRecord(await callJson("GET", "/v1/conduite", { pairing }));
+  const status = asRecord(data["status"]);
+  const pill = typeof status["text"] === "string" ? ` (${status["text"]})` : "";
+  console.log(`conduite : ${data["state"] ?? "?"}${pill}`);
+  if (typeof data["name"] === "string") console.log(`projet : ${data["name"]}`);
+  if (typeof data["repoRoot"] === "string") console.log(`dépôt : ${data["repoRoot"]}`);
+  console.log(`escalades : ${countOf(data["dialogs"])}`);
+}
+
+async function cmdAnswerDialog(pairing: Pairing | null, rest: string[]): Promise<void> {
+  const id = rest[0];
+  if (!id) {
+    console.log("id de l'escalade manquant");
+    process.exit(2);
+  }
+  const value = flag("value");
+  let body: Record<string, unknown>;
+  if (value !== undefined) body = { kind: "value", value };
+  else if (flags["confirm"] === true) body = { kind: "confirmed", confirmed: true };
+  else if (flags["decline"] === true) body = { kind: "confirmed", confirmed: false };
+  else if (flags["cancel"] === true) body = { kind: "cancelled" };
+  else {
+    console.log("--value, --confirm, --decline ou --cancel est requis");
+    process.exit(2);
+  }
+  await callJson("POST", `/v1/conduite/dialogs/${encodeURIComponent(id)}`, { pairing, body });
+  console.log("accepté");
+}
+
 // ---------------------------------------------------------------------------
 // 7. Aiguillage
 // ---------------------------------------------------------------------------
@@ -704,6 +747,15 @@ switch (command) {
     break;
   case "merge":
     await cmdMerge(pairing, rest);
+    break;
+  case "repos":
+    await cmdRepos(pairing);
+    break;
+  case "conduite-state":
+    await cmdConduiteState(pairing);
+    break;
+  case "answer-dialog":
+    await cmdAnswerDialog(pairing, rest);
     break;
   case "forget":
     if (deleteToken(base.account)) console.log("appairage supprimé");
