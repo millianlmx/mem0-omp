@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 5/6 « Lire la mémoire et les sessions »
-**Avancement** : 10/13 feature(s) fusionnée(s)
+**Statut** : en cours — segment 6/6 « Le graphe, et parler à OMP »
+**Avancement** : 11/13 feature(s) fusionnée(s)
 
 ## But
 
@@ -43,15 +43,15 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 | 2 | `ios-pipelines` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/75 | opencode-go/deepseek-v4.1-flash | La section Pipelines sur iOS : l'ardoise des features et runs de tous les dépôts (les cinq voies, les onze colonnes, les cartes) et ses gestes — répondre, valider un jalon, lancer, arrêter, reprendre, ouvrir la PR, fusionner avec confirmation — plus la feuille « Nouvelle feature… » (dépôt, modèles, titre, besoin). Rien n'est inventé : ce que la carte montre vient du magasin, ce que le geste fait vient de l'API de la coque macOS. La réussite se prouve en lançant une feature depuis l'iPad et en la voyant avancer jusqu'à la PR, sans toucher au Mac. |
 | 3 | `ios-projet` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/74 | opencode-go/deepseek-v4.1-flash | La section Projet sur iOS : le plan (segments, features, états), le suivi des PR du projet, les escalades à trancher, et « Piloter un projet… » — démarrer un cadrage, valider le plan, répondre aux questions depuis l'iPhone ou l'iPad. Le document PROJECT.md et les règles du plan restent la vérité, l'app ne les réimplémente pas. La réussite se prouve en conduisant un vrai projet du cadrage à sa première PR depuis l'iPad. |
 
-### Segment 5 — Lire la mémoire et les sessions (en cours)
+### Segment 5 — Lire la mémoire et les sessions (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
 | 1 | `ios-memoire` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/77 | opencode-go/deepseek-v4.1-flash | La section Mémoire sur iOS : recherche dans les souvenirs, sommaire du projet, lecture d'un souvenir, état du service et de la pile — en s'adressant au Mac qui relaie mem0-http, comme la coque macOS. La recherche est filtrée comme en session et l'indisponibilité du service est dite clairement au lieu d'être masquée. La réussite se prouve par une recherche qui ramène les mêmes souvenirs que l'outil en session, et par l'état dégradé affiché sans masquer la cause. |
-| 2 | `ios-sessions` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/79 | opencode-go/deepseek-v4.1-flash | La section Sessions sur iOS : le sélecteur de toutes les sessions OMP (par jour, par projet) et la visionneuse — messages, pensées, appels d'outil repliables, diffs colorés, question ask en évidence, suivi d'un run vivant sans recharger le fichier entier. Le rendu de conversation et le suivi direct sont posés ici comme composants iOS réutilisables par la section Session OMP. La réussite se prouve par une session de pipeline réelle affichée avec les mêmes faits que la coque macOS, et une session en cours qui se met à jour en direct. |
+| 2 | `ios-sessions` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/79 | opencode-go/deepseek-v4.1-flash | La section Sessions sur iOS : le sélecteur de toutes les sessions OMP (par jour, par projet) et la visionneuse — messages, pensées, appels d'outil repliables, diffs colorés, question ask en évidence, suivi d'un run vivant sans recharger le fichier entier. Le rendu de conversation et le suivi direct sont posés ici comme composants iOS réutilisables par la section Session OMP. La réussite se prouve par une session de pipeline réelle affichée avec les mêmes faits que la coque macOS, et une session en cours qui se met à jour en direct. |
 | 3 | `ios-statistiques` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/78 | opencode-go/deepseek-v4.1-flash | La section Statistiques sur iOS : la consommation des runs (tokens, modèle, durée, tours) agrégée par feature et par projet, lue par l'API à partir des sessions et du magasin. Les totaux doivent être ceux de la coque macOS pour le même état. La réussite se prouve sur une feature réelle dont les totaux égalent la somme de ses sessions, et sur un agrégat de projet égal à la somme de ses features. |
 
-### Segment 6 — Le graphe, et parler à OMP (à venir)
+### Segment 6 — Le graphe, et parler à OMP (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
