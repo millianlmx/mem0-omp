@@ -109,12 +109,16 @@ test("client-distant-ios/AC-19 : la CI compile l'iOS et joue les tests hermétiq
 test("client-distant-ios/AC-20 : le scénario manuel et sa recette gated sont en place", () => {
   // Le scénario vit dans le contrat `.omp/pipeline/contract.md`, un artefact
   // GITIGNORÉ : une copie git (`git worktree`, la simulation de release) et la CI
-  // ne le portent pas. On l'éprouve donc QUAND il est là, et la preuve TRACKÉE
-  // (la recette gated) est exigée sans condition.
+  // ne le portent pas — et un worktree VOISIN porte le contrat d'une AUTRE
+  // feature. On n'éprouve donc les marqueurs que quand le contrat est bien le
+  // nôtre : il se nomme lui-même. La preuve TRACKÉE (la recette gated) est
+  // exigée sans condition.
   if (fs.existsSync(CONTRACT)) {
     const contract = fs.readFileSync(CONTRACT, "utf8");
-    for (const marker of ["Mode avion ACTIVÉ", "Jeton révoqué", "Effacer", "appairage"]) {
-      assert.ok(contract.includes(marker), `le contrat doit porter le marqueur du scénario « ${marker} »`);
+    if (contract.includes("feature `client-distant-ios`")) {
+      for (const marker of ["Mode avion ACTIVÉ", "Jeton révoqué", "Effacer", "appairage"]) {
+        assert.ok(contract.includes(marker), `le contrat doit porter le marqueur du scénario « ${marker} »`);
+      }
     }
   }
 
@@ -171,9 +175,18 @@ test("client-distant-ios/AC-21 : la feuille de connexion n'emploie que des compo
     assert.match(source, pattern, `la surface doit employer le composant système ${name}`);
   }
 
-  // (b) Aucun composant visuel maison n'est introduit.
+  // (b) Aucun composant visuel maison dans les surfaces de CETTE feature : le
+  //     reste de l'app appartient aux autres features — le kit de `design-ios`
+  //     porte l'habillage, `ViewModifier` privés compris, et son contrat le lui
+  //     réserve. La liste blanche ci-dessus reste, elle, globale.
+  const own = ["ConnectionSheet.swift", "ConnectionText.swift"]
+    .map((name) => path.join(IOS_APP, name))
+    .filter((file) => fs.existsSync(file))
+    .map((file) => code(file))
+    .join("\n");
+  assert.ok(own.length > 0, "les sources de la feuille de connexion doivent exister");
   assert.doesNotMatch(
-    source,
+    own,
     /\bShape\b|\bPath\s*\(|\bCanvas\b|\bViewModifier\b|\bButtonStyle\b|\bLabelStyle\b/,
     "aucun composant visuel maison (Shape, Path(, Canvas, ViewModifier, ButtonStyle, LabelStyle)",
   );

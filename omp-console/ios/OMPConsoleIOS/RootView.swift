@@ -9,13 +9,19 @@ import SwiftUI
 /// pousse l'écran de la section, et le bouton retour du système revient à la
 /// liste. Aucune barre d'onglets, aucun `NavigationStack` racine.
 ///
-/// La racine POSSÈDE le modèle du client distant (`ConsoleClientModel.live()`,
+/// Elle porte le crochet de recette de l'état d'écran (S-3). La rotation, elle,
+/// n'est PAS pilotée par l'app : `simctl` n'a aucune sous-commande pour tourner
+/// un appareil, l'app déclare simplement portrait + paysages pour rester
+/// utilisable en paysage sur un vrai iPad (S-5).
+///
+/// La racine POSSÈDE aussi le modèle du client distant (`ConsoleClientModel.live()`,
 /// créé UNE fois) : elle démarre la découverte et la connexion, présente la
 /// feuille de connexion au lancement quand aucune section n'a été demandée par
 /// `-section` et que l'app n'est pas connectée, et la rouvre par une
 /// `ToolbarItem`.
 struct RootView: View {
     @State private var selection: ConsoleSection?
+    @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
     @State private var showConnection: Bool
 
@@ -23,8 +29,13 @@ struct RootView: View {
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
 
-    init(selection: ConsoleSection = .home, autoPresentConnection: Bool = true) {
+    init(
+        selection: ConsoleSection = .home,
+        state: IOSScreenState = .ready,
+        autoPresentConnection: Bool = true
+    ) {
         _selection = State(initialValue: selection)
+        _state = State(initialValue: state)
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -43,7 +54,7 @@ struct RootView: View {
                 }
             }
         } detail: {
-            SectionPlaceholderView(section: selection ?? .home)
+            IOSSectionView(section: selection ?? .home, state: state)
         }
         .sheet(isPresented: $showConnection) {
             ConnectionSheet(model: client)

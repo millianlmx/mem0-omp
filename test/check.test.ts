@@ -43,17 +43,14 @@ const NESTED_ENV = {
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
 // racine de types jetable, le stockage vectoriel local (des dizaines de Mo) et
-// le fichier de test qui recopierait la copie.
+// le fichier de test qui recopierait la copie. Les racines de build Swift
+// (`swift build --scratch-path .build-<quoi>`) sont reconnues par PRÉFIXE : un
+// scratch inconnu pèse des centaines de Mo et ne doit jamais être recopié.
 const EXCLUDED_DIRS: Record<string, true> = {
   ".git": true,
   node_modules: true,
   ".typecheck": true,
   qdrant_storage: true,
-  ".build": true,
-  ".build-app": true,
-  ".build-run": true,
-  ".build-tests": true,
-  ".build-ios": true,
   build: true,
 };
 const RECURSIVE_FILE = path.join("test", "check.test.ts");
@@ -75,7 +72,9 @@ function copyRepo(onlyTest?: string): string {
     filter: (src) => {
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
-      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true)) return false;
+      if (rel.split(path.sep).some((segment) => EXCLUDED_DIRS[segment] === true || segment.startsWith(".build"))) {
+        return false;
+      }
       if (rel === RECURSIVE_FILE) return false;
       if (only !== null && rel.startsWith(`test${path.sep}`) && rel !== only) return false;
       return true;

@@ -29,6 +29,10 @@ public enum KanbanText {
     public static let sendMessage = "Envoyer un message…"
     public static let diagnosticTitle = "Problèmes détectés"
     public static let emptyHint = "Lancez une feature avec « Nouvelle feature… » (⌘N)."
+    /// L'état vide de la section Pipelines, quand aucune pipeline n'existe : le
+    /// même mot pour les deux coques (l'iOS ne peut pas afficher `emptyHint`, qui
+    /// nomme un raccourci macOS).
+    public static let noPipeline = "Aucune pipeline pour l'instant."
 
     /// Les cinq étapes de l'avancement, dans l'ordre de la pipeline.
     public static let progressSteps = ["Besoins", "Specs", "Implémentation", "Revue", "PR"]

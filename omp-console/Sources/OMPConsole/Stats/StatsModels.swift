@@ -82,7 +82,7 @@ enum StatsText {
         KanbanBoardState.absentText(dir: dir)
     }
 
-    static let noProject = "Les statistiques apparaîtront dès qu'un projet sera piloté."
+    static let noProject = StatsPresentation.noProject
 
     static let empty = "Aucune donnée pour ce projet"
 
@@ -91,7 +91,7 @@ enum StatsText {
     }
 
     static let noStatsTitle = "Aucune statistique"
-    static let noProjectTitle = "Aucun projet"
+    static let noProjectTitle = StatsPresentation.noProjectTitle
 
     /// Les tuiles.
     static let sentTokens = "Tokens envoyés"

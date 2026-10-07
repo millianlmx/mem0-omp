@@ -181,8 +181,9 @@ enum KanbanBoardState: Sendable, Equatable {
     static let loadingText = "Chargement des pipelines…"
 
     /// Le message d'une section sans pipeline : magasin absent ou vide se disent
-    /// de la même façon — l'emplacement du magasin est un détail technique.
-    static let noPipelineText = "Aucune pipeline pour l'instant."
+    /// de la même façon — l'emplacement du magasin est un détail technique. Le
+    /// mot vit dans le noyau partagé (`KanbanText.noPipeline`, S-4).
+    static let noPipelineText = KanbanText.noPipeline
 
     /// Le message « magasin absent ». `dir` reste dans la signature (les
     /// Statistiques l'appellent avec leur dossier) mais n'est plus affiché.
