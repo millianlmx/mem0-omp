@@ -9,6 +9,8 @@
 /* Begin PBXBuildFile section */
 		E1E2E3E4E5E6E7E8E9EAEB1B /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
 		E1E2E3E4E5E6E7E8E9EAEB1C /* ConsoleCore in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */; };
+		E1E2E3E4E5E6E7E8E9EAEB21 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
+		E1E2E3E4E5E6E7E8E9EAEB22 /* ConsoleClient in Frameworks */ = {isa = PBXBuildFile; productRef = E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,6 +55,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E1E2E3E4E5E6E7E8E9EAEB1B /* ConsoleCore in Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB21 /* ConsoleClient in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -61,6 +64,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E1E2E3E4E5E6E7E8E9EAEB1C /* ConsoleCore in Frameworks */,
+				E1E2E3E4E5E6E7E8E9EAEB22 /* ConsoleClient in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -106,6 +110,7 @@
 			name = OMPConsoleIOS;
 			packageProductDependencies = (
 				E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */,
+				E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */,
 			);
 			productName = OMPConsoleIOS;
 			productReference = E1E2E3E4E5E6E7E8E9EAEB06 /* OMPConsoleIOS.app */;
@@ -130,6 +135,7 @@
 			name = OMPConsoleIOSTests;
 			packageProductDependencies = (
 				E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */,
+				E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */,
 			);
 			productName = OMPConsoleIOSTests;
 			productReference = E1E2E3E4E5E6E7E8E9EAEB07 /* OMPConsoleIOSTests.xctest */;
@@ -284,6 +290,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				INFOPLIST_FILE = OMPConsoleIOS-Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -307,6 +314,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				INFOPLIST_FILE = OMPConsoleIOS-Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = com.omp.console.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -393,6 +401,10 @@
 		E1E2E3E4E5E6E7E8E9EAEB1A /* ConsoleCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ConsoleCore;
+		};
+		E1E2E3E4E5E6E7E8E9EAEB20 /* ConsoleClient */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = ConsoleClient;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

@@ -1,0 +1,338 @@
+// Le MIROIR des charges utiles du contrat d'API (S-1). Chaque `struct Remote…`
+// de `Sources/OMPConsole/Remote/Payloads.swift` est recopié ici sous le MÊME nom,
+// avec les MÊMES noms de propriétés stockées — les clés JSON sont celles du dépôt.
+//
+// Les modèles PUBLICS de `ConsoleCore` (`StoreSnapshot`, `StoreRun`, `Project`,
+// `StatsRow`) sont réutilisés TELS QUELS, jamais recopiés.
+
+import ConsoleCore
+import Foundation
+
+// MARK: - Lectures
+
+public struct RemoteVersionPayload: Codable, Equatable, Sendable {
+    public var protocolVersion: Int
+}
+
+public struct RemoteStorePayload: Codable, Equatable, Sendable {
+    public var snapshot: StoreSnapshot
+}
+
+public struct RemoteSessionsPayload: Codable, Equatable, Sendable {
+    public var runs: [StoreRun]
+}
+
+public struct RemoteProjectsPayload: Codable, Equatable, Sendable {
+    public var projects: [Project]
+}
+
+public struct RemoteDocument: Codable, Equatable, Sendable {
+    public var name: String
+    public var state: String
+    public var content: String?
+    public var reason: String?
+}
+
+public struct RemoteDocumentsPayload: Codable, Equatable, Sendable {
+    public var documents: [RemoteDocument]
+}
+
+public struct RemoteSessionHeader: Codable, Equatable, Sendable {
+    public var id: String
+    public var cwd: String
+    public var version: Int?
+    public var timestamp: String?
+    public var parentSession: String?
+}
+
+public struct RemoteSkippedEntry: Codable, Equatable, Sendable {
+    public var offset: Int
+    public var reason: String
+}
+
+public struct RemoteUsage: Codable, Equatable, Sendable {
+    public var input: Int
+    public var output: Int
+    public var cacheRead: Int
+    public var cacheWrite: Int
+    public var totalTokens: Int
+    public var cost: Double?
+}
+
+public struct RemoteToolCall: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+}
+
+public struct RemoteConversationEntry: Codable, Equatable, Sendable {
+    public var index: Int
+    public var timestampMs: Double?
+    public var kind: String
+    public var text: String?
+    public var thinking: String?
+    public var model: String?
+    public var usage: RemoteUsage?
+    public var toolCalls: [RemoteToolCall]?
+    public var callId: String?
+    public var name: String?
+    public var diff: String?
+    public var isError: Bool?
+    public var tokensBefore: Int?
+    public var fromId: String?
+}
+
+public struct RemoteSessionPayload: Codable, Equatable, Sendable {
+    public var header: RemoteSessionHeader?
+    public var kind: String?
+    public var entries: [RemoteConversationEntry]
+    public var skipped: [RemoteSkippedEntry]
+    public var truncated: Bool
+}
+
+public struct RemoteStatsTotals: Codable, Equatable, Sendable {
+    public var input: Int
+    public var output: Int
+    public var turns: Int
+    public var durationMs: Double
+}
+
+public struct RemoteStatsPayload: Codable, Equatable {
+    public var project: String
+    public var totals: RemoteStatsTotals
+    public var rows: [StatsRow]
+    public var truncated: Bool
+}
+
+public struct RemoteDeviceRow: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var pairedAtMs: Double
+    public var lastSeenAtMs: Double
+    public var connected: Bool
+}
+
+public struct RemoteDevicesPayload: Codable, Equatable, Sendable {
+    public var devices: [RemoteDeviceRow]
+}
+
+// MARK: - Mémoire
+
+public struct RemoteMemoryRow: Codable, Equatable, Sendable {
+    public var id: String
+    public var text: String
+    public var updatedAt: String?
+    public var score: Double?
+    public var tags: [String]
+    public var agentId: String?
+}
+
+public struct RemoteMemoryPagePayload: Codable, Equatable, Sendable {
+    public var total: Int
+    public var rows: [RemoteMemoryRow]
+}
+
+public struct RemoteMemorySearchPayload: Codable, Equatable, Sendable {
+    public var rows: [RemoteMemoryRow]
+    public var candidates: Int
+    public var scored: Int
+}
+
+public struct RemoteMemoryGraphNode: Codable, Equatable, Sendable {
+    public var id: String
+    public var label: String
+    public var scope: String
+}
+
+public struct RemoteMemoryGraphLink: Codable, Equatable, Sendable {
+    public var a: String
+    public var b: String
+    public var kind: String
+    public var score: Double?
+}
+
+public struct RemoteMemoryGraphPayload: Codable, Equatable, Sendable {
+    public var nodes: [RemoteMemoryGraphNode]
+    public var links: [RemoteMemoryGraphLink]
+    public var total: Int
+}
+
+// MARK: - Gestes
+
+public struct RemoteAcceptedPayload: Codable, Equatable, Sendable {
+    public var accepted: Bool
+}
+
+public struct RemoteSentPayload: Codable, Equatable, Sendable {
+    public var sent: Bool
+}
+
+public struct RemotePairPayload: Codable, Equatable, Sendable {
+    public var deviceId: String
+    public var token: String
+    public var protocolVersion: Int
+}
+
+public struct RemoteConduitePayload: Codable, Equatable, Sendable {
+    public var state: String
+}
+
+/// Les statuts requis d'une PR, miroir de la coque.
+public enum RequiredCheck: String, CaseIterable, Codable, Sendable {
+    case ubuntu = "check (ubuntu-latest)"
+    case macos = "check (macos-latest)"
+    case releaseSimulation = "release-simulation"
+}
+
+/// L'état affiché d'un statut de PR.
+public enum PRCheckState: String, Codable, Sendable {
+    case green
+    case red
+    case pending
+    case ignored
+}
+
+/// L'âge d'une connaissance de PR.
+public enum PRFreshness: String, Codable, Sendable {
+    case unknown
+    case fresh
+    case stale
+}
+
+public struct PRCheckRow: Codable, Equatable, Sendable {
+    public let required: RequiredCheck
+    public let state: PRCheckState
+    public let link: String?
+}
+
+public struct ProjectPRRow: Codable, Equatable, Sendable {
+    public let slug: String
+    public let number: Int?
+    public let title: String?
+    public let url: String
+    public let checks: [PRCheckRow]
+    public let freshness: PRFreshness
+}
+
+public struct RemotePullRequestsPayload: Codable, Equatable, Sendable {
+    public var rows: [ProjectPRRow]
+    public var failure: String?
+    public var stale: Bool
+}
+
+public struct RemoteMergedPayload: Codable, Equatable, Sendable {
+    public var merged: Bool
+    public var number: Int?
+    public var url: String
+}
+
+public struct RemoteHostedSessionPayload: Codable, Equatable, Sendable {
+    public var state: String
+    public var stateLabel: String
+    public var sessionId: String?
+    public var sessionFile: String?
+    public var protocolVersion: Int?
+    public var dialogs: [RpcDialogRequest]
+    public var transcript: [TranscriptLine]
+    public var truncated: Bool
+}
+
+// MARK: - Corps de requête
+
+public struct RemotePairRequest: Codable, Equatable, Sendable {
+    public var code: String
+    public var name: String
+    public var protocolVersion: Int?
+}
+
+public struct RemoteAnswerRequest: Codable, Equatable, Sendable {
+    public var toolCallId: String?
+    public var kind: String
+    public var label: String?
+    public var text: String?
+}
+
+public struct RemoteTextRequest: Codable, Equatable, Sendable {
+    public var text: String
+}
+
+public struct RemoteVerdictRequest: Codable, Equatable, Sendable {
+    public var verdict: String
+}
+
+public struct RemotePromptRequest: Codable, Equatable, Sendable {
+    public var message: String
+}
+
+public struct RemoteFeatureRequest: Codable, Equatable, Sendable {
+    public var repoRoot: String
+    public var title: String
+    public var description: String
+    public var modelReqSpecs: String?
+    public var modelImplReview: String?
+}
+
+public struct RemoteConduiteRequest: Codable, Equatable, Sendable {
+    public var name: String
+}
+
+public struct RemoteMergeRequest: Codable, Equatable, Sendable {
+    public var headOid: String
+}
+
+// MARK: - Évènements du flux temps réel
+
+public struct RemoteHelloEvent: Codable, Equatable, Sendable {
+    public var protocolVersion: Int
+}
+
+public struct RemoteSessionsEvent: Codable, Equatable, Sendable {
+    public var file: String
+    public var added: [RemoteConversationEntry]?
+    public var issue: String?
+}
+
+public struct RemoteHostedEvent: Codable, Equatable, Sendable {
+    public var state: String
+    public var dialogs: [RpcDialogRequest]
+    public var added: [TranscriptLine]
+}
+
+public struct RemoteDevicesEvent: Codable, Equatable, Sendable {
+    public var devices: [RemoteDeviceRow]
+}
+
+// MARK: - Types portés par `GET /v1/session` et par les évènements
+
+/// Les quatre méthodes de dialogue auxquelles l'app répond.
+public enum RpcDialogMethod: String, CaseIterable, Codable, Sendable {
+    case select
+    case confirm
+    case input
+    case editor
+}
+
+/// Une demande de dialogue dépliée.
+public struct RpcDialogRequest: Identifiable, Codable, Equatable, Sendable {
+    public let id: String
+    public let method: RpcDialogMethod
+    public let title: String
+    public let message: String?
+    public let options: [String]
+    public let optionDescriptions: [String?]
+    public let placeholder: String?
+    public let prefill: String?
+    public let promptStyle: Bool
+}
+
+/// Une ligne de la transcription brute.
+public struct TranscriptLine: Identifiable, Codable, Equatable, Sendable {
+    public enum Kind: String, Codable, Sendable {
+        case inbound
+        case outbound
+        case clientError
+    }
+
+    public let id: Int
+    public let kind: Kind
+    public let text: String
+}

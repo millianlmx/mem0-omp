@@ -163,13 +163,21 @@ cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
 
 ## Cibles
 
-Le paquet déclare trois cibles (une ligne par cible, `omp-console/Package.swift`) :
+Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`) :
 
 - **OMPConsole** — la coque macOS : les vues, les modèles d'écran et les
   adaptateurs au système (AppKit, SwiftUI, PTY, réseau). Cible exécutable ;
   dépend de `ConsoleCore`.
 - **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
-  `OMPConsole` et de `ConsoleCore`.
+  `OMPConsole`, de `ConsoleCore` et de `ConsoleClient` (son test de contrat
+  confronte le catalogue du client aux routes servies).
+- **ConsoleClient** — la **cible partagée macOS/iOS du client distant** : le
+  client typé du contrat d'API, la découverte Bonjour, le transport HTTP, le flux
+  SSE, le trousseau et le modèle observable unique. Dépendance unique :
+  `ConsoleCore` ; ni AppKit ni UIKit.
+- **ConsoleClientTests** — la suite Swift Testing hermétique de la couche
+  cliente (doublures de transport, de trousseau et de découverte : aucun Mac
+  réel) ; dépend de `ConsoleClient` et de `ConsoleCore`.
 - **ConsoleCore** — la **cible partagée macOS/iOS** : les modèles et constantes
   pures du magasin d'état, le vocabulaire figé des sections et le socle du
   contrat de l'API distante. Aucune dépendance (ni interne, ni externe) : elle se
