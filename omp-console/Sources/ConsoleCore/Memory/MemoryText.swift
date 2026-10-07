@@ -173,6 +173,22 @@ public enum MemoryText {
     public static let scopeLabel = "Portée"
     public static let scoreLabel = "Pertinence"
 
+    /// La ligne de contexte d'un souvenir, dans la liste comme dans le détail :
+    /// date relative à `nowMs` (`ConsoleFormat.relative`), puis étiquettes
+    /// (`tagList`) — chaque segment ABSENT de l'entrée est omis, jamais remplacé.
+    /// La portée, identique pour toute la liste, n'y figure pas : elle vit dans les
+    /// détails techniques. UNE seule formule, partagée par les deux coques.
+    public static func subtitle(updatedAt: String?, tags: [String], nowMs: Double) -> String {
+        var segments: [String] = []
+        if let ms = updatedAtMs(updatedAt) {
+            segments.append(ConsoleFormat.relative(ms: ms, nowMs: nowMs))
+        }
+        if !tags.isEmpty {
+            segments.append(tagList(tags))
+        }
+        return segments.joined(separator: separator)
+    }
+
     /// Les étiquettes en mots-dièse, dans l'ordre du service.
     public static func tagList(_ tags: [String]) -> String {
         tags.map { "#\($0)" }.joined(separator: " ")

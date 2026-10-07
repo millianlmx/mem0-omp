@@ -255,26 +255,43 @@ final class RemoteReads {
 
     // MARK: - Mémoire
 
+    /// Le sommaire d'une portée (S-1) : la portée est résolue AVANT toute lecture,
+    /// et une portée nulle rend la page vide SANS appeler le service (S-2) — c'est
+    /// le signal « aucun projet ouvert », jamais un 200 muet ni une liste vide.
+    /// Les lignes sont bornées en NOMBRE (`RemoteLimits.memoryRows`) puis en octets,
+    /// la TÊTE (les plus récentes) conservée, `truncated` posé dès qu'une ligne est
+    /// retirée.
     func memory(scope: String?, limit rawLimit: String?) async throws -> RemoteMemoryPagePayload {
-        let limit = try Self.limit(rawLimit)
+        let limit = try Self.memoryLimit(rawLimit)
         let scope = await resolvedScope(scope)
+        guard let scope else {
+            return RemoteMemoryPagePayload(scope: nil, total: 0, rows: [], truncated: false)
+        }
         do {
             let page = try await service.all(scope: scope)
-            return RemoteMemoryPagePayload(
+            return Self.memoryPage(
+                scope: scope,
                 total: page.total,
-                rows: page.rows.prefix(limit).map(RemoteMemoryRow.init)
+                rows: page.rows,
+                limit: limit ?? RemoteLimits.memoryRows
             )
         } catch {
             throw Self.memoryError(error, config: memoryConfig)
         }
     }
 
+    /// La recherche dans la mémoire du projet (S-7) : sans portée résolue, elle est
+    /// refusée AVANT toute lecture (S-2) ; sans `limit`, elle emploie le défaut de
+    /// l'outil `mem0_search` (`MemorySearch.defaultLimit`), et la sélection reste
+    /// celle de la coque (`MemorySearch.select`, aucun second seuil).
     func memorySearch(query: String?, scope: String?, limit rawLimit: String?) async throws -> RemoteMemorySearchPayload {
-        let limit = try Self.limit(rawLimit)
+        let limit = try Self.memoryLimit(rawLimit) ?? MemorySearch.defaultLimit
         guard let query, !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw ConsoleAPIError.badRequest("requête vide")
         }
-        let scope = await resolvedScope(scope)
+        guard let scope = await resolvedScope(scope) else {
+            throw ConsoleAPIError.badRequest("aucun projet ouvert")
+        }
         do {
             let rows = try await service.search(query: query, scope: scope, pool: MemorySearch.pool(requested: limit))
             let selected = MemorySearch.select(rows: rows, floor: MemorySearch.threshold, limit: limit)
@@ -375,27 +392,45 @@ final class RemoteReads {
         return nil
     }
 
-    /// `limit` : entier, 1…200, défaut 50.
-    static func limit(_ raw: String?) throws -> Int {
-        guard let raw, !raw.isEmpty else { return RemoteLimits.memoryLimitDefault }
+    /// `limit` : entier FACULTATIF, 1…`memoryLimitMax`, `nil` quand il est absent
+    /// (chaque lecture choisit alors son propre défaut) ; hors bornes → 400.
+    static func memoryLimit(_ raw: String?) throws -> Int? {
+        guard let raw, !raw.isEmpty else { return nil }
         guard let value = Int(raw), value >= 1, value <= RemoteLimits.memoryLimitMax else {
             throw ConsoleAPIError.badRequest("limit hors bornes")
         }
         return value
     }
 
-    /// La traduction des pannes de la pile mémoire (S-9) : jamais un 200 vide.
+    /// La page bornée (S-1) : le NOMBRE d'abord (tête conservée), puis les OCTETS —
+    /// tant que la charge dépasse `RemoteLimits.responseBody`, on retire la moitié
+    /// de la QUEUE et l'on pose `truncated`. La tête (les plus récents, l'ordre du
+    /// service est `updated_at` décroissant) est ce qu'on garde, contrairement aux
+    /// sessions et aux statistiques qui gardent la fin de leur liste.
+    static func memoryPage(
+        scope: String,
+        total: Int,
+        rows: [MemoryRow],
+        limit: Int
+    ) -> RemoteMemoryPagePayload {
+        var kept = Array(rows.prefix(max(0, limit)).map(RemoteMemoryRow.init))
+        var truncated = rows.count > kept.count
+        var payload = RemoteMemoryPagePayload(scope: scope, total: total, rows: kept, truncated: truncated)
+        while (try? HTTPJSON.encode(payload))?.count ?? 0 > RemoteLimits.responseBody, kept.count > 0 {
+            kept = Array(kept.dropLast(max(1, kept.count / 2)))
+            truncated = true
+            payload = RemoteMemoryPagePayload(scope: scope, total: total, rows: kept, truncated: truncated)
+        }
+        return payload
+    }
+
+    /// La traduction des pannes de la pile mémoire (S-3) : jamais un 200 vide, et
+    /// le message est EXACTEMENT celui de la coque — l'adresse RÉELLEMENT sondée
+    /// (`MemoryServiceConfig.baseURL`) puis le dernier échec, en un seul mot.
     static func memoryError(_ error: Error, config: MemoryServiceConfig) -> ConsoleAPIError {
         guard let failure = error as? MemoryServiceError else { return .server("mémoire indisponible") }
-        switch failure {
-        case .notReachable:
-            return .unavailable("la pile mémoire est injoignable : \(config.baseURL.absoluteString)")
-        case .unauthorized:
-            return .unavailable("la pile mémoire refuse le jeton")
-        case .unexpectedStatus(let code, _):
-            return .server("la pile mémoire a répondu \(code)")
-        case .malformedResponse:
-            return .server("réponse mémoire illisible")
-        }
+        return .unavailable(
+            MemoryText.unavailableDetail(address: config.baseURL.absoluteString, error: failure.userMessage)
+        )
     }
 }

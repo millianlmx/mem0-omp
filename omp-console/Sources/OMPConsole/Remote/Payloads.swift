@@ -14,8 +14,10 @@ enum RemoteLimits {
     static let responseBody = 2 * 1024 * 1024
     static let sessionEntries = 2000
     static let statsRows = 2000
+    /// Le sommaire mémoire, borné en NOMBRE comme ses voisines : au-delà, la
+    /// charge dépasserait la borne de corps et le client refuserait la réponse.
+    static let memoryRows = 2000
     static let transcriptLines = 500
-    static let memoryLimitDefault = 50
     static let memoryLimitMax = 200
 }
 
@@ -223,9 +225,14 @@ struct RemoteMemoryRow: Codable, Equatable {
     }
 }
 
+/// Le sommaire d'une portée (S-1) : `scope` vaut `nil` quand AUCUN projet n'est
+/// ouvert — c'est LE signal de « aucun projet », sans champ booléen séparé ;
+/// `truncated` dit qu'une ligne a été retirée par la borne de nombre ou d'octets.
 struct RemoteMemoryPagePayload: Codable, Equatable {
+    var scope: String?
     var total: Int
     var rows: [RemoteMemoryRow]
+    var truncated: Bool
 }
 
 struct RemoteMemorySearchPayload: Codable, Equatable {

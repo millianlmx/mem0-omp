@@ -193,3 +193,16 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
+
+## Mémoire (feature `ios-memoire`)
+
+- L'écran Mémoire montre le sommaire du projet ouvert, dans l'ordre servi par le
+  Mac — les mêmes souvenirs que la section macOS, aucun tri local, la TÊTE
+  conservée quand la liste est tronquée, et « Aucun projet ouvert » quand la
+  portée est nulle. `[test: memoryFollowsTheClientTheScopeAndTheLoad]`
+- Le détail d'un souvenir ouvre une feuille : texte intégral rendu par le parseur
+  partagé (`MarkdownDocument`), identifiant, date relative, portée et étiquettes —
+  jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
+- L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
+  `[capture: iphone-memory-light.png]`
+

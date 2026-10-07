@@ -2071,3 +2071,49 @@ et se lance par :
 MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
 ```
 
+### Lire la mémoire du projet depuis l'iPhone
+
+La section **Mémoire** de l'app affiche le sommaire du projet OUVERT côté Mac — les
+mêmes souvenirs que la section Mémoire macOS, dans l'ordre du service —, permet
+d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire sans masquer sa
+cause. L'app ne lit que ce que le Mac sert : elle ne calcule aucune portée, ne
+propose ni graphe ni geste d'écriture, et ne se rafraîchit qu'à l'ouverture de la
+section et sur un geste (jamais en continu).
+
+Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
+
+1. **Appairer** l'app au Mac (feuille de connexion), un projet étant ouvert dans la
+   fenêtre « Session OMP » du Mac : la section affiche l'en-tête « N souvenirs »
+   puis les lignes du sommaire, dans l'ordre du service (les plus récents d'abord),
+   et la ligne de troncature si la liste a été bornée.
+2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre le texte intégral,
+   l'identifiant, la date de mise à jour relative, la portée et les étiquettes ; se
+   fermer par le geste système (aucun bouton « Fermer »).
+3. **Chercher** — taper « mémoire du projet » puis valider (retour clavier) :
+   l'en-tête devient « Résultats pour « mémoire du projet » » et les lignes sont
+   celles de l'outil `mem0_search` (mêmes identifiants, même ordre). Une recherche
+   sans candidat au-dessus du plancher dit « Aucun résultat » — jamais le sommaire.
+   La frappe seule n'émet aucune requête.
+4. **Revenir au sommaire** — vider le champ (croix système) ou toucher « Sommaire » :
+   le sommaire DÉJÀ lu revient, sans aucune requête.
+5. **La mémoire tombe** — arrêter le conteneur (`podman stop omp-console-mem0-http`)
+   puis toucher « Rafraîchir » : le bandeau rouge « Mémoire indisponible » nomme
+   l'adresse sondée et le dernier message d'erreur ; « Réessayer » repasse au
+   sommaire dès que la pile répond de nouveau.
+6. **Aucun projet ouvert** — fermer le projet côté Mac puis « Rafraîchir » : la carte
+   dit « Aucun projet ouvert », sans lire la mémoire.
+7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau de connexion
+   s'affiche, et aucune cause mémoire n'est inventée.
+
+Recette OUTILLÉE : le test Swift gated `iosMemoireRecipe`
+(`omp-console/Tests/OMPConsoleTests/MemoryIOSRecipeTests.swift`, titre
+`ios-memoire/AC-1`) exerce contre une coque réelle les parties automatisables —
+sommaire relayé identique à celui de la coque macOS, recherche identique à la
+sélection de l'outil, panne relayée avec son message, et charge « aucun projet ». Il
+est gardé par la variable `MEM0_MEMOIRE_RECIPE` et se lance par :
+
+```bash
+MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
+```
+
+

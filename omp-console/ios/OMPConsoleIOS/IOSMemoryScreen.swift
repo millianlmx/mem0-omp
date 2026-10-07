@@ -1,0 +1,219 @@
+// L'écran Mémoire de la coque iOS (BR-2) : le sommaire du projet ouvert — les
+// MÊMES souvenirs que la section « Mémoire » de macOS —, une recherche qui se
+// SOUMET (jamais à la frappe), et l'état de la mémoire dit sans masquer sa cause.
+//
+// Chaque état rendu par `IOSMemoryModel.screen` a sa branche ici, et aucune phrase
+// n'est composée : les mots viennent du noyau partagé (`MemoryText`) ou du
+// vocabulaire de l'app (`IOSMemoryText`). Aucun geste d'écriture, aucun graphe.
+//
+// Contrôles SYSTÈME uniquement (aucun `onTapGesture`), cibles ≥ 44 pt, aucun
+// `lineLimit` numérique : Dynamic Type maximum ne tronque rien.
+
+import ConsoleClient
+import ConsoleCore
+import SwiftUI
+
+struct IOSMemoryScreen: View {
+    @ObservedObject var client: ConsoleClientModel
+    /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
+    let recipe: IOSScreenState
+    @StateObject private var model: IOSMemoryModel
+
+    init(client: ConsoleClientModel, recipe: IOSScreenState) {
+        self.client = client
+        self.recipe = recipe
+        _model = StateObject(wrappedValue: IOSMemoryModel(client: client))
+    }
+
+    var body: some View {
+        panel
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { Task { await model.refresh() } } label: {
+                        Label(MemoryText.refresh, systemImage: "arrow.clockwise")
+                    }
+                    .disabled(!model.canRefresh)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { model.showSummary() } label: {
+                        Label(MemoryText.summaryButton, systemImage: "list.bullet")
+                    }
+                    .disabled(!model.canShowSummary)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.summary)
+                }
+            }
+            .sheet(item: $model.selection) { target in
+                IOSMemoryDetailView(row: target.row, scope: model.scope)
+            }
+            .task { await model.refresh() }
+            .accessibilityIdentifier(IOSMemoryAccessibility.screen)
+    }
+
+    // MARK: - Panneau et champ de recherche
+
+    /// Le champ de recherche se pose sur la VUE DE DÉTAIL (cet écran), pas sur la
+    /// racine, et seulement là où une portée est connue (S-6) : jamais devant
+    /// « Aucun projet ouvert », l'état du client, un chargement ou une panne.
+    @ViewBuilder
+    private var panel: some View {
+        let content = VStack(alignment: .leading, spacing: 12) {
+            if let banner = recipe.banner, let message = recipe.bannerMessage {
+                Text(verbatim: message)
+                    .font(.callout)
+                    .iosBanner(tone: banner.tone)
+            }
+            subject
+        }
+        .iosPanel()
+        .navigationTitle(ConsoleSection.memory.title)
+
+        if offersSearch {
+            content
+                .searchable(
+                    text: queryBinding,
+                    placement: .automatic,
+                    prompt: Text(verbatim: MemoryText.searchPrompt)
+                )
+                .onSubmit(of: .search) { Task { await model.submitQuery() } }
+        } else {
+            content
+        }
+    }
+
+    private var queryBinding: Binding<String> {
+        Binding(
+            get: { model.query },
+            set: { model.updateQuery($0) }
+        )
+    }
+
+    private var offersSearch: Bool {
+        switch model.state {
+        case .summary, .summaryEmpty, .search, .searchEmptyNoMatch, .searchEmptyNoScore, .searchEmptyBelowThreshold:
+            return true
+        default:
+            return false
+        }
+    }
+
+    // MARK: - Contenu, état par état
+
+    @ViewBuilder
+    private var subject: some View {
+        switch model.state {
+        case .clientState(let state):
+            banner(ConnectionText.state(state), tone: .attention)
+            card(IOSMemoryText.noData)
+        case .loading:
+            ProgressView()
+            Text(verbatim: MemoryText.loading)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .macUnreachable:
+            banner(IOSMemoryText.macUnreachable, tone: .attention)
+            card(IOSMemoryText.noData)
+            retryButton
+        case .noProject:
+            card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
+        case .unavailable(let detail):
+            banner(IOSMemoryText.unavailable(detail: detail), tone: .danger)
+            retryButton
+        case .summaryEmpty(let scope):
+            card(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))
+        case .summary(_, let total, let rows, let truncated):
+            header(MemoryText.summaryCount(total), identifier: IOSMemoryAccessibility.count)
+            if truncated {
+                Text(verbatim: IOSMemoryText.truncated(shown: rows.count, total: total))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.truncated)
+            }
+            rowsList(rows)
+        case .search(let query, let rows):
+            header(MemoryText.searchResults(query), identifier: IOSMemoryAccessibility.results)
+            rowsList(rows)
+        case .searchEmptyNoMatch:
+            card(MemoryText.noResultTitle, detail: MemoryText.noMatch)
+        case .searchEmptyNoScore:
+            card(MemoryText.searchUnsupportedTitle, detail: MemoryText.noSemanticScore)
+        case .searchEmptyBelowThreshold:
+            card(MemoryText.noResultTitle, detail: MemoryText.belowThreshold)
+        }
+    }
+
+    // MARK: - Composants
+
+    private func banner(_ text: String, tone: ConsoleTone) -> some View {
+        Text(verbatim: text)
+            .font(.callout)
+            .iosBanner(tone: tone)
+            .accessibilityIdentifier(IOSMemoryAccessibility.banner)
+    }
+
+    private func header(_ title: String, identifier: String) -> some View {
+        Text(verbatim: title)
+            .font(.headline)
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.leading)
+            .accessibilityIdentifier(identifier)
+    }
+
+    private func card(_ message: String, detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: message)
+                .font(.headline)
+                .multilineTextAlignment(.leading)
+            if let detail {
+                Text(verbatim: detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .iosCard()
+    }
+
+    private var retryButton: some View {
+        Button { Task { await model.refresh() } } label: {
+            Label(MemoryText.retry, systemImage: "arrow.clockwise")
+        }
+        .disabled(!model.canRefresh)
+        .accessibilityIdentifier(IOSMemoryAccessibility.retry)
+    }
+
+    /// La liste des souvenirs, dans l'ORDRE reçu (aucun tri local) : la ligne de
+    /// contexte est rafraîchie à la minute par `TimelineView`, SANS relire la
+    /// mémoire.
+    private func rowsList(_ rows: [RemoteMemoryRow]) -> some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let nowMs = context.date.timeIntervalSince1970 * 1000
+            List(rows, id: \.id) { row in
+                Button { model.selection = IOSMemorySelection(row: row) } label: {
+                    rowLabel(row, nowMs: nowMs)
+                }
+                .buttonStyle(.plain)
+                .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
+            }
+            .listStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func rowLabel(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(verbatim: IOSMemoryDetailView.heading(row))
+                .font(.headline)
+                .multilineTextAlignment(.leading)
+            let subtitle = IOSMemoryDetailView.subtitle(row, nowMs: nowMs)
+            if !subtitle.isEmpty {
+                Text(verbatim: subtitle)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
