@@ -25,15 +25,28 @@ final class RemoteRouter {
 
     // MARK: - Table
 
-    private enum Segment: Equatable {
+    /// Interne (et non privé) à seule fin d'être CONFRONTABLE au catalogue du
+    /// client (`ConsoleClient.ClientRoute.all`) : méthode et chemin mis à part,
+    /// les deux listes doivent être l'image l'une de l'autre.
+    enum Segment: Equatable {
         case literal(String)
         case parameter(String)
     }
 
-    private struct Route {
+    struct Route {
         let method: String
         let segments: [Segment]
         let name: String
+
+        /// Le gabarit de chemin, forme `{param}` — la forme comparée au client.
+        var path: String {
+            "/" + segments.map { segment in
+                switch segment {
+                case .literal(let value): return value
+                case .parameter(let name): return "{\(name)}"
+                }
+            }.joined(separator: "/")
+        }
 
         static func of(_ method: String, _ path: String, _ name: String) -> Route {
             let segments = path.split(separator: "/").map { part -> Segment in
@@ -45,7 +58,7 @@ final class RemoteRouter {
 
     /// L'ORDRE n'a pas d'importance (les motifs sont disjoints) ; c'est la seule
     /// liste des routes servies.
-    private static let routes: [Route] = [
+    static let routes: [Route] = [
         .of("GET", "v1/version", "version"),
         .of("GET", "v1/store", "store"),
         .of("GET", "v1/sessions", "sessions"),

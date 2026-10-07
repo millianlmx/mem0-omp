@@ -1,3 +1,4 @@
+import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
@@ -7,11 +8,25 @@ import SwiftUI
 /// barre latérale en pile racine et pousse le détail — un appui sur une ligne
 /// pousse l'écran de la section, et le bouton retour du système revient à la
 /// liste. Aucune barre d'onglets, aucun `NavigationStack` racine.
+///
+/// La racine POSSÈDE le modèle du client distant (`ConsoleClientModel.live()`,
+/// créé UNE fois) : elle démarre la découverte et la connexion, présente la
+/// feuille de connexion au lancement quand aucune section n'a été demandée par
+/// `-section` et que l'app n'est pas connectée, et la rouvre par une
+/// `ToolbarItem`.
 struct RootView: View {
     @State private var selection: ConsoleSection?
+    @StateObject private var client = ConsoleClientModel.live()
+    @State private var showConnection: Bool
 
-    init(selection: ConsoleSection = .home) {
+    /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
+    /// ainsi leur écran, sans feuille par-dessus.
+    private let autoPresentConnection: Bool
+
+    init(selection: ConsoleSection = .home, autoPresentConnection: Bool = true) {
         _selection = State(initialValue: selection)
+        self.autoPresentConnection = autoPresentConnection
+        _showConnection = State(initialValue: false)
     }
 
     var body: some View {
@@ -30,5 +45,30 @@ struct RootView: View {
         } detail: {
             SectionPlaceholderView(section: selection ?? .home)
         }
+        .sheet(isPresented: $showConnection) {
+            ConnectionSheet(model: client)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showConnection = true
+                } label: {
+                    Label(ConnectionText.title, systemImage: "antenna.radiowaves.left.and.right")
+                }
+            }
+        }
+        .onAppear {
+            client.start()
+            if autoPresentConnection, !isConnected {
+                showConnection = true
+            }
+        }
+    }
+
+    /// L'app est-elle connectée ? Au lancement elle ne l'est jamais : la feuille
+    /// de connexion s'ouvre donc d'elle-même quand aucune section n'est demandée.
+    private var isConnected: Bool {
+        if case .connected = client.state { return true }
+        return false
     }
 }

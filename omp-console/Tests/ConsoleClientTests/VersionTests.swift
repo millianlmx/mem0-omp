@@ -1,0 +1,73 @@
+// Le verrou de version d'API (S-8) : dans les deux sens, avec les deux numéros, et
+// toutes les routes refusées localement.
+
+@testable import ConsoleClient
+import ConsoleCore
+import Foundation
+import Testing
+
+@Suite("Version d'API")
+@MainActor
+struct VersionTests {
+    @Test("client-distant-ios/AC-14 : une version différente verrouille — les deux numéros, aucune requête")
+    func incompatibleVersion() async throws {
+        // Sens 1 : le TXT Bonjour annonce une autre version → verrou SANS tentative.
+        let announced = ClientHarness(
+            tokens: ["d": "tok"],
+            preferences: [ClientPreferenceKey.deviceId: "d"]
+        )
+        announced.model.start()
+        #expect(await eventually { announced.model.state != .unpaired })
+        announced.discovery.emitProtocolVersion(2)
+        #expect(announced.model.state == .incompatibleProtocol(local: 1, remote: 2))
+        #expect(announced.transport.requestCount == 0, "aucune tentative de connexion")
+        // Toute méthode de route est refusée localement, sans un octet.
+        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: 2)) {
+            _ = try await announced.model.version()
+        }
+        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: 2)) {
+            _ = try await announced.model.reply(cardId: "c1", text: "x")
+        }
+        #expect(announced.transport.requestCount == 0)
+        announced.stop()
+
+        // Sens 2 : c'est la RÉPONSE qui porte une autre version → verrou, deux numéros.
+        let answered = ClientHarness(
+            tokens: ["d": "tok"],
+            preferences: [ClientPreferenceKey.deviceId: "d"]
+        )
+        answered.transport.respond { _ in
+            .success(ClientHTTPResponse(
+                status: 200,
+                protocolVersion: 2,
+                body: Data(#"{"protocolVersion":2}"#.utf8)
+            ))
+        }
+        _ = answered.model.setManualAddress("10.0.0.5:9000")
+        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: 2)) {
+            _ = try await answered.model.version()
+        }
+        #expect(answered.model.state == .incompatibleProtocol(local: 1, remote: 2))
+        // `retry()` est la seule sortie du verrou.
+        answered.model.retry()
+        #expect(answered.model.state != .incompatibleProtocol(local: 1, remote: 2))
+        answered.stop()
+    }
+
+    @Test("un Mac sans en-tête de version donne un verrou à numéro distant nul")
+    func missingHeaderLocks() async {
+        let harness = ClientHarness(
+            tokens: ["d": "tok"],
+            preferences: [ClientPreferenceKey.deviceId: "d"]
+        )
+        harness.transport.respond { _ in
+            .success(ClientHTTPResponse(status: 200, protocolVersion: nil, body: Data(#"{"protocolVersion":1}"#.utf8)))
+        }
+        _ = harness.model.setManualAddress("10.0.0.5:9000")
+        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: nil)) {
+            _ = try await harness.model.version()
+        }
+        #expect(harness.model.state == .incompatibleProtocol(local: 1, remote: nil))
+        harness.stop()
+    }
+}
