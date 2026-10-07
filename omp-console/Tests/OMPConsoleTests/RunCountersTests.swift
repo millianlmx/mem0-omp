@@ -4,6 +4,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+@testable import ConsoleCore
 
 /// Le compte des cartes d'une colonne, tel que l'en-tête de la fenêtre l'écrit.
 private func columnCount(_ board: KanbanBoard, _ column: KanbanColumn) -> Int {

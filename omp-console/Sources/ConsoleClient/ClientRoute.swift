@@ -1,4 +1,4 @@
-// Le catalogue des routes du client (S-1) : l'image EXACTE des 29 routes servies
+// Le catalogue des routes du client (S-1) : l'image EXACTE des 30 routes servies
 // par la coque (`RemoteRouter.routes`), méthode et chemin mis à part. Un test
 // confronte les deux — c'est le seul garde-fou contre une route oubliée.
 
@@ -41,6 +41,7 @@ public extension ClientRoute {
         ClientRoute(name: "documents", method: "GET", path: "/v1/projects/{repoKey}/documents"),
         ClientRoute(name: "stats", method: "GET", path: "/v1/stats"),
         ClientRoute(name: "devices", method: "GET", path: "/v1/devices"),
+        ClientRoute(name: "models", method: "GET", path: "/v1/models"),
         ClientRoute(name: "memory", method: "GET", path: "/v1/memory"),
         ClientRoute(name: "memory.search", method: "GET", path: "/v1/memory/search"),
         ClientRoute(name: "memory.graph", method: "GET", path: "/v1/memory/graph"),

@@ -109,7 +109,7 @@ final class AlertsModel: ObservableObject {
     /// Le cœur de la décision (S-7).
     private func apply(_ snapshot: StoreSnapshot, stateDir: String) async {
         status = AlertsStatus.from(boardState: KanbanBoardState.derive(
-            snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir
+            snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal
         ))
         let events = AlertDerivation.events(from: snapshot)
         let fresh = Set(events.filter { !ledger.contains($0.key) }.map(\.key))

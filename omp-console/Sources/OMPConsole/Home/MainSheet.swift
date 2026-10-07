@@ -8,6 +8,7 @@
 // qui en dépendent n'ont pas de sens avant. Fermer la feuille ne l'interrompt pas
 // (l'Accueil reprend le fil avec son bandeau, règle 2 comprise).
 
+import ConsoleCore
 import Foundation
 
 enum MainSheet: Identifiable, Equatable {

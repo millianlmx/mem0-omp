@@ -581,7 +581,7 @@ final class ProjectConsoleModel: ObservableObject {
     func openPR(slug: String) {
         prActionFailure = nil
         guard let row = prRows.first(where: { $0.slug == slug }) else { return }
-        guard let url = ProjectPlanRowView.linkURL(row.url) else {
+        guard let url = httpURL(row.url) else {
             prActionFailure = ProjectViewText.prNotOpenable(url: row.url)
             return
         }

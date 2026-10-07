@@ -5,13 +5,12 @@
 // La règle d'aiguillage est EXHAUSTIVE et ne laisse jamais coexister une réponse à
 // une question et un envoi de texte libre (AC-4).
 
-import ConsoleCore
 import Foundation
 
 /// Ce qu'une carte offre comme geste. L'ordre d'apparition est celui de
 /// `zones(for:)` : question **ou** steer, puis question en texte, puis jalon, puis
 /// reprise, puis arrêt.
-enum KanbanActionZone: Sendable, Equatable {
+public enum KanbanActionZone: Sendable, Equatable {
     case pendingQuestion(toolCallId: String, question: String, options: [PanelAskOption])
     case steer
     /// Une question en TEXTE d'un maillon terminé : la réponse part en commande
@@ -24,7 +23,7 @@ enum KanbanActionZone: Sendable, Equatable {
     case stopLot(repoRoot: String)
 }
 
-enum KanbanActionPresentation {
+public enum KanbanActionPresentation {
     /// Les zones d'une carte. Exhaustif sur `card.action` :
     ///
     /// 1. une question en vol ⇒ `.pendingQuestion` et **jamais** `.steer` ;
@@ -35,7 +34,7 @@ enum KanbanActionPresentation {
     /// donc jamais en même temps qu'une question en vol), un jalon (`waiting` +
     /// `.specs`/`.review`), la reprise (marque `mort` sur une feature vivante) et
     /// l'arrêt (une feature de lot).
-    static func zones(for card: KanbanCard) -> [KanbanActionZone] {
+    public static func zones(for card: KanbanCard) -> [KanbanActionZone] {
         guard let action = card.action else { return [] }
         var zones: [KanbanActionZone] = []
         if let run = action.run {
@@ -72,17 +71,17 @@ enum KanbanActionPresentation {
     /// Le motif à afficher, non nul SEULEMENT quand la carte n'offre aucune zone :
     /// une exécution non armée dit pourquoi, toute autre carte sans geste dit
     /// qu'elle n'en porte aucun.
-    static func motif(for card: KanbanCard) -> String? {
+    public static func motif(for card: KanbanCard) -> String? {
         guard zones(for: card).isEmpty else { return nil }
         if let run = card.action?.run, run.inbox == nil {
-            return ActionsText.notArmed
+            return KanbanText.notArmed
         }
-        return ActionsText.noGesture
+        return KanbanText.noGesture
     }
 
     /// La carte offre « Reprendre » (S-10) : son pilote est mort alors que la
     /// feature vit encore.
-    static func resumable(_ card: KanbanCard) -> Bool {
+    public static func resumable(_ card: KanbanCard) -> Bool {
         zones(for: card).contains { zone in
             if case .resume = zone { return true }
             return false
@@ -92,8 +91,8 @@ enum KanbanActionPresentation {
 
 /// Les dépôts proposés au formulaire de lancement (S-7) : les dépôts RÉELS portés
 /// par les cartes de l'ardoise, ∪ le projet ouvert, triés et dédupliqués.
-enum KanbanLaunchRepos {
-    static func options(cards: [KanbanCard], projectRoot: String?) -> [String] {
+public enum KanbanLaunchRepos {
+    public static func options(cards: [KanbanCard], projectRoot: String?) -> [String] {
         var roots = Set<String>()
         for card in cards {
             if let root = card.action?.repoRoot, !root.isEmpty { roots.insert(realpathOr(root)) }
@@ -105,7 +104,7 @@ enum KanbanLaunchRepos {
     /// Le dépôt sélectionné par défaut : celui de la carte sélectionnée s'il est
     /// dans la liste, sinon le projet ouvert, sinon le premier. `nil` seulement
     /// quand la liste est vide.
-    static func defaultSelection(
+    public static func defaultSelection(
         options: [String],
         selectedRepoRoot: String?,
         projectRoot: String?

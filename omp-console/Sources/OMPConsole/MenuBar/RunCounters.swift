@@ -6,6 +6,7 @@
 // (S-9) et l'item de barre (S-2) lisent donc le MÊME objet : leurs chiffres ne
 // peuvent pas diverger (AC-7).
 
+import ConsoleCore
 import Foundation
 
 /// « runs occupés » et « runs en attente » : deux catégories EXCLUSIVES (une carte

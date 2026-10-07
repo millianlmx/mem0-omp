@@ -1884,6 +1884,27 @@ du verre, états vide et erreur, Dynamic Type — vit dans
 `omp-console/ios/DESIGN.md`. Chaque règle y porte un marqueur `[test: …]`,
 `[capture: …]` ou `[garde: design-ios/AC-<n>]` : aucune prose non jugeable.
 
+### Section Pipelines
+
+La section Pipelines affiche l'ardoise des features et des runs de tous les
+dépôts — les cinq voies et leurs cartes — dérivée du magasin que le Mac sert par
+la trame `store`, sans jamais inventer de donnée. La carte d'une feature offre
+les gestes de la coque macOS : répondre à une question (option ou texte libre),
+valider un jalon (specs ou revue), lancer une feature jamais en route, l'arrêter
+(avec confirmation), la reprendre, ouvrir la PR dans le navigateur et la
+fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
+« Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
+deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
+sans aucune action sur le Mac.
+
+Deux routes étendent la surface distante pour cette section : `GET /v1/models`
+(le catalogue de `omp models --json`, qu'aucune route n'exposait) et le champ
+additif `headOid` de la ligne de PR (sans lui, la fusion est impossible). La
+recette de bout en bout (dépôt jetable, iPad, Mac en service) est un test gated
+par `MEM0_PIPELINES_RECIPE` ; le scénario iPad reste manuel et vit dans le
+contrat de la feature. La recette de design iOS fait autorité et vit dans
+`omp-console/ios/DESIGN.md`.
+
 ### Prérequis
 
 - **Xcode 27** installé, et sa licence acceptée : sans cela, toute invocation de

@@ -2,6 +2,7 @@
 // omp-console-redesign) : les dépôts proposés et la garde « racine git ». Aucune
 // vue ici ; le disque n'est lu que par le `FileManager` injecté.
 
+import ConsoleCore
 import Foundation
 
 enum LaunchRepo {

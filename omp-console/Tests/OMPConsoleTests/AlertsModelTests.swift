@@ -5,6 +5,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+@testable import ConsoleCore
 
 // MARK: - AC-6 : fenêtre au premier plan ⇒ aucune notification, mais clé enregistrée
 

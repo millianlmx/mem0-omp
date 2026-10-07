@@ -292,6 +292,12 @@ public final class ConsoleClientModel: ObservableObject {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/devices"), as: RemoteDevicesPayload.self)
     }
 
+    /// Le catalogue des modèles du Mac (S-14). Une réponse 200 porte soit des
+    /// sélecteurs, soit un motif d'échec — jamais une erreur de transport.
+    public func models() async throws -> RemoteModelsPayload {
+        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/models"), as: RemoteModelsPayload.self)
+    }
+
     public func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
         var query: [String] = []
         if let scope { query.append("scope=" + encode(scope)) }
@@ -315,8 +321,14 @@ public final class ConsoleClientModel: ObservableObject {
 
     // MARK: - Gestes
 
-    public func answer(cardId: String, kind: String, label: String?, text: String?) async throws -> RemoteAcceptedPayload {
-        let body = try encode(RemoteAnswerRequest(toolCallId: nil, kind: kind, label: label, text: text))
+    public func answer(
+        cardId: String,
+        kind: String,
+        label: String?,
+        text: String?,
+        toolCallId: String? = nil
+    ) async throws -> RemoteAcceptedPayload {
+        let body = try encode(RemoteAnswerRequest(toolCallId: toolCallId, kind: kind, label: label, text: text))
         return try await perform(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/answer", body: body),
             as: RemoteAcceptedPayload.self

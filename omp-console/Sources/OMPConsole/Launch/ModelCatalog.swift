@@ -9,26 +9,19 @@
 // Le chargement est INJECTABLE : les tests fournissent une liste ou un échec sans
 // lancer de process.
 
+import ConsoleCore
 import Foundation
 
 /// L'échec du chargement du catalogue : un motif pour l'utilisateur (le texte
-/// `modèles indisponibles — <motif>` est composé par `ActionsText`).
+/// `modèles indisponibles — <motif>` est composé par `KanbanText`).
 struct ModelCatalogError: Error, Equatable, Sendable {
     let reason: String
 }
 
-/// L'état du catalogue dans une feuille : en cours, liste des sélecteurs, ou
-/// échec au motif du chargeur.
-enum ModelCatalogState: Equatable, Sendable {
-    case loading
-    case loaded([String])
-    case failed(String)
-}
-
-enum ModelCatalog {
-    /// L'option de tête des deux listes : un groupe laissé sur le défaut OMP.
-    static let defaultChoice = "défaut OMP (aucun modèle)"
-
+// `ModelCatalogState` et `ModelCatalog.defaultChoice`/`choices(_:)` vivent dans
+// `ConsoleCore` (`Kanban/ModelCatalog.swift`) : les deux coques les emploient.
+// La coque macOS garde ICI la lecture de `omp models --json`.
+extension ModelCatalog {
     /// Les sélecteurs de `{"models":[{"selector": …}]}` : une entrée sans
     /// `selector` non blanc est ignorée, les doublons sont retirés, l'ordre est
     /// croissant (comparaison de chaînes). `nil` quand le JSON est illisible ou
@@ -46,14 +39,6 @@ enum ModelCatalog {
             if seen.insert(selector).inserted { selectors.append(selector) }
         }
         return selectors.sorted()
-    }
-
-    /// La liste affichée d'un état : `defaultChoice` en tête, puis les sélecteurs
-    /// du catalogue chargé (aucun pendant le chargement ou en échec).
-    static func choices(_ state: ModelCatalogState) -> [String] {
-        var choices = [defaultChoice]
-        if case .loaded(let selectors) = state { choices.append(contentsOf: selectors) }
-        return choices
     }
 }
 

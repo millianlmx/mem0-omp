@@ -245,11 +245,11 @@ struct HomeView: ConsoleSectionView {
                     home.answerCardID = card.id
                 }
             case .validate:
-                Button(ActionsText.validate) {
+                Button(KanbanText.validateSpecs) {
                     if let action = card.action { actions.validate(action) }
                 }
             case .accept:
-                Button(ActionsText.accept) {
+                Button(KanbanText.acceptReview) {
                     if let action = card.action { actions.accept(action) }
                 }
             case .open:
@@ -306,7 +306,7 @@ struct HomeView: ConsoleSectionView {
             // « Reprendre » vit HORS du bouton de ligne : deux gestes distincts.
             if KanbanActionPresentation.resumable(card), let action = card.action {
                 StatusBadge(status: ConsoleStatus.of(card: card))
-                Button(ActionsText.resume) { actions.resume(action) }
+                Button(KanbanText.resume) { actions.resume(action) }
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("home.resume.\(card.id)")
             } else {
@@ -335,7 +335,7 @@ struct HomeView: ConsoleSectionView {
             }
             Spacer()
             StatusBadge(status: ConsoleStatus.of(card: card))
-            if let prUrl = card.prUrl, let url = ProjectPlanRowView.linkURL(prUrl) {
+            if let prUrl = card.prUrl, let url = httpURL(prUrl) {
                 Link(HomeText.openPR, destination: url)
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("home.delivered.open.\(card.id)")

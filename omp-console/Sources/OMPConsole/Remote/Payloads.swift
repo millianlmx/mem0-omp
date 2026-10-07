@@ -271,6 +271,15 @@ struct RemotePullRequestsPayload: Codable, Equatable {
     var stale: Bool
 }
 
+/// Le catalogue des modèles servis par `omp models --json` (S-14) : les sélecteurs
+/// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué (la
+/// liste est alors vide). Le client affiche le motif — ce n'est pas une erreur de
+/// transport.
+struct RemoteModelsPayload: Codable, Equatable {
+    var selectors: [String]
+    var failure: String?
+}
+
 struct RemoteMergedPayload: Codable, Equatable {
     var merged: Bool
     var number: Int?

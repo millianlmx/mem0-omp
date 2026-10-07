@@ -92,6 +92,18 @@ function appFile(root: string, name: string): string {
   return fs.existsSync(file) ? code(file) : "";
 }
 
+/** Les sources de la SECTION PROJET de l'app (les fichiers que la feature
+ *  `ios-projet` possède) : ses interdits portent sur eux, jamais sur toute
+ *  l'app — la fusion de PR est le geste de la section Pipelines
+ *  (`ios-pipelines`), qui cite `prMerge*` légitimement. */
+function projectCode(root: string = ROOT): string {
+  const files = swiftFiles(path.join(root, "omp-console", "ios", "OMPConsoleIOS")).filter(
+    (file) => path.basename(file).startsWith("IOSProject") || path.basename(file) === "ProjectText.swift",
+  );
+  assert.ok(files.length > 0, "aucune source de la section Projet dans l'app iOS");
+  return files.map((file) => code(file)).join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // AC-1 : le plan vient du noyau, l'app ne recompose aucun libellé d'état.
 
@@ -148,16 +160,21 @@ test("ios-projet/AC-3 : le volet PR montre les trois statuts requis et ne porte 
   assert.match(app, /prStaleSuffix/, "le suffixe périmé est cité");
   assert.match(app, /prUnavailable\(/, "l'échec de lecture passe par prUnavailable");
   assert.match(app, /prEmpty/, "l'absence de PR passe par prEmpty");
-  // Aucun geste de fusion dans la section Projet.
+  // Aucun geste de fusion dans la section Projet — l'interdit porte sur les
+  // fichiers QUE CETTE feature possède, pas sur toute l'app : la fusion est le
+  // geste de la section Pipelines (`ios-pipelines`), qui cite ces mots
+  // légitimement (leçon mesurée du 2026-10-07 : une garde qui interdit à
+  // l'échelle de `OMPConsoleIOS/**` rougit sur le voisin légitime).
+  const project = projectCode();
   for (const forbidden of ["prMerge", "prMergeConfirm", "prMergeHelp", "prMergeRefused", "prMergeRejected"]) {
-    assert.ok(!app.includes(forbidden), `la section Projet ne cite pas ${forbidden}`);
+    assert.ok(!project.includes(forbidden), `la section Projet ne cite pas ${forbidden}`);
   }
-  assert.ok(!/client\.merge\(|\.merge\(repoKey:/.test(app), "l'app n'appelle jamais la fusion");
+  assert.ok(!/client\.merge\(|\.merge\(repoKey:/.test(project), "l'app n'appelle jamais la fusion depuis la section Projet");
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectPRView.swift");
   fs.writeFileSync(target, `${code(target)}\nlet fuite = ProjectViewText.prMerge\n`);
-  assert.ok(appCode(copy).includes("prMerge"), "un geste de fusion cité doit faire rougir la garde");
+  assert.ok(projectCode(copy).includes("prMerge"), "un geste de fusion cité doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------

@@ -76,22 +76,22 @@ struct KanbanActionPane: View {
         case .textQuestion(_, let prompt):
             replyZone(prompt: prompt, action: action, prominent: prominent)
         case .milestone(let slug, let kind):
-            Button(kind == .specs ? ActionsText.validate : ActionsText.accept) {
+            Button(kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview) {
                 if kind == .specs { model.validate(action) } else { model.accept(action) }
             }
             .consoleButtonProminence(prominent)
             .accessibilityIdentifier(kind == .specs ? "kanban.actions.validate" : "kanban.actions.accept")
-            .accessibilityLabel("\(kind == .specs ? ActionsText.validate : ActionsText.accept) \(slug)")
+            .accessibilityLabel("\(kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview) \(slug)")
         case .resume:
             VStack(alignment: .leading, spacing: 6) {
                 Text(ActionsText.resumeNote)
                     .font(.callout)
-                Button(ActionsText.resume) { model.resume(action) }
+                Button(KanbanText.resume) { model.resume(action) }
                     .consoleButtonProminence(prominent)
                     .accessibilityIdentifier("kanban.actions.resume")
             }
         case .stopLot:
-            Button(ActionsText.stop, role: .destructive) { stopPrompt.shown = true }
+            Button(KanbanText.stop, role: .destructive) { stopPrompt.shown = true }
                 .accessibilityIdentifier("kanban.actions.stop")
                 .kanbanStopConfirmation(
                     repo: card.repo,
@@ -119,7 +119,7 @@ struct KanbanActionPane: View {
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("kanban.actions.reply.prompt")
             fullWidthField(
-                ActionsText.replyFieldPlaceholder,
+                KanbanText.replyPlaceholder,
                 text: Binding(get: { model.replyText }, set: { model.replyText = $0 }),
                 onSubmit: { model.submitReply(action) }
             )
@@ -144,14 +144,14 @@ struct KanbanActionPane: View {
         prominent: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(ActionsText.questionTitle)
+            Text(KanbanText.questionTitle)
                 .font(.headline)
             Text(question)
                 .font(.callout)
                 .textSelection(.enabled)
             QuestionOptionsView(model: model, options: options)
             fullWidthField(
-                ActionsText.answerFieldPlaceholder,
+                KanbanText.answerPlaceholder,
                 text: Binding(
                     get: { model.answerCustomText },
                     set: { model.setAnswerCustomText($0) }
@@ -181,7 +181,7 @@ struct KanbanActionPane: View {
                 onSubmit: { model.submitSteer(action) }
             )
             .accessibilityIdentifier("kanban.actions.steerField")
-            Button(ActionsText.send) { model.submitSteer(action) }
+            Button(KanbanText.send) { model.submitSteer(action) }
                 .disabled(model.steerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("kanban.actions.send")
         }
@@ -219,14 +219,14 @@ extension View {
         onConfirm: @escaping () -> Void
     ) -> some View {
         confirmationDialog(
-            ActionsText.stopConfirmTitle(repo: repo),
+            KanbanText.stopConfirmTitle(repo: repo),
             isPresented: isPresented,
             titleVisibility: .visible
         ) {
-            Button(ActionsText.stopConfirm, role: .destructive, action: onConfirm)
-            Button(ActionsText.cancel, role: .cancel) {}
+            Button(KanbanText.stopConfirm, role: .destructive, action: onConfirm)
+            Button(KanbanText.cancel, role: .cancel) {}
         } message: {
-            Text(ActionsText.stopConfirmMessage)
+            Text(KanbanText.stopConfirmMessage)
         }
     }
 }
@@ -253,7 +253,7 @@ struct QuestionOptionsView: View {
 
     var body: some View {
         Picker(
-            ActionsText.questionTitle,
+            KanbanText.questionTitle,
             selection: Binding<String?>(
                 get: { model.answerSelectedLabel },
                 set: { label in if let label { model.selectAnswerOption(label) } }

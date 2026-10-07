@@ -5,6 +5,7 @@
 // feuille ne compose aucune phrase (textes dans `ActionsText`). Aucune écriture
 // directe du magasin : « Appliquer » émet une commande `models` par le canal.
 
+import ConsoleCore
 import SwiftUI
 
 /// Les deux sélecteurs `Modèle req+specs` / `Modèle impl+review`, alimentés par le
@@ -20,22 +21,22 @@ struct ModelSlotsPicker: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            picker(ActionsText.modelReqSpecsField, selection: $reqSpecs, current: reqSpecs)
+            picker(KanbanText.modelReqSpecsField, selection: $reqSpecs, current: reqSpecs)
                 .accessibilityIdentifier("models.reqSpecs")
-            picker(ActionsText.modelImplReviewField, selection: $implReview, current: implReview)
+            picker(KanbanText.modelImplReviewField, selection: $implReview, current: implReview)
                 .accessibilityIdentifier("models.implReview")
             switch catalog {
             case .loading:
-                Text(ActionsText.modelCatalogLoading)
+                Text(KanbanText.modelCatalogLoading)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("models.loading")
             case .failed(let reason):
                 HStack(spacing: 8) {
-                    Text(ActionsText.modelCatalogUnavailable(reason))
+                    Text(KanbanText.modelCatalogUnavailable(reason))
                         .font(.callout)
                         .foregroundStyle(.red)
-                    Button(ActionsText.modelCatalogRetry) { onRetry() }
+                    Button(KanbanText.modelCatalogRetry) { onRetry() }
                         .accessibilityIdentifier("models.retry")
                 }
                 .accessibilityIdentifier("models.failure")
@@ -95,7 +96,7 @@ struct ModelsSheet: View {
             )
             HStack(spacing: 8) {
                 Spacer()
-                Button(ActionsText.cancel) { dismiss() }
+                Button(KanbanText.cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("models.cancel")
                 Button(ActionsText.applyModelChanges) { apply() }

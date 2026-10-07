@@ -5,7 +5,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
-import ConsoleCore
+@testable import ConsoleCore
 
 private func card(
     _ id: String,

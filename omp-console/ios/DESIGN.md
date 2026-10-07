@@ -137,3 +137,25 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-2]`
 - Aucun changement visible côté coque macOS : mots et apparence identiques,
   `ConsoleCore` modifié par ajout seulement. `[garde: design-ios/AC-10]`
+
+## Pipelines (feature `ios-pipelines`)
+
+- L'écran Pipelines rend l'ardoise PARTAGÉE de `ConsoleCore` (`KanbanBoard`), la
+  même dérivation que macOS : les cinq voies de `KanbanLane`, leurs cartes et
+  leurs états viennent du magasin, jamais d'un calcul propre à l'app.
+  `[garde: design-ios/AC-3]`
+- En largeur COMPACTE (iPhone portrait), les voies s'empilent verticalement dans
+  un défilement unique ; en largeur RÉGULIÈRE (iPad), elles sont côte à côte dans
+  un défilement horizontal — toutes les voies restent atteignables.
+  `[capture: iphone-kanban-light]`
+- L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
+  un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
+  affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
+- La feuille d'une carte offre les gestes de la carte via la règle d'aiguillage de
+  `KanbanActionPresentation` ; une carte d'historique n'offre aucun geste et le
+  dit. `[test: historyCardOffersNothing]`
+- « Fusionner » demande une confirmation AVANT tout effet et la ligne de PR
+  servie porte le `headOid` exigé par la route de fusion.
+  `[garde: design-ios/AC-8]`
+- La cible tactile minimale des cartes, des options de question et des boutons de
+  geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`

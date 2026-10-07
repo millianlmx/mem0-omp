@@ -123,6 +123,11 @@ struct ProjectPRRow: Equatable, Sendable, Codable {
     let url: String
     let checks: [PRCheckRow]
     let freshness: PRFreshness
+    /// Le commit de tête de la PR, lu fraîchement (`headRefOid` de `gh pr view`).
+    /// Le serveur EXIGE cette valeur pour fusionner (`RemoteMergeRequest.headOid`) :
+    /// sans elle, un client ne peut pas fusionner. `nil` tant que la PR n'a pas été
+    /// relue fraîchement.
+    var headOid: String? = nil
 
     /// Vrai si, et seulement si, les trois statuts requis sont verts : la relecture
     /// fraîche de S-5 est le vrai verrou du geste.
@@ -240,7 +245,8 @@ func projectPRRows(followed: [FollowedPR], knowledge: [String: PRKnowledge]) -> 
             title: known.snapshot?.title,
             url: pr.url,
             checks: checks,
-            freshness: known.freshness
+            freshness: known.freshness,
+            headOid: known.snapshot?.headOid
         )
     }
 }

@@ -9,7 +9,6 @@
 // confiance. Le titre d'une carte de lot, lui, est le seul slug : dépendances,
 // modèle et messages en file sont des détails du terminal, pas de la carte.
 
-import ConsoleCore
 import Foundation
 
 // --- textes de parité (Doc-5) ------------------------------------------------
@@ -17,7 +16,7 @@ import Foundation
 /// `elapsedLabel` (store.ts:172-181) : `<m>:<ss>` sous une heure, `<h>:<mm>:<ss>`
 /// au-delà, zéros à gauche. Un écart négatif (horloge reculée, entrée future) vaut
 /// `0:00` plutôt qu'un signe — d'où le `max(0, …)` AVANT le calcul des heures.
-func elapsedLabel(ms: Double) -> String {
+public func elapsedLabel(ms: Double) -> String {
     let total = ms.isFinite ? clampedInt(max(0, ms / 1000)) : 0
     let seconds = String(format: "%02d", total % 60)
     let minutes = (total / 60) % 60
@@ -26,7 +25,7 @@ func elapsedLabel(ms: Double) -> String {
 }
 
 /// `lotStateLabel` (lot.ts:247-263) : les mots d'un état de feature de lot.
-func lotStateLabel(_ state: LotFeatureState) -> String {
+public func lotStateLabel(_ state: LotFeatureState) -> String {
     switch state {
     case .pending: "à venir"
     case .running: "en cours"
@@ -40,7 +39,7 @@ func lotStateLabel(_ state: LotFeatureState) -> String {
 
 /// `lotWaitLabel` (lot.ts:268-275) : le libellé du JALON attendu, `nil` quand la
 /// feature n'attend rien de nommable.
-func lotWaitLabel(_ waitKind: LotWaitKind?) -> String? {
+public func lotWaitLabel(_ waitKind: LotWaitKind?) -> String? {
     switch waitKind {
     case .answer: "attend réponse"
     case .specs: "attend validation"
@@ -52,7 +51,7 @@ func lotWaitLabel(_ waitKind: LotWaitKind?) -> String? {
 /// Les mots d'un statut de FEATURE de projet (S-4) : ce que la carte écrit pour
 /// une feature de projet sans lot. Aucune valeur inventée — le statut vient du
 /// magasin `projects`.
-func projectStateLabel(_ status: ProjectFeatureStatus) -> String {
+public func projectStateLabel(_ status: ProjectFeatureStatus) -> String {
     switch status {
     case .planned: "prévue"
     case .launched: "lancée"
@@ -66,7 +65,7 @@ func projectStateLabel(_ status: ProjectFeatureStatus) -> String {
 /// `liveStateLabel` (panelRows.ts:713-716) : l'état d'un run VIVANT dans les mots
 /// du panneau. Une question `ask` en vol est une ATTENTE DE RÉPONSE ; `waiting`
 /// sans question est l'inactivité ou un run non conduit, donc « attend ».
-func liveStateLabel(_ entry: RunningEntry) -> String {
+public func liveStateLabel(_ entry: RunningEntry) -> String {
     if entry.pendingAsk != nil { return "attend réponse" }
     return entry.state == .waiting ? "attend" : "tourne"
 }
@@ -99,7 +98,7 @@ extension KanbanBoard {
     /// l'instant de la lecture, passé explicitement ; la durée AFFICHÉE, elle, se
     /// recalcule depuis l'instant de rendu (`KanbanCard.elapsedText(nowMs:)`), donc
     /// une carte ouverte avance sans que le magasin change (S-7).
-    static func build(snapshot: StoreSnapshot, nowMs: Double) -> KanbanBoard {
+    public static func build(snapshot: StoreSnapshot, nowMs: Double, isAlive: PipelineLiveness) -> KanbanBoard {
         let dedup = KanbanDedup.apply(snapshot: snapshot)
 
         // Appariement feature de projet ↔ feature de lot (S-2) : même dépôt RÉEL et
@@ -178,6 +177,7 @@ extension KanbanBoard {
                         sources: sources,
                         action: KanbanCardAction(
                             repoRoot: lot.repoRoot,
+                            repoKey: repoKey,
                             worktree: feature.worktree.isEmpty ? nil : feature.worktree,
                             slug: feature.slug,
                             waitKind: feature.waitKind,
@@ -224,6 +224,7 @@ extension KanbanBoard {
                         )],
                         action: KanbanCardAction(
                             repoRoot: project.repoRoot,
+                            repoKey: project.repoKey,
                             slug: nil,
                             waitKind: nil,
                             featureState: nil,
@@ -325,7 +326,7 @@ extension KanbanBoard {
             if let key = drafts[index].lotRepoKey, illisibleProjectKeys.contains(key) {
                 marks.append(.illisible)
             }
-            if drafts[index].hasDriver, KanbanAnomalies.isDead(pid: drafts[index].driverPid) {
+            if drafts[index].hasDriver, !isAlive.isAlive(drafts[index].driverPid) {
                 if drafts[index].card.column == .enCours { drafts[index].card.column = .echec }
                 marks.append(.mort)
             }
@@ -336,7 +337,7 @@ extension KanbanBoard {
         // Le bandeau : les entrées illisibles (S-8), puis les propriétaires morts
         // (S-9), puis les doublons (S-10) — déjà triés par identité croissante.
         var anomalies = KanbanAnomalies.illisibleLines(snapshot: snapshot)
-        anomalies += KanbanAnomalies.mortLines(running: dedup.running, lots: dedup.lots)
+        anomalies += KanbanAnomalies.mortLines(running: dedup.running, lots: dedup.lots, isAlive: isAlive)
         anomalies += dedup.anomalies
 
         return KanbanBoard(cards: drafts.map(\.card), anomalies: anomalies)
@@ -348,9 +349,14 @@ extension KanbanBoardState {
     /// puis magasin vide (aucune carte ET aucune anomalie), puis le tableau. Le cas
     /// « racine présente, aucune carte mais des anomalies » rend donc le TABLEAU —
     /// les anomalies ne sont jamais tues, et aucune carte n'est inventée.
-    static func derive(snapshot: StoreSnapshot, nowMs: Double, stateDir: String) -> KanbanBoardState {
+    public static func derive(
+        snapshot: StoreSnapshot,
+        nowMs: Double,
+        stateDir: String,
+        isAlive: PipelineLiveness
+    ) -> KanbanBoardState {
         guard snapshot.root == .present else { return .storeAbsent(dir: stateDir) }
-        let board = KanbanBoard.build(snapshot: snapshot, nowMs: nowMs)
+        let board = KanbanBoard.build(snapshot: snapshot, nowMs: nowMs, isAlive: isAlive)
         guard board.cards.isEmpty && board.anomalies.isEmpty else { return .board(board) }
         return .storeEmpty(dir: stateDir)
     }
@@ -464,7 +470,7 @@ private func isDoublon(
 
 /// Le run d'une carte (S-10) : les valeurs publiées, jamais un chemin recalculé —
 /// `inbox` vient de `RunningEntry.inbox`, la question de `RunningEntry.pendingAsk`.
-func cardRun(_ entry: RunningEntry) -> KanbanCardRun {
+public func cardRun(_ entry: RunningEntry) -> KanbanCardRun {
     KanbanCardRun(id: entry.id, label: entry.label, inbox: entry.inbox, pendingAsk: entry.pendingAsk)
 }
 
@@ -499,13 +505,13 @@ private func firstNonEmpty(_ values: String?...) -> String? {
 }
 
 /// L'ordre du LOT (S-5) : `repoRoot` croissant puis `id`.
-func lotOrder(_ left: Lot, _ right: Lot) -> Bool {
+public func lotOrder(_ left: Lot, _ right: Lot) -> Bool {
     if left.repoRoot != right.repoRoot { return left.repoRoot < right.repoRoot }
     return left.id < right.id
 }
 
 /// L'ordre du PROJET (S-5) : `repoRoot` croissant puis `repoKey`.
-func projectOrder(_ left: Project, _ right: Project) -> Bool {
+public func projectOrder(_ left: Project, _ right: Project) -> Bool {
     if left.repoRoot != right.repoRoot { return left.repoRoot < right.repoRoot }
     return left.repoKey < right.repoKey
 }

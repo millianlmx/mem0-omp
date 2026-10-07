@@ -27,6 +27,42 @@ public enum KanbanText {
     public static let problemsHelp = "Problèmes détectés dans les données des pipelines"
     public static let reply = "Répondre…"
     public static let sendMessage = "Envoyer un message…"
+    /// Le motif d'une carte sans aucun geste, et celui d'une exécution sans boîte
+    /// publiée : les deux coques aiguillent par `KanbanActionPresentation.motif`.
+    public static let noGesture = "Aucune action possible sur cette pipeline pour l'instant."
+    public static let notArmed = "Cette exécution n'accepte pas de message pour l'instant."
+
+    // --- gestes d'une carte (S-5 à S-12), mot pour mot ceux de macOS -----------
+    public static let launch = "Lancer"
+    public static let resume = "Reprendre"
+    public static let stop = "Arrêter…"
+    public static let stopConfirm = "Arrêter"
+    public static let cancel = "Annuler"
+    public static let validateSpecs = "Valider les specs"
+    public static let acceptReview = "Accepter la revue"
+    public static let questionTitle = "Question de l'agent"
+    public static let answerPlaceholder = "Autre réponse…"
+    public static let replyPlaceholder = "Votre réponse"
+    public static let send = "Envoyer"
+    public static let stopConfirmMessage =
+        "Le pilote s'arrête et les pipelines en cours dans ce dépôt sont interrompues."
+
+    // --- deux modèles d'une feature (S-13) ------------------------------------
+    public static let modelReqSpecsField = "Modèle req+specs"
+    public static let modelImplReviewField = "Modèle impl+review"
+    public static let modelCatalogLoading = "chargement des modèles…"
+    public static let modelCatalogRetry = "Réessayer"
+
+    /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
+    public static func stopConfirmTitle(repo: String) -> String {
+        "Arrêter les pipelines de \(repo) ?"
+    }
+
+    /// Le motif d'un catalogue indisponible : les deux listes se réduisent à
+    /// l'option par défaut, l'édition reste possible avec les valeurs courantes.
+    public static func modelCatalogUnavailable(_ reason: String) -> String {
+        "modèles indisponibles — \(reason)"
+    }
     public static let diagnosticTitle = "Problèmes détectés"
     public static let emptyHint = "Lancez une feature avec « Nouvelle feature… » (⌘N)."
     /// L'état vide de la section Pipelines, quand aucune pipeline n'existe : le
