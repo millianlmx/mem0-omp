@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 4/6 « Le pilotage depuis iOS »
-**Avancement** : 7/13 feature(s) fusionnée(s)
+**Statut** : en cours — segment 5/6 « Lire la mémoire et les sessions »
+**Avancement** : 8/13 feature(s) fusionnée(s)
 
 ## But
 
@@ -35,15 +35,15 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 | 1 | `client-distant-ios` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/72 | opencode-go/deepseek-v4.1-flash | La couche réseau de l'app iOS : découverte Bonjour de la coque macOS, saisie manuelle d'une adresse pour un tunnel personnel, appairage par code avec le secret au trousseau iOS, reconnexion avec repli, et client typé du contrat (lecture, gestes, flux temps réel) monté dans un modèle observable unique. L'écran d'état dit la vérité — Mac absent, hors réseau, jeton révoqué, version d'API incompatible — au lieu de masquer l'échec. La réussite se prouve sur appareil ou simulateur contre la vraie coque macOS : appairage, coupure puis reprise des deux côtés, et état affiché conforme à la réalité. |
 | 2 | `design-ios` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/73 | opencode-go/deepseek-v4.1-flash | La couche visuelle iOS : les équivalents des trois surfaces de la coque macOS (panneau, carte, bandeau) adaptés aux HIG tactiles, la typographie et les tons des statuts, les tailles et marges iPhone/iPad, les états vides et d'erreur — pour que l'app ait l'air d'un produit Apple sérieux au lieu d'un portage brut, exigence déjà exprimée pour la coque macOS. Le verre (Liquid Glass) ne sert que là où le système le dessine ; les contenus restent opaques. La réussite se prouve par des captures clair/sombre d'iPhone et d'iPad qui passent la recette esthétique, et par des libellés partagés avec la coque macOS — aucun texte réinventé. |
 
-### Segment 4 — Le pilotage depuis iOS (en cours)
+### Segment 4 — Le pilotage depuis iOS (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
-| 1 | `ios-accueil` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/76 | opencode-go/deepseek-v4.1-flash | La section Accueil sur iOS : les cartes d'attention (question en vol, jalon à valider, run en cours, « Reprendre », livraisons récentes), la feuille « Répondre » (options d'un ask vivant ou texte libre), la feuille Contrat, et les bandeaux (préparation, accusé de commande). Chaque carte agit par l'API — l'app iOS n'écrit jamais l'état du lot. La réussite se prouve sur un run réel en attente : répondre depuis l'iPhone fait repartir le run, et l'Accueil montre les mêmes faits que la coque macOS au même instant. |
+| 1 | `ios-accueil` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/76 | opencode-go/deepseek-v4.1-flash | La section Accueil sur iOS : les cartes d'attention (question en vol, jalon à valider, run en cours, « Reprendre », livraisons récentes), la feuille « Répondre » (options d'un ask vivant ou texte libre), la feuille Contrat, et les bandeaux (préparation, accusé de commande). Chaque carte agit par l'API — l'app iOS n'écrit jamais l'état du lot. La réussite se prouve sur un run réel en attente : répondre depuis l'iPhone fait repartir le run, et l'Accueil montre les mêmes faits que la coque macOS au même instant. |
 | 2 | `ios-pipelines` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/75 | opencode-go/deepseek-v4.1-flash | La section Pipelines sur iOS : l'ardoise des features et runs de tous les dépôts (les cinq voies, les onze colonnes, les cartes) et ses gestes — répondre, valider un jalon, lancer, arrêter, reprendre, ouvrir la PR, fusionner avec confirmation — plus la feuille « Nouvelle feature… » (dépôt, modèles, titre, besoin). Rien n'est inventé : ce que la carte montre vient du magasin, ce que le geste fait vient de l'API de la coque macOS. La réussite se prouve en lançant une feature depuis l'iPad et en la voyant avancer jusqu'à la PR, sans toucher au Mac. |
 | 3 | `ios-projet` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/74 | opencode-go/deepseek-v4.1-flash | La section Projet sur iOS : le plan (segments, features, états), le suivi des PR du projet, les escalades à trancher, et « Piloter un projet… » — démarrer un cadrage, valider le plan, répondre aux questions depuis l'iPhone ou l'iPad. Le document PROJECT.md et les règles du plan restent la vérité, l'app ne les réimplémente pas. La réussite se prouve en conduisant un vrai projet du cadrage à sa première PR depuis l'iPad. |
 
-### Segment 5 — Lire la mémoire et les sessions (à venir)
+### Segment 5 — Lire la mémoire et les sessions (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
