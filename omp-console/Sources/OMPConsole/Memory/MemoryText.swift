@@ -1,7 +1,8 @@
-// Ce que la coque garde des textes de la Mémoire : la ligne de contexte d'un
-// souvenir, seule fonction qui nomme un type de la coque (`MemoryRow`). Toutes
-// les constantes et les fonctions pures vivent dans
-// `ConsoleCore/Memory/MemoryText.swift`.
+// Ce que la coque garde des textes de la Mémoire : la seule surcharge qui nomme
+// un type de la coque (`MemoryRow`). Toutes les constantes et les fonctions
+// pures vivent dans `ConsoleCore/Memory/MemoryText.swift` — cette extension ne
+// fait que lever la ligne de contexte d'une ligne, par la MÊME formule que l'app
+// iOS (une seule écriture, deux coques).
 
 import ConsoleCore
 
@@ -11,13 +12,6 @@ extension MemoryText {
     /// est omis, jamais remplacé. La portée, identique pour toute la liste, n'y
     /// figure pas (elle vit dans les détails techniques).
     static func subtitle(row: MemoryRow, nowMs: Double) -> String {
-        var segments: [String] = []
-        if let ms = updatedAtMs(row.updatedAt) {
-            segments.append(ConsoleFormat.relative(ms: ms, nowMs: nowMs))
-        }
-        if !row.tags.isEmpty {
-            segments.append(tagList(row.tags))
-        }
-        return segments.joined(separator: separator)
+        subtitle(updatedAt: row.updatedAt, tags: row.tags, nowMs: nowMs)
     }
 }

@@ -159,17 +159,51 @@ public struct RemoteMemoryRow: Codable, Equatable, Sendable {
     public var score: Double?
     public var tags: [String]
     public var agentId: String?
+
+    public init(
+        id: String,
+        text: String,
+        updatedAt: String?,
+        score: Double?,
+        tags: [String],
+        agentId: String?
+    ) {
+        self.id = id
+        self.text = text
+        self.updatedAt = updatedAt
+        self.score = score
+        self.tags = tags
+        self.agentId = agentId
+    }
 }
 
+/// Le sommaire d'une portée (miroir de `remote.RemoteMemoryPagePayload`, S-1) :
+/// `scope` vaut `nil` quand aucun projet n'est ouvert ; `truncated` dit qu'une
+/// ligne a été retirée par la borne de nombre ou d'octets.
 public struct RemoteMemoryPagePayload: Codable, Equatable, Sendable {
+    public var scope: String?
     public var total: Int
     public var rows: [RemoteMemoryRow]
+    public var truncated: Bool
+
+    public init(scope: String?, total: Int, rows: [RemoteMemoryRow], truncated: Bool) {
+        self.scope = scope
+        self.total = total
+        self.rows = rows
+        self.truncated = truncated
+    }
 }
 
 public struct RemoteMemorySearchPayload: Codable, Equatable, Sendable {
     public var rows: [RemoteMemoryRow]
     public var candidates: Int
     public var scored: Int
+
+    public init(rows: [RemoteMemoryRow], candidates: Int, scored: Int) {
+        self.rows = rows
+        self.candidates = candidates
+        self.scored = scored
+    }
 }
 
 public struct RemoteMemoryGraphNode: Codable, Equatable, Sendable {

@@ -36,10 +36,13 @@ struct RemoteMemoryRouteTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        // (1) La page relayée, telle que le service la rend.
-        let pageReply = try await stack.call("GET", "/v1/memory", token: token)
+        // (1) La page relayée, telle que le service la rend. La portée est
+        // EXPLICITE : sans elle, la route ne lirait rien (S-2, « aucun projet »).
+        let pageReply = try await stack.call("GET", "/v1/memory?scope=projet", token: token)
         #expect(pageReply.status == 200)
         let page = try pageReply.json(RemoteMemoryPagePayload.self)
+        #expect(page.scope == "projet")
+        #expect(page.truncated == false)
         #expect(page.total == 4)
         #expect(page.rows.map(\.id) == ["m1", "m2", "m3", "m4"])
         #expect(page.rows.first { $0.id == "m3" }?.score == 0.92)
@@ -47,13 +50,13 @@ struct RemoteMemoryRouteTests {
         #expect(page.rows.first { $0.id == "m1" }?.tags == ["commun"])
 
         // (2) La recherche : le seuil 0,55 de la coque, via `MemorySearch.select`.
-        let searchReply = try await stack.call("GET", "/v1/memory/search?q=souvenir", token: token)
+        let searchReply = try await stack.call("GET", "/v1/memory/search?scope=projet&q=souvenir", token: token)
         #expect(searchReply.status == 200)
         let search = try searchReply.json(RemoteMemorySearchPayload.self)
         let selected = MemorySearch.select(
             rows: rows,
             floor: MemorySearch.threshold,
-            limit: RemoteLimits.memoryLimitDefault
+            limit: MemorySearch.defaultLimit
         )
         #expect(search.rows.map(\.id) == selected.kept.map(\.id))
         #expect(search.rows.map(\.id) == ["m3", "m2"])
@@ -140,11 +143,16 @@ struct RemoteMemoryRouteTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        for path in ["/v1/memory", "/v1/memory/search?q=souvenir"] {
+        for path in ["/v1/memory?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
             let reply = try await stack.call("GET", path, token: token)
             #expect(reply.status == 503)
             #expect(reply.errorCode == "unavailable")
-            // Le message NOMME l'adresse de la pile, et le corps est celui de l'erreur.
+            // Le message est EXACTEMENT celui de la constante partagée : l'adresse
+            // RÉELLEMENT sondée, puis le dernier échec (S-3).
+            #expect(reply.errorMessage == MemoryText.unavailableDetail(
+                address: "http://127.0.0.1:8321",
+                error: "connexion refusée"
+            ))
             #expect(reply.errorMessage?.contains("127.0.0.1:8321") == true)
             #expect(reply.text.contains("\"error\""))
         }
