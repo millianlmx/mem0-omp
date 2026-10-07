@@ -3,7 +3,7 @@
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
 **Statut** : en cours — segment 4/6 « Le pilotage depuis iOS »
-**Avancement** : 5/13 feature(s) fusionnée(s)
+**Avancement** : 6/13 feature(s) fusionnée(s)
 
 ## But
 
@@ -41,7 +41,7 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 |---|---|---|---|---|---|
 | 1 | `ios-accueil` | lancée | — | opencode-go/deepseek-v4.1-flash | La section Accueil sur iOS : les cartes d'attention (question en vol, jalon à valider, run en cours, « Reprendre », livraisons récentes), la feuille « Répondre » (options d'un ask vivant ou texte libre), la feuille Contrat, et les bandeaux (préparation, accusé de commande). Chaque carte agit par l'API — l'app iOS n'écrit jamais l'état du lot. La réussite se prouve sur un run réel en attente : répondre depuis l'iPhone fait repartir le run, et l'Accueil montre les mêmes faits que la coque macOS au même instant. |
 | 2 | `ios-pipelines` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/75 | opencode-go/deepseek-v4.1-flash | La section Pipelines sur iOS : l'ardoise des features et runs de tous les dépôts (les cinq voies, les onze colonnes, les cartes) et ses gestes — répondre, valider un jalon, lancer, arrêter, reprendre, ouvrir la PR, fusionner avec confirmation — plus la feuille « Nouvelle feature… » (dépôt, modèles, titre, besoin). Rien n'est inventé : ce que la carte montre vient du magasin, ce que le geste fait vient de l'API de la coque macOS. La réussite se prouve en lançant une feature depuis l'iPad et en la voyant avancer jusqu'à la PR, sans toucher au Mac. |
-| 3 | `ios-projet` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/74 | opencode-go/deepseek-v4.1-flash | La section Projet sur iOS : le plan (segments, features, états), le suivi des PR du projet, les escalades à trancher, et « Piloter un projet… » — démarrer un cadrage, valider le plan, répondre aux questions depuis l'iPhone ou l'iPad. Le document PROJECT.md et les règles du plan restent la vérité, l'app ne les réimplémente pas. La réussite se prouve en conduisant un vrai projet du cadrage à sa première PR depuis l'iPad. |
+| 3 | `ios-projet` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/74 | opencode-go/deepseek-v4.1-flash | La section Projet sur iOS : le plan (segments, features, états), le suivi des PR du projet, les escalades à trancher, et « Piloter un projet… » — démarrer un cadrage, valider le plan, répondre aux questions depuis l'iPhone ou l'iPad. Le document PROJECT.md et les règles du plan restent la vérité, l'app ne les réimplémente pas. La réussite se prouve en conduisant un vrai projet du cadrage à sa première PR depuis l'iPad. |
 
 ### Segment 5 — Lire la mémoire et les sessions (à venir)
 
