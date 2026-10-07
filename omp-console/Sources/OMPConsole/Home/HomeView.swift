@@ -411,3 +411,20 @@ struct HomeView: ConsoleSectionView {
         }
     }
 }
+
+// Les membres « notifications » de `HomePresentation` (S-16) : ils nomment
+// `AlertAuthorization` (coque macOS) et une URL de Réglages Système sans sens sur
+// iOS — le noyau partagé ne les porte donc pas.
+extension HomePresentation {
+    /// Réglages Système ▸ Notifications (« Ouvrir les Réglages » du bandeau).
+    static let notificationsSettingsURL = URL(
+        string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension"
+    )!
+
+    /// Le bandeau « notifications désactivées » : seulement quand l'autorisation
+    /// est REFUSÉE (`unknown` — pas encore répondu — et `unavailable` — hors
+    /// bundle — ne l'affichent pas) et que l'utilisateur ne l'a pas ignoré.
+    static func showsNotificationsBanner(authorization: AlertAuthorization, dismissed: Bool) -> Bool {
+        authorization == .denied && !dismissed
+    }
+}

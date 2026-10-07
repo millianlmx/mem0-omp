@@ -31,6 +31,20 @@ public final class ConsoleClientModel: ObservableObject {
     @Published public private(set) var pairingFailure: ClientPairingFailure?
     @Published public private(set) var localNetworkDenied = false
 
+    /// L'ardoise dérivée du dernier instantané reçu (S-8) : `.loading` tant
+    /// qu'aucune trame `store` n'est arrivée, puis recalculée à chaque trame et
+    /// après chaque lecture REST du magasin. La dérivation se fait ICI, jamais
+    /// dans une vue.
+    @Published public private(set) var board: KanbanBoardState = .loading
+    /// L'état des composants du Mac (S-8), posé par la trame `components` et par
+    /// la lecture `components()`.
+    @Published public private(set) var components: RemoteComponentsPayload?
+    /// Le journal des gestes (S-8), posé par la trame `journal` et par la lecture
+    /// `journal()`.
+    @Published public private(set) var journal: [ActionJournalEntry] = []
+    /// La préférence de bienvenue (S-8), lue au `start()`.
+    @Published public private(set) var welcomeSeen = false
+
     /// La borne des mises à jour de session conservées.
     public static let sessionUpdateLimit = 100
 
@@ -44,6 +58,9 @@ public final class ConsoleClientModel: ObservableObject {
     private let pathSource: any ClientPathSource
     private let deviceName: String
     private let localProtocolVersion: Int
+    /// L'horloge injectée : la dérivation de l'ardoise lit `nowMs()` (S-8), pour
+    /// que les tests soient déterministes. Défaut : l'horloge murale (ms epoch).
+    private let nowMs: @Sendable () -> Double
 
     // MARK: - Faits internes
 
@@ -69,7 +86,8 @@ public final class ConsoleClientModel: ObservableObject {
         pacer: any ClientPacer = LiveClientPacer(),
         pathSource: any ClientPathSource,
         deviceName: String = "iPhone",
-        localProtocolVersion: Int = ConsoleAPI.protocolVersion
+        localProtocolVersion: Int = ConsoleAPI.protocolVersion,
+        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }
     ) {
         self.transport = transport
         self.discovery = discovery
@@ -79,6 +97,7 @@ public final class ConsoleClientModel: ObservableObject {
         self.pathSource = pathSource
         self.deviceName = deviceName
         self.localProtocolVersion = localProtocolVersion
+        self.nowMs = nowMs
     }
 
     /// La production : le vrai transport, la vraie découverte, le vrai trousseau.
@@ -94,11 +113,28 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
+    /// OMP trouvé ou introuvable (S-8, S-10) : `.missing` est conclu SEULEMENT
+    /// quand le Mac a répondu que le composant n'est pas installé ; tant que
+    /// `components` est `nil`, on ne conclut JAMAIS à l'absence (l'Accueil reste
+    /// en chargement/déconnecté, jamais « OMP absent »).
+    public var omp: OmpStatus {
+        if let components, components.ompInstalled == false { return .missing }
+        return .available(URL(fileURLWithPath: components?.ompPath ?? ""))
+    }
+
+    /// La feuille de bienvenue a été vue : la préférence passe à `true` (S-8).
+    public func closeWelcome() {
+        guard !welcomeSeen else { return }
+        welcomeSeen = true
+        preferences.set(true, forKey: ClientPreferenceKey.welcomeSeen)
+    }
+
     public func start() {
         guard !running else { return }
         running = true
         manualAddress = loadManualAddress()
         deviceId = preferences.string(forKey: ClientPreferenceKey.deviceId)
+        welcomeSeen = preferences.bool(forKey: ClientPreferenceKey.welcomeSeen) ?? false
         discovery.onChange = { [weak self] list in self?.applyDiscovered(list) }
         discovery.onProtocolVersion = { [weak self] version in self?.applyRemoteProtocol(version) }
         discovery.onDenied = { [weak self] denied in self?.localNetworkDenied = denied }
@@ -259,7 +295,9 @@ public final class ConsoleClientModel: ObservableObject {
     }
 
     public func store() async throws -> RemoteStorePayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/store"), as: RemoteStorePayload.self)
+        let payload = try await perform(ClientHTTPRequest(method: "GET", path: "/v1/store"), as: RemoteStorePayload.self)
+        applyStore(payload.snapshot)
+        return payload
     }
 
     public func sessions() async throws -> RemoteSessionsPayload {
@@ -298,6 +336,21 @@ public final class ConsoleClientModel: ObservableObject {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/models"), as: RemoteModelsPayload.self)
     }
 
+    public func components() async throws -> RemoteComponentsPayload {
+        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/components"), as: RemoteComponentsPayload.self)
+    }
+
+    public func journal() async throws -> RemoteJournalPayload {
+        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/journal"), as: RemoteJournalPayload.self)
+    }
+
+    public func contract(cardId: String) async throws -> RemoteContractPayload {
+        try await perform(
+            ClientHTTPRequest(method: "GET", path: "/v1/cards/" + encode(cardId) + "/contract"),
+            as: RemoteContractPayload.self
+        )
+    }
+
     public func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
         var query: [String] = []
         if let scope { query.append("scope=" + encode(scope)) }
@@ -329,7 +382,7 @@ public final class ConsoleClientModel: ObservableObject {
         toolCallId: String? = nil
     ) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteAnswerRequest(toolCallId: toolCallId, kind: kind, label: label, text: text))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/answer", body: body),
             as: RemoteAcceptedPayload.self
         )
@@ -337,7 +390,7 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func reply(cardId: String, text: String) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteTextRequest(text: text))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/reply", body: body),
             as: RemoteAcceptedPayload.self
         )
@@ -345,7 +398,7 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func text(cardId: String, text: String) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteTextRequest(text: text))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/text", body: body),
             as: RemoteAcceptedPayload.self
         )
@@ -353,21 +406,21 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func verdict(cardId: String, verdict: String) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteVerdictRequest(verdict: verdict))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/verdict", body: body),
             as: RemoteAcceptedPayload.self
         )
     }
 
     public func resume(cardId: String) async throws -> RemoteAcceptedPayload {
-        try await perform(
+        try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/resume"),
             as: RemoteAcceptedPayload.self
         )
     }
 
     public func stop(cardId: String) async throws -> RemoteAcceptedPayload {
-        try await perform(
+        try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/cards/" + encode(cardId) + "/stop"),
             as: RemoteAcceptedPayload.self
         )
@@ -387,7 +440,7 @@ public final class ConsoleClientModel: ObservableObject {
             modelReqSpecs: modelReqSpecs,
             modelImplReview: modelImplReview
         ))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/features", body: body),
             as: RemoteAcceptedPayload.self
         )
@@ -395,14 +448,14 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func startConduite(repoKey: String, name: String) async throws -> RemoteConduitePayload {
         let body = try encode(RemoteConduiteRequest(name: name))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/projects/" + encode(repoKey) + "/conduite", body: body),
             as: RemoteConduitePayload.self
         )
     }
 
     public func closeConduite(repoKey: String) async throws -> RemoteConduitePayload {
-        try await perform(
+        try await performGesture(
             ClientHTTPRequest(method: "DELETE", path: "/v1/projects/" + encode(repoKey) + "/conduite"),
             as: RemoteConduitePayload.self
         )
@@ -445,7 +498,7 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func prompt(message: String) async throws -> RemoteSentPayload {
         let body = try encode(RemotePromptRequest(message: message))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(method: "POST", path: "/v1/session/prompt", body: body),
             as: RemoteSentPayload.self
         )
@@ -460,7 +513,7 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func merge(repoKey: String, slug: String, headOid: String) async throws -> RemoteMergedPayload {
         let body = try encode(RemoteMergeRequest(headOid: headOid))
-        return try await perform(
+        return try await performGesture(
             ClientHTTPRequest(
                 method: "POST",
                 path: "/v1/projects/" + encode(repoKey) + "/pull-requests/" + encode(slug) + "/merge",
@@ -496,6 +549,15 @@ public final class ConsoleClientModel: ObservableObject {
         guard let value = try? JSONDecoder().decode(T.self, from: response.body) else {
             throw ClientError.decoding("charge utile illisible (\(T.self))")
         }
+        return value
+    }
+
+    /// Un geste : exécute la route puis rafraîchit les faits de l'Accueil (S-8).
+    /// Le rafraîchissement n'est PAS attendu : le geste rend son résultat typé dès
+    /// que la route réussit, et l'accusé arrive par le flux ou par ces lectures.
+    private func performGesture<T: Decodable>(_ request: ClientHTTPRequest, as type: T.Type) async throws -> T {
+        let value = try await perform(request, as: type)
+        refreshHomeFacts()
         return value
     }
 
@@ -708,6 +770,7 @@ public final class ConsoleClientModel: ObservableObject {
         lastFailure = nil
         attempt = 0
         publishState()
+        refreshHomeFacts()
         for try await chunk in stream {
             if Task.isCancelled { throw CancellationError() }
             for event in parser.consume(chunk) {
@@ -728,7 +791,7 @@ public final class ConsoleClientModel: ObservableObject {
                 incompatible = ClientIncompatibility(local: localProtocolVersion, remote: hello.protocolVersion)
             }
         case .store(let snapshot):
-            self.snapshot = snapshot
+            applyStore(snapshot)
         case .devices(let event):
             devices = event.devices
         case .sessions(let event):
@@ -740,9 +803,43 @@ public final class ConsoleClientModel: ObservableObject {
             hosted = event
         case .conduite(let payload):
             conduite = payload
+        case .components(let payload):
+            components = payload
+        case .journal(let payload):
+            journal = payload.entries
         case .unknown:
             break
         }
+    }
+
+    /// Pose l'instantané et recalcule l'ardoise (S-8). Une trame identique ne
+    /// republie rien : l'égalité des `StoreSnapshot` est déjà `Equatable`.
+    private func applyStore(_ snapshot: StoreSnapshot) {
+        guard snapshot != self.snapshot else { return }
+        self.snapshot = snapshot
+        board = KanbanBoardState.derive(
+            snapshot: snapshot,
+            nowMs: nowMs(),
+            stateDir: "",
+            isAlive: .transported(snapshot)
+        )
+    }
+
+    // MARK: - Faits de l'Accueil (S-8)
+
+    /// Rafraîchit l'état des composants et le journal — à la connexion et après
+    /// chaque geste émis. Les appels sont TOLÉRANTS : un Mac plus ancien rend 404,
+    /// et une erreur n'est jamais propagée (les faits restent inconnus).
+    private func refreshHomeFacts() {
+        Task { [weak self] in
+            guard let self else { return }
+            await self.loadHomeFacts()
+        }
+    }
+
+    private func loadHomeFacts() async {
+        if let payload = try? await components() { components = payload }
+        if let payload = try? await journal() { journal = payload.entries }
     }
 
     // MARK: - Découverte, réseau, version distante

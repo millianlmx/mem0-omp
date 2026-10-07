@@ -83,4 +83,29 @@ struct PayloadDecodingTests {
         )
         #expect(events == [.unknown("futur"), .hello(RemoteHelloEvent(protocolVersion: 1))])
     }
+
+    @Test("les trames `components` et `journal` se décodent dans leurs miroirs")
+    func componentsAndJournalFrames() {
+        var parser = ClientStreamParser()
+        let components = ClientFixtures.frame(
+            "components",
+            #"{"ompInstalled":false,"ompPath":null,"setupBanner":"Préparation en cours"}"#
+        )
+        let journal = ClientFixtures.frame(
+            "journal",
+            #"{"entries":[{"id":"cmd-1","kindLabel":"lancement","targetLabel":"Titre","state":{"awaitingAck":{}},"at":1}]}"#
+        )
+        let events = parser.consume(components + journal)
+        #expect(events.count == 2)
+        #expect(events.first == .components(RemoteComponentsPayload(
+            ompInstalled: false, ompPath: nil, setupBanner: "Préparation en cours"
+        )))
+        if case .journal(let payload) = events.last {
+            #expect(payload.entries.count == 1)
+            #expect(payload.entries.first?.kindLabel == "lancement")
+            #expect(payload.entries.first?.state == .awaitingAck)
+        } else {
+            Issue.record("trame journal non décodée")
+        }
+    }
 }

@@ -31,7 +31,7 @@ final class FilesModel: ObservableObject {
     /// par git, il ne peut donc pas figurer dans l'arbre (S-6).
     /// `nonisolated` : ce sont des constantes, lisibles depuis les textes comme
     /// depuis les tests, sans passer par le fil principal.
-    nonisolated static let contractRelativePath = ".omp/pipeline/contract.md"
+    nonisolated static let contractRelativePath = ContractText.relativePath
     nonisolated static let projectDocumentRelativePath = "PROJECT.md"
 
     /// L'anti-rebond de S-7 : un lot d'événements ne déclenche qu'un rechargement

@@ -159,3 +159,37 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+## L'Accueil (S-10, S-11)
+
+- L'Accueil iOS montre un seul de ses cinq états : déconnecté, « OMP absent sur
+  le Mac », chargement, premiers pas, tableau de bord — dans cet ordre de
+  priorité. `[test: resolvePriority]`
+- Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
+  la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
+  libellés. `[test: parityFacts]`
+- La ligne « Accueil » porte le badge du nombre d'attentes (la fonction partagée
+  `HomePresentation.attentionCount`), et rien quand il vaut zéro. `[test: badgeCounts]`
+- La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
+  (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`
+- La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
+  `textQuestion`) ; une option sélectionnée prime sur le champ libre. `[test: answerZones]`
+- La feuille Contrat découpe le markdown par les fonctions partagées
+  (`ContractDocument`), affiche chaque section verbatim et le message d'une
+  section absente. `[test: contractOutputs]`
+- Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
+  exploitable. `[test: deliveredLinks]`
+- Le lien « Tout afficher » sélectionne la section Pipelines. `[test: allPipelinesSection]`
+- Le bandeau de préparation vient du Mac (`components.setupBanner`), jamais
+  inventé ; l'Accueil ne porte AUCUN bouton dessus. `[test: setupBanner]`
+- « OMP absent sur le Mac » n'est conclu que sur réponse du Mac, jamais quand la
+  réponse manque. `[test: macMissingRequiresComponents]`
+- Avant le premier instantané, l'Accueil affiche un chargement explicite, jamais
+  un vide muet. `[test: loadingBeforeFirstSnapshot]`
+- L'état de l'Accueil suit l'ardoise publiée sans geste de l'utilisateur.
+  `[test: liveUpdates]`
+- Aucun bandeau de notifications, et l'app ne demande jamais l'autorisation
+  d'en afficher. `[test: noNotificationsBanner]`
+- Les cinq états et les trois feuilles se capturent par le crochet de recette
+  `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
+- L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
+  `[capture: iphone-home-dark-ax]`

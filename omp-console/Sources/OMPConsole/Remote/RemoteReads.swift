@@ -19,6 +19,14 @@ final class RemoteReads {
     let memoryLinks: URL
     let environment: [String: String]
     let clock: RemoteClock
+    /// Le tableau de bord réel : la carte d'un contrat se résout par l'ardoise
+    /// DÉJÀ dérivée (`KanbanModel`), jamais par une seconde dérivation (S-6).
+    let kanban: KanbanModel
+    /// Le journal des gestes servi tel quel (S-5).
+    let actions: ActionsModel
+    /// L'état des composants et de la préparation (S-4), injecté par la racine
+    /// macOS : une seule source de vérité, aucune lecture propre à l'API.
+    let componentsProvider: @MainActor () -> RemoteComponentsPayload
 
     init(
         hub: StoreHub,
@@ -28,7 +36,12 @@ final class RemoteReads {
         memoryConfig: MemoryServiceConfig,
         memoryLinks: URL,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        clock: RemoteClock = .live
+        clock: RemoteClock = .live,
+        kanban: KanbanModel,
+        actions: ActionsModel,
+        components: @escaping @MainActor () -> RemoteComponentsPayload = {
+            RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
+        }
     ) {
         self.hub = hub
         self.registry = registry
@@ -38,6 +51,9 @@ final class RemoteReads {
         self.memoryLinks = memoryLinks
         self.environment = environment
         self.clock = clock
+        self.kanban = kanban
+        self.actions = actions
+        self.componentsProvider = components
     }
 
     // MARK: - Socle
@@ -205,6 +221,36 @@ final class RemoteReads {
                 connected: registry.connected.contains(device.id)
             )
         })
+    }
+
+    // MARK: - Composants, journal, contrat
+
+    /// L'état des composants et de la préparation (S-4), rendu par la fermeture
+    /// injectée : l'API ne relit jamais les modèles elle-même.
+    func components() -> RemoteComponentsPayload {
+        componentsProvider()
+    }
+
+    /// Le journal des gestes, servi tel quel (S-5).
+    func journal() -> RemoteJournalPayload {
+        RemoteJournalPayload(entries: actions.journal)
+    }
+
+    /// Le contrat d'une carte (S-6) : la carte par l'ardoise déjà dérivée, le
+    /// chemin par `ContractDocument.path`. 404 carte inconnue ; 409 quand la carte
+    /// n'a ni moment ni worktree.
+    func cardContract(cardId: String) throws -> RemoteContractPayload {
+        guard let card = kanban.state.card(cardId) else {
+            throw ConsoleAPIError.notFound("carte inconnue")
+        }
+        guard ContractDocument.moment(for: card) != nil,
+              let worktree = card.action?.worktree, !worktree.isEmpty else {
+            throw ConsoleAPIError.conflict("carte sans contrat")
+        }
+        return RemoteContractPayload(document: Self.document(
+            name: "contract.md",
+            path: ContractDocument.path(worktree: worktree)
+        ))
     }
 
     // MARK: - Mémoire

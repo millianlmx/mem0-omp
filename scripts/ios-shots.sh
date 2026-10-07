@@ -204,7 +204,7 @@ shoot() {
   xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
   xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
   for section in "${sections[@]}"; do
-    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" "$@" >/dev/null 2>&1
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section "$section" -home.welcomeSeen YES "$@" >/dev/null 2>&1
     sleep 2
     shot="$SHOTS/$label-$section-$appearance$suffix.png"
     if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
@@ -232,6 +232,55 @@ done
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$count" != "56" ]; then
   echo "  ✗ $count captures produites (56 attendues)" >&2
+  exit 1
+fi
+
+# Passage 3 — l'ACCUEIL de l'app (ios-accueil) : ses cinq états de recette et ses
+# trois feuilles, sur les deux appareils et les deux apparences, à taille de texte
+# par défaut. Le crochet `-home.recipe` force un état depuis la fixture partagée
+# (`HomeParity`) : chaque capture montre un chemin de code RÉEL, jamais un écran
+# fabriqué. La feuille Bienvenue s'obtient en NE passant PAS `-home.welcomeSeen`
+# (une installation neuve ne l'a jamais vue).
+recipes=(dashboard degraded firstRun loading ompMissing answer contract)
+
+shoot_home() {
+  local label="$1"
+  local udid="$2"
+  local appearance="$3"
+  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
+  for recipe in "${recipes[@]}"; do
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
+      -section home -home.welcomeSeen YES -home.recipe "$recipe" >/dev/null 2>&1
+    sleep 2
+    shot="$SHOTS/$label-home-$recipe-$appearance.png"
+    if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+      echo "  ✗ capture impossible ($shot)" >&2
+      exit 1
+    fi
+    echo "$shot"
+  done
+  # La feuille Bienvenue : première ouverture de l'Accueil, préférence fausse.
+  xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" -section home >/dev/null 2>&1
+  sleep 2
+  shot="$SHOTS/$label-home-welcome-$appearance.png"
+  if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+    echo "  ✗ capture impossible ($shot)" >&2
+    exit 1
+  fi
+  echo "$shot"
+}
+
+for appearance in light dark; do
+  shoot_home iphone "$iphone" "$appearance"
+  shoot_home ipad "$ipad" "$appearance"
+done
+
+# Le second groupe fait 8 états × {iPhone, iPad} × {clair, sombre} = 32 captures ;
+# le total avec les 56 écrans est 88.
+count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$count" != "88" ]; then
+  echo "  ✗ $count captures produites (88 attendues : 56 écrans + 32 Accueil)" >&2
   exit 1
 fi
 

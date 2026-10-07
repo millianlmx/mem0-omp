@@ -1618,9 +1618,17 @@ un flux temps réel.
 - **Documents de projet** : `GET /v1/projects/{repoKey}/documents` sert `PROJECT.md`
   (du magasin) et `contract.md` (de la racine du projet), chacun avec son état
   (`text`, `missing`, `binary`, `unreadable`).
+- **État du Mac pour l'Accueil** : `GET /v1/components` sert
+  `{ompInstalled, ompPath?, setupBanner?}` (la présence réelle du composant OMP et
+  le bandeau de préparation) ; `GET /v1/journal` sert les 20 derniers gestes
+  (`{entries:[…]}`, le plus récent en tête) ; `GET /v1/cards/{id}/contract` sert le
+  contrat d'une carte sous `{document: {name, state, content, reason}}` — `404`
+  carte inconnue, `409` carte sans contrat (moment ou worktree absent).
 - **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
-  `store`, `sessions`, `hosted` et `devices`, avec un battement de cœur toutes les
-  15 secondes. La révocation d'un appareil coupe son flux immédiatement.
+  `store`, `devices`, `components`, `journal`, `sessions` et `hosted`, avec un
+  battement de cœur toutes les 15 secondes. À l'abonnement, l'ordre est `hello`,
+  `store`, `devices`, `components`, `journal`. La révocation d'un appareil coupe son
+  flux immédiatement.
 
 ### Sonde CLI
 
@@ -1875,9 +1883,23 @@ absence en échec.
 sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
 sont hors périmètre), une seule navigation adaptative — barre latérale à deux
 groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
-état vide RÉEL. Elle n'a ni magasin local, ni badge d'attention : son seul accès
+état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
 trousseau et feuille de connexion.
+
+L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
+aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
+premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
+préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
+« Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
+(« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR) —
+les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
+ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
+trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
+libre), Contrat (sections verbatim) et Bienvenue (première ouverture d'une
+installation neuve, avant la feuille de connexion). Le crochet de recette
+`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract>`
+force un état depuis la fixture partagée `HomeParity` pour les captures.
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
@@ -1950,8 +1972,13 @@ sur chacune des sept sections par son argument de lancement et capture l'écran 
 images sont des artefacts de PR, jamais committées) — sept écrans × {iPhone
 portrait, iPad portrait} × {clair, sombre} à taille de texte par défaut, plus
 sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffixe
-`-ax`). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g
-pixelHeight`) : toutes PORTRAIT — une capture inattendue ferait échouer le script.
+`-ax`). Un SECOND groupe capture l'**Accueil** (feature `ios-accueil`) : ses cinq
+états de recette (`dashboard`, `degraded`, `firstRun`, `loading`, `ompMissing`) et
+ses feuilles « Répondre » et « Contrat » via `-home.recipe`, plus la feuille
+Bienvenue — 8 états × {iPhone, iPad} × {clair, sombre} = **32 PNG**. Le total
+attendu est **88** (56 + 32). Chaque capture est sondée en dimensions (`sips -g
+pixelWidth -g pixelHeight`) : toutes PORTRAIT — une capture inattendue ferait
+échouer le script.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,

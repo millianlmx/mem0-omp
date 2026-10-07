@@ -174,7 +174,9 @@ private func makeStack(
         memoryConfig: config,
         memoryLinks: support.appendingPathComponent("memory-links.json"),
         environment: environment,
-        clock: clock.clock
+        clock: clock.clock,
+        kanban: kanban,
+        actions: actions
     )
     let remoteActions = RemoteActions(
         kanban: kanban,

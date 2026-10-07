@@ -49,8 +49,8 @@ struct OMPConsoleApp: App {
     @StateObject private var setupModel: SetupModel
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
     /// latérale le montre, et ses deux veilles vivent tant que l'app vit — le
-    /// badge se recalcule sans redémarrage.
-    @StateObject private var componentsModel = ComponentPresenceModel()
+    /// badge se recalcule sans redémarrage. Le service d'API le sert aussi (S-4).
+    @StateObject private var componentsModel: ComponentPresenceModel
     /// Le service d'API distante (BR-9) : à l'échelle de l'app, comme les autres —
     /// il possède le registre des appareils, l'interrupteur persistant et la
     /// feuille d'appairage.
@@ -76,6 +76,11 @@ struct OMPConsoleApp: App {
         // elle-même (S-4), et c'est ce binaire-là qu'elle hébergera désormais.
         let home = HomeModel()
         _homeModel = StateObject(wrappedValue: home)
+        // La préparation et la présence des composants sont construites AVANT le
+        // service d'API : il les sert (`GET /v1/components`, évènement `components`).
+        let setup = SetupModel.standard()
+        let presence = ComponentPresenceModel()
+        _componentsModel = StateObject(wrappedValue: presence)
         // Le service d'API distante partage les modèles de l'app : ce que l'API
         // sert à distance est l'état que la fenêtre montre. Il démarre à
         // l'apparition de la racine ET sur `onReady` (S-14).
@@ -85,7 +90,17 @@ struct OMPConsoleApp: App {
             actions: actions,
             session: session,
             project: project,
-            stats: stats
+            stats: stats,
+            components: { [weak presence, weak setup] in
+                let installed = presence.map { !$0.presence.missing.contains(.omp) } ?? false
+                return RemoteComponentsPayload(
+                    ompInstalled: installed,
+                    ompPath: installed ? presence?.binaryPath(.omp) : nil,
+                    setupBanner: setup.flatMap { SetupText.banner(state: $0.state, dismissed: true) }
+                )
+            },
+            presenceChanges: presence.$presence.map { _ in () }.eraseToAnyPublisher(),
+            setupChanges: setup.$state.map { _ in () }.eraseToAnyPublisher()
         )
         _remoteModel = StateObject(wrappedValue: remote)
         // L'annonce Bonjour ne survit pas au process (S-14) : l'accroche de
@@ -94,7 +109,6 @@ struct OMPConsoleApp: App {
         AppDelegate.terminateRemoteService = { [weak remote] in
             remote?.stop()
         }
-        let setup = SetupModel.standard()
         // S-14 : le service ne démarre jamais tant que la préparation des composants
         // n'est pas terminée — `onReady` en fait le démarrage différé.
         remote.isSetupReady = { [weak setup] in setup?.state == .ready }

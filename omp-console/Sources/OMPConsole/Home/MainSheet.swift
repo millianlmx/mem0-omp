@@ -31,18 +31,7 @@ enum MainSheet: Identifiable, Equatable {
     }
 }
 
-enum MainSheetPolicy {
-    /// La zone à laquelle la feuille « Répondre » répond : une question en vol ou
-    /// une question en texte, sinon aucune.
-    static func answerZone(for card: KanbanCard) -> KanbanActionZone? {
-        KanbanActionPresentation.zones(for: card).first { zone in
-            switch zone {
-            case .pendingQuestion, .textQuestion: true
-            default: false
-            }
-        }
-    }
-
+extension MainSheetPolicy {
     /// La feuille due, dans l'ordre FIGÉ : (1) préparation en cours (ou en échec),
     /// feuille non ignorée → `.setup` ; (2) composant OMP manquant, feuille non
     /// ignorée → `.setup` ; (3) la feuille Contrat demandée (S-6) ; (4) la feuille

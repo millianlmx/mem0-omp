@@ -49,6 +49,11 @@ final class RemoteServiceModel: ObservableObject {
         session: SessionConsoleModel,
         project: ProjectConsoleModel,
         stats: StatsModel,
+        components: @escaping @MainActor () -> RemoteComponentsPayload = {
+            RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
+        },
+        presenceChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
+        setupChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
         registry: DeviceRegistry? = nil,
         makeListener: ((@escaping RemoteServer.Handler) -> any RemoteListening)? = nil
     ) {
@@ -63,7 +68,19 @@ final class RemoteServiceModel: ObservableObject {
         self.makeListener = factory
         self.listener = factory { _, _ in .respond(HTTPResponse.error(.notFound("route inconnue"))) }
 
-        let hub = RemoteStreamHub(storeHub: storeHub, registry: self.registry, session: session, project: project, clock: clock)
+        let hub = RemoteStreamHub(
+            storeHub: storeHub,
+            registry: self.registry,
+            session: session,
+            project: project,
+            clock: clock,
+            components: components,
+            journal: { actions.journal },
+            // Un changement de la présence des composants OU de l'état de
+            // préparation pousse le même évènement `components` (S-4).
+            componentsChanges: presenceChanges.merge(with: setupChanges).eraseToAnyPublisher(),
+            journalChanges: actions.$journal.map { _ in () }.eraseToAnyPublisher()
+        )
         let reads = RemoteReads(
             hub: storeHub,
             registry: self.registry,
@@ -72,7 +89,10 @@ final class RemoteServiceModel: ObservableObject {
             memoryConfig: Self.memoryConfig(environment: environment, stackEnv: paths.stackEnv),
             memoryLinks: paths.memoryLinks,
             environment: environment,
-            clock: clock
+            clock: clock,
+            kanban: kanban,
+            actions: actions,
+            components: components
         )
         let remoteActions = RemoteActions(
             kanban: kanban,

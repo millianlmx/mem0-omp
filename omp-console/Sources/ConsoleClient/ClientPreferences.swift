@@ -8,6 +8,11 @@ import Foundation
 public protocol ClientPreferences: Sendable {
     func string(forKey key: String) -> String?
     func set(_ value: String?, forKey key: String)
+    /// La lecture booléenne : `nil` quand la clé n'a jamais été posée (le domaine
+    /// Argument de macOS répond « YES », d'où `object(forKey:) != nil` avant
+    /// `bool(forKey:)`).
+    func bool(forKey key: String) -> Bool?
+    func set(_ value: Bool, forKey key: String)
 }
 
 /// Les clés de préférences, écrites une seule fois.
@@ -16,6 +21,8 @@ public enum ClientPreferenceKey {
     public static let manualAddress = "client.manualAddress"
     /// L'identifiant d'appareil appairé (UUID minuscule).
     public static let deviceId = "client.deviceId"
+    /// La feuille de bienvenue a été vue (le MÊME nom que la préférence macOS).
+    public static let welcomeSeen = "home.welcomeSeen"
 }
 
 /// La production : `UserDefaults.standard`. `UserDefaults` est documenté
@@ -37,6 +44,15 @@ public struct UserDefaultsClientPreferences: ClientPreferences, @unchecked Senda
         } else {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    public func bool(forKey key: String) -> Bool? {
+        guard defaults.object(forKey: key) != nil else { return nil }
+        return defaults.bool(forKey: key)
+    }
+
+    public func set(_ value: Bool, forKey key: String) {
+        defaults.set(value, forKey: key)
     }
 }
 
@@ -63,6 +79,20 @@ public final class InMemoryClientPreferences: ClientPreferences, @unchecked Send
         } else {
             values[key] = nil
         }
+    }
+
+    /// La lecture booléenne : `nil` quand la clé n'a jamais été posée.
+    public func bool(forKey key: String) -> Bool? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let raw = values[key] else { return nil }
+        return raw == "true"
+    }
+
+    public func set(_ value: Bool, forKey key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        values[key] = value ? "true" : "false"
     }
 
     /// Le contenu, pour les assertions de test.

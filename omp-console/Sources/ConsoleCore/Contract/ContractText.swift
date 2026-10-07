@@ -7,6 +7,26 @@
 import Foundation
 
 public enum ContractText {
+    // --- le chemin et le geste (S-6) ------------------------------------------
+
+    /// Le SEUL littéral du chemin du contrat dans tout le paquet. `FilesModel`
+    /// (coque macOS) et `ContractDocument.path(worktree:)` (noyau) le reprennent —
+    /// un chemin, un seul endroit.
+    public static let relativePath = ".omp/pipeline/contract.md"
+
+    /// Ce qui est à valider, dans les mots des sections requises (S-2) : la liste
+    /// des titres vient de `ContractDocument.titles(for:)`, jamais d'un second
+    /// littéral.
+    public static func subtitle(_ moment: ContractMoment) -> String {
+        "À valider : \(ContractDocument.titles(for: moment).joined(separator: " et "))."
+    }
+
+    /// Fichier absent : le chemin relatif vient de `ContractText.relativePath`,
+    /// jamais d'un second littéral.
+    public static var missingFile: String {
+        "Aucun contrat pour cette feature : le fichier `\(relativePath)` n'existe pas encore."
+    }
+
     // --- le geste et la feuille (S-6, S-7) ------------------------------------
 
     /// Le geste d'ouverture, offert sur les trois surfaces de la demande.

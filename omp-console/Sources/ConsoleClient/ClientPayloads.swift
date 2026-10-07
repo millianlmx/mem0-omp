@@ -31,6 +31,13 @@ public struct RemoteDocument: Codable, Equatable, Sendable {
     public var state: String
     public var content: String?
     public var reason: String?
+
+    public init(name: String, state: String, content: String?, reason: String?) {
+        self.name = name
+        self.state = state
+        self.content = content
+        self.reason = reason
+    }
 }
 
 public struct RemoteDocumentsPayload: Codable, Equatable, Sendable {
@@ -113,6 +120,34 @@ public struct RemoteDeviceRow: Codable, Equatable, Sendable {
 
 public struct RemoteDevicesPayload: Codable, Equatable, Sendable {
     public var devices: [RemoteDeviceRow]
+}
+
+public struct RemoteComponentsPayload: Codable, Equatable, Sendable {
+    public var ompInstalled: Bool
+    public var ompPath: String?
+    public var setupBanner: String?
+
+    public init(ompInstalled: Bool, ompPath: String?, setupBanner: String?) {
+        self.ompInstalled = ompInstalled
+        self.ompPath = ompPath
+        self.setupBanner = setupBanner
+    }
+}
+
+public struct RemoteJournalPayload: Codable, Equatable, Sendable {
+    public var entries: [ActionJournalEntry]
+
+    public init(entries: [ActionJournalEntry]) {
+        self.entries = entries
+    }
+}
+
+public struct RemoteContractPayload: Codable, Equatable, Sendable {
+    public var document: RemoteDocument
+
+    public init(document: RemoteDocument) {
+        self.document = document
+    }
 }
 
 // MARK: - Mémoire

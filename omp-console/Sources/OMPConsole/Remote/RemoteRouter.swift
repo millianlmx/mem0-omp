@@ -68,6 +68,9 @@ final class RemoteRouter {
         .of("GET", "v1/stats", "stats"),
         .of("GET", "v1/devices", "devices"),
         .of("GET", "v1/models", "models"),
+        .of("GET", "v1/components", "components"),
+        .of("GET", "v1/journal", "journal"),
+        .of("GET", "v1/cards/:id/contract", "card.contract"),
         .of("GET", "v1/memory", "memory"),
         .of("GET", "v1/memory/search", "memory.search"),
         .of("GET", "v1/memory/graph", "memory.graph"),
@@ -174,6 +177,12 @@ final class RemoteRouter {
             return try json(RemoteReposPayload(rows: actions.knownRepos()))
         case "conduite.get":
             return try json(actions.conduite())
+        case "components":
+            return try json(reads.components())
+        case "journal":
+            return try json(reads.journal())
+        case "card.contract":
+            return try json(try reads.cardContract(cardId: parameters["id"] ?? ""))
         case "memory":
             return try json(await reads.memory(scope: request.query["scope"], limit: request.query["limit"]))
         case "memory.search":

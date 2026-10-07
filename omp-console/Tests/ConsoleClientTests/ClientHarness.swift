@@ -20,7 +20,8 @@ struct ClientHarness {
         preferences initialPreferences: [String: String] = [:],
         pacerLimit: Int = Int.max,
         deviceName: String = "iPhone",
-        localProtocolVersion: Int = 1
+        localProtocolVersion: Int = 1,
+        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }
     ) {
         preferences = InMemoryClientPreferences(initialPreferences)
         tokens = InMemoryTokenStore(initialTokens)
@@ -33,7 +34,8 @@ struct ClientHarness {
             pacer: pacer,
             pathSource: path,
             deviceName: deviceName,
-            localProtocolVersion: localProtocolVersion
+            localProtocolVersion: localProtocolVersion,
+            nowMs: nowMs
         )
     }
 

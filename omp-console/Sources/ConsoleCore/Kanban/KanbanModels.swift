@@ -7,6 +7,8 @@
 // décision — les rangements, les appariements et les anomalies vivent dans
 // `KanbanBoard.swift` et `KanbanAnomalies.swift`. Les textes d'une carte sont des
 // fonctions pures du modèle, donc vérifiables sans rendre une vue.
+//
+// VIT DANS `ConsoleCore` : les deux coques (macOS et iOS) partagent l'ardoise.
 
 import CryptoKit
 import Darwin
@@ -59,6 +61,11 @@ public enum KanbanSourceKind: String, Sendable {
 public struct KanbanSource: Sendable, Equatable {
     public var kind: KanbanSourceKind
     public var ref: String
+
+    public init(kind: KanbanSourceKind, ref: String) {
+        self.kind = kind
+        self.ref = ref
+    }
 }
 
 // --- carte et ardoise (S-4, S-5) ---------------------------------------------
@@ -72,6 +79,13 @@ public struct KanbanCardRun: Sendable, Equatable {
     public var label: String
     public var inbox: String?
     public var pendingAsk: PanelPendingAsk?
+
+    public init(id: String, label: String, inbox: String?, pendingAsk: PanelPendingAsk?) {
+        self.id = id
+        self.label = label
+        self.inbox = inbox
+        self.pendingAsk = pendingAsk
+    }
 }
 
 /// Les valeurs des gestes d'une carte (S-10) : le dépôt, la feature de LOT quand
@@ -101,6 +115,26 @@ public struct KanbanCardAction: Sendable, Equatable {
     /// feature de lot appariée, aucune autre source) : ce que « Répondre » montre
     /// quand la feature attend une réponse sans question `ask` en vol.
     public var waitPrompt: String? = nil
+
+    public init(
+        repoRoot: String?,
+        repoKey: String? = nil,
+        worktree: String? = nil,
+        slug: String?,
+        waitKind: LotWaitKind?,
+        featureState: LotFeatureState?,
+        run: KanbanCardRun?,
+        waitPrompt: String? = nil
+    ) {
+        self.repoRoot = repoRoot
+        self.repoKey = repoKey
+        self.worktree = worktree
+        self.slug = slug
+        self.waitKind = waitKind
+        self.featureState = featureState
+        self.run = run
+        self.waitPrompt = waitPrompt
+    }
 }
 
 /// Une carte du tableau : ce que la vue affiche et ce que l'inspecteur décrit.
@@ -129,6 +163,36 @@ public struct KanbanCard: Sendable, Equatable, Identifiable {
     /// d'historique. Valeur par défaut : les constructions littérales des tests
     /// existants restent valides.
     public var action: KanbanCardAction? = nil
+
+    public init(
+        id: String,
+        column: KanbanColumn,
+        repo: String,
+        title: String,
+        state: String,
+        phase: PipelinePhase?,
+        models: ModelSlots?,
+        prUrl: String?,
+        startMs: Double,
+        endMs: Double?,
+        marks: [KanbanMark],
+        sources: [KanbanSource],
+        action: KanbanCardAction? = nil
+    ) {
+        self.id = id
+        self.column = column
+        self.repo = repo
+        self.title = title
+        self.state = state
+        self.phase = phase
+        self.models = models
+        self.prUrl = prUrl
+        self.startMs = startMs
+        self.endMs = endMs
+        self.marks = marks
+        self.sources = sources
+        self.action = action
+    }
 
     /// `/<phase>` ou `absent` (S-4) : un run et une entrée d'historique portent
     /// toujours un maillon, une carte de projet seule jamais.
@@ -161,6 +225,12 @@ public struct KanbanAnomaly: Sendable, Equatable {
     public var kind: KanbanMark
     public var text: String
     public var detail: String
+
+    public init(kind: KanbanMark, text: String, detail: String) {
+        self.kind = kind
+        self.text = text
+        self.detail = detail
+    }
 }
 
 /// L'ardoise : les cartes dans leur ORDRE TOTAL (S-5) et les anomalies du
@@ -168,6 +238,11 @@ public struct KanbanAnomaly: Sendable, Equatable {
 public struct KanbanBoard: Sendable, Equatable {
     public var cards: [KanbanCard]
     public var anomalies: [KanbanAnomaly]
+
+    public init(cards: [KanbanCard], anomalies: [KanbanAnomaly]) {
+        self.cards = cards
+        self.anomalies = anomalies
+    }
 }
 
 // --- état publié (S-11) ------------------------------------------------------

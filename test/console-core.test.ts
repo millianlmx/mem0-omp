@@ -230,7 +230,7 @@ function docOnlyCopy(): string {
 const SWIFT_SOURCES = path.join("Sources", "ConsoleCore");
 const SHELL_SOURCES_REL = path.join("Sources", "OMPConsole");
 
-/** Les vingt symboles déplacés de S-1/S-3 (type, ou fichier pour StoreModels/StoreRuns). */
+/** Les symboles déplacés de S-1/S-3 (type, ou fichier pour StoreModels/StoreRuns). */
 const MOVED: string[] = [
   "PipelineStore",
   "StoreModels",
@@ -251,6 +251,44 @@ const MOVED: string[] = [
   "StatsPresentation",
   "ContractText",
   "SetupText",
+  // ios-accueil / BR-1 : le noyau partagé de l'Accueil (S-1).
+  "KanbanColumn",
+  "KanbanMark",
+  "KanbanSourceKind",
+  "KanbanSource",
+  "KanbanCardRun",
+  "KanbanCardAction",
+  "KanbanCard",
+  "KanbanAnomaly",
+  "KanbanBoard",
+  "KanbanBoardState",
+  "KanbanStep",
+  "KanbanRepoKey",
+  "KanbanLane",
+  "KanbanLaneContent",
+  "KanbanCardPresentation",
+  "KanbanAnomalies",
+  "KanbanDedup",
+  "KanbanActionZone",
+  "KanbanActionPresentation",
+  "KanbanLaunchRepos",
+  "ActionsText",
+  "ActionJournalState",
+  "ActionJournalEntry",
+  "HomeState",
+  "HomeDashboard",
+  "HomeAttentionNature",
+  "HomeAttention",
+  "HomeCardAction",
+  "HomePresentation",
+  "OmpStatus",
+  "MainSheetPolicy",
+  "ContractMoment",
+  "ContractSection",
+  "ContractContent",
+  "ContractUnreadable",
+  "ContractDocument",
+  "HomeParity",
 ];
 
 /** Les cinq symboles qui RESTENT dans la coque (S-1). */

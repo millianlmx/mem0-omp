@@ -4,6 +4,8 @@
 //
 // La règle d'aiguillage est EXHAUSTIVE et ne laisse jamais coexister une réponse à
 // une question et un envoi de texte libre (AC-4).
+//
+// VIT DANS `ConsoleCore` : les deux coques partagent l'aiguillage.
 
 import Foundation
 

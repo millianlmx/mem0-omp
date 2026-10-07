@@ -1,4 +1,4 @@
-// Le catalogue des routes du client (S-1) : l'image EXACTE des 30 routes servies
+// Le catalogue des routes du client (S-1) : l'image EXACTE des 33 routes servies
 // par la coque (`RemoteRouter.routes`), méthode et chemin mis à part. Un test
 // confronte les deux — c'est le seul garde-fou contre une route oubliée.
 
@@ -30,7 +30,7 @@ public struct ClientRoute: Equatable, Sendable {
 }
 
 public extension ClientRoute {
-    /// La liste UNIQUE des routes du client : 29 entrées, ni plus ni moins.
+    /// La liste UNIQUE des routes du client : 33 entrées, ni plus ni moins.
     static let all: [ClientRoute] = [
         ClientRoute(name: "version", method: "GET", path: "/v1/version"),
         ClientRoute(name: "store", method: "GET", path: "/v1/store"),
@@ -42,6 +42,9 @@ public extension ClientRoute {
         ClientRoute(name: "stats", method: "GET", path: "/v1/stats"),
         ClientRoute(name: "devices", method: "GET", path: "/v1/devices"),
         ClientRoute(name: "models", method: "GET", path: "/v1/models"),
+        ClientRoute(name: "components", method: "GET", path: "/v1/components"),
+        ClientRoute(name: "journal", method: "GET", path: "/v1/journal"),
+        ClientRoute(name: "card.contract", method: "GET", path: "/v1/cards/{id}/contract"),
         ClientRoute(name: "memory", method: "GET", path: "/v1/memory"),
         ClientRoute(name: "memory.search", method: "GET", path: "/v1/memory/search"),
         ClientRoute(name: "memory.graph", method: "GET", path: "/v1/memory/graph"),

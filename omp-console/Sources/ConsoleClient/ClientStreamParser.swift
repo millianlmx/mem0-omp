@@ -17,6 +17,8 @@ public enum ClientStreamEvent: Equatable, Sendable {
     /// La file d'escalades de la conduite, ENTIÈRE à chaque fois (S-6).
     case conduite(RemoteConduiteStatePayload)
     case devices(RemoteDevicesEvent)
+    case components(RemoteComponentsPayload)
+    case journal(RemoteJournalPayload)
     /// Nom inconnu, ou charge utile illisible : ignoré par le modèle.
     case unknown(String)
 
@@ -29,6 +31,8 @@ public enum ClientStreamEvent: Equatable, Sendable {
         case .hosted: return "hosted"
         case .conduite: return "conduite"
         case .devices: return "devices"
+        case .components: return "components"
+        case .journal: return "journal"
         case .unknown(let name): return name
         }
     }
@@ -85,6 +89,12 @@ public struct ClientStreamParser {
                 .map(ClientStreamEvent.conduite) ?? .unknown(name)
         case "devices":
             return (try? decoder.decode(RemoteDevicesEvent.self, from: data)).map(ClientStreamEvent.devices)
+                ?? .unknown(name)
+        case "components":
+            return (try? decoder.decode(RemoteComponentsPayload.self, from: data)).map(ClientStreamEvent.components)
+                ?? .unknown(name)
+        case "journal":
+            return (try? decoder.decode(RemoteJournalPayload.self, from: data)).map(ClientStreamEvent.journal)
                 ?? .unknown(name)
         default:
             return .unknown(name)

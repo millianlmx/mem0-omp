@@ -17,6 +17,8 @@
 //
 // `pidAlive` de la couche de lecture est la SEULE autorité de vivacité : ce
 // fichier ne réimplémente rien (BR-3).
+//
+// VIT DANS `ConsoleCore` : les deux coques partagent la dérivation.
 
 import Foundation
 

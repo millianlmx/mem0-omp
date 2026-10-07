@@ -183,6 +183,26 @@ struct RemoteReposPayload: Codable, Equatable, Sendable {
     let rows: [RemoteRepoRow]
 }
 
+/// L'état RÉEL des composants de la coque (S-4) : `ompPath` porte le chemin du
+/// binaire OMP quand il est présent, `nil` sinon ; `setupBanner` la phrase de
+/// `SetupText.banner(state:dismissed: true)` (non nulle en préparation/échec).
+struct RemoteComponentsPayload: Codable, Equatable {
+    var ompInstalled: Bool
+    var ompPath: String?
+    var setupBanner: String?
+}
+
+/// Le journal des gestes, servi tel quel (S-5) : borné par le modèle.
+struct RemoteJournalPayload: Codable, Equatable {
+    var entries: [ActionJournalEntry]
+}
+
+/// Le contrat d'une feature (S-6) : le même `RemoteDocument` que les documents
+/// de projet, avec ses états `text | missing | binary | unreadable`.
+struct RemoteContractPayload: Codable, Equatable {
+    var document: RemoteDocument
+}
+
 // MARK: - Mémoire
 
 struct RemoteMemoryRow: Codable, Equatable {

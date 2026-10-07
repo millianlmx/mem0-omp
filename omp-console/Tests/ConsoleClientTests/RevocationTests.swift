@@ -24,8 +24,25 @@ struct RevocationTests {
             tokens: ["d": "tok"],
             preferences: [ClientPreferenceKey.deviceId: "d"]
         )
-        harness.transport.respond { _ in
-            .success(ClientHTTPResponse(
+        // Les lectures des faits de l'Accueil (S-8, rafraîchies à la connexion)
+        // répondent 200 : la révocation de ce test est déclenchée par `version()`,
+        // pas par le rafraîchissement de fond.
+        harness.transport.respond { request in
+            if request.path == "/v1/components" {
+                return .success(ClientHTTPResponse(
+                    status: 200,
+                    protocolVersion: 1,
+                    body: Data(#"{"ompInstalled":true}"#.utf8)
+                ))
+            }
+            if request.path == "/v1/journal" {
+                return .success(ClientHTTPResponse(
+                    status: 200,
+                    protocolVersion: 1,
+                    body: Data(#"{"entries":[]}"#.utf8)
+                ))
+            }
+            return .success(ClientHTTPResponse(
                 status: 401,
                 protocolVersion: 1,
                 body: Data(#"{"error":{"code":"unauthorized"}}"#.utf8)
@@ -59,6 +76,20 @@ struct RevocationTests {
                     status: 200,
                     protocolVersion: 1,
                     body: Data(#"{"deviceId":"FRESH-1","token":"tok-2","protocolVersion":1}"#.utf8)
+                ))
+            }
+            if request.path == "/v1/components" {
+                return .success(ClientHTTPResponse(
+                    status: 200,
+                    protocolVersion: 1,
+                    body: Data(#"{"ompInstalled":true}"#.utf8)
+                ))
+            }
+            if request.path == "/v1/journal" {
+                return .success(ClientHTTPResponse(
+                    status: 200,
+                    protocolVersion: 1,
+                    body: Data(#"{"entries":[]}"#.utf8)
                 ))
             }
             return .success(ClientHTTPResponse(
