@@ -211,8 +211,111 @@ final class RemoteActions {
 
     // MARK: - Conduite
 
+    /// Les dépôts connus de la coque (S-8) : les lots du magasin ∪ les projets du
+    /// magasin, `realpath`és, filtrés par la règle « racine git » de `LaunchRepo`,
+    /// dédupliqués par chemin puis triés. La clé est celle du pilote
+    /// (`KanbanRepoKey`, seule implémentation), jamais recalculée.
+    func knownRepos() -> [RemoteRepoRow] {
+        let snapshot = hub.current()
+        var roots = Set<String>()
+        for lot in snapshot.lots.lots where !lot.repoRoot.isEmpty {
+            roots.insert(realpathOr(lot.repoRoot))
+        }
+        for project in snapshot.projects.projects where !project.repoRoot.isEmpty {
+            roots.insert(realpathOr(project.repoRoot))
+        }
+        return roots
+            .filter { LaunchRepo.isGitRoot(path: $0) }
+            .sorted()
+            .map { path in
+                RemoteRepoRow(
+                    repoKey: KanbanRepoKey.key(forRoot: path),
+                    repoRoot: path,
+                    name: (path as NSString).lastPathComponent
+                )
+            }
+    }
+
+    /// L'état réduit de la conduite (S-11, S-9) : même source que l'en-tête macOS,
+    /// donc les mots sont identiques par construction.
+    func conduite() -> RemoteConduiteStatePayload {
+        Self.conduitePayload(self.project)
+    }
+
+    static func conduitePayload(_ project: ProjectConsoleModel) -> RemoteConduiteStatePayload {
+        RemoteConduiteStatePayload(
+            state: conduiteStateName(project.state),
+            repoKey: project.identity.map { KanbanRepoKey.key(forRoot: $0.repoRoot.path) },
+            name: project.identity?.name,
+            repoRoot: project.identity?.repoRoot.path,
+            status: project.sessionStatus,
+            dialogs: project.host.dialogQueue
+        )
+    }
+
+    static func conduiteStateName(_ state: ConduiteState) -> String {
+        switch state {
+        case .none: return "none"
+        case .starting: return "starting"
+        case .live: return "live"
+        case .closing: return "closing"
+        case .closed: return "closed"
+        }
+    }
+
+    /// Répond à l'escalade `{id}` (S-4, S-5). La validation dépend de la forme de
+    /// l'escalade ; le contrôle d'identité ET l'écriture de la réponse sont faits
+    /// dans la MÊME exécution du `@MainActor` (`ProjectConsoleModel.answer` est
+    /// synchrone) : la file ne peut pas glisser entre les deux.
+    func answerDialog(id: String, body: Data) async throws -> RemoteAcceptedPayload {
+        let request = try Self.decode(RemoteDialogAnswerRequest.self, body)
+        guard let dialog = self.project.pendingDialog else {
+            throw ConsoleAPIError.conflict("aucun dialogue en attente")
+        }
+        guard dialog.id == id else {
+            throw ConsoleAPIError.conflict("l'escalade a changé depuis la demande")
+        }
+        let response: RpcDialogResponse
+        switch request.kind {
+        case "value":
+            guard let value = request.value else { throw ConsoleAPIError.badRequest("valeur absente") }
+            switch dialog.method {
+            case .select:
+                guard dialog.options.contains(value) else {
+                    throw ConsoleAPIError.badRequest("libellé hors des options de l'escalade")
+                }
+            case .input:
+                guard !Self.isBlank(value) else { throw ConsoleAPIError.badRequest("texte vide") }
+            case .editor:
+                // Une valeur VIDE est acceptée : c'est la coque qui juge le plan.
+                break
+            case .confirm:
+                throw ConsoleAPIError.badRequest("cette escalade n'attend pas de valeur")
+            }
+            response = .value(id: id, value: value)
+        case "confirmed":
+            guard dialog.method == .confirm else {
+                throw ConsoleAPIError.badRequest("cette escalade n'attend pas de confirmation")
+            }
+            guard let confirmed = request.confirmed else { throw ConsoleAPIError.badRequest("confirmation absente") }
+            response = .confirmed(id: id, confirmed: confirmed)
+        case "cancelled":
+            response = .cancelled(id: id)
+        default:
+            throw ConsoleAPIError.badRequest("kind inconnu")
+        }
+        guard self.project.answer(dialogId: id, response: response) else {
+            throw ConsoleAPIError.conflict("l'escalade a changé depuis la demande")
+        }
+        return RemoteAcceptedPayload(accepted: true)
+    }
+
     func startConduite(repoKey: String, body: Data) async throws -> RemoteConduitePayload {
-        let record = try projectRecord(repoKey)
+        // Le dépôt est résolu contre les dépôts CONNUS (S-8) : un dépôt jamais cadré
+        // est accepté, la clé venant de la coque (le client ne la calcule jamais).
+        guard let repo = knownRepos().first(where: { $0.repoKey == repoKey }) else {
+            throw ConsoleAPIError.notFound("dépôt inconnu")
+        }
         let request = try Self.decode(RemoteConduiteRequest.self, body)
         guard !Self.isBlank(request.name) else { throw ConsoleAPIError.badRequest("nom vide") }
         // Le refus d'un second démarrage se décide AVANT l'appel : `refusal` est un
@@ -221,7 +324,7 @@ final class RemoteActions {
         // qu'un refus antérieur n'a pas été acquitté à l'écran — alors que le
         // démarrage, lui, a réellement eu lieu (S-10).
         guard self.project.canStartConduite else { throw self.conduiteConflict() }
-        await self.project.startConduite(repoRoot: URL(fileURLWithPath: record.repoRoot), name: request.name)
+        await self.project.startConduite(repoRoot: URL(fileURLWithPath: repo.repoRoot), name: request.name)
         switch self.project.state {
         case .live: return RemoteConduitePayload(state: "live")
         case .starting: return RemoteConduitePayload(state: "starting")
@@ -230,11 +333,13 @@ final class RemoteActions {
     }
 
     func closeConduite(repoKey: String) async throws -> RemoteConduitePayload {
-        let project = try projectRecord(repoKey)
-        // Seul le projet de la conduite VIVE peut être fermé : un autre `repoKey`
-        // (dont la conduite n'est pas la conduite courante) et un projet déjà
-        // fermé (identité remise à `nil`) rendent `409`, jamais un 200 (S-10).
-        guard isConduiteLive(project) else { throw ConsoleAPIError.conflict("aucun projet conduit") }
+        // Seul le projet de la conduite VIVE peut être fermé : on décide sur
+        // l'IDENTITÉ VIVE, sans consulter le magasin — une conduite ouverte sur un
+        // dépôt jamais cadré doit pouvoir être fermée (S-10).
+        guard let identity = self.project.identity,
+              KanbanRepoKey.key(forRoot: identity.repoRoot.path) == repoKey else {
+            throw ConsoleAPIError.conflict("aucun projet conduit")
+        }
         await self.project.closeConduite()
         return RemoteConduitePayload(state: "closed")
     }

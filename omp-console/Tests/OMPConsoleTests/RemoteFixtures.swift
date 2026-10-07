@@ -110,7 +110,7 @@ struct RemoteStack {
         let actions = actionsModel ?? ActionsModel()
         let session = sessionModel ?? SessionConsoleModel()
         let project = projectModel ?? ProjectConsoleModel()
-        let streams = RemoteStreamHub(storeHub: hub, registry: registry, session: session, clock: clock.clock)
+        let streams = RemoteStreamHub(storeHub: hub, registry: registry, session: session, project: project, clock: clock.clock)
         // Le câblage de PRODUCTION (`RemoteServiceModel`) : le registre publie
         // l'évènement `devices` par le flux. Sans lui, l'ordre RÉEL des trames
         // d'ouverture resterait invisible aux tests (S-13).

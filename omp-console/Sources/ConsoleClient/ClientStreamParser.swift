@@ -14,6 +14,8 @@ public enum ClientStreamEvent: Equatable, Sendable {
     case store(StoreSnapshot)
     case sessions(RemoteSessionsEvent)
     case hosted(RemoteHostedEvent)
+    /// La file d'escalades de la conduite, ENTIÈRE à chaque fois (S-6).
+    case conduite(RemoteConduiteStatePayload)
     case devices(RemoteDevicesEvent)
     /// Nom inconnu, ou charge utile illisible : ignoré par le modèle.
     case unknown(String)
@@ -25,6 +27,7 @@ public enum ClientStreamEvent: Equatable, Sendable {
         case .store: return "store"
         case .sessions: return "sessions"
         case .hosted: return "hosted"
+        case .conduite: return "conduite"
         case .devices: return "devices"
         case .unknown(let name): return name
         }
@@ -77,6 +80,9 @@ public struct ClientStreamParser {
         case "hosted":
             return (try? decoder.decode(RemoteHostedEvent.self, from: data)).map(ClientStreamEvent.hosted)
                 ?? .unknown(name)
+        case "conduite":
+            return (try? decoder.decode(RemoteConduiteStatePayload.self, from: data))
+                .map(ClientStreamEvent.conduite) ?? .unknown(name)
         case "devices":
             return (try? decoder.decode(RemoteDevicesEvent.self, from: data)).map(ClientStreamEvent.devices)
                 ?? .unknown(name)

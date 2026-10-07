@@ -54,7 +54,7 @@ struct RootView: View {
                 }
             }
         } detail: {
-            IOSSectionView(section: selection ?? .home, state: state)
+            IOSSectionView(section: selection ?? .home, state: state, client: client)
         }
         .sheet(isPresented: $showConnection) {
             ConnectionSheet(model: client)

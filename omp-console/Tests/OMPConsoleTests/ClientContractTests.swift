@@ -66,8 +66,8 @@ struct ClientContractTests {
     func catalogIsImageOfRouter() async throws {
         // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
         let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
-        #expect(served.count == 26)
-        #expect(ClientRoute.all.count == 26)
+        #expect(served.count == 29)
+        #expect(ClientRoute.all.count == 29)
         #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
 
         // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
@@ -109,6 +109,8 @@ struct ClientContractTests {
         _ = try await model.memorySearch(query: "memoire", scope: nil, limit: nil)
         _ = try await model.memoryGraph(scope: nil)
         _ = try await model.hostedSession()
+        _ = try await model.repos()
+        _ = try await model.conduiteState()
 
         // Le flux temps réel est ouvert par sa méthode typée.
         let events = try await model.openStream()
@@ -118,6 +120,30 @@ struct ClientContractTests {
         }
         #expect(sawHello)
         model.stop()
+    }
+
+    @Test("BR-3 : les charges utiles miroir conduite/dépôts sont l'image exacte de celles de la coque")
+    func mirrorPayloadShapes() throws {
+        #expect(try contractSameShape(
+            #"{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}"#,
+            client: ConsoleClient.RemoteRepoRow.self,
+            host: OMPConsole.RemoteRepoRow.self
+        ))
+        #expect(try contractSameShape(
+            #"{"rows":[{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}]}"#,
+            client: ConsoleClient.RemoteReposPayload.self,
+            host: OMPConsole.RemoteReposPayload.self
+        ))
+        #expect(try contractSameShape(
+            #"{"state":"live","repoKey":"k","name":"P","repoRoot":"/tmp/r","status":{"text":"Active","tone":"success"},"dialogs":[]}"#,
+            client: ConsoleClient.RemoteConduiteStatePayload.self,
+            host: OMPConsole.RemoteConduiteStatePayload.self
+        ))
+        #expect(try contractSameShape(
+            #"{"kind":"value","value":"x"}"#,
+            client: ConsoleClient.RemoteDialogAnswerRequest.self,
+            host: OMPConsole.RemoteDialogAnswerRequest.self
+        ))
     }
 
     @Test("client-distant-ios/AC-1 : la coque est découverte par Bonjour et présentée sans saisie d'adresse")
@@ -157,6 +183,25 @@ struct ClientContractTests {
         #expect(devices.devices.contains { $0.name == "Recette" })
         model.stop()
     }
+}
+
+/// Les noms des propriétés STOCKÉES d'une valeur, par réflexion : c'est ce que la
+/// confrontation des miroirs compare.
+private func contractFieldNames(_ value: Any) -> Set<String> {
+    Set(Mirror(reflecting: value).children.compactMap(\.label))
+}
+
+/// Décodage du MÊME JSON par les deux types (client et coque) : les noms de champs
+/// doivent coïncider — c'est l'invariant du miroir.
+private func contractSameShape<Client: Decodable, Host: Decodable>(
+    _ json: String,
+    client: Client.Type,
+    host: Host.Type
+) throws -> Bool {
+    let data = Data(json.utf8)
+    let decodedClient = try JSONDecoder().decode(client, from: data)
+    let decodedHost = try JSONDecoder().decode(host, from: data)
+    return contractFieldNames(decodedClient) == contractFieldNames(decodedHost)
 }
 
 /// Attend une condition sans bloquer plus que nécessaire.

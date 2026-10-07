@@ -23,6 +23,9 @@ public final class ConsoleClientModel: ObservableObject {
     @Published public private(set) var devices: [RemoteDeviceRow] = []
     @Published public private(set) var sessionUpdates: [RemoteSessionsEvent] = []
     @Published public private(set) var hosted: RemoteHostedEvent?
+    /// L'état RÉDUIT de la conduite (S-6/S-11) : posé par l'évènement `conduite`,
+    /// remis à `nil` dès que l'état publié quitte `.connected`.
+    @Published public private(set) var conduite: RemoteConduiteStatePayload?
     @Published public private(set) var discovered: DiscoveredMac?
     @Published public private(set) var manualAddress: ClientAddress?
     @Published public private(set) var pairingFailure: ClientPairingFailure?
@@ -393,6 +396,37 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
+    /// Les dépôts connus de la coque (S-8) : le client ne calcule jamais un `repoKey`.
+    public func repos() async throws -> RemoteReposPayload {
+        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/repos"), as: RemoteReposPayload.self)
+    }
+
+    /// L'état réduit de la conduite (S-11), lu à la demande.
+    public func conduiteState() async throws -> RemoteConduiteStatePayload {
+        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/conduite"), as: RemoteConduiteStatePayload.self)
+    }
+
+    /// La réponse à une escalade de la conduite (S-4/S-5) : `value` pour
+    /// `editor`/`select`/`input`, `confirmed` pour `confirm`, `cancelled` pour annuler.
+    public func answerProjectDialog(
+        id: String,
+        kind: String,
+        value: String?,
+        confirmed: Bool?
+    ) async throws -> RemoteAcceptedPayload {
+        let body = try encode(RemoteDialogAnswerRequest(kind: kind, value: value, confirmed: confirmed))
+        return try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/conduite/dialogs/" + encode(id), body: body),
+            as: RemoteAcceptedPayload.self
+        )
+    }
+
+    /// Le projet du magasin pour ce `repoKey`, lu de l'instantané courant — l'app
+    /// n'a jamais le type `StoreSnapshot` entre les mains.
+    public func project(repoKey: String) -> Project? {
+        snapshot?.projects.projects.first { $0.repoKey == repoKey }
+    }
+
     public func hostedSession() async throws -> RemoteHostedSessionPayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/session"), as: RemoteHostedSessionPayload.self)
     }
@@ -692,6 +726,8 @@ public final class ConsoleClientModel: ObservableObject {
             }
         case .hosted(let event):
             hosted = event
+        case .conduite(let payload):
+            conduite = payload
         case .unknown:
             break
         }
@@ -751,5 +787,8 @@ public final class ConsoleClientModel: ObservableObject {
             connectingEndpoint: connectingEndpoint,
             lastFailure: lastFailure
         ))
+        // Hors `.connected`, la conduite poussée n'est plus la vérité affichable :
+        // elle repasse à `nil` (S-6/S-7), jamais un état de repli local.
+        if case .connected = state {} else { conduite = nil }
     }
 }

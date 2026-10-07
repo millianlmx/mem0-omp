@@ -164,7 +164,7 @@ private func makeStack(
     let actions = ActionsModel()
     let session = SessionConsoleModel()
     let memory = ScriptedMemoryService()
-    let streams = RemoteStreamHub(storeHub: hub, registry: registry, session: session, clock: clock.clock)
+    let streams = RemoteStreamHub(storeHub: hub, registry: registry, session: session, project: project, clock: clock.clock)
     let config = MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
     let reads = RemoteReads(
         hub: hub,

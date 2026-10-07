@@ -39,6 +39,17 @@ public enum KanbanText {
 
     public static func marks(_ text: String) -> String { "Marques : \(text)" }
 
+    /// La forme canonique d'une paire de modèles : `req+specs <A> · impl+review <B>`
+    /// (un groupe vide s'affiche « défaut OMP »). Formule unique partagée par la
+    /// carte Kanban de macOS et le plan du projet des deux coques.
+    public static func modelsLine(_ models: ModelSlots) -> String {
+        "\(modelGroup(modelReqSpecs, models.reqSpecs)) · \(modelGroup(modelImplReview, models.implReview))"
+    }
+
+    private static func modelGroup(_ label: String, _ value: String?) -> String {
+        "\(label) \(value ?? modelDefault)"
+    }
+
     /// « 1 problème », « 3 problèmes » : le libellé du bouton de la barre d'outils.
     public static func problems(_ n: Int) -> String { ConsoleFormat.count(n, "problème", "problèmes") }
 }

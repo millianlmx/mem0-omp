@@ -36,10 +36,10 @@ enum PRCheckState: String, Sendable, Codable {
 
     var label: String {
         switch self {
-        case .green: "vert"
-        case .red: "rouge"
-        case .pending: "en cours"
-        case .ignored: "ignoré"
+        case .green: PRCheckText.green
+        case .red: PRCheckText.red
+        case .pending: PRCheckText.pending
+        case .ignored: PRCheckText.ignored
         }
     }
 
@@ -132,9 +132,7 @@ struct ProjectPRRow: Equatable, Sendable, Codable {
 
     /// « PR #<n> — <titre> », « PR #<n> », ou l'URL quand aucun numéro n'est connu.
     var headline: String {
-        if let number, let title, !title.isEmpty { return "PR #\(number) — \(title)" }
-        if let number { return "PR #\(number)" }
-        return url
+        ProjectViewText.prHeadline(number: number, title: title, url: url)
     }
 }
 

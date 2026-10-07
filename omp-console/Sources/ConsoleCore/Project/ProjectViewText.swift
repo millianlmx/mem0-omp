@@ -12,6 +12,12 @@ public enum ProjectViewText {
     public static let emptyTitle = "Aucun projet piloté."
     public static let emptyHelp = "Choisissez un dépôt pour piloter un projet de bout en bout depuis l'app."
     public static let notGitRepository = "Ce dossier n'est pas un dépôt git."
+    /// Le nom du document du plan et celui du contrat : la MÊME constante que
+    /// `RemoteReads.documents` (formule unique).
+    public static let docFileName = "PROJECT.md"
+    public static let contractFileName = "contract.md"
+    public static let noRepository = "Aucun dépôt connu de la coque."
+    public static let docLoading = "Lecture du document…"
     public static let docMissing = "PROJECT.md n'est pas encore publié."
     public static let projectMissing = "Le plan n'est pas encore disponible."
     public static let sessionStarting = "Lancement de la session…"
@@ -115,6 +121,22 @@ public enum ProjectViewText {
     /// Une ligne de statut : « <nom> : <état> ».
     public static func prCheckLine(name: String, state: String) -> String {
         "\(name) : \(state)"
+    }
+
+    /// « PR #<n> — <titre> », « PR #<n> », ou l'URL quand aucun numéro n'est connu.
+    /// Formule unique, partagée avec la coque macOS (`ProjectPRRow.headline`).
+    public static func prHeadline(number: Int?, title: String?, url: String) -> String {
+        if let number, let title, !title.isEmpty { return "PR #\(number) — \(title)" }
+        if let number { return "PR #\(number)" }
+        return url
+    }
+
+    /// Une URL n'est cliquable que si elle est `http(s)` — jamais une chaîne
+    /// bancale. Formule unique, partagée avec `ProjectPlanRowView.linkURL`.
+    public static func prLinkURL(_ value: String) -> URL? {
+        guard let url = URL(string: value), let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return nil }
+        return url
     }
 
     /// Le lien d'une vérification rouge vers le détail de son exécution.

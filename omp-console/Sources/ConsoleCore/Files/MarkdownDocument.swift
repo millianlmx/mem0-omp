@@ -11,11 +11,14 @@
 //   — `listItem(ordinal:)` porte le VRAI numéro (« 3. » donne 3) ;
 //   — un bloc HTML n'a AUCUNE intention de présentation ;
 //   — `codeBlock(languageHint:)` garde le saut de ligne final du bloc.
+//
+// Cible PARTAGÉE macOS/iOS : `PresentationIntent` est disponible dès iOS 15
+// (Doc-5), donc ce parseur n'importe que Foundation et tourne aussi sur l'app.
 
 import Foundation
 
 /// Un bloc du document, prêt à rendre.
-enum MarkdownBlock: Equatable {
+public enum MarkdownBlock: Equatable, Sendable {
     case heading(level: Int, text: AttributedString)
     case paragraph(AttributedString)
     /// Une liste à plat : les sous-listes sont dépliées en éléments plus profonds,
@@ -27,22 +30,28 @@ enum MarkdownBlock: Equatable {
     case rule
 }
 
-struct MarkdownListItem: Equatable {
+public struct MarkdownListItem: Equatable, Sendable {
     /// 0 pour la liste extérieure, +1 par imbrication.
-    let depth: Int
-    let marker: MarkdownListMarker
+    public let depth: Int
+    public let marker: MarkdownListMarker
     /// Le contenu propre de l'élément (paragraphes, code, citation) — jamais une
     /// sous-liste, dépliée à la suite.
-    let blocks: [MarkdownBlock]
+    public let blocks: [MarkdownBlock]
+
+    init(depth: Int, marker: MarkdownListMarker, blocks: [MarkdownBlock]) {
+        self.depth = depth
+        self.marker = marker
+        self.blocks = blocks
+    }
 }
 
-enum MarkdownListMarker: Equatable {
+public enum MarkdownListMarker: Equatable, Sendable {
     case bullet
     case number(Int)
 
     /// La puce change avec la profondeur, comme dans un traitement de texte ; un
     /// numéro reste un numéro.
-    func label(depth: Int) -> String {
+    public func label(depth: Int) -> String {
         switch self {
         case .bullet:
             ["•", "◦", "▪︎"][depth % 3]
@@ -52,24 +61,30 @@ enum MarkdownListMarker: Equatable {
     }
 }
 
-enum MarkdownColumnAlignment: Equatable {
+public enum MarkdownColumnAlignment: Equatable, Sendable {
     case leading
     case center
     case trailing
 }
 
-struct MarkdownTable: Equatable {
-    let alignments: [MarkdownColumnAlignment]
-    let headers: [AttributedString]
+public struct MarkdownTable: Equatable, Sendable {
+    public let alignments: [MarkdownColumnAlignment]
+    public let headers: [AttributedString]
     /// Chaque ligne a exactement `alignments.count` cellules (une cellule absente
     /// est vide).
-    let rows: [[AttributedString]]
+    public let rows: [[AttributedString]]
+
+    init(alignments: [MarkdownColumnAlignment], headers: [AttributedString], rows: [[AttributedString]]) {
+        self.alignments = alignments
+        self.headers = headers
+        self.rows = rows
+    }
 }
 
-enum MarkdownDocument {
+public enum MarkdownDocument {
     /// Le document en blocs. Un échec de parse rend le texte brut en un seul
     /// paragraphe ; un document vide rend une liste vide.
-    static func blocks(_ markdown: String) -> [MarkdownBlock] {
+    public static func blocks(_ markdown: String) -> [MarkdownBlock] {
         let attributed: AttributedString
         do {
             attributed = try AttributedString(
@@ -118,7 +133,7 @@ enum MarkdownDocument {
     /// le parseur de Foundation les rend comme du texte (vu à la recette :
     /// `<!-- mem0:brief v5 -->` affiché en tête d'AGENTS.md). Ils sont retirés HORS
     /// des blocs de code clôturés, qui gardent leur texte exact.
-    static func withoutHTMLComments(_ markdown: String) -> String {
+    public static func withoutHTMLComments(_ markdown: String) -> String {
         guard markdown.contains("<!--") else { return markdown }
         var output = ""
         var inFence = false
