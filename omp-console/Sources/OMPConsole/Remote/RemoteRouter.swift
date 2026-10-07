@@ -67,6 +67,7 @@ final class RemoteRouter {
         .of("GET", "v1/projects/:repoKey/documents", "documents"),
         .of("GET", "v1/stats", "stats"),
         .of("GET", "v1/devices", "devices"),
+        .of("GET", "v1/models", "models"),
         .of("GET", "v1/memory", "memory"),
         .of("GET", "v1/memory/search", "memory.search"),
         .of("GET", "v1/memory/graph", "memory.graph"),
@@ -164,6 +165,8 @@ final class RemoteRouter {
             return try json(reads.statistics())
         case "devices":
             return try json(reads.devices())
+        case "models":
+            return try json(await reads.models())
         case "memory":
             return try json(await reads.memory(scope: request.query["scope"], limit: request.query["limit"]))
         case "memory.search":

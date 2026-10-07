@@ -6,7 +6,7 @@
 // `controller.pumpCommands()` : aucun minuteur ne tourne à vide dans un test.
 
 @testable import OMPConsole
-import ConsoleCore
+@testable import ConsoleCore
 import Foundation
 import Testing
 

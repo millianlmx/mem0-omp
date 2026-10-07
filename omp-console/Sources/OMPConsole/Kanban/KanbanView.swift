@@ -291,7 +291,7 @@ private struct KanbanCardMenu: View {
             .accessibilityIdentifier("kanban.actions.editModels")
         }
         let zones = KanbanActionPresentation.zones(for: card)
-        let prURL = card.prUrl.flatMap(ProjectPlanRowView.linkURL)
+        let prURL = card.prUrl.flatMap(httpURL)
         if !zones.isEmpty || prURL != nil {
             Divider()
         }
@@ -303,11 +303,11 @@ private struct KanbanCardMenu: View {
                 case .steer:
                     Button(KanbanText.sendMessage) { model.openDetail(card.id) }
                 case .milestone(_, let kind):
-                    Button(kind == .specs ? ActionsText.validate : ActionsText.accept) {
+                    Button(kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview) {
                         if kind == .specs { actions.validate(action) } else { actions.accept(action) }
                     }
                 case .resume:
-                    Button(ActionsText.resume) { actions.resume(action) }
+                    Button(KanbanText.resume) { actions.resume(action) }
                 case .stopLot:
                     EmptyView()
                 }
@@ -318,7 +318,7 @@ private struct KanbanCardMenu: View {
         }
         if zones.contains(where: { if case .stopLot = $0 { true } else { false } }) {
             Divider()
-            Button(ActionsText.stop, role: .destructive) {
+            Button(KanbanText.stop, role: .destructive) {
                 model.select(card.id)
                 model.stopRequest = card
             }

@@ -121,3 +121,29 @@ public enum ConsoleFormat {
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
     }
 }
+
+extension ConsoleStatus {
+    /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
+    /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
+    /// vit encore). VIT DANS `ConsoleCore` : elle ne nomme que `KanbanCard` et
+    /// `KanbanActionPresentation`, tous deux partagés — les DEUX coques affichent
+    /// donc le même mot d'état.
+    public static func of(card: KanbanCard) -> ConsoleStatus {
+        if KanbanActionPresentation.resumable(card) {
+            return ConsoleStatus(text: "En pause", tone: .paused)
+        }
+        switch card.column {
+        case .enAttente: return ConsoleStatus(text: "Pas commencée", tone: .neutral)
+        case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
+        case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
+        case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
+        case .fusionne: return ConsoleStatus(text: "Fusionnée", tone: .success)
+        case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
+        case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
+        case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
+        case .bloquee: return ConsoleStatus(text: "Bloquée", tone: .danger)
+        case .termineeSansPr: return ConsoleStatus(text: "Terminée", tone: .neutral)
+        case .annuleeRetiree: return ConsoleStatus(text: "Annulée", tone: .neutral)
+        }
+    }
+}

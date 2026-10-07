@@ -8,19 +8,18 @@
 //
 // Fonctions PURES : la vue et le clavier lisent le même ordre.
 
-import ConsoleCore
 import Foundation
 
-enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
+public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
     case pasCommencees = "pas-commencees"
     case enCours = "en-cours"
     case aVous = "a-vous"
     case livrees = "livrees"
     case arretees = "arretees"
 
-    var id: String { rawValue }
+    public var id: String { rawValue }
 
-    var title: String {
+    public var title: String {
         switch self {
         case .pasCommencees: "Pas commencées"
         case .enCours: "En cours"
@@ -30,7 +29,7 @@ enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var symbol: String {
+    public var symbol: String {
         switch self {
         case .pasCommencees: "circle.dashed"
         case .enCours: "play.circle"
@@ -40,7 +39,7 @@ enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    var tone: ConsoleTone {
+    public var tone: ConsoleTone {
         switch self {
         case .pasCommencees: .neutral
         case .enCours: .info
@@ -51,7 +50,7 @@ enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
     }
 
     /// Le texte d'une voie vide.
-    var emptyText: String {
+    public var emptyText: String {
         switch self {
         case .pasCommencees: "Aucune feature en attente de lancement."
         case .enCours: "Rien ne tourne en ce moment."
@@ -63,11 +62,11 @@ enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
 
     /// Une voie toujours montrée, même vide. « Arrêtées » n'apparaît que si elle
     /// a des cartes : une voie d'échecs vide n'apprend rien.
-    var isPermanent: Bool { self != .arretees }
+    public var isPermanent: Bool { self != .arretees }
 
     /// La voie d'une carte. Une carte que « Reprendre » peut relancer est EN
     /// COURS (en pause) quelle que soit sa colonne : la feature vit encore.
-    static func of(_ card: KanbanCard) -> KanbanLane {
+    public static func of(_ card: KanbanCard) -> KanbanLane {
         if KanbanActionPresentation.resumable(card) { return .enCours }
         switch card.column {
         case .enAttente: return .pasCommencees
@@ -80,11 +79,11 @@ enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// Une voie affichée et ses cartes.
-struct KanbanLaneContent: Identifiable, Equatable {
-    var lane: KanbanLane
-    var cards: [KanbanCard]
+public struct KanbanLaneContent: Identifiable, Equatable {
+    public var lane: KanbanLane
+    public var cards: [KanbanCard]
 
-    var id: String { lane.rawValue }
+    public var id: String { lane.rawValue }
 }
 
 extension KanbanBoard {
@@ -92,7 +91,7 @@ extension KanbanBoard {
     /// autres seulement si elles ont des cartes. Dans une voie, les cartes
     /// suivent l'ordre des colonnes de S-1 (question, specs, revue…), puis
     /// l'ordre de l'ardoise.
-    var lanes: [KanbanLaneContent] {
+    public var lanes: [KanbanLaneContent] {
         let columnOrder = Dictionary(uniqueKeysWithValues: KanbanColumn.allCases.enumerated().map { ($1, $0) })
         let indexed = cards.enumerated().map { (index: $0, card: $1) }
         return KanbanLane.allCases.compactMap { lane in
@@ -111,10 +110,10 @@ extension KanbanBoard {
 }
 
 /// Ce qu'une carte montre, en fonctions PURES.
-enum KanbanCardPresentation {
+public enum KanbanCardPresentation {
     /// Le titre sans le préfixe « dépôt/ » des runs hors lot : le dépôt a sa
     /// propre ligne (« mem0-omp/export-csv » devient « export-csv »).
-    static func title(_ card: KanbanCard) -> String {
+    public static func title(_ card: KanbanCard) -> String {
         let prefix = card.repo + "/"
         guard !card.repo.isEmpty, card.title.hasPrefix(prefix), card.title.count > prefix.count else { return card.title }
         return String(card.title.dropFirst(prefix.count))
@@ -122,7 +121,7 @@ enum KanbanCardPresentation {
 
     /// Le badge d'une carte, ou `nil` quand la voie dit déjà son état (« En
     /// cours » dans « En cours », « Pas commencée » dans « Pas commencées »).
-    static func badge(_ card: KanbanCard) -> ConsoleStatus? {
+    public static func badge(_ card: KanbanCard) -> ConsoleStatus? {
         let status = ConsoleStatus.of(card: card)
         switch KanbanLane.of(card) {
         case .pasCommencees:
@@ -138,7 +137,7 @@ enum KanbanCardPresentation {
     }
 
     /// Le texte de l'attente : la question de l'agent, ou `nil`.
-    static func preview(_ card: KanbanCard) -> String? {
+    public static func preview(_ card: KanbanCard) -> String? {
         for zone in KanbanActionPresentation.zones(for: card) {
             switch zone {
             case .pendingQuestion(_, let question, _):
@@ -154,36 +153,36 @@ enum KanbanCardPresentation {
 
     /// La ligne « req+specs <A> » d'une carte, `nil` quand elle ne porte aucun
     /// modèle (aucune ligne n'est alors écrite).
-    static func reqSpecsLine(_ card: KanbanCard) -> String? {
+    public static func reqSpecsLine(_ card: KanbanCard) -> String? {
         guard let models = card.models else { return nil }
         return modelLine(KanbanText.modelReqSpecs, models.reqSpecs)
     }
 
     /// La ligne « impl+review <B> » d'une carte, `nil` quand elle ne porte aucun
     /// modèle.
-    static func implReviewLine(_ card: KanbanCard) -> String? {
+    public static func implReviewLine(_ card: KanbanCard) -> String? {
         guard let models = card.models else { return nil }
         return modelLine(KanbanText.modelImplReview, models.implReview)
     }
 
     /// `<libellé> <valeur|défaut OMP>` — un groupe vide s'affiche « défaut OMP ».
-    static func modelLine(_ label: String, _ value: String?) -> String {
+    public static func modelLine(_ label: String, _ value: String?) -> String {
         "\(label) \(value ?? KanbanText.modelDefault)"
     }
 
     /// La forme canonique d'une paire : `req+specs <A> · impl+review <B>`.
-    static func modelsText(_ models: ModelSlots) -> String {
+    public static func modelsText(_ models: ModelSlots) -> String {
         "\(modelLine(KanbanText.modelReqSpecs, models.reqSpecs)) · \(modelLine(KanbanText.modelImplReview, models.implReview))"
     }
 
     /// L'étape et l'avancement n'ont de sens que pour une feature vivante.
-    static func showsProgress(_ card: KanbanCard) -> Bool {
+    public static func showsProgress(_ card: KanbanCard) -> Bool {
         let lane = KanbanLane.of(card)
         return (lane == .enCours || lane == .aVous) && card.phase != nil
     }
 
     /// La durée n'a de sens que pour ce qui tourne ou attend.
-    static func showsDuration(_ card: KanbanCard) -> Bool {
+    public static func showsDuration(_ card: KanbanCard) -> Bool {
         let lane = KanbanLane.of(card)
         return lane == .enCours || lane == .aVous
     }

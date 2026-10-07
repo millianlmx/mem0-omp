@@ -148,7 +148,8 @@ final class KanbanModel: ObservableObject {
         let next = KanbanBoardState.derive(
             snapshot: snapshot,
             nowMs: StoreClock.live.nowMs(),
-            stateDir: stateDir
+            stateDir: stateDir,
+            isAlive: .processLocal
         )
         state = next
         if let selected = selectedCardID, next.card(selected) == nil {

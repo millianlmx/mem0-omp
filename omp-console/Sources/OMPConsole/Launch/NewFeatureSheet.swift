@@ -10,25 +10,6 @@ import AppKit
 import ConsoleCore
 import SwiftUI
 
-/// Les textes de la feuille, en un endroit : la vue ne compose aucune phrase.
-enum NewFeatureText {
-    static let title = "Nouvelle feature"
-    static let repo = "Dépôt"
-    static let noRepo = "Aucun dépôt : choisissez un dossier."
-    static let chooseFolder = "Choisir un dossier…"
-    static let panelPrompt = "Choisir"
-    static let panelMessage = "Choisissez la racine d'un dépôt git"
-    static let notGitRoot =
-        "Ce dossier n'est pas un dépôt git (aucun .git) : choisissez la racine d'un dépôt."
-    static let featureTitle = "Titre"
-    static let titlePlaceholder = "ex. export-csv"
-    static let titleHelp = "Devient la branche feat/<titre>."
-    static let need = "Besoin"
-    static let needPlaceholder = "Décrivez ce que vous voulez obtenir…"
-    static let cancel = "Annuler"
-    static let launch = "Lancer"
-}
-
 struct NewFeatureSheet: View {
     @ObservedObject var actions: ActionsModel
     @ObservedObject var kanban: KanbanModel

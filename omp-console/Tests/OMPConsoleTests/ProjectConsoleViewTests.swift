@@ -3,10 +3,11 @@
 
 import Testing
 @testable import OMPConsole
+import ConsoleCore
 
 @Test("une URL de PR non http(s) n'est pas cliquable")
 func projectPRLinkRequiresHTTPS() {
-    #expect(ProjectPlanRowView.linkURL("https://exemple.test/pull/1") != nil)
-    #expect(ProjectPlanRowView.linkURL("http://example.com/1") != nil)
-    #expect(ProjectPlanRowView.linkURL("socle-1") == nil)
+    #expect(httpURL("https://exemple.test/pull/1") != nil)
+    #expect(httpURL("http://example.com/1") != nil)
+    #expect(httpURL("socle-1") == nil)
 }

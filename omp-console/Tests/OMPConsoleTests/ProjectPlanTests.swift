@@ -77,8 +77,8 @@ func planShowsSegmentsStatesAndPR() async throws {
     #expect(counts.total == 2)
 
     // Une URL non http(s) n'est pas cliquable ; une URL http(s) l'est.
-    #expect(ProjectPlanRowView.linkURL("https://example.com/pull/1") != nil)
-    #expect(ProjectPlanRowView.linkURL("issoir-1 pane") == nil)
+    #expect(httpURL("https://example.com/pull/1") != nil)
+    #expect(httpURL("issoir-1 pane") == nil)
 }
 
 @MainActor

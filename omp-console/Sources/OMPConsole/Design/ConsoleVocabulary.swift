@@ -1,34 +1,13 @@
 // Les états qui NOMMENT un type de la coque : `ConsoleStatus` (et le reste du
-// vocabulaire commun) vit dans `ConsoleCore`, mais ces trois fabriques prennent
-// `KanbanCard`, `RunChoice` et `SessionHost.State`, qui ne sont pas partagés —
-// elles restent donc ici, en extension (une seule définition de `ConsoleStatus`
-// dans tout le paquet).
+// vocabulaire commun) vit dans `ConsoleCore`, mais ces deux fabriques prennent
+// `RunChoice` et `SessionHost.State`, qui ne sont pas partagés — elles restent
+// donc ici, en extension (une seule définition de `ConsoleStatus` dans tout le
+// paquet). `ConsoleStatus.of(card:)` a déménagé dans `ConsoleCore` : elle ne
+// nomme que des types partagés, les deux coques l'affichent.
 
 import ConsoleCore
 
 extension ConsoleStatus {
-    /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
-    /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
-    /// vit encore).
-    static func of(card: KanbanCard) -> ConsoleStatus {
-        if KanbanActionPresentation.resumable(card) {
-            return ConsoleStatus(text: "En pause", tone: .paused)
-        }
-        switch card.column {
-        case .enAttente: return ConsoleStatus(text: "Pas commencée", tone: .neutral)
-        case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
-        case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
-        case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
-        case .fusionne: return ConsoleStatus(text: "Fusionnée", tone: .success)
-        case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
-        case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
-        case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
-        case .bloquee: return ConsoleStatus(text: "Bloquée", tone: .danger)
-        case .termineeSansPr: return ConsoleStatus(text: "Terminée", tone: .neutral)
-        case .annuleeRetiree: return ConsoleStatus(text: "Annulée", tone: .neutral)
-        }
-    }
-
     /// L'état d'un run de la liste des sessions : un run vivant au propriétaire
     /// périmé est « Interrompu ».
     static func of(run: RunChoice) -> ConsoleStatus {

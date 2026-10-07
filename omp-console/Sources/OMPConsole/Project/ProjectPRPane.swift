@@ -102,7 +102,7 @@ struct PRRowView: View {
                     Text(ProjectViewText.prCheckLine(name: check.required.name, state: check.state.label))
                         .font(.callout)
                         .accessibilityIdentifier("projet.pr.\(row.slug).check.\(check.required.id)")
-                    if check.state == .red, let link = check.link, let url = ProjectPlanRowView.linkURL(link),
+                    if check.state == .red, let link = check.link, let url = httpURL(link),
                        runIdentifier(of: link) != nil {
                         Link(ProjectViewText.prRunLink, destination: url)
                             .font(.caption)

@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+@testable import ConsoleCore
 
 // MARK: - AC-1 : « attend une réponse »
 

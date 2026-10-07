@@ -605,7 +605,7 @@ struct ProjectPlanRowView: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 4)
-                if let prUrl = row.prUrl, let url = Self.linkURL(prUrl) {
+                if let prUrl = row.prUrl, let url = httpURL(prUrl) {
                     Link("PR", destination: url)
                         .accessibilityIdentifier("projet.pr")
                 }
@@ -621,13 +621,6 @@ struct ProjectPlanRowView: View {
                     .foregroundStyle(.secondary)
             }
         }
-    }
-
-    /// Une URL n'est cliquable que si elle est `http(s)` (S-8).
-    nonisolated static func linkURL(_ value: String) -> URL? {
-        guard let url = URL(string: value), let scheme = url.scheme?.lowercased(),
-              scheme == "http" || scheme == "https" else { return nil }
-        return url
     }
 }
 

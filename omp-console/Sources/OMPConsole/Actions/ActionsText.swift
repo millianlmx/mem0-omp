@@ -30,27 +30,11 @@ enum ActionsText {
         "le pilote n'a pas répondu après 20 s — vérifiez que le plugin omp-mem0-req est installé"
 
     // --- zone d'action (S-9) -------------------------------------------------
-    static let noGesture = "Aucune action possible sur cette pipeline pour l'instant."
-    /// Le motif d'une exécution sans boîte publiée (S-9) : sans elle, aucune
-    /// écriture n'est possible.
-    static let notArmed = "Cette exécution n'accepte pas de message pour l'instant."
-    static let questionTitle = "Question de l'agent"
-    static let answerFieldPlaceholder = "Autre réponse…"
     static let answer = "Répondre"
     static let steerTitle = "Envoyer un message à l'agent"
     static let steerFieldLabel = "Votre message"
-    static let send = "Envoyer"
-    static let validate = "Valider les specs"
-    static let accept = "Accepter la revue"
-    static let stop = "Arrêter…"
-    static let stopConfirm = "Arrêter"
-    static let stopConfirmMessage =
-        "Le pilote s'arrête et les pipelines en cours dans ce dépôt sont interrompues."
-    static let cancel = "Annuler"
     static let replyTitle = "Question de l'agent"
-    static let replyFieldPlaceholder = "Votre réponse"
     static let resumeNote = "Le pilote de cette pipeline est arrêté."
-    static let resume = "Reprendre"
 
     // --- journal (S-9, « Activité récente » de S-14) ------------------------
     static let journalTitle = "Activité récente"
@@ -59,31 +43,12 @@ enum ActionsText {
     // --- modèles (B-1, B-3, B-4) --------------------------------------------
     /// Le libellé du geste d'édition des deux modèles dans le journal.
     static let modelsLabel = "modèles"
-    /// Les deux rubriques des feuilles de création et d'édition.
-    static let modelReqSpecsField = "Modèle req+specs"
-    static let modelImplReviewField = "Modèle impl+review"
     /// Le bouton de la feuille d'édition qui émet la commande.
     static let applyModelChanges = "Appliquer"
-    /// L'état de chargement du catalogue (les deux listes se réduisent à l'option
-    /// par défaut).
-    static let modelCatalogLoading = "chargement des modèles…"
-    /// Le bouton de relance après un échec de chargement.
-    static let modelCatalogRetry = "Réessayer"
 
     /// Le titre de la feuille d'édition des modèles d'une feature.
     static func modelsSheetTitle(_ slug: String) -> String {
         "Modèles de \(slug)"
-    }
-
-    /// Le motif d'un catalogue indisponible (S-5) : les deux listes se réduisent à
-    /// l'option par défaut, l'édition reste possible avec les valeurs courantes.
-    static func modelCatalogUnavailable(_ reason: String) -> String {
-        "modèles indisponibles — \(reason)"
-    }
-
-    /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
-    static func stopConfirmTitle(repo: String) -> String {
-        "Arrêter les pipelines de \(repo) ?"
     }
 
     /// Le motif d'un refus du pilote : le texte EXACT du canal (AC-9), jamais

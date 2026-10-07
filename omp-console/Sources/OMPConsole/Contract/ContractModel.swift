@@ -5,6 +5,7 @@
 // Même mécanique que les autres feuilles de la fenêtre : la racine présente
 // `sheet` par `.sheet(item:)`, et `close()` la referme.
 
+import ConsoleCore
 import Combine
 import Foundation
 

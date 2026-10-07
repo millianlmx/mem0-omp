@@ -5,7 +5,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
-import ConsoleCore
+@testable import ConsoleCore
 
 private func card(_ action: KanbanCardAction?) -> KanbanCard {
     KanbanCard(
@@ -61,18 +61,18 @@ func unarmedRunHasMotif() {
     let armed = card(action(run: run, slug: nil, waitKind: nil, featureState: nil, repoRoot: nil))
 
     #expect(KanbanActionPresentation.zones(for: armed).isEmpty)
-    #expect(KanbanActionPresentation.motif(for: armed) == ActionsText.notArmed)
+    #expect(KanbanActionPresentation.motif(for: armed) == KanbanText.notArmed)
 }
 
 @Test("reponses-et-jalons/AC-4 : une carte sans run ni jalon ne porte aucun geste")
 func cardWithoutRunHasNoGesture() {
     let bare = card(action(run: nil, slug: nil, waitKind: nil, featureState: nil, repoRoot: nil))
     #expect(KanbanActionPresentation.zones(for: bare).isEmpty)
-    #expect(KanbanActionPresentation.motif(for: bare) == ActionsText.noGesture)
+    #expect(KanbanActionPresentation.motif(for: bare) == KanbanText.noGesture)
 
     let history = card(nil)
     #expect(KanbanActionPresentation.zones(for: history).isEmpty)
-    #expect(KanbanActionPresentation.motif(for: history) == ActionsText.noGesture)
+    #expect(KanbanActionPresentation.motif(for: history) == KanbanText.noGesture)
 }
 
 @Test("reponses-et-jalons/AC-5 : une feature en attente specs offre « Valider les specs »")

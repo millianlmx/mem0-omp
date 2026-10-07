@@ -18,7 +18,6 @@
 // `pidAlive` de la couche de lecture est la SEULE autorité de vivacité : ce
 // fichier ne réimplémente rien (BR-3).
 
-import ConsoleCore
 import Foundation
 
 /// Le résultat de la déduplication (S-10) : les entités RETENUES, les sources
@@ -28,25 +27,25 @@ import Foundation
 /// La déduplication a lieu AVANT le rangement en colonne et AVANT l'appariement
 /// projet ↔ lot : un lot perdant ne s'apparie donc à rien, et les cartes des
 /// sources perdantes ne sont jamais produites.
-struct KanbanDedup: Sendable {
-    var running: [RunningEntry]
-    var history: [HistoryEntry]
+public struct KanbanDedup: Sendable {
+    public var running: [RunningEntry]
+    public var history: [HistoryEntry]
     /// Les lots retenus, leurs features DÉJÀ dédupliquées (D3).
-    var lots: [Lot]
+    public var lots: [Lot]
     /// Les projets retenus, leurs segments DÉJÀ dédupliqués (D4).
-    var projects: [Project]
-    var doublonRunIDs: Set<String>
-    var doublonHistoryIDs: Set<String>
+    public var projects: [Project]
+    public var doublonRunIDs: Set<String>
+    public var doublonHistoryIDs: Set<String>
     /// Les lots gagnants d'une collision D5 : toutes leurs cartes sont marquées.
-    var doublonLotIDs: Set<String>
+    public var doublonLotIDs: Set<String>
     /// Les projets gagnants d'une collision D6, par `repoKey`.
-    var doublonProjectRepoKeys: Set<String>
+    public var doublonProjectRepoKeys: Set<String>
     /// Les features gagnantes d'une collision D3/D4, par clé `(dépôt réel, slug)`.
-    var doublonLotFeatureKeys: Set<String>
-    var doublonProjectFeatureKeys: Set<String>
-    var anomalies: [KanbanAnomaly]
+    public var doublonLotFeatureKeys: Set<String>
+    public var doublonProjectFeatureKeys: Set<String>
+    public var anomalies: [KanbanAnomaly]
 
-    static func apply(snapshot: StoreSnapshot) -> KanbanDedup {
+    public static func apply(snapshot: StoreSnapshot) -> KanbanDedup {
         var collisions: [(identity: String, anomaly: KanbanAnomaly)] = []
         var doublonRunIDs = Set<String>()
         var doublonHistoryIDs = Set<String>()
@@ -217,11 +216,11 @@ struct KanbanDedup: Sendable {
 
 /// Les lignes de bandeau et les prédicats d'anomalie — des fonctions pures, donc
 /// testables sans magasin ni vue.
-enum KanbanAnomalies {
+public enum KanbanAnomalies {
     // --- S-8 : entrées illisibles --------------------------------------------
 
     /// La raison telle que le détail technique l'écrit (S-8) : deux échecs distincts.
-    static func reasonText(_ reason: DiscardReason) -> String {
+    public static func reasonText(_ reason: DiscardReason) -> String {
         switch reason {
         case .unparsable: "JSON illisible"
         case .schema: "schéma incomplet ou inconnu"
@@ -231,7 +230,7 @@ enum KanbanAnomalies {
     /// Une ligne par entrée écartée des QUATRE stores du tableau, dans l'ordre de
     /// la bulle : `running`, `history`, `lots`, `projects`, puis par nom de fichier
     /// (l'ordre de la couche de lecture). `inbox/` et `audit/` sont hors périmètre.
-    static func illisibleLines(snapshot: StoreSnapshot) -> [KanbanAnomaly] {
+    public static func illisibleLines(snapshot: StoreSnapshot) -> [KanbanAnomaly] {
         let groups = [
             snapshot.running.discardedEntries,
             snapshot.history.discardedEntries,
@@ -251,7 +250,7 @@ enum KanbanAnomalies {
 
     /// Les clés de dépôt citées par les fichiers écartés d'un store
     /// (`lots/<clé>.json` → `<clé>`), pour marquer les cartes concernées.
-    static func discardedKeys(_ entries: [DiscardedEntry], store: PipelineStore) -> Set<String> {
+    public static func discardedKeys(_ entries: [DiscardedEntry], store: PipelineStore) -> Set<String> {
         let prefix = "\(store.rawValue)/"
         let suffix = ".json"
         var keys = Set<String>()
@@ -263,21 +262,21 @@ enum KanbanAnomalies {
 
     // --- S-9 : propriétaire mort ---------------------------------------------
 
-    /// « mort » = `pidAlive` faux, ou pid ABSENT (non entier : parité `asPid`).
-    /// Le BATTEMENT périmé (`isStale`, 10 000 ms) n'est PAS une anomalie : un run
-    /// vivant au repos garde un `updatedAt` figé (`publishRunning` ne le réécrit
-    /// pas), et le compter comme mort enterrerait des pipelines vivantes.
-    static func isDead(pid: Int?) -> Bool {
-        guard let pid else { return true }
-        return !pidAlive(pid)
-    }
-
     /// Les lignes `mort`, dans l'ordre : `running` par `id`, puis `lots` par clé de
     /// dépôt. Une ligne par ENTITÉ morte — un lot mort n'en produit qu'une, pas une
     /// par feature.
-    static func mortLines(running: [RunningEntry], lots: [Lot]) -> [KanbanAnomaly] {
+    ///
+    /// « mort » = `isAlive(pid)` faux, ou pid ABSENT (non entier : parité `asPid`).
+    /// Le BATTEMENT périmé (`isStale`, 10 000 ms) n'est PAS une anomalie : un run
+    /// vivant au repos garde un `updatedAt` figé (`publishRunning` ne le réécrit
+    /// pas), et le compter comme mort enterrerait des pipelines vivantes.
+    public static func mortLines(
+        running: [RunningEntry],
+        lots: [Lot],
+        isAlive: PipelineLiveness
+    ) -> [KanbanAnomaly] {
         var lines: [KanbanAnomaly] = []
-        for entry in running.sorted(by: { $0.id < $1.id }) where isDead(pid: entry.ownerPid) {
+        for entry in running.sorted(by: { $0.id < $1.id }) where !isAlive.isAlive(entry.ownerPid) {
             lines.append(KanbanAnomaly(
                 kind: .mort,
                 text: "\(entry.label) s'est arrêtée de façon inattendue.",
@@ -285,7 +284,7 @@ enum KanbanAnomalies {
             ))
         }
         let deadLots = lots
-            .filter { isDead(pid: $0.owner.pid) }
+            .filter { !isAlive.isAlive($0.owner.pid) }
             .sorted { KanbanRepoKey.key(forRoot: $0.repoRoot) < KanbanRepoKey.key(forRoot: $1.repoRoot) }
         for lot in deadLots {
             let repo = (realpathOr(lot.repoRoot) as NSString).lastPathComponent
@@ -299,7 +298,7 @@ enum KanbanAnomalies {
     }
 
     /// Le détail technique d'une ligne `mort` : le fichier et le pid.
-    static func mortText(target: String, pid: Int?) -> String {
+    public static func mortText(target: String, pid: Int?) -> String {
         "propriétaire mort — \(target) : \(pid.map { "pid \($0)" } ?? "pid absent")"
     }
 
@@ -307,7 +306,7 @@ enum KanbanAnomalies {
 
     /// La phrase nomme la pipeline quand l'identité en désigne une (`name`) ; le
     /// détail reste `doublon — <source A> et <source B> : <identité>` (S-10).
-    static func doublonLine(a: String, b: String, identity: String, name: String?) -> KanbanAnomaly {
+    public static func doublonLine(a: String, b: String, identity: String, name: String?) -> KanbanAnomaly {
         KanbanAnomaly(
             kind: .doublon,
             text: name.map { "Deux sources décrivent la même pipeline : \($0)." }

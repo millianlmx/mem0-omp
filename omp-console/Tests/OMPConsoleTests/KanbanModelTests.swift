@@ -8,6 +8,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
+@testable import ConsoleCore
 
 /// Un run hors lot, publié dans une fixture, avec un pid vivant.
 private func publishRun(_ fixture: StoreFixture, id: String, label: String, started: Double) {

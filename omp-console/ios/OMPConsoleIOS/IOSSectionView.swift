@@ -1,21 +1,32 @@
+import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
 /// L'écran UNIQUE des sept sections (S-2, BR-3) : il rend le contenu pur de
-/// `IOSSectionContent` sur le kit de design de `Design/`.
+/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF la section
+/// Pipelines, qui rend son écran réel (`PipelinesScreen`).
 ///
-/// Ordre du rendu : panneau → titre → pastille → carte de l'état vide → bandeau.
-/// Aucune phrase n'est composée ici : les mots viennent du noyau partagé, le
-/// message provisoire du bandeau vient de `IOSText`.
+/// Ordre du rendu (sections à contenu) : panneau → titre → pastille → carte de
+/// l'état vide → bandeau. Aucune phrase n'est composée ici : les mots viennent du
+/// noyau partagé, le message provisoire du bandeau vient de `IOSText`.
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
+    @ObservedObject var client: ConsoleClientModel
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
     }
 
     var body: some View {
+        if section == .kanban {
+            PipelinesScreen(client: client, recipe: state)
+        } else {
+            genericBody
+        }
+    }
+
+    private var genericBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(section.title)
                 .font(.title2)

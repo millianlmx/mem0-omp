@@ -178,6 +178,21 @@ final class RemoteReads {
         }
     }
 
+    // MARK: - Catalogue des modèles (S-14)
+
+    /// Le catalogue `omp models --json`, chargé par `ModelCatalogLoader` (délai de
+    /// garde 15 s). Un binaire absent, un code non nul ou une sortie illisible ne
+    /// jetent PAS : la réponse porte `failure` et une liste vide — le client
+    /// affiche le motif, ce n'est pas une erreur de transport.
+    func models() async -> RemoteModelsPayload {
+        switch await ModelCatalogLoader.loadDefault() {
+        case .success(let selectors):
+            return RemoteModelsPayload(selectors: selectors, failure: nil)
+        case .failure(let error):
+            return RemoteModelsPayload(selectors: [], failure: error.reason)
+        }
+    }
+
     // MARK: - Appareils
 
     func devices() -> RemoteDevicesPayload {

@@ -211,6 +211,22 @@ public struct ProjectPRRow: Codable, Equatable, Sendable {
     public let url: String
     public let checks: [PRCheckRow]
     public let freshness: PRFreshness
+    /// Le commit de tête de la PR (`headRefOid`), exigé par la fusion. `nil` tant
+    /// que le Mac ne l'a pas relu fraîchement.
+    public var headOid: String? = nil
+}
+
+/// Le catalogue des modèles servi par `GET /v1/models` (S-14) : les sélecteurs
+/// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué
+/// (la liste est alors vide). Miroir EXACT de la charge utile du serveur.
+public struct RemoteModelsPayload: Codable, Equatable, Sendable {
+    public var selectors: [String]
+    public var failure: String?
+
+    public init(selectors: [String], failure: String?) {
+        self.selectors = selectors
+        self.failure = failure
+    }
 }
 
 public struct RemotePullRequestsPayload: Codable, Equatable, Sendable {

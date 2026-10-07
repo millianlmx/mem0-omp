@@ -63,7 +63,7 @@ struct KanbanDetailView: View {
             if let action = card.action, KanbanActionPresentation.zones(for: card).contains(where: {
                 if case .stopLot = $0 { true } else { false }
             }) {
-                Button(ActionsText.stop, role: .destructive) { stopPrompt.shown = true }
+                Button(KanbanText.stop, role: .destructive) { stopPrompt.shown = true }
                     .accessibilityIdentifier("kanban.actions.stop")
                     .kanbanStopConfirmation(
                         repo: card.repo,
@@ -139,7 +139,7 @@ struct KanbanDetailView: View {
                     .gridCellColumns(2)
                 }
             }
-            if let prUrl = card.prUrl, let url = ProjectPlanRowView.linkURL(prUrl) {
+            if let prUrl = card.prUrl, let url = httpURL(prUrl) {
                 GridRow {
                     Text(KanbanText.pullRequest).foregroundStyle(.secondary)
                     Link(HomeText.openPR, destination: url)

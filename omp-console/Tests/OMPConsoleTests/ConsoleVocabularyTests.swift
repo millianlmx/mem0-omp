@@ -7,7 +7,7 @@
 import Foundation
 import Testing
 @testable import OMPConsole
-import ConsoleCore
+@testable import ConsoleCore
 
 private func vocabularyCard(
     _ column: KanbanColumn,
