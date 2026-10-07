@@ -6,11 +6,11 @@
 // conversation) les appellent, aucun ne compose son propre libellé d'état.
 //
 // VIT DANS `ConsoleCore` : ce fichier ne nomme aucun type de la coque, donc la
-// coque iOS le réutilise tel quel. `ConsoleStatus.of(card:)` ne nomme que des types
-// du noyau et vit ici ; `of(run:)` et `of(session:)`, qui nomment `RunChoice` et
-// `SessionHost.State`, restent déclarés par la coque — en extension, dans
-// `Sources/OMPConsole/Design/ConsoleVocabulary.swift` — pour qu'il n'existe jamais
-// deux définitions du même type.
+// coque iOS le réutilise tel quel. `ConsoleStatus.of(card:)` et
+// `ConsoleStatus.of(run:)` ne nomment que des types du noyau et vivent ici ;
+// `of(session:)`, qui nomme `SessionHost.State`, reste déclarée par la coque — en
+// extension, dans `Sources/OMPConsole/Design/ConsoleVocabulary.swift` — pour qu'il
+// n'existe jamais deux définitions du même type.
 
 import Foundation
 
@@ -32,9 +32,32 @@ public struct ConsoleStatus: Equatable, Sendable, Codable {
 
 /// L'état d'une carte de l'ardoise (S-3) : il ne nomme que des types du noyau
 /// (`KanbanCard`, `KanbanCardAction`), donc il est partagé par les deux coques.
-/// Les deux autres fabriques — `of(run:)` et `of(session:)` — nomment des types de
-/// la coque macOS et restent déclarées par elle, en extension.
+/// `of(run:)` ne nomme que `RunChoice` ; `of(session:)` nomme un type de la coque
+/// macOS et reste déclarée par elle, en extension.
 extension ConsoleStatus {
+    /// L'état d'un run qui a QUITTÉ `running/` : une pipeline terminée. Déclaré ici
+    /// pour que l'app iOS traite « run introuvable dans l'instantané » exactement
+    /// comme un run `ended(.done)` (S-9 de `ios-sessions`) — le mot n'est écrit
+    /// qu'une fois dans le noyau.
+    public static let finishedRun = ConsoleStatus(text: "Terminé", tone: .success)
+
+    /// L'état d'un run de la liste des sessions : un run vivant au propriétaire
+    /// périmé est « Interrompu ».
+    public static func of(run: RunChoice) -> ConsoleStatus {
+        switch run.state {
+        case .live where run.isStale:
+            return ConsoleStatus(text: "Interrompu", tone: .neutral)
+        case .live(.running):
+            return ConsoleStatus(text: "En cours", tone: .info)
+        case .live(.waiting):
+            return ConsoleStatus(text: "À vous", tone: .attention)
+        case .ended(.done):
+            return finishedRun
+        case .ended(.failed):
+            return ConsoleStatus(text: "Échec", tone: .danger)
+        }
+    }
+
     /// L'état d'une carte de l'ardoise. Une carte que « Reprendre » peut relancer
     /// est « En pause » quelle que soit sa colonne (le pilote est mort, la feature
     /// vit encore).

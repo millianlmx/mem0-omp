@@ -12,6 +12,7 @@ import Foundation
 import Testing
 
 @testable import OMPConsole
+import ConsoleCore
 
 @Test(
     "visionneuse-de-session/AC-3 : recette manuelle — faits essentiels d'une vraie session",

@@ -6,9 +6,10 @@
 // absent `-`. `renderEntry` est autonome : le bloc d'une entrée ne dépend pas de
 // ses voisines, ce qui permet de peindre une entrée à la fois.
 //
-// Trois fonctions PURES : aucune E/S, aucun état.
+// Trois fonctions PURES : aucune E/S, aucun état. PARTAGÉES : les deux coques
+// rendent le même texte.
 
-import ConsoleCore
+import Foundation
 
 /// Rend une valeur JSON de façon compacte et déterministe : clés TRIÉES, aucun
 /// espace superflu. `JSONSerialization` ne garantit aucun ordre de clés (Doc-4),

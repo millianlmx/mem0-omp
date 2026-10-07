@@ -29,6 +29,8 @@ struct RootView: View {
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     private let recipe: IOSHomeRecipe?
+    /// Le crochet de recette `-sessions.recipe`, quand il est donné.
+    private let sessionRecipe: IOSSessionsRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -37,11 +39,13 @@ struct RootView: View {
         selection: ConsoleSection = .home,
         state: IOSScreenState = .ready,
         recipe: IOSHomeRecipe? = nil,
+        sessionRecipe: IOSSessionsRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
         _state = State(initialValue: state)
         self.recipe = recipe
+        self.sessionRecipe = sessionRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -75,7 +79,12 @@ struct RootView: View {
                     onSelectSection: { selection = $0 }
                 )
             } else {
-                IOSSectionView(section: selection ?? .home, state: state, client: client)
+                IOSSectionView(
+                    section: selection ?? .home,
+                    state: state,
+                    client: client,
+                    recipe: sessionRecipe
+                )
             }
         }
         .sheet(isPresented: $showWelcome, onDismiss: presentConnectionIfNeeded) {

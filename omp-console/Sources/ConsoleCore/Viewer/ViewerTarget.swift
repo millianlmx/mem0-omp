@@ -9,24 +9,31 @@
 
 import Foundation
 
-/// La session poussée dans la section Sessions.
-struct ViewerTarget: Hashable, Codable, Sendable {
-    var sessionFile: String
+/// La session poussée dans la section Sessions. PARTAGÉE : l'app iOS la construit
+/// par `SessionList.make(of:)` et s'en sert d'identité de feuille.
+public struct ViewerTarget: Hashable, Codable, Sendable {
+    public var sessionFile: String
     /// Le titre de la fenêtre : le nom de la feature, jamais un identifiant de
     /// session (audit HIG 2026-10-01). Figé à l'ouverture : il ne participe ni à
     /// l'égalité ni au hachage, donc renommer un run ne change pas l'identité de
     /// sa fenêtre.
-    var title: String
+    public var title: String
     /// Le sous-titre de la fenêtre (« <étape> · <dépôt> »). Hors égalité et
     /// hachage comme `title` ; optionnel au décodage : une valeur restaurée sans la
     /// clé reste lisible.
-    var subtitle: String? = nil
+    public var subtitle: String? = nil
 
-    static func == (lhs: ViewerTarget, rhs: ViewerTarget) -> Bool {
+    public init(sessionFile: String, title: String, subtitle: String? = nil) {
+        self.sessionFile = sessionFile
+        self.title = title
+        self.subtitle = subtitle
+    }
+
+    public static func == (lhs: ViewerTarget, rhs: ViewerTarget) -> Bool {
         lhs.sessionFile == rhs.sessionFile
     }
 
-    func hash(into hasher: inout Hasher) {
+    public func hash(into hasher: inout Hasher) {
         hasher.combine(sessionFile)
     }
 }
@@ -35,7 +42,7 @@ struct ViewerTarget: Hashable, Codable, Sendable {
 /// l'identifiant de session, pas la date. `2026-09-28T15-07-55-136Z_01a0e88e-….jsonl`
 /// rend `01a0e88e`. Identité interne (identifiants d'accessibilité) : jamais un
 /// texte affiché.
-func sessionTag(forSessionFile path: String) -> String {
+public func sessionTag(forSessionFile path: String) -> String {
     let name = ((path as NSString).lastPathComponent as NSString).deletingPathExtension
     let tail: String
     if let separator = name.lastIndex(of: "_") {

@@ -13,29 +13,44 @@
 //     lectures du même fichier rendent les mêmes identités.
 //
 // Aucune E/S, aucun état de vue : le modèle de conversation entre, des lignes
-// sortent.
+// sortent. PARTAGÉ : les deux coques construisent les mêmes lignes.
 
-import ConsoleCore
 import Foundation
 
 // MARK: - Question `ask`
 
 /// La question d'un appel `ask` et ses options, telles qu'elles ont été DEMANDÉES.
 /// Affichage seul : aucune réponse n'est portée ici (S-6).
-struct AskSpan: Equatable, Sendable {
-    struct Option: Equatable, Sendable {
-        var label: String
-        var description: String?
+public struct AskSpan: Equatable, Sendable {
+    public struct Option: Equatable, Sendable {
+        public var label: String
+        public var description: String?
+
+        public init(label: String, description: String?) {
+            self.label = label
+            self.description = description
+        }
     }
 
-    struct Question: Equatable, Sendable {
-        var id: String
-        var question: String
-        var header: String?
-        var options: [Option]
+    public struct Question: Equatable, Sendable {
+        public var id: String
+        public var question: String
+        public var header: String?
+        public var options: [Option]
+
+        public init(id: String, question: String, header: String?, options: [Option]) {
+            self.id = id
+            self.question = question
+            self.header = header
+            self.options = options
+        }
     }
 
-    var questions: [Question]
+    public var questions: [Question]
+
+    public init(questions: [Question]) {
+        self.questions = questions
+    }
 }
 
 /// Lit la charge utile d'un appel `ask`. Validation TOLÉRANTE mais qui ÉCHOUE
@@ -45,7 +60,7 @@ struct AskSpan: Equatable, Sendable {
 /// Un `null` explicite sur un champ optionnel est traité comme ABSENT — l'hôte
 /// normalise ainsi ses arguments persistés, et une question dont le `header` est
 /// nul reste une question valide.
-func askSpan(from arguments: JSONValue?) -> AskSpan? {
+public func askSpan(from arguments: JSONValue?) -> AskSpan? {
     guard case .object(let object)? = arguments,
         case .array(let rawQuestions)? = object["questions"],
         !rawQuestions.isEmpty
@@ -132,7 +147,7 @@ private let primaryArgumentMax = 120
 /// exploitable rend `""`, un chemin passe par `ConsoleFormat.path` (relatif à
 /// `projectRoot` quand il est connu), un outil mémoire rend le texte du souvenir
 /// et une portée se dit en français.
-func primaryArgument(name: String, arguments: JSONValue?, projectRoot: String? = nil) -> String {
+public func primaryArgument(name: String, arguments: JSONValue?, projectRoot: String? = nil) -> String {
     guard let arguments, case .object(let object) = arguments else { return "" }
 
     func value(_ key: String) -> String? {
@@ -222,8 +237,8 @@ private func oneLine(_ text: String) -> String {
 
 /// Une ligne affichable. `id` est stable à vie : il dérive de l'OFFSET de
 /// l'entrée dans le fichier.
-struct SessionRow: Identifiable, Equatable, Sendable {
-    enum Kind: Equatable, Sendable {
+public struct SessionRow: Identifiable, Equatable, Sendable {
+    public enum Kind: Equatable, Sendable {
         case user(UserRow)
         case assistant(AssistantRow)
         case toolCall(ToolCallRow)
@@ -231,44 +246,82 @@ struct SessionRow: Identifiable, Equatable, Sendable {
         case marker(MarkerRow)
     }
 
-    var id: String
-    var kind: Kind
+    public var id: String
+    public var kind: Kind
+
+    public init(id: String, kind: Kind) {
+        self.id = id
+        self.kind = kind
+    }
 }
 
-struct UserRow: Equatable, Sendable {
-    var text: String
+public struct UserRow: Equatable, Sendable {
+    public var text: String
+
+    public init(text: String) {
+        self.text = text
+    }
 }
 
 /// Un message de l'agent. La réflexion n'est PAS un fait essentiel : elle est
 /// portée par la ligne du message qui la contient, derrière un pli.
-struct AssistantRow: Equatable, Sendable {
-    var text: String
-    var thinking: String?
+public struct AssistantRow: Equatable, Sendable {
+    public var text: String
+    public var thinking: String?
+
+    public init(text: String, thinking: String?) {
+        self.text = text
+        self.thinking = thinking
+    }
 }
 
 /// Un appel d'outil : son en-tête (nom + cible) et son corps (arguments,
 /// résultat, diff), ce dernier ouvert à la demande.
-struct ToolCallRow: Equatable, Sendable {
-    var callId: String
-    var name: String
-    var target: String
-    var argumentsJSON: String
+public struct ToolCallRow: Equatable, Sendable {
+    public var callId: String
+    public var name: String
+    public var target: String
+    public var argumentsJSON: String
     /// `nil` tant que l'appel n'a pas de réponse : le résultat le COMPLÈTE.
-    var result: ToolResultRow?
+    public var result: ToolResultRow?
     /// Renseigné seulement pour un appel `ask` dont la charge utile est valide.
-    var ask: AskSpan?
+    public var ask: AskSpan?
+
+    public init(
+        callId: String,
+        name: String,
+        target: String,
+        argumentsJSON: String,
+        result: ToolResultRow?,
+        ask: AskSpan?
+    ) {
+        self.callId = callId
+        self.name = name
+        self.target = target
+        self.argumentsJSON = argumentsJSON
+        self.result = result
+        self.ask = ask
+    }
 }
 
 /// Le résultat d'un appel : autonome (aucun appel vu), ou le corps d'un appel.
-struct ToolResultRow: Equatable, Sendable {
-    var callId: String?
-    var name: String?
-    var text: String
-    var diff: String?
-    var isError: Bool
+public struct ToolResultRow: Equatable, Sendable {
+    public var callId: String?
+    public var name: String?
+    public var text: String
+    public var diff: String?
+    public var isError: Bool
+
+    public init(callId: String?, name: String?, text: String, diff: String?, isError: Bool) {
+        self.callId = callId
+        self.name = name
+        self.text = text
+        self.diff = diff
+        self.isError = isError
+    }
 }
 
-enum MarkerRow: Equatable, Sendable {
+public enum MarkerRow: Equatable, Sendable {
     case compaction(summary: String, tokensBefore: Int?)
     case branchSummary(summary: String, fromId: String)
 }
@@ -278,8 +331,8 @@ enum MarkerRow: Equatable, Sendable {
 /// L'état d'assemblage INCRÉMENTAL d'une conversation. `append` est le seul point
 /// d'entrée : il ne reçoit jamais deux fois la même entrée (l'offset consommé est
 /// mémorisé), donc une lecture qui repasserait sur un fait déjà vu n'ajoute rien.
-struct SessionRowBuilder {
-    private(set) var rows: [SessionRow] = []
+public struct SessionRowBuilder: Sendable {
+    public private(set) var rows: [SessionRow] = []
     /// `callId → index de la ligne d'appel`, pour rattacher le résultat à son
     /// appel. Le PREMIER appel mémorisé gagne (`callRows[id] == nil`).
     private var callRows: [String: Int] = [:]
@@ -294,9 +347,11 @@ struct SessionRowBuilder {
     /// La racine du projet de la session (le `cwd` de son en-tête) : les chemins
     /// des appels d'outil s'affichent relatifs à elle. Posée avant `append` ; une
     /// ligne déjà bâtie n'est pas réécrite.
-    var projectRoot: String?
+    public var projectRoot: String?
 
-    mutating func append(_ entries: [ConversationEntry]) {
+    public init() {}
+
+    public mutating func append(_ entries: [ConversationEntry]) {
         for entry in entries {
             guard !consumedOffsets.contains(entry.offset) else { continue }
             consumedOffsets.insert(entry.offset)

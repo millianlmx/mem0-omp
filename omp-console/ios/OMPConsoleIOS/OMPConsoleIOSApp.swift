@@ -11,7 +11,11 @@ import SwiftUI
 ///   fonctionnalité ;
 /// - `-home.recipe <état>` : l'état de l'Accueil forcé depuis la fixture
 ///   partagée `HomeParity` (S-10, S-11), pour capturer les cinq états par un
-///   chemin RÉEL — un crochet de recette, pas une fonctionnalité.
+///   chemin RÉEL — un crochet de recette, pas une fonctionnalité ;
+/// - `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>` : l'état de
+///   la section Sessions forcé depuis la fixture partagée `SessionParity` (S-1,
+///   S-4, S-9), pour capturer l'écran réel — un crochet de recette, pas une
+///   fonctionnalité.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -23,6 +27,7 @@ struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
     private let initialState: IOSScreenState
     private let recipe: IOSHomeRecipe?
+    private let sessionRecipe: IOSSessionsRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -30,6 +35,7 @@ struct OMPConsoleIOSApp: App {
         initialSection = IOSSection.resolve(arguments)
         initialState = IOSScreenState.resolve(arguments)
         recipe = IOSHomeRecipe.resolve(arguments)
+        sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -39,6 +45,7 @@ struct OMPConsoleIOSApp: App {
                 selection: initialSection,
                 state: initialState,
                 recipe: recipe,
+                sessionRecipe: sessionRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

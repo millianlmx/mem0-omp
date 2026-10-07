@@ -227,3 +227,37 @@ marqueur `[test: <fonction>]` (une fonction de
   `[test: statsReloadsOnlyWhenConnected]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-stats-dark-ax]`
+## Sessions (S-1…S-11)
+
+- La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et
+  son groupement par jour (`SessionDays`) : mêmes runs, mêmes en-têtes que macOS,
+  y compris une session lancée hors coque. `[test: listGroupsByDay]`
+- Un `Picker` de projet restreint la liste AVANT le groupement, donc les
+  en-têtes de jour se recalculent ; « Tous les projets » la restitue entière.
+  `[test: projectFilter]`
+- Le fil de la visionneuse vient du modèle de lignes PARTAGÉ
+  (`SessionRowBuilder`) : mêmes lignes que macOS, prouvées sur la fixture
+  `SessionParity`. `[test: parityRows]`
+- Une session illisible ou tronquée affiche son motif (bandeau `danger`
+  au-dessus du fil) ou la note de réécriture — jamais un écran vide muet.
+  `[test: unreadableAndTruncated]`
+- L'écran de section est capturé tel quel, sans écran fabriqué.
+  `[capture: iphone-sessions-light]`
+- Les plis d'une ligne (réflexion, appel) sont INDÉPENDANTS, et une ligne de diff
+  porte son ton en plus de sa couleur par `SessionDiffText.toneLabel`.
+  `[test: foldsAndDiffs]`
+- Une question `ask` est mise en évidence et DÉPLIÉE d'emblée ; la visionneuse
+  n'offre AUCUN geste de réponse — lire, plier/déplier, faire défiler seulement.
+  `[test: askHighlighted]`
+- Un ajout d'un run vivant s'ajoute sans relire la session : une seule lecture
+  initiale, puis le flux de cette session. `[test: additionsDoNotReload]`
+- Le fil ne colle au bas que tant que l'utilisateur n'a pas remonté, et le
+  bouton « Revenir au direct » recolle sans geste. `[test: followPolicy]`
+- L'état du run passe de vivant à terminé sans rouvrir la session, par la
+  fonction partagée `ConsoleStatus.of(run:)`. `[test: runStatusTransition]`
+- Le fil est monté hors de la section Sessions depuis une simple source : le
+  même composant rend le même fil, preuve qu'il est réutilisable.
+  `[test: componentIsReusable]`
+- Aucune taille de police en points ni `lineLimit` numérique dans le fil : les
+  lignes se replient, comme les blocs de code d'`IOSMarkdownView`.
+  `[garde: design-ios/AC-7]`

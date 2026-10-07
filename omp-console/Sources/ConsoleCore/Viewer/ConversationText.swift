@@ -19,6 +19,12 @@ public enum ConversationText {
     public static let waitingTitle = "Aucun échange pour l'instant"
     public static let emptyTitle = "Session vide"
     public static let rewritten = "Fichier réécrit — affichage reconstruit"
+    /// Les quatre mots neufs de `ios-sessions` (S-4, S-8) : la coque macOS les lit
+    /// désormais (sortie identique), l'app iOS les emploie aux mêmes états.
+    public static let readError = "Erreur de lecture"
+    public static let starting = "Démarrage"
+    public static let live = "En direct"
+    public static let backToLive = "Revenir au direct"
 
     /// Le cache du rendu Markdown : assez large pour une longue session affichée
     /// (une entrée par message, réflexion ou résumé RENDU), borné pour qu'une
@@ -46,6 +52,36 @@ public enum ConversationText {
         "Session illisible : \(message). Nouvelle tentative automatique."
     }
 
+    /// Le texte d'un message de l'agent en blocs complets (titres, listes,
+    /// citations, code, tableaux, séparateurs) — S-19 R1 de omp-console-redesign.
+    /// Mémoïsé : un même texte n'est découpé qu'une fois tant qu'il reste en cache.
+    public static func blocks(_ text: String) -> [MarkdownBlock] {
+        blocksCache.value(for: text)
+    }
+
+    /// L'état du fil : la lecture en erreur prime (les faits déjà lus restent
+    /// affichés), puis l'attente d'un premier fait, puis le suivi du direct.
+    /// `nil` quand le fil ne suit plus le direct : le bouton « Revenir au direct »
+    /// dit seul cet état, un second mot ferait doublon (audit HIG 2026-10-01).
+    public static func status(state: SessionViewerState, following: Bool, isEmpty: Bool) -> ConsoleStatus? {
+        if case .unreadable = state { return ConsoleStatus(text: readError, tone: .danger) }
+        if state == .waiting && isEmpty { return ConsoleStatus(text: starting, tone: .info) }
+        if following { return ConsoleStatus(text: live, tone: .success) }
+        return nil
+    }
+
+    /// Le cache des BLOCS Markdown d'un message de l'agent (S-19 R1), borné comme
+    /// `markdownCache` : une entrée par message rendu.
+    ///
+    /// Accesseur CALCULÉ : une extension ne peut pas porter de propriété stockée
+    /// (D4). L'instance reste UNIQUE — `Support.blocksCache` est le seul stockage,
+    /// donc `blocks(_:)` et les tests qui lisent `ConversationText.blocksCache`
+    /// voient le même cache.
+    public static var blocksCache: BoundedMemo<[MarkdownBlock]> { Support.blocksCache }
+
+    private enum Support {
+        static let blocksCache = BoundedMemo<[MarkdownBlock]>(capacity: 2_048) { MarkdownDocument.blocks($0) }
+    }
 }
 
 /// Une mémoïsation BORNÉE par texte, sûre depuis n'importe quel fil.

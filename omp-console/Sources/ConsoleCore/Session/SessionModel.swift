@@ -9,10 +9,8 @@
 //
 // Aucun comportement ici : que des types et leurs invariants.
 
-/// `JSONValue` (le socle JSON partagé) vit désormais dans `ConsoleCore`
-/// (`Session/JSONValue.swift`) : ce fichier le voit par `import ConsoleCore`.
-
-import ConsoleCore
+/// `JSONValue` (le socle JSON partagé) vit dans le même module
+/// (`ConsoleCore/Session/JSONValue.swift`) : ces types valent pour les DEUX coques.
 
 /// Usage d'une réponse, lu sur `message.usage`.
 

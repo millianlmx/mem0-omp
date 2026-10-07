@@ -5,6 +5,7 @@
 // dollars n'est lu ni rendu (AC-2). La durée est un temps MURAL, bornes
 // comprises, donc l'attente d'une réponse utilisateur est incluse.
 
+import ConsoleCore
 import Foundation
 
 /// Ce que la session d'un run porte : deux sommes de tokens, un compte de tours,

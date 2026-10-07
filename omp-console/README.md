@@ -1927,6 +1927,50 @@ par `MEM0_PIPELINES_RECIPE` ; le scénario iPad reste manuel et vit dans le
 contrat de la feature. La recette de design iOS fait autorité et vit dans
 `omp-console/ios/DESIGN.md`.
 
+### Section Sessions
+
+La section Sessions liste les runs du magasin d'état — ceux de tous les dépôts et
+de tous les processus OMP du Mac, y compris une session lancée par un `omp` en
+terminal hors coque — groupés par jour sous les mêmes en-têtes que la coque macOS
+(« Aujourd'hui », « Hier », puis la date). Un `Picker` filtre la liste par projet ;
+choisir « Tous les projets » la restitue entière et les en-têtes de jour se
+recalculent. La liste vient de la dérivation partagée `ConsoleCore` (`SessionList`,
+`SessionDays`), alimentée par l'instantané que la trame `store` publie — aucune
+route n'est appelée pour lister.
+
+Ouvrir une ligne pousse une **visionneuse en LECTURE SEULE** : elle rend le fil
+d'une session par le même modèle de lignes que macOS (`SessionRowBuilder`),
+messages et rôles, pensées repliables, appels d'outil et leurs résultats, diffs
+colorés et libellés par `SessionDiffText`, question `ask` mise en évidence et
+dépliée d'emblée — sans aucun moyen de répondre ni d'écrire dans la session. Un
+run vivant s'ajoute en direct (une seule lecture, puis le flux de cette session),
+en préservant la position et l'état replié/déplié, et le fil reste collé au bas
+tant que l'utilisateur n'a pas remonté. Les composants du fil (modèle, vue, ligne,
+feuille) sont réutilisables par la section Session OMP : leur seul contrat
+d'entrée est une référence de session et une source.
+
+### Recette : la section Sessions
+
+Le crochet `-sessions.recipe` force un état RÉEL de l'écran depuis la fixture
+partagée `SessionParity`, sans écran fabriqué ; la DERNIÈRE paire reconnue gagne,
+et une valeur inconnue est ignorée :
+
+```
+-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>
+```
+
+- `liste` — la liste peuplée de la session de la fixture ;
+- `vide` — l'état vide réel de l'écran ;
+- `visionneuse` — la feuille du fil ouverte sur la session ;
+- `illisible` — le cas d'une session illisible ;
+- `en-direct` — le fil d'un run vivant.
+
+Les preuves Swift de la section vivent dans
+`omp-console/ios/OMPConsoleIOSTests/IOSSessionTests.swift` (motif de parité
+compris) et dans `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
+côté macOS ; la garde textuelle est `test/ios-sessions.test.ts`. La recette de
+design iOS fait autorité et vit dans `omp-console/ios/DESIGN.md`.
+
 ### Prérequis
 
 - **Xcode 27** installé, et sa licence acceptée : sans cela, toute invocation de

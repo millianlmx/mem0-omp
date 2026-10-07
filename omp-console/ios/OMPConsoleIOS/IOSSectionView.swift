@@ -3,10 +3,10 @@ import ConsoleCore
 import SwiftUI
 
 /// L'écran UNIQUE des sept sections (S-2, BR-3) : il rend le contenu pur de
-/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les quatre sections
+/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les cinq sections
 /// à écran réel : Pipelines (`PipelinesScreen`), Projet (`IOSProjectScreen`),
-/// Mémoire (`IOSMemoryScreen`) et Statistiques (`IOSStatsScreen`), nourries par le
-/// client partagé.
+/// Mémoire (`IOSMemoryScreen`), Statistiques (`IOSStatsScreen`) et Sessions
+/// (`IOSSessionsScreen`), toutes nourries par le client partagé.
 ///
 /// Ordre du rendu (sections à contenu) : panneau → titre → pastille → carte de
 /// l'état vide → bandeau. Aucune phrase n'est composée ici : les mots viennent du
@@ -15,6 +15,8 @@ struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
     @ObservedObject var client: ConsoleClientModel
+    /// Le crochet de recette `-sessions.recipe` de la section Sessions.
+    let recipe: IOSSessionsRecipe?
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -25,6 +27,8 @@ struct IOSSectionView: View {
             PipelinesScreen(client: client, recipe: state)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state)
+        } else if section == .sessions {
+            IOSSessionsScreen(client: client, recipe: recipe)
         } else {
             genericBody
         }
