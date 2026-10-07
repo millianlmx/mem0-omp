@@ -322,8 +322,12 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
-    public func statistics() async throws -> RemoteStatsPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/stats"), as: RemoteStatsPayload.self)
+    /// Le tableau du projet demandé (S-1) : sans `project`, le Mac choisit le
+    /// premier de son ordre ; avec, il sert ce projet-là (une clé inconnue
+    /// retombe sur le premier, et la charge utile le dit).
+    public func statistics(project: String? = nil) async throws -> RemoteStatsPayload {
+        let path = project.map { "/v1/stats?project=" + encode($0) } ?? "/v1/stats"
+        return try await perform(ClientHTTPRequest(method: "GET", path: path), as: RemoteStatsPayload.self)
     }
 
     public func devices() async throws -> RemoteDevicesPayload {

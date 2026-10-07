@@ -84,20 +84,20 @@ enum StatsText {
 
     static let noProject = StatsPresentation.noProject
 
-    static let empty = "Aucune donnée pour ce projet"
+    static let empty = StatsPresentation.empty
 
     static func hidden(_ count: Int) -> String {
-        ConsoleFormat.count(count, "feature du plan sans données", "features du plan sans données")
+        StatsPresentation.hidden(count)
     }
 
     static let noStatsTitle = "Aucune statistique"
     static let noProjectTitle = StatsPresentation.noProjectTitle
 
     /// Les tuiles.
-    static let sentTokens = "Tokens envoyés"
-    static let receivedTokens = "Tokens reçus"
-    static let timeSpent = "Temps passé"
-    static let turns = "Tours"
+    static let sentTokens = StatsPresentation.sentTokens
+    static let receivedTokens = StatsPresentation.receivedTokens
+    static let timeSpent = StatsPresentation.timeSpent
+    static let turns = StatsPresentation.turns
 
     /// Le graphique : un panneau par série, chacun à sa propre échelle.
     static let chartTitle = "Tokens par feature"
@@ -106,12 +106,12 @@ enum StatsText {
 
     /// Le tableau et ses colonnes (noms courts, Doc-9).
     static let tableTitle = "Exécutions"
-    static let columnFeature = "Feature"
+    static let columnFeature = StatsPresentation.columnFeature
     static let columnStep = "Étape"
-    static let columnModel = "Modèle"
-    static let columnDuration = "Durée"
-    static let columnTurns = "Tours"
-    static let columnTokens = "Tokens"
+    static let columnModel = StatsPresentation.columnModel
+    static let columnDuration = StatsPresentation.columnDuration
+    static let columnTurns = StatsPresentation.columnTurns
+    static let columnTokens = StatsPresentation.columnTokens
     static let columnState = "État"
 }
 

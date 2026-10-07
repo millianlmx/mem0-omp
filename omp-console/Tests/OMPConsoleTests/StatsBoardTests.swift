@@ -243,6 +243,64 @@ func projectTotalsSumListedFeatures() {
     #expect(totals.durationMs == 1_500)
 }
 
+// MARK: - S-2 : le modèle et les runs vivants d'une feature
+
+@Test("ios-statistiques/AC-1 : le modèle d'une feature est celui de son dernier run lisible qui en porte un")
+func featureModelIsTheLastReadableOne() {
+    let feature = FeatureStats(id: "alpha", slug: "alpha", runs: [
+        RunStats(id: "a", sessionFile: "a", phase: .impl, isLive: false, metrics: .measured(
+            SessionMetrics(input: 1, output: 1, turns: 1, model: "ancien-modele", firstMs: 0, lastMs: 1)
+        )),
+        // Un run LISIBLE sans modèle (session sans réponse assistant) ne l'emporte pas.
+        RunStats(id: "b", sessionFile: "b", phase: .impl, isLive: false, metrics: .measured(
+            SessionMetrics(input: 0, output: 0, turns: 1, model: nil, firstMs: 0, lastMs: 1)
+        )),
+        // Un run illisible ne fournit JAMAIS de modèle, même dernier.
+        RunStats(id: "c", sessionFile: "c", phase: .impl, isLive: true, metrics: .unreadable("session introuvable")),
+    ])
+    #expect(featureModel(feature) == "ancien-modele")
+
+    // Le DERNIER porteur gagne (l'ordre du plan, puis la fin de la liste).
+    let twoModels = FeatureStats(id: "alpha", slug: "alpha", runs: [
+        RunStats(id: "a", sessionFile: "a", phase: .impl, isLive: false, metrics: .measured(
+            SessionMetrics(input: 1, output: 1, turns: 1, model: "ancien", firstMs: 0, lastMs: 1)
+        )),
+        RunStats(id: "b", sessionFile: "b", phase: .impl, isLive: false, metrics: .measured(
+            SessionMetrics(input: 1, output: 1, turns: 1, model: "recent", firstMs: 0, lastMs: 1)
+        )),
+    ])
+    #expect(featureModel(twoModels) == "recent")
+
+    // Aucun run lisible portant un modèle : `nil`, jamais une chaîne vide.
+    let none = FeatureStats(id: "alpha", slug: "alpha", runs: [
+        RunStats(id: "a", sessionFile: "a", phase: .impl, isLive: false, metrics: .unreadable("session introuvable")),
+        RunStats(id: "b", sessionFile: "b", phase: .impl, isLive: false, metrics: .measured(
+            SessionMetrics(input: 0, output: 0, turns: 0, model: "", firstMs: nil, lastMs: nil)
+        )),
+    ])
+    #expect(featureModel(none) == nil)
+    #expect(featureModel(FeatureStats(id: "x", slug: "x", runs: [])) == nil)
+}
+
+@Test("ios-statistiques/AC-6 : les runs vivants d'une feature sont les runs LISIBLES et vivants")
+func featureLiveRunsCountsReadableLiveRuns() {
+    let feature = FeatureStats(id: "alpha", slug: "alpha", runs: [
+        // Vivant ET lisible : compté.
+        RunStats(id: "a", sessionFile: "a", phase: .impl, isLive: true, metrics: measured(1, 1, 1)),
+        // Vivant mais ILLISIBLE : pas compté (sa durée n'avance pas).
+        RunStats(id: "b", sessionFile: "b", phase: .impl, isLive: true, metrics: .unreadable("session introuvable")),
+        // Lisible mais clos : pas compté.
+        RunStats(id: "c", sessionFile: "c", phase: .impl, isLive: false, metrics: measured(1, 1, 1)),
+    ])
+    #expect(featureLiveRuns(feature) == 1)
+
+    let none = FeatureStats(id: "alpha", slug: "alpha", runs: [
+        RunStats(id: "a", sessionFile: "a", phase: .impl, isLive: false, metrics: measured(1, 1, 1))
+    ])
+    #expect(featureLiveRuns(none) == 0)
+    #expect(featureLiveRuns(FeatureStats(id: "x", slug: "x", runs: [])) == 0)
+}
+
 @Test("statistiques/AC-3 : la durée totale d'une feature à run vivant augmente avec `nowMs`")
 func liveFeatureTotalsAdvanceWithTime() {
     let feature = FeatureStats(id: "alpha", slug: "alpha", runs: [

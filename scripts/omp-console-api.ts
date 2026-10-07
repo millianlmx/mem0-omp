@@ -71,7 +71,7 @@ commandes :
   snapshot                                         compteurs du magasin et runs vivants
   sessions [<id>]                                  liste des runs ou détail d'une session
   docs <repoKey>                                   documents d'un projet
-  stats                                            statistiques du projet
+  stats [--project <repoKey>]                       statistiques du projet
   memory [--query <q>] [--scope <s>] [--graph]     mémoire du projet
   watch [--seconds <n>]                            suit le flux (store, sessions, hosted, devices)
   answer <cardId> (--option <libellé>|--text <texte>)
@@ -350,12 +350,20 @@ async function cmdDocs(pairing: Pairing | null, rest: string[]): Promise<void> {
 }
 
 async function cmdStats(pairing: Pairing | null): Promise<void> {
-  const data = asRecord(await callJson("GET", "/v1/stats", { pairing }));
-  const totals = asRecord(data["totals"]);
-  console.log(`projet : ${data["project"] ?? "?"}`);
-  console.log(`entrée : ${totals["input"] ?? "?"} — sortie : ${totals["output"] ?? "?"} — tours : ${totals["turns"] ?? "?"} — durée : ${totals["durationMs"] ?? "?"} ms`);
-  console.log(`lignes : ${countOf(data["rows"])}${data["truncated"] ? " (tronquées)" : ""}`);
-  for (const row of asArray(data["rows"])) console.log(`ligne : ${describe(row)}`);
+  const project = flag("project");
+  const query = project ? `?project=${encodeURIComponent(project)}` : "";
+  const data = asRecord(await callJson("GET", `/v1/stats${query}`, { pairing }));
+  console.log(`projet : ${data["project"] || "(aucun)"} — clé : ${data["projectKey"] ?? "(aucune)"}`);
+  console.log(`projets : ${countOf(data["projects"])}`);
+  console.log(`features listées : ${countOf(data["features"])} — masquées : ${data["hiddenPlanFeatures"] ?? "?"}`);
+  for (const feature of asArray(data["features"])) {
+    const row = asRecord(feature);
+    console.log(
+      `feature : ${row["slug"] ?? "?"} — entrée : ${row["input"] ?? "?"} — sortie : ${row["output"] ?? "?"}` +
+        ` — tours : ${row["turns"] ?? "?"} — durée : ${row["durationMs"] ?? "?"} ms` +
+        ` — runs vivants : ${row["liveRuns"] ?? "?"} — modèle : ${row["model"] ?? "—"}`,
+    );
+  }
 }
 
 async function cmdMemory(pairing: Pairing | null): Promise<void> {

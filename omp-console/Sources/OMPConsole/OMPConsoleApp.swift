@@ -90,7 +90,6 @@ struct OMPConsoleApp: App {
             actions: actions,
             session: session,
             project: project,
-            stats: stats,
             components: { [weak presence, weak setup] in
                 let installed = presence.map { !$0.presence.missing.contains(.omp) } ?? false
                 return RemoteComponentsPayload(

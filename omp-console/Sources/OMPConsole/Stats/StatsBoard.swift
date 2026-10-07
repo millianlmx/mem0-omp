@@ -158,3 +158,24 @@ func projectTotals(_ project: ProjectStats, nowMs: Double) -> StatsTotals {
     }
     return totals
 }
+
+/// Le modèle du DERNIER run LISIBLE de la feature, dans l'ordre du plan, qui en
+/// porte un non vide ; `nil` quand aucun n'en porte (S-2). Un run illisible ne
+/// fournit jamais de modèle.
+func featureModel(_ feature: FeatureStats) -> String? {
+    for run in feature.runs.reversed() {
+        guard case .measured(let metrics) = run.metrics else { continue }
+        guard let model = metrics.model, !model.isEmpty else { continue }
+        return model
+    }
+    return nil
+}
+
+/// Le nombre de runs de la feature LISIBLES et VIVANTS (S-2) : c'est lui qui
+/// fait avancer la durée affichée côté client, sans trafic.
+func featureLiveRuns(_ feature: FeatureStats) -> Int {
+    feature.runs.reduce(into: 0) { count, run in
+        guard run.isLive, case .measured = run.metrics else { return }
+        count += 1
+    }
+}

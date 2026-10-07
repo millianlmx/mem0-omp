@@ -48,7 +48,6 @@ final class RemoteServiceModel: ObservableObject {
         actions: ActionsModel,
         session: SessionConsoleModel,
         project: ProjectConsoleModel,
-        stats: StatsModel,
         components: @escaping @MainActor () -> RemoteComponentsPayload = {
             RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
         },
@@ -84,7 +83,6 @@ final class RemoteServiceModel: ObservableObject {
         let reads = RemoteReads(
             hub: storeHub,
             registry: self.registry,
-            stats: stats,
             service: HTTPMemoryService(config: Self.memoryConfig(environment: environment, stackEnv: paths.stackEnv)),
             memoryConfig: Self.memoryConfig(environment: environment, stackEnv: paths.stackEnv),
             memoryLinks: paths.memoryLinks,

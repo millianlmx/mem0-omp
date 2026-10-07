@@ -206,3 +206,24 @@ marqueur `[test: <fonction>]` (une fonction de
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
 
+## La section Statistiques (feature `ios-statistiques`)
+
+- Une carte par feature LISTÉE, dans l'ordre du plan : le slug, puis une ligne par
+  grandeur (modèle, temps passé, tours, tokens envoyés, tokens reçus). `[test: statsCardsSumTheListedFeatures]`
+- La ligne « Total du projet » somme les features LISTÉES — ni les features
+  masquées, ni un autre projet — et rien d'autre n'y entre. `[test: statsTotalSumsOnlyListedFeatures]`
+- Le sélecteur de projet, la ligne de total et la mention des features masquées
+  sont visibles des deux appareils, aux deux apparences. `[capture: ipad-stats-dark]`
+- Les durées et les totaux se recalculent à l'instant de RENDU
+  (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
+  milliseconde par milliseconde et par run vivant, sans un octet de trafic.
+  `[test: statsDurationsAdvanceWithLiveRuns]`
+- Six états à part entière, jamais un écran vide : chargement, dégradé (hors
+  `.connected`, bandeau `attention`), erreur (bandeau `danger` + « Réessayer »),
+  aucun projet, projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+- Un relevé est relancé par quatre déclencheurs seulement — apparition, changement
+  de projet, nouvel état du magasin, mise à jour de session — et JAMAIS tant que le
+  client n'est pas connecté : aucune minuterie de scrutation.
+  `[test: statsReloadsOnlyWhenConnected]`
+- L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
+  `[capture: iphone-stats-dark-ax]`
