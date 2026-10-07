@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 3/6 « L'app iOS parle au Mac »
-**Avancement** : 4/13 feature(s) fusionnée(s)
+**Statut** : en cours — segment 4/6 « Le pilotage depuis iOS »
+**Avancement** : 5/13 feature(s) fusionnée(s)
 
 ## But
 
@@ -28,14 +28,14 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 | 1 | `api-distante-du-console` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/71 | opencode-go/deepseek-v4.1-flash | La coque macOS expose sur le réseau local une API pour un client distant, portée par les couches existantes (Store/, Actions/, ConductorPool, MemoryService) : annonce Bonjour, appairage par code affiché dans l'app avec un secret au trousseau et une liste d'appareils révocables, lecture (instantané du magasin, sessions et leur flux, documents de projet, statistiques, mémoire en relais de mem0-http y compris le graphe) et gestes (répondre à un ask, valider un jalon, lancer/arrêter un run, lancer une feature, conduire un projet, prompt et dialogues d'une session hébergée, PR et fusion confirmée). Un flux pousse les changements du magasin et des sessions vivantes au lieu du sondage, et rien n'est servi sans jeton d'appareil. La réussite se prouve par un client réel qui s'appaire, lit un run vivant et le fait avancer par un geste, et par le refus de toute requête sans jeton. |
 | 2 | `coque-ios` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/69 | opencode-go/deepseek-v4.1-flash | L'app iOS naît dans le dépôt : un projet Xcode sous omp-console/ios/ (universel iPhone + iPad, iOS 26, groupes de fichiers synchronisés pour que les features suivantes ajoutent des écrans sans se disputer le .xcodeproj), branché sur ConsoleCore, avec la navigation adaptative de la coque macOS (barre latérale sur iPad, piles sur iPhone) et les sept sections prévues en écrans d'attente nommés. Les gardes et la CI apprennent à la compiler (xcodebuild via DEVELOPER_DIR, destinations simulateur) sans casser la règle CLT-only du macOS, et la documentation dit comment la lancer et l'installer. La réussite se prouve par un build CI vert, l'app lancée au simulateur (captures des sept écrans sur iPhone et iPad) et une installation sur un appareil réel. |
 
-### Segment 3 — L'app iOS parle au Mac (en cours)
+### Segment 3 — L'app iOS parle au Mac (fusionné)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
 | 1 | `client-distant-ios` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/72 | opencode-go/deepseek-v4.1-flash | La couche réseau de l'app iOS : découverte Bonjour de la coque macOS, saisie manuelle d'une adresse pour un tunnel personnel, appairage par code avec le secret au trousseau iOS, reconnexion avec repli, et client typé du contrat (lecture, gestes, flux temps réel) monté dans un modèle observable unique. L'écran d'état dit la vérité — Mac absent, hors réseau, jeton révoqué, version d'API incompatible — au lieu de masquer l'échec. La réussite se prouve sur appareil ou simulateur contre la vraie coque macOS : appairage, coupure puis reprise des deux côtés, et état affiché conforme à la réalité. |
-| 2 | `design-ios` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/73 | opencode-go/deepseek-v4.1-flash | La couche visuelle iOS : les équivalents des trois surfaces de la coque macOS (panneau, carte, bandeau) adaptés aux HIG tactiles, la typographie et les tons des statuts, les tailles et marges iPhone/iPad, les états vides et d'erreur — pour que l'app ait l'air d'un produit Apple sérieux au lieu d'un portage brut, exigence déjà exprimée pour la coque macOS. Le verre (Liquid Glass) ne sert que là où le système le dessine ; les contenus restent opaques. La réussite se prouve par des captures clair/sombre d'iPhone et d'iPad qui passent la recette esthétique, et par des libellés partagés avec la coque macOS — aucun texte réinventé. |
+| 2 | `design-ios` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/73 | opencode-go/deepseek-v4.1-flash | La couche visuelle iOS : les équivalents des trois surfaces de la coque macOS (panneau, carte, bandeau) adaptés aux HIG tactiles, la typographie et les tons des statuts, les tailles et marges iPhone/iPad, les états vides et d'erreur — pour que l'app ait l'air d'un produit Apple sérieux au lieu d'un portage brut, exigence déjà exprimée pour la coque macOS. Le verre (Liquid Glass) ne sert que là où le système le dessine ; les contenus restent opaques. La réussite se prouve par des captures clair/sombre d'iPhone et d'iPad qui passent la recette esthétique, et par des libellés partagés avec la coque macOS — aucun texte réinventé. |
 
-### Segment 4 — Le pilotage depuis iOS (à venir)
+### Segment 4 — Le pilotage depuis iOS (en cours)
 
 | # | Feature | État | PR | Modèle | Intention |
 |---|---|---|---|---|---|
