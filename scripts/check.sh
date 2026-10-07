@@ -387,27 +387,33 @@ fi
 
 echo "── Noyau partagé"
 
-# `ConsoleCore` est la cible PARTAGÉE macOS/iOS : elle se compile seule avec les
-# Command Line Tools (donc sans SDK iOS) et ne doit toucher AUCUNE API de
-# plateforme. AppKit et UIKit ne se détectent pas à la compilation — chacun existe
-# sur sa plateforme —, donc la portabilité se tient par un balayage de SOURCES :
-# un `import AppKit` dans un fichier de la cible partagée fait rougir ce contrôle.
+# `ConsoleCore` et `ConsoleClient` sont les cibles PARTAGÉES macOS/iOS : elles se
+# compilent avec les Command Line Tools (donc sans SDK iOS) et ne doivent toucher
+# AUCUNE API de plateforme. AppKit et UIKit ne se détectent pas à la compilation —
+# chacun existe sur sa plateforme —, donc la portabilité se tient par un balayage
+# de SOURCES : un `import AppKit` dans un fichier d'une cible partagée fait rougir
+# ce contrôle.
 #
 # Le balayage ignore les COMMENTAIRES (ligne `//` et blocs `/* … */`) : un exemple
 # cité dans un en-tête n'est pas un import. `SwiftUI` et `Observation`, eux, sont
-# disponibles des DEUX côtés — ils ne sont pas interdits.
+# disponibles des DEUX côtés — ils ne sont pas interdits ; `Combine`, `Network` et
+# `Security` sont des frameworks Foundation/systeme disponibles sur les deux.
 #
 # Ce contrôle ne demande que python3 (déjà requis par les sections précédentes) :
 # ni macOS, ni toolchain Swift, donc il tourne aussi sous Ubuntu.
 python3 - <<'PY'
 import os, re, sys
 
-ROOT = "omp-console/Sources/ConsoleCore"
+ROOTS = [
+    "omp-console/Sources/ConsoleCore",
+    "omp-console/Sources/ConsoleClient",
+]
 IMPORT = re.compile(r"^\s*import\s+(AppKit|UIKit|Cocoa)\b")
 
-if not os.path.isdir(ROOT):
-    print(f"  ✗ ConsoleCore absente de Sources/ : « {ROOT} » n'existe pas")
-    sys.exit(1)
+for root in ROOTS:
+    if not os.path.isdir(root):
+        print(f"  ✗ cible partagée absente de Sources/ : « {root} » n'existe pas")
+        sys.exit(1)
 
 
 def code_part(line, in_block):
@@ -434,27 +440,32 @@ def code_part(line, in_block):
 
 
 faults = []
-scanned = 0
-for dirpath, dirnames, filenames in os.walk(ROOT):
-    dirnames.sort()
-    for name in sorted(filenames):
-        if not name.endswith(".swift"):
-            continue
-        path = os.path.join(dirpath, name)
-        scanned += 1
-        in_block = False
-        with open(path, encoding="utf-8") as handle:
-            for number, line in enumerate(handle, 1):
-                code, in_block = code_part(line.rstrip("\n"), in_block)
-                found = IMPORT.match(code)
-                if found:
-                    faults.append((os.path.relpath(path), number, found.group(1)))
+report = []
+for root in ROOTS:
+    target = os.path.basename(root)
+    scanned = 0
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames.sort()
+        for name in sorted(filenames):
+            if not name.endswith(".swift"):
+                continue
+            path = os.path.join(dirpath, name)
+            scanned += 1
+            in_block = False
+            with open(path, encoding="utf-8") as handle:
+                for number, line in enumerate(handle, 1):
+                    code, in_block = code_part(line.rstrip("\n"), in_block)
+                    found = IMPORT.match(code)
+                    if found:
+                        faults.append((target, os.path.relpath(path), number, found.group(1)))
+    report.append((target, scanned))
 
-for path, number, module in faults:
-    print(f"  ✗ la cible partagée ConsoleCore importe {module} : {path}:{number}")
+for target, path, number, module in faults:
+    print(f"  ✗ la cible partagée {target} importe {module} : {path}:{number}")
 if faults:
     sys.exit(1)
-print(f"  ✓ la cible partagée ConsoleCore n'importe ni AppKit ni UIKit ({scanned} fichiers balayés)")
+for target, scanned in report:
+    print(f"  ✓ la cible partagée {target} n'importe ni AppKit ni UIKit ({scanned} fichiers balayés)")
 PY
 [ $? -ne 0 ] && FAIL=1
 

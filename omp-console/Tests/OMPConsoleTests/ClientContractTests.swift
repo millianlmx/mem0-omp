@@ -1,0 +1,171 @@
+// Le contrat du client contre la VRAIE pile : la confrontation des catalogues
+// (AC-13), la découverte Bonjour réelle (AC-1) et la recette gated (AC-20).
+//
+// Ce fichier vit dans OMPConsoleTests parce qu'il a besoin de `RemoteStack` et de
+// la table de routes de la coque ; les `Remote…` de ConsoleClient y sont donc
+// qualifiés quand un homonyme interne existe.
+
+import ConsoleClient
+import ConsoleCore
+import Foundation
+import Testing
+@testable import OMPConsole
+
+// MARK: - Doublures minimales (le harnais ConsoleClientTests n'est pas visible ici)
+
+@MainActor
+private final class ContractDiscovery: DiscoverySource {
+    var onChange: (([DiscoveredMac]) -> Void)?
+    var onProtocolVersion: ((Int) -> Void)?
+    var onDenied: ((Bool) -> Void)?
+    func start(serviceType: String) {}
+    func stop() {}
+}
+
+@MainActor
+private final class ContractPath: ClientPathSource {
+    var onChange: ((Bool) -> Void)?
+    func start() {}
+    func stop() {}
+}
+
+@MainActor
+private func makeModel(discovery: any DiscoverySource, tokens: InMemoryTokenStore = InMemoryTokenStore()) -> ConsoleClientModel {
+    ConsoleClientModel(
+        transport: URLSessionTransport(),
+        discovery: discovery,
+        preferences: InMemoryClientPreferences(),
+        tokens: tokens,
+        pacer: LiveClientPacer(),
+        pathSource: ContractPath()
+    )
+}
+
+/// L'endpoint d'une pile réelle.
+private func endpoint(of stack: RemoteStack) -> ClientEndpoint {
+    .manual(host: "127.0.0.1", port: Int(stack.port))
+}
+
+/// Le message d'erreur d'un corps, quand il y en a un.
+private func errorMessage(_ body: Data) -> String? {
+    guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+          let error = object["error"] as? [String: Any] else { return nil }
+    return error["message"] as? String
+}
+
+private func errorCode(_ body: Data) -> String? {
+    guard let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],
+          let error = object["error"] as? [String: Any] else { return nil }
+    return error["code"] as? String
+}
+
+@MainActor
+@Suite("Contrat client (pile réelle)")
+struct ClientContractTests {
+    @Test("client-distant-ios/AC-13 : le catalogue du client est l'image exacte des routes servies, et chacune existe")
+    func catalogIsImageOfRouter() async throws {
+        // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
+        let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
+        #expect(served.count == 26)
+        #expect(ClientRoute.all.count == 26)
+        #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
+
+        // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
+        //    routeur rendrait « route inconnue ».
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let transport = URLSessionTransport()
+        let target = endpoint(of: stack)
+        for route in ClientRoute.all {
+            let path = route.path
+                .replacingOccurrences(of: "{id}", with: "inconnu")
+                .replacingOccurrences(of: "{repoKey}", with: "inconnu")
+                .replacingOccurrences(of: "{slug}", with: "inconnu")
+            let response = try await transport.send(
+                ClientHTTPRequest(method: route.method, path: path, isStream: false),
+                to: target,
+                token: nil
+            )
+            #expect(
+                !(response.status == 404 && errorMessage(response.body) == "route inconnue"),
+                "\(route.method) \(route.path) n'est pas résolue par le routeur"
+            )
+        }
+
+        // 3. Les routes servies sur une pile neuve se décodent TYPÉES.
+        stack.stats.start()
+        let code = try stack.registry.generateCode()
+        let model = makeModel(discovery: ContractDiscovery())
+        _ = model.setManualAddress("127.0.0.1:\(stack.port)")
+        try await model.pair(code: code.value, deviceName: "Tests")
+
+        #expect(try await model.version() == ConsoleAPI.protocolVersion)
+        _ = try await model.store()
+        _ = try await model.sessions()
+        _ = try await model.projects()
+        _ = try await model.statistics()
+        _ = try await model.devices()
+        _ = try await model.memory(scope: nil, limit: nil)
+        _ = try await model.memorySearch(query: "memoire", scope: nil, limit: nil)
+        _ = try await model.memoryGraph(scope: nil)
+        _ = try await model.hostedSession()
+
+        // Le flux temps réel est ouvert par sa méthode typée.
+        let events = try await model.openStream()
+        var sawHello = false
+        for try await event in events {
+            if case .hello = event { sawHello = true; break }
+        }
+        #expect(sawHello)
+        model.stop()
+    }
+
+    @Test("client-distant-ios/AC-1 : la coque est découverte par Bonjour et présentée sans saisie d'adresse")
+    func discoversMacOverBonjour() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let model = makeModel(discovery: BonjourDiscoverySource())
+        model.start()
+        // Aucune adresse n'a été saisie : la coque doit apparaître seule.
+        let found = await contractEventually(timeout: 10) {
+            model.discovered != nil && model.manualAddress == nil
+        }
+        #expect(found, "aucun Mac découvert par Bonjour — l'annonce de la pile est-elle active ?")
+        #expect(model.discovered?.name == ConsoleAPI.Service.bonjourName)
+        #expect(model.discovered?.endpoint.host.isEmpty == false)
+        #expect(model.discovered?.endpoint.port != 0)
+        model.stop()
+    }
+
+    /// La recette RÉELLE (AC-20) est gated : elle exige une coque vivante pilotée à
+    /// la main derrière `MEM0_REMOTE_RECIPE=1`, et son nom de fonction est ce que
+    /// `swift test --filter clientDistantRecipe` cible.
+    @Test("client-distant-ios/AC-20 : recette réelle — appairage, lectures, flux contre la vraie coque")
+    func clientDistantRecipe() async throws {
+        guard ProcessInfo.processInfo.environment["MEM0_REMOTE_RECIPE"] == "1" else { return }
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let code = try stack.registry.generateCode()
+        let model = makeModel(discovery: ContractDiscovery())
+        _ = model.setManualAddress("127.0.0.1:\(stack.port)")
+        try await model.pair(code: code.value, deviceName: "Recette")
+        #expect(model.pairingFailure == nil)
+        #expect(try await model.version() == ConsoleAPI.protocolVersion)
+        let store = try await model.store()
+        #expect(store.snapshot.root == .present || store.snapshot.root == .absent)
+        let devices = try await model.devices()
+        #expect(devices.devices.contains { $0.name == "Recette" })
+        model.stop()
+    }
+}
+
+/// Attend une condition sans bloquer plus que nécessaire.
+@MainActor
+private func contractEventually(timeout: Double, _ condition: @MainActor () -> Bool) async -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        if condition() { return true }
+        try? await Task.sleep(nanoseconds: 20_000_000)
+    }
+    return condition()
+}

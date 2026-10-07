@@ -3,9 +3,11 @@
 // partagé `ConsoleCore` — celui-ci ne porte que le vocabulaire DURABLE des deux
 // coques (libellés de section, états vides, par exemple).
 //
-// SEUL fichier de l'app autorisé à porter un littéral de texte (garde
-// `design-ios/AC-4`, `test/design-ios.test.ts`) : tout autre libellé alphabétique
-// en dur dans `OMPConsoleIOS/**.swift` fait rougir la garde.
+// Fichier de VOCABULAIRE de l'app (`*Text.swift`), comme `ConnectionText.swift` :
+// la garde `design-ios/AC-5` (`test/design-ios.test.ts`) n'autorise un littéral
+// alphabétique que dans ces fichiers-là, un identifiant technique (`"ios."`,
+// `"-"`, un nom de symbole SF) — tout libellé en dur dans une vue fait rougir la
+// garde.
 
 enum IOSText {
     /// Le message du bandeau d'erreur, quand l'écran est ouvert par le crochet de

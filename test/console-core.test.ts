@@ -270,9 +270,26 @@ test("noyau-partage-console/AC-1 : ConsoleCore est une cible bibliothèque sans 
     `ConsoleCore dépend d'une autre cible du paquet : ${core.dependencies.join(", ")}`,
   );
 
-  // La coque et ses tests consomment la cible partagée.
-  assert.deepEqual(manifest.find((t) => t.name === "OMPConsole")?.dependencies, ["ConsoleCore"]);
-  assert.deepEqual(manifest.find((t) => t.name === "OMPConsoleTests")?.dependencies, ["OMPConsole", "ConsoleCore"]);
+  // L'ensemble des dépendances du manifeste, cible par cible. `ConsoleClient` a
+  // rejoint `OMPConsoleTests` avec la feature `client-distant-ios` : son test
+  // canonique AC-13 confronte le catalogue client à `RemoteRouter.routes`, ce qui
+  // exige les DEUX modules dans la même cible de tests.
+  const EXPECTED_DEPENDENCIES: Record<string, string[]> = {
+    ConsoleCore: [],
+    ConsoleClient: ["ConsoleCore"],
+    OMPConsole: ["ConsoleCore"],
+    OMPConsoleTests: ["OMPConsole", "ConsoleCore", "ConsoleClient"],
+    ConsoleClientTests: ["ConsoleClient", "ConsoleCore"],
+  };
+  for (const [name, dependencies] of Object.entries(EXPECTED_DEPENDENCIES)) {
+    const target = manifest.find((t) => t.name === name);
+    assert.ok(target !== undefined, `${name} absente de omp-console/Package.swift`);
+    assert.deepEqual(
+      target.dependencies,
+      dependencies,
+      `${name} : dépendances attendues ${dependencies.join(", ")}`,
+    );
+  }
 
   // Preuve SwiftPM de D2 : la cible décrite est bien une bibliothèque sans
   // `target_dependencies`. Hors copie, et sur macOS seulement : la garde est la

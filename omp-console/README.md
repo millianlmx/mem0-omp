@@ -163,13 +163,21 @@ cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
 
 ## Cibles
 
-Le paquet déclare trois cibles (une ligne par cible, `omp-console/Package.swift`) :
+Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`) :
 
 - **OMPConsole** — la coque macOS : les vues, les modèles d'écran et les
   adaptateurs au système (AppKit, SwiftUI, PTY, réseau). Cible exécutable ;
   dépend de `ConsoleCore`.
 - **OMPConsoleTests** — la suite Swift Testing de la coque ; dépend de
-  `OMPConsole` et de `ConsoleCore`.
+  `OMPConsole`, de `ConsoleCore` et de `ConsoleClient` (son test de contrat
+  confronte le catalogue du client aux routes servies).
+- **ConsoleClient** — la **cible partagée macOS/iOS du client distant** : le
+  client typé du contrat d'API, la découverte Bonjour, le transport HTTP, le flux
+  SSE, le trousseau et le modèle observable unique. Dépendance unique :
+  `ConsoleCore` ; ni AppKit ni UIKit.
+- **ConsoleClientTests** — la suite Swift Testing hermétique de la couche
+  cliente (doublures de transport, de trousseau et de découverte : aucun Mac
+  réel) ; dépend de `ConsoleClient` et de `ConsoleCore`.
 - **ConsoleCore** — la **cible partagée macOS/iOS** : les modèles et constantes
   pures du magasin d'état, le vocabulaire figé des sections et le socle du
   contrat de l'API distante. Aucune dépendance (ni interne, ni externe) : elle se
@@ -1867,7 +1875,9 @@ absence en échec.
 sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
 sont hors périmètre), une seule navigation adaptative — barre latérale à deux
 groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
-état vide RÉEL. Elle n'a ni réseau, ni magasin local, ni badge d'attention.
+état vide RÉEL. Elle n'a ni magasin local, ni badge d'attention : son seul accès
+réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
+trousseau et feuille de connexion.
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans

@@ -176,13 +176,18 @@ const HAS_LETTER = /[A-Za-zÀ-ÿ]/;
 /**
  * Les littéraux ALPHABÉTIQUES interdits dans les sources de l'app : tout
  * littéral qui porte une lettre doit être un identifiant technique (`"ios."`,
- * `"-"`) ou vivre dans `IOSText.swift`, le vocabulaire provisoire de l'app.
+ * `"-"`, un nom de symbole SF passé à `systemImage:`) ou vivre dans un fichier
+ * de VOCABULAIRE de l'app (`*Text.swift`) — c'est ce que S-4 réserve aux mots
+ * qui ne vivent pas dans `ConsoleCore` (AC-5 : les libellés provisoires
+ * relèvent du vocabulaire de l'app iOS, pas d'une vue).
  */
 function literalFaults(root: string): string[] {
   const faults: string[] = [];
   for (const { file, code: text } of appSources(root)) {
-    if (path.basename(file) === "IOSText.swift") continue;
-    for (const literal of stringLiterals(text)) {
+    if (path.basename(file).endsWith("Text.swift")) continue;
+    // Un nom de symbole SF est un identifiant, pas un libellé affiché.
+    const withoutSymbols = text.replace(/systemImage:\s*"[^"]*"/g, 'systemImage: ""');
+    for (const literal of stringLiterals(withoutSymbols)) {
       if (!HAS_LETTER.test(literal)) continue;
       if (literal.startsWith("ios.") || literal.startsWith("-")) continue;
       faults.push(`${rel(root, file)} : littéral « ${literal} »`);
@@ -229,7 +234,8 @@ function typographyFaults(root: string): string[] {
   for (const { file, code: text } of appSources(root)) {
     if (/\.system\(\s*size\s*:/.test(text)) faults.push(`${rel(root, file)} : taille de police en points`);
     if (/lineLimit\(\s*\d/.test(text)) faults.push(`${rel(root, file)} : lineLimit numérique`);
-    if (/\bButton\s*\(/.test(text)) faults.push(`${rel(root, file)} : contrôle maison (Button)`);
+    // `Button` est un contrôle SYSTÈME (la feuille de connexion en emploie six) :
+    // le contrôle maison, c'est celui qu'on pose soi-même — le geste nu.
     if (/onTapGesture/.test(text)) faults.push(`${rel(root, file)} : contrôle maison (onTapGesture)`);
   }
   const metrics = appFile(root, "Design/IOSMetrics.swift");

@@ -22,6 +22,7 @@ let package = Package(
     // eux (et leurs dépendances) qui sont construits.
     products: [
         .library(name: "ConsoleCore", targets: ["ConsoleCore"]),
+        .library(name: "ConsoleClient", targets: ["ConsoleClient"]),
         .executable(name: "OMPConsole", targets: ["OMPConsole"]),
     ],
     targets: [
@@ -35,6 +36,11 @@ let package = Package(
         // par un autre paquet (la coque iOS). Ses déclarations sont `public`,
         // jamais `package` — `package` serait invisible depuis un autre paquet.
         .target(name: "ConsoleCore", path: "Sources/ConsoleCore"),
+        // Cible PARTAGÉE macOS/iOS du client distant : le client typé du contrat
+        // d'API, la découverte Bonjour, le transport URLSession, le flux SSE, le
+        // trousseau et le modèle observable unique. Dépendance UNIQUE : ConsoleCore
+        // — ni AppKit, ni UIKit, ni Cocoa (garde « Noyau partagé » de check.sh).
+        .target(name: "ConsoleClient", dependencies: ["ConsoleCore"], path: "Sources/ConsoleClient"),
         // Cible exécutable : le fichier d'entrée ne s'appelle PAS main.swift,
         // sinon `@main` est refusé.
         .executableTarget(
@@ -46,8 +52,15 @@ let package = Package(
         // seuls, XCTest n'existe pas (D2).
         .testTarget(
             name: "OMPConsoleTests",
-            dependencies: ["OMPConsole", "ConsoleCore"],
+            dependencies: ["OMPConsole", "ConsoleCore", "ConsoleClient"],
             path: "Tests/OMPConsoleTests"
+        ),
+        // Les tests HERMÉTIQUES de la couche cliente : doublures de transport, de
+        // trousseau, de découverte et d'horloge — aucun Mac réel, aucun réseau.
+        .testTarget(
+            name: "ConsoleClientTests",
+            dependencies: ["ConsoleClient", "ConsoleCore"],
+            path: "Tests/ConsoleClientTests"
         ),
     ]
 )
