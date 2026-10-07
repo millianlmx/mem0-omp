@@ -117,10 +117,10 @@ final class RemoteReads {
         }
         let projectDoc = ProjectPaths.docFile(stateDir: hub.stateDir, repoKey: repoKey)
         let contractDoc = (project.repoRoot as NSString)
-            .appendingPathComponent(".omp/pipeline/contract.md")
+            .appendingPathComponent(".omp/pipeline/\(ProjectViewText.contractFileName)")
         return RemoteDocumentsPayload(documents: [
-            Self.document(name: "PROJECT.md", path: projectDoc),
-            Self.document(name: "contract.md", path: contractDoc),
+            Self.document(name: ProjectViewText.docFileName, path: projectDoc),
+            Self.document(name: ProjectViewText.contractFileName, path: contractDoc),
         ])
     }
 

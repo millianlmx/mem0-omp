@@ -216,8 +216,8 @@ func heartbeatIsSent() async throws {
 }
 
 @MainActor
-@Test("à l'ouverture, l'ordre réel des trames est `hello`, `store`, puis `devices`")
-func openingFramesAreHelloStoreThenDevices() async throws {
+@Test("à l'ouverture, l'ordre réel des trames est `hello`, `store`, `conduite`, puis `devices`")
+func openingFramesAreHelloStoreConduiteThenDevices() async throws {
     let stack = try await RemoteStack.make()
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -228,11 +228,12 @@ func openingFramesAreHelloStoreThenDevices() async throws {
 
     _ = await collector.waitFor("hello")
     _ = await collector.waitFor("store")
+    _ = await collector.waitFor("conduite")
     _ = await collector.waitFor("devices")
-    // La connexion est déclarée au registre APRÈS les deux trames initiales : le
-    // `devices` que `markConnected` publie arrive donc en dernier des trois, et une
-    // seule fois (S-13). Le harnais câble `changeHandler` comme la production.
-    #expect(Array(collector.events.map(\.name).prefix(3)) == ["hello", "store", "devices"])
+    // La connexion est déclarée au registre APRÈS les trois trames initiales : le
+    // `devices` que `markConnected` publie arrive donc en dernier, et une seule
+    // fois (S-13, S-6). Le harnais câble `changeHandler` comme la production.
+    #expect(Array(collector.events.map(\.name).prefix(4)) == ["hello", "store", "conduite", "devices"])
 }
 
 @MainActor
@@ -257,4 +258,48 @@ func twoStreamsOfTheSameDeviceBothReceive() async throws {
     #expect(await first.waitFor("devices", seconds: 5) != nil)
     #expect(await second.waitFor("devices", seconds: 5) != nil)
     #expect(RemoteStreamHub.backlogLimit == 64, "la borne du client lent est celle du contrat")
+}
+
+@MainActor
+@Test("une escalade de conduite est poussée entière sur l'évènement `conduite`")
+func conduiteDialogIsPushed() async throws {
+    let store = StoreFixture()
+    let repoRoot = store.root + "/depot"
+    try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
+    store.publish(.lots, "\(fixtureId(0xE1)).json", object: lotObject(id: fixtureId(0xE1), repoRoot: repoRoot))
+
+    let transport = ScriptedRpcTransport()
+    transport.readyLine = projectReadyLine()
+    wireProjectAutoResponses(transport)
+    makeProjectTransportRenderOnClose(transport)
+    let project = makeProjectModel(host: makeScriptedProjectHost(transport), stateDir: store.root)
+    let stack = try await RemoteStack.make(stateDir: store.root, projectModel: project)
+    defer { stack.stop() }
+    let token = try await stack.pair()
+
+    // Une conduite VIVE avant l'ouverture du flux : la trame d'ouverture la dit.
+    await stack.project.startConduite(repoRoot: URL(fileURLWithPath: repoRoot), name: "Projet")
+
+    let collector = SSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+
+    let opening = try #require(
+        await collector.waitFor("conduite"),
+        "l'ouverture doit porter l'état de la conduite (échec=\(collector.failure ?? "aucun"))"
+    )
+    #expect(opening.contains("\"state\":\"live\""), "trame reçue : \(opening.prefix(300))")
+    #expect(opening.contains("\"repoKey\""))
+
+    // Une escalade qui apparaît pousse la file ENTIÈRE, sans nouvelle requête.
+    transport.emit(projectDialogLine(
+        id: "d-1",
+        method: "select",
+        extra: ["title": "Le plan", "options": ["A", "B"]]
+    ))
+    let pushed = try #require(
+        await collector.waitFor("conduite", occurrence: 2),
+        "l'escalade doit être poussée sur le flux"
+    )
+    #expect(pushed.contains("d-1"), "trame reçue : \(pushed.prefix(300))")
 }

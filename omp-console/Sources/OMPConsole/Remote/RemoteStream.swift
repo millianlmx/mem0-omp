@@ -87,6 +87,7 @@ final class RemoteStreamHub {
     private let storeHub: StoreHub
     private let registry: DeviceRegistry
     private let session: SessionConsoleModel
+    private let project: ProjectConsoleModel
     private let clock: RemoteClock
 
     private var subscribers: [UUID: Subscriber] = [:]
@@ -96,10 +97,17 @@ final class RemoteStreamHub {
     private var started = false
     private var lastTranscriptId = 0
 
-    init(storeHub: StoreHub, registry: DeviceRegistry, session: SessionConsoleModel, clock: RemoteClock = .live) {
+    init(
+        storeHub: StoreHub,
+        registry: DeviceRegistry,
+        session: SessionConsoleModel,
+        project: ProjectConsoleModel,
+        clock: RemoteClock = .live
+    ) {
         self.storeHub = storeHub
         self.registry = registry
         self.session = session
+        self.project = project
         self.clock = clock
     }
 
@@ -115,12 +123,14 @@ final class RemoteStreamHub {
         guard let subscriber = subscribers[id], !subscriber.active else { return }
         subscriber.active = true
         startSources()
-        // À l'ouverture : `hello` puis l'instantané courant — le client n'a jamais
-        // à faire un `GET` initial. La connexion n'est déclarée au registre qu'APRÈS
-        // ces deux trames : `markConnected` publie `devices` par
-        // `registry.changeHandler`, donc la trame `devices` vient en dernier (S-13).
+        // À l'ouverture : `hello`, l'instantané courant et l'état de la conduite —
+        // le client n'a jamais à faire un `GET` initial. La connexion n'est
+        // déclarée au registre qu'APRÈS ces trois trames : `markConnected` publie
+        // `devices` par `registry.changeHandler`, donc la trame `devices` vient en
+        // dernier (S-13, S-6).
         deliver(subscriber, SSE.frame("hello", RemoteHelloEvent(protocolVersion: ConsoleAPI.protocolVersion)))
         deliver(subscriber, SSE.frame("store", storeHub.current()))
+        deliver(subscriber, SSE.frame("conduite", RemoteActions.conduitePayload(project)))
         registry.markConnected(subscriber.deviceId, true)
         refreshWatchedRuns()
     }
@@ -208,6 +218,30 @@ final class RemoteStreamHub {
                 self.broadcastHosted()
             }
         })
+
+        // Conduite de projet : l'état de la conduite et sa file d'escalades. Le hub
+        // publie la charge utile COMPLÈTE à chaque changement — jamais un delta
+        // (S-6, S-11). Le PREMIER élément de chaque abonnement est l'état courant,
+        // déjà porté par la trame `conduite` d'ouverture : on n'émet que sur
+        // changement RÉEL, comme le flux du magasin ci-dessus.
+        let projectHost = project.host
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in projectHost.$state.dropFirst().values {
+                guard let self else { return }
+                self.broadcastConduite()
+            }
+        })
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in projectHost.$dialogQueue.dropFirst().values {
+                guard let self else { return }
+                self.broadcastConduite()
+            }
+        })
+    }
+
+    private func broadcastConduite() {
+        guard !subscribers.isEmpty else { return }
+        broadcast(SSE.frame("conduite", RemoteActions.conduitePayload(project)))
     }
 
     /// La veille des fichiers de session des runs VIVANTS : un fichier qui

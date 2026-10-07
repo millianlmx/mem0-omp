@@ -1,8 +1,10 @@
+import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
 /// L'écran UNIQUE des sept sections (S-2, BR-3) : il rend le contenu pur de
-/// `IOSSectionContent` sur le kit de design de `Design/`.
+/// `IOSSectionContent` sur le kit de design de `Design/`. La section Projet, elle,
+/// rend le contenu RÉEL de `IOSProjectScreen` (BR-4), nourri par le client partagé.
 ///
 /// Ordre du rendu : panneau → titre → pastille → carte de l'état vide → bandeau.
 /// Aucune phrase n'est composée ici : les mots viennent du noyau partagé, le
@@ -10,6 +12,7 @@ import SwiftUI
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
+    @ObservedObject var client: ConsoleClientModel
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -19,16 +22,20 @@ struct IOSSectionView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(section.title)
                 .font(.title2)
-            if let status = content?.status {
-                IOSStatusChip(status: status)
-            }
-            if let content {
-                card(content)
-            }
-            if let banner = content?.banner, let message = content?.bannerMessage {
-                Text(message)
-                    .font(.callout)
-                    .iosBanner(tone: banner.tone)
+            if section == .project {
+                IOSProjectScreen(client: client)
+            } else {
+                if let status = content?.status {
+                    IOSStatusChip(status: status)
+                }
+                if let content {
+                    card(content)
+                }
+                if let banner = content?.banner, let message = content?.bannerMessage {
+                    Text(message)
+                        .font(.callout)
+                        .iosBanner(tone: banner.tone)
+                }
             }
         }
         .iosPanel()

@@ -67,6 +67,38 @@ struct StreamModelTests {
         harness.stop()
     }
 
+    @Test("ios-projet/AC-6 : une trame conduite s'applique, la file est remplacée en entier, `conduite` repasse à nil hors `.connected`")
+    func conduiteFrameReplacesQueueAndResets() async {
+        let harness = ClientHarness(
+            tokens: ["d": "tok"],
+            preferences: [ClientPreferenceKey.deviceId: "d"]
+        )
+        harness.transport.script(.hold)
+        harness.model.start()
+        #expect(await eventually { harness.model.state == .searching })
+        harness.discovery.emit([mac])
+        #expect(await eventually { harness.model.state == .connected(endpoint: macEndpoint) })
+
+        harness.transport.push(ClientFixtures.frame("conduite", #"{"state":"live"}"#))
+        #expect(await eventually { harness.model.conduite?.state == "live" })
+        #expect(harness.model.conduite?.dialogs.isEmpty == true)
+
+        // La file est REMPLACÉE EN ENTIER, jamais un delta.
+        harness.transport.push(ClientFixtures.frame(
+            "conduite",
+            #"{"state":"live","dialogs":[{"id":"d1","method":"confirm","title":"Valider ?","options":[],"optionDescriptions":[],"promptStyle":false}]}"#
+        ))
+        #expect(await eventually { harness.model.conduite?.dialogs.count == 1 })
+        harness.transport.push(ClientFixtures.frame("conduite", #"{"state":"live"}"#))
+        #expect(await eventually { harness.model.conduite?.dialogs.isEmpty == true })
+
+        // Hors `.connected`, la conduite poussée n'est plus affichable : `nil`.
+        harness.discovery.emit([])
+        #expect(await eventually { harness.model.state == .searching })
+        #expect(harness.model.conduite == nil)
+        harness.stop()
+    }
+
     @Test("le flux décode les trames devices et sessions, et borne les mises à jour")
     func streamEventsApplied() async {
         let harness = ClientHarness(

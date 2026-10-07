@@ -1,5 +1,6 @@
 // Preuves du signal d'attention (BR-4) : AC-9, AC-10, et la table de décision pure.
 
+import ConsoleCore
 import Foundation
 import Testing
 @testable import OMPConsole

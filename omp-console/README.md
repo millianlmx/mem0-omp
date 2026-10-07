@@ -1977,3 +1977,49 @@ dépôt et ne bloque rien.
 5. À la première exécution, approuver le certificat de développement sur
    l'appareil : *Réglages ▸ Général ▸ VPN et gestion de l'appareil*.
 6. Relancer l'app — elle s'ouvre alors normalement.
+
+### Conduire un projet depuis l'iPad
+
+La section **Projet** de l'app conduit un projet de bout en bout : elle lit le
+plan et `PROJECT.md` servis par la coque, suit les PR et leurs trois statuts
+requis, répond aux escalades et démarre/arrête la conduite. L'app ne calcule
+jamais de clé de dépôt et n'écrit rien sur l'appareil : tout vient du flux.
+
+Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
+
+1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
+   « Connecté à … ». La section Projet affiche alors « Aucun projet piloté. » et
+   le bouton « Piloter un projet… ». *(hors appairage, la section affiche le
+   bandeau d'attente « Non appairé » / « Mac absent — … » et aucun geste actif)*
+2. **Piloter un projet** — toucher « Piloter un projet… » : la feuille liste les
+   dépôts connus de la coque (« Dépôt », chacun avec son nom et son chemin),
+   y compris un dépôt jamais cadré. Choisir un dépôt (il porte la marque ✓), le
+   nom se préremplit, puis « Piloter ». La feuille se ferme et l'en-tête du projet
+   apparaît (nom, chemin du dépôt, pastille « Démarrage… » puis « Active »).
+3. **Répondre au cadrage** — quand la feuille « OMP vous demande » s'ouvre
+   (compteur « Question n sur m »), choisir une option ou saisir le texte, puis
+   « Répondre » : l'escalade quitte la file d'attente.
+4. **Valider le plan** — à l'escalade de revue, « Corriger le plan » ouvre une
+   feuille **préremplie avec le plan courant** ; éditer puis « Répondre » renvoie
+   le texte corrigé, ou « Annuler » refuse.
+5. **Suivre la PR** — dans le volet « PR et CI », chaque PR affiche
+   « PR #<n> — <titre> » et l'état des trois contrôles requis (« check
+   (ubuntu-latest) », « check (macos-latest) », « release-simulation »), chacun en
+   mots (vert / rouge / en cours / ignoré). « Relire les statuts » rafraîchit. Le
+   volet ne porte AUCUN bouton de fusion (la fusion est le geste de la section
+   Pipelines).
+6. **Arrêter le pilotage** — « Arrêter le pilotage » demande confirmation
+   (« Arrêter le pilotage de ce projet ? ») ; confirmé, l'app revient à l'état
+   vide « Aucun projet piloté. ».
+
+Recette OUTILLÉE : le test Swift gated `iosProjetRecipe`
+(`omp-console/Tests/OMPConsoleTests/ProjectIOSRecipeTests.swift`, titre
+`ios-projet/AC-12`) exerce contre une coque réelle les parties automatisables —
+`GET /v1/repos`, démarrage sur un dépôt jamais cadré, lecture de la conduite,
+réponse à une escalade, arrêt. Il est gardé par la variable `MEM0_REMOTE_RECIPE`
+et se lance par :
+
+```bash
+MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
+```
+

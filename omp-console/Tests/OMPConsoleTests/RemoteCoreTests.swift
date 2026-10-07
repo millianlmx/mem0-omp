@@ -150,6 +150,44 @@ func serviceConstantsMatchTheContract() {
     #expect(Set(alphabet).count == 32)
 }
 
+@Test("contrat partagé : les charges utiles de la conduite font un aller-retour JSON")
+func conduitePayloadsRoundTrip() throws {
+    let repos = RemoteReposPayload(rows: [
+        RemoteRepoRow(repoKey: "abc", repoRoot: "/tmp/x", name: "x"),
+    ])
+    #expect(try JSONDecoder().decode(RemoteReposPayload.self, from: JSONEncoder().encode(repos)) == repos)
+
+    // La forme EXACTE du contrat : les clés de la charge utile de conduite, y
+    // compris le miroir de dialogue (mêmes champs que `GET /v1/session`).
+    let json = """
+    {"state":"live","repoKey":"abc","name":"Projet","repoRoot":"/tmp/x",\
+    "status":{"text":"Active","tone":"success"},\
+    "dialogs":[{"id":"d1","method":"editor","title":"Corrige","options":[],\
+    "optionDescriptions":[],"promptStyle":false,"prefill":"plan"}]}
+    """
+    let state = try JSONDecoder().decode(RemoteConduiteStatePayload.self, from: Data(json.utf8))
+    #expect(state.state == "live")
+    #expect(state.repoKey == "abc")
+    #expect(state.status?.text == "Active")
+    #expect(state.dialogs.map(\.id) == ["d1"])
+    #expect(state.dialogs.first?.method == .editor)
+    #expect(state.dialogs.first?.prefill == "plan")
+    #expect(try JSONDecoder().decode(RemoteConduiteStatePayload.self, from: JSONEncoder().encode(state)) == state)
+
+    // Le corps d'escalade : l'encodage OMET les clés nil (S-4/S-5).
+    let cancel = try JSONEncoder().encode(RemoteDialogAnswerRequest(kind: "cancelled", value: nil, confirmed: nil))
+    let object = try #require(try JSONSerialization.jsonObject(with: cancel) as? [String: Any])
+    #expect(Set(object.keys) == ["kind"])
+    #expect(object["kind"] as? String == "cancelled")
+    let answered = try JSONDecoder().decode(
+        RemoteDialogAnswerRequest.self,
+        from: JSONEncoder().encode(RemoteDialogAnswerRequest(kind: "value", value: "plan", confirmed: nil))
+    )
+    #expect(answered.kind == "value")
+    #expect(answered.value == "plan")
+    #expect(answered.confirmed == nil)
+}
+
 @Test("contrat partagé : chaque erreur porte son code stable et son message")
 func errorCasesKeepStableCodes() {
     #expect(ConsoleAPIError.incompatibleProtocol("protocole 2").code == "incompatible_protocol")
