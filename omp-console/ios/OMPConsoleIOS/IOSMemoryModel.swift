@@ -21,6 +21,7 @@ protocol IOSMemoryReading: AnyObject {
     var state: ClientState { get }
     func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload
+    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload
 }
 
 extension ConsoleClientModel: IOSMemoryReading {}

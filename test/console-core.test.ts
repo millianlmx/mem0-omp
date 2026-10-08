@@ -314,6 +314,23 @@ const MOVED: string[] = [
   "DiffLine",
   "DiffTone",
   "BodySegment",
+  // ios-memoire-graphe / BR-1 : le noyau partagé du graphe des souvenirs (S-2).
+  "MemoryRow",
+  "MemoryGraphEdge",
+  "MemoryLink",
+  "MemoryGraphNodeID",
+  "MemoryGraphNode",
+  "MemoryGraphLinkKind",
+  "MemoryGraphLink",
+  "MemoryGraph",
+  "MemoryGraphStyle",
+  "MemoryGraphViewport",
+  "MemoryGraphHitTest",
+  "MemoryGraphShape",
+  "MemoryGraphScene",
+  "MemoryGraphLayout",
+  "MemoryGraphWire",
+  "MemoryGraphParity",
 ];
 
 /** Les cinq symboles qui RESTENT dans la coque (S-1). */

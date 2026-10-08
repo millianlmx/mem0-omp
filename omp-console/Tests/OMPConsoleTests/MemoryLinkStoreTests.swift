@@ -1,6 +1,7 @@
 // Le fichier des liens MANUELS (S-11) : normalisation, lecture tolérante, écriture
 // atomique et élagage — sur des racines JETABLES, jamais la racine de l'app.
 
+import ConsoleCore
 import Foundation
 import Testing
 

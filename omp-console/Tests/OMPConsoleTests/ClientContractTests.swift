@@ -144,6 +144,53 @@ struct ClientContractTests {
             client: ConsoleClient.RemoteDialogAnswerRequest.self,
             host: OMPConsole.RemoteDialogAnswerRequest.self
         ))
+        #expect(try contractSameShape(
+            #"{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}"#,
+            client: ConsoleClient.RemoteMemoryGraphNode.self,
+            host: OMPConsole.RemoteMemoryGraphNode.self
+        ))
+        #expect(try contractSameShape(
+            ##"{"id":"tag:a","label":"#a","scope":""}"##,
+            client: ConsoleClient.RemoteMemoryGraphNode.self,
+            host: OMPConsole.RemoteMemoryGraphNode.self
+        ))
+        #expect(try contractSameShape(
+            #"{"a":"memory:m1","b":"memory:m2","kind":"semantic","score":0.81}"#,
+            client: ConsoleClient.RemoteMemoryGraphLink.self,
+            host: OMPConsole.RemoteMemoryGraphLink.self
+        ))
+        #expect(try contractSameShape(
+            #"{"a":"memory:m1","b":"tag:a","kind":"manual"}"#,
+            client: ConsoleClient.RemoteMemoryGraphLink.self,
+            host: OMPConsole.RemoteMemoryGraphLink.self
+        ))
+        #expect(try contractSameShape(
+            #"{"nodes":[{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}],"links":[{"a":"memory:m1","b":"tag:a","kind":"tag"}],"total":1,"truncated":true}"#,
+            client: ConsoleClient.RemoteMemoryGraphPayload.self,
+            host: OMPConsole.RemoteMemoryGraphPayload.self
+        ))
+    }
+
+    @Test("S-1 (AC-1) : une charge d'un Mac d'avant la feature (sans text, tags, truncated) reste lisible des deux côtés")
+    func olderMacGraphPayloadStaysReadable() throws {
+        let json = ##"{"nodes":[{"id":"memory:m1","label":"titre","scope":"p"},{"id":"tag:a","label":"#a","scope":""}],"links":[{"a":"memory:m1","b":"tag:a","kind":"tag"}],"total":2}"##
+        let data = Data(json.utf8)
+
+        let client = try JSONDecoder().decode(ConsoleClient.RemoteMemoryGraphPayload.self, from: data)
+        #expect(client.total == 2)
+        #expect(client.truncated == false)
+        #expect(client.nodes.allSatisfy { $0.text == nil && $0.tags == nil })
+
+        let host = try JSONDecoder().decode(OMPConsole.RemoteMemoryGraphPayload.self, from: data)
+        #expect(host.total == 2)
+        #expect(host.truncated == false)
+        #expect(host.nodes.allSatisfy { $0.text == nil && $0.tags == nil })
+
+        #expect(try contractSameShape(
+            json,
+            client: ConsoleClient.RemoteMemoryGraphPayload.self,
+            host: OMPConsole.RemoteMemoryGraphPayload.self
+        ))
     }
 
     @Test("les charges utiles miroir de session portent les mêmes champs des deux côtés (BR-2)")

@@ -2075,10 +2075,13 @@ sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffi
 `-ax`). Un SECOND groupe capture l'**Accueil** (feature `ios-accueil`) : ses cinq
 états de recette (`dashboard`, `degraded`, `firstRun`, `loading`, `ompMissing`) et
 ses feuilles « Répondre » et « Contrat » via `-home.recipe`, plus la feuille
-Bienvenue — 8 états × {iPhone, iPad} × {clair, sombre} = **32 PNG**. Le total
-attendu est **88** (56 + 32). Chaque capture est sondée en dimensions (`sips -g
-pixelWidth -g pixelHeight`) : toutes PORTRAIT — une capture inattendue ferait
-échouer le script.
+Bienvenue — 8 états × {iPhone, iPad} × {clair, sombre} = **32 PNG**. Un
+TROISIÈME groupe capture le **mode graphe de la Mémoire** (feature
+`ios-memoire-graphe`) via `-memoire.recipe` : le graphe rendu, un état après
+pan/zoom et une fiche ouverte — 3 états × {iPhone, iPad} × {clair, sombre} =
+**12 PNG**. Le total attendu est **100** (56 + 32 + 12). Chaque capture est
+sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAIT —
+une capture inattendue ferait échouer le script.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,
@@ -2093,8 +2096,10 @@ sur le poste, la ligne pourra revenir avec ses quatorze captures.
 
 Un crochet de recette se pose en argument de lancement : `-section <rawValue>`
 ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
-`memory`, `stats`), et `-ios.state error` affiche le bandeau d'erreur sur les
-sept écrans — un crochet de recette, pas une fonctionnalité.
+`memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
+sept écrans, et `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
+section Mémoire sur la fixture partagée `MemoryGraphParity` — un crochet de
+recette, pas une fonctionnalité.
 
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
@@ -2176,9 +2181,16 @@ MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
 La section **Mémoire** de l'app affiche le sommaire du projet OUVERT côté Mac — les
 mêmes souvenirs que la section Mémoire macOS, dans l'ordre du service —, permet
 d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire sans masquer sa
-cause. L'app ne lit que ce que le Mac sert : elle ne calcule aucune portée, ne
-propose ni graphe ni geste d'écriture, et ne se rafraîchit qu'à l'ouverture de la
-section et sur un geste (jamais en continu).
+cause. Un SECOND mode, le **graphe**, s'ajoute derrière la bascule « Graphe ⇄
+Liste » de la barre d'outils : la LISTE reste le mode d'OUVERTURE. Le graphe est
+calculé CÔTÉ MAC par le MÊME noyau que la fenêtre macOS (nœuds-souvenirs,
+nœuds-étiquettes, arêtes de proximité et liens manuels), manipulable au doigt
+(pincer, glisser, toucher) sur iPhone comme sur iPad ; toucher un souvenir met
+son voisinage en évidence et ouvre sa fiche en lecture seule, toucher un
+nœud-étiquette APPLIQUE son filtre (le menu « Étiquette » revient à la vue
+entière). L'app ne lit que ce que le Mac sert : elle ne calcule aucune portée et
+n'émet AUCUNE écriture — le graphe est une lecture (`GET /v1/memory/graph`), et
+rien ne se rafraîchit en continu.
 
 Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 
@@ -2204,6 +2216,13 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
    dit « Aucun projet ouvert », sans lire la mémoire.
 7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau de connexion
    s'affiche, et aucune cause mémoire n'est inventée.
+8. **Le graphe** — toucher « Graphe » : le canevas montre les nœuds-souvenirs, les
+   nœuds-étiquettes, les arêtes de proximité (trait plein gris) et les liens
+   manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
+   toucher un souvenir pour ouvrir sa fiche (texte intégral, étiquettes, liens),
+   toucher un nœud-étiquette pour n'afficher que sa famille, puis « Étiquette ▸
+   Toutes les étiquettes » pour revenir. Toucher « Liste » rend le sommaire
+   inchangé — c'est le mode d'ouverture.
 
 Recette OUTILLÉE : le test Swift gated `iosMemoireRecipe`
 (`omp-console/Tests/OMPConsoleTests/MemoryIOSRecipeTests.swift`, titre

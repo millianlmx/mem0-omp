@@ -17,6 +17,8 @@ struct IOSSectionView: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-sessions.recipe` de la section Sessions.
     let recipe: IOSSessionsRecipe?
+    /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
+    let memoryRecipe: IOSMemoryGraphRecipe?
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -26,7 +28,7 @@ struct IOSSectionView: View {
         if section == .kanban {
             PipelinesScreen(client: client, recipe: state)
         } else if section == .memory {
-            IOSMemoryScreen(client: client, recipe: state)
+            IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe)
         } else if section == .sessions {
             IOSSessionsScreen(client: client, recipe: recipe)
         } else if section == .session {

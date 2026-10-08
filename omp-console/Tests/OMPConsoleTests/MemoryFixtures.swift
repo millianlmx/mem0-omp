@@ -6,6 +6,7 @@
 // capture la requête HTTP réelle (URL, méthode, en-tête, corps) que
 // `HTTPMemoryService` produit — c'est ce qui prouve S-1, S-2 et S-7 sans réseau.
 
+import ConsoleCore
 import Foundation
 @testable import OMPConsole
 

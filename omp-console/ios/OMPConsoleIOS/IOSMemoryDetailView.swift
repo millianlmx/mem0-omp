@@ -16,6 +16,23 @@ struct IOSMemoryDetailView: View {
     let row: RemoteMemoryRow
     /// La portée du sommaire, quand la ligne ne porte pas la sienne.
     let scope: String?
+    /// Les liens incidents du graphe (mode graphe) ; vide pour le mode liste, qui
+    /// rend alors exactement ce qu'il rendait (B-4).
+    let links: [MemoryGraphLink]
+    /// Les libellés des nœuds du graphe, pour nommer l'autre extrémité d'un lien.
+    let labels: [MemoryGraphNodeID: String]
+
+    init(
+        row: RemoteMemoryRow,
+        scope: String?,
+        links: [MemoryGraphLink] = [],
+        labels: [MemoryGraphNodeID: String] = [:]
+    ) {
+        self.row = row
+        self.scope = scope
+        self.links = links
+        self.labels = labels
+    }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -31,12 +48,48 @@ struct IOSMemoryDetailView: View {
                     IOSMarkdownView(blocks: blocks)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                if !links.isEmpty {
+                    Divider()
+                    linksBlock
+                }
                 technicalDetails
             }
             .padding(IOSMetrics.margin(sizeClass))
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .accessibilityIdentifier(IOSMemoryAccessibility.detail)
+    }
+
+    // MARK: - Les liens (mode graphe, S-5)
+
+    /// Les lignes de liens : la nature, l'autre extrémité (son libellé de nœud, ou
+    /// son identifiant à défaut) et, pour une proximité, son score.
+    static func linkLines(_ links: [MemoryGraphLink], from id: String, labels: [MemoryGraphNodeID: String]) -> [String] {
+        links.compactMap { link in
+            let other: MemoryGraphNodeID? = link.a.memoryId == id ? link.b : (link.b.memoryId == id ? link.a : nil)
+            guard let other else { return nil }
+            let name: String
+            switch other {
+            case let .tag(tag): name = MemoryText.tagLabel(tag)
+            case let .memory(memory): name = labels[other] ?? memory
+            }
+            let score: Double?
+            if case let .semantic(value) = link.kind { score = value } else { score = nil }
+            return IOSMemoryText.linkLine(kind: link.kind, other: name, score: score)
+        }
+    }
+
+    private var linksBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: IOSMemoryText.links)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            ForEach(Self.linkLines(links, from: row.id, labels: labels), id: \.self) { line in
+                Text(verbatim: line)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Faits PURS (les cinq faits de S-5)

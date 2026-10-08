@@ -6,6 +6,7 @@
 // ni la langue, ni la portée n'entrent en compte. Le tri se fait sur ce cosinus,
 // JAMAIS sur le `score` renvoyé par le service, que BM25 sature.
 
+import ConsoleCore
 import Foundation
 
 enum MemorySearch {

@@ -28,6 +28,7 @@ struct OMPConsoleIOSApp: App {
     private let initialState: IOSScreenState
     private let recipe: IOSHomeRecipe?
     private let sessionRecipe: IOSSessionsRecipe?
+    private let memoryRecipe: IOSMemoryGraphRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -36,6 +37,7 @@ struct OMPConsoleIOSApp: App {
         initialState = IOSScreenState.resolve(arguments)
         recipe = IOSHomeRecipe.resolve(arguments)
         sessionRecipe = IOSSessionsRecipe.resolve(arguments)
+        memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -46,6 +48,7 @@ struct OMPConsoleIOSApp: App {
                 state: initialState,
                 recipe: recipe,
                 sessionRecipe: sessionRecipe,
+                memoryRecipe: memoryRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

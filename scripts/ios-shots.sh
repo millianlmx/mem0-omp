@@ -34,6 +34,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 ROOT="$PWD"
 
 SHOTS="$ROOT/omp-console/build/ios-shots"
+
 APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app"
 BUNDLE_ID="com.omp.console.ios"
 
@@ -284,6 +285,67 @@ if [ "$count" != "88" ]; then
   exit 1
 fi
 
+# Passage 4 — le MODE GRAPHE de la Mémoire (ios-memoire-graphe) : ses trois états de
+# recette (`-memoire.recipe`), sur les deux appareils et les deux apparences, à
+# taille de texte par défaut. La charge utile vient de la fixture partagée
+# `MemoryGraphParity` (ConsoleCore) : chaque capture montre un chemin de code RÉEL.
+memoire_recipes=(graphe zoom fiche)
+
+# Journaux de la sortie d'erreur de chaque lancement de recette, sous build/. L'app y écrit
+# le signal de PRÊT (miroir de IOSMemoryText.graphRecipeReady) seulement quand l'état forcé
+# est réellement affiché : un état non atteint n'écrit rien, et la capture est refusée.
+# Chemin ABSOLU obligatoire (simctl ne crée pas le fichier pour un chemin relatif) ; le
+# journal est effacé avant chaque lancement : jamais de signal périmé, pas de sommeil fixe.
+RECIPE_LOGS="$ROOT/omp-console/build/ios-recipe-logs"
+rm -rf "$RECIPE_LOGS"
+mkdir -p "$RECIPE_LOGS"
+
+shoot_memoire() {
+  local label="$1"
+  local udid="$2"
+  local appearance="$3"
+  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
+  for recipe in "${memoire_recipes[@]}"; do
+    log="$RECIPE_LOGS/$label-$appearance-$recipe.log"
+    rm -f "$log"
+    xcrun simctl launch --terminate-running-process --stderr="$log" "$udid" "$BUNDLE_ID" \
+      -section memory -home.welcomeSeen YES -memoire.recipe "$recipe" >/dev/null 2>&1
+    reached=""
+    for _ in $(seq 1 40); do
+      if grep -q "memoire-recipe-ready" "$log" 2>/dev/null; then reached=1; break; fi
+      sleep 0.5
+    done
+    if [ -z "$reached" ]; then
+      echo "  ✗ état du graphe non atteint, capture refusée ($label $appearance $recipe)" >&2
+      exit 1
+    fi
+    # Une seconde de réglage : l'animation de la feuille « fiche » se termine après le signal.
+    sleep 1
+    suffix=""
+    [ "$recipe" = "graphe" ] || suffix="-$recipe"
+    shot="$SHOTS/$label-memoire-graphe$suffix-$appearance.png"
+    if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+      echo "  ✗ capture impossible ($shot)" >&2
+      exit 1
+    fi
+    echo "$shot"
+  done
+}
+
+for appearance in light dark; do
+  shoot_memoire iphone "$iphone" "$appearance"
+  shoot_memoire ipad "$ipad" "$appearance"
+done
+
+# Le troisième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
+# le total avec les 56 écrans et les 32 de l'Accueil est 100.
+count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$count" != "100" ]; then
+  echo "  ✗ $count captures produites (100 attendues : 56 écrans + 32 Accueil + 12 graphe)" >&2
+  exit 1
+fi
+
 # Chaque capture est sondée : toutes sont PORTRAIT (aucune ligne paysage — voir
 # la limite d'outillage en tête de ce script et dans `omp-console/ios/DESIGN.md`).
 for shot in "$SHOTS"/*.png; do
@@ -300,5 +362,5 @@ for shot in "$SHOTS"/*.png; do
   fi
 done
 
-echo "  ✓ 56 captures dans $SHOTS (dimensions vérifiées)"
+echo "  ✓ 100 captures dans $SHOTS (dimensions vérifiées)"
 exit 0
