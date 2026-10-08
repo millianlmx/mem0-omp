@@ -65,7 +65,12 @@ func makeRemoteServiceModel(
     port: Int = 0,
     dir: String = remoteTempDir()
 ) -> RemoteServiceModel {
-    let host = SessionHost()
+    // Deux sessions servies DISTINCTES, comme dans l'app : celle de la section
+    // « Session OMP » (purpose « session ») et celle de la conduite de projet
+    // (purpose « project »). Aucun test d'ici ne les démarre, donc aucun service
+    // n'est requis : la fabrique par défaut ne résout le service qu'au lancement.
+    let sessionHost = ServiceSessionModel(purpose: "session")
+    let projectHost = ServiceSessionModel(purpose: "project")
     let hub = StoreHub(stateDir: dir)
     // Jamais le vrai trousseau : sans registre fourni, la doublure en mémoire.
     let store = registry ?? DeviceRegistry(
@@ -82,9 +87,9 @@ func makeRemoteServiceModel(
         storeHub: hub,
         kanban: KanbanModel(hub: hub),
         actions: ActionsModel(),
-        session: SessionConsoleModel(host: host, defaults: defaults),
+        session: SessionConsoleModel(host: sessionHost, defaults: defaults),
         project: makeProjectModel(
-            host: host,
+            host: projectHost,
             stateDir: dir,
             presence: StubPresence(),
             attention: RecordingAttention(),

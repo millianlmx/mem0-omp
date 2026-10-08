@@ -107,7 +107,7 @@ func accueilRecipe() async throws {
     // 2. L'appairage, puis l'ouverture de l'Accueil.
     let code = try stack.registry.generateCode()
     let client = ConsoleClientModel(
-        transport: URLSessionTransport(),
+        transport: ConsoleClient.URLSessionTransport(),
         discovery: HomeRecipeDiscovery(),
         preferences: InMemoryClientPreferences(),
         tokens: InMemoryTokenStore(),

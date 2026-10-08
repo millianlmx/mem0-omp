@@ -62,10 +62,9 @@ private func makePRModel(
     interval: Duration = .milliseconds(20),
     features: [[String: Any]]
 ) async throws -> ProjectConsoleModel {
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
-    makeProjectTransportRenderOnClose(transport)
+    let transport = ScriptedServiceTransport()
+    keepProjectAlive(transport)
+    stubProjectConduite(transport, repo: repo.path)
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(
         host: host,

@@ -9,8 +9,8 @@
 // Invariant de l'échéance (S-3) : à l'expiration, l'enfant reçoit SIGTERM, puis
 // SIGKILL après `killGrace` s'il vit encore, et l'appel ne rend la main qu'une fois
 // l'enfant MORT ET RÉCOLLÉ — la fin vient du `terminationHandler` de Foundation,
-// jamais d'une intention. C'est le patron de `TerminalHost.kill` et de
-// `SessionHost.waitForExit`.
+// jamais d'une intention. C'est le patron de `TerminalHost.kill` et de la session
+// servie (`ServiceSessionModel`).
 //
 // Le PTY de `Terminal/TerminalHost.swift` est HORS périmètre : un `forkpty` n'est
 // pas un `Process`, et sa session a sa propre séquence d'arrêt.
@@ -39,6 +39,19 @@ struct ProcessChild: @unchecked Sendable {
     let stderr: Pipe
 }
 
+/// La fin d'un process enfant, dans ses deux formes : une fin propre (`exited`)
+/// n'a pas la même valeur qu'une mort subie (`uncaughtSignal`). Vit ici avec les
+/// autres types de process, le terminal intégré s'en servant aussi.
+struct ProcessExit: Equatable, Sendable {
+    enum Reason: Equatable, Sendable {
+        case exited
+        case uncaughtSignal
+    }
+
+    let status: Int32
+    let reason: Reason
+}
+
 /// Le résultat d'une commande COLLECTÉE (les deux tubes lus jusqu'à EOF).
 struct ProcessRun: Equatable, Sendable {
     var code: Int32
@@ -57,8 +70,7 @@ enum ProcessRunnerError: Error, Equatable, Sendable {
 
 enum ProcessRunner {
     /// Grâce accordée à l'enfant entre SIGTERM et SIGKILL : UNE constante, alignée
-    /// sur `SessionHost.killGrace` (SessionHost.swift:210) et
-    /// `TerminalHost.terminalStopGrace` (TerminalHost.swift:37), toutes deux à 2 s.
+    /// sur `ServiceSessionModel` et `TerminalHost.terminalStopGrace` (2 s).
     static let killGrace: Duration = .seconds(2)
 
     /// Configure l'enfant — binaire, argv BRUT, cwd, environnement, les trois tubes,
@@ -199,8 +211,7 @@ enum ProcessRunner {
     }
 }
 
-/// `Duration` → secondes, pour les échéances de `DispatchQueue.asyncAfter` (même
-/// conversion que `SessionHost.seconds(of:)`).
+/// `Duration` → secondes, pour les échéances de `DispatchQueue.asyncAfter`.
 private func seconds(of duration: Duration) -> Double {
     let components = duration.components
     return Double(components.seconds) + Double(components.attoseconds) * 1e-18

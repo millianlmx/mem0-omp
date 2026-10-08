@@ -9,11 +9,10 @@ import Testing
 private func makeWatchingModel(
     fixture: StoreFixture,
     repo: URL
-) async throws -> (ProjectConsoleModel, ScriptedRpcTransport) {
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
-    makeProjectTransportRenderOnClose(transport)
+) async throws -> (ProjectConsoleModel, ScriptedServiceTransport) {
+    let transport = ScriptedServiceTransport()
+    keepProjectAlive(transport)
+    stubProjectConduite(transport, repo: repo.path)
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(host: host, stateDir: fixture.root)
 

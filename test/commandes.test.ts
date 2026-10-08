@@ -42,6 +42,7 @@ import {
   type LotController,
   type LotFeature,
   type LotRunnerResult,
+  type LotRunSpec,
   type PipelineCommand,
 } from "../omp-mem0-req/extension.ts";
 
@@ -105,7 +106,7 @@ const gitRunner = async (args: string[], cwd: string) => {
 const OK: LotRunnerResult = { code: 0, killed: false, stdout: "", stderr: "" };
 
 type Run = {
-  argv: string[];
+  spec: LotRunSpec;
   cwd: string;
   phase: string;
   prompt: string;
@@ -113,7 +114,7 @@ type Run = {
   finish: (result: LotRunnerResult) => void;
 };
 
-type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
+type Runner = (input: { spec: LotRunSpec; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
 
 /**
  * Le runner des runs : `script` rend la fin immédiate d'un run, ou `null` pour le
@@ -121,13 +122,13 @@ type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => 
  */
 function mkRunner(script: (run: Run) => LotRunnerResult | null = () => null): { runner: Runner; runs: Run[] } {
   const runs: Run[] = [];
-  const runner: Runner = async ({ argv, cwd, signal }) => {
+  const runner: Runner = async ({ spec, cwd, signal }) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
     const run: Run = {
-      argv,
+      spec,
       cwd,
-      phase: argv[argv.indexOf("--pipeline-phase") + 1] ?? "",
-      prompt: argv[argv.length - 1] ?? "",
+      phase: spec.phase,
+      prompt: spec.prompt,
       aborted: false,
       finish: resolve,
     };
@@ -398,14 +399,14 @@ function writeContract(worktree: string, body: string): void {
   fs.writeFileSync(file, body, "utf8");
 }
 
-/** La phase d'un run lancé, lue dans son argv. */
+/** La phase d'un run lancé, lue dans sa spécification. */
 function phaseOf(run: Run): string {
-  return run.argv[run.argv.indexOf("--pipeline-phase") + 1] ?? "";
+  return run.spec.phase;
 }
 
-/** Le slug d'un run lancé, lu dans son argv. */
+/** Le slug d'un run lancé, lu dans sa spécification. */
 function slugOf(run: Run): string {
-  return run.argv[run.argv.indexOf("--pipeline-feature") + 1] ?? "";
+  return run.spec.slug;
 }
 
 /** Une entrée de magasin VIVANTE (le run d'une feature), publiée telle quelle. */
@@ -727,7 +728,7 @@ test("omp-console-redesign/AC-6 : une commande reply répond à une feature en a
   assert.equal(runs.length, 1, "un seul run repart");
   const run = runs[0]!;
   assert.equal(`${slugOf(run)}:${phaseOf(run)}`, "alpha:specs", "la phase de la feature est conservée");
-  assert.equal(run.argv[run.argv.indexOf("--resume") + 1], sessionFile, "le run reprend la session du maillon");
+  assert.equal(run.spec.sessionFile, sessionFile, "le run reprend la session du maillon");
   assert.match(run.prompt, /Postgres, la base existante/, "le prompt porte la réponse");
   assert.equal(stateOf(stateDir, repo, "alpha"), "running:");
 
@@ -864,8 +865,8 @@ test("canal/AC-11 : une commande hors format ou de type inconnu est refusée, sa
   const cases: Array<{ id: string; body: unknown; reason: string }> = [
     {
       id: "c-type",
-      body: { version: 1, id: "c-type", sentAt: at(), repo, kind: "relaunch" },
-      reason: "type de commande inconnu : relaunch",
+      body: { version: 1, id: "c-type", sentAt: at(), repo, kind: "renommer" },
+      reason: "type de commande inconnu : renommer",
     },
     {
       id: "c-version",

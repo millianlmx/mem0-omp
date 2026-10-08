@@ -15,7 +15,7 @@ import Testing
 
 /// Un script jetable `#!/bin/sh` qui écrit lui-même l'entrée `running/`, puis reste
 /// vivant (`exec sleep`) pour que son pid soit VIVANT — sans quoi l'entrée serait
-/// périmée et n'émettrait rien (motif mesuré, SessionHostTests).
+/// périmée et n'émettrait rien (motif mesuré sur un fait brut du magasin).
 private func writeRecipeScript(at path: String) throws {
     let script = """
     #!/bin/sh

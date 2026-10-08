@@ -26,11 +26,14 @@ import { branchFor, realpathOr, toSlug } from "./git.ts";
 import {
   LOT_NONE_REFUSAL,
   lotBranchTakenRefusal,
+  lotCancelRefusal,
   lotCyclicDepRefusal,
   lotFeatureMissingRefusal,
   lotRemoveDependentRefusal,
   lotRemoveStartedRefusal,
   lotSlugPresentRefusal,
+  lotStateCancellable,
+  lotStateTerminal,
   lotUnknownDepRefusal,
   relayMilestoneRefusal,
   lotFeature,
@@ -38,6 +41,7 @@ import {
 import type { Lot, LotWaitKind } from "./lot.ts";
 import { asStringOrNull, readJsonFile, writeJsonAtomic } from "./store.ts";
 import type { PanelPendingAsk } from "./store.ts";
+import type { WorktreeFate } from "./runs.ts";
 
 
 // --- emplacements, noms et bornes --------------------------------------------
@@ -99,7 +103,18 @@ export function commandAckPath(stateDir: string, id: string): string {
 
 // --- schéma ------------------------------------------------------------------
 
-export type CommandKind = "launch" | "stop" | "verdict" | "answer" | "reply" | "add" | "remove" | "models";
+export type CommandKind =
+  | "launch"
+  | "stop"
+  | "verdict"
+  | "answer"
+  | "reply"
+  | "add"
+  | "remove"
+  | "models"
+  | "relaunch"
+  | "cancel"
+  | "start";
 
 /**
  * Une commande du canal. Le discriminant est `kind` (convention du magasin :
@@ -121,6 +136,17 @@ export type PipelineCommand =
   | { version: 1; id: string; sentAt: number; repo: string; kind: "reply"; slug: string; text: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "models"; slug: string;
       modelReqSpecs: string | null; modelImplReview: string | null }
+  /** Le geste `R` du panneau (S-9) : rouvre un crédit de correction et relance. */
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "relaunch"; slug: string }
+  /** Le geste `c` du panneau (S-9) : abandonne une feature, avec le sort du worktree. */
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "cancel"; slug: string; fate: WorktreeFate }
+  /**
+   * Le geste `l` du panneau (S-11) : OUVRE le lot (brouillon → en marche) et
+   * lance ses features en attente. Le canal n'avait pas ce geste — le pilote d'une
+   * session le faisait par appel direct — et l'API en a besoin pour que `l` reste
+   * pleinement actif quand c'est le service qui pilote.
+   */
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "start" }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "stop" };
 
 
@@ -148,6 +174,9 @@ const COMMAND_KINDS: Record<CommandKind, true> = {
   add: true,
   remove: true,
   models: true,
+  relaunch: true,
+  cancel: true,
+  start: true,
 };
 
 
@@ -216,6 +245,7 @@ export function asCommand(raw: unknown): PipelineCommand | null {
   if (!isAbsolutePath(c.repo)) return null;
   const base = { version: 1 as const, id: c.id, sentAt: c.sentAt, repo: c.repo };
   if (c.kind === "stop") return { ...base, kind: "stop" };
+  if (c.kind === "start") return { ...base, kind: "start" };
   if (c.kind === "launch" || c.kind === "add") {
     const kind = c.kind;
     const title = asText(c.title);
@@ -248,6 +278,13 @@ export function asCommand(raw: unknown): PipelineCommand | null {
     };
   }
   if (c.kind === "remove") return { ...base, kind: "remove", slug };
+  // Les deux gestes du panneau (S-9) : `relaunch` ne porte que le slug, `cancel`
+  // porte en plus le sort du worktree — le MÊME vocabulaire que `WorktreeFate`.
+  if (c.kind === "relaunch") return { ...base, kind: "relaunch", slug };
+  if (c.kind === "cancel") {
+    if (c.fate !== "keep" && c.fate !== "archive" && c.fate !== "delete") return null;
+    return { ...base, kind: "cancel", slug, fate: c.fate };
+  }
   if (c.kind === "verdict") {
     if (c.verdict !== "v" && c.verdict !== "y") return null;
     return { ...base, kind: "verdict", slug, verdict: c.verdict };
@@ -509,7 +546,7 @@ export type CommandView = {
 /** Le slug qu'une commande vise dans le lot (`null` pour `launch`/`add`/`stop`). */
 export function commandSlugOf(cmd: PipelineCommand): string | null {
   return cmd.kind === "remove" || cmd.kind === "verdict" || cmd.kind === "answer" || cmd.kind === "reply" ||
-    cmd.kind === "models"
+    cmd.kind === "models" || cmd.kind === "relaunch" || cmd.kind === "cancel"
     ? cmd.slug
     : null;
 }
@@ -544,6 +581,14 @@ function depsRefusal(slug: string, deps: string[], lot: Lot | null): string | nu
 export function commandRefusal(cmd: PipelineCommand, view: CommandView): string | null {
   const { lot } = view;
   if (cmd.kind === "stop") return null; // l'arrêt ne demande rien à l'état
+  if (cmd.kind === "start") {
+    // Le lancement du lot demande un lot NON VIDE : le refus est celui de
+    // l'action, mot pour mot (`lot vide — a pour ajouter une feature`).
+    if (view.foreignReason !== null) return view.foreignReason;
+    if (lot === null) return LOT_NONE_REFUSAL;
+    if (lot.features.length === 0) return "lot vide — a pour ajouter une feature";
+    return null;
+  }
   if (cmd.kind === "launch" || cmd.kind === "add") {
     const empty = featureContentRefusal(cmd);
     if (empty !== null) return empty;
@@ -592,6 +637,20 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
     if (feature.state !== "waiting" || feature.waitKind !== "answer") {
       return "sans objet : la feature n'attend pas de réponse";
     }
+    return null;
+  }
+  // Les deux gestes du panneau (S-9) : leurs refus sont ceux de leurs actions,
+  // MOT POUR MOT — le panneau et l'API refusent donc au même endroit, avec le même
+  // texte. Ce qui dépend d'une lecture fraîche au moment de l'effet (dépendance
+  // amont, worktree, sort du worktree) reste jugé par l'action elle-même.
+  if (cmd.kind === "relaunch" && feature) {
+    if (!lotStateTerminal(feature.state) || feature.state === "done") {
+      return "relance possible sur une feature bloquée, échouée ou annulée";
+    }
+    return null;
+  }
+  if (cmd.kind === "cancel" && feature) {
+    if (!lotStateCancellable(feature.state)) return lotCancelRefusal(feature.state);
     return null;
   }
   return null;

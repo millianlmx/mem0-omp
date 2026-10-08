@@ -31,7 +31,6 @@ import reqExtension, {
   MODEL_GROUP_LABELS,
   auditState,
   buildConversationRunArgv,
-  buildLotRunArgv,
   commandDir,
   contractPathFor,
   createAuditRelay,
@@ -65,6 +64,7 @@ import reqExtension, {
   type LotFeature,
   type LotPanelActions,
   type LotRunnerResult,
+  type LotRunSpec,
   type ModelRow,
   type PanelGlyphs,
   type PipelineCommand,
@@ -260,14 +260,14 @@ function deposit(stateDir: string, cmd: PipelineCommand): void {
 // ---------------------------------------------------------------------------
 
 type RecordedRun = {
-  argv: string[];
+  spec: LotRunSpec;
   cwd: string;
   phase: string;
   prompt: string;
   finish: (result: LotRunnerResult) => void;
 };
 
-type RunInput = { argv: string[]; cwd: string; signal?: AbortSignal };
+type RunInput = { spec: LotRunSpec; cwd: string; signal?: AbortSignal };
 
 function mkRunner(): {
   runner: (input: RunInput) => Promise<LotRunnerResult>;
@@ -278,13 +278,13 @@ function mkRunner(): {
   const runs: RecordedRun[] = [];
   const gate: Array<(result: LotRunnerResult) => void> = [];
   let aborted = 0;
-  const runner = async ({ argv, cwd, signal }: RunInput) => {
+  const runner = async ({ spec, cwd, signal }: RunInput) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
     runs.push({
-      argv,
+      spec,
       cwd,
-      phase: argv[argv.indexOf("--pipeline-phase") + 1] ?? "",
-      prompt: argv[argv.length - 1] ?? "",
+      phase: spec.phase,
+      prompt: spec.prompt,
       finish: resolve,
     });
     gate.push(resolve);
@@ -328,18 +328,17 @@ function mkCtl(
   return { controller, stateDir, notices };
 }
 
-/** L'argv d'un run porte-t-il `--model <valeur>` à sa place fixe ? */
+/** Le modèle qu'un run a reçu : la spécification le porte tel quel. */
 function modelArgvOf(run: RecordedRun): string[] | null {
-  const at = run.argv.indexOf("--model");
-  return at === -1 ? null : run.argv.slice(at, at + 2);
+  return run.spec.model === null ? null : ["--model", run.spec.model];
 }
 
-/** Le run d'une feature, par son slug (l'argv nomme la feature). */
+/** Le run d'une feature, par son slug (la spécification nomme la feature). */
 function runOf(runs: RecordedRun[], slug: string): RecordedRun | undefined {
-  return runs.find((run) => run.argv[run.argv.indexOf("--pipeline-feature") + 1] === slug);
+  return runs.find((run) => run.spec.slug === slug);
 }
 
-const phaseOf = (run: RecordedRun): string => run.argv[run.argv.indexOf("--pipeline-phase") + 1] ?? "";
+const phaseOf = (run: RecordedRun): string => run.spec.phase;
 
 /** Aucun drapeau de raisonnement n'est jamais transmis (S-1, B-2). */
 const THINKING_FLAGS = ["--thinking", "--reasoning", "--effort", "--smol", "--slow", "--plan"];
@@ -1252,25 +1251,13 @@ test("model-selector/AC-3 : les runs req/specs reçoivent A, les runs impl/revie
   {
     // L'ARGV d'un maillon : la paire est à sa place fixe (après l'état, avant la
     // boîte, l'échéance et la reprise), quelle que soit la phase.
-    const base = {
-      ompBin: "omp",
-      worktree: "/tmp/wt",
-      prompt: "un prompt",
-      lotId: "lot-1",
-      slug: "alpha",
-      stateDir: "/state",
-      inbox: "/state/inbox",
-      sessionFile: "/state/s.jsonl",
-    };
     const carrier = { modelReqSpecs: MODEL_A, modelImplReview: MODEL_B };
     for (const phase of ["specs", "impl", "review", "release"] as PipelinePhase[]) {
-      const argv = buildLotRunArgv({ ...base, phase, model: featureModelForPhase(carrier, phase) });
+      // La spécification d'un run porte le modèle du GROUPE de sa phase, et rien
+      // d'autre : plus d'argv où glisser un drapeau de réflexion.
+      const spec = { phase, model: featureModelForPhase(carrier, phase) };
       const expected = phase === "specs" ? MODEL_A : MODEL_B;
-      assert.deepEqual(argv.slice(argv.indexOf("--model"), argv.indexOf("--model") + 2), ["--model", expected], phase);
-      assert.ok(argv.indexOf("--model") > argv.indexOf("--pipeline-state-dir"), "le modèle vient après l'état");
-      assert.ok(argv.indexOf("--model") < argv.indexOf("--panel-inbox"), "et avant la boîte");
-      assert.ok(argv.indexOf("--model") < argv.indexOf("--resume"), "et avant la reprise de session");
-      for (const flag of THINKING_FLAGS) assert.equal(argv.includes(flag), false, `jamais ${flag}`);
+      assert.equal(spec.model, expected, phase);
     }
   }
 
@@ -1304,7 +1291,9 @@ test("model-selector/AC-3 : les runs req/specs reçoivent A, les runs impl/revie
       "chaque phase reçoit le modèle de son groupe",
     );
     for (const run of runs) {
-      for (const flag of THINKING_FLAGS) assert.equal(run.argv.includes(flag), false, `jamais ${flag} : ${run.argv.join(" ")}`);
+      // Un run n'a plus d'argv : le modèle de la phase est le seul réglage qu'il
+      // reçoit, et aucun drapeau de réflexion n'existe dans cette voie (S-6).
+      assert.equal(run.spec.model === null || typeof run.spec.model === "string", true);
     }
   }
 
@@ -1706,57 +1695,23 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
 
 test("model-selector/AC-6 : un groupe resté au défaut OMP part sans aucun --model", async () => {
   {
-    // L'ARGV d'un maillon SANS modèle est celui d'avant cette feature, écrit en dur.
-    assert.deepEqual(
-      buildLotRunArgv({
-        ompBin: "omp",
-        worktree: "/tmp/wt",
-        prompt: "un prompt",
-        lotId: "lot-1",
-        slug: "alpha",
-        phase: "specs",
-        stateDir: "/state",
-        inbox: "/state/inbox",
-        sessionFile: "/state/s.jsonl",
-        model: null,
-      }),
-      [
-        "omp",
-        "--cwd",
-        "/tmp/wt",
-        "-p",
-        "--auto-approve",
-        "--pipeline-lot",
-        "lot-1",
-        "--pipeline-feature",
-        "alpha",
-        "--pipeline-phase",
-        "specs",
-        "--pipeline-state-dir",
-        "/state",
-        "--panel-inbox",
-        "/state/inbox",
-        "--resume",
-        "/state/s.jsonl",
-        "--",
-        "un prompt",
-      ],
-      "aucun --model, et aucune autre différence — pas de `--model \"\"`",
-    );
-    assert.equal(
-      buildLotRunArgv({
-        ompBin: "omp",
-        worktree: "/tmp/wt",
-        prompt: "un prompt",
-        lotId: "lot-1",
-        slug: "alpha",
-        phase: "specs",
-        stateDir: "/state",
-        model: "",
-      }).includes("--model"),
-      false,
-      "une chaîne vide ne produit rien non plus",
-    );
+    // Un maillon SANS modèle ne reçoit AUCUN modèle : la spécification porte
+    // `null`, jamais une chaîne vide — c'est la même garantie qu'avant, sans argv
+    // où glisser un `--model ""`.
+    const spec: LotRunSpec = {
+      lotId: "lot-1",
+      slug: "alpha",
+      phase: "specs",
+      stateDir: "/state",
+      worktree: "/tmp/wt",
+      prompt: "un prompt",
+      sessionFile: "/state/s.jsonl",
+      model: null,
+      inbox: "/state/inbox",
+      deadline: null,
+    };
+    assert.equal(spec.model, null, "aucun modèle : la clé reste nulle");
+    assert.equal(featureModelForPhase({ modelReqSpecs: MODEL_A }, "impl"), null);
 
     // Un groupe renseigné, l'autre laissé au défaut : seul le premier est résolu.
     const half = { modelReqSpecs: MODEL_A };

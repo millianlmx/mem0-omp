@@ -1,6 +1,7 @@
-// L'écrivain du canal côté app (S-1, S-2, S-4, S-11) : les SEULES écritures de
-// l'app — une livraison dans la boîte publiée d'un run, une commande dans le canal
-// — et la lecture seule des accusés que le pilote écrit.
+// L'écrivain du canal côté app (S-1, S-2, S-4, S-11) : la livraison dans la boîte
+// publiée d'un run, et l'envoi d'une commande au service par `POST
+// /v1/repos/{repo}/commands` (S-9). Les accusés ne sont plus lus dans des
+// fichiers : ils sont rendus par la réponse HTTP.
 //
 // Publication EXCLUSIVE et ATOMIQUE (`link(2)`, man 2 link, §4) : le contenu est
 // écrit dans un temporaire `<fichier>.tmp-<pid>` du répertoire CIBLE, puis publié
@@ -19,7 +20,7 @@
 // jamais l'écriture.
 //
 // Aucune autre écriture n'existe ici : ni `lots/`, ni `running/`, ni `history/`,
-// ni `projects/`, ni `audit/`, ni `commands/acks/` (S-11).
+// ni `projects/`, ni `audit/`.
 
 import ConsoleCore
 import Darwin
@@ -81,21 +82,47 @@ struct PipelineFileOps: Sendable {
 struct PipelineWriter: Sendable {
     let stateDir: String
     private let fileOps: PipelineFileOps
+    /// Le POST d'une commande au service (S-9) : rend l'accusé tel que la réponse
+    /// le porte. L'implémentation par défaut localise le service et poste.
+    private let post: @Sendable (String, [String: Any]) async throws -> ServiceCommandAck
+    /// Le `POST /v1/repos/{repo}/pilot` (S-9) : réveille un dépôt.
+    private let pilotRepo: @Sendable (String) async throws -> Void
 
-    init(stateDir: String = PipelineStore.stateDir(), fileOps: PipelineFileOps = .live) {
+    init(
+        stateDir: String = PipelineStore.stateDir(),
+        fileOps: PipelineFileOps = .live,
+        post: @escaping @Sendable (String, [String: Any]) async throws -> ServiceCommandAck = PipelineWriter.defaultPost,
+        pilot: @escaping @Sendable (String) async throws -> Void = PipelineWriter.defaultPilot
+    ) {
         self.stateDir = stateDir
         self.fileOps = fileOps
+        self.post = post
+        self.pilotRepo = pilot
+    }
+
+    /// Envoie une commande au service et rend son accusé (S-9).
+    func postCommand(repo: String, command: OutgoingCommand, sentAt: Double) async throws -> ServiceCommandAck {
+        try await post(repo, command.object(sentAt: sentAt))
+    }
+
+    /// Réveille un dépôt : contrôleur créé au besoin, adoption, tick (S-9).
+    func pilot(repo: String) async throws {
+        try await pilotRepo(repo)
+    }
+
+    private static let defaultPost: @Sendable (String, [String: Any]) async throws -> ServiceCommandAck = { repo, body in
+        let client = try ServiceClient(endpoint: ServiceLocator.locate())
+        return try await client.command(repo: repo, body: body)
+    }
+
+    private static let defaultPilot: @Sendable (String) async throws -> Void = { repo in
+        let client = try ServiceClient(endpoint: ServiceLocator.locate())
+        try await client.pilot(repo: repo)
     }
 
     /// La borne du nombre de noms candidats d'une publication (B-3) : au-delà,
     /// `écriture impossible (aucun nom libre)`.
     static let uniqueNameLimit = 1000
-
-    /// `<stateDir>/commands` — le canal.
-    var commandDir: String { joinPath(stateDir, "commands") }
-
-    /// `<stateDir>/commands/acks` — les accusés, un fichier par identifiant traité.
-    var commandAckDir: String { joinPath(commandDir, "acks") }
 
     /// `<stateDir>/inbox` — la SEULE zone où une livraison peut être déposée (B-1).
     var inboxRoot: String { joinPath(stateDir, "inbox") }
@@ -105,11 +132,6 @@ struct PipelineWriter: Sendable {
     /// ajoutés à la publication quand le nom est pris (parité `writeDelivery`).
     static func fileName(sentAt: Double, salt: String) -> String {
         "\(stamp(sentAt))-\(salt).json"
-    }
-
-    /// Le chemin de l'accusé d'un identifiant : `<stateDir>/commands/acks/<id>.json`.
-    func ackPath(id: String) -> String {
-        joinPath(commandAckDir, "\(id).json")
     }
 
     // --- confinement (B-1) ---------------------------------------------------
@@ -183,39 +205,6 @@ struct PipelineWriter: Sendable {
         }
         try ensureDirectory(inbox)
         return try publish(delivery.object(sentAt: sentAt), in: inbox, sentAt: sentAt, salt: salt)
-    }
-
-    // --- commandes -----------------------------------------------------------
-
-    /// Écrit une commande dans le canal et **ne la retire jamais** (seul le pilote
-    /// le fait, après avoir écrit l'accusé). Rend le chemin écrit.
-    @discardableResult
-    func writeCommand(_ command: OutgoingCommand, sentAt: Double, salt: String) throws -> String {
-        try ensureDirectory(commandDir)
-        return try publish(command.object(sentAt: sentAt), in: commandDir, sentAt: sentAt, salt: salt)
-    }
-
-    /// L'accusé d'une commande : `nil` s'il est ABSENT, ILLISIBLE ou hors schéma
-    /// (`asCommandAck`, commands.ts:150-162) — l'entrée de journal reste alors en
-    /// attente, sans exception.
-    func readAck(id: String) -> PipelineCommandAck? {
-        guard PipelineId.isValid(id) else { return nil }
-        guard let data = FileManager.default.contents(atPath: ackPath(id: id)) else { return nil }
-        guard let json = JSONValue.parse(data), case .object(let a) = json else { return nil }
-        guard isVersion1(a["version"]) else { return nil }
-        guard let fileId = asString(a["id"]), fileId == id, PipelineId.isValid(fileId) else { return nil }
-        guard asString(a["repo"]) != nil else { return nil }
-        let kind = a["kind"]
-        if kind != .null, asString(kind) == nil { return nil }
-        guard let state = CommandAckState(rawValue: asString(a["state"]) ?? "") else { return nil }
-        let rawReason = a["reason"]
-        var reason: String?
-        if rawReason != .null {
-            guard let text = asString(rawReason) else { return nil }
-            reason = text
-        }
-        guard let at = asNumber(a["at"]) else { return nil }
-        return PipelineCommandAck(id: fileId, state: state, reason: reason, at: at)
     }
 
     // --- publication exclusive (B-3) ------------------------------------------

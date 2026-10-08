@@ -110,7 +110,7 @@ func missingOmpGivesPreparationBackground() {
 private final class SwitchingResolver {
     var found = false
 
-    func resolve(_: [String: String]) -> Result<URL, SessionHostError> {
+    func resolve(_: [String: String]) -> Result<URL, OmpBinaryError> {
         found
             ? .success(URL(fileURLWithPath: "/usr/local/bin/omp"))
             : .failure(.binaryNotFound(searched: ["/a/omp"], override: nil))

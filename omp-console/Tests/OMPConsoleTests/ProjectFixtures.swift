@@ -1,62 +1,170 @@
-// Harnais des preuves de la conduite de projet (BR-5) : un host scripté, des
-// doubles d'attention et de présence, et des dépôts git jetables.
+// Harnais des preuves de la conduite de projet (BR-5) : une session servie
+// scriptée (API REST), des doubles d'attention et de présence, et des dépôts git
+// jetables.
 //
 // Aucun `omp` n'est lancé (sauf la recette, désactivée par défaut) : le transport
-// scripté permet de piloter la poignée de main, les trames et les dialogues.
+// HTTP scripté permet de piloter les réponses des routes, le flux SSE et les
+// dialogues.
 
 import AppKit
 import Combine
 import Foundation
 @testable import OMPConsole
 
-// MARK: - Trames JSONL
+// MARK: - Session servie scriptée (API REST)
 
-func projectJsonLine(_ object: [String: Any]) -> String {
-    guard
-        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-        let text = String(data: data, encoding: .utf8)
-    else { return "{}" }
-    return text
+/// Le délai avant la réouverture d'un flux scripté. Le service scripté ferme ses
+/// flux après les avoir rendus ; la session les rouvre après ce délai, ce qui
+/// laisse aux preuves le temps d'agir AVANT la réouverture suivante.
+let projectRetryDelay: Duration = .milliseconds(500)
+
+/// Empile `count` flux vides. Le service scripté ne sait pas garder un flux
+/// OUVERT : sans ces flux, la session mourrait à la première réouverture faute de
+/// script. Ils entretiennent donc la vie de la session le temps du test.
+func keepProjectAlive(_ transport: ScriptedServiceTransport, count: Int = 600) {
+    for _ in 0..<count { transport.scriptStream([]) }
 }
 
-func projectJsonObject(_ line: String) -> [String: Any]? {
-    guard let data = line.data(using: .utf8), let raw = try? JSONSerialization.jsonObject(with: data) else {
-        return nil
-    }
-    return raw as? [String: Any]
+/// Stub la route `POST /projects/{repo}/conduite` et la relecture de session qui
+/// suit (`GET /v1/sessions/{id}`), plus la clôture `DELETE /conduite` (S-7).
+func stubProjectConduite(
+    _ transport: ScriptedServiceTransport,
+    repo: String,
+    sessionId: String = "s1",
+    sessionFile: String? = nil
+) {
+    transport.stubJSON("POST", "/conduite", ["sessionId": sessionId, "state": "running"])
+    var session: [String: Any] = [
+        "id": sessionId,
+        "cwd": repo,
+        "purpose": "project",
+        "state": "running",
+    ]
+    if let sessionFile { session["sessionFile"] = sessionFile } else { session["sessionFile"] = NSNull() }
+    transport.stubJSON("GET", "/v1/sessions/\(sessionId)", session)
+    transport.stubJSON("DELETE", "/conduite", ["closed": true])
 }
 
-func projectField(_ key: String, in line: String) -> String? {
-    projectJsonObject(line)?[key] as? String
+/// Stub la vie d'une session SERVIE (`session` : prompt, dialogues, relecture,
+/// fermeture) : l'équivalent service de la poignée de main et des réponses
+/// automatiques du transport RPC. Un transport scripté rend la PREMIÈRE route dont
+/// le suffixe correspond, donc ces stubs se complètent sans se masquer.
+func stubServiceSession(
+    _ transport: ScriptedServiceTransport,
+    sessionId: String = "sess-1234",
+    cwd: String = "/tmp",
+    purpose: String = "session",
+    sessionFile: String? = "/tmp/session.jsonl"
+) {
+    var session: [String: Any] = ["id": sessionId, "cwd": cwd, "purpose": purpose, "state": "running"]
+    session["sessionFile"] = sessionFile ?? NSNull()
+    transport.stubJSON("POST", "/v1/sessions", session)
+    transport.stubJSON("GET", "/v1/sessions/\(sessionId)", session)
+    transport.stubJSON("POST", "/v1/sessions/\(sessionId)/prompt", ["accepted": true])
+    transport.stubJSON("DELETE", "/v1/sessions/\(sessionId)", ["closed": true])
 }
 
-func projectReadyLine() -> String {
-    projectJsonLine([
-        "type": "ready",
-        "protocolVersion": 1,
-        "supportedProtocolVersions": [1, 2],
-        "maxFrameBytes": 1_048_576,
-        "maxReassembledFrameBytes": 67_108_864,
-    ])
+/// Une session SERVIE prête à lancer (`session`), sans réseau ni process : le
+/// service scripté publie `sessionFile` à la création, et `streams` flux OUVERTS
+/// sont empilés — chaque (re)démarrage de la session en consomme un.
+@MainActor
+func makeScriptedHostedHost(
+    _ transport: ScriptedServiceTransport,
+    sessionFile: String,
+    sessionId: String = "sess-1234",
+    streams: Int = 2
+) -> ServiceSessionModel {
+    stubServiceSession(transport, sessionId: sessionId, sessionFile: sessionFile)
+    openServiceStream(transport, count: streams)
+    return makeProjectHost(purpose: "session", makeClient: { scriptedClient(transport) })
 }
 
-func projectResponseLine(
+/// La trame d'un dialogue, prête pour un flux (`scriptStream`) ou pour une poussée
+/// sur un flux ouvert (`emit`).
+func serviceDialogFrame(
     id: String,
-    command: String,
-    success: Bool = true,
-    data: [String: Any]? = nil,
-    error: String? = nil
-) -> String {
-    var object: [String: Any] = ["type": "response", "id": id, "command": command, "success": success]
-    if let data { object["data"] = data }
-    if let error { object["error"] = error }
-    return projectJsonLine(object)
+    method: String,
+    title: String,
+    options: [String] = [],
+    optionDescriptions: [String?] = [],
+    prefill: String? = nil,
+    placeholder: String? = nil
+) -> [String] {
+    let descriptions: [Any] = optionDescriptions.map { $0.map { $0 as Any } ?? NSNull() }
+    var json: [String: Any] = [
+        "id": id,
+        "method": method,
+        "title": title,
+        "options": options,
+        "optionDescriptions": descriptions,
+    ]
+    if let prefill { json["prefill"] = prefill }
+    if let placeholder { json["placeholder"] = placeholder }
+    return serviceFrame("dialog", json)
 }
 
-func projectDialogLine(id: String, method: String, extra: [String: Any] = [:]) -> String {
-    var object: [String: Any] = ["type": "extension_ui_request", "method": method, "id": id]
-    object.merge(extra) { _, new in new }
-    return projectJsonLine(object)
+/// Empile un flux portant UNE demande de dialogue — l'équivalent HTTP du
+/// `emit(dialogLine)` de l'ancien protocole.
+func emitProjectDialog(
+    _ transport: ScriptedServiceTransport,
+    id: String,
+    method: String,
+    title: String,
+    options: [String] = [],
+    optionDescriptions: [String?] = [],
+    prefill: String? = nil,
+    placeholder: String? = nil
+) {
+    transport.scriptStream(serviceDialogFrame(
+        id: id,
+        method: method,
+        title: title,
+        options: options,
+        optionDescriptions: optionDescriptions,
+        prefill: prefill,
+        placeholder: placeholder
+    ))
+}
+
+/// Ouvre le flux d'une session servie et le GARDE OUVERT : la session reste
+/// vivante sans reconnexion, et les trames poussées ensuite par
+/// `emitServiceDialog`/`emitServiceNotice` arrivent par cette même connexion —
+/// l'équivalent service de la poignée de main maintenue, plus léger que
+/// `keepProjectAlive`. `count` en empile plusieurs : chaque (re)démarrage de
+/// session consomme le suivant.
+func openServiceStream(_ transport: ScriptedServiceTransport, count: Int = 1) {
+    for _ in 0..<count { transport.scriptStream([], keepOpen: true) }
+}
+
+/// Pousse une demande de dialogue sur le flux OUVERT (l'équivalent service du
+/// `transport.emit(dialogLine)` de l'ancien protocole).
+func emitServiceDialog(
+    _ transport: ScriptedServiceTransport,
+    id: String,
+    method: String,
+    title: String,
+    options: [String] = [],
+    prefill: String? = nil,
+    placeholder: String? = nil
+) {
+    transport.emit(serviceDialogFrame(
+        id: id,
+        method: method,
+        title: title,
+        options: options,
+        prefill: prefill,
+        placeholder: placeholder
+    ))
+}
+
+/// Pousse une notice sur le flux OUVERT.
+func emitServiceNotice(_ transport: ScriptedServiceTransport, level: String = "info", message: String) {
+    transport.emit(serviceFrame("notice", ["level": level, "message": message]))
+}
+
+/// Empile un flux portant une seule trame de notice (S-7).
+func emitProjectNotice(_ transport: ScriptedServiceTransport, level: String = "info", message: String) {
+    transport.scriptStream(serviceFrame("notice", ["level": level, "message": message]))
 }
 
 // MARK: - Dépôts et magasins jetables
@@ -83,49 +191,76 @@ func makeProjectStateDir() throws -> String {
 
 // MARK: - Host scripté
 
+/// La session servie de projet, branchée sur un transport scripté.
 @MainActor
-func makeScriptedProjectHost(_ transport: ScriptedRpcTransport) -> SessionHost {
-    SessionHost(
-        transport: transport,
-        resolveBinary: { _ in .success(URL(fileURLWithPath: "/usr/bin/true")) },
-        environment: [:],
-        requestTimeout: .seconds(2),
-        readyTimeout: .seconds(2),
-        stopGrace: .milliseconds(80),
-        killGrace: .milliseconds(80)
+func makeScriptedProjectHost(
+    _ transport: ScriptedServiceTransport,
+    purpose: String = "project"
+) -> ServiceSessionModel {
+    makeProjectHost(purpose: purpose, makeClient: { scriptedClient(transport) })
+}
+
+/// La session servie de projet, sur une fabrique de client quelconque (les preuves
+/// qui font varier la réponse d'une route empilent plusieurs transports).
+@MainActor
+func makeProjectHost(
+    purpose: String = "project",
+    makeClient: @escaping @Sendable () throws -> ServiceClient
+) -> ServiceSessionModel {
+    ServiceSessionModel(
+        purpose: purpose,
+        makeClient: makeClient,
+        maxAttempts: 5,
+        retryDelay: { _ in projectRetryDelay }
     )
 }
 
-/// Répond automatiquement aux commandes de la poignée de main et des prompt, pour
-/// que les `await` du modèle ne dépendent pas d'un délai.
-@MainActor
-func wireProjectAutoResponses(_ transport: ScriptedRpcTransport) {
-    transport.onWrite = { line in
-        guard let object = projectJsonObject(line), let type = object["type"] as? String else { return }
-        let id = object["id"] as? String ?? "?"
-        switch type {
-        case "negotiate_protocol":
-            transport.emit(projectResponseLine(id: id, command: "negotiate_protocol", data: ["protocolVersion": 2]))
-        case "get_state":
-            transport.emit(projectResponseLine(
-                id: id,
-                command: "get_state",
-                data: ["sessionId": "sess-1234", "sessionFile": "/tmp/session.jsonl"]
-            ))
-        case "prompt":
-            transport.emit(projectResponseLine(id: id, command: "prompt"))
-        default:
-            break
-        }
-    }
+/// Un client sur un transport quelconque, pour les transports qui ne sont pas un
+/// `ScriptedServiceTransport` (l'endpoint est factice, seul le transport compte).
+func projectServiceClient(_ transport: any ServiceTransport) -> ServiceClient {
+    ServiceClient(
+        endpoint: ServiceEndpoint(
+            baseURL: URL(string: "http://127.0.0.1:8788/v1")!,
+            token: String(repeating: "a", count: 32),
+            pid: 4_242,
+            port: 8788,
+            stateDir: "/tmp/omp-state"
+        ),
+        transport: transport
+    )
 }
 
-/// Fait rendre la main au process dès la fermeture de stdin : `stop()` ne subit
-/// alors aucune escalade.
-@MainActor
-func makeProjectTransportRenderOnClose(_ transport: ScriptedRpcTransport) {
-    transport.onCloseStdin = {
-        transport.emitExit(ProcessExit(status: 0, reason: .exited))
+/// Plusieurs `ScriptedServiceTransport` servis l'un APRÈS l'autre : les preuves
+/// qui font varier la réponse d'une MÊME route (le fichier de session relu)
+/// avancent d'un cran, ce qu'un transport seul (première route gagnante) ne sait
+/// pas faire.
+final class RollingServiceTransport: ServiceTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private let stages: [ScriptedServiceTransport]
+    private var index = 0
+
+    init(_ stages: [ScriptedServiceTransport]) {
+        precondition(!stages.isEmpty, "au moins une étape")
+        self.stages = stages
+    }
+
+    /// Passe à l'étape suivante (la dernière se répète).
+    func advance() {
+        lock.lock(); defer { lock.unlock() }
+        index = min(index + 1, stages.count - 1)
+    }
+
+    private var current: ScriptedServiceTransport {
+        lock.lock(); defer { lock.unlock() }
+        return stages[index]
+    }
+
+    func send(_ request: URLRequest) async throws -> ServiceHTTPResponse {
+        try await current.send(request)
+    }
+
+    func lines(_ request: URLRequest) async throws -> AsyncThrowingStream<String, Error> {
+        try await current.lines(request)
     }
 }
 
@@ -160,7 +295,7 @@ final class StubPresence: WindowFrontmostReporting {
 
 @MainActor
 func makeProjectModel(
-    host: SessionHost,
+    host: ServiceSessionModel,
     stateDir: String,
     presence: (any WindowFrontmostReporting)? = nil,
     attention: (any AttentionRequesting)? = nil,

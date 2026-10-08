@@ -1,7 +1,13 @@
-// Recette gatée (S-4, BR-4) : la session RPC réelle vit sur le composant de
-// l'app, et un run `omp -p` au terminal — sans l'app ouverte — retrouve la
-// mémoire du projet. Ce sont les preuves machines d'AC-3 et AC-5 ; la procédure
-// humaine (renommer l'`omp` système) est décrite dans omp-console/README.md.
+// Recette gatée (S-4, BR-4) : le composant `omp` de l'app est le seul binaire
+// qu'elle utilise — il répond en version sans aucun PATH système — et un run
+// `omp -p` au terminal, sans l'app ouverte, retrouve la mémoire du projet. Ce sont
+// les preuves machines d'AC-3 et AC-5 ; la procédure humaine (renommer l'`omp`
+// système) est décrite dans omp-console/README.md.
+//
+// Depuis le cutover, l'app n'héberge PLUS de session `omp` : « Session OMP » et la
+// conduite de projet sont clientes du service (voir Service/ServiceSessionModelTests).
+// Le composant reste utilisé par la préparation des composants, `omp models --json`
+// et « Lancer omp » du terminal ; c'est ce que la recette gatée vérifie.
 //
 // Désactivée par défaut : `MEM0_SESSION_COMPONENT_RECIPE=1`.
 // Prérequis : la préparation a installé les composants (racine de support réelle,
@@ -11,22 +17,12 @@
 //     --filter sessionComponent -Xswiftc -plugin-path \
 //     -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
-import Darwin
 import Foundation
 import Testing
 @testable import OMPConsole
 
 private var recipeEnabled: Bool {
     ProcessInfo.processInfo.environment["MEM0_SESSION_COMPONENT_RECIPE"] != nil
-}
-
-@MainActor
-private func waitUntil(_ timeout: Double = 60, _ condition: () -> Bool) async -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while !condition(), Date() < deadline {
-        try? await Task.sleep(for: .milliseconds(50))
-    }
-    return condition()
 }
 
 /// Un dépôt git neuf, dans un dossier temporaire.
@@ -53,19 +49,33 @@ private func sessionFiles(under root: URL) -> [String] {
     return files
 }
 
+/// Un binaire `omp` absent n'est jamais deviné : l'erreur typée porte le texte lu
+/// par l'utilisateur, qui nomme le chemin cherché.
+@Test("client-rpc-omp/AC-14 : un binaire `omp` introuvable donne son texte, sans être deviné")
+func missingBinaryGivesItsMessage() {
+    let missing = "/nonexistent/omp"
+    let resolution = OmpBinaryResolver.resolve(environment: [OmpBinaryResolver.overrideKey: missing])
+    guard case .failure(let error) = resolution else {
+        Issue.record("un binaire absent doit échouer, jamais être deviné")
+        return
+    }
+    #expect(error == .binaryNotFound(searched: [missing], override: missing))
+    #expect(error.userMessage.contains(missing))
+}
+
 @MainActor
 @Test(
-    "all-in-one-app/AC-3 : une session RPC réelle vit sur le composant de l'app, sans aucun PATH système",
+    "all-in-one-app/AC-3 : le composant `omp` de l'app répond en version, sans aucun PATH système",
     .enabled(if: recipeEnabled)
 )
-func sessionRunsOnTheAppComponent() async throws {
+func componentOmpAnswersWithoutSystemPath() async throws {
     let paths = AppPaths.standard()
     let resolved = try #require(
         try? OmpBinaryResolver.resolve(environment: ProcessInfo.processInfo.environment).get(),
         "composant OMP introuvable : lancez d'abord la préparation d'OMP Console"
     )
     let component = paths.ompDir(ComponentManifest.current.ompVersion).appendingPathComponent("omp")
-    #expect(resolved.path == component.path, "la session doit tourner sur le composant de l'app, pas sur un binaire système")
+    #expect(resolved.path == component.path, "l'app n'utilise que son composant, jamais un binaire système")
 
     // Le binaire du composant répond en version, sans PATH.
     let version = try await CommandRunner.live(
@@ -73,19 +83,6 @@ func sessionRunsOnTheAppComponent() async throws {
     )
     #expect(version.code == 0)
     #expect(version.stdout.contains("omp/\(ComponentManifest.current.ompVersion)"))
-
-    // Une session RPC réelle démarre : aucun binaire système n'est consulté
-    // (PATH vidé), le process vit dans l'app.
-    let repo = try makeGitRepo()
-    let host = SessionHost(environment: ["HOME": NSHomeDirectory(), "PATH": "/nonexistent"])
-    defer {
-        if let pid = host.pid { kill(pid, SIGKILL) }
-    }
-    try await host.start(mode: .rpc, projectRoot: repo, resume: false)
-    let running = await waitUntil { if case .running = host.state { return true }; return false }
-    #expect(running, "la session doit atteindre `running` (état : \(host.state))")
-    #expect(host.pid != nil, "le process hébergé vit dans l'app")
-    await host.stop()
 }
 
 @Test(

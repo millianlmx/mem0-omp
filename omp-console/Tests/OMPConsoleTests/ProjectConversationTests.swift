@@ -13,69 +13,39 @@ import ConsoleCore
 func projectConversationFollowsHostSessionFile() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    makeProjectTransportRenderOnClose(transport)
-    var pendingStateId: String?
-    transport.onWrite = { line in
-        guard let object = projectJsonObject(line), let type = object["type"] as? String else { return }
-        let id = object["id"] as? String ?? "?"
-        switch type {
-        case "negotiate_protocol":
-            transport.emit(projectResponseLine(id: id, command: "negotiate_protocol", data: ["protocolVersion": 2]))
-        case "get_state":
-            pendingStateId = id
-        case "prompt":
-            transport.emit(projectResponseLine(id: id, command: "prompt"))
-        default:
-            break
-        }
-    }
-    let host = makeScriptedProjectHost(transport)
-    let model = makeProjectModel(host: host, stateDir: stateDir)
     let file = "/tmp/omp-project-conversation-\(UUID().uuidString).jsonl"
+    let other = "/tmp/omp-project-conversation-\(UUID().uuidString).jsonl"
 
-    // Avant la réponse de `get_state`, aucun fichier n'est connu : pas de conversation.
-    let start = Task { @MainActor in await model.startConduite(repoRoot: repo, name: "Mon projet") }
-    #expect(await awaitProject { host.state == .running && pendingStateId != nil })
-    #expect(model.conversation == nil)
+    // Deux étapes : la première sert la session et son premier fichier, la seconde
+    // le MÊME `GET /v1/sessions/{id}` avec un AUTRE fichier (relu après bascule).
+    let firstStage = ScriptedServiceTransport()
+    stubProjectConduite(firstStage, repo: repo.path, sessionFile: file)
+    keepProjectAlive(firstStage)
+    let secondStage = ScriptedServiceTransport()
+    secondStage.stubJSON("GET", "/v1/sessions/s1", [
+        "id": "s1", "cwd": repo.path, "purpose": "project", "state": "running", "sessionFile": other,
+    ])
+    secondStage.stubJSON("DELETE", "/conduite", ["closed": true])
+    keepProjectAlive(secondStage)
+    let rolling = RollingServiceTransport([firstStage, secondStage])
 
-    let firstId = try #require(pendingStateId)
-    pendingStateId = nil
-    transport.emit(projectResponseLine(id: firstId, command: "get_state", data: [
-        "sessionId": "session-abcdef12",
-        "sessionFile": file,
-    ]))
-    await start.value
+    let host = makeProjectHost(makeClient: { projectServiceClient(rolling) })
+    let model = makeProjectModel(host: host, stateDir: stateDir)
+
+    await model.startConduite(repoRoot: repo, name: "Mon projet")
     #expect(model.state == .live)
     #expect(await awaitProject { model.conversation?.target.sessionFile == file })
     let first = try #require(model.conversation)
     #expect(first.target.title == "Mon projet")
 
     // Un second `get_state` au MÊME fichier garde la même conversation.
-    let refresh = Task { @MainActor in await host.refreshState() }
-    #expect(await awaitProject { pendingStateId != nil })
-    let secondId = try #require(pendingStateId)
-    pendingStateId = nil
-    transport.emit(projectResponseLine(id: secondId, command: "get_state", data: [
-        "sessionId": "session-abcdef12",
-        "sessionFile": file,
-    ]))
-    await refresh.value
-    try await Task.sleep(for: .milliseconds(50))
+    await host.refreshState()
+    try? await Task.sleep(for: .milliseconds(50))
     #expect(model.conversation === first)
 
     // Un AUTRE fichier remplace la conversation.
-    let other = "/tmp/omp-project-conversation-\(UUID().uuidString).jsonl"
-    let moved = Task { @MainActor in await host.refreshState() }
-    #expect(await awaitProject { pendingStateId != nil })
-    let thirdId = try #require(pendingStateId)
-    pendingStateId = nil
-    transport.emit(projectResponseLine(id: thirdId, command: "get_state", data: [
-        "sessionId": "session-abcdef12",
-        "sessionFile": other,
-    ]))
-    await moved.value
+    rolling.advance()
+    await host.refreshState()
     #expect(await awaitProject { model.conversation?.target.sessionFile == other })
     #expect(model.conversation !== first)
 
@@ -151,16 +121,22 @@ func projectDialogStepCounter() {
     }
 }
 
-@Test("omp-console-redesign/C6 : la notice est le message décodé d'une trame notify, jamais la trame")
+@Test("omp-console-redesign/C6 : la notice est le message décodé d'une trame notice, jamais la trame")
 func projectNoticeDecodesNotifyFrame() {
-    let frame = ###"{"type":"extension_ui_request","id":"n1","method":"notify","message":"## Plan\n- socle — poser \"le\" modèle"}"###
-    #expect(ProjectConsoleModel.notifyMessage(frame: frame) == "## Plan\n- socle — poser \"le\" modèle")
+    let message = "## Plan\n- socle — poser \"le\" modèle"
+    let payload: [String: Any] = ["level": "info", "message": message]
+    let data = String(
+        data: try! JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
+        encoding: .utf8
+    )!
+    #expect(ServiceFrame.decode(event: "notice", data: data) == .notice(level: "info", message: message))
 
     // Une trame tronquée par le host n'est plus du JSON : aucune notice plutôt
     // que le texte brut échappé.
-    let truncated = String(frame.prefix(60)) + "…[3282 octets tronqués]"
-    #expect(ProjectConsoleModel.notifyMessage(frame: truncated) == nil)
-    // Une autre méthode, ou un message vide, ne fait pas de notice.
-    #expect(ProjectConsoleModel.notifyMessage(frame: #"{"type":"extension_ui_request","method":"setStatus","message":"x"}"#) == nil)
-    #expect(ProjectConsoleModel.notifyMessage(frame: #"{"type":"extension_ui_request","method":"notify","message":"  "}"#) == nil)
+    let truncated = String(data.prefix(20)) + "…[3282 octets tronqués]"
+    #expect(ServiceFrame.decode(event: "notice", data: truncated) == nil)
+    // Une notice SANS message, ou un autre évènement, ne fait pas de notice.
+    #expect(ServiceFrame.decode(event: "notice", data: #"{"level":"info"}"#) == nil)
+    #expect(ServiceFrame.decode(event: "notice", data: #"{"message":"x"}"#) == nil)
+    #expect(ServiceFrame.decode(event: "setStatus", data: #"{"level":"info","message":"x"}"#) == nil)
 }

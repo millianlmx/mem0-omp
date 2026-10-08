@@ -59,17 +59,31 @@ struct ProjectIOSRecipeTests {
         try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
         store.publish(.lots, "\(fixtureId(0xF1)).json", object: lotObject(id: fixtureId(0xF1), repoRoot: repoRoot))
 
-        let transport = ScriptedRpcTransport()
-        transport.readyLine = projectReadyLine()
-        wireProjectAutoResponses(transport)
-        makeProjectTransportRenderOnClose(transport)
+        // Le service est DOUBLÉ par un transport scripté : aucun process n'est
+        // lancé, mais les routes sont celles de l'API (S-6) — création de la
+        // conduite, escalade par le flux SSE, réponse au dialogue, fermeture.
+        let transport = ScriptedServiceTransport()
+        stubProjectConduite(transport, repo: repoRoot)
+        transport.stubJSON("POST", "/v1/sessions/s1/dialogs/recette-1", ["accepted": true])
+        // L'unique escalade part DÈS l'ouverture du flux, qui reste OUVERT : la
+        // conduite survit aux quatre étapes de la recette sans reconnexion.
+        transport.scriptStream(
+            serviceFrame("dialog", [
+                "id": "recette-1",
+                "method": "select",
+                "title": "Revue du plan",
+                "options": ["Valider le plan", "Corriger le plan"],
+                "optionDescriptions": [],
+            ]),
+            keepOpen: true
+        )
         let project = makeProjectModel(host: makeScriptedProjectHost(transport), stateDir: store.root)
         let stack = try await RemoteStack.make(stateDir: store.root, projectModel: project)
         defer { stack.stop() }
 
         // Le client iOS réel, branché sur l'adresse manuelle de la pile.
         let client = ConsoleClientModel(
-            transport: URLSessionTransport(),
+            transport: ConsoleClient.URLSessionTransport(),
             discovery: RecipeDiscovery(),
             preferences: InMemoryClientPreferences(),
             tokens: InMemoryTokenStore(),
@@ -100,12 +114,8 @@ struct ProjectIOSRecipeTests {
         #expect(live.repoKey == repoKey)
         #expect(live.status != nil)
 
-        // 3. Une escalade arrive par le flux, on y répond depuis le client.
-        transport.emit(projectDialogLine(
-            id: "recette-1",
-            method: "select",
-            extra: ["title": "Revue du plan", "options": ["Valider le plan", "Corriger le plan"]]
-        ))
+        // 3. L'escalade scriptée à l'ouverture du flux est arrivée jusqu'au client ; on
+        // y répond depuis le client.
         #expect(await recipeEventually { client.conduite?.dialogs.first?.id == "recette-1" })
         _ = try await client.answerProjectDialog(
             id: "recette-1",

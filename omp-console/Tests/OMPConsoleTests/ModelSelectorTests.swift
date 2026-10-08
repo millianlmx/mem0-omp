@@ -15,36 +15,53 @@ import Testing
 private let modelT0: Double = 1_700_000_000_000
 private let modelClock = StoreClock { modelT0 }
 
+/// Le capteur du corps posté au service : les commandes ne s'écrivent plus en
+/// fichier, elles partent par HTTP (S-9).
+private final class ModelPostRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var bodies: [[String: Any]] = []
+    var ack = ServiceCommandAck(id: "x", repo: "", kind: nil, state: .taken, reason: nil, at: 0)
+    var failure: Error?
+
+    func post(_ body: [String: Any]) throws -> ServiceCommandAck {
+        lock.lock(); defer { lock.unlock() }
+        bodies.append(body)
+        if let failure { throw failure }
+        return ack
+    }
+}
+
 @MainActor
-private func makeActions(_ fixture: StoreFixture) -> ActionsModel {
+private func makeActions(_ fixture: StoreFixture, recorder: ModelPostRecorder = ModelPostRecorder()) -> ActionsModel {
     ActionsModel(
-        writer: PipelineWriter(stateDir: fixture.root),
+        writer: PipelineWriter(stateDir: fixture.root, post: { _, body in try recorder.post(body) }),
         clock: modelClock,
         salt: { "abcd" }
     )
 }
 
-private func commandObject(_ fixture: StoreFixture, suffix: String = "") -> [String: JSONValue]? {
-    let path = joinPath(joinPath(fixture.root, "commands"), "0001700000000000-abcd\(suffix).json")
-    guard let data = FileManager.default.contents(atPath: path),
-          case .object(let object) = JSONValue.parse(data) else { return nil }
-    return object
+/// L'objet `[String: Any]` du premier corps posté, converti en `[String: JSONValue]`.
+private func postedObject(_ recorder: ModelPostRecorder, index: Int = 0) -> [String: JSONValue]? {
+    guard recorder.bodies.indices.contains(index) else { return nil }
+    return recorder.bodies[index].compactMapValues { JSONValue(raw: $0) }
 }
 
 // MARK: - AC-1 : création — deux modèles choisis, deux clés dans launch
 
 @MainActor
 @Test("model-selector/AC-1 : la commande launch porte les deux modèles choisis")
-func launchCarriesBothModels() throws {
+func launchCarriesBothModels() async throws {
     let fixture = StoreFixture()
-    let model = makeActions(fixture)
+    let recorder = ModelPostRecorder()
+    let model = makeActions(fixture, recorder: recorder)
 
     model.launch(
         title: "Ma feature", description: "l'intention", repoRoot: fixture.root,
         modelReqSpecs: "anthropic/claude-opus-4-7", modelImplReview: "cerebras/gemma-4-31b"
     )
+    await model.commandTask?.value
 
-    let object = try #require(commandObject(fixture))
+    let object = try #require(postedObject(recorder))
     #expect(object["kind"] == .string("launch"))
     #expect(object["modelReqSpecs"] == .string("anthropic/claude-opus-4-7"))
     #expect(object["modelImplReview"] == .string("cerebras/gemma-4-31b"))
@@ -55,16 +72,18 @@ func launchCarriesBothModels() throws {
 
 @MainActor
 @Test("model-selector/AC-1 : un groupe laissé par défaut n'écrit AUCUNE clé de modèle")
-func launchOmitsDefaultGroups() throws {
+func launchOmitsDefaultGroups() async throws {
     let fixture = StoreFixture()
-    let model = makeActions(fixture)
+    let recorder = ModelPostRecorder()
+    let model = makeActions(fixture, recorder: recorder)
 
     model.launch(
         title: "Ma feature", description: "l'intention", repoRoot: fixture.root,
         modelReqSpecs: "  ", modelImplReview: nil
     )
+    await model.commandTask?.value
 
-    let object = try #require(commandObject(fixture))
+    let object = try #require(postedObject(recorder))
     #expect(object["modelReqSpecs"] == nil, "une valeur blanche est lue absente")
     #expect(object["modelImplReview"] == nil)
 }
@@ -96,16 +115,22 @@ func catalogParsesSelectors() {
 
 @MainActor
 @Test("model-selector/AC-5 : la commande models a l'objet JSON exact, NSNull pour un groupe par défaut")
-func modelsCommandIsExact() throws {
+func modelsCommandIsExact() async throws {
     let fixture = StoreFixture()
-    let model = makeActions(fixture)
+    let recorder = ModelPostRecorder()
+    let model = makeActions(fixture, recorder: recorder)
 
     model.setModels(
         repoRoot: fixture.root, slug: "alpha",
         modelReqSpecs: "anthropic/claude-opus-4-7", modelImplReview: nil
     )
+    let entry = try #require(model.journal.first)
+    #expect(entry.kindLabel == ActionsText.modelsLabel)
+    #expect(entry.targetLabel == "alpha")
+    #expect(entry.state == .awaitingAck)
 
-    let object = try #require(commandObject(fixture))
+    await model.commandTask?.value
+    let object = try #require(postedObject(recorder))
     #expect(object == [
         "version": .number(1),
         "id": .string("console-1700000000000-abcd"),
@@ -116,26 +141,22 @@ func modelsCommandIsExact() throws {
         "modelReqSpecs": .string("anthropic/claude-opus-4-7"),
         "modelImplReview": .null,
     ])
-    let entry = try #require(model.journal.first)
-    #expect(entry.kindLabel == ActionsText.modelsLabel)
-    #expect(entry.targetLabel == "alpha")
-    #expect(entry.state == .awaitingAck)
 }
 
 @MainActor
-@Test("model-selector/AC-5 : un refus du pilote est journalisé au motif exact")
-func modelsRefusalIsJournalled() throws {
+@Test("model-selector/AC-5 : un refus du service est journalisé au motif exact")
+func modelsRefusalIsJournalled() async throws {
     let fixture = StoreFixture()
-    let model = makeActions(fixture)
-    let writer = PipelineWriter(stateDir: fixture.root)
+    let recorder = ModelPostRecorder()
     let motif = "lotFeatureMissingRefusal"
+    recorder.ack = ServiceCommandAck(
+        id: "console-1700000000000-abcd", repo: "/x", kind: "models",
+        state: .refused, reason: motif, at: 1
+    )
+    let model = makeActions(fixture, recorder: recorder)
 
     model.setModels(repoRoot: fixture.root, slug: "alpha", modelReqSpecs: "A", modelImplReview: "B")
-    let id = try #require(model.journal.first?.id)
-    try FileManager.default.createDirectory(atPath: writer.commandAckDir, withIntermediateDirectories: true)
-    try Data("{\"version\":1,\"id\":\"\(id)\",\"repo\":\"/x\",\"kind\":\"models\",\"state\":\"refused\",\"reason\":\"\(motif)\",\"at\":1}"
-        .utf8).write(to: URL(fileURLWithPath: writer.ackPath(id: id)))
-    model.pollAcks()
+    await model.commandTask?.value
 
     #expect(model.journal.first?.state == .refused(reason: motif))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))

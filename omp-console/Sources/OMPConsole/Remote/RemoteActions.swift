@@ -2,7 +2,7 @@
 // distance. Ils passent EXCLUSIVEMENT par les méthodes publiques des modèles
 // existants — `ActionsModel`, `ProjectConsoleModel`, `SessionConsoleModel` — et
 // n'ouvrent aucune seconde voie d'écriture : pas d'écriture directe dans
-// `<stateDir>`, pas de process lancé hors `ConductorPool`/`SessionHost`.
+// `<stateDir>`, pas de process lancé (les gestes partent au service par son API).
 
 import ConsoleCore
 import Foundation
@@ -147,26 +147,26 @@ final class RemoteActions {
         let action = try action(card)
         guard action.repoRoot != nil else { throw ConsoleAPIError.conflict("carte sans dépôt") }
         guard let entryId = actions.resume(action) else {
-            // Aucun pilote configuré : le geste n'a rien à armer (l'effet de bord
+            // Carte sans dépôt : le geste n'a rien à armer (l'effet de bord
             // observable est l'entrée de journal, S-10).
             return RemoteAcceptedPayload(accepted: true)
         }
         // La réponse attend la FIN RÉELLE du geste, jamais une borne devinée : le
-        // conducteur peut légitimement mettre jusqu'à `SessionHost.readyTimeout`
-        // (30 s par défaut) avant d'échouer, donc une attente plus courte rendrait
-        // un 202 mensonger sur une panne tardive. L'entrée est ensuite relue par
-        // SON identifiant — le journal est partagé par tous les gestes et borné à
-        // 20 entrées, donc sa tête n'est pas celle de ce geste.
-        let task = actions.pilotTask
+        // service peut légitimement mettre du temps à adopter le lot, donc une
+        // attente plus courte rendrait un 202 mensonger sur une panne tardive.
+        // L'entrée est ensuite relue par SON identifiant — le journal est partagé
+        // par tous les gestes et borné à 20 entrées, donc sa tête n'est pas celle
+        // de ce geste.
+        let task = actions.commandTask
         await task?.value
         guard let entry = actions.journal.first(where: { $0.id == entryId }) else {
             throw ConsoleAPIError.server("le geste de reprise n'a rien consigné")
         }
         if case .failed(let reason) = entry.state {
-            // Le motif du journal préfixe la traduction du conducteur : la route
-            // rend le message de `SessionHostError.userMessage` (S-10).
-            let message = reason.hasPrefix("conducteur : ")
-                ? String(reason.dropFirst("conducteur : ".count))
+            // Le motif du journal préfixe la traduction du service : la route rend
+            // le message utilisateur du client (S-10).
+            let message = reason.hasPrefix("pilote : ")
+                ? String(reason.dropFirst("pilote : ".count))
                 : reason
             throw ConsoleAPIError.unavailable(message)
         }
@@ -376,17 +376,20 @@ final class RemoteActions {
 
     func hostedSession() -> RemoteHostedSessionPayload {
         let host = session.host
-        let transcript = host.transcript
         return RemoteHostedSessionPayload(
             state: Self.stateName(host.state),
             stateLabel: SessionConsoleModel.statusText(for: host.state),
             sessionId: host.sessionId,
             sessionFile: host.sessionFile,
-            protocolVersion: host.protocolVersion,
+            // Plus de protocole RPC : la session est servie par l'API du service
+            // (S-6), dont le fil vivant est le fichier `.jsonl` — lu par les routes
+            // `sessions`/`session` (S-2). Le champ reste pour la compatibilité du
+            // client iOS, jamais deviné.
+            protocolVersion: nil,
             projectName: session.projectRoot?.lastPathComponent,
             dialogs: host.dialogQueue,
-            transcript: Array(transcript.suffix(RemoteLimits.transcriptLines)),
-            truncated: transcript.count > RemoteLimits.transcriptLines
+            transcript: [],
+            truncated: false
         )
     }
 
@@ -397,13 +400,13 @@ final class RemoteActions {
         guard host.state == .running else { throw ConsoleAPIError.conflict("la session n'est pas en marche") }
         do {
             try await host.send(prompt: request.message)
-        } catch let error as SessionHostError {
-            throw ConsoleAPIError.unavailable(error.userMessage)
+        } catch {
+            throw ConsoleAPIError.unavailable(ServiceSessionModel.userMessage(of: error))
         }
         return RemoteSentPayload(sent: true)
     }
 
-    static func stateName(_ state: SessionHost.State) -> String {
+    static func stateName(_ state: ServiceSessionModel.State) -> String {
         switch state {
         case .idle: return "idle"
         case .launching: return "launching"
@@ -418,8 +421,8 @@ final class RemoteActions {
     /// Le lancement de la session hébergée depuis l'iPad (S-1) : la clé est
     /// résolue contre les dépôts CONNUS (comme `startConduite`), la décision
     /// d'exclusivité est prise AVANT l'appel, et la charge rendue est l'état APRÈS
-    /// le démarrage. Un dossier disparu ne lève pas : `SessionHost.begin` pose
-    /// `.failed(message)` et rend 200.
+    /// le démarrage. Un dossier disparu ne lève pas : `ServiceSessionModel.start`
+    /// pose `.failed(message)` et rend 200.
     func launchHostedSession(body: Data) async throws -> RemoteHostedSessionPayload {
         let request = try Self.decode(RemoteHostedLaunchRequest.self, body)
         guard let repo = knownRepos().first(where: { $0.repoKey == request.repoKey }) else {
@@ -428,8 +431,8 @@ final class RemoteActions {
         guard session.canStart else { throw ConsoleAPIError.conflict(SessionConsoleText.launchBusy) }
         do {
             try await session.launch(projectRoot: URL(fileURLWithPath: repo.repoRoot))
-        } catch let error as SessionHostError {
-            throw ConsoleAPIError.unavailable(error.userMessage)
+        } catch {
+            throw ConsoleAPIError.unavailable(ServiceSessionModel.userMessage(of: error))
         }
         return hostedSession()
     }
@@ -440,14 +443,14 @@ final class RemoteActions {
         guard session.canRelaunch else { throw ConsoleAPIError.conflict(SessionConsoleText.relaunchNotDead) }
         do {
             try await session.relaunchSession()
-        } catch let error as SessionHostError {
-            throw ConsoleAPIError.unavailable(error.userMessage)
+        } catch {
+            throw ConsoleAPIError.unavailable(ServiceSessionModel.userMessage(of: error))
         }
         return hostedSession()
     }
 
     /// L'arrêt de la session hébergée (S-7) : idempotent — `host.stop()` est un
-    /// no-op dans `idle/stopped/failed` — et rend l'état courant.
+    /// no-op dans `idle/stopped` — et rend l'état courant.
     func stopHostedSession() async throws -> RemoteHostedSessionPayload {
         await session.stopSession()
         return hostedSession()

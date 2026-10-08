@@ -1,60 +1,16 @@
-// Les volets RPC partagés par la fenêtre « Session OMP » et la vue « Projet »
-// (S-4, BR-3) : transcription brute (inspecteur) et dialogue en attente.
+// Le dialogue partagé par la section « Session OMP » et la vue « Projet »
+// (S-6) : le PREMIER dialogue de la file, avec sa forme de réponse.
 //
-// Ils sont paramétrés par un `idPrefix` (`"session"` / `"projet"`) et par des
-// `Binding`/callbacks : AUCUNE seconde implémentation du dialogue n'existe, et
-// les règles de gating vivent dans les modèles, pas ici.
+// Il est paramétré par un `idPrefix` (`"session"` / `"projet"`) et par des
+// `Binding`/callbacks : aucune seconde implémentation du dialogue n'existe, et les
+// règles de gating vivent dans les modèles, pas ici.
 
 import ConsoleCore
 import SwiftUI
 
-/// La transcription brute, défilante sur la dernière ligne.
-struct RpcTranscriptPane: View {
-    let idPrefix: String
-    let lines: [TranscriptLine]
-    var emptyText: String = SessionConsoleText.noEvent
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    if lines.isEmpty {
-                        Text(emptyText)
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(lines) { line in
-                        Text(line.text)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .id(line.id)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(6)
-            }
-            .accessibilityIdentifier("\(idPrefix).transcript")
-            .onChange(of: lines.count) { _, _ in
-                guard let last = lines.last else { return }
-                proxy.scrollTo(last.id, anchor: .bottom)
-            }
-        }
-        .frame(minHeight: 160)
-        .background(Color.gray.opacity(0.08))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-    }
-}
-
-/// Le dialogue en attente : le PREMIER de la file, avec sa forme de réponse.
-/// « Session OMP » et « Projet » le montrent en feuille, sous leur propre titre
-/// (S-15, S-19 R3 de omp-console-redesign) ; « Projet » rend lui-même le titre
-/// du dialogue (`showsTitle: false`) pour en séparer le corps multi-lignes.
-///
-/// Les options d'un `select` sont une liste de boutons radio : chaque ligne
-/// dit qu'elle se choisit, son libellé et sa description passent à la ligne
-/// plutôt que d'être coupés, et la liste grandit avec son contenu jusqu'à une
-/// hauteur maximale au-delà de laquelle elle défile. Les boutons tiennent sur
-/// UNE rangée alignée à droite : l'annulation, puis l'action par défaut (↩, ou
-/// ⌘↩ sous un éditeur multi-ligne), seule mise en avant.
+/// Le dialogue en attente. « Session OMP » et « Projet » le montrent en feuille,
+/// sous leur propre titre ; « Projet » rend lui-même le titre du dialogue
+/// (`showsTitle: false`) pour en séparer le corps multi-lignes.
 struct RpcDialogPane: View {
     let idPrefix: String
     let dialog: RpcDialogRequest
@@ -125,8 +81,6 @@ struct RpcDialogPane: View {
                     .padding(4)
                 }
                 .scrollIndicators(.visible)
-                // La liste prend la hauteur de son contenu, plafonnée : au-delà,
-                // elle défile au lieu de couper les dernières options.
                 .frame(maxHeight: Self.optionsMaxHeight)
                 .fixedSize(horizontal: false, vertical: true)
                 .background(.background.secondary, in: RoundedRectangle(cornerRadius: 8))
@@ -136,8 +90,6 @@ struct RpcDialogPane: View {
         case .confirm:
             EmptyView()
         case .input:
-            // ↩ déclenche « Répondre », le bouton par défaut : aucun `onSubmit`,
-            // qui enverrait la réponse une seconde fois.
             TextField(dialog.placeholder ?? "", text: $dialogText)
                 .textFieldStyle(.roundedBorder)
         case .editor:
@@ -188,7 +140,6 @@ struct RpcDialogPane: View {
         case .input:
             answerButton(action: onAnswerText, shortcut: .defaultAction)
         case .editor:
-            // Sous un éditeur multi-ligne, ↩ est un saut de ligne : ⌘↩ répond.
             answerButton(action: onAnswerText, shortcut: KeyboardShortcut(.return, modifiers: .command))
         case .confirm:
             Button(SessionConsoleText.decline) { onConfirm(false) }

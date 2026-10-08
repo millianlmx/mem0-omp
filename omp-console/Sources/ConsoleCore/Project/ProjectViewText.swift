@@ -2,7 +2,7 @@
 // endroit à corriger, et des constantes pures donc testables sans UI.
 //
 // Aucun de ces textes n'est un message d'ÉCHEC de session : ceux-là viennent de
-// `SessionHostError.userMessage`, seule table de traduction des erreurs du host.
+// la table de traduction de la coque (`ServiceSessionModel.userMessage`).
 
 import Foundation
 

@@ -26,6 +26,7 @@ public enum SessionConsoleText {
     public static let chooseFolder = "Choisir un dossier…"
     public static let launch = "Lancer la session"
     public static let relaunch = "Relancer"
+    public static let retry = "Réessayer"
     public static let stop = "Arrêter la session"
     /// Le motif d'un lancement refusé : une session est déjà en marche (S-1).
     public static let launchBusy = "Une session est déjà en marche."
@@ -84,7 +85,8 @@ public enum SessionConsoleText {
     public static let noActivity = "Aucune trame pour l'instant."
     public static let noJournal = "Aucune entrée de journal."
 
-    /// Les titres des trames du protocole, humanisées (`RpcEventSummary`).
+    /// Les titres des trames du protocole, humanisées (inspecteur « Détails
+    /// techniques » d'avant le cutover ; conservés pour les écrans qui les citent).
     public enum Frame {
         public static let unreadable = "Trame illisible"
         public static let truncated = "message tronqué"

@@ -8,18 +8,20 @@ import { reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOmpBin, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
-import type { CommandState, CommandView, PipelineCommand } from "./commands.ts";
+import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
 import { featureModelForPhase, modelSlotsField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
-import { SELF_MODULE_URL, applyWorktreeFate, buildLotPrompt, buildLotRunArgv, lastLine, latestSessionFile, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget, selfExtensionArg } from "./runs.ts";
-import type { LotPromptKind, LotRunner, LotRunnerResult, WorktreeFate } from "./runs.ts";
+import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
+import type { LotPromptKind, WorktreeFate } from "./runs.ts";
+import type { LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
 import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeDelivery } from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
+import { serviceRunning } from "./serviceState.ts";
 
 
 
@@ -96,8 +98,6 @@ export type LotControllerDeps = {
   schedule?: (callback: () => void, ms: number) => () => void;
   worktreesBase?: string;
   archiveBase?: string;
-  ompBin?: string;
-  selfPath?: string | null;
   reviewCap?: number;
   /**
    * Le plafond de runs parallèles du lot (S-2) : injecté par les tests, lu sinon
@@ -107,6 +107,13 @@ export type LotControllerDeps = {
    */
   slots?: number;
   runTimeoutMs?: number;
+  /**
+   * Le RÔLE de ce contrôleur (S-4) : `service` = le pilote unique de la machine,
+   * qui reprend un lot tenu par une session terminale vivante ; `session`
+   * (défaut) = une session de l'utilisateur, qui écrit le lot SANS en prendre la
+   * propriété quand un service le pilote — et ne pilote plus rien elle-même.
+   */
+  pilotRole?: "service" | "session";
 };
 
 
@@ -121,6 +128,12 @@ export type LotController = LotPanelActions & {
    * appelant qui veut forcer une passe ; la boucle du pilote l'appelle seule.
    */
   pumpCommands(): Promise<void>;
+  /**
+   * Applique une commande reçue par l'API (S-9) : mêmes refus, même accusé, même
+   * idempotence que le canal de fichiers, et un tick avant de rendre la main pour
+   * que le magasin porte l'état résultant au retour de la réponse.
+   */
+  acceptCommand(cmd: PipelineCommand): Promise<PipelineCommandAck>;
   adopt(): boolean;
   /**
    * Tue tous les runs EN VOL (S-1), avec le motif affiché. Appelé à la fermeture
@@ -165,7 +178,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const cap = deps.reviewCap ?? lotReviewCap();
   const slots = deps.slots ?? lotSlots();
   const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
-  const ompBin = deps.ompBin ?? lotOmpBin();
+  const pilotRole = deps.pilotRole ?? "session";
   const worktreesBase = deps.worktreesBase ?? worktreesBaseDir();
   const archiveBase = deps.archiveBase ?? lotArchiveBaseDir();
   const inFlight = new Map<string, AbortController>();
@@ -256,11 +269,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * mort n'est pas un obstacle : c'est la reprise admise (S-1). Un pid vivant ne
    * suffit pas non plus : un pid RÉUTILISÉ après un redémarrage désigne un autre
    * process, donc le battement du propriétaire départage (`lotOwnerAlive`).
+   *
+   * Deux cas de S-4 ne sont PAS des étrangers : le SERVICE vivant — il relit le
+   * magasin à chaque passe, donc une session terminale doit pouvoir y écrire — et,
+   * quand ce contrôleur EST le service, tout autre pid, puisque plus aucune
+   * session terminale ne pilote un lot : le service reprend la main.
    */
   function foreignOwner(): number | null {
     const onDisk = read();
     if (!onDisk || onDisk.owner.pid === process.pid) return null;
-    return lotOwnerAlive(onDisk.owner, now()) ? onDisk.owner.pid : null;
+    if (!lotOwnerAlive(onDisk.owner, now())) return null;
+    if (pilotRole === "service") return null;
+    const service = serviceRunning(stateDir);
+    if (service !== null && service.pid === onDisk.owner.pid) return null;
+    return onDisk.owner.pid;
   }
 
   /** Un refus d'écriture est dit UNE fois par session — le toast disparaîtrait. */
@@ -268,6 +290,19 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (foreignOwnerWarned) return;
     foreignOwnerWarned = true;
     notify(`[pipeline] lot ${repo} : ${foreignOwnerReason(pid)} — rien ne lui a été écrit`);
+  }
+
+  /**
+   * Le motif du refus d'écrire ce lot, ou `null` : la politique de propriété est
+   * celle de `foreignOwner` — un seul endroit la dit (S-4 : le service vivant
+   * n'est pas un pilote étranger, et le service lui-même reprend tout lot tenu par
+   * une session).
+   */
+  function foreignRefusal(): string | null {
+    const foreign = foreignOwner();
+    if (foreign === null) return null;
+    reportForeignOwner(foreign);
+    return foreignOwnerReason(foreign);
   }
 
   /**
@@ -301,11 +336,25 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return foreignOwnerReason(foreign);
     }
     const session = deps.session?.() ?? { file: null, id: null };
-    // Le battement est estampillé à CHAQUE écriture : c'est lui qui distingue un
-    // pilote vivant d'un pid réutilisé après un redémarrage (S-1). Un lot sans
-    // battement (écrit par une version antérieure) reste lisible : `lotOwnerAlive`
-    // retombe alors sur le pid seul.
-    lot.owner = { pid: process.pid, sessionFile: session.file, sessionId: session.id, heartbeatAt: now() };
+    const service = serviceRunning(stateDir);
+    if (pilotRole !== "service" && service !== null && service.pid !== process.pid) {
+      // Une session TERMINALE n'est jamais propriétaire d'un lot quand un service
+      // le pilote (S-4) : son écriture laisse le lot au service — le battement est
+      // rafraîchi ici pour qu'un lot fraîchement écrit ne paraisse pas abandonné
+      // avant le tick suivant, et la session publiée reste celle du service.
+      lot.owner = {
+        pid: service.pid,
+        sessionFile: lot.owner.sessionFile ?? null,
+        sessionId: lot.owner.sessionId ?? null,
+        heartbeatAt: now(),
+      };
+    } else {
+      // Le battement est estampillé à CHAQUE écriture : c'est lui qui distingue un
+      // pilote vivant d'un pid réutilisé après un redémarrage (S-1). Un lot sans
+      // battement (écrit par une version antérieure) reste lisible : `lotOwnerAlive`
+      // retombe alors sur le pid seul.
+      lot.owner = { pid: process.pid, sessionFile: session.file, sessionId: session.id, heartbeatAt: now() };
+    }
     try {
       writeLot(stateDir, lot);
     } catch (err) {
@@ -505,8 +554,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
    */
   function lotForAdd(slug: string, depsRaw: string[]): { lot: Lot; deps: string[] } | string {
     const existing = read();
+    const foreign = foreignRefusal();
+    if (foreign !== null) return foreign;
     if (existing && existing.owner.pid !== process.pid) {
-      if (lotOwnerAlive(existing.owner, now())) return foreignOwnerReason(existing.owner.pid);
       const refusal = save(existing);
       if (refusal) return refusal;
       start();
@@ -565,22 +615,20 @@ export function createLotController(deps: LotControllerDeps): LotController {
     }
     if (inbox === null) inboxes.delete(feature.slug);
     else inboxes.set(feature.slug, inbox);
-    const argv = buildLotRunArgv({
-      ompBin,
-      worktree: feature.worktree,
-      prompt,
+    const spec: LotRunSpec = {
       lotId: lot.id,
       slug: feature.slug,
       phase: launch.phase,
       stateDir,
+      worktree: feature.worktree,
+      prompt,
       sessionFile,
-      selfPath: deps.selfPath ?? selfExtensionArg(SELF_MODULE_URL),
       // Le modèle (S-1) vient de la FEATURE, au moment du lancement : le groupe de
       // la PHASE du run décide de la clé, et l'ancien modèle unique en repli (AC-4).
       model: featureModelForPhase(feature, launch.phase),
       inbox,
       deadline: at + runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
-    });
+    };
     const abort = new AbortController();
     inFlight.set(feature.slug, abort);
     watched.set(feature.slug, "inflight");
@@ -618,12 +666,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
     let launched: Promise<LotRunnerResult>;
     try {
       launched = Promise.resolve(
-        // Le délai du runner est la MÊME borne de sécurité que celle de l'enfant :
-        // le budget de TRAVAIL est tenu par la passe (elle seule sait suspendre le
+        // Le délai du runner est la MÊME borne de sécurité que celle du run : le
+        // budget de TRAVAIL est tenu par la passe (elle seule sait suspendre le
         // décompte pendant une question en vol, cf. `workBudget`). Un délai de
         // runner calé sur le budget de travail tuerait un run qui ATTEND.
         deps.run({
-          argv,
+          spec,
           cwd: feature.worktree,
           timeout: runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
           signal: abort.signal,
@@ -1461,6 +1509,21 @@ export function createLotController(deps: LotControllerDeps): LotController {
         if (replied !== null) notify(`[pipeline] commande reply : ${replied}`);
         return;
       }
+      case "relaunch": {
+        const done = await actions.relaunch(cmd.slug);
+        if (done !== null) notify(`[pipeline] commande relaunch : ${done}`);
+        return;
+      }
+      case "cancel": {
+        const done = await actions.cancel(cmd.slug, cmd.fate);
+        if (done !== null) notify(`[pipeline] commande cancel : ${done}`);
+        return;
+      }
+      case "start": {
+        const done = await actions.launch();
+        if (done !== null) notify(`[pipeline] commande start : ${done}`);
+        return;
+      }
       case "stop": {
         // L'état « cohérent » de l'arrêt (S-3) : les runs en vol sont interrompus
         // sans être attendus, et les features restent `running` avec leur hash de
@@ -1470,6 +1533,49 @@ export function createLotController(deps: LotControllerDeps): LotController {
         return;
       }
     }
+  }
+
+  /**
+   * Une commande reçue par l'API (S-9) : les MÊMES refus, le MÊME accusé et la
+   * MÊME idempotence que le canal de fichiers — la décision est la fonction pure
+   * `commandRefusal`, sur une lecture fraîche, et l'accusé écrit sur le disque est
+   * ce qui rend le rejeu d'un identifiant inoffensif.
+   *
+   * L'effet précède un TICK du contrôleur : au retour de la réponse, le magasin
+   * porte déjà l'état résultant (S-8, S-9). Un accusé impossible à écrire ne
+   * laisse RIEN s'appliquer : sans lui, un rejeu doublerait l'effet.
+   */
+  async function acceptCommand(cmd: PipelineCommand): Promise<PipelineCommandAck> {
+    const known = readCommandAck(stateDir, cmd.id);
+    if (known !== null) return known;
+    // Le contrôle de BRANCHE d'un ajout est un `git` : il est fait AVANT la
+    // décision pour que celle-ci reste pure (même ordre que le canal de fichiers).
+    let branchTakenNow = false;
+    if (cmd.kind === "launch" || cmd.kind === "add") {
+      const slug = toSlug(cmd.title);
+      if (slug !== null) {
+        try {
+          branchTakenNow = await branchTaken(deps.runGit, deps.repoRoot, branchFor(slug));
+        } catch {
+          branchTakenNow = false;
+        }
+      }
+    }
+    const reason = commandRefusal(cmd, commandViewOf(cmd, branchTakenNow));
+    const ack = commandAck(cmd, cmd.id, reason === null ? "taken" : "refused", reason, now());
+    try {
+      writeCommandAck(stateDir, ack);
+    } catch {
+      return commandAck(cmd, cmd.id, "refused", "écriture de l'accusé impossible", now());
+    }
+    if (reason !== null) return ack;
+    try {
+      await applyCommand(cmd);
+    } catch {
+      /* l'accusé fait foi : le rejeu ne double pas l'effet (S-9) */
+    }
+    await tick();
+    return ack;
   }
 
   /**
@@ -1562,9 +1668,18 @@ export function createLotController(deps: LotControllerDeps): LotController {
     purgeCommandAcks(stateDir, deps.repoRoot);
   }
 
-  /** Démarre la boucle (une passe par `LOT_TICK_MS`) et se réécrit propriétaire. */
+  /**
+   * Démarre la boucle (une passe par `LOT_TICK_MS`) et se réécrit propriétaire.
+   *
+   * Une session TERMINALE n'arme JAMAIS sa boucle tant qu'un service vit (S-4,
+   * S-11) : son runner est une porte fermée, ses passes ne feraient qu'écrire des
+   * refus et disputer le lot au vrai pilote. Seuls le service, et une machine sans
+   * service (où plus rien n'avance, S-4), font tourner cette boucle.
+   */
   function start(): void {
     if (stopLoop) return;
+    const service = serviceRunning(stateDir);
+    if (pilotRole !== "service" && service !== null && service.pid !== process.pid) return;
     stopLoop = (deps.schedule ?? defaultSchedule)(() => {
       void tick().catch(() => undefined);
     }, LOT_TICK_MS);
@@ -1593,7 +1708,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // session en a ouvert le pipeline (S-14) : un brouillon où `a` a seulement
     // ajouté des features attend `l` — le reprendre lancerait leur pipeline.
     if (lot.status === "draft" && !hasStartedFeature(lot)) return false;
-    if (lot.owner.pid === process.pid || lotOwnerAlive(lot.owner, now())) return false;
+    if (lot.owner.pid === process.pid) return false;
+    // Le service est le pilote UNIQUE de la machine (S-4) : un pid vivant qui n'est
+    // pas lui — session terminale d'avant la bascule, run d'une version antérieure
+    // — ne lui dispute pas le lot, il le reprend.
+    if (pilotRole !== "service" && lotOwnerAlive(lot.owner, now())) return false;
     if (save(lot) !== null) return false;
     notify(`[pipeline] lot ${repo} repris par cette session (pilote précédent disparu)`);
     return true;
@@ -1661,8 +1780,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
   function open(slug?: string): { lot: Lot; feature?: LotFeature } | string {
     const lot = read();
     if (!lot) return LOT_NONE_REFUSAL;
+    const foreign = foreignRefusal();
+    if (foreign !== null) return foreign;
     if (lot.owner.pid !== process.pid) {
-      if (lotOwnerAlive(lot.owner, now())) return foreignOwnerReason(lot.owner.pid);
       const refusal = save(lot);
       if (refusal) return refusal;
       start();
@@ -1680,6 +1800,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     tick,
     pumpCommands,
     adopt,
+    acceptCommand,
 
     /**
      * Tue les runs EN VOL (S-1) : appelé à la fermeture de la session pilote. Les
@@ -1711,15 +1832,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
     enrol(input) {
       const existing = read();
-      // Un lot conduit par une session VIVANTE n'est jamais réécrit (S-1,
+      // Un lot conduit par un AUTRE PILOTE VIVANT n'est jamais réécrit (S-1,
       // invariant 2) : ce `/req` n'y inscrit rien — sa feature garde la chaîne
-      // manuelle (S-14), et le lot de l'autre session est intact. Un pilote MORT,
-      // lui, se reprend : c'est la seule reprise admise.
+      // manuelle (S-14), et le lot de l'autre est intact. Le SERVICE, lui, n'est
+      // pas un étranger : une session terminale écrit son lot, le service l'adopte
+      // au balayage suivant (S-4).
+      const foreign = foreignRefusal();
+      if (foreign !== null) return foreign;
       if (existing && existing.owner.pid !== process.pid) {
-        if (lotOwnerAlive(existing.owner, now())) {
-          reportForeignOwner(existing.owner.pid);
-          return foreignOwnerReason(existing.owner.pid);
-        }
         const taken = save(existing);
         if (taken) return taken;
         start();

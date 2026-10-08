@@ -17,9 +17,9 @@ import type { PanelAskOption, PanelPendingAsk } from "./store.ts";
 // Lot de features — le magasin, la chaîne, le pilote.
 // ---------------------------------------------------------------------------
 // Un lot = N features, un pipeline par feature, piloté par UN process (le
-// propriétaire, `owner.pid`). Chaque maillon d'une feature est un RUN : un
-// processus `omp -p` (cf. `buildLotRunArgv`) qui travaille dans le worktree de la
-// feature et meurt à la fin de son tour. Le pilote ne décide rien d'autre que la
+// propriétaire, `owner.pid`) — en pratique le SERVICE (S-4). Chaque maillon d'une
+// feature est un RUN : une session EN PROCESS du service, qui travaille dans le
+// worktree de la feature et est libérée à la fin de son tour (S-3). Le pilote ne décide rien d'autre que la
 // suite, et cette décision est PURE (`nextChainAction`) : l'état vit dans deux
 // fichiers — le contrat de la feature (écrit par l'agent) et le lot (écrit par le
 // pilote seul).

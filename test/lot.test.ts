@@ -20,7 +20,6 @@ import reqExtension, {
   buildLotAlert,
   buildLotPrompt,
   buildLotRecap,
-  buildLotRunArgv,
   buildPanelRows,
   contractHashOf,
   contractPathFor,
@@ -76,6 +75,7 @@ import reqExtension, {
   type LotFeatureState,
   type LotPanelActions,
   type LotRunnerResult,
+  type LotRunSpec,
   type PanelModel,
   type PanelRow,
   type RunningEntry,
@@ -134,7 +134,7 @@ const gitRunner = async (args: string[], cwd: string) => {
   return { code: res.status ?? 1, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 };
 
-type RecordedRun = { argv: string[]; cwd: string };
+type RecordedRun = { spec: LotRunSpec; cwd: string };
 
 /**
  * Le runner des runs. `pending` laisse un run EN VOL (il meurt sur annulation,
@@ -145,14 +145,14 @@ type RecordedRun = { argv: string[]; cwd: string };
 function mkRunner(
   plan:
     | { mode: "pending" }
-    | { mode: "result"; result: (argv: string[]) => LotRunnerResult }
+    | { mode: "result"; result: (spec: LotRunSpec) => LotRunnerResult }
     | { mode: "gate" },
 ) {
   const runs: RecordedRun[] = [];
   const gate: Array<(result: LotRunnerResult) => void> = [];
-  const runner = async ({ argv, cwd, signal }: { argv: string[]; cwd: string; signal?: AbortSignal }) => {
-    runs.push({ argv, cwd });
-    if (plan.mode === "result") return plan.result(argv);
+  const runner = async ({ spec, cwd, signal }: { spec: LotRunSpec; cwd: string; signal?: AbortSignal }) => {
+    runs.push({ spec, cwd });
+    if (plan.mode === "result") return plan.result(spec);
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
     if (plan.mode === "gate") gate.push(resolve);
     if (signal?.aborted) reject(new Error("aborted"));
@@ -176,7 +176,7 @@ type FakeDeps = {
 function mkCtl(
   repoRoot: string,
   options: {
-    runner: (input: { argv: string[]; cwd: string }) => Promise<LotRunnerResult>;
+    runner: (input: { spec: LotRunSpec; cwd: string }) => Promise<LotRunnerResult>;
     gh?: (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
     git?: (args: string[], cwd: string) => Promise<{ code: number; stdout: string; stderr: string }>;
     now?: () => number;
@@ -198,8 +198,8 @@ function mkCtl(
   const base = {
     stateDir,
     repoRoot,
-    run: async (input: { argv: string[]; cwd: string }) => {
-      runs.push({ argv: input.argv, cwd: input.cwd });
+    run: async (input: { spec: LotRunSpec; cwd: string }) => {
+      runs.push({ spec: input.spec, cwd: input.cwd });
       return options.runner(input);
     },
     runGit: options.git ?? gitRunner,
@@ -567,9 +567,9 @@ function fakeKit() {
 
 const rowsText = (rows: PanelRow[]) => rows.map((row) => row.text).join("\n");
 
-/** Le maillon d'un run enregistré, lu dans son argv. */
+/** Le maillon d'un run enregistré, lu dans sa spécification. */
 function phaseOf(run: RecordedRun): string {
-  return run.argv[run.argv.indexOf("--pipeline-phase") + 1] as string;
+  return run.spec.phase;
 }
 
 // ---------------------------------------------------------------------------
@@ -730,58 +730,36 @@ test("les impasses de la chaîne sont bloquées, nommées, et jamais silencieuse
 });
 
 // ---------------------------------------------------------------------------
-// L'argv et le prompt d'un run
+// La SPÉCIFICATION d'un run (S-3) : plus d'argv, un process unique
 // ---------------------------------------------------------------------------
 
-test("l'argv d'un run porte le drapeau de phase, l'auto-approbation et le prompt après `--`", () => {
-  const argv = buildLotRunArgv({
-    ompBin: "omp",
-    worktree: "/tmp/wt",
-    prompt: "- un prompt qui commence par un tiret",
+test("la spécification d'un run porte l'identité du maillon, le prompt et sa reprise", () => {
+  const spec: LotRunSpec = {
     lotId: "abc123",
     slug: "iso",
     phase: "specs",
     stateDir: "/tmp/state",
-    sessionFile: null,
-    selfPath: "/tmp/ext.ts",
-  });
-  assert.deepEqual(argv, [
-    "omp",
-    "--cwd",
-    "/tmp/wt",
-    "-p",
-    "--auto-approve",
-    "--pipeline-lot",
-    "abc123",
-    "--pipeline-feature",
-    "iso",
-    "--pipeline-phase",
-    "specs",
-    "--pipeline-state-dir",
-    "/tmp/state",
-    "-e",
-    "/tmp/ext.ts",
-    "--",
-    "- un prompt qui commence par un tiret",
-  ]);
-  assert.equal(argv.includes("--resume"), false, "aucune reprise sur un premier run");
-
-  const resumed = buildLotRunArgv({
-    ompBin: "omp",
     worktree: "/tmp/wt",
-    prompt: "x",
-    lotId: "abc123",
-    slug: "iso",
-    phase: "req",
-    stateDir: "/tmp/state",
-    sessionFile: "/tmp/s.jsonl",
-    selfPath: null,
-  });
-  assert.deepEqual(resumed.slice(resumed.indexOf("--resume"), resumed.indexOf("--resume") + 2), [
-    "--resume",
-    "/tmp/s.jsonl",
-  ]);
-  assert.equal(resumed.includes("-e"), false, "sans chemin d'extension connu, pas de `-e`");
+    prompt: "- un prompt qui commence par un tiret",
+    sessionFile: null,
+    model: null,
+    inbox: "/tmp/inbox",
+    deadline: 1_700_000_100_000,
+  };
+  // Un prompt qui commence par un tiret n'a plus de drapeau à heurter : il part
+  // TEL QUEL dans la session, et l'identité du maillon est un objet, pas un argv.
+  assert.equal(spec.prompt, "- un prompt qui commence par un tiret");
+  assert.equal(spec.sessionFile, null, "aucune reprise sur un premier run");
+  assert.equal(spec.lotId, "abc123");
+  assert.equal(spec.phase, "specs");
+  assert.equal(spec.stateDir, "/tmp/state");
+  assert.equal(spec.worktree, "/tmp/wt");
+  assert.equal(spec.inbox, "/tmp/inbox");
+  assert.equal(spec.deadline, 1_700_000_100_000);
+
+  const resumed: LotRunSpec = { ...spec, phase: "req", sessionFile: "/tmp/s.jsonl" };
+  assert.equal(resumed.sessionFile, "/tmp/s.jsonl", "une réponse reprend la session du maillon");
+  assert.equal(resumed.phase, "req");
 });
 
 test("le préambule d'un run annonce `ask` et ne clôt jamais une collecte", () => {
@@ -875,12 +853,9 @@ test("lot/AC-1 : un lot vide, trois features ajoutées puis lancées, trois pipe
 
   assert.equal(runs.length, 3, "trois runs, un par feature");
   for (const run of runs) {
-    assert.ok(run.argv.includes("--cwd") && run.cwd !== "");
-    assert.deepEqual(run.argv.slice(run.argv.indexOf("--pipeline-phase"), run.argv.indexOf("--pipeline-phase") + 2), [
-      "--pipeline-phase",
-      "req",
-    ]);
-    assert.ok(run.argv.includes("--auto-approve"));
+    assert.notEqual(run.cwd, "", "le run porte le cwd de son worktree");
+    assert.equal(run.spec.phase, "req");
+    assert.notEqual(run.spec.prompt, "", "le run porte le prompt de son maillon");
     assert.equal(fs.existsSync(run.cwd), true, "le worktree existe sur le disque");
     assert.ok(!fs.existsSync(contractPathFor(run.cwd)), "le contrat naîtra de la collecte, pas du lancement");
   }
@@ -929,7 +904,7 @@ test("lot/AC-2 : une feature ajoutée à un lot lancé démarre sans toucher aux
   assert.deepEqual(after.features.slice(0, 2), before, "les pipelines en cours n'ont pas bougé");
   assert.equal(after.features[3]!.state, "running", "la nouvelle feature a démarré sans autre action");
   assert.equal(runs.length, 3);
-  assert.ok(runs.some((run) => run.argv.includes("gamma")), "un run porte la nouvelle feature");
+  assert.ok(runs.some((run) => run.spec.slug === "gamma"), "un run porte la nouvelle feature");
 
   // Le battement armé fait avancer la dépendante dès que sa dépendance se termine.
   const done = readLot(stateDir, lotRepoKey(repoRoot))!;
@@ -994,7 +969,7 @@ test("lot/AC-2 : une feature ajoutée à un lot lancé démarre sans toucher aux
     after2.features[0]!.phase,
     "alpha n'est pas figée `running` : son maillon courant a bien un run",
   );
-  assert.ok(gated.runs.some((run) => run.argv.includes("beta")), "un run porte la feature ajoutée");
+  assert.ok(gated.runs.some((run) => run.spec.prompt.includes("beta")), "un run porte la feature ajoutée");
 });
 
 test("lot/AC-3 : une feature qui n'a pas démarré se retire, et aucun pipeline ne démarre pour elle", async () => {
@@ -1012,7 +987,7 @@ test("lot/AC-3 : une feature qui n'a pas démarré se retire, et aucun pipeline 
     ["alpha"],
   );
   assert.equal(runs.length, 1);
-  assert.ok(!runs[0]!.argv.includes("beta"));
+  assert.ok(!runs[0]!.spec.prompt.includes("beta"));
 });
 
 test("une annulation nomme le worktree introuvable, et un retrait refusé bloque la feature", async () => {
@@ -1131,7 +1106,7 @@ test("lot/AC-16 : une feature dépendante ne démarre qu'après la fin de celle 
   await controller.launch();
 
   assert.equal(runs.length, 1, "seule alpha démarre");
-  assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /alpha|req/);
+  assert.match(runs[0]!.spec.prompt, /alpha|req/);
   let lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[1]!.state, "pending", "beta attend, sans erreur");
 
@@ -1345,9 +1320,9 @@ test("lot/AC-5 : la chaîne enchaîne collecte, specs, implémentation et revue 
   gate.shift()!(ok);
   await flush(6);
   assert.equal(runs.length, 2, "la collecte close enchaîne sur /specs");
-  const phases = runs.map((run) => run.argv[run.argv.indexOf("--pipeline-phase") + 1]);
+  const phases = runs.map((run) => run.spec.phase);
   assert.equal(phases[1], "specs");
-  assert.match(runs[1]!.argv[runs[1]!.argv.length - 1]!, /^\[specs\]/);
+  assert.match(runs[1]!.spec.prompt, /^\[specs\]/);
 
   // 2. specs produites : le jalon suspend la chaîne, rien ne part tout seul
   writeContract(worktree, CONTRACT_SPECS);
@@ -1362,7 +1337,7 @@ test("lot/AC-5 : la chaîne enchaîne collecte, specs, implémentation et revue 
   assert.equal(await deps.controller.validate("alpha"), null);
   await flush(4);
   assert.equal(runs.length, 3);
-  assert.equal(runs[2]!.argv[runs[2]!.argv.indexOf("--pipeline-phase") + 1], "impl");
+  assert.equal(runs[2]!.spec.phase, "impl");
   gate.shift()!(ok);
   await flush(6);
   assert.equal(runs.length, 4);
@@ -1406,8 +1381,8 @@ test("lot/AC-4 : une feature ouverte par /req suit la même chaîne dès sa basc
   assert.equal(lot.features[0]!.phase, "specs", "la bascule place la feature sur le maillon des specs");
   assert.equal(lot.features[0]!.sessionFile, "/tmp/collecte.jsonl", "la session de la collecte reste joignable");
   assert.equal(runs.length, 1);
-  assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "specs");
-  assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /^\[specs\]/, "la graine est celle des specs, comme pour un lot");
+  assert.equal(runs[0]!.spec.phase, "specs");
+  assert.match(runs[0]!.spec.prompt, /^\[specs\]/, "la graine est celle des specs, comme pour un lot");
 
   // --- une écriture impossible ne fait pas croire à la bascule (S-1) ---------
   // Chemin nominal de /req : si le lot n'a pas pu être écrit, la bascule n'a PAS
@@ -1480,7 +1455,7 @@ test("lot/AC-6 : une revue qui remonte des problèmes relance l'implémentation 
   assert.equal(lot.features[0]!.phase, "impl");
   assert.equal(lot.features[0]!.fixes, 1, "un tour de correction est consommé");
   assert.equal(runs.length, 1);
-  assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /^\[impl --fix\]/, "la graine est celle de la correction");
+  assert.match(runs[0]!.spec.prompt, /^\[impl --fix\]/, "la graine est celle de la correction");
 });
 
 test("lot/AC-7 : au plafond, la boucle s'arrête et la feature apparaît bloquée", async () => {
@@ -1575,7 +1550,7 @@ test("lot/AC-9 : mon accord livre — la branche est poussée vers l'URL HTTPS e
   assert.equal(lot.features[0]!.state, "done");
   assert.equal(lot.features[0]!.prUrl, GH + "/o/r/pull/12");
   assert.equal(runs.length, 1, "le maillon de livraison a tourné une fois");
-  assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "release");
+  assert.equal(runs[0]!.spec.phase, "release");
   assert.deepEqual(pushes, [["push", "-u", GH + "/o/r.git", "feat/alpha"]]);
   assert.deepEqual(ghCalls[0], ["repo", "view", "--json", "url,defaultBranchRef"]);
   assert.deepEqual(ghCalls[1], [
@@ -1709,12 +1684,8 @@ test("lot/AC-12 : répondre relance le maillon interrompu, dans sa session", asy
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "running");
   assert.equal(runs.length, 1);
-  const argv = runs[0]!.argv;
-  assert.deepEqual(argv.slice(argv.indexOf("--resume"), argv.indexOf("--resume") + 2), [
-    "--resume",
-    "/tmp/session-collecte.jsonl",
-  ]);
-  assert.match(argv[argv.length - 1]!, /\[réponse de l'utilisateur\] je veux ceci/);
+  assert.equal(runs[0]!.spec.sessionFile, "/tmp/session-collecte.jsonl", "le run reprend la session du maillon");
+  assert.match(runs[0]!.spec.prompt, /\[réponse de l'utilisateur\] je veux ceci/);
 });
 
 test("la collecte d'une feature de lot se répond dans la session, pas au panneau", async () => {
@@ -1756,8 +1727,8 @@ test("lot/AC-13 : relancer une feature bloquée ne touche pas aux autres pipelin
     "la relance ouvre un nouveau crédit, et le run de correction qu'elle lance est compté",
   );
   assert.equal(lot.features[0]!.reviewRuns, 0, "aucune revue n'a été lancée");
-  assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /^\[reprise\]/);
-  assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /\[impl --fix\]/, "la revue bloquante impose la correction");
+  assert.match(runs[0]!.spec.prompt, /^\[reprise\]/);
+  assert.match(runs[0]!.spec.prompt, /\[impl --fix\]/, "la revue bloquante impose la correction");
   assert.deepEqual(lot.features[1]!, otherBefore, "l'autre pipeline est intact");
 });
 
@@ -1930,8 +1901,8 @@ test("lot/AC-15 : le dernier pipeline terminal poste le récap du lot, une seule
 
 test("lot/AC-19 : l'échec d'un pipeline ne freine pas les autres, et un lot repris réconcilie son run interrompu", async () => {
   const repoRoot = mkRepo();
-  const runner = async ({ argv }: { argv: string[] }) => {
-    if (argv.includes("fautif")) return { code: 1, killed: false, stdout: "", stderr: "ligne utile\nboom\n" };
+  const runner = async ({ spec }: { spec: LotRunSpec }) => {
+    if (spec.prompt.includes("fautif")) return { code: 1, killed: false, stdout: "", stderr: "ligne utile\nboom\n" };
     return new Promise<LotRunnerResult>(() => {});
   };
   const { controller, runs, stateDir } = mkCtl(repoRoot, { runner });
@@ -2645,7 +2616,7 @@ test("les touches du panneau pilotent le lot, et les refus s'affichent sans rien
   component.handleInput("\r");
   await flush(4);
   assert.equal(runs.length, 1);
-  assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "impl");
+  assert.equal(runs[0]!.spec.phase, "impl");
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.phase, "impl");
   assert.match(screen(), /en cours/);
 
@@ -2736,7 +2707,7 @@ test("`l` lance le lot, `x` retire une feature qui n'a pas démarré, `c` puis `
   assert.equal(launched.features[0]!.state, "running");
   assert.equal(launched.features[1]!.state, "pending", "la dépendance non satisfaite garde beta à l'arrêt");
   assert.equal(runs.length, 1);
-  assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "req");
+  assert.equal(runs[0]!.spec.phase, "req");
   const alpha = launched.features[0]!;
 
   // `j` puis `x` : la ligne sélectionnée est beta, qui n'a pas démarré.
@@ -2835,9 +2806,9 @@ test("`Entrée` répond au maillon qui attend depuis sa VUE, `R` le relance depu
   component.handleInput("\r");
   await flush(6);
   assert.equal(runs.length, 1);
-  assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "req");
-  assert.ok(runs[0]!.argv.includes("--resume"), "répondre relance le maillon dans SA session");
-  assert.match(runs[0]!.argv[runs[0]!.argv.length - 1]!, /voici ma réponse bloquante/);
+  assert.equal(runs[0]!.spec.phase, "req");
+  assert.notEqual(runs[0]!.spec.sessionFile, null, "répondre relance le maillon dans SA session");
+  assert.match(runs[0]!.spec.prompt, /voici ma réponse bloquante/);
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state, "running");
 
   // S-5 : une feature qui TOURNE n'accepte plus de réponse — le texte part en FILE.
@@ -2869,7 +2840,7 @@ test("`Entrée` répond au maillon qui attend depuis sa VUE, `R` le relance depu
   component.handleInput("\r");
   await flush(6);
   assert.equal(runs.length, 2);
-  const prompt = runs[1]!.argv[runs[1]!.argv.length - 1]!;
+  const prompt = runs[1]!.spec.prompt;
   assert.match(prompt, /^\[reprise\]/);
   assert.match(
     prompt,
@@ -2992,6 +2963,7 @@ test("un run de lot arme son maillon au démarrage et clôt son entrée à la fi
     "pipeline-feature",
     "pipeline-lot",
     "pipeline-phase",
+    "pipeline-service",
     "pipeline-state-dir",
   ]);
   const stateDir = path.join(mktmp("lot-worker-"), "pipeline");
@@ -3456,7 +3428,7 @@ test("slots/AC-1 : un lot ne démarre que le nombre de runs de son plafond", asy
     assert.equal(retained.worktree, "", "la passe ne prépare même pas l'arbre d'une retenue");
     assert.equal(retained.held, undefined, "aucun geste n'a été demandé pour elle : rien à mémoriser");
     assert.equal(heldBySlots(lot, retained), true, "elle est retenue par le plafond, pas par autre chose");
-    assert.ok(!runs.some((run) => run.argv.includes(retained.slug)), `aucun run ne porte ${retained.slug}`);
+    assert.ok(!runs.some((run) => run.spec.prompt.includes(retained.slug)), `aucun run ne porte ${retained.slug}`);
   }
 });
 
@@ -3485,8 +3457,8 @@ test("slots/AC-2 : un run qui se termine ouvre son créneau à la PREMIÈRE rete
     ["failed", "running", "running", "pending"],
   );
   assert.equal(slotBusy(lot), 2, "le compte de runs en vol reste au plafond");
-  assert.ok(runs.at(-1)!.argv.includes("gamma"), "la première retenue démarre");
-  assert.ok(!runs.some((run) => run.argv.includes("delta")), "la seconde retenue attend un autre créneau");
+  assert.equal(runs.at(-1)!.spec.slug, "gamma", "la première retenue démarre");
+  assert.ok(!runs.some((run) => run.spec.prompt.includes("delta")), "la seconde retenue attend un autre créneau");
   assert.equal(lot.features[3]!.worktree, "", "et la passe ne lui a pas préparé d'arbre");
   assert.equal(heldBySlots(lot, lot.features[3]!), true);
 });
@@ -3569,7 +3541,7 @@ test("slots/AC-3 : à plafond plein, gestes et bascule de collecte sont RETENUS"
   assert.equal(after.features[1]!.held, undefined, "le lancement retenu est consommé au démarrage réel");
   assert.equal(after.features[1]!.phase, "impl");
   assert.equal(phaseOf(runs.at(-1)!), "impl");
-  assert.ok(runs.at(-1)!.argv.includes("beta"), "la première retenue démarre");
+  assert.equal(runs.at(-1)!.spec.slug, "beta", "la première retenue démarre");
   assert.equal(slotBusy(after), 1, "un seul créneau : beta a pris celui d'alpha");
   assert.equal(after.features[3]!.state, "pending", "delta reste retenu, avec son texte");
   assert.equal(after.features[3]!.held!.text, "le texte retenu");
@@ -3629,7 +3601,7 @@ test("slots/AC-4 : un run hors lot ne consomme pas de créneau", async () => {
   await waitFor(() => readLot(stateDir, lotRepoKey(repoRoot))!.features[1]!.state === "running");
 
   assert.equal(runs.length, 2);
-  assert.ok(runs.at(-1)!.argv.includes("beta"), "la retenue démarre : le run hors lot ne l'a pas retardée");
+  assert.equal(runs.at(-1)!.spec.slug, "beta", "la retenue démarre : le run hors lot ne l'a pas retardée");
   assert.equal(slotBusy(readLot(stateDir, lotRepoKey(repoRoot))!), 1);
   assert.equal(hasFreeSlot(readLot(stateDir, lotRepoKey(repoRoot))!), false);
 });

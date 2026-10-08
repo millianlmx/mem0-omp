@@ -1,6 +1,7 @@
-// Le modèle de la fenêtre « Projet » (S-1 … S-10, BR-1/BR-2/BR-4) : il possède un
-// `SessionHost` (comme `SessionConsoleModel` possède le sien) et il est le SEUL
-// endroit qui décide — armement, refus, clôture, dialogues, attention.
+// Le modèle de la vue « Projet » (S-1 … S-10, BR-1/BR-2/BR-4) : il possède la
+// session servie de la conduite (comme `SessionConsoleModel` possède la sienne) et
+// il est le SEUL endroit qui décide — armement, refus, clôture, dialogues,
+// attention.
 //
 // Deux règles de forme valent pour tout ce fichier :
 //   — l'app n'ÉCRIT JAMAIS l'état du projet (ni `projects/<clé>.json`, ni le
@@ -22,17 +23,17 @@ import Foundation
 
 @MainActor
 final class ProjectConsoleModel: ObservableObject {
-    let host: SessionHost
+    let host: ServiceSessionModel
 
     // MARK: - État de la conduite
 
     @Published private(set) var state: ConduiteState = .none
     @Published private(set) var identity: ConduiteIdentity?
-    /// Le SEUL texte d'échec affiché : le `userMessage` d'une `SessionHostError`,
+    /// Le SEUL texte d'échec affiché : le `userMessage` d'une erreur du service,
     /// ou le texte d'état de la session morte (`SessionConsoleModel.statusText`).
     @Published private(set) var statusMessage: String = ""
-    /// Le message de la dernière présentation `notify` du pilote, DÉCODÉ de sa
-    /// trame (les `\n` sont de vrais retours à la ligne) — jamais la trame brute.
+    /// La dernière notice publiée par le service (S-7), affichée telle quelle —
+    /// jamais une trame brute.
     @Published private(set) var notice: String? {
         didSet { noticeBlocks = notice.map(MarkdownDocument.blocks) ?? [] }
     }
@@ -47,11 +48,8 @@ final class ProjectConsoleModel: ObservableObject {
     @Published var prompt: String = ""
     @Published var dialogText: String = ""
     @Published var selectedOptionIndex: Int?
-    /// L'inspecteur « Détails techniques » (session, activité, journal, trames
-    /// brutes) est ouvert (S-19 R3, patron S-18 R8).
+    /// L'inspecteur « Détails techniques » (session et journal) est ouvert.
     @Published var technicalShown = false
-    /// Le pli « Trames brutes » de l'inspecteur, fermé par défaut.
-    @Published var rawFramesShown = false
     /// La confirmation « Arrêter le pilotage » est présentée.
     @Published var isStopConfirmationPresented = false
 
@@ -134,16 +132,13 @@ final class ProjectConsoleModel: ObservableObject {
     private var pendingMergeBody = ""
 
     private let makeConversation: @MainActor (ViewerTarget) -> SessionViewerModel
-    private let activityCache = RpcActivityCache()
     /// Le nom de la conduite en cours d'armement : le fichier de session est
-    /// publié PENDANT `host.start`, avant que `identity` ne soit posée.
+    /// publié PENDANT l'armement, avant que `identity` ne soit posée.
     private var conversationTitle = ""
-    /// L'entrée de journal `notify` déjà lue (`refreshNotice`).
-    private var lastNoticeEntryID: Int?
     private var cancellables: Set<AnyCancellable> = []
 
     init(
-        host: SessionHost? = nil,
+        host: ServiceSessionModel? = nil,
         attention: AttentionRequesting = SystemAttention(),
         presence: any WindowFrontmostReporting = ProjectWindowPresence(),
         stateDir: String = PipelineStore.stateDir(),
@@ -155,7 +150,7 @@ final class ProjectConsoleModel: ObservableObject {
         fileManager: FileManager = .default,
         makeConversation: @escaping @MainActor (ViewerTarget) -> SessionViewerModel = { SessionViewerModel(target: $0) }
     ) {
-        let host = host ?? SessionHost()
+        let host = host ?? ServiceSessionModel(purpose: "project")
         self.host = host
         self.attention = attention
         self.presence = presence
@@ -211,10 +206,11 @@ final class ProjectConsoleModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // La notice est la dernière présentation `notify` (S-1).
-        host.$journal
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.refreshNotice() }
+        // La notice est la dernière notice publiée par le service (S-7).
+        host.$lastNotice
+            .removeDuplicates()
+            .sink { [weak self] message in
+                Task { @MainActor in self?.notice = message }
             }
             .store(in: &cancellables)
 
@@ -236,7 +232,7 @@ final class ProjectConsoleModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Fermeture de l'app : la conduite a son propre process à attendre.
+        // Fermeture de l'app : la session servie de la conduite est fermée (S-7).
         AppDelegate.terminateProject = { [weak self] in
             await self?.host.terminateForQuit()
         }
@@ -263,12 +259,6 @@ final class ProjectConsoleModel: ObservableObject {
     /// L'état de la session en un mot et un ton, pour le badge de l'en-tête.
     var sessionStatus: ConsoleStatus {
         .of(session: host.state, hasProject: true)
-    }
-
-    /// L'activité de l'inspecteur : les trames humanisées, la plus récente en haut
-    /// (patron S-18 R8). Chaque trame n'est résumée qu'une fois.
-    var activity: [RpcEventLine] {
-        activityCache.activity(host.transcript)
     }
 
     // MARK: - Armement (S-1)
@@ -308,10 +298,10 @@ final class ProjectConsoleModel: ObservableObject {
         }
         conversationTitle = normalized
         do {
-            try await host.start(mode: .rpcUI, projectRoot: repoRoot, resume: false)
-            try await host.send(prompt: "/project " + normalized)
+            try await host.startConduite(repoRoot: repoRoot, name: normalized)
             identity = ConduiteIdentity(repoRoot: repoRoot, name: normalized)
             state = .live
+            await host.refreshState()
             refreshProject()
             armDocWatch()
         } catch {
@@ -319,7 +309,7 @@ final class ProjectConsoleModel: ObservableObject {
             identity = nil
             project = nil
             docText = nil
-            statusMessage = (error as? SessionHostError)?.userMessage ?? String(describing: error)
+            statusMessage = ServiceSessionModel.userMessage(of: error)
         }
         evaluateAttention()
     }
@@ -750,7 +740,7 @@ final class ProjectConsoleModel: ObservableObject {
             try await host.send(prompt: text)
             prompt = ""
         } catch {
-            statusMessage = (error as? SessionHostError)?.userMessage ?? String(describing: error)
+            statusMessage = ServiceSessionModel.userMessage(of: error)
         }
     }
 
@@ -796,12 +786,14 @@ final class ProjectConsoleModel: ObservableObject {
     }
 
     private func answer(_ response: RpcDialogResponse) {
-        do {
-            try host.answer(response)
-            dialogText = ""
-            selectedOptionIndex = nil
-        } catch {
-            statusMessage = (error as? SessionHostError)?.userMessage ?? String(describing: error)
+        Task { @MainActor in
+            do {
+                try await host.answer(response)
+                dialogText = ""
+                selectedOptionIndex = nil
+            } catch {
+                statusMessage = ServiceSessionModel.userMessage(of: error)
+            }
         }
     }
 
@@ -821,11 +813,11 @@ final class ProjectConsoleModel: ObservableObject {
 
     // MARK: - Statut et attention
 
-    private func hostStateChanged(_ hostState: SessionHost.State) {
+    private func hostStateChanged(_ hostState: ServiceSessionModel.State) {
         switch hostState {
-        case .dead(let exit):
+        case .dead:
             if state == .live || state == .starting { state = .closed }
-            statusMessage = SessionConsoleModel.statusText(for: .dead(exit: exit))
+            statusMessage = SessionConsoleModel.statusText(for: .dead)
         case .stopped:
             if state == .live || state == .starting { state = .closed }
         case .failed(let message):
@@ -834,40 +826,6 @@ final class ProjectConsoleModel: ObservableObject {
             break
         }
         evaluateAttention()
-    }
-
-    /// La notice suit le JOURNAL (qui publie peu) mais se lit dans la TRAME : le
-    /// journal n'en garde qu'un résumé brut tronqué. Seule une nouvelle entrée
-    /// `notify` relance la recherche.
-    private func refreshNotice() {
-        let last = host.journal.last { entry in
-            entry.kind == .presentation && entry.message.hasPrefix("présentation notify")
-        }
-        guard last?.id != lastNoticeEntryID else { return }
-        lastNoticeEntryID = last?.id
-        guard last != nil else {
-            notice = nil
-            return
-        }
-        // La trame est ajoutée à la transcription AVANT l'entrée du journal.
-        let frame = host.transcript.last { line in
-            line.kind == .inbound && line.text.contains("\"notify\"")
-        }
-        notice = frame.flatMap { Self.notifyMessage(frame: $0.text) }
-    }
-
-    /// PURE : le `message` d'une trame `extension_ui_request` de méthode `notify`,
-    /// décodé par JSON ; `nil` pour toute autre trame, une trame tronquée par le
-    /// host (JSON illisible) ou un message vide.
-    nonisolated static func notifyMessage(frame: String) -> String? {
-        guard let data = frame.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              object["type"] as? String == "extension_ui_request",
-              object["method"] as? String == "notify",
-              let message = object["message"] as? String
-        else { return nil }
-        let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     /// Applique `AttentionDecision.action(for:)` à chaque changement d'entrée

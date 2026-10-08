@@ -108,19 +108,11 @@ func terminationGuardCoversTheThreeHooks() async {
     let savedSession = AppDelegate.terminateSession
     let savedProject = AppDelegate.terminateProject
     let savedTerminal = AppDelegate.terminateTerminal
-    let savedConductors = AppDelegate.terminateConductors
-    let savedBusy = AppDelegate.conductorsBusy
     defer {
         AppDelegate.terminateSession = savedSession
         AppDelegate.terminateProject = savedProject
         AppDelegate.terminateTerminal = savedTerminal
-        AppDelegate.terminateConductors = savedConductors
-        AppDelegate.conductorsBusy = savedBusy
     }
-    // Les accroches des conducteurs (posées par tout `ConductorPool` construit
-    // ailleurs dans la suite) ne doivent pas brouiller cette preuve.
-    AppDelegate.terminateConductors = nil
-    AppDelegate.conductorsBusy = nil
 
     AppDelegate.terminateSession = nil
     AppDelegate.terminateProject = nil
@@ -149,19 +141,11 @@ func terminalHookIsIndependentFromTheOthers() async {
     let savedSession = AppDelegate.terminateSession
     let savedProject = AppDelegate.terminateProject
     let savedTerminal = AppDelegate.terminateTerminal
-    let savedConductors = AppDelegate.terminateConductors
-    let savedBusy = AppDelegate.conductorsBusy
     defer {
         AppDelegate.terminateSession = savedSession
         AppDelegate.terminateProject = savedProject
         AppDelegate.terminateTerminal = savedTerminal
-        AppDelegate.terminateConductors = savedConductors
-        AppDelegate.conductorsBusy = savedBusy
     }
-    // Les accroches des conducteurs (posées par tout `ConductorPool` construit
-    // ailleurs dans la suite) ne doivent pas brouiller cette preuve.
-    AppDelegate.terminateConductors = nil
-    AppDelegate.conductorsBusy = nil
 
     var sessionCalled = false
     var terminalCalled = false

@@ -10,8 +10,8 @@ ouverte depuis **Sessions** est poussée dans la section, avec un bouton retour)
 L'app s'ouvre sur l'**Accueil** (voir « Premiers pas ») ; **Pipelines** affiche
 le tableau des pipelines (voir « Section Kanban ») avec sa zone d'action (voir
 « Agir depuis Pipelines »), **Projet** le pilotage de projet (voir « Section
-Projet (pilotage) »), **Session OMP** la session hébergée (voir « Héberger une
-session OMP »), **Terminal** le terminal intégré (voir « Section Terminal »),
+Projet (pilotage) »), **Session OMP** la session servie par l'API locale (voir
+« Piloter le service »), **Terminal** le terminal intégré (voir « Section Terminal »),
 **Sessions** le sélecteur de sessions (voir « Visionneuse de session »),
 **Fichiers** la visionneuse de fichiers et de diffs (voir « Lire les fichiers et
 les diffs d'une cible »), **Mémoire** la mémoire du projet en lecture seule (voir
@@ -33,6 +33,11 @@ Cible minimale : macOS 26.
   Xcode, but active developer directory is a CommandLineTools instance »). Tout
   passe par SwiftPM (`swift build`, `swift test`) et par l'assemblage du bundle
   décrit ci-dessous.
+- **Un service local en marche** pour les sessions : l'app est **cliente** d'une
+  API REST locale servie par `omp-mem0-req` (jeton et port dans
+  `~/.omp/agent/pipeline/service.json`). L'app n'en lance **aucun** process :
+  service absent ⇒ « service arrêté » et un bouton « Réessayer » (voir « Piloter
+  le service »).
 - **Rien d'autre à installer** : ni `omp`, ni podman/Docker, ni la pile mémoire —
   l'app installe et démarre tout ce qui lui manque au premier lancement (voir
   « Composants de l'app »). Restent hors périmètre, mais SIGNALÉS par l'app quand
@@ -67,12 +72,13 @@ Tout se fait depuis l'app, sans terminal :
    impl+review`, chaque liste menée par `défaut OMP (aucun modèle)` puis les
    sélecteurs de `omp models --json`), le titre (il devient la branche
    `feat/<titre>`) et le besoin.
-   « Lancer » (↩, bouton par défaut) dépose une commande `launch` dans le canal et revient à
+   « Lancer » (↩, bouton par défaut) poste une commande `launch` au service et revient à
    l'Accueil, dont le bandeau suit l'accusé.
-4. **Le conducteur** — un dépôt sans pilote vivant est conduit par l'app : elle
-   démarre un `omp --mode rpc` sur ce dépôt APRÈS avoir déposé la commande (un
-   pilote n'arme le canal qu'à son démarrage), un seul par dépôt. Il vit tant que
-   l'app vit ; quitter pendant des maillons en cours demande confirmation.
+4. **Le service** — l'app ne lance **aucun** process `omp` pour les sessions :
+   elle lit l'enregistrement `service.json` du service local (jeton, port), crée
+   les sessions par l'API et poste les commandes. Un dépôt sans pilote vivant se
+   réveille par `POST /v1/repos/{repo}/pilot` : le service crée ou adopte son
+   conducteur, un seul par dépôt, et il vit tant que le service vit.
 5. **À vous** — les questions de l'agent et les jalons arrivent en tête de
    l'Accueil, en cartes (badge sur « Accueil ») : « Répondre… » ouvre la feuille
    « Répondre » — une question `ask` en vol se répond par ses options ou un texte
@@ -81,9 +87,10 @@ Tout se fait depuis l'app, sans terminal :
    carte, et « Lire le contrat » (secondaire) ouvre la feuille **Contrat** pour un
    besoin ou des specs à valider. La PR livrée apparaît sous « Livrées récemment »
    avec « Ouvrir la PR ».
-6. **Reprendre** — une pipeline dont le pilote est mort (app quittée, session
-   fermée) est « En pause » sous « En cours » avec « Reprendre », qui relance un
-   conducteur ; celui-ci adopte le lot.
+6. **Reprendre** — une pipeline dont le pilote est mort (service arrêté, session
+   fermée) est « En pause » sous « En cours » avec « Reprendre », qui poste
+   `POST /v1/repos/{repo}/pilot` ; le service réveille un conducteur qui adopte le
+   lot.
 
 **La pile mémoire survit à ⌘Q** : l'app ne possède aucun site d'arrêt — les
 processus de la machine (`krunkit`, `gvproxy`) sont lancés par des invocations
@@ -92,34 +99,47 @@ la voir plantée) ne coupe donc pas la mémoire : une session `omp` au terminal,
 un `omp -p`, sur un dépôt reçoit toujours son rappel par `http://localhost:8321`
 (le défaut du plugin `omp-mem0-memory`).
 
-Une commande sans accusé après 20 s est signalée dans « Activité récente » (Pipelines) et le
-bandeau : « aucun accusé après 20 s : aucun pilote n'a pris la commande — vérifiez
-le plugin omp-mem0-req (omp plugin list) ». Prérequis : le plugin `omp-mem0-req`
-chargé par `omp` doit porter le canal de commande **et** la commande `reply`
+Un geste de carte **poste** sa commande au service (`POST /v1/repos/{repo}/commands`)
+et affiche l'accusé rendu par la **réponse** : `state:"taken"` (le service l'a prise)
+ou `state:"refused"` avec le motif exact du service, verbatim dans « Activité
+récente » (Pipelines). Aucun fichier d'accusé, aucune relecture périodique : sans
+service joignable, l'app affiche « service arrêté ». Prérequis : le service local
+doit tourner et porter le canal de commande **et** la commande `reply`
 (`ls -la ~/.omp/plugins/node_modules/omp-mem0-req` dit quelle copie est chargée ;
 `omp plugin link <chemin>/omp-mem0-req` charge une copie de travail, `omp plugin
 upgrade omp-mem0-req@mem0-omp` revient à la version publiée).
 
-### Recette : le conducteur réel
+### Recette : une commande prise par le service
 
-La preuve qu'un conducteur hébergé par l'app prend en charge une commande déposée
-par l'app exige `omp` et un plugin `omp-mem0-req` qui porte le canal ; elle ne
-tourne que si **`MEM0_CONDUCTOR_RECIPE`** est posée (aucun appel modèle : le titre
-`!!!` est refusé par le pilote) :
+La preuve qu'une commande postée par l'app est prise en charge exige le service
+local en marche : son enregistrement `~/.omp/agent/pipeline/service.json` porte le
+jeton et le port. L'app ne lance **aucun** `omp` — c'est le service qui possède les
+sessions et les conducteurs ; la commande part à l'API par
+`POST /v1/repos/{repo}/commands`, avec le jeton dans l'en-tête `X-OMP-Service-Token`.
 
-```bash
-cd omp-console && MEM0_CONDUCTOR_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
-  -Xswiftc -plugin-path \
-  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing" \
-  --filter realConductorTakesACommandDepositedByTheApp
-```
+1. Vérifier que le service répond (le port et le jeton viennent du `service.json`) :
+
+   ```bash
+   read -r PORT TOKEN <<<"$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["port"], d["token"])' \
+     ~/.omp/agent/pipeline/service.json)"
+   curl -sS -H "X-OMP-Service-Token: $TOKEN" "http://127.0.0.1:$PORT/v1/health"
+   ```
+
+   Une réponse porte `{"pid":…}` ; un service absent fait échouer la connexion — c'est
+   l'état « service arrêté » que l'app affiche avec son bouton **Réessayer**.
+
+2. Depuis une carte « À vous », appliquer un geste (par exemple « Valider les specs ») :
+   la ligne de « Activité récente » passe de « envoyé au pilote » à « prise en charge »,
+   et la réponse du service porte `{"ack":{"state":"taken",…}}`.
+3. Provoquer un refus (dépôt non git, plugin absent, conduite déjà vivante) : le journal
+   affiche « refusée : <motif> », le motif exact de la réponse, jamais recomposé.
 
 ### Barres d'outils
 
 | Section | Barre d'outils (en plus de « Nouvelle feature… », `toolbar.newFeature`, inactif avec l'infobulle « OMP Console prépare ses composants » sans composant OMP) |
 |---|---|
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
-| Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; menu « Options » (`session.mode`, choix « Dialogues »), « Détails techniques » (`session.details`) |
+| Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
@@ -251,7 +271,8 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
 `commands/` ne fait pas partie du périmètre **lu** par la couche `Store/`. La
 section **Kanban** consomme le flux global en lecture, et c'est la couche
 `Actions/` (voir « Agir depuis Pipelines ») qui écrit — et seulement deux
-familles de fichiers : les livraisons d'un run et les commandes du canal.
+familles : les livraisons d'un run (dans `<stateDir>/inbox/`) et les commandes
+postées au service (`POST /v1/repos/{repo}/commands`).
 
 ## Section Kanban
 
@@ -414,28 +435,26 @@ l'entrée d'historique et la parité tient. Consigner les relevés dans la secti
 ## Agir depuis Pipelines
 
 `Sources/OMPConsole/Actions/` est la **seule** couche qui écrit depuis l'app. Elle
-n'écrit jamais l'état du lot : ses deux familles de fichiers sont les livraisons
-d'un run (`<stateDir>/inbox/<boîte>/`) et les commandes du canal
-(`<stateDir>/commands/`). Tout geste est tracé dans le pli **Activité récente** en
-bas de la section (une ligne par geste : symbole d'état, libellé, heure), avec
-l'accusé du pilote quand il y en a un — un
-refus est affiché verbatim, une commande sans pilote reste « en attente dans le
-canal », puis passe « aucun accusé après 20 s » (elle reste sondée : un accusé
-tardif la rattrape). Après un `launch`, un `verdict` ou un `reply` déposé, l'app
-fait conduire le dépôt s'il n'a pas de pilote vivant (voir « Premiers pas ») ; un
-conducteur qui ne démarre pas fait échouer l'entrée (« conducteur : … »).
+n'écrit jamais l'état du lot : ses écritures sont les livraisons d'un run
+(`<stateDir>/inbox/<boîte>/`) et les commandes **postées** au service
+(`POST /v1/repos/{repo}/commands`). Tout geste est tracé dans le pli **Activité
+récente** en bas de la section (une ligne par geste : symbole d'état, libellé,
+heure) : l'accusé affiché est celui de la **réponse** du service — `state:"taken"`
+(prise en charge) ou `state:"refused"` avec son motif, affiché verbatim. Aucun
+fichier d'accusé, aucune relecture périodique. « Reprendre » poste
+`POST /v1/repos/{repo}/pilot`.
 
 | Geste | Où | Écrit |
 |---|---|---|
 | Répondre à une question de l'agent (option ou texte libre) | section « Action » de la feuille de détail, menu contextuel « Répondre… » de la carte, ou feuille « Répondre » de l'Accueil | une livraison `ask` dans la boîte publiée du run |
 | Envoyer un message à l'agent (exécution vivante sans question) | section « Action » de la feuille de détail | une livraison `text` dans la boîte publiée du run |
-| Valider les specs | feuille de détail, menu contextuel ou carte « À vous » de l'Accueil (feature en attente specs) | `{kind:"verdict", verdict:"v"}` dans le canal |
+| Valider les specs | feuille de détail, menu contextuel ou carte « À vous » de l'Accueil (feature en attente specs) | `POST /v1/repos/{repo}/commands` — `{kind:"verdict", verdict:"v"}` |
 | Lire le contrat (besoin ou specs à valider) | carte « À vous » de l'Accueil (secondaire), zone d'action de la feuille de détail, menu contextuel de la carte | rien : la console lit `<worktree>/.omp/pipeline/contract.md` et ouvre la feuille Contrat |
-| Accepter la revue | feuille de détail, menu contextuel ou carte « À vous » (feature en attente revue) | `{kind:"verdict", verdict:"y"}` dans le canal |
-| Répondre à une question en texte d'un maillon terminé | feuille de détail ou feuille « Répondre » (feature en attente de réponse, sans question en vol) | `{kind:"reply", slug, text}` dans le canal |
-| Reprendre | feuille de détail, menu contextuel ou ligne « En cours » de l'Accueil (carte marquée `mort`, feature vivante) | rien : un conducteur démarre et adopte le lot |
-| Arrêter… | feuille de détail ou menu contextuel (carte portant un lot), après confirmation | `{kind:"stop", repo}` dans le canal |
-| Lancer une feature | feuille « Nouvelle feature » (barre d'outils, ⌘N) | `{kind:"launch", title, description, repo}` dans le canal |
+| Accepter la revue | feuille de détail, menu contextuel ou carte « À vous » (feature en attente revue) | `POST /v1/repos/{repo}/commands` — `{kind:"verdict", verdict:"y"}` |
+| Répondre à une question en texte d'un maillon terminé | feuille de détail ou feuille « Répondre » (feature en attente de réponse, sans question en vol) | `POST /v1/repos/{repo}/commands` — `{kind:"reply", slug, text}` |
+| Reprendre | feuille de détail, menu contextuel ou ligne « En cours » de l'Accueil (carte marquée `mort`, feature vivante) | rien de plus : `POST /v1/repos/{repo}/pilot` réveille le conducteur du service |
+| Arrêter… | feuille de détail ou menu contextuel (carte portant un lot), après confirmation | `POST /v1/repos/{repo}/commands` — `{kind:"stop", repo}` |
+| Lancer une feature | feuille « Nouvelle feature » (barre d'outils, ⌘N) | `POST /v1/repos/{repo}/commands` — `{kind:"launch", title, description, repo}` |
 
 Règles d'aiguillage : une carte qui porte une **question en vol** offre la réponse
 (option **ou** texte libre, jamais les deux ensemble) ; un run vivant **sans**
@@ -896,8 +915,8 @@ MEM0_MIGRATION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
   --filter recetteMigrationArreteEtCopieLAncienneBase -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
-# Session composant + run terminal : session RPC réelle sur le composant, puis un
-# `omp -p` au terminal (sans l'app) dont la session porte un message mem0-recall
+# Session composant + run terminal : une session servie vit sur le composant de
+# l'app, puis un `omp -p` au terminal (sans l'app) dont la session porte un message mem0-recall
 MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
   --filter "sessionRunsOnTheAppComponent|terminalRunRecallsMemoryWithoutTheApp" \
   -Xswiftc -plugin-path -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
@@ -907,81 +926,79 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
 
 - **AC-3 — l'app n'utilise aucun binaire système** : renommez l'`omp` du système
   (`mv ~/.bun/bin/omp ~/.bun/bin/omp.bak` — sans toucher à la racine de l'app),
-  ouvrez l'app, lancez une session ; elle vit, et le process lancé est
-  `…/com.omp.console/components/omp/18.6.0/omp`. Le renommage est réversible, et
-  la suppression du composant seul provoque la réinstallation par « Réessayer ».
+  ouvrez l'app et chargez le catalogue de modèles (feuille « Nouvelle feature ») :
+  il est lu par le composant de l'app (`…/com.omp.console/components/omp/18.6.0/omp`),
+  et l'app ne lance **aucun** process pour les sessions (elles sont servies par le
+  service). Le renommage est réversible, et la suppression du composant seul
+  provoque la réinstallation par « Réessayer ».
 - **AC-5 — la pile survit à l'app** : quittez l'app (⌘Q), puis, dans un terminal
   sur un dépôt : `omp -p "résume ce dépôt"`. Le run reçoit le rappel mémoire du
   plugin (`mem0-recall` dans son fichier de session) parce que la pile de l'app
   tourne toujours en arrière-plan.
 
-## Héberger une session OMP
+## Piloter le service
 
-La section **Session OMP** (⌘4, ou Fichier ▸ « Nouvelle session OMP » ⌥⌘N)
-héberge **une seule** session à la fois (le modèle est à instance unique et
-refuse un second lancement : il ne peut pas exister deux `omp` hébergés).
+La section **Session OMP** (⌘4, ou Fichier ▸ « Nouvelle session OMP » ⌥⌘N) ne
+lance **aucun** process `omp` : elle est **cliente** d'une API REST locale servie
+par le service. Elle pilote **une seule** session à la fois (le modèle est à
+instance unique et refuse un second lancement).
 
-1. **Choisir le projet** — bouton « Choisir un dossier… » (⌘O). Le dossier choisi
-   devient le cwd passé au `omp` hébergé ; il est mémorisé, et il n'est jamais
-   réécrit sans un geste de votre part.
-2. **Choisir le mode** — menu « Options » de la barre d'outils, choix
-   « Dialogues » ; deux modes, une différence réelle :
-   - **`rpc-ui — dialogues actifs`** : le seul mode headless où l'outil `ask` de
-     l'hôte existe. C'est le mode où un prompt peut déclencher une question à choix
-     multiples, à laquelle la fenêtre répond.
-   - **`rpc — sans dialogues`** : mode conducteur, sans `ask` côté hôte. Le prompt
-     part, les événements arrivent, aucune question n'est posée.
-3. **Lancer la session** (⌘R), écrire dans le composeur du bas (↩ ou le bouton ↑
-   envoient) et **lire la conversation** : le fichier de session publié par `omp`
-   est suivi et rendu par le même fil que la Visionneuse (bulles, verbes d'outil,
-   statut en mots). Une question de l'hôte s'ouvre en feuille « OMP vous demande »
-   (⌘. ou Échap l'annulent).
-4. **Arrêter la session** (⌘.) ou quitter l'app : le process est terminé par la
-   fermeture de son stdin (fin propre du protocole), puis, s'il ne rend pas la main,
-   par la séquence d'arrêt volontaire de l'hôte — `stopGrace` de 5 s après la
-   fermeture de stdin, `SIGTERM`, `killGrace` de 2 s, `SIGKILL`, attente bornée 1 s.
-   Il n'en reste aucun orphelin, et le fichier de session `.jsonl` reste sur disque,
-   résumable. À l'échéance d'une commande `git` ou `gh`, l'escalade est sa propre
-   séquence : `SIGTERM`, 2 s de grâce, `SIGKILL`, l'attente restant bornée par
-   délai + grâce.
+1. **Localiser le service** — l'app lit `~/.omp/agent/pipeline/service.json` (ou
+   `MEM0_PIPELINE_STATE_DIR`) : `version=1`, `pid`, `port`, `token` (32
+   hexadécimaux), `stateDir`. Le pid doit vivre ; un enregistrement absent,
+   illisible, hors schéma ou au pid mort n'est jamais deviné — la fenêtre affiche
+   « service arrêté » et un bouton **Réessayer**, et l'app ne lance aucun process.
+2. **Choisir le projet** — bouton « Choisir un dossier… » (⌘O). Le dossier choisi
+   devient le `cwd` de la session ; il est mémorisé, et il n'est jamais réécrit
+   sans un geste de votre part.
+3. **Lancer la session** (⌘R) : l'app crée la session par
+   `POST /v1/sessions {cwd, purpose:"session"}` puis s'abonne à son flux
+   `GET /v1/sessions/{id}/events` (SSE). Écrire dans le composeur du bas (↩ ou le
+   bouton ↑) poste `POST /v1/sessions/{id}/prompt {text}` et **lit la
+   conversation** : le fichier de session publié par le service est suivi et rendu
+   par le même fil que la Visionneuse (bulles, verbes d'outil, statut en mots). Une
+   question de l'hôte arrive par le flux et s'ouvre en feuille « OMP vous demande » :
+   la réponse part par `POST /v1/sessions/{id}/dialogs/{dialogId}` (⌘. ou Échap
+   l'annulent).
+4. **Arrêter la session** (⌘.) ou quitter l'app : l'app ferme la session par
+   `DELETE /v1/sessions/{id}` et le flux SSE s'arrête. Il n'en reste aucun process
+   dans l'app, et le fichier de session `.jsonl` reste sur disque, résumable.
 
 La fenêtre dit son état en mots, dans son sous-titre (« <projet> · Prête »,
 « Démarrage… », « Active », « Arrêt… », « Arrêtée », « Interrompue », « Échec ») et
 par son contenu : « Aucune session » sans projet, « Prête à démarrer », le
 démarrage, « La session n'a pas démarré » avec le motif, puis la conversation ;
 une session morte garde sa conversation sous un bandeau « La session s'est
-arrêtée. Relancez-la pour reprendre la conversation. » (**Relancer** reprend le
-même `.jsonl`). Les détails techniques vivent dans l'inspecteur « Détails
-techniques » (`session.details`), en formulaire groupé : **Session** (projet, état,
-pid, identifiant de session, mode, statut détaillé), **Activité** (chaque trame du
-protocole résumée en français — « Réponse · get_state », « Appel d'outil · read »,
-« Question de l'hôte »… — par `RpcEventSummary`, les 200 plus récentes en haut),
-**Journal**, et les trames JSONL brutes derrière un pli « Trames brutes » fermé par
-défaut. Un prompt n'est jamais relancé tout seul après une mort : la relance est un
-clic.
+arrêtée. Relancez-la pour reprendre la conversation. » (**Relancer** ouvre une
+nouvelle session sur le même `.jsonl`). Les détails techniques vivent dans
+l'inspecteur « Détails techniques » (`session.details`), en formulaire groupé :
+**Session** (projet, état, pid du service, identifiant de session, statut détaillé)
+et **Journal** (les messages absorbés par l'app : ouverture de session, coupures,
+erreurs). Aucune trame de protocole brute n'est affichée. Un prompt n'est jamais
+relancé tout seul après une mort : la relance est un clic.
 
-L'écriture d'un prompt est **bornée** (délai de 500 ms) et sans `SIGPIPE` : si le
-`omp` hébergé ne lit plus son entrée ou est mort, l'écriture échoue proprement —
-l'app ne meurt pas d'un `SIGPIPE` — et la fenêtre affiche « Écriture impossible
-vers la session : … ». La mort de la session reste annoncée par la sortie réelle du
-process : état `Process mort …` et bouton **Relancer** (l'échec d'écriture, lui, ne
-change pas l'état de la session).
+L'écriture d'un prompt passe par le service (`POST /v1/sessions/{id}/prompt`) : un
+service injoignable échoue proprement, la fenêtre affiche « service arrêté » et
+l'état de la session reste celui du flux SSE ; une coupure du flux est retentée
+avec un repli borné avant de marquer la session morte et d'offrir **Relancer**.
 
 ### Le binaire `omp` de l'app
 
-Un SEUL binaire est proposé à la session hébergée : le composant de l'app
-(`…/components/omp/18.6.0/omp`, S-4). `PATH`, `~/.bun/bin`, `/opt/homebrew/bin`,
-`/usr/local/bin` et l'ancienne préférence `omp.chosenPath` ne sont plus consultés :
-l'app n'utilise que ses composants, et la feuille « OMP est requis » n'existe plus
-(la préparation la remplace).
+L'app n'utilise qu'UN SEUL binaire `omp` pour ses propres besoins, le composant
+qu'elle a installé (`…/components/omp/18.6.0/omp`, S-4) : il sert à la préparation
+des composants et au catalogue `omp models --json` — **jamais** aux sessions, que
+le service possède. `PATH`, `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin` et
+l'ancienne préférence `omp.chosenPath` ne sont plus consultés pour ce binaire : la
+feuille « OMP est requis » n'existe plus (la préparation la remplace). Le bouton
+« Lancer omp » du terminal, lui, tape `omp` dans le shell, qui le résout par son
+`PATH` complété (voir « Section Terminal »).
 
 - **`OMP_CONSOLE_OMP_BINARY`** (échappatoire de test) — posée et non vide, c'est le
   SEUL candidat ; utile aux recettes pour pointer un `omp` de secours ou simuler un
   poste sans composant.
-- Si le composant est absent ou non exécutable, la session refuse de démarrer et la
-  fenêtre nomme le chemin cherché (« Binaire `omp` introuvable (cherché : …) ») :
-  aucune session fantôme n'est affichée comme vivante. « Réessayer » sur la feuille
-  de préparation le réinstalle.
+- Si le composant est absent ou non exécutable, l'Accueil montre sa préparation et
+  « Réessayer » le réinstalle ; `omp models --json` retombe alors sur l'option
+  « défaut OMP (aucun modèle) ».
 
 ## Section Terminal (terminal intégré)
 
@@ -1008,7 +1025,7 @@ absolu, sinon `/bin/zsh -l`) ; `omp` se lance **à la demande** dans ce shell.
    **⌘Q** tue de la même façon les terminaux vivants : aucun shell ni `omp` ne
    survit à la fermeture de l'app.
 
-Le terminal et la section **Session OMP** (session RPC `omp --mode rpc-ui`) vivent
+Le terminal et la section **Session OMP** (session servie par l'API locale) vivent
 **en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
 deux sens, et ils peuvent même viser le même répertoire.
 
@@ -1071,34 +1088,45 @@ la fois** (un second démarrage est refusé jusqu'à l'arrêt du pilotage en cou
 
 1. **Choisir le dépôt et le nom** dans la feuille (dossier par `NSOpenPanel`,
    dossiers seulement, nom par défaut = dernier composant du chemin).
-2. **Piloter** — l'app lance `omp --mode rpc-ui --cwd <dossier>` (mode
-   dialogues actifs, seul mode où l'outil `ask` de l'hôte existe) puis écrit
-   `/project <nom>`. Aucun terminal n'est ouvert, aucune commande n'est tapée.
-3. **Jouer l'utilisateur** — la saisie libre de la fenêtre écrit un `prompt`
-   (↩ ou ⌘↩), et toute demande adressée à l'utilisateur (cadrage, validation du
-   plan, escalade de lot) s'affiche comme un dialogue répondable : `select` (liste
+2. **Piloter** — l'app poste `POST /v1/projects/{repo}/conduite {name}` : le
+   service crée la session `purpose:"project"`, lui envoie `/project <nom>` et
+   l'adopte. Aucun terminal n'est ouvert, aucune commande n'est tapée. Le refus —
+   dépôt non git, sans distant GitHub — est un **409** dont le texte exact
+   (`reason`) s'affiche tel quel ; l'app refuse aussi en amont un second pilotage
+   tant que SA fenêtre porte une conduite. Une conduite **déjà vivante** pour ce
+   dépôt (le service l'a reprise tout seul après un redémarrage) n'est pas un
+   refus : l'app lit `GET /v1/sessions`, s'y rattache et retrouve ses questions en
+   attente — l'instantané du flux les rejoue.
+3. **Jouer l'utilisateur** — la saisie libre de la fenêtre poste un `prompt` au
+   service (`POST /v1/sessions/{id}/prompt`, ↩ ou ⌘↩), et toute demande adressée à
+   l'utilisateur (cadrage, validation du plan, escalade de lot) arrive par le flux
+   de la session `purpose:"project"` comme un dialogue répondable : `select` (liste
    d'options), `input`/`editor` (texte, avec le `prefill` du plan pour un `editor`),
-   `confirm`. La feuille de dialogue affiche « Question n sur m » quand la question
-   se termine par « (n/m) ».
+   `confirm` — la réponse part par `POST /v1/sessions/{id}/dialogs/{dialogId}`. La
+   feuille de dialogue affiche « Question n sur m » quand la question se termine par
+   « (n/m) ».
 4. **Suivre** — le volet **Plan** re-présente le JSON du magasin (segments, état
    de chaque feature, modèle, lien de la PR quand elle existe), et le volet
    **Document** rend `PROJECT.md` avec le rendu Markdown commun de l'app (vrais
    tableaux). Les deux se rafraîchissent sans action : le JSON par la veille du
    magasin, le document par une veille de fichier. La dernière notification du
    pilote (`notify`) s'affiche sous l'en-tête, décodée et rendue en Markdown —
-   jamais la trame JSON brute, réservée aux « Détails techniques ».
+   jamais la trame JSON brute.
 5. **Alerter** — quand le projet attend une réponse et que la fenêtre n'est pas au
    premier plan, l'app émet **une** demande d'attention critique (`NSApp`) ; à la
    fin du projet (toutes les features du dernier segment fusionnées ou retirées),
    une demande informative unique. Aucune notification macOS, aucun vol de focus.
-6. **Arrêter** — bouton **Arrêter le pilotage**, après confirmation (arrêt propre
-   du process hébergé). Le projet reste `running` côté pilote ; la reprise
-   éventuelle est le fait du pilote au prochain `/project`.
+6. **Arrêter** — bouton **Arrêter le pilotage**, après confirmation : l'app poste
+   `DELETE /v1/projects/{repo}/conduite` et le service ferme la session. Le projet
+   reste `running` côté pilote ; la reprise éventuelle est le fait du pilote au
+   prochain `/project`. Fermer l'app (⌘Q, bouton rouge) n'envoie **rien** : l'app
+   se détache, la conduite reste vivante dans le service, ses segments avancent et
+   sa question en attente attend la réouverture.
 
 **Ce que l'app n'écrit jamais** : ni `<stateDir>/projects/<clé>.json`, ni le
 worktree `.doc`, ni le lot. Elle ne réimplémente non plus aucune règle du pilote
 (plan, segments, jalons, PR) : elle affiche ce que le magasin porte et renvoie les
-réponses dans la session hébergée.
+réponses dans la session `purpose:"project"` (`POST /v1/sessions/{id}/dialogs/{dialogId}`).
 
 Aucune reprise automatique : relancer l'app n'ouvre **aucune** session et n'arme
 **aucun** `/project` ; c'est toujours un geste de l'utilisateur.
@@ -1288,45 +1316,26 @@ sonde AX :
 
 ## Harnais réel
 
-La suite de tests contient quatre tests **réels** qui lancent un vrai `omp` (donc
-font de vrais appels au modèle) et parcourent l'aller-retour complet : prompt →
-événements → dialogue `ask` répondu → fin de tour (`harnessRoundTripDialogue`), le
-mode conducteur sans dialogues (`harnessHeadlessMode`), un `SIGKILL` suivi d'une
-relance qui reprend le même `.jsonl` (`harnessMortEtRelance`), et la fermeture de
-l'app sans orphelin (`harnessAucunOrphelin`).
+L'ancien harnais de sessions hébergées (`SessionHarnessTests`) a disparu avec
+l'hôte `omp` de l'app : ses quatre tests réels (aller-retour prompt → événements →
+dialogue `ask` répondu → fin de tour, mort et relance du même `.jsonl`, fermeture
+sans orphelin) exerçaient des sessions que l'app lançait elle-même. Les sessions
+sont désormais servies par le service, et l'app ne lance **aucun** process `omp`
+pour elles : plus aucun test ne pilote un `omp` hébergé par l'app.
 
-Ces quatre tests sont **désactivés par défaut** : leur seule activation est la
-présence de **`MEM0_HARNESS_RECIPE`**, et aucun script du dépôt
-(`scripts/swift-app.sh`, `bash scripts/check.sh`, `.github/workflows/`) ne pose
-cette variable. La présence d'un `omp` sur la machine n'active donc rien : sans la
-variable, les quatre sont rapportés « skipped » et aucun octet n'est envoyé à un
-modèle.
+Les preuves qui lancent encore un vrai `omp` sont les **recettes gatées** : session
+composant et run terminal (`MEM0_SESSION_COMPONENT_RECIPE`, voir « Composants de
+l'app »), terminal (`MEM0_TERMINAL_RECIPE`, voir « Section Terminal »), lecture
+d'une vraie session (`MEM0_SESSION_RECIPE`, `MEM0_VIEWER_RECIPE`). Chacune est
+**désactivée par défaut** — aucun script du dépôt (`scripts/swift-app.sh`,
+`bash scripts/check.sh`, `.github/workflows/`) ne pose sa variable — donc la suite
+reste verte et aucun octet n'est envoyé à un modèle.
 
-Recette manuelle, à la demande :
-
-```bash
-cd omp-console && MEM0_HARNESS_RECIPE=1 swift test --scratch-path .build-tests --no-parallel \
-  --filter harness -Xswiftc -plugin-path \
-  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
-```
-
-`--filter harness` porte sur le **nom de fonction** du test, pas sur son titre
-affiché (mesuré plus haut à propos de `--filter recette`) : il sélectionne
-exactement les quatre fonctions nommées ci-dessus. `--no-parallel` est requis : les
-quatre ouvrent de vraies sessions, et un run groupé est instable.
-
-`omp` doit être **résoluble** (`OmpBinaryResolver` ; échappatoire
-`OMP_CONSOLE_OMP_BINARY`). Variable posée sans `omp` résoluble ⇒ chaque test
-**échoue explicitement** (« `omp` est introuvable »), jamais un faux succès ni un
-skip silencieux : la variable est une demande d'exécution réelle, pas un filtre.
-
-`scripts/swift-app.sh` et `bash scripts/check.sh` lancent la suite **sans** la
-variable : quel que soit `omp` sur la machine, ils rapportent ces quatre tests
-« skipped » et la suite reste verte.
-
-Le harnais **du terminal** (`TerminalSmokeTests`) suit la même règle, avec sa propre
-variable : il ne tourne que si **`MEM0_TERMINAL_RECIPE`** est posée, donc jamais en
-intégration continue (voir « Section Terminal (terminal intégré) »).
+Une recette posée sans son prérequis **échoue explicitement**, jamais en faux
+succès ni en skip silencieux : la variable est une demande d'exécution réelle, pas
+un filtre. Le harnais du terminal (`TerminalSmokeTests`) suit la même règle, avec sa
+propre variable **`MEM0_TERMINAL_RECIPE`** (voir « Section Terminal (terminal
+intégré) »).
 
 ## Notifications et barre de menus
 
@@ -1403,9 +1412,9 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 ```
 
 1. Accorder le dialogue d'autorisation ; vérifier l'item de barre à l'icône seule.
-2. Mettre une autre app au premier plan, puis produire un **vrai** évènement par un
-   **process de run réel** (`omp --mode rpc-ui` armé du magasin jetable, prompt
-   demandant une question à choix multiples) : une bannière apparaît, nomme le run,
+2. Mettre une autre app au premier plan, puis produire un **vrai** évènement par une
+   **session servie réelle** (une session du service sur le magasin jetable, avec
+   un prompt demandant une question à choix multiples) : une bannière apparaît, nomme le run,
    et aucune seconde ne suit tant que la question est en vol. Relancer l'app avec le
    même `MEM0_CONSOLE_ALERTS_DIR` ⇒ aucune bannière ; `notified-alerts.json` porte la
    clé `answer:<id>:<toolCallId>`.
@@ -1672,17 +1681,11 @@ omp-console/
 │   ├── ConsoleModel.swift         l'état : la section courante, la session ouverte dans Sessions
 │   ├── ProjectRoot.swift          le projet ouvert, résolu en UN endroit (clé partagée)
 │   ├── SessionConsoleView.swift   section « Session OMP » : conversation, composeur, inspecteur
-│   ├── SessionConsoleModel.swift  projet, mode, prompt, dialogue, conversation, statut, actions
-│   ├── SessionHost.swift          session hébergée : poignée de main, corrélation,
-│   │                              dialogues, mort, relance, arrêt propre
-│   ├── RpcFrames.swift            trames JSONL : décodage, commandes, réponses
-│   ├── RpcChunkDecoder.swift      fragments v2 et lignes illisibles
-│   ├── RpcTransport.swift         session hébergée : protocole, stdin, signaux, sortie,
-│   │                              écriture bornée sans SIGPIPE
+│   ├── SessionConsoleModel.swift  projet, prompt, dialogue, conversation, statut, actions
 │   ├── ProcessRunner.swift        l'exécuteur partagé : lancement, drainage, lignes,
 │   │                              escalade SIGTERM/SIGKILL
-│   ├── OmpBinary.swift            résolution du binaire `omp`
-│   ├── OmpEnvironment.swift       l'environnement de tout `omp` hébergé (PATH)
+│   ├── OmpBinary.swift            résolution du binaire `omp` de l'app (composant)
+│   ├── OmpEnvironment.swift       l'environnement d'un `omp` lancé par l'app (PATH)
 │   ├── Design/
 │   │   ├── ConsoleSurface.swift   surfaces du contenu : carte, bandeau, bouton proéminent (aucun verre)
 │   │   ├── ConsoleVocabulary.swift états en mots, étapes, formateurs (fonctions pures)
@@ -1704,8 +1707,14 @@ omp-console/
 │   ├── Launch/                    la feuille « Nouvelle feature »
 │   │   ├── LaunchRepo.swift       dépôts proposés, garde « racine git » (purs)
 │   │   └── NewFeatureSheet.swift  la feuille
-│   ├── Conductor/
-│   │   └── ConductorPool.swift    les conducteurs : un `omp --mode rpc` par dépôt sans pilote
+│   ├── Service/                   le client de l'API REST locale (aucun process lancé)
+│   │   ├── ServiceLocator.swift   lit `<état>/service.json`, vérifie le pid, rend l'URL et le jeton
+│   │   ├── ServiceClient.swift    le client HTTP 127.0.0.1 : sessions, commandes, pilot, dialogues
+│   │   ├── ServiceEvents.swift    le flux SSE d'une session, reconnexion bornée
+│   │   ├── ServiceSessionModel.swift session servie : création, prompt, dialogues, arrêt (DELETE)
+│   │   ├── ServiceError.swift     la table d'erreurs du service (« service arrêté », 409 exact…)
+│   │   ├── ServiceProtocol.swift  les valeurs de fil : dialogues, trames, accusés (pur)
+│   │   └── DialogPane.swift       le volet de dialogue partagé (Session OMP, Projet)
 │   ├── Setup/                     la préparation du premier lancement (S-1, S-5)
 │   │   ├── AppPaths.swift         la racine privée de l'app (composants, XDG, pile)
 │   │   ├── CommandRunner.swift    l'exécution d'une commande externe, injectable
@@ -1742,9 +1751,7 @@ omp-console/
 │   │   ├── SessionModel.swift     le modèle de conversation : des valeurs
 │   │   ├── SessionReader.swift    lecture incrémentale tirée par l'appelant
 │   │   ├── SessionRendering.swift le rendu texte du modèle (fonctions pures)
-│   │   ├── SessionConsoleText.swift les textes de la fenêtre Session OMP
-│   │   ├── RpcEventSummary.swift  les trames du protocole résumées en français (pur)
-│   │   └── RpcPanes.swift         volets RPC partagés (transcription, dialogue, prompt)
+│   │   └── SessionConsoleText.swift les textes de la fenêtre Session OMP
 │   ├── Project/                   la conduite d'un projet depuis l'app
 │   │   ├── ProjectConduite.swift  identité, état et refus d'une conduite
 │   │   ├── ProjectConsoleModel.swift le modèle : armement, refus, clôture, dialogues, veille
@@ -1860,7 +1867,9 @@ omp-console/
 │   └── MenuBar/                   l'item de barre de menus et ses compteurs
 │       ├── RunCounters.swift      occupés / en attente et l'état publié
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
-├── Tests/OMPConsoleTests/         la suite Swift Testing
+├── Tests/OMPConsoleTests/         la suite Swift Testing (Service/ : ServiceClientTests,
+│                                  ServiceSessionModelTests, ServiceActionsTests ;
+│                                  ScriptedServiceTransport, le transport HTTP scripté)
 ├── Bundle/Info.plist              le plist du bundle .app
 └── build/                         artefacts (bundle .app), ignorés par git
 ```

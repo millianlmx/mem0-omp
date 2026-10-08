@@ -1,6 +1,7 @@
 // Preuves du MODÈLE de la fenêtre « Terminal » (S-1, S-6, S-7, S-8, S-9, S-10 ;
 // S-18 R6) : le cycle de vie du shell hébergé, le refus du double lancement, les
-// états de la fenêtre, « Lancer omp » et la coexistence avec la session RPC.
+// états de la fenêtre, « Lancer omp » et la coexistence avec la session servie par
+// l'API (aucun process `omp` côté app).
 //
 // Les preuves ne dépendent PAS d'`omp` ni du shell du poste : le shell est celui
 // que désigne `$SHELL` (`TerminalShell.command`), donc un script jetable qui fait
@@ -345,8 +346,8 @@ func quittingTheAppKillsLiveTerminals() async throws {
 // MARK: - AC-10
 
 @MainActor
-@Test("terminal-integre/AC-10 : un terminal et la session RPC vivent et meurent indépendamment")
-func terminalAndRpcSessionAreIndependent() async throws {
+@Test("terminal-integre/AC-10 : un terminal et la session servie vivent et meurent indépendamment")
+func terminalAndServiceSessionAreIndependent() async throws {
     let directory = try makeScratchDirectory()
     let shell = try makeScript("exec /bin/cat -v", in: directory, named: "fake-shell")
     let terminalHost = TerminalHost()
@@ -356,39 +357,24 @@ func terminalAndRpcSessionAreIndependent() async throws {
     terminal.start(target: makeTarget(directory, label: "socle"))
     #expect(await awaitMainTrue { terminal.isRunning })
 
-    // 2) La session RPC démarre PENDANT : elle a son propre process (scripté ici) et
-    //    son propre état.
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = terminalJSONLine([
-        "type": "ready",
-        "protocolVersion": 1,
-        "supportedProtocolVersions": [1, 2],
-        "maxFrameBytes": 1_048_576,
-        "maxReassembledFrameBytes": 67_108_864,
+    // 2) La session servie démarre PENDANT : l'app ne lance AUCUN process pour
+    //    elle — c'est le service qui la porte — et son état est indépendant du PTY.
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("POST", "/v1/sessions", [
+        "id": "session-abcdef12", "cwd": directory, "purpose": "session", "state": "running",
     ])
-    transport.onWrite = { line in
-        guard let object = terminalJSONObject(line),
-              let type = object["type"] as? String,
-              let id = object["id"] as? String
-        else { return }
-        if type == "negotiate_protocol" {
-            transport.emit(terminalJSONLine([
-                "type": "response",
-                "id": id,
-                "command": "negotiate_protocol",
-                "success": true,
-                "data": ["protocolVersion": 2],
-            ]))
-        }
-    }
-    let host = SessionHost(
-        transport: transport,
-        resolveBinary: { _ in .success(URL(fileURLWithPath: "/usr/bin/true")) },
-        environment: [:],
-        requestTimeout: .seconds(1),
-        readyTimeout: .seconds(1),
-        stopGrace: .milliseconds(80),
-        killGrace: .milliseconds(80)
+    transport.stubJSON("POST", "/prompt", ["accepted": true])
+    transport.stubJSON("DELETE", "/v1/sessions/session-abcdef12", ["closed": true])
+    // Le flux scripté, puis des flux de queue : à court de flux, le double lève
+    // « service arrêté » et la session passerait `dead` (chaque réouverture coûte
+    // le `retryDelay` de 25 ms).
+    transport.scriptStream(serviceFrame("state", ["state": "running"]))
+    for _ in 0..<20 { transport.scriptStream(serviceFrame("state", ["state": "running"])) }
+    let host = ServiceSessionModel(
+        purpose: "session",
+        makeClient: { scriptedClient(transport) },
+        maxAttempts: 5,
+        retryDelay: { _ in .milliseconds(25) }
     )
     let suite = UserDefaults(suiteName: "terminal-ac10-\(UUID().uuidString)") ?? .standard
     suite.set(directory, forKey: ProjectRoot.defaultsKey)
@@ -396,22 +382,26 @@ func terminalAndRpcSessionAreIndependent() async throws {
     session.launch()
 
     #expect(await awaitMainTrue(timeout: 4) { host.state == .running })
-    // Les deux vivent, sur des process distincts : aucune exclusivité.
+    // Les deux vivent, indépendamment : la session est celle du service (pid 4242,
+    // l'endpoint scripté), jamais un enfant de l'app comme le shell du terminal.
     #expect(terminal.isRunning)
-    #expect(transport.pid != nil)
-    #expect(transport.pid != terminalHost.pid)
+    #expect(host.sessionId == "session-abcdef12")
+    #expect(host.pid == 4_242)
+    #expect(host.pid != terminalHost.pid)
 
-    // La session RPC répond encore, terminal vivant.
+    // La session servie répond encore, terminal vivant.
     session.prompt = "ping"
     session.sendPrompt()
-    #expect(await awaitMainTrue { !transport.writtenCommands.isEmpty })
+    let prompted = await awaitMainTrue {
+        transport.requests.contains { $0.method == "POST" && $0.path.hasSuffix("/prompt") }
+    }
+    #expect(prompted)
 
     // Le terminal vit toujours et son PTY porte encore les octets.
     terminal.send(keys: Array("ok".utf8))
     #expect(await awaitMainTrue { grid(terminal).contains("ok") })
 
-    // Réciproquement : arrêter la session RPC ne perturbe pas le terminal.
-    transport.onCloseStdin = { transport.emitExit(ProcessExit(status: 0, reason: .exited)) }
+    // Réciproquement : arrêter la session servie ne perturbe pas le terminal.
     session.stop()
     #expect(await awaitMainTrue { host.state == .stopped })
     #expect(terminal.isRunning)
@@ -460,21 +450,4 @@ func everyStateHasItsText() async throws {
     #expect(await awaitMainTrue(timeout: 8) { model.state == .idle })
     #expect(await awaitMainTrue(timeout: 8) { model.statusText == TerminalViewText.chooseHint })
     #expect(model.emulator == nil)
-}
-
-// MARK: - Trames JSONL (session RPC scriptée)
-
-private func terminalJSONLine(_ object: [String: Any]) -> String {
-    guard
-        let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]),
-        let text = String(data: data, encoding: .utf8)
-    else { return "{}" }
-    return text
-}
-
-private func terminalJSONObject(_ line: String) -> [String: Any]? {
-    guard let data = line.data(using: .utf8), let raw = try? JSONSerialization.jsonObject(with: data) else {
-        return nil
-    }
-    return raw as? [String: Any]
 }

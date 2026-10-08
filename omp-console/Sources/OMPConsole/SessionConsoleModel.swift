@@ -1,23 +1,23 @@
-// Modèle de la fenêtre « Session OMP » (S-9) : projet, mode, prompt, dialogue,
-// statut, disponibilités — et la conversation lisible de la session hébergée
-// (S-15 de omp-console-redesign) : le fichier de session d'`omp`, publié par
-// `get_state`, suivi par un `SessionViewerModel` comme dans la visionneuse.
+// Modèle de la section « Session OMP » (S-10) : projet, prompt, dialogue, statut,
+// disponibilités — et la conversation lisible de la session servie (S-15 de
+// omp-console-redesign) : le fichier de session publié par l'API, suivi par un
+// `SessionViewerModel` comme dans la visionneuse.
 //
-// Le modèle ne parle JAMAIS le protocole : il appelle le host et traduit ses
-// erreurs en texte via `SessionHostError.userMessage` — c'est le seul endroit qui
-// produit du texte affiché pour un échec (S-3). Tout le reste de l'affichage est
-// la donnée publiée par le host, montrée telle quelle.
+// Le modèle ne parle JAMAIS le protocole : il appelle la session servie et traduit
+// ses erreurs en texte via `userMessage` — c'est le seul endroit qui produit du
+// texte affiché pour un échec. Tout le reste de l'affichage est la donnée publiée
+// par la session, montrée telle quelle.
 //
 // Deux invariants de S-9 sont tenus par la forme du code :
 //   - le choix du projet n'est JAMAIS écrit en `UserDefaults` sans un geste
 //     explicite (`chooseProject`) : `init` ne fait que LIRE ;
-//   - la fenêtre « Session OMP » est une scène à instance unique, donc « une seule
-//     session hébergée » est structurellement vrai ; `canLaunch` est faux dès que
-//     l'état est `launching|running|stopping`.
+//   - la section « Session OMP » est à instance unique, donc « une seule session
+//     servie » est structurellement vrai ; `canLaunch` est faux dès que l'état est
+//     `launching|running|stopping`.
 //
 // Le modèle vit à l'échelle de l'APP (`@StateObject` sur la structure `App`), pas
-// de la fenêtre : fermer la fenêtre pendant une session ne doit pas laisser un
-// `omp` orphelin, et l'accroche de terminaison doit exister avant la première
+// de la fenêtre : fermer la fenêtre pendant une session ne doit pas laisser de
+// session orpheline, et l'accroche de terminaison doit exister avant la première
 // ouverture de la fenêtre.
 
 import AppKit
@@ -30,49 +30,41 @@ final class SessionConsoleModel: ObservableObject {
     /// Clé partagée avec la visionneuse de fichiers : elle vit dans `ProjectRoot`,
     /// seul propriétaire de la préférence.
     static let projectRootKey = ProjectRoot.defaultsKey
-    static let modeKey = "session.mode"
 
-    let host: SessionHost
+    let host: ServiceSessionModel
 
     @Published var projectRoot: URL?
-    @Published var mode: RpcMode = .rpcUI
     @Published var prompt: String = ""
     @Published var dialogText: String = ""
     @Published var selectedOptionIndex: Int?
-    /// Le pli « Trames brutes » de l'inspecteur, fermé par défaut (S-18 R8).
-    @Published var rawFramesShown = false
     @Published var statusMessage: String = ""
-    /// L'inspecteur « Détails techniques » (session, activité, journal, trames
-    /// brutes) est ouvert.
+    /// L'inspecteur « Détails techniques » (session et journal) est ouvert.
     @Published var technicalShown = false
-    /// La conversation du fichier de session de l'hôte ; `nil` tant qu'aucun
-    /// fichier n'est connu.
+    /// La conversation du fichier de session de la session servie ; `nil` tant
+    /// qu'aucun fichier n'est connu.
     @Published private(set) var conversation: SessionViewerModel?
 
     private let defaults: UserDefaults
     private let fileManager: FileManager
     private let makeConversation: @MainActor (ViewerTarget) -> SessionViewerModel
     private var cancellables: Set<AnyCancellable> = []
-    private let activityCache = RpcActivityCache()
 
     init(
-        host: SessionHost? = nil,
+        host: ServiceSessionModel? = nil,
         defaults: UserDefaults = .standard,
         fileManager: FileManager = .default,
         makeConversation: @escaping @MainActor (ViewerTarget) -> SessionViewerModel = { SessionViewerModel(target: $0) }
     ) {
-        let host = host ?? SessionHost()
+        let host = host ?? ServiceSessionModel(purpose: "session")
         self.host = host
         self.defaults = defaults
         self.fileManager = fileManager
         self.makeConversation = makeConversation
-        self.mode = RpcMode(rawValue: defaults.string(forKey: Self.modeKey) ?? "") ?? .rpcUI
         self.projectRoot = Self.restoredProjectRoot(defaults: defaults, fileManager: fileManager)
         self.statusMessage = Self.statusText(for: host.state)
 
-        // Le statut suit l'ÉTAT, pas chaque trame : `removeDuplicates` évite qu'une
-        // transcription qui grandit écrase le message d'une commande expirée
-        // (AC-13 : l'erreur reste affichée sans changer d'état).
+        // Le statut suit l'ÉTAT, pas chaque trame : `removeDuplicates` évite qu'un
+        // journal qui grandit écrase le message d'une commande expirée.
         host.$state
             .removeDuplicates()
             .sink { [weak self] _ in
@@ -81,10 +73,8 @@ final class SessionConsoleModel: ObservableObject {
             .store(in: &cancellables)
 
         // … et le FICHIER de session : la conversation suit le fichier publié par
-        // `get_state`. Une relance reprise garde le même fichier, donc la même
-        // conversation ; un lancement neuf le remet à `nil`, puis en publie un
-        // autre. La valeur reçue est la NOUVELLE (`@Published` émet avant
-        // d'écrire) : elle est passée telle quelle, jamais relue sur l'hôte.
+        // l'API. Une reprise garde le même fichier, donc la même conversation ; un
+        // lancement neuf le remet à `nil`, puis en publie un autre.
         host.$sessionFile
             .removeDuplicates()
             .sink { [weak self] file in
@@ -92,7 +82,7 @@ final class SessionConsoleModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        // Fermeture de l'app : l'unique chemin de sortie passe par le host (S-8).
+        // Fermeture de l'app : l'unique chemin de sortie passe par la session.
         AppDelegate.terminateSession = { [weak self] in
             await self?.host.terminateForQuit()
         }
@@ -100,7 +90,7 @@ final class SessionConsoleModel: ObservableObject {
 
     // MARK: - Persistance
 
-    /// La règle vit dans `ProjectRoot` : la fenêtre « Session OMP » et la
+    /// La règle vit dans `ProjectRoot` : la section « Session OMP » et la
     /// visionneuse de fichiers résolvent LE MÊME projet, avec la même préférence
     /// (`ProjectRoot.defaultsKey`) et la même règle de repli. Une clé PRÉSENTE mais
     /// invalide (dossier supprimé) ne déclenche pas le repli : l'utilisateur a
@@ -122,7 +112,7 @@ final class SessionConsoleModel: ObservableObject {
     /// sienne (`launch(projectRoot:)`), donc la route décide sur `canStart`.
     var canStart: Bool {
         switch host.state {
-        case .idle, .stopped, .failed: return true
+        case .idle, .stopped, .dead, .failed: return true
         default: return false
         }
     }
@@ -137,8 +127,10 @@ final class SessionConsoleModel: ObservableObject {
     }
 
     var canRelaunch: Bool {
-        if case .dead = host.state { return true }
-        return false
+        switch host.state {
+        case .dead, .stopped, .failed: return true
+        default: return false
+        }
     }
 
     var canSendPrompt: Bool {
@@ -160,7 +152,7 @@ final class SessionConsoleModel: ObservableObject {
         }
     }
 
-    /// Note de relance de l'état `dead` (S-9), dans l'inspecteur.
+    /// Note de relance d'un état interrompu, dans l'inspecteur.
     var relaunchNote: String? {
         guard case .dead = host.state, let sessionFile = host.sessionFile else { return nil }
         return SessionConsoleText.relaunchNote(sessionFile: ConsoleFormat.path(sessionFile))
@@ -171,26 +163,16 @@ final class SessionConsoleModel: ObservableObject {
         SessionConsoleText.stateTitle(host.state, hasProject: projectRoot != nil)
     }
 
-    /// Le statut, quand il dit AUTRE chose que l'état (l'échec d'une commande,
-    /// AC-13) ; `nil` quand il ne ferait que le répéter.
+    /// Le statut, quand il dit AUTRE chose que l'état ; `nil` quand il ne ferait
+    /// que le répéter.
     var statusNotice: String? {
         statusMessage == Self.statusText(for: host.state) ? nil : statusMessage
     }
 
-    /// L'activité de l'inspecteur : les trames humanisées, la plus récente en haut
-    /// (S-18 R8). Chaque trame n'est résumée qu'une fois.
-    var activity: [RpcEventLine] {
-        activityCache.activity(host.transcript)
-    }
-
-    /// Un dialogue en attente capte le raccourci d'arrêt : « ⌘. arrête la session
-    /// (état vivant) OU annule le dialogue en attente » (S-9).
+    /// Un dialogue en attente capte le raccourci d'arrêt.
     var hasPendingDialog: Bool { !host.dialogQueue.isEmpty }
 
-    /// Action du raccourci ⌘. — un seul point de décision, pour que la fenêtre
-    /// n'ait pas deux règles à tenir synchronisées : dialogue en attente ⇒ annulation
-    /// de celui-ci, sinon arrêt de la session. Le BOUTON « Arrêter la session »
-    /// reste, lui, l'arrêt à la souris dans les deux cas.
+    /// Action du raccourci ⌘. — dialogue en attente ⇒ annulation, sinon arrêt.
     func performStopShortcut() {
         if hasPendingDialog {
             cancelDialog()
@@ -214,17 +196,11 @@ final class SessionConsoleModel: ObservableObject {
         defaults.set(url.path, forKey: Self.projectRootKey)
     }
 
-    func setMode(_ mode: RpcMode) {
-        self.mode = mode
-        defaults.set(mode.rawValue, forKey: Self.modeKey)
-    }
-
     func launch() {
         guard canLaunch, let projectRoot else { return }
-        let mode = mode
         Task { @MainActor in
             do {
-                try await host.start(mode: mode, projectRoot: projectRoot, resume: false)
+                try await host.start(projectRoot: projectRoot, resumeFile: nil)
             } catch {
                 present(error)
             }
@@ -233,20 +209,19 @@ final class SessionConsoleModel: ObservableObject {
 
     /// Le lancement piloté par la route distante (S-1) : la racine vient de la
     /// liste des dépôts connus de la coque, et elle devient la préférence
-    /// mémorisée — même effet que le geste « Choisir un dossier… ». Le mode est
-    /// celui de la coque (`rpcUI` par défaut) ; `resume` est faux, c'est une
-    /// session NEUVE.
+    /// mémorisée — même effet que le geste « Choisir un dossier… ». C'est une
+    /// session NEUVE : aucun fichier à reprendre.
     func launch(projectRoot url: URL) async throws {
-        guard canStart else { throw SessionHostError.alreadyRunning }
+        guard canStart else { throw ServiceSessionError.alreadyRunning }
         projectRoot = url
         defaults.set(url.path, forKey: Self.projectRootKey)
-        try await host.start(mode: mode, projectRoot: url, resume: false)
+        try await host.start(projectRoot: url, resumeFile: nil)
     }
 
     /// La relance MANUELLE de la route distante (S-1) : la règle `canRelaunch` du
     /// Mac, qui REPREND le même fichier de session — `host.relaunch()` décide.
     func relaunchSession() async throws {
-        guard canRelaunch else { throw SessionHostError.notRunning }
+        guard canRelaunch else { throw ServiceSessionError.notRunning }
         try await host.relaunch()
     }
 
@@ -344,7 +319,7 @@ final class SessionConsoleModel: ObservableObject {
 
     /// Le statut détaillé d'un état : ni pid ni identifiant, qui ont leurs
     /// propres lignes dans l'inspecteur.
-    static func statusText(for state: SessionHost.State) -> String {
+    static func statusText(for state: ServiceSessionModel.State) -> String {
         switch state {
         case .idle:
             return SessionConsoleText.Status.idle
@@ -374,16 +349,18 @@ final class SessionConsoleModel: ObservableObject {
     }
 
     private func answer(_ response: RpcDialogResponse) {
-        do {
-            try host.answer(response)
-            dialogText = ""
-            selectedOptionIndex = nil
-        } catch {
-            present(error)
+        Task { @MainActor in
+            do {
+                try await host.answer(response)
+                dialogText = ""
+                selectedOptionIndex = nil
+            } catch {
+                present(error)
+            }
         }
     }
 
     private func present(_ error: Error) {
-        statusMessage = (error as? SessionHostError)?.userMessage ?? String(describing: error)
+        statusMessage = ServiceSessionModel.userMessage(of: error)
     }
 }

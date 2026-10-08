@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { armPhase, stateOfCwd, states } from "./state.ts";
-import { runState } from "./runState.ts";
+import { runStateFor } from "./runState.ts";
+import type { ArmedRunState } from "./runState.ts";
 import { PIPELINE_HEARTBEAT_MS, asRunningEntry, asStringOrNull, deleteRunningEntry, historyIdFor, pipelineLabel, pipelineRunningDir, pipelineStateDir, readJsonFile, runningIdFor, writeHistoryEntry, writeRunningEntry } from "./store.ts";
 import type { HistoryEntry, PanelAskOption, PipelineCtx, PipelineFinalState, PipelineRunState, RunningEntry } from "./store.ts";
 
@@ -20,17 +21,29 @@ export type PublishDeps = {
 };
 
 
-// Compteurs d'activité par identifiant d'appel d'outil : incrémentés et
-// décrémentés, jamais posés à zéro sur un événement — un `tool_execution_end`
-// manquant (processus tué, tour interrompu) ne doit pas figer l'état.
-export const pendingAsks = new Set<string>();
+// Compteurs d'activité par identifiant d'appel d'outil : ils vivent dans l'état
+// de la SESSION (`runStateOf`), pas dans le process — le service héberge plusieurs
+// sessions, et un `ask` en vol dans l'une ne doit pas faire dire « attend » à
+// l'entrée d'une autre (S-3, S-8).
 
-export const pendingApprovals = new Set<string>();
+/** L'état d'exécution de la session d'un contexte : boîte, question, compteurs. */
+export function runStateOf(ctx: PipelineCtx | undefined): ArmedRunState {
+  return runStateFor(stateKeyOf(ctx));
+}
 
 
-// Dernier contexte vu pour ce processus : source de `isIdle` (délégué au runner,
-// donc vivant) et de la session publiée. Le battement n'en a pas d'autre.
-export let liveCtx: PipelineCtx | undefined;
+/** La clé d'état d'un contexte : son fichier de session, sinon son identifiant. */
+function stateKeyOf(ctx: PipelineCtx | undefined): string {
+  const file = sessionFileOf(ctx);
+  if (file !== null && file !== "") return file;
+  return sessionIdOf(ctx) ?? "";
+}
+
+
+// Dernier contexte vu PAR SESSION : source de `isIdle` (délégué au runner, donc
+// vivant) et de la session publiée. Le battement n'en a pas d'autre, et une
+// session du service ne doit jamais publier avec le contexte d'une autre.
+const liveCtxs = new Map<string, PipelineCtx>();
 
 export let stateWriteWarned = false;
 
@@ -177,7 +190,8 @@ export function sessionIdOf(ctx: PipelineCtx | undefined): string | null {
  * `running` sinon.
  */
 export function currentRunState(ctx: PipelineCtx | undefined, cwd: string): PipelineRunState {
-  if (pendingAsks.size > 0 || pendingApprovals.size > 0) return "waiting";
+  const state = runStateOf(ctx);
+  if (state.pendingAsks.size > 0 || state.pendingApprovals.size > 0) return "waiting";
   if (ctx?.cwd && path.resolve(ctx.cwd) !== path.resolve(cwd)) return "waiting";
   try {
     if (ctx?.isIdle?.() === true) return "waiting";
@@ -196,7 +210,8 @@ export function currentRunState(ctx: PipelineCtx | undefined, cwd: string): Pipe
 export function publishRunning(deps: PublishDeps, cwd: string): void {
   const st = states.get(path.resolve(cwd));
   if (!st?.phase) return;
-  const ctx = deps.ctx ?? liveCtx;
+  const ctx = deps.ctx ?? liveCtxs.get(stateKeyOf(deps.ctx));
+  const session = runStateOf(ctx);
   // Un sous-agent publie SON contexte sur le MÊME cwd : sa session prendrait la
   // place de celle du maillon dans l'entrée (le cwd ne les distingue pas), et
   // l'utilisateur rejoindrait sa transcription. Il n'écrit rien.
@@ -218,15 +233,15 @@ export function publishRunning(deps: PublishDeps, cwd: string): void {
     // Faute de mieux, la session du PREMIER contexte armé fait foi : c'est elle
     // que le pilote a lancée, et un contexte étranger ne doit pas la remplacer.
     sessionFile: same
-      ? (sessionFileOf(ctx) ?? previous?.sessionFile ?? runState.sessionFile ?? null)
-      : (previous?.sessionFile ?? runState.sessionFile ?? null),
+      ? (sessionFileOf(ctx) ?? previous?.sessionFile ?? session.sessionFile ?? null)
+      : (previous?.sessionFile ?? session.sessionFile ?? null),
     sessionId: same ? (sessionIdOf(ctx) ?? previous?.sessionId ?? null) : (previous?.sessionId ?? null),
     owner: { pid: process.pid },
-    // La boîte et la question en vol décrivent CE process : elles ne se reprennent
-    // pas de l'entrée précédente (une boîte n'est armée qu'au démarrage, et une
-    // question ne survit pas à la fin de son appel).
-    inbox: runState.inbox,
-    pendingAsk: runState.pendingAsk,
+    // La boîte et la question en vol décrivent CETTE session : elles ne se
+    // reprennent pas de l'entrée précédente (une boîte n'est armée qu'au
+    // démarrage, et une question ne survit pas à la fin de son appel).
+    inbox: session.inbox,
+    pendingAsk: session.pendingAsk,
   };
   st.entry = entry;
   const stateDir = deps.stateDir ?? pipelineStateDir();
@@ -291,7 +306,7 @@ export function publishCurrentCwd(deps: PublishDeps): void {
     // prendre son contexte comme « dernier contexte vu » ferait publier sa session
     // pour le cwd du maillon, et les pilotes liraient sa transcription.
     if (isSubagentSession(sessionFileOf(ctx))) return;
-    liveCtx = ctx;
+    liveCtxs.set(stateKeyOf(ctx), ctx);
     publishRunning(deps, ctx.cwd);
   } catch (err) {
     reportStateWriteFailure(deps, err);
@@ -313,12 +328,13 @@ export function ensureHeartbeat(ctx: PipelineCtx | undefined, deps: Omit<Publish
   // n'apparaîtrait plus comme en cours pour le reste de son tour. Il ne bat pas,
   // et ne devient pas non plus le « dernier contexte vu ».
   if (isSubagentSession(sessionFileOf(ctx))) return;
-  if (ctx) liveCtx = ctx;
-  runState.heartbeatStop?.();
+  if (ctx) liveCtxs.set(stateKeyOf(ctx), ctx);
+  const session = runStateOf(ctx);
+  session.heartbeatStop?.();
   const timer = ctx.setInterval(() => {
-    for (const cwd of armedCwds()) publishRunning({ ...deps, ctx: liveCtx }, cwd);
+    for (const cwd of armedCwds()) publishRunning({ ...deps, ctx }, cwd);
   }, PIPELINE_HEARTBEAT_MS);
-  runState.heartbeatStop = () => {
+  session.heartbeatStop = () => {
     try {
       ctx.clearTimer?.(timer);
     } catch {
@@ -349,9 +365,10 @@ export function armPipeline(deps: PublishDeps, cwd: string | undefined, phase: P
   // publie à défaut de contexte utilisable, et un sous-agent du même process —
   // dont le `session_start` est écarté avant d'arriver ici — ne peut donc pas la
   // remplacer (S-6).
-  if (runState.sessionFile === null) {
+  const session = runStateOf(deps.ctx);
+  if (session.sessionFile === null) {
     const file = sessionFileOf(deps.ctx);
-    if (!isSubagentSession(file)) runState.sessionFile = file;
+    if (!isSubagentSession(file)) session.sessionFile = file;
   }
   // Aucun réarmement ici : la notice « état non écrit » vaut AU PLUS UNE FOIS PAR
   // SESSION, et la seule frontière de session est le hook `session_start`. Réarmer

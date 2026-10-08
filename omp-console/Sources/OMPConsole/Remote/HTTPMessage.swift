@@ -67,7 +67,7 @@ enum HTTPParseOutcome: Equatable {
 }
 
 /// Le parseur incrémental : on lui pousse des octets, il rend une requête dès
-/// qu'une complète est disponible (patron `RpcChunkDecoder`).
+/// qu'une complète est disponible (même patron que le découpeur de trames SSE).
 struct HTTPRequestParser {
     private var buffer: [UInt8] = []
 

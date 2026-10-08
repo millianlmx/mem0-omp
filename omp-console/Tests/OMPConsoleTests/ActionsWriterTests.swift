@@ -267,168 +267,199 @@ func inZoneInboxesAreAccepted() throws {
     #expect(PipelineWriter.canonicalPath("../../hors") == nil, "un chemin relatif n'a pas de canonisation")
 }
 
-// MARK: - commandes et accusés (S-4)
+// MARK: - commandes (S-9) : le corps POSTÉ au service
 
-@Test("reponses-et-jalons/AC-5 : une commande verdict `v` a le nom et l'objet du canal")
-func writeVerdictCommand() throws {
+/// Un capteur du corps posté : `PipelineWriter.post` l'enregistre et rend l'accusé
+/// décidé par le test.
+private final class PostedCommands: @unchecked Sendable {
+    private let lock = NSLock()
+    private(set) var bodies: [[String: Any]] = []
+    private(set) var pilots: [String] = []
+    var ack = ServiceCommandAck(
+        id: "c", repo: "/tmp/depot", kind: nil, state: .taken, reason: nil, at: 0
+    )
+    var failure: Error?
+
+    func post(_ body: [String: Any]) throws -> ServiceCommandAck {
+        lock.lock(); defer { lock.unlock() }
+        bodies.append(body)
+        if let failure { throw failure }
+        return ack
+    }
+
+    func recordPilot(_ repo: String) {
+        lock.withLock { pilots.append(repo) }
+    }
+}
+
+private func commandWriter(_ recorder: PostedCommands, stateDir: String) -> PipelineWriter {
+    PipelineWriter(stateDir: stateDir, post: { _, body in try recorder.post(body) })
+}
+
+/// L'objet `[String: Any]` égal à l'attendu, sans se soucier du type NSNumber.
+private func sameObject(_ body: [String: Any], _ expected: [String: Any]) -> Bool {
+    NSDictionary(dictionary: body) == NSDictionary(dictionary: expected)
+}
+
+@Test("reponses-et-jalons/AC-5 : une commande verdict `v` poste l'objet exact du canal")
+func writeVerdictCommand() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
+    let recorder = PostedCommands()
+    let writer = commandWriter(recorder, stateDir: fixture.root)
     let command = OutgoingCommand.verdict(
         id: "console-1700000000000-a1b2", repo: "/tmp/depot", slug: "alpha", verdict: .specs
     )
 
-    let path = try writer.writeCommand(command, sentAt: 1_700_000_000_000, salt: "a1b2")
+    let ack = try await writer.postCommand(repo: "/tmp/depot", command: command, sentAt: 1_700_000_000_000)
 
-    #expect(path == joinPath(writer.commandDir, "0001700000000000-a1b2.json"))
-    #expect(object(path) == [
-        "version": .number(1),
-        "id": .string("console-1700000000000-a1b2"),
-        "sentAt": .number(1_700_000_000_000),
-        "repo": .string("/tmp/depot"),
-        "kind": .string("verdict"),
-        "slug": .string("alpha"),
-        "verdict": .string("v"),
-    ])
-    #expect(writer.ackPath(id: "console-1700000000000-a1b2")
-        == joinPath(writer.commandAckDir, "console-1700000000000-a1b2.json"))
+    #expect(ack.state == .taken)
+    #expect(recorder.bodies.count == 1)
+    #expect(sameObject(recorder.bodies[0], [
+        "version": 1,
+        "id": "console-1700000000000-a1b2",
+        "sentAt": 1_700_000_000_000,
+        "repo": "/tmp/depot",
+        "kind": "verdict",
+        "slug": "alpha",
+        "verdict": "v",
+    ]))
 }
 
 @Test("reponses-et-jalons/AC-6 : une commande verdict `y` porte exactement le schéma du canal")
-func writeReviewVerdictCommand() throws {
+func writeReviewVerdictCommand() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    let path = try writer.writeCommand(
-        .verdict(id: "c-y", repo: "/tmp/depot", slug: "beta", verdict: .review),
-        sentAt: 1_700_000_000_000, salt: "abcd"
+    let recorder = PostedCommands()
+    let writer = commandWriter(recorder, stateDir: fixture.root)
+    _ = try await writer.postCommand(
+        repo: "/tmp/depot",
+        command: .verdict(id: "c-y", repo: "/tmp/depot", slug: "beta", verdict: .review),
+        sentAt: 1_700_000_000_000
     )
-    #expect(object(path) == [
-        "version": .number(1),
-        "id": .string("c-y"),
-        "sentAt": .number(1_700_000_000_000),
-        "repo": .string("/tmp/depot"),
-        "kind": .string("verdict"),
-        "slug": .string("beta"),
-        "verdict": .string("y"),
-    ])
+    #expect(sameObject(recorder.bodies[0], [
+        "version": 1,
+        "id": "c-y",
+        "sentAt": 1_700_000_000_000,
+        "repo": "/tmp/depot",
+        "kind": "verdict",
+        "slug": "beta",
+        "verdict": "y",
+    ]))
 }
 
-@Test("reponses-et-jalons/AC-7 : une commande launch ne porte NI slug NI deps")
-func writeLaunchCommand() throws {
+@Test("reponses-et-jalons/AC-7 : une commande launch ne porte NI slug NI deps, et n'écrit aucun fichier")
+func writeLaunchCommand() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
+    let recorder = PostedCommands()
+    let writer = commandWriter(recorder, stateDir: fixture.root)
     let before = relativeTree(fixture.root)
 
-    let path = try writer.writeCommand(
-        .launch(
+    _ = try await writer.postCommand(
+        repo: "/tmp/depot",
+        command: .launch(
             id: "c-l", repo: "/tmp/depot", title: "Ma feature", description: "l'intention",
             modelReqSpecs: nil, modelImplReview: nil
         ),
-        sentAt: 1_700_000_000_000, salt: "abcd"
+        sentAt: 1_700_000_000_000
     )
 
-    #expect(object(path) == [
-        "version": .number(1),
-        "id": .string("c-l"),
-        "sentAt": .number(1_700_000_000_000),
-        "repo": .string("/tmp/depot"),
-        "kind": .string("launch"),
-        "title": .string("Ma feature"),
-        "description": .string("l'intention"),
-    ])
-    // Un seul fichier créé, dans `commands/` — et `acks/` n'existe pas encore.
-    let added = Set(relativeTree(fixture.root)).subtracting(before)
-    #expect(added == ["commands/0001700000000000-abcd.json"])
+    #expect(sameObject(recorder.bodies[0], [
+        "version": 1,
+        "id": "c-l",
+        "sentAt": 1_700_000_000_000,
+        "repo": "/tmp/depot",
+        "kind": "launch",
+        "title": "Ma feature",
+        "description": "l'intention",
+    ]))
+    #expect(relativeTree(fixture.root) == before, "la commande part par HTTP, aucun fichier n'est créé")
 }
 
 @Test("model-selector/AC-5 : une commande models porte le schéma exact, NSNull pour un groupe par défaut")
-func writeModelsCommand() throws {
+func writeModelsCommand() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    let path = try writer.writeCommand(
-        .models(id: "c-m", repo: "/tmp/depot", slug: "alpha", modelReqSpecs: "A", modelImplReview: nil),
-        sentAt: 1_700_000_000_000, salt: "abcd"
+    let recorder = PostedCommands()
+    let writer = commandWriter(recorder, stateDir: fixture.root)
+    _ = try await writer.postCommand(
+        repo: "/tmp/depot",
+        command: .models(id: "c-m", repo: "/tmp/depot", slug: "alpha", modelReqSpecs: "A", modelImplReview: nil),
+        sentAt: 1_700_000_000_000
     )
-    #expect(object(path) == [
-        "version": .number(1),
-        "id": .string("c-m"),
-        "sentAt": .number(1_700_000_000_000),
-        "repo": .string("/tmp/depot"),
-        "kind": .string("models"),
-        "slug": .string("alpha"),
-        "modelReqSpecs": .string("A"),
-        "modelImplReview": .null,
-    ])
+    #expect(sameObject(recorder.bodies[0], [
+        "version": 1,
+        "id": "c-m",
+        "sentAt": 1_700_000_000_000,
+        "repo": "/tmp/depot",
+        "kind": "models",
+        "slug": "alpha",
+        "modelReqSpecs": "A",
+        "modelImplReview": NSNull(),
+    ]))
 }
 
 @Test("reponses-et-jalons/AC-8 : une commande stop ne porte que son identité et son dépôt")
-func writeStopCommand() throws {
+func writeStopCommand() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    let path = try writer.writeCommand(
-        .stop(id: "c-s", repo: "/tmp/depot"), sentAt: 1_700_000_000_000, salt: "abcd"
+    let recorder = PostedCommands()
+    let writer = commandWriter(recorder, stateDir: fixture.root)
+    _ = try await writer.postCommand(
+        repo: "/tmp/depot", command: .stop(id: "c-s", repo: "/tmp/depot"), sentAt: 1_700_000_000_000
     )
-    #expect(object(path) == [
-        "version": .number(1),
-        "id": .string("c-s"),
-        "sentAt": .number(1_700_000_000_000),
-        "repo": .string("/tmp/depot"),
-        "kind": .string("stop"),
-    ])
+    #expect(sameObject(recorder.bodies[0], [
+        "version": 1,
+        "id": "c-s",
+        "sentAt": 1_700_000_000_000,
+        "repo": "/tmp/depot",
+        "kind": "stop",
+    ]))
 }
 
-@Test("reponses-et-jalons/AC-10 : un accusé absent rend nil sans lever")
-func readAckAbsentIsNil() {
+@Test("reponses-et-jalons/AC-9 : l'accusé refusé rend son identité, son état et son motif verbatim")
+func readAckRefused() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    #expect(writer.readAck(id: "console-1-abcd") == nil, "`commands/acks/` absent : aucune exception")
+    let recorder = PostedCommands()
+    recorder.ack = ServiceCommandAck(
+        id: "c-1", repo: "/tmp/depot", kind: "verdict", state: .refused,
+        reason: "sans objet : la feature n'attend pas le jalon v", at: 1_700_000_000_000
+    )
+    let writer = commandWriter(recorder, stateDir: fixture.root)
+    let ack = try await writer.postCommand(
+        repo: "/tmp/depot",
+        command: .verdict(id: "c-1", repo: "/tmp/depot", slug: "alpha", verdict: .specs),
+        sentAt: 1_700_000_000_000
+    )
+    #expect(ack.state == .refused)
+    #expect(ack.reason == "sans objet : la feature n'attend pas le jalon v")
+    #expect(ack.id == "c-1")
+    #expect(ack.at == 1_700_000_000_000)
 }
 
-@Test("reponses-et-jalons/AC-9 : un accusé refusé rend son identité, son état et son motif")
-func readAckRefused() throws {
+@Test("reponses-et-jalons/AC-10 : un échec du POST est rendu tel quel, aucun accusé inventé")
+func readAckAbsentIsNil() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    try FileManager.default.createDirectory(atPath: writer.commandAckDir, withIntermediateDirectories: true)
-    let ack = writer.ackPath(id: "c-1")
-    try Data("""
-    {"version":1,"id":"c-1","repo":"/tmp/depot","kind":"verdict","state":"refused",\
-    "reason":"sans objet : la feature n'attend pas le jalon v","at":1700000000000}
-    """.utf8).write(to: URL(fileURLWithPath: ack))
-
-    #expect(writer.readAck(id: "c-1") == PipelineCommandAck(
-        id: "c-1",
-        state: .refused,
-        reason: "sans objet : la feature n'attend pas le jalon v",
-        at: 1_700_000_000_000
-    ))
+    let recorder = PostedCommands()
+    recorder.failure = ServiceClientError.unavailable
+    let writer = commandWriter(recorder, stateDir: fixture.root)
+    await #expect(throws: ServiceClientError.unavailable) {
+        _ = try await writer.postCommand(
+            repo: "/tmp/depot", command: .stop(id: "c-1", repo: "/tmp/depot"), sentAt: 1
+        )
+    }
+    #expect(recorder.bodies.count == 1, "le corps a bien été posté une fois")
 }
 
-@Test("reponses-et-jalons/AC-10 : un accusé illisible ou hors schéma est traité comme absent")
-func readAckIllisibleIsNil() throws {
+@Test("reponses-et-jalons/AC-10 : « piloter un dépôt » poste au service, sans écrire de fichier")
+func readAckIllisibleIsNil() async throws {
     let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    try FileManager.default.createDirectory(atPath: writer.commandAckDir, withIntermediateDirectories: true)
-
-    try Data("{ pas du json".utf8).write(to: URL(fileURLWithPath: writer.ackPath(id: "c-1")))
-    #expect(writer.readAck(id: "c-1") == nil)
-
-    try Data("{\"version\":2,\"id\":\"c-1\"}".utf8).write(to: URL(fileURLWithPath: writer.ackPath(id: "c-1")))
-    #expect(writer.readAck(id: "c-1") == nil, "version hors schéma")
-
-    try Data("{\"version\":1,\"id\":\"c-1\",\"repo\":\"/x\",\"kind\":null,\"state\":\"peut-être\",\"reason\":null,\"at\":1}"
-        .utf8).write(to: URL(fileURLWithPath: writer.ackPath(id: "c-1")))
-    #expect(writer.readAck(id: "c-1") == nil, "état hors vocabulaire")
-}
-
-@Test("reponses-et-jalons/AC-10 : un accusé nommé d'un autre identifiant est traité comme absent")
-func readAckWrongIdIsNil() throws {
-    let fixture = StoreFixture()
-    let writer = PipelineWriter(stateDir: fixture.root)
-    try FileManager.default.createDirectory(atPath: writer.commandAckDir, withIntermediateDirectories: true)
-    try Data("{\"version\":1,\"id\":\"autre\",\"repo\":\"/x\",\"kind\":null,\"state\":\"taken\",\"reason\":null,\"at\":1}"
-        .utf8).write(to: URL(fileURLWithPath: writer.ackPath(id: "c-1")))
-
-    #expect(writer.readAck(id: "c-1") == nil)
-    #expect(writer.readAck(id: "a/b") == nil, "un identifiant hors motif ne nomme aucun fichier")
+    let recorder = PostedCommands()
+    let writer = PipelineWriter(
+        stateDir: fixture.root,
+        post: { _, body in try recorder.post(body) },
+        pilot: { repo in recorder.recordPilot(repo) }
+    )
+    let before = relativeTree(fixture.root)
+    try await writer.pilot(repo: "/tmp/depot")
+    #expect(recorder.pilots == ["/tmp/depot"])
+    #expect(relativeTree(fixture.root) == before)
 }
 
 // MARK: - identifiants (S-4)
@@ -466,15 +497,6 @@ func occupiedTargetIsNeverOverwritten() throws {
         after[.modificationDate] as? Date == before[.modificationDate] as? Date,
         "le fichier préexistant n'est pas modifié : contenu ET date intacts"
     )
-
-    // Même règle pour une COMMANDE : deux écritures au même (sentAt, salt) donnent
-    // deux fichiers distincts, chacun avec son contenu.
-    let first = try writer.writeCommand(.stop(id: "c-1", repo: "/tmp/depot"), sentAt: 1, salt: "abcd")
-    let second = try writer.writeCommand(.stop(id: "c-2", repo: "/tmp/depot"), sentAt: 1, salt: "abcd")
-    #expect(first == joinPath(writer.commandDir, "0000000000000001-abcd.json"))
-    #expect(second == joinPath(writer.commandDir, "0000000000000001-abcd-1.json"))
-    #expect(object(first)?["id"] == .string("c-1"))
-    #expect(object(second)?["id"] == .string("c-2"))
 }
 
 @Test("chemins-du-magasin-non-confines/AC-6 : un EINTR à la création, à l'écriture et à la publication est retenté")
@@ -543,19 +565,22 @@ func exhaustedNamesAndIOErrorsFail() throws {
     // Aucun nom libre : la publication échoue après `uniqueNameLimit` collisions.
     do {
         let fixture = StoreFixture()
+        let box = fixture.createBox("run-1")
         var ops = PipelineFileOps.live
         ops.link = { _, _ in EEXIST }
         let writer = PipelineWriter(stateDir: fixture.root, fileOps: ops)
         var failure: PipelineWriteFailure?
         do {
-            _ = try writer.writeCommand(.stop(id: "c-s", repo: "/tmp/depot"), sentAt: 1, salt: "abcd")
+            _ = try writer.writeDelivery(
+                inbox: box, delivery: .text(text: "un"), sentAt: 1, salt: "abcd"
+            )
         } catch let error as PipelineWriteFailure {
             failure = error
         }
         #expect(PipelineWriter.uniqueNameLimit == 1000)
         #expect(failure?.reason == "écriture impossible (aucun nom libre)")
         #expect(
-            (try FileManager.default.contentsOfDirectory(atPath: writer.commandDir)).isEmpty,
+            (try FileManager.default.contentsOfDirectory(atPath: box)).isEmpty,
             "aucune cible publiée, aucun temporaire laissé"
         )
     }

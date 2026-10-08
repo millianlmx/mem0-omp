@@ -52,6 +52,11 @@ export type PipelinesPanelDeps = {
    */
   lot?: LotPanelActions & { adopt?: () => boolean };
   /**
+   * Le pid du SERVICE vivant, ou `null` (S-11) : c'est lui qui pilote les lots de
+   * la machine, et c'est lui que l'en-tête nomme — plus aucune session terminale.
+   */
+  servicePid?: () => number | null;
+  /**
    * Les modèles connus de la session (S-3), capturés à l'ouverture de l'étape
    * « Modèle » du flux d'ajout. Absente ou vide, l'étape n'existe pas et le flux
    * reste nom → description → dépendances → aperçu.
