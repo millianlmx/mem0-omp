@@ -2,8 +2,8 @@
 
 Document tenu par la commande /project (plugin omp-mem0-req) sur la branche `omp-project` : réécrit à chaque changement d'état, ne l'édite pas à la main.
 
-**Statut** : en cours — segment 6/6 « Le graphe, et parler à OMP »
-**Avancement** : 12/13 feature(s) fusionnée(s)
+**Statut** : terminé
+**Avancement** : 13/13 feature(s) fusionnée(s)
 
 ## But
 
@@ -51,9 +51,9 @@ Une app iOS universelle (iPhone + iPad, iOS 26, SwiftUI et Liquid Glass natif) s
 | 2 | `ios-sessions` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/79 | défaut OMP | défaut OMP | La section Sessions sur iOS : le sélecteur de toutes les sessions OMP (par jour, par projet) et la visionneuse — messages, pensées, appels d'outil repliables, diffs colorés, question ask en évidence, suivi d'un run vivant sans recharger le fichier entier. Le rendu de conversation et le suivi direct sont posés ici comme composants iOS réutilisables par la section Session OMP. La réussite se prouve par une session de pipeline réelle affichée avec les mêmes faits que la coque macOS, et une session en cours qui se met à jour en direct. |
 | 3 | `ios-statistiques` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/78 | défaut OMP | défaut OMP | La section Statistiques sur iOS : la consommation des runs (tokens, modèle, durée, tours) agrégée par feature et par projet, lue par l'API à partir des sessions et du magasin. Les totaux doivent être ceux de la coque macOS pour le même état. La réussite se prouve sur une feature réelle dont les totaux égalent la somme de ses sessions, et sur un agrégat de projet égal à la somme de ses features. |
 
-### Segment 6 — Le graphe, et parler à OMP (en cours)
+### Segment 6 — Le graphe, et parler à OMP (terminé)
 
 | # | Feature | État | PR | Modèle req+specs | Modèle impl+review | Intention |
 |---|---|---|---|---|---|---|
-| 1 | `ios-memoire-graphe` | PR ouverte | https://github.com/millianlmx/mem0-omp/pull/82 | défaut OMP | défaut OMP | Le mode graphe de la section Mémoire sur iOS : les nœuds-étiquettes et les arêtes de proximité calculés côté Mac (même route que la coque macOS), dessinés en Canvas avec pan, zoom, sélection d'un souvenir et de ses liens — lecture seule. La réussite se prouve par le même graphe que la coque macOS pour la même base, manipulable au doigt sur iPhone et iPad (captures). |
+| 1 | `ios-memoire-graphe` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/82 | défaut OMP | défaut OMP | Le mode graphe de la section Mémoire sur iOS : les nœuds-étiquettes et les arêtes de proximité calculés côté Mac (même route que la coque macOS), dessinés en Canvas avec pan, zoom, sélection d'un souvenir et de ses liens — lecture seule. La réussite se prouve par le même graphe que la coque macOS pour la même base, manipulable au doigt sur iPhone et iPad (captures). |
 | 2 | `ios-session-omp` | fusionnée | https://github.com/millianlmx/mem0-omp/pull/81 | défaut OMP | défaut OMP | La section Session OMP sur iOS : choisir un dépôt, lancer ou arrêter une session hébergée par le Mac, envoyer un prompt, répondre à ses dialogues, et lire la conversation en direct (le rendu de la section Sessions est réutilisé). Le process reste hébergé par la coque macOS (SessionHost/ConductorPool), l'app iOS n'exécute rien. La réussite se prouve par une session réelle pilotée depuis l'iPad : un prompt envoyé, un dialogue répondu, la réponse affichée en direct. |
