@@ -42,6 +42,11 @@ struct RemoteSessionsEvent: Encodable, Equatable {
 
 struct RemoteHostedEvent: Encodable, Equatable {
     var state: String
+    /// Les trois champs ADDITIFS de S-2 : le mot du Mac, le fichier de session
+    /// publié, et le nom du dépôt — nuls tant que rien n'est connu.
+    var stateLabel: String?
+    var sessionFile: String?
+    var projectName: String?
     var dialogs: [RpcDialogRequest]
     var added: [TranscriptLine]
 }
@@ -260,6 +265,14 @@ final class RemoteStreamHub {
                 self.broadcastHosted()
             }
         })
+        // Le fichier de la session hébergée entre (ou sort) de la veille à sa
+        // publication tardive (`get_state`) ou à un lancement neuf (S-4).
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in host.$sessionFile.values {
+                guard let self else { return }
+                self.refreshWatchedRuns()
+            }
+        })
 
         // Conduite de projet : l'état de la conduite et sa file d'escalades. Le hub
         // publie la charge utile COMPLÈTE à chaque changement — jamais un delta
@@ -286,15 +299,19 @@ final class RemoteStreamHub {
         broadcast(SSE.frame("conduite", RemoteActions.conduitePayload(project)))
     }
 
-    /// La veille des fichiers de session des runs VIVANTS : un fichier qui
-    /// apparaît entre sous surveillance, un run qui meurt en sort.
+    /// La veille des fichiers de session : ceux des runs VIVANTS du magasin, PLUS
+    /// le fichier de la session hébergée (S-4) — c'est ce qui permet au fil de
+    /// l'iPad de recevoir les ajouts de la session servie par le Mac. Un fichier
+    /// qui apparaît entre sous surveillance, un fichier qui quitte l'ensemble en
+    /// sort.
     private func refreshWatchedRuns() {
-        let live = Set(
+        var live = Set(
             storeRuns(of: storeHub.current())
                 .filter(storeRunIsLive)
                 .map(\.sessionFile)
                 .filter { !$0.isEmpty }
         )
+        if let hosted = session.host.sessionFile, !hosted.isEmpty { live.insert(hosted) }
         for file in live where watchers[file] == nil { watch(file) }
         for file in watchers.keys where !live.contains(file) {
             watchers[file]?.stop()
@@ -348,6 +365,9 @@ final class RemoteStreamHub {
         if let last = host.transcript.last?.id { lastTranscriptId = max(lastTranscriptId, last) }
         broadcast(SSE.frame("hosted", RemoteHostedEvent(
             state: RemoteActions.stateName(host.state),
+            stateLabel: SessionConsoleModel.statusText(for: host.state),
+            sessionFile: host.sessionFile,
+            projectName: session.projectRoot?.lastPathComponent,
             dialogs: host.dialogQueue,
             added: fresh
         )))

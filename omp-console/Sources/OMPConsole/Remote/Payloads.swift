@@ -348,6 +348,10 @@ struct RemoteHostedSessionPayload: Codable, Equatable {
     var sessionId: String?
     var sessionFile: String?
     var protocolVersion: Int?
+    /// Le dernier segment de la racine de projet mémorisée (S-2) : c'est le
+    /// « dépôt » que l'iPad affiche. `nil` distingue « Aucune session » de
+    /// « Prête à démarrer ».
+    var projectName: String?
     var dialogs: [RpcDialogRequest]
     var transcript: [TranscriptLine]
     var truncated: Bool
@@ -390,6 +394,12 @@ struct RemoteFeatureRequest: Decodable, Equatable {
 
 struct RemoteConduiteRequest: Decodable, Equatable {
     var name: String
+}
+
+/// Le corps de `POST /v1/session/launch` (S-1) : la clé d'un dépôt servi par
+/// `GET /v1/repos` — jamais un chemin.
+struct RemoteHostedLaunchRequest: Decodable, Equatable {
+    var repoKey: String
 }
 
 /// Le corps de `POST /v1/conduite/dialogs/{id}` (S-4, S-5) : `kind` vaut `value`,

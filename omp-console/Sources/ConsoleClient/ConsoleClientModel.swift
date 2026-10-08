@@ -547,7 +547,59 @@ public final class ConsoleClientModel: ObservableObject {
     }
 
     public func hostedSession() async throws -> RemoteHostedSessionPayload {
-        try await perform(ClientHTTPRequest(method: "GET", path: "/v1/session"), as: RemoteHostedSessionPayload.self)
+        let payload = try await perform(
+            ClientHTTPRequest(method: "GET", path: "/v1/session"),
+            as: RemoteHostedSessionPayload.self
+        )
+        applyHosted(payload)
+        return payload
+    }
+
+    /// Lance la session hébergée sur un dépôt CONNU du Mac (S-1) : le client ne
+    /// calcule jamais la clé, il la reçoit de `GET /v1/repos`.
+    public func launchHostedSession(repoKey: String) async throws -> RemoteHostedSessionPayload {
+        let body = try encode(RemoteHostedLaunchRequest(repoKey: repoKey))
+        let payload = try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/session/launch", body: body),
+            as: RemoteHostedSessionPayload.self
+        )
+        applyHosted(payload)
+        return payload
+    }
+
+    /// Relance une session `dead` (S-1) : la règle `canRelaunch` est celle du Mac.
+    public func relaunchHostedSession() async throws -> RemoteHostedSessionPayload {
+        let payload = try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/session/relaunch"),
+            as: RemoteHostedSessionPayload.self
+        )
+        applyHosted(payload)
+        return payload
+    }
+
+    /// Arrête la session hébergée (S-7) : idempotent côté coque.
+    public func stopHostedSession() async throws -> RemoteHostedSessionPayload {
+        let payload = try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/session/stop"),
+            as: RemoteHostedSessionPayload.self
+        )
+        applyHosted(payload)
+        return payload
+    }
+
+    /// Tranche un dialogue de la session hébergée (S-5) : mêmes `kind` que la
+    /// conduite, appliqués à la file de `SessionConsoleModel`.
+    public func answerHostedDialog(
+        id: String,
+        kind: String,
+        value: String?,
+        confirmed: Bool?
+    ) async throws -> RemoteAcceptedPayload {
+        let body = try encode(RemoteDialogAnswerRequest(kind: kind, value: value, confirmed: confirmed))
+        return try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/session/dialogs/" + encode(id), body: body),
+            as: RemoteAcceptedPayload.self
+        )
     }
 
     public func prompt(message: String) async throws -> RemoteSentPayload {
@@ -891,6 +943,21 @@ public final class ConsoleClientModel: ObservableObject {
         } else {
             sessionFeeds[file] = subscribers
         }
+    }
+
+    /// Pose l'état de la session hébergée servie par une lecture ou un geste (S-2) :
+    /// le client publie UN SEUL `hosted`, alimenté par le GET, la trame SSE et la
+    /// réponse des routes de geste. Le transcript de la charge utile n'est pas
+    /// repris — le fil vient du fichier de session (S-4).
+    private func applyHosted(_ payload: RemoteHostedSessionPayload) {
+        hosted = RemoteHostedEvent(
+            state: payload.state,
+            stateLabel: payload.stateLabel,
+            sessionFile: payload.sessionFile,
+            projectName: payload.projectName,
+            dialogs: payload.dialogs,
+            added: []
+        )
     }
 
     /// Pose l'instantané et recalcule l'ardoise (S-8). Une trame identique ne
