@@ -167,7 +167,10 @@ func theCLIWithoutPairingIsRefused() async throws {
 )
 func theCLIDrivesALiveRunEndToEnd() async throws {
     let bun = try #require(resolveBun(), "bun est requis pour la recette")
-    let omp = try #require(resolveOmp(), "omp est requis pour la recette")
+    // Le conducteur est le SERVICE : l'app ne lance plus `omp` (elle POSTE
+    // `POST /v1/repos/{repo}/pilot`). La recette exige donc un service LOCAL EN
+    // MARCHE, à la place du binaire `omp` d'avant le cutover — un service absent se
+    // voit dans le refus de l'étape 3, jamais dans un succès trompeur.
 
     // Un magasin jetable avec un lot publié, comme la coque en lit un.
     let store = StoreFixture()
@@ -189,8 +192,14 @@ func theCLIDrivesALiveRunEndToEnd() async throws {
         sessionFile: store.root + "/session.jsonl"
     ))
 
-    let pilot = RecipePilot(omp: omp)
-    let actions = ActionsModel(writer: PipelineWriter(stateDir: store.root), clock: .live, pilot: pilot)
+    let pilot = RecipePilot()
+    let actions = ActionsModel(
+        writer: PipelineWriter(
+            stateDir: store.root,
+            pilot: { repo in try await pilot.ensurePilot(repoRoot: repo) }
+        ),
+        clock: .live
+    )
     let stack = try await RemoteStack.make(stateDir: store.root, actionsModel: actions)
     defer { stack.stop() }
     stack.kanban.start()
@@ -222,20 +231,20 @@ func theCLIDrivesALiveRunEndToEnd() async throws {
     #expect(!snapshot.1.contains("token"))
 }
 
-/// Un conducteur RÉEL : le binaire `omp` de la machine, lancé par le vrai pool.
-@MainActor
-private final class RecipePilot: PipelinePilot {
-    let omp: URL
-    private(set) var roots: [String] = []
-    private var pool: ConductorPool?
+/// Le dépôt piloté par le SERVICE RÉEL : l'app POSTE `POST /v1/repos/{repo}/pilot`
+/// au service local (`ServiceLocator`), qui possède le conducteur — l'app ne lance
+/// plus `omp`. Le double NOTE le dépôt confié, ce qui garde l'assertion « le
+/// conducteur a réellement été armé » observable depuis la recette.
+private final class RecipePilot: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: [String] = []
 
-    init(omp: URL) { self.omp = omp }
+    var roots: [String] { lock.withLock { stored } }
 
     func ensurePilot(repoRoot: String) async throws {
-        roots.append(repoRoot)
-        if pool == nil { pool = ConductorPool() }
-        guard let pool else { return }
-        try await pool.ensurePilot(repoRoot: repoRoot)
+        lock.withLock { stored.append(repoRoot) }
+        let client = try ServiceClient(endpoint: try ServiceLocator.locate())
+        try await client.pilot(repo: repoRoot)
     }
 }
 
@@ -244,13 +253,4 @@ private let bunIsOnPath = resolveBun() != nil
 private func resolveBun() -> String? {
     let candidates = ["/opt/homebrew/bin/bun", "/usr/local/bin/bun", "\(NSHomeDirectory())/.bun/bin/bun"]
     return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
-}
-
-private func resolveOmp() -> URL? {
-    let candidates = [
-        "\(NSHomeDirectory())/.bun/bin/omp",
-        "/opt/homebrew/bin/omp",
-        "/usr/local/bin/omp",
-    ]
-    return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }.map { URL(fileURLWithPath: $0) }
 }

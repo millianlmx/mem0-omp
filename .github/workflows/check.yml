@@ -30,7 +30,13 @@ jobs:
         run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
       - name: Installer l'hôte OMP (types et SDK)
         run: |
-          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.2.11 @types/node@22
+          # 18.8.4 : les options du service (`bindProcessState` de
+          # CreateAgentSessionOptions, `runEphemeralTurn` de ExtensionContextActions)
+          # n'existent pas dans 18.2.11, et 18.4.8 livre des sources que Bun ne
+          # charge pas (`createRatchetPrelude` absent de `src/ratchet/prelude.js`),
+          # ce qui ferait échouer la section « Plugins réels ». Mesuré : 18.8.4
+          # passe le type-check ET le smoke.
+          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22
           echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
           echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
       - uses: oven-sh/setup-bun@v2

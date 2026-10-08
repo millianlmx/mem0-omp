@@ -120,6 +120,17 @@ const CANCEL = "Annuler";
 const NOTICE_PREFIXES = ["[req]", "[pipeline]", "[project]", "[audit]"];
 
 
+/**
+ * Le refus « conduite déjà tenue » (S-7) : le texte EXACT d'aujourd'hui, écrit
+ * une seule fois — la commande `/project` le dit dans une session, l'API du
+ * service le rend en 409 (`servicePilot.startConduite`), et les deux doivent
+ * rester mot pour mot.
+ */
+export function conduiteBusyRefusal(repo: string, pid: number): string {
+  return `[project] le projet de ${repo} est conduit par une autre session vivante (pid ${pid}) — continue dans celle-ci, ou ferme-la puis relance /project.`;
+}
+
+
 /** Les slugs d'une liste de segments, dans l'ordre du plan. */
 function slugsOf(segments: readonly PlanSegment[]): string[] {
   return segments.flatMap((segment) => segment.features.map((feature) => feature.slug));
@@ -732,9 +743,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
       }
       const beat = readAuditRelay(stateDir, project.relayKey);
       if (beat !== null && beat.pid !== process.pid && pidAlive(beat.pid) && now() - beat.heartbeatAt <= AUDIT_RELAY_STALE_MS) {
-        refuse(
-          `[project] le projet de ${repo} est conduit par une autre session vivante (pid ${beat.pid}) — continue dans celle-ci, ou ferme-la puis relance /project.`,
-        );
+        refuse(conduiteBusyRefusal(repo, beat.pid));
         return;
       }
       await resume(ctx, repoRoot, extra);

@@ -40,12 +40,7 @@ func recetteArmeProjectSurDepotSansRemote() async throws {
     }
     print(
         "recette /project : notice observée = \(model.notice ?? "aucune"), "
-            + "état = \(model.state), armé = \(observed), prompt = \(transportPrompt(model.host))"
+            + "état = \(model.state), armé = \(observed), session = \(model.host.sessionId ?? "aucune")"
     )
     model.stop()
-}
-
-@MainActor
-private func transportPrompt(_ host: SessionHost) -> String {
-    host.transcript.last(where: { $0.kind == .outbound })?.text ?? "aucun"
 }

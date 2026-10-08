@@ -534,18 +534,33 @@ test("fixpanel/AC-4 : l'en-tête du lot nomme son pilote dans les trois cas", ()
   assert.ok(!foreign.includes("a ajouter"), "`a` n'est pas annoncé quand un autre pilote conduit");
   assert.ok(!foreign.includes("l lancer"), "`l` non plus");
 
-  // 3. Personne ne conduit : le titre dit quoi faire, et les gestes reviennent —
-  //    c'est le panneau qui reprend le lot (l'adoption est du ressort du panneau).
+  // 3. Personne ne conduit : le titre dit que RIEN n'avance et quoi faire — plus
+  //    aucune session terminale ne reprend un lot (S-4, S-11).
   const dead = rowsFor({ owner: { pid: 999_999_999, sessionFile: null, sessionId: null } });
-  assert.match(dead, /pilote absent — l reprend/, "le titre dit que le lot est à l'arrêt");
-  assert.match(dead, /a ajouter · l lancer · Entrée session/, "les gestes sont de nouveau annoncés");
+  assert.match(dead, /pilote absent — les pipelines\s+n'avancent plus/, "le titre dit que le lot est à l'arrêt");
+  assert.match(dead, /\/service start/, "et nomme le geste qui le relance");
+  assert.ok(!dead.includes("l reprend"), "la reprise locale n'existe plus");
 
   // Un pid VIVANT mais au battement PÉRIMÉ est mort pour le pilotage : c'est le
-  // pid RÉUTILISÉ après un redémarrage, et le lot doit se reprendre.
+  // pid RÉUTILISÉ après un redémarrage, et le titre le dit de la même façon.
   const stale = rowsFor({
     owner: { pid: process.ppid, sessionFile: null, sessionId: null, heartbeatAt: NOW - 6 * LOT_TICK_MS },
   });
-  assert.match(stale, /pilote absent — l reprend/, "un battement périmé vaut un pilote mort");
+  assert.match(stale, /pilote absent — les pipelines\s+n'avancent plus/, "un battement périmé vaut un pilote mort");
+
+  // 4. Le SERVICE pilote : l'en-tête le nomme, et ses gestes restent annoncés —
+  //    ce sont eux qui partent à son API (S-11).
+  seedLot(stateDir, repoRoot, [feature("alpha", { state: "pending" })], {
+    owner: { pid: 999_999_999, sessionFile: null, sessionId: null },
+  });
+  const served = text(
+    buildPanelRows(
+      readPanelModel({ stateDir, repoRoot, selection: 0, now: NOW, servicePid: process.pid }),
+      { width: 80, budget: 24, glyphs: GLYPHS, now: NOW, servicePid: process.pid },
+    ),
+  );
+  assert.match(served, /pilote : le service \(en\s+adoption\)/, "le service est le pilote attendu");
+  assert.match(served, /a ajouter · l lancer · Entrée session/, "ses gestes restent annoncés");
 });
 
 // ---------------------------------------------------------------------------

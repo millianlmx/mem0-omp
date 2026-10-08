@@ -226,6 +226,8 @@ fait désormais échouer la construction de l'image, pas la première requête.
 
 ## Commandes
 
+- `/service` — le service OMP : `start`, `status`, `stop`, `install`, `uninstall`
+  (voir « Le service » ci-dessus).
 - `/mem0-status` — connexion, projet résolu, état du brief, nombre de souvenirs, et
   les compteurs de la session : tours, rappels non vides, explorations, agrafages,
   modifications, écritures mémoire, présence du sommaire.
@@ -359,6 +361,30 @@ fait désormais échouer la construction de l'image, pas la première requête.
   seul dès que **toutes** les PR du précédent sont fusionnées — par toi, jamais par
   `/project`. Voir « Projet ».
 
+## Le service
+
+Un seul process `omp` fait avancer toutes les pipelines de la machine — les maillons
+d'une feature, les segments d'un projet, les audits. Il vit hors de toute session
+terminal, expose une **API REST locale** (`http://127.0.0.1:<port>/v1`, jeton dans
+`<état>/service.json`) que le panneau `/pipelines` et l'app OMP Console utilisent, et
+c'est lui qui exécute les maillons — plus aucun `omp -p` par maillon.
+
+- `/service start` — démarre le service DANS le process courant et ne rend jamais la
+  main : c'est la commande que le job launchd exécute
+  (`omp -p --no-session --pipeline-service "/service start"`).
+- `/service status` — dit `en marche (pid N, port P)` ou `arrêté`, et l'état du job.
+- `/service stop` — arrêt propre : plus de nouvelles requêtes, tours coupés,
+  contrôleurs arrêtés, `service.json` retiré.
+- `/service install` / `/service uninstall` — pose (ou retire) le job launchd
+  `com.millianlmx.mem0-omp-service` dans `~/Library/LaunchAgents`, avec `KeepAlive` et
+  `RunAtLoad` : le service redémarre à l'ouverture de session et après un `kill -9`,
+  ce qui fait reprendre seuls les lots et les projets en cours. Le job écrit sa sortie
+  dans **`<état>/service.log`** (StandardOutPath/StandardErrorPath), à côté de
+  `service.json`.
+
+Sans service, les pipelines **n'avancent plus** — aucune session terminale ne reprend
+un lot — et le panneau le dit (`pilote absent — les pipelines n'avancent plus`).
+
 ## Pipelines en cours
 
 `/pipelines` — ou `alt+w` — monte un panneau **plein écran** qui liste les pipelines de
@@ -377,7 +403,7 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 ────────────────────────────────────────────────────────────────
  Pipelines · 2 processus
  Lot · mem0-omp · 3 features · 1 terminée · 0 bloquée · 0 échouée
- · 0 annulée · 2 en cours · pilote : cette session
+ · 0 annulée · 2 en cours · pilote : le service (pid 4821)
  ❯ mem0-omp/panneau-des-pipelines      /impl · --fix · tour 2/3 · 3:12
    dernière revue : 2 bloquant(s)
    mem0-omp/fetch-du-souvenir          /specs · attend réponse · 0:41
@@ -394,11 +420,13 @@ repart à chaque changement de maillon, ce n'est jamais la durée totale :
 ────────────────────────────────────────────────────────────────
 ```
 
-L'en-tête du lot nomme **qui pilote** : `pilote : cette session` quand c'est la tienne,
-`piloté par pid N — consultation` quand une autre session conduit ce lot (les gestes qui
-écrivent ne sont alors plus annoncés, ils seraient refusés), `pilote absent — l reprend`
-quand le propriétaire a disparu — le lot est à l'arrêt, et rien ne le dit mieux que ces
-trois mots.
+L'en-tête du lot nomme **qui pilote** : `pilote : le service (pid N)` quand le service
+conduit le lot — c'est le cas normal, c'est lui le pilote de la machine — `pilote : le
+service (en adoption)` pour un lot qu'il n'a pas encore repris, `piloté par pid N —
+consultation` quand une autre session vit encore dessus, `pilote : cette session` quand
+aucun service ne tourne et que la session conduit son propre lot. Sans pilote, la ligne
+dit `pilote absent — les pipelines n'avancent plus (/service start)` : aucune session
+terminale ne reprend un lot.
 
 Le panneau occupe **toute la largeur** du terminal (et toute sa hauteur) : rien n'est
 rendu dans une colonne de 80 caractères, et un redimensionnement se voit au rendu
@@ -595,8 +623,11 @@ que d'afficher un écran à moitié peint.
   redémarrages d'OMP, et `d` est le seul moyen d'en retirer une entrée.
 - **Où c'est écrit** : `<état>/running/<id>.json` (une entrée par pipeline, écrite par
   son propriétaire, remplacée atomiquement) et `<état>/history/<id>.json`, sous
-  `~/.omp/agent/pipeline` — ou `MEM0_PIPELINE_STATE_DIR`. Aucun serveur, aucun démon :
-  des fichiers, et rien d'autre.
+  `~/.omp/agent/pipeline` — ou `MEM0_PIPELINE_STATE_DIR`. Le magasin reste des fichiers :
+  c'est ce que lisent le panneau et l'app. Les **maillons**, eux, sont exécutés par le
+  **service** (`/service start`, un seul process `omp` pour toute la machine) : le
+  panneau et l'app lui envoient leurs gestes par son API locale, et plus aucune session
+  terminale ne pilote un lot.
 - **Le canal de commande** : `<état>/commands/` reçoit des commandes d'un client
   extérieur (un fichier JSON par commande, écrit dans un temporaire puis renommé), et
   le pilote propriétaire du dépôt visé les prend en charge en écrivant son accusé dans
@@ -615,8 +646,8 @@ que d'afficher un écran à moitié peint.
 
 Un **lot** enchaîne plusieurs features : chacune a son pipeline (les quatre maillons
 `/req` → `/specs` → `/impl` → `/review`), et le lot les fait avancer **tout seul** — un
-processus par maillon — en ne s'arrêtant que là où il a besoin de toi. Il se pilote
-entièrement depuis le panneau.
+maillon par run, exécuté par le service — en ne s'arrêtant que là où il a besoin de toi.
+Il se pilote entièrement depuis le panneau, et ses gestes partent au service par son API.
 
 ```
 ────────────────────────────────────────────────────────────────
@@ -874,11 +905,12 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_HTTP_TOKEN` | vide | envoyé en header `X-Mem0-Token` si défini côté serveur |
 | `MEM0_PROJECT_ID` | — | force le nom de projet |
 | `MEM0_PIPELINE_WORKTREES_DIR` | `~/.omp/pipeline-worktrees` | base des worktrees de feature (`~` accepté, chemin relatif ignoré) |
-| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`), des lots (`lots/`) et du canal de commande (`commands/` + `commands/acks/`), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
+| `MEM0_PIPELINE_STATE_DIR` | `~/.omp/agent/pipeline` | magasin d'état des pipelines (`running/` + `history/`), des lots (`lots/`), du canal de commande (`commands/` + `commands/acks/`) et du service (`service.json` — pid, port, jeton — et `service.log`, la sortie du job launchd), lu par `/pipelines` (`~` accepté, chemin relatif ignoré) |
 | `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
 | `MEM0_PIPELINE_SLOTS` | `4` | runs de features du lot menés en parallèle (entier, 1-32) ; au-delà, les features runnables attendent un créneau (`attend un créneau` dans `/pipelines`) — les runs hors lot ne comptent pas |
 | `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget d'un run de maillon en millisecondes (10 s à 24 h) ; au-delà, la feature passe `échoué` |
-| `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` des runs du lot (chemin absolu si `omp` n'est pas dans le `PATH`) |
+| `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` du job launchd du service et des runs de conversation (chemin absolu si `omp` n'est pas dans le `PATH`) |
+| `MEM0_SERVICE_PORT` | `8788` | port d'écoute de l'API du service (boucle locale uniquement) ; s'il est occupé, le service prend un port éphémère et `service.json` porte le port réel — les clients lisent toujours ce fichier |
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |
 | `MEM0_AUTOSETUP` | `1` | `0` pour ne jamais écrire dans un dépôt |
 | `MEM0_QUIET` | `0` | `1` pour réinjecter les souvenirs sans les afficher dans le transcript |

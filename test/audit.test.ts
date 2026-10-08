@@ -41,11 +41,12 @@ import reqExtension, {
   type LotController,
   type LotFeature,
   type LotRunnerResult,
+  type LotRunSpec,
   type AuditRelay,
   type ModelRow,
   type PipelinePhase,
 } from "../omp-mem0-req/extension.ts";
-import { runState } from "../omp-mem0-req/runState.ts";
+import { runStateFor } from "../omp-mem0-req/runState.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -96,9 +97,9 @@ const gitRunner = async (args: string[], cwd: string) => {
 
 const OK: LotRunnerResult = { code: 0, killed: false, stdout: "", stderr: "" };
 
-type Run = { argv: string[]; cwd: string; phase: string; prompt: string; finish: (result: LotRunnerResult) => void };
+type Run = { spec: LotRunSpec; cwd: string; phase: string; prompt: string; finish: (result: LotRunnerResult) => void };
 
-type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
+type Runner = (input: { spec: LotRunSpec; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
 
 /**
  * Le runner des runs : `script` rend la fin immédiate d'un run, ou `null` pour le
@@ -106,13 +107,13 @@ type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => 
  */
 function mkRunner(script: (run: Run) => LotRunnerResult | null = () => null): { runner: Runner; runs: Run[] } {
   const runs: Run[] = [];
-  const runner: Runner = async ({ argv, cwd, signal }) => {
+  const runner: Runner = async ({ spec, cwd, signal }) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
     const run: Run = {
-      argv,
+      spec,
       cwd,
-      phase: argv[argv.indexOf("--pipeline-phase") + 1] ?? "",
-      prompt: argv[argv.length - 1] ?? "",
+      phase: spec.phase,
+      prompt: spec.prompt,
       finish: resolve,
     };
     runs.push(run);
@@ -1075,13 +1076,13 @@ test("audit/AC-16 : une question relayée sans réponse redevient répondable au
 
   // Le run attend sa réponse ; le panneau la livre dans sa boîte, la pompe de l'enfant la lui rend.
   const answered = Promise.withResolvers<unknown>();
-  runState.askWaiters.set("call-16", answered.resolve);
+  runStateFor("").askWaiters.set("call-16", answered.resolve);
   try {
     writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-16", selected: "Postgres", sentAt: Date.now() });
-    pumpInbox({ getFlag: () => undefined, sendUserMessage() {} } as never, { isIdle: () => true } as never, inbox);
+    pumpInbox({ getFlag: () => undefined, sendUserMessage() {} } as never, { isIdle: () => true } as never, inbox, true);
     assert.deepEqual(await answered.promise, { selected: "Postgres" });
   } finally {
-    runState.askWaiters.delete("call-16");
+    runStateFor("").askWaiters.delete("call-16");
   }
 });
 
@@ -1500,8 +1501,8 @@ test("audit-multi/AC-6 : deux questions de modèle par élément coché, et chaq
   assert.equal(featureOf("gamma").modelReqSpecs, "p/y");
   assert.equal("modelImplReview" in featureOf("gamma"), false, "défaut OMP : aucune clé impl+review");
   const modelArg = (slug: string) => {
-    const argv = fx.runs.find((run) => path.basename(run.cwd) === path.basename(featureOf(slug).worktree))!.argv;
-    return argv.includes("--model") ? argv[argv.indexOf("--model") + 1] : null;
+    const spec = fx.runs.find((run) => path.basename(run.cwd) === path.basename(featureOf(slug).worktree))!.spec;
+    return spec.model;
   };
   for (const run of fx.runs) {
     const slug = path.basename(run.cwd);

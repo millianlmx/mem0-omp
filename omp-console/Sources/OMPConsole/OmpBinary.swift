@@ -32,7 +32,7 @@ enum OmpBinaryResolver {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         paths: AppPaths = .standard(),
         manifest: ComponentManifest = .current
-    ) -> Result<URL, SessionHostError> {
+    ) -> Result<URL, OmpBinaryError> {
         let searched = candidates(environment: environment, paths: paths, manifest: manifest)
         for candidate in searched where FileManager.default.isExecutableFile(atPath: candidate) {
             return .success(URL(fileURLWithPath: candidate))

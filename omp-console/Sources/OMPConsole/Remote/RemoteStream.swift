@@ -110,7 +110,6 @@ final class RemoteStreamHub {
     private var watchers: [String: FileWatcher] = [:]
     private var readers: [String: SessionReader] = [:]
     private var started = false
-    private var lastTranscriptId = 0
 
     init(
         storeHub: StoreHub,
@@ -245,7 +244,9 @@ final class RemoteStreamHub {
             }
         })
 
-        // Session hébergée : état, dialogues, transcript ajouté.
+        // Session hébergée : état et dialogues. La conversation, elle, suit le
+        // FICHIER de session servi par l'API (`sessions`/`session`, S-2) — l'hôte
+        // RPC n'existe plus, donc plus de fil en mémoire à pousser ici.
         let host = session.host
         tasks.append(Task { @MainActor [weak self] in
             for await _ in host.$state.values {
@@ -259,14 +260,8 @@ final class RemoteStreamHub {
                 self.broadcastHosted()
             }
         })
-        tasks.append(Task { @MainActor [weak self] in
-            for await _ in host.$transcript.values {
-                guard let self else { return }
-                self.broadcastHosted()
-            }
-        })
         // Le fichier de la session hébergée entre (ou sort) de la veille à sa
-        // publication tardive (`get_state`) ou à un lancement neuf (S-4).
+        // publication (`get_state`) ou à un lancement neuf (S-4).
         tasks.append(Task { @MainActor [weak self] in
             for await _ in host.$sessionFile.values {
                 guard let self else { return }
@@ -361,15 +356,15 @@ final class RemoteStreamHub {
 
     private func broadcastHosted() {
         let host = session.host
-        let fresh = host.transcript.filter { $0.id > lastTranscriptId }
-        if let last = host.transcript.last?.id { lastTranscriptId = max(lastTranscriptId, last) }
+        // `added` reste VIDE : la conversation vivante se lit dans le fichier de
+        // session (routes `sessions`/`session`), jamais dans un fil d'hôte.
         broadcast(SSE.frame("hosted", RemoteHostedEvent(
             state: RemoteActions.stateName(host.state),
             stateLabel: SessionConsoleModel.statusText(for: host.state),
             sessionFile: host.sessionFile,
             projectName: session.projectRoot?.lastPathComponent,
             dialogs: host.dialogQueue,
-            added: fresh
+            added: []
         )))
     }
 

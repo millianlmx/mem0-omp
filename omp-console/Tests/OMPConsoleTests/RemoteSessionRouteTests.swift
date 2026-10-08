@@ -6,49 +6,27 @@ import Foundation
 import Testing
 @testable import OMPConsole
 
-/// Le harnais local du test : une session hébergée scriptée, comme
-/// `SessionHostTests` en a l'habitude.
+/// Le harnais local du test : une session SERVIE scriptée — un transport HTTP
+/// scripté à la place du service, un flux SSE maintenu ouvert pour que la session
+/// reste vivante sans reconnexion.
 @MainActor
-private func makeHostedSession() async throws -> (transport: ScriptedRpcTransport, session: SessionConsoleModel, root: URL) {
-    let transport = ScriptedRpcTransport()
-    transport.onWrite = { [weak transport] line in
-        MainActor.assumeIsolated {
-            guard let transport,
-                  let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let type = object["type"] as? String else { return }
-            let id = object["id"] as? String ?? "?"
-            let data: [String: Any]
-            switch type {
-            case "negotiate_protocol": data = ["protocolVersion": 2]
-            case "get_state": data = ["sessionId": "sess-1234", "sessionFile": "/tmp/session.jsonl"]
-            case "prompt": data = [:]
-            default: return
-            }
-            var body: [String: Any] = ["type": "response", "id": id, "command": type, "success": true]
-            if !data.isEmpty { body["data"] = data }
-            let text = (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]))
-                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-            transport.emit(text)
-        }
-    }
-    transport.readyLine = """
-    {"type":"ready","protocolVersion":2,"supportedProtocolVersions":[1,2],\
-    "maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
-    """
-    let host = SessionHost(
-        transport: transport,
-        resolveBinary: { _ in .success(URL(fileURLWithPath: "/usr/bin/true")) },
-        environment: [:],
-        requestTimeout: .seconds(2),
-        readyTimeout: .seconds(2),
-        stopGrace: .milliseconds(80),
-        killGrace: .milliseconds(80)
-    )
+private func makeHostedSession() async throws -> (transport: ScriptedServiceTransport, session: SessionConsoleModel, root: URL) {
     let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         .appendingPathComponent("omp-console-session-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    try await host.start(mode: .rpcUI, projectRoot: root, resume: false)
-    return (transport, SessionConsoleModel(host: host), root)
+
+    let transport = ScriptedServiceTransport()
+    stubServiceSession(transport, cwd: root.path, sessionFile: "/tmp/session.jsonl")
+    openServiceStream(transport, count: 2)
+    let host = ServiceSessionModel(
+        purpose: "session",
+        makeClient: { scriptedClient(transport) },
+        maxAttempts: 5,
+        retryDelay: { _ in projectRetryDelay }
+    )
+    let session = SessionConsoleModel(host: host)
+    try await host.start(projectRoot: root, resumeFile: nil)
+    return (transport, session, root)
 }
 
 @MainActor
@@ -70,15 +48,17 @@ func aPromptReachesTheHostedSession() async throws {
     #expect(prompt.status == 200)
     #expect(try prompt.json(RemoteSentPayload.self).sent)
     #expect(
-        hosted.transport.written.contains { $0.contains("\"prompt\"") && $0.contains("fais avancer le lot") },
-        "la trame `prompt` doit être écrite sur le transport"
+        hosted.transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/prompt")
+                && ($0.body?["text"] as? String) == "fais avancer le lot"
+        },
+        "le prompt doit être POSTÉ au service"
     )
 
     // Un dialogue NOUVEAU remonte sans sondage : il est dans le GET suivant, et dans
     // le flux (`event: hosted`).
-    hosted.transport.emit(
-        #"{"type":"extension_ui_request","id":"d1","method":"select","title":"Choisir","options":["a","b"]}"#
-    )
+    emitServiceDialog(hosted.transport, id: "d1", method: "select", title: "Choisir", options: ["a", "b"])
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.count == 1 })
     let state = try await stack.call("GET", "/v1/session", token: token)
     #expect(state.status == 200)
     let payload = try state.json(RemoteHostedSessionPayload.self)
@@ -120,45 +100,6 @@ func hostedSessionEdgeCases() async throws {
 
 // MARK: - La session hébergée pilotée à distance (feature ios-session-omp)
 
-/// Un hôte scripté PRÊT À LANCER (aucun process), dont `get_state` publie le
-/// fichier de session demandé — la matière des routes de S-1 et du flux de S-4.
-@MainActor
-private func makeHostedHost(sessionFile: String, transport: ScriptedRpcTransport) -> SessionHost {
-    transport.onWrite = { [weak transport] line in
-        MainActor.assumeIsolated {
-            guard let transport,
-                  let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let type = object["type"] as? String else { return }
-            let id = object["id"] as? String ?? "?"
-            let data: [String: Any]
-            switch type {
-            case "negotiate_protocol": data = ["protocolVersion": 2]
-            case "get_state": data = ["sessionId": "sess-1234", "sessionFile": sessionFile]
-            case "prompt": data = [:]
-            default: return
-            }
-            var body: [String: Any] = ["type": "response", "id": id, "command": type, "success": true]
-            if !data.isEmpty { body["data"] = data }
-            let text = (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]))
-                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-            transport.emit(text)
-        }
-    }
-    transport.readyLine = """
-    {"type":"ready","protocolVersion":2,"supportedProtocolVersions":[1,2],\
-    "maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
-    """
-    return SessionHost(
-        transport: transport,
-        resolveBinary: { _ in .success(URL(fileURLWithPath: "/usr/bin/true")) },
-        environment: [:],
-        requestTimeout: .seconds(2),
-        readyTimeout: .seconds(2),
-        stopGrace: .milliseconds(80),
-        killGrace: .milliseconds(80)
-    )
-}
-
 /// Un dépôt git jetable, publié comme lot du magasin : `knownRepos()` le sert.
 private func makeKnownRepo(_ store: StoreFixture) throws -> String {
     let repoRoot = store.root + "/depot"
@@ -178,8 +119,8 @@ func hostedLaunchStartsTheSingleSession() async throws {
     let store = StoreFixture()
     let repoRoot = try makeKnownRepo(store)
     let sessionFile = store.root + "/session.jsonl"
-    let transport = ScriptedRpcTransport()
-    let session = SessionConsoleModel(host: makeHostedHost(sessionFile: sessionFile, transport: transport))
+    let transport = ScriptedServiceTransport()
+    let session = SessionConsoleModel(host: makeScriptedHostedHost(transport, sessionFile: sessionFile))
     let stack = try await RemoteStack.make(stateDir: store.root, sessionModel: session)
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -201,7 +142,12 @@ func hostedLaunchStartsTheSingleSession() async throws {
     // Le prompt part bien à la session (S-3, route existante).
     let sent = try await stack.call("POST", "/v1/session/prompt", token: token, json: ["message": "bonjour"])
     #expect(sent.status == 200)
-    #expect(transport.written.contains { $0.contains("\"prompt\"") && $0.contains("bonjour") })
+    #expect(
+        transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/prompt") && ($0.body?["text"] as? String) == "bonjour"
+        },
+        "le prompt doit être POSTÉ au service"
+    )
 
     // Le lancement sur une clé inconnue est refusé : aucun chemin n'est accepté.
     let unknown = try await launch(stack, token: token, repoKey: "inconnu")
@@ -213,7 +159,9 @@ func hostedLaunchStartsTheSingleSession() async throws {
 func hostedLaunchOnlyKnownRepos() async throws {
     let store = StoreFixture()
     _ = try makeKnownRepo(store)
-    let session = SessionConsoleModel(host: makeHostedHost(sessionFile: store.root + "/s.jsonl", transport: ScriptedRpcTransport()))
+    let session = SessionConsoleModel(
+        host: makeScriptedHostedHost(ScriptedServiceTransport(), sessionFile: store.root + "/s.jsonl")
+    )
     let stack = try await RemoteStack.make(stateDir: store.root, sessionModel: session)
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -232,8 +180,8 @@ func hostedLaunchRefusesSecondSession() async throws {
     let store = StoreFixture()
     let repoRoot = try makeKnownRepo(store)
     let sessionFile = store.root + "/session.jsonl"
-    let transport = ScriptedRpcTransport()
-    let session = SessionConsoleModel(host: makeHostedHost(sessionFile: sessionFile, transport: transport))
+    let transport = ScriptedServiceTransport()
+    let session = SessionConsoleModel(host: makeScriptedHostedHost(transport, sessionFile: sessionFile))
     let stack = try await RemoteStack.make(stateDir: store.root, sessionModel: session)
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -254,8 +202,8 @@ func hostedStopReturnsStopped() async throws {
     let store = StoreFixture()
     let repoRoot = try makeKnownRepo(store)
     let sessionFile = store.root + "/session.jsonl"
-    let transport = ScriptedRpcTransport()
-    let session = SessionConsoleModel(host: makeHostedHost(sessionFile: sessionFile, transport: transport))
+    let transport = ScriptedServiceTransport()
+    let session = SessionConsoleModel(host: makeScriptedHostedHost(transport, sessionFile: sessionFile))
     let stack = try await RemoteStack.make(stateDir: store.root, sessionModel: session)
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -269,7 +217,10 @@ func hostedStopReturnsStopped() async throws {
     #expect(payload.state == "stopped")
     // Le dépôt reste mémorisé : le lancement est de nouveau offert.
     #expect(payload.projectName == "depot")
-    #expect(transport.closeStdinCount == 1)
+    #expect(
+        transport.requests.contains { $0.method == "DELETE" && $0.path.hasSuffix("/v1/sessions/sess-1234") },
+        "la session servie doit être fermée par un DELETE"
+    )
 }
 
 @MainActor
@@ -283,17 +234,28 @@ func hostedRelaunchOnlyFromDead() async throws {
     }
     let token = try await stack.pair()
 
-    // `running` : la relance est refusée (409), aucune écriture de relance.
+    // `running` : la relance est refusée (409), aucune nouvelle session n'est créée.
     let busy = try await stack.call("POST", "/v1/session/relaunch", token: token)
     #expect(busy.status == 409)
+    func creations() -> [ScriptedRequest] {
+        hosted.transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix("/v1/sessions") }
+    }
+    #expect(creations().count == 1)
 
-    // Mort subie : la session devient `dead`, relançable.
-    hosted.transport.emitExit(ProcessExit(status: 1, reason: .exited))
-    #expect(hosted.session.host.state != .running)
+    // Service injoignable : le prompt échoue, la session devient `dead`, relançable.
+    hosted.transport.failRequests(ServiceClientError.unavailable)
+    let lost = try await stack.call("POST", "/v1/session/prompt", token: token, json: ["message": "bonjour"])
+    #expect(lost.status == 503)
+    #expect(hosted.session.host.state == .dead)
+
+    // Le service revient : la relance REPREND le fichier de session déjà publié.
+    hosted.transport.failRequests(nil)
     let relaunched = try await stack.call("POST", "/v1/session/relaunch", token: token)
     #expect(relaunched.status == 200)
     let payload = try relaunched.json(RemoteHostedSessionPayload.self)
     #expect(payload.sessionFile == "/tmp/session.jsonl")
+    #expect(creations().count == 2)
+    #expect(creations().last?.body?["resume"] as? String == "/tmp/session.jsonl")
 }
 
 @MainActor
@@ -307,45 +269,58 @@ func hostedDialogRouting() async throws {
     }
     let token = try await stack.pair()
 
-    func emit(_ json: String) { hosted.transport.emit(json) }
+    func emit(_ id: String, _ method: String, _ title: String, options: [String] = [], prefill: String? = nil) {
+        emitServiceDialog(hosted.transport, id: id, method: method, title: title, options: options, prefill: prefill)
+    }
     func answer(_ id: String, _ body: [String: Any]) async throws -> RemoteReply {
         try await stack.call("POST", "/v1/session/dialogs/\(id)", token: token, json: body)
     }
+    /// La réponse part en tâche : la file se vide quand le service l'a reçue.
+    func queueDrains() async -> Bool { await awaitMainTrue { hosted.session.host.dialogQueue.isEmpty } }
 
     // 1. `select` : les erreurs d'abord (tête de file), puis la réponse qui vide.
-    emit(#"{"type":"extension_ui_request","id":"s1","method":"select","title":"Choisir","options":["a","b"]}"#)
-    #expect(hosted.session.host.dialogQueue.first?.id == "s1")
+    emit("s1", "select", "Choisir", options: ["a", "b"])
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.first?.id == "s1" })
     #expect((try await answer("s1", ["kind": "value"])).status == 400)
     #expect((try await answer("s1", ["kind": "value", "value": "z"])).errorMessage == "libellé hors des options du dialogue")
     let selected = try await answer("s1", ["kind": "value", "value": "b"])
     #expect(selected.status == 200)
     #expect(try selected.json(RemoteAcceptedPayload.self).accepted)
-    #expect(hosted.session.host.dialogQueue.isEmpty)
-    #expect(hosted.transport.written.contains { $0.contains("\"value\"") && $0.contains("\"b\"") })
+    #expect(await queueDrains())
+    #expect(
+        hosted.transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/dialogs/s1") && ($0.body?["value"] as? String) == "b"
+        },
+        "la réponse doit être POSTÉE au service"
+    )
 
     // 2. `input` : un texte non blanc.
-    emit(#"{"type":"extension_ui_request","id":"s2","method":"input","title":"Saisir"}"#)
+    emit("s2", "input", "Saisir")
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.first?.id == "s2" })
     #expect((try await answer("s2", ["kind": "value", "value": "   "])).errorMessage == "texte vide")
     let input = try await answer("s2", ["kind": "value", "value": "texte"])
     #expect(input.status == 200)
-    #expect(hosted.session.host.dialogQueue.isEmpty)
+    #expect(await queueDrains())
 
     // 3. `editor` : une valeur VIDE est acceptée.
-    emit(#"{"type":"extension_ui_request","id":"s3","method":"editor","title":"Éditer","prefill":"plan"}"#)
+    emit("s3", "editor", "Éditer", prefill: "plan")
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.first?.id == "s3" })
     let edited = try await answer("s3", ["kind": "value", "value": ""])
     #expect(edited.status == 200)
-    #expect(hosted.session.host.dialogQueue.isEmpty)
+    #expect(await queueDrains())
 
     // 4. `confirm` : `confirmed` requis, et rien ne remplace une confirmation.
-    emit(#"{"type":"extension_ui_request","id":"s4","method":"confirm","title":"Confirmer"}"#)
+    emit("s4", "confirm", "Confirmer")
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.first?.id == "s4" })
     #expect((try await answer("s4", ["kind": "value", "value": "x"])).errorMessage == "ce dialogue n'attend pas de valeur")
     #expect((try await answer("s4", ["kind": "confirmed"])).errorMessage == "confirmation absente")
     let confirmed = try await answer("s4", ["kind": "confirmed", "confirmed": true])
     #expect(confirmed.status == 200)
-    #expect(hosted.session.host.dialogQueue.isEmpty)
+    #expect(await queueDrains())
 
     // 5. `select` : pas de confirmation, `kind` inconnu, puis annulation (AC-11).
-    emit(#"{"type":"extension_ui_request","id":"s5","method":"select","title":"Choisir","options":["a"]}"#)
+    emit("s5", "select", "Choisir", options: ["a"])
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.first?.id == "s5" })
     #expect((try await answer("s5", ["kind": "confirmed", "confirmed": true])).errorMessage == "ce dialogue n'attend pas de confirmation")
     #expect((try await answer("s5", ["kind": "autre"])).errorMessage == "kind inconnu")
     let stale = try await answer("inconnu", ["kind": "cancelled"])
@@ -353,7 +328,7 @@ func hostedDialogRouting() async throws {
     #expect(stale.errorMessage == "le dialogue a changé depuis la demande")
     let cancelled = try await answer("s5", ["kind": "cancelled"])
     #expect(cancelled.status == 200)
-    #expect(hosted.session.host.dialogQueue.isEmpty)
+    #expect(await queueDrains())
 }
 
 /// Un lecteur SSE minimal, local au fichier : il attend la première trame d'un nom.
@@ -405,10 +380,10 @@ private final class HostedSSECollector {
 func hostedSessionFileIsWatched() async throws {
     let store = StoreFixture()
     let sessionFile = store.root + "/session.jsonl"
-    let transport = ScriptedRpcTransport()
-    let host = makeHostedHost(sessionFile: sessionFile, transport: transport)
+    let transport = ScriptedServiceTransport()
+    let host = makeScriptedHostedHost(transport, sessionFile: sessionFile)
     let session = SessionConsoleModel(host: host)
-    try await host.start(mode: .rpcUI, projectRoot: URL(fileURLWithPath: store.root), resume: false)
+    try await host.start(projectRoot: URL(fileURLWithPath: store.root), resumeFile: nil)
     let stack = try await RemoteStack.make(stateDir: store.root, sessionModel: session)
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -448,10 +423,10 @@ func hostedSessionFileIsWatched() async throws {
 func hostedPromptReachesTheThread() async throws {
     let store = StoreFixture()
     let sessionFile = store.root + "/session.jsonl"
-    let transport = ScriptedRpcTransport()
-    let host = makeHostedHost(sessionFile: sessionFile, transport: transport)
+    let transport = ScriptedServiceTransport()
+    let host = makeScriptedHostedHost(transport, sessionFile: sessionFile)
     let session = SessionConsoleModel(host: host)
-    try await host.start(mode: .rpcUI, projectRoot: URL(fileURLWithPath: store.root), resume: false)
+    try await host.start(projectRoot: URL(fileURLWithPath: store.root), resumeFile: nil)
     let stack = try await RemoteStack.make(stateDir: store.root, sessionModel: session)
     defer { stack.stop() }
     let token = try await stack.pair()
@@ -473,7 +448,12 @@ func hostedPromptReachesTheThread() async throws {
         json: ["message": "corrige le lot"]
     )
     #expect(prompt.status == 200)
-    #expect(transport.written.contains { $0.contains("corrige le lot") }, "le prompt doit partir à la session")
+    #expect(
+        transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/prompt") && ($0.body?["text"] as? String) == "corrige le lot"
+        },
+        "le prompt doit partir à la session"
+    )
 
     // L'hôte écrit le tour dans son fichier : le message utilisateur, puis la réponse.
     let turn = """

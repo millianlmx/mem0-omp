@@ -8,9 +8,9 @@
 //   1. Le modèle ne parle JAMAIS le protocole du PTY : il appelle le host et
 //      traduit ses échecs en texte via `TerminalHostError.userMessage`, seule table
 //      des échecs du terminal. Aucun état n'est laissé sans texte (S-10).
-//   2. Aucun état partagé avec la session RPC (S-9) : le modèle ne connaît ni
-//      `SessionConsoleModel` ni `SessionHost`, et `canStart` ne dépend que de son
-//      propre état.
+//   2. Aucun état partagé avec la session servie : le modèle ne connaît ni
+//      `SessionConsoleModel` ni `ServiceSessionModel`, et `canStart` ne dépend que
+//      de son propre état.
 //   3. La sortie du PTY ne change pas l'ÉTAT : elle est accumulée dans l'émulateur
 //      et signalée par une trame coalescée (au plus une par tour de boucle
 //      principale), pour qu'un TUI bavard ne fasse pas re-rendre la fenêtre à

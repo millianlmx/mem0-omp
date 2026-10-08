@@ -11,88 +11,16 @@ import type { Lot } from "./lot.ts";
 import type { SessionProbe } from "./panelSession.ts";
 import { isSubagentSession, reportStateWriteFailure } from "./publish.ts";
 import { buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
+import { serviceRunning } from "./serviceState.ts";
 import { PIPELINE_PHASES, pidAlive, readStore } from "./store.ts";
 
 
 
-// --- le run : un processus `omp` par maillon (S-13) --------------------------
-
-/** Ce qu'un runner de run rend : la sortie du mode print et son issue. */
-export type LotRunnerResult = { code: number; killed: boolean; stdout: string; stderr: string };
-
-export type LotRunnerInput = { argv: string[]; cwd: string; timeout: number; signal: AbortSignal };
-
-export type LotRunner = (input: LotRunnerInput) => Promise<LotRunnerResult>;
-
-
-export type LotRunSpec = {
-  ompBin: string;
-  worktree: string;
-  prompt: string;
-  lotId: string;
-  slug: string;
-  phase: PipelinePhase;
-  stateDir: string;
-  sessionFile?: string | null;
-  selfPath?: string | null;
-  /**
-   * La boîte du run (S-6) : le dossier que l'enfant consomme pour recevoir un
-   * message en cours de tour et une réponse `ask`. Absente (création impossible),
-   * le run part NON armé — exactement comme un run d'une version antérieure.
-   */
-  inbox?: string | null;
-  /**
-   * La BORNE DURE du run (epoch ms) — `--pipeline-deadline`. Ce n'est pas le délai
-   * de travail : le pilote le suspend tant qu'une question `ask` est en vol (le
-   * temps de l'utilisateur n'est pas du travail). C'est le filet de sécurité d'un
-   * pilote vivant mais bloqué — posé à `lancement + délai de travail + marge`.
-   * Absente, l'enfant n'a aucune échéance propre (runs d'une version antérieure).
-   */
-  deadline?: number;
-  /**
-   * Le modèle de la feature (S-1) : poussé en `--model` sur les runs d'une feature
-   * qui en a un. Absent ou vide, l'argv est celui d'avant cette feature, à l'octet
-   * près — aucun `--model ""`, et jamais de drapeau de réflexion (le niveau reste
-   * celui de la config OMP, S-6).
-   */
-  model?: string | null;
-};
-
-
-/**
- * L'argv exact d'un run. Le prompt suit `--` (positionnel littéral, cf.
- * `## Documentation` §2) : un prompt qui commence par `-` ne peut pas être pris
- * pour un drapeau. `--auto-approve` est nécessaire — sans lui les approbations
- * d'outils sont fail-closed en headless (`## Documentation` §1).
- */
-export function buildLotRunArgv(spec: LotRunSpec): string[] {
-  const argv = [
-    spec.ompBin,
-    "--cwd",
-    spec.worktree,
-    "-p",
-    "--auto-approve",
-    "--pipeline-lot",
-    spec.lotId,
-    "--pipeline-feature",
-    spec.slug,
-    "--pipeline-phase",
-    spec.phase,
-    "--pipeline-state-dir",
-    spec.stateDir,
-  ];
-  // Le modèle (S-1) : à sa place fixe, après l'état et avant la boîte, l'échéance,
-  // la reprise et l'extension. Absent ou vide, AUCUN élément n'est ajouté.
-  if (spec.model) argv.push("--model", spec.model);
-  if (spec.inbox) argv.push("--panel-inbox", spec.inbox);
-  if (typeof spec.deadline === "number" && Number.isFinite(spec.deadline)) {
-    argv.push("--pipeline-deadline", String(Math.trunc(spec.deadline)));
-  }
-  if (spec.sessionFile) argv.push("--resume", spec.sessionFile);
-  if (spec.selfPath) argv.push("-e", spec.selfPath);
-  argv.push("--", spec.prompt);
-  return argv;
-}
+// --- les prompts d'un maillon, et le run de conversation ---------------------
+// L'argv d'un maillon n'existe plus : le service exécute les maillons en process
+// et reçoit une spécification (`serviceRuns.LotRunSpec`, S-3, S-12 §1). Il ne
+// reste ici que ce qui décrit un RUN DE CONVERSATION — le seul process `omp` que
+// le plugin lance encore, pour une session hors lot d'un autre process.
 
 
 /** Le répertoire d'installation des plugins OMP : `~/.omp/plugins`. */
@@ -135,16 +63,6 @@ export function selfExtensionArg(
     return null;
   }
 }
-
-
-/** L'URL de ce module, quand le runtime en expose une (ESM) — sinon `undefined`. */
-export const SELF_MODULE_URL: string | undefined = (() => {
-  try {
-    return (import.meta as { url?: string }).url;
-  } catch {
-    return undefined;
-  }
-})();
 
 
 export type LotPromptKind = "collecte" | "phase" | "answer" | "relaunch";
@@ -584,10 +502,9 @@ export function lotDriverFor(stateDir: string, repoRoot: string, cwd: string): L
 
 /**
  * Bascule la collecte d'une feature de lot vers le pilote (S-14) : la feature
- * passe au maillon `specs`, en cours, et cette session devient propriétaire du lot
- * (sans quoi la passe du pilote qu'elle vient d'armer refuserait de le conduire).
- * Rend `true` quand la main a été passée — la session de l'utilisateur n'annonce
- * alors plus rien.
+ * passe au maillon `specs` et le lot reste à son PILOTE — le service quand il vit
+ * (S-4, aucun repli sur une session terminal), la session sinon. Rend `true` quand
+ * la main a été passée — la session de l'utilisateur n'annonce alors plus rien.
  *
  * La bascule n'a lieu que pour la COLLECTE de la feature, et une seule fois :
  * la feature doit être au maillon `req` (sinon un maillon lancé à la main —
@@ -618,22 +535,30 @@ export function handOverCollecte(input: {
   if (!contractHasSection(input.contract, "Besoins")) return false;
   const lot = readLot(input.stateDir, lotRepoKey(input.repoRoot));
   if (!lot) return false;
-  if (lot.owner.pid !== process.pid && pidAlive(lot.owner.pid)) return false;
+  const service = serviceRunning(input.stateDir);
+  // Un autre pilote VIVANT (session d'avant la bascule, run d'une version
+  // antérieure) n'est jamais réécrit ici (S-1, invariant 2). Le SERVICE, lui,
+  // n'est pas un étranger : c'est LUI le pilote de la machine (S-4) — un lot
+  // qu'il tient se bascule normalement.
+  if (
+    lot.owner.pid !== process.pid &&
+    pidAlive(lot.owner.pid) &&
+    !(service !== null && service.pid === lot.owner.pid)
+  ) {
+    return false;
+  }
   const feature = lot.features.find(
     (f) => f.origin === "session" && f.phase === "req" && realpathOr(f.worktree) === realpathOr(input.cwd),
   );
   if (!feature || lotStateTerminal(feature.state)) return false;
-  // La boucle du lot doit être armée APRÈS cette bascule, sinon la feature rendue
-  // `pending` ne partirait jamais : c'est l'appelant qui l'arme (`controller.start()`
-  // au site de bascule, extension.ts), et rien n'est fait ici — `runs.ts` ne
-  // connaît pas le contrôleur.
   const at = input.now ?? Date.now();
   feature.phase = "specs";
   // D'où la feature repart (S-3, S-14) : dans un lot au BROUILLON, elle passe
   // `running` — `hasStartedFeature` en a besoin pour OUVRIR le lot, et un brouillon
   // n'a par construction aucun créneau occupé. Dans un lot DÉJÀ en marche, elle
-  // passe `pending` : la passe la démarrera au premier créneau libre (le plafond de
-  // `MEM0_PIPELINE_SLOTS` s'applique à cette bascule comme à tout autre lancement).
+  // passe `pending` : la passe du pilote la démarrera au premier créneau libre (le
+  // plafond de `MEM0_PIPELINE_SLOTS` s'applique à cette bascule comme à tout autre
+  // lancement).
   feature.state = lot.status === "draft" ? "running" : "pending";
   feature.waitKind = null;
   feature.waitPrompt = null;
@@ -641,7 +566,14 @@ export function handOverCollecte(input: {
   feature.sessionFile = input.sessionFile ?? feature.sessionFile;
   feature.sinceAt = at;
   feature.updatedAt = at;
-  lot.owner = { pid: process.pid, sessionFile: feature.sessionFile, sessionId: lot.owner.sessionId };
+  // Le lot reste au PILOTE — le service quand il vit (S-4 ; le balayage suivant
+  // ouvre la chaîne, aucune session terminale ne prend la main), la session sinon
+  // (machine sans service, où plus rien n'avance : le battement posé ici laisse le
+  // lot reprenable dès qu'un service le balaie).
+  lot.owner =
+    service !== null && service.pid !== process.pid
+      ? { pid: service.pid, sessionFile: feature.sessionFile, sessionId: lot.owner.sessionId, heartbeatAt: at }
+      : { pid: process.pid, sessionFile: feature.sessionFile, sessionId: lot.owner.sessionId, heartbeatAt: at };
   try {
     writeLot(input.stateDir, lot);
   } catch (err) {

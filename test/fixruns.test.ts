@@ -54,7 +54,8 @@ import reqExtension, {
 // L'état ARMÉ d'un process est partagé par `globalThis` (c'est le correctif de
 // RUNS-1) : il survit donc d'un test à l'autre dans ce fichier, et chaque test qui
 // arme doit partir d'un état neuf — comme un process qui vient de démarrer.
-import { runState } from "../omp-mem0-req/runState.ts";
+import { resetRunStatesForTests } from "../omp-mem0-req/runState.ts";
+import { runStateOf } from "../omp-mem0-req/publish.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures : répertoires, fichiers de session, magasin, lot
@@ -269,13 +270,7 @@ function runCtx(cwd: string, sessionFile: string, intervals?: number[]) {
 
 /** L'état ARMÉ d'un process neuf : le partage par `globalThis` ne doit pas fuir. */
 function resetArmedRun(): void {
-  runState.inbox = null;
-  runState.pendingAsk = null;
-  runState.askWaiters.clear();
-  runState.pumpStop = null;
-  runState.askTool = false;
-  runState.armed = false;
-  runState.sessionFile = null;
+  resetRunStatesForTests();
 }
 
 /** Un état armé COMPLET pour un test : magasin, worktree, boîte, session, app. */
@@ -355,12 +350,12 @@ test("fixruns/AC-2 : un process armé n'a qu'une pompe et qu'un seul outil `ask`
   // question posée par l'autre — c'est ce qui rend le canal `ask` viable.
   const pending = app.ask("call-1", { questions: [{ id: "q", question: "On garde ?", options: [{ label: "oui" }] }] }, ctx);
   await flush(2);
-  assert.equal(runState.pendingAsk?.toolCallId, "call-1");
+  assert.equal(runStateOf(ctx).pendingAsk?.toolCallId, "call-1");
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-1", selected: "oui", sentAt: 1 });
-  pumpInbox(second.pi as never, ctx as never, inbox);
+  pumpInbox(second.pi as never, ctx as never, inbox, true);
   const answered = await pending;
   assert.match(answered.content[0]!.text, /Réponse de l'utilisateur : oui/);
-  assert.equal(runState.pendingAsk, null, "la question n'est plus en vol");
+  assert.equal(runStateOf(ctx).pendingAsk, null, "la question n'est plus en vol");
 });
 
 // ---------------------------------------------------------------------------
@@ -384,12 +379,12 @@ test("fixruns/AC-3 : l'ask en vol est rejeté à l'échéance de `--pipeline-dea
   assert.equal(publishedEntry(stateDir, worktree)?.pendingAsk?.toolCallId, "call-1", "la question est publiée");
 
   await sleep(600);
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   const refused = await pending;
   assert.equal(refused.isError, true);
   assert.match(refused.content[0]!.text, /délai du run atteint/);
   assert.equal(publishedEntry(stateDir, worktree)?.pendingAsk ?? null, null, "la question n'est plus en vol");
-  assert.equal(runState.pumpStop, null, "la pompe du run est éteinte");
+  assert.equal(runStateOf(ctx).pumpStop, null, "la pompe du run est éteinte");
 
   // Une question posée APRÈS l'échéance est refusée d'emblée : plus personne ne
   // répondra, le modèle doit rendre la main au lieu d'attendre.
@@ -532,7 +527,7 @@ test("fixruns/AC-7 : une republication sans changement n'écrit pas l'entrée", 
 
   // Un changement réel — la question en vol — écrit, lui, et l'entrée publiée
   // porte la question COMPLÈTE (identifiant, texte, options).
-  runState.pendingAsk = {
+  runStateOf(ctx).pendingAsk = {
     toolCallId: "call-1",
     id: "q",
     question: "On garde ?",
@@ -566,13 +561,13 @@ test("fixruns/AC-8 : une réponse orpheline est consommée, une seconde question
   // Une réponse destinée à un identifiant INCONNU n'a plus d'objet : elle est
   // consommée (sinon la pompe la relirait à chaque passe) et ne touche à rien.
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "fantôme", selected: "oui", sentAt: 1 });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   assert.deepEqual(readDeliveries(inbox), [], "la livraison orpheline est consommée");
-  assert.equal(runState.pendingAsk?.toolCallId, "call-1", "la question réelle reste en vol");
+  assert.equal(runStateOf(ctx).pendingAsk?.toolCallId, "call-1", "la question réelle reste en vol");
 
   // Le chien de garde du parent (pilote disparu) passe par la MÊME table : la
   // question en vol est rejetée avec le motif, jamais laissée en attente.
-  failInFlightAsks("pilote disparu — termine ton tour");
+  failInFlightAsks("pilote disparu — termine ton tour", runStateOf(ctx));
   const refused = await pending;
   assert.equal(refused.isError, true);
   assert.match(refused.content[0]!.text, /pilote disparu — termine ton tour/);
@@ -580,7 +575,7 @@ test("fixruns/AC-8 : une réponse orpheline est consommée, une seconde question
   const orphan = app.ask("call-3", question, ctx);
   await flush(2);
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-3", custom: "peu importe", sentAt: 2 });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   const replied = await orphan;
   assert.equal(replied.isError, undefined, "après le rejet, le run repose une question normalement");
   assert.match(replied.content[0]!.text, /peu importe/);

@@ -20,9 +20,9 @@ import SwiftUI
 
 struct ProjectConsoleView: View {
     @ObservedObject var model: ProjectConsoleModel
-    // Le host est observé séparément : sa transcription, son journal et sa file
-    // de dialogues changent sans que le modèle publie quoi que ce soit.
-    @ObservedObject var host: SessionHost
+    // La session est observée séparément : son journal et sa file de dialogues
+    // changent sans que le modèle publie quoi que ce soit.
+    @ObservedObject var host: ServiceSessionModel
 
     init(model: ProjectConsoleModel) {
         self.model = model
@@ -277,18 +277,6 @@ struct ProjectConsoleView: View {
                     .textSelection(.enabled)
             }
 
-            Section(SessionConsoleText.sectionActivity) {
-                let activity = model.activity
-                if activity.isEmpty {
-                    Text(SessionConsoleText.noActivity)
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(activity) { line in
-                    ProjectActivityRow(line: line)
-                }
-            }
-            .accessibilityIdentifier("projet.activity")
-
             Section(SessionConsoleText.sectionJournal) {
                 if host.journal.isEmpty {
                     Text(SessionConsoleText.noJournal)
@@ -301,14 +289,6 @@ struct ProjectConsoleView: View {
                 }
             }
             .accessibilityIdentifier("projet.journal")
-
-            Section {
-                DisclosureGroup(SessionConsoleText.rawFrames, isExpanded: $model.rawFramesShown) {
-                    RpcTranscriptPane(idPrefix: "projet", lines: host.transcript)
-                        .frame(minHeight: 240)
-                }
-                .accessibilityIdentifier("projet.rawFrames")
-            }
         }
         .formStyle(.grouped)
         .inspectorColumnWidth(min: 320, ideal: 420, max: 640)
@@ -389,8 +369,8 @@ struct ProjectDialogSheet: View {
 
 struct ProjectHeaderView: View {
     @ObservedObject var model: ProjectConsoleModel
-    // L'état en mots suit le host, qui publie sans passer par le modèle.
-    @ObservedObject var host: SessionHost
+    // L'état en mots suit la session, qui publie sans passer par le modèle.
+    @ObservedObject var host: ServiceSessionModel
 
     init(model: ProjectConsoleModel) {
         self.model = model
@@ -490,34 +470,6 @@ struct ProjectHeaderView: View {
         .foregroundStyle(.secondary)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("projet.notice")
-    }
-}
-
-// MARK: - Une ligne de l'activité
-
-/// Une trame humanisée : symbole, titre court, détail d'une ligne (même rendu
-/// que l'inspecteur de « Session OMP »).
-private struct ProjectActivityRow: View {
-    let line: RpcEventLine
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(systemName: line.symbol)
-                .foregroundStyle(.secondary)
-                .frame(width: 18)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(line.title)
-                    .font(.callout)
-                if !line.detail.isEmpty {
-                    Text(line.detail)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-        }
-        .accessibilityElement(children: .combine)
     }
 }
 

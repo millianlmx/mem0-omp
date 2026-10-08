@@ -29,6 +29,7 @@ import {
   type LotController,
   type LotFeature,
   type LotRunnerResult,
+  type LotRunSpec,
 } from "../omp-mem0-req/extension.ts";
 
 // ---------------------------------------------------------------------------
@@ -78,7 +79,7 @@ const gitRunner = async (args: string[], cwd: string) => {
   return { code: res.status ?? 1, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
 };
 
-type RecordedRun = { argv: string[]; cwd: string };
+type RecordedRun = { spec: LotRunSpec; cwd: string };
 
 /**
  * Le runner des runs. `result` rend une fin immédiate (et peut ÉCRIRE le contrat,
@@ -88,8 +89,8 @@ type RecordedRun = { argv: string[]; cwd: string };
 function mkRunner(plan: { mode: "result"; result: (input: RecordedRun) => LotRunnerResult } | { mode: "gate" }) {
   const runs: RecordedRun[] = [];
   const gate: Array<(result: LotRunnerResult) => void> = [];
-  const runner = async ({ argv, cwd, signal }: { argv: string[]; cwd: string; signal?: AbortSignal }) => {
-    const input = { argv, cwd };
+  const runner = async ({ spec, cwd, signal }: { spec: LotRunSpec; cwd: string; signal?: AbortSignal }) => {
+    const input = { spec, cwd };
     runs.push(input);
     if (plan.mode === "result") return plan.result(input);
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
@@ -114,7 +115,7 @@ type FakeDeps = {
 
 function mkCtl(
   repoRoot: string,
-  runner: (input: { argv: string[]; cwd: string }) => Promise<LotRunnerResult>,
+  runner: (input: { spec: LotRunSpec; cwd: string }) => Promise<LotRunnerResult>,
   options: { now?: () => number; runTimeoutMs?: number } = {},
 ): FakeDeps {
   const stateDir = path.join(mktmp("fixchain-state-"), "pipeline");
@@ -124,8 +125,8 @@ function mkCtl(
   const controller = createLotController({
     stateDir,
     repoRoot,
-    run: async (input: { argv: string[]; cwd: string }) => {
-      runs.push({ argv: input.argv, cwd: input.cwd });
+    run: async (input: { spec: LotRunSpec; cwd: string }) => {
+      runs.push({ spec: input.spec, cwd: input.cwd });
       return runner(input);
     },
     runGit: gitRunner,
@@ -232,12 +233,11 @@ const WORKED = "hash-d-un-run-precedent";
 const QUESTION = "Il me manque un arbitrage.\n\n- (1) garde l'ancien format\n- (2) migre les données\n";
 
 function phaseOf(run: RecordedRun): string | null {
-  const at = run.argv.indexOf("--pipeline-phase");
-  return at === -1 ? null : (run.argv[at + 1] ?? null);
+  return run.spec.phase;
 }
 
 function promptOf(run: RecordedRun): string {
-  return run.argv[run.argv.indexOf("--") + 1] ?? "";
+  return run.spec.prompt;
 }
 
 /** Laisse retomber les microtâches : les fins de run sont traitées hors passe. */
@@ -374,7 +374,7 @@ test("fixchain/AC-3 : une question en TEXTE met le maillon en attente au lieu d'
   await flush();
   const resumed = runs[runs.length - 1]!;
   assert.equal(phaseOf(resumed), "impl", "la réponse reprend le maillon qui a posé la question");
-  assert.equal(resumed.argv[resumed.argv.indexOf("--resume") + 1], "/tmp/live-run.jsonl");
+  assert.equal(resumed.spec.sessionFile, "/tmp/live-run.jsonl");
 
   // Le verdict, lui, n'est pas un texte : un /review qui écrit sa section ET
   // termine par des options n'est pas retenu par une fausse question.
@@ -539,7 +539,7 @@ test("fixchain/AC-7 : relancer une feature bloquée au maillon req reprend la co
   assert.doesNotMatch(prompt, /\[reprise\]/);
   assert.match(prompt, /l'intention déclarée/, "la description déclarée porte la collecte");
   assert.equal(
-    runs[0]!.argv[runs[0]!.argv.indexOf("--resume") + 1],
+    runs[0]!.spec.sessionFile,
     "/tmp/collecte.jsonl",
     "la collecte reprend dans la session retenue, pas dans une session neuve",
   );

@@ -16,7 +16,7 @@ import Foundation
 
 @MainActor
 final class HomeModel: ObservableObject {
-    typealias Resolver = ([String: String]) -> Result<URL, SessionHostError>
+    typealias Resolver = ([String: String]) -> Result<URL, OmpBinaryError>
 
     /// La préférence « bienvenue déjà vue » : une installation neuve ne l'a pas.
     static let welcomeSeenKey = "home.welcomeSeen"
@@ -104,7 +104,7 @@ final class HomeModel: ObservableObject {
         actions.replyText = ""
     }
 
-    private static func status(_ result: Result<URL, SessionHostError>) -> OmpStatus {
+    private static func status(_ result: Result<URL, OmpBinaryError>) -> OmpStatus {
         switch result {
         case .success(let url):
             return .available(url)

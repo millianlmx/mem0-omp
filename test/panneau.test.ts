@@ -67,6 +67,7 @@ import {
   type LotFeature,
   type LotPanelActions,
   type LotRunnerResult,
+  type LotRunSpec,
   type PanelGlyphs,
   type PanelRow,
   type PipelinesPanelDeps,
@@ -626,22 +627,22 @@ function closedEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: str
 // ---------------------------------------------------------------------------
 
 type RecordedRun = {
-  argv: string[];
+  spec: LotRunSpec;
   cwd: string;
   aborted: () => boolean;
   /** Rend la main du run au test, avec son résultat. */
   finish: (result: LotRunnerResult) => void;
 };
 
-type RunInput = { argv: string[]; cwd: string; signal?: AbortSignal };
+type RunInput = { spec: LotRunSpec; cwd: string; signal?: AbortSignal };
 type RunnerHarness = { runner: (input: RunInput) => Promise<LotRunnerResult>; runs: RecordedRun[] };
 
 /** Le runner des runs : chaque run reste EN VOL jusqu'à `finish`, et dit s'il fut avorté. */
 function mkRunner(): RunnerHarness {
   const runs: RecordedRun[] = [];
-  const runner = async ({ argv, cwd, signal }: RunInput) => {
+  const runner = async ({ spec, cwd, signal }: RunInput) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
-    runs.push({ argv, cwd, aborted: () => signal?.aborted === true, finish: resolve });
+    runs.push({ spec, cwd, aborted: () => signal?.aborted === true, finish: resolve });
     if (signal?.aborted) reject(new Error("aborted"));
     else signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     return promise;
@@ -673,14 +674,14 @@ async function flush(times = 6): Promise<void> {
   for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-/** Le prompt d'un run enregistré : c'est le dernier argument de l'argv. */
+/** Le prompt d'un run enregistré : sa spécification le porte tel quel. */
 function promptOf(run: RecordedRun): string {
-  return run.argv[run.argv.length - 1] as string;
+  return run.spec.prompt;
 }
 
-/** Le maillon d'un run enregistré, lu dans son argv. */
+/** Le maillon d'un run enregistré, lu dans sa spécification. */
 function phaseOf(run: RecordedRun): string {
-  return run.argv[run.argv.indexOf("--pipeline-phase") + 1] as string;
+  return run.spec.phase;
 }
 
 // ---------------------------------------------------------------------------
@@ -894,7 +895,7 @@ test("panneau/AC-3 : une question à choix se répond en sélectionnant une opti
       `le run porte le libellé de l'option : ${promptOf(runs[0]!)}`,
     );
     assert.equal(phaseOf(runs[0]!), "req");
-    assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--resume") + 1], session, "la reprise vise la session du maillon");
+    assert.equal(runs[0]!.spec.sessionFile, session, "la reprise vise la session du maillon");
     const after = readLot(stateDir, lotRepoKey(repoRoot))!;
     assert.equal(after.features[0]!.state, "running", "la question n'est plus en attente");
     assert.equal(after.features[0]!.waitKind, null);
@@ -962,7 +963,7 @@ test("panneau/AC-3 : une question à choix se répond en sélectionnant une opti
     await flush();
     assert.equal(runs.length, 1);
     assert.ok(
-      !runs[0]!.argv.includes("--resume"),
+      runs[0]!.spec.sessionFile === null,
       "sans fichier de session, le run repart à neuf plutôt que de rester bloqué",
     );
     assert.ok(promptOf(runs[0]!).startsWith("[réponse de l'utilisateur] on continue"));
@@ -1225,7 +1226,7 @@ test("panneau/AC-6 : répondre « fin » depuis la vue clôt la collecte et la c
     await flush();
     assert.equal(runs.length, 1);
     assert.equal(phaseOf(runs[0]!), "req", "la réponse repart sur le maillon de collecte");
-    assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--resume") + 1], session);
+    assert.equal(runs[0]!.spec.sessionFile, session);
     assert.match(promptOf(runs[0]!), /\[réponse de l'utilisateur\] fin/);
     assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.state, "running");
 

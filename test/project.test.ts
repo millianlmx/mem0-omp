@@ -46,6 +46,7 @@ import reqExtension, {
   type LotController,
   type LotFeature,
   type LotRunnerResult,
+  type LotRunSpec,
   type ModelRow,
   type PipelinePhase,
   type Project,
@@ -132,9 +133,9 @@ const mappedGit = (bare: string) => (args: string[], cwd: string) =>
 
 const OK: LotRunnerResult = { code: 0, killed: false, stdout: "", stderr: "" };
 
-type Run = { argv: string[]; cwd: string; phase: string; prompt: string; finish: (result: LotRunnerResult) => void };
+type Run = { spec: LotRunSpec; cwd: string; phase: string; prompt: string; finish: (result: LotRunnerResult) => void };
 
-type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
+type Runner = (input: { spec: LotRunSpec; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
 
 /**
  * Le runner des runs : `script` rend la fin immédiate d'un run, ou `null` pour le
@@ -142,13 +143,13 @@ type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => 
  */
 function mkRunner(script: (run: Run) => LotRunnerResult | null = () => null): { runner: Runner; runs: Run[] } {
   const runs: Run[] = [];
-  const runner: Runner = async ({ argv, cwd, signal }) => {
+  const runner: Runner = async ({ spec, cwd, signal }) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
     const run: Run = {
-      argv,
+      spec,
       cwd,
-      phase: argv[argv.indexOf("--pipeline-phase") + 1] ?? "",
-      prompt: argv[argv.length - 1] ?? "",
+      phase: spec.phase,
+      prompt: spec.prompt,
       finish: resolve,
     };
     runs.push(run);

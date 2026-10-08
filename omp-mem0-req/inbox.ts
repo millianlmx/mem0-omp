@@ -3,8 +3,8 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { LOT_EDITOR_MAX } from "./lot.ts";
-import { publishCurrentCwd } from "./publish.ts";
-import { runState } from "./runState.ts";
+import { publishCurrentCwd, runStateOf } from "./publish.ts";
+import type { ArmedRunState } from "./runState.ts";
 import type { FlagReader } from "./runs.ts";
 import { pipelineDeadlineOf } from "./runs.ts";
 import { PANEL_INBOX_POLL_MS, PIPELINE_PHASES, consumeDelivery, readDeliveries } from "./store.ts";
@@ -112,13 +112,20 @@ export type AskAnswer = {
 // reparenté au lanceur de sessions (`ppid === 1`) — et il attendait une réponse
 // qu'aucun lot ne porte plus (RUNS-2). Le chien de garde est ici, dans le module
 // qui a armé, parce que c'est sa pompe qui tourne.
+//
+// Il ne concerne QUE les runs d'un process ENFANT : un maillon exécuté par le
+// service (S-3) n'a pas de pilote parent à surveiller — sa borne est l'échéance
+// de son identité — et surveiller `process.ppid` y ferait tomber le maillon dès
+// que le service est lancé par un shell qui se termine.
 let armedParentPid: number | null = null;
 
 
 /** Le motif d'arrêt d'un run armé : le pilote a disparu, ou l'échéance est passée. */
-export function runStopReason(pi: FlagReader): string | null {
-  const parent = armedParentPid ?? process.ppid;
-  if (process.ppid === 1 || process.ppid !== parent) return "pilote disparu — termine ton tour";
+export function runStopReason(pi: FlagReader, watchParent = true): string | null {
+  if (watchParent) {
+    const parent = armedParentPid ?? process.ppid;
+    if (process.ppid === 1 || process.ppid !== parent) return "pilote disparu — termine ton tour";
+  }
   const deadline = pipelineDeadlineOf(pi);
   if (deadline !== null && Date.now() >= deadline) {
     return "délai du run atteint — termine ton tour et rends la main";
@@ -127,31 +134,32 @@ export function runStopReason(pi: FlagReader): string | null {
 }
 
 
-// La question EN VOL de ce process vit dans `runState.askWaiters`, une entrée par
-// identifiant d'appel : un run peut poser deux questions (`concurrency` de notre
-// outil est `exclusive`, l'hôte peut néanmoins les enchaîner), et deux instances
-// de l'extension dans le même process — plugin installé + `-e` — partagent ainsi
-// la même table : la pompe de l'une résout la question posée par l'autre.
+// La question EN VOL d'une session vit dans `runStateFor(key).askWaiters`, une
+// entrée par identifiant d'appel : un run peut poser deux questions (`concurrency`
+// de notre outil est `exclusive`, l'hôte peut néanmoins les enchaîner), et deux
+// instances de l'extension dans le même process — plugin installé + `-e` —
+// partagent ainsi la même table : la pompe de l'une résout la question posée par
+// l'autre. Deux SESSIONS du service, elles, ne partagent rien (S-3).
 
 
-/** Rejette toutes les questions en vol : aucune réponse ne viendra plus. */
-export function failInFlightAsks(reason: string): void {
-  for (const [toolCallId, settle] of [...runState.askWaiters]) {
-    runState.askWaiters.delete(toolCallId);
+/** Rejette toutes les questions en vol d'une session : aucune réponse ne viendra plus. */
+export function failInFlightAsks(reason: string, state: ArmedRunState): void {
+  for (const [toolCallId, settle] of [...state.askWaiters]) {
+    state.askWaiters.delete(toolCallId);
     settle({ failed: reason });
   }
 }
 
 
-/** Arrête le run armé : ses questions en vol sont rejetées, et sa pompe s'éteint. */
-function stopArmedRun(reason: string): void {
-  failInFlightAsks(reason);
+/** Arrête le run armé d'une session : questions rejetées, pompe éteinte. */
+function stopArmedRun(reason: string, state: ArmedRunState): void {
+  failInFlightAsks(reason, state);
   try {
-    runState.pumpStop?.();
+    state.pumpStop?.();
   } catch {
     /* minuterie déjà nettoyée par la session */
   }
-  runState.pumpStop = null;
+  state.pumpStop = null;
 }
 
 
@@ -174,29 +182,30 @@ export function conversationPhaseOf(pi: FlagReader): PipelinePhase | null {
 
 
 /** Une livraison de réponse atterrit-elle sur la question en vol ? Une seule fois, par identifiant. */
-export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask" }>): void {
-  const waiter = runState.askWaiters.get(delivery.toolCallId);
+export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask" }>, state: ArmedRunState): void {
+  const waiter = state.askWaiters.get(delivery.toolCallId);
   if (!waiter) return;
-  runState.askWaiters.delete(delivery.toolCallId);
+  state.askWaiters.delete(delivery.toolCallId);
   waiter("selected" in delivery ? { selected: delivery.selected } : { custom: delivery.custom });
 }
 
 
 /**
- * La pompe de la boîte : les livraisons dans l'ordre des noms, un fichier par
- * livraison, supprimé dès qu'il a produit son effet. Un texte n'est PAS consommé
- * tant que la session est au repos (le déposant le reprendra à la fin du run) ;
- * une réponse `ask` est toujours consommée — sans question en vol elle n'a plus
- * d'objet (S-7). Ne lève jamais : la pompe travaille sur un timer.
+ * La pompe de la boîte d'une session : les livraisons dans l'ordre des noms, un
+ * fichier par livraison, supprimé dès qu'il a produit son effet. Un texte n'est
+ * PAS consommé tant que la session est au repos (le déposant le reprendra à la fin
+ * du run) ; une réponse `ask` est toujours consommée — sans question en vol elle
+ * n'a plus d'objet (S-7). Ne lève jamais : la pompe travaille sur un timer.
  */
-export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string): void {
+export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string, watchParent: boolean): void {
+  const state = runStateOf(ctx);
   // Le chien de garde passe AVANT les livraisons : un run dont le pilote est mort
-  // (ou dont l'échéance du drapeau est passée) n'a plus personne à qui répondre —
-  // sa question en vol est rejetée, et sa pompe s'éteint au lieu de tourner
-  // indéfiniment sur une boîte que plus personne n'alimente (RUNS-2).
-  const stop = runStopReason(pi);
+  // (ou dont l'échéance est passée) n'a plus personne à qui répondre — sa question
+  // en vol est rejetée, et sa pompe s'éteint au lieu de tourner indéfiniment sur
+  // une boîte que plus personne n'alimente (RUNS-2).
+  const stop = runStopReason(pi, watchParent);
   if (stop !== null) {
-    stopArmedRun(stop);
+    stopArmedRun(stop, state);
     return;
   }
   for (const entry of readDeliveries(dir)) {
@@ -206,7 +215,7 @@ export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string): void
       continue;
     }
     if (delivery.kind === "ask") {
-      resolveAskDelivery(delivery);
+      resolveAskDelivery(delivery, state);
       consumeDelivery(entry.file);
       continue;
     }
@@ -223,37 +232,52 @@ export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string): void
 }
 
 
+/** L'armement d'une session : sa boîte, son chien de garde, sa pompe (S-3, S-6). */
+export type ArmInboxOptions = {
+  /** Le dossier de la boîte : le drapeau d'un run enfant, ou l'identité d'un maillon. */
+  inbox: string | null;
+  /**
+   * Surveiller `process.ppid` : vrai pour un run lancé en PROCESS ENFANT par un
+   * pilote, faux pour un maillon exécuté en process par le service.
+   */
+  watchParent: boolean;
+};
+
+
 /**
- * Arme la consommation de la boîte de ce run (`--panel-inbox`) : une minuterie
- * `ctx.setInterval` — jamais un `setInterval` brut, qui tuerait la session en
- * jetant — et rien du tout hors d'un run armé. Rend `true` quand le run est
- * effectivement armé : c'est ce que `session_start` publie dans l'entrée.
+ * Arme la consommation de la boîte d'une session : une minuterie `ctx.setInterval`
+ * — jamais un `setInterval` brut, qui tuerait la session en jetant — et rien du
+ * tout hors d'une session armée. Rend `true` quand elle est effectivement armée :
+ * c'est ce que `session_start` publie dans l'entrée.
  *
- * UNE SEULE pompe par process (S-6) : quand l'extension est chargée deux fois,
- * la seconde instance s'efface — sans quoi elle consommerait les livraisons
- * destinées à l'outil `ask` de la première (la livraison est supprimée au
- * passage, et la question restait sans réponse).
+ * UNE SEULE pompe par SESSION (S-6) : quand l'extension est chargée deux fois, la
+ * seconde instance s'efface — sans quoi elle consommerait les livraisons destinées
+ * à l'outil `ask` de la première (la livraison est supprimée au passage, et la
+ * question restait sans réponse).
  */
-export function armInbox(pi: ExtensionAPI, ctx: PipelineCtx): boolean {
-  const dir = panelInboxFlagOf(pi);
+export function armInbox(pi: ExtensionAPI, ctx: PipelineCtx, options: ArmInboxOptions): boolean {
+  const dir = options.inbox;
   if (dir === null || typeof ctx.setInterval !== "function") return false;
-  // Le pilote de ce run est le parent du process : c'est lui qui répondra, et sa
-  // disparition (reparentage au lanceur de sessions) se lit dans `process.ppid`.
-  armedParentPid = process.ppid;
-  runState.inbox = dir;
-  runState.armed = true;
-  if (runState.pumpStop !== null) return true;
+  const state = runStateOf(ctx);
+  // Le pilote d'un run ENFANT est le parent du process : c'est lui qui répondra,
+  // et sa disparition (reparentage au lanceur de sessions) se lit dans
+  // `process.ppid`.
+  if (options.watchParent) armedParentPid = process.ppid;
+  state.watchParent = options.watchParent;
+  state.inbox = dir;
+  state.armed = true;
+  if (state.pumpStop !== null) return true;
   const timer = ctx.setInterval(() => {
     // Une pompe qui jette sur un timer détruirait la session (une exception non
     // capturée est fatale, `## Documentation` §1) : aucun échec de lecture ne
     // doit remonter au-delà de ce point.
     try {
-      pumpInbox(pi, ctx, dir);
+      pumpInbox(pi, ctx, dir, options.watchParent);
     } catch {
       /* boîte illisible : on retente à la prochaine passe */
     }
   }, PANEL_INBOX_POLL_MS);
-  runState.pumpStop = () => {
+  state.pumpStop = () => {
     try {
       ctx.clearTimer?.(timer);
     } catch {
@@ -282,12 +306,13 @@ export type AskToolDetails = {
  * Le schéma vient du builder injecté (`pi.arktype`, dialecte omptype) : aucun
  * import de valeur depuis `@oh-my-pi/*`, comme tout le reste du dépôt.
  */
-export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string) => void; stateDir: string }): void {
-  // Une seule inscription par process : la seconde instance de l'extension
-  // (plugin installé + `-e`) écraserait l'outil de la première, et une question
-  // posée par l'une ne serait jamais résolue par la pompe de l'autre.
-  if (runState.askTool) return;
-  runState.askTool = true;
+export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { notify?: (text: string) => void; stateDir: string }): void {
+  // Une seule inscription par SESSION : deux instances de l'extension dans le même
+  // process (plugin installé + `-e`) écraseraient l'outil l'une de l'autre, et une
+  // question posée par l'une ne serait jamais résolue par la pompe de l'autre.
+  const state = runStateOf(ctx);
+  if (state.askTool) return;
+  state.askTool = true;
   const option = pi.arktype({ label: "string", "description?": "string" });
   const question = pi.arktype({
     id: "string",
@@ -307,13 +332,16 @@ export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string
     // défaut) et le maillon, qui n'a personne à qui demander, ne le trouverait pas.
     loadMode: "essential",
     parameters: pi.arktype({ questions: question.array() }),
-    async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
+    async execute(toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, toolCtx?: ExtensionContext) {
       const checked = checkAsk(params);
       if (!checked.ok) return { content: [{ type: "text" as const, text: checked.error }], isError: true };
+      // La question appartient à la SESSION de l'appel : deux maillons du même
+      // process ne se volent ni leur question en vol ni leur boîte (S-3).
+      const callState = runStateOf((toolCtx ?? ctx) as PipelineCtx);
       // Le run n'a plus personne pour répondre : le pilote est mort, ou l'échéance
-      // du drapeau est passée. Une question posée MAINTENANT resterait sans
-      // réponse jusqu'à la fin du process — le modèle doit rendre la main.
-      const stop = runStopReason(pi);
+      // est passée. Une question posée MAINTENANT resterait sans réponse jusqu'à la
+      // fin du process — le modèle doit rendre la main.
+      const stop = runStopReason(pi, callState.watchParent);
       if (stop !== null) {
         return { content: [{ type: "text" as const, text: `Error: ${stop}` }], isError: true };
       }
@@ -323,7 +351,7 @@ export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string
       // délai du run). `ToolDefinition` n'expose pas `concurrency` — l'`ask` de
       // l'hôte, lui, est `exclusive` — donc le refus est explicite, et le modèle
       // repose sa question après la réponse.
-      if (runState.askWaiters.size > 0) {
+      if (callState.askWaiters.size > 0) {
         return {
           content: [
             {
@@ -336,25 +364,25 @@ export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string
       }
       const asked: PanelPendingAsk = { toolCallId, ...checked.ask };
       const publish = () =>
-        publishCurrentCwd({ ctx: ctx as PipelineCtx, notify: deps.notify, stateDir: deps.stateDir });
+        publishCurrentCwd({ ctx: (toolCtx ?? ctx) as PipelineCtx, notify: deps.notify, stateDir: deps.stateDir });
       let answer: AskAnswer;
       try {
         answer = await new Promise<AskAnswer>((resolve, reject) => {
           const onAbort = () => {
-            runState.askWaiters.delete(toolCallId);
+            callState.askWaiters.delete(toolCallId);
             reject(new Error("ask interrompu : le run a été annulé"));
           };
           const settle = (value: AskAnswer) => {
             signal?.removeEventListener("abort", onAbort);
             resolve(value);
           };
-          runState.askWaiters.set(toolCallId, settle);
+          callState.askWaiters.set(toolCallId, settle);
           if (signal?.aborted === true) {
             onAbort();
             return;
           }
           signal?.addEventListener("abort", onAbort, { once: true });
-          runState.pendingAsk = asked;
+          callState.pendingAsk = asked;
           publish();
         });
       } catch (err) {
@@ -365,8 +393,8 @@ export function registerAskTool(pi: ExtensionAPI, deps: { notify?: (text: string
           isError: true,
         };
       } finally {
-        runState.askWaiters.delete(toolCallId);
-        runState.pendingAsk = null;
+        callState.askWaiters.delete(toolCallId);
+        callState.pendingAsk = null;
         publish();
       }
       // Le run s'est arrêté PENDANT que la question était en vol (pilote disparu,

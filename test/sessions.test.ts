@@ -43,6 +43,7 @@ import reqExtension, {
   type LotFeature,
   type LotPanelActions,
   type LotRunnerResult,
+  type LotRunSpec,
   type PanelGlyphs,
   type PanelModel,
   type PanelRow,
@@ -586,24 +587,24 @@ function sectionRows(rows: PanelRow[], features: number, running: number, needle
 // ---------------------------------------------------------------------------
 
 type RecordedRun = {
-  argv: string[];
+  spec: LotRunSpec;
   cwd: string;
   aborted: () => boolean;
   /** Rend la main du run au test, avec son résultat. */
   finish: (result: LotRunnerResult) => void;
 };
 
-/** Ce qu'un runner de run reçoit du pilote : l'argv, le cwd, et le signal d'annulation. */
-type RunInput = { argv: string[]; cwd: string; signal?: AbortSignal };
+/** Ce qu'un runner de run reçoit du pilote : la spécification du maillon, le cwd, le signal. */
+type RunInput = { spec: LotRunSpec; cwd: string; signal?: AbortSignal };
 type RunRunner = (input: RunInput) => Promise<LotRunnerResult>;
 type RunnerHarness = { runner: RunRunner; runs: RecordedRun[] };
 
 /** Le runner des runs : chaque run reste EN VOL jusqu'à `finish`, et dit s'il a été avorté. */
 function mkRunner(): RunnerHarness {
   const runs: RecordedRun[] = [];
-  const runner: RunRunner = async ({ argv, cwd, signal }) => {
+  const runner: RunRunner = async ({ spec, cwd, signal }) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
-    runs.push({ argv, cwd, aborted: () => signal?.aborted === true, finish: resolve });
+    runs.push({ spec, cwd, aborted: () => signal?.aborted === true, finish: resolve });
     if (signal?.aborted) reject(new Error("aborted"));
     else signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     return promise;
@@ -1266,7 +1267,7 @@ test("sessions/AC-1 : entrer dans la session d'un maillon vivant ne l'interrompt
   runs.runs[0]!.finish({ code: 0, killed: false, stdout: "", stderr: "" });
   await flush();
   assert.equal(runs.runs.length, 2, "le maillon suivant est parti sans aucune action");
-  assert.equal(runs.runs[1]!.argv[runs.runs[1]!.argv.indexOf("--pipeline-phase") + 1], "specs");
+  assert.equal(runs.runs[1]!.spec.phase, "specs");
   assert.equal(readLot(stateDir, lotRepoKey(repoRoot))!.features[0]!.phase, "specs");
   panel.component.dispose();
 });
@@ -1294,7 +1295,7 @@ test("sessions/AC-2 : un maillon se termine pendant la visite et la chaîne ench
   await flush();
 
   assert.equal(runs.runs.length, 2, "le maillon suivant part sans aucune action de l'utilisateur");
-  assert.equal(runs.runs[1]!.argv[runs.runs[1]!.argv.indexOf("--pipeline-phase") + 1], "specs");
+  assert.equal(runs.runs[1]!.spec.phase, "specs");
   const after = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(after.features[0]!.phase, "specs", "le lot a avancé tout seul");
   assert.equal(after.features[0]!.state, "running");
@@ -1414,7 +1415,7 @@ test("sessions/AC-4 : annuler un run n'arrête que lui, le reste du lot continue
   await flush();
   assert.equal(runs.runs.length, 3, "beta enchaîne son maillon suivant");
   assert.equal(runs.runs[2]!.cwd, beta!.worktree, "et c'est bien le sien");
-  assert.equal(runs.runs[2]!.argv[runs.runs[2]!.argv.indexOf("--pipeline-phase") + 1], "specs");
+  assert.equal(runs.runs[2]!.spec.phase, "specs");
   withLot.component.dispose();
 });
 

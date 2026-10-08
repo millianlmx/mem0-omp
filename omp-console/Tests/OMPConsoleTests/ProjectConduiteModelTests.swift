@@ -1,28 +1,38 @@
-// Preuves du noyau de conduite (BR-1) : AC-1 … AC-6, transport scripté.
+// Preuves du noyau de conduite (BR-1) : AC-1 … AC-6, session servie scriptée.
 //
 // Chaque test porte son identifiant dans le TITRE affiché (`@Test("<slug>/AC-<n> :
 // …")`), retrouvé par grep à la revue.
+//
+// Aucun process : `POST /projects/{repo}/conduite` arme la conduite, les dialogues
+// arrivent par le flux SSE scripté et les réponses repartent par HTTP.
 
 import Foundation
 import Testing
 @testable import OMPConsole
 import ConsoleCore
 
-/// Monte un modèle vivant : poignée de main répondue, `/project` armé.
+/// Monte un modèle vivant : `POST /conduite` armé et flux entretenu par l'appelant.
 @MainActor
-private func startLiveModel(
+private func liveModel(
     repo: URL,
     name: String = "Mon projet",
-    stateDir: String
-) async throws -> (ProjectConsoleModel, ScriptedRpcTransport) {
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
-    makeProjectTransportRenderOnClose(transport)
+    stateDir: String,
+    transport: ScriptedServiceTransport
+) async -> (ProjectConsoleModel, ScriptedServiceTransport) {
+    stubProjectConduite(transport, repo: repo.path)
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(host: host, stateDir: stateDir)
     await model.startConduite(repoRoot: repo, name: name)
     return (model, transport)
+}
+
+private extension ScriptedServiceTransport {
+    var conduitePosts: [ScriptedRequest] {
+        requests.filter { $0.method == "POST" && $0.path.hasSuffix("/conduite") }
+    }
+    func lastRequest(endingWith suffix: String) -> ScriptedRequest? {
+        requests.last { $0.path.hasSuffix(suffix) }
+    }
 }
 
 // MARK: - S-1 / AC-1
@@ -32,11 +42,12 @@ private func startLiveModel(
 func conduiteStartsSessionAndArmsProject() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
+    let transport = ScriptedServiceTransport()
+    keepProjectAlive(transport)
+    let (model, t) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
 
-    #expect(transport.startCount == 1)
-    #expect(transport.startedWith?.arguments == ["--mode", "rpc-ui", "--cwd", repo.path])
-    #expect(projectField("message", in: transport.writtenCommands.first ?? "") == "/project Mon projet")
+    #expect(t.conduitePosts.count == 1)
+    #expect(t.conduitePosts.first?.body?["name"] as? String == "Mon projet")
     #expect(model.state == .live)
     #expect(model.identity?.name == "Mon projet")
     #expect(model.identity?.repoRoot.path == repo.path)
@@ -49,14 +60,12 @@ func conduiteRefusesNonGitDirectory() async throws {
     let plain = FileManager.default.temporaryDirectory.appendingPathComponent("omp-plain-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: plain, withIntermediateDirectories: true)
     let stateDir = try makeProjectStateDir()
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
+    let transport = ScriptedServiceTransport()
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(host: host, stateDir: stateDir)
 
     await model.startConduite(repoRoot: plain, name: "X")
-    #expect(transport.startCount == 0)
+    #expect(transport.requests.isEmpty)
     #expect(model.state == .none)
     #expect(model.statusMessage == ProjectViewText.notGitRepository)
 }
@@ -66,14 +75,12 @@ func conduiteRefusesNonGitDirectory() async throws {
 func conduiteRefusesEmptyName() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
+    let transport = ScriptedServiceTransport()
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(host: host, stateDir: stateDir)
 
     await model.startConduite(repoRoot: repo, name: "   \n  ")
-    #expect(transport.startCount == 0)
+    #expect(transport.requests.isEmpty)
     #expect(model.state == .none)
     #expect(ProjectConsoleModel.normalizeName("  a\n\n b   c  ") == "a b c")
 }
@@ -86,10 +93,12 @@ func conduiteRefusesSecondStart() async throws {
     let repoA = try makeGitRepository()
     let repoB = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repoA, name: "Alpha", stateDir: stateDir)
+    let transport = ScriptedServiceTransport()
+    keepProjectAlive(transport)
+    let (model, t) = await liveModel(repo: repoA, name: "Alpha", stateDir: stateDir, transport: transport)
 
     await model.startConduite(repoRoot: repoB, name: "Beta")
-    #expect(transport.startCount == 1)
+    #expect(t.conduitePosts.count == 1)
     #expect(model.state == .live)
     // Le chemin du message est formaté (`~/…`), jamais brut ; le champ garde le vrai.
     #expect(model.refusal?.message == ProjectViewText.refusal(name: "Alpha", path: ConsoleFormat.path(repoA.path)))
@@ -103,11 +112,11 @@ func conduiteRefusesSecondStart() async throws {
     #expect(model.state == .closed)
     #expect(model.identity == nil)
     #expect(model.canStartConduite)
+    #expect(t.requests.contains { $0.method == "DELETE" && $0.path.hasSuffix("/conduite") })
 
     await model.startConduite(repoRoot: repoB, name: "Beta")
     #expect(model.state == .live)
-    #expect(transport.startCount == 2)
-    #expect(transport.startedWith?.arguments[3] == repoB.path)
+    #expect(t.conduitePosts.count == 2)
     #expect(model.identity?.repoRoot.path == repoB.path)
     model.stop()
 }
@@ -118,17 +127,14 @@ func conduiteRefusesSecondStart() async throws {
 @Test("conduite-de-projet/AC-3 : aucune reprise à la construction du modèle")
 func conduiteDoesNotResumeOnInit() async throws {
     let stateDir = try makeProjectStateDir()
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
+    let transport = ScriptedServiceTransport()
     let host = makeScriptedProjectHost(transport)
     let suite = UserDefaults(suiteName: "project-conduite-\(UUID().uuidString)") ?? .standard
     let before = suite.dictionaryRepresentation()
 
     let model = ProjectConsoleModel(host: host, attention: RecordingAttention(), presence: StubPresence(), stateDir: stateDir, defaults: suite)
 
-    #expect(transport.startCount == 0)
-    #expect(transport.written.isEmpty)
+    #expect(transport.requests.isEmpty)
     #expect(model.state == .none)
     #expect(model.identity == nil)
     #expect(model.canStartConduite)
@@ -142,18 +148,27 @@ func conduiteDoesNotResumeOnInit() async throws {
 func conduiteSendsTextThenShowsDialog() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
+    let transport = ScriptedServiceTransport()
+    // Premier flux vide : le dialogue n'arrive qu'à la RÉOUVERTURE, donc APRÈS la
+    // saisie libre que le test envoie aussitôt.
+    transport.scriptStream([])
+    emitProjectDialog(
+        transport,
+        id: "d-plan",
+        method: "select",
+        title: "Le plan du projet vous convient-il ?",
+        options: ["Valider le plan", "Corriger le plan", "Abandonner"]
+    )
+    keepProjectAlive(transport)
+    transport.stubJSON("POST", "/v1/sessions/s1/prompt", ["accepted": true])
+    transport.stubJSON("POST", "/v1/sessions/s1/dialogs/d-plan", ["accepted": true])
+    let (model, t) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
 
     model.prompt = "La description de mon projet"
     await model.sendText()
-    #expect(projectField("message", in: transport.writtenCommands.last ?? "") == "La description de mon projet")
+    #expect(t.lastRequest(endingWith: "/prompt")?.body?["text"] as? String == "La description de mon projet")
     #expect(model.prompt.isEmpty)
 
-    transport.emit(projectDialogLine(
-        id: "d-plan",
-        method: "select",
-        extra: ["title": "Le plan du projet vous convient-il ?", "options": ["Valider le plan", "Corriger le plan", "Abandonner"]]
-    ))
     #expect(await awaitProject { model.pendingDialog != nil })
     #expect(model.pendingDialog?.title == "Le plan du projet vous convient-il ?")
     #expect(model.canSendText == false)
@@ -162,10 +177,8 @@ func conduiteSendsTextThenShowsDialog() async throws {
     model.selectedOptionIndex = 0
     #expect(model.canAnswerDialog)
     model.answerSelectedOption()
-    let answer = transport.writtenCommands.last ?? ""
-    #expect(projectField("type", in: answer) == "extension_ui_response")
-    #expect(projectField("id", in: answer) == "d-plan")
-    #expect(projectField("value", in: answer) == "Valider le plan")
+    #expect(await awaitProject { t.requests.contains { $0.path.hasSuffix("/dialogs/d-plan") } })
+    #expect(t.lastRequest(endingWith: "/dialogs/d-plan")?.body?["value"] as? String == "Valider le plan")
     model.stop()
 }
 
@@ -174,13 +187,15 @@ func conduiteSendsTextThenShowsDialog() async throws {
 func conduiteNeverAnswersAPresentation() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
-    let countBefore = transport.written.count
+    let transport = ScriptedServiceTransport()
+    emitProjectNotice(transport, message: "[project] rien à faire\nligne 2")
+    keepProjectAlive(transport)
+    let (model, t) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
+    let countBefore = t.requests.count
 
-    transport.emit(projectDialogLine(id: "n1", method: "notify", extra: ["message": "[project] rien à faire\nligne 2"]))
     // La notice est le message DÉCODÉ de la trame, jamais la trame JSON brute.
     #expect(await awaitProject { model.notice == "[project] rien à faire\nligne 2" })
-    #expect(transport.written.count == countBefore)
+    #expect(t.requests.count == countBefore)
     model.stop()
 }
 
@@ -191,31 +206,35 @@ func conduiteNeverAnswersAPresentation() async throws {
 func conduiteCorrectsPlanThroughEditor() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
-
-    transport.emit(projectDialogLine(
+    let transport = ScriptedServiceTransport()
+    emitProjectDialog(
+        transport,
         id: "d-revue",
         method: "select",
-        extra: ["title": "Revue du plan", "options": ["Valider le plan", "Corriger le plan", "Abandonner"]]
-    ))
-    #expect(await awaitProject { model.pendingDialog != nil })
+        title: "Revue du plan",
+        options: ["Valider le plan", "Corriger le plan", "Abandonner"]
+    )
+    let plan = "## Fondations\n- socle-app-swift — la coque"
+    emitProjectDialog(transport, id: "d-correction", method: "editor", title: "Corrige le plan", prefill: plan)
+    keepProjectAlive(transport)
+    transport.stubJSON("POST", "/v1/sessions/s1/dialogs/d-revue", ["accepted": true])
+    transport.stubJSON("POST", "/v1/sessions/s1/dialogs/d-correction", ["accepted": true])
+    let (model, t) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
+
+    #expect(await awaitProject { model.pendingDialog?.id == "d-revue" })
     model.selectedOptionIndex = 1
     model.answerSelectedOption()
-    #expect(projectField("value", in: transport.writtenCommands.last ?? "") == "Corriger le plan")
+    #expect(await awaitProject { t.requests.contains { $0.path.hasSuffix("/dialogs/d-revue") } })
+    #expect(t.lastRequest(endingWith: "/dialogs/d-revue")?.body?["value"] as? String == "Corriger le plan")
 
-    let plan = "## Fondations\n- socle-app-swift — la coque"
-    transport.emit(projectDialogLine(
-        id: "d-correction",
-        method: "editor",
-        extra: ["title": "Corrige le plan", "prefill": plan]
-    ))
     #expect(await awaitProject { model.pendingDialog?.method == .editor })
     #expect(await awaitProject { model.dialogText == plan })
 
     let edited = plan + "\n- projet — la conduite depuis l'app"
     model.dialogText = edited
     model.answerDialogText()
-    #expect(projectField("value", in: transport.writtenCommands.last ?? "") == edited)
+    #expect(await awaitProject { t.requests.contains { $0.path.hasSuffix("/dialogs/d-correction") } })
+    #expect(t.lastRequest(endingWith: "/dialogs/d-correction")?.body?["value"] as? String == edited)
     model.stop()
 }
 
@@ -226,24 +245,25 @@ func conduiteCorrectsPlanThroughEditor() async throws {
 func conduiteAnswersLotEscalation() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
-
-    transport.emit(projectDialogLine(
+    let transport = ScriptedServiceTransport()
+    emitProjectDialog(
+        transport,
         id: "d-echec",
         method: "select",
-        extra: [
-            "title": "Échec de la feature conduite-de-projet (segment 1 « Fondations ») : la compilation échoue",
-            "options": ["Relancer la feature", "Retirer la feature du plan", "Arrêter le projet"],
-        ]
-    ))
+        title: "Échec de la feature conduite-de-projet (segment 1 « Fondations ») : la compilation échoue",
+        options: ["Relancer la feature", "Retirer la feature du plan", "Arrêter le projet"]
+    )
+    keepProjectAlive(transport)
+    transport.stubJSON("POST", "/v1/sessions/s1/dialogs/d-echec", ["accepted": true])
+    let (model, t) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
+
     #expect(await awaitProject { model.pendingDialog != nil })
     #expect(model.pendingDialog?.title.contains("Échec de la feature") == true)
     model.selectedOptionIndex = 1
     model.answerSelectedOption()
-    let answer = transport.writtenCommands.last ?? ""
-    #expect(projectField("id", in: answer) == "d-echec")
-    #expect(projectField("value", in: answer) == "Retirer la feature du plan")
-    #expect(model.pendingDialog == nil)
+    #expect(await awaitProject { t.requests.contains { $0.path.hasSuffix("/dialogs/d-echec") } })
+    #expect(t.lastRequest(endingWith: "/dialogs/d-echec")?.body?["value"] as? String == "Retirer la feature du plan")
+    #expect(await awaitProject { model.pendingDialog == nil })
     model.stop()
 }
 
@@ -252,10 +272,13 @@ func conduiteAnswersLotEscalation() async throws {
 func conduiteQueuesDialogs() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport) = try await startLiveModel(repo: repo, stateDir: stateDir)
+    let transport = ScriptedServiceTransport()
+    emitProjectDialog(transport, id: "d1", method: "select", title: "Premier", options: ["A", "B"])
+    emitProjectDialog(transport, id: "d2", method: "input", title: "Second", placeholder: "texte")
+    keepProjectAlive(transport)
+    transport.stubJSON("POST", "/v1/sessions/s1/dialogs/d1", ["accepted": true])
+    let (model, _) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
 
-    transport.emit(projectDialogLine(id: "d1", method: "select", extra: ["title": "Premier", "options": ["A", "B"]]))
-    transport.emit(projectDialogLine(id: "d2", method: "input", extra: ["title": "Second", "placeholder": "texte"]))
     #expect(await awaitProject { model.waitingDialogCount == 2 })
     #expect(model.pendingDialog?.id == "d1")
 
@@ -263,5 +286,64 @@ func conduiteQueuesDialogs() async throws {
     model.answerSelectedOption()
     #expect(await awaitProject { model.pendingDialog?.id == "d2" })
     #expect(model.waitingDialogCount == 1)
+    model.stop()
+}
+
+// MARK: - S-7 : conduite DÉJÀ vivante et fermeture de l'app
+
+@MainActor
+@Test("conduite-de-projet : une conduite déjà vivante est retrouvée, question en attente comprise")
+func conduiteAttachesToLiveConduite() async throws {
+    let repo = try makeGitRepository()
+    let stateDir = try makeProjectStateDir()
+    let transport = ScriptedServiceTransport()
+    // Le service conduit déjà ce dépôt (il l'a reprise seul après un redémarrage) :
+    // `/conduite` rend 409, la liste le dit, et l'instantané du flux rejoue la
+    // question en attente.
+    transport.stubStatus("POST", "/conduite", status: 409, json: [
+        "error": "conflict", "reason": "une conduite vit déjà pour \(repo.path) (s1)",
+    ])
+    transport.stubJSON("GET", "/v1/sessions", ["sessions": [[
+        "id": "s1", "cwd": repo.path, "purpose": "project", "state": "running", "sessionFile": "/tmp/p.jsonl",
+    ]]])
+    transport.stubJSON("GET", "/v1/sessions/s1", [
+        "id": "s1", "cwd": repo.path, "purpose": "project", "state": "running", "sessionFile": "/tmp/p.jsonl",
+    ])
+    emitProjectDialog(transport, id: "d-attente", method: "select", title: "Une question attend", options: ["A", "B"])
+    keepProjectAlive(transport)
+    let model = makeProjectModel(host: makeScriptedProjectHost(transport), stateDir: stateDir)
+
+    await model.startConduite(repoRoot: repo, name: "Mon projet")
+
+    #expect(model.state == .live, "une conduite vivante se retrouve, elle ne se refuse pas")
+    #expect(model.identity?.repoRoot.path == repo.path)
+    #expect(model.statusMessage.isEmpty)
+    #expect(model.host.sessionId == "s1")
+    #expect(await awaitProject { model.pendingDialog?.id == "d-attente" })
+    model.stop()
+}
+
+@MainActor
+@Test("conduite-de-projet : la fermeture de l'app laisse la conduite au service")
+func conduiteSurvivesAppQuit() async throws {
+    let repo = try makeGitRepository()
+    let stateDir = try makeProjectStateDir()
+    let transport = ScriptedServiceTransport()
+    keepProjectAlive(transport)
+    let saved = AppDelegate.terminateProject
+    defer { AppDelegate.terminateProject = saved }
+
+    let (model, t) = await liveModel(repo: repo, stateDir: stateDir, transport: transport)
+    #expect(model.state == .live)
+    #expect(AppDelegate.terminateProject != nil)
+
+    // Le geste EXACT de la fermeture de l'app : l'app se détache, rien ne part au
+    // service — la conduite y reste vivante (S-7), son `DELETE` appartient au
+    // geste « Arrêter le pilotage ».
+    await AppDelegate.terminateProject?()
+
+    #expect(!t.requests.contains { $0.method == "DELETE" && $0.path.hasSuffix("/conduite") })
+    // L'état suit par le `@Published` du host, donc à la tâche du fil principal près.
+    #expect(await awaitProject { model.state == .closed })
     model.stop()
 }

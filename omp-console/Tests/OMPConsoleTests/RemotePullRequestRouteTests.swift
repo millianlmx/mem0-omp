@@ -109,10 +109,9 @@ private func makeLiveModel(service: RecordingPRService, url: String = prURL) asy
     let key = ProjectPaths.key(forRoot: repo.path)
     let root = try stateDir(withProjectKey: key, repoRoot: repo.path, slug: prSlug, url: url)
 
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
-    makeProjectTransportRenderOnClose(transport)
+    let transport = ScriptedServiceTransport()
+    stubProjectConduite(transport, repo: repo.path)
+    openServiceStream(transport)
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(
         host: host,
@@ -131,7 +130,7 @@ private func makeLiveModel(service: RecordingPRService, url: String = prURL) asy
 /// `nil` — le cas « aucun projet conduit ».
 @MainActor
 private func makeIdleStack(stateDir root: String) async throws -> (stack: RemoteStack, model: ProjectConsoleModel) {
-    let transport = ScriptedRpcTransport()
+    let transport = ScriptedServiceTransport()
     let host = makeScriptedProjectHost(transport)
     let model = makeProjectModel(host: host, stateDir: root, environment: [:])
     let stack = try await RemoteStack.make(stateDir: root, projectModel: model)

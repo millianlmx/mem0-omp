@@ -58,6 +58,7 @@ import reqExtension, {
   type LotFeature,
   type LotPanelActions,
   type LotRunnerResult,
+  type LotRunSpec,
   type PanelDelivery,
   type PanelGesture,
   type PanelGlyphs,
@@ -588,15 +589,15 @@ function closedEntry(stateDir: string, input: Partial<RunningEntry> & { cwd: str
 // Le pilote de lot câblé sur un runner doublure : aucun process `omp` n'est lancé
 // ---------------------------------------------------------------------------
 
-type RecordedRun = { argv: string[]; cwd: string; finish: (result: LotRunnerResult) => void };
-type RunInput = { argv: string[]; cwd: string; signal?: AbortSignal };
+type RecordedRun = { spec: LotRunSpec; cwd: string; finish: (result: LotRunnerResult) => void };
+type RunInput = { spec: LotRunSpec; cwd: string; signal?: AbortSignal };
 type RunnerHarness = { runner: (input: RunInput) => Promise<LotRunnerResult>; runs: RecordedRun[] };
 
 function mkRunner(): RunnerHarness {
   const runs: RecordedRun[] = [];
-  const runner = async ({ argv, cwd, signal }: RunInput) => {
+  const runner = async ({ spec, cwd, signal }: RunInput) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
-    runs.push({ argv, cwd, finish: resolve });
+    runs.push({ spec, cwd, finish: resolve });
     if (signal?.aborted) reject(new Error("aborted"));
     else signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
     return promise;
@@ -632,14 +633,14 @@ async function flush(times = 8): Promise<void> {
   for (let i = 0; i < times; i++) await new Promise((resolve) => setImmediate(resolve));
 }
 
-/** Le prompt d'un run enregistré : c'est le dernier argument de l'argv. */
+/** Le prompt d'un run enregistré : sa spécification le porte tel quel. */
 function promptOf(run: RecordedRun): string {
-  return run.argv[run.argv.length - 1] as string;
+  return run.spec.prompt;
 }
 
-/** La boîte qu'un run a reçue dans son argv (`--panel-inbox`). */
+/** La boîte qu'un run a reçue dans sa spécification. */
 function inboxOf(run: RecordedRun): string {
-  return run.argv[run.argv.indexOf("--panel-inbox") + 1] as string;
+  return run.spec.inbox as string;
 }
 
 /** La livraison d'un fichier de boîte, horodatage neutralisé pour la comparaison. */
@@ -835,18 +836,18 @@ test("conversation/AC-5 : un message rejoint le tour en cours du maillon, sans n
     const inbox = panelInboxDirFor(stateDir, worktree);
     const app = mkApp({ "panel-inbox": inbox, "pipeline-state-dir": stateDir });
     const busy = childCtx(worktree, () => false);
-    assert.equal(armInbox(app.pi as never, busy as never), true, "un run armé consomme sa boîte");
+    assert.equal(armInbox(app.pi as never, busy as never, { inbox, watchParent: true }), true, "un run armé consomme sa boîte");
     writeDelivery(inbox, { version: 1, kind: "text", text: "va plutôt par là", sentAt: 1 });
-    pumpInbox(app.pi as never, busy as never, inbox);
+    pumpInbox(app.pi as never, busy as never, inbox, true);
     assert.deepEqual(app.sent, [{ text: "va plutôt par là", deliverAs: "steer" }]);
     assert.deepEqual(readDeliveries(inbox), [], "le fichier consommé est supprimé");
     writeDelivery(inbox, { version: 1, kind: "text", text: "plus tard", sentAt: 2 });
-    pumpInbox(app.pi as never, childCtx(worktree, () => true) as never, inbox);
+    pumpInbox(app.pi as never, childCtx(worktree, () => true) as never, inbox, true);
     assert.equal(app.sent.length, 1, "un run au repos ne consomme pas un message");
     assert.equal(readDeliveries(inbox).length, 1, "et le fichier reste pour le déposant");
     // Une boîte absente n'arme rien : une session interactive n'est pas touchée.
     const plain = mkApp({});
-    assert.equal(armInbox(plain.pi as never, busy as never), false);
+    assert.equal(armInbox(plain.pi as never, busy as never, { inbox: null, watchParent: true }), false);
   }
 });
 
@@ -957,7 +958,7 @@ test("conversation/AC-7 : répondre à la question fait cesser « attend », et 
   runs[0]!.finish({ code: 0, killed: false, stdout: "maillon terminé", stderr: "" });
   await flush();
   assert.equal(runs.length, 2, "la chaîne a lancé le maillon suivant");
-  assert.equal(runs[1]!.argv[runs[1]!.argv.indexOf("--pipeline-phase") + 1], "review");
+  assert.equal(runs[1]!.spec.phase, "review");
 });
 
 // ---------------------------------------------------------------------------
@@ -990,9 +991,9 @@ test("conversation/AC-8 : une feature bloquée se relance par une réponse, une 
     panel.component.handleInput("\r");
     await flush();
     assert.equal(runs.length, 1);
-    assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--resume") + 1], session, "la reprise vise sa session");
+    assert.equal(runs[0]!.spec.sessionFile, session, "la reprise vise sa session");
     assert.match(promptOf(runs[0]!), /^\[réponse de l'utilisateur\] voici/);
-    assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--pipeline-phase") + 1], "impl", "le maillon est conservé");
+    assert.equal(runs[0]!.spec.phase, "impl", "le maillon est conservé");
     const after = readLot(stateDir, lotRepoKey(repoRoot))!;
     assert.equal(after.features[0]!.state, "running");
     assert.equal(after.features[0]!.stopReason, null);
@@ -1027,7 +1028,7 @@ test("conversation/AC-8 : une feature bloquée se relance par une réponse, une 
     await flush();
     assert.equal(runs.length, 1);
     assert.match(promptOf(runs[0]!), /^\[réponse de l'utilisateur\] oui/);
-    assert.equal(runs[0]!.argv[runs[0]!.argv.indexOf("--resume") + 1], session);
+    assert.equal(runs[0]!.spec.sessionFile, session);
   }
 });
 
@@ -1357,7 +1358,7 @@ test("conversation/AC-11 : le lot enchaîne le maillon suivant pendant qu'une co
   runs[0]!.finish({ code: 0, killed: false, stdout: "maillon terminé", stderr: "" });
   await flush();
   assert.equal(runs.length, 2, "le lot enchaîne le maillon suivant");
-  assert.equal(runs[1]!.argv[runs[1]!.argv.indexOf("--pipeline-feature") + 1], "beta");
+  assert.equal(runs[1]!.spec.slug, "beta");
 
   // La vue n'a pas changé de sujet : elle est toujours sur alpha.
   panel.component.refresh();
@@ -1537,7 +1538,7 @@ test("le run armé enregistre son outil ask, publie sa boîte et répond dans le
     options: [{ label: "JWT" }, { label: "cookie" }],
   });
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-1", selected: "cookie", sentAt: 1 });
-  pumpInbox(app as never, ctx as never, inbox);
+  pumpInbox(app as never, ctx as never, inbox, true);
   const answered = await pending;
   assert.match(answered.content[0]!.text, /^Question : JWT ou cookie \?\nRéponse de l'utilisateur : cookie/);
   assert.deepEqual(readDeliveries(inbox), [], "la réponse consommée est supprimée");
@@ -1550,7 +1551,7 @@ test("le run armé enregistre son outil ask, publie sa boîte et répond dans le
   const unknown = app.ask("call-2", { questions: [{ id: "q", question: "?", options: [askOption("a"), askOption("b")] }] }, ctx);
   await flush(2);
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-2", selected: "z", sentAt: 2 });
-  pumpInbox(app as never, ctx as never, inbox);
+  pumpInbox(app as never, ctx as never, inbox, true);
   const refused = await unknown;
   assert.equal(refused.isError, true);
   assert.equal(refused.content[0]!.text, "Error: unknown option z");
@@ -1564,7 +1565,7 @@ test("le run armé enregistre son outil ask, publie sa boîte et répond dans le
   const libre = app.ask("call-4", { questions: [{ id: "q", question: "Et sinon ?", options: [askOption("a")] }] }, ctx);
   await flush(2);
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-4", custom: "aucune idée", sentAt: 4 });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   const answeredLibre = await libre;
   assert.match(answeredLibre.content[0]!.text, /Réponse de l'utilisateur \(texte libre\) : aucune idée/);
   assert.deepEqual(answeredLibre.details, {
@@ -1576,7 +1577,7 @@ test("le run armé enregistre son outil ask, publie sa boîte et répond dans le
 
   // Une livraison sans question en vol est jetée sans effet.
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-9", custom: "trop tard", sentAt: 3 });
-  pumpInbox(app as never, ctx as never, inbox);
+  pumpInbox(app as never, ctx as never, inbox, true);
   assert.deepEqual(readDeliveries(inbox), [], "un fichier sans destinataire est supprimé");
 
   // Une session NON armée n'enregistre rien : l'outil `ask` de l'hôte garde la main.
@@ -1694,7 +1695,7 @@ test("conversation-ask/AC-1 : une option part au PREMIER Entrée, sans aperçu",
   // minuterie) vide la boîte, et aucun run n'est lancé — le panneau n'en lance
   // jamais pour une réponse. La résolution de l'outil `ask` par cette livraison est
   // prouvée plus bas (« le run armé enregistre son outil ask… »).
-  pumpInbox(app as never, ctx as never, inbox);
+  pumpInbox(app as never, ctx as never, inbox, true);
   assert.deepEqual(readDeliveries(inbox), [], "la livraison est consommée par le maillon");
 
   // Le maillon republie son entrée sans question : la zone cesse de l'attendre au

@@ -8,9 +8,9 @@
 // VIT DANS `ConsoleCore` : ce fichier ne nomme aucun type de la coque, donc la
 // coque iOS le réutilise tel quel. `ConsoleStatus.of(card:)` et
 // `ConsoleStatus.of(run:)` ne nomment que des types du noyau et vivent ici ;
-// `of(session:)`, qui nomme `SessionHost.State`, reste déclarée par la coque — en
-// extension, dans `Sources/OMPConsole/Design/ConsoleVocabulary.swift` — pour qu'il
-// n'existe jamais deux définitions du même type.
+// `of(session:)`, qui nomme `ServiceSessionModel.State`, reste déclarée par la
+// coque — en extension, dans `Sources/OMPConsole/Design/ConsoleVocabulary.swift`
+// — pour qu'il n'existe jamais deux définitions du même type.
 
 import Foundation
 

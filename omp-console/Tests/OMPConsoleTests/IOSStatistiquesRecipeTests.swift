@@ -131,7 +131,7 @@ struct IOSStatistiquesRecipeTests {
 
         // Le client iOS réel, branché sur l'adresse manuelle de la pile.
         let client = ConsoleClientModel(
-            transport: URLSessionTransport(),
+            transport: ConsoleClient.URLSessionTransport(),
             discovery: StatsRecipeDiscovery(),
             preferences: InMemoryClientPreferences(),
             tokens: InMemoryTokenStore(),

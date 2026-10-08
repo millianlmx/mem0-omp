@@ -379,6 +379,22 @@ struct RemoteHostedSessionPayload: Codable, Equatable {
     var truncated: Bool
 }
 
+/// Une ligne du fil de la session hébergée. L'hôte RPC n'existe plus (la session
+/// est servie par l'API du service, dont le fil vivant est le fichier `.jsonl`) :
+/// le type ne survit que pour la FORME de la charge utile — `added` est toujours
+/// vide, et le client lit la conversation par les routes `sessions`/`session`.
+struct TranscriptLine: Identifiable, Equatable, Sendable, Codable {
+    enum Kind: String, Equatable, Sendable, Codable {
+        case inbound
+        case outbound
+        case clientError
+    }
+
+    let id: Int
+    let kind: Kind
+    let text: String
+}
+
 // MARK: - Corps de requête
 
 struct RemotePairRequest: Decodable, Equatable {

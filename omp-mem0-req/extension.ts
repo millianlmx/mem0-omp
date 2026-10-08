@@ -4,10 +4,11 @@ import * as path from "node:path";
 import { createAuditRelay } from "./audit.ts";
 import { hasPendingCommands } from "./commands.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
-import type { NextStep } from "./contract.ts";
+import type { NextStep, PipelinePhase } from "./contract.ts";
 import { GIT_TIMEOUT_MS, branchFor, branchTaken, buildSweepMessage, buildWelcome, contractPathFor, createFeatureWorktree, linkGate, resolveFeatureRoot, sweepFeatureWorktrees, toSlug, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { armInbox, conversationPhaseOf, registerAskTool } from "./inbox.ts";
+import { armInbox, conversationPhaseOf, panelInboxFlagOf, registerAskTool } from "./inbox.ts";
+import { createLaunchd, resolveLaunchdOmpBinary } from "./launchd.ts";
 import { lotOmpBin, lotRunTimeoutMs } from "./lot.ts";
 import type { Lot } from "./lot.ts";
 import { createLotController } from "./lotController.ts";
@@ -19,10 +20,13 @@ import { hostComponents } from "./panelHost.ts";
 import { diskProbe, joinEntry } from "./panelSession.ts";
 import type { SwitchCtx } from "./panelSession.ts";
 import type { PipelinesPanelDeps } from "./panelView.ts";
-import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, pendingApprovals, pendingAsks, publishCurrentCwd, reportStateWriteFailure, resetStateWriteWarning, sessionFileOf, sessionIdOf } from "./publish.ts";
+import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publishCurrentCwd, reportStateWriteFailure, resetStateWriteWarning, runStateOf, sessionFileOf, sessionIdOf } from "./publish.ts";
 import type { PublishDeps } from "./publish.ts";
-import { runState } from "./runState.ts";
-import { SELF_MODULE_URL, buildConversationRunArgv, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
+import { createServiceClient, createServiceLotActions } from "./serviceClient.ts";
+import { createServiceHost } from "./serviceHost.ts";
+import { maillonIdentityOf } from "./serviceSessions.ts";
+import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
+import { buildConversationRunArgv, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
 import type { WorkerMode } from "./runs.ts";
 import { SYSTEM_DIRECTIVE_REQ, buildAuditSeed, buildImplSeed, buildReviewSeed, buildSpecsSeed } from "./seeds.ts";
 import { stateOfCwd } from "./state.ts";
@@ -64,6 +68,22 @@ export function prefillEditor(ctx: { hasUI: boolean; ui?: EditorUI }, step: Next
 // ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
+
+/**
+ * L'URL de CE module — le point d'entrée que l'hôte charge. Elle DOIT être lue
+ * ici : un `import.meta.url` évalué dans `runs.ts` (comme avant) rend le chemin
+ * de `runs.ts`, qu'OMP refuse de charger comme extension (« n'exporte pas de
+ * fabrique ») — les runs enfants partaient alors sans plugin, et une session
+ * servie ne recevait ni la fabrique ni `session_start` : plus aucun maillon
+ * n'était publié, aucune boîte armée, aucune question relayée (S-3, S-8).
+ */
+const SELF_MODULE_URL: string | undefined = (() => {
+  try {
+    return (import.meta as { url?: string }).url;
+  } catch {
+    return undefined;
+  }
+})();
 
 export default function reqExtension(pi: ExtensionAPI) {
   // Toute la git du plugin passe par là : jamais node:child_process dans
@@ -148,8 +168,9 @@ export default function reqExtension(pi: ExtensionAPI) {
 
   // --- drapeaux du mode worker, et pilote du lot ----------------------------
   // Les drapeaux sont déclarés AU CHARGEMENT : un drapeau inconnu du CLI est une
-  // erreur dure, et un run de lot est lancé avec ces quatre-là (`buildLotRunArgv`,
-  // cf. `## Documentation` §2).
+  // erreur dure. Ils restent déclarés pour les runs d'une version ANTÉRIEURE (un
+  // enfant survivant à la bascule) et pour le run de CONVERSATION d'une session
+  // hors lot, seul process `omp` que le plugin lance encore (S-3).
   pi.registerFlag("pipeline-lot", { type: "string", description: "Lot propriétaire de ce run (mode worker)" });
   pi.registerFlag("pipeline-feature", { type: "string", description: "Feature de ce run (mode worker)" });
   pi.registerFlag("pipeline-phase", {
@@ -175,6 +196,16 @@ export default function reqExtension(pi: ExtensionAPI) {
     description: "Échéance absolue (epoch ms) d'un run de lot, au-delà de laquelle il rend la main",
   });
 
+  // Le drapeau qui fait d'un process `omp` le SERVICE (S-1) : un booléen, posé
+  // par la ligne de commande du job launchd — `omp -p --no-session
+  // --pipeline-service "/service start"`. Le process se reconnaît à lui et sort de
+  // toutes les branches de session ordinaires (aucune publication, aucune
+  // adoption : c'est LUI le pilote).
+  pi.registerFlag(SERVICE_FLAG, {
+    type: "boolean",
+    description: "Ce process est le service OMP : il pilote tous les lots et exécute les maillons",
+  });
+
   // Mode worker : ce process EST un maillon du lot. Il publie son état, exécute le
   // prompt reçu en argv et n'annonce rien — la chaîne appartient au pilote.
   //
@@ -182,6 +213,21 @@ export default function reqExtension(pi: ExtensionAPI) {
   // les drapeaux d'extension APRÈS avoir chargé les extensions (`## Documentation`
   // §2), donc un `pi.getFlag` évalué à l'import rend toujours `undefined`.
   const workerMode = (): WorkerMode | null => workerModeOf(pi);
+
+  /**
+   * Ce process est-il le service ? Le drapeau `--pipeline-service` répond pour sa
+   * session `-p` ; une session HÉBERGÉE charge sa propre instance du plugin, dont
+   * `getFlag` ne voit pas les drapeaux du CLI — c'est le MARQUEUR de process, posé
+   * par le service lui-même à son démarrage, qui tranche (S-3, S-6, S-7).
+   */
+  const isServiceProcess = (): boolean => {
+    try {
+      if (pi.getFlag(SERVICE_FLAG) === true) return true;
+    } catch {
+      /* une instance sans registre de drapeaux n'est pas le service */
+    }
+    return isMarkedServiceProcess();
+  };
 
   /**
    * Le magasin d'état de CE process : le drapeau d'un run de lot fait autorité
@@ -224,15 +270,16 @@ export default function reqExtension(pi: ExtensionAPI) {
     const controller = createLotController({
       stateDir: storeDir(),
       repoRoot,
-      run: async ({ argv, cwd, timeout, signal }) => {
-        const res = await pi.exec(argv[0] ?? "omp", argv.slice(1), { cwd, timeout, signal });
-        return {
-          code: res.killed ? 124 : res.code,
-          killed: res.killed === true,
-          stdout: res.stdout ?? "",
-          stderr: res.stderr ?? "",
-        };
-      },
+      // Une session TERMINALE n'exécute JAMAIS de maillon (S-4, S-10) : c'est le
+      // service qui les exécute, et le panneau comme les gestes passent par son API
+      // (S-9, S-11). Le runner reste une porte fermée NOMMÉE : si un chemin oubliait
+      // cette règle, l'échec serait dit, pas exécuté en local.
+      run: async () => ({
+        code: 1,
+        killed: false,
+        stdout: "",
+        stderr: "le service OMP exécute les maillons — aucun run local",
+      }),
       runGit: run,
       runGh,
       notify: notifyDurable,
@@ -243,7 +290,6 @@ export default function reqExtension(pi: ExtensionAPI) {
       // nommerait un fichier de session périmé.
       toast: (text, tone) => liveCtx().ui?.notify?.(text, tone),
       session: () => ({ file: sessionFileOf(liveCtx() as PipelineCtx), id: sessionIdOf(liveCtx() as PipelineCtx) }),
-      selfPath: selfExtensionArg(SELF_MODULE_URL),
       schedule: (callback, ms) => {
         // Minuterie GÉRÉE : nettoyée au `session_shutdown`, jamais orpheline. Un
         // contexte dégradé (hors OMP complet) n'a pas de minuterie : le pilote
@@ -309,11 +355,25 @@ export default function reqExtension(pi: ExtensionAPI) {
       const root = resolveFeatureRoot(ctx.cwd);
       return root.primary ?? root.dir;
     })();
+    // Le SERVICE est le pilote (S-4, S-11) : les gestes du panneau passent par son
+    // API, et l'en-tête le nomme. Sans service, le panneau reste en LECTURE et le
+    // dit — aucune session terminale ne reprend un lot.
+    const service = serviceRunning(stateDir);
+    if (service === null) {
+      notifyDurable("[pipeline] service OMP arrêté — les pipelines n'avancent plus (/service status)");
+    }
     const deps: PipelinesPanelDeps = {
       stateDir,
       components,
       repoRoot,
-      lot: workerMode() ? undefined : controllerFor(ctx),
+      servicePid: () => serviceRunning(stateDir)?.pid ?? null,
+      lot:
+        service === null
+          ? undefined
+          : createServiceLotActions({
+              repoRoot,
+              client: createServiceClient({ stateDir }),
+            }),
       /**
        * Les modèles connus de la session (S-3) : l'étape « Modèle » du flux d'ajout
        * s'ouvre sur cette liste. Vide (aucun modèle connu, ou `ctx.models` d'un hôte
@@ -397,6 +457,122 @@ export default function reqExtension(pi: ExtensionAPI) {
     }
   };
 
+  // --- /service : le service unique de la machine (S-1) ---------------------
+  // `start` démarre le serveur ET le pilotage, puis ne rend JAMAIS la main : c'est
+  // la commande qui tient le process `omp -p --pipeline-service` en vie (Doc-1 §9).
+  // `install`/`uninstall`/`status` parlent à launchd (Doc-3) et rendent la main.
+  let serviceHost: ReturnType<typeof createServiceHost> | null = null;
+
+  /**
+   * Le binaire `omp` du job launchd : un CHEMIN ABSOLU, résolu sur le PATH de
+   * l'installation. Un nom nu produirait un job qui ne démarre jamais (launchd
+   * résout un premier argument relatif via `_PATH_STDPATH` — mesuré,
+   * `78: EX_CONFIG`) ; si aucune résolution n'aboutit, `/service install` refuse
+   * en le nommant.
+   */
+  const launchd = () => {
+    const resolved = resolveLaunchdOmpBinary();
+    return createLaunchd({
+      ompBin: resolved.bin ?? lotOmpBin(),
+      ompBinProblem: resolved.problem,
+      stateDir: storeDir(),
+      exec: async argv => {
+        try {
+          const res = await pi.exec(argv[0] ?? "launchctl", argv.slice(1), { timeout: 10_000 });
+          return { code: res.killed ? 124 : res.code, stdout: res.stdout ?? "", stderr: res.stderr ?? "" };
+        } catch (err) {
+          return { code: 127, stdout: "", stderr: (err as Error).message };
+        }
+      },
+    });
+  };
+
+  pi.registerCommand("service", {
+    description:
+      "Pilote le service OMP unique : start (démarre et ne rend pas la main), status, stop, install/uninstall (launchd)",
+    handler: async (args, ctx) => {
+      const action = String(args ?? "").trim().split(/\s+/)[0] ?? "";
+      const say = (text: string, tone: "info" | "warning" | "error" = "info") => ctx.ui?.notify?.(text, tone);
+      if (action === "" || action === "status") {
+        const record = serviceRunning(storeDir());
+        const job = await launchd().status();
+        say(
+          record !== null
+            ? `[service] en marche (pid ${record.pid}, port ${record.port}) — ${serviceFilePath(storeDir())}`
+            : `[service] arrêté — ${serviceFilePath(storeDir())} (job launchd : ${job.text})`,
+        );
+        return;
+      }
+      if (action === "install") {
+        const result = await launchd().install();
+        say(`[service] ${result.text}`, result.ok ? "info" : "warning");
+        return;
+      }
+      if (action === "uninstall") {
+        const result = await launchd().uninstall();
+        say(`[service] ${result.text}`, result.ok ? "info" : "warning");
+        return;
+      }
+      if (action === "stop") {
+        if (serviceHost !== null) {
+          await serviceHost.stop();
+          serviceHost = null;
+          say("[service] arrêté (service local)");
+          return;
+        }
+        const record = serviceRunning(storeDir());
+        if (record === null) {
+          say("[service] arrêté");
+          return;
+        }
+        try {
+          process.kill(record.pid, "SIGTERM");
+          say(`[service] arrêt demandé (pid ${record.pid})`);
+        } catch (err) {
+          say(`[service] arrêt impossible : ${(err as Error).message}`, "warning");
+        }
+        return;
+      }
+      if (action !== "start") {
+        say(`[service] action inconnue : ${action} (start|status|stop|install|uninstall)`, "warning");
+        return;
+      }
+      // `start` : le process devient le service. Une erreur est NOMMÉE et fait
+      // sortir — launchd étrangle alors le job (ThrottleInterval) au lieu d'une
+      // boucle serrée (S-5, cas limites).
+      const host = createServiceHost({
+        pi,
+        stateDir: storeDir(),
+        selfPath: selfExtensionArg(SELF_MODULE_URL),
+        runGit: run,
+        runGh,
+        log: line => {
+          process.stdout.write(`${line}\n`);
+        },
+      });
+      serviceHost = host;
+      const started = await host.start();
+      if (started.kind === "already-running") {
+        say(`[service] un service tourne déjà (pid ${started.pid})`);
+        serviceHost = null;
+        return;
+      }
+      say(`[service] en marche (pid ${started.handle.pid}, port ${started.handle.port})`);
+      // L'arrêt propre (S-1) : plus de nouvelles requêtes, tours coupés, contrôleurs
+      // arrêtés, `service.json` retiré, sortie 0.
+      const shutdown = async (signal: string) => {
+        say(`[service] arrêt sur ${signal}`);
+        await host.stop();
+        process.exit(0);
+      };
+      process.on("SIGTERM", () => void shutdown("SIGTERM"));
+      process.on("SIGINT", () => void shutdown("SIGINT"));
+      // La commande ne rend JAMAIS la main : c'est ce qui tient le process en vie
+      // (le serveur HTTP référence par ailleurs la boucle d'évènements, Doc-2 §5).
+      await new Promise<never>(() => {});
+    },
+  });
+
   pi.registerCommand("pipelines", {
     description: "Affiche le panneau des pipelines en cours (tous les processus OMP, tous dépôts) — Échap ferme",
     handler: async (_args, ctx) => {
@@ -430,13 +606,33 @@ export default function reqExtension(pi: ExtensionAPI) {
     // et rien de ce qui suit ne le concerne.
     if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
     liveCtxRef = ctx;
+    // --- une session HÉBERGÉE par le service (S-3, S-6, S-7) -----------------
+    if (isServiceProcess()) {
+      const identity = maillonIdentityOf(sessionIdOf(ctx as PipelineCtx));
+      if (identity !== null) {
+        // MAILLON : sa boîte vient de son identité (jamais d'un drapeau — le
+        // process n'en a aucun), il publie son entrée, arme sa boîte et reçoit les
+        // amorces de phase. Il n'adopte RIEN : le pilote, c'est le service.
+        const armed = armInbox(pi, ctx as PipelineCtx, { inbox: identity.inbox, watchParent: false });
+        if (armed) registerAskTool(pi, ctx as PipelineCtx, { notify: notifyDurable, stateDir: identity.stateDir });
+        stateOfCwd(ctx.cwd).reqMode = identity.phase === "req";
+        armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, identity.phase as PipelinePhase);
+        return;
+      }
+      // SESSION SERVIE (app, conduite) : ses relais vivent dans le service — c'est
+      // ce qui fait survivre les questions d'un projet à la fermeture de l'app
+      // (S-7) — mais elle ne pilote aucun lot et ne publie aucune entrée.
+      auditRelay.sync(ctx);
+      projectRelay.sync(ctx);
+      return;
+    }
     ensureHeartbeat(ctx as PipelineCtx, { notify: notifyDurable, stateDir: storeDir() });
     // Un run lancé par le panneau est ARMÉ (`--panel-inbox`) : il consomme sa
     // boîte et expose un vrai outil `ask` (S-6, S-7). Une session interactive n'a
     // jamais ce drapeau : rien n'est armé ici, et l'outil `ask` de l'hôte — avec
     // son dialogue riche — garde la main.
-    const armed = armInbox(pi, ctx as PipelineCtx);
-    if (armed) registerAskTool(pi, { notify: notifyDurable, stateDir: storeDir() });
+    const armed = armInbox(pi, ctx as PipelineCtx, { inbox: panelInboxFlagOf(pi), watchParent: true });
+    if (armed) registerAskTool(pi, ctx as PipelineCtx, { notify: notifyDurable, stateDir: storeDir() });
     // Un run de lot arme SON maillon et le publie : il apparaît dans /pipelines
     // dès le démarrage, et un maillon `req` reçoit la directive de collecte.
     const mode = workerMode();
@@ -457,12 +653,9 @@ export default function reqExtension(pi: ExtensionAPI) {
       if (phase) armPipeline(pipelineDeps(ctx as PipelineCtx), ctx.cwd, phase);
       return;
     }
-    // Session ordinaire : si le lot de ce dépôt n'a plus de pilote, on le reprend —
-    // et s'il n'y a pas de lot mais qu'une COMMANDE attend dans le canal, on arme
-    // quand même (S-10) : c'est ainsi qu'un client sans TUI fait naître un lot.
-    const controller = controllerFor(ctx);
-    const root = resolveFeatureRoot(ctx.cwd);
-    if (controller.adopt() || hasPendingCommands(storeDir(), root.primary ?? root.dir)) controller.start();
+    // Session ordinaire : elle ne PREND PLUS la main sur un lot (S-4) — le service
+    // est le seul pilote de la machine, et le panneau comme les gestes passent par
+    // son API (S-9, S-11). Seuls les relais de cette session s'arment.
     auditRelay.sync(ctx);
     // La session hôte d'un projet en cours (`omp --resume` de la session /project)
     // réarme son relais : le projet reprend là où il en était (S-4).
@@ -495,11 +688,16 @@ export default function reqExtension(pi: ExtensionAPI) {
   // concerne — il n'a armé ni relais, ni pompe, ni contrôleur.
   pi.on("session_shutdown", async (_event, ctx) => {
     if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
+    // Le process du SERVICE n'arrête pas ses contrôleurs ici : ils appartiennent à
+    // son pilotage (`servicePilot`), qui les arrête à son propre arrêt — les couper
+    // sur le `session_shutdown` de la session `-p` qui l'héberge laisserait des
+    // runs vivants sans pilote.
+    if (isServiceProcess()) return;
     auditRelay.disarm();
     projectRelay.disarm();
     try {
-      runState.pumpStop?.();
-      runState.pumpStop = null;
+      runStateOf(ctx as PipelineCtx).pumpStop?.();
+      runStateOf(ctx as PipelineCtx).pumpStop = null;
     } catch {
       /* une minuterie déjà nettoyée n'est pas une erreur */
     }
@@ -522,25 +720,26 @@ export default function reqExtension(pi: ExtensionAPI) {
   // L'outil `ask` en vol est le cas le plus visible de « suspendu à une question » :
   // l'état est publié dès le démarrage de l'appel, pas à la fin du tour.
   pi.on("tool_execution_start", async (event, ctx) => {
-    if (event.toolName === "ask") pendingAsks.add(event.toolCallId);
+    if (event.toolName === "ask") runStateOf(ctx as PipelineCtx).pendingAsks.add(event.toolCallId);
     publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
   });
 
   pi.on("tool_execution_end", async (event, ctx) => {
     // Par identifiant d'appel : un `end` manquant ne fige pas le compteur, et un
     // `end` d'un autre appel non plus.
-    pendingAsks.delete(event.toolCallId);
-    pendingApprovals.delete(event.toolCallId);
+    const state = runStateOf(ctx as PipelineCtx);
+    state.pendingAsks.delete(event.toolCallId);
+    state.pendingApprovals.delete(event.toolCallId);
     publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
   });
 
   pi.on("tool_approval_requested", async (event, ctx) => {
-    pendingApprovals.add(event.toolCallId);
+    runStateOf(ctx as PipelineCtx).pendingApprovals.add(event.toolCallId);
     publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
   });
 
   pi.on("tool_approval_resolved", async (event, ctx) => {
-    pendingApprovals.delete(event.toolCallId);
+    runStateOf(ctx as PipelineCtx).pendingApprovals.delete(event.toolCallId);
     publishCurrentCwd(pipelineDeps(ctx as PipelineCtx));
   });
 
@@ -698,10 +897,9 @@ export default function reqExtension(pi: ExtensionAPI) {
       // collecte).
       liveCtxRef = ctx;
       armPipeline(pipelineDeps(ctx as PipelineCtx), created.path, "req");
-      // Le pilote tourne : les AUTRES features du lot (s'il y en a) avancent
-      // pendant cette collecte, et celle-ci sera prise en charge à sa clôture.
-      // Une feature refusée n'appartient à aucun lot : aucun pilote à faire tourner.
-      if (!refused) lotDriver.start();
+      // Le pilote du lot n'est PLUS cette session (S-4) : le service balaie le
+      // magasin et adopte le lot à sa passe suivante. Une feature refusée
+      // n'appartient à aucun lot : il n'y a rien à faire avancer ici.
       pi.sendMessage(
         {
           customType: "req",
@@ -1019,7 +1217,6 @@ export default function reqExtension(pi: ExtensionAPI) {
       // la collecte : un /specs lancé à la main (autorisé tant qu'aucun lot ne
       // pilote la feature) ne doit pas inscrire la feature au lot et faire
       // relancer un second /specs par le pilote.
-      const controller = controllerFor(ctx);
       const handed =
         phase === "req" &&
         handOverCollecte({
@@ -1043,7 +1240,9 @@ export default function reqExtension(pi: ExtensionAPI) {
         } catch (err) {
           reportStateWriteFailure(pipelineDeps(ctx as PipelineCtx), err);
         }
-        controller.start();
+        // AUCUNE prise de relais locale (S-4, S-11) : le lot appartient au
+        // service (ou, sans service, à cette session sans boucle — plus rien
+        // n'avance alors), et c'est le balayage du service qui ouvre la chaîne.
         pi.sendMessage(
           {
             customType: "pipeline",
@@ -1094,6 +1293,7 @@ export * from "./commands.ts";
 export * from "./contract.ts";
 export * from "./git.ts";
 export * from "./inbox.ts";
+export * from "./launchd.ts";
 export * from "./lot.ts";
 export * from "./lotController.ts";
 export * from "./models.ts";
@@ -1107,8 +1307,19 @@ export * from "./project.ts";
 export * from "./projectDriver.ts";
 export * from "./projectRelay.ts";
 export * from "./publish.ts";
-export * from "./runs.ts";
 export * from "./relay.ts";
+export * from "./runState.ts";
+export * from "./runs.ts";
 export * from "./seeds.ts";
+export * from "./service.ts";
+export * from "./serviceApi.ts";
+export * from "./serviceClient.ts";
+export * from "./serviceHost.ts";
+export * from "./serviceHttp.ts";
+export * from "./servicePilot.ts";
+export * from "./serviceRuns.ts";
+export * from "./serviceRuntime.ts";
+export * from "./serviceSessions.ts";
+export * from "./serviceState.ts";
 export * from "./state.ts";
 export * from "./store.ts";

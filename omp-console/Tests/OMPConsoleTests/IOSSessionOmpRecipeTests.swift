@@ -40,44 +40,6 @@ private func sessionOmpEventually(timeout: Double = 10, _ condition: @MainActor 
     return condition()
 }
 
-/// Un hôte scripté prêt à lancer, dont `get_state` publie le fichier de session.
-@MainActor
-private func makeRecipeHost(sessionFile: String, transport: ScriptedRpcTransport) -> SessionHost {
-    transport.onWrite = { [weak transport] line in
-        MainActor.assumeIsolated {
-            guard let transport,
-                  let object = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
-                  let type = object["type"] as? String else { return }
-            let id = object["id"] as? String ?? "?"
-            let data: [String: Any]
-            switch type {
-            case "negotiate_protocol": data = ["protocolVersion": 2]
-            case "get_state": data = ["sessionId": "sess-recette", "sessionFile": sessionFile]
-            case "prompt": data = [:]
-            default: return
-            }
-            var body: [String: Any] = ["type": "response", "id": id, "command": type, "success": true]
-            if !data.isEmpty { body["data"] = data }
-            let text = (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]))
-                .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
-            transport.emit(text)
-        }
-    }
-    transport.readyLine = """
-    {"type":"ready","protocolVersion":2,"supportedProtocolVersions":[1,2],\
-    "maxFrameBytes":1048576,"maxReassembledFrameBytes":67108864}
-    """
-    return SessionHost(
-        transport: transport,
-        resolveBinary: { _ in .success(URL(fileURLWithPath: "/usr/bin/true")) },
-        environment: [:],
-        requestTimeout: .seconds(2),
-        readyTimeout: .seconds(2),
-        stopGrace: .milliseconds(80),
-        killGrace: .milliseconds(80)
-    )
-}
-
 @MainActor
 @Suite("Recette ios-session-omp (coque réelle)")
 struct IOSSessionOmpRecipeTests {
@@ -91,8 +53,8 @@ struct IOSSessionOmpRecipeTests {
         try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
         store.publish(.lots, "\(fixtureId(0xF1)).json", object: lotObject(id: fixtureId(0xF1), repoRoot: repoRoot))
 
-        let transport = ScriptedRpcTransport()
-        let host = makeRecipeHost(sessionFile: store.root + "/session.jsonl", transport: transport)
+        let transport = ScriptedServiceTransport()
+        let host = makeScriptedHostedHost(transport, sessionFile: store.root + "/session.jsonl", sessionId: "sess-recette")
         let stack = try await RemoteStack.make(
             stateDir: store.root,
             sessionModel: SessionConsoleModel(host: host)
@@ -101,7 +63,7 @@ struct IOSSessionOmpRecipeTests {
 
         // Le client iOS réel, branché sur l'adresse manuelle de la pile.
         let client = ConsoleClientModel(
-            transport: URLSessionTransport(),
+            transport: ConsoleClient.URLSessionTransport(),
             discovery: SessionOmpRecipeDiscovery(),
             preferences: InMemoryClientPreferences(),
             tokens: InMemoryTokenStore(),
@@ -123,14 +85,14 @@ struct IOSSessionOmpRecipeTests {
         #expect(launched.state == "running")
         #expect(launched.projectName == "depot")
 
-        // 3. Un prompt atteint réellement la session (écrit sur le transport).
+        // 3. Un prompt atteint réellement la session (POSTÉ au service).
         _ = try await client.prompt(message: "bonjour depuis l'iPad")
-        #expect(transport.written.contains { $0.contains("\"prompt\"") && $0.contains("bonjour depuis l'iPad") })
+        #expect(transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/prompt") && ($0.body?["text"] as? String) == "bonjour depuis l'iPad"
+        })
 
         // 4. Un dialogue poussé par le flux devient tranchable depuis le client.
-        transport.emit(
-            #"{"type":"extension_ui_request","id":"recette-1","method":"select","title":"Choisir","options":["a","b"]}"#
-        )
+        emitServiceDialog(transport, id: "recette-1", method: "select", title: "Choisir", options: ["a", "b"])
         #expect(await sessionOmpEventually { client.hosted?.dialogs.first?.id == "recette-1" })
         _ = try await client.answerHostedDialog(id: "recette-1", kind: "value", value: "b", confirmed: nil)
         #expect(await sessionOmpEventually { client.hosted?.dialogs.isEmpty == true })

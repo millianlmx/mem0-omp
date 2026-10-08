@@ -292,33 +292,33 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
   /**
    * Un balayage armé (BR-2), dans cet ordre : (1) le lot — tenu par une autre
    * session VIVANTE, le relais se tait (battement retiré, notice unique, aucun
-   * crochet ni injection) ; propriétaire mort, il est repris ; (2) le crochet du
-   * profil (il tourne AUSSI sans lot) ; (3) le prédicat d'armement réévalué ;
-   * (4) le battement puis l'injection des éléments nouveaux. Sans lot à ce
-   * process, seul un profil à éléments supplémentaires injecte encore (ses
-   * échecs ne dépendent pas du lot).
+   * crochet ni injection) ; propriétaire mort, il est SILENCIEUX lui aussi : seul
+   * le service reprend un lot (S-4), une session terminale n'appelle plus
+   * `adopt()`/`start()` ; (2) le crochet du profil (il tourne AUSSI sans lot) ;
+   * (3) le prédicat d'armement réévalué ; (4) le battement puis l'injection des
+   * éléments nouveaux. Sans lot à ce process, seul un profil à éléments
+   * supplémentaires injecte encore (ses échecs ne dépendent pas du lot).
    */
   function scan(): void {
     try {
       const { sessionFile, repoRoot, ctx } = state;
       if (sessionFile === null || repoRoot === null || ctx === null) return;
       const stateDir = deps.stateDir();
-      let lot = lotOf(repoRoot);
+      const lot = lotOf(repoRoot);
       if (lot !== null && lot.owner.pid !== process.pid) {
+        removeHeartbeat();
+        state.relayed.clear();
         if (lotOwnerAlive(lot.owner, now())) {
-          removeHeartbeat();
-          state.relayed.clear();
           if (!state.foreignWarned) {
             state.foreignWarned = true;
             deps.notify(
               `[${name}] le lot de ${path.basename(repoRoot)} est piloté par une autre session vivante (pid ${lot.owner.pid}) : les questions et jalons de cette session ${tag} restent dans son panneau /pipelines`,
             );
           }
-          return;
         }
-        const controller = deps.controllerFor(ctx);
-        if (controller.adopt()) controller.start();
-        lot = lotOf(repoRoot);
+        // Propriétaire mort : plus aucun pilote (le service est arrêté) — rien à
+        // relayer, rien à reprendre (S-4, S-11).
+        return;
       }
       profile.onScan?.();
       if (profile.stillArmed !== undefined && !profile.stillArmed()) {

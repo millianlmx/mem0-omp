@@ -7,8 +7,8 @@
 // Le programme hébergé est le shell de connexion de l'utilisateur, `omp` étant
 // lancé à la demande (S-18 R6) : les états parlent du SHELL.
 //
-// Aucun de ces textes n'est un message de la session RPC : ceux-là viennent de
-// `SessionHostError.userMessage`.
+// Aucun de ces textes n'est un message de la session servie : ceux-là viennent de
+// `ServiceSessionModel.userMessage`.
 
 import Foundation
 

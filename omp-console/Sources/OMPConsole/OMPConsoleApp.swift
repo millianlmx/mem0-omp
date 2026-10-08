@@ -57,12 +57,11 @@ struct OMPConsoleApp: App {
     @StateObject private var remoteModel: RemoteServiceModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    /// UN `ConductorPool` pour l'app (S-7 de omp-console-redesign) : il fait
-    /// conduire les dépôts sans pilote vivant, et ses accroches de terminaison
-    /// sont posées dès sa construction.
+    /// Un `ActionsModel` pour l'app : il poste au service les gestes des cartes
+    /// (S-9), sans lancer aucun process. Les accroches de terminaison des modèles
+    /// sont posées dès leur construction.
     init() {
-        let pool = ConductorPool()
-        let actions = ActionsModel(pilot: pool)
+        let actions = ActionsModel()
         _actionsModel = StateObject(wrappedValue: actions)
         let kanban = KanbanModel()
         _kanbanModel = StateObject(wrappedValue: kanban)
@@ -263,11 +262,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var terminateProject: (() async -> Void)?
     /// Posée par `TerminalConsoleModel.init` (S-8).
     static var terminateTerminal: (() async -> Void)?
-    /// Posée par `ConductorPool.init` : arrête tous les conducteurs.
-    static var terminateConductors: (() async -> Void)?
-    /// Posée par `ConductorPool.init` : vrai quand un conducteur mène des maillons
-    /// en cours — quitter les interromprait.
-    static var conductorsBusy: (() -> Bool)?
     /// Posée par `OMPConsoleApp.init` : arrête le service d'API distante et son
     /// annonce Bonjour (S-14).
     static var terminateRemoteService: (() async -> Void)?
@@ -300,13 +294,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if hooksDone { return .terminateNow }
-        // Des maillons conduits par l'app seraient interrompus : l'utilisateur
-        // tranche (S-7 de omp-console-redesign).
-        if Self.conductorsBusy?() == true, !Self.confirmQuitWhileConducting() {
-            return .terminateCancel
-        }
         guard Self.terminateSession != nil || Self.terminateProject != nil || Self.terminateTerminal != nil
-            || Self.terminateConductors != nil || Self.terminateRemoteService != nil else {
+            || Self.terminateRemoteService != nil else {
             return .terminateNow
         }
         // MESURÉ (2026-10-01, bundle lancé) : avec `.terminateLater`, une feuille
@@ -321,30 +310,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             await Self.terminateSession?()
             await Self.terminateProject?()
             await Self.terminateTerminal?()
-            await Self.terminateConductors?()
             await Self.terminateRemoteService?()
             self.hooksDone = true
             self.requestTermination()
         }
         return .terminateCancel
     }
-
-    /// La confirmation de fermeture : « Quitter » (premier bouton) rend `true`.
-    private static func confirmQuitWhileConducting() -> Bool {
-        let alert = NSAlert()
-        alert.messageText = QuitText.title
-        alert.informativeText = QuitText.body
-        alert.addButton(withTitle: QuitText.quit)
-        alert.addButton(withTitle: QuitText.cancel)
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-}
-
-/// Les textes de la confirmation de fermeture (S-7 de omp-console-redesign).
-enum QuitText {
-    static let title = "Quitter OMP Console ?"
-    static let body =
-        "OMP Console pilote des pipelines en cours : quitter les interrompt. Vous pourrez les relancer avec « Reprendre » à la prochaine ouverture."
-    static let quit = "Quitter"
-    static let cancel = "Annuler"
 }

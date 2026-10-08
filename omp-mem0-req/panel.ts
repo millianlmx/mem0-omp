@@ -18,6 +18,7 @@ import type { HostKeybinding, PanelComponent, PanelKeybindings, PanelView, Pipel
 import { LIST_MODE_MAX_LINES, PANEL_NOTICE_MAX_LINES, ROW_PADDING_X, VIEW_ZONE_MAX_LINES, WINDOW_FOLLOW, serviceRow, textWindow } from "./panelWidth.ts";
 import type { TextWindow } from "./panelWidth.ts";
 import type { WorktreeFate } from "./runs.ts";
+import { SERVICE_DOWN_REFUSAL } from "./serviceClient.ts";
 import { asStringOrNull, deleteHistoryEntry, dropInbox, panelInboxDirFor, panelInboxDirOf, pidAlive, writeDelivery } from "./store.ts";
 import type { PanelDelivery } from "./store.ts";
 
@@ -108,6 +109,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       notice,
       mode,
       now: now(),
+      servicePid: deps.servicePid?.() ?? null,
     });
     // La CLÉ de rang mémorisée se résout sur le modèle FRAIS (PANEL-3) : l'index de la
     // ligne qui la porte, ou la voisine bornée si elle a disparu.
@@ -362,14 +364,15 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         notice,
         mode,
         now: now(),
+        servicePid: deps.servicePid?.() ?? null,
       });
       // La sélection suit la CLÉ du rang, jamais son index (PANEL-3) : une entrée
       // d'historique qui arrive en tête ne doit pas déplacer le curseur sur sa voisine.
       model = { ...model, selection: panelIndexForKey(model, panelSelections.get(selectionKey), model.selection) };
-      // Un lot dont le pilote est MORT se reprend (PANEL-4) : sans ça, le panneau
-      // affichait un lot qui travaille (horloge comprise) alors que plus personne ne
-      // conduit la chaîne.
-      if (model.driver?.kind === "dead") deps.lot?.adopt?.();
+      // Le lot est RÉVEILLÉ par l'API (S-9, S-11) : plus aucune reprise locale.
+      // Sans service, rien n'est réveillé — le panneau le dit par son en-tête
+      // (`pilote absent`) et ses gestes sont refusés.
+      if (model.driver?.kind === "service" && model.driver.pid === null) deps.lot?.adopt?.();
       // Un APERÇU qui décrit un état périmé se referme (PANEL-9) : entre l'ouverture et
       // l'`Entrée`, la liste s'est relue et le pilote a pu agir — un aperçu périmé fait
       // croire que le geste fera ce qu'il annonce.
@@ -1245,8 +1248,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       if (!row || !isLotFeature(row)) return false;
       const actions = deps.lot;
       if (!actions) return false;
-      // Un lot piloté par un AUTRE process se consulte (PANEL-4) : ouvrir un aperçu
-      // que le pilote refusera ferait confirmer un geste impossible.
+      // Un lot piloté par un AUTRE process que le service se consulte (PANEL-4) :
+      // ouvrir un aperçu que le pilote refusera ferait confirmer un geste impossible.
       if (model.driver?.kind === "foreign") {
         showNotice(`lot piloté par pid ${model.driver.pid} — consultation seule`);
         return true;
@@ -1863,12 +1866,15 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // Toute action du lot exige le pilote : sans lui, le panneau reste en lecture.
       const requireLot = (): LotPanelActions | null => {
         if (!lot) {
-          showNotice("lot indisponible dans cette session");
+          // Sans service, les gestes sont REFUSÉS (S-11) : le pied ne les annonce
+          // plus (`canDrive`), et une touche qui reste le dit.
+          showNotice(SERVICE_DOWN_REFUSAL);
           return null;
         }
-        // Un lot piloté par un AUTRE process se consulte (PANEL-4) : le pied n'annonce
-        // déjà plus `a ajouter`/`l lancer`, et une touche qui reste ne doit pas ouvrir
-        // un aperçu que le pilote refusera.
+        // Un lot piloté par un AUTRE process que le service se consulte (PANEL-4) :
+        // le pied n'annonce déjà plus `a ajouter`/`l lancer`, et une touche qui reste
+        // ne doit pas ouvrir un aperçu que le pilote refusera. Le SERVICE, lui, est le
+        // pilote légitime : ses gestes passent par son API (S-9, S-11).
         if (model.driver?.kind === "foreign") {
           showNotice(`lot piloté par pid ${model.driver.pid} — consultation seule`);
           return null;

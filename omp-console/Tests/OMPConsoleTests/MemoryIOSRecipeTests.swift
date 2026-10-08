@@ -50,7 +50,7 @@ private func memoryRecipeEventually(timeout: Double = 10, _ condition: @MainActo
 @MainActor
 private func memoryRecipeClient(on stack: RemoteStack) async throws -> ConsoleClientModel {
     let client = ConsoleClientModel(
-        transport: URLSessionTransport(),
+        transport: ConsoleClient.URLSessionTransport(),
         discovery: MemoryRecipeDiscovery(),
         preferences: InMemoryClientPreferences(),
         tokens: InMemoryTokenStore(),

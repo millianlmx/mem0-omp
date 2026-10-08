@@ -267,7 +267,7 @@ final class TerminalHost {
 
     /// Arrêt du process, REJOUABLE : un appel pendant que le premier escalade ne
     /// relance rien, il attend la même fin. La séquence est celle de
-    /// `SessionHost.shutdown` (S-7/S-8) : `SIGTERM` au GROUPE, attente bornée,
+    /// `ServiceSessionModel.shutdown` : `SIGTERM` au GROUPE, attente bornée,
     /// `SIGKILL` au groupe, récolte — l'attente porte sur la mort EFFECTIVE, jamais
     /// sur une intention.
     func kill() async {

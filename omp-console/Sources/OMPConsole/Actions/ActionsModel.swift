@@ -1,36 +1,28 @@
-// Le modèle d'action (BR-2, puis S-7/S-8/S-10 de omp-console-redesign) : le
-// journal borné des gestes, les émissions (livraisons et commandes), le sondage
-// des accusés, l'état de la feuille de lancement et la sollicitation du pilote.
+// Le modèle d'action (BR-2, puis S-7/S-8/S-9/S-10 de omp-console-redesign) : le
+// journal borné des gestes, les émissions (livraisons et commandes), l'état de la
+// feuille de lancement.
 //
 // Deux invariants de forme :
-//   - l'app n'écrit QUE par `PipelineWriter` : jamais un état de lot, jamais un
-//     accusé, jamais `commands/` en dehors de ses propres identifiants (S-11) ;
+//   - l'app n'écrit QUE par `PipelineWriter` : une livraison dans la boîte d'un run
+//     vivant, et — pour un geste de carte — une commande POSTÉE au service (S-9) ;
+//     jamais un état de lot, jamais un accusé de fichier ;
 //   - aucune phrase n'est composée ici : la mise en texte d'une entrée est
 //     `ActionsText.journalLine(for:)`.
 //
-// L'horloge et le nonce sont INJECTABLES (patron `StoreClock`), et le sondage est
-// une méthode publique appelable par un test (`controller.pumpCommands` côté
-// TypeScript) : aucun minuteur ne tourne à vide.
+// L'horloge et le nonce sont INJECTABLES (patron `StoreClock`).
 
 import Combine
 import ConsoleCore
 import Foundation
 
-// `ActionJournalState` et `ActionJournalEntry` vivent désormais dans le noyau
-// partagé (`ConsoleCore/Actions/ActionJournal.swift`) : les deux coques emploient
-// les mêmes types, `Codable` (S-1, S-5).
+// `ActionJournalState` et `ActionJournalEntry` vivent dans le noyau partagé
+// (`ConsoleCore/Actions/ActionJournal.swift`) : les deux coques emploient les
+// mêmes types, `Codable` (S-1, S-5).
 
 @MainActor
 final class ActionsModel: ObservableObject {
     /// Journal borné à 20 entrées, la plus récente en tête (S-4).
     static let journalLimit = 20
-
-    /// Cadence du sondage des accusés (S-4).
-    let ackPollMs: Double = 500
-
-    /// Au-delà, une commande sans accusé est dite `unacknowledged` (S-8) : aucun
-    /// pilote ne l'a prise. Elle reste sondée — un accusé tardif la rattrape.
-    let ackTimeoutMs: Double = 20_000
 
     @Published private(set) var journal: [ActionJournalEntry] = []
     /// La bulle « Activité » de la barre d'outils de Pipelines.
@@ -50,8 +42,7 @@ final class ActionsModel: ObservableObject {
     /// L'état du catalogue `omp models --json` (S-5), partagé par les deux
     /// feuilles qui offrent les deux sélecteurs.
     @Published private(set) var modelCatalog: ModelCatalogState = .loading
-    /// Les deux choix de la feuille d'édition des modèles d'une feature (S-5),
-    /// pré-positionnés sur les valeurs courantes résolues à l'ouverture.
+    /// Les deux choix de la feuille d'édition des modèles d'une feature (S-5).
     @Published var editModelReqSpecs: String?
     @Published var editModelImplReview: String?
 
@@ -65,16 +56,12 @@ final class ActionsModel: ObservableObject {
     private let writer: PipelineWriter
     private let clock: StoreClock
     private let salt: @Sendable () -> String
-    /// Qui fait conduire un dépôt sans pilote vivant (S-7) ; `nil` = aucun
-    /// conducteur (les commandes attendent un pilote lancé ailleurs).
-    private let pilot: PipelinePilot?
     /// Le chargement du catalogue de modèles (S-5) ; injectable pour les tests.
     private let loadModels: @Sendable () async -> Result<[String], ModelCatalogError>
-    private var timer: Timer?
 
-    /// La dernière sollicitation du pilote en vol : un test l'attend au lieu de
+    /// La dernière émission de commande en vol : un test l'attend au lieu de
     /// deviner quand la tâche a fini.
-    private(set) var pilotTask: Task<Void, Never>?
+    private(set) var commandTask: Task<Void, Never>?
     /// Le dernier chargement du catalogue en vol.
     private(set) var modelCatalogTask: Task<Void, Never>?
 
@@ -82,18 +69,16 @@ final class ActionsModel: ObservableObject {
         writer: PipelineWriter = PipelineWriter(),
         clock: StoreClock = .live,
         salt: @escaping @Sendable () -> String = ActionsModel.randomSalt,
-        pilot: PipelinePilot? = nil,
         modelCatalogLoader: (@Sendable () async -> Result<[String], ModelCatalogError>)? = nil
     ) {
         self.writer = writer
         self.clock = clock
         self.salt = salt
-        self.pilot = pilot
         self.loadModels = modelCatalogLoader ?? { await ModelCatalogLoader.loadDefault() }
     }
 
-    /// Quatre hexadécimaux minuscules : le nom d'un fichier du canal doit porter un
-    /// `salt` du motif `<4 hex>` pour être lu par le pilote (`COMMAND_FILE`).
+    /// Quatre hexadécimaux minuscules : le nom d'un fichier de livraison doit
+    /// porter un `salt` du motif `<4 hex>`.
     nonisolated static func randomSalt() -> String {
         var generator = SystemRandomNumberGenerator()
         return String(format: "%04x", UInt16.random(in: 0...0xFFFF, using: &generator))
@@ -145,7 +130,7 @@ final class ActionsModel: ObservableObject {
     }
 
     /// Le geste « Répondre » d'une question en TEXTE (S-10) : une commande `reply`
-    /// adressée au dépôt de la feature, puis le pilote est sollicité.
+    /// adressée au dépôt de la feature.
     func submitReply(_ action: KanbanCardAction) {
         guard !Self.isBlank(replyText), let slug = action.slug, let repoRoot = action.repoRoot else { return }
         let sentAt = clock.nowMs()
@@ -157,31 +142,30 @@ final class ActionsModel: ObservableObject {
             text: replyText
         )
         replyText = ""
-        if emitCommand(kindLabel: ActionsText.answerLabel, target: slug, command: command, sentAt: sentAt, salt: salt) {
-            solicitPilot(repoRoot: repoRoot, entryID: command.id)
-        }
+        emitCommand(kindLabel: ActionsText.answerLabel, target: slug, repoRoot: repoRoot, command: command, sentAt: sentAt)
     }
 
-    /// Le geste « Reprendre » (S-10) : aucune commande — le conducteur démarré
-    /// adopte le lot à son `session_start`. Le journal dit le résultat.
+    /// Le geste « Reprendre » (S-9) : `POST /v1/repos/{repo}/pilot`. Le journal dit
+    /// le résultat.
     ///
-    /// Rend l'identifiant de l'entrée de journal du geste (`nil` quand aucun pilote
-    /// n'est configuré) : l'appelant qui doit attendre la FIN RÉELLE du geste
-    /// attend `pilotTask` puis relit CETTE entrée — jamais la tête du journal, qui
-    /// est partagé par tous les gestes et borné à 20 entrées (S-10).
+    /// Rend l'identifiant de l'entrée de journal du geste (`nil` quand la carte n'a
+    /// pas de dépôt) : l'appelant qui doit attendre la FIN RÉELLE du geste attend
+    /// `commandTask` puis relit CETTE entrée — jamais la tête du journal, qui est
+    /// partagé par tous les gestes et borné à 20 entrées (S-10 de la coque).
     @discardableResult
     func resume(_ action: KanbanCardAction) -> String? {
-        guard let pilot, let repoRoot = action.repoRoot else { return nil }
+        guard let repoRoot = action.repoRoot else { return nil }
         let at = clock.nowMs()
         let id = "resume-\(sentAtMillis(at))-\(salt())"
         let target = Self.repoName(repoRoot)
-        pilotTask = Task { @MainActor [weak self] in
+        let writer = self.writer
+        commandTask = Task { @MainActor [weak self] in
             let state: ActionJournalState
             do {
-                try await pilot.ensurePilot(repoRoot: repoRoot)
+                try await writer.pilot(repo: realpathOr(repoRoot))
                 state = .taken
             } catch {
-                state = .failed(reason: Self.conductorMotif(of: error))
+                state = .failed(reason: Self.pilotMotif(of: error))
             }
             self?.append(ActionJournalEntry(
                 id: id, kindLabel: ActionsText.resumeLabel, targetLabel: target, state: state, at: at
@@ -204,8 +188,7 @@ final class ActionsModel: ObservableObject {
         )
     }
 
-    /// Dépose la réponse à une question en vol (texte libre) — la garde du texte
-    /// blanc s'applique aussi ici (S-1).
+    /// Dépose la réponse à une question en vol (texte libre).
     func answer(_ action: KanbanCardAction, custom text: String) {
         guard !Self.isBlank(text) else { return }
         guard let run = action.run, let inbox = run.inbox,
@@ -230,7 +213,7 @@ final class ActionsModel: ObservableObject {
         )
     }
 
-    // --- émissions : commandes (S-4 … S-8) -----------------------------------
+    // --- émissions : commandes (S-4 … S-9) -----------------------------------
 
     /// Émet `{kind:"verdict", verdict:"v"}` — le jalon specs.
     func validate(_ action: KanbanCardAction) {
@@ -244,9 +227,7 @@ final class ActionsModel: ObservableObject {
         emitVerdict(slug: slug, repoRoot: repoRoot, verdict: .review, kindLabel: ActionsText.reviewLabel)
     }
 
-    /// Émet `{kind:"stop"}` — adressé au DÉPÔT (le canal n'a pas d'arrêt par run).
-    /// Le pilote n'est PAS sollicité : arrêter un lot sans pilote n'a pas d'objet,
-    /// et démarrer un conducteur ferait reprendre ses runs (S-7).
+    /// Émet `{kind:"stop"}` — adressé au DÉPÔT.
     func stopLot(_ action: KanbanCardAction) {
         guard action.slug != nil, let repoRoot = action.repoRoot else { return }
         let sentAt = clock.nowMs()
@@ -258,15 +239,13 @@ final class ActionsModel: ObservableObject {
         emitCommand(
             kindLabel: ActionsText.stopLabel,
             target: Self.repoName(repoRoot),
+            repoRoot: repoRoot,
             command: command,
-            sentAt: sentAt,
-            salt: salt
+            sentAt: sentAt
         )
     }
 
     /// Émet `{kind:"launch"}` : le slug est dérivé par le DÉPÔT, jamais par l'app.
-    /// Les deux modèles choisis (S-5) partent en clés optionnelles, omises quand
-    /// le groupe est laissé sur le défaut OMP.
     func launch(
         title: String,
         description: String,
@@ -285,25 +264,23 @@ final class ActionsModel: ObservableObject {
             modelReqSpecs: Self.normalizedModel(modelReqSpecs),
             modelImplReview: Self.normalizedModel(modelImplReview)
         )
-        let written = emitCommand(
+        emitCommand(
             kindLabel: ActionsText.launchLabel,
             target: title,
+            repoRoot: repoRoot,
             command: command,
-            sentAt: sentAt,
-            salt: salt
+            sentAt: sentAt
         )
         launchFormShown = false
         launchTitle = ""
         launchDescription = ""
         launchModelReqSpecs = nil
         launchModelImplReview = nil
-        if written { solicitPilot(repoRoot: repoRoot, entryID: command.id) }
     }
 
     // --- modèles (S-5) -------------------------------------------------------
 
     /// Lance le chargement du catalogue `omp models --json` et publie son état.
-    /// Les deux feuilles s'en servent ; un échec laisse l'édition possible.
     func loadModelCatalog() {
         modelCatalog = .loading
         let loader = loadModels
@@ -317,15 +294,13 @@ final class ActionsModel: ObservableObject {
         }
     }
 
-    /// Pré-positionne la feuille d'édition sur les valeurs courantes RÉSOLUES
-    /// d'une feature (`nil` = défaut OMP).
+    /// Pré-positionne la feuille d'édition sur les valeurs courantes RÉSOLUES.
     func beginModelsEdit(_ slots: ModelSlots?) {
         editModelReqSpecs = slots?.reqSpecs
         editModelImplReview = slots?.implReview
     }
 
-    /// Émet `{kind:"models"}` (S-5) : remplace les deux modèles d'une feature. Un
-    /// groupe laissé vide part en `null` — le pilote efface la clé.
+    /// Émet `{kind:"models"}` (S-5) : remplace les deux modèles d'une feature.
     func setModels(repoRoot: String, slug: String, modelReqSpecs: String?, modelImplReview: String?) {
         guard !Self.isBlank(slug) else { return }
         let sentAt = clock.nowMs()
@@ -337,71 +312,19 @@ final class ActionsModel: ObservableObject {
             modelReqSpecs: Self.normalizedModel(modelReqSpecs),
             modelImplReview: Self.normalizedModel(modelImplReview)
         )
-        if emitCommand(
+        emitCommand(
             kindLabel: ActionsText.modelsLabel,
             target: slug,
+            repoRoot: repoRoot,
             command: command,
-            sentAt: sentAt,
-            salt: salt
-        ) {
-            solicitPilot(repoRoot: repoRoot, entryID: command.id)
-        }
+            sentAt: sentAt
+        )
     }
 
-    /// Un sélecteur de modèle : `nil` pour une valeur absente ou blanche (le
-    /// groupe est alors laissé sur le défaut OMP).
+    /// Un sélecteur de modèle : `nil` pour une valeur absente ou blanche.
     private static func normalizedModel(_ value: String?) -> String? {
         guard let value, !isBlank(value) else { return nil }
         return value
-    }
-
-    // --- sondage des accusés (S-4, S-8) --------------------------------------
-
-    /// Une passe de sondage : met à jour chaque entrée en attente dont l'accusé est
-    /// lisible, dit `unacknowledged` celles qui attendent depuis `ackTimeoutMs`
-    /// sans accusé (elles restent sondées), puis éteint le minuteur dès qu'il ne
-    /// reste plus rien à attendre.
-    func pollAcks() {
-        let now = clock.nowMs()
-        for index in journal.indices where Self.isPending(journal[index].state) {
-            if let ack = writer.readAck(id: journal[index].id) {
-                journal[index].state = ack.state == .taken ? .taken : .refused(reason: ack.reason)
-            } else if journal[index].state == .awaitingAck, now - journal[index].at >= ackTimeoutMs {
-                journal[index].state = .unacknowledged
-            }
-        }
-        if !journal.contains(where: { Self.isPending($0.state) }) { stopTimer() }
-    }
-
-    // --- pilote (S-7) --------------------------------------------------------
-
-    /// Sollicite le pilote APRÈS le dépôt de la commande : c'est ce qui fait armer
-    /// un conducteur neuf à son `session_start`. Un échec ne touche que l'entrée
-    /// `entryID`, et seulement si elle attend encore son accusé.
-    private func solicitPilot(repoRoot: String, entryID: String) {
-        guard let pilot else { return }
-        pilotTask = Task { @MainActor [weak self] in
-            do {
-                try await pilot.ensurePilot(repoRoot: repoRoot)
-            } catch {
-                self?.pilotFailed(entryID: entryID, reason: Self.conductorMotif(of: error))
-            }
-        }
-    }
-
-    private func pilotFailed(entryID: String, reason: String) {
-        guard let index = journal.firstIndex(where: { $0.id == entryID }),
-              Self.isPending(journal[index].state) else { return }
-        journal[index].state = .failed(reason: reason)
-    }
-
-    /// `conducteur : <message>` — le message utilisateur d'une erreur d'hôte.
-    private static func conductorMotif(of error: Error) -> String {
-        "conducteur : \((error as? SessionHostError)?.userMessage ?? String(describing: error))"
-    }
-
-    private static func isPending(_ state: ActionJournalState) -> Bool {
-        state == .awaitingAck || state == .unacknowledged
     }
 
     // --- outillage -----------------------------------------------------------
@@ -420,9 +343,7 @@ final class ActionsModel: ObservableObject {
             slug: slug,
             verdict: verdict
         )
-        if emitCommand(kindLabel: kindLabel, target: slug, command: command, sentAt: sentAt, salt: salt) {
-            solicitPilot(repoRoot: repoRoot, entryID: command.id)
-        }
+        emitCommand(kindLabel: kindLabel, target: slug, repoRoot: repoRoot, command: command, sentAt: sentAt)
     }
 
     private func emitDelivery(
@@ -447,35 +368,52 @@ final class ActionsModel: ObservableObject {
         }
     }
 
-    /// Écrit la commande et journalise ; rend `true` quand le fichier est déposé.
-    @discardableResult
+    /// Poste la commande au service (S-9) : l'entrée entre d'abord en attente,
+    /// puis prend l'accusé rendu par la réponse — ou échoue avec le motif.
     private func emitCommand(
         kindLabel: String,
         target: String,
+        repoRoot: String,
         command: OutgoingCommand,
-        sentAt: Double,
-        salt: String
-    ) -> Bool {
-        do {
-            try writer.writeCommand(command, sentAt: sentAt, salt: salt)
-            append(ActionJournalEntry(
-                id: command.id, kindLabel: kindLabel, targetLabel: target, state: .awaitingAck, at: sentAt
-            ))
-            armTimer()
-            return true
-        } catch {
-            append(ActionJournalEntry(
-                id: command.id, kindLabel: kindLabel, targetLabel: target,
-                state: .failed(reason: Self.motif(of: error)), at: sentAt
-            ))
-            return false
+        sentAt: Double
+    ) {
+        append(ActionJournalEntry(
+            id: command.id, kindLabel: kindLabel, targetLabel: target, state: .awaitingAck, at: sentAt
+        ))
+        let writer = self.writer
+        let repo = realpathOr(repoRoot)
+        let id = command.id
+        commandTask = Task { @MainActor [weak self] in
+            do {
+                let ack = try await writer.postCommand(repo: repo, command: command, sentAt: sentAt)
+                self?.settle(id: id, with: ack)
+            } catch {
+                self?.settle(id: id, with: .failed(reason: Self.motif(of: error)))
+            }
         }
     }
 
-    /// Le motif d'un échec d'écriture : celui de `PipelineWriter`, jamais une
-    /// `localizedDescription`.
+    /// Applique le résultat d'une commande à son entrée : prise en charge, refus
+    /// au motif VERBATIM, ou échec local.
+    private func settle(id: String, with ack: ServiceCommandAck) {
+        guard let index = journal.firstIndex(where: { $0.id == id }) else { return }
+        journal[index].state = ack.state == .taken ? .taken : .refused(reason: ack.reason)
+    }
+
+    private func settle(id: String, with state: ActionJournalState) {
+        guard let index = journal.firstIndex(where: { $0.id == id }) else { return }
+        journal[index].state = state
+    }
+
+    /// Le motif d'un échec d'écriture de livraison : celui de `PipelineWriter`.
     private static func motif(of error: Error) -> String {
-        (error as? PipelineWriteFailure)?.reason ?? "écriture impossible (\(error))"
+        if let failure = error as? PipelineWriteFailure { return failure.reason }
+        return ServiceSessionModel.userMessage(of: error)
+    }
+
+    /// `pilote : <message>` — le message utilisateur d'une erreur du service.
+    private static func pilotMotif(of error: Error) -> String {
+        "pilote : \(ServiceSessionModel.userMessage(of: error))"
     }
 
     private func append(_ entry: ActionJournalEntry) {
@@ -483,20 +421,6 @@ final class ActionsModel: ObservableObject {
         if journal.count > Self.journalLimit {
             journal.removeLast(journal.count - Self.journalLimit)
         }
-    }
-
-    private func armTimer() {
-        guard timer == nil else { return }
-        let timer = Timer(timeInterval: ackPollMs / 1000, repeats: true) { [weak self] _ in
-            Task { @MainActor in self?.pollAcks() }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
-    }
-
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
     }
 
     private static func isBlank(_ text: String) -> Bool {

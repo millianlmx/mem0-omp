@@ -1,28 +1,34 @@
 // Preuves du signal d'attention (BR-4) : AC-9, AC-10, et la table de décision pure.
+//
+// Les dialogues arrivent par le flux SSE scripté (session servie) : le test les
+// empile AVANT l'armement, la réouverture du flux les délivre après le démarrage.
 
 import ConsoleCore
 import Foundation
 import Testing
 @testable import OMPConsole
 
-private func planDialog(_ id: String) -> String {
-    projectDialogLine(
-        id: id,
-        method: "select",
-        extra: ["title": "Revue du plan", "options": ["Valider le plan", "Corriger le plan", "Abandonner"]]
-    )
+private func planDialog(_ id: String) -> [String] {
+    serviceFrame("dialog", [
+        "id": id,
+        "method": "select",
+        "title": "Revue du plan",
+        "options": ["Valider le plan", "Corriger le plan", "Abandonner"],
+    ])
 }
 
 @MainActor
 private func makeAttentionModel(
     repo: URL,
     stateDir: String,
-    frontmost: Bool
-) async throws -> (ProjectConsoleModel, ScriptedRpcTransport, RecordingAttention, StubPresence) {
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
-    makeProjectTransportRenderOnClose(transport)
+    frontmost: Bool,
+    prepare: (ScriptedServiceTransport) -> Void = { _ in }
+) async throws -> (ProjectConsoleModel, ScriptedServiceTransport, RecordingAttention, StubPresence) {
+    let transport = ScriptedServiceTransport()
+    stubProjectConduite(transport, repo: repo.path)
+    transport.stubJSON("POST", "/v1/sessions/s1/dialogs/d1", ["accepted": true])
+    prepare(transport)
+    keepProjectAlive(transport)
     let host = makeScriptedProjectHost(transport)
     let attention = RecordingAttention()
     let presence = StubPresence()
@@ -60,9 +66,13 @@ func attentionDecisionTable() {
 func attentionRequestsOnAwaitingOutOfForeground() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport, attention, _) = try await makeAttentionModel(repo: repo, stateDir: stateDir, frontmost: false)
+    let (model, _, attention, _) = try await makeAttentionModel(
+        repo: repo,
+        stateDir: stateDir,
+        frontmost: false,
+        prepare: { $0.scriptStream(planDialog("d1")) }
+    )
 
-    transport.emit(planDialog("d1"))
     #expect(await awaitProject { attention.requested == [.critical] })
 
     model.selectedOptionIndex = 0
@@ -77,9 +87,13 @@ func attentionRequestsOnAwaitingOutOfForeground() async throws {
 func attentionSilentWhenFrontmost() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport, attention, _) = try await makeAttentionModel(repo: repo, stateDir: stateDir, frontmost: true)
+    let (model, _, attention, _) = try await makeAttentionModel(
+        repo: repo,
+        stateDir: stateDir,
+        frontmost: true,
+        prepare: { $0.scriptStream(planDialog("d1")) }
+    )
 
-    transport.emit(planDialog("d1"))
     #expect(await awaitProject { model.pendingDialog != nil })
     // Laisse un tour au calcul d'attention.
     try? await Task.sleep(for: .milliseconds(50))
@@ -92,10 +106,15 @@ func attentionSilentWhenFrontmost() async throws {
 func attentionSingleRequestForSuccessiveDialogs() async throws {
     let repo = try makeGitRepository()
     let stateDir = try makeProjectStateDir()
-    let (model, transport, attention, _) = try await makeAttentionModel(repo: repo, stateDir: stateDir, frontmost: false)
+    let (model, _, attention, _) = try await makeAttentionModel(
+        repo: repo,
+        stateDir: stateDir,
+        frontmost: false,
+        prepare: { transport in
+            transport.scriptStream(planDialog("d1") + planDialog("d2"))
+        }
+    )
 
-    transport.emit(planDialog("d1"))
-    transport.emit(planDialog("d2"))
     #expect(await awaitProject { model.waitingDialogCount == 2 })
     try? await Task.sleep(for: .milliseconds(50))
     #expect(attention.requested == [.critical])
@@ -110,7 +129,12 @@ func attentionInformsOnProjectDone() async throws {
     let fixture = StoreFixture()
     let repo = try makeGitRepository()
     let key = ProjectPaths.key(forRoot: repo.path)
-    let (model, transport, attention, _) = try await makeAttentionModel(repo: repo, stateDir: fixture.root, frontmost: false)
+    let (model, _, attention, _) = try await makeAttentionModel(
+        repo: repo,
+        stateDir: fixture.root,
+        frontmost: false,
+        prepare: { $0.scriptStream(planDialog("d1")) }
+    )
 
     var running = projectObject(repoKey: key, current: 0)
     running["segments"] = [["name": "Fondations", "features": [projectFeatureObject(slug: "x", status: "merged")]]]
@@ -118,7 +142,6 @@ func attentionInformsOnProjectDone() async throws {
     #expect(await awaitProject { model.project != nil })
 
     // L'attente l'emporte : une demande critique, pas l'informative.
-    transport.emit(planDialog("d1"))
     #expect(await awaitProject { attention.requested == [.critical] })
 
     model.selectedOptionIndex = 0
@@ -143,7 +166,11 @@ func attentionSilentOnDoneWhenFrontmost() async throws {
     let fixture = StoreFixture()
     let repo = try makeGitRepository()
     let key = ProjectPaths.key(forRoot: repo.path)
-    let (model, _, attention, _) = try await makeAttentionModel(repo: repo, stateDir: fixture.root, frontmost: true)
+    let (model, _, attention, _) = try await makeAttentionModel(
+        repo: repo,
+        stateDir: fixture.root,
+        frontmost: true
+    )
 
     var done = projectObject(repoKey: key, current: 0)
     done["status"] = "done"

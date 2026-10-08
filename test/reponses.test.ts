@@ -43,10 +43,11 @@ import reqExtension, {
   type LotController,
   type LotFeature,
   type LotRunnerResult,
+  type LotRunSpec,
   type PipelineCommand,
   type RunningEntry,
 } from "../omp-mem0-req/extension.ts";
-import { runState } from "../omp-mem0-req/runState.ts";
+import { resetRunStatesForTests } from "../omp-mem0-req/runState.ts";
 
 // ---------------------------------------------------------------------------
 // Répertoires jetables
@@ -161,13 +162,7 @@ function runCtx(cwd: string, sessionFile: string, intervals: number[]) {
 }
 
 function resetArmedRun(): void {
-  runState.inbox = null;
-  runState.pendingAsk = null;
-  runState.askWaiters.clear();
-  runState.pumpStop = null;
-  runState.askTool = false;
-  runState.armed = false;
-  runState.sessionFile = null;
+  resetRunStatesForTests();
 }
 
 function writeSessionFile(file: string, cwd: string): string {
@@ -234,24 +229,24 @@ const gitRunner = async (args: string[], cwd: string) => {
 };
 
 type Run = {
-  argv: string[];
+  spec: LotRunSpec;
   cwd: string;
   phase: string;
   aborted: boolean;
   finish: (result: LotRunnerResult) => void;
 };
 
-type Runner = (input: { argv: string[]; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
+type Runner = (input: { spec: LotRunSpec; cwd: string; signal?: AbortSignal }) => Promise<LotRunnerResult>;
 
 /** Le runner des runs : `script` rend la fin immédiate, ou `null` pour laisser en vol. */
 function mkRunner(script: (run: Run) => LotRunnerResult | null = () => null): { runner: Runner; runs: Run[] } {
   const runs: Run[] = [];
-  const runner: Runner = async ({ argv, cwd, signal }) => {
+  const runner: Runner = async ({ spec, cwd, signal }) => {
     const { promise, resolve, reject } = Promise.withResolvers<LotRunnerResult>();
     const run: Run = {
-      argv,
+      spec,
       cwd,
-      phase: argv[argv.indexOf("--pipeline-phase") + 1] ?? "",
+      phase: spec.phase,
       aborted: false,
       finish: resolve,
     };
@@ -417,7 +412,7 @@ test("reponses-et-jalons/AC-1 : une livraison ask littérale résout la question
 
   // Le littéral de l'app : sélection de l'option par son LIBELLÉ.
   depositDelivery(inbox, 1_700_000_000_000, { kind: "ask", toolCallId: "call-1", selected: "Postgres" });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
 
   const answered = await pending;
   assert.equal(answered.isError, undefined);
@@ -434,7 +429,7 @@ test("reponses-et-jalons/AC-2 : une livraison ask en texte libre porte le champ 
   await flush(2);
 
   depositDelivery(inbox, 1_700_000_000_001, { kind: "ask", toolCallId: "call-2", custom: "aucun des deux" });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
 
   const answered = await pending;
   assert.equal(answered.isError, undefined);
@@ -453,7 +448,7 @@ test("reponses-et-jalons/AC-11 : le run armé résout une question SANS aucune i
   const pending = app.ask("call-11", QUESTION, ctx);
   await flush(2);
   depositDelivery(inbox, 1_700_000_000_002, { kind: "ask", toolCallId: "call-11", selected: "SQLite" });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   const answered = await pending;
   assert.match(answered.content[0]!.text, /SQLite/, "le run est débloqué et repart");
 });
@@ -467,7 +462,7 @@ test("reponses-et-jalons/AC-3 : une livraison text fait exactement un steer sur 
   await app.hooks.get("session_start")!(undefined as never, ctx as never);
 
   const file = depositDelivery(inbox, 1_700_000_000_003, { kind: "text", text: "continue le travail" });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
 
   assert.deepEqual(app.sent, [{ text: "continue le travail", deliverAs: "steer" }]);
   assert.equal(fs.existsSync(file), false, "la livraison est consommée");

@@ -103,30 +103,44 @@ export type PanelGlyphs = { cursor: string };
  * nôtre conduit (le panneau consulte) ; `dead` — personne ne conduit, le lot est
  * à l'arrêt et se reprend.
  */
-export type PanelDriver = { kind: "self" } | { kind: "foreign"; pid: number } | { kind: "dead" };
+export type PanelDriver =
+  | { kind: "self" }
+  | { kind: "foreign"; pid: number }
+  /** Le service pilote : `pid` = le sien, `null` = lot pas encore adopté (S-11). */
+  | { kind: "service"; pid: number | null }
+  | { kind: "dead" };
 
 
 /**
- * L'état du pilote d'un lot : notre pid, sinon la vivacité du propriétaire
+ * L'état du pilote d'un lot : le SERVICE quand il vit (c'est lui le pilote de la
+ * machine, S-4), sinon notre pid, sinon la vivacité du propriétaire
  * (`lotOwnerAlive`, battement compris — un pid réutilisé après un redémarrage
  * n'est pas un pilote). Pur : il ne lit rien, il ne reprend rien.
  */
-export function panelDriver(lot: Lot | null, now: number): PanelDriver | null {
+export function panelDriver(lot: Lot | null, now: number, servicePid: number | null = null): PanelDriver | null {
   if (lot === null) return null;
+  if (servicePid !== null && lot.owner.pid === servicePid) return { kind: "service", pid: servicePid };
   if (lot.owner.pid === process.pid) return { kind: "self" };
-  return lotOwnerAlive(lot.owner, now) ? { kind: "foreign", pid: lot.owner.pid } : { kind: "dead" };
+  if (lotOwnerAlive(lot.owner, now)) return { kind: "foreign", pid: lot.owner.pid };
+  // Un service VIVANT est le pilote attendu : un lot qu'il n'a pas encore adopté
+  // s'affiche « en adoption » plutôt que « pilote absent » (S-11).
+  if (servicePid !== null) return { kind: "service", pid: null };
+  return { kind: "dead" };
 }
 
 
-/** Le mot du pilote dans l'en-tête du lot (PANEL-4) : jamais un silence. */
+/** Le mot du pilote dans l'en-tête du lot (PANEL-4, S-11) : jamais un silence. */
 export function driverLabel(driver: PanelDriver): string {
   switch (driver.kind) {
     case "self":
       return "pilote : cette session";
+    case "service":
+      return driver.pid === null ? "pilote : le service (en adoption)" : `pilote : le service (pid ${driver.pid})`;
     case "foreign":
       return `piloté par pid ${driver.pid} — consultation`;
     case "dead":
-      return "pilote absent — l reprend";
+      // Plus de « l reprend » : aucune session terminale ne reprend un lot (S-4).
+      return "pilote absent — les pipelines n'avancent plus (/service start)";
   }
 }
 
@@ -580,6 +594,8 @@ export function readPanelModel(input: {
   mode?: LotPanelMode;
   /** L'instant de la lecture : il départage le pilote (battement périmé). */
   now?: number;
+  /** Le pid du service vivant, ou `null` : c'est lui le pilote de la machine (S-11). */
+  servicePid?: number | null;
 }): PanelModel {
   const snapshot = reconcileStore(input.stateDir);
   const lotPath = input.repoRoot ? lotPathFor(input.stateDir, lotRepoKey(input.repoRoot)) : null;
@@ -627,7 +643,7 @@ export function readPanelModel(input: {
     lot,
     // Le pilote se lit ICI, à chaque passe : la reprise d'un lot orphelin
     // (`adopt`) appartient au panneau monté, pas au modèle (PANEL-4).
-    driver: panelDriver(lot, at),
+    driver: panelDriver(lot, at, input.servicePid ?? null),
     mode: input.mode ?? { kind: "browse" },
     selection: clampSelection(input.selection ?? 0, count),
     notice: input.notice ?? null,
@@ -1216,7 +1232,7 @@ const EMPTY_PLAN: Plan = { start: 0, end: 0, above: false, below: false };
  */
 export function buildPanelRows(
   model: PanelModel,
-  opts: { width: number; budget: number; glyphs: PanelGlyphs; now: number; canDrive?: boolean },
+  opts: { width: number; budget: number; glyphs: PanelGlyphs; now: number; canDrive?: boolean; servicePid?: number | null },
 ): PanelRow[] {
   const width = Math.max(1, Math.floor(opts.width));
   const glyphs = opts.glyphs;
@@ -1239,7 +1255,7 @@ export function buildPanelRows(
   // QUI PILOTE (PANEL-4) : l'en-tête du lot le dit, et un pilote ÉTRANGER retire
   // les gestes du pied — le pilote les refuserait, les annoncer serait une touche
   // morte.
-  const driver = model.driver ?? panelDriver(lot, opts.now);
+  const driver = model.driver ?? panelDriver(lot, opts.now, opts.servicePid ?? null);
   const foreign = driver?.kind === "foreign";
   const driveable = lot !== null && !foreign;
 

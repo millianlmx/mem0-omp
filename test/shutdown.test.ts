@@ -35,7 +35,8 @@ import reqExtension, {
 } from "../omp-mem0-req/extension.ts";
 // L'état ARMÉ est partagé par `globalThis` : il survit d'un test à l'autre dans ce
 // fichier, donc chaque test part d'un état neuf — comme un process qui démarre.
-import { runState } from "../omp-mem0-req/runState.ts";
+import { resetRunStatesForTests } from "../omp-mem0-req/runState.ts";
+import { runStateOf } from "../omp-mem0-req/publish.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -161,13 +162,7 @@ function mkRelayPi(): RelayPi {
 
 /** L'état ARMÉ d'un process neuf : le partage par `globalThis` ne doit pas fuir. */
 function resetArmedRun(): void {
-  runState.inbox = null;
-  runState.pendingAsk = null;
-  runState.askWaiters.clear();
-  runState.pumpStop = null;
-  runState.askTool = false;
-  runState.armed = false;
-  runState.sessionFile = null;
+  resetRunStatesForTests();
 }
 
 /** Idem pour l'état /audit. */
@@ -299,14 +294,14 @@ test("shutdown/AC-1 : le relais /audit survit à la fin d'un sous-agent", async 
 test("shutdown/AC-2 : la pompe de boîte du run armé survit à la fin d'un sous-agent", async () => {
   const { stateDir, worktree, auditFile, subFile, inbox, app, ctx } = await fixture();
   assert.ok(fs.existsSync(auditRelayPath(stateDir, auditFile)), "le relais est armé et balayé");
-  const before = runState.pumpStop;
+  const before = runStateOf(ctx).pumpStop;
   assert.equal(typeof before, "function", "le run armé `--panel-inbox` a bien une pompe");
 
   // Avant : une livraison déposée dans la boîte est consommée par la pompe.
   const answers: unknown[] = [];
-  runState.askWaiters.set("call-1", (answer) => answers.push(answer));
+  runStateOf(ctx).askWaiters.set("call-1", (answer) => answers.push(answer));
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-1", selected: "oui", sentAt: 1 });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   // `.slice()` : `assert.deepEqual` rétrécit le type de son premier argument, et
   // `answers` doit rester `unknown[]` pour recevoir la réponse suivante.
   assert.deepEqual(answers.slice(), [{ selected: "oui" }], "la réponse déposée atteint la question en vol");
@@ -316,13 +311,13 @@ test("shutdown/AC-2 : la pompe de boîte du run armé survit à la fin d'un sous
 
   // Après : la pompe est la MÊME fonction (ni appelée, ni mise à `null`), et la
   // boîte consomme toujours — le run n'est pas aveugle à la réponse déposée.
-  assert.equal(runState.pumpStop, before, "la pompe est la même fonction : ni appelée, ni mise à null");
-  runState.askWaiters.set("call-2", (answer) => answers.push(answer));
+  assert.equal(runStateOf(ctx).pumpStop, before, "la pompe est la même fonction : ni appelée, ni mise à null");
+  runStateOf(ctx).askWaiters.set("call-2", (answer) => answers.push(answer));
   writeDelivery(inbox, { version: 1, kind: "ask", toolCallId: "call-2", custom: "peu importe", sentAt: 2 });
-  pumpInbox(app.pi as never, ctx as never, inbox);
+  pumpInbox(app.pi as never, ctx as never, inbox, true);
   assert.deepEqual(answers[1], { custom: "peu importe" }, "une réponse déposée après le shutdown est consommée");
   assert.deepEqual(readDeliveries(inbox), [], "et son fichier est supprimé");
-  assert.equal(runState.pumpStop, before, "la pompe du run est toujours celle d'avant");
+  assert.equal(runStateOf(ctx).pumpStop, before, "la pompe du run est toujours celle d'avant");
 });
 
 // ---------------------------------------------------------------------------
@@ -333,7 +328,7 @@ test("shutdown/AC-3 : la session propriétaire désarme le relais et arrête la 
   const { stateDir, auditFile, app, ctx, propose } = await fixture();
   const relayFile = auditRelayPath(stateDir, auditFile);
   assert.ok(fs.existsSync(relayFile), "le relais est armé et balayé avant le shutdown");
-  assert.equal(typeof runState.pumpStop, "function", "la pompe du run armé tourne avant le shutdown");
+  assert.equal(typeof runStateOf(ctx).pumpStop, "function", "la pompe du run armé tourne avant le shutdown");
 
   // Le fichier de session du run ne porte aucun `parentSession` : c'est la session
   // propriétaire du process qui se ferme, pas un sous-agent.
@@ -341,7 +336,7 @@ test("shutdown/AC-3 : la session propriétaire désarme le relais et arrête la 
 
   assert.equal(fs.existsSync(relayFile), false, "le battement du relais est retiré du disque");
   assert.equal(auditState.sessionFile, null, "le relais est désarmé");
-  assert.equal(runState.pumpStop, null, "la pompe est arrêtée puis remise à null");
+  assert.equal(runStateOf(ctx).pumpStop, null, "la pompe est arrêtée puis remise à null");
   const refused = await propose(PROPOSAL);
   assert.equal(refused.isError, true);
   assert.equal(

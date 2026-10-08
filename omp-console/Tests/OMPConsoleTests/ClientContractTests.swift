@@ -32,7 +32,7 @@ private final class ContractPath: ClientPathSource {
 @MainActor
 private func makeModel(discovery: any DiscoverySource, tokens: InMemoryTokenStore = InMemoryTokenStore()) -> ConsoleClientModel {
     ConsoleClientModel(
-        transport: URLSessionTransport(),
+        transport: ConsoleClient.URLSessionTransport(),
         discovery: discovery,
         preferences: InMemoryClientPreferences(),
         tokens: tokens,
@@ -74,7 +74,7 @@ struct ClientContractTests {
         //    routeur rendrait « route inconnue ».
         let stack = try await RemoteStack.make()
         defer { stack.stop() }
-        let transport = URLSessionTransport()
+        let transport = ConsoleClient.URLSessionTransport()
         let target = endpoint(of: stack)
         for route in ClientRoute.all {
             let path = route.path

@@ -269,10 +269,9 @@ func conduiteDialogIsPushed() async throws {
     try FileManager.default.createDirectory(atPath: repoRoot + "/.git", withIntermediateDirectories: true)
     store.publish(.lots, "\(fixtureId(0xE1)).json", object: lotObject(id: fixtureId(0xE1), repoRoot: repoRoot))
 
-    let transport = ScriptedRpcTransport()
-    transport.readyLine = projectReadyLine()
-    wireProjectAutoResponses(transport)
-    makeProjectTransportRenderOnClose(transport)
+    let transport = ScriptedServiceTransport()
+    stubProjectConduite(transport, repo: repoRoot)
+    openServiceStream(transport)
     let project = makeProjectModel(host: makeScriptedProjectHost(transport), stateDir: store.root)
     let stack = try await RemoteStack.make(stateDir: store.root, projectModel: project)
     defer { stack.stop() }
@@ -292,11 +291,7 @@ func conduiteDialogIsPushed() async throws {
     #expect(opening.contains("\"repoKey\""))
 
     // Une escalade qui apparaît pousse la file ENTIÈRE, sans nouvelle requête.
-    transport.emit(projectDialogLine(
-        id: "d-1",
-        method: "select",
-        extra: ["title": "Le plan", "options": ["A", "B"]]
-    ))
+    emitServiceDialog(transport, id: "d-1", method: "select", title: "Le plan", options: ["A", "B"])
     let pushed = try #require(
         await collector.waitFor("conduite", occurrence: 2),
         "l'escalade doit être poussée sur le flux"
