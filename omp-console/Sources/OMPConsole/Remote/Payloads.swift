@@ -274,6 +274,12 @@ struct RemoteMemoryGraphNode: Codable, Equatable {
     var id: String
     var label: String
     var scope: String
+    /// Le texte INTÉGRAL du souvenir (champ ADDITIF OPTIONNEL) ; `nil` pour un
+    /// nœud-étiquette. Un Mac plus ancien ne l'émet pas.
+    var text: String?
+    /// Les étiquettes du souvenir (champ ADDITIF OPTIONNEL) ; `nil` pour un
+    /// nœud-étiquette.
+    var tags: [String]?
 }
 
 struct RemoteMemoryGraphLink: Codable, Equatable {
@@ -287,6 +293,22 @@ struct RemoteMemoryGraphPayload: Codable, Equatable {
     var nodes: [RemoteMemoryGraphNode]
     var links: [RemoteMemoryGraphLink]
     var total: Int
+    /// Vrai dès qu'une LIGNE a été retirée par l'une des deux bornes (nombre ou
+    /// octets) — le graphe affiché est alors partiel, et l'app le dit.
+    var truncated: Bool
+}
+
+extension RemoteMemoryGraphPayload {
+    /// `truncated` est un champ ADDITIF : un Mac d'avant la feature graphe ne
+    /// l'émet pas, et la charge reste lisible (absent ⇒ faux). Extension, pour
+    /// garder l'init memberwise utilisé par `RemoteReads.graphPayload`.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        nodes = try container.decode([RemoteMemoryGraphNode].self, forKey: .nodes)
+        links = try container.decode([RemoteMemoryGraphLink].self, forKey: .links)
+        total = try container.decode(Int.self, forKey: .total)
+        truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+    }
 }
 
 // MARK: - Gestes

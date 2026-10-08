@@ -206,6 +206,22 @@ marqueur `[test: <fonction>]` (une fonction de
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
 
+## Le mode graphe de la Mémoire (feature `ios-memoire-graphe`)
+
+- La section Mémoire s'OUVRE sur la LISTE, inchangée : le graphe s'ajoute derrière
+  une bascule `Graphe ⇄ Liste` de la barre d'outils. `[test: theListIsTheOpeningMode]`
+- Le graphe est manipulable au doigt sur iPhone ET iPad (pincer, glisser,
+  toucher), et un nœud reste touchable après la manipulation.
+  `[capture: iphone-memoire-graphe-zoom-*]`
+- Toucher un nœud-étiquette APPLIQUE son filtre (la famille de l'étiquette), avec un
+  menu pour revenir à la vue entière ; toucher un souvenir met son voisinage en
+  évidence et ouvre sa fiche en lecture seule.
+  `[capture: ipad-memoire-graphe-fiche-*]`
+- Le canevas fait EXCEPTION à « aucune couleur hors `ConsoleTone` » : sa palette est
+  celle du noyau PARTAGÉ (`MemoryGraphStyle.hue(for:)`, `Color.accentColor`,
+  `.secondary`, `.primary`), exactement comme la coque macOS — une seule peinture,
+  deux coques. `[capture: iphone-memoire-graphe-light.png]`
+
 ## La section Statistiques (feature `ios-statistiques`)
 
 - Une carte par feature LISTÉE, dans l'ordre du plan : le slug, puis une ligne par

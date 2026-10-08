@@ -10,19 +10,11 @@
 // laisser un fichier tronqué, donc jamais une perte silencieuse des liens déjà
 // enregistrés.
 
+import ConsoleCore
 import Foundation
 
-/// Un lien manuel : une paire ORDONNÉE (`a < b`, ordre lexicographique) d'ids de
-/// souvenirs. L'ordre est ce qui rend un lien unique quelle que soit la façon dont
-/// l'utilisateur l'a créé.
-struct MemoryLink: Hashable, Sendable, Comparable {
-    var a: String
-    var b: String
-
-    static func < (left: MemoryLink, right: MemoryLink) -> Bool {
-        left.a == right.a ? left.b < right.b : left.a < right.a
-    }
-}
+// `MemoryLink` vit désormais dans `ConsoleCore` (`MemoryGraphFacts.swift`) : l'app
+// iOS en a besoin, et ne lie pas cette cible. Ce fichier garde le MAGASIN disque.
 
 enum MemoryLinkStore {
     /// Le nom de fichier FIXE du registre (S-11), sous la racine de support.

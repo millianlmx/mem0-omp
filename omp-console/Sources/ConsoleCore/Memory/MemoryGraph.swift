@@ -8,57 +8,83 @@
 //  - `.semantic(score:)` : dérivé du service (`GET /memory/graph`, S-3) ;
 //  - `.manual` : créé à la main par l'utilisateur, persisté dans le fichier local
 //    (S-11).
+//
+// Le noyau est PARTAGÉ par les deux coques (S-2) : il vit dans `ConsoleCore`, donc
+// l'app iOS le dérive par le même code que la coque macOS.
 
-import ConsoleCore
 import Foundation
 
 // MARK: - Nœuds
 
 /// L'identité d'un nœud : un souvenir du service, ou une étiquette partagée.
-enum MemoryGraphNodeID: Hashable, Sendable {
+public enum MemoryGraphNodeID: Hashable, Sendable {
     case memory(String)
     case tag(String)
 
     /// L'id du souvenir, ou `nil` pour un nœud-étiquette.
-    var memoryId: String? {
+    public var memoryId: String? {
         if case let .memory(id) = self { return id }
         return nil
     }
 
     /// L'étiquette, ou `nil` pour un nœud de souvenir.
-    var tagName: String? {
+    public var tagName: String? {
         if case let .tag(name) = self { return name }
         return nil
     }
 }
 
 /// Un nœud affiché : son libellé (titre du souvenir, ou `#étiquette`) et sa portée
-/// (`agent_id` de la ligne ; `nil` pour un nœud-étiquette).
-struct MemoryGraphNode: Equatable, Identifiable, Sendable {
-    var id: MemoryGraphNodeID
-    var label: String
-    var scope: String?
+/// (`agent_id` de la ligne ; `nil` pour un nœud-étiquette). `text` et `tags` sont
+/// des FAITS du souvenir (texte intégral et étiquettes telles que la ligne les
+/// porte) : `nil`/vide pour un nœud-étiquette, jamais un libellé recalculé.
+public struct MemoryGraphNode: Equatable, Identifiable, Sendable {
+    public var id: MemoryGraphNodeID
+    public var label: String
+    public var scope: String?
+    public var text: String?
+    public var tags: [String]
+
+    public init(
+        id: MemoryGraphNodeID,
+        label: String,
+        scope: String?,
+        text: String? = nil,
+        tags: [String] = []
+    ) {
+        self.id = id
+        self.label = label
+        self.scope = scope
+        self.text = text
+        self.tags = tags
+    }
 }
 
 // MARK: - Liens
 
 /// La nature d'un lien : c'est elle qui décide du trait à l'écran (plein gris pour
 /// un dérivé, discontinu accentué pour un lien manuel).
-enum MemoryGraphLinkKind: Equatable, Sendable {
+public enum MemoryGraphLinkKind: Equatable, Sendable {
     case semantic(score: Double)
     case tag
     case manual
 
-    var isManual: Bool { self == .manual }
+    public var isManual: Bool { self == .manual }
 }
 
-struct MemoryGraphLink: Equatable, Sendable {
-    var a: MemoryGraphNodeID
-    var b: MemoryGraphNodeID
-    var kind: MemoryGraphLinkKind
+public struct MemoryGraphLink: Equatable, Sendable {
+    public var a: MemoryGraphNodeID
+    public var b: MemoryGraphNodeID
+    public var kind: MemoryGraphLinkKind
+
+    public init(a: MemoryGraphNodeID, b: MemoryGraphNodeID, kind: MemoryGraphLinkKind) {
+        self.a = a
+        self.b = b
+        self.kind = kind
+    }
 
     /// Les deux extrémités d'un lien de souvenirs, quel que soit son ordre.
-    var memoryEnds: (String, String)? {
+    public var memoryEnds: (String, String)? {
         guard let left = a.memoryId, let right = b.memoryId else { return nil }
         return (left, right)
     }
@@ -66,10 +92,10 @@ struct MemoryGraphLink: Equatable, Sendable {
 
 // MARK: - Dérivation
 
-enum MemoryGraph {
+public enum MemoryGraph {
     /// Les nœuds d'un jeu de lignes : un par souvenir, dans l'ordre reçu, puis un
     /// par étiquette portée par ≥ 2 souvenirs AFFICHÉS (S-4), triées par nom.
-    static func nodes(rows: [MemoryRow]) -> [MemoryGraphNode] {
+    public static func nodes(rows: [MemoryRow]) -> [MemoryGraphNode] {
         rows.map(memoryNode) + tagNodes(rows: rows, only: nil)
     }
 
@@ -80,7 +106,7 @@ enum MemoryGraph {
     /// Une étiquette portée par un SEUL souvenir n'émet aucun lien : elle n'a pas de
     /// nœud-étiquette, et « deux souvenirs qui partagent une étiquette » est la seule
     /// relation que les étiquettes expriment.
-    static func links(rows: [MemoryRow], edges: [MemoryGraphEdge], manual: Set<MemoryLink>) -> [MemoryGraphLink] {
+    public static func links(rows: [MemoryRow], edges: [MemoryGraphEdge], manual: Set<MemoryLink>) -> [MemoryGraphLink] {
         let present = Set(rows.map(\.id))
         let shared = Set(tagCounts(rows: rows).filter { $0.value >= 2 }.keys)
         var links: [MemoryGraphLink] = []
@@ -109,7 +135,7 @@ enum MemoryGraph {
     /// sur les souvenirs VISIBLES — une étiquette qui ne relie plus deux souvenirs
     /// affichés perd son nœud, et un lien dont une extrémité disparaît n'est pas
     /// dessiné (sans être supprimé de sa source).
-    static func visibility(
+    public static func visibility(
         rows: [MemoryRow],
         links: [MemoryGraphLink],
         project: String?,
@@ -128,18 +154,42 @@ enum MemoryGraph {
         return (nodes, visibleLinks)
     }
 
+    /// La famille d'une étiquette sur un graphe DÉJÀ dérivé : les nœuds-souvenirs qui
+    /// portent l'étiquette, le nœud-étiquette `.tag(nom)`, et les liens dont les DEUX
+    /// extrémités survivent. L'app iOS n'a que le graphe du fil ; c'est la règle de
+    /// `visibility(project: nil, tag: nom, searchIds: nil)`, et l'égalité est prouvée
+    /// en test sur la fixture.
+    public static func tagFamily(
+        nodes: [MemoryGraphNode],
+        links: [MemoryGraphLink],
+        tag: String
+    ) -> (nodes: [MemoryGraphNode], links: [MemoryGraphLink]) {
+        guard nodes.contains(where: { $0.id == .tag(tag) }) else { return (nodes, links) }
+        let kept = nodes.filter { node in
+            switch node.id {
+            case .memory:
+                return node.tags.contains(tag)
+            case let .tag(name):
+                return name == tag
+            }
+        }
+        let visible = Set(kept.map(\.id))
+        let visibleLinks = links.filter { visible.contains($0.a) && visible.contains($0.b) }
+        return (kept, visibleLinks)
+    }
+
     // MARK: - Détails
 
     /// La portée d'une ligne : `agent_id`, ou la chaîne vide pour « Sans projet »
     /// (une ligne sans portée reste un nœud, jamais une ligne perdue).
-    static func scope(of row: MemoryRow) -> String {
+    public static func scope(of row: MemoryRow) -> String {
         row.agentId ?? ""
     }
 
     /// Les étiquettes d'une ligne : segments vides écartés, doublons retirés
     /// (l'ordre d'apparition est conservé), comparaison à l'identique — la casse
     /// comprise.
-    static func tags(of row: MemoryRow) -> [String] {
+    public static func tags(of row: MemoryRow) -> [String] {
         var seen: Set<String> = []
         var kept: [String] = []
         for tag in row.tags where !tag.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -152,7 +202,9 @@ enum MemoryGraph {
         MemoryGraphNode(
             id: .memory(row.id),
             label: MemoryText.title(row.text),
-            scope: row.agentId
+            scope: row.agentId,
+            text: row.text,
+            tags: tags(of: row)
         )
     }
 

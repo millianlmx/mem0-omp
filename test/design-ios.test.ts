@@ -299,7 +299,7 @@ function screenFaults(root: string): string[] {
   return faults;
 }
 
-/** Les noms des cinquante-six captures produites (S-6, AC-6). */
+/** Les noms des captures produites (S-6, AC-6) : 56 écrans + 12 graphe. */
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
@@ -308,6 +308,14 @@ function expectedShotNames(): string[] {
       names.push(`ipad-${section}-${appearance}.png`);
       names.push(`iphone-${section}-${appearance}-ax.png`);
       names.push(`ipad-${section}-${appearance}-ax.png`);
+    }
+  }
+  // ios-memoire-graphe : 3 états × {iPhone, iPad} × {clair, sombre}.
+  for (const appearance of APPEARANCES) {
+    for (const device of ["iphone", "ipad"]) {
+      names.push(`${device}-memoire-graphe-${appearance}.png`);
+      names.push(`${device}-memoire-graphe-zoom-${appearance}.png`);
+      names.push(`${device}-memoire-graphe-fiche-${appearance}.png`);
     }
   }
   return names;
@@ -546,10 +554,10 @@ test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire"
   assert.ok(faults.some((f) => f.includes("Bonjour")), `un libellé en dur doit faire rougir la garde : ${faults.join(" | ")}`);
 });
 
-test("design-ios/AC-6 : le script produit les 56 captures et n'en committe aucune", () => {
+test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.equal(expectedShotNames().length, 56, "la matrice attendue fait 56 noms");
+  assert.equal(expectedShotNames().length, 68, "la matrice attendue fait 68 noms");
 
   const copy = copyRepo();
   const target = path.join(copy, "scripts", "ios-shots.sh");

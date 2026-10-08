@@ -309,6 +309,20 @@ public struct RemoteMemoryGraphNode: Codable, Equatable, Sendable {
     public var id: String
     public var label: String
     public var scope: String
+    /// Le texte INTÉGRAL du souvenir (champ ADDITIF OPTIONNEL) ; `nil` pour un
+    /// nœud-étiquette.
+    public var text: String?
+    /// Les étiquettes du souvenir (champ ADDITIF OPTIONNEL) ; `nil` pour un
+    /// nœud-étiquette.
+    public var tags: [String]?
+
+    public init(id: String, label: String, scope: String, text: String? = nil, tags: [String]? = nil) {
+        self.id = id
+        self.label = label
+        self.scope = scope
+        self.text = text
+        self.tags = tags
+    }
 }
 
 public struct RemoteMemoryGraphLink: Codable, Equatable, Sendable {
@@ -316,12 +330,39 @@ public struct RemoteMemoryGraphLink: Codable, Equatable, Sendable {
     public var b: String
     public var kind: String
     public var score: Double?
+
+    public init(a: String, b: String, kind: String, score: Double? = nil) {
+        self.a = a
+        self.b = b
+        self.kind = kind
+        self.score = score
+    }
 }
 
 public struct RemoteMemoryGraphPayload: Codable, Equatable, Sendable {
     public var nodes: [RemoteMemoryGraphNode]
     public var links: [RemoteMemoryGraphLink]
     public var total: Int
+    public var truncated: Bool
+
+    public init(nodes: [RemoteMemoryGraphNode], links: [RemoteMemoryGraphLink], total: Int, truncated: Bool = false) {
+        self.nodes = nodes
+        self.links = links
+        self.total = total
+        self.truncated = truncated
+    }
+}
+
+extension RemoteMemoryGraphPayload {
+    /// `truncated` est un champ ADDITIF : un Mac d'avant la feature graphe ne
+    /// l'émet pas, et la charge reste lisible (absent ⇒ faux).
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        nodes = try container.decode([RemoteMemoryGraphNode].self, forKey: .nodes)
+        links = try container.decode([RemoteMemoryGraphLink].self, forKey: .links)
+        total = try container.decode(Int.self, forKey: .total)
+        truncated = try container.decodeIfPresent(Bool.self, forKey: .truncated) ?? false
+    }
 }
 
 // MARK: - Gestes

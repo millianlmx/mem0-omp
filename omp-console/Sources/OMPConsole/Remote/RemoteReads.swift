@@ -311,28 +311,26 @@ final class RemoteReads {
         }
     }
 
+    /// Le graphe complet d'une base, en LECTURE SEULE (S-1, AC-1/2/8) : les mêmes
+    /// nœuds et arêtes que le mode graphe de la coque macOS pour la même base.
+    ///
+    /// `scope` NON VIDE ⇒ les souvenirs de cette portée ; absent ou vide ⇒ TOUTES
+    /// les portées, SANS repli sur le projet courant (la coque macOS lit
+    /// `service.all(scope: nil)` : un repli ferait diverger les deux graphes dès
+    /// qu'un projet est ouvert).
+    ///
+    /// Les lignes sont bornées en NOMBRE (`RemoteLimits.memoryRows`, TÊTE conservée)
+    /// puis en OCTETS : tant que la charge dépasse `RemoteLimits.responseBody`, on
+    /// retire la moitié de la queue et l'on RE-DÉRIVE nœuds et liens sur les lignes
+    /// gardées — jamais un lien dont une extrémité a disparu, jamais un
+    /// nœud-étiquette orphelin.
     func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
-        let scope = await resolvedScope(scope)
+        let scope = (scope?.isEmpty == false) ? scope : nil
         do {
             let page = try await service.all(scope: scope)
             let edges = try await service.graph().edges
             let manual = MemoryLinkStore.load(memoryLinks)
-            let nodes = MemoryGraph.nodes(rows: page.rows)
-            let links = MemoryGraph.links(rows: page.rows, edges: edges, manual: manual)
-            return RemoteMemoryGraphPayload(
-                nodes: nodes.map {
-                    RemoteMemoryGraphNode(id: Self.nodeID($0.id), label: $0.label, scope: $0.scope ?? "")
-                },
-                links: links.map { link in
-                    RemoteMemoryGraphLink(
-                        a: Self.nodeID(link.a),
-                        b: Self.nodeID(link.b),
-                        kind: Self.kind(link.kind),
-                        score: Self.score(link.kind)
-                    )
-                },
-                total: nodes.count
-            )
+            return Self.memoryGraph(rows: page.rows, edges: edges, manual: manual)
         } catch {
             throw Self.memoryError(error, config: memoryConfig)
         }
@@ -378,24 +376,71 @@ final class RemoteReads {
         return RemoteDocument(name: name, state: "text", content: text, reason: nil)
     }
 
+    /// Le vocabulaire du fil, délégué au noyau PARTAGÉ (`MemoryGraphWire`, S-2) :
+    /// plus de seconde table de correspondance.
     static func nodeID(_ id: MemoryGraphNodeID) -> String {
-        switch id {
-        case .memory(let memory): return "memory:\(memory)"
-        case .tag(let tag): return "tag:\(tag)"
-        }
+        MemoryGraphWire.id(id)
     }
 
     static func kind(_ kind: MemoryGraphLinkKind) -> String {
-        switch kind {
-        case .semantic: return "semantic"
-        case .tag: return "tag"
-        case .manual: return "manual"
-        }
+        MemoryGraphWire.name(kind)
     }
 
     static func score(_ kind: MemoryGraphLinkKind) -> Double? {
         if case .semantic(let score) = kind { return score }
         return nil
+    }
+
+    /// Le graphe borné (S-1) : la dérivation partagée des lignes gardées, bornée en
+    /// NOMBRE (tête conservée) puis en OCTETS — chaque retrait RE-DÉRIVE nœuds et
+    /// liens, donc aucun lien orphelin ni nœud-étiquette sans porteur.
+    static func memoryGraph(
+        rows: [MemoryRow],
+        edges: [MemoryGraphEdge],
+        manual: Set<MemoryLink>
+    ) -> RemoteMemoryGraphPayload {
+        var kept = Array(rows.prefix(max(0, RemoteLimits.memoryRows)))
+        var truncated = rows.count > kept.count
+        var payload = graphPayload(rows: kept, edges: edges, manual: manual, truncated: truncated)
+        while (try? HTTPJSON.encode(payload))?.count ?? 0 > RemoteLimits.responseBody, kept.count > 0 {
+            kept = Array(kept.dropLast(max(1, kept.count / 2)))
+            truncated = true
+            payload = graphPayload(rows: kept, edges: edges, manual: manual, truncated: truncated)
+        }
+        return payload
+    }
+
+    /// La projection filaire des faits du noyau : `text`/`tags` pour les seuls
+    /// nœuds-souvenirs, `score` pour les seules arêtes `semantic`.
+    private static func graphPayload(
+        rows: [MemoryRow],
+        edges: [MemoryGraphEdge],
+        manual: Set<MemoryLink>,
+        truncated: Bool
+    ) -> RemoteMemoryGraphPayload {
+        let nodes = MemoryGraph.nodes(rows: rows)
+        let links = MemoryGraph.links(rows: rows, edges: edges, manual: manual)
+        return RemoteMemoryGraphPayload(
+            nodes: nodes.map { node in
+                RemoteMemoryGraphNode(
+                    id: MemoryGraphWire.id(node.id),
+                    label: node.label,
+                    scope: node.scope ?? "",
+                    text: node.text,
+                    tags: node.text == nil ? nil : node.tags
+                )
+            },
+            links: links.map { link in
+                RemoteMemoryGraphLink(
+                    a: MemoryGraphWire.id(link.a),
+                    b: MemoryGraphWire.id(link.b),
+                    kind: MemoryGraphWire.name(link.kind),
+                    score: score(link.kind)
+                )
+            },
+            total: nodes.count,
+            truncated: truncated
+        )
     }
 
     /// `limit` : entier FACULTATIF, 1…`memoryLimitMax`, `nil` quand il est absent

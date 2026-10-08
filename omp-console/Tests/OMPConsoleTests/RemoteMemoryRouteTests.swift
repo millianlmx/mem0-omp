@@ -10,7 +10,7 @@ import Testing
 
 @testable import OMPConsole
 
-@Suite("Remote mémoire")
+@Suite("Remote mémoire", .serialized)
 @MainActor
 struct RemoteMemoryRouteTests {
 
@@ -158,7 +158,8 @@ struct RemoteMemoryRouteTests {
         }
     }
 
-    @Test func testGraphIncludesManualLinks() async throws {
+    @Test("ios-memoire-graphe/AC-2 : testGraphIncludesManualLinks — le lien manuel créé sur le Mac est servi et distinguable")
+    func testGraphIncludesManualLinks() async throws {
         let rows = [
             memoryRow(id: "m1", text: "un", score: nil, scope: "projet", tags: []),
             memoryRow(id: "m2", text: "deux", score: nil, scope: "projet", tags: []),
@@ -180,6 +181,59 @@ struct RemoteMemoryRouteTests {
         #expect(manual.first?.a == "memory:m1")
         #expect(manual.first?.b == "memory:m2")
         #expect(manual.first?.score == nil)
+    }
+
+    /// AC-1/AC-3 : sans `scope`, la route graphe lit TOUTES les portées — jamais un
+    /// repli sur le projet courant (qui ferait diverger le graphe iOS dès qu'un
+    /// projet est ouvert).
+    @Test func testGraphServesEveryScopeWithoutAProject() async throws {
+        let defaults = UserDefaults.standard
+        let previous = defaults.string(forKey: ProjectRoot.defaultsKey)
+        defaults.set("/inexistant-omp-console-\(UUID().uuidString)", forKey: ProjectRoot.defaultsKey)
+        defer {
+            if let previous {
+                defaults.set(previous, forKey: ProjectRoot.defaultsKey)
+            } else {
+                defaults.removeObject(forKey: ProjectRoot.defaultsKey)
+            }
+        }
+
+        let service = ScriptedMemoryService(page: .success(MemoryPage(total: 2, rows: MemoryGraphParity.rows)))
+        let stack = try await RemoteStack.make(memory: service)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        #expect(reply.status == 200)
+        let graph = try reply.json(RemoteMemoryGraphPayload.self)
+        #expect(!graph.nodes.isEmpty)
+        // La portée demandée au service est nulle : TOUTES les portées.
+        #expect(service.allScopes == [nil])
+        // Une portée EXPLICITE est, elle, passée telle quelle.
+        _ = try await stack.call("GET", "/v1/memory/graph?scope=alpha", token: token)
+        #expect(service.allScopes == [nil, "alpha"])
+    }
+
+    /// AC-1 : au-delà de la borne, le graphe est tronqué honnêtement et reste
+    /// COHÉRENT (aucun lien orphelin, `total` = nœuds servis).
+    @Test func testGraphTruncationIsAnnouncedAndCoherent() async throws {
+        let text = String(repeating: "a", count: 2000)
+        let rows = (0..<1200).map { index in
+            memoryRow(id: "m\(index)", text: text, scope: "projet")
+        }
+        let service = ScriptedMemoryService(page: .success(MemoryPage(total: rows.count, rows: rows)))
+        let stack = try await RemoteStack.make(memory: service)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        #expect(reply.status == 200)
+        let graph = try reply.json(RemoteMemoryGraphPayload.self)
+        #expect(graph.truncated == true)
+        #expect(graph.nodes.count < rows.count)
+        #expect(graph.total == graph.nodes.count)
+        let ids = Set(graph.nodes.map(\.id))
+        #expect(graph.links.allSatisfy { ids.contains($0.a) && ids.contains($0.b) })
     }
 
     @Test func testLimitOutOfBoundsIsBadRequest() async throws {

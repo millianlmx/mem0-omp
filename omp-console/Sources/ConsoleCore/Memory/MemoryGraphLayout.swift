@@ -5,30 +5,31 @@
 // placement est une FONCTION PURE de ses entrées, donc deux appels rendent les
 // mêmes positions — c'est la graine fixe et le nombre d'itérations fixe qui
 // l'imposent, pas l'article (Fruchterman & Reingold 1991).
+//
+// Partagé par les deux coques (S-2) : il vit dans `ConsoleCore`.
 
-import ConsoleCore
 import CoreGraphics
 import Foundation
 
 // MARK: - Style
 
 /// Les constantes de dessin et la palette, déterministes.
-enum MemoryGraphStyle {
+public enum MemoryGraphStyle {
     /// Le rayon d'un nœud de souvenir, en points d'affichage.
-    static let nodeRadius: CGFloat = 5
+    public static let nodeRadius: CGFloat = 5
     /// La tolérance du clic autour d'un nœud, en points.
-    static let hitSlack: CGFloat = 4
+    public static let hitSlack: CGFloat = 4
     /// La marge autour du graphe quand il est recadré (10 %).
-    static let margin: CGFloat = 0.10
+    public static let margin: CGFloat = 0.10
     /// Les bornes du zoom : au-delà, le geste est ignoré.
-    static let minZoom: CGFloat = 0.25
-    static let maxZoom: CGFloat = 3.0
+    public static let minZoom: CGFloat = 0.25
+    public static let maxZoom: CGFloat = 3.0
     /// Le zoom à partir duquel les libellés des souvenirs sont dessinés.
-    static let labelZoom: CGFloat = 1.5
+    public static let labelZoom: CGFloat = 1.5
 
     /// La teinte d'une portée : FNV-1a sur son nom, JAMAIS `hashValue` (qui change
     /// d'un lancement à l'autre). Une portée vide garde une teinte stable.
-    static func hue(for scope: String?) -> Double {
+    public static func hue(for scope: String?) -> Double {
         let name = scope ?? ""
         var hash: UInt64 = 0xcbf2_9ce4_8422_2325
         for byte in name.utf8 {
@@ -44,19 +45,25 @@ enum MemoryGraphStyle {
 /// La transformation position normalisée → point écran, partagée par le dessin et
 /// par le test de clic : une seule formule, donc le clic ne peut pas dériver du
 /// dessin.
-struct MemoryGraphViewport: Equatable, Sendable {
-    var size: CGSize
-    var zoom: CGFloat = 1
-    var pan: CGSize = .zero
+public struct MemoryGraphViewport: Equatable, Sendable {
+    public var size: CGSize
+    public var zoom: CGFloat
+    public var pan: CGSize
+
+    public init(size: CGSize, zoom: CGFloat = 1, pan: CGSize = .zero) {
+        self.size = size
+        self.zoom = zoom
+        self.pan = pan
+    }
 
     /// Le côté du carré utile : le graphe tient dans la plus petite dimension,
     /// avec `margin` de chaque côté.
-    var side: CGFloat { min(size.width, size.height) * (1 - 2 * MemoryGraphStyle.margin) }
+    public var side: CGFloat { min(size.width, size.height) * (1 - 2 * MemoryGraphStyle.margin) }
 
-    var center: CGPoint { CGPoint(x: size.width / 2, y: size.height / 2) }
+    public var center: CGPoint { CGPoint(x: size.width / 2, y: size.height / 2) }
 
     /// Le point écran d'une position normalisée (`[0,1]²`).
-    func screen(_ normalized: CGPoint) -> CGPoint {
+    public func screen(_ normalized: CGPoint) -> CGPoint {
         let base = CGPoint(
             x: center.x + (normalized.x - 0.5) * side,
             y: center.y + (normalized.y - 0.5) * side
@@ -69,7 +76,7 @@ struct MemoryGraphViewport: Equatable, Sendable {
 
     /// Le déplacement à poser pour que le point écran `anchor` reste SOUS le geste
     /// quand le zoom passe de la valeur courante à `newZoom` (zoom centré).
-    func pan(keeping anchor: CGPoint, zoom newZoom: CGFloat) -> CGSize {
+    public func pan(keeping anchor: CGPoint, zoom newZoom: CGFloat) -> CGSize {
         guard zoom > 0 else { return pan }
         let ratio = 1 - newZoom / zoom
         return CGSize(
@@ -81,8 +88,8 @@ struct MemoryGraphViewport: Equatable, Sendable {
 
 /// La cible d'un clic : le nœud dont la position écran est à ≤ rayon d'affichage
 /// + tolérance du clic ; à égalité de distance, le plus proche.
-enum MemoryGraphHitTest {
-    static func node(
+public enum MemoryGraphHitTest {
+    public static func node(
         at point: CGPoint,
         positions: [MemoryGraphNodeID: CGPoint],
         zoom: CGFloat,
@@ -109,7 +116,7 @@ enum MemoryGraphHitTest {
 /// Un élément à dessiner. La SCÈNE est pure : elle se confronte en test sans rendre
 /// de vue, et le canevas ne fait que la peindre — une seule source de vérité pour ce
 /// qui s'affiche.
-enum MemoryGraphShape: Equatable, Sendable {
+public enum MemoryGraphShape: Equatable, Sendable {
     /// Un lien entre deux points écran. `kind` décide du trait (un lien manuel est
     /// discontinu et accentué, jamais confondu avec un dérivé).
     case line(from: CGPoint, to: CGPoint, kind: MemoryGraphLinkKind, highlighted: Bool)
@@ -123,16 +130,20 @@ enum MemoryGraphShape: Equatable, Sendable {
     case label(center: CGPoint, text: String, hue: Double?)
 }
 
-struct MemoryGraphScene: Equatable, Sendable {
+public struct MemoryGraphScene: Equatable, Sendable {
     /// Les formes, DANS L'ORDRE DE DESSIN : liens, noms de grappes, nœuds, libellés.
-    var shapes: [MemoryGraphShape]
+    public var shapes: [MemoryGraphShape]
+
+    public init(shapes: [MemoryGraphShape]) {
+        self.shapes = shapes
+    }
 
     /// La scène d'un graphe affiché : positions normalisées → points écran, puis
     /// profondeur (liens d'abord, libellés en dernier).
     ///
     /// Les libellés des souvenirs ne sont dessinés qu'au zoom ≥ 1,5, ou pour le
     /// nœud survolé et la sélection — jamais un texte illisible.
-    static func build(
+    public static func build(
         nodes: [MemoryGraphNode],
         links: [MemoryGraphLink],
         positions: [MemoryGraphNodeID: CGPoint],
@@ -205,19 +216,18 @@ struct MemoryGraphScene: Equatable, Sendable {
 
     /// Un lien est mis en évidence quand il touche le nœud survolé ou le souvenir
     /// sélectionné.
-    static func isHighlighted(_ link: MemoryGraphLink, selection: String?, hovered: MemoryGraphNodeID?) -> Bool {
+    public static func isHighlighted(_ link: MemoryGraphLink, selection: String?, hovered: MemoryGraphNodeID?) -> Bool {
         if let hovered, hovered == link.a || hovered == link.b { return true }
         if let selection, link.a.memoryId == selection || link.b.memoryId == selection { return true }
         return false
     }
 }
 
-
-enum MemoryGraphLayout {
+public enum MemoryGraphLayout {
     /// La graine fixe du bruit initial : même graphe ⇒ mêmes positions.
-    static let defaultSeed: UInt64 = 0x5EED_0F6B_1E5A_17C3
+    public static let defaultSeed: UInt64 = 0x5EED_0F6B_1E5A_17C3
     /// Le nombre d'itérations par défaut.
-    static let defaultIterations = 200
+    public static let defaultIterations = 200
 
     /// Les positions NORMALISÉES (`[0,1]²`) de chaque nœud, dans l'ORDRE des nœuds.
     ///
@@ -225,7 +235,7 @@ enum MemoryGraphLayout {
     /// (POD) ne fait hasher aucune `String`, là où un dictionnaire clé par
     /// `MemoryGraphNodeID` le ferait — un piège MESURÉ de ce dépôt en release
     /// (`swift test -c release` corrompt parfois une valeur qui porte des `String`).
-    static func points(
+    public static func points(
         nodes: [MemoryGraphNode],
         links: [MemoryGraphLink],
         seed: UInt64 = defaultSeed,
@@ -241,7 +251,7 @@ enum MemoryGraphLayout {
     /// les nœuds-étiquettes au barycentre de leurs souvenirs ; puis l'algorithme
     /// de Fruchterman & Reingold (répulsion entre tous, ressorts sur les liens,
     /// refroidissement) sépare les grappes. Le résultat est recadré dans `[0,1]²`.
-    static func positions(
+    public static func positions(
         nodes: [MemoryGraphNode],
         links: [MemoryGraphLink],
         seed: UInt64 = defaultSeed,
@@ -279,7 +289,7 @@ enum MemoryGraphLayout {
         }
         for (position, node) in nodes.enumerated() {
             switch node.id {
-            case let .memory(_):
+            case .memory:
                 let center = centers[node.scope ?? ""] ?? (0.5, 0.5)
                 xs[position] = center.0 + (random.nextUnit() - 0.5) * 0.08
                 ys[position] = center.1 + (random.nextUnit() - 0.5) * 0.08

@@ -83,26 +83,8 @@ struct MemoryHealth: Equatable, Sendable {
     var errorMessage: String?
 }
 
-/// Une ligne de souvenir, réduite à ce que l'app affiche (S-1, S-3, S-5) : son
-/// identifiant, son texte COMPLET, sa date, son cosinus brut s'il en porte, ses
-/// étiquettes (`metadata.tags`, omp-console-redesign S-18 R7) et sa portée
-/// (`agent_id`, S-2 — la ligne d'un graphe porte la sienne).
-struct MemoryRow: Identifiable, Equatable, Sendable {
-    var id: String
-    var text: String
-    var updatedAt: String?
-    var semanticScore: Double?
-    var tags: [String] = []
-    var agentId: String? = nil
-}
-
-/// Une arête de proximité sémantique rendue par le service (S-3) : deux ids de
-/// souvenirs et leur cosinus. `source < target` est garanti par le service.
-struct MemoryGraphEdge: Equatable, Sendable {
-    var source: String
-    var target: String
-    var score: Double
-}
+// `MemoryRow` et `MemoryGraphEdge` vivent désormais dans `ConsoleCore`
+// (`MemoryGraphFacts.swift`) : l'app iOS en a besoin, et ne lie pas cette cible.
 
 /// La réponse de `GET /memory/graph`, décodée TOLÉRAMMENT : une arête dont les
 /// extrémités ne sont pas deux chaînes et le score un nombre fini est ignorée — une

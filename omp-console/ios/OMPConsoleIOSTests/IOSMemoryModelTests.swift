@@ -18,8 +18,10 @@ private final class CountingMemoryReader: IOSMemoryReading {
     var state: ClientState = .connected(endpoint: ClientEndpoint.manual(host: "127.0.0.1", port: 8787))
     var page: Result<RemoteMemoryPagePayload, Error>
     var search: Result<RemoteMemorySearchPayload, Error>
+    var graph: Result<RemoteMemoryGraphPayload, Error>
     private(set) var pageReads = 0
     private(set) var searchReads = 0
+    private(set) var graphReads = 0
 
     init(
         page: Result<RemoteMemoryPagePayload, Error> = .success(
@@ -27,10 +29,14 @@ private final class CountingMemoryReader: IOSMemoryReading {
         ),
         search: Result<RemoteMemorySearchPayload, Error> = .success(
             RemoteMemorySearchPayload(rows: [], candidates: 0, scored: 0)
+        ),
+        graph: Result<RemoteMemoryGraphPayload, Error> = .success(
+            RemoteMemoryGraphPayload(nodes: [], links: [], total: 0, truncated: false)
         )
     ) {
         self.page = page
         self.search = search
+        self.graph = graph
     }
 
     func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
@@ -41,6 +47,11 @@ private final class CountingMemoryReader: IOSMemoryReading {
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
         searchReads += 1
         return try search.get()
+    }
+
+    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
+        graphReads += 1
+        return try graph.get()
     }
 }
 

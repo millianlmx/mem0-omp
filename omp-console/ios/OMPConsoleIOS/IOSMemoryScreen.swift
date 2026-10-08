@@ -17,37 +17,75 @@ struct IOSMemoryScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
+    /// Le crochet de recette `-memoire.recipe` du mode graphe.
+    let graphRecipe: IOSMemoryGraphRecipe?
     @StateObject private var model: IOSMemoryModel
+    @StateObject private var graph: IOSMemoryGraphModel
 
-    init(client: ConsoleClientModel, recipe: IOSScreenState) {
+    init(client: ConsoleClientModel, recipe: IOSScreenState, graphRecipe: IOSMemoryGraphRecipe? = nil) {
         self.client = client
         self.recipe = recipe
+        self.graphRecipe = graphRecipe
         _model = StateObject(wrappedValue: IOSMemoryModel(client: client))
+        _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: client))
     }
 
     var body: some View {
         panel
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { Task { await model.refresh() } } label: {
+                    Button {
+                        if graph.shown {
+                            Task { await graph.refresh() }
+                        } else {
+                            Task { await model.refresh() }
+                        }
+                    } label: {
                         Label(MemoryText.refresh, systemImage: "arrow.clockwise")
                     }
-                    .disabled(!model.canRefresh)
+                    .disabled(graph.shown ? graph.state == .loading : !model.canRefresh)
                     .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
                 }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { model.showSummary() } label: {
-                        Label(MemoryText.summaryButton, systemImage: "list.bullet")
+                if !graph.shown {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button { model.showSummary() } label: {
+                            Label(MemoryText.summaryButton, systemImage: "list.bullet")
+                        }
+                        .disabled(!model.canShowSummary)
+                        .accessibilityIdentifier(IOSMemoryAccessibility.summary)
                     }
-                    .disabled(!model.canShowSummary)
-                    .accessibilityIdentifier(IOSMemoryAccessibility.summary)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        if graph.shown {
+                            graph.hide()
+                        } else {
+                            Task { await graph.activate() }
+                        }
+                    } label: {
+                        if graph.shown {
+                            Label(MemoryText.listButton, systemImage: "list.bullet")
+                        } else {
+                            Label(MemoryText.graphButton, systemImage: "point.3.connected.trianglepath.dotted")
+                        }
+                    }
+                    .accessibilityIdentifier(IOSMemoryAccessibility.graphToggle)
                 }
             }
             .sheet(item: $model.selection) { target in
                 IOSMemoryDetailView(row: target.row, scope: model.scope)
             }
             .task { await model.refresh() }
+            .onAppear { applyGraphRecipe() }
+            .onDisappear { graph.suspend() }
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
+    }
+
+    /// Le crochet de recette force le mode graphe sur la fixture partagée, sans
+    /// réseau : le chemin de rendu est celui de production.
+    private func applyGraphRecipe() {
+        guard let graphRecipe else { return }
+        Task { await graphRecipe.activate(graph) }
     }
 
     // MARK: - Panneau et champ de recherche
@@ -63,7 +101,7 @@ struct IOSMemoryScreen: View {
                     .font(.callout)
                     .iosBanner(tone: banner.tone)
             }
-            subject
+            displayed
         }
         .iosPanel()
         .navigationTitle(ConsoleSection.memory.title)
@@ -89,11 +127,22 @@ struct IOSMemoryScreen: View {
     }
 
     private var offersSearch: Bool {
+        guard !graph.shown else { return false }
         switch model.state {
         case .summary, .summaryEmpty, .search, .searchEmptyNoMatch, .searchEmptyNoScore, .searchEmptyBelowThreshold:
             return true
         default:
             return false
+        }
+    }
+
+    /// Le contenu de la section : le graphe quand la bascule l'a demandé, la LISTE
+    /// sinon (mode d'ouverture, B-4).
+    @ViewBuilder private var displayed: some View {
+        if graph.shown {
+            IOSMemoryGraphView(client: client, model: graph)
+        } else {
+            subject
         }
     }
 

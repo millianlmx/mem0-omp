@@ -31,6 +31,8 @@ struct RootView: View {
     private let recipe: IOSHomeRecipe?
     /// Le crochet de recette `-sessions.recipe`, quand il est donné.
     private let sessionRecipe: IOSSessionsRecipe?
+    /// Le crochet de recette `-memoire.recipe`, quand il est donné.
+    private let memoryRecipe: IOSMemoryGraphRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -40,12 +42,14 @@ struct RootView: View {
         state: IOSScreenState = .ready,
         recipe: IOSHomeRecipe? = nil,
         sessionRecipe: IOSSessionsRecipe? = nil,
+        memoryRecipe: IOSMemoryGraphRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
         _state = State(initialValue: state)
         self.recipe = recipe
         self.sessionRecipe = sessionRecipe
+        self.memoryRecipe = memoryRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -83,7 +87,8 @@ struct RootView: View {
                     section: selection ?? .home,
                     state: state,
                     client: client,
-                    recipe: sessionRecipe
+                    recipe: sessionRecipe,
+                    memoryRecipe: memoryRecipe
                 )
             }
         }

@@ -453,15 +453,13 @@ test("ios-memoire/AC-9 : rafraîchir à l'ouverture et sur geste, jamais en cont
 function readOnlyFaults(root: string): string[] {
   const faults: string[] = [];
   const memory = memoryAppCode(root);
+  // Le graphe est désormais un SECOND mode de la section : seuls les jetons
+  // d'ÉCRITURE restent interdits (le mode graphe lit `memoryGraph(`).
   for (const token of [
-    "MemoryText.graphButton",
     "MemoryText.createMemory",
     "MemoryText.edit",
     "MemoryText.delete",
     "MemoryText.save",
-    "memoryGraph(",
-    "MemoryLinkStore",
-    "MemoryGraphModel",
   ]) {
     if (memory.includes(token)) faults.push(`la section Mémoire porte ${token}`);
   }
@@ -476,11 +474,11 @@ function readOnlyFaults(root: string): string[] {
   return faults;
 }
 
-test("ios-memoire/AC-10 : lecture seule — ni écriture, ni graphe", () => {
+test("ios-memoire/AC-10 : lecture seule — aucune écriture, ni sommaire ni graphe", () => {
   assert.deepEqual(readOnlyFaults(ROOT), []);
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
-  fs.writeFileSync(target, `${code(target)}\nlet fuite = client.memoryGraph(\n`);
-  assert.ok(readOnlyFaults(copy).length > 0, "un geste de graphe ajouté doit faire rougir la garde");
+  fs.writeFileSync(target, `${code(target)}\nlet fuite = MemoryText.delete\n`);
+  assert.ok(readOnlyFaults(copy).length > 0, "un geste d'écriture ajouté doit faire rougir la garde");
 });
