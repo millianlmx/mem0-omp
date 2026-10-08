@@ -127,7 +127,10 @@ public struct URLSessionTransport: ClientTransport {
         to endpoint: ClientEndpoint,
         token: String?
     ) throws -> URLRequest {
-        guard let url = URL(string: request.path, relativeTo: endpoint.baseURL)?.absoluteURL else {
+        guard let base = endpoint.baseURL else {
+            throw ClientError.decoding("adresse du Mac invalide : \(endpoint.display)")
+        }
+        guard let url = URL(string: request.path, relativeTo: base)?.absoluteURL else {
             throw ClientError.decoding("chemin de requête invalide")
         }
         var urlRequest = URLRequest(url: url)

@@ -388,3 +388,44 @@ func componentsAndJournalChangesArePushed() async throws {
     #expect(pushedJournal.contains("\"kindLabel\":\"lancement\""))
     #expect(pushedJournal.contains("cmd-1"))
 }
+
+/// Une source `@Published` réelle, comme `presence.$presence` de la racine de l'app.
+@MainActor
+private final class PublishedChangeSource: ObservableObject {
+    @Published var tick = 0
+}
+
+@MainActor
+@Test("flux SSE : les éditeurs @Published réels de l'app s'abonnent hors de l'acteur principal sans faire planter le Mac")
+func publishedSourcesSubscribeOffTheMainActor() async throws {
+    // Régression mesurée le 2026-10-08 : `.map { _ in () }` écrit dans un contexte
+    // @MainActor héritait de l'acteur, et `RemoteStreamHub.startSources` abonne ces
+    // éditeurs par `.values` depuis le pool coopératif — la vérification
+    // d'isolation tuait l'app (EXC_BREAKPOINT) dès qu'un appareil ouvrait le flux.
+    let presence = PublishedChangeSource()
+    let actions = ActionsModel()
+    let stack = try await RemoteStack.make(
+        componentsChanges: presence.$tick.voidChanges(),
+        journalChanges: actions.$journal.voidChanges()
+    )
+    defer { stack.stop() }
+    let token = try await stack.pair()
+
+    let collector = SSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+    _ = await collector.waitFor("components")
+    _ = await collector.waitFor("journal")
+
+    // L'abonnement a bien eu lieu : un `@Published` rend sa valeur COURANTE à
+    // l'abonnement (deuxième trame), et un vrai changement en pousse une de plus.
+    presence.tick += 1
+    _ = try #require(
+        await collector.waitFor("components", occurrence: 2),
+        "la veille des composants doit être abonnée (échec=\(collector.failure ?? "aucun"))"
+    )
+    _ = try #require(
+        await collector.waitFor("journal", occurrence: 2),
+        "la veille du journal doit être abonnée (échec=\(collector.failure ?? "aucun"))"
+    )
+}

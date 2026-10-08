@@ -97,8 +97,8 @@ struct OMPConsoleApp: App {
                     setupBanner: setup.flatMap { SetupText.banner(state: $0.state, dismissed: true) }
                 )
             },
-            presenceChanges: presence.$presence.map { _ in () }.eraseToAnyPublisher(),
-            setupChanges: setup.$state.map { _ in () }.eraseToAnyPublisher()
+            presenceChanges: presence.$presence.voidChanges(),
+            setupChanges: setup.$state.voidChanges()
         )
         _remoteModel = StateObject(wrappedValue: remote)
         // L'annonce Bonjour ne survit pas au process (S-14) : l'accroche de

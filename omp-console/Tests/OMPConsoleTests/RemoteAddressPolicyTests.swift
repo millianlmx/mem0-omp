@@ -68,3 +68,13 @@ func mappedIPv4IsJudgedOnItsIPv4Part() {
 func namedHostIsRefused() {
     #expect(RemoteAddressPolicy.isLocal(host: .name("exemple.local", nil)) == false)
 }
+
+@Test("adresse affichée : l'adresse CLAT d'un partage de connexion iPhone n'est jamais montrée")
+func displayedAddressSkipsUnreachableIPv4() {
+    // En IPv6 seul (Wi-Fi « iPhone de … »), `en0` n'a que 192.0.0.2 : un autre
+    // appareil ne peut pas la joindre, l'adresse suivante (ex. Tailscale) si.
+    #expect(RemoteServer.primaryLocalAddress(among: ["192.0.0.2", "100.100.172.84"]) == "100.100.172.84")
+    #expect(RemoteServer.primaryLocalAddress(among: ["192.0.0.2"]) == nil)
+    #expect(RemoteServer.primaryLocalAddress(among: ["192.168.1.12", "100.100.172.84"]) == "192.168.1.12")
+    #expect(RemoteServer.primaryLocalAddress(among: ["8.8.8.8"]) == nil)
+}

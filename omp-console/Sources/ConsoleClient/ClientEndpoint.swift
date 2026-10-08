@@ -24,11 +24,10 @@ public enum ClientEndpoint: Equatable, Sendable, Hashable {
     }
 
     /// La base HTTP de l'endpoint, sans chemin : c'est le transport qui ajoute le
-    /// chemin de la route.
-    public var baseURL: URL {
-        // L'hôte est écrit tel quel (un littéral IP ou un nom résolu) : `URL`
-        // n'échoue pas sur cette forme.
-        URL(string: "http://\(host):\(port)")!
+    /// chemin de la route. `nil` quand l'hôte saisi ne s'écrit pas en URL (jamais
+    /// de `!` : une adresse manuelle libre ne doit pas faire planter l'app).
+    public var baseURL: URL? {
+        URL(string: "http://\(Self.urlHost(host)):\(port)")
     }
 
     /// La forme affichée : `192.168.1.12:8787` pour une adresse, et
@@ -36,10 +35,24 @@ public enum ClientEndpoint: Equatable, Sendable, Hashable {
     public var display: String {
         switch self {
         case .manual(let host, let port):
-            return "\(host):\(port)"
+            return "\(Self.shownHost(host)):\(port)"
         case .bonjour(let name, let host, let port):
-            return "\(name) — \(host):\(port)"
+            return "\(name) — \(Self.shownHost(host)):\(port)"
         }
+    }
+
+    /// Un littéral IPv6 s'écrit entre crochets (`fe80::1%en0` → `[fe80::1%en0]`) ;
+    /// Network.framework rend ainsi l'adresse lien-local d'un Mac découvert par
+    /// Bonjour sur un partage de connexion, et `URL` refuse la forme nue.
+    private static func shownHost(_ host: String) -> String {
+        guard host.contains(":"), !host.hasPrefix("[") else { return host }
+        return "[\(host)]"
+    }
+
+    /// Dans une URL, la zone d'un lien-local s'écrit `%25en0` (le `%` est échappé).
+    private static func urlHost(_ host: String) -> String {
+        guard host.contains(":"), !host.hasPrefix("[") else { return host }
+        return "[\(host.replacingOccurrences(of: "%", with: "%25"))]"
     }
 }
 
