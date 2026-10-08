@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.24.0 — 2026-10-08
+
+- feat(req,console,test,docs): service OMP unique — un process pilote et exécute les pipelines, l'app en devient cliente (#80) (e34825e)
+
 ## omp-mem0-req 0.23.0 — 2026-10-04
 
 - feat(req,console): deux modèles d'orchestration par feature — req+specs et impl+review (#59) (b959057)
