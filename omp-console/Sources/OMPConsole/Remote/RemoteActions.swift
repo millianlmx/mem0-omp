@@ -383,6 +383,7 @@ final class RemoteActions {
             sessionId: host.sessionId,
             sessionFile: host.sessionFile,
             protocolVersion: host.protocolVersion,
+            projectName: session.projectRoot?.lastPathComponent,
             dialogs: host.dialogQueue,
             transcript: Array(transcript.suffix(RemoteLimits.transcriptLines)),
             truncated: transcript.count > RemoteLimits.transcriptLines
@@ -412,6 +413,91 @@ final class RemoteActions {
         case .dead: return "dead"
         case .failed: return "failed"
         }
+    }
+
+    /// Le lancement de la session hébergée depuis l'iPad (S-1) : la clé est
+    /// résolue contre les dépôts CONNUS (comme `startConduite`), la décision
+    /// d'exclusivité est prise AVANT l'appel, et la charge rendue est l'état APRÈS
+    /// le démarrage. Un dossier disparu ne lève pas : `SessionHost.begin` pose
+    /// `.failed(message)` et rend 200.
+    func launchHostedSession(body: Data) async throws -> RemoteHostedSessionPayload {
+        let request = try Self.decode(RemoteHostedLaunchRequest.self, body)
+        guard let repo = knownRepos().first(where: { $0.repoKey == request.repoKey }) else {
+            throw ConsoleAPIError.notFound("dépôt inconnu")
+        }
+        guard session.canStart else { throw ConsoleAPIError.conflict(SessionConsoleText.launchBusy) }
+        do {
+            try await session.launch(projectRoot: URL(fileURLWithPath: repo.repoRoot))
+        } catch let error as SessionHostError {
+            throw ConsoleAPIError.unavailable(error.userMessage)
+        }
+        return hostedSession()
+    }
+
+    /// La relance d'une session `dead` (S-1) : `canRelaunch` est la règle du Mac,
+    /// et elle REPREND le même fichier de session.
+    func relaunchHostedSession() async throws -> RemoteHostedSessionPayload {
+        guard session.canRelaunch else { throw ConsoleAPIError.conflict(SessionConsoleText.relaunchNotDead) }
+        do {
+            try await session.relaunchSession()
+        } catch let error as SessionHostError {
+            throw ConsoleAPIError.unavailable(error.userMessage)
+        }
+        return hostedSession()
+    }
+
+    /// L'arrêt de la session hébergée (S-7) : idempotent — `host.stop()` est un
+    /// no-op dans `idle/stopped/failed` — et rend l'état courant.
+    func stopHostedSession() async throws -> RemoteHostedSessionPayload {
+        await session.stopSession()
+        return hostedSession()
+    }
+
+    /// Répond à un dialogue de la session hébergée (S-5). Mêmes contrôles et mêmes
+    /// messages que `answerDialog` (conduite), appliqués à `SessionConsoleModel` :
+    /// le contrôle d'identité (tête de file) et l'écriture sont faits dans la MÊME
+    /// exécution du `@MainActor`.
+    func answerHostedDialog(id: String, body: Data) async throws -> RemoteAcceptedPayload {
+        let request = try Self.decode(RemoteDialogAnswerRequest.self, body)
+        guard let dialog = session.host.dialogQueue.first else {
+            throw ConsoleAPIError.conflict("aucun dialogue en attente")
+        }
+        guard dialog.id == id else {
+            throw ConsoleAPIError.conflict("le dialogue a changé depuis la demande")
+        }
+        let response: RpcDialogResponse
+        switch request.kind {
+        case "value":
+            guard let value = request.value else { throw ConsoleAPIError.badRequest("valeur absente") }
+            switch dialog.method {
+            case .select:
+                guard dialog.options.contains(value) else {
+                    throw ConsoleAPIError.badRequest("libellé hors des options du dialogue")
+                }
+            case .input:
+                guard !Self.isBlank(value) else { throw ConsoleAPIError.badRequest("texte vide") }
+            case .editor:
+                // Une valeur VIDE est acceptée : c'est la session qui juge.
+                break
+            case .confirm:
+                throw ConsoleAPIError.badRequest("ce dialogue n'attend pas de valeur")
+            }
+            response = .value(id: id, value: value)
+        case "confirmed":
+            guard dialog.method == .confirm else {
+                throw ConsoleAPIError.badRequest("ce dialogue n'attend pas de confirmation")
+            }
+            guard let confirmed = request.confirmed else { throw ConsoleAPIError.badRequest("confirmation absente") }
+            response = .confirmed(id: id, confirmed: confirmed)
+        case "cancelled":
+            response = .cancelled(id: id)
+        default:
+            throw ConsoleAPIError.badRequest("kind inconnu")
+        }
+        guard session.answer(dialogId: id, response: response) else {
+            throw ConsoleAPIError.conflict("le dialogue a changé depuis la demande")
+        }
+        return RemoteAcceptedPayload(accepted: true)
     }
 
     // MARK: - PR

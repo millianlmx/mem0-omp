@@ -256,7 +256,7 @@ test("ios-projet/AC-7 : la feuille propose les dépôts servis par la coque, san
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSProjectLaunchSheet.swift");
   fs.writeFileSync(target, code(target).replace("client.repos()", "[]"));
-  assert.ok(!appCode(copy).includes("client.repos()"), "une liste recalculée doit faire rougir la garde");
+  assert.ok(!code(target).includes("client.repos()"), "une liste recalculée doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------

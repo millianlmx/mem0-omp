@@ -261,3 +261,45 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points ni `lineLimit` numérique dans le fil : les
   lignes se replient, comme les blocs de code d'`IOSMarkdownView`.
   `[garde: design-ios/AC-7]`
+
+## Session OMP (feature `ios-session-omp`)
+
+- L'écran couvre NEUF états : déconnecté (bandeau `attention`, aucun geste),
+  chargement, aucune session, lancement, arrêt en cours, session vive, arrêtée,
+  interrompue, échec — décidés par la fonction pure
+  `IOSSessionOmpModel.surface(state:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+- L'en-tête porte le nom du dépôt servi (`projectName`) et la pastille du mot
+  d'état (`stateLabel`) ; un état inconnu du client vaut `idle`, jamais une
+  invention. `[test: surfaceFollowsClientAndHosted]`
+- Le lancement n'est offert que hors d'une session en marche (ni en lancement, ni
+  en arrêt) : l'écran n'ouvre la feuille que sous `model.canLaunch`.
+  `[test: launchAvailability]`
+- La relance est réservée à `dead`, l'arrêt à `launching|running` — parité avec
+  les règles du Mac. `[test: relaunchAndStopAvailability]`
+- Le composeur n'est actif qu'en marche, sans dialogue en attente et sur un texte
+  non blanc ; le mot de la cause est affiché tel quel.
+  `[test: composerAvailability]`
+- Un envoi appelle `prompt` une seule fois ; le champ se vide sur succès et reste
+  rempli sur échec, le message servi affiché en bandeau.
+  `[test: sendPromptCallsOnce]`
+- Les quatre formes de dialogue et l'annulation passent par la feuille
+  RÉUTILISÉE de Projet : choix simple, confirmation, réponse libre, édition d'un
+  texte prérempli. `[test: fourDialogForms]`
+- Un choix simple répond `kind:"value"` avec l'option choisie, en un seul appel ;
+  le dialogue quitte la file servie, donc la feuille se referme.
+  `[test: selectDialogAnswersWithValue]`
+- « Annuler » répond `kind:"cancelled"` ; un `hosted` sans dialogue referme la
+  feuille. `[test: cancellationAnswersAndClears]`
+- À l'apparition, l'écran relit l'état servi ; un dialogue posé pendant la
+  déconnexion redevient la tête de la file et donc tranchable.
+  `[test: reconnectRestoresDialogs]`
+- Le fil est le composant RÉUTILISÉ de la section Sessions
+  (`IOSSessionThreadView`), monté sur le fichier servi ; aucun geste d'écriture
+  dans le fil. `[test: componentIsReusable]`
+- L'arrêt appelle la route une fois et l'état servi passe à `stopped`.
+  `[test: stopCallsRouteOnce]`
+- L'écran de section est capturé tel quel, en clair et en Dynamic Type maximum.
+  `[capture: iphone-session-light]` `[capture: iphone-session-dark-ax]`
+- Aucune taille de police en points, aucun `lineLimit` numérique, aucun
+  `onTapGesture` : les mêmes gardes typographiques que les autres sections.
+  `[garde: design-ios/AC-7]`

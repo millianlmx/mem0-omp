@@ -505,6 +505,9 @@ public struct RemoteHostedSessionPayload: Codable, Equatable, Sendable {
     public var sessionId: String?
     public var sessionFile: String?
     public var protocolVersion: Int?
+    /// Le dernier segment de la racine de projet mémorisée (S-2) : `nil` quand
+    /// aucune racine n'est connue.
+    public var projectName: String?
     public var dialogs: [RpcDialogRequest]
     public var transcript: [TranscriptLine]
     public var truncated: Bool
@@ -549,6 +552,16 @@ public struct RemoteConduiteRequest: Codable, Equatable, Sendable {
     public var name: String
 }
 
+/// Le corps de `POST /v1/session/launch` (S-1), miroir client : la clé d'un dépôt
+/// servi par `GET /v1/repos`.
+public struct RemoteHostedLaunchRequest: Codable, Equatable, Sendable {
+    public var repoKey: String
+
+    public init(repoKey: String) {
+        self.repoKey = repoKey
+    }
+}
+
 /// La réponse à une escalade de la conduite (S-4/S-5, miroir de
 /// `remote.RemoteDialogAnswerRequest`) : `value` pour `editor`/`select`/`input`,
 /// `confirmed` pour `confirm`, `cancelled` pour une annulation.
@@ -582,6 +595,9 @@ public struct RemoteSessionsEvent: Codable, Equatable, Sendable {
 
 public struct RemoteHostedEvent: Codable, Equatable, Sendable {
     public var state: String
+    public var stateLabel: String?
+    public var sessionFile: String?
+    public var projectName: String?
     public var dialogs: [RpcDialogRequest]
     public var added: [TranscriptLine]
 }

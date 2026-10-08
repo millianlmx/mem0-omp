@@ -117,12 +117,17 @@ final class SessionConsoleModel: ObservableObject {
         return fileManager.fileExists(atPath: projectRoot.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
-    var canLaunch: Bool {
+    /// L'état seul autorise un démarrage (S-1) : `canLaunch` y ajoute la
+    /// disponibilité d'une racine de projet mémorisée. L'iPad, lui, apporte la
+    /// sienne (`launch(projectRoot:)`), donc la route décide sur `canStart`.
+    var canStart: Bool {
         switch host.state {
-        case .idle, .stopped, .failed: return isProjectUsable
+        case .idle, .stopped, .failed: return true
         default: return false
         }
     }
+
+    var canLaunch: Bool { canStart && isProjectUsable }
 
     var canStop: Bool {
         switch host.state {
@@ -226,6 +231,25 @@ final class SessionConsoleModel: ObservableObject {
         }
     }
 
+    /// Le lancement piloté par la route distante (S-1) : la racine vient de la
+    /// liste des dépôts connus de la coque, et elle devient la préférence
+    /// mémorisée — même effet que le geste « Choisir un dossier… ». Le mode est
+    /// celui de la coque (`rpcUI` par défaut) ; `resume` est faux, c'est une
+    /// session NEUVE.
+    func launch(projectRoot url: URL) async throws {
+        guard canStart else { throw SessionHostError.alreadyRunning }
+        projectRoot = url
+        defaults.set(url.path, forKey: Self.projectRootKey)
+        try await host.start(mode: mode, projectRoot: url, resume: false)
+    }
+
+    /// La relance MANUELLE de la route distante (S-1) : la règle `canRelaunch` du
+    /// Mac, qui REPREND le même fichier de session — `host.relaunch()` décide.
+    func relaunchSession() async throws {
+        guard canRelaunch else { throw SessionHostError.notRunning }
+        try await host.relaunch()
+    }
+
     func relaunch() {
         guard canRelaunch else { return }
         Task { @MainActor in
@@ -241,6 +265,13 @@ final class SessionConsoleModel: ObservableObject {
         Task { @MainActor in
             await host.stop()
         }
+    }
+
+    /// L'arrêt qui ATTEND la fin de la séquence (S-7) : la route distante rend
+    /// l'état APRÈS l'arrêt, pas un `running` transitoire. Le bouton macOS, lui,
+    /// garde `stop()` (il suit l'état publié).
+    func stopSession() async {
+        await host.stop()
     }
 
     func sendPrompt() {
@@ -330,6 +361,16 @@ final class SessionConsoleModel: ObservableObject {
         case .failed(let message):
             return message
         }
+    }
+
+    /// Répond à un dialogue SI ET SEULEMENT SI c'est encore la TÊTE de la file
+    /// (S-5) : le contrôle d'identité et l'écriture sont faits dans la MÊME
+    /// exécution du `@MainActor`, donc la file ne peut pas glisser entre les deux.
+    /// Miroir exact de `ProjectConsoleModel.answer(dialogId:response:)`.
+    func answer(dialogId: String, response: RpcDialogResponse) -> Bool {
+        guard host.dialogQueue.first?.id == dialogId else { return false }
+        answer(response)
+        return true
     }
 
     private func answer(_ response: RpcDialogResponse) {

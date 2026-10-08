@@ -29,6 +29,8 @@ struct IOSSectionView: View {
             IOSMemoryScreen(client: client, recipe: state)
         } else if section == .sessions {
             IOSSessionsScreen(client: client, recipe: recipe)
+        } else if section == .session {
+            IOSSessionOmpScreen(client: client)
         } else {
             genericBody
         }

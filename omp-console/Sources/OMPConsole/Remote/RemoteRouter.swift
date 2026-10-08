@@ -90,6 +90,10 @@ final class RemoteRouter {
         .of("DELETE", "v1/projects/:repoKey/conduite", "conduite.close"),
         .of("GET", "v1/session", "hosted.get"),
         .of("POST", "v1/session/prompt", "hosted.prompt"),
+        .of("POST", "v1/session/launch", "hosted.launch"),
+        .of("POST", "v1/session/relaunch", "hosted.relaunch"),
+        .of("POST", "v1/session/stop", "hosted.stop"),
+        .of("POST", "v1/session/dialogs/:id", "hosted.dialog"),
         .of("GET", "v1/projects/:repoKey/pull-requests", "prs"),
         .of("POST", "v1/projects/:repoKey/pull-requests/:slug/merge", "prs.merge"),
     ]
@@ -233,6 +237,14 @@ final class RemoteRouter {
             return try json(actions.hostedSession())
         case "hosted.prompt":
             return try json(try await actions.prompt(body: request.body))
+        case "hosted.launch":
+            return try json(try await actions.launchHostedSession(body: request.body))
+        case "hosted.relaunch":
+            return try json(try await actions.relaunchHostedSession())
+        case "hosted.stop":
+            return try json(try await actions.stopHostedSession())
+        case "hosted.dialog":
+            return try json(try await actions.answerHostedDialog(id: parameters["id"] ?? "", body: request.body))
         case "prs":
             return try json(try await actions.pullRequests(repoKey: parameters["repoKey"] ?? ""))
         case "prs.merge":

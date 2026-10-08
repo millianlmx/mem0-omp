@@ -27,6 +27,10 @@ public enum SessionConsoleText {
     public static let launch = "Lancer la session"
     public static let relaunch = "Relancer"
     public static let stop = "Arrêter la session"
+    /// Le motif d'un lancement refusé : une session est déjà en marche (S-1).
+    public static let launchBusy = "Une session est déjà en marche."
+    /// Le motif d'une relance refusée : la session n'est pas `dead` (S-1).
+    public static let relaunchNotDead = "Aucune session interrompue à relancer."
 
     // MARK: Dialogue d'OMP (`RpcDialogPane`)
 

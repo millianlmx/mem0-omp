@@ -1971,6 +1971,62 @@ compris) et dans `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
 côté macOS ; la garde textuelle est `test/ios-sessions.test.ts`. La recette de
 design iOS fait autorité et vit dans `omp-console/ios/DESIGN.md`.
 
+### Section Session OMP
+
+La section Session OMP pilote, depuis l'iPad, l'**UNIQUE** session hébergée du
+Mac — la MÊME que la fenêtre « Session OMP » de la coque macOS. Lancer une
+session depuis l'iPad la fait apparaître sur le Mac, et inversement : il n'y a
+qu'un seul hôte, jamais deux. L'écran couvre neuf états (déconnecté, chargement,
+aucune session, lancement, arrêt en cours, session vive, arrêtée, interrompue,
+échec) ; l'en-tête porte le nom du dépôt et la pastille de l'état.
+
+Lancer choisit le dépôt dans la liste des dépôts **connus du Mac**
+(`GET /v1/repos`) — jamais un chemin, jamais un nom calculé par l'app. Le
+lancement est indisponible tant qu'une session tourne : l'écran n'offre aucun
+geste dans les états de marche, et la route refuse un second lancement (409).
+Une session `dead` se relance par « Relancer » (elle reprend le même fichier) ;
+une session en marche s'arrête par « Arrêter la session » (confirmation, puis
+la séquence d'arrêt du Mac). Le fil réutilise le composant de la section Sessions
+(`IOSSessionThreadView`) sur le fichier de session servi : mêmes faits que sur le
+Mac, une seule lecture puis le flux de CE fichier. Les dialogues de la session
+(quatre formes de la feuille d'escalade, plus « Annuler ») sont tranchables depuis
+l'iPad. Rien n'est persisté sur l'appareil.
+
+### Recette : piloter la session OMP depuis l'iPad
+
+Prérequis : l'iPad appairé au Mac (voir « Ouvrir, compiler, tester »), et une
+coque macOS en service. Chaque geste et son attendu observable :
+
+1. **Ouvrir la section Session OMP** — sans session lancée, l'écran affiche
+   « Aucune session » (ou « Prête à démarrer » si un dossier est déjà mémorisé sur
+   le Mac) et le bouton « Lancer la session ».
+2. **Choisir un dépôt** — « Lancer la session » ouvre la feuille : la liste des
+   dépôts connus du Mac, chacun avec son nom et son chemin. Aucune saisie de
+   chemin. Sélectionner un dépôt (marque « ✓ »), puis « Lancer la session ».
+3. **Voir la session démarrer** — l'écran montre « Lancement de la session… », puis
+   l'en-tête du dépôt avec la pastille « Session active » et le fil. Sur le Mac, la
+   fenêtre « Session OMP » affiche la MÊME session, ouverte.
+4. **Envoyer un prompt** — saisir un texte dans le composeur et « Envoyer » : le
+   message apparaît dans le fil, puis la réponse de la session s'y ajoute sans
+   geste. Le champ se vide après un envoi réussi.
+5. **Répondre à un dialogue** — quand la session pose une question, la feuille
+   « OMP vous demande » s'ouvre : choisir une option (ou saisir un texte, ou
+   éditer un plan prérempli), « Répondre » ; pour une confirmation, « Confirmer »
+   ou « Refuser » ; « Annuler » annule le dialogue. La feuille se ferme et la
+   session reprend.
+6. **Reconnecter** — fermer puis rouvrir l'app : la section retrouve la session
+   dans le même état, et un dialogue posé pendant la déconnexion reste tranchable.
+7. **Arrêter** — « Arrêter la session » (confirmation « Arrêter la session ? ») :
+   l'état passe à « Session arrêtée » sur l'iPad comme sur le Mac, la conversation
+   reste affichée, et « Lancer la session » redevient disponible.
+
+La recette OUTILLÉE de bout en bout (routes réelles, flux SSE réel, client de
+production) est gatée par `MEM0_REMOTE_RECIPE` :
+`MEM0_REMOTE_RECIPE=1 swift test --filter iosSessionOmpRecipe`. Comme pour
+`iosProjetRecipe`, elle ne prouve pas le Mac réel : la recette pas à pas ci-dessus
+est la preuve d'appareil. La garde textuelle de la feature est
+`test/ios-session-omp.test.ts`.
+
 ### Prérequis
 
 - **Xcode 27** installé, et sa licence acceptée : sans cela, toute invocation de
