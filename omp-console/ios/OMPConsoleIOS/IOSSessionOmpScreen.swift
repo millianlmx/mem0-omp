@@ -84,6 +84,9 @@ struct IOSSessionOmpScreen: View {
                 actions
             }
         }
+        .iosPanel()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .navigationTitle(ConsoleSection.session.title)
         .onAppear { model.appeared() }
         .onChange(of: client.state) {
             if case .connected = client.state { model.refresh() }

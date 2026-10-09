@@ -161,6 +161,10 @@ marqueur `[test: <fonction>]` (une fonction de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
 ## L'Accueil (S-10, S-11)
 
+- L'écran porte le titre de navigation `ConsoleSection.home.title`, en grand titre
+  par défaut comme les autres sections, dans ses cinq états : aucune bande vide
+  sous la barre, et le bouton retour reste dans la barre titrée quand le tableau
+  de bord défile. `[capture: iphone-home-light]`
 - L'Accueil iOS montre un seul de ses cinq états : déconnecté, « OMP absent sur
   le Mac », chargement, premiers pas, tableau de bord — dans cet ordre de
   priorité. `[test: resolvePriority]`
@@ -280,6 +284,10 @@ marqueur `[test: <fonction>]` (une fonction de
 
 ## Session OMP (feature `ios-session-omp`)
 
+- L'écran porte le titre de navigation `ConsoleSection.session.title` et pose tout
+  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses neuf états
+  (jamais centré verticalement) ; le seul défilement est celui du fil de
+  conversation. `[capture: iphone-session-light]`
 - L'écran couvre NEUF états : déconnecté (bandeau `attention`, aucun geste),
   chargement, aucune session, lancement, arrêt en cours, session vive, arrêtée,
   interrompue, échec — décidés par la fonction pure
