@@ -19,7 +19,11 @@ import SwiftUI
 /// - `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>` : l'état de
 ///   la section Sessions forcé depuis la fixture partagée `SessionParity` (S-1,
 ///   S-4, S-9), pour capturer l'écran réel — un crochet de recette, pas une
-///   fonctionnalité.
+///   fonctionnalité ;
+/// - `-pipelines.recipe <vide|choisi|rempli>` : la feuille « Nouvelle feature »
+///   ouverte d'elle-même sur l'écran Pipelines, dans un état forcé (dépôts, dépôt
+///   choisi, titre, besoin), pour capturer la feuille sans appairage — un crochet
+///   de recette, pas une fonctionnalité.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -34,6 +38,7 @@ struct OMPConsoleIOSApp: App {
     private let recipeRow: Int?
     private let sessionRecipe: IOSSessionsRecipe?
     private let memoryRecipe: IOSMemoryGraphRecipe?
+    private let pipelinesRecipe: IOSPipelinesRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -44,6 +49,7 @@ struct OMPConsoleIOSApp: App {
         recipeRow = IOSHomeRecipe.row(arguments)
         sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
+        pipelinesRecipe = IOSPipelinesRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -56,6 +62,7 @@ struct OMPConsoleIOSApp: App {
                 recipeRow: recipeRow,
                 sessionRecipe: sessionRecipe,
                 memoryRecipe: memoryRecipe,
+                pipelinesRecipe: pipelinesRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

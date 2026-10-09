@@ -377,13 +377,54 @@ shoot_rows() {
 
 shoot_rows iphone "$iphone"
 
-# Le quatrième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 56
+# Le cinquième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 56
 # écrans, les 32 de l'Accueil et les 12 du graphe est 112.
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$count" != "112" ]; then
   echo "  ✗ $count captures produites (112 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées)" >&2
   exit 1
 fi
+
+# Passage 6 — la feuille « NOUVELLE FEATURE » (ios-nouvelle-feature-formulaire) : ses trois
+# états de recette (`-pipelines.recipe`), sur les deux appareils et les deux apparences,
+# à taille de texte par défaut. Le lancement ouvre l'écran Pipelines et présente la feuille
+# d'elle-même, dans l'état forcé (dépôts, dépôt choisi, titre, besoin) : tout le reste est le
+# chemin RÉEL de la feuille. Aucun appairage n'est requis.
+nouvelle_feature_recipes=(vide choisi rempli)
+
+shoot_nouvelle_feature() {
+  local label="$1"
+  local udid="$2"
+  local appearance="$3"
+  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
+  for recipe in "${nouvelle_feature_recipes[@]}"; do
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
+      -section kanban -home.welcomeSeen YES -pipelines.recipe "$recipe" >/dev/null 2>&1
+    sleep 2
+    shot="$SHOTS/$label-nouvelle-feature-$recipe-$appearance.png"
+    if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+      echo "  ✗ capture impossible ($shot)" >&2
+      exit 1
+    fi
+    echo "$shot"
+  done
+}
+
+for appearance in light dark; do
+  shoot_nouvelle_feature iphone "$iphone" "$appearance"
+  shoot_nouvelle_feature ipad "$ipad" "$appearance"
+done
+
+# Le sixième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
+# le total avec les 56 écrans, les 32 de l'Accueil, les 12 du graphe et les 12 rangées
+# est 124.
+count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$count" != "124" ]; then
+  echo "  ✗ $count captures produites (124 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées + 12 nouvelle feature)" >&2
+  exit 1
+fi
+
 
 # Chaque capture est sondée : toutes sont PORTRAIT (aucune ligne paysage — voir
 # la limite d'outillage en tête de ce script et dans `omp-console/ios/DESIGN.md`).
@@ -401,5 +442,5 @@ for shot in "$SHOTS"/*.png; do
   fi
 done
 
-echo "  ✓ 112 captures dans $SHOTS (dimensions vérifiées)"
+echo "  ✓ 124 captures dans $SHOTS (dimensions vérifiées)"
 exit 0

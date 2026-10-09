@@ -57,6 +57,25 @@ enum PipelinesText {
 
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
+
+    /// Le chevron du sélecteur de dépôt (un menu : il se déroule, il ne navigue pas).
+    static let repoMenuSymbol = "chevron.up.chevron.down"
+
+    // MARK: - Recette `-pipelines.recipe` (crochet de capture, pas une fonctionnalité)
+
+    static let recipeFlag = "-pipelines.recipe"
+    /// Les dépôts forcés par la recette (triés) : deux homonymes et un nom unique.
+    static let recipeRepos = [
+        "/Users/demo/Archives/mem0-omp",
+        "/Users/demo/Projets/mem0-omp",
+        "/Users/demo/Projets/site-vitrine",
+    ]
+    /// La racine choisie par les recettes `choisi` et `rempli` (un des `recipeRepos`).
+    static let recipeChosenRepo = "/Users/demo/Projets/mem0-omp"
+    static let recipeTitle = "export-csv"
+    static let recipeShortNeed = "Exporter les souvenirs du projet au format CSV."
+    /// Douze lignes « Ligne <n> du besoin. » : plus que les huit que la zone montre.
+    static let recipeLongNeed = (1...12).map { "Ligne \($0) du besoin." }.joined(separator: "\n")
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
