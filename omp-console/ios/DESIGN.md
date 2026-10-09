@@ -35,6 +35,15 @@ marqueur `[test: <fonction>]` (une fonction de
   écran, `iosCard()` pour la carte d'un état vide, `iosBanner(tone:)` pour un
   bandeau. `[garde: design-ios/AC-1]`
 - Chaque écran des sept sections pose son contenu sur `iosPanel()`. `[capture: iphone-*-light]`
+- Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
+  régulier), fixe — c'est la marge de l'écran, le rembourrage intérieur seul suit
+  Dynamic Type. Aucun panneau ne touche un bord de l'écran, et aucun appelant
+  n'ajoute la sienne. `[capture: iphone-*-light]`
+- Un seul défilement VERTICAL par écran : Pipelines, Sessions et Mémoire (Liste)
+  posent leur panneau dans un `ScrollView(.vertical)` et n'emploient aucune
+  `List` ; le panneau prend la hauteur de son contenu. Le mode Graphe de la
+  Mémoire fait exception : son canevas garde ses gestes, hors de tout
+  défilement. `[capture: iphone-kanban-light]`
 - Un bandeau est une surface de CONTENU : teinte du ton à 12 % d'opacité, rayon
   12, jamais un fond rouge plein écran. `[test: errorStateBannersAllSeven]`
 - La pastille porte l'identifiant d'accessibilité `ios.status` et combine ses
@@ -145,8 +154,9 @@ marqueur `[test: <fonction>]` (une fonction de
   leurs états viennent du magasin, jamais d'un calcul propre à l'app.
   `[garde: design-ios/AC-3]`
 - En largeur COMPACTE (iPhone portrait), les voies s'empilent verticalement dans
-  un défilement unique ; en largeur RÉGULIÈRE (iPad), elles sont côte à côte dans
-  un défilement horizontal — toutes les voies restent atteignables.
+  le défilement de l'écran ; en largeur RÉGULIÈRE (iPad), elles sont côte à côte
+  dans un défilement horizontal posé dans ce défilement vertical — toutes les
+  voies et toutes les cartes restent atteignables.
   `[capture: iphone-kanban-light]`
 - L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
   un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide

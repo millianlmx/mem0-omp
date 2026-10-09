@@ -14,15 +14,17 @@ struct PipelinesScreen: View {
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let banner = recipe.banner, let message = recipe.bannerMessage {
-                Text(message)
-                    .font(.callout)
-                    .iosBanner(tone: banner.tone)
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                if let banner = recipe.banner, let message = recipe.bannerMessage {
+                    Text(message)
+                        .font(.callout)
+                        .iosBanner(tone: banner.tone)
+                }
+                content
             }
-            content
+            .iosPanel()
         }
-        .iosPanel()
         .navigationTitle(ConsoleSection.kanban.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -82,18 +84,19 @@ struct PipelinesScreen: View {
     }
 
     /// L'ardoise : en largeur COMPACTE (iPhone portrait) les voies s'empilent
-    /// verticalement dans un défilement unique ; en largeur RÉGULIÈRE (iPad) elles
-    /// sont côte à côte dans un défilement horizontal.
+    /// verticalement dans le défilement de l'écran, sans défilement propre ; en
+    /// largeur RÉGULIÈRE (iPad) elles sont côte à côte dans un défilement
+    /// horizontal, l'axe orthogonal : aucun défilement vertical n'est imbriqué.
     @ViewBuilder
     private func boardContent(_ board: KanbanBoard) -> some View {
         let showsRepo = Set(board.cards.map(\.repo)).count > 1
-        ScrollView(sizeClass == .compact ? .vertical : .horizontal) {
-            if sizeClass == .compact {
-                VStack(alignment: .leading, spacing: 16) {
-                    lanes(board, showsRepo: showsRepo)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
+        if sizeClass == .compact {
+            VStack(alignment: .leading, spacing: 16) {
+                lanes(board, showsRepo: showsRepo)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
                     lanes(board, showsRepo: showsRepo)
                 }

@@ -95,16 +95,8 @@ struct IOSMemoryScreen: View {
     /// « Aucun projet ouvert », l'état du client, un chargement ou une panne.
     @ViewBuilder
     private var panel: some View {
-        let content = VStack(alignment: .leading, spacing: 12) {
-            if let banner = recipe.banner, let message = recipe.bannerMessage {
-                Text(verbatim: message)
-                    .font(.callout)
-                    .iosBanner(tone: banner.tone)
-            }
-            displayed
-        }
-        .iosPanel()
-        .navigationTitle(ConsoleSection.memory.title)
+        let content = surface
+            .navigationTitle(ConsoleSection.memory.title)
 
         if offersSearch {
             content
@@ -116,6 +108,28 @@ struct IOSMemoryScreen: View {
                 .onSubmit(of: .search) { Task { await model.submitQuery() } }
         } else {
             content
+        }
+    }
+
+    /// Le panneau : en mode LISTE il est le contenu du seul défilement vertical de
+    /// l'écran ; en mode GRAPHE il reste hors de tout `ScrollView`, pour que le
+    /// canevas garde son déplacement et son zoom (le geste ne défile pas la page).
+    @ViewBuilder
+    private var surface: some View {
+        let stack = VStack(alignment: .leading, spacing: 12) {
+            if let banner = recipe.banner, let message = recipe.bannerMessage {
+                Text(verbatim: message)
+                    .font(.callout)
+                    .iosBanner(tone: banner.tone)
+            }
+            displayed
+        }
+        if graph.shown {
+            stack.iosPanel()
+        } else {
+            ScrollView(.vertical) {
+                stack.iosPanel()
+            }
         }
     }
 
@@ -237,17 +251,21 @@ struct IOSMemoryScreen: View {
     private func rowsList(_ rows: [RemoteMemoryRow]) -> some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let nowMs = context.date.timeIntervalSince1970 * 1000
-            List(rows, id: \.id) { row in
-                Button { model.selection = IOSMemorySelection(row: row) } label: {
-                    rowLabel(row, nowMs: nowMs)
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                    if index > 0 {
+                        Divider()
+                    }
+                    Button { model.selection = IOSMemorySelection(row: row) } label: {
+                        rowLabel(row, nowMs: nowMs)
+                    }
+                    .buttonStyle(.plain)
+                    .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
                 }
-                .buttonStyle(.plain)
-                .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
-                .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
             }
-            .listStyle(.plain)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func rowLabel(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
