@@ -326,14 +326,20 @@ final class RemoteReads {
     /// nœud-étiquette orphelin.
     func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
         let scope = (scope?.isEmpty == false) ? scope : nil
+        let page: MemoryPage
         do {
-            let page = try await service.all(scope: scope)
-            let edges = try await service.graph().edges
-            let manual = MemoryLinkStore.load(memoryLinks)
-            return Self.memoryGraph(rows: page.rows, edges: edges, manual: manual)
+            page = try await service.all(scope: scope)
         } catch {
             throw Self.memoryError(error, config: memoryConfig)
         }
+        let edges: [MemoryGraphEdge]
+        do {
+            edges = try await service.graph().edges
+        } catch {
+            throw Self.graphError(error, config: memoryConfig)
+        }
+        let manual = MemoryLinkStore.load(memoryLinks)
+        return Self.memoryGraph(rows: page.rows, edges: edges, manual: manual)
     }
 
     private func resolvedScope(_ scope: String?) async -> String? {
@@ -483,5 +489,19 @@ final class RemoteReads {
         return .unavailable(
             MemoryText.unavailableDetail(address: config.baseURL.absoluteString, error: failure.userMessage)
         )
+    }
+
+    /// La traduction d'une panne de l'appel `/memory/graph` SEUL : un 404 ou un 405
+    /// amont signifie « route graphe absente côté mem0-http » (Starlette répond 405
+    /// quand un motif `/memory/{id}` capte le chemin, 404 sinon) et rend le code
+    /// structuré `outdated_service` ; toute autre panne reste celle de `memoryError`.
+    static func graphError(_ error: Error, config: MemoryServiceConfig) -> ConsoleAPIError {
+        let translated = memoryError(error, config: config)
+        guard case .unexpectedStatus(let status, _)? = error as? MemoryServiceError,
+              status == 404 || status == 405,
+              case .unavailable(let message) = translated else {
+            return translated
+        }
+        return .outdatedService(message)
     }
 }

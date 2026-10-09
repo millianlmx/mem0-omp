@@ -183,6 +183,81 @@ struct IOSMemoryGraphTests {
         #expect(blank.state == .empty)
     }
 
+    // MARK: - ios-graphe-memoire-405-erreur-brute : « trop ancien » lisible
+
+    /// Le prédicat « lisible » : ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    private func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
+    }
+
+    private func stateAfter(_ error: Error) async -> IOSMemoryGraphModel.State {
+        let model = IOSMemoryGraphModel(client: GraphReader(graph: .failure(error)))
+        await model.activate()
+        return model.state
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-3 : serviceOutdatedOn405IsReadable — le 405 relayé devient « serveur mémoire trop ancien »")
+    func serviceOutdatedOn405IsReadable() async {
+        let relayed = MemoryText.unavailableDetail(
+            address: "http://localhost:8321",
+            error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+        )
+        #expect(await stateAfter(ClientError.api(.outdatedService(relayed))) == .serviceOutdated)
+        let text = IOSMemoryText.graphServiceOutdated
+        #expect(text.contains("serveur mémoire trop ancien"))
+        #expect(text.contains("mem0-http"))
+        #expect(isReadable(text))
+        #expect(!text.contains("mets-la à jour"))
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-4 : serviceOutdatedOn404IsTheSameMessage — le 404 relayé donne le même état et le même texte")
+    func serviceOutdatedOn404IsTheSameMessage() async {
+        let relayed = MemoryText.unavailableDetail(
+            address: "http://localhost:8321",
+            error: "réponse 404 du service ({\"detail\":\"Not Found\"})"
+        )
+        let state = await stateAfter(ClientError.api(.outdatedService(relayed)))
+        #expect(state == .serviceOutdated)
+        #expect(state == (await stateAfter(ClientError.api(.outdatedService("autre détail")))))
+        #expect(isReadable(IOSMemoryText.graphServiceOutdated))
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-5 : macOutdatedOnNotFound — la coque qui ne connaît pas la route donne « app Mac trop ancienne »")
+    func macOutdatedOnNotFound() async {
+        #expect(await stateAfter(ClientError.api(.notFound("route inconnue"))) == .macOutdated)
+        #expect(await stateAfter(ClientError.api(.notFound("autre"))) == .macOutdated)
+        let text = IOSMemoryText.graphMacOutdated
+        #expect(text.contains("app Mac trop ancienne, mets-la à jour"))
+        #expect(!text.contains("serveur mémoire trop ancien"))
+        #expect(isReadable(text))
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-6 : otherFailuresNeverClaimOutdated — les autres pannes restent celles d'avant, sans « trop ancien »")
+    func otherFailuresNeverClaimOutdated() async {
+        let detail = MemoryText.unavailableDetail(address: "http://127.0.0.1:8321", error: "réponse 500 du service (boom)")
+        let unavailable = await stateAfter(ClientError.api(.unavailable(detail)))
+        #expect(unavailable == .unavailable(detail: detail))
+        #expect(IOSMemoryText.unavailable(detail: detail) == MemoryText.unavailableTitle + "\n" + detail)
+
+        let server = await stateAfter(ClientError.api(.server("mémoire indisponible")))
+        #expect(server == .unavailable(detail: "mémoire indisponible"))
+
+        let transport = await stateAfter(ClientError.transport(.unreachable("refus")))
+        #expect(transport == .macUnreachable)
+
+        let texts = [
+            IOSMemoryText.unavailable(detail: detail),
+            IOSMemoryText.unavailable(detail: "mémoire indisponible"),
+            IOSMemoryText.macUnreachable,
+        ]
+        for text in texts {
+            #expect(!text.contains("trop ancien"))
+            #expect(!text.contains("mets-la à jour"))
+        }
+    }
+
     // MARK: - AC-4, AC-5 : pincer et glisser
 
     @Test("ios-memoire-graphe/AC-4 : pinchAndDragMoveTheViewportAndKeepNodesHittable")

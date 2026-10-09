@@ -252,4 +252,95 @@ struct MemoryRelayTests {
         }
         #expect(service.searches.isEmpty)
     }
+
+    // MARK: - ios-graphe-memoire-405-erreur-brute
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-3 : un 405 sur /memory/graph rend 503 outdated_service avec le message d'aujourd'hui")
+    func testGraph405IsOutdatedService() async throws {
+        let failure = MemoryServiceError.unexpectedStatus(405, #"{"detail":"Method Not Allowed"}"#)
+        let stack = try await RemoteStack.make(memory: ScriptedMemoryService(graph: .failure(failure)))
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        #expect(reply.status == 503)
+        #expect(reply.errorCode == "outdated_service")
+        #expect(reply.errorMessage == MemoryText.unavailableDetail(
+            address: "http://127.0.0.1:8321",
+            error: failure.userMessage
+        ))
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-4 : un 404 sur /memory/graph rend aussi 503 outdated_service")
+    func testGraph404IsOutdatedService() async throws {
+        let failure = MemoryServiceError.unexpectedStatus(404, #"{"detail":"Not Found"}"#)
+        let stack = try await RemoteStack.make(memory: ScriptedMemoryService(graph: .failure(failure)))
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        #expect(reply.status == 503)
+        #expect(reply.errorCode == "outdated_service")
+        #expect(reply.errorMessage == MemoryText.unavailableDetail(
+            address: "http://127.0.0.1:8321",
+            error: failure.userMessage
+        ))
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-6 : les autres pannes du graphe restent `unavailable`, y compris un 405 sur /memory/all")
+    func testOtherGraphFailuresStayUnavailable() async throws {
+        let graphFailures: [MemoryServiceError] = [
+            .unexpectedStatus(500, "boom"),
+            .notReachable("connexion refusée"),
+            .unauthorized,
+            .malformedResponse("corps illisible"),
+        ]
+        for failure in graphFailures {
+            let stack = try await RemoteStack.make(memory: ScriptedMemoryService(graph: .failure(failure)))
+            defer { stack.stop() }
+            let token = try await stack.pair()
+
+            let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+            #expect(reply.status == 503)
+            #expect(reply.errorCode == "unavailable")
+            #expect(reply.errorMessage == MemoryText.unavailableDetail(
+                address: "http://127.0.0.1:8321",
+                error: failure.userMessage
+            ))
+        }
+
+        // La route de la liste n'est pas celle du graphe : on n'en déduit pas « trop ancien ».
+        for status in [404, 405] {
+            let failure = MemoryServiceError.unexpectedStatus(status, "x")
+            let stack = try await RemoteStack.make(memory: ScriptedMemoryService(page: .failure(failure)))
+            defer { stack.stop() }
+            let token = try await stack.pair()
+
+            let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+            #expect(reply.status == 503)
+            #expect(reply.errorCode == "unavailable")
+        }
+    }
+
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-7 : la liste et la recherche ne rendent jamais outdated_service, même sur 404/405")
+    func testListAndSearchNeverReportOutdatedService() async throws {
+        for status in [404, 405] {
+            let failure = MemoryServiceError.unexpectedStatus(status, #"{"detail":"Method Not Allowed"}"#)
+            let stack = try await RemoteStack.make(
+                memory: ScriptedMemoryService(page: .failure(failure), search: .failure(failure))
+            )
+            defer { stack.stop() }
+            let token = try await stack.pair()
+
+            for path in ["/v1/memory?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
+                let reply = try await stack.call("GET", path, token: token)
+                #expect(reply.status == 503)
+                #expect(reply.errorCode == "unavailable")
+                #expect(reply.errorMessage == MemoryText.unavailableDetail(
+                    address: "http://127.0.0.1:8321",
+                    error: failure.userMessage
+                ))
+            }
+        }
+    }
 }

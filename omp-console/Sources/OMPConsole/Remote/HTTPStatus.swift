@@ -14,7 +14,7 @@ enum HTTPStatus {
         case .unauthorized: return 401
         case .notFound: return 404
         case .conflict: return 409
-        case .unavailable: return 503
+        case .unavailable, .outdatedService: return 503
         case .server, .decoding: return 500
         }
     }

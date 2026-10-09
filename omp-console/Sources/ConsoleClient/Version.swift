@@ -46,6 +46,7 @@ public enum ClientErrorMapping {
         case "not_found": return .api(.notFound(message))
         case "conflict": return .api(.conflict(message))
         case "unavailable": return .api(.unavailable(message))
+        case "outdated_service": return .api(.outdatedService(message))
         case "server": return .api(.server(message))
         case "decoding": return .api(.decoding(message))
         default:

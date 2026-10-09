@@ -44,6 +44,14 @@ enum IOSMemoryText {
     /// Le graphe partiel : le Mac a retiré des lignes à l'une des deux bornes.
     static let graphPartial = "Graphe partiel : le Mac n'a pas servi tous les souvenirs."
 
+    /// La route graphe est absente côté mem0-http (code partagé `outdated_service`) :
+    /// la cause et le remède, sans adresse, sans JSON ni code HTTP.
+    static let graphServiceOutdated =
+        "Graphe indisponible : serveur mémoire trop ancien.\nMets à jour mem0-http sur le Mac (redéploie le service), puis réessaie."
+
+    /// L'app Mac elle-même ne connaît pas la route graphe (`not_found`).
+    static let graphMacOutdated = "Graphe indisponible : app Mac trop ancienne, mets-la à jour."
+
     /// Le titre du bloc de liens de la fiche.
     static let links = "Liens"
 

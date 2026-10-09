@@ -42,6 +42,12 @@ struct IOSMemoryGraphView: View {
                 banner(IOSMemoryText.macUnreachable, tone: .attention)
                 card(IOSMemoryText.noData)
                 retry
+            case .serviceOutdated:
+                banner(IOSMemoryText.graphServiceOutdated, tone: .attention)
+                retry
+            case .macOutdated:
+                banner(IOSMemoryText.graphMacOutdated, tone: .attention)
+                retry
             case let .unavailable(detail):
                 banner(IOSMemoryText.unavailable(detail: detail), tone: .danger)
                 retry
