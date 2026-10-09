@@ -1983,6 +1983,8 @@ fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
 sans aucune action sur le Mac.
 
+Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
+
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
 (le catalogue de `omp models --json`, qu'aucune route n'exposait) et le champ
 additif `headOid` de la ligne de PR (sans lui, la fusion est impossible). La
