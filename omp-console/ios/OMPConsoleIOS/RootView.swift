@@ -29,6 +29,8 @@ struct RootView: View {
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     private let recipe: IOSHomeRecipe?
+    /// Le crochet de recette `-home.row`, quand il est donné.
+    private let recipeRow: Int?
     /// Le crochet de recette `-sessions.recipe`, quand il est donné.
     private let sessionRecipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe`, quand il est donné.
@@ -41,6 +43,7 @@ struct RootView: View {
         selection: ConsoleSection = .home,
         state: IOSScreenState = .ready,
         recipe: IOSHomeRecipe? = nil,
+        recipeRow: Int? = nil,
         sessionRecipe: IOSSessionsRecipe? = nil,
         memoryRecipe: IOSMemoryGraphRecipe? = nil,
         autoPresentConnection: Bool = true
@@ -48,6 +51,7 @@ struct RootView: View {
         _selection = State(initialValue: selection)
         _state = State(initialValue: state)
         self.recipe = recipe
+        self.recipeRow = recipeRow
         self.sessionRecipe = sessionRecipe
         self.memoryRecipe = memoryRecipe
         self.autoPresentConnection = autoPresentConnection
@@ -79,6 +83,7 @@ struct RootView: View {
                 HomeView(
                     client: client,
                     recipe: recipe,
+                    recipeRow: recipeRow,
                     showConnection: $showConnection,
                     onSelectSection: { selection = $0 }
                 )

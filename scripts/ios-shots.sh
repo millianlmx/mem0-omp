@@ -346,6 +346,45 @@ if [ "$count" != "100" ]; then
   exit 1
 fi
 
+# Passage 5 — les RANGÉES de l'Accueil en Dynamic Type (ios-accueil-dynamic-type-casse) :
+# chaque rangée « titre | puce | bouton » du tableau de bord (index 0..3 dans « En cours »
+# puis « Livrées récemment », fixture `HomeParity`) amenée en haut de l'écran par le
+# crochet `-home.row`, à la taille par défaut, en accessibility-extra-large et à la taille
+# maximale — iPhone seulement, apparence claire. La taille du simulateur est remise à
+# `large` par `reset_simulators` à la sortie.
+home_rows=(0 1 2 3)
+row_sizes=("$TEXT_DEFAULT" accessibility-extra-large "$TEXT_AX")
+
+shoot_rows() {
+  local label="$1"
+  local udid="$2"
+  xcrun simctl ui "$udid" appearance light >/dev/null 2>&1 || true
+  for size in "${row_sizes[@]}"; do
+    xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
+    for row in "${home_rows[@]}"; do
+      xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
+        -section home -home.welcomeSeen YES -home.recipe dashboard -home.row "$row" >/dev/null 2>&1
+      sleep 2
+      shot="$SHOTS/$label-home-row$row-$size.png"
+      if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+        echo "  ✗ capture impossible ($shot)" >&2
+        exit 1
+      fi
+      echo "$shot"
+    done
+  done
+}
+
+shoot_rows iphone "$iphone"
+
+# Le quatrième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 56
+# écrans, les 32 de l'Accueil et les 12 du graphe est 112.
+count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$count" != "112" ]; then
+  echo "  ✗ $count captures produites (112 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées)" >&2
+  exit 1
+fi
+
 # Chaque capture est sondée : toutes sont PORTRAIT (aucune ligne paysage — voir
 # la limite d'outillage en tête de ce script et dans `omp-console/ios/DESIGN.md`).
 for shot in "$SHOTS"/*.png; do
@@ -362,5 +401,5 @@ for shot in "$SHOTS"/*.png; do
   fi
 done
 
-echo "  ✓ 100 captures dans $SHOTS (dimensions vérifiées)"
+echo "  ✓ 112 captures dans $SHOTS (dimensions vérifiées)"
 exit 0

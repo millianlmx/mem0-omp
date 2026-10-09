@@ -193,6 +193,11 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
+- Les rangées « En cours » et « Livrées récemment » restent sur une ligne aux
+  tailles standard et s'empilent (titre, puce, bouton) aux tailles
+  d'accessibilité ; leurs boutons sont bornés à `accessibility3` et leur texte à
+  `accessibility4` (au-delà, un mot comme « Implémentation » est coupé en deux).
+  `[test: rowsStackFromTheFirstAccessibilitySize]`
 
 ## Mémoire (feature `ios-memoire`)
 

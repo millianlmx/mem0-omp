@@ -7,6 +7,12 @@
 // `IOSSection.resolve`, la DERNIÈRE paire reconnue gagne ; une valeur inconnue est
 // ignorée.
 //
+// `-home.row <n>` (feature ios-accueil-dynamic-type-casse) amène le HAUT de la
+// rangée d'index `n` — « En cours » puis « Livrées récemment » — en haut de la
+// zone de défilement du tableau de bord, pour les captures de rangées. Même
+// règle : la DERNIÈRE paire reconnue gagne ; `n` doit être un entier ≥ 0, sinon la
+// paire est ignorée. Ce n'est pas une fonctionnalité, comme `-home.recipe`.
+//
 // Le fichier ne nomme PAS le type de l'instantané (jeton interdit dans les
 // sources de l'app) : il consomme `HomeParity.snapshot`, la fixture partagée.
 
@@ -34,6 +40,23 @@ enum IOSHomeRecipe: String, Equatable {
                index + 1 < arguments.count,
                let recipe = IOSHomeRecipe(rawValue: arguments[index + 1]) {
                 resolved = recipe
+            }
+            index += 1
+        }
+        return resolved
+    }
+
+    /// La rangée à amener en haut de l'écran : la DERNIÈRE paire `-home.row <n>`
+    /// reconnue gagne ; `n` doit être un entier ≥ 0, sinon la paire est ignorée.
+    static func row(_ arguments: [String]) -> Int? {
+        var resolved: Int?
+        var index = 0
+        while index < arguments.count {
+            if arguments[index] == "-home.row",
+               index + 1 < arguments.count,
+               let row = Int(arguments[index + 1]),
+               row >= 0 {
+                resolved = row
             }
             index += 1
         }

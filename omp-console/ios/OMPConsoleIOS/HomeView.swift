@@ -5,7 +5,9 @@
 //
 // Aucune phrase n'est composée ici : les mots viennent du noyau partagé
 // (`HomeText`, `ActionsText`, `ContractText`) et de `IOSHomeText` ; la vue rend
-// les décisions pures de `IOSHomeState` et `IOSHomeContent`.
+// les décisions pures de `IOSHomeState` et `IOSHomeContent`. Les rangées « En
+// cours » et « Livrées récemment » s'empilent aux tailles d'accessibilité
+// (`IOSHomeContent.rowAxis`) et restent sur une ligne aux tailles standard.
 //
 // Surfaces : `iosPanel()`/`iosCard()`/`iosBanner(tone:)`/`IOSStatusChip`, les
 // composants système, jamais un contrôle maison (`onTapGesture` interdit ; les
@@ -25,6 +27,9 @@ struct HomeView: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     let recipe: IOSHomeRecipe?
+    /// Le crochet de recette `-home.row`, quand il est donné : la rangée à amener en
+    /// haut du tableau de bord (captures des rangées en Dynamic Type).
+    let recipeRow: Int?
     /// La feuille de connexion de la racine, ouverte par l'état déconnecté.
     @Binding var showConnection: Bool
     /// Sélection d'une section depuis l'Accueil (« Tout afficher », « Voir dans Pipelines »).
@@ -32,6 +37,7 @@ struct HomeView: View {
 
     @Environment(\.openURL) private var openURL
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     @State private var answerCard: SelectedCard?
     @State private var contractCard: SelectedCard?
@@ -41,11 +47,13 @@ struct HomeView: View {
     init(
         client: ConsoleClientModel,
         recipe: IOSHomeRecipe? = nil,
+        recipeRow: Int? = nil,
         showConnection: Binding<Bool>,
         onSelectSection: @escaping (ConsoleSection) -> Void
     ) {
         self.client = client
         self.recipe = recipe
+        self.recipeRow = recipeRow
         _showConnection = showConnection
         self.onSelectSection = onSelectSection
     }
@@ -165,24 +173,35 @@ struct HomeView: View {
     private func dashboardView(_ dashboard: HomeDashboard) -> some View {
         let showsRepo = HomePresentation.showsRepo(dashboard)
         let prominentID = HomePresentation.prominentAttentionID(dashboard)
-        return ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 28) {
-                setupBanner
-                launchBanner
-                if let gestureFailure {
-                    Text(gestureFailure)
-                        .font(.callout)
-                        .iosBanner(tone: .danger)
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 28) {
+                    setupBanner
+                    launchBanner
+                    if let gestureFailure {
+                        Text(gestureFailure)
+                            .font(.callout)
+                            .iosBanner(tone: .danger)
+                    }
+                    attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
+                    runningSection(dashboard, showsRepo: showsRepo)
+                    deliveredSection(dashboard, showsRepo: showsRepo)
                 }
-                attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
-                runningSection(dashboard, showsRepo: showsRepo)
-                deliveredSection(dashboard, showsRepo: showsRepo)
+                .padding(IOSMetrics.margin(sizeClass))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(IOSMetrics.margin(sizeClass))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(IOSHomeAccessibility.dashboard)
+            .onAppear { scrollToRecipeRow(dashboard, proxy: proxy) }
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(IOSHomeAccessibility.dashboard)
+    }
+
+    /// Le crochet `-home.row <n>` : la rangée d'index `n` (« En cours » puis
+    /// « Livrées récemment ») en haut de la zone de défilement. Un index absent ou
+    /// hors bornes ne défile pas. Le défilement manuel reste libre ensuite.
+    private func scrollToRecipeRow(_ dashboard: HomeDashboard, proxy: ScrollViewProxy) {
+        guard let recipeRow, let id = IOSHomeContent.recipeRowID(dashboard, index: recipeRow) else { return }
+        proxy.scrollTo(id, anchor: .top)
     }
 
     private func attentionSection(_ dashboard: HomeDashboard, showsRepo: Bool, prominentID: String?) -> some View {
@@ -212,7 +231,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(dashboard.running.enumerated()), id: \.element.id) { index, card in
                         if index > 0 { Divider() }
-                        runningRow(card, showsRepo: showsRepo)
+                        runningRow(card, showsRepo: showsRepo).id(card.id)
                     }
                 }
                 .iosCard()
@@ -229,7 +248,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(Array(dashboard.delivered.enumerated()), id: \.element.id) { index, card in
                         if index > 0 { Divider() }
-                        deliveredRow(card, showsRepo: showsRepo)
+                        deliveredRow(card, showsRepo: showsRepo).id(card.id)
                     }
                 }
                 .iosCard()
@@ -310,7 +329,7 @@ struct HomeView: View {
     // MARK: - Lignes
 
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        HStack(spacing: 12) {
+        rowLayout {
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.title).font(.body.weight(.medium))
                 if let subtitle = HomeText.cardSubtitle(
@@ -321,11 +340,12 @@ struct HomeView: View {
                     Text(subtitle).font(.callout).foregroundStyle(.secondary)
                 }
             }
-            Spacer()
+            if rowAxis == .horizontal { Spacer() }
             IOSStatusChip(status: ConsoleStatus.of(card: card))
             if KanbanActionPresentation.resumable(card), card.action != nil {
                 Button(KanbanText.resume) { resume(card) }
                     .buttonStyle(.bordered)
+                    .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
                     .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
             } else {
                 TimelineView(.periodic(from: .now, by: 1)) { context in
@@ -336,14 +356,26 @@ struct HomeView: View {
                 }
             }
         }
+        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.running(card.id))
     }
 
+    /// L'axe des rangées « titre | puce | bouton » (règle pure : `IOSHomeContent.rowAxis`).
+    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize) }
+
+    /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
+    private var rowLayout: AnyLayout {
+        switch rowAxis {
+        case .horizontal: AnyLayout(HStackLayout(spacing: 12))
+        case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        }
+    }
+
     private func deliveredRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         let link = IOSHomeContent.deliveredLink(card)
-        return HStack(spacing: 12) {
+        return rowLayout {
             if let link {
                 Button { openURL(link) } label: {
                     deliveredLabel(card, showsRepo: showsRepo)
@@ -352,6 +384,7 @@ struct HomeView: View {
                 .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
                 Button(HomeText.openPR) { openURL(link) }
                     .buttonStyle(.bordered)
+                    .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
                     .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
             } else {
                 deliveredLabel(card, showsRepo: showsRepo)
@@ -359,18 +392,19 @@ struct HomeView: View {
                     .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
             }
         }
+        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
     }
 
     private func deliveredLabel(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        HStack(spacing: 12) {
+        rowLayout {
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.title)
                 if showsRepo {
                     Text(card.repo).foregroundStyle(.secondary)
                 }
             }
-            Spacer()
+            if rowAxis == .horizontal { Spacer() }
             IOSStatusChip(status: ConsoleStatus.of(card: card))
         }
         .contentShape(Rectangle())
