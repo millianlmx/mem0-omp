@@ -1965,18 +1965,21 @@ partagée `SessionParity`, sans écran fabriqué ; la DERNIÈRE paire reconnue g
 et une valeur inconnue est ignorée :
 
 ```
--sessions.recipe <liste|vide|visionneuse|illisible|en-direct>
+-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases>
 ```
 
 - `liste` — la liste peuplée de la session de la fixture ;
 - `vide` — l'état vide réel de l'écran ;
 - `visionneuse` — la feuille du fil ouverte sur la session ;
 - `illisible` — le cas d'une session illisible ;
-- `en-direct` — le fil d'un run vivant.
+- `en-direct` — le fil d'un run vivant ;
+- `phases` — une session terminée par étape de pipeline (mêmes titre, dépôt et
+  heure) : les icônes d'étape diffèrent, les titres doivent rester alignés.
 
 Les preuves Swift de la section vivent dans
 `omp-console/ios/OMPConsoleIOSTests/IOSSessionTests.swift` (motif de parité
-compris) et dans `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
+compris), `omp-console/ios/OMPConsoleIOSTests/IOSRowAccessibilityTests.swift`
+(rangées lues par VoiceOver) et `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
 côté macOS ; la garde textuelle est `test/ios-sessions.test.ts`. La recette de
 design iOS fait autorité et vit dans `omp-console/ios/DESIGN.md`.
 

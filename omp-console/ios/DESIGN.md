@@ -169,6 +169,10 @@ marqueur `[test: <fonction>]` (une fonction de
   libellés. `[test: parityFacts]`
 - La ligne « Accueil » porte le badge du nombre d'attentes (la fonction partagée
   `HomePresentation.attentionCount`), et rien quand il vaut zéro. `[test: badgeCounts]`
+- Chaque ligne de la liste racine est UN bouton d'accessibilité (`ios.section.<section>`)
+  dont le libellé est le titre de la section, suivi de « , N en attente » quand le
+  badge est visible — la même valeur alimente le badge et le libellé.
+  `[test: sectionRowLabelFollowsShownBadge]`
 - La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
   (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
@@ -277,6 +281,12 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points ni `lineLimit` numérique dans le fil : les
   lignes se replient, comme les blocs de code d'`IOSMarkdownView`.
   `[garde: design-ios/AC-7]`
+- Le libellé d'accessibilité d'une ligne dit ce qu'elle affiche, dans son ordre :
+  feature, état, étape, dépôt, heure — un morceau absent de l'écran est absent du
+  libellé. `[test: sessionRowLabelSaysWhatRowShows]`
+- Le symbole d'étape occupe une colonne de largeur fixe (`IOSMetrics.phaseIconWidth`,
+  mise à l'échelle par `@ScaledMetric`) : les titres des lignes partagent la même
+  abscisse à toute taille de texte. `[test: phasesRecipeShowsEveryPhase]`
 
 ## Session OMP (feature `ios-session-omp`)
 

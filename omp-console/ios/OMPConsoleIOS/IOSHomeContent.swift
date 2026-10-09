@@ -60,6 +60,13 @@ enum IOSHomeContent {
         HomePresentation.attentionCount(omp: omp, board: board)
     }
 
+    /// Le badge VISIBLE d'une ligne de la liste racine : le compte d'attentes
+    /// seulement sur « Accueil » quand elle est la section affichée, sinon 0
+    /// (`.badge(0)` ne montre rien). Alimente le badge ET le libellé de la ligne.
+    static func rowBadge(for section: ConsoleSection, selection: ConsoleSection?, attentionCount: Int) -> Int {
+        section == .home && selection == .home && attentionCount > 0 ? attentionCount : 0
+    }
+
     /// La bienvenue est due à la première ouverture de l'Accueil (S-15).
     static func welcomeDue(welcomeSeen: Bool, section: ConsoleSection) -> Bool {
         !welcomeSeen && section == .home

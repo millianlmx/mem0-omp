@@ -60,16 +60,15 @@ struct RootView: View {
                 ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
                     Section(group.title) {
                         ForEach(IOSSection.sections(of: group)) { section in
-                            if section == .home, selection == .home, attentionCount > 0 {
-                                Label(section.title, systemImage: section.systemImage)
-                                    .badge(attentionCount)
-                                    .tag(section)
-                                    .accessibilityIdentifier("ios.section." + section.rawValue)
-                            } else {
-                                Label(section.title, systemImage: section.systemImage)
-                                    .tag(section)
-                                    .accessibilityIdentifier("ios.section." + section.rawValue)
-                            }
+                            let badge = IOSHomeContent.rowBadge(
+                                for: section, selection: selection, attentionCount: attentionCount)
+                            Label(section.title, systemImage: section.systemImage)
+                                .badge(badge)
+                                .tag(section)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(IOSHomeText.sectionRowLabel(section.title, badge: badge))
+                                .accessibilityAddTraits(.isButton)
+                                .accessibilityIdentifier("ios.section." + section.rawValue)
                         }
                     }
                 }
@@ -113,8 +112,9 @@ struct RootView: View {
         }
     }
 
-    /// Le badge d'une ligne : le compte d'attentes seulement sur la ligne
-    /// « Accueil » quand elle est la section affichée (S-12).
+    /// Le compte d'attentes de la ligne « Accueil » ; `IOSHomeContent.rowBadge` décide
+    /// s'il est visible (Accueil sélectionnée, compte > 0, S-12), et ce même badge
+    /// nourrit le libellé d'accessibilité de la ligne.
     private var attentionCount: Int {
         IOSHomeContent.badge(omp: client.omp, board: client.board)
     }

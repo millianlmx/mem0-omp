@@ -35,9 +35,28 @@ enum IOSSessionText {
     /// L'étiquette d'une question `ask` (S-7).
     static let question = "Question"
 
-    /// Le libellé d'accessibilité d'une ligne de la liste : le titre de la
-    /// feature et l'état de son run (S-1).
-    static func rowLabel(_ title: String, _ status: String) -> String { "\(title) — \(status)" }
+    /// Le séparateur des morceaux du libellé d'accessibilité d'une ligne.
+    static let rowLabelSeparator = ", "
+
+    /// Le libellé d'accessibilité d'une ligne de la liste : ce que la ligne
+    /// AFFICHE, dans son ordre visuel — feature, état, étape, dépôt, heure.
+    /// L'étape et le dépôt viennent de la ligne « étape · dépôt » : sans elle
+    /// (`target.subtitle == nil`) ils sont absents ; un dépôt vide n'est pas dit.
+    /// Un morceau absent de l'écran est absent du libellé, sans séparateur orphelin.
+    static func rowLabel(_ choice: RunChoice) -> String {
+        var parts: [String] = []
+        let title = choice.featureTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { parts.append(choice.featureTitle) }
+        parts.append(ConsoleStatus.of(run: choice).text)
+        if choice.target.subtitle != nil {
+            parts.append(PhaseText.title(choice.phase))
+            if !choice.repo.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                parts.append(choice.repo)
+            }
+        }
+        parts.append(ConsoleFormat.time(ms: choice.startedAtMs))
+        return parts.joined(separator: rowLabelSeparator)
+    }
 
     /// Le titre d'un appel d'outil : le verbe, puis sa cible quand elle existe.
     static func toolTitle(_ verb: String, _ target: String) -> String {
@@ -87,6 +106,12 @@ enum IOSSessionText {
     static let recipeVisionneuse = "visionneuse"
     static let recipeIllisible = "illisible"
     static let recipeEnDirect = "en-direct"
+    static let recipePhases = "phases"
+
+    /// L'identifiant d'une session de la recette `phases` : celui de l'en-tête de
+    /// la fixture, suffixé par l'étape, pour que les cinq lignes soient distinctes.
+    static func phaseSessionID(_ id: String, _ phase: PipelinePhase) -> String { "\(id)-\(phase.rawValue)" }
+
     /// Le motif « fichier illisible » de la recette : le même que celui que la
     /// suite macOS épingle sur un fichier aux droits retirés.
     static let unreadableReason = "ouverture en lecture refusée"

@@ -15,6 +15,14 @@ enum IOSMetrics {
     /// La cible tactile minimale (HIG, D-4) : aucune cible de la coque ne
     /// descend sous 44 pt.
     static let minimumTarget: CGFloat = 44
+    /// La largeur de la colonne de l'icône d'étape d'une ligne Sessions, à la
+    /// taille de référence `.body` : la largeur de la colonne macOS
+    /// (`SessionSelectorView`, 28 pt), et ≥ à la largeur de LAYOUT du symbole
+    /// d'étape le plus large (`hammer`, 25 pt à `.body`, mesuré par idb sur
+    /// iPhone et iPad le 2026-10-09 : le glyphe seul fait 20,7 pt, mais son
+    /// cadre de mise en page est plus large). Mise à l'échelle par
+    /// `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
+    static let phaseIconWidth: CGFloat = 28
 
     /// La marge horizontale d'un écran, selon la largeur disponible.
     static func margin(_ sizeClass: UserInterfaceSizeClass?) -> CGFloat {

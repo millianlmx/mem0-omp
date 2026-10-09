@@ -21,6 +21,18 @@ enum IOSHomeText {
         "Connectez l'app au Mac pour voir ce qui vous attend, ce qui tourne et ce qui est livré."
     static let connect = "Se connecter"
 
+    // --- rangée de la liste racine (lue par VoiceOver) -------------------------
+
+    /// Le mot qui suit le nombre d'un badge visible dans le libellé d'une rangée.
+    static let rowPending = "en attente"
+
+    /// Le libellé d'accessibilité d'une rangée de section : le titre, suivi du
+    /// badge QUAND il est visible (`badge > 0`). Même valeur que celle passée à
+    /// `.badge(_:)`, donc le libellé annonce un badge si et seulement s'il se voit.
+    static func sectionRowLabel(_ title: String, badge: Int) -> String {
+        badge > 0 ? "\(title), \(badge) \(rowPending)" : title
+    }
+
     // --- OMP absent sur le Mac (S-10, AC-16) ----------------------------------
 
     static let macMissingTitle = "OMP absent sur le Mac"
