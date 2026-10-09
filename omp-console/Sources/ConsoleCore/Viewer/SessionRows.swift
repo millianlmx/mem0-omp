@@ -338,12 +338,14 @@ public struct SessionRowBuilder: Sendable {
     private var callRows: [String: Int] = [:]
     /// Les offsets d'entrée déjà consommés : l'anti-doublon.
     private var consumedOffsets: Set<Int> = []
-    /// Le dernier texte de l'agent (rogné) depuis le dernier message de
-    /// l'utilisateur. Mesuré sur les sessions réelles : l'agent réécrit parfois sa
-    /// réponse finale MOT POUR MOT après un dernier appel d'outil (texte + appel
-    /// `mem0_add`, puis le même texte seul) — les DONNÉES portent le doublon, le
-    /// fil ne le montre qu'une fois.
-    private var lastAssistantText: String?
+    /// Les textes de l'agent (rognés, non vides) déjà montrés depuis le dernier
+    /// message de l'utilisateur. Mesuré sur les sessions réelles : l'agent redonne
+    /// sa réponse finale, soit MOT POUR MOT après un dernier appel d'outil, soit —
+    /// quand un avis `[pipeline]` (un `custom_message`, silencieux pour le lecteur)
+    /// déclenche un tour automatique — en DERNIER PARAGRAPHE d'un message précédé
+    /// d'un préambule. Les DONNÉES portent le doublon ; le fil ne le montre
+    /// qu'une fois. Un vrai message de l'utilisateur vide l'ensemble.
+    private var shownAssistantTexts: Set<String> = []
     /// La racine du projet de la session (le `cwd` de son en-tête) : les chemins
     /// des appels d'outil s'affichent relatifs à elle. Posée avant `append` ; une
     /// ligne déjà bâtie n'est pas réécrite.
@@ -358,24 +360,24 @@ public struct SessionRowBuilder: Sendable {
 
             switch entry.kind {
             case .user(let turn):
-                lastAssistantText = nil
+                shownAssistantTexts.removeAll()
                 rows.append(
                     SessionRow(id: rowId(entry.offset), kind: .user(UserRow(text: turn.text)))
                 )
 
             case .assistant(let turn):
                 let text = turn.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                let repeated = !text.isEmpty && text == lastAssistantText
-                if !text.isEmpty { lastAssistantText = text }
                 let thinking = turn.thinking.flatMap { $0.isEmpty ? nil : $0 }
-                // Un texte identique au précédent du même tour est REPLIÉ : la
-                // ligne ne garde que sa réflexion, ou disparaît s'il n'y en a pas.
-                // Ses appels d'outil restent, eux, tous affichés.
-                if !repeated || thinking != nil {
+                let shown = displayedText(of: turn.text, trimmed: text)
+                if !text.isEmpty { shownAssistantTexts.insert(text) }
+                // Un texte déjà montré dans le même tour est REPLIÉ : la ligne ne
+                // garde que sa réflexion, ou disparaît s'il n'y en a pas. Ses appels
+                // d'outil restent, eux, tous affichés.
+                if shown != nil || thinking != nil {
                     rows.append(
                         SessionRow(
                             id: rowId(entry.offset),
-                            kind: .assistant(AssistantRow(text: repeated ? "" : turn.text, thinking: turn.thinking))
+                            kind: .assistant(AssistantRow(text: shown ?? "", thinking: turn.thinking))
                         )
                     )
                 }
@@ -424,6 +426,28 @@ public struct SessionRowBuilder: Sendable {
                 )
             }
         }
+    }
+
+    /// Le texte à montrer pour un message de l'agent : `nil` si c'est la copie
+    /// INTÉGRALE d'un texte déjà montré ; le message sans sa copie finale si un
+    /// texte déjà montré revient en fin de message, juste après une fin de ligne
+    /// (la copie la plus longue, donc le plus petit début) ; sinon le texte tel quel.
+    /// Comparaison exacte sur textes rognés : aucun rapprochement flou. `Character.isNewline`
+    /// et non `== "\n"` : « \r\n » est un seul `Character`.
+    private func displayedText(of original: String, trimmed text: String) -> String? {
+        guard !text.isEmpty else { return original }
+        if shownAssistantTexts.contains(text) { return nil }
+        guard !shownAssistantTexts.isEmpty else { return original }
+        var index = text.startIndex
+        while index < text.endIndex {
+            let next = text.index(after: index)
+            if text[index].isNewline, next < text.endIndex, shownAssistantTexts.contains(String(text[next...])) {
+                let preamble = String(text[..<next]).trimmingCharacters(in: .whitespacesAndNewlines)
+                return preamble
+            }
+            index = next
+        }
+        return original
     }
 
     private func callRow(_ call: ToolCall) -> ToolCallRow {

@@ -651,6 +651,14 @@ pied de liste (`viewer.selector.footer`).
   automatique. » (`viewer.unreadable`) s'il n'est pas lisible, « Session vide » s'il
   est vide (`viewer.placeholder`). Sous le fil, `viewer.notes` dit le nombre
   d'entrées ignorées et « Fichier réécrit — affichage reconstruit » le cas échéant.
+- **Une réponse déjà montrée n'est pas remontrée.** Depuis le dernier message de
+  l'utilisateur, un texte de l'agent déjà affiché ne l'est plus — ni en entier, ni
+  quand il revient en fin d'un message, juste après une fin de ligne (la copie
+  qu'ajoute un tour automatique : l'avis `[pipeline]` est silencieux pour le
+  lecteur, l'agent répond « préambule » + sa réponse précédente) : seul le préambule
+  reste, les appels d'outil aussi. Un vrai message de l'utilisateur rouvre
+  l'affichage. Même règle sur iOS (le constructeur de lignes est partagé) ; le
+  fichier de session n'est jamais modifié.
 - **Lecture seule** : la visionneuse n'appelle aucune API d'écriture. Vérifier
   tient en une commande : la taille et l'empreinte du `.jsonl` ne changent pas
   pendant qu'on défile, qu'on plie ou que des faits arrivent.
