@@ -122,7 +122,7 @@ function formFaults(root: string): string[] {
   const view = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift"));
   const faults: string[] = [];
   if (!view.includes("sizeClass == .compact")) faults.push("PipelinesScreen ne distingue pas la largeur compacte");
-  if (!view.includes("ScrollView(")) faults.push("PipelinesScreen n'a pas de défilement");
+  if (!view.includes("ScrollView(.vertical)")) faults.push("PipelinesScreen n'a pas de défilement vertical d'écran");
   if (/lineLimit\(\s*\d/.test(view)) faults.push("PipelinesScreen tronque par lineLimit numérique");
   return faults;
 }
@@ -280,7 +280,7 @@ test("ios-pipelines/AC-4 : les deux formes atteignent toutes les voies (compacte
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("ScrollView(", "VStack("));
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("ScrollView(.vertical)", "VStack("));
   assert.ok(formFaults(copy).some((f) => f.includes("défilement")), "l'absence de défilement doit faire rougir la garde");
 });
 

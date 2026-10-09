@@ -18,7 +18,6 @@ struct HomeContractSheet: View {
     var recipePayload: RemoteContractPayload? = nil
 
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.horizontalSizeClass) private var sizeClass
 
     @State private var content: IOSContractContent?
     @State private var failure: String?
@@ -51,7 +50,6 @@ struct HomeContractSheet: View {
                     }
                 }
                 .iosPanel()
-                .padding(IOSMetrics.margin(sizeClass))
             }
             .navigationTitle(ContractText.title(slug: IOSHomeContent.contractSlug(card)))
             .toolbar {

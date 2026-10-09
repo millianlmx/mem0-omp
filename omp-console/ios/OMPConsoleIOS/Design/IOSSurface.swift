@@ -21,8 +21,10 @@ enum IOSSurface {
 }
 
 extension View {
-    /// Le panneau d'un écran : fond opaque, marges de la taille de classe, filet
-    /// du système. Chaque écran des sept sections y pose son contenu.
+    /// Le panneau d'un écran : fond opaque, filet du système, rembourrage
+    /// intérieur qui suit Dynamic Type, et marge extérieure de la taille de
+    /// classe (fixe) — aucun panneau ne touche un bord de l'écran, aucun appelant
+    /// n'ajoute la sienne. Chaque écran des sept sections y pose son contenu.
     func iosPanel() -> some View {
         modifier(IOSPanelSurface())
     }
@@ -57,6 +59,7 @@ private struct IOSPanelSurface: ViewModifier {
                 RoundedRectangle(cornerRadius: IOSSurface.panelRadius)
                     .strokeBorder(Color(uiColor: .separator), lineWidth: 0.5)
             }
+            .padding(IOSMetrics.margin(sizeClass))
     }
 }
 

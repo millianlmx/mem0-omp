@@ -38,10 +38,12 @@ struct IOSSessionsScreen: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            content
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                content
+            }
+            .iosPanel()
         }
-        .iosPanel()
         .navigationTitle(ConsoleSection.sessions.title)
         .sheet(item: $open) { target in
             switch target {
@@ -124,10 +126,17 @@ struct IOSSessionsScreen: View {
             .pickerStyle(.menu)
             .accessibilityIdentifier(IOSSessionsAccessibility.filter)
 
-            List {
+            LazyVStack(alignment: .leading, spacing: 12) {
                 ForEach(days) { day in
-                    Section(day.title) {
-                        ForEach(day.choices) { choice in
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(day.title)
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                            .accessibilityAddTraits(.isHeader)
+                        ForEach(Array(day.choices.enumerated()), id: \.element.id) { index, choice in
+                            if index > 0 {
+                                Divider()
+                            }
                             Button {
                                 open = .choice(choice)
                             } label: {
@@ -143,11 +152,11 @@ struct IOSSessionsScreen: View {
                             )
                         }
                     }
+                    .accessibilityElement(children: .contain)
                     .accessibilityIdentifier(IOSSessionsAccessibility.day(day.id))
                 }
             }
-            .listStyle(.plain)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier(IOSSessionsAccessibility.list)
         }
     }
