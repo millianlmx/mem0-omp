@@ -20,7 +20,7 @@ import SwiftUI
 // lit par l'import, elle n'en déclare aucun.
 
 struct SessionSelectorView: View {
-    @StateObject private var selector = SessionSelectorModel()
+    @ObservedObject var selector: SessionSelectorModel
     /// Montre une session dans la section (visionneuse poussée sur la liste).
     let onOpen: (ViewerTarget) -> Void
 

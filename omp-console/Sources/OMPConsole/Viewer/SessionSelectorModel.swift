@@ -45,6 +45,11 @@ final class SessionSelectorModel: ObservableObject {
         }
     }
 
+    /// Le run d'une session, ou `nil` s'il n'est pas dans le magasin.
+    func run(forFile file: String) -> RunChoice? {
+        choices.first { $0.sessionFile == file }
+    }
+
     /// Arrête l'abonnement et la veille du magasin. Idempotent.
     func stop() {
         task?.cancel()

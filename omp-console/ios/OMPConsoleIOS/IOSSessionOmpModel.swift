@@ -180,7 +180,8 @@ final class IOSSessionOmpModel: ObservableObject {
             source: client,
             file: file,
             title: client.hosted?.projectName ?? "",
-            subtitle: client.hosted?.stateLabel
+            subtitle: client.hosted?.stateLabel,
+            tracksRun: false
         )
     }
 

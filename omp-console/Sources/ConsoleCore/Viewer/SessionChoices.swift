@@ -59,6 +59,15 @@ public struct RunChoice: Identifiable, Equatable, Sendable {
         self.target = target
     }
 
+    /// Le run est-il fini ? Vrai pour un run introuvable dans l'instantané (même
+    /// règle que le statut d'en-tête iOS) et pour un run clos (`done`, `failed`) ;
+    /// faux pour un run vivant, y compris périmé (« Interrompu »).
+    public static func hasEnded(_ run: RunChoice?) -> Bool {
+        guard let run else { return true }
+        if case .ended = run.state { return true }
+        return false
+    }
+
     /// Le dépôt et le titre d'un run : un label `<dépôt>/<feature>` se coupe au
     /// DERNIER `/` ; un label sans `/` est le titre, le dépôt est alors le dernier
     /// segment du `cwd`.

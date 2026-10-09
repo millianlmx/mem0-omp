@@ -141,7 +141,7 @@ sessions et les conducteurs ; la commande part à l'API par
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau est affiché |
-| Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
+| Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
 Identifiants de l'Accueil et des feuilles : `home.loading`, `home.firstRun`
 (bouton `home.firstRun.start`), `home.ompMissing.background` (fond « OMP Console
@@ -641,7 +641,11 @@ pied de liste (`viewer.selector.footer`).
   d'octets ; la veille est une source vnode sur le fichier, jamais une scrutation).
   Un geste vers le haut suspend le suivi — le mot `viewer.status` « En direct »
   disparaît et le bouton **« Revenir au direct »** apparaît ; l'activer reprend le
-  suivi.
+  suivi. Une session dont le run est fini (clos, ou absent du magasin) n'affiche
+  jamais « En direct » ni « Démarrage », sur macOS comme sur iOS : la règle
+  (`ConversationText.status(…, runEnded:)`, `RunChoice.hasEnded`) vit dans le noyau,
+  et un run qui se termine pendant l'affichage fait disparaître le mot sans
+  réouverture.
 - **États explicites** : « En attente des premiers échanges » tant que le fichier
   n'existe pas, un bandeau rouge « Session illisible : … Nouvelle tentative
   automatique. » (`viewer.unreadable`) s'il n'est pas lisible, « Session vide » s'il
@@ -1990,6 +1994,18 @@ en préservant la position et l'état replié/déplié, et le fil reste collé a
 tant que l'utilisateur n'a pas remonté. Les composants du fil (modèle, vue, ligne,
 feuille) sont réutilisables par la section Session OMP : leur seul contrat
 d'entrée est une référence de session et une source.
+
+L'en-tête de la feuille porte l'état du RUN (`IOSSessionThreadModel.runStatus` :
+« En cours », « À vous », « Terminé » ou « Échec ») ; le fil porte, lui, sa puce
+`ios.session.thread.status` (« En direct », « Démarrage »). Quand le run de la
+feuille est fini — clos, ou absent de l'instantané — la feuille montre « Terminé »
+dans son en-tête, une seule fois, et AUCUN « En direct » : la puce du fil
+disparaît, y compris si le run se termine pendant que la feuille est ouverte
+(`refreshRunStatus()`, à chaque trame `store`). Le fil de la session hébergée
+(section Session OMP, `tracksRun: false`) n'est pas un run du magasin : il garde
+« En direct » tant qu'il suit le bas. La preuve visuelle vient des recettes
+`visionneuse` (« Terminé » une fois, aucun « En direct ») et `en-direct` (« En
+cours » et « En direct »).
 
 ### Recette : la section Sessions
 

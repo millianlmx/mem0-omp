@@ -31,7 +31,8 @@ struct IOSSessionViewerSheet: View {
                 source: client,
                 file: choice.sessionFile,
                 title: choice.featureTitle,
-                subtitle: choice.target.subtitle
+                subtitle: choice.target.subtitle,
+                tracksRun: true
             )
         )
     }
@@ -45,7 +46,8 @@ struct IOSSessionViewerSheet: View {
                 source: IOSSessionsRecipeSource(thread: thread),
                 file: thread.file,
                 title: thread.title,
-                subtitle: thread.subtitle
+                subtitle: thread.subtitle,
+                tracksRun: true
             )
         )
     }
