@@ -27,6 +27,17 @@ struct ConnectionTextTests {
         #expect(ConnectionText.state(.connected(endpoint: endpoint)).contains("127.0.0.1:8787"))
     }
 
+    @Test("ConnectionText : un Mac découvert avec une zone s'affiche sans zone")
+    func zonedEndpointShownWithoutZone() {
+        let endpoint = ClientEndpoint.bonjour(name: "OMP Console", host: "192.168.1.175%en0", port: 8787)
+        for state in [ConnectionText.state(.connecting(endpoint: endpoint)),
+                      ConnectionText.state(.connected(endpoint: endpoint)),
+                      ConnectionText.state(.macAbsent(endpoint: endpoint))] {
+            #expect(state.contains("192.168.1.175:8787"))
+            #expect(!state.contains("%"))
+        }
+    }
+
     @Test("ConnectionText : l'état version incompatible porte les deux numéros")
     func incompatibleProtocolHasBothNumbers() {
         let text = ConnectionText.state(.incompatibleProtocol(local: 3, remote: 5))
