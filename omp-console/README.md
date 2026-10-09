@@ -1493,9 +1493,33 @@ périodique** : la sonde part à l'apparition de la section, au bouton « Rafra�
 et avant chaque recherche.
 
 > La route `GET /memory/graph` et l'extension `PUT` (étiquettes) sont **nouvelles
-> côté service** : une pile construite avant cette version répond 404/405. Il faut
-> reconstruire l'image — `compose build mem0-http && compose up -d` (l'app affiche
-> sinon l'erreur du service dans l'état « Mémoire indisponible »).
+> côté service** : une pile construite avant cette version répond 404/405. L'iPhone
+> affiche alors « Graphe indisponible : serveur mémoire trop ancien » (la fenêtre
+> macOS affiche l'erreur du service dans l'état « Mémoire indisponible »).
+>
+> **Pile de l'app (conteneur `omp-console-mem0-http`)** — l'étiquette d'image est
+> figée à `omp-console-mem0-http:1` : l'app ne reconstruit l'image que si
+> l'étiquette MANQUE, et ne recrée le conteneur que si le NOM d'image diffère.
+> Reconstruire sous la même étiquette ne remplace donc pas le conteneur en marche.
+> Opération ponctuelle, à la main, avec `P` = le binaire podman embarqué
+> (`~/Library/Application Support/com.omp.console/components/podman/<version>/bin/podman`),
+> `S` = `unix://$TMPDIR/podman/omp-console-api.sock` et `B` = le bundle en marche :
+>
+> 1. Contrôler sans rien changer : `grep -n '@app.get("/memory/graph")' "$B/Contents/Resources/Stack/mem0-http/http_server.py"`
+>    trouve une ligne, et `"$P" --url "$S" ps -a` liste `omp-console-mem0-http`.
+> 2. Construire : `"$P" --url "$S" image build -t omp-console-mem0-http:1 "$B/Contents/Resources/Stack/mem0-http"`
+>    (le build rejoue `test_api.py` ; s'il échoue, rien n'a changé).
+> 3. Quitter l'app (`osascript -e 'quit app "OMP Console"'`), puis
+>    `"$P" --url "$S" container rm -f omp-console-mem0-http` et relancer l'app : elle
+>    recrée le conteneur avec l'environnement de `stack/env`. Attendre
+>    `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8321/health` = `200`.
+> 4. Vérifier : `curl -s http://127.0.0.1:8321/memory/graph` rend `200` et un JSON
+>    `total` / `threshold` / `top_k` / `edges`, et `/openapi.json` liste `/memory/graph`.
+>    L'ancienne image, devenue sans étiquette, se supprime par `"$P" --url "$S" image rm <id>`.
+>
+> La base Qdrant (`omp-console-qdrant`) n'est jamais touchée. La commande
+> `compose build mem0-http && compose up -d` ne vaut que pour la pile MANUELLE de
+> `mem0-stack/`, pas pour celle de l'app.
 
 **La portée** est calculée par le même algorithme que `projectId` du plugin mémoire
 (`omp-mem0-memory/state.ts`) : override `MEM0_PROJECT_ID`, sinon la racine du dépôt
@@ -1610,6 +1634,13 @@ un flux temps réel.
 - **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 1` et
   chaque réponse le renvoie. Un client dont la version diffère est refusé par le code
   partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie.
+- **Route graphe et service trop ancien** : `GET /v1/memory/graph` est la SEULE route
+  qui rend le code partagé `outdated_service` (statut `503`, enveloppe
+  `{"error":{"code":"outdated_service","message":"…"}}`), et uniquement quand
+  mem0-http répond 404 ou 405 sur son propre `/memory/graph` (service sans cette
+  route). Le message est celui des autres pannes mémoire ; un client qui ne connaît
+  pas ce code lit le `503` comme `unavailable`. La liste, la recherche et les autres
+  pannes du graphe (service injoignable, `500`, délai dépassé) gardent `unavailable`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
   `{"code":"XXXXXXXX","name":"<appareil>","protocolVersion":1}` et rend un jeton
   d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres routes). Le code
@@ -2241,6 +2272,14 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
    toucher un nœud-étiquette pour n'afficher que sa famille, puis « Étiquette ▸
    Toutes les étiquettes » pour revenir. Toucher « Liste » rend le sommaire
    inchangé — c'est le mode d'ouverture.
+9. **Graphe et pile trop ancienne** — avec une pile mem0-http sans la route
+   `/memory/graph` (voir « Pile de l'app » dans « Consulter et corriger la mémoire du
+   projet »), toucher « Graphe » : le bandeau dit « Graphe indisponible : serveur
+   mémoire trop ancien. » puis « Mets à jour mem0-http sur le Mac (redéploie le
+   service), puis réessaie. », sans URL, sans JSON et sans code HTTP. Si c'est l'app
+   Mac elle-même qui ne connaît pas la route, il dit « Graphe indisponible : app Mac
+   trop ancienne, mets-la à jour. » Après le redéploiement, « Réessayer » affiche le
+   graphe sans relancer l'app.
 
 Recette OUTILLÉE : le test Swift gated `iosMemoireRecipe`
 (`omp-console/Tests/OMPConsoleTests/MemoryIOSRecipeTests.swift`, titre

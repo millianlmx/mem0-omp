@@ -202,6 +202,8 @@ func errorCasesKeepStableCodes() {
     #expect(ConsoleAPIError.unavailable("x").code == "unavailable")
     #expect(ConsoleAPIError.server("x").code == "server")
     #expect(ConsoleAPIError.decoding("x").code == "decoding")
+    #expect(ConsoleAPIError.outdatedService("x").code == "outdated_service")
+    #expect(ConsoleAPIError.outdatedService("x").message == "x")
 
     // Le message est rendu tel quel, jamais reformulé par le code.
     #expect(ConsoleAPIError.notFound("route inconnue").message == "route inconnue")

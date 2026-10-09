@@ -25,6 +25,8 @@ final class IOSMemoryGraphModel: ObservableObject {
         case idle
         case loading
         case macUnreachable
+        case serviceOutdated
+        case macOutdated
         case unavailable(detail: String)
         case empty
         case graph(
@@ -71,6 +73,10 @@ final class IOSMemoryGraphModel: ObservableObject {
         switch failure {
         case .notConnected, .transport, .incompatibleProtocol, .decoding:
             return .macUnreachable
+        case .api(.outdatedService):
+            return .serviceOutdated
+        case .api(.notFound):
+            return .macOutdated
         case .api(let api):
             return .unavailable(detail: api.message ?? "")
         }

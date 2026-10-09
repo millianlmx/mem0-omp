@@ -55,6 +55,10 @@ public enum ConsoleAPIError: Error, Equatable, Sendable {
     case unavailable(String)
     case server(String)
     case decoding(String)
+    /// La route graphe est absente côté service mémoire (404/405 amont) : un code
+    /// PARTAGÉ et structuré, pour que le client ne classe jamais une panne sur le
+    /// texte d'un message (feature `ios-graphe-memoire-405-erreur-brute`).
+    case outdatedService(String)
 
     /// Le code stable du contrat : jamais traduit, jamais reformulé.
     public var code: String {
@@ -65,6 +69,7 @@ public enum ConsoleAPIError: Error, Equatable, Sendable {
         case .notFound: return "not_found"
         case .conflict: return "conflict"
         case .unavailable: return "unavailable"
+        case .outdatedService: return "outdated_service"
         case .server: return "server"
         case .decoding: return "decoding"
         }
@@ -78,6 +83,7 @@ public enum ConsoleAPIError: Error, Equatable, Sendable {
              .notFound(let message),
              .conflict(let message),
              .unavailable(let message),
+             .outdatedService(let message),
              .server(let message),
              .decoding(let message):
             return message

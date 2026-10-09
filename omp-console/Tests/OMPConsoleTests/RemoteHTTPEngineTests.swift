@@ -156,7 +156,7 @@ func queryParametersAreDecoded() throws {
 
 // MARK: - Statuts et réponses
 
-@Test("statuts HTTP : les huit cas d'erreur rendent le code de la table")
+@Test("statuts HTTP : les neuf cas d'erreur rendent le code de la table")
 func errorStatusTable() throws {
     let cases: [(ConsoleAPIError, Int)] = [
         (.badRequest("x"), 400),
@@ -165,10 +165,11 @@ func errorStatusTable() throws {
         (.notFound("x"), 404),
         (.conflict("x"), 409),
         (.unavailable("x"), 503),
+        (.outdatedService("x"), 503),
         (.server("x"), 500),
         (.decoding("x"), 500),
     ]
-    #expect(cases.count == 8)
+    #expect(cases.count == 9)
     for (error, code) in cases {
         #expect(HTTPStatus.of(error) == code)
     }

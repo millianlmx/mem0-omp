@@ -54,6 +54,20 @@ struct VersionTests {
         answered.stop()
     }
 
+    @Test("ios-graphe-memoire-405-erreur-brute/AC-3 : le code outdated_service est décodé en .api(.outdatedService), un code inconnu retombe sur le statut")
+    func outdatedServiceCodeIsDecoded() {
+        let outdated = Data(#"{"error":{"code":"outdated_service","message":"m"}}"#.utf8)
+        #expect(
+            ClientErrorMapping.translate(status: 503, protocolVersion: 1, body: outdated, localVersion: 1)
+                == .api(.outdatedService("m"))
+        )
+        let unknown = Data(#"{"error":{"code":"futur","message":"m"}}"#.utf8)
+        #expect(
+            ClientErrorMapping.translate(status: 503, protocolVersion: 1, body: unknown, localVersion: 1)
+                == .api(.unavailable("m"))
+        )
+    }
+
     @Test("un Mac sans en-tête de version donne un verrou à numéro distant nul")
     func missingHeaderLocks() async {
         let harness = ClientHarness(

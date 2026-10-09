@@ -93,6 +93,22 @@ func ac5GraphRouteFailureIsNotASilentPartialGraph() async {
 }
 
 @MainActor
+@Test("ios-graphe-memoire-405-erreur-brute/AC-7 : un 405 sur la route graphe laisse le graphe macOS indisponible avec le message d'aujourd'hui")
+func ac7MacGraphKeepsItsUnavailableStateOn405() async {
+    let failure = MemoryServiceError.unexpectedStatus(405, #"{"detail":"Method Not Allowed"}"#)
+    let service = ScriptedMemoryService(
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "un", scope: "p")])),
+        graph: .failure(failure)
+    )
+    let model = memoryGraphModel(service: service)
+
+    await model.activate()
+
+    #expect(model.state == .unavailable(address: "http://localhost:8321", detail: MemoryServiceError.message(for: failure)))
+    #expect(model.visible.nodes.isEmpty)
+}
+
+@MainActor
 @Test("graph-based-memeries-view/AC-5 : corpus vide ⇒ état vide global, pas celui du projet")
 func ac5EmptyCorpusIsAGlobalEmptyState() async {
     let model = memoryGraphModel(service: ScriptedMemoryService(page: .success(MemoryPage(total: 0, rows: []))))
