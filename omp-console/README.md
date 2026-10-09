@@ -2474,6 +2474,115 @@ Limite connue : le tap d'AC-3 ne distingue PAS l'avant de l'après. Le « touch 
 d'UIKit déclenche déjà un bouton de 20 pt jusqu'à environ 19 à 25 pt au-dessus du centre
 du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La garde
 textuelle de la correction est `test/ios-cibles-tactiles-sous-44pt.test.ts`.
+### Recette idb : cibles, identifiants et bords
+
+`scripts/ios-recette-ui.sh` relève 8 surfaces de l'app iOS sur un simulateur
+iPhone dédié et signale trois classes de défauts sur chaque relevé : une cible
+tactile de moins de 44 pt, un identifiant d'accessibilité porté par plusieurs
+éléments, un élément collé au bord de l'écran. Elle se lance à la main : ni CI,
+ni iPad, ni appairage au Mac.
+
+**Prérequis** : `xcrun` (Xcode), `idb` (`idb ui describe-all`, idb-cli 1.6.6 relevé
+ici) et `python3` (bibliothèque standard seule : l'analyseur décode lui-même les PNG).
+
+**Simulateur dédié.** Il doit être neuf (jamais appairé) et son nom ne contient ni
+« iPhone » ni « iPad » : `ios-shots.sh` et `ios-build.sh` d'autres worktrees
+prendraient sinon cet appareil. La recette ne le crée ni ne le supprime.
+
+```bash
+xcrun simctl create recette-ui-tel com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro com.apple.CoreSimulator.SimRuntime.iOS-27-0
+bash scripts/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…
+```
+
+**Matrice.** 8 surfaces × 3 configurations = **24 relevés** : les sept sections
+(`home`, `kanban`, `project`, `session`, `sessions`, `memory`, `stats`) plus la
+feuille d'une carte Pipelines (`kanban-fiche`), en clair à la taille par défaut,
+en sombre à la taille par défaut, puis en clair en AX-XL (`accessibility-extra-large`).
+Les écrans sont alimentés par les crochets de recette existants (`-home.recipe
+dashboard`, `-sessions.recipe liste`, `-memoire.recipe graphe`, `-pipelines.recipe
+fiche`) ; Projet, Session OMP, Statistiques et le tableau Pipelines sont relevés
+dans leur état non appairé. Un relevé n'est accepté que si deux lectures
+consécutives de l'arbre sont identiques **et** que la surface est reconnue par ses
+marqueurs d'accessibilité : jamais la liste racine, l'Accueil déconnecté ou une
+autre section. L'ordre des clés du JSON d'idb et celui de la liste `traits` d'un
+élément changent d'une lecture à l'autre ; la comparaison porte donc sur le JSON
+décodé, `traits` pris comme un ensemble.
+
+**Sortie.** `omp-console/build/ios-recette-ui/base/` (ignoré par git, vidé à chaque
+passage) : `<surface>-<apparence>-<taille>.json` (arbre AX) et `.png` (capture sans
+masque de coins) pour chacun des 24 relevés, `logs/` (journaux `--stderr` de l'app,
+construction) et `rapport.txt`. L'app et le simulateur sont remis à l'état par
+défaut à la sortie (apparence claire, taille `large`) ; le simulateur reste allumé.
+
+**Rapport.** Une ligne par signalement, champs séparés par une tabulation :
+
+```
+SIGNALÉ	surface=<s>	apparence=<a>	taille=<t>	regle=<r>	source=<ax|capture>	element=<désignation>	cadre=<x>,<y>,<l>x<h>
+EXCEPTÉ	surface=<s>	apparence=<a>	taille=<t>	regle=<r>	source=<ax|capture>	element=<désignation>	cadre=<x>,<y>,<l>x<h>	exception=<n>	justification=<texte>
+```
+
+Règles : `cible-44` (contrôle interactif dont un côté arrondi à 0,1 pt est < 44),
+`id-duplique` (une ligne par élément porteur), `bord` (source `ax` : cadre qui touche
+le bord à 0,5 pt près ; source `capture` : colonne de pixels x=0 ou x=largeur−1
+différente du fond sur 44 pt ou plus, sections seulement, jamais la feuille). La
+désignation d'un élément est `id:<AXUniqueId>`, sinon `libellé:<AXLabel>`, sinon
+`type:<type>`. Sans signalement, le fichier est vide. La sortie standard donne le
+chemin du rapport, `<N> signalé(s), <M> excepté(s)` et un avertissement `exception
+inutilisée : <n>` par entrée qui n'excepte rien.
+
+**Codes de sortie.** `0` : 24 relevés faits et aucun `SIGNALÉ` ; `1` : au moins un
+`SIGNALÉ` ; `2` : la recette n'a pas pu conclure (prérequis, exceptions invalides,
+relevé non vérifié, construction ou installation impossible).
+
+**Exceptions.** `scripts/ios-recette-ui-exceptions.json` (versionné)
+est un tableau d'objets aux clés exactes `surface` (une des 8 clés ou `*`),
+`apparence` (`clair`, `sombre`, `*`), `taille` (`defaut`, `ax-xl`, `*`), `regle`,
+`source` (`ax` ou `capture`, `capture` seulement avec `bord`), `element`
+(`id:…`, `libellé:…` ou `type:…`, strictement égal à la désignation) et
+`justification` (non vide : elle nomme la cause lue dans le code). La première
+entrée qui correspond excepte le signalement. Le fichier est validé avant tout
+relevé. Trois familles sont **protégées**, car elles masqueraient les défauts visés
+par l'audit : `cible-44` sur « Tout afficher », « Lire le contrat » et « Piloter un
+projet… » (`ios.home.allPipelines`, `ios.home.attention.*.contract`,
+`ios.projet.start`) ; `id-duplique` sur `pipelines.card.sheet.title` ; `bord` en
+source `capture` sur `kanban`, `sessions`, `memory` ou `*`.
+
+**Intégration.** `--integrer <branche>` (répétable) relève, au lieu du worktree
+courant, une intégration locale jetable : la recette prend `git merge-base HEAD
+main`, vérifie chaque branche (`branche introuvable : <b>`, ou `branche sans commit
+au-dessus de la base <court> : <b>`, sortie 2), crée un worktree détaché
+`omp-console/build/ios-recette-ui/integration-src`, y fusionne les branches dans
+l'ordre donné (`merge --no-ff`), construit et installe son app, puis affiche
+`intégration : <base> + <b1>@<sha> + …`. Un conflit sur un fichier `.md` garde la
+version déjà intégrée ; tout autre conflit annule la fusion et sort en 2
+(`conflit hors documentation : <b> : <chemins>`). Le worktree est supprimé à la
+sortie, quoi qu'il arrive ; rien n'est poussé, aucune branche n'est créée, et la
+branche courante n'entre pas dans l'intégration. Le rapport va dans
+`omp-console/build/ios-recette-ui/integration/`. Les exceptions et l'analyseur sont
+ceux du worktree courant.
+
+Preuve (2026-10-09, simulateur dédié) avec `feat/ios-panneau-sans-marge-scroll-imbrique`,
+`feat/ios-cibles-tactiles-sous-44pt` et `feat/ios-fiche-carte-pipelines` : 53
+signalements, tous exceptés par une entrée justifiée (la liste versionnée), sortie 0,
+et aucune ligne du rapport ne relève de « Tout afficher » / « Lire le contrat » /
+« Piloter un projet… », de `pipelines.card.sheet.title` ni d'un `bord` en source
+`capture` sur Pipelines, Sessions ou Mémoire. La même commande avec une copie de la
+liste privée de l'entrée du filtre de Sessions sort en 1 et nomme ce signalement
+(`SIGNALÉ … id:ios.sessions.filter`). Une exception est une dette : elle disparaît
+avec le correctif qui la justifie, et une entrée devenue inutile est signalée
+(`exception inutilisée : <n>`).
+
+**Nettoyage** d'un simulateur dédié, dans cet ordre :
+
+```bash
+xcrun simctl shutdown <UDID>
+pgrep -fl <UDID>        # vide, à l'exception de idb_companion
+xcrun simctl delete <UDID>
+pkill -f "idb_companion --udid <UDID>"
+```
+
+idb lance un `idb_companion --udid <UDID>` qui survit à `simctl delete` : sans
+`pkill`, il reste.
 
 ### Installer sur un appareil réel
 
