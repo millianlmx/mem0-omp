@@ -831,6 +831,7 @@ public final class ConsoleClientModel: ObservableObject {
         case .api(.unavailable(let message)): return .unavailable(message)
         case .api(let other): return .unavailable(other.message ?? other.code)
         case .decoding(let message): return .unavailable(message)
+        case .unexpectedStatus(let status): return .unavailable("statut \(status)")
         case .notConnected: return .transport(.unreachable("aucun endpoint connu"))
         }
     }

@@ -7,9 +7,6 @@
 // Fichier de VOCABULAIRE (`*Text.swift`) : la garde `design-ios/AC-5` autorise
 // les littéraux alphabétiques ici, et seulement ici, dans l'app.
 
-import ConsoleClient
-import ConsoleCore
-
 enum PipelinesText {
     /// L'état vide de l'app quand le Mac n'est pas joignable et qu'aucun
     /// instantané n'est jamais arrivé : on ne peut PAS affirmer que le magasin est
@@ -28,30 +25,6 @@ enum PipelinesText {
     /// La fusion ne trouve aucune ligne de PR pour ce slug : la PR est ouverte,
     /// mais le Mac ne la suit pas.
     static let noPullRequestRow = "La PR est ouverte, mais le Mac ne la suit pas encore."
-
-    /// L'app n'est pas connectée au Mac : aucun geste n'est émis.
-    static let notConnected = "L'app n'est pas connectée au Mac."
-
-    /// Le Mac n'a pas répondu.
-    static let transportError = "Le Mac n'a pas répondu."
-
-    /// Le message d'une erreur de geste : le texte du serveur tel quel, jamais
-    /// recomposé ; un échec de transport n'invente pas de cause.
-    static func gestureError(_ error: Error) -> String {
-        guard let client = error as? ClientError else { return transportError }
-        switch client {
-        case .notConnected:
-            return notConnected
-        case .incompatibleProtocol(let local, let remote):
-            return ConnectionText.incompatibleProtocol(local: local, remote: remote)
-        case .api(let api):
-            return api.message ?? transportError
-        case .transport:
-            return transportError
-        case .decoding(let detail):
-            return detail
-        }
-    }
 
     // MARK: - Identifiants de feuille
 
@@ -126,6 +99,7 @@ enum PipelinesAccessibility {
     static let answerField = "pipelines.card.sheet.answer"
     static let answerSend = "pipelines.card.sheet.send"
     static let error = "pipelines.card.sheet.error"
+    static let retry = "pipelines.card.sheet.retry"
 
     // Un identifiant PAR élément de la fiche : un identifiant posé sur un
     // conteneur sans `.contain` est porté par tous ses descendants.
@@ -151,4 +125,5 @@ enum PipelinesAccessibility {
     static let launchButton = "pipelines.newFeature.launch"
     static let cancelButton = "pipelines.newFeature.cancel"
     static let modelRetry = "pipelines.newFeature.modelRetry"
+    static let modelFailure = "pipelines.newFeature.modelFailure"
 }

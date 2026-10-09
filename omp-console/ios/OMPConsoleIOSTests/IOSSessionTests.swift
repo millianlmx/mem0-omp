@@ -432,7 +432,7 @@ struct IOSSessionTests {
         brokenSource.failure = ClientError.transport(.unreachable("hôte muet"))
         let failing = IOSSessionThreadModel(source: brokenSource, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
         await failing.read()
-        #expect(failing.errorBanner == ConversationText.readError)
+        #expect(failing.errorBanner == IOSMacErrorText.message(for: .macUnreachable))
         #expect(failing.isLoading == false)
 
         // La recette `.illisible` porte le même motif, et rien n'est fabriqué.
@@ -447,6 +447,73 @@ struct IOSSessionTests {
         )
         await recipeModel.read()
         #expect(recipeModel.state == .unreadable(IOSSessionText.unreadableReason))
+    }
+
+    // MARK: - Erreurs du Mac (ios-erreurs-serveur-lisibles)
+
+    private static func failingModel(_ failure: Error?) throws -> (IOSSessionThreadModel, SessionStubSource) {
+        let source = SessionStubSource(payload: try Self.payload())
+        source.failure = failure
+        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
+        return (model, source)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : viewerShowsTranslatedFailure — la visionneuse porte le message traduit, sans URL ni JSON")
+    func viewerShowsTranslatedFailure() async throws {
+        let (model, _) = try Self.failingModel(MacSessionDouble.relayed503)
+        await model.read()
+        let expected = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(model.errorBanner == expected)
+        #expect(MacSessionDouble.isReadable(expected))
+        #expect(expected.contains("Service indisponible sur le Mac"))
+        #expect(model.isLoading == false)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : viewerRetryReadsAgain — Réessayer relit la session et les lignes apparaissent")
+    func viewerRetryReadsAgain() async throws {
+        let (model, source) = try Self.failingModel(MacSessionDouble.relayed503)
+        await model.read()
+        #expect(model.errorBanner != nil)
+        #expect(source.readCount == 1)
+
+        source.failure = nil
+        model.retry()
+        #expect(model.errorBanner == nil)
+        #expect(model.isLoading)
+        for _ in 0..<200 where model.isLoading { await Task.yield() }
+
+        #expect(source.readCount == 2)
+        #expect(model.state == .ready)
+        #expect(model.errorBanner == nil)
+        #expect(model.isLoading == false)
+        #expect(model.rows.count == Self.pinnedRows.count)
+        #expect(IOSSessionsAccessibility.retry == "ios.session.retry")
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : viewerUnauthorizedShowsNoBanner — un 401 n'affiche aucun bandeau de section")
+    func viewerUnauthorizedShowsNoBanner() async throws {
+        let (model, _) = try Self.failingModel(ClientError.api(.unauthorized))
+        await model.read()
+        #expect(model.errorBanner == nil)
+        #expect(model.isLoading == false)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : viewerUnknownRouteIsMacOutdated — « route inconnue » dit app Mac trop ancienne, un 404 métier reste l'attente")
+    func viewerUnknownRouteIsMacOutdated() async throws {
+        let (model, _) = try Self.failingModel(
+            MacSessionDouble.error(status: 404, code: "not_found", message: IOSMacFailure.unknownRoute)
+        )
+        await model.read()
+        #expect(model.errorBanner == IOSMacErrorText.message(for: .macOutdated))
+        #expect(model.isLoading == false)
+        #expect(model.errorBanner?.contains("app Mac trop ancienne") == true)
+
+        let (missing, _) = try Self.failingModel(
+            MacSessionDouble.error(status: 404, code: "not_found", message: "session introuvable")
+        )
+        await missing.read()
+        #expect(missing.state == .waiting)
+        #expect(missing.errorBanner == nil)
     }
 
     // MARK: - AC-6 : plis indépendants et diffs colorés
@@ -859,5 +926,33 @@ struct IOSSessionTests {
         #expect(scrolledUp.scrollRequest == suspended, "remonté, les ajouts ne déplacent pas le fil")
         #expect(!scrolledUp.following)
         scrolledUp.finish()
+    }
+}
+
+/// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
+private enum MacSessionDouble {
+    static func error(status: Int, code: String, message: String) -> ClientError {
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]])) ?? Data()
+        return ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http est injoignable : l'adresse et le JSON amont
+    /// sont dans le message.
+    static var relayed503: ClientError {
+        error(
+            status: 503,
+            code: "unavailable",
+            message: MemoryText.unavailableDetail(
+                address: "localhost:8321",
+                error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+            )
+        )
+    }
+
+    /// Ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    static func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
     }
 }

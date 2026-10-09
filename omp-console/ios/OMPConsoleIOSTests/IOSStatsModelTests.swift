@@ -251,10 +251,80 @@ struct IOSStatsModelTests {
         #expect(await eventually { keys.count == 2 })
         #expect(keys == ["k2", "k2"])
 
-        // Une erreur rend la main à l'état d'erreur, avec le message servi.
+        // Une erreur rend la main à l'état d'erreur, avec le message TRADUIT (S-5).
         let failing = makeModel(state: { self.connected }, load: { _ in throw ClientError.notConnected })
         failing.reload(trigger: .appeared)
         #expect(await eventually { failing.failure != nil })
-        #expect(failing.surface == .error(ConnectionText.state(connected)))
+        #expect(failing.surface == .error(IOSMacErrorText.message(for: .macUnreachable)))
+    }
+
+    // MARK: - Erreurs du Mac (ios-erreurs-serveur-lisibles)
+
+    /// Le prédicat « lisible » : ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    private func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http répond 405 : l'adresse et le JSON amont sont
+    /// dans le message. La réponse passe par la vraie traduction du client.
+    private func relayed503() -> ClientError {
+        let detail = MemoryText.unavailableDetail(
+            address: "localhost:8321",
+            error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+        )
+        let body = (try? JSONSerialization.data(
+            withJSONObject: ["error": ["code": "unavailable", "message": detail]]
+        )) ?? Data()
+        return ClientErrorMapping.translate(status: 503, protocolVersion: 1, body: body)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : statsShowsTranslatedFailure — le 503 relayé s'affiche en « service indisponible », sans URL ni JSON")
+    func statsShowsTranslatedFailure() async {
+        let error = relayed503()
+        let model = makeModel(state: { self.connected }, load: { _ in throw error })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.failure != nil })
+        let expected = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(model.surface == .error(expected))
+        #expect(isReadable(expected))
+        #expect(expected.contains("Service indisponible sur le Mac"))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : statsRetryShowsBoard — après un échec, le relevé relancé affiche le tableau")
+    func statsRetryShowsBoard() async {
+        let error = relayed503()
+        var succeed = false
+        let model = makeModel(state: { self.connected }, load: { _ in
+            if !succeed { throw error }
+            return self.payload(features: [self.feature(slug: "a", durationMs: 1)])
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.failure != nil })
+        #expect(model.surface == .error(IOSMacErrorText.message(for: .serviceUnavailable)))
+
+        // Réessayer relance le même relevé (`reload(trigger: .appeared)`).
+        succeed = true
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.payload != nil })
+        #expect(model.failure == nil)
+        #expect(model.surface == .board)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : statsUnauthorizedShowsNoError — un 401 ne pose aucun message ; la surface suit l'état du client")
+    func statsUnauthorizedShowsNoError() async {
+        var current = connected
+        let model = makeModel(state: { current }, load: { _ in throw ClientError.api(.unauthorized) })
+        model.reload(trigger: .appeared)
+        // Le relevé a échoué, puis `reload` a laissé `failure` à nil.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(model.failure == nil)
+        #expect(model.surface == .loading)
+
+        // Le client révoqué : la surface passe par l'état de connexion, jamais par `.error`.
+        current = .revoked
+        #expect(model.failure == nil)
+        #expect(model.surface == .degraded(ConnectionText.state(.revoked)))
     }
 }

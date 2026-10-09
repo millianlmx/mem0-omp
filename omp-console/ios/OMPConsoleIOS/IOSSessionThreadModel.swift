@@ -224,7 +224,8 @@ final class IOSSessionThreadModel: ObservableObject {
     // MARK: - Lecture (S-3, S-4)
 
     /// UNE lecture complète. Ne lève jamais : un fichier absent est un état
-    /// (`waiting`), un échec de lecture un bandeau.
+    /// (`waiting`), un échec de lecture un bandeau traduit par le traducteur
+    /// partagé (nil sur un 401 : le parcours de jeton révoqué parle seul).
     func read() async {
         do {
             let payload = try await source.read(file: file)
@@ -233,13 +234,24 @@ final class IOSSessionThreadModel: ObservableObject {
         } catch {
             if Task.isCancelled { return }
             isLoading = false
-            if let clientError = error as? ClientError, case .api(.notFound) = clientError {
+            if let clientError = error as? ClientError,
+               case .api(.notFound(let motive)) = clientError,
+               motive != IOSMacFailure.unknownRoute {
                 // Fichier absent : exactement l'état que macOS montre (S-4).
                 state = .waiting
             } else {
-                errorBanner = ConversationText.readError
+                errorBanner = IOSMacErrorText.message(for: error)
             }
         }
+    }
+
+    /// Réessayer après un échec de lecture : efface le bandeau, remontre le
+    /// chargement et relit la session.
+    func retry() {
+        readTask?.cancel()
+        errorBanner = nil
+        isLoading = true
+        readTask = Task { [weak self] in await self?.read() }
     }
 
     /// Une lecture complète : l'état, les lignes (dérivation partagée), les plis

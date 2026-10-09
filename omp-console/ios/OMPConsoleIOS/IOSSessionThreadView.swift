@@ -43,6 +43,12 @@ struct IOSSessionThreadView: View {
                     .font(.callout)
                     .iosBanner(tone: .danger)
                     .accessibilityIdentifier(IOSSessionsAccessibility.errorBanner)
+                Button { model.retry() } label: {
+                    Label(ConnectionText.retry, systemImage: "arrow.clockwise")
+                        .frame(minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier(IOSSessionsAccessibility.retry)
             }
             if case .unreadable(let reason) = model.state {
                 // L'erreur de lecture s'affiche MÊME quand des faits sont déjà là :

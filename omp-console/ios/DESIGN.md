@@ -454,3 +454,48 @@ marqueur `[test: <fonction>]` (une fonction de
 - « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
   a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
   que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`
+
+## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
+
+- Un SEUL traducteur, `IOSMacErrorText` (`OMPConsoleIOS/IOSMacErrorText.swift`),
+  range tout échec d'appel au Mac en une cause distinguable ; Mémoire (liste,
+  recherche, graphe), Sessions, Statistiques et Pipelines l'appellent, aucune ne
+  relit le détail brut. Un message = la cause, puis un remède propre à cette cause,
+  en tutoyant ; jamais d'URL, d'adresse, de JSON, de `"detail"` ni de code HTTP.
+  `[test: everyCauseHasItsOwnRemedy]`
+- 404 « route inconnue » et 404/405 hors contrat : « Fonction indisponible : app Mac
+  trop ancienne. » — mets à jour OMP Console sur le Mac. Seul le message EXACT
+  « route inconnue » vaut cette cause. `[test: macOutdatedOn404And405]`
+- Connexion refusée, délai dépassé, Mac non connecté : « Mac injoignable. » — le
+  client ne distingue pas ces échecs, la cause les couvre tous, et la raison
+  système (qui peut nommer l'hôte) n'est jamais affichée.
+  `[test: refusedConnectionIsMacUnreachable]`
+- 503 : « Service indisponible sur le Mac. » — le texte amont relayé (adresse,
+  JSON du service) est écarté. `[test: unavailableHidesRelayDetail]`
+- 403 : « Action refusée par le Mac. », distincte du 401 et du 404/405.
+  `[test: forbiddenIsRefused]`
+- 500, corps illisible, code ou statut inattendu : « Le Mac a rencontré une erreur. »,
+  sans aucun détail technique. `[test: serverAndUnreadableAreGeneric]`
+- Un refus métier (400, 409, 404 autre que « route inconnue ») affiche le motif
+  rédigé par le Mac, sans code HTTP ; un motif vide ou qui contient une URL, un
+  JSON ou un nombre à trois chiffres cède au message générique.
+  `[test: businessRefusalKeepsTheMacMotive]`
+- 401 : AUCUN message de section. Le parcours de jeton révoqué parle seul — secret
+  effacé du trousseau, retour à l'appairage, « Jeton révoqué » à l'écran.
+  `[test: unauthorizedHasNoMessage]`
+- Le graphe de la Mémoire garde sa distinction : `outdated_service` dit « serveur
+  mémoire trop ancien » (mem0-http), un 404 dit « app Mac trop ancienne ». La liste
+  et la recherche ne l'ont pas : un 503 qui cite une réponse 404/405 de mem0-http
+  reste « Service indisponible sur le Mac ». `[test: graphKeepsOutdatedDistinction]`
+  `[test: memoryNeverClaimsOutdated]`
+- Chaque échec de CHARGEMENT propose « Réessayer » (cible de 44 pt), qui relance le
+  chargement qui a échoué : Mémoire, graphe, Statistiques, visionneuse de session,
+  catalogue des modèles et lecture des PR d'une carte. Un geste d'écriture (arrêt,
+  fusion, réponse) affiche son message sans « Réessayer » : rejouer un POST n'est
+  pas un chargement. `[test: memoryRetryShowsData]` `[test: viewerRetryReadsAgain]`
+  `[test: statsRetryShowsBoard]` `[test: catalogRetryLoadsModels]`
+  `[test: graphRetryShowsGraph]`
+- Chaque section affiche le message du traducteur partagé, prouvé par une doublure
+  du Mac. `[test: memoryShowsTranslatedFailure]` `[test: viewerShowsTranslatedFailure]`
+  `[test: statsShowsTranslatedFailure]` `[test: catalogShowsTranslatedFailure]`
+  `[test: graphShowsTranslatedFailure]`

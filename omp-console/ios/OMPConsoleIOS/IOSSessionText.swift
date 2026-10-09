@@ -156,6 +156,7 @@ enum IOSSessionsAccessibility {
     static let placeholder = "ios.session.placeholder"
     static let unreadable = "ios.session.unreadable"
     static let errorBanner = "ios.session.error"
+    static let retry = "ios.session.retry"
     static let notes = "ios.session.notes"
     static let backToLive = "ios.session.backToLive"
 

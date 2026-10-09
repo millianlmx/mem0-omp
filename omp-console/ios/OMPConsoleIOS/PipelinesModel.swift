@@ -125,4 +125,20 @@ enum PipelinesModel {
             )
         )
     }
+
+    /// Le catalogue des modèles de la feuille « Nouvelle feature » : le MÊME chemin
+    /// pour le premier chargement et pour Réessayer. Un échec rend le message du
+    /// traducteur partagé ; sur 401 (`nil`), l'état de connexion « jeton révoqué »
+    /// prend la place du message — le parcours de révocation parle seul.
+    static func catalog(_ load: @MainActor () async throws -> RemoteModelsPayload) async -> ModelCatalogState {
+        do {
+            let payload = try await load()
+            if let failure = payload.failure {
+                return .failed(KanbanText.modelCatalogUnavailable(failure))
+            }
+            return .loaded(payload.selectors)
+        } catch {
+            return .failed(IOSMacErrorText.message(for: error) ?? ConnectionText.revoked)
+        }
+    }
 }

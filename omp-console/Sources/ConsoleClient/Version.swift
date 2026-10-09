@@ -34,7 +34,7 @@ public enum ClientErrorMapping {
             return .incompatibleProtocol(local: localVersion, remote: protocolVersion)
         }
         guard let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: body) else {
-            return .decoding("corps d'erreur illisible (statut \(status))")
+            return .unexpectedStatus(status)
         }
         let code = envelope.error.code
         let message = envelope.error.message ?? ""
@@ -56,7 +56,7 @@ public enum ClientErrorMapping {
             case 404: return .api(.notFound(message))
             case 409: return .api(.conflict(message))
             case 503: return .api(.unavailable(message))
-            default: return .api(.server(message.isEmpty ? "statut \(status)" : message))
+            default: return .unexpectedStatus(status)
             }
         }
     }
