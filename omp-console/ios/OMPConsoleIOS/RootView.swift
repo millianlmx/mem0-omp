@@ -79,7 +79,7 @@ struct RootView: View {
                         ForEach(IOSSection.sections(of: group)) { section in
                             let badge = IOSHomeContent.rowBadge(
                                 for: section, attentionCount: attentionCount)
-                            Label(section.title, systemImage: section.systemImage)
+                            Label(section.title, systemImage: IOSSection.systemImage(of: section))
                                 .badge(badge)
                                 .tag(section)
                                 .accessibilityElement(children: .ignore)

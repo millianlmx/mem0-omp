@@ -8,9 +8,10 @@ import SwiftUI
 /// Mémoire (`IOSMemoryScreen`), Statistiques (`IOSStatsScreen`) et Sessions
 /// (`IOSSessionsScreen`), toutes nourries par le client partagé.
 ///
-/// Ordre du rendu (sections à contenu) : panneau → titre → pastille → carte de
-/// l'état vide → bandeau. Aucune phrase n'est composée ici : les mots viennent du
-/// noyau partagé, le message provisoire du bandeau vient de `IOSText`.
+/// Ordre du rendu (sections à contenu) : panneau → pastille → carte de l'état
+/// vide → bandeau ; le titre est celui de la barre de navigation. Aucune phrase
+/// n'est composée ici : les mots viennent du noyau partagé, le message provisoire
+/// du bandeau vient de `IOSText`.
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
@@ -46,8 +47,6 @@ struct IOSSectionView: View {
 
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(section.title)
-                .font(.title2)
             if section == .project {
                 IOSProjectScreen(client: client)
             } else if section == .stats {
@@ -67,6 +66,7 @@ struct IOSSectionView: View {
             }
         }
         .iosPanel()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(section.title)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)

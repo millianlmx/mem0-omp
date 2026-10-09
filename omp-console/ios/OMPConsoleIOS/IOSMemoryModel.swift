@@ -165,6 +165,20 @@ final class IOSMemoryModel: ObservableObject {
     var canRefresh: Bool { !isLoading }
     var canShowSummary: Bool { isSearching && !isLoading }
 
+    /// Pourquoi « Sommaire » est indisponible, ou `nil` s'il l'est. La première
+    /// règle qui s'applique gagne : le graphe, puis le sommaire déjà courant, puis
+    /// une recherche en vol. `nil` ⇔ `canShowSummary` hors graphe.
+    static func summaryUnavailableReason(graphShown: Bool, isSearching: Bool, isLoading: Bool) -> String? {
+        if graphShown { return IOSMemoryText.summaryReasonGraph }
+        if !isSearching { return IOSMemoryText.summaryReasonShown }
+        if isLoading { return IOSMemoryText.summaryReasonSearching }
+        return nil
+    }
+
+    func summaryUnavailableReason(graphShown: Bool) -> String? {
+        Self.summaryUnavailableReason(graphShown: graphShown, isSearching: isSearching, isLoading: isLoading)
+    }
+
     // MARK: - Gestes : les deux seuls déclencheurs réseau (S-9)
 
     /// L'apparition de l'écran ET le geste « Rafraîchir »/« Réessayer » : la MÊME

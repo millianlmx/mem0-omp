@@ -233,8 +233,9 @@ struct IOSProjectScreen: View {
                     .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                     .contentShape(Rectangle())
             }
-                .disabled(!IOSProjectModel.gesturesEnabled(client.state))
-                .accessibilityIdentifier(ProjectAccessibility.start)
+            .buttonStyle(.borderedProminent)
+            .disabled(!IOSProjectModel.gesturesEnabled(client.state))
+            .accessibilityIdentifier(ProjectAccessibility.start)
             if model.isConduiteLive {
                 Button(ProjectViewText.closeConduite) { showingStop = true }
                     .disabled(!model.canStop)
