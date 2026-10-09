@@ -21,7 +21,7 @@ import SwiftUI
 /// `-section`, et la rouvre par le bouton antenne `connectionToolbarItem` : sur
 /// la liste des sections en largeur compacte, et sur la colonne détail toujours
 /// — exactement un bouton à l'écran. La ligne « Accueil » porte le badge du
-/// nombre d'attentes (S-12) quand l'Accueil est la section affichée.
+/// nombre d'attentes (S-12), quelle que soit la section affichée.
 struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
@@ -68,7 +68,7 @@ struct RootView: View {
                     Section(group.title) {
                         ForEach(IOSSection.sections(of: group)) { section in
                             let badge = IOSHomeContent.rowBadge(
-                                for: section, selection: selection, attentionCount: attentionCount)
+                                for: section, attentionCount: attentionCount)
                             Label(section.title, systemImage: section.systemImage)
                                 .badge(badge)
                                 .tag(section)
@@ -134,11 +134,10 @@ struct RootView: View {
         }
     }
 
-    /// Le compte d'attentes de la ligne « Accueil » ; `IOSHomeContent.rowBadge` décide
-    /// s'il est visible (Accueil sélectionnée, compte > 0, S-12), et ce même badge
-    /// nourrit le libellé d'accessibilité de la ligne.
+    /// Le compte d'attentes de la ligne « Accueil » : celui de la recette quand
+    /// `-home.recipe` est donné, sinon le compte en direct (S-12).
     private var attentionCount: Int {
-        IOSHomeContent.badge(omp: client.omp, board: client.board)
+        recipe?.badge ?? IOSHomeContent.badge(omp: client.omp, board: client.board)
     }
 
     /// L'ordre de S-15 : la bienvenue d'abord, la connexion ensuite.

@@ -1956,14 +1956,18 @@ préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Ré
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
 (« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR) —
 les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
-ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
+ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
+le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
+ligne n'en porte, et rien à zéro), et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections verbatim) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract>`
-force un état depuis la fixture partagée `HomeParity` pour les captures ; le
-crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
-l'écran (captures des rangées en Dynamic Type).
+force un état depuis la fixture partagée `HomeParity` pour les captures ; il
+nourrit aussi le badge de la ligne Accueil (3 pour dashboard/answer/contract/degraded,
+0 pour loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
+d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
+Dynamic Type).
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
