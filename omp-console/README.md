@@ -1985,7 +1985,14 @@ valider un jalon (specs ou revue), lancer une feature jamais en route, l'arrête
 fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 « Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
 deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
-sans aucune action sur le Mac.
+sans aucune action sur le Mac. Le sélecteur de dépôt affiche le NOM du dossier
+(jamais un chemin absolu ; pour les seuls homonymes, il y ajoute les derniers
+segments du dossier parent, p. ex. « mem0-omp (Projets) »), ou l'invite « Choisir
+un dépôt » tant qu'aucun n'est choisi — « Lancer » reste alors inactif ; la
+valeur lancée est toujours le chemin complet. Les champs titre et besoin portent
+les libellés VoiceOver « Titre » et « Besoin » ; le besoin est une zone
+multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans le
+champ.
 
 Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
 
@@ -2169,8 +2176,12 @@ Type** (feature `ios-accueil-dynamic-type-casse`) via `-home.row <n>`, qui amèn
 rangée d'index `n` (« En cours » puis « Livrées récemment ») en haut du tableau de
 bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
 `accessibility-extra-extra-extra-large`), iPhone clair seulement = **12 PNG**
-(`iphone-home-row<n>-<taille>.png`). Le total attendu est **112** (56 + 32 + 12 +
-12). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
+(`iphone-home-row<n>-<taille>.png`). Un CINQUIÈME groupe capture la feuille
+**« Nouvelle feature »** (feature `ios-nouvelle-feature-formulaire`) via
+`-pipelines.recipe <vide|choisi|rempli>` — aucun dépôt choisi, un dépôt et un
+besoin court, un besoin de douze lignes — 3 recettes × {iPhone, iPad} × {clair,
+sombre} = **12 PNG**, sans appairage. Le total attendu est **124** (56 + 32 + 12 +
+12 + 12). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
 toutes PORTRAIT — une capture inattendue ferait échouer le script.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
@@ -2189,7 +2200,9 @@ ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
 `memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
 sept écrans, et `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
 section Mémoire sur la fixture partagée `MemoryGraphParity` — un crochet de
-recette, pas une fonctionnalité.
+recette, pas une fonctionnalité. `-pipelines.recipe <vide|choisi|rempli>` ouvre
+l'écran Pipelines sur la feuille « Nouvelle feature » avec des dépôts, un titre
+et un besoin forcés (le reste est le chemin réel de la feuille).
 
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 

@@ -59,7 +59,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
   sources de l'app. `[garde: design-ios/AC-7]`
 - Aucun `lineLimit` numérique : les textes se replient sur plusieurs lignes.
-  `[garde: design-ios/AC-7]`
+  Seule exception : la PLAGE de hauteur d'un champ de saisie vertical
+  (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
+  tronqué, le champ défile. `[garde: design-ios/AC-7]`
 
 ## Marges et cibles tactiles
 
@@ -178,6 +180,22 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+- Dans la feuille « Nouvelle feature », le sélecteur de dépôt montre le NOM du
+  dossier (jamais un chemin absolu), complété par les derniers segments du
+  parent pour les seuls homonymes ; la valeur lancée reste la racine complète.
+  `[test: repoChoicesUseFolderNames]`
+- Le mot « Dépôt » n'apparaît qu'une fois ; sans dépôt choisi, le sélecteur
+  affiche l'invite « Choisir un dépôt » et « Lancer » est inactif.
+  `[capture: iphone-nouvelle-feature-vide-light]`
+- Les champs titre et besoin portent les libellés VoiceOver « Titre » et
+  « Besoin », sans libellé visible ajouté.
+  `[capture: iphone-nouvelle-feature-choisi-light]`
+- Le champ besoin montre 3 lignes à vide, grandit jusqu'à 8 lignes puis défile
+  dans le champ, sans second défilement de feuille.
+  `[capture: iphone-nouvelle-feature-rempli-light]`
+- La feuille se capture par le crochet de recette `-pipelines.recipe`
+  (`vide`, `choisi`, `rempli`), sans appairage. `[test: pipelinesRecipeResolves]`
+
 ## L'Accueil (S-10, S-11)
 
 - L'écran porte le titre de navigation `ConsoleSection.home.title`, en grand titre

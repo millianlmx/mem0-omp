@@ -9,6 +9,9 @@ struct PipelinesScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
+    /// Le crochet de recette `-pipelines.recipe` : la feuille « Nouvelle feature »
+    /// s'ouvre d'elle-même dans l'état forcé.
+    let newFeatureRecipe: IOSPipelinesRecipe?
     @State private var sheet: PipelinesSheet?
     /// Les voies terminales dépliées pendant CETTE visite (S-3) : remis à vide
     /// à la sortie de l'écran, jamais écrit nulle part.
@@ -42,11 +45,14 @@ struct PipelinesScreen: View {
             case .card(let cardId):
                 PipelinesCardSheet(client: client, cardId: cardId)
             case .newFeature:
-                NewFeatureSheetView(client: client)
+                NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
             }
         }
         .onDisappear { unfoldedLanes = [] }
         .accessibilityIdentifier(PipelinesAccessibility.screen)
+        .task {
+            if newFeatureRecipe != nil { sheet = .newFeature }
+        }
     }
 
     // MARK: - Dérivation
