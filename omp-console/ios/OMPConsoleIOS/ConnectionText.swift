@@ -134,7 +134,8 @@ enum ConnectionText {
     static let openLocalNetworkSettings = "Ouvrir Réglages"
 }
 
-/// Les identifiants d'accessibilité de la feuille (chaînes pointées de S-11).
+/// Les identifiants d'accessibilité de la feuille et de son bouton d'ouverture
+/// (chaînes pointées de S-11).
 enum ConnectionAccessibility {
     static let sheet = "connection.sheet"
     static let state = "connection.state"
@@ -150,6 +151,7 @@ enum ConnectionAccessibility {
     static let codeError = "connection.code.error"
     static let retry = "connection.retry"
     static let close = "connection.close"
+    static let open = "connection.open"
 
     /// Tous les identifiants, dans l'ordre de S-11 — c'est la liste que le test
     /// d'unicité éprouve. Le nom évite `all` : la garde `coque-ios/AC-2` exige
@@ -169,5 +171,6 @@ enum ConnectionAccessibility {
         codeError,
         retry,
         close,
+        open,
     ]
 }
