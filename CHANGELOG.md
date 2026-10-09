@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.25.0 — 2026-10-09
+
+- feat(req,service,panel,relay,test,docs): repli de modèle et quota, brief/journal/arbitre déportés, contexte par run sous 120k (#84) (2e2ad5a)
+
 ## omp-mem0-req 0.24.0 — 2026-10-08
 
 - feat(req,console,test,docs): service OMP unique — un process pilote et exécute les pipelines, l'app en devient cliente (#80) (e34825e)
