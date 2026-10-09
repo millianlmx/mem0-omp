@@ -81,6 +81,7 @@ struct HomeView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationTitle(ConsoleSection.home.title)
         .sheet(item: $answerCard) { selected in
             HomeAnswerSheet(card: selected.card, client: client)
         }
