@@ -28,6 +28,20 @@ enum PipelinesSheet: Identifiable {
     }
 }
 
+/// Une voie telle que l'écran Pipelines la rend.
+struct PipelinesLaneRow: Identifiable, Equatable {
+    /// La voie et TOUTES ses cartes : le compte de l'en-tête reste celui de la voie, repliée ou non.
+    let content: KanbanLaneContent
+    /// L'en-tête replie et déplie la voie.
+    let foldable: Bool
+    /// Repliée : seul l'en-tête est rendu.
+    let folded: Bool
+
+    var id: String { content.id }
+    var lane: KanbanLane { content.lane }
+    var visibleCards: [KanbanCard] { folded ? [] : content.cards }
+}
+
 /// La logique PURE de l'écran Pipelines (S-3, S-4) : aucune donnée n'est
 /// inventée, aucune n'est mise en cache. L'écran dérive tout de l'instantané du
 /// client (`ConsoleClientModel.snapshot`), alimenté par la trame `store`.
@@ -59,5 +73,23 @@ enum PipelinesModel {
     static func connectionBanner(connection: ClientState) -> ConsoleStatus? {
         if case .connected = connection { return nil }
         return ConsoleStatus(text: ConnectionText.state(connection), tone: .attention)
+    }
+
+    /// Les voies que l'en-tête peut replier : les deux voies terminales.
+    static let foldableLanes: Set<KanbanLane> = [.livrees, .arretees]
+
+    /// Les voies telles que l'écran les rend. En largeur régulière (iPad) : une
+    /// rangée par voie de `lanes`, voies vides comprises, sans repli — l'affichage
+    /// d'avant. En largeur compacte (iPhone) : les voies sans carte sont écartées,
+    /// et les voies terminales sont repliées sauf celles de `unfolded`. Les cartes
+    /// d'une voie ne sont jamais tronquées (S-1).
+    static func laneRows(_ lanes: [KanbanLaneContent], compact: Bool, unfolded: Set<KanbanLane>) -> [PipelinesLaneRow] {
+        guard compact else {
+            return lanes.map { PipelinesLaneRow(content: $0, foldable: false, folded: false) }
+        }
+        return lanes.filter { !$0.cards.isEmpty }.map { content in
+            let foldable = foldableLanes.contains(content.lane)
+            return PipelinesLaneRow(content: content, foldable: foldable, folded: foldable && !unfolded.contains(content.lane))
+        }
     }
 }

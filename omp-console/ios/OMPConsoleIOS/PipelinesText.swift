@@ -20,6 +20,11 @@ enum PipelinesText {
     /// vocabulaire, pas dans la vue).
     static func laneCount(_ count: Int) -> String { "\(count)" }
 
+    /// La valeur d'accessibilité de l'en-tête d'une voie terminale : SwiftUI
+    /// n'expose pas l'état replié/déplié d'un bouton, il passe par la valeur.
+    static let laneFolded = "replié"
+    static let laneUnfolded = "déplié"
+
     /// La fusion ne trouve aucune ligne de PR pour ce slug : la PR est ouverte,
     /// mais le Mac ne la suit pas.
     static let noPullRequestRow = "La PR est ouverte, mais le Mac ne la suit pas encore."
@@ -63,6 +68,7 @@ enum PipelinesAccessibility {
     static let emptyCard = "pipelines.empty"
 
     static func lane(_ id: String) -> String { "pipelines.lane.\(id)" }
+    static func laneHeader(_ id: String) -> String { "pipelines.lane.\(id).header" }
     static func card(_ id: String) -> String { "pipelines.card.\(id)" }
     static func gesture(_ name: String, _ id: String) -> String { "pipelines.card.\(id).\(name)" }
     static func option(_ index: Int) -> String { "pipelines.option.\(index)" }
