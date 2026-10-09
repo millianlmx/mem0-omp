@@ -1938,6 +1938,16 @@ groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec s
 état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
 trousseau et feuille de connexion.
+Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
+connecté ou non : sur iPhone, dans la barre de la liste des sections et dans celle
+de chaque écran poussé ; sur iPad, une seule fois, dans la barre du détail. La
+recette `scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
+--ipad <UDID>` le prouve au simulateur avec `idb` (captures sous
+`omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
+(`scripts/ios-build.sh` compile sans signature, et le trousseau du simulateur
+refuse alors d'écrire le jeton d'appairage : l'état connecté serait
+inatteignable) et veut des simulateurs dédiés, que les autres runs
+(`ios-shots.sh`) ne pilotent pas.
 
 L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
 aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
