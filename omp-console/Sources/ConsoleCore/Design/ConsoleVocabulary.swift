@@ -171,4 +171,11 @@ public enum ConsoleFormat {
         Date(timeIntervalSince1970: ms / 1000)
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
     }
+
+    /// La date et l'heure à la minute, « 9 oct. 2026 à 14:32 ».
+    public static func dateTime(ms: Double, timeZone: TimeZone = .current) -> String {
+        var style = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)
+        style.timeZone = timeZone
+        return Date(timeIntervalSince1970: ms / 1000).formatted(style)
+    }
 }

@@ -230,6 +230,12 @@ struct PipelinesScreen: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            if let date = PipelinesModel.cardDate(card) {
+                Text(date)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
             if let preview = KanbanCardPresentation.preview(card) {
                 Text(preview)
                     .font(.callout)
