@@ -60,11 +60,21 @@ public enum ConversationText {
     }
 
     /// L'état du fil : la lecture en erreur prime (les faits déjà lus restent
-    /// affichés), puis l'attente d'un premier fait, puis le suivi du direct.
+    /// affichés), puis la fin du run (un run fini n'est ni « Démarrage » ni « En
+    /// direct » : « Terminé » est porté ailleurs, jamais en doublon), puis l'attente
+    /// d'un premier fait, puis le suivi du direct.
     /// `nil` quand le fil ne suit plus le direct : le bouton « Revenir au direct »
     /// dit seul cet état, un second mot ferait doublon (audit HIG 2026-10-01).
-    public static func status(state: SessionViewerState, following: Bool, isEmpty: Bool) -> ConsoleStatus? {
+    /// `runEnded` vient de `RunChoice.hasEnded` pour le fil d'un run du magasin ;
+    /// un fil qui n'est pas un run du magasin (session hébergée) passe `false`.
+    public static func status(
+        state: SessionViewerState,
+        following: Bool,
+        isEmpty: Bool,
+        runEnded: Bool
+    ) -> ConsoleStatus? {
         if case .unreadable = state { return ConsoleStatus(text: readError, tone: .danger) }
+        if runEnded { return nil }
         if state == .waiting && isEmpty { return ConsoleStatus(text: starting, tone: .info) }
         if following { return ConsoleStatus(text: live, tone: .success) }
         return nil

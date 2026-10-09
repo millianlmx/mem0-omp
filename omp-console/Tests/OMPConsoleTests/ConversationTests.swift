@@ -102,27 +102,67 @@ func toolCallIsNamedByItsVerb() {
 func threadStateIsSaidInWords() {
     // L'erreur de lecture prime, même sur un fil qui suit le direct et a des faits.
     #expect(
-        ConversationText.status(state: .unreadable("EACCES"), following: true, isEmpty: false)
+        ConversationText.status(state: .unreadable("EACCES"), following: true, isEmpty: false, runEnded: false)
             == ConsoleStatus(text: "Erreur de lecture", tone: .danger)
     )
     #expect(
-        ConversationText.status(state: .waiting, following: true, isEmpty: true)
+        ConversationText.status(state: .waiting, following: true, isEmpty: true, runEnded: false)
             == ConsoleStatus(text: "Démarrage", tone: .info)
     )
     // Des faits déjà lus, fichier momentanément absent : le fil reste « En direct ».
     #expect(
-        ConversationText.status(state: .waiting, following: true, isEmpty: false)
+        ConversationText.status(state: .waiting, following: true, isEmpty: false, runEnded: false)
             == ConsoleStatus(text: "En direct", tone: .success)
     )
     #expect(
-        ConversationText.status(state: .ready, following: true, isEmpty: true)
+        ConversationText.status(state: .ready, following: true, isEmpty: true, runEnded: false)
             == ConsoleStatus(text: "En direct", tone: .success)
     )
     // Hors du direct, aucun mot : le bouton « Revenir au direct » dit l'état.
-    #expect(ConversationText.status(state: .ready, following: false, isEmpty: false) == nil)
+    #expect(ConversationText.status(state: .ready, following: false, isEmpty: false, runEnded: false) == nil)
     // L'erreur de lecture prime même hors du direct.
     #expect(
-        ConversationText.status(state: .unreadable("EACCES"), following: false, isEmpty: false)
+        ConversationText.status(state: .unreadable("EACCES"), following: false, isEmpty: false, runEnded: false)
             == ConsoleStatus(text: "Erreur de lecture", tone: .danger)
     )
+}
+
+@Test("ios-viewer-en-direct-sur-session-finie/AC-1 : un run fini ne dit jamais « En direct », même suivi du bas actif")
+func endedRunThreadNeverSaysLive() {
+    #expect(ConversationText.status(state: .ready, following: true, isEmpty: false, runEnded: true) == nil)
+    // Fichier momentanément absent d'un run fini : aucun mot.
+    #expect(ConversationText.status(state: .waiting, following: true, isEmpty: false, runEnded: true) == nil)
+    // Jamais « Démarrage » pour un run fini.
+    #expect(ConversationText.status(state: .waiting, following: true, isEmpty: true, runEnded: true) == nil)
+    // L'erreur de lecture prime toujours.
+    #expect(
+        ConversationText.status(state: .unreadable("EACCES"), following: true, isEmpty: false, runEnded: true)
+            == ConsoleStatus(text: "Erreur de lecture", tone: .danger)
+    )
+}
+
+@Test("ios-viewer-en-direct-sur-session-finie/AC-2 : un run vivant suivi garde « En direct »")
+func liveRunThreadKeepsLive() {
+    #expect(
+        ConversationText.status(state: .ready, following: true, isEmpty: false, runEnded: false)
+            == ConsoleStatus(text: "En direct", tone: .success)
+    )
+}
+
+@Test("ios-viewer-en-direct-sur-session-finie/AC-1 : RunChoice.hasEnded — introuvable et clos = fini, vivant (même périmé) = non")
+func runChoiceHasEnded() {
+    func run(_ state: RunChoiceState, stale: Bool = false) -> RunChoice {
+        RunChoice(
+            id: "/s.jsonl", sessionFile: "/s.jsonl", label: "depot/f",
+            repo: "depot", featureTitle: "f", startedAtMs: 0, phase: .impl,
+            state: state, isStale: stale,
+            target: ViewerTarget(sessionFile: "/s.jsonl", title: "t")
+        )
+    }
+    #expect(RunChoice.hasEnded(nil))
+    #expect(RunChoice.hasEnded(run(.ended(.done))))
+    #expect(RunChoice.hasEnded(run(.ended(.failed))))
+    #expect(!RunChoice.hasEnded(run(.live(.running))))
+    #expect(!RunChoice.hasEnded(run(.live(.waiting))))
+    #expect(!RunChoice.hasEnded(run(.live(.running), stale: true)))
 }

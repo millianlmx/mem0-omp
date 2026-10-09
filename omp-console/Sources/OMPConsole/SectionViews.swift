@@ -20,15 +20,17 @@ protocol ConsoleSectionView: View {
 struct SessionsView: ConsoleSectionView {
     static let section = ConsoleSection.sessions
     @ObservedObject var console: ConsoleModel
+    /// SEUL lecteur du magasin de la section : la liste et la visionneuse le partagent.
+    @StateObject private var selector = SessionSelectorModel()
 
     var body: some View {
         NavigationStack(path: Binding(
             get: { console.sessionsPath },
             set: { console.sessionsPath = $0 }
         )) {
-            SessionSelectorView(onOpen: { console.openSession($0) })
+            SessionSelectorView(selector: selector, onOpen: { console.openSession($0) })
                 .navigationDestination(for: ViewerTarget.self) { target in
-                    SessionViewerContent(target: target)
+                    SessionViewerContent(target: target, runs: selector)
                         .id(target)
                 }
         }

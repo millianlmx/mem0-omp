@@ -140,6 +140,9 @@ final class IOSSessionThreadModel: ObservableObject {
     @Published private(set) var ignoredCount = 0
     /// L'état du RUN de la session (S-9), relu à chaque changement d'instantané.
     @Published private(set) var runStatus: ConsoleStatus?
+    /// Le run du magasin est FINI (ou introuvable) : le fil n'affiche alors jamais
+    /// « En direct ». Toujours `false` pour le fil hébergé (`tracksRun == false`).
+    @Published private(set) var runEnded = false
     /// Le motif d'un échec de LECTURE (transport, décodage) : la session n'est pas
     /// illisible, on ne l'a pas lue. `nil` quand tout va bien.
     @Published private(set) var errorBanner: String?
@@ -158,11 +161,16 @@ final class IOSSessionThreadModel: ObservableObject {
     private var feedTask: Task<Void, Never>?
     private var readTask: Task<Void, Never>?
 
-    init(source: any IOSSessionSource, file: String, title: String, subtitle: String?) {
+    /// `true` pour le fil d'un run du magasin (la feuille d'un run), `false` pour
+    /// le fil de la session hébergée, qui n'est pas un run du magasin.
+    let tracksRun: Bool
+
+    init(source: any IOSSessionSource, file: String, title: String, subtitle: String?, tracksRun: Bool) {
         self.source = source
         self.file = file
         self.title = title
         self.subtitle = subtitle
+        self.tracksRun = tracksRun
         refreshRunStatus()
     }
 
@@ -176,7 +184,7 @@ final class IOSSessionThreadModel: ObservableObject {
 
     /// Le statut affiché du fil : l'attente d'un premier fait, le direct, ou rien.
     var threadStatus: ConsoleStatus? {
-        ConversationText.status(state: state, following: following, isEmpty: rows.isEmpty)
+        ConversationText.status(state: state, following: following, isEmpty: rows.isEmpty, runEnded: runEnded)
     }
 
     // MARK: - Cycle de vie (S-8)
@@ -285,8 +293,12 @@ final class IOSSessionThreadModel: ObservableObject {
     /// Relit l'état du run depuis la source : la trame `store` de la vue l'appelle
     /// à chaque instantané. « En cours » devient « Terminé » sans rouvrir la session.
     func refreshRunStatus() {
-        let status = IOSSessionThreadFacts.status(run: source.run(forFile: file))
+        guard tracksRun else { return }
+        let run = source.run(forFile: file)
+        let status = IOSSessionThreadFacts.status(run: run)
         if runStatus != status { runStatus = status }
+        let ended = RunChoice.hasEnded(run)
+        if runEnded != ended { runEnded = ended }
     }
 
     // MARK: - Plis (S-6)

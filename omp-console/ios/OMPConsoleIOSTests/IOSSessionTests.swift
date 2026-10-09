@@ -231,7 +231,8 @@ struct IOSSessionTests {
             source: SessionStubSource(payload: payload),
             file: "parity-session-1.jsonl",
             title: "parity-session-1",
-            subtitle: nil
+            subtitle: nil,
+            tracksRun: false
         )
         await model.read()
         return model
@@ -420,7 +421,7 @@ struct IOSSessionTests {
         // Fichier ABSENT (404) : l'attente, sans bandeau — exactement macOS.
         let missingSource = SessionStubSource(payload: truncated)
         missingSource.failure = ClientError.api(.notFound("session introuvable"))
-        let missing = IOSSessionThreadModel(source: missingSource, file: "absent.jsonl", title: "t", subtitle: nil)
+        let missing = IOSSessionThreadModel(source: missingSource, file: "absent.jsonl", title: "t", subtitle: nil, tracksRun: false)
         await missing.read()
         #expect(missing.state == .waiting)
         #expect(missing.errorBanner == nil)
@@ -429,7 +430,7 @@ struct IOSSessionTests {
         // Échec de LECTURE (transport) : un bandeau, jamais un écran muet.
         let brokenSource = SessionStubSource(payload: truncated)
         brokenSource.failure = ClientError.transport(.unreachable("hôte muet"))
-        let failing = IOSSessionThreadModel(source: brokenSource, file: "s.jsonl", title: "t", subtitle: nil)
+        let failing = IOSSessionThreadModel(source: brokenSource, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
         await failing.read()
         #expect(failing.errorBanner == ConversationText.readError)
         #expect(failing.isLoading == false)
@@ -441,7 +442,8 @@ struct IOSSessionTests {
             source: IOSSessionsRecipeSource(thread: recipeThread),
             file: recipeThread.file,
             title: recipeThread.title,
-            subtitle: recipeThread.subtitle
+            subtitle: recipeThread.subtitle,
+            tracksRun: false
         )
         await recipeModel.read()
         #expect(recipeModel.state == .unreadable(IOSSessionText.unreadableReason))
@@ -543,7 +545,7 @@ struct IOSSessionTests {
     @Test("ios-sessions/AC-8 : un ajout s'ajoute — une seule lecture, plis et position préservés")
     func additionsDoNotReload() async throws {
         let source = SessionStubSource(payload: try Self.payload())
-        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil)
+        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
         await model.read()
         #expect(source.readCount == 1)
 
@@ -579,7 +581,7 @@ struct IOSSessionTests {
     @Test("ios-sessions/AC-8 : le fil ne colle au bas que tant que l'utilisateur n'a pas remonté")
     func followPolicy() async throws {
         let source = SessionStubSource(payload: try Self.payload())
-        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil)
+        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
         await model.read()
 
         // Une lecture qui ajoute des lignes demande un défilement, et le fil suit.
@@ -626,7 +628,8 @@ struct IOSSessionTests {
             source: source,
             file: live.sessionFile,
             title: live.featureTitle,
-            subtitle: live.target.subtitle
+            subtitle: live.target.subtitle,
+            tracksRun: true
         )
         #expect(model.runStatus == ConsoleStatus.of(run: live))
         #expect(model.runStatus?.tone == .info)
@@ -658,11 +661,54 @@ struct IOSSessionTests {
             source: IOSSessionsRecipeSource(thread: thread),
             file: thread.file,
             title: thread.title,
-            subtitle: thread.subtitle
+            subtitle: thread.subtitle,
+            tracksRun: true
         )
         #expect(recipeModel.runStatus == ConsoleStatus.of(run: run))
         await recipeModel.read()
         #expect(recipeModel.rows == Self.pinnedRows)
+    }
+
+    // MARK: - ios-viewer-en-direct-sur-session-finie / AC-3 : « En direct » ne survit pas à la fin du run
+
+    @Test("ios-viewer-en-direct-sur-session-finie/AC-3 : le fil d'un run fini ne dit pas « En direct », le fil hébergé si")
+    func endedRunThreadIsNotLive() async throws {
+        let live = Self.choice(id: "s-live", repo: "alpha", startedAtMs: Self.nowMs, state: .live(.running))
+        let ended = Self.choice(id: "s-live", repo: "alpha", startedAtMs: Self.nowMs, state: .ended(.done))
+        let direct = ConsoleStatus(text: ConversationText.live, tone: .success)
+
+        // Run du magasin vivant : le suivi actif dit « En direct ».
+        let source = SessionStubSource(payload: try Self.payload(), run: live)
+        let model = IOSSessionThreadModel(
+            source: source, file: live.sessionFile, title: live.featureTitle,
+            subtitle: live.target.subtitle, tracksRun: true
+        )
+        await model.read()
+        #expect(model.following)
+        #expect(model.runEnded == false)
+        #expect(model.threadStatus == direct)
+
+        // Le run se termine pendant que la feuille est ouverte : « En direct » disparaît.
+        source.run = ended
+        model.refreshRunStatus()
+        #expect(model.following)
+        #expect(model.runEnded)
+        #expect(model.threadStatus == nil)
+
+        // Run introuvable (recette `visionneuse`) : traité comme fini.
+        source.run = nil
+        model.refreshRunStatus()
+        #expect(model.threadStatus == nil)
+
+        // Le fil hébergé n'est pas un run du magasin : jamais de `runStatus`, toujours « En direct ».
+        let hosted = IOSSessionThreadModel(
+            source: SessionStubSource(payload: try Self.payload(), run: nil),
+            file: "hebergee.jsonl", title: "t", subtitle: nil, tracksRun: false
+        )
+        await hosted.read()
+        #expect(hosted.runStatus == nil)
+        #expect(hosted.runEnded == false)
+        #expect(hosted.threadStatus == direct)
     }
 
     // MARK: - AC-10 : le fil réutilisable
@@ -675,7 +721,8 @@ struct IOSSessionTests {
             source: source,
             file: "une-session-quelconque.jsonl",
             title: "une feature",
-            subtitle: nil
+            subtitle: nil,
+            tracksRun: false
         )
         await model.read()
         #expect(source.readCount == 1)
