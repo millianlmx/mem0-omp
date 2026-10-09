@@ -1937,7 +1937,9 @@ sont hors périmètre), une seule navigation adaptative — barre latérale à d
 groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
 état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
-trousseau et feuille de connexion.
+trousseau et feuille de connexion. Le Mac découvert est joint par son adresse
+IPv4 ou IPv6, lien-local zoné compris ; une adresse s'affiche toujours sans sa
+zone d'interface (`192.168.1.175:8787`, `[fe80::1]:8787`).
 Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
 connecté ou non : sur iPhone, dans la barre de la liste des sections et dans celle
 de chaque écran poussé ; sur iPad, une seule fois, dans la barre du détail. La
