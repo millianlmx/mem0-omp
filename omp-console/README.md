@@ -2467,7 +2467,7 @@ MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
 
 La section **Statistiques** de l'app est en **lecture seule** : elle affiche la
 consommation des runs du projet choisi, par feature — slug, modèle, durée, tours,
-tokens envoyés et tokens reçus — puis la ligne « Total du projet », somme des
+tokens envoyés (entrée hors cache + cache lu + cache écrit) et tokens reçus — puis la ligne « Total du projet », somme des
 features LISTÉES. Aucun montant, aucun geste de pilotage d'un run. Les mots
 affichés (« Tokens envoyés », « Temps passé », « Tours », « Total du projet ») sont
 ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
@@ -2483,9 +2483,10 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
    il affiche celui que le Mac sert. Choisir un autre projet : quelques secondes
    plus tard le tableau devient celui de ce projet.
 3. **Comparer avec le Mac** — ouvrir la fenêtre **Statistiques** macOS sur le même
-   projet : chaque feature de l'app porte les MÊMES tokens d'entrée et de sortie,
-   le même modèle, la même durée et le même nombre de tours ; la ligne « Total du
-   projet » égale la somme des tuiles macOS.
+   projet : chaque feature de l'app porte les MÊMES tokens reçus, le même modèle,
+   la même durée et le même nombre de tours ; ses tokens envoyés, eux, ajoutent le
+   cache lu et le cache écrit à l'entrée que la tuile macOS affiche seule. La ligne
+   « Total du projet » somme les features listées.
 4. **Vérifier le masquage** — une feature du plan sans run lisible n'apparaît pas
    comme une ligne à zéro : elle est comptée en pied, « N feature(s) du plan sans
    données », exactement comme sur macOS.

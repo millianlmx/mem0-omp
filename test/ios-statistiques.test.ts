@@ -122,7 +122,7 @@ function mirrorFaults(root: string): string[] {
 
   const expected: Record<string, string[]> = {
     RemoteStatsProject: ["key", "label"],
-    RemoteStatsFeature: ["slug", "input", "output", "turns", "durationMs", "liveRuns", "model"],
+    RemoteStatsFeature: ["slug", "input", "output", "cacheRead", "cacheWrite", "turns", "durationMs", "liveRuns", "model"],
     RemoteStatsPayload: ["projectKey", "project", "projects", "features", "hiddenPlanFeatures"],
   };
   for (const [name, fields] of Object.entries(expected)) {

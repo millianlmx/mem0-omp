@@ -18,6 +18,8 @@ struct IOSStatsModelTests {
         slug: String,
         input: Int = 0,
         output: Int = 0,
+        cacheRead: Int? = nil,
+        cacheWrite: Int? = nil,
         turns: Int = 0,
         durationMs: Double,
         liveRuns: Int = 0,
@@ -27,6 +29,8 @@ struct IOSStatsModelTests {
             slug: slug,
             input: input,
             output: output,
+            cacheRead: cacheRead,
+            cacheWrite: cacheWrite,
             turns: turns,
             durationMs: durationMs,
             liveRuns: liveRuns,
@@ -104,6 +108,31 @@ struct IOSStatsModelTests {
         #expect(order.map(\.title) == ["a", "b"])
         #expect(StatsAccessibility.feature("a") == "ios.stats.feature.a")
         #expect(StatsAccessibility.total == "ios.stats.total")
+    }
+
+    @Test("ios-stats-tokens-envoyes-incoherent/AC-1, AC-2, AC-3 : « Tokens envoyés » compte l'entrée, le cache lu et le cache écrit")
+    func statsSentTokensCountTheCache() {
+        let cached = feature(
+            slug: "f", input: 76, output: 40_233, cacheRead: 33_206, cacheWrite: 15_936, durationMs: 0
+        )
+        let bare = feature(slug: "g", input: 5, durationMs: 0)
+
+        // AC-1 : la carte vaut I + R + W, non I seul ; « Tokens reçus » reste la sortie.
+        let card = IOSStatsContent.featureCard(cached, elapsedMs: 0)
+        #expect(card.lines[3].label == StatsPresentation.sentTokens)
+        #expect(card.lines[3].value == ConsoleFormat.tokens(49_218))
+        #expect(card.lines[3].value != ConsoleFormat.tokens(76))
+        #expect(card.lines[4].value == ConsoleFormat.tokens(40_233))
+
+        // AC-2 : le total somme les valeurs entières des features listées.
+        let total = IOSStatsContent.totalCard(payload(features: [cached, bare]), elapsedMs: 0)
+        #expect(total.lines[2].label == StatsPresentation.sentTokens)
+        #expect(total.lines[2].value == ConsoleFormat.tokens(49_223))
+
+        // AC-3 : sans cache (Mac ancien), l'entrée seule, jamais une valeur vide.
+        let plain = IOSStatsContent.featureCard(bare, elapsedMs: 0)
+        #expect(plain.lines[3].value == ConsoleFormat.tokens(5))
+        #expect(!plain.lines[3].value.isEmpty)
     }
 
     @Test("ios-statistiques/AC-3 : la ligne de total somme les features listées, rien d'autre")

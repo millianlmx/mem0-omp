@@ -185,6 +185,8 @@ final class RemoteReads {
                 slug: feature.slug,
                 input: totals.input,
                 output: totals.output,
+                cacheRead: totals.cacheRead,
+                cacheWrite: totals.cacheWrite,
                 turns: totals.turns,
                 durationMs: totals.durationMs,
                 liveRuns: featureLiveRuns(feature),
