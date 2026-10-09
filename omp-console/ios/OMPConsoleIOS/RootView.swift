@@ -17,14 +17,17 @@ import SwiftUI
 /// La racine POSSÈDE aussi le modèle du client distant (`ConsoleClientModel.live()`,
 /// créé UNE fois) : elle démarre la découverte et la connexion, présente la
 /// feuille de bienvenue (S-15, avant la connexion) puis la feuille de connexion
-/// au lancement quand aucune section n'a été demandée par `-section`, et la
-/// rouvre par une `ToolbarItem`. La ligne « Accueil » porte le badge du nombre
-/// d'attentes (S-12) quand l'Accueil est la section affichée.
+/// au lancement quand aucune section n'a été demandée par
+/// `-section`, et la rouvre par le bouton antenne `connectionToolbarItem` : sur
+/// la liste des sections en largeur compacte, et sur la colonne détail toujours
+/// — exactement un bouton à l'écran. La ligne « Accueil » porte le badge du
+/// nombre d'attentes (S-12), quelle que soit la section affichée.
 struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
     @State private var showConnection: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showWelcome = false
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
@@ -65,7 +68,7 @@ struct RootView: View {
                     Section(group.title) {
                         ForEach(IOSSection.sections(of: group)) { section in
                             let badge = IOSHomeContent.rowBadge(
-                                for: section, selection: selection, attentionCount: attentionCount)
+                                for: section, attentionCount: attentionCount)
                             Label(section.title, systemImage: section.systemImage)
                                 .badge(badge)
                                 .tag(section)
@@ -77,24 +80,32 @@ struct RootView: View {
                     }
                 }
             }
-        } detail: {
-            if selection == .home {
-                HomeView(
-                    client: client,
-                    recipe: recipe,
-                    recipeRow: recipeRow,
-                    showConnection: $showConnection,
-                    onSelectSection: { selection = $0 }
-                )
-            } else {
-                IOSSectionView(
-                    section: selection ?? .home,
-                    state: state,
-                    client: client,
-                    recipe: sessionRecipe,
-                    memoryRecipe: memoryRecipe
-                )
+            .toolbar {
+                if sizeClass == .compact {
+                    connectionToolbarItem
+                }
             }
+        } detail: {
+            Group {
+                if selection == .home {
+                    HomeView(
+                        client: client,
+                        recipe: recipe,
+                        recipeRow: recipeRow,
+                        showConnection: $showConnection,
+                        onSelectSection: { selection = $0 }
+                    )
+                } else {
+                    IOSSectionView(
+                        section: selection ?? .home,
+                        state: state,
+                        client: client,
+                        recipe: sessionRecipe,
+                        memoryRecipe: memoryRecipe
+                    )
+                }
+            }
+            .toolbar { connectionToolbarItem }
         }
         .sheet(isPresented: $showWelcome, onDismiss: presentConnectionIfNeeded) {
             HomeWelcomeSheet(client: client)
@@ -102,26 +113,31 @@ struct RootView: View {
         .sheet(isPresented: $showConnection) {
             ConnectionSheet(model: client)
         }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showConnection = true
-                } label: {
-                    Label(ConnectionText.title, systemImage: "antenna.radiowaves.left.and.right")
-                }
-            }
-        }
         .onAppear {
             client.start()
             presentInitialSheets()
         }
     }
 
-    /// Le compte d'attentes de la ligne « Accueil » ; `IOSHomeContent.rowBadge` décide
-    /// s'il est visible (Accueil sélectionnée, compte > 0, S-12), et ce même badge
-    /// nourrit le libellé d'accessibilité de la ligne.
+    /// Le bouton antenne (« Connexion ») : rouvre la feuille de connexion, sans
+    /// condition. Il est posé sur CHAQUE colonne qui porte une barre — jamais sur
+    /// le `NavigationSplitView` lui-même, dont la barre n'est affichée nulle part.
+    @ToolbarContentBuilder
+    private var connectionToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showConnection = true
+            } label: {
+                Label(ConnectionText.title, systemImage: "antenna.radiowaves.left.and.right")
+            }
+            .accessibilityIdentifier(ConnectionAccessibility.open)
+        }
+    }
+
+    /// Le compte d'attentes de la ligne « Accueil » : celui de la recette quand
+    /// `-home.recipe` est donné, sinon le compte en direct (S-12).
     private var attentionCount: Int {
-        IOSHomeContent.badge(omp: client.omp, board: client.board)
+        recipe?.badge ?? IOSHomeContent.badge(omp: client.omp, board: client.board)
     }
 
     /// L'ordre de S-15 : la bienvenue d'abord, la connexion ensuite.

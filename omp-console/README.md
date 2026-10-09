@@ -1938,6 +1938,16 @@ groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec s
 état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
 trousseau et feuille de connexion.
+Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
+connecté ou non : sur iPhone, dans la barre de la liste des sections et dans celle
+de chaque écran poussé ; sur iPad, une seule fois, dans la barre du détail. La
+recette `scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
+--ipad <UDID>` le prouve au simulateur avec `idb` (captures sous
+`omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
+(`scripts/ios-build.sh` compile sans signature, et le trousseau du simulateur
+refuse alors d'écrire le jeton d'appairage : l'état connecté serait
+inatteignable) et veut des simulateurs dédiés, que les autres runs
+(`ios-shots.sh`) ne pilotent pas.
 
 L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
 aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
@@ -1946,14 +1956,18 @@ préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Ré
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
 (« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR) —
 les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
-ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
+ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
+le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
+ligne n'en porte, et rien à zéro), et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong>`
-force un état depuis la fixture partagée `HomeParity` pour les captures ; le
-crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
-l'écran (captures des rangées en Dynamic Type).
+force un état depuis la fixture partagée `HomeParity` pour les captures ; il
+nourrit aussi le badge de la ligne Accueil (3 pour dashboard/answer/contract/contractLong/degraded,
+0 pour loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
+d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
+Dynamic Type).
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
@@ -1972,6 +1986,8 @@ fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 « Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
 deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
 sans aucune action sur le Mac.
+
+Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
 (le catalogue de `omp models --json`, qu'aucune route n'exposait) et le champ

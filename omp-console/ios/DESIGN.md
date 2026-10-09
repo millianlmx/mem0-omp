@@ -156,8 +156,17 @@ marqueur `[test: <fonction>]` (une fonction de
 - En largeur COMPACTE (iPhone portrait), les voies s'empilent verticalement dans
   le défilement de l'écran ; en largeur RÉGULIÈRE (iPad), elles sont côte à côte
   dans un défilement horizontal posé dans ce défilement vertical — toutes les
-  voies et toutes les cartes restent atteignables.
+  voies montrées et toutes leurs cartes restent atteignables.
   `[capture: iphone-kanban-light]`
+- En largeur COMPACTE, une voie sans carte n'est pas montrée — « Pas commencées »
+  comprise — et sans aucune voie à montrer l'écran affiche le mot partagé
+  `KanbanText.noPipeline`. `[test: compactHidesEveryEmptyLane]`
+- En largeur COMPACTE, « Livrées » et « Arrêtées » s'ouvrent repliées à chaque
+  visite : leur en-tête, un bouton de 44 pt (`pipelines.lane.<voie>.header`,
+  valeur d'accessibilité « replié »/« déplié »), les déplie et les replie ;
+  l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
+- En largeur RÉGULIÈRE (iPad), l'ardoise est inchangée : voies permanentes même
+  vides, voies terminales dépliées. `[test: regularKeepsLanesUnchanged]`
 - L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
   un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
   affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
@@ -187,6 +196,10 @@ marqueur `[test: <fonction>]` (une fonction de
   dont le libellé est le titre de la section, suivi de « , N en attente » quand le
   badge est visible — la même valeur alimente le badge et le libellé.
   `[test: sectionRowLabelFollowsShownBadge]`
+- Le badge ne dépend pas de la section affichée : la liste racine de l'iPhone le
+  montre au retour de n'importe quel écran, la barre latérale de l'iPad aussi
+  quand une autre section est sélectionnée ; aucune autre ligne n'en porte.
+  `[test: homeRowCarriesPositiveCount]`
 - La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
   (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,

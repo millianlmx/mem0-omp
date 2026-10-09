@@ -68,11 +68,12 @@ struct ConnectionTextTests {
     @Test("ConnectionAccessibility : les identifiants sont uniques, préfixés et complets")
     func identifiersAreUniqueAndComplete() {
         let identifiers = ConnectionAccessibility.identifiers
-        #expect(identifiers.count == 14)
+        #expect(identifiers.count == 15)
         #expect(Set(identifiers).count == identifiers.count)
         #expect(identifiers.allSatisfy { $0.hasPrefix("connection.") })
         #expect(identifiers.contains(ConnectionAccessibility.sheet))
         #expect(identifiers.contains(ConnectionAccessibility.codePair))
         #expect(identifiers.contains(ConnectionAccessibility.close))
+        #expect(identifiers.contains(ConnectionAccessibility.open))
     }
 }

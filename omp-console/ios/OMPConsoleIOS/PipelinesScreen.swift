@@ -10,6 +10,9 @@ struct PipelinesScreen: View {
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
     @State private var sheet: PipelinesSheet?
+    /// Les voies terminales dépliées pendant CETTE visite (S-3) : remis à vide
+    /// à la sortie de l'écran, jamais écrit nulle part.
+    @State private var unfoldedLanes: Set<KanbanLane> = []
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.openURL) private var openURL
 
@@ -42,6 +45,7 @@ struct PipelinesScreen: View {
                 NewFeatureSheetView(client: client)
             }
         }
+        .onDisappear { unfoldedLanes = [] }
         .accessibilityIdentifier(PipelinesAccessibility.screen)
     }
 
@@ -90,50 +94,83 @@ struct PipelinesScreen: View {
     @ViewBuilder
     private func boardContent(_ board: KanbanBoard) -> some View {
         let showsRepo = Set(board.cards.map(\.repo)).count > 1
-        if sizeClass == .compact {
+        let rows = PipelinesModel.laneRows(
+            board.lanes, compact: sizeClass == .compact, unfolded: unfoldedLanes)
+        if rows.isEmpty {
+            emptyCard(KanbanText.noPipeline)
+        } else if sizeClass == .compact {
             VStack(alignment: .leading, spacing: 16) {
-                lanes(board, showsRepo: showsRepo)
+                lanes(rows, showsRepo: showsRepo)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: 12) {
-                    lanes(board, showsRepo: showsRepo)
+                    lanes(rows, showsRepo: showsRepo)
                 }
             }
         }
     }
 
     @ViewBuilder
-    private func lanes(_ board: KanbanBoard, showsRepo: Bool) -> some View {
-        ForEach(board.lanes) { lane in
-            laneView(lane, showsRepo: showsRepo)
+    private func lanes(_ rows: [PipelinesLaneRow], showsRepo: Bool) -> some View {
+        ForEach(rows) { row in
+            laneView(row, showsRepo: showsRepo)
         }
     }
 
     @ViewBuilder
-    private func laneView(_ lane: KanbanLaneContent, showsRepo: Bool) -> some View {
+    private func laneView(_ row: PipelinesLaneRow, showsRepo: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: lane.lane.symbol)
-                    .foregroundStyle(lane.lane.tone.tint)
-                Text(lane.lane.title).font(.headline)
-                Text(PipelinesText.laneCount(lane.cards.count))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if lane.cards.isEmpty {
-                Text(lane.lane.emptyText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            if row.foldable {
+                Button {
+                    unfoldedLanes.formSymmetricDifference([row.lane])
+                } label: {
+                    HStack(spacing: 6) {
+                        laneTitle(row)
+                        Spacer(minLength: 0)
+                        Image(systemName: IOSSessionText.chevron(!row.folded))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityValue(row.folded ? PipelinesText.laneFolded : PipelinesText.laneUnfolded)
+                .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
             } else {
-                ForEach(lane.cards) { card in
+                HStack(spacing: 6) {
+                    laneTitle(row)
+                }
+            }
+            if !row.visibleCards.isEmpty {
+                ForEach(row.visibleCards) { card in
                     cardButton(card, showsRepo: showsRepo)
                 }
+            } else if !row.folded && row.content.cards.isEmpty {
+                Text(row.lane.emptyText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(minWidth: sizeClass == .compact ? 0 : 240, alignment: .leading)
-        .accessibilityIdentifier(PipelinesAccessibility.lane(lane.lane.rawValue))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(PipelinesAccessibility.lane(row.lane.rawValue))
+    }
+
+    /// Le symbole teinté, le titre et le compte d'une voie — le même contenu
+    /// pour l'en-tête repliable et pour l'en-tête simple.
+    @ViewBuilder
+    private func laneTitle(_ row: PipelinesLaneRow) -> some View {
+        Image(systemName: row.lane.symbol)
+            .foregroundStyle(row.lane.tone.tint)
+        Text(row.lane.title).font(.headline)
+        Text(PipelinesText.laneCount(row.content.cards.count))
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 
     /// La carte : le corps ouvre la feuille ; quand le magasin porte une adresse
