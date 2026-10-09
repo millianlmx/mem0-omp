@@ -9,10 +9,14 @@ struct PipelinesScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
-    /// Le crochet de recette `-pipelines.recipe` : la feuille « Nouvelle feature »
-    /// s'ouvre d'elle-même dans l'état forcé.
+    /// Le crochet de recette `-pipelines.recipe <vide|choisi|rempli>` : la feuille
+    /// « Nouvelle feature » s'ouvre d'elle-même dans l'état forcé.
     let newFeatureRecipe: IOSPipelinesRecipe?
+    /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` : la fiche de
+    /// la carte de fixture s'ouvre UNE fois, sans instantané du Mac.
+    var cardRecipe: PipelinesCardRecipe?
     @State private var sheet: PipelinesSheet?
+    @State private var recipeOpened = false
     /// Les voies terminales dépliées pendant CETTE visite (S-3) : remis à vide
     /// à la sortie de l'écran, jamais écrit nulle part.
     @State private var unfoldedLanes: Set<KanbanLane> = []
@@ -43,12 +47,17 @@ struct PipelinesScreen: View {
         .sheet(item: $sheet) { target in
             switch target {
             case .card(let cardId):
-                PipelinesCardSheet(client: client, cardId: cardId)
+                PipelinesCardSheet(client: client, cardId: cardId, recipe: cardRecipe)
             case .newFeature:
                 NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
             }
         }
         .onDisappear { unfoldedLanes = [] }
+        .onAppear {
+            guard !recipeOpened, let card = cardRecipe?.card else { return }
+            recipeOpened = true
+            sheet = .card(card.id)
+        }
         .accessibilityIdentifier(PipelinesAccessibility.screen)
         .task {
             if newFeatureRecipe != nil { sheet = .newFeature }

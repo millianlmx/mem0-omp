@@ -195,6 +195,16 @@ marqueur `[test: <fonction>]` (une fonction de
   `[capture: iphone-nouvelle-feature-rempli-light]`
 - La feuille se capture par le crochet de recette `-pipelines.recipe`
   (`vide`, `choisi`, `rempli`), sans appairage. `[test: pipelinesRecipeResolves]`
+- La fiche d'une carte affiche son titre complet une seule fois, dans le corps, sur
+  autant de lignes qu'il faut ; la barre porte « Pipelines » et « Fermer » (44 pt).
+  `[capture: iphone-pipelines-fiche-*]`
+- « Reprendre » est l'action principale (bouton plein, accent) ; « Arrêter… » est
+  secondaire, rouge à contour, et passe par sa confirmation.
+  `[capture: iphone-pipelines-fiche-actions-*]`
+- Le modèle s'affiche par son nom lisible du catalogue servi par le Mac, l'identifiant
+  brut sinon. `[test: modelNameFromCatalog]`
+- Chaque élément de la fiche porte son propre identifiant `pipelines.card.sheet.*`.
+  `[test: sheetIdentifiersAreDistinct]`
 
 ## L'Accueil (S-10, S-11)
 

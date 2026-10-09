@@ -22,8 +22,10 @@ import SwiftUI
 ///   fonctionnalité ;
 /// - `-pipelines.recipe <vide|choisi|rempli>` : la feuille « Nouvelle feature »
 ///   ouverte d'elle-même sur l'écran Pipelines, dans un état forcé (dépôts, dépôt
-///   choisi, titre, besoin), pour capturer la feuille sans appairage — un crochet
-///   de recette, pas une fonctionnalité.
+///   choisi, titre, besoin), pour capturer la feuille sans appairage ;
+///   `-pipelines.recipe <fiche|actions|arret>` : la fiche d'une carte de fixture
+///   ouverte sur l'écran Pipelines (ios-fiche-carte-pipelines), sans réseau — des
+///   crochets de recette, pas des fonctionnalités.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -39,6 +41,7 @@ struct OMPConsoleIOSApp: App {
     private let sessionRecipe: IOSSessionsRecipe?
     private let memoryRecipe: IOSMemoryGraphRecipe?
     private let pipelinesRecipe: IOSPipelinesRecipe?
+    private let cardRecipe: PipelinesCardRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -50,6 +53,7 @@ struct OMPConsoleIOSApp: App {
         sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
         pipelinesRecipe = IOSPipelinesRecipe.resolve(arguments)
+        cardRecipe = PipelinesCardRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -63,6 +67,7 @@ struct OMPConsoleIOSApp: App {
                 sessionRecipe: sessionRecipe,
                 memoryRecipe: memoryRecipe,
                 pipelinesRecipe: pipelinesRecipe,
+                cardRecipe: cardRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

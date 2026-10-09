@@ -18,6 +18,13 @@ struct ModelCatalogError: Error, Equatable, Sendable {
     let reason: String
 }
 
+/// Le catalogue lu d'UNE sortie de `omp models --json` : les sélecteurs triés et
+/// leurs noms lisibles (clés ⊂ `selectors`).
+struct ModelCatalogListing: Equatable, Sendable {
+    let selectors: [String]
+    let names: [String: String]
+}
+
 // `ModelCatalogState` et `ModelCatalog.defaultChoice`/`choices(_:)` vivent dans
 // `ConsoleCore` (`Kanban/ModelCatalog.swift`) : les deux coques les emploient.
 // La coque macOS garde ICI la lecture de `omp models --json`.
@@ -40,6 +47,28 @@ extension ModelCatalog {
         }
         return selectors.sorted()
     }
+
+    /// Le nom lisible de chaque sélecteur de `{"models":[{"selector": …, "name": …}]}`
+    /// (feature ios-fiche-carte-pipelines, D-4). Une entrée dont `selector` ou
+    /// `name` n'est pas une chaîne non blanche est ignorée ; `name` est gardé
+    /// tel quel ; pour un sélecteur en double la PREMIÈRE entrée gagne. Même
+    /// garde de forme que `selectors(fromJSON:)` : `nil` quand le JSON est
+    /// illisible ou sans tableau `models`.
+    static func names(fromJSON data: Data) -> [String: String]? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        guard let object = root as? [String: Any], let models = object["models"] as? [[String: Any]] else {
+            return nil
+        }
+        var names: [String: String] = [:]
+        for model in models {
+            guard let selector = model["selector"] as? String,
+                  !selector.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let name = model["name"] as? String,
+                  !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            if names[selector] == nil { names[selector] = name }
+        }
+        return names
+    }
 }
 
 /// Le chargement de `omp models --json` (S-5). Le binaire est résolu par
@@ -53,6 +82,12 @@ enum ModelCatalogLoader {
     /// Le chargeur réel. Un binaire absent, un code non nul ou une sortie
     /// illisible rendent le motif de l'échec.
     static func loadDefault() async -> Result<[String], ModelCatalogError> {
+        await loadListing().map(\.selectors)
+    }
+
+    /// Le chargement complet : sélecteurs ET noms lus de la MÊME sortie d'un
+    /// seul lancement de `omp models --json`.
+    static func loadListing() async -> Result<ModelCatalogListing, ModelCatalogError> {
         let environment = ProcessInfo.processInfo.environment
         let binary: URL
         switch OmpBinaryResolver.resolve(environment: environment) {
@@ -75,9 +110,11 @@ enum ModelCatalogLoader {
         guard run.code == 0 else {
             return .failure(ModelCatalogError(reason: "omp models a échoué (code \(run.code))"))
         }
-        guard let selectors = ModelCatalog.selectors(fromJSON: Data(run.stdout.utf8)) else {
+        let data = Data(run.stdout.utf8)
+        guard let selectors = ModelCatalog.selectors(fromJSON: data),
+              let names = ModelCatalog.names(fromJSON: data) else {
             return .failure(ModelCatalogError(reason: "réponse illisible"))
         }
-        return .success(selectors)
+        return .success(ModelCatalogListing(selectors: selectors, names: names))
     }
 }
