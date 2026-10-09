@@ -374,6 +374,8 @@ test("service-sessions/AC-5 : une session de maillon porte son identité, et n'e
       worktree: cwd,
       inbox: path.join(stateDir, "inbox", "iso"),
       deadlineAt: null,
+      primary: null,
+      fallback: null,
     },
   });
   // L'identité est inscrite AVANT le prompt : c'est elle que la branche de session

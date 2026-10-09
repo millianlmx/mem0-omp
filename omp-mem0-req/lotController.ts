@@ -4,21 +4,31 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { contractHashOf, effectiveReviewVerdict, isReviewCapReason, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { reviewBlockers, reviewVerdict } from "./contract.ts";
+import { contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
-import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
+import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
+import { ARBITRATION_REFUSAL } from "./lot.ts";
 import { COMMAND_MAX_PER_PASS, COMMAND_POLL_MS, COMMAND_UNREADABLE_REFUSAL, asCommand, commandAck, commandIdOf, commandRefusal, commandShapeRefusal, commandSlugOf, purgeCommandAcks, readCommandAck, readCommands, removeCommandFile, writeCommandAck } from "./commands.ts";
 import type { CommandState, CommandView, PipelineCommand, PipelineCommandAck } from "./commands.ts";
 import { defaultSchedule } from "./panelView.ts";
-import { featureModelForPhase, modelSlotsField } from "./models.ts";
+import { fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForPhase, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
-import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
+import { questionOf } from "./lot.ts";
+import { appendJournal, contextBlock, journalFor, readBrief } from "./context.ts";
+import type { DecisionSource, JournalKind } from "./context.ts";
+import { ARBITER_DEADLINE_MS, buildArbiterCorpus, buildArbiterPrompt, itemQuestion, normalizeQuestion, validateArbiterDecision } from "./arbiter.ts";
+import type { ArbiterEffect, ArbiterItem } from "./arbiter.ts";
+import { relayItemsOf } from "./relay.ts";
+import type { RelayItem } from "./relay.ts";
+import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, milestoneLine, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
 import type { LotPromptKind, WorktreeFate } from "./runs.ts";
-import type { LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
+import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason } from "./quota.ts";
+import type { QuotaHit } from "./quota.ts";
+import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
 import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeDelivery } from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
 import { serviceRunning } from "./serviceState.ts";
@@ -44,6 +54,8 @@ export type AddFeatureInput = {
   auditSession?: string;
   modelReqSpecs?: string | null;
   modelImplReview?: string | null;
+  fallbackReqSpecs?: string | null;
+  fallbackImplReview?: string | null;
   relayKind?: "project";
   base?: string;
 };
@@ -51,6 +63,14 @@ export type AddFeatureInput = {
 
 /** Le refus d'une réponse à un `ask` (S-7) : la question se répond dans SA vue. */
 const ASK_REPLY_REFUSAL = "le maillon attend une réponse à sa question : choisis une option dans sa conversation";
+
+
+/**
+ * Les features qu'une décision de quota vise (S-5) : celles d'une session
+ * /project ou /audit (`context`, sa clé de relais), celles qu'AUCUNE session
+ * ouverte ne porte (`unrelayed`, le rang de /pipelines), ou toutes.
+ */
+export type QuotaScope = { kind: "context"; key: string } | { kind: "unrelayed" } | { kind: "all" };
 
 
 /** Ce que le panneau demande au pilote : chaque refus rend son motif, jamais une exception. */
@@ -64,20 +84,32 @@ export type LotPanelActions = {
    */
   editModels(
     slug: string,
-    input: { modelReqSpecs: string | null; modelImplReview: string | null },
+    input: {
+      modelReqSpecs: string | null;
+      modelImplReview: string | null;
+      fallbackReqSpecs?: string | null;
+      fallbackImplReview?: string | null;
+    },
   ): Promise<string | null>;
+  /**
+   * La décision de quota (S-5) : `model` devient le REPLI du groupe de chaque
+   * feature bloquée par `provider` dans `scope` (le principal ne change pas), puis
+   * chacune est relancée par `relaunch` — session reprise. Rend `null`, ou le motif.
+   */
+  resolveQuota(provider: string, model: string, scope: QuotaScope): Promise<string | null>;
   launch(): Promise<string | null>;
   remove(slug: string): Promise<string | null>;
   /**
    * Livre la réponse (feature `waiting`+`answer`) ou met le texte en file (`running`).
-   * `from: "audit"` / `"project"` : le relais lui-même répond — une question relayée
-   * n'est pas refusée (S-3, S-6).
+   * `source` (S-11) : d'où vient la réponse — `utilisateur` par défaut, `contexte` ou
+   * `arbitrage` pour l'arbitre. `viaRelay` : le relais ou l'arbitre répondent eux-mêmes —
+   * une question relayée n'est pas refusée comme « confiée à la session » (S-3, S-6).
    */
-  answer(slug: string, text: string, options?: { from?: "audit" | "project" }): Promise<string | null>;
+  answer(slug: string, text: string, options?: { source?: DecisionSource; viaRelay?: boolean }): Promise<string | null>;
   /** Ce que cette feature accepte comme écriture — la MÊME règle que `answer` applique. */
   reply(slug: string): RowReply;
-  validate(slug: string): Promise<string | null>;
-  accept(slug: string): Promise<string | null>;
+  validate(slug: string, options?: { source?: DecisionSource }): Promise<string | null>;
+  accept(slug: string, options?: { source?: DecisionSource }): Promise<string | null>;
   relaunch(slug: string): Promise<string | null>;
   cancel(slug: string, fate: WorktreeFate): Promise<string | null>;
 };
@@ -87,6 +119,8 @@ export type LotControllerDeps = {
   stateDir: string;
   repoRoot: string;
   run: LotRunner;
+  /** Le lanceur d'arbitre (S-9) : absent = aucun arbitrage, les éléments restent à l'utilisateur. */
+  arbiter?: ArbiterRunner;
   runGit: GitRunner;
   /** `gh`, pour l'URL du dépôt et la PR. Absent ⇒ la livraison est bloquée, sans exception. */
   runGh?: (args: string[], cwd: string) => Promise<GitResult>;
@@ -151,6 +185,8 @@ export type LotController = LotPanelActions & {
     worktree: string;
     modelReqSpecs?: string | null;
     modelImplReview?: string | null;
+    fallbackReqSpecs?: string | null;
+    fallbackImplReview?: string | null;
   }): string | null;
 };
 
@@ -175,6 +211,27 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const repoKey = lotRepoKey(deps.repoRoot);
   const repo = path.basename(realpathOr(deps.repoRoot)) || realpathOr(deps.repoRoot);
   const now = () => (deps.now ?? Date.now)();
+  /** Une décision APPLIQUÉE, consignée au journal du dépôt (S-7) — source `utilisateur` ici. */
+  function journalDecision(
+    feature: LotFeature,
+    phase: PipelinePhase,
+    kind: JournalKind,
+    question: string,
+    answer: string,
+    source: DecisionSource = "utilisateur",
+  ): void {
+    appendJournal(stateDir, repoKey, {
+      at: now(),
+      slug: feature.slug,
+      phase,
+      kind,
+      question,
+      answer,
+      source,
+      context: feature.auditSession ?? null,
+    });
+  }
+
   const cap = deps.reviewCap ?? lotReviewCap();
   const slots = deps.slots ?? lotSlots();
   const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
@@ -182,6 +239,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
   const worktreesBase = deps.worktreesBase ?? worktreesBaseDir();
   const archiveBase = deps.archiveBase ?? lotArchiveBaseDir();
   const inFlight = new Map<string, AbortController>();
+  /** Le lot d'impl et le `--fix` du run EN VOL de chaque feature, relus par `finishRun` pour son enregistrement (S-12). */
+  const runKinds = new Map<string, { lot: string | null; fix: boolean }>();
   /**
    * La boîte de chaque run EN VOL (S-6) : créée par le lanceur, consommée par
    * l'enfant, vidée par `finishRun` — les textes jamais consommés reviennent à la
@@ -514,10 +573,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
     feature.waitKind = null;
     feature.waitPrompt = null;
     feature.stopReason = null;
+    delete feature.quota;
     feature.endedAt = null;
     // Les compteurs du plafond comptent AUSSI les runs lancés par une action (R,
     // réponse, jalon) : sinon le plafond effectif valait cap+1 corrections, et une
     // revue lancée par R n'était comptée nulle part (S-5).
+    // Le découpage de l'impl (S-13) s'arrête à l'entrée en review et sur `--fix`.
+    if (launch.phase === "review" || launch.fix) {
+      delete feature.implLots;
+      delete feature.implLot;
+    }
     feature.fixes += launch.fix ? 1 : 0;
     feature.reviewRuns += launch.phase === "review" ? 1 : 0;
     feature.unreadableRuns = (feature.unreadableRuns ?? 0) + (launch.phase === "review" ? 1 : 0);
@@ -575,14 +640,66 @@ export function createLotController(deps: LotControllerDeps): LotController {
     return { lot, deps };
   }
 
+  /**
+   * Le modèle de DÉPART d'un run (S-4) : le principal s'il est nul (défaut OMP —
+   * la garde est alors appliquée après ouverture, par le runner) ou non épuisé ;
+   * sinon le repli s'il existe et n'est pas épuisé ; sinon rien : le quota du
+   * principal bloque la feature.
+   */
+  function startModel(primary: string | null, fallback: string | null): { model: string | null } | { blocked: QuotaHit } {
+    if (primary === null) return { model: null };
+    const at = now();
+    const hit = exhaustedUntil(stateDir, primary, at);
+    if (hit === null) return { model: primary };
+    if (fallback !== null && exhaustedUntil(stateDir, fallback, at) === null) return { model: fallback };
+    return { blocked: hit };
+  }
+
+  /** Passe la feature en « bloquée : quota » (S-5) : `blocked`, jamais `failed`, avec son quota. */
+  function blockOnQuota(lot: Lot, feature: LotFeature, phase: PipelinePhase, hit: QuotaHit): void {
+    feature.quota = { provider: hit.provider, model: hit.model, until: hit.until, announced: hit.announced, phase };
+    settle(lot, feature, "blocked", quotaStopReason(hit));
+  }
+
   function startRun(lot: Lot, feature: LotFeature, launch: PlannedLaunch): void {
+    const primary = featureModelForPhase(feature, launch.phase);
+    const fallback = featureFallbackForPhase(feature, launch.phase);
+    // La garde de lancement (S-4) : jamais de run sur un modèle épuisé, et aucune
+    // session ouverte quand ni le principal ni le repli n'est disponible.
+    const started = startModel(primary, fallback);
+    if ("blocked" in started) {
+      blockOnQuota(lot, feature, launch.phase, started.blocked);
+      if (save(lot) !== null) watched.delete(feature.slug);
+      return;
+    }
     // La file (S-5) est consommée PAR le run qui part : les textes sont capturés
     // avant d'être vidés, et le vidage part dans l'écriture même qui démarre le run.
     // Une écriture refusée (propriétaire étranger vivant, disque) rend les textes à
     // la file : aucun run ne part, donc aucun message n'est perdu.
     const queued = feature.pendingTexts;
     feature.pendingTexts = [];
+    // La source du jalon qui vient d'être franchi (S-11) : nommée à la fin du prompt du
+    // run qui le suit (impl après « specs validées », release après « revue propre »).
+    const milestoneSource = feature.milestoneSource;
+    const milestone =
+      milestoneSource !== undefined && launch.kind === "phase" && !launch.fix
+        ? launch.phase === "impl"
+          ? milestoneLine("specs validées", milestoneSource)
+          : launch.phase === "release"
+            ? milestoneLine("revue propre", milestoneSource)
+            : undefined
+        : undefined;
+    if (milestone !== undefined) delete feature.milestoneSource;
+    // Le lot d'impl du run (S-13) : seulement un run d'impl hors `--fix`, sur une feature découpée.
+    const implLots = feature.implLots;
+    const implRank = feature.implLot;
+    const lotOfRun =
+      launch.phase === "impl" && !launch.fix && implLots !== undefined && implRank !== undefined && implLots[implRank] !== undefined
+        ? { id: implLots[implRank] as string, index: implRank, ids: implLots }
+        : undefined;
+    runKinds.set(feature.slug, { lot: lotOfRun?.id ?? null, fix: launch.fix });
     const prompt = buildLotPrompt({
+      ...(lotOfRun === undefined ? {} : { lot: lotOfRun }),
       kind: launch.kind,
       phase: launch.phase,
       slug: feature.slug,
@@ -590,6 +707,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
       text: launch.text,
       fix: launch.fix,
       messages: queued,
+      ...(launch.source === undefined ? {} : { source: launch.source }),
+      ...(milestone === undefined ? {} : { milestone }),
+      // Le contexte de conduite (S-8) : seulement pour une feature lancée par /project ou /audit.
+      ...(feature.auditSession !== undefined
+        ? { context: contextBlock({ stateDir, repoKey, slug: feature.slug, contextKey: feature.auditSession }) }
+        : {}),
     });
     // La session reprise (S-8 §1) : celle de l'entrée VIVANTE du worktree quand il
     // y en a une — c'est le run lui-même qui l'a publiée, donc elle fait autorité
@@ -625,7 +748,9 @@ export function createLotController(deps: LotControllerDeps): LotController {
       sessionFile,
       // Le modèle (S-1) vient de la FEATURE, au moment du lancement : le groupe de
       // la PHASE du run décide de la clé, et l'ancien modèle unique en repli (AC-4).
-      model: featureModelForPhase(feature, launch.phase),
+      model: started.model,
+      primary,
+      fallback,
       inbox,
       deadline: at + runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
     };
@@ -658,6 +783,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // Le lot n'a pas été écrit : le vidage de la file non plus. Les textes
       // retournent dans la feature, comme ils sont restés sur le disque (S-5).
       feature.pendingTexts = queued;
+      if (milestoneSource !== undefined) feature.milestoneSource = milestoneSource;
       return;
     }
     const startedAt = now();
@@ -738,6 +864,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const feature = lotFeature(lot, slug);
     if (!feature || feature.state !== "running" || feature.phase !== phase) return;
     queueLeftovers(feature, leftovers);
+    const runKind = runKinds.get(slug);
+    runKinds.delete(slug);
     // La session du run est retenue quel que soit son SORT (S-8 §1) : un run tué ou
     // en échec a quand même une conversation, et c'est elle qu'une réponse doit
     // reprendre — la perdre obligeait `R` à repartir d'une session NEUVE, en
@@ -746,6 +874,26 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (session) {
       feature.sessionFile = session;
       feature.lastRunSessionFile = session;
+    }
+    appendRunRecord(feature, {
+      step: phase,
+      lot: runKind?.lot ?? null,
+      fix: runKind?.fix ?? false,
+      startedAt,
+      endedAt: now(),
+      peakContext: result.peakContext ?? null,
+      sessionFile: session ?? null,
+    });
+    // Un run rendu SANS modèle disponible (S-2) n'a pas échoué : son quota est
+    // épuisé. La feature devient `blocked` (jamais `failed`), avec sa session et son
+    // worktree intacts ; l'inscription au registre précède la sauvegarde (S-4), pour
+    // qu'aucun lancement ne retombe sur ce modèle.
+    if (result.quota) {
+      markExhausted(stateDir, result.quota);
+      blockOnQuota(lot, feature, phase, result.quota);
+      if (save(lot) !== null) watched.delete(slug);
+      void Promise.resolve().then(() => tick().catch(() => undefined));
+      return;
     }
     // Un run tué alors qu'une question était EN VOL n'a pas échoué : il attendait.
     // La feature devient `blocked` (répondable, avec sa session) au lieu de
@@ -825,6 +973,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (action.kind === "run") {
       // Le maillon suivant du MÊME run : le créneau est déjà tenu, donc aucun
       // plafond ne s'applique ici — seul l'armement est partagé.
+      // Impl par lot (S-13) : quand la chaîne dirait « review » et qu'un lot reste, le lot
+      // suivant part à la place ; le rang est écrit avec la sauvegarde qui précède le run.
+      const lots = feature.implLots;
+      const rank = feature.implLot ?? 0;
+      if (feature.phase === "impl" && action.phase === "review" && lots !== undefined && rank + 1 < lots.length) {
+        feature.implLot = rank + 1;
+        arm(feature, { phase: "impl", fix: false });
+        out.launches.push({ slug: feature.slug, phase: "impl", fix: false, kind: "phase", resume: false });
+        return out;
+      }
       arm(feature, action);
       out.launches.push({
         slug: feature.slug,
@@ -1029,6 +1187,209 @@ export function createLotController(deps: LotControllerDeps): LotController {
     return next;
   }
 
+  // --- l'arbitre éphémère (S-9) -----------------------------------------------
+  // Une session NEUVE par élément, jamais reprise : elle juge sur un corpus fermé
+  // (brief, journal, contrat) et rend UNE décision que ce pilote valide avant tout
+  // effet. Aucun message n'est jamais envoyé à une session parente.
+
+  /** Les arbitrages VIVANTS de CE process : une marque `feature.arbitration` sans entrée ici est périmée. */
+  const arbiting = new Map<string, AbortController>();
+  const ARBITRABLE: ReadonlySet<string> = new Set(["ask", "question", "specs", "review"]);
+
+  /** Les éléments courants de toutes les features avec contexte, dans l'ordre du lot. */
+  function currentItems(lot: Lot): RelayItem[] {
+    const keys = new Set<string>();
+    for (const feature of lot.features) if (feature.auditSession !== undefined) keys.add(feature.auditSession);
+    const items: RelayItem[] = [];
+    for (const key of keys) items.push(...relayItemsOf(lot, key, (feature) => liveEntryOf(feature.worktree), { cap: false }));
+    return items;
+  }
+
+  /**
+   * Décide quels éléments partent à l'arbitre, et nettoie les marques périmées :
+   * une marque sans arbitre vivant dans ce process (service redémarré) est
+   * effacée et l'élément ré-arbitré ; une escalade dont l'élément n'est plus
+   * courant tombe. Pose `feature.arbitration` — écrit avec la passe.
+   */
+  function planArbitrations(lot: Lot): { changed: boolean; planned: Array<{ slug: string; item: RelayItem }> } {
+    const out = { changed: false, planned: [] as Array<{ slug: string; item: RelayItem }> };
+    if (deps.arbiter === undefined) return out;
+    const items = currentItems(lot).filter((item) => ARBITRABLE.has(item.kind));
+    for (const feature of lot.features) {
+      if (feature.arbitration !== undefined && !arbiting.has(feature.slug)) {
+        delete feature.arbitration;
+        out.changed = true;
+      }
+      const item = items.find((candidate) => candidate.slug === feature.slug);
+      if (feature.escalation !== undefined && item?.key !== feature.escalation.key) {
+        delete feature.escalation;
+        out.changed = true;
+      }
+      if (item === undefined || feature.auditSession === undefined) continue;
+      if (feature.escalation !== undefined || feature.arbitration !== undefined) continue;
+      if (item.kind === "ask" && answeredAsks.has(askKey(item.slug, item.toolCallId ?? ""))) continue;
+      feature.arbitration = { key: item.key, startedAt: now() };
+      out.planned.push({ slug: feature.slug, item });
+      out.changed = true;
+    }
+    return out;
+  }
+
+  function arbiterItemOf(item: RelayItem): ArbiterItem {
+    return {
+      kind: item.kind as ArbiterItem["kind"],
+      slug: item.slug,
+      phase: item.phase,
+      question: item.kind === "ask" || item.kind === "question" ? (item.question ?? "") : null,
+      options: item.options.map((option) => option.label),
+    };
+  }
+
+  /** Pose l'escalade de l'élément (S-9) et efface la marque, dans la MÊME sauvegarde. */
+  function escalateItem(slug: string, item: RelayItem, reason: string): void {
+    const lot = read();
+    const feature = lot ? lotFeature(lot, slug) : undefined;
+    if (!lot || !feature || feature.arbitration?.key !== item.key) return;
+    feature.escalation = {
+      key: item.key,
+      kind: item.kind === "specs" || item.kind === "review" ? "jalon" : "question",
+      phase: item.phase,
+      question: itemQuestion(arbiterItemOf(item)),
+      options: item.options.map((option) => option.label),
+      reason,
+      at: now(),
+    };
+    delete feature.arbitration;
+    save(lot);
+  }
+
+  /** Efface la marque d'arbitrage de l'élément (la décision est appliquée, ou jetée). */
+  function clearArbitration(slug: string, key: string): void {
+    const lot = read();
+    const feature = lot ? lotFeature(lot, slug) : undefined;
+    if (!lot || !feature || feature.arbitration?.key !== key) return;
+    delete feature.arbitration;
+    save(lot);
+  }
+
+  /**
+   * La décision de l'arbitre pour `item`, ou `null` quand la feature a disparu :
+   * raccourci du journal (question déjà tranchée), garde de modèle (S-4), run
+   * d'arbitre puis validation déterministe.
+   */
+  async function decideItem(slug: string, item: RelayItem, signal: AbortSignal): Promise<ArbiterEffect | null> {
+    const lot = read();
+    const feature = lot ? lotFeature(lot, slug) : undefined;
+    if (!feature || feature.auditSession === undefined || deps.arbiter === undefined) return null;
+    const arbiterItem = arbiterItemOf(item);
+    const entries = journalFor(stateDir, repoKey, slug);
+    if (arbiterItem.question !== null) {
+      const wanted = normalizeQuestion(arbiterItem.question);
+      const known = entries.find((entry) => entry.kind === "question" && normalizeQuestion(entry.question) === wanted);
+      if (known) {
+        return { kind: "answer", answer: known.answer, source: "contexte", selected: arbiterItem.options.includes(known.answer) };
+      }
+    }
+    const fallback = featureFallbackForPhase(feature, item.phase);
+    const started = startModel(featureModelForPhase(feature, item.phase), fallback);
+    if ("blocked" in started) {
+      return { kind: "escalate", reason: `arbitre indisponible : quota épuisé (${started.blocked.provider})` };
+    }
+    const corpus = buildArbiterCorpus({
+      brief: readBrief(stateDir, feature.auditSession),
+      slug,
+      entries,
+      contract: readContractText(feature.worktree) || null,
+    });
+    const result = await deps.arbiter({
+      stateDir,
+      cwd: feature.worktree,
+      prompt: buildArbiterPrompt(arbiterItem, corpus),
+      model: started.model,
+      fallback,
+      deadline: now() + ARBITER_DEADLINE_MS,
+      signal,
+    });
+    // Le run d'arbitre est enregistré à sa fin, décision ou non (S-12).
+    {
+      const after = read();
+      const arbitrated = after ? lotFeature(after, slug) : undefined;
+      if (after && arbitrated) {
+        appendRunRecord(arbitrated, {
+          step: "arbitre",
+          lot: null,
+          fix: false,
+          startedAt: result.startedAt,
+          endedAt: result.endedAt,
+          peakContext: result.peakContext ?? null,
+          sessionFile: result.sessionFile,
+        });
+        save(after);
+      }
+    }
+    return validateArbiterDecision(arbiterItem, result.decision, corpus);
+  }
+
+  /**
+   * Applique la décision validée : l'élément est REVÉRIFIÉ (même clé toujours
+   * courante) avant tout effet ; une décision d'un élément disparu est jetée,
+   * sans journal. L'effet passe par les actions publiques, source nommée — qui
+   * journalisent elles-mêmes (S-7). Un refus de l'effet escalade.
+   */
+  async function applyEffect(slug: string, item: RelayItem, effect: ArbiterEffect): Promise<void> {
+    const lot = read();
+    const feature = lot ? lotFeature(lot, slug) : undefined;
+    if (!lot || !feature || feature.arbitration?.key !== item.key) return;
+    if (!currentItems(lot).some((candidate) => candidate.key === item.key)) return;
+    if (effect.kind === "escalate") {
+      escalateItem(slug, item, effect.reason);
+      return;
+    }
+    let refusal: string | null;
+    if (effect.kind === "approve") {
+      refusal =
+        item.kind === "specs"
+          ? await controller.validate(slug, { source: "arbitrage" })
+          : await controller.accept(slug, { source: "arbitrage" });
+    } else if (item.kind === "ask") {
+      refusal = deliverAskAnswer(
+        {
+          version: 1,
+          id: "",
+          sentAt: now(),
+          repo: "",
+          kind: "answer",
+          slug,
+          toolCallId: item.toolCallId ?? "",
+          ...(effect.selected ? { selected: effect.answer } : { custom: effect.answer }),
+        },
+        effect.source,
+      );
+    } else {
+      refusal = await controller.answer(slug, effect.answer, { source: effect.source, viaRelay: true });
+    }
+    if (refusal !== null) escalateItem(slug, item, `décision d'arbitre refusée : ${refusal}`);
+  }
+
+  async function arbitrate(slug: string, item: RelayItem): Promise<void> {
+    const abort = new AbortController();
+    arbiting.set(slug, abort);
+    try {
+      let effect: ArbiterEffect | null;
+      try {
+        effect = await decideItem(slug, item, abort.signal);
+      } catch {
+        effect = { kind: "escalate", reason: "arbitre sans décision" };
+      }
+      if (effect !== null) await applyEffect(slug, item, effect);
+    } catch {
+      /* l'effet a échoué : la marque tombe, la passe suivante ré-arbitre */
+    } finally {
+      arbiting.delete(slug);
+      clearArbitration(slug, item.key);
+    }
+  }
+
   async function pass(): Promise<void> {
     const initial = read();
     if (!initial) return;
@@ -1194,7 +1555,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
       // Une question confiée à la session /audit n'est pas annoncée ici, et
       // `alertedAsk` ne bouge pas : l'alerte part à la première passe qui suit la
       // fermeture du relais (S-3).
-      if (ask && alertedAsk.get(feature.slug) !== ask.toolCallId && !auditRelayOpen(stateDir, feature, lot.owner.pid, now())) {
+      // Une question de feature AVEC contexte est tranchée par l'arbitre (S-9) : elle ne
+      // prévient l'utilisateur que quand elle lui est escaladée.
+      const arbitrated = deps.arbiter !== undefined && feature.auditSession !== undefined && feature.escalation === undefined;
+      if (ask && !arbitrated && alertedAsk.get(feature.slug) !== ask.toolCallId && !auditRelayOpen(stateDir, feature, lot.owner.pid, now())) {
         alertedAsk.set(feature.slug, ask.toolCallId);
         const text =
           `[pipeline] ${repo}/${feature.slug} attend ta réponse (maillon /${feature.phase}) — /pipelines\n` +
@@ -1334,6 +1698,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       changed = true;
     }
 
+    // 4. L'arbitrage (S-9) : l'élément courant de chaque feature AVEC contexte
+    // qui n'a ni escalade ni arbitrage en vol. Les marques sont posées ICI et
+    // écrites AVEC la passe — l'arbitre ne part qu'après la sauvegarde.
+    const arbitrations = planArbitrations(lot);
+    if (arbitrations.changed) changed = true;
     if (maybeRecap(lot)) changed = true;
     // Le battement du propriétaire (S-1) : un pilote VIVANT le rafraîchit à chaque
     // passe. Sans lui, un pid réutilisé après un redémarrage ferait passer un
@@ -1350,6 +1719,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature) startRun(lot, feature, launch);
     }
     for (const feature of releases) void finishRelease(feature);
+    for (const planned of arbitrations.planned) void arbitrate(planned.slug, planned.item);
     // Dernier acte de la passe, APRÈS l'écriture : c'est un `await` (`git`), il ne
     // décide plus rien — l'arbre abandonné n'appartient à aucune feature du lot.
     await discardWorktrees(orphans);
@@ -1422,7 +1792,10 @@ export function createLotController(deps: LotControllerDeps): LotController {
    * dans `answeredAsks` QUE si la livraison a réussi : une écriture ratée laisse la
    * question répondable par une commande neuve.
    */
-  function deliverAskAnswer(cmd: Extract<PipelineCommand, { kind: "answer" }>): string | null {
+  function deliverAskAnswer(
+    cmd: Extract<PipelineCommand, { kind: "answer" }>,
+    source: DecisionSource = "utilisateur",
+  ): string | null {
     const lot = read();
     if (!lot) return LOT_NONE_REFUSAL;
     const feature = lotFeature(lot, cmd.slug);
@@ -1430,10 +1803,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const entry = liveEntryOf(feature.worktree);
     const inbox = entry === null ? null : panelInboxDirOf(entry);
     const sentAt = now();
+    const tag = source === "utilisateur" ? {} : { source };
     const delivery: PanelDelivery =
       cmd.selected !== undefined
-        ? { version: 1, kind: "ask", toolCallId: cmd.toolCallId, selected: cmd.selected, sentAt }
-        : { version: 1, kind: "ask", toolCallId: cmd.toolCallId, custom: cmd.custom ?? "", sentAt };
+        ? { version: 1, kind: "ask", toolCallId: cmd.toolCallId, selected: cmd.selected, sentAt, ...tag }
+        : { version: 1, kind: "ask", toolCallId: cmd.toolCallId, custom: cmd.custom ?? "", sentAt, ...tag };
     if (inbox === null) return "écriture impossible : ce run n'a plus de boîte";
     try {
       writeDelivery(inbox, delivery);
@@ -1441,6 +1815,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
     }
     answeredAsks.add(askKey(cmd.slug, cmd.toolCallId));
+    // Le journal (S-7) : la question du run en vol, une fois la réponse livrée.
+    const asked = entry?.pendingAsk;
+    journalDecision(
+      feature,
+      feature.phase,
+      "question",
+      asked && asked.toolCallId === cmd.toolCallId ? asked.question : (questionOf(feature.waitPrompt) ?? "(question sans texte)"),
+      cmd.selected ?? cmd.custom ?? "",
+      source,
+    );
     return null;
   }
 
@@ -1461,6 +1845,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
           deps: cmd.deps ?? [],
           modelReqSpecs: cmd.modelReqSpecs ?? null,
           modelImplReview: cmd.modelImplReview ?? null,
+          ...(cmd.fallbackReqSpecs !== undefined ? { fallbackReqSpecs: cmd.fallbackReqSpecs } : {}),
+          ...(cmd.fallbackImplReview !== undefined ? { fallbackImplReview: cmd.fallbackImplReview } : {}),
         });
         if (added !== null) {
           notify(`[pipeline] commande launch : ${added}`);
@@ -1477,6 +1863,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
           deps: cmd.deps ?? [],
           modelReqSpecs: cmd.modelReqSpecs ?? null,
           modelImplReview: cmd.modelImplReview ?? null,
+          ...(cmd.fallbackReqSpecs !== undefined ? { fallbackReqSpecs: cmd.fallbackReqSpecs } : {}),
+          ...(cmd.fallbackImplReview !== undefined ? { fallbackImplReview: cmd.fallbackImplReview } : {}),
         });
         if (added !== null) notify(`[pipeline] commande add : ${added}`);
         return;
@@ -1485,6 +1873,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
         const edited = await actions.editModels(cmd.slug, {
           modelReqSpecs: cmd.modelReqSpecs,
           modelImplReview: cmd.modelImplReview,
+          ...(cmd.fallbackReqSpecs !== undefined ? { fallbackReqSpecs: cmd.fallbackReqSpecs } : {}),
+          ...(cmd.fallbackImplReview !== undefined ? { fallbackImplReview: cmd.fallbackImplReview } : {}),
         });
         if (edited !== null) notify(`[pipeline] commande models : ${edited}`);
         return;
@@ -1512,6 +1902,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
       case "relaunch": {
         const done = await actions.relaunch(cmd.slug);
         if (done !== null) notify(`[pipeline] commande relaunch : ${done}`);
+        return;
+      }
+      case "quota": {
+        const done = await actions.resolveQuota(cmd.provider, cmd.model, { kind: "unrelayed" });
+        if (done !== null) notify(`[pipeline] commande quota : ${done}`);
         return;
       }
       case "cancel": {
@@ -1877,6 +2272,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         // Les modèles (S-2) : chaque clé n'existe que pour une valeur exploitable —
         // « défaut OMP » ne s'écrit pas.
         ...modelSlotsField(input),
+        ...fallbackSlotsField(input),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,
@@ -1950,6 +2346,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         // Les modèles (S-2) : même garde qu'à l'enrôlement — une commande d'un
         // client antérieur (clés absentes) crée une feature sans clé de modèle.
         ...modelSlotsField(input),
+        ...fallbackSlotsField(input),
         addedAt: at,
         sinceAt: at,
         updatedAt: at,
@@ -2020,13 +2417,27 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
       if (!feature) return lotFeatureMissingRefusal(slug);
-      // Les deux clés sont REMPLACÉES ensemble (S-3) : une valeur blanche EFFACE la
-      // clé, et l'ancien modèle unique est supprimé — il ne sert plus de repli. Le
-      // seul champ touché est le modèle : ni l'état, ni la phase, ni les compteurs.
+      // Les clés de modèle sont REMPLACÉES ensemble (S-3) : une valeur blanche EFFACE
+      // la clé, et l'ancien modèle unique est supprimé — il ne sert plus de repli.
+      // Les replis (S-1) : clé absente = inchangé, `null` = retiré, chaîne = ce repli.
+      // Le refus « repli identique au principal » est jugé AVANT toute mutation.
+      const nextModels = modelSlotsField(input);
+      const nextFallbacks = {
+        fallbackReqSpecs: input.fallbackReqSpecs === undefined ? feature.fallbackReqSpecs : input.fallbackReqSpecs,
+        fallbackImplReview:
+          input.fallbackImplReview === undefined ? feature.fallbackImplReview : input.fallbackImplReview,
+      };
+      const identical =
+        fallbackEqualsPrimaryRefusal(nextModels.modelReqSpecs, nextFallbacks.fallbackReqSpecs, "modelReqSpecs") ??
+        fallbackEqualsPrimaryRefusal(nextModels.modelImplReview, nextFallbacks.fallbackImplReview, "modelImplReview");
+      if (identical !== null) return identical;
+      // Le seul champ touché est le modèle (et son repli) : ni l'état, ni la phase, ni les compteurs.
       delete feature.model;
       delete feature.modelReqSpecs;
       delete feature.modelImplReview;
-      Object.assign(feature, modelSlotsField(input));
+      delete feature.fallbackReqSpecs;
+      delete feature.fallbackImplReview;
+      Object.assign(feature, nextModels, fallbackSlotsField(nextFallbacks));
       return save(lot);
     },
 
@@ -2042,7 +2453,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (trimmed === "") return "réponse vide";
       // Le relais (/audit ou /project) répond lui-même : la question qu'il relaie
       // n'est pas refusée comme « confiée à la session » (S-3, S-6).
-      const fromRelay = options?.from === "audit" || options?.from === "project";
+      const fromRelay = options?.viaRelay === true;
+      const source = options?.source ?? "utilisateur";
       // Les cas qui n'écrivent PAS le lot se règlent SANS revendiquer la propriété
       // (F1) : la boîte d'un run vivant et la question en vol s'atteignent depuis
       // n'importe quelle session — exiger la propriété ici faisait annoncer
@@ -2052,7 +2464,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const knownFeature = known ? lotFeature(known, slug) : undefined;
       if (known && knownFeature) {
         const live = liveWriterOf(known, knownFeature);
-        const direct = rowReply(knownFeature, fromRelay ? { ...live, auditRelay: false } : live);
+        const direct = rowReply(knownFeature, { ...live, ...(fromRelay ? { auditRelay: false } : {}), viaArbiter: source !== "utilisateur" });
         if (direct.kind === "closed") return direct.reason;
         if (direct.kind === "ask") return ASK_REPLY_REFUSAL;
         if (direct.kind === "steer") return deliverSteer(direct.inbox, trimmed);
@@ -2065,7 +2477,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       const { lot, feature } = opened;
       if (!feature) return lotFeatureMissingRefusal(slug);
       const live = liveWriterOf(lot, feature);
-      const reply = rowReply(feature, fromRelay ? { ...live, auditRelay: false } : live);
+      const reply = rowReply(feature, { ...live, ...(fromRelay ? { auditRelay: false } : {}), viaArbiter: source !== "utilisateur" });
       if (reply.kind === "closed") return reply.reason;
       if (reply.kind === "ask") return ASK_REPLY_REFUSAL;
       if (reply.kind === "steer") return deliverSteer(reply.inbox, trimmed);
@@ -2081,14 +2493,22 @@ export function createLotController(deps: LotControllerDeps): LotController {
       }
       // `reply` (feature en attente) et `text` (feature bloquée) : un run repart
       // avec son contexte, et la PHASE est conservée (S-8 §1 et §2).
-      return startPlanned(lot, feature, {
+      const asked = feature.state === "waiting" && feature.waitKind === "answer" ? feature.waitPrompt : null;
+      delete feature.escalation;
+      const started = await startPlanned(lot, feature, {
         slug,
         phase: feature.phase,
         fix: false,
         kind: "answer",
         text: trimmed,
         resume: true,
+        ...(source === "utilisateur" ? {} : { source }),
       });
+      // Le journal (S-7) : une réponse À UNE QUESTION, une fois appliquée.
+      if (started === null && asked !== null) {
+        journalDecision(feature, feature.phase, "question", questionOf(asked) ?? asked, trimmed, source);
+      }
+      return started;
     },
 
     /**
@@ -2104,7 +2524,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return rowReply(feature, liveWriterOf(lot, feature));
     },
 
-    async validate(slug) {
+    async validate(slug, options) {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
@@ -2112,10 +2532,31 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature.state !== "waiting" || feature.waitKind !== "specs") {
         return "rien à valider : la feature n'est pas au jalon des specs";
       }
-      return startPlanned(lot, feature, { slug, phase: "impl", fix: false, kind: "phase", resume: false });
+      const source = options?.source === "arbitrage" ? "arbitrage" : "utilisateur";
+      if (source === "utilisateur" && feature.arbitration !== undefined) return ARBITRATION_REFUSAL;
+      // La source du jalon (S-11) : lue par le prompt du run qui suit, puis effacée.
+      feature.milestoneSource = source;
+      delete feature.escalation;
+      // La découpe de l'impl (S-13) : figée ICI, depuis le contrat tel qu'il est validé.
+      const implLots = contractLots(readContractText(feature.worktree));
+      if (implLots.length >= 2) {
+        feature.implLots = implLots;
+        feature.implLot = 0;
+      } else {
+        delete feature.implLots;
+        delete feature.implLot;
+      }
+      const started = await startPlanned(lot, feature, { slug, phase: "impl", fix: false, kind: "phase", resume: false });
+      if (started === null) journalDecision(feature, "specs", "jalon", "specs validées ?", "validé", source);
+      else {
+        delete feature.milestoneSource;
+        delete feature.implLots;
+        delete feature.implLot;
+      }
+      return started;
     },
 
-    async accept(slug) {
+    async accept(slug, options) {
       const opened = open(slug);
       if (typeof opened === "string") return opened;
       const { lot, feature } = opened;
@@ -2123,7 +2564,55 @@ export function createLotController(deps: LotControllerDeps): LotController {
       if (feature.state !== "waiting" || feature.waitKind !== "review") {
         return "rien à accepter : la revue n'est pas propre";
       }
-      return startPlanned(lot, feature, { slug, phase: "release", fix: false, kind: "phase", resume: false });
+      const source = options?.source === "arbitrage" ? "arbitrage" : "utilisateur";
+      if (source === "utilisateur" && feature.arbitration !== undefined) return ARBITRATION_REFUSAL;
+      feature.milestoneSource = source;
+      delete feature.escalation;
+      const started = await startPlanned(lot, feature, { slug, phase: "release", fix: false, kind: "phase", resume: false });
+      if (started === null) journalDecision(feature, "review", "jalon", "revue propre : livrer ?", "accepté", source);
+      else delete feature.milestoneSource;
+      return started;
+    },
+
+    async resolveQuota(provider, model, scope) {
+      const opened = open();
+      if (typeof opened === "string") return opened;
+      const { lot } = opened;
+      const at = now();
+      const inScope = (feature: LotFeature): boolean =>
+        scope.kind === "context"
+          ? feature.auditSession === scope.key
+          : scope.kind === "unrelayed"
+            ? !auditRelayOpen(stateDir, feature, lot.owner.pid, at)
+            : true;
+      const slugs = quotaGroupsOf(lot, inScope).find((group) => group.provider === provider)?.slugs ?? [];
+      if (slugs.length === 0) return `aucune feature bloquée par le quota ${provider}`;
+      const hit = exhaustedUntil(stateDir, model, at);
+      if (hit !== null) return `${model} est épuisé ${quotaDeadlineLabel(hit.until, hit.announced)} — choisis un autre modèle`;
+      // Le repli du groupe du run bloqué devient M ; le principal ne change JAMAIS,
+      // et un M qui EST le principal du groupe laisse la feature telle quelle.
+      for (const slug of slugs) {
+        const feature = lotFeature(lot, slug) as LotFeature;
+        const quota = feature.quota as NonNullable<LotFeature["quota"]>;
+        if (featureModelForPhase(feature, quota.phase) === model) continue;
+        const key = modelGroupOf(quota.phase) === "modelReqSpecs" ? "fallbackReqSpecs" : "fallbackImplReview";
+        feature[key] = model;
+      }
+      const written = save(lot);
+      if (written === null) {
+        for (const slug of slugs) {
+          const feature = lotFeature(lot, slug) as LotFeature;
+          const quota = feature.quota as NonNullable<LotFeature["quota"]>;
+          journalDecision(feature, quota.phase, "quota", `quota ${provider} épuisé — relancer avec quel repli ?`, model);
+        }
+      }
+      if (written !== null) return written;
+      const refusals: string[] = [];
+      for (const slug of slugs) {
+        const refusal = await controller.relaunch(slug);
+        if (refusal !== null) refusals.push(`${slug} : ${refusal}`);
+      }
+      return refusals.length === 0 ? null : refusals.join(" · ");
     },
 
     async relaunch(slug) {

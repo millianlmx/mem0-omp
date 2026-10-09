@@ -743,6 +743,8 @@ test("la spécification d'un run porte l'identité du maillon, le prompt et sa r
     prompt: "- un prompt qui commence par un tiret",
     sessionFile: null,
     model: null,
+    primary: null,
+    fallback: null,
     inbox: "/tmp/inbox",
     deadline: 1_700_000_100_000,
   };
@@ -2394,6 +2396,7 @@ test("lot/AC-10 : le panneau affiche chaque pipeline du lot avec son maillon et 
   seedLot(refusState, refusRepo, [feature("alpha", { worktree: mktmp("lot-refus-wt-") })]);
   const submitted: AddFeatureInput[] = [];
   const refusing: LotPanelActions = {
+    resolveQuota: async () => null,
     add: async (input) => {
       submitted.push(input);
       return "« delta » est déjà dans le lot";
@@ -2527,7 +2530,7 @@ test("l'éditeur en ligne et les modes du panneau tiennent dans le cadre", () =>
   };
   const opts = { width: 64, budget: 18, glyphs: GLYPHS, now: 0 };
   const add = buildPanelRows(
-    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "", modelReqSpecs: null, modelImplReview: null }, buffer: "une intention" } },
+    { ...emptyModel, lot, selection: 0, mode: { kind: "add", step: "description", draft: { name: "a", description: "", deps: "", modelReqSpecs: null, fallbackReqSpecs: null, modelImplReview: null, fallbackImplReview: null }, buffer: "une intention" } },
     opts,
   );
   assert.match(rowsText(add), /Description : une intention▏/);

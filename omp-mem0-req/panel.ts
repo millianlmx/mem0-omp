@@ -2,15 +2,20 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { realpathOr } from "./git.ts";
-import { LOT_EDITOR_MAX, isRelayRefusal, lotCancelRefusal, lotReplyRefusal, lotStateCancellable, lotStateTerminal, relayMilestoneRefusal, rowReply } from "./lot.ts";
+import { appendJournal } from "./context.ts";
+import { LOT_EDITOR_MAX, isRelayRefusal, lotCancelRefusal, lotReplyRefusal, lotRepoKey, lotStateCancellable, lotStateTerminal, milestoneGestureRefusal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
-import { DEFAULT_MODEL_CHOICE, featureModelOf, featureModelSlots, filterModelChoices } from "./models.ts";
-import type { ModelChoice } from "./models.ts";
+import { DEFAULT_MODEL_CHOICE, MODEL_STEPS, featureFallbackForPhase, featureModelOf, featureModelSlots, filterModelChoices, isFallbackStep, stepChoices } from "./models.ts";
+import type { ModelChoice, ModelStep, ModelStepDraft } from "./models.ts";
+import { exhaustedUntil } from "./quota.ts";
 import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
 import type { HostComponent, PanelTheme, PanelTui, SessionAssembly } from "./panelHost.ts";
-import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, liveWriterPid, lotModeRows, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelIndexForKey, panelRowAt, panelRowCount, panelSelectionKey, parseSgrMouse, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel, staleGestureNotice } from "./panelRows.ts";
-import type { LotPanelMode, PanelGesture, PanelGlyphs, PanelModel, PanelRow, PanelRowRef, SgrMouseEvent } from "./panelRows.ts";
+import { PANEL_REFRESH_MS, buildPanelRows, clampSelection, hasLiveWriter, isLotFeature, isQuotaRow, liveWriterPid, lotModeRows, lotModeText, moveSelection, noSessionNotice, panelBudget, panelHeight, panelIndexForKey, panelRowAt, panelRowCount, panelSelectionKey, parseSgrMouse, quotaRowCount, readPanelModel, rowCwd, rowLabel, rowPhase, rowSessionFile, rowStateLabel, staleGestureNotice } from "./panelRows.ts";
+import type { LotPanelMode, PanelGesture, PanelGlyphs, PanelModel, PanelRow, PanelRowRef, QuotaRow, SgrMouseEvent } from "./panelRows.ts";
+
+/** Un rang qui a une session à montrer : tout rang sauf un groupe de quota (S-5). */
+type ViewRow = Exclude<PanelRowRef, QuotaRow>;
 import { SESSION_VIEW_MAX_ENTRIES, extendSessionTail, readSessionTail } from "./panelSession.ts";
 import type { SessionEntryLike, SessionTail } from "./panelSession.ts";
 import { END_KEYS, EXPAND_KEY, FAST_SCROLL_LINES, HOME_KEYS, SHIFT_DOWN_KEYS, SHIFT_UP_KEYS, WHEEL_SCROLL_LINES, componentLabel, defaultSchedule, inputZone, panelSelections, readOnlyReason, sameZoneSource, unreadableLine, viewFooter, viewZoneRows, zoneScrollOf } from "./panelView.ts";
@@ -84,7 +89,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const drafts = new Map<string, string>();
     /** La clé d'un brouillon : le slug de la feature, sinon son fichier de session, sinon son libellé. */
     const draftKey = (row: PanelRowRef): string =>
-      isLotFeature(row) ? row.slug : (rowSessionFile(model, row) ?? row.label);
+      isQuotaRow(row) ? `quota:${row.provider}` : isLotFeature(row) ? row.slug : (rowSessionFile(model, row) ?? row.label);
     /**
      * La largeur du DERNIER rendu : les touches qui fenêtrent un texte (S-2,
      * `PageUp`/`PageDown` du champ comme de la zone) mesurent le même repli que le
@@ -150,6 +155,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      * du run qui a planté.
      */
     const viewSessionFile = (row: PanelRowRef): string | null => {
+      if (isQuotaRow(row)) return null;
       if (!isLotFeature(row)) return asStringOrNull(row.sessionFile);
       return (
         asStringOrNull(model.live[row.slug]?.sessionFile) ??
@@ -416,16 +422,16 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     // Le lot occupe la TÊTE de la liste sélectionnable : les rangs machine suivent.
     const features = (): LotFeature[] => model.lot?.features ?? [];
     const selectedFeature = (): LotFeature | undefined => {
-      const index = model.selection;
+      const index = model.selection - quotaRowCount(model);
       return index >= 0 && index < features().length ? features()[index] : undefined;
     };
     /** Le rang sélectionné, quelle que soit sa section — la seule façon d'atteindre une feature appariée. */
     const selectedRow = (): PanelRowRef | undefined => panelRowAt(model, model.selection);
     /** Le rang qui porte ce fichier de session : la vue le suit d'un rendu à l'autre. */
-    const rowForSession = (file: string): PanelRowRef | undefined => {
+    const rowForSession = (file: string): ViewRow | undefined => {
       for (let i = 0; i < panelRowCount(model); i++) {
         const row = panelRowAt(model, i);
-        if (row && rowSessionFile(model, row) === file) return row;
+        if (row && !isQuotaRow(row) && rowSessionFile(model, row) === file) return row;
       }
       return undefined;
     };
@@ -436,7 +442,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      * session à nommer), puis son cwd, puis son fichier de session. Un rang disparu de
      * la liste ne fait pas tomber la vue.
      */
-    const rowForView = (): PanelRowRef | undefined => {
+    const rowForView = (): ViewRow | undefined => {
       if (view.kind !== "session") return undefined;
       const { slug } = view;
       if (slug !== null) {
@@ -479,7 +485,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      * nouveau run, une session vivante sans boîte appartient à son process, et la
      * nôtre se répond directement.
      */
-    const zoneFor = (row: PanelRowRef | undefined): ViewZone => {
+    const zoneFor = (row: ViewRow | undefined): ViewZone => {
       if (!row) return { kind: "closed", reason: "session terminée" };
       if (isLotFeature(row)) {
         const slug = row.slug;
@@ -732,6 +738,26 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     const openView = () => {
       const row = selectedRow();
       if (!row) return;
+      // Le rang d'un groupe de quota (S-5) n'a pas de session : `Entrée` y ouvre la
+      // liste des replis. Le lot l'exige comme tout geste, et le catalogue est
+      // capturé ICI, comme à l'ouverture de `a` et `m`.
+      if (isQuotaRow(row)) {
+        if (!deps.lot) {
+          showNotice(SERVICE_DOWN_REFUSAL);
+          return;
+        }
+        const catalogue = deps.modelChoices?.() ?? [];
+        if (catalogue.length === 0) {
+          showNotice("aucun modèle connu — rien n'est relancé");
+          return;
+        }
+        const at = now();
+        const choices = catalogue.filter(
+          (choice) => choice.value !== "" && exhaustedUntil(deps.stateDir, choice.value, at) === null,
+        );
+        setMode({ kind: "quotaModel", provider: row.provider, choices, sel: 0, query: "" });
+        return;
+      }
       const file = rowSessionFile(model, row);
       let zone = zoneFor(row);
       if (file === null && zone.kind === "closed") {
@@ -1097,6 +1123,19 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           async () => {
             try {
               writeDelivery(target.dir, delivery);
+              // Le journal (S-7) : la réponse de l'utilisateur à une question `ask` d'une feature du lot.
+              if (input.toolCallId !== null && row !== undefined && isLotFeature(row) && deps.repoRoot) {
+                appendJournal(deps.stateDir, lotRepoKey(deps.repoRoot), {
+                  at: now(),
+                  slug: row.slug,
+                  phase: input.phase,
+                  kind: "question",
+                  question: input.question ?? "(question sans texte)",
+                  answer: text,
+                  source: "utilisateur",
+                  context: row.auditSession ?? null,
+                });
+              }
               sent();
               sentAsk();
               return null;
@@ -1261,9 +1300,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       // Un jalon confié à la session /audit ou /project ne se valide pas ici (S-3,
       // S-6 §6) : aucun aperçu, aucun appel au pilote, le geste est consommé.
-      if ((data === "v" || data === "y") && model.relayed[feature.slug] === true) {
-        showNotice(relayMilestoneRefusal(feature));
-        return true;
+      if (data === "v" || data === "y") {
+        const refusal = milestoneGestureRefusal(feature, model.relayed[feature.slug] === true);
+        if (refusal !== null) {
+          showNotice(refusal);
+          return true;
+        }
       }
       /** L'aperçu d'un geste : c'est lui que `Entrée` exécute, et `Échap` l'abandonne. */
       const preview = (gesture: PanelGesture): boolean => {
@@ -1489,6 +1531,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           return () => lot.add(gesture.input);
         case "editModels":
           return () => lot.editModels(gesture.slug, gesture.input);
+        case "quota":
+          return () => lot.resolveQuota(gesture.provider, gesture.model, { kind: "unrelayed" });
       }
     };
 
@@ -1521,18 +1565,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
      * le champ des DÉPENDANCES.
      */
     const previousAddStep = (mode: Extract<LotPanelMode, { kind: "add" }>): LotPanelMode => {
-      if (mode.step === "modelImplReview") {
-        return {
-          kind: "add",
-          step: "modelReqSpecs",
-          draft: { ...mode.draft },
-          buffer: "",
-          choices: mode.choices,
-          sel: modelChoiceIndex(mode.choices, mode.draft.modelReqSpecs),
-          query: "",
-        };
-      }
-      if (mode.step === "modelReqSpecs") {
+      const at = MODEL_STEPS.indexOf(mode.step as ModelStep);
+      if (at > 0) return stepMode(mode, MODEL_STEPS[at - 1] as ModelStep);
+      if (at === 0) {
         return {
           kind: "add",
           step: "deps",
@@ -1560,21 +1595,29 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
     };
 
     /**
-     * L'ÉTAPE PRÉCÉDENTE d'une édition (S-4) : `Échap` sur `impl+review` rend
-     * `req+specs`, filtre vidé et curseur sur le choix retenu ; `req+specs` rend la
-     * LISTE (rien n'est écrit).
+     * L'ÉTAPE PRÉCÉDENTE d'une édition (S-4) : `Échap` rend l'étape d'avant — filtre
+     * vidé, curseur sur le choix retenu — ; la première étape rend la LISTE (rien
+     * n'est écrit, c'est le cas général de `Échap`).
      */
-    const previousEditStep = (mode: Extract<LotPanelMode, { kind: "editModels" }>): LotPanelMode => {
+    const previousEditStep = (mode: Extract<LotPanelMode, { kind: "editModels" }>): LotPanelMode =>
+      stepMode(mode, MODEL_STEPS[Math.max(0, MODEL_STEPS.indexOf(mode.step) - 1)] as ModelStep);
+
+    /**
+     * La même étape ou la suivante d'un mode à étapes de liste : tampon vidé, filtre
+     * vidé, curseur sur le choix RETENU de la liste affichée de cette étape.
+     */
+    const stepMode = (
+      mode: Extract<LotPanelMode, { kind: "add" }> | Extract<LotPanelMode, { kind: "editModels" }>,
+      step: ModelStep,
+    ): LotPanelMode => {
+      const { scroll: _scroll, ...rest } = mode;
       return {
-        kind: "editModels",
-        slug: mode.slug,
-        step: "modelReqSpecs",
-        draft: { ...mode.draft },
+        ...rest,
+        step,
         buffer: "",
-        choices: mode.choices,
-        sel: modelChoiceIndex(mode.choices, mode.draft.modelReqSpecs),
+        sel: modelChoiceIndex(stepChoices(step, mode.choices, mode.draft), mode.draft[step]),
         query: "",
-      };
+      } as LotPanelMode;
     };
 
     /** Les dépendances d'un tampon de champ : des slugs séparés par des virgules. */
@@ -1604,9 +1647,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
           setMode(previousAddStep(mode));
           return true;
         }
-        // `Échap` dans une ÉDITION (S-4) : l'étape 2 rend l'étape 1 (filtre vidé,
-        // curseur sur le choix retenu) ; l'étape 1 rend la LISTE — rien n'est écrit.
-        if (mode.kind === "editModels" && mode.step === "modelImplReview") {
+        // `Échap` dans une ÉDITION (S-4) : chaque étape rend l'étape d'avant (filtre
+        // vidé, curseur sur le choix retenu) ; la première rend la LISTE — rien n'est écrit.
+        if (mode.kind === "editModels" && mode.step !== "modelReqSpecs") {
           setMode(previousEditStep(mode));
           return true;
         }
@@ -1683,11 +1726,16 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       // mécanique : seuls le mode rendu et le geste de sortie diffèrent.
       type ModelListMode =
         | Extract<LotPanelMode, { kind: "add" }>
-        | Extract<LotPanelMode, { kind: "editModels" }>;
+        | Extract<LotPanelMode, { kind: "editModels" }>
+        | Extract<LotPanelMode, { kind: "quotaModel" }>;
 
-      /** Le choix AFFICHÉ et sélectionné d'une étape : sa valeur, `null` pour le défaut OMP. */
-      const chosenModelValue = (m: { choices?: ModelChoice[]; sel?: number; query?: string }): string | null => {
-        const shown = filterModelChoices(m.choices ?? [], m.query ?? "");
+      /** La liste AFFICHABLE d'un mode : l'étape de repli exclut le principal choisi juste avant (S-1). */
+      const listChoices = (m: ModelListMode): ModelChoice[] =>
+        m.kind === "quotaModel" ? (m.choices ?? []) : stepChoices(m.step as ModelStep, m.choices, m.draft);
+
+      /** Le choix AFFICHÉ et sélectionné d'une étape : sa valeur, `null` pour le défaut OMP / aucun repli. */
+      const chosenModelValue = (m: ModelListMode): string | null => {
+        const shown = filterModelChoices(listChoices(m), m.query ?? "");
         const sel = Math.min(Math.max(m.sel ?? 0, 0), Math.max(0, shown.length - 1));
         const value = (shown[sel] ?? DEFAULT_MODEL_CHOICE).value;
         return value === "" ? null : value;
@@ -1701,7 +1749,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
        * hors champ. Toute frappe imprimable est un FILTRE, jamais une touche de geste.
        */
       const applyModelListKey = (m: ModelListMode): boolean => {
-        const shown = filterModelChoices(m.choices ?? [], m.query ?? "");
+        const shown = filterModelChoices(listChoices(m), m.query ?? "");
         const last = Math.max(0, shown.length - 1);
         const sel = Math.min(Math.max(m.sel ?? 0, 0), last);
         if (isKey(data, "tui.select.up") || data === "k") {
@@ -1721,60 +1769,63 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         return true;
       };
 
+      if (mode.kind === "quotaModel") {
+        if (applyModelListKey(mode)) return true;
+        // Liste vide (recherche sans résultat) : `Entrée` ne fait rien.
+        const shown = filterModelChoices(mode.choices ?? [], mode.query ?? "");
+        const picked = shown[Math.min(Math.max(mode.sel ?? 0, 0), Math.max(0, shown.length - 1))];
+        if (picked === undefined) return true;
+        const { provider } = mode;
+        const count = (model.quota ?? []).find((group) => group.provider === provider)?.slugs.length ?? 0;
+        setMode({ kind: "confirm", gesture: { kind: "quota", provider, model: picked.value, count }, back: mode });
+        return true;
+      }
       if (mode.kind === "editModels") {
         if (applyModelListKey(mode)) return true;
         const draft = { ...mode.draft, [mode.step]: chosenModelValue(mode) };
-        if (mode.step === "modelReqSpecs") {
-          setMode({
-            kind: "editModels",
-            slug: mode.slug,
-            step: "modelImplReview",
-            draft,
-            buffer: "",
-            choices: mode.choices,
-            sel: modelChoiceIndex(mode.choices, draft.modelImplReview),
-            query: "",
-          });
+        const next = MODEL_STEPS[MODEL_STEPS.indexOf(mode.step) + 1];
+        if (next !== undefined) {
+          setMode(stepMode({ ...mode, draft }, next));
         } else {
-          // Les deux choix sont faits : l'aperçu du geste, seul endroit d'où part
-          // l'écriture (S-8). `back` = l'étape 2, où `Échap` revient.
+          // Les quatre choix sont faits : l'aperçu du geste, seul endroit d'où part
+          // l'écriture (S-8). `back` = la dernière étape, où `Échap` revient.
           setMode({
             kind: "confirm",
             gesture: {
               kind: "editModels",
               slug: mode.slug,
-              input: { modelReqSpecs: draft.modelReqSpecs, modelImplReview: draft.modelImplReview },
+              input: {
+                modelReqSpecs: draft.modelReqSpecs,
+                modelImplReview: draft.modelImplReview,
+                fallbackReqSpecs: draft.fallbackReqSpecs,
+                fallbackImplReview: draft.fallbackImplReview,
+              },
             },
-            back: mode,
+            back: { ...mode, draft },
           });
         }
         return true;
       }
-      if (mode.step === "modelReqSpecs" || mode.step === "modelImplReview") {
+      if (MODEL_STEPS.includes(mode.step as ModelStep)) {
         if (applyModelListKey(mode)) return true;
         const draft = { ...mode.draft, [mode.step]: chosenModelValue(mode) };
-        if (mode.step === "modelReqSpecs") {
-          setMode({
-            kind: "add",
-            step: "modelImplReview",
-            draft,
-            buffer: "",
-            choices: mode.choices,
-            sel: modelChoiceIndex(mode.choices, draft.modelImplReview),
-            query: "",
-          });
+        const next = MODEL_STEPS[MODEL_STEPS.indexOf(mode.step as ModelStep) + 1];
+        if (next !== undefined) {
+          setMode(stepMode({ ...mode, draft }, next));
           return true;
         }
-        // L'étape 2 ferme le flux : ses deux choix forment l'aperçu du geste, et une
-        // valeur laissée au défaut n'ajoute aucune clé au lot (S-2).
+        // La dernière étape ferme le flux : ses quatre choix forment l'aperçu du
+        // geste, et une valeur laissée au défaut n'ajoute aucune clé au lot (S-2).
         const input: AddFeatureInput = {
           name: draft.name,
           description: draft.description,
           deps: parseDeps(draft.deps),
           ...(draft.modelReqSpecs !== null ? { modelReqSpecs: draft.modelReqSpecs } : {}),
           ...(draft.modelImplReview !== null ? { modelImplReview: draft.modelImplReview } : {}),
+          ...(draft.fallbackReqSpecs !== null ? { fallbackReqSpecs: draft.fallbackReqSpecs } : {}),
+          ...(draft.fallbackImplReview !== null ? { fallbackImplReview: draft.fallbackImplReview } : {}),
         };
-        setMode({ kind: "confirm", gesture: { kind: "add", input }, back: mode });
+        setMode({ kind: "confirm", gesture: { kind: "add", input }, back: { ...mode, draft } });
         return true;
       }
       if (confirm) {
@@ -1892,7 +1943,15 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         setMode({
           kind: "add",
           step: "name",
-          draft: { name: "", description: "", deps: "", modelReqSpecs: null, modelImplReview: null },
+          draft: {
+            name: "",
+            description: "",
+            deps: "",
+            modelReqSpecs: null,
+            fallbackReqSpecs: null,
+            modelImplReview: null,
+            fallbackImplReview: null,
+          },
           buffer: "",
           choices: deps.modelChoices?.() ?? [],
         });
@@ -1914,10 +1973,12 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         // Pré-positionnement sur les valeurs RÉSOLUES (S-4) : l'ancien `model` remplit
         // les deux groupes tant qu'il existe ; aucune clé, les deux sont au défaut OMP.
         const slots = featureModelSlots(feature);
-        const draft =
-          slots === null
-            ? { modelReqSpecs: null, modelImplReview: null }
-            : { modelReqSpecs: slots.reqSpecs, modelImplReview: slots.implReview };
+        const draft: ModelStepDraft = {
+          modelReqSpecs: slots?.reqSpecs ?? null,
+          fallbackReqSpecs: featureFallbackForPhase(feature, "req"),
+          modelImplReview: slots?.implReview ?? null,
+          fallbackImplReview: featureFallbackForPhase(feature, "impl"),
+        };
         setMode({
           kind: "editModels",
           slug: feature.slug,
@@ -1953,8 +2014,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       if (data === "v") {
         const feature = selectedFeature();
-        if (feature && model.relayed[feature.slug] === true) {
-          showNotice(relayMilestoneRefusal(feature));
+        const refusal = feature ? milestoneGestureRefusal(feature, model.relayed[feature.slug] === true) : null;
+        if (refusal !== null) {
+          showNotice(refusal);
           return;
         }
         if (!feature || feature.state !== "waiting" || feature.waitKind !== "specs") {
@@ -1967,8 +2029,9 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
       }
       if (data === "y") {
         const feature = selectedFeature();
-        if (feature && model.relayed[feature.slug] === true) {
-          showNotice(relayMilestoneRefusal(feature));
+        const refusal = feature ? milestoneGestureRefusal(feature, model.relayed[feature.slug] === true) : null;
+        if (refusal !== null) {
+          showNotice(refusal);
           return;
         }
         if (!feature || feature.state !== "waiting" || feature.waitKind !== "review") {

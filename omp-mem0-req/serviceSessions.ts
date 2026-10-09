@@ -12,6 +12,7 @@ import type { DialogAnswer, DialogRequest, ServiceFrame, SessionDescription, Ses
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
 import { createServiceUIContext, initializeHostedRunner } from "./serviceRuntime.ts";
 import type { DialogOpen } from "./serviceRuntime.ts";
+import type { ArbiterCapture } from "./arbiter.ts";
 
 
 /**
@@ -27,6 +28,10 @@ export type MaillonIdentity = {
   worktree: string;
   inbox: string | null;
   deadlineAt: number | null;
+  /** Le modèle principal du groupe (S-2) : `null` = « défaut OMP ». Pilote le retour au principal (S-3). */
+  primary: string | null;
+  /** Le repli du groupe (S-2) : `null` = aucun repli. */
+  fallback: string | null;
 };
 
 /** Le registre d'identités : par PROCESS, comme les modules de l'extension (Doc-1 §8). */
@@ -58,9 +63,61 @@ export function forgetMaillonIdentity(sessionId: string | null | undefined): voi
   if (typeof sessionId === "string" && sessionId !== "") identities().delete(sessionId);
 }
 
+/** Le registre des captures d'arbitre, par session — même patron que les identités (Doc-1 §8). */
+const ARBITERS_KEY = Symbol.for("omp-mem0-req.arbiterCaptures");
+
+function arbiters(): Map<string, ArbiterCapture> {
+  const host = globalThis as typeof globalThis & { [ARBITERS_KEY]?: Map<string, ArbiterCapture> };
+  let known = host[ARBITERS_KEY];
+  if (!known) {
+    known = new Map<string, ArbiterCapture>();
+    host[ARBITERS_KEY] = known;
+  }
+  return known;
+}
+
+
+export function registerArbiterCapture(sessionId: string, capture: ArbiterCapture): void {
+  arbiters().set(sessionId, capture);
+}
+
+
+/** La capture de la session `sessionId` si c'est une session d'arbitre, sinon `null`. */
+export function arbiterCaptureOf(sessionId: string | null | undefined): ArbiterCapture | null {
+  if (typeof sessionId !== "string" || sessionId === "") return null;
+  return arbiters().get(sessionId) ?? null;
+}
+
+
+export function forgetArbiterCapture(sessionId: string | null | undefined): void {
+  if (typeof sessionId === "string" && sessionId !== "") arbiters().delete(sessionId);
+}
+
+
+/** Les rôles de modèle « chat » d'OMP (Doc-1) : un sous-agent résolu par rôle suit le modèle du run. */
+const MODEL_ROLES = ["default", "smol", "slow", "vision", "plan", "commit", "tiny", "memory", "task", "advisor"] as const;
+
+
+/**
+ * Les réglages EN MÉMOIRE d'une session hébergée (S-2) : EXACTEMENT, quand le modèle
+ * de départ est connu, chaque rôle de modèle sur lui ; quand un repli existe, la
+ * chaîne `{default: [R]}` et le retour au principal à l'échéance. Aucune autre clé :
+ * ni compaction, ni `retry.maxDelayMs`. Sans repli, OMP n'a aucun modèle de
+ * remplacement à proposer.
+ */
+export function hostedSettingsOverrides(model: string | null, fallback: string | null): Record<string, unknown> {
+  const overrides: Record<string, unknown> = {};
+  if (model !== null) overrides.modelRoles = Object.fromEntries(MODEL_ROLES.map(role => [role, model]));
+  if (fallback !== null) {
+    overrides["retry.fallbackChains"] = { default: [fallback] };
+    overrides["retry.fallbackRevertPolicy"] = "cooldown-expiry";
+  }
+  return overrides;
+}
+
 
 /** Les formes INTERNES d'une session hébergée : l'API n'en expose que deux (S-6). */
-export type HostedPurpose = SessionPurpose | "run";
+export type HostedPurpose = SessionPurpose | "run" | "arbiter";
 
 
 /** Une session servie : sa boucle, ses dialogues, ses auditeurs de flux. */
@@ -97,6 +154,8 @@ export type SessionHostDeps = {
   selfPath: string | null;
   log?: (line: string) => void;
   now?: () => number;
+  /** Extensions SUPPLÉMENTAIRES chargées dans chaque session (banc de test) — ajoutées à `selfPath`. */
+  extraExtensionPaths?: readonly string[];
 };
 
 export type OpenSessionOptions = {
@@ -106,7 +165,11 @@ export type OpenSessionOptions = {
   identity?: MaillonIdentity;
   /** Le modèle du maillon (couple de la phase), poussé en `modelPattern`. */
   model?: string | null;
+  /** Le repli du groupe (S-2) : `null`/absent = aucun repli, donc aucune chaîne de repli d'OMP. */
+  fallback?: string | null;
   autoApprove?: boolean;
+  /** La capture de décision d'une session `arbiter` (S-9) : lue par l'outil `arbiter_decide`. */
+  arbiter?: ArbiterCapture;
 };
 
 
@@ -220,7 +283,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
   type AppSession = HostedSession & { purpose: SessionPurpose };
 
   function isAppSession(session: HostedSession): session is AppSession {
-    return session.purpose !== "run";
+    return session.purpose !== "run" && session.purpose !== "arbiter";
   }
 
 
@@ -248,7 +311,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       if (known.purpose !== purpose) continue;
       // `run` est interne au service (S-3) : il n'est pas borné par l'API — deux
       // maillons peuvent viser le même cwd (reprise, relance).
-      if (purpose === "run") continue;
+      if (purpose === "run" || purpose === "arbiter") continue;
       if (path.resolve(known.cwd) !== cwd) continue;
       if (purpose === "session") throw conflict(`une session vit déjà pour ${cwd} (${known.id})`);
       throw conflict(`une conduite vit déjà pour ${cwd} (${known.id})`);
@@ -260,6 +323,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     } else {
       manager = deps.pi.pi.SessionManager.create(cwd);
     }
+    const additionalExtensionPaths = [...(deps.selfPath ? [deps.selfPath] : []), ...(deps.extraExtensionPaths ?? [])];
     const created = await deps.pi.pi.createAgentSession({
       cwd,
       // Un service n'a pas de terminal, mais il a des DIALOGUES : `hasUI` est ce
@@ -271,13 +335,13 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       // peut en mener plusieurs en parallèle sans qu'elles se volent leurs
       // singletons.
       bindProcessState: false,
-      settings: deps.pi.pi.Settings.isolated(),
+      settings: deps.pi.pi.Settings.isolated(hostedSettingsOverrides(options.model ?? null, options.fallback ?? null)),
       agentRegistry: new deps.pi.pi.AgentRegistry(),
       sessionManager: manager,
       modelPattern: options.model ?? undefined,
       // Le plugin n'est chargé DEUX FOIS que s'il n'est pas installé : `selfPath`
       // vaut `null` dans ce cas (règle de `selfExtensionArg`, runs.ts).
-      ...(deps.selfPath ? { additionalExtensionPaths: [deps.selfPath] } : {}),
+      ...(additionalExtensionPaths.length > 0 ? { additionalExtensionPaths } : {}),
     });
     const session = created.session;
     const id = manager.getSessionId();
@@ -307,10 +371,12 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
           log(`[service] libération de session en échec : ${err instanceof Error ? err.message : String(err)}`);
         }
         forgetMaillonIdentity(id);
+        forgetArbiterCapture(id);
         sessions.delete(id);
       },
     };
     if (options.identity) registerMaillonIdentity(id, options.identity);
+    if (options.arbiter) registerArbiterCapture(id, options.arbiter);
     // Le contexte UI du runner ET celui des outils : `setToolUIContext` ne touche
     // que les contextes d'outil (Doc-1 §6), les deux sont nécessaires.
     const ui = createServiceUIContext(dialogChannel(hosted), log);

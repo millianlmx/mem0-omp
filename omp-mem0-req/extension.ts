@@ -13,7 +13,7 @@ import { lotOmpBin, lotRunTimeoutMs } from "./lot.ts";
 import type { Lot } from "./lot.ts";
 import { createLotController } from "./lotController.ts";
 import type { LotController } from "./lotController.ts";
-import { modelDialogChoice, modelDialogOptions, modelPanelChoices, modelQuestionTitle } from "./models.ts";
+import { askFeatureModels, modelPanelChoices } from "./models.ts";
 import { pipelinesPanelFactory } from "./panel.ts";
 import { createProjectRelay } from "./projectRelay.ts";
 import { hostComponents } from "./panelHost.ts";
@@ -24,7 +24,9 @@ import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publish
 import type { PublishDeps } from "./publish.ts";
 import { createServiceClient, createServiceLotActions } from "./serviceClient.ts";
 import { createServiceHost } from "./serviceHost.ts";
-import { maillonIdentityOf } from "./serviceSessions.ts";
+import { arbiterCaptureOf, maillonIdentityOf } from "./serviceSessions.ts";
+import { registerArbiterTool } from "./arbiter.ts";
+import { exhaustedUntil } from "./quota.ts";
 import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
 import { buildConversationRunArgv, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
 import type { WorkerMode } from "./runs.ts";
@@ -608,6 +610,12 @@ export default function reqExtension(pi: ExtensionAPI) {
     liveCtxRef = ctx;
     // --- une session HÉBERGÉE par le service (S-3, S-6, S-7) -----------------
     if (isServiceProcess()) {
+      // ARBITRE (S-9) : un seul outil, `arbiter_decide` — ni publication, ni boîte, ni relais.
+      const capture = arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx));
+      if (capture !== null) {
+        registerArbiterTool(pi, capture);
+        return;
+      }
       const identity = maillonIdentityOf(sessionIdOf(ctx as PipelineCtx));
       if (identity !== null) {
         // MAILLON : sa boîte vient de son identité (jamais d'un drapeau — le
@@ -660,6 +668,34 @@ export default function reqExtension(pi: ExtensionAPI) {
     // La session hôte d'un projet en cours (`omp --resume` de la session /project)
     // réarme son relais : le projet reprend là où il en était (S-4).
     projectRelay.sync(ctx);
+  });
+
+  // RETOUR AU PRINCIPAL entre deux appels modèle d'une même boucle d'outils (S-3) :
+  // OMP ne revient au principal qu'à l'admission d'un prompt, jamais au milieu d'une
+  // boucle. Un run du service sur le repli reprend donc le principal dès que son
+  // quota est levé : `tool_result` est ATTENDU avant que la boucle ne rappelle le
+  // modèle, et `setModel` vaut pour cet appel-là. Hors service, ou hors maillon
+  // (sans identité), le crochet ne fait rien : la session de l'utilisateur garde son
+  // modèle (B-5).
+  pi.on("tool_result", async (_event, ctx) => {
+    if (!isServiceProcess()) return;
+    const identity = maillonIdentityOf(sessionIdOf(ctx as PipelineCtx));
+    if (identity === null || identity.primary === null) return;
+    const live = ctx.model;
+    if (live !== undefined && `${live.provider}/${live.id}` === identity.primary) return;
+    if (exhaustedUntil(identity.stateDir, identity.primary, Date.now()) !== null) return;
+    const target = ctx.models.resolve(identity.primary);
+    if (target === undefined) {
+      process.stdout.write(`[service] retour au principal impossible : modèle inconnu ${identity.primary}\n`);
+      return;
+    }
+    try {
+      if (!(await pi.setModel(target))) {
+        process.stdout.write(`[service] retour au principal impossible : aucune clé d'API pour ${identity.primary}\n`);
+      }
+    } catch (err) {
+      process.stdout.write(`[service] retour au principal impossible : ${err instanceof Error ? err.message : String(err)}\n`);
+    }
   });
 
   // Une bascule de session (`/new`, `/resume`, `/req`, `/audit`, `/project`…)
@@ -792,24 +828,25 @@ export default function reqExtension(pi: ExtensionAPI) {
       // feature naît sans clé de modèle (défaut OMP).
       let modelReqSpecs: string | null = null;
       let modelImplReview: string | null = null;
+      let fallbackReqSpecs: string | null = null;
+      let fallbackImplReview: string | null = null;
       if (ctx.hasUI) {
-        const options = modelDialogOptions(ctx.models?.list?.() ?? []);
-        if (options.length > 0) {
-          const reqChoice = modelDialogChoice(
-            await ctx.ui.select(modelQuestionTitle(slug, "modelReqSpecs"), options, { signal: undefined }),
+        const catalogue = ctx.models?.list?.() ?? [];
+        if (catalogue.length > 0) {
+          const chosen = await askFeatureModels(
+            (title, options, opts) => ctx.ui.select(title, options, opts),
+            catalogue,
+            slug,
+            undefined,
           );
-          const implChoice =
-            reqChoice === null
-              ? null
-              : modelDialogChoice(
-                  await ctx.ui.select(modelQuestionTitle(slug, "modelImplReview"), options, { signal: undefined }),
-                );
-          if (reqChoice === null || implChoice === null) {
+          if (chosen === null) {
             ctx.ui?.notify?.("[req] choix du modèle annulé — rien n'a été créé, relance /req.", "warning");
             return;
           }
-          modelReqSpecs = reqChoice.model;
-          modelImplReview = implChoice.model;
+          modelReqSpecs = chosen.models.reqSpecs;
+          modelImplReview = chosen.models.implReview;
+          fallbackReqSpecs = chosen.fallbacks.reqSpecs;
+          fallbackImplReview = chosen.fallbacks.implReview;
         }
       }
 
@@ -878,6 +915,8 @@ export default function reqExtension(pi: ExtensionAPI) {
         worktree: created.path,
         modelReqSpecs,
         modelImplReview,
+        fallbackReqSpecs,
+        fallbackImplReview,
       });
       // Un lot conduit par une session vivante ne s'écrit pas (S-1) : la feature
       // n'y entre pas, et cette session le dit au lieu de laisser croire qu'elle
@@ -1103,6 +1142,10 @@ export default function reqExtension(pi: ExtensionAPI) {
     // Le « fin » du cadrage /project (S-2 §4) : lu d'abord, sans rien changer au
     // prompt système ni à la logique /req qui suit.
     projectRelay.onProjectPrompt(event.prompt, ctx);
+    // L'arbitre (S-9) partage le cwd d'une feature : le mode /req d'un maillon voisin ne le concerne pas.
+    if (isServiceProcess() && arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null) {
+      return { systemPrompt: event.systemPrompt };
+    }
     const st = stateOfCwd(ctx.cwd);
     if (!st.reqMode) {
       return { systemPrompt: event.systemPrompt };
@@ -1166,6 +1209,8 @@ export default function reqExtension(pi: ExtensionAPI) {
       // clôturerait l'entrée du run vivant et annoncerait une fin de maillon qui
       // n'a pas eu lieu (le sous-agent partage le cwd de son parent).
       if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
+      // Une session d'ARBITRE (S-9) ne publie rien : aucune annonce, aucune entrée.
+      if (isServiceProcess() && arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null) return;
       // Un run (maillon de lot ou run lancé par le panneau) : il libère son entrée
       // du magasin et n'annonce RIEN — la chaîne appartient au pilote (S-13), et
       // une notice « commande suivante » n'a aucun sens dans une session reprise.
@@ -1287,10 +1332,12 @@ export default function reqExtension(pi: ExtensionAPI) {
   });
 }
 
+export * from "./arbiter.ts";
 export * from "./audit.ts";
 export * from "./chain.ts";
 export * from "./commands.ts";
 export * from "./contract.ts";
+export * from "./context.ts";
 export * from "./git.ts";
 export * from "./inbox.ts";
 export * from "./launchd.ts";
@@ -1307,6 +1354,7 @@ export * from "./project.ts";
 export * from "./projectDriver.ts";
 export * from "./projectRelay.ts";
 export * from "./publish.ts";
+export * from "./quota.ts";
 export * from "./relay.ts";
 export * from "./runState.ts";
 export * from "./runs.ts";

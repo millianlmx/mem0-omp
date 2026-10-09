@@ -110,6 +110,9 @@ function stubHost(options: { hold?: boolean } = {}) {
         },
         session: {
           isStreaming: true,
+          messages: [],
+          model: undefined,
+          subscribe: () => () => {},
           prompt: async (text: string) => {
             prompts.push(text);
             if (!options.hold) return true;
@@ -570,6 +573,8 @@ test("replace-rpc-mode-by-native-rest-api/AC-8 : une session en cours est « en 
     prompt: "travaille",
     sessionFile: null,
     model: null,
+    primary: null,
+    fallback: null,
     inbox: path.join(stateDir, "inbox", "iso"),
     deadline: null,
   };

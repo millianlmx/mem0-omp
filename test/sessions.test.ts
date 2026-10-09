@@ -779,6 +779,7 @@ test("sessions/AC-7 : chaque action du panneau s'applique à la feature sélecti
 
   const log: string[] = [];
   const actions: LotPanelActions = {
+    resolveQuota: async () => null,
     add: async (input) => {
       log.push(`add:${input.name}`);
       return null;

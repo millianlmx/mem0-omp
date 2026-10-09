@@ -35,7 +35,7 @@ import {
   lotStateCancellable,
   lotStateTerminal,
   lotUnknownDepRefusal,
-  relayMilestoneRefusal,
+  milestoneGestureRefusal,
   lotFeature,
 } from "./lot.ts";
 import type { Lot, LotWaitKind } from "./lot.ts";
@@ -114,7 +114,8 @@ export type CommandKind =
   | "models"
   | "relaunch"
   | "cancel"
-  | "start";
+  | "start"
+  | "quota";
 
 /**
  * Une commande du canal. Le discriminant est `kind` (convention du magasin :
@@ -125,17 +126,25 @@ export type CommandKind =
 export type PipelineCommand =
   | { version: 1; id: string; sentAt: number; repo: string; kind: "launch";
       title: string; description: string; deps?: string[];
-      modelReqSpecs?: string | null; modelImplReview?: string | null }
+      modelReqSpecs?: string | null; modelImplReview?: string | null;
+      fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "add";
       title: string; description: string; deps?: string[];
-      modelReqSpecs?: string | null; modelImplReview?: string | null }
+      modelReqSpecs?: string | null; modelImplReview?: string | null;
+      fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "remove"; slug: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "verdict"; slug: string; verdict: "v" | "y" }
+  /**
+   * La décision de quota prise dans /pipelines (S-5) : `model` devient le repli des
+   * features bloquées par `provider` qu'AUCUNE session ouverte ne porte.
+   */
+  | { version: 1; id: string; sentAt: number; repo: string; kind: "quota"; provider: string; model: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "answer"; slug: string;
       toolCallId: string; selected?: string; custom?: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "reply"; slug: string; text: string }
   | { version: 1; id: string; sentAt: number; repo: string; kind: "models"; slug: string;
-      modelReqSpecs: string | null; modelImplReview: string | null }
+      modelReqSpecs: string | null; modelImplReview: string | null;
+      fallbackReqSpecs?: string | null; fallbackImplReview?: string | null }
   /** Le geste `R` du panneau (S-9) : rouvre un crédit de correction et relance. */
   | { version: 1; id: string; sentAt: number; repo: string; kind: "relaunch"; slug: string }
   /** Le geste `c` du panneau (S-9) : abandonne une feature, avec le sort du worktree. */
@@ -177,6 +186,7 @@ const COMMAND_KINDS: Record<CommandKind, true> = {
   relaunch: true,
   cancel: true,
   start: true,
+  quota: true,
 };
 
 
@@ -224,6 +234,27 @@ function asOptionalModelSlots(
 }
 
 
+/**
+ * Les deux clés de REPLI OPTIONNELLES d'une commande `launch`/`add`/`models` (S-1) :
+ * une clé ABSENTE n'est pas transmise ; une clé PRÉSENTE est `string` ou `null`, et
+ * toute autre forme rend `null` (refus de forme).
+ */
+function asOptionalFallbackSlots(
+  c: Record<string, unknown>,
+): { fallbackReqSpecs?: string | null; fallbackImplReview?: string | null } | null {
+  if (c.fallbackReqSpecs !== undefined && c.fallbackReqSpecs !== null && typeof c.fallbackReqSpecs !== "string") {
+    return null;
+  }
+  if (c.fallbackImplReview !== undefined && c.fallbackImplReview !== null && typeof c.fallbackImplReview !== "string") {
+    return null;
+  }
+  const out: { fallbackReqSpecs?: string | null; fallbackImplReview?: string | null } = {};
+  if (c.fallbackReqSpecs !== undefined) out.fallbackReqSpecs = c.fallbackReqSpecs as string | null;
+  if (c.fallbackImplReview !== undefined) out.fallbackImplReview = c.fallbackImplReview as string | null;
+  return out;
+}
+
+
 /** Une chaîne non vide, ou `null` — sans normaliser : le vide est jugé plus loin, par la décision. */
 function asText(value: unknown): string | null {
   return typeof value === "string" ? value : null;
@@ -253,13 +284,20 @@ export function asCommand(raw: unknown): PipelineCommand | null {
     if (title === null || description === null) return null;
     const deps = asDeps(c.deps);
     if (deps === null) return null;
-    // Les DEUX modèles de la feature (S-2) : optionnels au schéma, ils alimentent
-    // `AddFeatureInput` tels quels — `null` et l'absence n'écrivent aucune clé.
+    // Les DEUX modèles de la feature (S-2) et leurs replis (S-1) : optionnels au
+    // schéma, ils alimentent `AddFeatureInput` tels quels — `null` et l'absence
+    // n'écrivent aucune clé.
     const slots = asOptionalModelSlots(c);
-    if (slots === null) return null;
+    const fallbacks = asOptionalFallbackSlots(c);
+    if (slots === null || fallbacks === null) return null;
     return deps === undefined
-      ? { ...base, kind, title, description, ...slots }
-      : { ...base, kind, title, description, deps, ...slots };
+      ? { ...base, kind, title, description, ...slots, ...fallbacks }
+      : { ...base, kind, title, description, deps, ...slots, ...fallbacks };
+  }
+  if (c.kind === "quota") {
+    if (typeof c.provider !== "string" || c.provider === "") return null;
+    if (typeof c.model !== "string" || c.model === "") return null;
+    return { ...base, kind: "quota", provider: c.provider, model: c.model };
   }
   const slug = asStringOrNull(c.slug);
   if (slug === null) return null;
@@ -268,13 +306,15 @@ export function asCommand(raw: unknown): PipelineCommand | null {
     // ne pas toucher à un groupe sans le dire — forme refusée, aucun effet (S-3).
     if (c.modelReqSpecs === undefined || c.modelImplReview === undefined) return null;
     const slots = asOptionalModelSlots(c);
-    if (slots === null) return null;
+    const fallbacks = asOptionalFallbackSlots(c);
+    if (slots === null || fallbacks === null) return null;
     return {
       ...base,
       kind: "models",
       slug,
       modelReqSpecs: slots.modelReqSpecs as string | null,
       modelImplReview: slots.modelImplReview as string | null,
+      ...fallbacks,
     };
   }
   if (c.kind === "remove") return { ...base, kind: "remove", slug };
@@ -613,7 +653,8 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
     return dependent ? lotRemoveDependentRefusal(dependent.slug) : null;
   }
   if (cmd.kind === "verdict" && feature) {
-    if (view.relayed.has(cmd.slug)) return relayMilestoneRefusal(feature);
+    const gesture = milestoneGestureRefusal(feature, view.relayed.has(cmd.slug));
+    if (gesture !== null) return gesture;
     const expected: LotWaitKind = cmd.verdict === "v" ? "specs" : "review";
     if (feature.state !== "waiting" || feature.waitKind !== expected) {
       return `sans objet : la feature n'attend pas le jalon ${cmd.verdict}`;
@@ -652,6 +693,9 @@ export function commandRefusal(cmd: PipelineCommand, view: CommandView): string 
   if (cmd.kind === "cancel" && feature) {
     if (!lotStateCancellable(feature.state)) return lotCancelRefusal(feature.state);
     return null;
+  }
+  if (cmd.kind === "quota" && !lot.features.some((f) => f.state === "blocked" && f.quota?.provider === cmd.provider)) {
+    return `aucune feature bloquée par le quota ${cmd.provider}`;
   }
   return null;
 }

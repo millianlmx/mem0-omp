@@ -157,6 +157,55 @@ export function modelSlotsField(input: {
 }
 
 
+// --- le repli de chaque groupe (S-1) -----------------------------------------
+
+/** Le porteur minimal des deux clés de repli : la feature du lot, ou toute forme qui les porte. */
+export type FallbackSlotsCarrier = Pick<LotFeature, "fallbackReqSpecs" | "fallbackImplReview">;
+
+/**
+ * Le repli du groupe de la phase (S-1) : la clé du groupe si elle est renseignée,
+ * sinon `null` — « aucun repli ». Contrairement au modèle, il n'y a AUCUN ancien
+ * champ unique à relire : une feature d'avant le repli n'en a pas.
+ */
+export function featureFallbackForPhase(feature: FallbackSlotsCarrier, phase: PipelinePhase): string | null {
+  const key = modelGroupOf(phase) === "modelReqSpecs" ? "fallbackReqSpecs" : "fallbackImplReview";
+  const value = feature[key];
+  return typeof value === "string" && value.trim() !== "" ? value : null;
+}
+
+/**
+ * Les champs de repli à ÉCRIRE dans le lot (S-1) : une clé n'existe que pour une
+ * valeur exploitable (non vide après `trim()`), jamais `""` ni `null`.
+ */
+export function fallbackSlotsField(input: {
+  fallbackReqSpecs?: string | null;
+  fallbackImplReview?: string | null;
+}): { fallbackReqSpecs?: string; fallbackImplReview?: string } {
+  const out: { fallbackReqSpecs?: string; fallbackImplReview?: string } = {};
+  if (typeof input.fallbackReqSpecs === "string" && input.fallbackReqSpecs.trim() !== "") {
+    out.fallbackReqSpecs = input.fallbackReqSpecs;
+  }
+  if (typeof input.fallbackImplReview === "string" && input.fallbackImplReview.trim() !== "") {
+    out.fallbackImplReview = input.fallbackImplReview;
+  }
+  return out;
+}
+
+/**
+ * Le refus d'un repli égal au principal d'un même groupe (S-1), ou `null`. Un
+ * principal `null` (« défaut OMP ») n'est jamais égal à un repli.
+ */
+export function fallbackEqualsPrimaryRefusal(
+  primary: string | null | undefined,
+  fallback: string | null | undefined,
+  group: ModelGroupKey,
+): string | null {
+  if (typeof primary !== "string" || primary.trim() === "") return null;
+  if (typeof fallback !== "string" || fallback.trim() === "") return null;
+  return primary === fallback ? `repli identique au modèle principal (${MODEL_GROUP_LABELS[group]})` : null;
+}
+
+
 /**
  * Le modèle de la feature du lot dont le `worktree` est le même répertoire que
  * `cwd`, pour la phase `phase`, ou `null`. Deux précautions : `""` n'est JAMAIS
@@ -222,4 +271,132 @@ export function modelDialogChoice(label: string | undefined): { model: string | 
  */
 export function modelPanelChoices(models: readonly ModelRow[]): ModelChoice[] {
   return models.length === 0 ? [] : modelChoices(models);
+}
+
+
+/** Le libellé de l'option « aucun repli » — mot pour mot dans toutes les portes (S-1). */
+export const NO_FALLBACK_LABEL = "aucun repli";
+
+/** Ce que dit l'option « aucun repli » dans un dialogue de l'hôte (S-1). */
+export const NO_FALLBACK_DESCRIPTION = "si le modèle principal est épuisé, la feature passe en « bloquée : quota »";
+
+
+/** Le titre du dialogue de repli d'un groupe — le même dans toutes les portes (S-1). */
+export function fallbackQuestionTitle(slug: string, group: ModelGroupKey): string {
+  return `Repli ${MODEL_GROUP_LABELS[group]} — ${slug}`;
+}
+
+
+/**
+ * Les options du dialogue de repli (S-1) : « aucun repli » d'abord, puis chaque
+ * sélecteur du catalogue SAUF le principal choisi juste avant. « défaut OMP » n'est
+ * jamais une option de repli. Catalogue vide : `[]` — aucun dialogue.
+ */
+export function fallbackDialogOptions(
+  models: readonly ModelRow[],
+  principal: string | null,
+): ModelSelectItem[] {
+  if (models.length === 0) return [];
+  return [
+    { label: NO_FALLBACK_LABEL, description: NO_FALLBACK_DESCRIPTION },
+    ...models.map(modelSelector).filter(selector => selector !== principal).map(label => ({ label })),
+  ];
+}
+
+
+/**
+ * La traduction du libellé d'un dialogue de repli (S-1) : `null` = annulation
+ * (Échap), `{ fallback: null }` = aucun repli, sinon le sélecteur tel quel.
+ */
+export function fallbackDialogChoice(label: string | undefined): { fallback: string | null } | null {
+  if (label === undefined) return null;
+  return { fallback: label === NO_FALLBACK_LABEL ? null : label };
+}
+
+
+/** La porte `ctx.ui.select` de l'hôte, réduite à ce que les dialogues de modèle utilisent. */
+export type ModelSelectFn = (
+  title: string,
+  options: ModelSelectItem[],
+  opts?: { signal?: AbortSignal },
+) => Promise<string | undefined>;
+
+
+/**
+ * Les QUATRE dialogues de création d'une feature (S-1), dans l'ordre : principal
+ * req+specs → repli req+specs → principal impl+review → repli impl+review. Rend
+ * `null` à la première annulation (Échap) — chaque porte la traite comme
+ * l'annulation du dialogue de modèle principal. Catalogue vide : aucune question,
+ * `{ models: {null, null}, fallbacks: {null, null} }` (le flux d'avant).
+ */
+export async function askFeatureModels(
+  select: ModelSelectFn,
+  models: readonly ModelRow[],
+  slug: string,
+  signal: AbortSignal | undefined,
+): Promise<{ models: ModelSlots; fallbacks: ModelSlots } | null> {
+  const picked: ModelSlots = { reqSpecs: null, implReview: null };
+  const fallbacks: ModelSlots = { reqSpecs: null, implReview: null };
+  if (models.length === 0) return { models: picked, fallbacks };
+  const modelOptions = modelDialogOptions(models);
+  const groups: { group: ModelGroupKey; slot: keyof ModelSlots }[] = [
+    { group: "modelReqSpecs", slot: "reqSpecs" },
+    { group: "modelImplReview", slot: "implReview" },
+  ];
+  for (const { group, slot } of groups) {
+    const principal = modelDialogChoice(await select(modelQuestionTitle(slug, group), modelOptions, { signal }));
+    if (principal === null) return null;
+    picked[slot] = principal.model;
+    const fallback = fallbackDialogChoice(
+      await select(fallbackQuestionTitle(slug, group), fallbackDialogOptions(models, principal.model), { signal }),
+    );
+    if (fallback === null) return null;
+    fallbacks[slot] = fallback.fallback;
+  }
+  return { models: picked, fallbacks };
+}
+
+
+// --- les quatre étapes de liste du panneau (S-1) -----------------------------
+
+/**
+ * Les étapes de choix d'un ajout ou d'une édition, DANS L'ORDRE du flux : principal
+ * puis repli de req+specs, principal puis repli de impl+review. Les valeurs SONT les
+ * noms des champs du brouillon.
+ */
+export const MODEL_STEPS = ["modelReqSpecs", "fallbackReqSpecs", "modelImplReview", "fallbackImplReview"] as const;
+export type ModelStep = (typeof MODEL_STEPS)[number];
+
+/** Le brouillon des quatre choix : `null` = défaut OMP (principal) ou aucun repli. */
+export type ModelStepDraft = Record<ModelStep, string | null>;
+
+export function isFallbackStep(step: ModelStep): step is "fallbackReqSpecs" | "fallbackImplReview" {
+  return step === "fallbackReqSpecs" || step === "fallbackImplReview";
+}
+
+/** Le groupe d'une étape : `fallbackReqSpecs` et `modelReqSpecs` sont du groupe `modelReqSpecs`. */
+export function groupOfStep(step: ModelStep): ModelGroupKey {
+  return step === "modelReqSpecs" || step === "fallbackReqSpecs" ? "modelReqSpecs" : "modelImplReview";
+}
+
+/** Le choix « aucun repli » d'une liste du panneau : valeur vide, jamais filtré. */
+export const NO_FALLBACK_CHOICE: ModelChoice = { value: "", label: NO_FALLBACK_LABEL };
+
+/**
+ * La liste d'une étape de repli (S-1) : « aucun repli » en tête, puis le catalogue
+ * SANS « défaut OMP » et sans le principal choisi juste avant.
+ */
+export function fallbackChoices(catalogue: readonly ModelChoice[], principal: string | null): ModelChoice[] {
+  return [NO_FALLBACK_CHOICE, ...catalogue.filter(choice => choice.value !== "" && choice.value !== principal)];
+}
+
+/** La liste AFFICHABLE d'une étape : le catalogue tel quel (principal), ou la liste de repli du brouillon. */
+export function stepChoices(
+  step: ModelStep,
+  catalogue: readonly ModelChoice[] | undefined,
+  draft: Pick<ModelStepDraft, "modelReqSpecs" | "modelImplReview">,
+): ModelChoice[] {
+  const all = catalogue ?? [];
+  if (!isFallbackStep(step)) return [...all];
+  return fallbackChoices(all, draft[groupOfStep(step)]);
 }

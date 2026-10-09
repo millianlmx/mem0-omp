@@ -2,12 +2,14 @@
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { CONTRACT_PATH, saysFin } from "./contract.ts";
+import { saysFin } from "./contract.ts";
 import { branchFor, branchTaken, resolveFeatureRoot } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
 import { AUDIT_RELAY_STALE_MS, LOT_EDITOR_MAX, lotFeature, lotRepoKey, readLot } from "./lot.ts";
+import { checkBriefLists, checkBriefPatch, editBrief, parseBrief, readBrief, renderBrief, writeBrief } from "./context.ts";
+import type { BriefInput } from "./context.ts";
 import type { LotController } from "./lotController.ts";
-import { modelDialogChoice, modelDialogOptions, modelQuestionTitle } from "./models.ts";
+import { askFeatureModels } from "./models.ts";
 import type { ModelSlots } from "./models.ts";
 import {
   PROJECT_DOC_BRANCH,
@@ -30,7 +32,7 @@ import type { PlanDraft, PlanSegment, Project, ProjectSegment } from "./project.
 import { createProjectDriver, projectState } from "./projectDriver.ts";
 import type { ProjectDriver } from "./projectDriver.ts";
 import { sessionFileOf } from "./publish.ts";
-import { createRelay, relayToolText as toolText } from "./relay.ts";
+import { createRelay, escalationRelayMessage, quotaRelayMessage, relayToolText as toolText } from "./relay.ts";
 import type { Relay, RelayCore, RelayEscalation, RelayItem, RelayState, RelayToolResult } from "./relay.ts";
 import { buildProjectResumeSeed, buildProjectSeed } from "./seeds.ts";
 import { pidAlive, readAuditRelay } from "./store.ts";
@@ -45,8 +47,8 @@ import type { PipelineCtx } from "./store.ts";
 // soumet son plan par `project_plan` : l'outil le fait corriger et valider, fait
 // choisir le modèle de chaque feature, écrit le projet et lance le premier
 // segment. La même session devient alors le RELAIS des pipelines du projet — le
-// relais générique (`relay.ts`) avec le profil /project : questions, jalons et
-// ÉCHECS des features lui sont injectés en messages `[project]`, et le pilote du
+// relais générique (`relay.ts`) avec le profil /project : les escalades de
+// l'arbitre et les ÉCHECS des features lui sont injectés en messages `[project]`, et le pilote du
 // projet (`projectDriver.ts`) tourne à chacun de ses balayages. Relancer /project
 // dans le dépôt reprend le projet (plan et avancement), sans refaire le cadrage.
 
@@ -103,6 +105,8 @@ const PLAN_VALIDATE = "Valider le plan";
 const PLAN_FIX = "Corriger le plan";
 const PLAN_ABANDON = "Abandonner";
 const PLAN_INTERRUPTED = "Plan non validé : dialogue interrompu — rien n'est écrit ni lancé.";
+const BRIEF_EDIT_TITLE =
+  "Brief du projet — valide ou corrige (rubriques : But, Fonction, Décisions, Contraintes, Non-objectifs)";
 const PLAN_RUNNING = "Error: le plan du projet est déjà validé — pour le modifier, appelle project_amend";
 const NO_PROJECT = "Error: aucun projet en cours dans ce dépôt";
 const AMEND_APPLY = "Appliquer la modification";
@@ -183,41 +187,15 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
 
   /** Le message injecté pour un élément, mot pour mot (S-6 §4). */
   function message(item: RelayItem): string {
-    const contract = path.join(item.worktree, CONTRACT_PATH);
     switch (item.kind) {
       case "ask":
-      case "question": {
-        const lines = [
-          `[project] Question de /${item.phase} — feature ${item.slug}`,
-          `Élément : ${item.key}`,
-          item.question ?? "(question sans texte)",
-        ];
-        if (item.options.length > 0) {
-          lines.push("Options :");
-          item.options.forEach((option, index) => {
-            lines.push(`- (${index + 1}) ${option.label}${option.description ? ` — ${option.description}` : ""}`);
-          });
-        }
-        lines.push(
-          `Contrat de la feature : ${contract}`,
-          "Réponds toi-même avec project_reply (élément, réponse = libellé exact d'une option ou texte libre) si le cadrage, le plan et le contrat te donnent la réponse ; sinon project_escalate (élément).",
-        );
-        return lines.join("\n");
-      }
+      case "question":
       case "specs":
-        return [
-          `[project] Jalon « specs validées » — feature ${item.slug}`,
-          `Élément : ${item.key}`,
-          `À examiner : ${contract}, sections ## Spécifications et ## Lots.`,
-          "Valide avec project_approve (élément) si elles servent l'intention de la feature dans le plan ; en cas de doute, project_escalate (élément).",
-        ].join("\n");
       case "review":
-        return [
-          `[project] Jalon « revue propre » — feature ${item.slug}`,
-          `Élément : ${item.key}`,
-          `À examiner : ${contract}, section ## Revue.`,
-          "Accepte avec project_approve (élément) — la livraison ouvrira la PR ; en cas de doute, project_escalate (élément).",
-        ].join("\n");
+        // Un élément n'arrive à la session que ESCALADÉ par l'arbitre (S-10).
+        return escalationRelayMessage("project", item);
+      case "quota":
+        return quotaRelayMessage("project", item);
       // Le plafond n'est pas un élément de ce relais (il devient un échec) : il
       // partage le message d'un échec s'il en devenait un.
       case "cap":
@@ -349,32 +327,26 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
   }
 
   /**
-   * Les modèles des features (S-2) : DEUX questions par feature quand des modèles
-   * sont connus — req+specs puis impl+review, dans cet ordre. Rend les choix, ou le
-   * slug de la première question abandonnée.
+   * Les modèles et replis des features (S-1) : QUATRE questions par feature quand
+   * des modèles sont connus — principal et repli req+specs, puis principal et repli
+   * impl+review. Rend les choix, ou le slug de la première question abandonnée.
    */
   async function chooseModels(
     ctx: ExtensionContext,
     slugs: readonly string[],
     signal: AbortSignal | undefined,
-  ): Promise<{ models: Map<string, ModelSlots> } | { missing: string }> {
-    const options = modelDialogOptions(ctx.models?.list?.() ?? []);
+  ): Promise<{ models: Map<string, ModelSlots>; fallbacks: Map<string, ModelSlots> } | { missing: string }> {
+    const catalogue = ctx.models?.list?.() ?? [];
     const models = new Map<string, ModelSlots>();
-    if (options.length === 0) return { models };
+    const fallbacks = new Map<string, ModelSlots>();
+    if (catalogue.length === 0) return { models, fallbacks };
     for (const slug of slugs) {
-      const reqChoice = modelDialogChoice(
-        await ctx.ui.select(modelQuestionTitle(slug, "modelReqSpecs"), options, { signal }),
-      );
-      const implChoice =
-        reqChoice === null
-          ? null
-          : modelDialogChoice(
-              await ctx.ui.select(modelQuestionTitle(slug, "modelImplReview"), options, { signal }),
-            );
-      if (reqChoice === null || implChoice === null) return { missing: slug };
-      models.set(slug, { reqSpecs: reqChoice.model, implReview: implChoice.model });
+      const chosen = await askFeatureModels((title, options, opts) => ctx.ui.select(title, options, opts), catalogue, slug, signal);
+      if (chosen === null) return { missing: slug };
+      models.set(slug, chosen.models);
+      fallbacks.set(slug, chosen.fallbacks);
     }
-    return { models };
+    return { models, fallbacks };
   }
 
   /** `project_plan` à son tour de dialogue (S-3) : complétude, revue, correction, modèles, écriture, lancement. */
@@ -384,6 +356,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
     repoRoot: string,
     sessionFile: string,
     proposed: PlanDraft,
+    briefLists: Pick<BriefInput, "decisions" | "constraints" | "nonGoals">,
     signal: AbortSignal | undefined,
   ): Promise<RelayToolResult> {
     // Un tour interrompu referme le dialogue ouvert, qui rend `undefined` comme un
@@ -419,6 +392,16 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
       if (interrupted()) return toolText(PLAN_INTERRUPTED);
       if (corrected !== null) plan = corrected;
     }
+    const brief = await editBrief(
+      ctx,
+      BRIEF_EDIT_TITLE,
+      renderBrief({ title: `/project ${path.basename(repoRoot)}`, purpose: plan.purpose, function: plan.function, ...briefLists }),
+      signal,
+    );
+    if (interrupted()) return toolText(PLAN_INTERRUPTED);
+    if (brief === null) {
+      return toolText("Plan non validé : brief non validé — rien n'est écrit ni lancé. Rappelle project_plan pour reprendre la validation.");
+    }
     const chosen = await chooseModels(ctx, slugsOf(plan.segments), signal);
     if (interrupted()) return toolText(PLAN_INTERRUPTED);
     if ("missing" in chosen) {
@@ -429,7 +412,14 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
 
     // L'écriture (S-4) : relue, sans `await` entre la lecture et l'écriture.
     if (projectOf(repoRoot)?.status === "running") return toolText(PLAN_RUNNING, true);
-    const project = newProject(plan, chosen.models, { stateDir: deps.stateDir(), repoRoot, hostSession: sessionFile, now: now() });
+    const project = newProject(
+      plan,
+      chosen.models,
+      { stateDir: deps.stateDir(), repoRoot, hostSession: sessionFile, now: now() },
+      chosen.fallbacks,
+    );
+    // Le brief d'abord (S-6) : un plan validé a toujours son brief.
+    writeBrief(deps.stateDir(), project.relayKey, brief);
     writeProject(deps.stateDir(), project);
     // Le cadrage est clos : le relais reste armé sur la MÊME session, dont la clé
     // passe de `null` à `relayKey`. La première passe lance le segment 1 ; le
@@ -472,6 +462,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
     proposed: PlanSegment[],
     purpose: string | null,
     fn: string | null,
+    briefPatch: Partial<Pick<BriefInput, "decisions" | "constraints" | "nonGoals">>,
     signal: AbortSignal | undefined,
   ): Promise<RelayToolResult> {
     projectState.amending = true;
@@ -507,6 +498,23 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
         if (interrupted()) return toolText(AMEND_INTERRUPTED);
         if (corrected !== null) after = corrected.segments;
       }
+      // Le brief (S-6) : l'éditeur est pré-rempli avec le brief courant dont les
+      // rubriques fournies sont remplacées. Échap : l'amendement n'est pas appliqué.
+      const briefTitle = `/project ${path.basename(repoRoot)}`;
+      const current = readBrief(deps.stateDir(), project.relayKey);
+      const base = parseBrief(
+        current ??
+          renderBrief({ title: briefTitle, purpose: project.purpose, function: project.function, decisions: [], constraints: [], nonGoals: [] }),
+        briefTitle,
+      );
+      const brief = await editBrief(
+        ctx,
+        BRIEF_EDIT_TITLE,
+        renderBrief({ ...base, ...briefPatch, purpose: purpose ?? base.purpose, function: fn ?? base.function }),
+        signal,
+      );
+      if (interrupted()) return toolText(AMEND_INTERRUPTED);
+      if (brief === null) return toolText("Modification non appliquée : brief non validé — le plan est inchangé.");
       const upcoming = new Set(slugsOf(before));
       const chosen = await chooseModels(
         ctx,
@@ -531,7 +539,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
           features: segment.features.map((feature) => {
             const known = kept.get(feature.slug);
             return known === undefined
-              ? newProjectFeature(feature, chosen.models.get(feature.slug) ?? null, at)
+              ? newProjectFeature(feature, chosen.models.get(feature.slug) ?? null, at, chosen.fallbacks.get(feature.slug) ?? null)
               : { ...known, intention: feature.intention, updatedAt: at };
           }),
         })),
@@ -539,6 +547,8 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
       if (purpose !== null) fresh.purpose = purpose;
       if (fn !== null) fresh.function = fn;
       fresh.updatedAt = at;
+      // Le brief d'abord (S-6) : un plan amendé a toujours son brief à jour.
+      writeBrief(deps.stateDir(), fresh.relayKey, brief);
       writeProject(deps.stateDir(), fresh);
       driverFor(repoRoot).syncDoc(["plan modifié"]);
       return toolText(`Plan modifié : ${after.length} segment(s) à venir, ${slugsOf(after).length} feature(s) à venir.`);
@@ -559,10 +569,19 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
         "Soumet le plan du projet — but (purpose), fonction (function) et segments ordonnés de features, chacune nommée avec son intention : l'outil fait confirmer la clôture du cadrage si l'utilisateur n'a pas dit « fin », montre le plan, le fait corriger puis valider, fait choisir le modèle de chaque feature, écrit le document PROJECT.md (branche omp-project) et lance le premier segment. Refusé une fois le plan validé : project_amend le modifie.",
       approval: "read",
       loadMode: "essential",
-      parameters: pi.arktype({ purpose: "string", function: "string", segments: segment.array() }),
+      parameters: pi.arktype({
+        purpose: "string",
+        function: "string",
+        decisions: "string[]",
+        constraints: "string[]",
+        nonGoals: "string[]",
+        segments: segment.array(),
+      }),
       async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
         const checked = checkPlan(params);
         if (!checked.ok) return toolText(checked.error, true);
+        const lists = checkBriefLists(params as Record<string, unknown>);
+        if (!lists.ok) return toolText(lists.error, true);
         if (!core.armedOn(ctx) || ctx === undefined) return toolText(core.notArmed, true);
         if (!ctx.hasUI) return toolText(core.needsUi, true);
         const repoRoot = state.repoRoot as string;
@@ -572,7 +591,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
         if (unavailable !== null) return toolText(unavailable, true);
         return core.inDialogTurn(
           signal,
-          () => validatePlan(core, ctx, repoRoot, sessionFile, checked.plan, signal),
+          () => validatePlan(core, ctx, repoRoot, sessionFile, checked.plan, lists.lists, signal),
           () => toolText(PLAN_INTERRUPTED),
         );
       },
@@ -585,7 +604,14 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
         "Propose une modification du plan : la NOUVELLE liste complète des segments pas encore démarrés (vide : le projet s'achèvera avec le segment courant), et au besoin un nouveau but ou une nouvelle fonction. L'utilisateur l'applique, la corrige ou la rejette : rien n'est appliqué sans sa validation.",
       approval: "read",
       loadMode: "essential",
-      parameters: pi.arktype({ "purpose?": "string", "function?": "string", segments: segment.array() }),
+      parameters: pi.arktype({
+        "purpose?": "string",
+        "function?": "string",
+        "decisions?": "string[]",
+        "constraints?": "string[]",
+        "nonGoals?": "string[]",
+        segments: segment.array(),
+      }),
       async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
         if (!core.armedOn(ctx) || ctx === undefined) return toolText(core.notArmed, true);
         if (!ctx.hasUI) return toolText(core.needsUi, true);
@@ -597,11 +623,13 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
         if (!checked.ok) return toolText(checked.error, true);
         const unavailable = await amendAvailability(repoRoot, project, checked.segments);
         if (unavailable !== null) return toolText(unavailable, true);
+        const patch = checkBriefPatch(record);
+        if (!patch.ok) return toolText(patch.error, true);
         const text = (value: unknown) =>
           typeof value === "string" && value.trim() !== "" ? value.trim().slice(0, LOT_EDITOR_MAX) : null;
         return core.inDialogTurn(
           signal,
-          () => amend(ctx, repoRoot, checked.segments, text(record.purpose), text(record.function), signal),
+          () => amend(ctx, repoRoot, checked.segments, text(record.purpose), text(record.function), patch.patch, signal),
           () => toolText(AMEND_INTERRUPTED),
         );
       },
@@ -622,20 +650,10 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
       },
       message,
       tools: {
-        reply: {
-          label: "Projet — répondre",
-          description:
-            "Répond à la place de l'utilisateur à une question relayée par un message [project] (élément = son identifiant ; réponse = libellé exact d'une option ou texte libre), seulement quand le cadrage, le plan et le contrat de la feature donnent la réponse.",
-        },
-        approve: {
-          label: "Projet — valider",
-          description:
-            "Valide un jalon relayé par un message [project] : « specs validées » (reprend sur /impl) ou « revue propre » (livre et ouvre la PR).",
-        },
         escalate: {
           label: "Projet — demander à l'utilisateur",
           description:
-            "Remonte à l'utilisateur, dans cette session, un élément relayé que /project ne tranche pas : la question d'origine et ses options, un jalon en doute, ou l'échec d'une feature (relancer, retirer ou arrêter le projet). La réponse de l'utilisateur est transmise mot pour mot.",
+            "Remonte à l'utilisateur, dans cette session, un élément que l'arbitre de /project n'a pas pu trancher et que le message [project] t'a relayé (identifiant = « élément » du message) : la question d'origine et ses options, ou un jalon en doute, ou l'échec d'une feature (relancer, retirer ou arrêter le projet). Appelle-le sans répondre toi-même : la réponse de l'utilisateur est transmise mot pour mot.",
         },
       },
       escalate: escalateFailure,

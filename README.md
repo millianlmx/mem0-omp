@@ -19,8 +19,8 @@ mem0-omp/                              racine = marketplace OMP
 │   ├── lotController.ts, lot.ts, chain.ts, contract.ts, seeds.ts
 │   │                                  le lot : pilote, modèle, chaîne, contrat, amorces
 │   ├── runs.ts, inbox.ts, publish.ts, store.ts, runState.ts, git.ts, state.ts,
-│   │   models.ts, audit.ts, commands.ts
-│   │                                  runs, boîtes, magasin d'état, worktrees, audit, modèles
+│   │   models.ts, audit.ts, commands.ts, quota.ts, context.ts, arbiter.ts
+│   │                                  runs, boîtes, magasin d'état, worktrees, audit, modèles, quotas
 │   ├── project.ts, projectDriver.ts, projectRelay.ts, relay.ts
 │   │                                  la conduite de projet et le relais
 │   └── panel.ts, panelRows.ts, panelWidth.ts, panelView.ts, panelSession.ts,
@@ -34,6 +34,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/check.sh                   validation avant publication
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
+├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
 ├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
@@ -302,16 +303,20 @@ fait désormais échouer la construction de l'image, pas la première requête.
   commande est en plus préremplie dans la zone de saisie, prête à valider par Entrée —
   et jamais par-dessus un brouillon déjà tapé.
 
-  **Les deux modèles se choisissent au lancement de la feature.** `/req` demande, **avant
-  toute écriture** (ni branche, ni worktree, ni session), **deux** modèles dans la liste des
-  modèles connus d'OMP — celui des maillons `req` et `specs`, puis celui de `impl`, `review`
-  et `release` —, avec à chaque fois la réponse `défaut OMP (aucun modèle)` ; `Échap` annule
-  sans rien créer. Les deux sont **modifiables à tout moment**, depuis OMP Console ou par le
-  geste `m` du panneau `/pipelines` : un run déjà lancé n'est ni interrompu ni relancé, tout
+  **Les modèles et leurs replis se choisissent au lancement de la feature.** `/req` demande, **avant
+  toute écriture** (ni branche, ni worktree, ni session), **quatre** choix dans la liste des
+  modèles connus d'OMP : le modèle des maillons `req` et `specs`, **son repli**, le modèle de
+  `impl`, `review` et `release`, **son repli**. Les modèles proposent `défaut OMP (aucun
+  modèle)` ; la liste d'un repli commence par `aucun repli` (si le principal est épuisé, la
+  feature passe en « bloquée : quota ») puis reprend les modèles connus **sans le principal
+  choisi juste avant**. `Échap` annule
+  sans rien créer. Les quatre sont **modifiables à tout moment**, depuis OMP Console ou par le
+  geste `m` du panneau `/pipelines` (et par la commande de canal `models`) : un run déjà lancé n'est ni interrompu ni relancé, tout
   run suivant utilise la valeur courante. Chaque modèle part en `--model` sur les runs de
   **son groupe** — la collecte et `/specs` pour le premier, `/impl`, `/review` et la
-  livraison pour le second — et les deux s'affichent sur son rang du panneau
-  (`… · req+specs anthropic/claude-opus-4-7 · impl+review défaut OMP`). Un groupe laissé sur
+  livraison pour le second —, son repli ne sert que si ce principal est épuisé (voir « Repli
+  de modèle et quota »), et le tout s'affiche sur son rang du panneau
+  (`… · req+specs anthropic/claude-opus-4-7 (repli cerebras/llama3.1-8b) · impl+review défaut OMP`). Un groupe laissé sur
   `défaut OMP` ne transmet aucun `--model`, et le niveau de réflexion n'est jamais transmis :
   il reste celui de la config OMP.
 
@@ -341,8 +346,9 @@ fait désormais échouer la construction de l'image, pas la première requête.
   cocher** de tous ces éléments, faiblesses et features réunies : coches-en un ou
   plusieurs et valide (valider sans rien cocher ne lance rien). Pour chaque élément
   coché, tu **valides ou amendes l'intention** transmise à `/req`, puis tu choisis ses
-  **deux modèles** (`req+specs`, puis `impl+review`) — deux questions par élément, chaque
-  pipeline tourne avec les siens. Les
+  **modèles et replis** — quatre questions par élément : `req+specs`, son repli, `impl+review`,
+  son repli (`aucun repli` est la première option, le principal choisi n'est jamais
+  proposé en repli) —, chaque pipeline tourne avec les siens. Les
   pipelines cochées démarrent **en parallèle dans la limite de `MEM0_PIPELINE_SLOTS`**
   (les autres attendent un créneau) ; un élément qui dépend d'un autre élément
   choisi n'attaque qu'une fois celui-ci terminé. Redemande un lancement dans la même
@@ -355,7 +361,7 @@ fait désormais échouer la construction de l'image, pas la première requête.
   projet par des questions à options ; le cadrage ne se clôt que sur ton « fin » ou sur
   le **contrôle de complétude**. L'agent propose ensuite un **plan de segments** ordonnés
   de features, que tu **corriges puis valides** — aucune pipeline ne démarre avant —,
-  avec les deux modèles de chaque feature. Le plan et son avancement vivent dans `PROJECT.md`,
+  avec le modèle et le repli de chaque feature. Le plan et son avancement vivent dans `PROJECT.md`,
   seul fichier de la branche `omp-project`. Chaque segment part en pipelines parallèles
   **dans la limite de `MEM0_PIPELINE_SLOTS`** jusqu'aux PR, et le segment suivant démarre
   seul dès que **toutes** les PR du précédent sont fusionnées — par toi, jamais par
@@ -384,6 +390,57 @@ c'est lui qui exécute les maillons — plus aucun `omp -p` par maillon.
 
 Sans service, les pipelines **n'avancent plus** — aucune session terminale ne reprend
 un lot — et le panneau le dit (`pilote absent — les pipelines n'avancent plus`).
+
+### Repli de modèle et quota
+
+Chaque run (étape de pipeline) tourne sur le **modèle principal** et le **repli** que
+l'utilisateur a choisis pour son groupe (req+specs ou impl+review), et sur aucun autre :
+le pipeline ne choisit jamais un modèle de remplacement à sa place.
+
+- Les réglages de la session d'un run sont posés **en mémoire** (`Settings.isolated`) :
+  le modèle de départ sur tous les rôles de modèle d'OMP (les sous-agents suivent le
+  run) et, quand un repli existe, la chaîne native `{"default": [repli]}`. Le service
+  n'écrit jamais `~/.omp/agent/config.yml`, n'appelle jamais `setModel` avec
+  `persist`, et ne touche ni la session `/project` ni les sessions de l'app.
+- Une 429 sur le principal fait basculer le run sur le repli **dans la même session**
+  (mêmes messages, aucun redémarrage). Quand OMP ne bascule pas — par exemple un repli
+  du même fournisseur après `GoUsageLimitError` — le runner bascule lui-même et envoie
+  `[reprise] Le modèle X a atteint son quota : le run continue sur Y…` (3 reprises au
+  plus par run).
+- Le principal reprend la main dès que son échéance est passée, **au milieu d'une
+  boucle d'outils** : un crochet `tool_result` du plugin rappelle `setModel` entre deux
+  appels modèle (OMP ne le fait qu'à l'admission d'un prompt).
+- `<état>/quota.json` (écrit par le service seul) liste les modèles épuisés et leur
+  échéance, annoncée (`retry-after-ms`) ou non (5 min). **Aucun run ne démarre sur un
+  modèle épuisé** : le run part sur le repli, et sans repli disponible la feature passe
+  en `blocked` avec `quota` (fournisseur, modèle, échéance, phase) — jamais `failed` —,
+  sa session et son worktree intacts. L'échéance s'écrit `jusqu'au JJ/MM HH:MM` ou
+  `échéance non annoncée`.
+- `bun scripts/fallback-bench.ts <sans-repli|repli|retour|epuise>` rejoue ces
+  scénarios dans une vraie session OMP, sans réseau (fournisseur `banc` scripté, HOME
+  factice, `config.yml` amorcé dont l'empreinte est comparée avant/après) et imprime une
+  ligne JSON ; `test/context-optimization-architecture.test.ts` le lance.
+- **Quota : une escalade par fournisseur, jamais un modèle choisi à ta place.** Les
+  features `blocked` portant un `quota` du **même fournisseur** forment **un seul groupe**,
+  décidé sur **une** surface : la session /project ou /audit **ouverte** pour les features de
+  son contexte (message `[audit] quota prov épuisé jusqu'au … — features bloquées : a, b.
+  Décision réservée à l'utilisateur : appelle audit_escalate avec l'élément quota:prov.`),
+  sinon `/pipelines` (rang `quota <fournisseur> épuisé …`, `Entrée` ouvre la liste du
+  catalogue — sans `défaut OMP` ni modèle épuisé, avec la recherche au clavier —, `Entrée`
+  sur un modèle ouvre l'aperçu `Relancer <N> feature(s) bloquée(s) par <fournisseur> avec le
+  repli <M> ?`, `Entrée` applique, `Échap` revient ; sans modèle connu : `aucun modèle
+  connu — rien n'est relancé`). Dans la session parente, `<nom>_escalate` ouvre
+  `Quota <fournisseur> épuisé — relancer <N> feature(s) avec quel repli ?` avec le même
+  catalogue puis `Laisser bloquées pour l'instant` (rien ne change, l'élément n'est pas
+  réinjecté avant la prochaine ouverture de la session). La commande de canal `quota`
+  fait la même décision.
+- **La décision rend le modèle choisi `M` le REPLI du groupe** (req+specs ou impl+review) de
+  l'étape bloquée, pour chaque feature du groupe ; **le principal ne change pas** (et un `M`
+  qui est déjà le principal du groupe laisse la feature telle quelle). `quota` et la raison
+  d'arrêt sont effacés et la feature est relancée par `R` : elle **reprend sa session**
+  (`[reprise] …`) sur `M` tant que le principal est épuisé, et revient sur lui à son
+  échéance. Deux refus, rien n'est modifié : `aucune feature bloquée par le quota <fournisseur>`
+  et `<M> est épuisé <échéance> — choisis un autre modèle`.
 
 ## Pipelines en cours
 
@@ -445,20 +502,39 @@ fenêtres qui pourraient manger l'écran, et de les faire défiler.
   garde un marqueur qui **nomme la section qu'il tronque** (`… 4 de plus dans le lot`).
 - **La colonne de droite** d'un rang est `<maillon> · <état> · <temps>` — jamais les
   dépendances : elles restent sur le libellé (`base-qdrant ← isolation-worktree`), une
-  seule fois. Les **deux modèles** s'ajoutent au libellé (`base-qdrant · req+specs
-  anthropic/claude-opus-4-7 · impl+review défaut OMP`), une fois eux aussi, et disparaissent
-  pour une feature née au défaut OMP ; `défaut OMP` nomme un groupe laissé vide, l'ancien
+  seule fois. Les **modèles** s'ajoutent au libellé (`base-qdrant · req+specs
+  anthropic/claude-opus-4-7 · impl+review défaut OMP`), une fois eux aussi, suivis de ` (repli
+  <R>)` quand le groupe a un repli (`req+specs anthropic/claude-opus-4-7 (repli
+  cerebras/llama3.1-8b) · impl+review défaut OMP`) ; ils disparaissent
+  pour une feature née au défaut OMP et sans repli ; `défaut OMP` nomme un groupe laissé vide, l'ancien
   modèle unique d'une feature d'avant remplissant les deux. Quand le libellé et la colonne
   ne tiennent pas ensemble sur la largeur de contenu, l'entrée peint **deux rangs** : le
   libellé, puis l'état et le temps — jamais
   coupés en deux. **Le tour de correction y figure** dès qu'il y en a un : `--fix · tour
   2/3` pour un `/impl --fix`, `tour 2/3` pour une `/review` — sans quoi un tour de
   correction se lisait comme un `/impl` neuf, et la boucle ne se suivait qu'à son blocage.
+- **Un quota épuisé est lu sans ambiguïté** : l'état d'une feature bloquée par un quota
+  s'affiche `bloquée : quota` (jamais `échoué`) et son second rang dit `quota : <fournisseur>
+  épuisé jusqu'au JJ/MM HH:MM` (ou `échéance non annoncée`). Sous le titre du lot, **un rang
+  par fournisseur épuisé** — `quota prov épuisé jusqu'au 15/11 01:13 · 2 feature(s)
+  bloquée(s)`, astuce `Entrée choisir un repli` — regroupe les features bloquées que
+  **aucune session /project ou /audit ouverte** ne porte (voir « Repli de modèle et quota »).
 - **La raison d'arrêt** d'une feature bloquée ou échouée est portée par la liste, sur un
   second rang de son entrée : `arrêt : run tué par le délai de 3600s`. `échoué` ne dit
   pas pourquoi ; le motif, si. Deux autres seconds rangs existent : `dernière revue : n
   bloquant(s)` — le verdict que la chaîne vient de lire dans le contrat — et `PR : <url>`
   pour une feature livrée, l'URL que `gh` a imprimée.
+- **Le pic de contexte de chaque run** s'écrit sur une sous-ligne `contexte : …`, après les
+  autres : le service mesure, à chaque fin de tour assistant, `input + cacheRead +
+  cacheWrite` et retient le **maximum** du run (`—` quand le run n'a émis aucun usage) ;
+  l'enregistrement (au plus 100 par feature, les plus anciens retirés) est ajouté **à la fin
+  du run** — étape ou arbitre —, donc rien n'apparaît pour un run en cours. Les groupes
+  suivent `req`, `specs`, `impl`, `review`, `release`, `arbitre`, séparés par ` · ` ; un pic
+  s'écrit `<n>` sous 1000, sinon en milliers (`82k`), suivi de ` ⚠` au-delà de 120 000 :
+  `contexte : req 41k · specs 82k · impl BR-1 82k, BR-2 131k ⚠ · review 90k`. Un run d'impl
+  par lot porte l'id du lot, un `--fix` s'écrit `fix <pic>`. Ligne d'information : rien ne
+  coupe ni ne compacte un run quand son pic dépasse la limite, et la ligne est absente tant
+  qu'aucun run n'est terminé (et pour un lot d'avant cette version).
 - **Le pied a toujours trois rangs** : les touches du panneau, celles de la **ligne
   sélectionnée** — `Entrée écrire`, `Entrée répondre`, `v valider`, `y accepter`,
   `R relancer`, `x retirer`, `c annuler`, `d supprimer` (le seul rang qu'il supprime est
@@ -633,7 +709,9 @@ que d'afficher un écran à moitié peint.
   le pilote propriétaire du dépôt visé les prend en charge en écrivant son accusé dans
   `<état>/commands/acks/<id>.json` — `prise en charge` avant d'agir, ou `refusée` avec
   son motif. Les commandes sont `launch` (créer le lot et lancer une feature), `add` et
-  `remove` (modifier la liste à chaud), `verdict` (`v` ou `y`, comme les touches du
+  `remove` (modifier la liste à chaud), `models` (modèles et replis d'une feature : une clé de
+  repli absente laisse le repli inchangé, `null` le retire), `quota` (choisir le repli d'un
+  fournisseur épuisé : `{provider, model}`), `verdict` (`v` ou `y`, comme les touches du
   panneau), `answer` (répondre à une question en vol d'un run), `reply` (répondre à une
   question en texte d'un maillon terminé : le maillon repart sur sa session) et `stop`
   (interrompre le pilote). Un même identifiant rejoué ne produit ni second accusé ni
@@ -695,19 +773,24 @@ s'affiche tel quel au lieu d'être avalé.
 
 - **Ajouter** (`a`) : trois champs — nom, **Description** (elle amorce la collecte),
   dépendances (slugs séparés par des virgules, vide admis) — puis, quand des modèles connus
-  existent, **deux étapes** : `Modèle req+specs` puis `Modèle impl+review`. La liste des
-  modèles connus s'y affiche avec `défaut OMP (aucun modèle)` en tête ; `↑`/`↓` (ou `k`/`j`)
+  existent, **quatre étapes** : `Modèle req+specs`, `Repli req+specs`, `Modèle impl+review`,
+  `Repli impl+review`. La liste des
+  modèles connus s'y affiche avec `défaut OMP (aucun modèle)` en tête ; la liste d'un **repli**
+  commence par `aucun repli` puis reprend les modèles connus **sans le principal choisi juste
+  avant** (`défaut OMP` n'est jamais un repli). `↑`/`↓` (ou `k`/`j`)
   déplacent le curseur, une frappe **filtre** la liste (Retour arrière l'efface, un filtre
   sans résultat le dit), `PageUp`/`PageDown` font défiler la fenêtre, `Entrée` valide le
-  choix affiché (sur la seconde étape, il ouvre l'aperçu) et `Échap` rend l'étape précédente —
+  choix affiché (sur la dernière étape, il ouvre l'aperçu) et `Échap` rend l'étape précédente —
   le champ des dépendances depuis la première —, tampon compris. Le curseur partant sur la
   première ligne, `Entrée` seul reproduit le comportement d'avant : la feature naît sans
-  modèle. L'aperçu n'annonce que les groupes **renseignés**
-  (`Créer gamma ? · 0 dépendance(s) · req+specs anthropic/claude-opus-4-7`). Le worktree de la
+  modèle ni repli. L'aperçu n'annonce que les groupes **renseignés**, chacun suivi de son repli
+  (`Créer gamma ? · 0 dépendance(s) · req+specs anthropic/claude-opus-4-7 (repli aucun)`). Le worktree de la
   feature est créé au lancement (`feat/<nom>`), jamais à l'ajout. **Modèles** (`m`) ouvre les
-  deux mêmes étapes, pré-positionnées sur les valeurs courantes, puis un aperçu
-  (`Modifier les modèles de gamma ? · req+specs … · impl+review défaut OMP`) : `Entrée`
-  applique, un refus du pilote s'affiche tel quel, et un run déjà lancé n'est ni interrompu
+  quatre mêmes étapes, pré-positionnées sur les valeurs courantes (le repli actuel, ou
+  `aucun repli`), puis un aperçu
+  (`Modifier les modèles de gamma ? · req+specs <A|défaut OMP> (repli <R|aucun>) · impl+review <B|défaut OMP> (repli <R|aucun>)`) : `Entrée`
+  applique, un refus du pilote s'affiche tel quel — un repli identique au principal du même
+  groupe est refusé —, et un run déjà lancé n'est ni interrompu
   ni relancé — le run suivant relit la valeur courante. Sans modèle connu, `m` le dit
   (`aucun modèle connu — modèles inchangés`) sans rien ouvrir. **Retirer** (`x`) enlève une
   feature qui n'a pas encore démarré.
@@ -721,6 +804,23 @@ s'affiche tel quel au lieu d'être avalé.
   l'**accord de fin de revue** (`y`). Entre deux jalons, tu n'as rien à lancer. Une question
   posée **en texte** (pas par l'outil `ask`) arrête la chaîne de la même façon, quel que soit
   le maillon : la feature passe *attend réponse*, et ta réponse la relance dans sa session.
+- **L'implémentation par lot (impl par lot)** : à la validation des specs (`v`), si la
+  section `## Lots` du contrat compte **au moins deux** lots (`BR-<n> — type: …`), le
+  pilote **fige** la découpe (`implLots`, `implLot` dans le lot de la feature) et lance
+  **un run `/impl` par lot, chacun dans une session neuve**, au lieu d'un seul run pour
+  tout le contrat. Le prompt du run du lot *i* porte, après la graine et avant la
+  directive de lot, la ligne `[lot <id> (<i+1>/<N>)] Implémente UNIQUEMENT le lot <id> du
+  contrat. Lots déjà faits : … Lots suivants (autres runs) : ….` ; le panneau affiche la
+  phase `/impl <id> (<i+1>/<N>)`. Quand un lot finit, le lot **suivant** part à la place
+  de la revue ; après le dernier, la découpe est effacée et la chaîne passe à `/review`
+  comme avant. Une question, une réponse, une relance ou une reprise après quota d'un
+  lot reprennent **la session de ce lot**. Un contrat réécrit pendant l'impl ne change
+  pas la découpe en cours. Avec moins de deux lots : un seul run, comme avant. Les
+  directives `/specs`, `/impl` et `/review` demandent en plus de déléguer la lecture du
+  dépôt à des sous-agents, avec pour objectif 120 000 tokens de contexte par run
+  (objectif non bloquant : rien ne coupe ni ne compacte). La boucle de correction
+  (`/impl --fix` en **un seul** run, sans ligne `[lot …]`), l'accord de fin de revue et la
+  livraison (commit, push, PR) ne changent pas.
 - **La boucle de correction** (`/impl --fix` → `/review`) tourne seule, dans la limite de
   `MEM0_PIPELINE_REVIEW_CAP` tours (3 par défaut) : au-delà, la feature passe *bloqué* au
   lieu de boucler. Deux garanties de fond : `/impl --fix` consigne ses levées dans une section
@@ -788,21 +888,40 @@ s'affiche tel quel au lieu d'être avalé.
   attente (`slug ← dépendance`) jusqu'à ce que celui-ci soit terminé, puis part de sa
   branche.
   Tant que la session `/audit` est la session **courante** du process pilote, elle est
-  le **relais** de ces pipelines : chaque question d'un maillon et chaque jalon lui
-  arrive comme un message `[audit]` qui nomme sa feature et son maillon. Elle répond
-  seule (`audit_reply`), valide « specs validées » et « revue propre »
-  (`audit_approve`) — la chaîne va alors jusqu'à la PR sans aucune touche — ou te
-  remonte l'élément dans sa session (`audit_escalate`) avec la question et les options
-  d'origine, précédées de `Question de /<maillon> — feature <nom>` ; ta réponse part
-  **mot pour mot** au maillon qui l'a posée. Quand plusieurs pipelines demandent en même
-  temps, leurs dialogues s'ouvrent **un à la fois**, dans l'ordre des demandes. Le
-  plafond de la boucle revue ⇄ correction te revient toujours, et aucune PR n'est
-  ouverte avant ta décision. Pendant le relais, le panneau affiche `relayé à /audit` et
-  refuse d'y répondre ou d'y valider. **Quitter ou fermer** la session `/audit` fait
-  retomber questions et jalons sur le panneau, comme pour une feature ordinaire (y
-  compris une question restée sans réponse) ; **y revenir** (`/resume`) lui rend le
-  relais et lui réinjecte ce qui attend encore. Rien n'est jamais fusionné. Le battement
-  du relais vit dans `<état>/audit/<sha1(session)[:16]>.json`.
+  le **relais** de ces pipelines, mais elle ne répond plus : chaque question d'un maillon
+  et chaque jalon (« specs validées », « revue propre ») est tranché par un **arbitre** —
+  une session d'un instant, neuve, qui ne lit que le brief, le journal de la feature et le
+  contrat — sans aucun tour de la session `/audit`. La décision est **consignée au journal**
+  (source `contexte` ou `arbitrage`) et la chaîne repart. Quand l'arbitre ne peut pas
+  trancher, il **escalade** : la feature reste en attente et la session `/audit` reçoit UN
+  message `[audit] escalade — <feature> /<maillon> : <question>` (options numérotées, `motif
+  de l'arbitre`) ; elle te le remonte par `audit_escalate` (dialogue avec la question et les
+  options d'origine), et ta réponse — ou `Valider les specs` / `Accepter la revue et livrer
+  (PR)` — part **mot pour mot**, source `utilisateur`. Les outils `audit_reply` et
+  `audit_approve` n'existent plus : la session ne répond jamais seule. Elle reçoit encore
+  les échecs, le plafond de la boucle revue ⇄ correction et les groupes de quota ; aucune
+  PR n'est ouverte avant ta décision. Quand plusieurs pipelines demandent en même temps,
+  leurs dialogues s'ouvrent **un à la fois**, dans l'ordre des demandes. Pendant un
+  arbitrage le panneau affiche `arbitrage en cours` et refuse réponse, `v` et `y`
+  (`arbitrage en cours — la décision sera consignée au journal`, de même par la commande de
+  canal). Une feature escaladée n'est plus jamais arbitrée pour la même question : seule une
+  action de ta part la débloque. **Session fermée** : l'arbitrage et la tenue des escalades
+  continuent dans le service ; le panneau affiche sous la feature `escalade /<maillon> :
+  <question>` et accepte Entrée, `v` et `y` (source `utilisateur`). **Rouverte** (`/resume`),
+  la session relit le lot et le journal et ne se voit réinjecter, une fois par armement, que
+  les escalades en attente — jamais une décision déjà au journal. Tant qu'elle est ouverte,
+  le panneau affiche `relayé à /audit` pour ces escalades et refuse d'y répondre. Rien
+  n'est jamais fusionné. Le battement du relais vit dans
+  `<état>/audit/<sha1(session)[:16]>.json`.
+
+  **Brief et journal** : l'outil `audit_propose` exige aussi un `brief` (`purpose`,
+  `function`, `decisions`, `constraints`, `nonGoals`). Après la sélection et la validation
+  des intentions, **avant** les questions de modèle, tu valides le brief dans un éditeur
+  titré `Brief de l'audit — …` (mêmes cinq rubriques que pour `/project`, mêmes règles :
+  rubrique absente → l'éditeur rouvre, Échap n'écrit rien) ; il est écrit tel que tu l'as
+  validé dans `<état>/briefs/<sha1(session)[:16]>.md`. Un nouvel `audit_propose` validé dans
+  la même session réécrit le brief. Chaque run d'une feature de l'audit reçoit ce brief et le
+  journal de sa feature (`<état>/journal/…jsonl`, voir « Projet ») dans son prompt.
 
 ## Projet
 
@@ -821,8 +940,10 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   plan : **Valider**, **Corriger** (un éditeur où `## <segment>` ouvre un segment et
   `- <nom> — <intention>` ajoute une feature ; l'ordre des lignes est l'ordre du plan ;
   un texte illisible ou un nom déjà pris rouvre l'éditeur avec l'erreur) ou
-  **Abandonner** (rien n'est écrit). À la validation, tu choisis les deux modèles de chaque
-  feature (`req+specs`, puis `impl+review`), le document est écrit et le segment 1 part.
+  **Abandonner** (rien n'est écrit). À la validation, tu choisis le modèle **et le repli** de chaque
+  feature pour `req+specs`, puis pour `impl+review` (quatre questions par feature), le document
+  est écrit et le segment 1 part ; un amendement appliqué pose les mêmes quatre questions à ses
+  features neuves.
 - **Le document et sa branche** : `PROJECT.md` est le **seul** fichier de la branche
   orpheline `omp-project` (worktree privé `<état>/projects/<sha1(realpath(dépôt))[:16]>.doc`). Il porte le but,
   la fonction, chaque segment et ses features dans l'ordre, avec leur état, leur PR et
@@ -838,15 +959,19 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   le segment attend, et réessaie toutes les 60 s.
 - **Le relais `[project]`** : les features d'un projet sont des features du lot (section
   *Lot* du panneau, même pilote, pipelines parallèles dans la limite de
-  `MEM0_PIPELINE_SLOTS`). Tant que la session `/project` est la session courante, chaque
-  question d'un maillon, chaque jalon et chaque échec lui arrive en message `[project]`.
-  Ses cinq outils : `project_plan` (le plan), `project_amend` (sa modification),
-  `project_reply` (répondre seule, quand le cadrage, le plan et le contrat donnent la
-  réponse), `project_approve` (« specs validées », « revue propre » : la chaîne va
-  jusqu'à la PR sans aucune touche) et `project_escalate` (te remonter l'élément ; ta
-  réponse part **mot pour mot**). Pendant le relais, le panneau affiche `relayé à
-  /project` et refuse d'y répondre ou d'y valider ; quitter ou fermer la session fait
-  retomber questions et jalons sur le panneau.
+  `MEM0_PIPELINE_SLOTS`). Les questions et les jalons y sont tranchés par l'**arbitre**
+  (brief, journal, contrat), consignés au journal, sans aucun tour de la session
+  `/project` — même arbitre et mêmes règles que pour `/audit`. Tant que la session `/project`
+  est la session courante, elle reçoit en message `[project]` les **escalades** de l'arbitre
+  (`[project] escalade — <feature> /<maillon> : <question>`, options, motif), les échecs et
+  les groupes de quota. Ses trois outils : `project_plan` (le plan), `project_amend` (sa
+  modification) et `project_escalate` (te remonter l'élément ; ta réponse, ou ton `Valider
+  les specs` / `Accepter la revue et livrer (PR)`, part **mot pour mot**, source
+  `utilisateur`). La session ne répond jamais seule. Pendant un arbitrage le panneau
+  affiche `arbitrage en cours` et refuse réponse, `v` et `y` ; session ouverte il affiche
+  `relayé à /project` pour les escalades ; session fermée, la feature reste en attente sous
+  `escalade /<maillon> : <question>` et tu réponds depuis le panneau. Rouverte, la session
+  ne se voit réinjecter, une fois, que les escalades en attente.
 - **Fusions** : `/project` sonde les PR du segment courant (`gh pr view`) au plus une fois
   par minute. Il ne fusionne **jamais** : quand toutes les PR du segment sont fusionnées
   (par toi), le segment suivant démarre seul ; quand le dernier l'est, le projet est
@@ -862,6 +987,38 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   l'initiative de l'agent. Tu l'appliques, la corriges ou la rejettes : rien n'est
   appliqué sans ta validation, et aucun segment ne démarre pendant le dialogue. Le
   segment courant ne change jamais par cette voie.
+- **Le brief durable** : `project_plan` porte aussi `decisions`, `constraints` et `nonGoals`
+  (des listes de phrases courtes). Juste après l'éditeur du plan et **avant** les questions de
+  modèle, tu valides le **brief** dans un éditeur (rubriques `## But`, `## Fonction`,
+  `## Décisions`, `## Contraintes`, `## Non-objectifs`) : le texte que tu valides est écrit tel
+  quel dans `<état>/briefs/<sha1(clé)[:16]>.md`, **avant** le plan. Une rubrique absente
+  rouvre l'éditeur (`brief incomplet : rubrique « <X> » absente`) ; Échap n'écrit ni plan ni
+  brief. Un `project_amend` appliqué rouvre l'éditeur sur le brief courant dont les rubriques
+  fournies (`decisions`, `constraints`, `nonGoals`, `purpose`, `function`) sont remplacées ;
+  Échap n'applique pas l'amendement. Le brief est relu depuis le fichier à chaque usage.
+- **Le journal et le contexte des étapes** : chaque décision appliquée — réponse à une
+  question, « specs validées », « revue propre », choix d'un repli après un quota — s'ajoute,
+  avec sa feature, sa question, sa réponse et sa source (`utilisateur` pour toi), à
+  `<état>/journal/<sha1(realpath(dépôt))[:16]>.jsonl` (une ligne JSON par entrée, ajout seul).
+  Le prompt de **chaque** run d'une feature du projet embarque, après le prompt de base, le
+  brief et les 50 entrées les plus récentes du journal **de cette feature** : l'étape les lit
+  avant de poser une question.
+- **L'arbitre éphémère** : une question d'une étape (`/req`, `/specs`, `/impl`, `/review`) ou un
+  jalon (« specs validées », « revue propre ») d'une feature du projet n'est plus relayé à la
+  session `/project` : le **service** ouvre une session d'arbitre **neuve** par élément, jamais
+  reprise, sur les modèles de la feature (principal puis repli, gardés par le registre des
+  quotas), avec pour seul corpus le brief, le journal de la feature et le contrat. Il appelle
+  `arbiter_decide` une fois : réponse (source `contexte` ou `arbitrage`, avec au moins une
+  citation mot pour mot du corpus), approbation d'un jalon justifié par le contrat, ou
+  escalade. Le pilote **valide** la décision sans rien accorder sur parole (citation
+  absente du corpus, jalon « répondu », aucun appel, échéance de 10 minutes ⇒ escalade,
+  `feature.escalation` posée) ; une question déjà au journal est livrée telle quelle, sans
+  arbitre. Aucun message ne part vers la session `/project`, qu'elle soit ouverte ou non.
+  L'étape sait d'où vient la réponse : `[réponse de l'utilisateur]`, `[réponse tirée du
+  contexte]` ou `[réponse de l'arbitre]` en tête du prompt, `Réponse tirée du contexte` /
+  `Réponse de l'arbitre` dans le résultat de `ask`, et `[jalon « specs validées » — décision
+  de l'arbitre]` (ou `de l'utilisateur`) à la fin du prompt qui suit un jalon ; la livraison
+  ne dit plus que l'utilisateur a accepté. La même mécanique sert `/audit`.
 - **Arrêt et reprise** : relancer `/project` dans le dépôt — ou `/resume` de la session
   `/project` — reprend le projet là où il en était (plan, avancement, questions en
   attente), sans refaire le cadrage ni relancer une feature déjà lancée ou terminée. Un

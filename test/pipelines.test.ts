@@ -672,6 +672,8 @@ test("magasin absent ou vide : zéro entrée, aucune erreur", () => {
     live: {},
     // Sans lot, aucune feature n'est confiée à une session /audit (audit S-3).
     relayed: {},
+    // Sans lot, aucun groupe de quota (S-5).
+    quota: [],
     history: [],
     lot: null,
     // Sans lot, il n'y a pas de pilote à nommer (PANEL-4).

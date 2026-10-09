@@ -53,6 +53,8 @@ import reqExtension, {
   type ProjectFeature,
   type ProjectRelay,
 } from "../omp-mem0-req/extension.ts";
+import { relayItemsOf } from "../omp-mem0-req/relay.ts";
+import { liveRunFor } from "../omp-mem0-req/store.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures (copiées de test/audit.test.ts : les fichiers de test ne s'importent pas)
@@ -252,6 +254,26 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
   };
 }
 
+/** Pose l'escalade que le verdict `escalate` d'un arbitre laisserait sur chaque élément courant de la clé de relais. */
+function escalateAll(stateDir: string, repoRoot: string, key: string): void {
+  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false });
+  for (const item of items) {
+    if (item.kind === "cap" || item.kind === "quota" || item.kind === "failure") continue;
+    const milestone = item.kind === "specs" || item.kind === "review";
+    lot.features.find((f) => f.slug === item.slug)!.escalation = {
+      key: item.key,
+      kind: milestone ? "jalon" : "question",
+      phase: item.phase,
+      question: milestone ? (item.kind === "specs" ? "specs validées ?" : "revue propre : livrer ?") : (item.question ?? ""),
+      options: item.options.map((option) => option.label),
+      reason: "ni le brief ni le journal ne tranchent",
+      at: T0,
+    };
+  }
+  writeLot(stateDir, lot);
+}
+
 function seedLot(stateDir: string, repoRoot: string, features: LotFeature[]): void {
   writeLot(stateDir, {
     version: LOT_VERSION,
@@ -370,7 +392,9 @@ function mkUi(answers: unknown[], withAskDialog = false) {
     notify: (title: string) => calls.push({ kind: "notify", title }),
     select: (title: string, items: unknown, options?: unknown) => next({ kind: "select", title, items, options }),
     input: (title: string) => next({ kind: "input", title }),
-    editor: (title: string, prefill?: string) => next({ kind: "editor", title, prefill }),
+    // Le brief (S-6) est validé tel quel : il ne consomme aucune réponse et n'est pas journalisé.
+    editor: (title: string, prefill?: string) =>
+      title.startsWith("Brief ") ? Promise.resolve(prefill) : next({ kind: "editor", title, prefill }),
   };
   if (withAskDialog) ui.askDialog = (questions: unknown) => next({ kind: "askDialog", title: "", questions });
   return { ui, calls };
@@ -404,7 +428,7 @@ function mkPi() {
 const textOf = (result: { content: { text: string }[] }) => result.content.map((c) => c.text).join("\n");
 
 /** La clé d'élément d'un message `[project]`. */
-const keyOf = (content: string) => /Élément : (\S+)/.exec(content)?.[1] ?? "";
+const keyOf = (content: string) => /Élément : (\S+)/.exec(content)?.[1] ?? /avec l'élément (\S+)\.$/.exec(content)?.[1] ?? "";
 
 /** Un fichier de session réel (en-tête sans `parentSession` : pas un sous-agent). */
 function sessionFileIn(dir: string, name: string): string {
@@ -551,6 +575,9 @@ const slugsOf = (project: Project | null) =>
 const PLAN = {
   purpose: "Offrir une CLI de conversion pour les équipes data.",
   function: "Convertit des fichiers CSV en JSON, en flux.",
+  decisions: ["La CLI lit stdin."],
+  constraints: ["Aucune dépendance native."],
+  nonGoals: ["Pas d'interface graphique."],
   segments: [
     {
       name: "Socle",
@@ -760,7 +787,7 @@ test("project/AC-1 : le cadrage lit le code avant de questionner et ne se clôt 
     assert.deepEqual(projectState.cadrage, { sessionFile: cadrage, fin: false });
     assert.deepEqual(
       [...app.tools.keys()].sort(),
-      ["project_amend", "project_approve", "project_escalate", "project_plan", "project_reply"],
+      ["project_amend", "project_escalate", "project_plan"],
     );
     const plan = app.tools.get("project_plan")!;
 
@@ -925,9 +952,9 @@ test("project/AC-3 : PROJECT.md (branche omp-project) porte le plan dans l'ordre
 // S-6, S-7 — le relais des pipelines du projet, le pilote des segments
 // ---------------------------------------------------------------------------
 
-test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteignent la PR, jalons donnés par /project", async () => {
+test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteignent la PR, jalons décidés par l'utilisateur après escalade", async () => {
   const fx = mkProject({
-    answers: ["Valider le plan"],
+    answers: ["Valider le plan", "Valider les specs", "Valider les specs", "Accepter la revue et livrer (PR)", "Accepter la revue et livrer (PR)"],
     script: (run) => {
       switch (run.phase) {
         case "req":
@@ -966,15 +993,17 @@ test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteig
   ] as const) {
     await waitFor(() => states().every((state) => state === `waiting:${milestone}`));
     assert.deepEqual(states(), [`waiting:${milestone}`, `waiting:${milestone}`]);
+    escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.project()!.relayKey);
     const before = fx.messages.length;
     fx.relay.scan();
     const injected = fx.messages.slice(before).map((m) => m.message.content);
     assert.equal(injected.length, 2, `un message par jalon ${milestone}`);
     for (const content of injected) {
-      assert.ok(content.startsWith(`[project] ${label} — feature `), content);
-      const approved = await fx.call("project_approve", { item: keyOf(content) });
-      assert.equal(approved.isError, undefined, textOf(approved));
-      assert.ok(textOf(approved).includes("par /project"), textOf(approved));
+      assert.ok(content.startsWith("[project] escalade — "), content);
+      assert.ok(content.includes(milestone === "specs" ? "specs validées ?" : "revue propre : livrer ?"), content);
+      const decided = await fx.call("project_escalate", { item: keyOf(content) });
+      assert.equal(decided.isError, undefined, textOf(decided));
+      assert.ok(textOf(decided).startsWith("Réponse de l'utilisateur transmise mot pour mot à /"), textOf(decided));
     }
   }
 
@@ -991,7 +1020,7 @@ test("project/AC-4 : les deux pipelines d'un segment tournent ensemble et atteig
   assert.ok(project.segments[0]!.features.every((f) => f.prUrl?.startsWith(`${GH}/o/r/pull/`)), "une PR par feature");
   assert.equal(fx.ghCalls.filter((args) => args[0] === "pr" && args[1] === "create").length, 2, "deux PR ouvertes");
   assert.ok(!fx.ghCalls.some((args) => args.includes("merge")), "aucune fusion");
-  assert.equal(fx.calls.length, uiAfterPlan, "aucun dialogue de jalon présenté à l'utilisateur");
+  assert.equal(fx.calls.length, uiAfterPlan + 4, "un dialogue par jalon, présenté à l'utilisateur");
   assert.ok(!fx.ctl.notices.some((n) => n.includes("attend")), `les jalons relayés ne sont pas annoncés au panneau : ${fx.ctl.notices.join(" | ")}`);
 });
 
@@ -1016,10 +1045,11 @@ test("project/AC-5 : une question que le projet ne tranche pas est remontée à 
     feature("b", { state: "failed", stopReason: "boom", ...relayed }),
   ]);
   const inbox = publishAsk(fx.ctl.stateDir, worktree, "call-1");
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, project.relayKey);
   fx.arm();
 
   const contents = fx.messages.map((m) => m.message.content);
-  const question = contents.find((c) => c.startsWith("[project] Question de /specs — feature a"));
+  const question = contents.find((c) => c.startsWith("[project] escalade — a /specs : "));
   const failure = contents.find((c) => c.startsWith("[project] Échec — feature b (segment 1 « Socle »)"));
   assert.ok(question, contents.join("\n---\n"));
   assert.ok(failure, contents.join("\n---\n"));
@@ -1027,10 +1057,8 @@ test("project/AC-5 : une question que le projet ne tranche pas est remontée à 
   assert.equal(keyOf(failure), `failure:b:${T0 + 5}`);
   assert.deepEqual(readDeliveries(inbox), [], "rien n'est livré au maillon tant que personne n'a tranché");
 
-  // L'échec est une décision de l'utilisateur : /project ne peut pas y répondre.
-  const reserved = await fx.call("project_reply", { item: keyOf(failure), answer: "Relancer" });
-  assert.equal(reserved.isError, true);
-  assert.equal(textOf(reserved), `Error: ${keyOf(failure)} : décision réservée à l'utilisateur — appelle project_escalate`);
+  // Un échec reste une décision de l'utilisateur : `project_escalate` est son seul chemin.
+  assert.ok(failure.endsWith("appelle project_escalate (élément), sans trancher."), failure);
 
   // La question remontée : la réponse de l'utilisateur, mot pour mot.
   const selected = await fx.call("project_escalate", { item: keyOf(question) });
@@ -1044,6 +1072,7 @@ test("project/AC-5 : une question que le projet ne tranche pas est remontée à 
 
   // Une nouvelle question, répondue en texte libre : livrée telle quelle (`custom`).
   const inbox2 = publishAsk(fx.ctl.stateDir, worktree, "call-2");
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, project.relayKey);
   fx.relay.scan();
   const second = fx.messages.at(-1)!.message.content;
   assert.equal(keyOf(second), "ask:a:call-2");

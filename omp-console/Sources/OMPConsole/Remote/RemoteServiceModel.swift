@@ -78,7 +78,7 @@ final class RemoteServiceModel: ObservableObject {
             // Un changement de la présence des composants OU de l'état de
             // préparation pousse le même évènement `components` (S-4).
             componentsChanges: presenceChanges.merge(with: setupChanges).eraseToAnyPublisher(),
-            journalChanges: actions.$journal.map { _ in () }.eraseToAnyPublisher()
+            journalChanges: actions.$journal.voidChanges()
         )
         let reads = RemoteReads(
             hub: storeHub,
@@ -266,5 +266,17 @@ final class PairingModel: ObservableObject {
     private func stopTimer() {
         timer?.invalidate()
         timer = nil
+    }
+}
+
+extension Publisher where Failure == Never {
+    /// « Quelque chose a changé », sans la valeur. La fermeture est volontairement
+    /// HORS acteur : écrite dans un contexte `@MainActor` elle en hériterait, or le
+    /// flux SSE consomme ces éditeurs par `.values` depuis un fil du pool coopératif
+    /// et l'abonnement émet la valeur courante sur ce fil — la vérification
+    /// d'isolation de Swift Concurrency fait alors planter l'app dès qu'un
+    /// appareil se connecte (`_dispatch_assert_queue_fail`).
+    nonisolated func voidChanges() -> AnyPublisher<Void, Never> {
+        map { _ in () }.eraseToAnyPublisher()
     }
 }

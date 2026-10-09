@@ -160,6 +160,8 @@ export function createServiceLotActions(deps: ServiceLotActionsDeps): LotPanelAc
         deps: input.deps,
         modelReqSpecs: input.modelReqSpecs ?? null,
         modelImplReview: input.modelImplReview ?? null,
+        ...(input.fallbackReqSpecs !== undefined ? { fallbackReqSpecs: input.fallbackReqSpecs } : {}),
+        ...(input.fallbackImplReview !== undefined ? { fallbackImplReview: input.fallbackImplReview } : {}),
       }),
     editModels: (slug, input) =>
       send({
@@ -167,13 +169,17 @@ export function createServiceLotActions(deps: ServiceLotActionsDeps): LotPanelAc
         slug,
         modelReqSpecs: input.modelReqSpecs,
         modelImplReview: input.modelImplReview,
+        ...(input.fallbackReqSpecs !== undefined ? { fallbackReqSpecs: input.fallbackReqSpecs } : {}),
+        ...(input.fallbackImplReview !== undefined ? { fallbackImplReview: input.fallbackImplReview } : {}),
       }),
+    // Le canal ne porte pas de portée : la commande vise les features que AUCUNE
+    // session ouverte ne porte — exactement le rang de /pipelines (S-5).
+    resolveQuota: (provider, model) => send({ kind: "quota", provider, model }),
     launch: () => send({ kind: "start" }),
     remove: slug => send({ kind: "remove", slug }),
     // Une réponse à une question en vol part dans la boîte du run par le canal
     // (`answer`) ; un texte à un maillon terminé part en `reply` (S-9).
-    answer: (slug, text, options) =>
-      options?.from === undefined ? send({ kind: "reply", slug, text }) : send({ kind: "reply", slug, text }),
+    answer: (slug, text) => send({ kind: "reply", slug, text }),
     reply: () => ({ kind: "closed", reason: "la réponse passe par le service OMP — rouvre le rang pour écrire" }),
     validate: slug => send({ kind: "verdict", slug, verdict: "v" }),
     accept: slug => send({ kind: "verdict", slug, verdict: "y" }),

@@ -371,6 +371,8 @@ export function createProjectDriver(deps: ProjectDriverDeps): ProjectDriver {
         // le lot — `undefined` (groupe au défaut) n'écrit aucune clé.
         modelReqSpecs: feature.modelReqSpecs ?? null,
         modelImplReview: feature.modelImplReview ?? null,
+        fallbackReqSpecs: feature.fallbackReqSpecs ?? null,
+        fallbackImplReview: feature.fallbackImplReview ?? null,
         base: sha,
       });
     } catch (err) {

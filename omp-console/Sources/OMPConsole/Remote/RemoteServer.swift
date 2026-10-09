@@ -161,7 +161,7 @@ final class RemoteServer: RemoteListening {
         switch newState {
         case .ready:
             let effective = listener?.port?.rawValue ?? UInt16(clamping: port)
-            let host = Self.primaryLocalAddress() ?? "127.0.0.1"
+            let host = Self.primaryLocalAddress(among: Self.interfaceIPv4Addresses()) ?? "127.0.0.1"
             let shown = "\(host):\(effective)"
             address = shown
             state = .running(address: shown)
@@ -217,11 +217,22 @@ final class RemoteServer: RemoteListening {
         return code == -65570
     }
 
-    /// La première adresse IPv4 locale non-loopback, en ordre d'interface.
-    static func primaryLocalAddress() -> String? {
-        var address: String?
+    /// La première adresse que la garde d'acceptation accepterait pour un pair du
+    /// même réseau : l'adresse CLAT d'un réseau IPv6 seul (`192.0.0.2`, partage de
+    /// connexion iPhone) ou une adresse publique n'est joignable par personne, la
+    /// montrer ferait taper à l'appareil une adresse morte.
+    nonisolated static func primaryLocalAddress(among addresses: [String]) -> String? {
+        addresses.first { text in
+            guard let ipv4 = IPv4Address(text) else { return false }
+            return RemoteAddressPolicy.isLocal(ipv4: ipv4.rawValue)
+        }
+    }
+
+    /// Les adresses IPv4 non-loopback des interfaces actives, en ordre d'interface.
+    nonisolated static func interfaceIPv4Addresses() -> [String] {
+        var addresses: [String] = []
         var head: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&head) == 0, let first = head else { return nil }
+        guard getifaddrs(&head) == 0, let first = head else { return [] }
         defer { freeifaddrs(head) }
         for pointer in sequence(first: first, next: { $0.pointee.ifa_next }) {
             let flags = Int32(pointer.pointee.ifa_flags)
@@ -237,11 +248,10 @@ final class RemoteServer: RemoteListening {
                 0,
                 NI_NUMERICHOST
             ) == 0 {
-                address = String(cString: host)
-                break
+                addresses.append(String(cString: host))
             }
         }
-        return address
+        return addresses
     }
 }
 

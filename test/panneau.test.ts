@@ -543,6 +543,7 @@ function text(rows: PanelRow[]): string {
 function countingActions(): { actions: LotPanelActions; calls: string[] } {
   const calls: string[] = [];
   const actions: LotPanelActions = {
+    resolveQuota: async () => null,
     add: async (input) => {
       calls.push(`add:${input.name}`);
       return null;

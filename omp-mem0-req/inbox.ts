@@ -8,7 +8,14 @@ import type { ArmedRunState } from "./runState.ts";
 import type { FlagReader } from "./runs.ts";
 import { pipelineDeadlineOf } from "./runs.ts";
 import { PANEL_INBOX_POLL_MS, PIPELINE_PHASES, consumeDelivery, readDeliveries } from "./store.ts";
-import type { PanelAskOption, PanelDelivery, PanelPendingAsk, PipelineCtx } from "./store.ts";
+import type { AskSource, PanelAskOption, PanelDelivery, PanelPendingAsk, PipelineCtx } from "./store.ts";
+
+/** Le libellé de la source d'une réponse `ask` (S-11) : l'utilisateur garde ses textes historiques. */
+function answerLabel(source: AskSource | undefined, free: boolean): string {
+  if (source === "contexte") return "Réponse tirée du contexte";
+  if (source === "arbitrage") return "Réponse de l'arbitre";
+  return free ? "Réponse de l'utilisateur (texte libre)" : "Réponse de l'utilisateur";
+}
 
 
 
@@ -96,6 +103,8 @@ export function checkAsk(input: unknown): AskCheck {
 /** La réponse attendue d'une question en vol : une option choisie, ou un texte libre. */
 export type AskAnswer = {
   selected?: string;
+  /** D'où vient la réponse (S-11) : absente = l'utilisateur. */
+  source?: AskSource;
   custom?: string;
   /**
    * La question n'aura pas de réponse : le run s'arrête (pilote disparu, échéance
@@ -186,7 +195,8 @@ export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask
   const waiter = state.askWaiters.get(delivery.toolCallId);
   if (!waiter) return;
   state.askWaiters.delete(delivery.toolCallId);
-  waiter("selected" in delivery ? { selected: delivery.selected } : { custom: delivery.custom });
+  const source = delivery.source === undefined ? {} : { source: delivery.source };
+  waiter("selected" in delivery ? { selected: delivery.selected, ...source } : { custom: delivery.custom, ...source });
 }
 
 
@@ -416,7 +426,7 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
         };
         return {
           content: [
-            { type: "text" as const, text: `Question : ${asked.question}\nRéponse de l'utilisateur : ${chosen.label}` },
+            { type: "text" as const, text: `Question : ${asked.question}\n${answerLabel(answer.source, false)} : ${chosen.label}` },
           ],
           details,
         };
@@ -425,7 +435,7 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
       const details: AskToolDetails = { id: asked.id, question: asked.question, options: asked.options, custom };
       return {
         content: [
-          { type: "text" as const, text: `Question : ${asked.question}\nRéponse de l'utilisateur (texte libre) : ${custom}` },
+          { type: "text" as const, text: `Question : ${asked.question}\n${answerLabel(answer.source, true)} : ${custom}` },
         ],
         details,
       };
