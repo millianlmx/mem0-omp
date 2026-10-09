@@ -12,6 +12,10 @@ import SwiftUI
 /// - `-home.recipe <état>` : l'état de l'Accueil forcé depuis la fixture
 ///   partagée `HomeParity` (S-10, S-11), pour capturer les cinq états par un
 ///   chemin RÉEL — un crochet de recette, pas une fonctionnalité ;
+/// - `-home.row <n>` : la rangée du tableau de bord (« En cours » puis « Livrées
+///   récemment ») amenée en haut de l'écran, pour capturer les rangées en Dynamic
+///   Type (feature ios-accueil-dynamic-type-casse) — un crochet de recette, pas
+///   une fonctionnalité ;
 /// - `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>` : l'état de
 ///   la section Sessions forcé depuis la fixture partagée `SessionParity` (S-1,
 ///   S-4, S-9), pour capturer l'écran réel — un crochet de recette, pas une
@@ -27,6 +31,7 @@ struct OMPConsoleIOSApp: App {
     private let initialSection: ConsoleSection
     private let initialState: IOSScreenState
     private let recipe: IOSHomeRecipe?
+    private let recipeRow: Int?
     private let sessionRecipe: IOSSessionsRecipe?
     private let memoryRecipe: IOSMemoryGraphRecipe?
     private let requestedSection: Bool
@@ -36,6 +41,7 @@ struct OMPConsoleIOSApp: App {
         initialSection = IOSSection.resolve(arguments)
         initialState = IOSScreenState.resolve(arguments)
         recipe = IOSHomeRecipe.resolve(arguments)
+        recipeRow = IOSHomeRecipe.row(arguments)
         sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
@@ -47,6 +53,7 @@ struct OMPConsoleIOSApp: App {
                 selection: initialSection,
                 state: initialState,
                 recipe: recipe,
+                recipeRow: recipeRow,
                 sessionRecipe: sessionRecipe,
                 memoryRecipe: memoryRecipe,
                 autoPresentConnection: !requestedSection

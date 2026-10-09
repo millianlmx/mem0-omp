@@ -1908,7 +1908,9 @@ trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou 
 libre), Contrat (sections verbatim) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract>`
-force un état depuis la fixture partagée `HomeParity` pour les captures.
+force un état depuis la fixture partagée `HomeParity` pour les captures ; le
+crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
+l'écran (captures des rangées en Dynamic Type).
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
@@ -2088,9 +2090,14 @@ Bienvenue — 8 états × {iPhone, iPad} × {clair, sombre} = **32 PNG**. Un
 TROISIÈME groupe capture le **mode graphe de la Mémoire** (feature
 `ios-memoire-graphe`) via `-memoire.recipe` : le graphe rendu, un état après
 pan/zoom et une fiche ouverte — 3 états × {iPhone, iPad} × {clair, sombre} =
-**12 PNG**. Le total attendu est **100** (56 + 32 + 12). Chaque capture est
-sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAIT —
-une capture inattendue ferait échouer le script.
+**12 PNG**. Un QUATRIÈME groupe capture les **rangées de l'Accueil en Dynamic
+Type** (feature `ios-accueil-dynamic-type-casse`) via `-home.row <n>`, qui amène la
+rangée d'index `n` (« En cours » puis « Livrées récemment ») en haut du tableau de
+bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
+`accessibility-extra-extra-extra-large`), iPhone clair seulement = **12 PNG**
+(`iphone-home-row<n>-<taille>.png`). Le total attendu est **112** (56 + 32 + 12 +
+12). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
+toutes PORTRAIT — une capture inattendue ferait échouer le script.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,

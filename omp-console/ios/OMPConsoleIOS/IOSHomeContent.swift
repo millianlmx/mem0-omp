@@ -7,6 +7,7 @@
 import ConsoleClient
 import ConsoleCore
 import Foundation
+import SwiftUI
 
 /// Ce que le découpage du contrat a rendu (S-14) : une section par titre requis,
 /// un fichier absent, ou un fichier illisible avec la raison du Mac.
@@ -134,5 +135,35 @@ enum IOSHomeContent {
         case .notConnected: return IOSHomeText.notConnected
         case .incompatibleProtocol: return IOSHomeText.incompatibleProtocol
         }
+    }
+}
+
+/// La disposition d'une rangée « titre | puce | bouton » de l'Accueil.
+enum IOSHomeRowAxis: Equatable { case horizontal, stacked }
+
+extension IOSHomeContent {
+    /// `.stacked` si et seulement si `size.isAccessibilitySize`, sinon `.horizontal`.
+    static func rowAxis(_ size: DynamicTypeSize) -> IOSHomeRowAxis {
+        size.isAccessibilitySize ? .stacked : .horizontal
+    }
+
+    /// La plus grande taille de texte des boutons de rangée : au-delà, « Reprendre »
+    /// deviendrait un disque et « Ouvrir la PR » ne tiendrait plus.
+    static let rowButtonMaximumSize: DynamicTypeSize = .accessibility3
+
+    /// La plus grande taille de texte d'une rangée (titre, sous-titre, puce) : mesuré
+    /// en capture (feature ios-accueil-dynamic-type-casse), à `.accessibility5` le
+    /// sous-titre « Implémentation » ne tient plus sur la largeur d'un iPhone et le
+    /// système le coupe au milieu du mot.
+    static let rowTextMaximumSize: DynamicTypeSize = .accessibility4
+}
+
+extension IOSHomeContent {
+    /// L'identifiant de carte de la rangée d'index `index` dans
+    /// `dashboard.running + dashboard.delivered` (cet ordre), ou nil hors bornes.
+    static func recipeRowID(_ dashboard: HomeDashboard, index: Int) -> String? {
+        let rows = dashboard.running + dashboard.delivered
+        guard rows.indices.contains(index) else { return nil }
+        return rows[index].id
     }
 }
