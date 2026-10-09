@@ -443,6 +443,122 @@ func repeatedAssistantTextIsCollapsed() throws {
     #expect(builder.rows.last?.id == "r60")
 }
 
+/// Le texte réel de la réponse finale mesurée (session d'`ios-bouton-connexion-introuvable`,
+/// ligne 23) : la copie de la ligne 29 le porte en dernier paragraphe.
+private let finalAnswerText =
+    "commit a6bbe27 — fix(ios,test,scripts,docs): bouton antenne de connexion visible sur iPhone et unique sur iPad"
+
+private func assistantEntry(
+    _ offset: Int, _ text: String, calls: [ToolCall] = []
+) -> ConversationEntry {
+    ConversationEntry(
+        index: offset,
+        offset: offset,
+        kind: .assistant(AssistantTurn(text: text, thinking: nil, model: nil, usage: nil, toolCalls: calls))
+    )
+}
+
+private func userEntry(_ offset: Int, _ text: String) -> ConversationEntry {
+    ConversationEntry(index: offset, offset: offset, kind: .user(UserTurn(text: text)))
+}
+
+private func assistantTexts(_ builder: SessionRowBuilder) -> [String: String] {
+    var texts: [String: String] = [:]
+    for row in builder.rows {
+        if case .assistant(let content) = row.kind { texts[row.id] = content.text }
+    }
+    return texts
+}
+
+@Test("ios-viewer-message-final-double/AC-3 : la copie de la réponse finale produite par un tour automatique n'est montrée qu'une fois, ses appels d'outil restent")
+func automaticTurnCopyOfFinalAnswerIsHidden() {
+    let answer = finalAnswerText
+    var builder = SessionRowBuilder()
+    builder.append([
+        userEntry(0, "Livre la feature"),
+        assistantEntry(10, answer),
+        // Le tour automatique (avis `[pipeline]` silencieux pour le lecteur) : un
+        // appel d'outil, son résultat, puis préambule + la réponse précédente.
+        assistantEntry(20, "", calls: [ToolCall(id: "c1", name: "mem0_add", arguments: .object(["text": .string("fait")]))]),
+        ConversationEntry(
+            index: 30,
+            offset: 30,
+            kind: .toolResult(ToolResultTurn(callId: "c1", name: "mem0_add", text: "Enregistré", diff: nil, isError: false))
+        ),
+        assistantEntry(40, "Livraison enregistrée en mémoire.\n\n" + answer),
+        // Une copie intégrale qui suit encore est repliée par l'égalité.
+        assistantEntry(50, answer),
+    ])
+    let texts = assistantTexts(builder)
+    #expect(texts.values.filter { $0.contains(answer) }.count == 1)
+    #expect(builder.rows.map(\.id) == ["r0", "r10", "r20", "r20.c0", "r40"])
+    #expect(texts["r10"] == answer)
+    #expect(texts["r40"] == "Livraison enregistrée en mémoire.")
+    guard let call = builder.rows.first(where: { $0.id == "r20.c0" }), case .toolCall(let row) = call.kind else {
+        Issue.record("l'appel d'outil du tour automatique devait rester affiché")
+        return
+    }
+    #expect(row.result != nil)
+
+    // Sans fin de ligne avant la copie, rien n'est replié : message entier.
+    var glued = SessionRowBuilder()
+    glued.append([
+        userEntry(0, "Livre la feature"),
+        assistantEntry(10, answer),
+        assistantEntry(20, "Voir : " + answer),
+    ])
+    #expect(assistantTexts(glued)["r20"] == "Voir : " + answer)
+
+    // CR-LF (un seul `Character`) et U+2028 comptent comme fin de ligne.
+    var crlf = SessionRowBuilder()
+    crlf.append([
+        userEntry(0, "Livre la feature"),
+        assistantEntry(10, answer),
+        assistantEntry(20, "Fait.\r\n" + answer),
+        assistantEntry(30, "Ok.\u{2028}" + answer),
+    ])
+    #expect(assistantTexts(crlf)["r20"] == "Fait.")
+    #expect(assistantTexts(crlf)["r30"] == "Ok.")
+
+    // Copie au début ou au milieu : non repliée ; différence d'un caractère : idem.
+    var partial = SessionRowBuilder()
+    partial.append([
+        userEntry(0, "Livre la feature"),
+        assistantEntry(10, answer),
+        assistantEntry(20, answer + "\n\nSuite."),
+        assistantEntry(30, "Avant.\n\n" + answer + "\n\nAprès."),
+        assistantEntry(40, "Avant.\n\n" + answer.replacingOccurrences(of: "iPad", with: "iPod")),
+    ])
+    let partialTexts = assistantTexts(partial)
+    #expect(partialTexts["r20"] == answer + "\n\nSuite.")
+    #expect(partialTexts["r30"] == "Avant.\n\n" + answer + "\n\nAprès.")
+    #expect(partialTexts["r40"] == "Avant.\n\n" + answer.replacingOccurrences(of: "iPad", with: "iPod"))
+
+    // L'assemblage incrémental donne les mêmes lignes qu'un seul `append`.
+    var incremental = SessionRowBuilder()
+    incremental.append([userEntry(0, "Livre la feature"), assistantEntry(10, answer)])
+    incremental.append([assistantEntry(40, "Livraison enregistrée en mémoire.\n\n" + answer)])
+    #expect(assistantTexts(incremental)["r40"] == "Livraison enregistrée en mémoire.")
+}
+
+@Test("ios-viewer-message-final-double/AC-4 : une réponse identique séparée par un vrai message de l'utilisateur reste affichée")
+func typedMessageKeepsRepeatedAnswer() {
+    let answer = finalAnswerText
+    var builder = SessionRowBuilder()
+    builder.append([
+        userEntry(0, "Livre"),
+        assistantEntry(10, answer),
+        userEntry(20, "Et encore ?"),
+        assistantEntry(30, answer),
+        userEntry(40, "Résume"),
+        assistantEntry(50, "Résumé.\n\n" + answer),
+    ])
+    let texts = assistantTexts(builder)
+    #expect(texts["r10"] == answer)
+    #expect(texts["r30"] == answer)
+    #expect(texts["r50"] == "Résumé.\n\n" + answer)
+}
+
 @Test("omp-console-redesign/audit HIG : la cible d'un appel montre un chemin court et une portée en français")
 func toolTargetsAreHumanized() {
     let home = NSHomeDirectory()
