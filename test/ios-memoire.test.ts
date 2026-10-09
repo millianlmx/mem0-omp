@@ -177,8 +177,7 @@ function detailFaults(root: string): string[] {
     "MemoryText.identifierLabel",
     "MemoryText.scopeLabel",
     "MemoryText.scoreLabel",
-    "MemoryText.title(",
-    "IOSMarkdownView(",
+    "Self.text(row)",
   ]) {
     if (!detail.includes(token)) faults.push(`la feuille n'emploie pas ${token}`);
   }

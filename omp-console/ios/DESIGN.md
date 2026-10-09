@@ -200,9 +200,13 @@ marqueur `[test: <fonction>]` (une fonction de
   Mac — les mêmes souvenirs que la section macOS, aucun tri local, la TÊTE
   conservée quand la liste est tronquée, et « Aucun projet ouvert » quand la
   portée est nulle. `[test: memoryFollowsTheClientTheScopeAndTheLoad]`
-- Le détail d'un souvenir ouvre une feuille : texte intégral rendu par le parseur
-  partagé (`MarkdownDocument`), identifiant, date relative, portée et étiquettes —
-  jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
+- Le détail d'un souvenir ouvre une feuille : la ligne de contexte (date relative,
+  étiquettes), le texte intégral tel qu'il est stocké, identifiant et portée sous
+  « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
+- Le texte d'un souvenir s'affiche TEL QU'IL EST STOCKÉ (`Text(verbatim:)`), dans la
+  liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
+  — un `*` reste un `*`. Seuls les autres contenus (documents projet, réponses) passent
+  par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
 

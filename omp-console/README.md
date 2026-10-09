@@ -2205,11 +2205,13 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion), un projet étant ouvert dans la
    fenêtre « Session OMP » du Mac : la section affiche l'en-tête « N souvenirs »
-   puis les lignes du sommaire, dans l'ordre du service (les plus récents d'abord),
-   et la ligne de troncature si la liste a été bornée.
-2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre le texte intégral,
-   l'identifiant, la date de mise à jour relative, la portée et les étiquettes ; se
-   fermer par le geste système (aucun bouton « Fermer »).
+   puis les lignes du sommaire, chacune avec le texte COMPLET du souvenir tel qu'il
+   est stocké (aucun rendu Markdown), dans l'ordre du service (les plus récents
+   d'abord), et la ligne de troncature si la liste a été bornée.
+2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre la date relative et
+   les étiquettes, puis le texte intégral tel qu'il est stocké (un `*` reste un `*`),
+   et l'identifiant et la portée sous « Détails techniques » ; se fermer par le geste
+   système (aucun bouton « Fermer »).
 3. **Chercher** — taper « mémoire du projet » puis valider (retour clavier) :
    l'en-tête devient « Résultats pour « mémoire du projet » » et les lignes sont
    celles de l'outil `mem0_search` (mêmes identifiants, même ordre). Une recherche
@@ -2228,7 +2230,7 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 8. **Le graphe** — toucher « Graphe » : le canevas montre les nœuds-souvenirs, les
    nœuds-étiquettes, les arêtes de proximité (trait plein gris) et les liens
    manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
-   toucher un souvenir pour ouvrir sa fiche (texte intégral, étiquettes, liens),
+   toucher un souvenir pour ouvrir sa fiche (texte intégral tel qu'il est stocké, étiquettes, liens),
    toucher un nœud-étiquette pour n'afficher que sa famille, puis « Étiquette ▸
    Toutes les étiquettes » pour revenir. Toucher « Liste » rend le sommaire
    inchangé — c'est le mode d'ouverture.

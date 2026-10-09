@@ -14,7 +14,7 @@ import Testing
 @MainActor
 @Suite("ios-memoire — la feuille d'un souvenir")
 struct IOSMemoryDetailTests {
-    /// Une ligne complète : texte Markdown, date lisible, cosinus, étiquettes, portée.
+    /// Une ligne complète : texte Markdown (affiché tel quel), date lisible, cosinus, étiquettes, portée.
     private let full = RemoteMemoryRow(
         id: "m1",
         text: "# Titre du souvenir\n\nUn corps **gras** et un `code`.",
@@ -38,13 +38,8 @@ struct IOSMemoryDetailTests {
     func detailRendersTheFiveFacts() {
         let nowMs = 1_760_000_000_000.0
 
-        // (1) Le texte INTÉGRAL, découpé par le parseur partagé.
-        let blocks = IOSMemoryDetailView.blocks(of: full)
-        #expect(!blocks.isEmpty)
-        #expect(blocks == MarkdownDocument.blocks(full.text))
-        // Le titre court vient du noyau.
-        #expect(IOSMemoryDetailView.heading(full) == MemoryText.title(full.text))
-        #expect(!IOSMemoryDetailView.heading(full).isEmpty)
+        // (1) Le texte INTÉGRAL, tel qu'il est stocké.
+        #expect(IOSMemoryDetailView.text(full) == full.text)
 
         // (2) La date de mise à jour RELATIVE, puis (3) les étiquettes.
         let subtitle = IOSMemoryDetailView.subtitle(full, nowMs: nowMs)
@@ -63,9 +58,8 @@ struct IOSMemoryDetailTests {
         #expect(IOSMemoryDetailView.scoreText(full) == "0,92")
         #expect(IOSMemoryDetailView.scoreText(poor) == nil)
 
-        // Ligne pauvre : aucun bloc, aucun titre, aucune date, aucune étiquette.
-        #expect(IOSMemoryDetailView.blocks(of: poor).isEmpty)
-        #expect(IOSMemoryDetailView.heading(poor) == MemoryText.emptyRow)
+        // Ligne pauvre : texte de repli, aucune date, aucune étiquette.
+        #expect(IOSMemoryDetailView.text(poor) == MemoryText.emptyRow)
         #expect(IOSMemoryDetailView.subtitle(poor, nowMs: nowMs).isEmpty)
     }
 

@@ -252,8 +252,8 @@ struct IOSMemoryScreen: View {
 
     private func rowLabel(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: IOSMemoryDetailView.heading(row))
-                .font(.headline)
+            Text(verbatim: IOSMemoryDetailView.text(row))
+                .font(.body)
                 .multilineTextAlignment(.leading)
             let subtitle = IOSMemoryDetailView.subtitle(row, nowMs: nowMs)
             if !subtitle.isEmpty {
