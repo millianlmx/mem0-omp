@@ -40,6 +40,7 @@ enum IOSHomeAccessibility {
     static let contractBody = "ios.home.contract.body"
     static let contractClose = "ios.home.contract.close"
     static let contractLoading = "ios.home.contract.loading"
+    static let contractFeature = "ios.home.contract.feature"
 
     static let welcomeSheet = "ios.home.welcome.sheet"
     static let welcomeContinue = "ios.home.welcome.continue"
@@ -130,6 +131,27 @@ enum IOSHomeContent {
     /// l'identifiant de la carte, sinon son titre.
     static func contractSlug(_ card: KanbanCard) -> String {
         card.id.split(separator: ":").last.map(String.init) ?? card.title
+    }
+
+    /// Les blocs Markdown du CORPS d'une section : la première ligne du texte (la
+    /// ligne « ## <titre> », que `ContractDocument.section` inclut) est retirée.
+    /// nil ⇔ section absente (`section.text == nil`).
+    static func contractBlocks(_ section: ContractSection) -> [MarkdownBlock]? {
+        guard let text = section.text else { return nil }
+        // La fin de la première ligne : `isNewline` couvre aussi « \r\n », qui
+        // forme UN seul caractère Swift.
+        let rest = text.firstIndex(where: \.isNewline).map { String(text[text.index(after: $0)...]) } ?? ""
+        if rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
+        return MarkdownDocument.blocks(rest)
+    }
+
+    /// Un message court rendu en Markdown EN LIGNE : le code en ligne passe en
+    /// chasse fixe, sans accents graves ; les espaces et retours restent tels quels.
+    static func inlineMarkdown(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
     }
 
     /// Le message EXACT d'un échec de geste (S-9) : le message de l'API, jamais

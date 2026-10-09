@@ -223,8 +223,13 @@ marqueur `[test: <fonction>]` (une fonction de
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
   `textQuestion`) ; une option sélectionnée prime sur le champ libre. `[test: answerZones]`
 - La feuille Contrat découpe le markdown par les fonctions partagées
-  (`ContractDocument`), affiche chaque section verbatim et le message d'une
-  section absente. `[test: contractOutputs]`
+  (`ContractDocument`) et rend chaque section en Markdown, bloc par bloc, par
+  `IOSMarkdownView`, sans sa ligne « ## Titre » (l'en-tête de la feuille suffit) ;
+  une section absente ou vide a son message, sans syntaxe Markdown brute.
+  `[test: contractSectionsDropTheirHeading]`
+- Sa barre dit « Contrat » en ligne ; le nom complet de la feature est en tête du
+  panneau, en en-tête, et passe à la ligne au lieu d'être tronqué.
+  `[test: longRecipeNamesTheWholeFeature]`
 - Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
   exploitable. `[test: deliveredLinks]`
 - Le lien « Tout afficher » sélectionne la section Pipelines. `[test: allPipelinesSection]`
@@ -259,7 +264,7 @@ marqueur `[test: <fonction>]` (une fonction de
   « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
 - Le texte d'un souvenir s'affiche TEL QU'IL EST STOCKÉ (`Text(verbatim:)`), dans la
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
-  — un `*` reste un `*`. Seuls les autres contenus (documents projet, réponses) passent
+  — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
