@@ -68,6 +68,7 @@ struct IOSSectionView: View {
         }
         .iosPanel()
         .navigationTitle(section.title)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)
     }
 

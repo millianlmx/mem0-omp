@@ -210,8 +210,14 @@ struct HomeView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(HomeText.attentionHeader).font(.title2.bold())
                 Spacer()
-                Button(HomeText.allPipelines) { onSelectSection(IOSHomeContent.allPipelinesSection) }
-                    .accessibilityIdentifier(IOSHomeAccessibility.allPipelines)
+                Button {
+                    onSelectSection(IOSHomeContent.allPipelinesSection)
+                } label: {
+                    Text(HomeText.allPipelines)
+                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier(IOSHomeAccessibility.allPipelines)
             }
             if dashboard.attention.isEmpty {
                 emptyLine(HomeText.attentionEmpty)
@@ -286,8 +292,14 @@ struct HomeView: View {
             Text(attention.prompt).font(.body)
             HStack(spacing: 8) {
                 if ContractDocument.moment(for: card) != nil {
-                    Button(ContractText.open) { contractCard = SelectedCard(card: card) }
-                        .accessibilityIdentifier(IOSHomeAccessibility.attentionContract(card.id))
+                    Button {
+                        contractCard = SelectedCard(card: card)
+                    } label: {
+                        Text(ContractText.open)
+                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier(IOSHomeAccessibility.attentionContract(card.id))
                 }
                 attentionButton(attention, prominent: prominent)
             }
