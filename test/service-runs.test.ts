@@ -79,7 +79,7 @@ function fakeHost(options: { hold?: boolean } = {}) {
   let disposed = 0;
 
   const sessionHost = {
-    open: async (openOptions: { cwd: string; identity?: Parameters<typeof registerMaillonIdentity>[1] }) => {
+    open: async (openOptions: { cwd: string; identity?: Parameters<typeof registerMaillonIdentity>[1]; model?: string | null; fallback?: string | null }) => {
       const arrived = Promise.withResolvers<void>();
       const maillon: FakeMaillon = {
         id: `maillon-${maillons.length + 1}`,
@@ -104,6 +104,9 @@ function fakeHost(options: { hold?: boolean } = {}) {
         },
         session: {
           isStreaming: true,
+          messages: [],
+          model: undefined,
+          subscribe: () => () => {},
           prompt: async (text: string) => {
             maillon.promptText = text;
             arrived.resolve();
@@ -245,6 +248,8 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
     prompt: "travaille",
     sessionFile: null,
     model: null,
+    primary: null,
+    fallback: null,
     inbox: path.join(stateDir, "inbox", "iso"),
     deadline: null,
   };
@@ -259,6 +264,8 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
     worktree,
     inbox: spec.inbox,
     deadlineAt: null,
+    primary: null,
+    fallback: null,
   });
   const ctx = {
     cwd: worktree,
@@ -284,7 +291,7 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
   // Le tour rend la main par le runneur : le résultat est celui de la chaîne
   // (`code 0`, `stdout` = textes assistant) et l'entrée du run disparaît (S-8).
   const result = await runner({ spec, cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
-  assert.deepEqual(result, { code: 0, killed: false, stdout: "le maillon a travaillé", stderr: "" });
+  assert.deepEqual(result, { code: 0, killed: false, stdout: "le maillon a travaillé", stderr: "", peakContext: null });
   assert.equal(
     readStore(stateDir).running.some(candidate => candidate.cwd === worktree),
     false,
@@ -308,6 +315,8 @@ test("service-runs/AC-11 : le budget coupé rend `killed` + code 124, jamais un 
     prompt: "travaille",
     sessionFile: null,
     model: null,
+    primary: null,
+    fallback: null,
     inbox: null,
     deadline: null,
   };
@@ -341,6 +350,8 @@ test("service-runs/AC-12 : la réponse à une question rouvre la session du mail
     prompt: "[réponse de l'utilisateur] voici ma réponse",
     sessionFile,
     model: null,
+    primary: null,
+    fallback: null,
     inbox: null,
     deadline: null,
   };

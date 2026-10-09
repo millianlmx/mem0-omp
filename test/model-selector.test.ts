@@ -510,6 +510,7 @@ function type(panel: PanelHarness, text: string): void {
 function countingActions(): { actions: LotPanelActions; calls: Array<Record<string, unknown>> } {
   const calls: Array<Record<string, unknown>> = [];
   const actions: LotPanelActions = {
+    resolveQuota: async () => null,
     add: async (input) => {
       calls.push({ kind: "add", ...input });
       return null;
@@ -663,7 +664,9 @@ function mkAuditUi(answers: unknown[]) {
     notify: (title: string) => calls.push({ kind: "notify", title }),
     select: (title: string, items: unknown) => next({ kind: "select", title, items }),
     input: (title: string) => next({ kind: "input", title }),
-    editor: (title: string) => next({ kind: "editor", title }),
+    // Le brief (S-6) est validé tel quel : il ne consomme aucune réponse et n'est pas journalisé.
+    editor: (title: string, prefill?: string) =>
+      title.startsWith("Brief ") ? Promise.resolve(prefill) : next({ kind: "editor", title }),
   };
   return { ui, calls };
 }
@@ -720,11 +723,14 @@ function mkAudit(options: { answers?: unknown[]; models?: Array<{ provider: stri
 const textOf = (result: { content: { text: string }[] }) => result.content.map((c) => c.text).join("\n");
 
 /** Deux propositions DISTINCTES : deux features d'un même audit. */
+const BRIEF_EMPTY = { purpose: "But.", function: "Fonction.", decisions: [], constraints: [], nonGoals: [] };
 const PROPOSAL_ALPHA = {
+  brief: BRIEF_EMPTY,
   weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
   features: [{ name: "alpha", intention: "Borner la file du lot.\nPérimètre : lot.ts." }],
 };
 const PROPOSAL_BETA = {
+  brief: BRIEF_EMPTY,
   weaknesses: [{ name: "modele-readme", intention: "README.md : le modèle n'est pas documenté" }],
   features: [{ name: "beta", intention: "Documenter le choix du modèle." }],
 };
@@ -811,7 +817,9 @@ function mkProjUi(answers: unknown[]) {
     notify: (title: string) => calls.push({ kind: "notify", title }),
     select: (title: string, items: unknown, options?: unknown) => next({ kind: "select", title, items, options }),
     input: (title: string) => next({ kind: "input", title }),
-    editor: (title: string, prefill?: string) => next({ kind: "editor", title, options: { prefill } }),
+    // Le brief (S-6) est validé tel quel : il ne consomme aucune réponse et n'est pas journalisé.
+    editor: (title: string, prefill?: string) =>
+      title.startsWith("Brief ") ? Promise.resolve(prefill) : next({ kind: "editor", title, options: { prefill } }),
   };
   return { ui, calls };
 }
@@ -930,6 +938,9 @@ function mkProjectFixture(options: { answers?: unknown[]; models?: ModelRow[] })
 const PLAN_ONE = {
   purpose: "Un but mesurable.",
   function: "Une fonction précise.",
+  decisions: [] as string[],
+  constraints: [] as string[],
+  nonGoals: [] as string[],
   segments: [{ name: "Socle", features: [{ name: "a", intention: "Intention A." }] }],
 };
 
@@ -961,13 +972,18 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     const base = mktmp("model-selector-ac2-req-wt-");
     await withEnv({ MEM0_PIPELINE_STATE_DIR: stateDir, MEM0_PIPELINE_WORKTREES_DIR: base }, async () => {
       const app = mkReqApp();
-      const { ctx, calls, moved } = mkReqCtx(root, { answers: [MODEL_A, MODEL_B], models: KNOWN });
+      const { ctx, calls, moved } = mkReqCtx(root, { answers: [MODEL_A, "aucun repli", MODEL_B, "aucun repli"], models: KNOWN });
       await app.commands.get("req")!("deux-groupes", ctx as never);
 
       assert.deepEqual(
         calls.map((call) => call.title),
-        ["Modèle req+specs — deux-groupes", "Modèle impl+review — deux-groupes"],
-        "deux dialogues successifs, dans l'ordre des groupes",
+        [
+          "Modèle req+specs — deux-groupes",
+          "Repli req+specs — deux-groupes",
+          "Modèle impl+review — deux-groupes",
+          "Repli impl+review — deux-groupes",
+        ],
+        "quatre dialogues successifs, dans l'ordre : principal puis repli de chaque groupe",
       );
       assert.deepEqual(
         (calls[0]!.items as Array<{ label: string }>).map((item) => item.label),
@@ -990,7 +1006,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     const base = mktmp("model-selector-ac2-cancel-wt-");
     await withEnv({ MEM0_PIPELINE_STATE_DIR: stateDir, MEM0_PIPELINE_WORKTREES_DIR: base }, async () => {
       const app = mkReqApp();
-      for (const answers of [[undefined], [MODEL_A, undefined]] as Array<Array<string | undefined>>) {
+      for (const answers of [[undefined], [MODEL_A, undefined], [MODEL_A, "aucun repli", MODEL_B, undefined]] as Array<Array<string | undefined>>) {
         const { ctx, notices, moved } = mkReqCtx(root, { answers, models: KNOWN });
         await app.commands.get("req")!("annule", ctx as never);
         assert.deepEqual(
@@ -1037,12 +1053,16 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
         "Lancer la sélection",
         "Valider et lancer",
         MODEL_A,
+        "aucun repli",
         MODEL_B,
+        "aucun repli",
         "beta",
         "Lancer la sélection",
         "Valider et lancer",
         MODEL_B,
+        "aucun repli",
         MODEL_A,
+        "aucun repli",
       ],
     });
     assert.equal((await fx.call("audit_propose", PROPOSAL_ALPHA)).isError, undefined);
@@ -1068,7 +1088,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
 
     const cancelled = mkAudit({
       models: KNOWN,
-      answers: ["alpha", "Lancer la sélection", "Valider et lancer", MODEL_A, undefined],
+      answers: ["alpha", "Lancer la sélection", "Valider et lancer", MODEL_A, "aucun repli", undefined],
     });
     const refused = await cancelled.call("audit_propose", PROPOSAL_ALPHA);
     assert.equal(textOf(refused), "Aucune pipeline lancée (0/1).\n- alpha : non lancée — modèle non choisi");
@@ -1090,7 +1110,7 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
   {
     // PORTE /project : deux questions par slug à la validation du plan ; les clés
     // vivent sur la feature de projet ET passent au lot quand le segment part.
-    const fx = mkProjectFixture({ answers: ["Valider le plan", MODEL_A, MODEL_B], models: KNOWN });
+    const fx = mkProjectFixture({ answers: ["Valider le plan", MODEL_A, "aucun repli", MODEL_B, "aucun repli"], models: KNOWN });
     projectState.cadrage = { sessionFile: fx.sessionFile, fin: true };
     fx.arm();
     const validated = await fx.call("project_plan", PLAN_ONE);
@@ -1133,9 +1153,13 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     assert.match(panel.screen(80), /Modèle req\+specs/, "la première étape est celle du groupe req+specs");
     assert.match(panel.screen(80), /> défaut OMP \(aucun modèle\)/, "défaut OMP ouvre la liste");
     press(panel, ["\u001b[B", "\u001b[B", "\r"]); // → anthropic/claude-opus-4-7
+    assert.match(panel.screen(80), /Repli req\+specs/, "le repli de req+specs suit son principal");
+    assert.match(panel.screen(80), /> aucun repli/, "« aucun repli » ouvre la liste de repli");
+    press(panel, ["\r"]); // aucun repli
     assert.match(panel.screen(80), /Modèle impl\+review/, "la seconde étape suit la première");
     assert.match(panel.screen(80), /> défaut OMP \(aucun modèle\)/, "la seconde étape repart du défaut");
-    press(panel, ["\r"]); // défaut → aperçu
+    press(panel, ["\r"]); // défaut → repli impl+review
+    press(panel, ["\r"]); // aucun repli → aperçu
     assert.match(
       panel.screen(140),
       /Créer gamma \? · une intention · 0 dépendance\(s\) · req\+specs anthropic\/claude-opus-4-7/,
@@ -1159,11 +1183,11 @@ test("model-selector/AC-2 : /req, le panneau, /audit et /project demandent chaqu
     press(second, ["a"]);
     type(second, "delta");
     press(second, ["\r", "\r", "\r"]);
-    press(second, ["\u001b[B", "\u001b[B", "\r"]); // req+specs = opus
-    press(second, ["\u001b[B", "\u001b[B", "\u001b[B", "\r"]); // impl+review = cerebras
+    press(second, ["\u001b[B", "\u001b[B", "\r", "\r"]); // req+specs = opus, aucun repli
+    press(second, ["\u001b[B", "\u001b[B", "\u001b[B", "\r", "\r"]); // impl+review = cerebras, aucun repli
     assert.match(
       second.screen(160),
-      /Créer delta \? · 0 dépendance\(s\) · req\+specs anthropic\/claude-opus-4-7 · impl\+review cerebras\/llama3\.1-8b/,
+      /Créer delta \? · 0 dépendance\(s\) · req\+specs anthropic\/claude-opus-4-7 \(repli aucun\) · impl\+review cerebras\/llama3\.1-8b \(repli aucun\)/,
     );
     press(second, ["\r"]);
     await flush();
@@ -1639,17 +1663,30 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     press(panel, ["m"]);
     assert.match(panel.screen(80), /Modèle req\+specs/, "le geste m ouvre l'étape req+specs");
     assert.match(panel.screen(80), /> anthropic\/claude-opus-4-7/, "le curseur est pré-positionné sur la valeur courante");
-    press(panel, ["\r"]); // garde A → étape impl+review
+    press(panel, ["\r"]); // garde A → repli req+specs
+    assert.match(panel.screen(80), /Repli req\+specs/, "le repli suit son principal");
+    press(panel, ["\r"]); // aucun repli → étape impl+review
     assert.match(panel.screen(80), /Modèle impl\+review/);
     assert.match(panel.screen(80), /> cerebras\/llama3\.1-8b/, "la seconde étape est pré-positionnée elle aussi");
-    press(panel, ["k", "\u001b[B", "\r"]); // remonte puis redescend : même valeur → aperçu
+    press(panel, ["k", "\u001b[B", "\r"]); // remonte puis redescend : même valeur → repli impl+review
+    assert.match(panel.screen(80), /Repli impl\+review/, "le repli impl+review suit son principal");
+    press(panel, ["\r"]); // aucun repli → aperçu
     assert.match(
       panel.screen(140),
-      /Modifier les modèles de alpha \? · req\+specs anthropic\/claude-opus-4-7 · impl\+review cerebras\/llama3\.1-8b/,
+      /Modifier les modèles de alpha \? · req\+specs anthropic\/claude-opus-4-7 \(repli aucun\) · impl\+review cerebras\/llama3\.1-8b \(repli aucun\)/,
     );
     press(panel, ["\r"]);
     await flush();
-    assert.deepEqual(calls, [{ kind: "editModels", slug: "alpha", modelReqSpecs: MODEL_A, modelImplReview: MODEL_B }]);
+    assert.deepEqual(calls, [
+      {
+        kind: "editModels",
+        slug: "alpha",
+        modelReqSpecs: MODEL_A,
+        modelImplReview: MODEL_B,
+        fallbackReqSpecs: null,
+        fallbackImplReview: null,
+      },
+    ]);
     panel.component.dispose();
 
     // Un REFUS rendu par l'action devient la notice du panneau, telle quelle.
@@ -1659,7 +1696,7 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
       lot: { ...countingActions().actions, editModels: async () => refusalText },
       modelChoices: () => modelChoices(KNOWN),
     });
-    press(withRefusal, ["m", "\r", "\r", "\r"]);
+    press(withRefusal, ["m", "\r", "\r", "\r", "\r", "\r"]);
     await flush(4);
     assert.ok(withRefusal.screen(120).includes(refusalText), "le motif exact est affiché");
     withRefusal.component.dispose();
@@ -1667,11 +1704,11 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     // Le geste ÉCRIT le lot quand il pend au vrai pilote.
     const real = mountPanel(stateDir, { repoRoot, lot: controller, modelChoices: () => modelChoices(KNOWN) });
     press(real, ["m"]);
-    press(real, ["\r"]); // A gardé → étape impl+review
-    press(real, ["k", "k", "\r"]); // B → haiku (deux rangs plus haut) → aperçu
+    press(real, ["\r", "\r"]); // A gardé, aucun repli → étape impl+review
+    press(real, ["k", "k", "\r", "\r"]); // B → haiku (deux rangs plus haut), aucun repli → aperçu
     assert.match(
       real.screen(140),
-      /Modifier les modèles de alpha \? · req\+specs anthropic\/claude-opus-4-7 · impl\+review anthropic\/claude-haiku-4/,
+      /Modifier les modèles de alpha \? · req\+specs anthropic\/claude-opus-4-7 \(repli aucun\) · impl\+review anthropic\/claude-haiku-4 \(repli aucun\)/,
     );
     press(real, ["\r"]);
     await flush(4);
@@ -1707,6 +1744,8 @@ test("model-selector/AC-6 : un groupe resté au défaut OMP part sans aucun --mo
       prompt: "un prompt",
       sessionFile: "/state/s.jsonl",
       model: null,
+      primary: null,
+      fallback: null,
       inbox: "/state/inbox",
       deadline: null,
     };

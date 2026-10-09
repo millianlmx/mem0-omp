@@ -5,7 +5,7 @@ import { isReviewCapReason } from "./chain.ts";
 import { realpathOr, toSlug } from "./git.ts";
 import { LOT_EDITOR_MAX, isLotBaseSha, lotFeature, lotRepoKey } from "./lot.ts";
 import type { Lot } from "./lot.ts";
-import { modelSlotsField } from "./models.ts";
+import { fallbackSlotsField, modelSlotsField } from "./models.ts";
 import type { ModelSlots } from "./models.ts";
 import type { RelayItem } from "./relay.ts";
 import { readJsonFile, writeJsonAtomic } from "./store.ts";
@@ -41,6 +41,12 @@ export type ProjectFeature = {
    */
   modelReqSpecs?: string;
   modelImplReview?: string;
+  /**
+   * Les deux replis de la feature (S-1), un par groupe de phase ; absents = aucun
+   * repli. Même règle d'écriture que les modèles : jamais `""` ni `null` stockés.
+   */
+  fallbackReqSpecs?: string | null;
+  fallbackImplReview?: string | null;
   status: ProjectFeatureStatus;
   prUrl: string | null;
   /** Non nul ssi `status === "failed"`. */
@@ -158,6 +164,12 @@ function asProjectFeature(raw: unknown): ProjectFeature | null {
     ...(typeof f.modelImplReview === "string" && f.modelImplReview.trim() !== ""
       ? { modelImplReview: f.modelImplReview }
       : {}),
+    ...(typeof f.fallbackReqSpecs === "string" && f.fallbackReqSpecs.trim() !== ""
+      ? { fallbackReqSpecs: f.fallbackReqSpecs }
+      : {}),
+    ...(typeof f.fallbackImplReview === "string" && f.fallbackImplReview.trim() !== ""
+      ? { fallbackImplReview: f.fallbackImplReview }
+      : {}),
     status,
     prUrl: f.prUrl as string | null,
     failure,
@@ -249,11 +261,15 @@ export function newProjectFeature(
   feature: { slug: string; intention: string },
   models: ModelSlots | null,
   now: number,
+  fallbacks: ModelSlots | null = null,
 ): ProjectFeature {
   return {
     slug: feature.slug,
     intention: feature.intention,
     ...modelSlotsField(models === null ? {} : { modelReqSpecs: models.reqSpecs, modelImplReview: models.implReview }),
+    ...fallbackSlotsField(
+      fallbacks === null ? {} : { fallbackReqSpecs: fallbacks.reqSpecs, fallbackImplReview: fallbacks.implReview },
+    ),
     status: "planned",
     prUrl: null,
     failure: null,
@@ -268,6 +284,7 @@ export function newProject(
   plan: PlanDraft,
   models: ReadonlyMap<string, ModelSlots>,
   input: { stateDir: string; repoRoot: string; hostSession: string | null; now: number },
+  fallbacks: ReadonlyMap<string, ModelSlots> = new Map(),
 ): Project {
   const repoRoot = realpathOr(input.repoRoot);
   const repoKey = lotRepoKey(repoRoot);
@@ -281,7 +298,7 @@ export function newProject(
     status: "running",
     segments: plan.segments.map((segment) => ({
       name: segment.name,
-      features: segment.features.map((feature) => newProjectFeature(feature, models.get(feature.slug) ?? null, input.now)),
+      features: segment.features.map((feature) => newProjectFeature(feature, models.get(feature.slug) ?? null, input.now, fallbacks.get(feature.slug) ?? null)),
     })),
     current: 0,
     base: null,
@@ -572,6 +589,9 @@ export function syncFromLot(project: Project, lot: Lot | null, now: number): { p
           fail("lot", `pipeline en erreur : ${lf.stopReason ?? "sans motif"}`);
           break;
         case "blocked":
+          // Un quota épuisé n'est pas un échec (S-5) : la feature attend la décision
+          // de l'utilisateur, groupée par fournisseur (relais ou /pipelines).
+          if (lf.quota !== undefined) break;
           if (isReviewCapReason(lf.stopReason)) fail("lot", `plafond de revue atteint : ${lf.stopReason}`);
           else fail("lot", `pipeline bloquée : ${lf.stopReason ?? "sans motif"}`);
           break;

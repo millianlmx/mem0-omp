@@ -1,12 +1,13 @@
 // /audit : le relais des questions et des jalons d'une pipeline vers sa session /audit.
 import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as path from "node:path";
-import { CONTRACT_PATH } from "./contract.ts";
+import { checkBrief, editBrief, renderBrief, writeBrief } from "./context.ts";
+import type { BriefInput } from "./context.ts";
 import { toSlug } from "./git.ts";
 import { LOT_EDITOR_MAX, lotFeature, lotRepoKey, lotReplaceable, readLot } from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
-import { modelDialogChoice, modelDialogOptions, modelQuestionTitle } from "./models.ts";
-import { createRelay, relayItemsOf, relayToolText as toolText } from "./relay.ts";
+import { askFeatureModels } from "./models.ts";
+import { createRelay, escalationRelayMessage, quotaRelayMessage, relayItemsOf, relayToolText as toolText } from "./relay.ts";
 import type { RelayCore, RelayDeps, RelayItem, RelayState, RelayToolResult } from "./relay.ts";
 import type { RunningEntry } from "./store.ts";
 
@@ -17,12 +18,12 @@ import type { RunningEntry } from "./store.ts";
 // ---------------------------------------------------------------------------
 // La session /audit lance une ou plusieurs features dans le lot — les éléments
 // que l'utilisateur coche, lancés en parallèle dans l'ordre de leurs dépendances
-// (le pilote existant les conduit) — puis devient leur RELAIS : chaque question
-// d'un maillon et chaque jalon lui est injecté comme un message `[audit]`, et
-// elle y répond par ses outils (`audit_reply`, `audit_approve`, `audit_escalate`).
-// Le cœur du relais (armement, balayage, battement, file des dialogues, outils de
-// réponse) est GÉNÉRIQUE (`relay.ts`) : ce module n'en est que le PROFIL /audit,
-// plus la proposition (`audit_propose`).
+// (le pilote existant les conduit) — puis devient leur RELAIS : l'arbitre du
+// pilote tranche leurs questions et leurs jalons, et la session ne reçoit, comme
+// un message `[audit]`, que ce qu'il escalade, puis y répond par son seul outil
+// `audit_escalate`. Le cœur du relais (armement, balayage, battement, file des
+// dialogues, outil d'escalade) est GÉNÉRIQUE (`relay.ts`) : ce module n'en est que
+// le PROFIL /audit, plus la proposition (`audit_propose`).
 //
 // Le relais est OUVERT tant que la session /audit est la session courante du
 // process pilote : un fichier de battement (`<stateDir>/audit/<id>.json`) le dit
@@ -30,7 +31,7 @@ import type { RunningEntry } from "./store.ts";
 // jalons. Quitter la session (ou la fermer) retire le fichier — tout retombe sur
 // le panneau ; y revenir le réécrit et ré-injecte ce qui attend encore.
 
-export type AuditItemKind = "ask" | "question" | "specs" | "review" | "cap";
+export type AuditItemKind = "ask" | "question" | "specs" | "review" | "cap" | "quota";
 
 /** Un élément relayé à la session /audit : une question ou un jalon d'une feature /audit (S-6). */
 export type AuditItem = RelayItem & { kind: AuditItemKind };
@@ -105,41 +106,15 @@ export function auditItemsOf(
 
 /** Le message injecté dans la session /audit pour un élément, mot pour mot (S-6). */
 export function buildRelayMessage(item: AuditItem): string {
-  const contract = path.join(item.worktree, CONTRACT_PATH);
   switch (item.kind) {
     case "ask":
-    case "question": {
-      const lines = [
-        `[audit] Question de /${item.phase} — feature ${item.slug}`,
-        `Élément : ${item.key}`,
-        item.question ?? "(question sans texte)",
-      ];
-      if (item.options.length > 0) {
-        lines.push("Options :");
-        item.options.forEach((option, index) => {
-          lines.push(`- (${index + 1}) ${option.label}${option.description ? ` — ${option.description}` : ""}`);
-        });
-      }
-      lines.push(
-        `Contrat de la feature : ${contract}`,
-        "Réponds toi-même avec audit_reply (élément, réponse = libellé exact d'une option ou texte libre) si l'audit et le contrat te donnent la réponse ; sinon audit_escalate (élément).",
-      );
-      return lines.join("\n");
-    }
+    case "question":
     case "specs":
-      return [
-        `[audit] Jalon « specs validées » — feature ${item.slug}`,
-        `Élément : ${item.key}`,
-        `À examiner : ${contract}, sections ## Spécifications et ## Lots.`,
-        "Valide avec audit_approve (élément) si elles servent l'intention de l'audit ; en cas de doute, audit_escalate (élément).",
-      ].join("\n");
     case "review":
-      return [
-        `[audit] Jalon « revue propre » — feature ${item.slug}`,
-        `Élément : ${item.key}`,
-        `À examiner : ${contract}, section ## Revue.`,
-        "Accepte avec audit_approve (élément) — la livraison ouvrira la PR ; en cas de doute, audit_escalate (élément).",
-      ].join("\n");
+      // Un élément n'arrive à la session que ESCALADÉ par l'arbitre (S-10).
+      return escalationRelayMessage("audit", item);
+    case "quota":
+      return quotaRelayMessage("audit", item);
     case "cap":
       return [
         `[audit] Plafond de la boucle revue ⇄ correction — feature ${item.slug}`,
@@ -158,7 +133,7 @@ export type ProposalElementKind = "weakness" | "feature";
 export type ProposalElement = { kind: ProposalElementKind; slug: string; intention: string; deps: string[] };
 
 /** Une proposition validée : les faiblesses dans l'ordre reçu, PUIS les features. */
-export type Proposal = { elements: ProposalElement[] };
+export type Proposal = { elements: ProposalElement[]; brief: BriefInput };
 
 /**
  * Le premier cycle de dépendances, parcouru en profondeur dans l'ordre des
@@ -244,7 +219,9 @@ export function checkProposal(input: unknown): { ok: true; proposal: Proposal } 
   }
   const cycle = dependencyCycle(elements);
   if (cycle !== null) return fail(`Error: dependency cycle « ${cycle.join(" → ")} »`);
-  return { ok: true, proposal: { elements } };
+  const briefChecked = checkBrief(record.brief);
+  if (!briefChecked.ok) return fail(briefChecked.error);
+  return { ok: true, proposal: { elements, brief: briefChecked.brief } };
 }
 
 /**
@@ -342,6 +319,7 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     sessionFile: string,
     repoRoot: string,
     elements: readonly ProposalElement[],
+    brief: BriefInput,
     signal: AbortSignal | undefined,
   ): Promise<RelayToolResult> {
     // Les éléments pris, lus À CE TOUR : deux propositions successives ne lancent
@@ -372,15 +350,10 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     if (checked.length === 0) return toolText(["Aucune pipeline lancée : aucun élément coché.", ...freeLine].join("\n"));
 
     // S-3 — TOUS les dialogues avant le premier ajout : son run de collecte porte
-    // déjà ses `--model`, et un abandon tardif n'a rien écrit.
-    const modelOptions = modelDialogOptions(ctx.models?.list?.() ?? []);
-    const retained: {
-      slug: string;
-      intention: string;
-      deps: string[];
-      modelReqSpecs: string | null;
-      modelImplReview: string | null;
-    }[] = [];
+    // déjà ses `--model`, et un abandon tardif n'a rien écrit. L'ordre (S-6) :
+    // intentions, puis brief, puis modèles.
+    const catalogue = ctx.models?.list?.() ?? [];
+    const validatedElements: { slug: string; intention: string; deps: string[] }[] = [];
     const reasons = new Map<string, string>();
     for (const element of checked) {
       const { slug } = element;
@@ -401,28 +374,51 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
         reasons.set(slug, "intention non validée");
         continue;
       }
+      validatedElements.push({ slug, intention, deps: element.deps });
+    }
+    if (interrupted()) return toolText(INTERRUPTED);
+    // Le brief (S-6) : un nouvel `audit_propose` validé dans la même session est
+    // l'amendement — le brief est réécrit de la même façon. Échap : rien n'est écrit.
+    let briefText: string | null = null;
+    if (validatedElements.length > 0) {
+      briefText = await editBrief(
+        ctx,
+        `Brief de l'audit — ${path.basename(repoRoot)} : valide ou corrige (rubriques : But, Fonction, Décisions, Contraintes, Non-objectifs)`,
+        renderBrief({ title: `/audit ${path.basename(repoRoot)}`, ...brief }),
+        signal,
+      );
+      if (interrupted()) return toolText(INTERRUPTED);
+      if (briefText === null) return toolText("Aucune pipeline lancée : brief non validé — rien n'est écrit.");
+    }
+    const retained: {
+      slug: string;
+      intention: string;
+      deps: string[];
+      modelReqSpecs: string | null;
+      modelImplReview: string | null;
+      fallbackReqSpecs: string | null;
+      fallbackImplReview: string | null;
+    }[] = [];
+    for (const { slug, intention, deps: elementDeps } of validatedElements) {
       let modelReqSpecs: string | null = null;
       let modelImplReview: string | null = null;
-      if (modelOptions.length > 0) {
-        const reqChoice = modelDialogChoice(
-          await ctx.ui.select(modelQuestionTitle(slug, "modelReqSpecs"), modelOptions, { signal }),
-        );
-        const implChoice =
-          reqChoice === null
-            ? null
-            : modelDialogChoice(
-                await ctx.ui.select(modelQuestionTitle(slug, "modelImplReview"), modelOptions, { signal }),
-              );
-        if (reqChoice === null || implChoice === null) {
+      let fallbackReqSpecs: string | null = null;
+      let fallbackImplReview: string | null = null;
+      if (catalogue.length > 0) {
+        const chosen = await askFeatureModels((title, options, opts) => ctx.ui.select(title, options, opts), catalogue, slug, signal);
+        if (chosen === null) {
           reasons.set(slug, "modèle non choisi");
           continue;
         }
-        modelReqSpecs = reqChoice.model;
-        modelImplReview = implChoice.model;
+        modelReqSpecs = chosen.models.reqSpecs;
+        modelImplReview = chosen.models.implReview;
+        fallbackReqSpecs = chosen.fallbacks.reqSpecs;
+        fallbackImplReview = chosen.fallbacks.implReview;
       }
-      retained.push({ slug, intention, deps: element.deps, modelReqSpecs, modelImplReview });
+      retained.push({ slug, intention, deps: elementDeps, modelReqSpecs, modelImplReview, fallbackReqSpecs, fallbackImplReview });
     }
     if (interrupted()) return toolText(INTERRUPTED);
+    if (briefText !== null && retained.length > 0) writeBrief(deps.stateDir(), sessionFile, briefText);
 
     // S-4 — un ajout à la fois, dans l'ordre des dépendances. Chaque `add` est une
     // écriture autonome du pilote : un refus n'annule jamais un ajout précédent.
@@ -461,6 +457,8 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
         auditSession: sessionFile,
         modelReqSpecs: element.modelReqSpecs ?? undefined,
         modelImplReview: element.modelImplReview ?? undefined,
+        fallbackReqSpecs: element.fallbackReqSpecs ?? undefined,
+        fallbackImplReview: element.fallbackImplReview ?? undefined,
       });
       if (refusal !== null) {
         refused = true;
@@ -517,20 +515,10 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
       cap: true,
       message: (item) => buildRelayMessage(item as AuditItem),
       tools: {
-        reply: {
-          label: "Audit — répondre",
-          description:
-            "Répond à la place de l'utilisateur à une question relayée par un message [audit] (élément = son identifiant ; réponse = libellé exact d'une option ou texte libre).",
-        },
-        approve: {
-          label: "Audit — valider",
-          description:
-            "Valide un jalon relayé par un message [audit] : « specs validées » (reprend sur /impl) ou « revue propre » (livre et ouvre la PR).",
-        },
         escalate: {
           label: "Audit — demander à l'utilisateur",
           description:
-            "Remonte à l'utilisateur, dans cette session, un élément relayé que /audit ne tranche pas : la question d'origine et ses options, un jalon en doute, ou le plafond de la boucle revue ⇄ correction. La réponse de l'utilisateur est transmise mot pour mot au maillon.",
+            "Remonte à l'utilisateur, dans cette session, un élément que l'arbitre de /audit n'a pas pu trancher et que le message [audit] t'a relayé (identifiant = « élément » du message) : la question d'origine et ses options, ou un jalon en doute, ou le plafond de la boucle revue ⇄ correction. Appelle-le sans répondre toi-même : la réponse de l'utilisateur est transmise mot pour mot au maillon.",
         },
       },
       registerTools(relayCore) {
@@ -544,7 +532,17 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
             "Soumet l'analyse de /audit — faiblesses et features, chacune nommée, avec ses dépendances (deps) : l'outil montre à l'utilisateur une liste à cocher de tous les éléments pas encore lancés, lui fait valider ou amender l'intention puis choisir le modèle de chaque élément coché, et lance leurs pipelines en parallèle (un élément attend la fin de ceux dont il dépend). Rappelle-le avec la même analyse pour lancer d'autres éléments plus tard.",
           approval: "read",
           loadMode: "essential",
-          parameters: pi.arktype({ weaknesses: element.array(), features: element.array() }),
+          parameters: pi.arktype({
+            weaknesses: element.array(),
+            features: element.array(),
+            brief: pi.arktype({
+              purpose: "string",
+              function: "string",
+              decisions: "string[]",
+              constraints: "string[]",
+              nonGoals: "string[]",
+            }),
+          }),
           async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
             const checked = checkProposal(params);
             if (!checked.ok) return toolText(checked.error, true);
@@ -554,7 +552,7 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
             const repoRoot = state.repoRoot as string;
             return inDialogTurn(
               signal,
-              () => propose(ctx, sessionFile, repoRoot, checked.proposal.elements, signal),
+              () => propose(ctx, sessionFile, repoRoot, checked.proposal.elements, checked.proposal.brief, signal),
               () => toolText(INTERRUPTED),
             );
           },

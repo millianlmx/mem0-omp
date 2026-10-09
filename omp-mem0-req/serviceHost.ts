@@ -12,7 +12,7 @@ import { createServicePilot } from "./servicePilot.ts";
 import type { ServicePilot } from "./servicePilot.ts";
 import { createSessionHost } from "./serviceSessions.ts";
 import type { SessionHost } from "./serviceSessions.ts";
-import { createMaillonRunner } from "./serviceRuns.ts";
+import { createArbiterRunner, createMaillonRunner } from "./serviceRuns.ts";
 import { startService } from "./service.ts";
 import type { ServiceHandle, ServiceStartResult } from "./service.ts";
 import { pipelineStateDir } from "./store.ts";
@@ -68,6 +68,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     stateDir,
     host: sessions,
     run: createMaillonRunner({ host: sessions, log, now: options.now }),
+    arbiter: createArbiterRunner({ host: sessions, log, now: options.now }),
     runGit: options.runGit,
     runGh: options.runGh,
     notify: text => log(`[service] ${text}`),

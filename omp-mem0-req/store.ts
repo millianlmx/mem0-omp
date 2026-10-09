@@ -332,11 +332,15 @@ export function writeJsonAtomic(file: string, payload: unknown): void {
 export const PANEL_INBOX_POLL_MS = 250;
 
 
+/** D'où vient la réponse à un `ask` (S-11) : absente = l'utilisateur, texte historique inchangé. */
+export type AskSource = "contexte" | "arbitrage";
+
+
 /** Une livraison déposée dans la boîte d'un run : un texte, ou la réponse à un `ask` (S-6, S-7). */
 export type PanelDelivery =
   | { version: 1; kind: "text"; text: string; sentAt: number }
-  | { version: 1; kind: "ask"; toolCallId: string; selected: string; sentAt: number }
-  | { version: 1; kind: "ask"; toolCallId: string; custom: string; sentAt: number };
+  | { version: 1; kind: "ask"; toolCallId: string; selected: string; sentAt: number; source?: AskSource }
+  | { version: 1; kind: "ask"; toolCallId: string; custom: string; sentAt: number; source?: AskSource };
 
 
 /** Une livraison relue : `delivery` vaut `null` quand le fichier est illisible ou de forme inconnue. */
@@ -452,9 +456,10 @@ export function asDelivery(raw: unknown): PanelDelivery | null {
   // réponse, c'est une forme inconnue — elle est ignorée, jamais devinée.
   if (selected === null && custom === null) return null;
   if (selected !== null && custom !== null) return null;
+  const source = d.source === "contexte" || d.source === "arbitrage" ? { source: d.source as AskSource } : {};
   return selected !== null
-    ? { version: 1, kind: "ask", toolCallId: d.toolCallId, selected, sentAt }
-    : { version: 1, kind: "ask", toolCallId: d.toolCallId, custom: custom as string, sentAt };
+    ? { version: 1, kind: "ask", toolCallId: d.toolCallId, selected, sentAt, ...source }
+    : { version: 1, kind: "ask", toolCallId: d.toolCallId, custom: custom as string, sentAt, ...source };
 }
 
 

@@ -5,10 +5,13 @@ import * as path from "node:path";
 import { isReviewCapReason } from "./chain.ts";
 import { CONTRACT_PATH } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
-import { LOT_TICK_MS, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, readLot } from "./lot.ts";
-import type { Lot, LotFeature } from "./lot.ts";
+import { LOT_TICK_MS, lotOwnerAlive, lotRepoKey, parseReplyOptions, questionOf, quotaGroupsOf, readLot } from "./lot.ts";
+import type { FeatureEscalation, Lot, LotFeature, QuotaGroup } from "./lot.ts";
 import type { LotController } from "./lotController.ts";
+import { modelSelector } from "./models.ts";
 import { sessionFileOf } from "./publish.ts";
+import { exhaustedUntil, quotaDeadlineLabel } from "./quota.ts";
+import { appendJournal } from "./context.ts";
 import { repoRootOf } from "./runs.ts";
 import { liveRunFor, panelInboxDirOf, removeAuditRelay, writeAuditRelay, writeDelivery } from "./store.ts";
 import type { PanelAskOption, PipelineCtx, RunningEntry } from "./store.ts";
@@ -19,13 +22,15 @@ import type { PanelAskOption, PipelineCtx, RunningEntry } from "./store.ts";
 // Le relais — une session interactive qui tranche pour l'utilisateur.
 // ---------------------------------------------------------------------------
 // Une session (/audit, /project) lance des features dans le lot — le pilote
-// existant les conduit — puis devient leur RELAIS : chaque question d'un maillon,
-// chaque jalon (et, pour /project, chaque échec) lui est injecté comme un message
-// `[<nom>]`, et elle y répond par ses outils (`<nom>_reply`, `<nom>_approve`,
-// `<nom>_escalate`). Le relais n'écrit JAMAIS le lot : il livre une réponse `ask`
-// dans la boîte du run (comme le panneau) ou appelle les actions du pilote (qui
-// exigent la propriété du lot — d'où la règle « un relais ouvert est tenu par le
-// pilote »).
+// existant les conduit, et son ARBITRE (S-9) tranche chaque question et chaque
+// jalon depuis le brief, le journal et le contrat — puis devient le RELAIS de ce
+// que l'arbitre n'a pas pu trancher : seuls les éléments escaladés, les plafonds
+// de revue, les échecs et les groupes de quota lui sont injectés, comme un
+// message `[<nom>]`, et elle y répond par son seul outil `<nom>_escalate`, qui
+// ouvre le dialogue de l'utilisateur (S-10). Le relais n'écrit JAMAIS le lot : il
+// livre une réponse `ask` dans la boîte du run (comme le panneau) ou appelle les
+// actions du pilote (qui exigent la propriété du lot — d'où la règle « un relais
+// ouvert est tenu par le pilote »).
 //
 // Le relais est OUVERT tant que sa session est la session courante du process
 // pilote : un fichier de battement (`<stateDir>/audit/<id>.json`, par CLÉ DE
@@ -35,14 +40,14 @@ import type { PanelAskOption, PipelineCtx, RunningEntry } from "./store.ts";
 //
 // Tout ce qui distingue /audit de /project vit dans son PROFIL (`RelayProfile`) ;
 // ce module porte le cœur commun : armement, balayage, battement, injection, file
-// des dialogues et les trois outils de réponse.
+// des dialogues et l'outil d'escalade.
 //
 // Les dialogues passent par une FILE (`state.dialogs`) : l'hôte exécute en même
 // temps les appels d'outils d'un même tour, donc deux questions escaladées
 // ensemble — ou une proposition et une escalade — s'ouvrent l'une après l'autre,
 // dans l'ordre des appels, jamais l'une par-dessus l'autre.
 
-export type RelayItemKind = "ask" | "question" | "specs" | "review" | "cap" | "failure";
+export type RelayItemKind = "ask" | "question" | "specs" | "review" | "cap" | "failure" | "quota";
 
 /** Un élément relayé : une question, un jalon ou un échec d'une feature relayée (S-6). */
 export type RelayItem = {
@@ -57,7 +62,40 @@ export type RelayItem = {
   toolCallId: string | null;
   inbox: string | null;
   stopReason: string | null;
+  /** Le groupe de features bloquées par un même fournisseur : présent ssi `kind === "quota"` (S-5). */
+  quota?: QuotaGroup;
+  /** L'escalade de l'arbitre : présente ssi l'élément a été renvoyé à l'utilisateur (S-10). */
+  escalation?: FeatureEscalation;
 };
+
+
+/** Le texte d'un groupe de quota relayé (S-5), mot pour mot : une seule escalade par fournisseur. */
+export function quotaRelayMessage(name: string, item: RelayItem): string {
+  const group = item.quota as QuotaGroup;
+  return (
+    `[${name}] quota ${group.provider} épuisé ${quotaDeadlineLabel(group.until, group.announced)} — ` +
+    `features bloquées : ${group.slugs.join(", ")}. ` +
+    `Décision réservée à l'utilisateur : appelle ${name}_escalate avec l'élément ${item.key}.`
+  );
+}
+
+/**
+ * Le texte d'un élément ESCALADÉ (S-10), mot pour mot : la question, ses options
+ * numérotées, le motif de l'arbitre, puis la décision réservée à l'utilisateur.
+ */
+export function escalationRelayMessage(name: string, item: RelayItem): string {
+  const escalation = item.escalation as FeatureEscalation;
+  const lines = [`[${name}] escalade — ${item.slug} /${item.phase} : ${escalation.question}`];
+  if (escalation.options.length > 0) {
+    lines.push("Options :");
+    escalation.options.forEach((option, index) => lines.push(`- (${index + 1}) ${option}`));
+  }
+  lines.push(
+    `motif de l'arbitre : ${escalation.reason}`,
+    `Décision réservée à l'utilisateur : appelle ${name}_escalate avec l'élément ${item.key}.`,
+  );
+  return lines.join("\n");
+}
 
 
 /** L'état d'un relais dans le process : partagé par les instances de l'extension (même patron que `runState`). */
@@ -152,7 +190,7 @@ export type RelayProfile = {
   extraItems?(lot: Lot | null): RelayItem[];
   /** Le message injecté pour un élément, mot pour mot. */
   message(item: RelayItem): string;
-  tools: { reply: ToolDoc; approve: ToolDoc; escalate: ToolDoc };
+  tools: { escalate: ToolDoc };
   /** L'escalade des éléments supplémentaires. */
   escalate?(ctx: ExtensionContext, item: RelayItem, signal: AbortSignal | undefined): Promise<RelayEscalation>;
   /** Les outils propres au profil, inscrits AVANT les trois outils de réponse. */
@@ -228,11 +266,31 @@ export function relayItemsOf(
       items.push({ ...base, key: `cap:${feature.slug}:${since}`, kind: "cap", stopReason: feature.stopReason });
     }
   }
+  // Une seule escalade par fournisseur (S-5) : les features bloquées par un quota
+  // se regroupent, quel que soit leur nombre. La clé n'a pas de discriminant — le
+  // groupe n'est pas réinjecté tant qu'il subsiste.
+  for (const group of quotaGroupsOf(lot, (feature) => feature.auditSession === key)) {
+    const first = lot.features.find((feature) => feature.slug === group.slugs[0]) as LotFeature;
+    items.push({
+      slug: first.slug,
+      phase: first.quota?.phase ?? first.phase,
+      worktree: first.worktree,
+      question: null,
+      options: [],
+      toolCallId: null,
+      inbox: null,
+      stopReason: first.stopReason,
+      key: `quota:${group.provider}`,
+      kind: "quota",
+      quota: group,
+    });
+  }
   return items;
 }
 
 
 const FREE_TEXT = "Autre réponse (texte libre)";
+const LEAVE_BLOCKED = "Laisser bloquées pour l'instant";
 const ABANDON_FEATURE = "Abandonner la feature (worktree et branche conservés)";
 const gone = (item: string) => `Error: ${item} n'est plus en attente (déjà traité, ou retombé au panneau /pipelines)`;
 
@@ -247,7 +305,6 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
   const needsUi = `Error: ${tag} demande une session interactive`;
   const notAnswered = (item: string) =>
     `Error: l'utilisateur n'a pas répondu — ${item} reste en attente ; ne le tranche pas, rappelle ${name}_escalate quand il te le demande`;
-  const reserved = (item: string) => `Error: ${item} : décision réservée à l'utilisateur — appelle ${name}_escalate`;
 
   const lotOf = (repoRoot: string): Lot | null => readLot(deps.stateDir(), lotRepoKey(repoRoot));
 
@@ -273,11 +330,19 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
     state.relayed.clear();
   }
 
-  /** Les éléments du LOT relayés à `key`, runs vivants lus dans le magasin. */
+  /**
+   * Les éléments du LOT relayés à `key`, runs vivants lus dans le magasin. Une
+   * question ou un jalon n'est relayé que ESCALADÉ (S-10) : sans escalade, l'arbitre
+   * le tranche et la session parente ne reçoit rien.
+   */
   function lotItems(lot: Lot, key: string): RelayItem[] {
     const stateDir = deps.stateDir();
     return relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), {
       cap: profile.cap,
+    }).flatMap((item): RelayItem[] => {
+      if (item.kind === "cap" || item.kind === "failure" || item.kind === "quota") return [item];
+      const escalation = lot.features.find((feature) => feature.slug === item.slug)?.escalation;
+      return escalation !== undefined && escalation.key === item.key ? [{ ...item, escalation }] : [];
     });
   }
 
@@ -345,7 +410,12 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
         if (state.relayed.has(item.key)) continue;
         state.relayed.set(item.key, item);
         pi.sendMessage(
-          { customType: name, content: profile.message(item), display: true, attribution: "agent" },
+          {
+            customType: name,
+            content: item.escalation !== undefined ? escalationRelayMessage(name, item) : profile.message(item),
+            display: true,
+            attribution: "agent",
+          },
           { triggerTurn: true, deliverAs: "followUp" },
         );
       }
@@ -400,6 +470,19 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
           ? { version: 1, kind: "ask", toolCallId, selected: answer, sentAt }
           : { version: 1, kind: "ask", toolCallId, custom: answer, sentAt },
       );
+      // Le journal (S-7) : la réponse de l'utilisateur à la question du run, une fois livrée.
+      if (state.repoRoot !== null) {
+        appendJournal(deps.stateDir(), lotRepoKey(state.repoRoot), {
+          at: sentAt,
+          slug: item.slug,
+          phase: item.phase,
+          kind: "question",
+          question: item.question ?? "(question sans texte)",
+          answer,
+          source: "utilisateur",
+          context: profile.keyOf(),
+        });
+      }
       return null;
     } catch (err) {
       return `écriture impossible : ${err instanceof Error ? err.message : String(err)}`;
@@ -466,63 +549,6 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
     profile.registerTools?.(core);
 
     pi.registerTool({
-      name: `${name}_reply`,
-      label: profile.tools.reply.label,
-      description: profile.tools.reply.description,
-      approval: "read",
-      loadMode: "essential",
-      parameters: pi.arktype({ item: "string", answer: "string" }),
-      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
-        const { item: key, answer } = params as { item: string; answer: string };
-        if (!armedOn(ctx) || ctx === undefined) return relayToolText(notArmed, true);
-        const item = findItem(key);
-        if (item === undefined) return relayToolText(gone(key), true);
-        if (item.kind === "specs" || item.kind === "review") {
-          return relayToolText(`Error: ${key} est un jalon — ${name}_approve pour valider, ${name}_escalate en cas de doute`, true);
-        }
-        if (item.kind === "cap" || item.kind === "failure") return relayToolText(reserved(key), true);
-        if (answer.trim() === "") return relayToolText("Error: réponse vide", true);
-        const refusal =
-          item.kind === "ask"
-            ? deliverAsk(item, answer)
-            : await deps.controllerFor(ctx).answer(item.slug, answer, { from: name });
-        if (refusal !== null) return relayToolText(`Error: ${refusal}`, true);
-        state.relayed.delete(key);
-        return relayToolText(
-          `Question de /${item.phase} — feature ${item.slug}\n${item.question ?? "(question sans texte)"}\nRéponse envoyée par ${tag} : ${answer}`,
-        );
-      },
-    });
-
-    pi.registerTool({
-      name: `${name}_approve`,
-      label: profile.tools.approve.label,
-      description: profile.tools.approve.description,
-      approval: "read",
-      loadMode: "essential",
-      parameters: pi.arktype({ item: "string" }),
-      async execute(_toolCallId: string, params: unknown, _signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
-        const { item: key } = params as { item: string };
-        if (!armedOn(ctx) || ctx === undefined) return relayToolText(notArmed, true);
-        const item = findItem(key);
-        if (item === undefined) return relayToolText(gone(key), true);
-        if (item.kind === "cap" || item.kind === "failure") return relayToolText(reserved(key), true);
-        if (item.kind === "ask" || item.kind === "question") {
-          return relayToolText(`Error: ${key} n'est pas un jalon — ${name}_reply ou ${name}_escalate`, true);
-        }
-        const controller = deps.controllerFor(ctx);
-        const refusal = item.kind === "specs" ? await controller.validate(item.slug) : await controller.accept(item.slug);
-        if (refusal !== null) return relayToolText(`Error: ${refusal}`, true);
-        state.relayed.delete(key);
-        return relayToolText(
-          item.kind === "specs"
-            ? `Jalon « specs validées » de ${item.slug} validé par ${tag} — la chaîne repart sur /impl`
-            : `Jalon « revue propre » de ${item.slug} accepté par ${tag} — livraison et ouverture de la PR`,
-        );
-      },
-    });
-
-    pi.registerTool({
       name: `${name}_escalate`,
       label: profile.tools.escalate.label,
       description: profile.tools.escalate.description,
@@ -543,10 +569,51 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
     });
   }
 
+  /**
+   * L'escalade d'un groupe de quota (S-5) : le catalogue sans « défaut OMP » ni
+   * modèle épuisé, puis « Laisser bloquées pour l'instant ». Le choix devient le
+   * repli des features de la session (`resolveQuota`, portée = sa clé de relais).
+   */
+  async function escalateQuota(
+    ctx: ExtensionContext,
+    item: RelayItem,
+    signal: AbortSignal | undefined,
+  ): Promise<RelayToolResult> {
+    const group = item.quota as QuotaGroup;
+    const at = now();
+    const selectors = (ctx.models?.list?.() ?? [])
+      .map(modelSelector)
+      .filter((selector) => exhaustedUntil(deps.stateDir(), selector, at) === null)
+      .sort();
+    const answer = await ctx.ui.select(
+      `Quota ${group.provider} épuisé — relancer ${group.slugs.length} feature(s) avec quel repli ?`,
+      [...selectors, LEAVE_BLOCKED],
+      { signal },
+    );
+    if (answer === undefined) return relayToolText(notAnswered(item.key), true);
+    if (answer === LEAVE_BLOCKED) {
+      return relayToolText(
+        `Décision de l'utilisateur : les features bloquées par ${group.provider} restent bloquées pour l'instant (${group.slugs.join(", ")}).`,
+      );
+    }
+    const current = findItem(item.key);
+    if (current === undefined) {
+      return relayToolText(`${gone(item.key)} — la réponse de l'utilisateur n'a pas été transmise`, true);
+    }
+    const key = profile.keyOf();
+    const refusal = await deps.controllerFor(ctx).resolveQuota(group.provider, answer, { kind: "context", key: key ?? "" });
+    if (refusal !== null) return relayToolText(`Error: ${refusal}`, true);
+    state.relayed.delete(item.key);
+    return relayToolText(
+      `Quota ${group.provider} : ${group.slugs.length} feature(s) relancée(s) avec le repli ${answer} (${group.slugs.join(", ")}) — décision de l'utilisateur.`,
+    );
+  }
+
   /** `<nom>_escalate` à son tour de dialogue (S-5) : l'élément est relu, il a pu être traité entre-temps. */
   async function escalate(ctx: ExtensionContext, key: string, signal: AbortSignal | undefined): Promise<RelayToolResult> {
     const item = findItem(key);
     if (item === undefined) return relayToolText(gone(key), true);
+    if (item.kind === "quota") return escalateQuota(ctx, item, signal);
     try {
       const contract = path.join(item.worktree, CONTRACT_PATH);
       const controller = deps.controllerFor(ctx);
@@ -563,7 +630,7 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
           const text = answer;
           if (text !== undefined) {
             act = async () =>
-              item.kind === "ask" ? deliverAsk(item, text) : controller.answer(item.slug, text, { from: name });
+              item.kind === "ask" ? deliverAsk(item, text) : controller.answer(item.slug, text, { viaRelay: true });
           }
           break;
         }
@@ -601,7 +668,7 @@ export function createRelay(profile: RelayProfile, deps: RelayDeps): Relay {
             const text = await ctx.ui.input(`Réponse au maillon /review — ${item.slug}`, undefined, { signal });
             answer = text;
             if (text !== undefined && text.trim() !== "") {
-              act = () => controller.answer(item.slug, text, { from: name });
+              act = () => controller.answer(item.slug, text, { viaRelay: true });
             }
           }
           break;

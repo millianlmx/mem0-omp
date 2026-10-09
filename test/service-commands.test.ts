@@ -136,6 +136,9 @@ function holdingHost() {
         },
         session: {
           isStreaming: true,
+          messages: [],
+          model: undefined,
+          subscribe: () => () => {},
           prompt: async () => {
             const { promise, reject } = Promise.withResolvers<never>();
             held.reject = reject;
@@ -196,6 +199,8 @@ function publishMaillon(stateDir: string, worktree: string, inbox: string | null
     worktree,
     inbox,
     deadlineAt: null,
+    primary: null,
+    fallback: null,
   });
   const ctx = {
     cwd: worktree,

@@ -2,6 +2,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { DecisionSource } from "./context.ts";
 import { contractHasSection } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, isUnder, realpathOr, resolveFeatureRoot, worktreePathFor } from "./git.ts";
@@ -164,6 +165,30 @@ export function phaseSeed(input: { phase: PipelinePhase; slug: string; fix: bool
 }
 
 
+/** La première ligne d'un prompt de réponse, selon la source (S-11). */
+const ANSWER_PREFIX: Record<DecisionSource, string> = {
+  utilisateur: "[réponse de l'utilisateur]",
+  contexte: "[réponse tirée du contexte]",
+  arbitrage: "[réponse de l'arbitre]",
+};
+
+
+/** La ligne de jalon (S-11) : le jalon franchi et qui l'a décidé. */
+export function milestoneLine(milestone: "specs validées" | "revue propre", source: "arbitrage" | "utilisateur"): string {
+  return `[jalon « ${milestone} » — décision de ${source === "arbitrage" ? "l'arbitre" : "l'utilisateur"}]`;
+}
+
+
+/** La ligne exacte d'un run d'impl par lot (S-13). */
+export function lotPromptLine(lot: { id: string; index: number; ids: string[] }): string {
+  const list = (ids: string[]): string => (ids.length === 0 ? "aucun" : ids.join(", "));
+  return (
+    `[lot ${lot.id} (${lot.index + 1}/${lot.ids.length})] Implémente UNIQUEMENT le lot ${lot.id} du contrat. ` +
+    `Lots déjà faits : ${list(lot.ids.slice(0, lot.index))}. Lots suivants (autres runs) : ${list(lot.ids.slice(lot.index + 1))}.`
+  );
+}
+
+
 /**
  * Le prompt d'un run (S-13). `collecte` est préfixé `[req]` : le préambule d'un
  * run n'est pas une entrée de l'utilisateur, et le détecteur de clôture
@@ -183,7 +208,15 @@ export function buildLotPrompt(input: {
   focus?: string;
   fix?: boolean;
   messages?: string[];
+  context?: string;
+  /** Le lot d'impl que ce run implémente (S-13) : sa ligne suit la graine, avant la directive de lot. */
+  lot?: { id: string; index: number; ids: string[] };
+  /** D'où vient la réponse d'un prompt `answer` (S-11) : absent = l'utilisateur. */
+  source?: DecisionSource;
+  /** La ligne de jalon qui termine le prompt (S-11), avant les messages en file. */
+  milestone?: string;
 }): string {
+  const lotLine = input.lot === undefined ? "" : `${lotPromptLine(input.lot)}\n\n`;
   const seed = phaseSeed({ phase: input.phase, slug: input.slug, fix: input.fix === true, focus: input.focus ?? "" });
   let prompt: string;
   if (input.kind === "collecte") {
@@ -191,20 +224,22 @@ export function buildLotPrompt(input: {
     prompt = `[req] Feature « ${input.slug} »${intent ? ` — intention déclarée : ${intent}` : ""}\n\n${LOT_WORKER_DIRECTIVE}`;
   } else if (input.kind === "answer") {
     prompt =
-      `[réponse de l'utilisateur] ${(input.text ?? "").trim()}\n\n` +
+      `${ANSWER_PREFIX[input.source ?? "utilisateur"]} ${(input.text ?? "").trim()}\n\n` +
       `Maillon courant : /${input.phase}. Lis le contrat .omp/pipeline/contract.md pour l'état de la feature.\n\n` +
       LOT_WORKER_DIRECTIVE;
   } else if (input.kind === "relaunch") {
     prompt =
       "[reprise] Le maillon est relancé par l'utilisateur : reprends où tu t'es arrêté, " +
-      `sans élargir le périmètre.\n\n${seed}\n\n${LOT_WORKER_DIRECTIVE}`;
+      `sans élargir le périmètre.\n\n${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
   } else {
-    prompt = `${seed}\n\n${LOT_WORKER_DIRECTIVE}`;
+    prompt = `${seed}\n\n${lotLine}${LOT_WORKER_DIRECTIVE}`;
   }
+  const withContext = input.context ? `${prompt}\n\n${input.context}` : prompt;
+  const withMilestone = input.milestone ? `${withContext}\n\n${input.milestone}` : withContext;
   const queued = (input.messages ?? []).map((message) => message.trim()).filter((message) => message !== "");
-  if (queued.length === 0) return prompt;
+  if (queued.length === 0) return withMilestone;
   const blocks = queued.map((message) => `[message de l'utilisateur, envoyé depuis /pipelines]\n${message}`);
-  return `${prompt}\n\n${blocks.join("\n\n")}`;
+  return `${withMilestone}\n\n${blocks.join("\n\n")}`;
 }
 
 
@@ -230,7 +265,7 @@ export function lastLine(text: string): string {
  * le chemin de poussée de cette machine passe par le token de `gh`, jamais par
  * une clé SSH.
  */
-export const RELEASE_DIRECTIVE = `Tu es l'agent de livraison. La revue est propre et l'utilisateur a accepté la fin du cycle : tu prépares le commit et le corps de la PR. Le pilotage du lot poussera la branche et ouvrira la PR juste après toi.
+export const RELEASE_DIRECTIVE = `Tu es l'agent de livraison. La revue est propre et la fin du cycle a été acceptée (la décision et sa source sont nommées à la fin de ce message) : tu prépares le commit et le corps de la PR. Le pilotage du lot poussera la branche et ouvrira la PR juste après toi.
 
 Procédure OBLIGATOIRE, dans l'ordre :
 1. Lis le contrat .omp/pipeline/contract.md : Besoins (B-<n>), Critères d'acceptation (AC-<n>), Spécifications (S-<n>), Lots (BR-<n>) et le verdict de \`## Revue\`. Si \`## Revue\` est absente ou consigne des BLOQUANTS, ARRÊTE-toi et dis-le : il n'y a rien à livrer.

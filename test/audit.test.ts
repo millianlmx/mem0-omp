@@ -47,6 +47,8 @@ import reqExtension, {
   type PipelinePhase,
 } from "../omp-mem0-req/extension.ts";
 import { runStateFor } from "../omp-mem0-req/runState.ts";
+import { relayItemsOf } from "../omp-mem0-req/relay.ts";
+import { liveRunFor } from "../omp-mem0-req/store.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -220,6 +222,30 @@ function seedLot(stateDir: string, repoRoot: string, features: LotFeature[], ove
   });
 }
 
+/**
+ * L'arbitre a renvoyé à l'utilisateur tout ce que `key` porte (S-10) : l'escalade
+ * est posée sur chaque feature qui a un élément courant. Les fixtures n'ont pas
+ * d'arbitre — c'est ce que son verdict `escalate` laisse dans le lot.
+ */
+function escalateAll(stateDir: string, repoRoot: string, key: string, reason = "ni le brief ni le journal ne tranchent"): void {
+  const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
+  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false });
+  for (const item of items) {
+    if (item.kind === "cap" || item.kind === "quota" || item.kind === "failure") continue;
+    const milestone = item.kind === "specs" || item.kind === "review";
+    lot.features.find((f) => f.slug === item.slug)!.escalation = {
+      key: item.key,
+      kind: milestone ? "jalon" : "question",
+      phase: item.phase,
+      question: milestone ? (item.kind === "specs" ? "specs validées ?" : "revue propre : livrer ?") : (item.question ?? ""),
+      options: item.options.map((option) => option.label),
+      reason,
+      at: T0,
+    };
+  }
+  writeLot(stateDir, lot);
+}
+
 function writeContract(worktree: string, body: string): void {
   const file = contractPathFor(worktree);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -309,7 +335,9 @@ function mkUi(answers: unknown[], withAskDialog = false) {
     notify: (title: string) => calls.push({ kind: "notify", title }),
     select: (title: string, items: unknown, options?: unknown) => next({ kind: "select", title, items, options }),
     input: (title: string) => next({ kind: "input", title }),
-    editor: (title: string, prefill?: string) => next({ kind: "editor", title, prefill }),
+    // Le brief (S-6) est validé tel quel : il ne consomme aucune réponse et n'est pas journalisé.
+    editor: (title: string, prefill?: string) =>
+      title.startsWith("Brief ") ? Promise.resolve(prefill) : next({ kind: "editor", title, prefill }),
   };
   if (withAskDialog) ui.askDialog = (questions: unknown) => next({ kind: "askDialog", title: "", questions });
   return { ui, calls };
@@ -411,7 +439,17 @@ function mkAudit(
   return { repoRoot, clock, runs, ctl, sessionFile, relay, messages: fake.messages, calls, call, lot, featureOf, seed };
 }
 
+/** Le brief OBLIGATOIRE d'une proposition (S-6). */
+const BRIEF = {
+  purpose: "Fiabiliser la file du lot.",
+  function: "Borne la file et documente le relais.",
+  decisions: ["La borne vit dans lot.ts."],
+  constraints: ["Aucune dépendance neuve."],
+  nonGoals: ["Pas de refonte du panneau."],
+};
+
 const PROPOSAL = {
+  brief: BRIEF,
   weaknesses: [
     { name: "borne-file", intention: "lot.ts : aucune borne sur la file" },
     { name: "relais-readme", intention: "README.md : le relais n'est pas documenté" },
@@ -536,7 +574,7 @@ test("audit/AC-1 : /audit ouvre une session neuve amorcée par la directive, et 
   assert.equal(auditState.sessionFile, auditFile, "la session neuve est armée");
   assert.deepEqual(
     [...app.tools.keys()].sort(),
-    ["audit_approve", "audit_escalate", "audit_propose", "audit_reply"],
+    ["audit_escalate", "audit_propose"],
   );
 
   const propose = app.tools.get("audit_propose")!;
@@ -615,12 +653,16 @@ test("audit/AC-6 : la feature lancée par /audit est dans la section Lot, condui
 // S-6, S-7 — le relais : injection, réponse de /audit, jalons
 // ---------------------------------------------------------------------------
 
-test("audit/AC-8 : une question d'un maillon arrive dans la session /audit, sort du panneau, et la réponse de /audit débloque le maillon", async () => {
+test("audit/AC-8 : une question n'arrive dans la session /audit qu'escaladée par l'arbitre, et elle reste verrouillée au panneau", async () => {
   const fx = mkAudit();
   const worktree = mkWorktree(CONTRACT_SPECS);
   fx.seed([feature("alpha", { worktree, state: "running", phase: "specs", auditSession: fx.sessionFile })]);
   const inbox = publishAsk(fx.ctl.stateDir, worktree, "call-1");
 
+  fx.relay.scan();
+  assert.equal(fx.messages.length, 0, "une question non escaladée n'est jamais injectée : l'arbitre la tranche");
+
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
   fx.relay.scan();
   assert.equal(fx.messages.length, 1);
   const injected = fx.messages[0]!;
@@ -628,54 +670,40 @@ test("audit/AC-8 : une question d'un maillon arrive dans la session /audit, sort
   assert.equal(injected.message.display, true);
   assert.equal(injected.message.attribution, "agent");
   assert.deepEqual(injected.options, { triggerTurn: true, deliverAs: "followUp" });
-  assert.ok(injected.message.content.startsWith("[audit] Question de /specs — feature alpha\nÉlément : ask:alpha:call-1\n"));
+  assert.ok(injected.message.content.startsWith(`[audit] escalade — alpha /specs : ${QUESTION}\n`), injected.message.content);
 
-  // Le panneau ne la propose plus à la réponse.
+  // La session ne répond pas elle-même, et le panneau ne la propose plus à la réponse.
   assert.deepEqual(fx.ctl.controller.reply("alpha"), { kind: "closed", reason: AUDIT_RELAY_REFUSAL });
   assert.equal(await fx.ctl.controller.answer("alpha", "Postgres"), AUDIT_RELAY_REFUSAL);
   const model = readPanelModel({ stateDir: fx.ctl.stateDir, repoRoot: fx.repoRoot, now: fx.clock.now });
   const footer = lotFooterActions(model.lot!.features, 0, model.live, model.relayed);
   assert.ok(footer.startsWith(AUDIT_RELAY_FOOTER), footer);
   assert.ok(!footer.includes("Entrée répondre"), footer);
-
-  const replied = await fx.call("audit_reply", { item: "ask:alpha:call-1", answer: "Postgres" });
-  assert.equal(replied.isError, undefined, textOf(replied));
-  const deliveries = readDeliveries(inbox);
-  assert.equal(deliveries.length, 1);
-  assert.deepEqual({ ...deliveries[0]!.delivery, sentAt: 0 }, {
-    version: 1,
-    kind: "ask",
-    toolCallId: "call-1",
-    selected: "Postgres",
-    sentAt: 0,
-  });
+  assert.deepEqual(readDeliveries(inbox), [], "aucune réponse n'est livrée avant celle de l'utilisateur");
 });
 
-test("audit/AC-9 : la session /audit montre la question reçue, le maillon qui l'a posée et la réponse envoyée", async () => {
-  const fx = mkAudit();
+test("audit/AC-9 : la session /audit montre l'escalade (question, options, motif, feature, maillon) et l'utilisateur y répond", async () => {
+  const fx = mkAudit({ answers: ["Postgres"] });
   const worktree = mkWorktree(CONTRACT_SPECS);
   fx.seed([feature("alpha", { worktree, state: "running", phase: "specs", auditSession: fx.sessionFile })]);
-  publishAsk(fx.ctl.stateDir, worktree, "call-9");
+  const inbox = publishAsk(fx.ctl.stateDir, worktree, "call-9");
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile, "le brief ne dit rien du moteur");
   fx.relay.scan();
 
   assert.equal(
     fx.messages[0]!.message.content,
     [
-      "[audit] Question de /specs — feature alpha",
-      "Élément : ask:alpha:call-9",
-      QUESTION,
+      `[audit] escalade — alpha /specs : ${QUESTION}`,
       "Options :",
-      "- (1) Postgres — robuste",
+      "- (1) Postgres",
       "- (2) SQLite",
-      `Contrat de la feature : ${path.join(worktree, CONTRACT_PATH)}`,
-      "Réponds toi-même avec audit_reply (élément, réponse = libellé exact d'une option ou texte libre) si l'audit et le contrat te donnent la réponse ; sinon audit_escalate (élément).",
+      "motif de l'arbitre : le brief ne dit rien du moteur",
+      "Décision réservée à l'utilisateur : appelle audit_escalate avec l'élément ask:alpha:call-9.",
     ].join("\n"),
   );
-  const replied = await fx.call("audit_reply", { item: "ask:alpha:call-9", answer: "une base en mémoire" });
-  assert.equal(
-    textOf(replied),
-    `Question de /specs — feature alpha\n${QUESTION}\nRéponse envoyée par /audit : une base en mémoire`,
-  );
+  const replied = await fx.call("audit_escalate", { item: "ask:alpha:call-9" });
+  assert.equal(textOf(replied), "Réponse de l'utilisateur transmise mot pour mot à /specs — feature alpha : Postgres");
+  assert.equal(readDeliveries(inbox).length, 1);
 });
 
 test("audit/AC-10 : hors pipeline /audit, les questions vont à l'utilisateur comme avant, et une session ordinaire n'arme aucun relais", async () => {
@@ -709,8 +737,8 @@ test("audit/AC-10 : hors pipeline /audit, les questions vont à l'utilisateur co
   assert.equal(auditState.sessionFile, null);
 });
 
-test("audit/AC-13 : /audit valide les jalons sans doute — la chaîne repart sans touche v ni y", async () => {
-  const fx = mkAudit();
+test("audit/AC-13 : un jalon n'arrive à /audit qu'escaladé, et la décision de l'utilisateur fait repartir la chaîne", async () => {
+  const fx = mkAudit({ answers: ["Valider les specs", "Accepter la revue et livrer (PR)"] });
   const specsWt = mkWorktree(CONTRACT_SPECS);
   const reviewWt = mkWorktree(CONTRACT_CLEAN);
   fx.seed([
@@ -718,15 +746,18 @@ test("audit/AC-13 : /audit valide les jalons sans doute — la chaîne repart sa
     feature("beta", { worktree: reviewWt, state: "waiting", phase: "review", waitKind: "review", auditSession: fx.sessionFile }),
   ]);
   fx.relay.scan();
+  assert.equal(fx.messages.length, 0, "un jalon non escaladé reste à l'arbitre");
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
+  fx.relay.scan();
   assert.deepEqual(
     fx.messages.map((m) => m.message.content.split("\n")[0]),
-    ["[audit] Jalon « specs validées » — feature alpha", "[audit] Jalon « revue propre » — feature beta"],
+    ["[audit] escalade — alpha /specs : specs validées ?", "[audit] escalade — beta /review : revue propre : livrer ?"],
   );
 
-  const specs = await fx.call("audit_approve", { item: `specs:alpha:${T0}` });
-  assert.equal(textOf(specs), "Jalon « specs validées » de alpha validé par /audit — la chaîne repart sur /impl");
-  const review = await fx.call("audit_approve", { item: `review:beta:${T0}` });
-  assert.equal(textOf(review), "Jalon « revue propre » de beta accepté par /audit — livraison et ouverture de la PR");
+  const specs = await fx.call("audit_escalate", { item: `specs:alpha:${T0}` });
+  assert.equal(textOf(specs), "Réponse de l'utilisateur transmise mot pour mot à /specs — feature alpha : Valider les specs");
+  const review = await fx.call("audit_escalate", { item: `review:beta:${T0}` });
+  assert.equal(textOf(review), "Réponse de l'utilisateur transmise mot pour mot à /review — feature beta : Accepter la revue et livrer (PR)");
   await flush();
 
   assert.deepEqual(
@@ -736,13 +767,14 @@ test("audit/AC-13 : /audit valide les jalons sans doute — la chaîne repart sa
       [reviewWt, "release"],
     ],
   );
-  assert.equal(fx.calls.length, 0, "aucun dialogue présenté à l'utilisateur");
+  assert.equal(fx.calls.length, 2, "un dialogue par jalon, présenté à l'utilisateur");
+  assert.equal(fx.featureOf("alpha")!.escalation, undefined, "l'escalade est effacée à la décision");
 });
 
-test("audit/AC-5 : la pipeline enchaîne /req, /specs, /impl, /review jusqu'à une PR ouverte et non fusionnée, sans action de l'utilisateur", async () => {
+test("audit/AC-5 : la pipeline enchaîne /req, /specs, /impl, /review jusqu'à une PR ouverte et non fusionnée, l'utilisateur ne tranchant que les escalades", async () => {
   const pushes: string[][] = [];
   const fx = mkAudit({
-    answers: ["alpha", "Lancer la sélection", "Valider et lancer"],
+    answers: ["alpha", "Lancer la sélection", "Valider et lancer", "Postgres", "Valider les specs", "Accepter la revue et livrer (PR)"],
     script: (run) => {
       switch (run.phase) {
         case "req":
@@ -783,22 +815,20 @@ test("audit/AC-5 : la pipeline enchaîne /req, /specs, /impl, /review jusqu'à u
     return f ? `${f.state}:${f.waitKind ?? ""}` : "";
   };
 
-  // Ce que ferait le modèle de la session /audit : un outil par élément relayé.
-  await waitFor(() => state() === "waiting:answer");
-  fx.relay.scan();
-  const question = fx.messages.at(-1)!.message.content;
-  const questionKey = /Élément : (\S+)/.exec(question)![1]!;
-  assert.equal(textOf(await fx.call("audit_reply", { item: questionKey, answer: "Postgres" })).split("\n").at(-1), "Réponse envoyée par /audit : Postgres");
-
-  await waitFor(() => state() === "waiting:specs");
-  fx.relay.scan();
-  const specsKey = /Élément : (\S+)/.exec(fx.messages.at(-1)!.message.content)![1]!;
-  assert.equal((await fx.call("audit_approve", { item: specsKey })).isError, undefined);
-
-  await waitFor(() => state() === "waiting:review");
-  fx.relay.scan();
-  const reviewKey = /Élément : (\S+)/.exec(fx.messages.at(-1)!.message.content)![1]!;
-  assert.equal((await fx.call("audit_approve", { item: reviewKey })).isError, undefined);
+  // Ce que ferait la session /audit : un appel `audit_escalate` par élément escaladé
+  // (la fixture n'a pas d'arbitre : elle pose l'escalade que son verdict laisserait).
+  const relayOne = async (wanted: string, answer: string) => {
+    await waitFor(() => state() === wanted);
+    escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
+    fx.relay.scan();
+    const key = /avec l'élément (\S+)\.$/.exec(fx.messages.at(-1)!.message.content)![1]!;
+    const result = await fx.call("audit_escalate", { item: key });
+    assert.equal(result.isError, undefined, textOf(result));
+    assert.ok(textOf(result).endsWith(answer), textOf(result));
+  };
+  await relayOne("waiting:answer", "feature alpha : Postgres");
+  await relayOne("waiting:specs", "feature alpha : Valider les specs");
+  await relayOne("waiting:review", "feature alpha : Accepter la revue et livrer (PR)");
 
   await waitFor(() => fx.featureOf("alpha")?.state === "done");
   const done = fx.featureOf("alpha")!;
@@ -811,7 +841,7 @@ test("audit/AC-5 : la pipeline enchaîne /req, /specs, /impl, /review jusqu'à u
   assert.ok(fx.ctl.ghCalls.some((args) => args[0] === "pr" && args[1] === "create"), "la PR est ouverte");
   assert.ok(!fx.ctl.ghCalls.some((args) => args.includes("merge")), "aucune fusion");
   assert.deepEqual(pushes, [["push", "-u", GH + "/o/r.git", "feat/alpha"]]);
-  assert.equal(fx.calls.length, uiAfterLaunch, "aucun dialogue après la validation de l'intention");
+  assert.equal(fx.calls.length, uiAfterLaunch + 3, "seules les trois escalades ont ouvert un dialogue après la validation de l'intention");
   assert.equal(uiAfterLaunch, 3, "seules la sélection (cocher, lancer) et la validation de l'intention ont été présentées");
   assert.ok(
     !fx.ctl.notices.some((n) => n.includes("attend")),
@@ -864,10 +894,6 @@ test("audit/AC-7 : au plafond de la boucle revue ⇄ correction, /audit remonte 
     ].join("\n"),
   );
 
-  const reply = await fx.call("audit_reply", { item: key, answer: "on livre quand même" });
-  assert.equal(textOf(reply), `Error: ${key} : décision réservée à l'utilisateur — appelle audit_escalate`);
-  const approve = await fx.call("audit_approve", { item: key });
-  assert.equal(textOf(approve), `Error: ${key} : décision réservée à l'utilisateur — appelle audit_escalate`);
   await flush();
   assert.ok(!fx.runs.some((run) => run.phase === "release"), "aucune livraison");
   assert.deepEqual(fx.ctl.ghCalls, [], "aucun appel à gh, donc aucune PR");
@@ -903,6 +929,7 @@ test("audit/AC-11 : une question escaladée montre son texte et ses options d'or
   const worktree = mkWorktree(CONTRACT_SPECS);
   fx.seed([feature("alpha", { worktree, state: "running", phase: "specs", auditSession: fx.sessionFile })]);
   const inbox = publishAsk(fx.ctl.stateDir, worktree, "call-11");
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
   fx.relay.scan();
 
   const pending = fx.call("audit_escalate", { item: "ask:alpha:call-11" });
@@ -937,6 +964,7 @@ test("audit/AC-12 : la réponse de l'utilisateur part mot pour mot au maillon qu
   const worktree = mkWorktree(CONTRACT_SPECS);
   fx.seed([feature("alpha", { worktree, state: "running", phase: "specs", auditSession: fx.sessionFile })]);
   const inbox = publishAsk(fx.ctl.stateDir, worktree, "call-12");
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
   fx.relay.scan();
 
   const custom = await fx.call("audit_escalate", { item: "ask:alpha:call-12" });
@@ -966,6 +994,7 @@ test("audit/AC-12 : la réponse de l'utilisateur part mot pour mot au maillon qu
       auditSession: text.sessionFile,
     }),
   ]);
+  escalateAll(text.ctl.stateDir, text.repoRoot, text.sessionFile);
   text.relay.scan();
   const answered = await text.call("audit_escalate", { item: `question:alpha:${T0}` });
   assert.equal(text.calls[0]!.title, `Question de /specs — feature alpha\n${QUESTION}`);
@@ -981,6 +1010,7 @@ test("audit/AC-14 : un jalon en doute est remonté à l'utilisateur, et la chaî
   const fx = mkAudit({ answers: [() => dialog.promise] });
   const worktree = mkWorktree(CONTRACT_SPECS);
   fx.seed([feature("alpha", { worktree, state: "waiting", phase: "specs", waitKind: "specs", auditSession: fx.sessionFile })]);
+  escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
   fx.relay.scan();
 
   const pending = fx.call("audit_escalate", { item: `specs:alpha:${T0}` });
@@ -1105,6 +1135,7 @@ test("audit/AC-17 : la même session /audit rouverte reprend le relais et récup
       auditSession: auditFile,
     }),
   ]);
+  escalateAll(stateDir, repoRoot, auditFile);
   const app = mkApp();
   const current = { file: sessionFileIn(dir, "avant.jsonl") };
   const { ctx } = appCtx(repoRoot, current, mkUi([]).ui, auditFile);
@@ -1127,7 +1158,7 @@ test("audit/AC-17 : la même session /audit rouverte reprend le relais et récup
   assert.equal(auditState.sessionFile, auditFile, "le relais est rendu à la session rouverte");
   assert.equal(relayed().length, 2, "la question encore en attente est ré-injectée");
   assert.equal(relayed()[1]!.message.content, relayed()[0]!.message.content);
-  assert.ok(relayed()[1]!.message.content.startsWith("[audit] Question de /specs — feature alpha\n"));
+  assert.ok(relayed()[1]!.message.content.startsWith("[audit] escalade — alpha /specs : "));
   assert.deepEqual(ctl.controller.reply("alpha"), { kind: "closed", reason: AUDIT_RELAY_REFUSAL }, "elle quitte le panneau");
 
   // La fermeture du process (`session_shutdown`) retire aussi le relais : la question retombe.
@@ -1324,6 +1355,7 @@ test("audit-multi/AC-3 : valider sans rien cocher ne lance aucune pipeline et n'
 test("audit-multi/AC-4 : deux éléments cochés sans dépendance entre eux tournent simultanément", async () => {
   const proposal = {
     weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
+    brief: BRIEF,
     features: [
       { name: "fa", intention: "Faire A." },
       { name: "fb", intention: "Faire B." },
@@ -1357,6 +1389,7 @@ test("audit-multi/AC-5 : un élément qui dépend d'un autre élément coché ne
   // Le dépendant est listé AVANT sa dépendance : l'ordre des ajouts suit les dépendances.
   const proposal = {
     weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
+    brief: BRIEF,
     features: [
       { name: "b", intention: "Bâtir sur A.", deps: ["a"] },
       { name: "a", intention: "Poser A." },
@@ -1464,14 +1497,20 @@ test("audit-multi/AC-6 : deux questions de modèle par élément coché, et chaq
     answers: [
       submitted(["relais-readme", "alpha", "gamma"]),
       "Valider et lancer",
-      "p/x",
-      "p/y",
       "Valider et lancer",
-      "défaut OMP (aucun modèle)",
-      "p/x",
       "Valider et lancer",
+      "p/x",
+      "aucun repli",
       "p/y",
+      "aucun repli",
       "défaut OMP (aucun modèle)",
+      "aucun repli",
+      "p/x",
+      "aucun repli",
+      "p/y",
+      "aucun repli",
+      "défaut OMP (aucun modèle)",
+      "aucun repli",
     ],
   });
   const result = await fx.call("audit_propose", PROPOSAL);
@@ -1480,16 +1519,22 @@ test("audit-multi/AC-6 : deux questions de modèle par élément coché, et chaq
     fx.calls.slice(1).map((call) => call.title.split("\n")[0]),
     [
       "Intention transmise à /req — relais-readme",
-      "Modèle req+specs — relais-readme",
-      "Modèle impl+review — relais-readme",
       "Intention transmise à /req — alpha",
-      "Modèle req+specs — alpha",
-      "Modèle impl+review — alpha",
       "Intention transmise à /req — gamma",
+      "Modèle req+specs — relais-readme",
+      "Repli req+specs — relais-readme",
+      "Modèle impl+review — relais-readme",
+      "Repli impl+review — relais-readme",
+      "Modèle req+specs — alpha",
+      "Repli req+specs — alpha",
+      "Modèle impl+review — alpha",
+      "Repli impl+review — alpha",
       "Modèle req+specs — gamma",
+      "Repli req+specs — gamma",
       "Modèle impl+review — gamma",
+      "Repli impl+review — gamma",
     ],
-    "exactement deux questions de modèle par élément, nommant chacune son groupe",
+    "exactement deux questions de modèle et deux de repli par élément, nommant chacune son groupe",
   );
 
   await waitFor(() => fx.runs.length >= 3);
@@ -1531,6 +1576,7 @@ test("audit-multi/AC-7 : relancer depuis la même session /audit — les éléme
   const dialogs = fx.calls.length;
   const all = await fx.call("audit_propose", {
     weaknesses: [{ name: "gamma", intention: "constat" }],
+    brief: BRIEF,
     features: [{ name: "alpha", intention: "intention" }],
   });
   assert.equal(all.isError, undefined);
@@ -1568,6 +1614,7 @@ test("audit-multi/AC-8 : deux questions simultanées affichent leur origine, son
     ]);
     const inboxA = publishAsk(fx.ctl.stateDir, wtA, "call-a", "specs");
     const inboxB = publishAsk(fx.ctl.stateDir, wtB, "call-b", "impl");
+    escalateAll(fx.ctl.stateDir, fx.repoRoot, fx.sessionFile);
     fx.relay.scan();
     return { fx, inboxA, inboxB };
   };
@@ -1581,7 +1628,7 @@ test("audit-multi/AC-8 : deux questions simultanées affichent leur origine, son
     const { fx, inboxA, inboxB } = setup([() => first.promise, () => second.promise]);
     assert.deepEqual(
       fx.messages.map((m) => m.message.content.split("\n")[0]),
-      ["[audit] Question de /specs — feature alpha", "[audit] Question de /impl — feature beta"],
+      [`[audit] escalade — alpha /specs : ${QUESTION}`, `[audit] escalade — beta /impl : ${QUESTION}`],
     );
 
     // Le modèle de /audit escalade les deux dans le même tour : deux appels concurrents.

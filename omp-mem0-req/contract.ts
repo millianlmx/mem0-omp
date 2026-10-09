@@ -91,6 +91,24 @@ export function contractSection(contract: string, title: string): string | null 
 }
 
 
+const LOT_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(BR-\d+)\s*—\s*type\s*:/;
+
+/**
+ * Les ids `BR-<n>` de la section `## Lots` (dernière occurrence), dans l'ordre et sans
+ * doublon, reconnus sur les lignes d'en-tête de lot `BR-<n> — type : …` (S-13).
+ */
+export function contractLots(contract: string): string[] {
+  const body = contractSection(contract, "Lots");
+  if (body === null) return [];
+  const ids: string[] = [];
+  for (const line of body.split("\n")) {
+    const id = LOT_HEAD.exec(line)?.[1];
+    if (id !== undefined && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+
 // Libellés du verdict de /review (REVIEW_DIRECTIVE), dans l'ordre où ils sont
 // écrits : ils bornent le corps du champ BLOQUANTS — le champ suivant n'est pas un
 // bloquant, et une recommandation n'en est jamais un.

@@ -59,6 +59,81 @@ export type HeldLaunch = {
   kind: LotPromptKind;
   resume: boolean;
   text?: string;
+  /** D'où vient le texte d'une réponse (S-11) : absent = l'utilisateur. */
+  source?: "contexte" | "arbitrage";
+};
+
+
+/**
+ * Le quota qui bloque une feature (S-5) : le fournisseur, le modèle épuisé, son
+ * échéance (epoch ms), si elle a été ANNONCÉE par le fournisseur, et la phase du run.
+ */
+export type FeatureQuota = { provider: string; model: string; until: number; announced: boolean; phase: PipelinePhase };
+
+
+/**
+ * Un GROUPE de quota (S-5) : les features `blocked` portant le quota d'un même
+ * fournisseur. `until`/`announced` sont ceux de l'échéance la plus PROCHE du groupe.
+ */
+export type QuotaGroup = { provider: string; slugs: string[]; until: number; announced: boolean };
+
+/** Le groupe de quota d'une feature (S-5), ou `null` : `blocked` ET porteuse d'un quota. */
+export function blockedQuotaOf(feature: LotFeature): FeatureQuota | null {
+  return feature.state === "blocked" && feature.quota !== undefined ? feature.quota : null;
+}
+
+/**
+ * Les groupes de quota des features retenues par `keep` (S-5), un par fournisseur,
+ * dans l'ordre d'apparition dans le lot. Pur.
+ */
+export function quotaGroupsOf(lot: Lot, keep: (feature: LotFeature) => boolean = () => true): QuotaGroup[] {
+  const groups = new Map<string, QuotaGroup>();
+  for (const feature of lot.features) {
+    const quota = blockedQuotaOf(feature);
+    if (quota === null || !keep(feature)) continue;
+    const known = groups.get(quota.provider);
+    if (known === undefined) {
+      groups.set(quota.provider, { provider: quota.provider, slugs: [feature.slug], until: quota.until, announced: quota.announced });
+      continue;
+    }
+    known.slugs.push(feature.slug);
+    if (quota.until < known.until) {
+      known.until = quota.until;
+      known.announced = quota.announced;
+    }
+  }
+  return [...groups.values()];
+}
+
+
+/** Un arbitrage en vol (S-9) : la clé de l'élément arbitré et l'instant de départ. */
+export type FeatureArbitration = { key: string; startedAt: number };
+
+
+/** Plafond des enregistrements de run conservés par feature (S-12). */
+export const LOT_RUNS_MAX = 100;
+
+/** Un run terminé (S-12) : son étape, son lot d'impl, le pic de contexte mesuré (`null` sans usage) et sa session. */
+export type LotRunRecord = {
+  step: PipelinePhase | "arbitre";
+  lot: string | null;
+  fix: boolean;
+  startedAt: number;
+  endedAt: number;
+  peakContext: number | null;
+  sessionFile: string | null;
+};
+
+
+/** Un élément que l'arbitre n'a pas pu trancher : il attend l'utilisateur (S-9, S-10). */
+export type FeatureEscalation = {
+  key: string;
+  kind: "question" | "jalon";
+  phase: PipelinePhase;
+  question: string;
+  options: string[];
+  reason: string;
+  at: number;
 };
 
 
@@ -159,6 +234,36 @@ export type LotFeature = {
    * `release`. Mêmes règles d'écriture et de remplacement que `modelReqSpecs`.
    */
   modelImplReview?: string;
+  /**
+   * Le repli du groupe req+specs (S-1) : le sélecteur `provider/id` sur lequel un
+   * run `req`/`specs` continue quand le principal est épuisé. Absent = aucun repli
+   * (jamais `""` ni `null` stockés). Remplaçable à tout moment par `models`.
+   */
+  fallbackReqSpecs?: string;
+  /** Le repli du groupe impl+review (S-1) : mêmes règles que `fallbackReqSpecs`. */
+  fallbackImplReview?: string;
+  /** L'arbitrage EN VOL (S-9) : posé et sauvé avant l'ouverture de la session d'arbitre, effacé à la décision. */
+  arbitration?: FeatureArbitration;
+  /** L'escalade vers l'utilisateur (S-9, S-10) : posée par l'arbitre, effacée quand la décision est appliquée. */
+  escalation?: FeatureEscalation;
+  /** La source du jalon qui vient d'être décidé (S-11) : lue par le prompt du run qui suit, puis effacée. */
+  milestoneSource?: "arbitrage" | "utilisateur";
+  /**
+   * Les lots de l'impl (S-13), figés au lancement de l'impl qui suit la validation des specs :
+   * un run d'impl par lot, chacun en session neuve. Absents : un seul run d'impl. Effacés à
+   * l'entrée en review et sur `--fix`.
+   */
+  implLots?: string[];
+  /** Rang (0-based) du lot d'impl courant dans `implLots`. */
+  implLot?: number;
+  /** Les runs terminés de la feature, du plus ancien au plus récent (S-12) ; au plus `LOT_RUNS_MAX`. */
+  runs?: LotRunRecord[];
+  /**
+   * Le quota qui a BLOQUÉ la feature (S-5) : écrit avec `state: "blocked"` quand un
+   * run a rendu un quota épuisé (ou que la garde de lancement l'a refusé), effacé par
+   * la décision de l'utilisateur. Absent : la feature n'est pas bloquée par un quota.
+   */
+  quota?: FeatureQuota;
   /**
    * L'ANCIEN modèle unique, conservé en LECTURE seule (S-1, AC-4) : une feature
    * créée avant cette feature le porte, et il remplit alors les DEUX groupes tant
@@ -400,7 +505,13 @@ export type RowReply =
 
 
 /** Ce que la règle d'écriture sait du run VIVANT d'une feature (S-6, S-7). */
-export type RowLiveWriter = { inbox?: string | null; pendingAsk?: PanelPendingAsk | null; auditRelay?: boolean };
+export type RowLiveWriter = {
+  inbox?: string | null;
+  pendingAsk?: PanelPendingAsk | null;
+  auditRelay?: boolean;
+  /** L'écrivain EST l'arbitre ou le contexte (S-9) : le verrou « arbitrage en cours » ne s'applique pas à lui. */
+  viaArbiter?: boolean;
+};
 
 
 /** Refus d'écriture d'une question confiée à /audit, mot pour mot (S-3). */
@@ -421,6 +532,9 @@ export const PROJECT_RELAY_MILESTONE_REFUSAL = "jalon confié à la session /pro
 /** Premier item du pied d'une feature relayée à /project (S-6 §6). */
 export const PROJECT_RELAY_FOOTER = "relayé à /project";
 
+/** Le refus de réponse, de `v` et de `y` pendant qu'un arbitre juge l'élément courant (S-10), mot pour mot. */
+export const ARBITRATION_REFUSAL = "arbitrage en cours — la décision sera consignée au journal";
+
 
 /** Le refus d'écriture d'une question relayée : le texte du GENRE de relais de la feature. */
 export function relayRefusal(feature: LotFeature): string {
@@ -439,7 +553,16 @@ export function relayFooter(feature: LotFeature): string {
 
 /** Le motif d'un refus d'écriture est-il celui d'une question relayée (l'un des deux genres) ? */
 export function isRelayRefusal(reason: string): boolean {
-  return reason === AUDIT_RELAY_REFUSAL || reason === PROJECT_RELAY_REFUSAL;
+  return reason === AUDIT_RELAY_REFUSAL || reason === PROJECT_RELAY_REFUSAL || reason === ARBITRATION_REFUSAL;
+}
+
+/**
+ * Le refus d'un geste de jalon (`v`, `y`) pour l'utilisateur : l'arbitre juge
+ * l'élément (S-10), ou une session /audit ou /project ouverte le porte. `null` : le geste passe.
+ */
+export function milestoneGestureRefusal(feature: LotFeature, relayed: boolean): string | null {
+  if (feature.arbitration !== undefined) return ARBITRATION_REFUSAL;
+  return relayed ? relayMilestoneRefusal(feature) : null;
 }
 
 
@@ -502,6 +625,9 @@ export function rowReply(feature: LotFeature, live?: RowLiveWriter | null): RowR
   // Une question relayée ne se répond pas ici : c'est la session /audit ou
   // /project qui la tranche (S-3, S-6 §6). Les autres écritures (steer, file,
   // texte) restent.
+  if (feature.arbitration !== undefined && live?.viaArbiter !== true && (reply.kind === "ask" || reply.kind === "reply")) {
+    return { kind: "closed", reason: ARBITRATION_REFUSAL };
+  }
   if (live?.auditRelay === true && (reply.kind === "ask" || reply.kind === "reply")) {
     return { kind: "closed", reason: relayRefusal(feature) };
   }
@@ -647,6 +773,7 @@ export function asHeldLaunch(raw: unknown): HeldLaunch | null {
     kind: h.kind,
     resume: h.resume,
     ...(typeof h.text === "string" ? { text: h.text.slice(0, LOT_EDITOR_MAX) } : {}),
+    ...(h.source === "contexte" || h.source === "arbitrage" ? { source: h.source } : {}),
   };
 }
 
@@ -657,6 +784,79 @@ export function asHeldLaunch(raw: unknown): HeldLaunch | null {
  */
 export function isLotBaseSha(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(value);
+}
+
+
+/** Le quota d'une feature relu du disque : complet ou absent (S-5), jamais un rejet. */
+function asFeatureQuota(raw: unknown): FeatureQuota | null {
+  if (!raw || typeof raw !== "object") return null;
+  const q = raw as Record<string, unknown>;
+  if (typeof q.provider !== "string" || q.provider === "") return null;
+  if (typeof q.model !== "string" || q.model === "") return null;
+  if (typeof q.until !== "number" || !Number.isFinite(q.until)) return null;
+  if (typeof q.announced !== "boolean") return null;
+  if (!PIPELINE_PHASES.includes(q.phase as PipelinePhase)) return null;
+  return { provider: q.provider, model: q.model, until: q.until, announced: q.announced, phase: q.phase as PipelinePhase };
+}
+
+/** Les enregistrements de run relus du disque (S-12) : seuls les complets, au plus `LOT_RUNS_MAX`. */
+function asRunRecords(raw: unknown): LotRunRecord[] {
+  if (!Array.isArray(raw)) return [];
+  const out: LotRunRecord[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const r = entry as Record<string, unknown>;
+    const step = r.step === "arbitre" || PIPELINE_PHASES.includes(r.step as PipelinePhase) ? (r.step as LotRunRecord["step"]) : null;
+    if (step === null || typeof r.fix !== "boolean") continue;
+    if (typeof r.startedAt !== "number" || !Number.isFinite(r.startedAt) || typeof r.endedAt !== "number" || !Number.isFinite(r.endedAt)) continue;
+    const peak = typeof r.peakContext === "number" && Number.isFinite(r.peakContext) ? r.peakContext : null;
+    out.push({
+      step,
+      lot: typeof r.lot === "string" && r.lot !== "" ? r.lot : null,
+      fix: r.fix,
+      startedAt: r.startedAt,
+      endedAt: r.endedAt,
+      peakContext: peak,
+      sessionFile: typeof r.sessionFile === "string" && r.sessionFile !== "" ? r.sessionFile : null,
+    });
+  }
+  return out.slice(-LOT_RUNS_MAX);
+}
+
+/** Ajoute un run terminé à la feature ; au-delà de `LOT_RUNS_MAX`, les plus anciens sont retirés (S-12). */
+export function appendRunRecord(feature: LotFeature, record: LotRunRecord): void {
+  feature.runs = [...(feature.runs ?? []), record].slice(-LOT_RUNS_MAX);
+}
+
+
+/** L'arbitrage en vol relu du disque (S-9) : complet ou absent. */
+function asFeatureArbitration(raw: unknown): FeatureArbitration | null {
+  if (!raw || typeof raw !== "object") return null;
+  const a = raw as Record<string, unknown>;
+  if (typeof a.key !== "string" || a.key === "" || typeof a.startedAt !== "number" || !Number.isFinite(a.startedAt)) return null;
+  return { key: a.key, startedAt: a.startedAt };
+}
+
+
+/** L'escalade relue du disque (S-9, S-10) : complète ou absente. */
+function asFeatureEscalation(raw: unknown): FeatureEscalation | null {
+  if (!raw || typeof raw !== "object") return null;
+  const e = raw as Record<string, unknown>;
+  if (typeof e.key !== "string" || e.key === "") return null;
+  if (e.kind !== "question" && e.kind !== "jalon") return null;
+  if (typeof e.phase !== "string" || (PIPELINE_PHASES as readonly string[]).indexOf(e.phase) < 0) return null;
+  if (typeof e.question !== "string" || typeof e.reason !== "string") return null;
+  if (!Array.isArray(e.options) || !e.options.every((o) => typeof o === "string")) return null;
+  if (typeof e.at !== "number" || !Number.isFinite(e.at)) return null;
+  return {
+    key: e.key,
+    kind: e.kind,
+    phase: e.phase as PipelinePhase,
+    question: e.question,
+    options: e.options as string[],
+    reason: e.reason,
+    at: e.at,
+  };
 }
 
 
@@ -696,6 +896,10 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     : [];
   const num = (v: unknown, fallback: number) => (typeof v === "number" && Number.isFinite(v) ? v : fallback);
   const held = asHeldLaunch(f.held);
+  const featureQuota = asFeatureQuota(f.quota);
+  const arbitration = asFeatureArbitration(f.arbitration);
+  const escalation = asFeatureEscalation(f.escalation);
+  const runs = asRunRecords(f.runs);
   return {
     slug: f.slug,
     name: f.name,
@@ -733,6 +937,26 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     // valent exactement `"project"` / un sha complet, sinon absents (jamais un rejet).
     ...(f.relayKind === "project" ? { relayKind: "project" as const } : {}),
     ...(isLotBaseSha(f.base) ? { base: f.base } : {}),
+    // Les replis (S-1) : mêmes règles de lecture que les modèles — `""`, `null` ou
+    // un autre type sont lus comme ABSENTS, jamais un rejet.
+    ...(typeof f.fallbackReqSpecs === "string" && f.fallbackReqSpecs.trim() !== ""
+      ? { fallbackReqSpecs: f.fallbackReqSpecs }
+      : {}),
+    ...(typeof f.fallbackImplReview === "string" && f.fallbackImplReview.trim() !== ""
+      ? { fallbackImplReview: f.fallbackImplReview }
+      : {}),
+    // L'arbitrage en vol, l'escalade et la source du jalon (S-9, S-10, S-11) : relus complets ou absents.
+    ...(arbitration ? { arbitration } : {}),
+    ...(escalation ? { escalation } : {}),
+    ...(runs.length > 0 ? { runs } : {}),
+    ...(f.milestoneSource === "arbitrage" || f.milestoneSource === "utilisateur" ? { milestoneSource: f.milestoneSource } : {}),
+    ...(() => {
+      const ids = Array.isArray(f.implLots) ? f.implLots.filter((id): id is string => typeof id === "string" && id !== "") : [];
+      const rank = Math.trunc(num(f.implLot, -1));
+      return ids.length >= 2 && rank >= 0 && rank < ids.length ? { implLots: ids, implLot: rank } : {};
+    })(),
+    // Le quota bloquant (S-5) : relu seulement quand il est complet, sinon absent.
+    ...(featureQuota ? { quota: featureQuota } : {}),
     // Les modèles (S-1) : chaque clé n'est écrite que si elle est non vide après
     // `trim()` — toute autre valeur (`""`, `42`, `null`) est lue comme ABSENTE,
     // jamais un rejet. Les valeurs ne sont pas revalidées contre le catalogue : un

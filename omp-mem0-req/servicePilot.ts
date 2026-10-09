@@ -17,7 +17,7 @@ import { asCommand, commandShapeRefusal } from "./commands.ts";
 import type { CommandOutcome, ServiceHealth } from "./serviceApi.ts";
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
 import type { SessionHost } from "./serviceSessions.ts";
-import type { LotRunner } from "./serviceRuns.ts";
+import type { ArbiterRunner, LotRunner } from "./serviceRuns.ts";
 import { SERVICE_VERSION } from "./serviceState.ts";
 import { pipelineStateDir } from "./store.ts";
 import * as fs from "node:fs";
@@ -28,6 +28,8 @@ export type PilotDeps = {
   stateDir: string;
   host: SessionHost;
   run: LotRunner;
+  /** Le lanceur d'arbitre (S-9) : absent = aucun arbitrage, les éléments restent à l'utilisateur. */
+  arbiter?: ArbiterRunner;
   runGit: GitRunner;
   runGh?: (args: string[], cwd: string) => Promise<GitResult>;
   notify?: (text: string) => void;
@@ -130,6 +132,7 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       stateDir,
       repoRoot: root,
       run: deps.run,
+      arbiter: deps.arbiter,
       runGit: deps.runGit,
       runGh: deps.runGh,
       notify: deps.notify,

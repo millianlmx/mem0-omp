@@ -506,6 +506,7 @@ function mountPanel(stateDir: string, over: Partial<PipelinesPanelDeps> = {}): P
 function countingActions(): { actions: LotPanelActions; calls: string[] } {
   const calls: string[] = [];
   const actions: LotPanelActions = {
+    resolveQuota: async () => null,
     add: async (input) => {
       calls.push(`add:${input.name}`);
       return null;

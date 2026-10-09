@@ -298,6 +298,7 @@ function mountPanel(stateDir: string, rows: number, over: Partial<PipelinesPanel
 function countingActions(remove?: (slug: string) => string | null): { actions: LotPanelActions; calls: string[] } {
   const calls: string[] = [];
   const actions: LotPanelActions = {
+    resolveQuota: async () => null,
     add: async (input) => {
       calls.push(`add:${input.name}`);
       return null;
@@ -380,7 +381,7 @@ function geometry(stateDir: string, repoRoot: string): { model: PanelModel } {
 
 /** Le nom par lequel un rang se reconnaît à l'écran. */
 function rowName(row: PanelRowRef): string {
-  return "worktree" in row ? row.slug : row.label;
+  return "worktree" in row ? row.slug : "label" in row ? row.label : row.provider;
 }
 
 test("fixpanel/AC-1 : la hauteur ne dépasse jamais le budget, pour toute sélection", () => {
