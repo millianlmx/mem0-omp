@@ -196,6 +196,10 @@ marqueur `[test: <fonction>]` (une fonction de
   dont le libellé est le titre de la section, suivi de « , N en attente » quand le
   badge est visible — la même valeur alimente le badge et le libellé.
   `[test: sectionRowLabelFollowsShownBadge]`
+- Le badge ne dépend pas de la section affichée : la liste racine de l'iPhone le
+  montre au retour de n'importe quel écran, la barre latérale de l'iPad aussi
+  quand une autre section est sélectionnée ; aucune autre ligne n'en porte.
+  `[test: homeRowCarriesPositiveCount]`
 - La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
   (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,

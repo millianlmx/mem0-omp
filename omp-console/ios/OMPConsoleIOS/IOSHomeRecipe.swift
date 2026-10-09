@@ -65,19 +65,33 @@ enum IOSHomeRecipe: String, Equatable {
 
     /// L'état de l'Accueil forcé, dérivé de la fixture partagée.
     var homeState: IOSHomeState {
+        let inputs = self.inputs
+        return IOSHomeState.resolve(state: inputs.state, board: inputs.board, omp: inputs.omp)
+    }
+
+    /// Le badge de la ligne « Accueil » : le compte d'attentes du MÊME couple
+    /// (omp, board) que l'Accueil forcé, comme en direct (il ignore la connexion).
+    var badge: Int {
+        let inputs = self.inputs
+        return IOSHomeContent.badge(omp: inputs.omp, board: inputs.board)
+    }
+
+    /// La SEULE source du couple (omp, board) — et de l'état de connexion — de
+    /// chaque cas : `homeState` et `badge` ne peuvent pas diverger.
+    private var inputs: (state: ClientState, omp: OmpStatus, board: KanbanBoardState) {
         let omp = OmpStatus.available(URL(fileURLWithPath: ""))
         let connected = ClientState.connected(endpoint: .manual(host: "", port: 0))
         switch self {
         case .dashboard, .answer, .contract:
-            return IOSHomeState.resolve(state: connected, board: Self.board, omp: omp)
+            return (connected, omp, Self.board)
         case .loading:
-            return IOSHomeState.resolve(state: connected, board: .loading, omp: omp)
+            return (connected, omp, .loading)
         case .firstRun:
-            return IOSHomeState.resolve(state: connected, board: .storeEmpty(dir: ""), omp: omp)
+            return (connected, omp, .storeEmpty(dir: ""))
         case .ompMissing:
-            return IOSHomeState.resolve(state: connected, board: Self.board, omp: .missing)
+            return (connected, .missing, Self.board)
         case .degraded:
-            return IOSHomeState.resolve(state: .unpaired, board: Self.board, omp: omp)
+            return (.unpaired, omp, Self.board)
         }
     }
 
