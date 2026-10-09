@@ -1948,9 +1948,9 @@ préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Ré
 les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
 ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
-libre), Contrat (sections verbatim) et Bienvenue (première ouverture d'une
+libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
-`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract>`
+`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong>`
 force un état depuis la fixture partagée `HomeParity` pour les captures ; le
 crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
 l'écran (captures des rangées en Dynamic Type).
@@ -2156,6 +2156,18 @@ bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
 (`iphone-home-row<n>-<taille>.png`). Le total attendu est **112** (56 + 32 + 12 +
 12). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
 toutes PORTRAIT — une capture inattendue ferait échouer le script.
+
+La feuille Contrat a sa propre recette idb, pour les preuves avant/après de la
+feature `contrat-ios-markdown-brut` : `bash scripts/ios-contrat-recette.sh
+<avant|apres>` ouvre la feuille sur un contrat long (`-home.recipe contractLong`)
+dans deux simulateurs PRIVÉS, `omp-contrat-telephone` et `omp-contrat-tablette`
+(créés au besoin sur le runtime iOS ≥ 26 le plus récent, jamais désinstallés ni
+effacés), la fait défiler page par page et écrit captures, relevés
+d'accessibilité et `rapport.txt` dans
+`omp-console/build/contrat-ios-markdown-brut/<avant|apres>/` (ignoré par git).
+Codes de sortie : 0 relevé écrit (en mode `apres`, toutes les lignes `ok`), 1
+app absente, appareil en échec ou, en mode `apres`, un critère en `échec`, 2 non
+exécuté (idb ou runtime absent). Elle n'entre pas dans le compte des 112 captures.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,

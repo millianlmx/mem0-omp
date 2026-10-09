@@ -41,7 +41,15 @@ enum IOSHomeText {
 
     // --- feuille Contrat (S-14) -----------------------------------------------
 
+    static let contractNavigationTitle = "Contrat"
     static let contractLoading = "Chargement du contrat…"
+    static let contractSectionEmpty = "Cette section est vide."
+
+    /// Une section requise absente du contrat : le titre entre guillemets
+    /// français, sans la syntaxe Markdown du texte partagé de macOS.
+    static func contractSectionMissing(title: String) -> String {
+        "La section « \(title) » est absente du contrat."
+    }
 
     // --- échecs des gestes (S-9, S-13, S-14) ----------------------------------
 

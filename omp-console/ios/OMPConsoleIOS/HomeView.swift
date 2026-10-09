@@ -91,11 +91,11 @@ struct HomeView: View {
         .onAppear { presentRecipeSheet() }
     }
 
-    /// Le crochet `-home.recipe answer|contract` ouvre sa feuille sur la carte de
+    /// Le crochet `-home.recipe answer|contract|contractLong` ouvre sa feuille sur la carte de
     /// la fixture partagée : une capture montre alors un chemin de code réel.
     private func presentRecipeSheet() {
         guard let recipe, let card = recipe.sheetCard else { return }
-        if recipe == .contract {
+        if recipe == .contract || recipe == .contractLong {
             contractCard = SelectedCard(card: card)
         } else {
             answerCard = SelectedCard(card: card)
