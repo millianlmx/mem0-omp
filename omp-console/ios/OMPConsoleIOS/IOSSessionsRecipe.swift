@@ -1,4 +1,4 @@
-// Le crochet de RECETTE `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>`
+// Le crochet de RECETTE `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases>`
 // (BR-7) : il force l'écran Sessions dans un état RÉEL, dérivé de la fixture
 // partagée `SessionParity` — jamais un écran fabriqué.
 //
@@ -21,6 +21,7 @@ enum IOSSessionsRecipe: Equatable {
     case visionneuse
     case illisible
     case enDirect
+    case phases
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSSessionsRecipe? {
@@ -45,6 +46,7 @@ enum IOSSessionsRecipe: Equatable {
         case IOSSessionText.recipeVisionneuse: return .visionneuse
         case IOSSessionText.recipeIllisible: return .illisible
         case IOSSessionText.recipeEnDirect: return .enDirect
+        case IOSSessionText.recipePhases: return .phases
         default: return nil
         }
     }
@@ -52,12 +54,23 @@ enum IOSSessionsRecipe: Equatable {
     // MARK: - L'état forcé
 
     /// La liste montrée : la session de la fixture, ou rien du tout (`.vide`, qui
-    /// montre l'état vide RÉEL de l'écran).
+    /// montre l'état vide RÉEL de l'écran). `.phases` montre cinq sessions
+    /// terminées, une par étape du pipeline, aux identités distinctes.
     var list: SessionList {
-        guard self != .vide, let choice = Self.fixtureChoice(state: .ended(.done)) else {
+        switch self {
+        case .vide:
             return SessionList(choices: [], storeAbsent: false, discarded: 0)
+        case .phases:
+            let choices = PipelinePhase.allCases.compactMap {
+                Self.fixtureChoice(state: .ended(.done), phase: $0, phaseSuffixed: true)
+            }
+            return SessionList(choices: choices, storeAbsent: false, discarded: 0)
+        default:
+            guard let choice = Self.fixtureChoice(state: .ended(.done)) else {
+                return SessionList(choices: [], storeAbsent: false, discarded: 0)
+            }
+            return SessionList(choices: [choice], storeAbsent: false, discarded: 0)
         }
-        return SessionList(choices: [choice], storeAbsent: false, discarded: 0)
     }
 
     /// La session du fil : la charge utile EXACTE de la fixture, et le run que la
@@ -65,7 +78,7 @@ enum IOSSessionsRecipe: Equatable {
     var thread: IOSSessionsRecipeThread? {
         guard let payload = Self.fixturePayload else { return nil }
         switch self {
-        case .liste, .vide:
+        case .liste, .vide, .phases:
             return nil
         case .visionneuse:
             return Self.thread(payload: payload, run: nil)
@@ -90,16 +103,20 @@ enum IOSSessionsRecipe: Equatable {
     /// (`cwd` + `id`), son horodatage de sa première entrée. Seuls la phase et
     /// l'état sont choisis par la recette — c'est ce qui rend « En cours » et
     /// « Terminé » exerçables par une capture.
-    private static func fixtureChoice(state: RunChoiceState) -> RunChoice? {
+    private static func fixtureChoice(
+        state: RunChoiceState, phase: PipelinePhase = .impl, phaseSuffixed: Bool = false
+    ) -> RunChoice? {
         guard let header = fixturePayload?.header else { return nil }
         let cwd = header.cwd
-        let sessionFile = IOSSessionText.sessionFile(cwd, header.id)
+        // La recette `phases` suffixe l'identifiant par l'étape : sans cela, les cinq
+        // lignes partageraient un `id` (le fichier de session) et SwiftUI les fusionnerait.
+        let fileID = phaseSuffixed ? IOSSessionText.phaseSessionID(header.id, phase) : header.id
+        let sessionFile = IOSSessionText.sessionFile(cwd, fileID)
         // Le label n'a PAS de `/` : `RunChoice.split` tire alors le dépôt du
         // dernier segment du `cwd`, calculé dans ConsoleCore — l'app iOS ne
         // calcule jamais elle-même une clé de dépôt (`ios-projet/AC-7`).
         let label = header.id
         let parts = RunChoice.split(label: label, cwd: cwd)
-        let phase: PipelinePhase = .impl
         return RunChoice(
             id: sessionFile,
             sessionFile: sessionFile,

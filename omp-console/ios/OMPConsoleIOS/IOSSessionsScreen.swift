@@ -23,6 +23,9 @@ struct IOSSessionsScreen: View {
 
     @State private var open: SessionOpen?
     @State private var project: String?
+    /// La largeur de la colonne de l'icône d'étape, mise à l'échelle comme le
+    /// corps de texte que suit le glyphe : les titres partagent une abscisse.
+    @ScaledMetric(relativeTo: .body) private var phaseIconWidth: CGFloat = IOSMetrics.phaseIconWidth
 
     /// La cible de la feuille : un run de la liste, ou la session d'une recette.
     private enum SessionOpen: Identifiable {
@@ -144,12 +147,7 @@ struct IOSSessionsScreen: View {
                             }
                             .buttonStyle(.plain)
                             .accessibilityIdentifier(IOSSessionsAccessibility.row(choice.id))
-                            .accessibilityLabel(
-                                IOSSessionText.rowLabel(
-                                    choice.featureTitle,
-                                    ConsoleStatus.of(run: choice).text
-                                )
-                            )
+                            .accessibilityLabel(IOSSessionText.rowLabel(choice))
                         }
                     }
                     .accessibilityElement(children: .contain)
@@ -176,6 +174,7 @@ struct IOSSessionsScreen: View {
         HStack(spacing: 10) {
             Image(systemName: PhaseText.symbol(choice.phase))
                 .foregroundStyle(.secondary)
+                .frame(width: phaseIconWidth)
             VStack(alignment: .leading, spacing: 4) {
                 Text(choice.featureTitle)
                     .font(.headline)
