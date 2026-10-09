@@ -63,7 +63,13 @@ enum PipelinesText {
 
     // MARK: - Recette `-pipelines.recipe` (crochet de capture, pas une fonctionnalité)
 
+    /// Le drapeau partagé par les deux recettes de l'écran : la feuille « Nouvelle
+    /// feature » (`vide`, `choisi`, `rempli`) et la fiche d'une carte (`fiche`,
+    /// `actions`, `arret`). Chaque recette ignore les valeurs de l'autre.
     static let recipeFlag = "-pipelines.recipe"
+
+    // La feuille « Nouvelle feature » (ios-nouvelle-feature-formulaire).
+
     /// Les dépôts forcés par la recette (triés) : deux homonymes et un nom unique.
     static let recipeRepos = [
         "/Users/demo/Archives/mem0-omp",
@@ -72,10 +78,33 @@ enum PipelinesText {
     ]
     /// La racine choisie par les recettes `choisi` et `rempli` (un des `recipeRepos`).
     static let recipeChosenRepo = "/Users/demo/Projets/mem0-omp"
-    static let recipeTitle = "export-csv"
+    static let recipeFeatureTitle = "export-csv"
     static let recipeShortNeed = "Exporter les souvenirs du projet au format CSV."
     /// Douze lignes « Ligne <n> du besoin. » : plus que les huit que la zone montre.
     static let recipeLongNeed = (1...12).map { "Ligne \($0) du besoin." }.joined(separator: "\n")
+
+    // La fiche d'une carte (ios-fiche-carte-pipelines).
+
+    static let recipeFiche = "fiche"
+    static let recipeActions = "actions"
+    static let recipeArret = "arret"
+
+    /// Le signal de PRÊT, écrit sur la sortie d'erreur quand l'état forcé est atteint.
+    /// `scripts/ios-shots.sh` et `scripts/ios-fiche-carte-recette.sh` le lisent (miroir
+    /// littéral dans les scripts) au lieu d'attendre un délai fixe.
+    static let recipeReady = "pipelines-recipe-ready"
+
+    /// L'ancre de défilement de la liste des gestes (états `actions` et `arret`).
+    static let recipeActionsAnchor = "pipelines.card.sheet.actions"
+
+    /// Le titre de la carte de fixture : 77 caractères, donc plus d'une ligne sur iPhone.
+    static let recipeTitle = "Corriger la fiche d'une carte Pipelines : titre complet sur plusieurs lignes"
+
+    /// Les deux modèles de la carte de fixture : l'un connu du catalogue de recette
+    /// (nom lisible attendu), l'autre inconnu (sélecteur brut attendu).
+    static let recipeModelKnown = "anthropic/claude-opus-5-5"
+    static let recipeModelUnknown = "lm-studio/qwen3-coder-30b"
+    static let recipeModelKnownName = "Claude Opus 5.5"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
@@ -97,6 +126,22 @@ enum PipelinesAccessibility {
     static let answerField = "pipelines.card.sheet.answer"
     static let answerSend = "pipelines.card.sheet.send"
     static let error = "pipelines.card.sheet.error"
+
+    // Un identifiant PAR élément de la fiche : un identifiant posé sur un
+    // conteneur sans `.contain` est porté par tous ses descendants.
+    static let sheetInfo = "pipelines.card.sheet.info"
+    static let sheetRepo = "pipelines.card.sheet.repo"
+    static let sheetPhase = "pipelines.card.sheet.phase"
+    static let sheetDuration = "pipelines.card.sheet.duration"
+    static let sheetModelReqSpecs = "pipelines.card.sheet.model.reqSpecs"
+    static let sheetModelImplReview = "pipelines.card.sheet.model.implReview"
+    static let sheetPR = "pipelines.card.sheet.pr"
+    static let sheetMotif = "pipelines.card.sheet.motif"
+    static let sheetEmpty = "pipelines.card.sheet.empty"
+    static let sheetQuestionTitle = "pipelines.card.sheet.question.title"
+    static let sheetQuestion = "pipelines.card.sheet.question"
+    static let sheetPrompt = "pipelines.card.sheet.prompt"
+    static let sheetClose = "pipelines.card.sheet.close"
 
     static let repoField = "pipelines.newFeature.repo"
     static let reqSpecsField = "pipelines.newFeature.modelReqSpecs"

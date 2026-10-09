@@ -207,9 +207,9 @@ final class RemoteReads {
     /// jetent PAS : la réponse porte `failure` et une liste vide — le client
     /// affiche le motif, ce n'est pas une erreur de transport.
     func models() async -> RemoteModelsPayload {
-        switch await ModelCatalogLoader.loadDefault() {
-        case .success(let selectors):
-            return RemoteModelsPayload(selectors: selectors, failure: nil)
+        switch await ModelCatalogLoader.loadListing() {
+        case .success(let listing):
+            return RemoteModelsPayload(selectors: listing.selectors, failure: nil, names: listing.names)
         case .failure(let error):
             return RemoteModelsPayload(selectors: [], failure: error.reason)
         }

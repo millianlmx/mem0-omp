@@ -170,6 +170,24 @@ struct ClientContractTests {
             client: ConsoleClient.RemoteMemoryGraphPayload.self,
             host: OMPConsole.RemoteMemoryGraphPayload.self
         ))
+        #expect(try contractSameShape(
+            #"{"selectors":["a/b"],"failure":null,"names":{"a/b":"B"}}"#,
+            client: ConsoleClient.RemoteModelsPayload.self,
+            host: OMPConsole.RemoteModelsPayload.self
+        ))
+    }
+
+    @Test("ios-fiche-carte-pipelines/AC-6 : un Mac d'avant la feature (catalogue sans names) reste lisible, names vaut nil")
+    func olderMacModelsPayloadStaysReadable() throws {
+        let json = #"{"selectors":["a/b"],"failure":null}"#
+        let data = Data(json.utf8)
+        #expect(try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: data).names == nil)
+        #expect(try JSONDecoder().decode(OMPConsole.RemoteModelsPayload.self, from: data).names == nil)
+        #expect(try contractSameShape(
+            json,
+            client: ConsoleClient.RemoteModelsPayload.self,
+            host: OMPConsole.RemoteModelsPayload.self
+        ))
     }
 
     @Test("S-1 (AC-1) : une charge d'un Mac d'avant la feature (sans text, tags, truncated) reste lisible des deux côtés")
