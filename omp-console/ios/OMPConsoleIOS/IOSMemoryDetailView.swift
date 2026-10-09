@@ -1,12 +1,13 @@
-// La feuille d'un souvenir (BR-3) : le texte INTÉGRAL rendu par le parseur
-// partagé, la ligne de contexte (date relative puis étiquettes), et les données
-// techniques repliées sous « Détails techniques ».
+// La feuille d'un souvenir (BR-3) : le texte INTÉGRAL affiché tel qu'il est
+// stocké (`Text(verbatim:)`, aucun rendu Markdown), la ligne de contexte (date
+// relative puis étiquettes), et les données techniques repliées sous « Détails
+// techniques ».
 //
-// Lecture seule : aucun bouton d'écriture, aucune copie, aucun lien de graphe. La
-// fermeture est le geste système de la feuille, qui n'a pas besoin d'un bouton.
+// Lecture seule : aucun bouton d'écriture, aucune copie. La fermeture est le geste
+// système de la feuille, qui n'a pas besoin d'un bouton.
 //
 // Les faits affichés sont des fonctions PURES (testables sans rendre la vue) : le
-// titre, la ligne de contexte, la portée et la pertinence.
+// texte, la ligne de contexte, la portée et la pertinence.
 
 import ConsoleClient
 import ConsoleCore
@@ -41,13 +42,11 @@ struct IOSMemoryDetailView: View {
             VStack(alignment: .leading, spacing: 16) {
                 header
                 Divider()
-                if blocks.isEmpty {
-                    Text(verbatim: MemoryText.emptyRow)
-                        .foregroundStyle(.secondary)
-                } else {
-                    IOSMarkdownView(blocks: blocks)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
+                Text(verbatim: Self.text(row))
+                    .font(.body)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(isBlank ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
                 if !links.isEmpty {
                     Divider()
                     linksBlock
@@ -94,12 +93,16 @@ struct IOSMemoryDetailView: View {
 
     // MARK: - Faits PURS (les cinq faits de S-5)
 
-    /// Le titre court du souvenir, replié sur `MemoryText.emptyRow` quand son
-    /// texte est blanc.
-    static func heading(_ row: RemoteMemoryRow) -> String {
-        let title = MemoryText.title(row.text)
-        return title.isEmpty ? MemoryText.emptyRow : title
+    /// Le texte STOCKÉ tel quel, `MemoryText.emptyRow` s'il est blanc.
+    static func text(_ row: RemoteMemoryRow) -> String {
+        isBlank(row.text) ? MemoryText.emptyRow : row.text
     }
+
+    private static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var isBlank: Bool { Self.isBlank(row.text) }
 
     /// La ligne de contexte : date relative puis étiquettes, segments absents omis.
     static func subtitle(_ row: RemoteMemoryRow, nowMs: Double) -> String {
@@ -116,21 +119,10 @@ struct IOSMemoryDetailView: View {
         row.score.map(MemoryText.decimal)
     }
 
-    /// Le texte INTÉGRAL découpé par le parseur partagé ; aucun bloc pour un texte
-    /// blanc (la vue affiche alors `MemoryText.emptyRow`).
-    static func blocks(of row: RemoteMemoryRow) -> [MarkdownBlock] {
-        row.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [] : MarkdownDocument.blocks(row.text)
-    }
-
-    private var blocks: [MarkdownBlock] { Self.blocks(of: row) }
-
     // MARK: - Rendu
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(verbatim: Self.heading(row))
-                .font(.title2)
-                .multilineTextAlignment(.leading)
             TimelineView(.periodic(from: .now, by: 60)) { context in
                 let subtitle = Self.subtitle(row, nowMs: context.date.timeIntervalSince1970 * 1000)
                 if !subtitle.isEmpty {
