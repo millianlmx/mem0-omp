@@ -296,6 +296,13 @@ marqueur `[test: <fonction>]` (une fonction de
   initiale, puis le flux de cette session. `[test: additionsDoNotReload]`
 - Le fil ne colle au bas que tant que l'utilisateur n'a pas remonté, et le
   bouton « Revenir au direct » recolle sans geste. `[test: followPolicy]`
+- Sous l'en-tête : « Chargement de la session… » jusqu'à la fin de la lecture, et
+  pendant une reconstruction, puis le fil, ouvert sur sa FIN, ou l'état vide —
+  jamais une zone muette. `[test: threadShowsLoadingUntilRead]`
+- Une session sans message affiche « Session vide », jamais un chargement sans
+  fin. `[test: emptySessionIsExplicit]`
+- La recette `suivi` fait arriver trois messages : au bas, ils s'affichent sans
+  geste ; remonté, la position ne bouge pas. `[test: followRecipeKeepsFollowPolicy]`
 - L'état du run passe de vivant à terminé sans rouvrir la session, par la
   fonction partagée `ConsoleStatus.of(run:)`. `[test: runStatusTransition]`
 - Le fil est monté hors de la section Sessions depuis une simple source : le
@@ -349,6 +356,8 @@ marqueur `[test: <fonction>]` (une fonction de
 - Le fil est le composant RÉUTILISÉ de la section Sessions
   (`IOSSessionThreadView`), monté sur le fichier servi ; aucun geste d'écriture
   dans le fil. `[test: componentIsReusable]`
+- Le fil se lit et s'abonne dès que l'écran le monte, et s'arrête quand il
+  disparaît. `[test: hostedThreadStartsWhenSynced]`
 - L'arrêt appelle la route une fois et l'état servi passe à `stopped`.
   `[test: stopCallsRouteOnce]`
 - L'écran de section est capturé tel quel, en clair et en Dynamic Type maximum.
