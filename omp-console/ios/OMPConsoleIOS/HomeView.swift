@@ -121,6 +121,7 @@ struct HomeView: View {
 
     // MARK: - États
 
+
     private var macMissingView: some View {
         VStack(spacing: 16) {
             connectionBanner
@@ -276,6 +277,7 @@ struct HomeView: View {
                 HStack(spacing: 10) {
                     Image(systemName: IOSHomeText.natureSymbol(attention.nature))
                         .foregroundStyle(.tint)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(HomeText.natureText(attention.nature))
                             .font(.caption.weight(.semibold))
@@ -466,10 +468,14 @@ struct HomeView: View {
                 IOSStatusChip(status: ConsoleStatus.of(card: card))
                 if let link {
                     if rowAxis == .twoLine { Spacer() }
-                    Button(HomeText.openPR) { openURL(link) }
-                        .buttonStyle(.bordered)
-                        .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                        .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
+                    Button { openURL(link) } label: {
+                        Text(HomeText.openPR)
+                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                    .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
+                    .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
                 }
             }
         }

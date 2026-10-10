@@ -603,6 +603,21 @@ La section **Fichiers** est une visionneuse **strictement en lecture** de l'arbr
 d'une cible git — le dépôt principal ou l'un des worktrees `feat/*` connus, une
 seule cible à la fois.
 
+**Sans projet choisi** (la préférence `session.projectRoot` absente ou vers un
+dossier disparu), la section affiche « Aucun projet ouvert » — « Choisissez le
+projet dont vous voulez parcourir les fichiers. » — et un bouton **Choisir un
+projet…** (`files.chooseProject`). Le même bouton porte l'état vide de
+**Mémoire** et du **Terminal** : quand l'app connaît des projets (les dépôts des
+lots et des projets du magasin, la liste même de `GET /v1/repos`), il ouvre un
+menu d'une entrée par projet — nommée par son dossier, « nom — dossier parent »
+quand deux projets portent le même nom —, puis « Choisir un dossier… » ; quand
+elle n'en connaît aucun, c'est un bouton simple qui ouvre directement le panneau
+de **Session OMP** (« Choisissez le dossier du projet à héberger. »). Le choix
+devient le projet de l'app, exactement comme un choix fait dans Session OMP, et
+remplit l'écran courant sans changer de section. Un panneau annulé, ou un projet
+dont le dossier a disparu entre-temps (il sort alors du menu), laisse l'état vide
+tel quel.
+
 1. **Choisir la cible** — le sélecteur « Cible » de l'en-tête. La cible par défaut
    est celle du projet ouvert (la préférence partagée `session.projectRoot` avec la
    section « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
@@ -1187,13 +1202,16 @@ Le terminal et la section **Session OMP** (session servie par l'API locale) vive
 **en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
 deux sens, et ils peuvent même viser le même répertoire.
 
-États affichés : « Choisissez un répertoire… », « Lecture des worktrees… » (feuille
-ouverte), « Lancement du shell… », « shell vivant (pid <n>) · <cible> », « Le shell
-s'est terminé (code|signal <n>). » avec le bouton **Relancer**, et l'erreur
-explicite en cas d'échec (« Exécutable introuvable : … », « Répertoire
-introuvable : … », « PTY indisponible (<errno>) : aucun process lancé. »). Aucun
-état n'est un
-rectangle vide.
+États affichés : sans projet choisi, « Aucun projet ouvert » — « Choisissez le
+projet dans lequel ouvrir un terminal. » — avec le bouton **Choisir un projet…**
+(`terminal.chooseProject`, voir la section Fichiers) : le projet choisi, la
+feuille « Choisir un répertoire » s'ouvre aussitôt sur ses répertoires. Avec un
+projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Lecture
+des worktrees… » (feuille ouverte), « Lancement du shell… », « shell vivant (pid
+<n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec le bouton
+**Relancer**, et l'erreur explicite en cas d'échec (« Exécutable introuvable :
+… », « Répertoire introuvable : … », « PTY indisponible (<errno>) : aucun process
+lancé. »). Aucun état n'est un rectangle vide.
 
 **Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
 scrollback : la ligne qui sort de l'écran est perdue), pas de sélection ni de copie,
@@ -1752,8 +1770,10 @@ inchangé — il ne lit que `health.ok` —, et la voie manuelle `mem0-stack/` (
 `package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis le premier
 `*.xcodeproj`, puis le nom du répertoire. `_global` n'est jamais envoyé : la liste
 ne montre que la mémoire du projet. Sans portée calculable (aucun projet ouvert,
-`git` en échec), la liste affiche « Aucun projet ouvert » et n'émet aucun appel de
-portée — le GRAPHE, lui, n'en dépend pas : il montre toutes les portées du service.
+`git` en échec), la liste affiche « Aucun projet ouvert » avec le bouton **Choisir
+un projet…** (`memory.chooseProject`, voir la section Fichiers) et n'émet aucun
+appel de portée — le GRAPHE, lui, n'en dépend pas : il montre toutes les portées du
+service.
 
 **La recherche** reproduit `mem0_search` : pool sur-échantillonné
 `min(6 × 4, 50) = 24`, seuil de cosinus brut **0,55**, `explain` vrai, puis
@@ -1800,7 +1820,7 @@ rechargement suivant.
 | État | Rendu |
 |---|---|
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
-| portée incalculable (liste) | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
+| portée incalculable (liste) | « Aucun projet ouvert » — « Choisissez le projet dont vous voulez consulter la mémoire. » + bouton « Choisir un projet… » : menu des projets connus puis « Choisir un dossier… », ou, sans projet connu, le panneau de Session OMP ; le choix recharge la liste sur place |
 | service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
 | adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », le détail `<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>` (sélectionnable) et, **seulement quand le propriétaire est l'ancienne pile**, le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
@@ -2949,11 +2969,15 @@ est un tableau d'objets aux clés exactes `surface` (une des 8 clés ou `*`),
 (`id:…`, `libellé:…` ou `type:…`, strictement égal à la désignation) et
 `justification` (non vide : elle nomme la cause lue dans le code). La première
 entrée qui correspond excepte le signalement. Le fichier est validé avant tout
-relevé. Trois familles sont **protégées**, car elles masqueraient les défauts visés
+relevé. Ces familles sont **protégées**, car elles masqueraient les défauts visés
 par l'audit : `cible-44` sur « Tout afficher », « Lire le contrat » et « Piloter un
 projet… » (`ios.home.allPipelines`, `ios.home.attention.*.contract`,
-`ios.projet.start`) ; `id-duplique` sur `pipelines.card.sheet.title` ; `bord` en
-source `capture` sur `kanban`, `sessions`, `memory` ou `*`.
+`ios.projet.start`), sur « Ouvrir la PR » de l'Accueil (`ios.home.delivered.open.*`),
+« Se connecter » (`ios.connexion.connect`), « Réessayer » de la Mémoire
+(`ios.memoire.retry`) et le menu d'étiquettes du graphe
+(`ios.memoire.graphe.etiquette`) ; `id-duplique` sur `pipelines.card.sheet.title` et
+`ios.memoire.screen` ; `bord` en source `capture` sur `kanban`, `sessions`, `memory`
+ou `*`.
 
 **Intégration.** `--integrer <branche>` (répétable) relève, au lieu du worktree
 courant, une intégration locale jetable : la recette prend `git merge-base HEAD
@@ -2979,6 +3003,14 @@ liste privée de l'entrée du filtre de Sessions sort en 1 et nomme ce signaleme
 (`SIGNALÉ … id:ios.sessions.filter`). Une exception est une dette : elle disparaît
 avec le correctif qui la justifie, et une entrée devenue inutile est signalée
 (`exception inutilisée : <n>`).
+
+État au 2026-10-10 (feature `accessibilite-et-localisation-ios-residu`, simulateur
+privé `recette-ui-tel` jamais appairé, sans `--integrer`) : **22 exceptions**,
+`0 signalé(s), 41 excepté(s)`, sortie 0. Les entrées de « Ouvrir la PR » de l'Accueil
+et de `ios.memoire.screen` ont disparu avec leurs correctifs ; les barres de
+navigation système des sections (`id:Accueil`, `id:Projet`, `id:Session OMP`,
+`id:Sessions`, `id:Statistiques`, comme `id:Pipelines` et `id:Mémoire`) et les deux
+rangées « livrée » de l'Accueil (42,7 pt) restent exceptées.
 
 **Nettoyage** d'un simulateur dédié, dans cet ordre :
 
@@ -3055,6 +3087,54 @@ Sorties dans `omp-console/build/etats-non-connecte-heterogenes-ios/<avant|apres>
 <section> <détail>` par contrôle, puis `bilan : …`), `build.log`. Codes de sortie :
 **0** tout « ok » (les « sauté » motivés sont tolérés) ; **1** au moins un échec, ou
 build, simulateur ou argument en défaut ; **2** non exécuté. Une passe dure ~12 min.
+
+### Recette : accessibilité et langue
+
+`scripts/ios-accessibilite-localisation-recette.sh` prouve à l'exécution, avant et
+après, les neuf critères de la feature `accessibilite-et-localisation-ios-residu`
+(symboles décoratifs muets, identifiants de conteneur non propagés, un identifiant
+par carte, cibles de 44 pt, app française seulement, nom sous l'icône, titre et
+chevrons de la liste racine) :
+
+```bash
+bash scripts/ios-accessibilite-localisation-recette.sh               # arbre de travail
+bash scripts/ios-accessibilite-localisation-recette.sh --avant 032a0df
+```
+
+- **Construction** non signée par `scripts/ios-build.sh --no-tests` (aucun
+  appairage). Avec `--avant <ref>`, dans un worktree détaché temporaire
+  (`omp-console/build/ios-accessibilite-localisation/avant-src`), supprimé à la sortie.
+- **Simulateurs privés** `loc-acces-tel` (iPhone 18 Pro) et `loc-acces-tab` (iPad Pro
+  13-inch (M5)), iOS 27.0, créés par le script et supprimés à la sortie avec leur
+  `idb_companion`, quel que soit le code. Leur nom se range APRÈS « iPhone 18 Pro »
+  et « iPad Pro 13-inch (M5) » : `scripts/ios-build.sh` lance ses tests sur le
+  PREMIER appareil du runtime (rangement par type puis par nom), et un nom en
+  « a… » a vu un `xcodebuild test` d'un autre worktree y installer sa build en cours
+  de recette. Si l'app installée change malgré tout (empreinte de l'exécutable, du
+  `.debug.dylib` et de l'Info.plist), l'étape est rejouée après réinstallation.
+- **Déroulé** : écran d'accueil d'iOS (AC-7) ; en langue par défaut, Accueil de
+  recette, Accueil non appairé, Bienvenue, ardoise Pipelines
+  (`-pipelines.recipe ardoise`, voie « Livrées » dépliée), Projet et graphe de la
+  Mémoire (AC-1 à AC-5) ; liste racine et capture (AC-8, AC-9 : pixels d'une bande à
+  droite de chaque rangée, chevron attendu sur iPhone seulement) ; puis passage des
+  deux appareils en anglais (`AppleLanguages=(en)`, `AppleLocale=en_US`, redémarrage)
+  et AC-6 : bouton de barre latérale (iPad), bouton retour et menu d'édition du champ
+  titre de « Nouvelle feature… » (iPhone).
+- **Sortie** : une ligne `AC-<n> <✓|✗|–> <appareil> <détail>` par mesure, recopiée
+  dans `omp-console/build/ios-accessibilite-localisation/<apres|avant>/rapport.txt`
+  avec un JSON `describe-all` et une capture PNG par mesure. `–` marque une mesure
+  non faite : sur la base, celles qui demandent le crochet `ardoise` ; partout, la
+  fiche « Ouvrir la PR », le lien du plan Projet et les « Réessayer » de la Mémoire,
+  inatteignables sans appairage ni panne (leur forme est gardée par
+  `test/accessibilite-et-localisation-ios-residu.test.ts`).
+- **Codes de sortie** : 0 tout est ✓ ; 1 au moins un ✗ ; 2 rien n'a pu être conclu
+  (outil manquant, Xcode inutilisable, construction impossible, signal absent, arbre
+  instable, menu d'édition introuvable après 3 essais, simulateur non supprimé).
+
+Preuve (2026-10-10) : sur l'arbre de travail, 45 ✓, 0 ✗, sortie 0 ; sur 032a0df,
+sortie 1, avec ✗ pour AC-1 (Accueil, Bienvenue), AC-3 (`ios.memoire.screen` porté
+6 fois), AC-5, AC-6 (« Hide Sidebar », « Back », « Paste »), AC-7, AC-8 et AC-9
+(iPhone).
 
 ### Installer sur un appareil réel
 

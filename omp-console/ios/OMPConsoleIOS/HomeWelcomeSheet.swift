@@ -33,6 +33,7 @@ struct HomeWelcomeSheet: View {
                             Image(systemName: promise.symbol)
                                 .font(.title2)
                                 .foregroundStyle(.tint)
+                                .accessibilityHidden(true)
                                 .frame(width: iconWidth)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(promise.title).font(.headline)
