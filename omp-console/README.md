@@ -47,17 +47,34 @@ Cible minimale : macOS 26.
 
 Tout se fait depuis l'app, sans terminal :
 
-1. **La préparation** — au premier lancement, l'app installe ses composants (OMP
-   18.6.0, podman 6.1.3), migre la base mémoire existante si elle en trouve une,
-   monte sa pile mémoire et sonde oMLX. La feuille « Préparation d'OMP Console »
-   montre une ligne par étape (Composants, Migration de la mémoire, Pile mémoire,
-   Prérequis) avec son état et son détail ; « Fermer » (Échap) n'interrompt RIEN —
-   la préparation continue et l'Accueil garde un bandeau « Reprendre… » ; `↩`
-   déclenche le bouton proéminent. « Réessayer » n'apparaît qu'en cas d'échec,
-   proéminent, avec la cause en toutes lettres (« Pas de réseau : … », « empreinte
-   SHA-256 différente », « Ce Mac n'est pas pris en charge (arm64 requis) », …). En
-   cas de succès, la feuille se ferme d'elle-même. Rien ne dépend d'un `omp`
-   système.
+1. **La préparation** — l'app installe ses composants (OMP 18.6.0, podman 6.1.3),
+   migre la base mémoire existante si elle en trouve une, monte sa pile mémoire et
+   sonde oMLX. La feuille « Préparation d'OMP Console » montre une ligne par étape
+   (Composants, Migration de la mémoire, Pile mémoire, Prérequis) avec son état ;
+   pendant une étape, un bloc pleine largeur sous les lignes nomme l'étape en
+   cours et porte une barre de progression, chiffrée quand la taille du
+   téléchargement est connue, indéterminée sinon.
+   - **OMP absent au lancement** : rien ne se télécharge d'office. La feuille est
+     **bloquante** — aucun « Fermer », Échap sans effet — et ne propose que
+     « Quitter » (⌘Q, à gauche ; il quitte vraiment l'app), « Réessayer » (relit la
+     présence d'OMP sans rien télécharger ; s'il manque toujours, la feuille le
+     dit) et « Installer » (`↩`, proéminent), qui lance toute la préparation. Dès
+     que le binaire d'OMP est placé, la feuille devient fermable, pendant que la
+     pile mémoire se prépare.
+   - **OMP présent** (seul Podman, ou la pile, reste à préparer) : la préparation
+     démarre d'elle-même et la feuille est **fermable** ; « Fermer » (Échap)
+     n'interrompt RIEN — la préparation continue et l'Accueil garde un bandeau
+     « Reprendre… » ; `↩` déclenche le bouton proéminent.
+   - **Échec** : une phrase claire (« Pas de réseau : … », « empreinte SHA-256
+     différente », « Ce Mac n'est pas pris en charge (arm64 requis) », …) ; le
+     détail technique, s'il existe, est replié derrière « Afficher le détail » et,
+     déplié, tient dans une zone de hauteur fixe qui défile. « Réessayer » relance
+     la chaîne. Sur un port tenu par l'ancienne pile mémoire, « Arrêter l'ancienne
+     pile et reprendre » (`↩`) passe devant « Réessayer » ; pendant l'arrêt, les
+     deux restent affichés mais éteints, et « Fermer » (Échap) reste disponible.
+
+   À la fin de toute la préparation, la feuille se ferme d'elle-même. Rien ne
+   dépend d'un `omp` système.
 2. **Bienvenue** — au premier lancement d'une installation neuve (magasin vide ou
    absent), une feuille présente l'app (son icône) en trois promesses ; son seul
    bouton « Continuer » (↩ ou Échap) la ferme. Elle n'est montrée qu'une
@@ -154,8 +171,13 @@ prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
 (boutons `home.attention.<carte>.action` et `home.attention.<carte>.contract`),
 `home.running.<carte>`,
 `home.resume.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
-feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.retry`,
-`sheet.setup.close`) ; feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
+feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.install`,
+`sheet.setup.retry`, `sheet.setup.quit`, `sheet.setup.close`,
+`sheet.setup.ompMissing`, `sheet.setup.retryMissed`, bloc de progression
+`sheet.setup.progress` avec `sheet.setup.progress.label` et
+`sheet.setup.progress.bar`, échec `sheet.setup.failure`,
+`sheet.setup.detail.toggle`, `sheet.setup.detail`) ; feuille Bienvenue
+`welcome.sheet` (`welcome.continue`) ;
 feuille « Répondre » `answer.sheet` (`answer.question`,
 `kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
 **Contrat** `contract.sheet` (corps `contract.sheet.body`, fermeture
@@ -170,8 +192,9 @@ fois, dans l'ordre : Préparation d'OMP Console, Contrat, Bienvenue, Nouvelle fe
 répondre (`MainSheetPolicy`).
 
 Le badge d'état des composants embarqués, au pied de la barre latérale, est
-`components.badge` (mot + point teinté, aucune interaction) ; son état ne dépend
-que de la présence des deux binaires sous la racine de l'app.
+`components.badge` (mot + point teinté) ; son état ne dépend que de la présence
+des deux binaires sous la racine de l'app. Quand un composant manque, c'est un
+bouton (AXButton) qui rouvre la feuille de préparation.
 
 Lancer le bundle depuis un dépôt l'ouvre comme projet ; pour une capture sur un
 magasin de démonstration, sans écrire de préférence :
@@ -933,8 +956,13 @@ et podman (S-1, S-4) :
   l'installateur — le binaire existe, est exécutable et n'est pas un dossier —
   jamais l'état de marche : aucune version n'est exécutée. Deux veilles de
   fichier (`FileWatcher`, jamais de scrutation) le recalculent sans redémarrer
-  l'app, et un changement de permission suffit ; il n'est ni cliquable ni
-  focusable, et replier la barre latérale le masque avec elle.
+  l'app, et un changement de permission suffit. Quand un composant manque, le
+  badge est un bouton (clic, ou Espace au focus ; aide « Afficher la préparation
+  d'OMP Console ») qui rouvre la feuille de préparation — bloquante si OMP
+  manque, fermable si seul Podman manque ; « Tout est installé » reste un mot
+  non interactif. Si OMP disparaît pendant que l'app tourne, seul le badge
+  change : la feuille bloquante s'impose au clic du badge, ou d'elle-même au
+  lancement suivant. Replier la barre latérale masque le badge avec elle.
 - **Manifeste** — versions, URL et empreintes sont figées dans
   `ComponentManifest.current` (`Setup/ComponentManifest.swift`). L'installation
   est idempotente (un composant présent à la bonne version n'est ni retéléchargé
@@ -988,7 +1016,14 @@ et podman (S-1, S-4) :
   `mem0-stack/.env.example` s'appliquent.
 - **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
   (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
-  devient alors le seul candidat (les recettes s'en servent).
+  devient alors le seul candidat (les recettes s'en servent). Sous une racine
+  jetable SEULEMENT, l'argument de lancement `-setup.recipe <valeur>`
+  (`Setup/SetupRecipe.swift`) remplace l'installateur par un script, sans réseau
+  ni pile : `progression` (téléchargement chiffré de 0 à 100 % en 10 s, puis
+  attente), `indeterminee` (téléchargement sans taille, puis attente), `echec`
+  (échec d'installation au détail de 41 lignes), `succes` (téléchargement court,
+  puis pose d'exécutables factices et préparation terminée). Valeur inconnue ou
+  racine réelle : la chaîne réelle, sans message.
 
 ### Geste de secours de la machine podman (AC-2)
 
@@ -1117,9 +1152,10 @@ feuille « OMP est requis » n'existe plus (la préparation la remplace). Le bou
 - **`OMP_CONSOLE_OMP_BINARY`** (échappatoire de test) — posée et non vide, c'est le
   SEUL candidat ; utile aux recettes pour pointer un `omp` de secours ou simuler un
   poste sans composant.
-- Si le composant est absent ou non exécutable, l'Accueil montre sa préparation et
-  « Réessayer » le réinstalle ; `omp models --json` retombe alors sur l'option
-  « défaut OMP (aucun modèle) ».
+- Si le composant est absent ou non exécutable au lancement, la feuille de
+  préparation bloquante s'impose : « Installer » le télécharge, « Réessayer »
+  relit sa présence, « Quitter » quitte l'app ; `omp models --json` retombe
+  alors sur l'option « défaut OMP (aucun modèle) ».
 
 ## Section Terminal (terminal intégré)
 
@@ -1939,8 +1975,9 @@ omp-console/
 │   │   ├── ComponentPresence.swift présence des composants : lecture et veille (badge)
 │   │   ├── ComponentBadge.swift   le badge d'état, au pied de la barre latérale
 │   │   ├── SetupModel.swift       la chaîne composants → migration → pile → oMLX
+│   │   ├── SetupRecipe.swift      crochet de recette `-setup.recipe` (racine jetable)
 │   │   ├── SetupText.swift        tous les textes de la préparation, en un endroit
-│   │   └── SetupView.swift        la feuille : quatre lignes, états, boutons
+│   │   └── SetupView.swift        la feuille : lignes, progression, échec, pied bloquant ou fermable
 │   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-4, S-6, S-7, S-8)
 │   │   ├── PodmanCommand.swift    argv purs et environnement XDG d'une commande podman
 │   │   ├── StackConfig.swift      la config `stack/env` (mêmes clés que mem0-stack)

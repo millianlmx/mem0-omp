@@ -9,6 +9,12 @@
 //
 // Chaque étape est idempotente (composants déjà installés, pile déjà montée) :
 // « Réessayer » relance la chaîne entière, sans nettoyage préalable.
+//
+// L'absence d'OMP n'est PAS un état du modèle : la seule source est
+// `HomeModel.omp`, que le modèle relit par `refreshOmp` (posé par `OMPConsoleApp`)
+// au clic de « Réessayer », au clic du badge, et pendant la chaîne quand
+// l'installateur change d'étape. OMP absent au lancement : aucune préparation
+// d'office (`autoPrepare: false`), la feuille bloquante attend « Installer ».
 
 import Combine
 import Foundation
@@ -96,9 +102,16 @@ final class SetupModel: ObservableObject {
     /// Le dernier état d'oMLX sondé (non bloquant).
     @Published private(set) var omlx: OMLXStatus = .unknown
 
+    /// « Réessayer » a relu la présence d'OMP et ne l'a pas trouvé : la feuille
+    /// bloquante le dit sous son corps.
+    @Published private(set) var retryMissed = false
+
     /// Appelé quand la préparation atteint `.ready` : l'app revérifie la
     /// disponibilité d'OMP (qui vient d'être installé). Posé par `OMPConsoleApp`.
     var onReady: (@MainActor () -> Void)?
+    /// Relit `HomeModel.omp` et rend vrai si OMP est présent. Posé par
+    /// `OMPConsoleApp` ; sans clôture, OMP est réputé présent.
+    var refreshOmp: (@MainActor () -> Bool)?
 
     private let install: @MainActor (_ progress: @escaping @MainActor (ComponentInstallStep) -> Void) async throws -> Void
     private let migrate: @MainActor (_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> Void
@@ -130,12 +143,15 @@ final class SetupModel: ObservableObject {
         }
     }
 
-    /// La chaîne réelle : composants, migration, pile, sonde oMLX.
+    /// La chaîne réelle : composants, migration, pile, sonde oMLX. `autoPrepare`
+    /// vaut `home.canLaunch` : sans OMP au lancement, rien ne se télécharge avant
+    /// « Installer ».
     static func standard(
         paths: AppPaths = .standard(),
         manifest: ComponentManifest = .current,
         buildContext: URL? = StackBuildContext.resolve(),
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        autoPrepare: Bool
     ) -> SetupModel {
         let installer = ComponentInstaller(paths: paths, manifest: manifest, session: session)
         let migration = StackMigration(paths: paths)
@@ -160,7 +176,8 @@ final class SetupModel: ObservableObject {
                     environment: ProcessInfo.processInfo.environment,
                     run: .live
                 )
-            }
+            },
+            autoPrepare: autoPrepare
         )
     }
 
@@ -173,7 +190,20 @@ final class SetupModel: ObservableObject {
 
         state = .preparing(.omp(downloaded: 0, total: 0))
         do {
-            try await install { [weak self] step in self?.state = .preparing(SetupStep(step)) }
+            // OMP est relu à chaque changement d'étape de l'installateur (pas à
+            // chaque rappel d'octets) et à son retour : dès que son binaire est
+            // placé, la feuille bloquante devient fermable.
+            var lastStage: ComponentInstallStage?
+            try await install { [weak self] step in
+                guard let self else { return }
+                self.state = .preparing(SetupStep(step))
+                let stage = ComponentInstallStage(step)
+                if stage != lastStage {
+                    lastStage = stage
+                    _ = self.refreshOmp?()
+                }
+            }
+            _ = refreshOmp?()
             try await migrate { [weak self] step in self?.state = .preparing(SetupStep(step)) }
             try await ensureStack { [weak self] step in self?.state = .preparing(SetupStep(step)) }
             state = .preparing(.prerequisites)
@@ -197,6 +227,49 @@ final class SetupModel: ObservableObject {
         if case .failed = state {
             Task { [weak self] in await self?.prepare() }
         }
+    }
+
+    /// « Installer » (feuille bloquante) : la chaîne complète, téléchargements
+    /// compris. Sans effet si une préparation tourne.
+    func startInstall() {
+        guard !preparing else { return }
+        retryMissed = false
+        dismissed = false
+        Task { [weak self] in await self?.prepare() }
+    }
+
+    /// « Réessayer » : relit la présence d'OMP sans rien télécharger. Absent, la
+    /// feuille reste bloquante et le dit ; présent, la chaîne repart (elle
+    /// installe ce qui manque encore, Podman compris). Sans effet si une
+    /// préparation tourne.
+    func retry() {
+        guard !preparing else { return }
+        if ompPresent() {
+            retryMissed = false
+            dismissed = false
+            Task { [weak self] in await self?.prepare() }
+        } else {
+            retryMissed = true
+            if state == .ready { state = .idle }
+        }
+    }
+
+    /// Le clic du badge des composants : la feuille revient. Pendant une
+    /// préparation, elle montre celle en cours ; sinon OMP est relu — présent, la
+    /// chaîne repart pour installer ce qui manque ; absent, la feuille bloquante
+    /// s'impose par la politique.
+    func reopen() {
+        dismissed = false
+        guard !preparing else { return }
+        if ompPresent() {
+            Task { [weak self] in await self?.prepare() }
+        } else if state == .ready {
+            state = .idle
+        }
+    }
+
+    private func ompPresent() -> Bool {
+        refreshOmp?() ?? true
     }
 
     /// La reprise de l'ancienne pile (S-6), déclenchée par l'utilisateur
@@ -225,5 +298,20 @@ final class SetupModel: ObservableObject {
         // Une erreur inattendue (lancement d'un binaire, typage) est dite dans le
         // vocabulaire de la pile : c'est elle qui tourne à ce moment-là.
         return .stack(.podmanFailed(command: "préparation", detail: error.localizedDescription))
+    }
+}
+
+/// Le cas d'un rappel de l'installateur, sans ses octets : deux rappels d'un même
+/// téléchargement ont le même cas.
+private enum ComponentInstallStage: Equatable {
+    case omp, ompInstall, podman, podmanInstall
+
+    init(_ step: ComponentInstallStep) {
+        switch step {
+        case .omp: self = .omp
+        case .ompInstall: self = .ompInstall
+        case .podman: self = .podman
+        case .podmanInstall: self = .podmanInstall
+        }
     }
 }
