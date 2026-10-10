@@ -90,6 +90,7 @@ struct IOSProjectScreen: View {
         } message: {
             Text(ProjectViewText.closeConfirmMessage)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(ProjectAccessibility.screen)
     }
 
@@ -227,9 +228,14 @@ struct IOSProjectScreen: View {
 
     private var actions: some View {
         HStack(spacing: 12) {
-            Button(ProjectViewText.startConduite, action: startTapped)
-                .disabled(!IOSProjectModel.gesturesEnabled(client.state))
-                .accessibilityIdentifier(ProjectAccessibility.start)
+            Button(action: startTapped) {
+                Text(ProjectViewText.startConduite)
+                    .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!IOSProjectModel.gesturesEnabled(client.state))
+            .accessibilityIdentifier(ProjectAccessibility.start)
             if model.isConduiteLive {
                 Button(ProjectViewText.closeConduite) { showingStop = true }
                     .disabled(!model.canStop)

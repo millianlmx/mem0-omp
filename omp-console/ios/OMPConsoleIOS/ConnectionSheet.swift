@@ -1,10 +1,17 @@
-// La feuille de connexion de l'app iOS (S-11, BR-6) : quatre zones — état,
-// découverte, adresse manuelle, appairage —, chacune rendant TOUS ses états.
+// La feuille de connexion de l'app iOS (S-11 de client-distant-ios, réécrite par
+// mode en S-3 de connexion-ios-feuille-intrusive-et-sans) : ce qu'elle montre
+// dépend du mode résolu par `ConnectionSheetMode` —
+//
+// - lecture du trousseau : l'attente seule ;
+// - non appairé (refusé ou non) : état, découverte, adresse manuelle, code ;
+// - connecté : état, adresse une fois, « Oublier ce Mac » ;
+// - déconnecté : état, adresse une fois, « Réessayer », adresse modifiable dans un
+//   groupe replié, « Oublier ce Mac ».
 //
 // Composants SYSTÈME uniquement (`NavigationStack`, `Form`, `Section`, `Text`,
-// `TextField`, `Button`, `Label`, `ProgressView`) : aucun `Shape`, `Path`,
-// `Canvas`, `ViewModifier`, `ButtonStyle`, `LabelStyle` ni style maison n'entre
-// dans les sources de l'app (garde `coque-ios/AC-8`, S-11).
+// `TextField`, `Button`, `ProgressView`, `DisclosureGroup`, `confirmationDialog`) :
+// aucun composant visuel maison n'entre dans les sources de l'app (garde
+// `client-distant-ios/AC-21`).
 //
 // L'état est porté par du TEXTE, jamais par la seule couleur ; chaque champ porte
 // un libellé visible et un identifiant d'accessibilité de `ConnectionAccessibility`.
@@ -26,10 +33,13 @@ struct ConnectionSheet: View {
     @State private var addressRejected = false
     @State private var code = ""
     @State private var pairMessage: String?
+    /// Le groupe « Modifier l'adresse » : REPLIÉ à chaque ouverture de la feuille.
+    @State private var addressEditExpanded = false
+    @State private var forgetAsked = false
+    @State private var forgetting = false
     @FocusState private var focus: Field?
 
-    /// Les deux champs saisissables, dans l'ordre d'utilité (code si non appairé,
-    /// adresse sinon).
+    /// Les deux champs saisissables.
     private enum Field: Hashable {
         case address
         case code
@@ -38,10 +48,7 @@ struct ConnectionSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                stateSection
-                discoverySection
-                addressSection
-                pairingSection
+                content
             }
             .accessibilityIdentifier(ConnectionAccessibility.sheet)
             .navigationTitle(ConnectionText.title)
@@ -51,30 +58,78 @@ struct ConnectionSheet: View {
                         .accessibilityIdentifier(ConnectionAccessibility.close)
                 }
             }
-            .onAppear { focus = initialFocus }
+            .onAppear {
+                prefill(for: mode)
+                // Seul le mode non appairé focalise le code ; les autres modes ne
+                // touchent JAMAIS au focus, donc aucun clavier (D-3).
+                if mode.initialFocusOnCode { focus = .code }
+            }
+            .onChange(of: mode) { _, newMode in
+                prefill(for: newMode)
+            }
         }
     }
 
-    // MARK: - Zone 1 : état
+    @ViewBuilder
+    private var content: some View {
+        switch mode {
+        case .restoring:
+            restoringSection
+        case .unpaired(let refused, _):
+            stateSection(address: nil, refused: refused, retry: false)
+            discoverySection
+            Section(ConnectionText.addressTitle) { addressFields }
+            pairingSection
+        case .connected(let address):
+            stateSection(address: address, refused: false, retry: false)
+            forgetSection
+        case .disconnected(let address):
+            stateSection(address: address, refused: false, retry: true)
+            addressEditSection
+            forgetSection
+        }
+    }
 
-    private var stateSection: some View {
+    // MARK: - État
+
+    private var restoringSection: some View {
         Section(ConnectionText.stateTitle) {
             HStack(spacing: 8) {
-                Text(ConnectionText.state(model.state))
+                Text(ConnectionText.restoring)
+                    .accessibilityIdentifier(ConnectionAccessibility.state)
+                ProgressView()
+            }
+        }
+    }
+
+    /// La zone d'état : le libellé SANS adresse, puis l'adresse une seule fois.
+    private func stateSection(address: String?, refused: Bool, retry: Bool) -> some View {
+        Section(ConnectionText.stateTitle) {
+            HStack(spacing: 8) {
+                Text(ConnectionText.sheetState(model.state))
                     .accessibilityIdentifier(ConnectionAccessibility.state)
                 if case .connecting = model.state {
                     ProgressView()
                 }
             }
-            if let endpoint = model.state.endpoint {
-                Text(endpoint.display)
+            if let address {
+                Text(address)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(ConnectionAccessibility.endpoint)
+            }
+            if refused {
+                Text(ConnectionText.refusedMessage)
+                    .foregroundStyle(.red)
+                    .accessibilityIdentifier(ConnectionAccessibility.refused)
+            }
+            if retry {
+                Button(ConnectionText.retry) { model.retry() }
+                    .accessibilityIdentifier(ConnectionAccessibility.retry)
             }
         }
     }
 
-    // MARK: - Zone 2 : découverte
+    // MARK: - Découverte (non appairé)
 
     private var discoverySection: some View {
         Section(ConnectionText.discoveryTitle) {
@@ -107,43 +162,68 @@ struct ConnectionSheet: View {
         }
     }
 
-    // MARK: - Zone 3 : adresse manuelle
+    // MARK: - Adresse manuelle
 
-    private var addressSection: some View {
-        Section(ConnectionText.addressTitle) {
-            TextField(ConnectionText.addressField, text: $addressText)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .focused($focus, equals: .address)
-                .onSubmit(saveAddress)
-                .accessibilityIdentifier(ConnectionAccessibility.address)
-                .accessibilityLabel(ConnectionText.addressTitle)
-            if addressRejected {
-                Text(ConnectionText.addressInvalid)
-                    .foregroundStyle(.red)
-                    .accessibilityIdentifier(ConnectionAccessibility.addressError)
-            }
-            Button(ConnectionText.addressSave, action: saveAddress)
-                .accessibilityIdentifier(ConnectionAccessibility.addressSave)
-            if let manual = model.manualAddress {
-                HStack {
-                    Text(manual.text)
-                    Spacer()
-                    Button(ConnectionText.addressClear, role: .destructive) {
-                        model.clearManualAddress()
-                        addressRejected = false
-                    }
-                    .accessibilityIdentifier(ConnectionAccessibility.addressClear)
+    /// Le champ, la validation, l'erreur et l'adresse en vigueur avec « Effacer » :
+    /// une section en mode non appairé, le contenu du groupe replié sinon.
+    @ViewBuilder
+    private var addressFields: some View {
+        TextField(ConnectionText.addressField, text: $addressText)
+            .keyboardType(.URL)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .focused($focus, equals: .address)
+            .onSubmit(saveAddress)
+            .accessibilityIdentifier(ConnectionAccessibility.address)
+            .accessibilityLabel(ConnectionText.addressTitle)
+        if addressRejected {
+            Text(ConnectionText.addressInvalid)
+                .foregroundStyle(.red)
+                .accessibilityIdentifier(ConnectionAccessibility.addressError)
+        }
+        Button(ConnectionText.addressSave, action: saveAddress)
+            .disabled(!ConnectionSheetMode.canSaveAddress(addressText))
+            .accessibilityIdentifier(ConnectionAccessibility.addressSave)
+        if let manual = model.manualAddress {
+            HStack {
+                Text(manual.text)
+                Spacer()
+                // Sans style sans bordure, la rangée entière déclencherait le
+                // bouton : toucher l'adresse l'effacerait (D-5). La cible de 44 pt
+                // est donc portée par l'étiquette elle-même.
+                Button(role: .destructive) {
+                    model.clearManualAddress()
+                    addressRejected = false
+                } label: {
+                    Text(ConnectionText.addressClear)
+                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.borderless)
+                .accessibilityIdentifier(ConnectionAccessibility.addressClear)
             }
         }
     }
 
-    // MARK: - Zone 4 : appairage
+    /// Mode déconnecté : la modification de l'adresse, recours quand l'adresse du
+    /// Mac a changé, reste repliée jusqu'au geste de l'utilisateur. L'identifiant
+    /// est posé sur l'ÉTIQUETTE : posé sur le groupe, il écraserait ceux du
+    /// contenu (champ, « Utiliser cette adresse », « Effacer »).
+    private var addressEditSection: some View {
+        Section(ConnectionText.addressTitle) {
+            DisclosureGroup(isExpanded: $addressEditExpanded) {
+                addressFields
+            } label: {
+                Text(ConnectionText.addressEdit)
+                    .accessibilityIdentifier(ConnectionAccessibility.addressEdit)
+            }
+        }
+    }
+
+    // MARK: - Appairage (non appairé)
 
     private var pairingSection: some View {
-        Section(ConnectionText.codeTitle) {
+        Section {
             TextField(ConnectionText.codeField, text: $code)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
@@ -173,14 +253,52 @@ struct ConnectionSheet: View {
                 Button(ConnectionText.retry) { model.retry() }
                     .accessibilityIdentifier(ConnectionAccessibility.retry)
             }
+        } header: {
+            Text(ConnectionText.codeTitle)
+        } footer: {
+            Text(ConnectionText.codeHelp)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier(ConnectionAccessibility.help)
+        }
+    }
+
+    // MARK: - Oublier ce Mac (appairé)
+
+    private var forgetSection: some View {
+        Section {
+            HStack(spacing: 8) {
+                Button(ConnectionText.forget, role: .destructive) { forgetAsked = true }
+                    .disabled(forgetting)
+                    .accessibilityIdentifier(ConnectionAccessibility.forget)
+                    // Posée SUR le bouton : en largeur régulière (iPad), la
+                    // confirmation est une bulle ancrée à lui (D-1).
+                    .confirmationDialog(
+                        ConnectionText.forgetTitle,
+                        isPresented: $forgetAsked,
+                        titleVisibility: .visible
+                    ) {
+                        Button(ConnectionText.forget, role: .destructive) {
+                            Task { await forget() }
+                        }
+                        .accessibilityIdentifier(ConnectionAccessibility.forgetConfirm)
+                        Button(ConnectionText.forgetCancel, role: .cancel) {}
+                    } message: {
+                        Text(ConnectionText.forgetMessage)
+                    }
+                if forgetting {
+                    ProgressView()
+                }
+            }
         }
     }
 
     // MARK: - Actions
 
-    /// Valide par la touche de retour du champ d'adresse. Un refus ne change RIEN :
+    /// Valide par la touche de retour du champ d'adresse ou par « Utiliser cette
+    /// adresse ». Un champ vide ou blanc ne fait rien ; un refus ne change RIEN :
     /// l'adresse précédente reste en vigueur, le message s'affiche sous le champ.
     private func saveAddress() {
+        guard ConnectionSheetMode.canSaveAddress(addressText) else { return }
         switch model.setManualAddress(addressText) {
         case .success:
             addressRejected = false
@@ -202,6 +320,16 @@ struct ConnectionSheet: View {
         }
     }
 
+    /// La révocation est tentée au mieux par le modèle, l'oubli local se fait
+    /// toujours ; la feuille reste ouverte et passe au mode non appairé.
+    private func forget() async {
+        forgetting = true
+        await model.forget()
+        forgetting = false
+        code = ""
+        pairMessage = nil
+    }
+
     private func openLocalNetworkSettings() {
         if let url = URL(string: UIApplication.openSettingsURLString) {
             openURL(url)
@@ -210,11 +338,20 @@ struct ConnectionSheet: View {
 
     // MARK: - Dérivations
 
-    /// Le premier champ utile : le code quand l'app n'est pas appairée, sinon
-    /// l'adresse.
-    private var initialFocus: Field? {
-        if case .unpaired = model.state { return .code }
-        return .address
+    private var mode: ConnectionSheetMode {
+        ConnectionSheetMode.resolve(
+            pairing: model.pairing,
+            state: model.state,
+            effectiveEndpoint: model.effectiveEndpoint,
+            manualAddress: model.manualAddress
+        )
+    }
+
+    /// Le champ d'adresse VIDE reçoit l'adresse connue quand le Mac a refusé le
+    /// jeton : il suffit alors de saisir un nouveau code.
+    private func prefill(for mode: ConnectionSheetMode) {
+        guard case .unpaired(refused: true, let prefill?) = mode, addressText.isEmpty else { return }
+        addressText = prefill
     }
 
     /// « Appairer » n'est actif qu'avec huit caractères ET un endpoint connu.
@@ -222,12 +359,15 @@ struct ConnectionSheet: View {
         code.count == 8 && knownEndpoint
     }
 
+    /// Un endpoint est connu par l'état, la découverte, l'adresse manuelle ou
+    /// l'endpoint dont le Mac a refusé le jeton (l'appairage y retourne).
     private var knownEndpoint: Bool {
-        model.state.endpoint != nil || model.discovered != nil || model.manualAddress != nil
+        if case .refused(.some) = model.pairing { return true }
+        return model.state.endpoint != nil || model.discovered != nil || model.manualAddress != nil
     }
 
-    /// Le seul état qui justifie « Réessayer » : le verrou de version, un Mac
-    /// absent, ou un appairage que le transport n'a pas confirmé.
+    /// Le seul état qui justifie « Réessayer » en mode non appairé : le verrou de
+    /// version, un Mac absent, ou un appairage que le transport n'a pas confirmé.
     private var canRetry: Bool {
         if case .macAbsent = model.state { return true }
         if case .incompatibleProtocol = model.state { return true }

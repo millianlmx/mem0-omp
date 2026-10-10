@@ -26,7 +26,8 @@ private func parityBoard() -> KanbanBoardState {
         snapshot: HomeParity.snapshot,
         nowMs: parityNowMs,
         stateDir: "",
-        isAlive: .transported(HomeParity.snapshot)
+        isAlive: .transported(HomeParity.snapshot),
+        prFacts: [:]
     )
 }
 

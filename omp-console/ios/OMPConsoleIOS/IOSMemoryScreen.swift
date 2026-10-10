@@ -29,6 +29,9 @@ struct IOSMemoryScreen: View {
     /// La marge verticale d'une rangée, mise à l'échelle comme le corps de
     /// texte : aucun texte ne touche le filet voisin (rangees-sessions-memoire-serrees, S-4).
     @ScaledMetric(relativeTo: .body) private var rowPadding: CGFloat = IOSMetrics.rowVerticalPadding
+    /// La raison montrée dans la bulle de « Sommaire » : figée au toucher, tant que
+    /// la bulle est ouverte.
+    @State private var summaryReason: String?
 
     init(client: ConsoleClientModel, recipe: IOSScreenState, graphRecipe: IOSMemoryGraphRecipe? = nil) {
         self.client = client
@@ -54,15 +57,7 @@ struct IOSMemoryScreen: View {
                     .disabled(graph.shown ? graph.state == .loading : !model.canRefresh)
                     .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
                 }
-                if !graph.shown {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { model.showSummary() } label: {
-                            Label(MemoryText.summaryButton, systemImage: "list.bullet")
-                        }
-                        .disabled(!model.canShowSummary)
-                        .accessibilityIdentifier(IOSMemoryAccessibility.summary)
-                    }
-                }
+                ToolbarItem(placement: .topBarTrailing) { summaryButton }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         if graph.shown {
@@ -72,7 +67,7 @@ struct IOSMemoryScreen: View {
                         }
                     } label: {
                         if graph.shown {
-                            Label(MemoryText.listButton, systemImage: "list.bullet")
+                            Label(MemoryText.listButton, systemImage: IOSMemoryText.listSymbol)
                         } else {
                             Label(MemoryText.graphButton, systemImage: "point.3.connected.trianglepath.dotted")
                         }
@@ -87,6 +82,34 @@ struct IOSMemoryScreen: View {
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
+    }
+
+    /// « Sommaire » est TOUJOURS là. Indisponible, il est grisé et un toucher en
+    /// dit la raison dans une bulle — il n'appelle pas `showSummary()`. Le grisé passe
+    /// par `.tint` : la barre d'outils ignore `.foregroundStyle` et `.opacity` (mesuré).
+    private var summaryButton: some View {
+        let reason = model.summaryUnavailableReason(graphShown: graph.shown)
+        return Button {
+            if let reason {
+                summaryReason = reason
+            } else {
+                model.showSummary()
+            }
+        } label: {
+            Label(MemoryText.summaryButton, systemImage: IOSMemoryText.summarySymbol)
+        }
+        .tint(reason == nil ? nil : Color(uiColor: .tertiaryLabel))
+        .accessibilityValue(reason == nil ? "" : IOSMemoryText.summaryUnavailable)
+        .accessibilityHint(reason ?? "")
+        .popover(isPresented: Binding(get: { summaryReason != nil }, set: { if !$0 { summaryReason = nil } })) {
+            Text(summaryReason ?? "")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding()
+                .presentationCompactAdaptation(.popover)
+                .accessibilityIdentifier(IOSMemoryAccessibility.summaryReason)
+        }
+        .accessibilityIdentifier(IOSMemoryAccessibility.summary)
     }
 
     /// Le crochet de recette force le mode graphe sur la fixture partagée, sans
@@ -181,29 +204,30 @@ struct IOSMemoryScreen: View {
             Text(verbatim: MemoryText.loading)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-        case .macUnreachable:
-            banner(IOSMemoryText.macUnreachable, tone: .attention)
+        case .failed(.macUnreachable):
+            banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
             card(IOSMemoryText.noData)
+            retryButton
+        case .failed(.macTimedOut):
+            banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
+            card(IOSMemoryText.noData)
+            retryButton
+        case .failed(.macOutdated):
+            banner(IOSMacErrorText.message(for: .macOutdated), tone: .attention)
             retryButton
         case .noProject:
             card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
-        case .unavailable(let detail):
-            banner(IOSMemoryText.unavailable(detail: detail), tone: .danger)
+        case .failed(let cause):
+            banner(IOSMacErrorText.message(for: cause), tone: .danger)
             retryButton
         case .summaryEmpty(let scope):
             card(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))
-        case .summary(_, let total, let rows, let truncated):
+        case .summary(_, let total, let rows, let more):
             header(MemoryText.summaryCount(total), identifier: IOSMemoryAccessibility.count)
-            if truncated {
-                Text(verbatim: IOSMemoryText.truncated(shown: rows.count, total: total))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier(IOSMemoryAccessibility.truncated)
-            }
-            rowsList(rows)
+            rowsList(rows, more: more)
         case .search(let query, let rows):
             header(MemoryText.searchResults(query), identifier: IOSMemoryAccessibility.results)
-            rowsList(rows)
+            rowsList(rows, more: nil)
         case .searchEmptyNoMatch:
             card(MemoryText.noResultTitle, detail: MemoryText.noMatch)
         case .searchEmptyNoScore:
@@ -248,6 +272,8 @@ struct IOSMemoryScreen: View {
     private var retryButton: some View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                .frame(minHeight: IOSMetrics.minimumTarget)
+                .contentShape(Rectangle())
         }
         .disabled(!model.canRefresh)
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
@@ -255,8 +281,10 @@ struct IOSMemoryScreen: View {
 
     /// La liste des souvenirs, dans l'ORDRE reçu (aucun tri local) : la ligne de
     /// contexte est rafraîchie à la minute par `TimelineView`, SANS relire la
-    /// mémoire.
-    private func rowsList(_ rows: [RemoteMemoryRow]) -> some View {
+    /// mémoire. Le pied de la page suivante est le DERNIER élément du
+    /// `LazyVStack` : il n'est créé qu'à l'approche du bas, et change d'identité
+    /// à chaque page pour que son apparition relise la suivante.
+    private func rowsList(_ rows: [RemoteMemoryRow], more: IOSMemoryMore?) -> some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let nowMs = context.date.timeIntervalSince1970 * 1000
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -271,9 +299,69 @@ struct IOSMemoryScreen: View {
                     .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                     .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
                 }
+                if let more {
+                    moreFooter(more)
+                        .id(rows.count)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Le pied de liste selon l'état de la page suivante (S-4) : seule la vue
+    /// `.available` lit à son apparition ; hors `.connected`, elle laisse parler
+    /// l'état du client au lieu d'un chargement qui n'aurait pas lieu, et la
+    /// reconnexion la remonte (donc relit) ; un échec garde les lignes et offre
+    /// Réessayer ; une liste complète n'a aucun pied.
+    @ViewBuilder
+    private func moreFooter(_ more: IOSMemoryMore) -> some View {
+        switch more {
+        case .complete:
+            EmptyView()
+        case .available:
+            if IOSMemoryModel.gesturesEnabled(client.state) {
+                moreProgress
+                    .onAppear { Task { await model.loadMore() } }
+            } else {
+                Text(verbatim: ConnectionText.state(client.state))
+                    .font(.callout)
+                    .iosBanner(tone: .attention)
+                    .padding(.top, 12)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.more)
+            }
+        case .loading:
+            moreProgress
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(verbatim: message)
+                    .font(.callout)
+                    .iosBanner(tone: .attention)
+                Button { Task { await model.loadMore() } } label: {
+                    Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                }
+                .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                .accessibilityIdentifier(IOSMemoryAccessibility.moreRetry)
+            }
+            .padding(.top, 12)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(IOSMemoryAccessibility.more)
+        }
+    }
+
+    /// Le retour visuel de la lecture de la page suivante : un seul élément
+    /// accessible, dont le libellé est le texte affiché.
+    private var moreProgress: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text(verbatim: IOSMemoryText.loadingMore)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: IOSMemoryText.loadingMore))
+        .accessibilityIdentifier(IOSMemoryAccessibility.more)
     }
 
     private func rowLabel(_ row: RemoteMemoryRow, nowMs: Double) -> some View {

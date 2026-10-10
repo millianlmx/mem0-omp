@@ -48,7 +48,10 @@ struct IOSSectionContentTests {
         for section in IOSSection.all {
             let content = IOSSectionContent.of(section, state: .ready)
             #expect(content?.title == section.title, "\(section.rawValue)")
-            #expect(content?.systemImage == section.systemImage, "\(section.rawValue)")
+            #expect(content?.systemImage == IOSSection.systemImage(of: section), "\(section.rawValue)")
+            if section != .sessions {
+                #expect(content?.systemImage == section.systemImage, "\(section.rawValue)")
+            }
         }
     }
 

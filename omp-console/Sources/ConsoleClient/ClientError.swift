@@ -1,5 +1,5 @@
-// Les erreurs du client : une cause de transport (indistinguable, donc à deux
-// cas seulement), une erreur du contrat d'API (le code stable partagé), une
+// Les erreurs du client : une cause de transport (injoignable, délai dépassé,
+// connexion fermée), une erreur du contrat d'API (le code stable partagé), une
 // erreur de décodage, et les verrous locaux.
 
 import ConsoleCore
@@ -7,15 +7,19 @@ import Foundation
 
 /// L'échec d'un échange HTTP tel que le client peut l'observer et le distinguer.
 public enum ClientTransportFailure: Error, Equatable, Sendable {
-    /// Connexion refusée, hôte muet, délai dépassé : une seule cause honnête.
+    /// Connexion refusée, hôte introuvable, réseau coupé : le Mac est injoignable.
     case unreachable(String)
+    /// Le délai de la requête a expiré (`URLError.timedOut`, -1001) : le Mac a
+    /// été joint, ou l'est peut-être, mais n'a pas répondu à temps. Hors de la
+    /// Mémoire, les surfaces le traitent exactement comme `.unreachable`.
+    case timedOut(String)
     /// Connexion fermée par l'autre bout.
     case closed(String)
 
     /// Le message lisible, jamais une cause inventée.
     public var reason: String {
         switch self {
-        case .unreachable(let reason), .closed(let reason): return reason
+        case .unreachable(let reason), .timedOut(let reason), .closed(let reason): return reason
         }
     }
 }
@@ -32,6 +36,9 @@ public enum ClientError: Error, Equatable, Sendable {
     case api(ConsoleAPIError)
     /// Corps de réponse illisible, ou plus gros que la borne servie.
     case decoding(String)
+    /// Le Mac a répondu sans enveloppe d'erreur lisible, ou avec un code inconnu sur un
+    /// statut que la table ne range pas : seul le statut HTTP est fiable.
+    case unexpectedStatus(Int)
 }
 
 /// L'échec d'un appairage : quatre causes, jamais un demi-appairage.

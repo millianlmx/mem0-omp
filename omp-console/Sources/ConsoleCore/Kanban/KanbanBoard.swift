@@ -97,10 +97,20 @@ extension KanbanBoard {
     /// Construit l'ardoise depuis un instantané du magasin.
     ///
     /// FONCTION PURE : aucune E/S, aucun accès horloge implicite. `nowMs` est
-    /// l'instant de la lecture, passé explicitement ; la durée AFFICHÉE, elle, se
-    /// recalcule depuis l'instant de rendu (`KanbanCard.elapsedText(nowMs:)`), donc
-    /// une carte ouverte avance sans que le magasin change (S-7).
-    public static func build(snapshot: StoreSnapshot, nowMs: Double, isAlive: PipelineLiveness) -> KanbanBoard {
+    /// l'instant de la lecture, passé explicitement : il borne les livraisons
+    /// closes (`deliveredWindowMs`). La durée AFFICHÉE, elle, se recalcule depuis
+    /// l'instant de rendu (`KanbanCard.elapsedText(nowMs:)`), donc une carte
+    /// ouverte avance sans que le magasin change (S-7).
+    ///
+    /// `prFacts` : l'état GitHub des PR, indexé par URL exacte
+    /// (`PullRequestFacts.index`). Une URL sans fait est une PR à l'état INCONNU,
+    /// rangée « PR créée » — jamais « PR ouverte » par défaut.
+    public static func build(
+        snapshot: StoreSnapshot,
+        nowMs: Double,
+        isAlive: PipelineLiveness,
+        prFacts: [String: PullRequestFact]
+    ) -> KanbanBoard {
         let dedup = KanbanDedup.apply(snapshot: snapshot)
 
         // Appariement feature de projet ↔ feature de lot (S-2) : même dépôt RÉEL et
@@ -123,6 +133,9 @@ extension KanbanBoard {
         var drafts: [CardDraft] = []
         var absorbedRuns = Set<String>()
         var pairedProjects = Set<String>()
+        // Le worktree RÉEL de chaque feature de lot (tous états) → l'indice de sa
+        // carte : c'est là que se rattachent ses clôtures de `history/` (bloc 4).
+        var featureDraftByWorktree: [String: Int] = [:]
 
         // (1) Les cartes de feature de lot, lots triés par `repoRoot` puis `id`,
         // features dans l'ordre du fichier. Une carte fusionnée projet + lot prend
@@ -141,7 +154,10 @@ extension KanbanBoard {
                         run = candidate
                         absorbedRuns.insert(candidate.id)
                     }
+                    if featureDraftByWorktree[worktree] == nil { featureDraftByWorktree[worktree] = drafts.count }
                 }
+                let prUrl = firstNonEmpty(pair?.feature.prUrl, feature.prUrl)
+                let fact = prUrl.flatMap { prFacts[$0] }
                 var sources: [KanbanSource] = []
                 if let pair {
                     sources.append(KanbanSource(
@@ -160,7 +176,8 @@ extension KanbanBoard {
                     card: KanbanCard(
                         id: "feature:\(repoKey):\(feature.slug)",
                         column: rankColumn(
-                            lot: lot, feature: feature, project: pair?.feature, run: run, history: nil
+                            lot: lot, feature: feature, project: pair?.feature, run: run, history: nil,
+                            prUrl: prUrl, fact: fact
                         ),
                         repo: basename(repoReal),
                         title: feature.slug,
@@ -170,7 +187,7 @@ extension KanbanBoard {
                         // Les modèles RÉSOLUS et la PR du projet priment (le plan
                         // fait autorité) ; à défaut, ceux de la feature du lot.
                         models: pair.flatMap { modelSlots(of: $0.feature) } ?? modelSlots(of: feature),
-                        prUrl: firstNonEmpty(pair?.feature.prUrl, feature.prUrl),
+                        prUrl: prUrl,
                         // Une entrée publiée ne fait jamais reculer l'horloge : la
                         // durée part de l'instant le PLUS ANCIEN des deux.
                         startMs: run.map { min(feature.sinceAt, $0.phaseStartedAt) } ?? feature.sinceAt,
@@ -192,6 +209,8 @@ extension KanbanBoard {
                     lot: lot,
                     lotRepoKey: repoKey,
                     project: pair?.project,
+                    projectFeature: pair?.feature,
+                    fact: fact,
                     doublon: isDoublon(
                         dedup, repoReal: repoReal, slug: feature.slug,
                         run: run, lot: lot, project: pair?.project, history: nil
@@ -207,16 +226,21 @@ extension KanbanBoard {
             let repoReal = realpathOr(project.repoRoot)
             for feature in projectFeatures(project) {
                 if pairedProjects.contains(featureKey(repoReal, feature.slug)) { continue }
+                let prUrl = firstNonEmpty(feature.prUrl)
+                let fact = prUrl.flatMap { prFacts[$0] }
                 drafts.append(CardDraft(
                     card: KanbanCard(
                         id: "project:\(project.repoKey):\(feature.slug)",
-                        column: rankColumn(lot: nil, feature: nil, project: feature, run: nil, history: nil),
+                        column: rankColumn(
+                            lot: nil, feature: nil, project: feature, run: nil, history: nil,
+                            prUrl: prUrl, fact: fact
+                        ),
                         repo: basename(repoReal),
                         title: feature.slug,
                         state: projectStateLabel(feature.status),
                         phase: nil,
                         models: modelSlots(of: feature),
-                        prUrl: firstNonEmpty(feature.prUrl),
+                        prUrl: prUrl,
                         startMs: feature.updatedAt,
                         endMs: nil,
                         marks: [],
@@ -237,6 +261,8 @@ extension KanbanBoard {
                     lot: nil,
                     lotRepoKey: nil,
                     project: project,
+                    projectFeature: feature,
+                    fact: fact,
                     doublon: isDoublon(
                         dedup, repoReal: repoReal, slug: feature.slug,
                         run: nil, lot: nil, project: project, history: nil
@@ -250,7 +276,9 @@ extension KanbanBoard {
             drafts.append(CardDraft(
                 card: KanbanCard(
                     id: "run:\(entry.id)",
-                    column: rankColumn(lot: nil, feature: nil, project: nil, run: entry, history: nil),
+                    column: rankColumn(
+                        lot: nil, feature: nil, project: nil, run: entry, history: nil, prUrl: nil, fact: nil
+                    ),
                     repo: repoFromLabel(entry.label),
                     title: entry.label,
                     state: liveStateLabel(entry),
@@ -280,13 +308,42 @@ extension KanbanBoard {
             ))
         }
 
-        // (4) Les entrées d'historique, dans l'ordre de lecture du store — jamais
-        // absorbées : une clôture est une entité à part entière.
+        // (4) Les clôtures de `history/` (après D2), rattachées par worktree RÉEL :
+        // omp-mem0-req en écrit une par MAILLON, donc une feature en accumule
+        // plusieurs. Une clôture dont le `cwd` est le worktree d'une feature de lot
+        // (tous états) ne fait AUCUNE carte : elle devient une source de la carte
+        // de cette feature. Les autres sont groupées par `cwd` réel, et chaque
+        // groupe fait UNE carte, celle de la clôture la plus récente ; les autres
+        // clôtures du groupe en deviennent des sources. Les groupes suivent l'ordre
+        // de lecture du store (première clôture lue).
+        var absorbedHistory: [Int: [HistoryEntry]] = [:]
+        var groupOrder: [String] = []
+        var groups: [String: [HistoryEntry]] = [:]
         for entry in dedup.history {
+            let key = realpathOr(entry.cwd)
+            if let index = featureDraftByWorktree[key] {
+                absorbedHistory[index, default: []].append(entry)
+                continue
+            }
+            if groups[key] == nil { groupOrder.append(key) }
+            groups[key, default: []].append(entry)
+        }
+        for (index, entries) in absorbedHistory {
+            for entry in entries.sorted(by: historyRecency) {
+                drafts[index].card.sources.append(historySource(entry))
+                if dedup.doublonHistoryIDs.contains(entry.id) { drafts[index].doublon = true }
+            }
+        }
+        for key in groupOrder {
+            let entries = (groups[key] ?? []).sorted(by: historyRecency)
+            guard let entry = entries.first else { continue }
+            let others = entries.dropFirst()
             drafts.append(CardDraft(
                 card: KanbanCard(
                     id: "history:\(entry.id)",
-                    column: rankColumn(lot: nil, feature: nil, project: nil, run: nil, history: entry),
+                    column: rankColumn(
+                        lot: nil, feature: nil, project: nil, run: nil, history: entry, prUrl: nil, fact: nil
+                    ),
                     repo: repoFromLabel(entry.label),
                     title: entry.label,
                     state: entry.finalState == .done ? "terminée" : "échouée",
@@ -296,7 +353,7 @@ extension KanbanBoard {
                     startMs: entry.phaseStartedAt,
                     endMs: entry.endedAt,
                     marks: [],
-                    sources: [KanbanSource(kind: .history, ref: "history/\(entry.id).json")]
+                    sources: entries.map(historySource)
                 ),
                 run: nil,
                 lot: nil,
@@ -305,7 +362,7 @@ extension KanbanBoard {
                 doublon: isDoublon(
                     dedup, repoReal: "", slug: nil,
                     run: nil, lot: nil, project: nil, history: entry
-                )
+                ) || others.contains { dedup.doublonHistoryIDs.contains($0.id) }
             ))
         }
 
@@ -342,8 +399,16 @@ extension KanbanBoard {
         anomalies += KanbanAnomalies.mortLines(running: dedup.running, lots: dedup.lots, isAlive: isAlive)
         anomalies += dedup.anomalies
 
-        return KanbanBoard(cards: drafts.map(\.card), anomalies: anomalies)
+        // La borne des livraisons CLOSES : une carte « Livrées » fusionnée, fermée
+        // ou sans PR, close depuis plus de `deliveredWindowMs`, quitte l'ardoise.
+        // « PR ouverte » et « PR créée » restent quel que soit leur âge.
+        let cards = drafts.filter { !isExpiredDelivery($0, nowMs: nowMs) }.map(\.card)
+        return KanbanBoard(cards: cards, anomalies: anomalies)
     }
+
+    /// La fenêtre de « Livrées récemment » : 7 × 24 h. Une livraison CLOSE
+    /// (fusionnée, fermée, sans PR) plus ancienne quitte l'ardoise.
+    public static let deliveredWindowMs: Double = 604_800_000
 }
 
 extension KanbanBoardState {
@@ -355,10 +420,11 @@ extension KanbanBoardState {
         snapshot: StoreSnapshot,
         nowMs: Double,
         stateDir: String,
-        isAlive: PipelineLiveness
+        isAlive: PipelineLiveness,
+        prFacts: [String: PullRequestFact]
     ) -> KanbanBoardState {
         guard snapshot.root == .present else { return .storeAbsent(dir: stateDir) }
-        let board = KanbanBoard.build(snapshot: snapshot, nowMs: nowMs, isAlive: isAlive)
+        let board = KanbanBoard.build(snapshot: snapshot, nowMs: nowMs, isAlive: isAlive, prFacts: prFacts)
         guard board.cards.isEmpty && board.anomalies.isEmpty else { return .board(board) }
         return .storeEmpty(dir: stateDir)
     }
@@ -368,21 +434,28 @@ extension KanbanBoardState {
 
 /// Le rangement d'une carte : le PREMIER cas vrai, dans l'ordre de S-1. La fonction
 /// est TOTALE — une carte a toujours une source, donc toujours une colonne.
+///
+/// Une carte livrée AVEC PR (feature de lot `done` + `prUrl`, feature de projet
+/// `pr`/`merged`) se range selon le FAIT GitHub, qui prime toujours sur le statut
+/// du magasin ; sans fait, l'état est inconnu : « PR créée », sauf une feature de
+/// projet que le magasin dit déjà `merged`.
 private func rankColumn(
     lot: Lot?,
     feature: LotFeature?,
     project: ProjectFeature?,
     run: RunningEntry?,
-    history: HistoryEntry?
+    history: HistoryEntry?,
+    prUrl: String?,
+    fact: PullRequestFact?
 ) -> KanbanColumn {
     // 1 à 4 : les statuts de la FEATURE de projet priment (un projet `merged` dont
     // la feature de lot a échoué va en « fusionné »).
     if let project {
         switch project.status {
-        case .merged: return .fusionne
+        case .merged: return deliveredColumn(fact, unknown: .fusionne)
         case .removed: return .annuleeRetiree
         case .failed: return .echec
-        case .pr: return .prOuverte
+        case .pr: return deliveredColumn(fact, unknown: .prCreee)
         case .planned, .launched: break
         }
     }
@@ -403,7 +476,7 @@ private func rankColumn(
         case .blocked: return .bloquee
         case .cancelled: return .annuleeRetiree
         case .failed: return .echec
-        case .done: return firstNonEmpty(feature.prUrl) != nil ? .prOuverte : .termineeSansPr
+        case .done: return prUrl != nil ? deliveredColumn(fact, unknown: .prCreee) : .termineeSansPr
         case .pending, .running, .waiting: break
         }
     }
@@ -420,6 +493,53 @@ private func rankColumn(
     return .enCours
 }
 
+/// La colonne d'une carte livrée avec PR : celle du fait GitHub, `unknown` sans
+/// fait.
+private func deliveredColumn(_ fact: PullRequestFact?, unknown: KanbanColumn) -> KanbanColumn {
+    switch fact?.state {
+    case .open: return .prOuverte
+    case .merged: return .fusionne
+    case .closed: return .prFermee
+    case nil: return unknown
+    }
+}
+
+// --- borne des livraisons closes ---------------------------------------------
+
+/// Une carte RETIRÉE de l'ardoise : voie « Livrées », colonne close (fusionnée,
+/// fermée, sans PR) et date de référence plus ancienne que `deliveredWindowMs`
+/// (strictement). Référence, dans cet ordre : la clôture GitHub datée, la fin de
+/// pipeline (`endMs`), la date de la feature de projet ; sans référence, la carte
+/// reste. Une référence future (horloge décalée) donne un âge négatif : gardée.
+private func isExpiredDelivery(_ draft: CardDraft, nowMs: Double) -> Bool {
+    let card = draft.card
+    guard KanbanLane.of(card) == .livrees else { return false }
+    switch card.column {
+    case .fusionne, .prFermee, .termineeSansPr: break
+    default: return false
+    }
+    let closedAt: Double? = switch draft.fact?.state {
+    case .merged, .closed: draft.fact?.closedAtMs
+    case .open, nil: nil
+    }
+    let projectAt = draft.projectFeature.map(\.updatedAt).flatMap { $0 > 0 ? $0 : nil }
+    guard let reference = closedAt ?? card.endMs ?? projectAt else { return false }
+    return nowMs - reference > KanbanBoard.deliveredWindowMs
+}
+
+// --- clôtures de `history/` --------------------------------------------------
+
+/// La source citable d'une clôture.
+private func historySource(_ entry: HistoryEntry) -> KanbanSource {
+    KanbanSource(kind: .history, ref: "history/\(entry.id).json")
+}
+
+/// L'ordre des clôtures d'une même feature : la plus récente d'abord, à égalité
+/// le plus petit `id`.
+private func historyRecency(_ left: HistoryEntry, _ right: HistoryEntry) -> Bool {
+    left.endedAt != right.endedAt ? left.endedAt > right.endedAt : left.id < right.id
+}
+
 // --- brouillon de carte ------------------------------------------------------
 
 /// Une carte en cours de construction, avec le CONTEXTE qui a servi à la bâtir :
@@ -432,6 +552,11 @@ private struct CardDraft {
     var lot: Lot?
     var lotRepoKey: String?
     var project: Project?
+    /// La feature de projet de la carte (appariée ou seule) : sa date sert de
+    /// dernière référence à la borne des livraisons closes.
+    var projectFeature: ProjectFeature? = nil
+    /// Le fait GitHub de la PR de la carte, quand il est connu.
+    var fact: PullRequestFact? = nil
     var doublon: Bool
 
     /// Le conducteur de la carte : le run apparié (ou la carte de run elle-même),

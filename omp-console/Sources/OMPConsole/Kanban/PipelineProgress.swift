@@ -19,8 +19,8 @@ struct PipelineStep: Equatable {
 enum PipelineProgress {
     /// Les cinq étapes (`KanbanText.progressSteps`) d'une carte. L'étape courante
     /// vient du jalon attendu, sinon du maillon ; l'issue de la carte (fusionnée,
-    /// PR ouverte, terminée, annulée, en échec) décide du reste. Les règles
-    /// s'appliquent dans cet ordre.
+    /// PR ouverte ou créée, PR fermée ou terminée, annulée, en échec) décide du
+    /// reste. Les règles s'appliquent dans cet ordre.
     static func steps(for card: KanbanCard) -> [PipelineStep] {
         let titles = KanbanText.progressSteps
         func all(_ state: (Int) -> PipelineStepState) -> [PipelineStep] {
@@ -29,9 +29,9 @@ enum PipelineProgress {
         switch card.column {
         case .fusionne:
             return all { _ in .done }
-        case .prOuverte:
+        case .prOuverte, .prCreee:
             return all { $0 < 4 ? .done : .current }
-        case .termineeSansPr:
+        case .termineeSansPr, .prFermee:
             return all { $0 < 4 ? .done : .upcoming }
         default:
             break

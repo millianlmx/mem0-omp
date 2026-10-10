@@ -38,13 +38,17 @@ final class AlertsModel: ObservableObject {
     private let isWindowFrontmost: @MainActor () -> Bool
     private let nowMs: @Sendable () -> Double
     private var activationObserver: NSObjectProtocol?
+    /// Le superviseur d'ownership (S-5) : optionnel, une seule surface le démarre.
+    private let ownership: StackOwnershipModel?
+    private var ownershipTask: Task<Void, Never>?
 
     init(
         hub: StoreHub = StoreHub(),
         ledgerPath: String = AlertLedger.defaultPath(),
         deliverer: AlertDelivering = AlertDeliverer.live(),
         isWindowFrontmost: @escaping @MainActor () -> Bool = { NSApplication.shared.isActive },
-        nowMs: @escaping @Sendable () -> Double = { StoreClock.live.nowMs() }
+        nowMs: @escaping @Sendable () -> Double = { StoreClock.live.nowMs() },
+        ownership: StackOwnershipModel? = nil
     ) {
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: hub.stateDir, nowMs: hub.nowMs) }
@@ -53,6 +57,7 @@ final class AlertsModel: ObservableObject {
         self.deliverer = deliverer
         self.isWindowFrontmost = isWindowFrontmost
         self.nowMs = nowMs
+        self.ownership = ownership
     }
 
     /// Le flux de l'état publié : l'item de barre s'y abonne (S-2). C'est le SEUL
@@ -88,12 +93,27 @@ final class AlertsModel: ObservableObject {
                 await self.apply(snapshot, stateDir: stateDir)
             }
         }
+        // Le superviseur d'ownership (S-5) : un abonnement UNIQUE et de longue
+        // durée, comme `hub.snapshots()`. `ownership.start()` démarre la scrutation.
+        if let ownership {
+            let events = ownership.events
+            ownershipTask = Task { [weak self] in
+                for await event in events {
+                    guard let self else { return }
+                    await self.ingest(event)
+                }
+            }
+            ownership.start()
+        }
     }
 
-    /// Annule l'abonnement, retire l'observateur et arrête le hub.
+    /// Annule les abonnements, retire l'observateur et arrête le hub et le superviseur.
     func stop() {
         task?.cancel()
         task = nil
+        ownershipTask?.cancel()
+        ownershipTask = nil
+        ownership?.stop()
         if let observer = activationObserver {
             NotificationCenter.default.removeObserver(observer)
             activationObserver = nil
@@ -106,22 +126,33 @@ final class AlertsModel: ObservableObject {
         authorization = request ? await deliverer.requestAuthorization() : await deliverer.authorization()
     }
 
-    /// Le cœur de la décision (S-7).
+    /// Le cœur de la décision (S-7) : l'instantané publie les compteurs, puis
+    /// chaque évènement dérivé passe par `ingest`.
     private func apply(_ snapshot: StoreSnapshot, stateDir: String) async {
+        // Aucun fait de PR : les compteurs ne lisent que les cartes en cours et en
+        // attente, que l'état GitHub ne range jamais.
         status = AlertsStatus.from(boardState: KanbanBoardState.derive(
-            snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal
+            snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal, prFacts: [:]
         ))
-        let events = AlertDerivation.events(from: snapshot)
-        let fresh = Set(events.filter { !ledger.contains($0.key) }.map(\.key))
-        // (3) On enregistre TOUTES les clés dérivées ; l'écriture n'a lieu que si au
-        // moins une est neuve — un registre inchangé ne se réécrit pas.
-        if ledger.record(keys: events.map(\.key), nowMs: nowMs()) {
+        for event in AlertDerivation.events(from: snapshot) {
+            await ingest(event)
+        }
+    }
+
+    /// La décision pour UN évènement (S-7, S-5) : « la clé est enregistrée AVANT la
+    /// livraison, et la livraison n'a lieu que si la fenêtre n'est pas au premier
+    /// plan ». C'est le même corps que celui qu'`apply` portait, extrait pour que le
+    /// flux d'ownership (S-5) le réutilise tel quel.
+    func ingest(_ event: AlertEvent) async {
+        let isFresh = !ledger.contains(event.key)
+        // On enregistre la clé même fenêtre au premier plan ; l'écriture n'a lieu
+        // que si la clé est neuve — un registre inchangé ne se réécrit pas.
+        if ledger.record(keys: [event.key], nowMs: nowMs()) {
             ledger.save()
         }
-        // (4) Une fenêtre au premier plan consomme l'évènement sans notifier.
+        // Une fenêtre au premier plan consomme l'évènement sans notifier.
         guard !isWindowFrontmost() else { return }
-        for event in events where fresh.contains(event.key) {
-            _ = await deliverer.deliver(AlertMessage(key: event.key, title: event.title, body: event.body))
-        }
+        guard isFresh else { return }
+        _ = await deliverer.deliver(AlertMessage(key: event.key, title: event.title, body: event.body))
     }
 }

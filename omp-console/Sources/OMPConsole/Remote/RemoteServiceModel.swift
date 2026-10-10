@@ -78,7 +78,9 @@ final class RemoteServiceModel: ObservableObject {
             // Un changement de la présence des composants OU de l'état de
             // préparation pousse le même évènement `components` (S-4).
             componentsChanges: presenceChanges.merge(with: setupChanges).eraseToAnyPublisher(),
-            journalChanges: actions.$journal.voidChanges()
+            journalChanges: actions.$journal.voidChanges(),
+            pullRequestStates: { kanban.pullRequestStatesPayload() },
+            pullRequestStatesChanges: kanban.pullRequestStatesChanges()
         )
         let reads = RemoteReads(
             hub: storeHub,

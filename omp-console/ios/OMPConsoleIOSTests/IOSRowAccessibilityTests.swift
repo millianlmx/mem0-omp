@@ -20,10 +20,9 @@ struct IOSRowAccessibilityTests {
 
     /// Le badge visible puis le libellé de la rangée, comme le fait `RootView`.
     private static func rowLabel(
-        _ section: ConsoleSection, selection: ConsoleSection?, attentionCount: Int
+        _ section: ConsoleSection, attentionCount: Int
     ) -> (badge: Int, label: String) {
-        let badge = IOSHomeContent.rowBadge(
-            for: section, selection: selection, attentionCount: attentionCount)
+        let badge = IOSHomeContent.rowBadge(for: section, attentionCount: attentionCount)
         return (badge, IOSHomeText.sectionRowLabel(section.title, badge: badge))
     }
 
@@ -33,24 +32,19 @@ struct IOSRowAccessibilityTests {
         let home = ConsoleSection.home.title
         let kanban = ConsoleSection.kanban.title
 
-        let shown = Self.rowLabel(.home, selection: .home, attentionCount: 2)
+        let shown = Self.rowLabel(.home, attentionCount: 2)
         #expect(shown.badge == 2)
         #expect(shown.label == "\(home), 2 \(pending)")
 
-        // Accueil non sélectionnée (racine iPhone) : pas de badge, donc pas d'annonce.
-        let unselected = Self.rowLabel(.home, selection: nil, attentionCount: 2)
-        #expect(unselected.badge == 0)
-        #expect(unselected.label == home)
-
-        let none = Self.rowLabel(.home, selection: .home, attentionCount: 0)
+        let none = Self.rowLabel(.home, attentionCount: 0)
         #expect(none.badge == 0)
         #expect(none.label == home)
 
-        let other = Self.rowLabel(.kanban, selection: .kanban, attentionCount: 2)
+        let other = Self.rowLabel(.kanban, attentionCount: 2)
         #expect(other.badge == 0)
         #expect(other.label == kanban)
 
-        let many = Self.rowLabel(.home, selection: .home, attentionCount: 120)
+        let many = Self.rowLabel(.home, attentionCount: 120)
         #expect(many.label == "\(home), 120 \(pending)")
     }
 

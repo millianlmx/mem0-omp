@@ -318,3 +318,43 @@ func liveFeatureTotalsAdvanceWithTime() {
     // Les tokens ne dépendent pas du temps.
     #expect(atZero.input == later.input)
 }
+
+@Test("statistiques-etat-vide-et-non-defilables/AC-7, AC-8 : seules les exécutions vivantes, lisibles et horodatées portent une horloge ; sans elles, aucune")
+func liveStartsListOnlyReadableLiveRuns() {
+    let project = ProjectStats(
+        repoKey: "k",
+        label: "depot",
+        features: [
+            FeatureStats(id: "alpha", slug: "alpha", runs: [
+                // Vivante, lisible, horodatée : la seule dont la durée avance (AC-7).
+                RunStats(id: "a", sessionFile: "a.jsonl", phase: .impl, isLive: true, metrics: measured(1, 1, 1, first: 1_234, last: 5_000)),
+                // Vivante mais ILLISIBLE : « — », pas d'horloge.
+                RunStats(id: "b", sessionFile: "b.jsonl", phase: .impl, isLive: true, metrics: .unreadable("session introuvable")),
+                // Vivante, lisible, SANS horodatage : « — », pas d'horloge.
+                RunStats(id: "c", sessionFile: "c.jsonl", phase: .impl, isLive: true, metrics: .measured(
+                    SessionMetrics(input: 1, output: 1, turns: 1, model: "modele", firstMs: nil, lastMs: nil)
+                )),
+            ]),
+            FeatureStats(id: "beta", slug: "beta", runs: [
+                // Close : sa durée est figée.
+                RunStats(id: "d", sessionFile: "d.jsonl", phase: .specs, isLive: false, metrics: measured(1, 1, 1, first: 0, last: 900)),
+            ]),
+        ],
+        hiddenPlanFeatures: 0
+    )
+    #expect(statsLiveStarts(project) == ["a.jsonl": 1_234])
+
+    // AC-8 : un projet sans exécution vivante n'a aucune horloge de rendu.
+    let still = ProjectStats(
+        repoKey: "k",
+        label: "depot",
+        features: [
+            FeatureStats(id: "beta", slug: "beta", runs: [
+                RunStats(id: "d", sessionFile: "d.jsonl", phase: .specs, isLive: false, metrics: measured(1, 1, 1, first: 0, last: 900)),
+            ]),
+        ],
+        hiddenPlanFeatures: 0
+    )
+    #expect(statsLiveStarts(still).isEmpty)
+    #expect(statsLiveStarts(ProjectStats(repoKey: "k", label: "depot", features: [], hiddenPlanFeatures: 0)).isEmpty)
+}

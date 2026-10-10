@@ -22,6 +22,9 @@ enum AlertKind: Sendable, Equatable {
     case failedLot
     case failedRun
     case mergedPullRequest
+    /// La pile de l'app a perdu un port qu'elle tenait (S-5, AC-5). Dernier rang :
+    /// une perte d'ownership se livre APRÈS les évènements du magasin.
+    case stackOwnershipLost
 
     /// Le rang de livraison : c'est l'ordre de déclaration ci-dessus.
     var rank: Int {
@@ -32,6 +35,7 @@ enum AlertKind: Sendable, Equatable {
         case .failedLot: 3
         case .failedRun: 4
         case .mergedPullRequest: 5
+        case .stackOwnershipLost: 6
         }
     }
 }

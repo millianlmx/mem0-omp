@@ -85,7 +85,7 @@ func makeRemoteServiceModel(
         port: port,
         environment: [:],
         storeHub: hub,
-        kanban: KanbanModel(hub: hub),
+        kanban: KanbanModel(hub: hub, prStates: PullRequestStateBook(reader: nil)),
         actions: ActionsModel(),
         session: SessionConsoleModel(host: sessionHost, defaults: defaults),
         project: makeProjectModel(
