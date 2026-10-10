@@ -1,5 +1,5 @@
 // La feuille « Lancer une session OMP » de l'app iOS (BR-5, S-1) : la liste des
-// dépôts CONNUS de la coque, chacun avec son nom et son chemin. Le client ne
+// dépôts CONNUS de la coque, chacun désigné par son nom (`IOSRepoRows`). Le client ne
 // calcule JAMAIS le `repoKey` : il le reçoit dans la liste, et n'envoie que lui —
 // aucune saisie de chemin, aucun champ « nom » (la session n'en prend pas).
 //
@@ -12,6 +12,9 @@ import SwiftUI
 
 struct IOSSessionOmpLaunchSheet: View {
     @ObservedObject var client: ConsoleClientModel
+    /// La fixture du crochet de recette `-sessionomp.recipe lancement` : elle remplace
+    /// `client.repos()` et présélectionne un dépôt. `nil` hors recette.
+    private let recipe: IOSLaunchRecipe.Fixture?
     /// Rend `nil` sur succès, sinon le message d'échec à afficher DANS la feuille.
     let onLaunch: (String) async -> String?
 
@@ -22,6 +25,25 @@ struct IOSSessionOmpLaunchSheet: View {
     @State private var selected: String?
     @State private var error: String?
     @State private var submitting = false
+    /// La hauteur mesurée du formulaire : la hauteur de la feuille ajustée sur
+    /// iPad, qui suit chaque état (chargement, liste, erreur).
+    @State private var contentHeight: CGFloat = 0
+
+    init(
+        client: ConsoleClientModel,
+        recipe: IOSLaunchRecipe.Fixture? = nil,
+        onLaunch: @escaping (String) async -> String?
+    ) {
+        self.client = client
+        self.recipe = recipe
+        self.onLaunch = onLaunch
+    }
+
+    /// Les gestes vers le Mac : actifs connecté ; sous le crochet de recette, la
+    /// fixture tient lieu de Mac (etats-non-connecte-heterogenes-ios, S-5).
+    private var gesturesEnabled: Bool {
+        recipe != nil || IOSConnectionStatus.of(client).gesturesEnabled
+    }
 
     var body: some View {
         NavigationStack {
@@ -36,16 +58,18 @@ struct IOSSessionOmpLaunchSheet: View {
                         .accessibilityIdentifier(SessionOmpAccessibility.launchError)
                 }
             }
+            .iosSheetContentHeight($contentHeight)
             .navigationTitle(IOSSessionOmpText.launchSheetTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(SessionConsoleText.cancel) { dismiss() }
+                    IOSSheetIconButton(role: .cancel, label: SessionConsoleText.cancel) { dismiss() }
                         .keyboardShortcut(.cancelAction)
                         .accessibilityIdentifier(SessionOmpAccessibility.launchCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(SessionConsoleText.launch, action: commit)
-                        .disabled(!IOSConnectionStatus.of(client).gesturesEnabled || selected == nil || submitting)
+                    IOSSheetIconButton(role: .confirm, label: SessionConsoleText.launch, action: commit)
+                        .disabled(!gesturesEnabled || selected == nil || submitting)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier(SessionOmpAccessibility.launchCommit)
                 }
@@ -53,6 +77,7 @@ struct IOSSessionOmpLaunchSheet: View {
             .accessibilityIdentifier(SessionOmpAccessibility.launchSheet)
             .task { await load() }
         }
+        .iosFittedSheet(contentHeight: contentHeight)
     }
 
     @ViewBuilder private var repositoryList: some View {
@@ -66,29 +91,21 @@ struct IOSSessionOmpLaunchSheet: View {
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(SessionOmpAccessibility.launchRepositories)
         } else {
-            ForEach(repos, id: \.repoKey) { repo in
-                Button { choose(repo) } label: {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(repo.name)
-                                .foregroundStyle(.primary)
-                            Text(ConsoleFormat.path(repo.repoRoot))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 8)
-                        if selected == repo.repoKey {
-                            Text(ProjectText.selectedMark)
-                        }
-                    }
-                }
-                .accessibilityAddTraits(selected == repo.repoKey ? .isSelected : [])
-                .accessibilityIdentifier(SessionOmpAccessibility.launchRepo(repo.repoKey))
-            }
+            IOSRepoRows(
+                repos: repos,
+                selected: selected,
+                identifier: SessionOmpAccessibility.launchRepo,
+                choose: choose)
         }
     }
 
     private func load() async {
+        if let recipe {
+            repos = recipe.repos
+            selected = recipe.selectedKey
+            loading = false
+            return
+        }
         loading = true
         loadFailure = nil
         do {
@@ -105,7 +122,7 @@ struct IOSSessionOmpLaunchSheet: View {
     }
 
     private func commit() {
-        guard let repoKey = selected, !submitting else { return }
+        guard let repoKey = selected, gesturesEnabled, !submitting else { return }
         submitting = true
         Task {
             let message = await onLaunch(repoKey)

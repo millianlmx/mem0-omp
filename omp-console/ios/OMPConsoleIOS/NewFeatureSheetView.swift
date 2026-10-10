@@ -71,13 +71,14 @@ struct NewFeatureSheetView: View {
                 }
             }
             .navigationTitle(NewFeatureText.title)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(NewFeatureText.cancel) { dismiss() }
+                    IOSSheetIconButton(role: .cancel, label: NewFeatureText.cancel) { dismiss() }
                         .accessibilityIdentifier(PipelinesAccessibility.cancelButton)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(NewFeatureText.launch) { submit() }
+                    IOSSheetIconButton(role: .confirm, label: NewFeatureText.launch) { submit() }
                         .disabled(!ready || busy || !connection.gesturesEnabled)
                         .accessibilityIdentifier(PipelinesAccessibility.launchButton)
                 }

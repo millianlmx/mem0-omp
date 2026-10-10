@@ -169,6 +169,11 @@ public final class ConsoleClientModel: ObservableObject {
         return .available(URL(fileURLWithPath: components?.ompPath ?? ""))
     }
 
+    /// Le dossier personnel du Mac, publié par `components` : l'app iOS abrège les
+    /// chemins du Mac en « ~/… » contre LUI, jamais contre son bac à sable. `nil`
+    /// avant la première trame `components`, ou face à un Mac antérieur.
+    public var macHomeDirectory: String? { components?.homeDirectory }
+
     /// La feuille de bienvenue a été vue : la préférence passe à `true` (S-8).
     public func closeWelcome() {
         guard !welcomeSeen else { return }

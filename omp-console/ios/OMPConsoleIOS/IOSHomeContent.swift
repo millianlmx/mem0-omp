@@ -29,6 +29,8 @@ enum IOSHomeAccessibility {
     static let allPipelines = "ios.home.allPipelines"
 
     static let answerSheet = "ios.home.answer.sheet"
+    /// Le titre de la carte, en tête du formulaire de la feuille « Répondre ».
+    static let answerTitle = "ios.home.answer.title"
     static let answerQuestion = "ios.home.answer.question"
     static let answerText = "ios.home.answer.text"
     static let answerCancel = "ios.home.answer.cancel"

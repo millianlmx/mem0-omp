@@ -597,6 +597,27 @@ marqueur `[test: <fonction>]` (une fonction de
   a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
   que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`
 
+## Les feuilles (feature `feuilles-ios-presentation-et-depots`)
+
+- Sur iPad, une feuille au contenu long (Contrat, feuille de session, fiche d'un
+  souvenir) est une feuille « page » (`iosPageSheet()`), plus de 600 pt de contenu ;
+  la Bienvenue, « Piloter un projet » et « Lancer une session OMP » gardent la
+  largeur du formulaire (580 pt) et une hauteur qui suit leur contenu
+  (`iosFittedSheet(contentHeight:)`), à 64 pt au plus sous le dernier élément. Sur
+  iPhone, rien ne change : feuille pleine hauteur, même haut, pleine largeur, et
+  aucun `presentationDetents`. Avant la première mesure, la hauteur idéale est
+  absente, jamais nulle : la feuille n'est pas écrasée. `[test: fittedSheetIdealHeight]`
+- Dans « Piloter un projet » et « Lancer une session OMP », un dépôt est désigné
+  par son seul nom de dossier, suivi de son parent entre parenthèses seulement
+  s'il a un homonyme (`KanbanLaunchRepos.choices`, vue partagée `IOSRepoRows`) ;
+  aucun chemin, texte de couleur normale (jamais bleu lien). Le dépôt choisi porte
+  une coche SF Symbol masquée à VoiceOver, qui annonce le nom et l'état
+  « sélectionné », jamais « coche » ni « ✓ ». `[test: repoRowLabels]`
+- Un chemin du Mac affiché par l'app iOS s'abrège en `~/…` relativement au
+  dossier personnel que le Mac publie (`components.homeDirectory`), jamais deviné
+  sur l'appareil ; un chemin hors de ce dossier reste absolu, un Mac antérieur
+  laisse les chemins absolus. `[test: threadRowsAbbreviateMacHome]`
+
 ## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
 
 - Un SEUL traducteur, `IOSMacErrorText` (`OMPConsoleIOS/IOSMacErrorText.swift`),

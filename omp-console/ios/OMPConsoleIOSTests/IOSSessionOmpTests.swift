@@ -103,6 +103,8 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     }
 
     func run(forFile file: String) -> RunChoice? { nil }
+
+    var macHomeDirectory: String? { nil }
 }
 
 private func decode<T: Decodable>(_ json: String) throws -> T {

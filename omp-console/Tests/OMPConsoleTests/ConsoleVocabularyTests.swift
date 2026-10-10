@@ -99,6 +99,21 @@ func pathIsShortenedForDisplay() {
     #expect(ConsoleFormat.path("/tmp/x") == "/tmp/x")
 }
 
+@Test("feuilles-ios-presentation-et-depots/AC-7 : un chemin sous le dossier personnel donné s'abrège en « ~ », jamais un préfixe homonyme")
+func pathAbbreviatesGivenHome() {
+    #expect(ConsoleFormat.path("/Users/x/a", home: "/Users/x") == "~/a")
+    #expect(ConsoleFormat.path("/Users/x/a", home: "/Users/x/") == "~/a")
+    #expect(ConsoleFormat.path("/Users/x", home: "/Users/x") == "~")
+    #expect(ConsoleFormat.path("/Users/xy/a", home: "/Users/x") == "/Users/xy/a")
+    #expect(ConsoleFormat.path("/Users/x/a", home: nil) == "/Users/x/a")
+    #expect(ConsoleFormat.path("/Users/x/a", home: "") == "/Users/x/a")
+    // La racine du projet reste prioritaire sur le dossier personnel.
+    #expect(ConsoleFormat.path("/Users/x/p/f", relativeTo: "/Users/x/p", home: "/Users/x") == "f")
+    // Sur macOS, le dossier local est celui de l'utilisateur, et la forme historique en dépend.
+    #expect(ConsoleFormat.localHome == NSHomeDirectory())
+    #expect(ConsoleFormat.path(NSHomeDirectory() + "/a") == ConsoleFormat.path(NSHomeDirectory() + "/a", home: NSHomeDirectory()))
+}
+
 @Test("ios-pipelines-cartes-homonymes : la date d'une carte se lit à la minute")
 func dateTimeShowsTheMinute() throws {
     let paris = try #require(TimeZone(identifier: "Europe/Paris"))

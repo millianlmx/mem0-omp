@@ -33,6 +33,10 @@ struct IOSSectionView: View {
     let statsRecipe: IOSStatsRecipe?
     /// Le crochet de recette `-pipelines.board` de l'écran Pipelines.
     let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
+    /// Le crochet de recette `-projet.recipe <lancement|dialogue>` de l'écran Projet.
+    let projectRecipe: IOSProjectRecipe?
+    /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
+    let sessionOmpRecipe: IOSSessionOmpRecipe?
     /// La feuille Connexion de la racine, ouverte par « Se connecter » du
     /// composant d'état de connexion des sections.
     @Binding var showConnection: Bool
@@ -50,9 +54,9 @@ struct IOSSectionView: View {
         } else if section == .sessions {
             IOSSessionsScreen(client: client, recipe: recipe, showConnection: $showConnection)
         } else if section == .session {
-            IOSSessionOmpScreen(client: client, showConnection: $showConnection)
+            IOSSessionOmpScreen(client: client, recipe: sessionOmpRecipe, showConnection: $showConnection)
         } else if section == .project {
-            IOSProjectScreen(client: client, showConnection: $showConnection)
+            IOSProjectScreen(client: client, recipe: projectRecipe, showConnection: $showConnection)
         } else if section == .stats {
             IOSStatsScreen(client: client, recipe: statsRecipe, showConnection: $showConnection)
         } else {

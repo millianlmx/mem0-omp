@@ -72,6 +72,7 @@ struct HomeContractSheet: View {
             }
             .accessibilityIdentifier(IOSHomeAccessibility.contractSheet)
         }
+        .iosPageSheet()
         .task { await load() }
     }
 

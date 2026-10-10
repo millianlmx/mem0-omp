@@ -33,6 +33,12 @@ enum IOSHomeText {
     static let macMissingBody =
         "Le Mac est joignable, mais OMP n'y est pas installé. Installez-le sur le Mac, puis rouvrez l'Accueil."
 
+    // --- feuille Répondre (S-13) ----------------------------------------------
+
+    /// Le titre de barre de la feuille « Répondre » : court et statique, il se lit
+    /// en entier ; le titre de la carte passe en tête du formulaire.
+    static let answerNavigationTitle = "Répondre"
+
     // --- feuille Contrat (S-14) -----------------------------------------------
 
     static let contractNavigationTitle = "Contrat"
