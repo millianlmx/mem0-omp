@@ -37,7 +37,7 @@ struct OMPConsoleApp: App {
     @StateObject private var actionsModel: ActionsModel
     @StateObject private var projectModel: ProjectConsoleModel
     @StateObject private var statsModel: StatsModel
-    @StateObject private var memoryModel = MemoryModel()
+    @StateObject private var memoryModel: MemoryModel
     /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, comme
     /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
     /// sélection, ni les filtres.
@@ -115,6 +115,11 @@ struct OMPConsoleApp: App {
             Task { await remote.startIfEnabled() }
         }
         _setupModel = StateObject(wrappedValue: setup)
+        // La section Mémoire reprend l'ancienne pile par LA MÊME action que la
+        // feuille de préparation (S-6) : une seule implémentation.
+        let memory = MemoryModel()
+        memory.recoverOwnership = { await setup.takeOverLegacyStack() }
+        _memoryModel = StateObject(wrappedValue: memory)
     }
 
     var body: some Scene {
@@ -266,9 +271,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// annonce Bonjour (S-14).
     static var terminateRemoteService: (() async -> Void)?
 
+    /// Le superviseur de l'ownership des ports (S-5) : unique à l'app, démarré
+    /// par `alerts.start()` — aucune autre surface ne le démarre.
+    lazy var ownership = StackOwnershipModel()
+
     /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
     /// construisent donc pas).
-    lazy var alerts = AlertsModel()
+    lazy var alerts = AlertsModel(ownership: ownership)
 
     private var statusItemController: StatusItemController?
 

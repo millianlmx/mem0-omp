@@ -920,7 +920,11 @@ et podman (S-1, S-4) :
 | podman (pkg extrait par `pkgutil --expand-full`, jamais installé) | `…/components/podman/6.1.3/{bin,lib,share}` | 6.1.3 |
 | configuration XDG de la machine podman | `…/config/` (`XDG_CONFIG_HOME`) | |
 | disque et cache de la machine podman | `…/data/` (`XDG_DATA_HOME`) | |
+| artefacts runtime de podman (gvproxy, sockets de la machine) | `…/tmp/` (`TMPDIR` de la machine) | |
 | pile mémoire | `…/stack/` (`qdrant_storage/`, `env`, `machine.json`, `migration.json`) | |
+| jeton d'installation de la pile | `…/stack/installation-token` (0600) | |
+| trace de la dernière union des bases | `…/stack/union.json` | |
+| copie de staging de l'union | `…/stack/union-staging/` | |
 
 - **Badge du coin inférieur gauche** — le pied de la barre latérale porte l'état
   des composants embarqués (identifiant AX `components.badge`) : « Tout est
@@ -942,18 +946,42 @@ et podman (S-1, S-4) :
   `docker://quay.io/podman/machine-os:6.1`, 4 CPU, 4 Gio, 50 Gio de disque, avec
   `helper_binaries_dir` pointé sur les `bin/` du composant ; sa configuration et
   son disque vivent sous la racine de l'app, donc elle ne voit jamais une machine
-  podman système.
+  podman système. Son état est jugé à son **API** (une commande `info` portée par
+  son podman et son `TMPDIR` privés), pas au seul `machine inspect` : une VM qui
+  vit mais dont l'API ne répond pas est **réparée automatiquement** (`machine stop
+  omp-console` puis `machine start omp-console`), sans geste manuel (AC-2). Si
+  cette réparation échoue, le geste de secours est documenté ci-dessous.
 - **Conteneurs** — réseau `omp-console-stack`, `omp-console-qdrant`
   (`qdrant/qdrant:v1.19.0`, ports `127.0.0.1:6333/6334`) et
   `omp-console-mem0-http` (image construite depuis le contexte embarqué
   `Contents/Resources/Stack/mem0-http`, port `127.0.0.1:8321`), tous deux
-  `--restart unless-stopped`.
-- **Migration** (une fois par racine) — l'app découvre l'ancienne pile par l'API
-  Docker sur socket Unix (`~/.docker/run/docker.sock`, puis
-  `/var/run/docker.sock`), l'arrête (`mem0-qdrant`, `mem0-http`), copie
-  `qdrant_storage` (la source reste INTACTE, une base déjà présente n'est JAMAIS
-  recouverte), importe le `.env` voisin dans `stack/env` (0600) et écrit
-  `stack/migration.json` (informatif).
+  `--restart unless-stopped`. Ces conteneurs sont les seuls propriétaires légitimes
+  de `127.0.0.1:8321` et `127.0.0.1:6333`.
+- **Étiquette d'image par empreinte** — l'image mem0-http est étiquetée par
+  l'empreinte des sources embarquées
+  (`omp-console-mem0-http:<12 premiers hexadécimaux>` de
+  `mem0-stack/mem0-http/STACK_FINGERPRINT`) et n'est **reconstruite que si cette
+  étiquette manque** : sources inchangées ⇒ aucune reconstruction (AC-7), source
+  modifiée ⇒ nouvelle étiquette ⇒ reconstruction (AC-8). Après toute modification
+  de `mem0-stack/mem0-http/`, régénérer l'empreinte versionnée :
+  `bun scripts/stack-fingerprint.ts --write` ; le test `stack/AC-24` échoue si le
+  fichier versionné diverge des sources du dépôt (il nomme le fichier et la
+  commande).
+- **Migration** (une fois par racine) — l'app découvre la source de l'ancienne
+  pile par l'API Docker sur socket Unix (`~/.docker/run/docker.sock`, puis
+  `/var/run/docker.sock`), copie `qdrant_storage` **quand elle est quiescente**
+  (aucun conteneur legacy en marche : on ne copie pas une base RocksDB vivante),
+  la source reste INTACTE (une base déjà présente n'est JAMAIS recouverte),
+  importe le `.env` voisin dans `stack/env` (0600) et écrit `stack/migration.json`
+  (informatif). L'arrêt des conteneurs legacy n'est **jamais automatique** : il n'a
+  lieu que sur une action explicite de l'utilisateur (voir « Ancienne pile »).
+- **Ancienne pile** — si ses conteneurs tiennent `127.0.0.1:8321`/`6333`, l'app
+  nomme le conflit et le geste exact à exécuter, et ne reprend jamais ces ports
+  seule. Le geste, dans un terminal : `podman stop mem0-qdrant mem0-http` (ou
+  `docker stop …` selon le moteur qui porte l'ancienne pile). Dans l'app, le bouton
+  **« Arrêter l'ancienne pile et reprendre »** exécute ce même arrêt (par le socket
+  Docker, transport déjà en place) puis relance la préparation complète — c'est la
+  seule façon dont l'app arrête un conteneur d'une autre pile (AC-6).
 - **`stack/env`** — mêmes clés que `mem0-stack/.env` : `QDRANT_API_KEY`,
   `MEM0_HTTP_TOKEN`, `OMLX_BASE_URL`, `OMLX_API_TOKEN`, `OMLX_LLM_MODEL`,
   `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS`. Sans fichier, les défauts de
@@ -961,6 +989,20 @@ et podman (S-1, S-4) :
 - **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
   (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
   devient alors le seul candidat (les recettes s'en servent).
+
+### Geste de secours de la machine podman (AC-2)
+
+La réparation est automatique (voir « Machine podman dédiée ») ; si elle échoue,
+relancer la machine à la main, dans un terminal, avec l'environnement privé de
+l'app et le joker du dossier de version de podman :
+
+```bash
+XDG_CONFIG_HOME="$HOME/Library/Application Support/com.omp.console/config" \
+XDG_DATA_HOME="$HOME/Library/Application Support/com.omp.console/data" \
+TMPDIR="$HOME/Library/Application Support/com.omp.console/tmp" \
+"$HOME/Library/Application Support/com.omp.console/components/podman/"*/bin/podman machine stop omp-console
+# puis la même ligne avec `machine start`
+```
 
 ### Recettes gatées de la préparation
 
@@ -979,9 +1021,14 @@ MEM0_STACK_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
   --filter recetteReelleDeLaPile -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
-# Migration : arrête réellement l'ancienne pile, copie dans une racine temporaire
+# Migration : copie la base quand l'ancienne pile est quiescente, sans jamais l'arrêter
 MEM0_MIGRATION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
-  --filter recetteMigrationArreteEtCopieLAncienneBase -Xswiftc -plugin-path \
+  --filter recetteMigrationCopieSansArreterLAncienneBase -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+
+# Union : rejoue l'union réelle contre la pile de l'app (staging + conteneur lecteur)
+MEM0_UNION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recetteUnionReelleContreLaPileDeLApp -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
 # Session composant + run terminal : une session servie vit sur le composant de
@@ -991,7 +1038,7 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
   -Xswiftc -plugin-path -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 ```
 
-### Preuves manuelles (AC-3, AC-5)
+### Preuves manuelles (AC-3, AC-5, AC-10)
 
 - **AC-3 — l'app n'utilise aucun binaire système** : renommez l'`omp` du système
   (`mv ~/.bun/bin/omp ~/.bun/bin/omp.bak` — sans toucher à la racine de l'app),
@@ -1004,6 +1051,11 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
   sur un dépôt : `omp -p "résume ce dépôt"`. Le run reçoit le rappel mémoire du
   plugin (`mem0-recall` dans son fichier de session) parce que la pile de l'app
   tourne toujours en arrière-plan.
+- **AC-10 — la voie manuelle reste intacte** : dans `mem0-stack/`,
+  `docker compose up -d` puis `curl http://localhost:8321/health` rend toujours
+  `ok` — aucune variable nouvelle n'est obligatoire, le champ additif
+  `installation` n'apparaissant que si `OMP_INSTALLATION_TOKEN` est posée (ce que
+  la voie manuelle ne fait pas). L'app ne modifie jamais `mem0-stack/`.
 
 ## Piloter le service
 
@@ -1582,6 +1634,16 @@ la recherche et le graphe, 10 s pour les autres), et il n'y a **aucun sondage
 périodique** : la sonde part à l'apparition de la section, au bouton « Rafraîchir »
 et avant chaque recherche.
 
+**L'identité de la pile.** `GET /health` reste à la même adresse, avec le même
+protocole et les mêmes autres champs ; la pile de l'app y ajoute un champ
+**additif** `installation` qui porte le jeton d'installation de cette installation
+(`<racine de support>/stack/installation-token`, 0600). L'app n'accepte comme
+« sa » pile qu'une réponse `200` dont `ok` vaut `true` **et** dont `installation`
+égale son jeton : un `200` nu rendu par un autre service est traité comme étranger
+(état « Ce n'est pas la pile d'OMP Console »). Le contrat du plugin mémoire est
+inchangé — il ne lit que `health.ok` —, et la voie manuelle `mem0-stack/` (sans
+`OMP_INSTALLATION_TOKEN`) garde son `/health` identique.
+
 > La route `GET /memory/graph` et l'extension `PUT` (étiquettes) sont **nouvelles
 > côté service** : une pile construite avant cette version répond 404/405. L'iPhone
 > affiche alors « Graphe indisponible : serveur mémoire trop ancien » (la fenêtre
@@ -1667,6 +1729,7 @@ rechargement suivant.
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
 | portée incalculable (liste) | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
 | service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
+| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », le détail `<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>` (sélectionnable) et, **seulement quand le propriétaire est l'ancienne pile**, le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
 | sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
 | recherche sans ligne | « Aucun résultat » — « La mémoire du projet ne contient aucun souvenir correspondant. » |
@@ -1678,7 +1741,8 @@ rechargement suivant.
 | détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée de la ligne, pertinence (en recherche) ; en mode graphe, les actions d'écriture et le bloc « Liens manuels » |
 
 **Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
-`memoire.unavailable.detail`, `memoire.summary.count`, `memoire.search.results`,
+`memoire.unavailable.detail`, `memoire.foreignOwned.detail`,
+`memoire.foreignOwned.takeover`, `memoire.summary.count`, `memoire.search.results`,
 `memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
 `memoire.detail.copy`, `memoire.detail.technical` ; mode graphe :
 `memoire.graph.toggle`, `memoire.graph.canvas` (libellé = bandeau de compte),
@@ -1875,12 +1939,19 @@ omp-console/
 │   │   ├── SetupModel.swift       la chaîne composants → migration → pile → oMLX
 │   │   ├── SetupText.swift        tous les textes de la préparation, en un endroit
 │   │   └── SetupView.swift        la feuille : quatre lignes, états, boutons
-│   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-6)
+│   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-4, S-6, S-7, S-8)
 │   │   ├── PodmanCommand.swift    argv purs et environnement XDG d'une commande podman
 │   │   ├── StackConfig.swift      la config `stack/env` (mêmes clés que mem0-stack)
+│   │   ├── InstallationToken.swift le jeton d'installation (0600) et sa sonde identitaire
+│   │   ├── StackSources.swift     l'empreinte des sources embarquées et l'étiquette d'image
 │   │   ├── MemoryStack.swift      machine `omp-console`, conteneurs, attentes, `/health`
 │   │   ├── DockerSocket.swift     l'API Docker sur socket Unix (curl), décodage tolérant
-│   │   ├── StackMigration.swift   arrêt de l'ancienne pile, copie gardée, import `.env`
+│   │   ├── StackOwnership.swift   qui tient un port : lsof, classification, geste exact
+│   │   ├── StackOwnershipModel.swift le superviseur d'ownership et son évènement d'alerte
+│   │   ├── LegacyStack.swift      la seule autorité sur l'ancienne pile (découverte, arrêt sur ordre)
+│   │   ├── StackMigration.swift   copie gardée quand la source est quiescente, import `.env`
+│   │   ├── MemoryUnion.swift      l'union id-par-id des deux bases (scroll/retrieve/upsert)
+│   │   ├── MemoryUnionRunner.swift l'orchestration de l'union (staging, conteneur lecteur, trace)
 │   │   └── OMLXProbe.swift        la sonde oMLX (budget 5 s, jamais bruyante)
 │   ├── Terminal/                  la fenêtre de terminal : un shell de connexion dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
@@ -1963,6 +2034,7 @@ omp-console/
 │   │   ├── MemorySearch.swift     la sélection de pertinence (portée du plugin)
 │   │   ├── MemoryText.swift       tous les textes de la section, en un endroit
 │   │   ├── MemoryModel.swift      l'état de la LISTE : portée, sommaire, recherche, sélection
+│   │   ├── MemoryOwnership.swift  le propriétaire de l'adresse (étranger) et son geste
 │   │   ├── MemoryGraph.swift      la dérivation pure du graphe : nœuds, liens, visibilité
 │   │   ├── MemoryGraphLayout.swift placement (Fruchterman-Reingold), vue écran, clic, scène
 │   │   ├── MemoryLinkStore.swift  les liens manuels, dans `<racine de support>/memory-links.json`

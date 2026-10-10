@@ -1,10 +1,12 @@
-// La migration de l'ancienne base vers la pile de l'app (S-3, BR-3 ; AC-4).
+// La migration de l'ancienne base vers la pile de l'app (S-3/S-6, BR-3/BR-7 ;
+// AC-6).
 //
 // Chaque test monte une racine de support TEMPORAIRE et joue le pipeline complet de
 // `StackMigration.run()` contre la doublure `DockerCurlDouble` (aucun socket réel),
 // ou contre le repli disque quand aucun socket ne répond. On vérifie le résultat
 // observable : la base copiée, la source INTACTE, le `.env` importé en 0600, le
-// marqueur, et les deux échecs typés.
+// marqueur v2 — et l'INVARIANT de S-6 : la migration n'arrête JAMAIS un conteneur
+// de l'ancienne pile, et ne copie pas une base dont la pile tourne encore.
 
 import Darwin
 import Foundation
@@ -46,6 +48,14 @@ private func inspectJSON(id: String, source: String, label: String?) -> String {
     """
 }
 
+/// Un conteneur d'ancienne pile « exited » (l'ancienne pile est arrêtée mais ses
+/// données restent) : la migration peut alors copier sa base.
+private let exitedQdrant = """
+[{"Id":"q1","Names":["/mem0-qdrant"],"State":"exited"}]
+"""
+
+/// Un conteneur d'ancienne pile « running » : la migration ne doit JAMAIS copier
+/// sa base — ni l'arrêter.
 private let runningQdrant = """
 [{"Id":"q1","Names":["/mem0-qdrant"],"State":"running"}]
 """
@@ -69,9 +79,9 @@ private func tree(_ root: URL) throws -> [String: Data] {
 
 // MARK: - Le pipeline par socket
 
-@Test("all-in-one-app/AC-4 : la découverte par socket arrête la pile qui tourne, copie la base et importe le `.env` en 0600")
+@Test("bug-embedded-podman-machine/AC-6 : la découverte par socket copie la base d'une ancienne pile arrêtée, sans jamais l'arrêter")
 @MainActor
-func migrationOverSocketStopsCopiesAndImports() async throws {
+func migrationOverSocketCopiesWithoutStopping() async throws {
     let root = try tempRoot()
     let home = try tempRoot()
     let legacy = home.appendingPathComponent("Experiments/mem0-omp/mem0-stack", isDirectory: true)
@@ -88,13 +98,10 @@ func migrationOverSocketStopsCopiesAndImports() async throws {
     let double = DockerCurlDouble()
     double.route = { _, url in
         if url.hasSuffix("/containers/json?all=true") {
-            return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false)
+            return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false)
         }
         if url.hasSuffix("/containers/mem0-qdrant/json") {
             return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false)
-        }
-        if url.hasSuffix("/stop?t=10") {
-            return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false)
         }
         return ProcessRun(code: 7, stdout: "", stderr: "route absente", timedOut: false)
     }
@@ -105,13 +112,12 @@ func migrationOverSocketStopsCopiesAndImports() async throws {
     let outcome = try await migration.run(progress: { steps.append($0) })
 
     #expect(outcome.legacyStorage == storage)
-    #expect(outcome.stoppedContainers == ["mem0-qdrant"])
     #expect(outcome.copied)
     #expect(outcome.configImported)
-    #expect(steps == [.legacyStop, .copy])
+    #expect(steps == [.copy])
 
-    // Le stop n'a visé que le socket du candidat et que le conteneur qui tourne.
-    #expect(double.calls.filter { $0.arguments.last?.hasSuffix("/stop?t=10") == true }.count == 1)
+    // AUCUN arrêt automatique : la doublure n'a jamais reçu de `POST …/stop`.
+    #expect(!double.calls.contains { $0.arguments.last?.hasSuffix("/stop?t=10") == true })
     #expect(double.calls.contains { $0.arguments == ["--silent", "--show-error", "--max-time", "10", "--unix-socket", socket, "http://localhost/containers/json?all=true"] })
 
     // La copie est complète et fidèle.
@@ -128,48 +134,54 @@ func migrationOverSocketStopsCopiesAndImports() async throws {
     let attributes = try FileManager.default.attributesOfItem(atPath: paths.stackEnv.path)
     #expect((attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600)
 
-    // Le marqueur porte les cinq champs du contrat.
+    // Le marqueur porte les quatre champs du contrat (version 2, plus de
+    // `stoppedContainers`).
     let markerData = try bytes(paths.migrationState)
     let marker = try #require(try JSONSerialization.jsonObject(with: markerData) as? [String: Any])
-    #expect(marker["version"] as? Int == 1)
+    #expect(marker["version"] as? Int == 2)
     #expect(marker["source"] as? String == storage.path)
     #expect(marker["copied"] as? Bool == true)
-    #expect(marker["stoppedContainers"] as? [String] == ["mem0-qdrant"])
+    #expect(marker["stoppedContainers"] == nil)
     #expect((marker["date"] as? String)?.isEmpty == false)
 }
 
-@Test("all-in-one-app/AC-4 : 304 (déjà arrêté) et 404 (absent) sont tolérés, seul un autre code échoue")
+@Test("bug-embedded-podman-machine/AC-6 : un conteneur legacy qui TOURNE interdit la copie et n'est jamais arrêté")
 @MainActor
-func alreadyStoppedAndAbsentAreTolerated() async throws {
+func runningLegacyBlocksCopyAndIsNeverStopped() async throws {
     let root = try tempRoot()
     let home = try tempRoot()
+    let legacy = home.appendingPathComponent("legacy", isDirectory: true)
+    let storage = legacy.appendingPathComponent("qdrant_storage", isDirectory: true)
+    try writeCollections(at: storage, docs: ["vivante"])
     defer {
         try? FileManager.default.removeItem(at: root)
         try? FileManager.default.removeItem(at: home)
     }
 
-    func run(stopCode: String) async throws -> MigrationOutcome {
-        let double = DockerCurlDouble()
-        double.route = { _, url in
-            if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
-            if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: stopCode, stderr: "", timedOut: false) }
-            return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
-        }
-        let migration = StackMigration(paths: AppPaths(supportRoot: root), environment: ["HOME": home.path], run: double.runner)
-        return try await migration.run()
+    let double = DockerCurlDouble()
+    double.route = { _, url in
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false) }
+        return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 
-    // 304 : le conteneur est déjà arrêté, l'arrêt est consigné.
-    let alreadyStopped = try await run(stopCode: "304")
-    #expect(alreadyStopped.stoppedContainers == ["mem0-qdrant"])
-    // 404 : absent — toléré, et rien n'est consigné.
-    let absent = try await run(stopCode: "404")
-    #expect(absent.stoppedContainers == [])
+    let paths = AppPaths(supportRoot: root)
+    let migration = StackMigration(paths: paths, environment: ["HOME": home.path], run: double.runner)
+    var steps: [MigrationStep] = []
+    let outcome = try await migration.run(progress: { steps.append($0) })
+
+    // La source est vue, mais RIEN n'est copié tant que la pile tourne…
+    #expect(outcome.legacyStorage == storage)
+    #expect(outcome.copied == false)
+    #expect(steps.isEmpty)
+    #expect(!fileExists(paths.qdrantStorage))
+    // …et la doublure n'a reçu AUCUN arrêt.
+    #expect(!double.calls.contains { $0.arguments.last?.hasSuffix("/stop?t=10") == true })
 }
 
 // MARK: - Les gardes de la copie
 
-@Test("all-in-one-app/AC-4 : une base déjà présente n'est JAMAIS recouverte")
+@Test("bug-embedded-podman-machine/AC-6 : une base déjà présente n'est JAMAIS recouverte")
 @MainActor
 func existingBaseIsNeverOverwritten() async throws {
     let root = try tempRoot()
@@ -187,9 +199,8 @@ func existingBaseIsNeverOverwritten() async throws {
 
     let double = DockerCurlDouble()
     double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false) }
         if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false) }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 
@@ -199,13 +210,13 @@ func existingBaseIsNeverOverwritten() async throws {
 
     #expect(outcome.legacyStorage == storage)
     #expect(outcome.copied == false)
-    #expect(steps == [.legacyStop])                       // jamais de `.copy`
+    #expect(steps.isEmpty)                               // jamais de `.copy`
     #expect(try bytes(sentinel) == Data("point de deja-la".utf8))
     #expect(fileExists(paths.qdrantStorage.appendingPathComponent("collections/deja-la/storage.sqlite")))
     #expect(!fileExists(paths.qdrantStorage.appendingPathComponent("collections/ancienne")))
 }
 
-@Test("all-in-one-app/AC-4 : la copie ne touche JAMAIS la source")
+@Test("bug-embedded-podman-machine/AC-6 : la copie ne touche JAMAIS la source")
 @MainActor
 func copyLeavesTheSourceIntact() async throws {
     let root = try tempRoot()
@@ -222,9 +233,8 @@ func copyLeavesTheSourceIntact() async throws {
 
     let double = DockerCurlDouble()
     double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false) }
         if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false) }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 
@@ -234,7 +244,7 @@ func copyLeavesTheSourceIntact() async throws {
     #expect(try tree(storage) == before)
 }
 
-@Test("all-in-one-app/AC-4 : l'import lit le `.env` du parent de `qdrant_storage` quand il n'y a pas de label compose")
+@Test("bug-embedded-podman-machine/AC-6 : l'import lit le `.env` du parent de `qdrant_storage`")
 @MainActor
 func importFallsBackToStorageParent() async throws {
     let root = try tempRoot()
@@ -250,9 +260,8 @@ func importFallsBackToStorageParent() async throws {
 
     let double = DockerCurlDouble()
     double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false) }
         if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: nil), stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false) }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 
@@ -264,7 +273,7 @@ func importFallsBackToStorageParent() async throws {
     #expect(StackEnvStore.load(at: paths.stackEnv)?.qdrantApiKey == "cle-du-lab")
 }
 
-@Test("all-in-one-app/AC-4 : sans `.env` à côté de la source, aucune configuration n'est écrite")
+@Test("bug-embedded-podman-machine/AC-6 : sans `.env` à côté de la source, aucune configuration n'est écrite")
 @MainActor
 func withoutEnvNoConfigIsWritten() async throws {
     let root = try tempRoot()
@@ -279,9 +288,8 @@ func withoutEnvNoConfigIsWritten() async throws {
 
     let double = DockerCurlDouble()
     double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false) }
         if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false) }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 
@@ -294,7 +302,7 @@ func withoutEnvNoConfigIsWritten() async throws {
     #expect(!fileExists(paths.stackEnv))
 }
 
-@Test("all-in-one-app/AC-4 : un `.env` vide (ou sans clé connue) écrit les défauts de `StackConfig`")
+@Test("bug-embedded-podman-machine/AC-6 : un `.env` vide (ou sans clé connue) écrit les défauts de `StackConfig`")
 @MainActor
 func emptyEnvWritesDefaults() async throws {
     let root = try tempRoot()
@@ -310,9 +318,8 @@ func emptyEnvWritesDefaults() async throws {
 
     let double = DockerCurlDouble()
     double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false) }
         if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false) }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 
@@ -325,7 +332,7 @@ func emptyEnvWritesDefaults() async throws {
 
 // MARK: - Le repli disque
 
-@Test("all-in-one-app/AC-4 : aucun socket ne répond ⇒ repli disque sur le premier candidat qui a des `collections`")
+@Test("bug-embedded-podman-machine/AC-6 : aucun socket ne répond ⇒ repli disque sur le premier candidat qui a des `collections`")
 @MainActor
 func diskFallbackPicksTheFirstCandidateWithCollections() async throws {
     let root = try tempRoot()
@@ -355,14 +362,13 @@ func diskFallbackPicksTheFirstCandidateWithCollections() async throws {
 
     #expect(outcome.legacyStorage == legacy.appendingPathComponent("qdrant_storage"))
     #expect(outcome.copied)
-    #expect(outcome.stoppedContainers == [])              // rien à arrêter par disque
     #expect(steps == [.copy])                             // aucune étape d'arrêt
     #expect(fileExists(paths.qdrantStorage.appendingPathComponent("collections/experiments/storage.sqlite")))
     #expect(!fileExists(paths.qdrantStorage.appendingPathComponent("collections/dev/storage.sqlite")))
     #expect(StackEnvStore.load(at: paths.stackEnv)?.omlxLLMModel == "modele-du-poste")
 }
 
-@Test("all-in-one-app/AC-4 : première pile absente partout ⇒ résultat vide et AUCUNE erreur")
+@Test("bug-embedded-podman-machine/AC-6 : première pile absente partout ⇒ résultat vide et AUCUNE erreur")
 @MainActor
 func noLegacyPileYieldsAnEmptyOutcome() async throws {
     let root = try tempRoot()
@@ -380,18 +386,19 @@ func noLegacyPileYieldsAnEmptyOutcome() async throws {
     var steps: [MigrationStep] = []
     let outcome = try await migration.run(progress: { steps.append($0) })
 
-    #expect(outcome == MigrationOutcome(legacyStorage: nil, stoppedContainers: [], copied: false, configImported: false))
+    #expect(outcome == MigrationOutcome(legacyStorage: nil, copied: false, configImported: false))
     #expect(steps.isEmpty)
     #expect(!fileExists(paths.qdrantStorage))
     // Le marqueur est le relevé INFORMATIF de la dernière migration : il est écrit
     // même sans source, et n'est jamais une garde.
     let marker = try #require(try JSONSerialization.jsonObject(with: try Data(contentsOf: paths.migrationState)) as? [String: Any])
+    #expect(marker["version"] as? Int == 2)
     #expect(marker["source"] as? String == "")
     #expect(marker["copied"] as? Bool == false)
-    #expect(marker["stoppedContainers"] as? [String] == [])
+    #expect(marker["stoppedContainers"] == nil)
 }
 
-@Test("all-in-one-app/AC-4 : un socket qui répond sans la pile fait foi — pas de repli disque")
+@Test("bug-embedded-podman-machine/AC-6 : un socket qui répond sans la pile fait foi — pas de repli disque")
 @MainActor
 func respondingSocketWinsOverDiskFallback() async throws {
     let root = try tempRoot()
@@ -413,13 +420,13 @@ func respondingSocketWinsOverDiskFallback() async throws {
     let outcome = try await migration.run()
 
     // Le premier socket répond (vide) : le repli disque ne doit PAS s'exécuter.
-    #expect(outcome == MigrationOutcome(legacyStorage: nil, stoppedContainers: [], copied: false, configImported: false))
+    #expect(outcome == MigrationOutcome(legacyStorage: nil, copied: false, configImported: false))
     #expect(!fileExists(paths.qdrantStorage))
 }
 
 // MARK: - Idempotence
 
-@Test("all-in-one-app/AC-4 : rejouer la migration ne copie ni ne réécrit rien")
+@Test("bug-embedded-podman-machine/AC-6 : rejouer la migration ne copie ni ne réécrit rien")
 @MainActor
 func migrationIsIdempotent() async throws {
     let root = try tempRoot()
@@ -433,22 +440,15 @@ func migrationIsIdempotent() async throws {
         try? FileManager.default.removeItem(at: home)
     }
 
-    // Le conteneur est « running » au premier tour, « exited » ensuite — comme une
-    // vraie pile arrêtée.
+    // L'ancienne pile est arrêtée (aucun conteneur ne tourne) : la migration copie
+    // au premier tour, puis la garde « base déjà présente » bloque le second.
     let double = DockerCurlDouble()
-    var stopped = false
     double.route = { _, url in
         if url.hasSuffix("/containers/json?all=true") {
-            return ProcessRun(code: 0, stdout: stopped
-                ? #"[{"Id":"q1","Names":["/mem0-qdrant"],"State":"exited"}]"#
-                : runningQdrant, stderr: "", timedOut: false)
+            return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false)
         }
         if url.hasSuffix("/containers/mem0-qdrant/json") {
             return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false)
-        }
-        if url.hasSuffix("/stop?t=10") {
-            stopped = true
-            return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false)
         }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
@@ -464,7 +464,6 @@ func migrationIsIdempotent() async throws {
     #expect(first.copied && first.configImported)
     #expect(second.copied == false)
     #expect(second.configImported == false)
-    #expect(second.stoppedContainers == [])
     #expect(try tree(paths.qdrantStorage) == storageAfterFirst)
     #expect(try bytes(paths.stackEnv) == envAfterFirst)
     // La source est toujours présente, jamais supprimée.
@@ -473,30 +472,7 @@ func migrationIsIdempotent() async throws {
 
 // MARK: - Les erreurs
 
-@Test("all-in-one-app/AC-4 : un stop qui ne rend ni 204 ni 304 lève `legacyStopFailed`")
-@MainActor
-func stopFailureRaisesLegacyStopFailed() async throws {
-    let root = try tempRoot()
-    let home = try tempRoot()
-    defer {
-        try? FileManager.default.removeItem(at: root)
-        try? FileManager.default.removeItem(at: home)
-    }
-
-    let double = DockerCurlDouble()
-    double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "500", stderr: "", timedOut: false) }
-        return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
-    }
-
-    let migration = StackMigration(paths: AppPaths(supportRoot: root), environment: ["HOME": home.path], run: double.runner)
-    await #expect(throws: StackMigrationError.legacyStopFailed(container: "mem0-qdrant", detail: "code HTTP 500")) {
-        _ = try await migration.run()
-    }
-}
-
-@Test("all-in-one-app/AC-4 : une copie impossible lève `copyFailed`, nettoie le dossier partiel et laisse la source intacte")
+@Test("bug-embedded-podman-machine/AC-6 : une copie impossible lève `copyFailed`, nettoie le dossier partiel et laisse la source intacte")
 @MainActor
 func copyFailureRaisesCopyFailedAndCleansUp() async throws {
     // Un test lancé en root ignore les permissions POSIX : la copie réussirait.
@@ -521,9 +497,8 @@ func copyFailureRaisesCopyFailedAndCleansUp() async throws {
 
     let double = DockerCurlDouble()
     double.route = { _, url in
-        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: runningQdrant, stderr: "", timedOut: false) }
+        if url.hasSuffix("/containers/json?all=true") { return ProcessRun(code: 0, stdout: exitedQdrant, stderr: "", timedOut: false) }
         if url.hasSuffix("/containers/mem0-qdrant/json") { return ProcessRun(code: 0, stdout: inspectJSON(id: "q1", source: storage.path, label: legacy.path), stderr: "", timedOut: false) }
-        if url.hasSuffix("/stop?t=10") { return ProcessRun(code: 0, stdout: "204", stderr: "", timedOut: false) }
         return ProcessRun(code: 7, stdout: "", stderr: "", timedOut: false)
     }
 

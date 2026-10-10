@@ -26,6 +26,11 @@ _mem: AsyncMemory | None = None
 # protection en profondeur plutôt qu'une exigence stricte.
 HTTP_TOKEN = os.environ.get("MEM0_HTTP_TOKEN", "")
 
+# Jeton d'installation (S-4) : l'app le tire par installation, le garde de son
+# côté et le donne à SA pile. /health le rend de façon ADDITIVE quand il est
+# posé — un service étranger (jeton absent ou différent) reste reconnaissable.
+INSTALLATION_TOKEN = os.environ.get("OMP_INSTALLATION_TOKEN", "")
+
 
 async def get_memory() -> AsyncMemory:
     global _mem
@@ -287,7 +292,12 @@ class SearchRequest(BaseModel):
 async def health():
     import mem0
 
-    return {"ok": True, "mem0": getattr(mem0, "__version__", "?"), "user": USER}
+    body = {"ok": True, "mem0": getattr(mem0, "__version__", "?"), "user": USER}
+    # Champ ADDITIF : absent quand la variable est vide (ou absente), présent et
+    # rendu tel quel sinon. Les autres champs et le contrat de la route ne bougent pas.
+    if INSTALLATION_TOKEN:
+        body["installation"] = INSTALLATION_TOKEN
+    return body
 
 
 @app.post("/memory/add")

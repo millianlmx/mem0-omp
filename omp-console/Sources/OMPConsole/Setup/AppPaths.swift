@@ -56,6 +56,15 @@ struct AppPaths: Equatable, Sendable {
         supportRoot.appendingPathComponent("config", isDirectory: true)
     }
 
+    /// `<racine>/tmp` : le `TMPDIR` de CHAQUE invocation podman (S-1). podman
+    /// dérive de `TMPDIR` tous les artefacts runtime d'une `machine` qui ne vivent
+    /// pas sous les XDG (`gvproxy.pid`, `gvproxy.log`, sockets, journaux de VM) :
+    /// sans ce dossier, l'app partagerait `$TMPDIR/podman/` avec le podman système
+    /// (mesuré : les deux machines y écrivaient `gvproxy.pid` sous le même nom).
+    var tmpDir: URL {
+        supportRoot.appendingPathComponent("tmp", isDirectory: true)
+    }
+
     /// `<racine>/data` : le `XDG_DATA_HOME` de la machine podman de l'app.
     var dataDir: URL {
         supportRoot.appendingPathComponent("data", isDirectory: true)
@@ -102,5 +111,22 @@ struct AppPaths: Equatable, Sendable {
     /// Le marqueur informatif de la migration (S-3).
     var migrationState: URL {
         stackRoot.appendingPathComponent("migration.json")
+    }
+
+    /// `<stackRoot>/installation-token` : le jeton d'installation de la pile
+    /// (S-4), écrit en 0600 — voir `InstallationTokenStore`.
+    var installationToken: URL {
+        stackRoot.appendingPathComponent(InstallationTokenStore.fileName)
+    }
+
+    /// `<stackRoot>/union-staging` : les copies de staging de l'union des
+    /// souvenirs (S-8), un sous-dossier par passage, supprimé en sortie.
+    var unionStagingRoot: URL {
+        stackRoot.appendingPathComponent("union-staging", isDirectory: true)
+    }
+
+    /// `<stackRoot>/union.json` : le relevé de la dernière union réussie (S-8).
+    var unionState: URL {
+        stackRoot.appendingPathComponent("union.json")
     }
 }
