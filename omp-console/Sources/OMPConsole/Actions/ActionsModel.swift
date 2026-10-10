@@ -42,6 +42,9 @@ final class ActionsModel: ObservableObject {
     /// L'état du catalogue `omp models --json` (S-5), partagé par les deux
     /// feuilles qui offrent les deux sélecteurs.
     @Published private(set) var modelCatalog: ModelCatalogState = .loading
+    /// Les noms lisibles du catalogue (sélecteur → nom), `[:]` tant qu'il n'est
+    /// pas chargé ou en échec : chaque surface retombe alors sur le sélecteur.
+    @Published private(set) var modelNames: [String: String] = [:]
     /// Les deux choix de la feuille d'édition des modèles d'une feature (S-5).
     @Published var editModelReqSpecs: String?
     @Published var editModelImplReview: String?
@@ -57,7 +60,7 @@ final class ActionsModel: ObservableObject {
     private let clock: StoreClock
     private let salt: @Sendable () -> String
     /// Le chargement du catalogue de modèles (S-5) ; injectable pour les tests.
-    private let loadModels: @Sendable () async -> Result<[String], ModelCatalogError>
+    private let loadModels: @Sendable () async -> Result<ModelCatalogListing, ModelCatalogError>
 
     /// La dernière émission de commande en vol : un test l'attend au lieu de
     /// deviner quand la tâche a fini.
@@ -69,12 +72,12 @@ final class ActionsModel: ObservableObject {
         writer: PipelineWriter = PipelineWriter(),
         clock: StoreClock = .live,
         salt: @escaping @Sendable () -> String = ActionsModel.randomSalt,
-        modelCatalogLoader: (@Sendable () async -> Result<[String], ModelCatalogError>)? = nil
+        modelCatalogLoader: (@Sendable () async -> Result<ModelCatalogListing, ModelCatalogError>)? = nil
     ) {
         self.writer = writer
         self.clock = clock
         self.salt = salt
-        self.loadModels = modelCatalogLoader ?? { await ModelCatalogLoader.loadDefault() }
+        self.loadModels = modelCatalogLoader ?? { await ModelCatalogLoader.loadListing() }
     }
 
     /// Quatre hexadécimaux minuscules : le nom d'un fichier de livraison doit
@@ -172,6 +175,36 @@ final class ActionsModel: ObservableObject {
             ))
         }
         return id
+    }
+
+    /// Le geste « Reprendre » d'une feature en ÉCHEC ou BLOQUÉE (S-3 de
+    /// accueil-en-cours-melange-pause-et-compte) : émet `{kind:"relaunch"}`, que
+    /// le service accepte sur une feature `failed`/`blocked` et qui la remet
+    /// `running` (session reprise, compteurs remis à zéro).
+    ///
+    /// Rend l'identifiant de la commande, qui est aussi celui de son entrée de
+    /// journal (même usage que `resume`), ou `nil` sans rien journaliser quand la
+    /// carte n'est pas une feature de lot en échec ou bloquée.
+    @discardableResult
+    func relaunch(_ action: KanbanCardAction) -> String? {
+        guard let slug = action.slug, let repoRoot = action.repoRoot,
+              action.featureState == .failed || action.featureState == .blocked
+        else { return nil }
+        let sentAt = clock.nowMs()
+        let salt = salt()
+        let command = OutgoingCommand.relaunch(
+            id: PipelineId.console(sentAt: sentAt, salt: salt),
+            repo: realpathOr(repoRoot),
+            slug: slug
+        )
+        emitCommand(
+            kindLabel: ActionsText.resumeLabel,
+            target: slug,
+            repoRoot: repoRoot,
+            command: command,
+            sentAt: sentAt
+        )
+        return command.id
     }
 
     // --- émissions : livraisons (S-1, S-2) -----------------------------------
@@ -280,7 +313,8 @@ final class ActionsModel: ObservableObject {
 
     // --- modèles (S-5) -------------------------------------------------------
 
-    /// Lance le chargement du catalogue `omp models --json` et publie son état.
+    /// Lance le chargement du catalogue `omp models --json` et publie son état
+    /// et ses noms lisibles.
     func loadModelCatalog() {
         modelCatalog = .loading
         let loader = loadModels
@@ -288,8 +322,12 @@ final class ActionsModel: ObservableObject {
             let result = await loader()
             guard let self else { return }
             switch result {
-            case .success(let selectors): self.modelCatalog = .loaded(selectors)
-            case .failure(let error): self.modelCatalog = .failed(error.reason)
+            case .success(let listing):
+                self.modelCatalog = .loaded(listing.selectors)
+                self.modelNames = listing.names
+            case .failure(let error):
+                self.modelCatalog = .failed(error.reason)
+                self.modelNames = [:]
             }
         }
     }

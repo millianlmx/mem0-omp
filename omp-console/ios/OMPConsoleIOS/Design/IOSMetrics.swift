@@ -23,6 +23,13 @@ enum IOSMetrics {
     /// cadre de mise en page est plus large). Mise à l'échelle par
     /// `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
     static let phaseIconWidth: CGFloat = 28
+    /// La largeur maximale de la colonne de lecture d'un écran (S-1 de
+    /// ipad-clavier-et-largeur-de-lecture), marges extérieures (`regularMargin`,
+    /// 24 pt de chaque côté) COMPRISES : la surface visible mesure donc 672 pt à
+    /// la taille de référence, sous les ~700 pt d'une ligne lisible.
+    /// `IOSReadableWidth` la met à l'échelle par `@ScaledMetric` : aux tailles
+    /// d'accessibilité, le plafond grandit avec le texte (aucune largeur figée).
+    static let readableWidth: CGFloat = 720
     /// La largeur de la colonne de l'icône d'une promesse de la bienvenue, à la
     /// taille de référence `.title2` : les trois symboles (largeurs propres
     /// différentes) y sont centrés, et les textes commencent au même x

@@ -49,6 +49,8 @@ enum IOSHomeAccessibility {
     static func attentionAction(_ id: String) -> String { "ios.home.attention.\(id).action" }
     static func attentionContract(_ id: String) -> String { "ios.home.attention.\(id).contract" }
     static func running(_ id: String) -> String { "ios.home.running.\(id)" }
+    static func paused(_ id: String) -> String { "ios.home.paused.\(id)" }
+    static func notStarted(_ id: String) -> String { "ios.home.notStarted.\(id)" }
     static func resume(_ id: String) -> String { "ios.home.resume.\(id)" }
     static func delivered(_ id: String) -> String { "ios.home.delivered.\(id)" }
     static func deliveredOpen(_ id: String) -> String { "ios.home.delivered.open.\(id)" }
@@ -82,11 +84,26 @@ enum IOSHomeContent {
         HomePresentation.cardAction(attention)
     }
 
+    /// La clé du geste qu'envoie le bouton d'une carte « À vous », ou aucune :
+    /// « Répondre… » ouvre une feuille, « Voir dans Pipelines » change de section.
+    /// « Reprendre » d'une pipeline en échec ou bloquée emprunte la route de
+    /// reprise de la carte, que le Mac traduit en relance (`relaunch`).
+    static func attentionGestureKey(_ attention: HomeAttention) -> IOSHomeGestureKey? {
+        let gesture: IOSHomeGesture
+        switch attentionButton(attention) {
+        case .validate: gesture = .validateSpecs
+        case .accept: gesture = .acceptReview
+        case .relaunch: gesture = .resume
+        case .answer, .open: return nil
+        }
+        return IOSHomeGestureKey(cardId: attention.card.id, gesture: gesture)
+    }
+
     /// Le geste d'attente exige-t-il le Mac ? Seul « Voir dans Pipelines » reste
     /// local et tapable hors connexion (etats-non-connecte-heterogenes-ios, S-5).
     static func attentionNeedsMac(_ action: HomeCardAction) -> Bool {
         switch action {
-        case .answer, .validate, .accept: true
+        case .answer, .validate, .accept, .relaunch: true
         case .open: false
         }
     }
@@ -207,12 +224,18 @@ extension IOSHomeContent {
 }
 
 extension IOSHomeContent {
-    /// L'identifiant de carte de la rangée d'index `index` dans
-    /// `dashboard.running + dashboard.delivered` (cet ordre), ou nil hors bornes.
+    /// Les rangées du tableau de bord, dans l'ordre de l'écran : « En cours »,
+    /// « À reprendre », « Pas commencées », puis « Livrées récemment ».
+    static func rows(_ dashboard: HomeDashboard) -> [KanbanCard] {
+        dashboard.running + dashboard.paused + dashboard.notStarted + dashboard.delivered
+    }
+
+    /// L'identifiant de carte de la rangée d'index `index` dans `rows(_:)`, ou nil
+    /// hors bornes.
     static func recipeRowID(_ dashboard: HomeDashboard, index: Int) -> String? {
-        let rows = dashboard.running + dashboard.delivered
-        guard rows.indices.contains(index) else { return nil }
-        return rows[index].id
+        let cards = rows(dashboard)
+        guard cards.indices.contains(index) else { return nil }
+        return cards[index].id
     }
 }
 
@@ -233,19 +256,13 @@ extension IOSHomeContent {
         return IOSHomeText.gestureFailure(headline, cause: cause)
     }
 
-    /// Les gestes que le tableau de bord offre : « Valider les specs » et « Accepter
-    /// la revue » des cartes « À vous », « Reprendre » des rangées « En cours ». Un
-    /// échec ou une confirmation dont la clé n'y figure plus est effacé.
+    /// Les gestes que le tableau de bord offre : « Valider les specs », « Accepter
+    /// la revue » et « Reprendre » (échec ou blocage) des cartes « À vous »,
+    /// « Reprendre » des rangées « À reprendre ». Un échec ou une confirmation dont
+    /// la clé n'y figure plus est effacé.
     static func offeredGestures(_ dashboard: HomeDashboard) -> Set<IOSHomeGestureKey> {
-        var offered: Set<IOSHomeGestureKey> = []
-        for attention in dashboard.attention {
-            switch attentionButton(attention) {
-            case .validate: offered.insert(IOSHomeGestureKey(cardId: attention.card.id, gesture: .validateSpecs))
-            case .accept: offered.insert(IOSHomeGestureKey(cardId: attention.card.id, gesture: .acceptReview))
-            case .answer, .open: break
-            }
-        }
-        for card in dashboard.running where KanbanActionPresentation.resumable(card) && card.action != nil {
+        var offered = Set(dashboard.attention.compactMap(attentionGestureKey))
+        for card in dashboard.paused where card.action != nil {
             offered.insert(IOSHomeGestureKey(cardId: card.id, gesture: .resume))
         }
         return offered

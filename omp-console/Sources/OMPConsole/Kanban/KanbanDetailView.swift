@@ -126,8 +126,8 @@ struct KanbanDetailView: View {
                 }
             }
             if let models = card.models {
-                infoRow(KanbanText.modelReqSpecs, models.reqSpecs ?? KanbanText.modelDefault)
-                infoRow(KanbanText.modelImplReview, models.implReview ?? KanbanText.modelDefault)
+                infoRow(KanbanText.modelReqSpecs, modelName(models.reqSpecs))
+                infoRow(KanbanText.modelImplReview, modelName(models.implReview))
             }
             if let action = card.action, action.slug != nil {
                 GridRow {
@@ -146,6 +146,11 @@ struct KanbanDetailView: View {
                 }
             }
         }
+    }
+
+    /// Le nom lisible d'un groupe, le sélecteur en repli, « défaut OMP » s'il est vide.
+    private func modelName(_ selector: String?) -> String {
+        selector.map { ModelCatalog.displayName($0, names: actions.modelNames) } ?? KanbanText.modelDefault
     }
 
     private func infoRow(_ label: String, _ value: String) -> some View {

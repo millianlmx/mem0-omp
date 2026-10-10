@@ -35,9 +35,6 @@ final class HomeModel: ObservableObject {
     @Published private(set) var notificationsBannerDismissed: Bool
     /// Le bandeau de lancement masqué par l'utilisateur (identifiant d'entrée).
     @Published var dismissedBannerID: String?
-    /// « Quitter » a été demandé depuis une feuille : la feuille se ferme d'abord,
-    /// la terminaison part à sa fermeture (`ConsoleRootView`).
-    @Published private(set) var quitRequested = false
 
     private let resolve: Resolver
     private let environment: () -> [String: String]
@@ -91,13 +88,14 @@ final class HomeModel: ObservableObject {
         welcomeRequested = true
     }
 
-    /// MESURÉ (2026-10-01, sonde /tmp/quitprobe) : tant qu'une feuille SwiftUI est
-    /// attachée, `NSApp.terminate(nil)` n'appelle même pas le délégué — l'app reste
-    /// ouverte. « Quitter » demande donc d'abord la fermeture de la feuille.
-    func requestQuit() {
-        quitRequested = true
+    /// « Répondre… » sur une carte, ou le clic d'une notification de question :
+    /// la feuille s'ouvre sur cette carte avec une saisie vierge. SEUL chemin
+    /// d'ouverture de la feuille « Répondre ».
+    func openAnswer(_ cardID: String, actions: ActionsModel) {
+        actions.clearAnswer()
+        actions.replyText = ""
+        answerCardID = cardID
     }
-
     /// « Annuler » ou Échap sur la feuille « Répondre » : la saisie ne suit pas.
     func dismissAnswer(actions: ActionsModel) {
         answerCardID = nil

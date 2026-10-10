@@ -30,6 +30,10 @@ import SwiftUI
 
 struct IOSSessionThreadView: View {
     @ObservedObject var model: IOSSessionThreadModel
+    /// La session qui porte le fil est finie (fin du run pour la feuille de la
+    /// liste, fin de la session hébergée pour Session OMP) : ses appels restés sans
+    /// résultat se lisent « Interrompu » (S-7 de mac-finitions-hig).
+    let sessionEnded: Bool
     @State private var position = ScrollPosition(idType: String.self)
 
     var body: some View {
@@ -134,7 +138,8 @@ struct IOSSessionThreadView: View {
                         row: row,
                         isOpen: model.isExpanded(row.id),
                         isThinkingOpen: model.isExpanded(IOSSessionRowView.thinkingKey(of: row.id)),
-                        onToggle: { key in model.toggleFold(key) }
+                        onToggle: { key in model.toggleFold(key) },
+                        sessionEnded: sessionEnded
                     )
                     .equatable()
                 }

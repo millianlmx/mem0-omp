@@ -1,5 +1,6 @@
 // La vue « Projet » (BR-3 ; S-19 R3 de omp-console-redesign), au patron de
-// « Session OMP » : un en-tête (nom, dépôt, état en mots, arrêt, détails), le
+// « Session OMP » : les commandes (état en mots, arrêt, détails) dans la barre
+// d'outils de la fenêtre, un en-tête d'informations (nom, dépôt, avancement), le
 // volet « PR et CI », Plan | Document, puis la CONVERSATION de la session hébergée
 // (`ConversationThread`, sur le fichier de session d'`omp`) et un composeur. Les
 // dialogues de `/project` s'ouvrent en feuille ; les trames brutes, l'activité
@@ -159,6 +160,35 @@ struct ProjectConsoleView: View {
             ProjectDialogSheet(model: model, dialog: dialog)
         }
         .inspector(isPresented: $model.technicalShown) { inspector }
+        .toolbar { toolbarContent }
+    }
+
+    // MARK: - Barre d'outils (patron « Session OMP »)
+
+    /// L'état en pilule, puis : l'arrêt du pilotage | les détails. Seulement
+    /// pendant un pilotage : l'état vide n'a que son bouton de démarrage.
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .primaryAction) {
+            StatusPill(status: model.sessionStatus)
+                .accessibilityIdentifier("projet.sessionStatus")
+        }
+        .sharedBackgroundVisibility(.hidden)
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
+            Button(ProjectViewText.closeConduite, role: .destructive) {
+                model.isStopConfirmationPresented = true
+            }
+            .disabled(!model.canCloseConduite)
+            .accessibilityIdentifier("projet.close")
+        }
+        ToolbarSpacer(.fixed, placement: .primaryAction)
+        ToolbarItem(placement: .primaryAction) {
+            Button { model.technicalShown.toggle() } label: {
+                Label(SessionConsoleText.details, systemImage: "info.circle")
+            }
+            .help(SessionConsoleText.details)
+            .accessibilityIdentifier("projet.details")
+        }
     }
 
     /// PR et CI, puis Plan | Document.
@@ -191,7 +221,7 @@ struct ProjectConsoleView: View {
 
     @ViewBuilder private var conversationArea: some View {
         if let conversation = model.conversation {
-            ConversationThread(model: conversation)
+            ConversationThread(model: conversation, sessionEnded: host.state.isOver)
                 .id(conversation.target.sessionFile)
                 .accessibilityIdentifier("projet.conversation")
         } else if model.state == .starting {
@@ -373,9 +403,12 @@ struct ProjectDialogSheet: View {
 
 // MARK: - En-tête
 
+/// Un en-tête d'INFORMATIONS : nom, dépôt, avancement, erreur, avis et bandeau.
+/// Les commandes du pilotage vivent dans la barre d'outils de la fenêtre.
 struct ProjectHeaderView: View {
     @ObservedObject var model: ProjectConsoleModel
-    // L'état en mots suit la session, qui publie sans passer par le modèle.
+    // Le bandeau d'attente suit la file de dialogues de la session, qui publie
+    // sans passer par le modèle.
     @ObservedObject var host: ServiceSessionModel
 
     init(model: ProjectConsoleModel) {
@@ -385,37 +418,21 @@ struct ProjectHeaderView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .center, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.identity?.name ?? ProjectViewText.windowTitle)
-                        .font(.title2.weight(.semibold))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.identity?.name ?? ProjectViewText.windowTitle)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(1)
+                    .accessibilityIdentifier("projet.name")
+                if let repo = model.identity?.repoRoot.path {
+                    Text(ConsoleFormat.path(repo))
+                        .font(.callout)
                         .lineLimit(1)
-                        .accessibilityIdentifier("projet.name")
-                    if let repo = model.identity?.repoRoot.path {
-                        Text(ConsoleFormat.path(repo))
-                            .font(.callout)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier("projet.repo")
-                    }
+                        .truncationMode(.middle)
+                        .foregroundStyle(.secondary)
+                        .accessibilityIdentifier("projet.repo")
                 }
-                Spacer(minLength: 8)
-                StatusPill(status: model.sessionStatus)
-                    .accessibilityIdentifier("projet.sessionStatus")
-                Button { model.technicalShown.toggle() } label: {
-                    Label(SessionConsoleText.details, systemImage: "info.circle")
-                        .labelStyle(.iconOnly)
-                }
-                .help(SessionConsoleText.details)
-                .accessibilityLabel(SessionConsoleText.details)
-                .accessibilityIdentifier("projet.details")
-                Button(ProjectViewText.closeConduite, role: .destructive) {
-                    model.isStopConfirmationPresented = true
-                }
-                .disabled(!model.canCloseConduite)
-                .accessibilityIdentifier("projet.close")
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             if let project = model.project {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

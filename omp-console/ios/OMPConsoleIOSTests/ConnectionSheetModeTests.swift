@@ -177,7 +177,7 @@ struct ConnectionSheetModeTests {
         #expect(ConnectionText.codeMalformed.contains("0–9"))
         #expect(!ConnectionText.codeMalformed.contains("A–Z, 0–9"))
         #expect(ConnectionText.pairingFailure(.malformedCode) == ConnectionText.codeMalformed)
-        #expect(!ClientPairing.isValidCode("IIIIIIII"))
+        #expect(!PairingCodeFormat.isWellFormed(PairingCodeFormat.normalize("IIIIIIII")))
     }
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-14 : « Utiliser cette adresse » est inactif sur un champ vide ou blanc")

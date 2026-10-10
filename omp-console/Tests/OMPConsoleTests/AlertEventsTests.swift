@@ -22,8 +22,9 @@ func pendingAnswerNamesTheRun() {
     #expect(events.count == 1)
     #expect(events.first?.kind == .pendingAnswer)
     #expect(events.first?.key == "answer:\(id):call-1")
-    #expect(events.first?.title == "depot/ma-question attend une réponse")
-    #expect(events.first?.body == "Une question attend votre réponse.")
+    #expect(events.first?.title == "Question")
+    #expect(events.first?.body == "depot/ma-question")
+    #expect(events.first?.cardID == "run:\(id)")
 }
 
 @Test("notifications-et-barre-de-menus/AC-1 : un même toolCallId ne produit qu'un évènement, un nouveau en produit un")
@@ -73,7 +74,8 @@ func pendingAnswerEmptyLabel() {
     let fixture = StoreFixture()
     let id = fixtureId(0xa5)
     publishPendingAnswer(fixture, id: id, label: "")
-    #expect(alertEvents(fixture).first?.title == " attend une réponse")
+    #expect(alertEvents(fixture).first?.title == "Question")
+    #expect(alertEvents(fixture).first?.body == "")
 }
 
 // MARK: - AC-2 : « attend une validation »
@@ -99,13 +101,16 @@ func milestoneEvents() {
         "milestone:\(repoKey):jalon-specs:specs",
         "milestone:\(repoKey):jalon-revue:review",
     ])
-    #expect(events[0].title == "jalon-specs attend une validation")
-    #expect(events[0].body == "Jalon specs : validez le contrat pour continuer.")
+    #expect(events[0].title == "Specs à valider")
+    #expect(events[0].body == "jalon-specs")
+    #expect(events[0].cardID == "feature:\(repoKey):jalon-specs")
     #expect(events[1].kind == .milestoneReview)
-    #expect(events[1].body == "Jalon revue : validez la livraison pour continuer.")
+    #expect(events[1].title == "Revue à accepter")
+    #expect(events[1].body == "jalon-revue")
+    #expect(events[1].cardID == "feature:\(repoKey):jalon-revue")
 }
 
-@Test("notifications-et-barre-de-menus/AC-2 : `waitKind` nul ou `answer` n'émet aucun jalon ; le name non blanc prime")
+@Test("notifications-et-barre-de-menus/AC-2 : `waitKind` nul ou `answer` n'émet aucun jalon ; le corps est le slug affiché, jamais le name")
 func milestoneEdgeCases() {
     let fixture = StoreFixture()
     let key = fixtureId(0xb2)
@@ -123,13 +128,15 @@ func milestoneEdgeCases() {
     )
     #expect(alertEvents(fixture).isEmpty)
 
-    // Un `name` non blanc prime sur le slug dans le TITRE.
+    // Le corps est le nom que l'Accueil affiche (`KanbanCard.title` = slug), jamais
+    // le `name` de la feature.
     var custom = lotFeatureObject(slug: "avec-nom", state: "waiting", waitKind: "specs")
     custom["name"] = "Ma Feature"
     fixture.publish(.lots, "\(fixtureId(0xb3)).json", object: lotObject(id: fixtureId(0xb3), features: [custom]))
     let events = alertEvents(fixture)
     #expect(events.count == 1)
-    #expect(events.first?.title == "Ma Feature attend une validation")
+    #expect(events.first?.title == "Specs à valider")
+    #expect(events.first?.body == "avec-nom")
 }
 
 @Test("notifications-et-barre-de-menus/AC-2 : deux lots du même dépôt, même slug ⇒ une seule clé")
@@ -167,11 +174,13 @@ func failedEvents() {
     let events = alertEvents(fixture)
     #expect(events.map(\.key) == ["failed-lot:\(repoKey):feature-echouee", "failed-run:\(historyId)"])
     #expect(events[0].kind == .failedLot)
-    #expect(events[0].title == "feature-echouee a échoué")
-    #expect(events[0].body == "La feature feature-echouee a échoué.")
+    #expect(events[0].title == "Échec")
+    #expect(events[0].body == "feature-echouee")
+    #expect(events[0].cardID == "feature:\(repoKey):feature-echouee")
     #expect(events[1].kind == .failedRun)
-    #expect(events[1].title == "depot/run-clos a échoué")
-    #expect(events[1].body == "Le run a échoué.")
+    #expect(events[1].title == "Échec")
+    #expect(events[1].body == "depot/run-clos")
+    #expect(events[1].cardID == "history:\(historyId)")
 }
 
 @Test("notifications-et-barre-de-menus/AC-3 : un run clos en `done` et un run vivant périmé n'émettent rien")
@@ -223,8 +232,9 @@ func mergedPullRequestEvents() {
     #expect(events.count == 1)
     #expect(events.first?.key == "merged-pr:\(key):fusionnee")
     #expect(events.first?.kind == .mergedPullRequest)
-    #expect(events.first?.title == "PR fusionnée : fusionnee")
-    #expect(events.first?.body == "La PR de fusionnee est fusionnée.")
+    #expect(events.first?.title == "PR fusionnée")
+    #expect(events.first?.body == "fusionnee")
+    #expect(events.first?.cardID == "project:\(key):fusionnee")
     // Une seconde lecture ne crée pas une seconde clé.
     #expect(alertEvents(fixture).map(\.key) == ["merged-pr:\(key):fusionnee"])
 }
@@ -287,6 +297,171 @@ func deliveryOrderIsDeterministic() {
     ])
     // Le garde-fou : les clés des jalon specs/revue du lot sont bien celles attendues.
     #expect(alertEvents(fixture).map(\.key).contains("milestone:\(repoKey):specs:specs"))
+}
+
+// MARK: - notifications-mac-lien-profond : textes alignés sur l'Accueil, carte portée
+
+/// Le libellé d'état que l'Accueil affiche pour une carte : la nature d'une attente
+/// (`HomeText.natureText`) ou l'état d'une livraison (`ConsoleStatus.of(card:)`).
+/// `nil` si l'Accueil ne montre la carte ni en attente ni en livraison.
+private func homeLabel(of cardID: String, in board: KanbanBoard) -> String? {
+    let dashboard = HomePresentation.dashboard(board)
+    if let attention = dashboard.attention.first(where: { $0.card.id == cardID }) {
+        return HomeText.natureText(attention.nature)
+    }
+    if let delivered = dashboard.delivered.first(where: { $0.id == cardID }) {
+        return ConsoleStatus.of(card: delivered).text
+    }
+    return nil
+}
+
+@Test("notifications-mac-lien-profond/AC-8 : titre = libellé d'état de l'Accueil (« Échec » pour les échecs), corps = nom affiché, carte portée")
+func homeAlignedTextsAndCardIDs() throws {
+    let fixture = StoreFixture()
+    let repoRoot = "/Users/millian/Experiments/mem0-omp"
+    let repoKey = KanbanRepoKey.key(forRoot: repoRoot)
+
+    // Une question d'un run seul, et une question d'un run ABSORBÉ par une feature
+    // de lot (cwd du run == worktree de la feature).
+    let soloRun = fixtureId(0xf1)
+    publishPendingAnswer(fixture, id: soloRun, label: "depot/question-seule")
+    let absorbedRun = fixtureId(0xf2)
+    publishPendingAnswer(fixture, id: absorbedRun, label: "depot/question-absorbee", toolCallId: "call-9")
+
+    // Jalon specs dont le `name` diffère du slug, jalon revue, feature échouée,
+    // feature absorbant le run, feature livrée appariée à une PR fusionnée.
+    var specs = lotFeatureObject(slug: "jalon-specs", state: "waiting", waitKind: "specs")
+    specs["name"] = "Un nom qui n'est pas le slug"
+    let lotId = fixtureId(0xf3)
+    fixture.publish(
+        .lots, "\(lotId).json",
+        object: lotObject(
+            id: lotId, repoRoot: repoRoot,
+            features: [
+                specs,
+                lotFeatureObject(slug: "jalon-revue", state: "waiting", waitKind: "review"),
+                lotFeatureObject(slug: "feature-echouee", state: "failed"),
+                lotFeatureObject(slug: "feature-question", state: "running", worktree: "/tmp/alerts/\(absorbedRun)"),
+                lotFeatureObject(slug: "livree-appariee", state: "done"),
+            ]
+        )
+    )
+    // PR fusionnée appariée à la feature de lot (même dépôt, même slug), et PR
+    // fusionnée d'un projet seul.
+    fixture.publish(
+        .projects, "\(repoKey).json",
+        object: projectObject(
+            repoKey: repoKey, repoRoot: repoRoot,
+            segments: [["name": "S", "features": [projectFeatureObject(slug: "livree-appariee", status: "merged")]]],
+            current: 0
+        )
+    )
+    let soloProject = fixtureId(0xf4)
+    fixture.publish(
+        .projects, "\(soloProject).json",
+        object: projectObject(
+            repoKey: soloProject, repoRoot: "/tmp/alerts/autre-depot",
+            segments: [["name": "S", "features": [projectFeatureObject(slug: "livree-seule", status: "merged")]]],
+            current: 0
+        )
+    )
+    // Un run clos en échec.
+    let historyId = fixtureId(0xf5)
+    fixture.publish(
+        .history, "\(historyId).json",
+        object: historyObject(
+            id: historyId, cwd: "/tmp/alerts/clos-echec", label: "depot/run-echoue",
+            finalState: "failed", phaseStartedAt: fixtureT0 - 9_000, endedAt: fixtureT0 - 1_000
+        )
+    )
+
+    let board = kanbanBoard(fixture)
+    let events = AlertDerivation.events(from: alertsSnapshot(fixture), board: board)
+    func event(_ key: String) throws -> AlertEvent {
+        try #require(events.first { $0.key == key }, "évènement \(key) absent")
+    }
+    func card(_ id: String) throws -> KanbanCard {
+        try #require(board.cards.first { $0.id == id }, "carte \(id) absente de l'ardoise")
+    }
+
+    // (a) Jalon specs : « Specs à valider », corps = nom affiché par l'Accueil (le slug).
+    let specsEvent = try event("milestone:\(repoKey):jalon-specs:specs")
+    #expect(specsEvent.kind == .milestoneSpecs)
+    #expect(specsEvent.cardID == "feature:\(repoKey):jalon-specs")
+    #expect(specsEvent.title == "Specs à valider")
+    #expect(specsEvent.body == "jalon-specs")
+    #expect(specsEvent.body == (try card(try #require(specsEvent.cardID))).title)
+
+    // Les six familles, avec la carte attendue pour chacune.
+    let expected: [(key: String, kind: AlertKind, cardID: String)] = [
+        ("answer:\(soloRun):call-1", .pendingAnswer, "run:\(soloRun)"),
+        ("answer:\(absorbedRun):call-9", .pendingAnswer, "feature:\(repoKey):feature-question"),
+        ("milestone:\(repoKey):jalon-specs:specs", .milestoneSpecs, "feature:\(repoKey):jalon-specs"),
+        ("milestone:\(repoKey):jalon-revue:review", .milestoneReview, "feature:\(repoKey):jalon-revue"),
+        ("failed-lot:\(repoKey):feature-echouee", .failedLot, "feature:\(repoKey):feature-echouee"),
+        ("failed-run:\(historyId)", .failedRun, "history:\(historyId)"),
+        ("merged-pr:\(repoKey):livree-appariee", .mergedPullRequest, "feature:\(repoKey):livree-appariee"),
+        ("merged-pr:\(soloProject):livree-seule", .mergedPullRequest, "project:\(soloProject):livree-seule"),
+    ]
+    #expect(Set(events.map(\.key)) == Set(expected.map(\.key)))
+    for row in expected {
+        let alert = try event(row.key)
+        let target = try card(row.cardID)
+        #expect(alert.kind == row.kind, "\(row.key)")
+        #expect(alert.cardID == row.cardID, "\(row.key)")
+        // (d) Corps = nom affiché par l'Accueil, run absorbé compris (slug de la feature).
+        #expect(alert.body == target.title, "\(row.key)")
+        switch row.kind {
+        case .failedLot, .failedRun:
+            // (c) Échec de lot ou de run : toujours « Échec ».
+            #expect(alert.title == "Échec", "\(row.key)")
+        case .pendingAnswer, .milestoneSpecs, .milestoneReview, .mergedPullRequest:
+            // (b) Titre == libellé d'état de l'Accueil pour la même carte.
+            let label = try #require(homeLabel(of: row.cardID, in: board), "\(row.cardID) absente de l'Accueil")
+            #expect(alert.title == label, "\(row.key)")
+        case .stackOwnershipLost:
+            Issue.record("\(row.key) : une perte d'ownership ne vient jamais du magasin")
+        }
+    }
+    #expect(try event("answer:\(absorbedRun):call-9").body == "feature-question")
+}
+
+@Test("notifications-mac-lien-profond/AC-8 : sans ardoise, le titre reste celui de la famille et le corps prend le repli")
+func homeAlignedTextsWithoutBoard() {
+    let fixture = StoreFixture()
+    let repoRoot = "/Users/millian/Experiments/mem0-omp"
+    let repoKey = KanbanRepoKey.key(forRoot: repoRoot)
+    let runId = fixtureId(0xf6)
+    publishPendingAnswer(fixture, id: runId, label: "depot/sans-ardoise")
+    var specs = lotFeatureObject(slug: "repli-specs", state: "waiting", waitKind: "specs")
+    specs["name"] = "Nom ignoré"
+    fixture.publish(.lots, "\(fixtureId(0xf7)).json", object: lotObject(id: fixtureId(0xf7), repoRoot: repoRoot, features: [specs]))
+
+    let events = AlertDerivation.events(from: alertsSnapshot(fixture), board: nil)
+    #expect(events.map(\.title) == ["Question", "Specs à valider"])
+    #expect(events.map(\.body) == ["depot/sans-ardoise", "repli-specs"])
+    #expect(events.map(\.cardID) == ["run:\(runId)", "feature:\(repoKey):repli-specs"])
+}
+
+@Test("notifications-mac-lien-profond/AC-9 : le payload porte la famille et la carte ; un payload incomplet ou illisible se décode en nil")
+func alertOpeningPayloadRoundTrip() {
+    let kinds: [AlertKind] = [.pendingAnswer, .milestoneSpecs, .milestoneReview, .failedLot, .failedRun, .mergedPullRequest]
+    for kind in kinds {
+        let opening = AlertOpening(kind: kind, cardID: "feature:abc:\(kind.rawValue)")
+        let payload: [AnyHashable: Any] = opening.userInfo
+        #expect(AlertOpening(userInfo: payload) == opening)
+    }
+    #expect(AlertOpening(kind: .failedRun, cardID: "history:x").userInfo == ["kind": "failedRun", "cardID": "history:x"])
+
+    // Notification d'une version antérieure, clé manquante, type faux, famille
+    // inconnue, carte vide : aucun lien profond.
+    #expect(AlertOpening(userInfo: [:]) == nil)
+    #expect(AlertOpening(userInfo: ["kind": "pendingAnswer"]) == nil)
+    #expect(AlertOpening(userInfo: ["cardID": "run:a"]) == nil)
+    #expect(AlertOpening(userInfo: ["kind": 3, "cardID": "run:a"]) == nil)
+    #expect(AlertOpening(userInfo: ["kind": "pendingAnswer", "cardID": 7]) == nil)
+    #expect(AlertOpening(userInfo: ["kind": "inconnue", "cardID": "run:a"]) == nil)
+    #expect(AlertOpening(userInfo: ["kind": "pendingAnswer", "cardID": ""]) == nil)
 }
 
 // MARK: - AC-5 : le rang de `stackOwnershipLost`

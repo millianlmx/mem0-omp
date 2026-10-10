@@ -1,6 +1,7 @@
 // Le modèle d'alertes (BR-3, S-7) : il s'abonne au flux global du magasin, publie
-// l'état des compteurs et l'autorisation, et décide — une fois par évènement — de
-// livrer ou non une notification.
+// les comptes de l'Accueil que l'item de barre recopie (« À vous », « En cours »)
+// et l'autorisation, et décide — une fois par évènement — de livrer ou non une
+// notification.
 //
 // Décision, à CHAQUE instantané, dans cet ordre (S-7) :
 //   1. dériver TOUS les évènements du magasin (AlertEvents) ;
@@ -22,10 +23,14 @@ import Foundation
 
 @MainActor
 final class AlertsModel: ObservableObject {
-    /// L'état des compteurs, tel que la bande (S-9) et l'item de barre (S-2) l'affichent.
+    /// Les comptes « À vous » / « En cours » de l'Accueil, tels que l'item de barre
+    /// de menus les affiche (S-6, S-7 de accueil-en-cours-melange-pause-et-compte).
     @Published private(set) var status: AlertsStatus = .loading
     /// L'état d'autorisation, relu au démarrage puis à chaque activation de l'app.
     @Published private(set) var authorization: AlertAuthorization = .unknown
+    /// Le clic d'une notification (notifications-mac-lien-profond S-3) : posé par
+    /// `AppDelegate`, il remet la destination décodée au routeur de la fenêtre.
+    var onOpen: (@MainActor (AlertOpening?) -> Void)?
 
     /// Comment ouvrir un abonnement NEUF : un `StoreHub` arrêté ne se rouvre pas.
     private let makeHub: () -> StoreHub
@@ -38,9 +43,14 @@ final class AlertsModel: ObservableObject {
     private let isWindowFrontmost: @MainActor () -> Bool
     private let nowMs: @Sendable () -> Double
     private var activationObserver: NSObjectProtocol?
+    private var openingsObserved = false
     /// Le superviseur d'ownership (S-5) : optionnel, une seule surface le démarre.
     private let ownership: StackOwnershipModel?
     private var ownershipTask: Task<Void, Never>?
+    /// L'ardoise du crochet de recette `-home.recipe` (`HomeRecipe`) : `start()`
+    /// en pose le statut et s'arrête là — aucun hub, aucun superviseur, aucune
+    /// notification.
+    private let recipeBoard: KanbanBoardState?
 
     init(
         hub: StoreHub = StoreHub(),
@@ -48,7 +58,8 @@ final class AlertsModel: ObservableObject {
         deliverer: AlertDelivering = AlertDeliverer.live(),
         isWindowFrontmost: @escaping @MainActor () -> Bool = { NSApplication.shared.isActive },
         nowMs: @escaping @Sendable () -> Double = { StoreClock.live.nowMs() },
-        ownership: StackOwnershipModel? = nil
+        ownership: StackOwnershipModel? = nil,
+        recipeBoard: KanbanBoardState? = nil
     ) {
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: hub.stateDir, nowMs: hub.nowMs) }
@@ -58,6 +69,7 @@ final class AlertsModel: ObservableObject {
         self.isWindowFrontmost = isWindowFrontmost
         self.nowMs = nowMs
         self.ownership = ownership
+        self.recipeBoard = recipeBoard
     }
 
     /// Le flux de l'état publié : l'item de barre s'y abonne (S-2). C'est le SEUL
@@ -67,9 +79,19 @@ final class AlertsModel: ObservableObject {
     }
 
     /// Charge le registre, s'abonne au flux, demande l'autorisation, relit le statut
-    /// à chaque activation. Idempotent.
+    /// à chaque activation, et confie les clics au livreur (une seule fois, même
+    /// après `stop()`). Idempotent. Sous une recette, pose seulement le statut
+    /// de son ardoise.
     func start() {
+        if let recipeBoard {
+            status = AlertsStatus.from(boardState: recipeBoard)
+            return
+        }
         guard task == nil else { return }
+        if !openingsObserved {
+            openingsObserved = true
+            deliverer.observeOpenings { [weak self] in self?.onOpen?($0) }
+        }
         if hubStopped {
             hub = makeHub()
             hubStopped = false
@@ -126,15 +148,18 @@ final class AlertsModel: ObservableObject {
         authorization = request ? await deliverer.requestAuthorization() : await deliverer.authorization()
     }
 
-    /// Le cœur de la décision (S-7) : l'instantané publie les compteurs, puis
+    /// Le cœur de la décision (S-7) : l'instantané publie les comptes, puis
     /// chaque évènement dérivé passe par `ingest`.
     private func apply(_ snapshot: StoreSnapshot, stateDir: String) async {
-        // Aucun fait de PR : les compteurs ne lisent que les cartes en cours et en
-        // attente, que l'état GitHub ne range jamais.
-        status = AlertsStatus.from(boardState: KanbanBoardState.derive(
+        // L'ardoise du MÊME instantané sert aux comptes et aux évènements (carte
+        // concernée, nom affiché par l'Accueil). Aucun fait de PR : les comptes ne
+        // lisent que « À vous » et « En cours », que l'état GitHub ne range jamais
+        // (il ne range que les livraisons).
+        let boardState = KanbanBoardState.derive(
             snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal, prFacts: [:]
-        ))
-        for event in AlertDerivation.events(from: snapshot) {
+        )
+        status = AlertsStatus.from(boardState: boardState)
+        for event in AlertDerivation.events(from: snapshot, board: boardState.kanbanBoard) {
             await ingest(event)
         }
     }
@@ -153,6 +178,11 @@ final class AlertsModel: ObservableObject {
         // Une fenêtre au premier plan consomme l'évènement sans notifier.
         guard !isWindowFrontmost() else { return }
         guard isFresh else { return }
-        _ = await deliverer.deliver(AlertMessage(key: event.key, title: event.title, body: event.body))
+        // Le clic mène à la carte concernée ; un évènement sans carte (perte
+        // d'ownership) ne porte aucune destination, son clic mène à l'Accueil.
+        _ = await deliverer.deliver(AlertMessage(
+            key: event.key, title: event.title, body: event.body,
+            opening: event.cardID.map { AlertOpening(kind: event.kind, cardID: $0) }
+        ))
     }
 }

@@ -72,6 +72,9 @@ public struct RemoteToolCall: Codable, Equatable, Sendable {
     /// Les arguments bruts de l'appel (S-3). ABSENT de la charge utile quand l'appel
     /// n'en porte pas — le client garde alors le nom seul, comme la coque macOS.
     public var arguments: JSONValue?
+    /// Le texte des arguments dans l'ORDRE du fichier. Toléré absent : un Mac
+    /// d'avant la feature n'en envoie pas, et le fil retombe sur `arguments` trié.
+    public var argumentsText: String?
 }
 
 public struct RemoteConversationEntry: Codable, Equatable, Sendable {
@@ -617,6 +620,8 @@ public struct RemoteHostedSessionPayload: Codable, Equatable, Sendable {
 public struct RemotePairRequest: Codable, Equatable, Sendable {
     public var code: String
     public var name: String
+    /// L'identité de l'installation : le Mac remplace la ligne qui la porte déjà.
+    public var deviceKey: String?
     public var protocolVersion: Int?
 }
 

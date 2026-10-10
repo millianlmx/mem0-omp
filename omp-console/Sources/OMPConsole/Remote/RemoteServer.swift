@@ -17,7 +17,7 @@ import Darwin
 import Foundation
 import Network
 
-/// Le contrat du service vu par la coque : la feuille d'appairage n'observe que
+/// Le contrat du service vu par la coque : l'onglet « Appareils » n'observe que
 /// ceci (et les tests substituent une doublure).
 @MainActor
 protocol RemoteListening: AnyObject {
@@ -217,14 +217,33 @@ final class RemoteServer: RemoteListening {
         return code == -65570
     }
 
-    /// La première adresse que la garde d'acceptation accepterait pour un pair du
-    /// même réseau : l'adresse CLAT d'un réseau IPv6 seul (`192.0.0.2`, partage de
-    /// connexion iPhone) ou une adresse publique n'est joignable par personne, la
-    /// montrer ferait taper à l'appareil une adresse morte.
+    /// L'adresse que la garde d'acceptation accepterait pour un pair du même
+    /// réseau, la plus joignable d'abord : une adresse privée de LAN (10/8,
+    /// 172.16/12, 192.168/16), puis le partage d'adresses 100.64/10 (Tailscale),
+    /// puis le lien-local ; à rang égal, l'ordre des interfaces. L'app iOS
+    /// n'atteint en HTTP que le réseau local (ATS, `NSAllowsLocalNetworking`) :
+    /// une adresse Tailscale montrée en premier lui fait échouer l'appairage
+    /// (NSURLError -1022), alors que l'adresse de LAN du même Mac passe. L'adresse
+    /// CLAT d'un réseau IPv6 seul (`192.0.0.2`, partage de connexion iPhone) ou une
+    /// adresse publique n'est joignable par personne : jamais montrée.
     nonisolated static func primaryLocalAddress(among addresses: [String]) -> String? {
-        addresses.first { text in
-            guard let ipv4 = IPv4Address(text) else { return false }
-            return RemoteAddressPolicy.isLocal(ipv4: ipv4.rawValue)
+        var best: (rank: Int, text: String)?
+        for text in addresses {
+            guard let ipv4 = IPv4Address(text), RemoteAddressPolicy.isLocal(ipv4: ipv4.rawValue) else { continue }
+            let rank = displayRank(ipv4: [UInt8](ipv4.rawValue))
+            if best.map({ rank < $0.rank }) ?? true { best = (rank, text) }
+        }
+        return best?.text
+    }
+
+    /// 0 : LAN privé ; 1 : 100.64/10 ; 2 : lien-local (et boucle locale).
+    private nonisolated static func displayRank(ipv4 bytes: [UInt8]) -> Int {
+        switch bytes[0] {
+        case 10: return 0
+        case 172 where (16...31).contains(bytes[1]): return 0
+        case 192 where bytes[1] == 168: return 0
+        case 100: return 1
+        default: return 2
         }
     }
 

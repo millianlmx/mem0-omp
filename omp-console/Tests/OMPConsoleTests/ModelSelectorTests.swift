@@ -206,16 +206,17 @@ func modelLinesAreExact() throws {
         phase: .impl, models: ModelSlots(reqSpecs: "anthropic/claude-opus-4-7", implReview: nil),
         prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: []
     )
-    #expect(KanbanCardPresentation.reqSpecsLine(card) == "/req+/specs anthropic/claude-opus-4-7")
-    #expect(KanbanCardPresentation.implReviewLine(card) == "/impl+/review défaut OMP")
+    #expect(KanbanCardPresentation.modelLines(card, names: nil) == KanbanModelLines(
+        reqSpecs: "Modèle /req et /specs : anthropic/claude-opus-4-7",
+        implReview: "Modèle /impl et /review : défaut OMP"
+    ))
     let slots = try #require(card.models)
-    #expect(KanbanCardPresentation.modelsText(slots)
-        == "/req+/specs anthropic/claude-opus-4-7 · /impl+/review défaut OMP")
+    #expect(KanbanText.modelsLine(slots)
+        == "Modèle /req et /specs : anthropic/claude-opus-4-7 · Modèle /impl et /review : défaut OMP")
 
     var bare = card
     bare.models = nil
-    #expect(KanbanCardPresentation.reqSpecsLine(bare) == nil, "sans modèle, aucune ligne")
-    #expect(KanbanCardPresentation.implReviewLine(bare) == nil)
+    #expect(KanbanCardPresentation.modelLines(bare, names: nil) == nil, "sans modèle, aucune ligne")
 }
 
 @Test("model-selector/AC-7 : une feature ancienne à modèle unique remplit les DEUX groupes")

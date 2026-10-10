@@ -13,10 +13,11 @@ public enum KanbanText {
     public static let technical = "Détails techniques"
     public static let step = "Étape"
     public static let duration = "Durée"
-    /// Les deux groupes de modèle d'une feature (B-4) : le libellé court d'une
-    /// ligne d'affichage, et le libellé de l'option de choix (en tête des listes).
-    public static let modelReqSpecs = "/req+/specs"
-    public static let modelImplReview = "/impl+/review"
+    /// Les deux groupes de modèle d'une feature, MÊMES mots sur Mac et iOS : le
+    /// libellé d'une ligne d'affichage (fiche, carte, plan) et le titre d'un
+    /// sélecteur (feuilles Nouvelle feature et Modèles).
+    public static let modelReqSpecs = "Modèle /req et /specs"
+    public static let modelImplReview = "Modèle /impl et /review"
     public static let modelDefault = "défaut OMP"
     public static let editModels = "Modifier les modèles…"
     public static let editModelsShort = "Modifier…"
@@ -52,14 +53,18 @@ public enum KanbanText {
         "Le pilote s’arrête et les pipelines en cours dans ce dépôt sont interrompues."
 
     // --- deux modèles d'une feature (S-13) ------------------------------------
-    public static let modelReqSpecsField = "Modèle /req+/specs"
-    public static let modelImplReviewField = "Modèle /impl+/review"
     public static let modelCatalogLoading = "chargement des modèles…"
     public static let modelCatalogRetry = "Réessayer"
 
+    /// La valeur d'accessibilité de l'en-tête d'une voie repliable (iPhone et
+    /// Mac) : SwiftUI n'expose pas l'état replié/déplié d'un bouton, il passe par
+    /// la valeur.
+    public static let laneFolded = "replié"
+    public static let laneUnfolded = "déplié"
+
     /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
     public static func stopConfirmTitle(repo: String) -> String {
-        "Arrêter les pipelines de \(repo) ?"
+        "Arrêter les pipelines de \(repo) ?"
     }
 
     /// Le motif d'un catalogue indisponible : les deux listes se réduisent à
@@ -133,15 +138,14 @@ public enum KanbanText {
         marks.isEmpty ? nil : marks.map(markSentence).joined(separator: " ")
     }
 
-    /// La forme canonique d'une paire de modèles : `req+specs <A> · impl+review <B>`
-    /// (un groupe vide s'affiche « défaut OMP »). Formule unique partagée par la
-    /// carte Kanban de macOS et le plan du projet des deux coques.
+    /// La forme canonique d'une paire de modèles :
+    /// `Modèle /req et /specs : <A> · Modèle /impl et /review : <B>` (un groupe
+    /// vide s'affiche « défaut OMP »). Formule unique partagée par le plan du
+    /// projet des deux coques.
     public static func modelsLine(_ models: ModelSlots) -> String {
-        "\(modelGroup(modelReqSpecs, models.reqSpecs)) · \(modelGroup(modelImplReview, models.implReview))"
-    }
-
-    private static func modelGroup(_ label: String, _ value: String?) -> String {
-        "\(label) \(value ?? modelDefault)"
+        let reqSpecs = KanbanCardPresentation.modelLine(modelReqSpecs, models.reqSpecs)
+        let implReview = KanbanCardPresentation.modelLine(modelImplReview, models.implReview)
+        return "\(reqSpecs) · \(implReview)"
     }
 
     /// « 1 problème », « 3 problèmes » : le libellé du bouton de la barre d'outils.

@@ -17,11 +17,6 @@ enum PipelinesText {
     /// vocabulaire, pas dans la vue).
     static func laneCount(_ count: Int) -> String { "\(count)" }
 
-    /// La valeur d'accessibilité de l'en-tête d'une voie terminale : SwiftUI
-    /// n'expose pas l'état replié/déplié d'un bouton, il passe par la valeur.
-    static let laneFolded = "replié"
-    static let laneUnfolded = "déplié"
-
     /// La fusion ne trouve aucune ligne de PR pour ce slug : la PR est ouverte,
     /// mais le Mac ne la suit pas.
     static let noPullRequestRow = "La PR est ouverte, mais le Mac ne la suit pas encore."
@@ -30,10 +25,6 @@ enum PipelinesText {
 
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
-
-    /// La touche du raccourci ⌘R de « Rafraîchir » (clavier de l'iPad), la même
-    /// que sur le Mac.
-    static let refreshKey: Character = "r"
 
     /// Le chevron du sélecteur de dépôt (un menu : il se déroule, il ne navigue pas).
     static let repoMenuSymbol = "chevron.up.chevron.down"

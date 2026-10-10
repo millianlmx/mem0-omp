@@ -236,12 +236,24 @@ final class ProjectConsoleModel: ObservableObject {
         AppDelegate.terminateProject = { [weak self] in
             await self?.host.terminateForQuit()
         }
+        // Inventaire du Quitter (mac-quitter-sans-confirmation, S-1).
+        AppDelegate.projectQuitActivity = { [weak self] in
+            self?.quitActivity
+        }
     }
 
     // MARK: - Disponibilités
 
     var canStartConduite: Bool { state == .none || state == .closed }
     var canCloseConduite: Bool { state == .starting || state == .live }
+
+    /// Le pilotage en cours, qui CONTINUE dans OMP au Quitter (S-1) : nommé par son
+    /// identité, ou, pendant le lancement (`identity` encore nil), par le nom saisi.
+    var quitActivity: QuitActivity? {
+        guard canCloseConduite else { return nil }
+        return .pilotage(named: identity?.name ?? conversationTitle)
+    }
+
     var hasPendingDialog: Bool { !host.dialogQueue.isEmpty }
     var pendingDialog: RpcDialogRequest? { host.dialogQueue.first }
     var waitingDialogCount: Int { host.dialogQueue.count }

@@ -18,6 +18,7 @@
 // Aucun mot n'est composé ici : tout vient de `ConnectionText`.
 
 import ConsoleClient
+import ConsoleCore
 import SwiftUI
 import UIKit
 
@@ -230,8 +231,11 @@ struct ConnectionSheet: View {
                 .autocorrectionDisabled()
                 .focused($focus, equals: .code)
                 .onChange(of: code) { _, newValue in
-                    if newValue.count > 8 {
-                        code = String(newValue.prefix(8))
+                    // Le Mac affiche « XXXX-XXXX » : le tiret et les espaces ne
+                    // comptent pas dans les huit caractères (S-8).
+                    let bounded = PairingCodeFormat.limitInput(newValue)
+                    if bounded != newValue {
+                        code = bounded
                     }
                     pairMessage = nil
                 }
@@ -355,9 +359,18 @@ struct ConnectionSheet: View {
         addressText = prefill
     }
 
-    /// « Appairer » n'est actif qu'avec huit caractères ET un endpoint connu.
+    /// « Appairer » n'est actif qu'avec huit caractères significatifs ET un
+    /// endpoint connu.
     private var canPair: Bool {
-        code.count == 8 && knownEndpoint
+        Self.canPair(code: code, knownEndpoint: knownEndpoint)
+    }
+
+    /// Huit caractères une fois le code normalisé (tiret, espaces et casse
+    /// ignorés) : « ABCD-EFGH », « ABCDEFGH » et « abcd-efgh » le sont tous trois.
+    /// L'alphabet n'est PAS vérifié ici : un symbole hors alphabet laisse le
+    /// bouton actif et produit le message `codeMalformed` du modèle.
+    static func canPair(code: String, knownEndpoint: Bool) -> Bool {
+        PairingCodeFormat.normalize(code).count == ConsoleAPI.Service.pairingCodeLength && knownEndpoint
     }
 
     /// Un endpoint est connu par l'état, la découverte, l'adresse manuelle ou

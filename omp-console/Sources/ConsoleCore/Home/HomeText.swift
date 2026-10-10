@@ -42,6 +42,8 @@ public enum HomeText {
     // --- tableau de bord ------------------------------------------------------
     public static let attentionHeader = "À vous"
     public static let runningHeader = "En cours"
+    public static let pausedHeader = "À reprendre"
+    public static let notStartedHeader = "Pas commencées"
     public static let deliveredTitle = "Livrées récemment"
     public static let attentionEmpty = "Rien ne vous attend."
     public static let runningEmpty = "Aucune pipeline en cours."
@@ -67,7 +69,28 @@ public enum HomeText {
         case .question: "Question"
         case .milestoneSpecs: "Spécifications à valider"
         case .milestoneReview: "Revue à accepter"
+        case .failed: "En échec"
+        case .blocked: "Bloquée"
         }
+    }
+
+    /// L'invite d'une carte « En échec » : le maillon où la feature s'est
+    /// arrêtée, jamais le texte d'erreur brut.
+    public static func failedPrompt(_ phase: PipelinePhase?) -> String {
+        guard let phase else { return "La pipeline s'est arrêtée en échec." }
+        return "L'étape « \(PhaseText.title(phase)) » s'est arrêtée en échec."
+    }
+
+    /// L'invite d'une carte « Bloquée » : le maillon où la feature attend.
+    public static func blockedPrompt(_ phase: PipelinePhase?) -> String {
+        guard let phase else { return "La pipeline est bloquée." }
+        return "La pipeline est bloquée à l'étape « \(PhaseText.title(phase)) »."
+    }
+
+    /// Le résumé de l'item de barre de menus (info-bulle et description
+    /// VoiceOver) : les mots des sections de l'Accueil, zéros écrits.
+    public static func countsSummary(_ counts: HomeCounts) -> String {
+        "\(counts.attention) à vous · \(counts.running) en cours"
     }
 
     /// La ligne sous le titre d'une carte : « <dépôt> · <étape> ». Le dépôt n'y

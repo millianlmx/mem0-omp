@@ -28,6 +28,7 @@ struct WelcomeSheet: View {
                             .font(.title2)
                             .foregroundStyle(Color.accentColor)
                             .frame(width: 32)
+                            .accessibilityHidden(true)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(promise.title).font(.headline)
                             Text(promise.detail)

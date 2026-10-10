@@ -79,6 +79,10 @@ func keyboardMovesWithinTheBoard() async {
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state.kanbanBoard?.cards.count == 2 })
+    // La carte close vit dans « Livrées », repliée à l'ouverture : le clavier ne
+    // parcourt que les cartes visibles (parite-mac-des-correctifs-ios/S-2), on
+    // la déplie pour éprouver l'ordre total.
+    model.toggleLane(.livrees)
 
     // Sans sélection : `next` prend la PREMIÈRE carte, `previous` la dernière.
     model.move(by: .next)

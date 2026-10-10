@@ -88,6 +88,10 @@ final class SessionConsoleModel: ObservableObject {
         AppDelegate.terminateSession = { [weak self] in
             await self?.host.terminateForQuit()
         }
+        // Inventaire du Quitter (mac-quitter-sans-confirmation, S-1).
+        AppDelegate.sessionQuitActivity = { [weak self] in
+            self?.quitActivity
+        }
     }
 
     // MARK: - Persistance
@@ -126,6 +130,14 @@ final class SessionConsoleModel: ObservableObject {
         case .launching, .running: return true
         default: return false
         }
+    }
+
+    /// La session vivante que le Quitter arrêtera, nommée par le dossier avec
+    /// lequel ELLE a été lancée (`host.projectRoot`), pas par le projet choisi
+    /// depuis (`projectRoot`), qui peut avoir changé.
+    var quitActivity: QuitActivity? {
+        guard canStop else { return nil }
+        return .session(named: host.projectRoot?.lastPathComponent)
     }
 
     var canRelaunch: Bool {

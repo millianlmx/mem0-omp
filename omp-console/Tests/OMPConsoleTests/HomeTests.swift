@@ -79,8 +79,8 @@ func attentionsAreHighlightedWithTheirQuestion() {
     ) else { return }
     #expect(muted.attention.first?.prompt == HomeText.questionWithoutText)
 
-    // Une pipeline au pilote mort rangée en « Échec » reste « en cours » tant
-    // qu'elle se reprend ; une terminée ne l'est pas.
+    // Une pipeline au pilote mort rangée en « Échec » va dans « À reprendre » ;
+    // une feature échouée relançable remonte dans « À vous ».
     let deadAction = KanbanCardAction(repoRoot: "/r", slug: "dead", waitKind: nil, featureState: .running, run: nil)
     let dead = card("dead", column: .echec, action: deadAction, marks: [.mort])
     var failedAction = deadAction
@@ -89,7 +89,130 @@ func attentionsAreHighlightedWithTheirQuestion() {
     guard case .dashboard(let resumed) = HomePresentation.state(
         omp: available, board: .board(KanbanBoard(cards: [dead, failed], anomalies: []))
     ) else { return }
-    #expect(resumed.running.map(\.id) == ["dead"])
+    #expect(resumed.running.isEmpty)
+    #expect(resumed.paused.map(\.id) == ["dead"])
+    #expect(resumed.attention.map(\.id) == ["failed"])
+}
+
+/// Une action de feature de lot dans l'état donné.
+private func lotAction(
+    _ slug: String,
+    state: LotFeatureState,
+    waitKind: LotWaitKind? = nil,
+    slugKnown: Bool = true
+) -> KanbanCardAction {
+    KanbanCardAction(
+        repoRoot: "/r", slug: slugKnown ? slug : nil, waitKind: waitKind, featureState: state, run: nil
+    )
+}
+
+/// Les identifiants des cinq listes d'un tableau de bord.
+private func lists(_ dashboard: HomeDashboard) -> [[String]] {
+    [
+        dashboard.attention.map(\.id), dashboard.running.map(\.id), dashboard.paused.map(\.id),
+        dashboard.notStarted.map(\.id), dashboard.delivered.map(\.id),
+    ]
+}
+
+@Test("accueil-en-cours-melange-pause-et-compte/AC-1 : chaque règle range sa carte dans une seule section, « En cours » sans pause ni feature jamais lancée")
+func dashboardRanksEachCardInOneSection() {
+    let cards = [
+        // Règle 1 : en pause, quelle que soit la colonne.
+        card("pause-cours", column: .echec, action: lotAction("pause-cours", state: .running), marks: [.mort]),
+        card("pause-question", column: .questionEnVol,
+             action: lotAction("pause-question", state: .waiting, waitKind: .answer), marks: [.mort]),
+        card("pause-jalon", column: .jalonSpecs,
+             action: lotAction("pause-jalon", state: .waiting, waitKind: .specs), marks: [.mort]),
+        card("pause-attente", column: .enAttente, action: lotAction("pause-attente", state: .pending), marks: [.mort]),
+        // Règles 2 à 4 : questions et jalons vivants.
+        card("question", column: .questionEnVol),
+        card("specs", column: .jalonSpecs),
+        card("revue", column: .jalonReview),
+        // Règle 5 : échec ou blocage relançable ; sinon ignoré.
+        card("echec", column: .echec, action: lotAction("echec", state: .failed)),
+        card("bloquee", column: .bloquee, action: lotAction("bloquee", state: .blocked)),
+        card("history:h1", column: .echec),
+        card("project:p1", column: .echec, action: lotAction("p1", state: .failed, slugKnown: false)),
+        card("bloquee-sans-slug", column: .bloquee, action: lotAction("x", state: .blocked, slugKnown: false)),
+        card("echec-livree", column: .echec, action: lotAction("echec-livree", state: .done)),
+        // Règles 6 à 9.
+        card("cours", column: .enCours, action: lotAction("cours", state: .running)),
+        card("attente", column: .enAttente, action: lotAction("attente", state: .pending)),
+        card("pr", column: .prOuverte),
+        card("fusion", column: .fusionne),
+        card("sans-pr", column: .termineeSansPr),
+        card("annulee", column: .annuleeRetiree),
+    ]
+    let dashboard = HomePresentation.dashboard(KanbanBoard(cards: cards, anomalies: []))
+    #expect(dashboard.attention.map(\.id) == ["question", "specs", "revue", "echec", "bloquee"])
+    #expect(dashboard.attention.map(\.nature) == [.question, .milestoneSpecs, .milestoneReview, .failed, .blocked])
+    #expect(dashboard.running.map(\.id) == ["cours"])
+    #expect(dashboard.paused.map(\.id) == ["pause-cours", "pause-question", "pause-jalon", "pause-attente"])
+    #expect(dashboard.notStarted.map(\.id) == ["attente"])
+    #expect(dashboard.delivered.map(\.id) == ["pr", "fusion"])
+
+    // Invariants : listes disjointes ; « En cours » sans pause ni `.enAttente`.
+    let all = lists(dashboard).flatMap { $0 }
+    #expect(Set(all).count == all.count)
+    #expect(!dashboard.running.contains { KanbanActionPresentation.resumable($0) })
+    #expect(!dashboard.running.contains { $0.column == .enAttente })
+    #expect(!dashboard.running.contains { ConsoleStatus.of(card: $0).text == "En pause" })
+
+    // Le badge suit « À vous », et les comptes de la barre de menus aussi.
+    #expect(HomePresentation.attentionCount(omp: available, board: .board(KanbanBoard(cards: cards, anomalies: []))) == 5)
+    #expect(HomePresentation.counts(KanbanBoard(cards: cards, anomalies: [])) == HomeCounts(attention: 5, running: 1))
+
+    // Ardoise vide : cinq listes vides.
+    let empty = lists(HomePresentation.dashboard(board))
+    #expect(empty.allSatisfy { $0.isEmpty })
+    #expect(HomePresentation.counts(board) == .zero)
+}
+
+@Test("accueil-en-cours-melange-pause-et-compte/AC-3 : une carte en échec ou bloquée dit « En échec » / « Bloquée » et son étape, sans pid, chemin ni JSON")
+func failedAndBlockedCardsReadAsPlainFrench() {
+    #expect(HomeText.natureText(.failed) == "En échec")
+    #expect(HomeText.natureText(.blocked) == "Bloquée")
+    #expect(HomeText.failedPrompt(.impl) == "L'étape « Implémentation » s'est arrêtée en échec.")
+    #expect(HomeText.failedPrompt(nil) == "La pipeline s'est arrêtée en échec.")
+    #expect(HomeText.blockedPrompt(.specs) == "La pipeline est bloquée à l'étape « Spécification ».")
+    #expect(HomeText.blockedPrompt(nil) == "La pipeline est bloquée.")
+
+    let prompts = PipelinePhase.allCases.flatMap { [HomeText.failedPrompt($0), HomeText.blockedPrompt($0)] }
+        + [HomeText.failedPrompt(nil), HomeText.blockedPrompt(nil)]
+    for prompt in prompts {
+        #expect(!prompt.contains("/"), "aucun chemin : \(prompt)")
+        #expect(!prompt.contains("{"), "aucun JSON : \(prompt)")
+        #expect(!prompt.contains { $0.isNumber }, "aucun pid ni code : \(prompt)")
+    }
+
+    // Le prompt est calculé sur la phase de la carte, et le geste est la relance.
+    var failed = card("echec", column: .echec, action: lotAction("echec", state: .failed))
+    failed.phase = .review
+    var blocked = card("bloquee", column: .bloquee, action: lotAction("bloquee", state: .blocked))
+    blocked.phase = nil
+    let dashboard = HomePresentation.dashboard(KanbanBoard(cards: [failed, blocked], anomalies: []))
+    #expect(dashboard.attention.map(\.prompt) == [HomeText.failedPrompt(.review), HomeText.blockedPrompt(nil)])
+    #expect(dashboard.attention.map { HomePresentation.cardAction($0) } == [.relaunch, .relaunch])
+    #expect(dashboard.running.isEmpty && dashboard.paused.isEmpty && dashboard.notStarted.isEmpty)
+    // Une carte `.relaunch` peut porter le bouton proéminent.
+    #expect(HomePresentation.prominentAttentionID(dashboard) == "echec")
+}
+
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : relancée, la feature quitte « À vous » pour « En cours »")
+func relaunchedFeatureMovesFromAttentionToRunning() {
+    // Même feature, lot vivant : `failed` (colonne `.echec`), puis `running`
+    // (colonne `.enCours`) à l'instantané qui suit l'accusé `taken`.
+    let failed = card("feature:k:cache", column: .echec, action: lotAction("cache", state: .failed))
+    let before = HomePresentation.dashboard(KanbanBoard(cards: [failed], anomalies: []))
+    #expect(before.attention.map(\.id) == ["feature:k:cache"])
+    #expect(HomePresentation.cardAction(before.attention[0]) == .relaunch)
+    #expect(before.running.isEmpty)
+
+    let running = card("feature:k:cache", column: .enCours, action: lotAction("cache", state: .running))
+    let after = HomePresentation.dashboard(KanbanBoard(cards: [running], anomalies: []))
+    #expect(after.attention.isEmpty)
+    #expect(after.running.map(\.id) == ["feature:k:cache"])
+    #expect(HomePresentation.counts(KanbanBoard(cards: [running], anomalies: [])) == HomeCounts(attention: 0, running: 1))
 }
 
 @MainActor
@@ -130,13 +253,13 @@ func setupImposesItsSheetFirst() {
             #expect(MainSheetPolicy.sheet(
                 omp: available, setup: .preparing(.machine), setupDismissed: false, board: board,
                 welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask",
-                contract: nil, pairing: false
+                contract: nil
             ) == .setup)
             // Règle 2 : préparation prête mais composant OMP absent.
             #expect(MainSheetPolicy.sheet(
                 omp: .missing, setup: .ready, setupDismissed: false, board: board,
                 welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask",
-                contract: nil, pairing: false
+                contract: nil
             ) == .setup)
         }
     }
@@ -144,18 +267,18 @@ func setupImposesItsSheetFirst() {
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .failed(.components(.unsupportedMac)), setupDismissed: false,
         board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
-        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+        launchFormShown: false, answerCardID: nil, contract: nil
     ) == .setup)
     // Ignorée : les autres règles reprennent la main.
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .preparing(.machine), setupDismissed: true, board: .storeEmpty(dir: "/s"),
         welcomeSeen: true, welcomeRequested: false, launchFormShown: true, answerCardID: nil,
-        contract: nil, pairing: false
+        contract: nil
     ) == .newFeature)
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .failed(.components(.unsupportedMac)), setupDismissed: true,
         board: .storeEmpty(dir: "/s"), welcomeSeen: false, welcomeRequested: true,
-        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+        launchFormShown: false, answerCardID: nil, contract: nil
     ) == .welcome)
 
     // `onReady` revérifie OMP : une fois le composant installé, l'Accueil ouvre.
@@ -191,12 +314,12 @@ func missingOmpSheetIgnoresEveryOtherInput() {
         for dismissed in [false, true] {
             for board in boards {
                 for contract in contracts {
-                    for flag in 0..<16 {
+                    for flag in 0..<8 {
                         let sheet = MainSheetPolicy.sheet(
                             omp: .missing, setup: setup, setupDismissed: dismissed, board: board,
                             welcomeSeen: flag & 1 != 0, welcomeRequested: flag & 2 != 0,
                             launchFormShown: flag & 4 != 0, answerCardID: "ask",
-                            contract: contract, pairing: flag & 8 != 0
+                            contract: contract
                         )
                         #expect(sheet == .setup, "setup=\(setup) dismissed=\(dismissed) flags=\(flag)")
                         cases += 1
@@ -205,12 +328,12 @@ func missingOmpSheetIgnoresEveryOtherInput() {
             }
         }
     }
-    #expect(cases == 5 * 2 * 4 * 2 * 16)
+    #expect(cases == 5 * 2 * 4 * 2 * 8)
     // OMP présent, la feuille ignorée cède la place (elle est fermable).
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .preparing(.podman(downloaded: 0, total: 20)), setupDismissed: true,
         board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
-        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+        launchFormShown: false, answerCardID: nil, contract: nil
     ) == nil)
 }
 
@@ -270,7 +393,7 @@ func welcomeOpensOnceOnAFreshInstall() {
         MainSheetPolicy.sheet(
             omp: home.omp, setup: .ready, setupDismissed: false, board: board, welcomeSeen: home.welcomeSeen,
             welcomeRequested: home.welcomeRequested, launchFormShown: launchFormShown,
-            answerCardID: home.answerCardID, contract: nil, pairing: false
+            answerCardID: home.answerCardID, contract: nil
         )
     }
     #expect(policy(first, .storeEmpty(dir: "/s")) == .welcome)
@@ -300,7 +423,7 @@ func answerOpensTheCardSheetWhileItWaits() {
     func policy(_ board: KanbanBoardState, answerCardID: String?) -> MainSheet? {
         MainSheetPolicy.sheet(
             omp: available, setup: .ready, setupDismissed: false, board: board, welcomeSeen: true,
-            welcomeRequested: false, launchFormShown: false, answerCardID: answerCardID, contract: nil, pairing: false
+            welcomeRequested: false, launchFormShown: false, answerCardID: answerCardID, contract: nil
         )
     }
 

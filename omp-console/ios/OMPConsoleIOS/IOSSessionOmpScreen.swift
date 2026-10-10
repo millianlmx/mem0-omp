@@ -70,7 +70,7 @@ struct IOSSessionOmpScreen: View {
                 }
             case .live:
                 panel {
-                    sessionBody
+                    sessionBody(ended: model.surface.isOver)
                     actions
                 }
             case .stopped:
@@ -80,7 +80,7 @@ struct IOSSessionOmpScreen: View {
                         .font(.callout)
                         .iosBanner(tone: .neutral)
                         .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                    sessionBody
+                    sessionBody(ended: model.surface.isOver)
                     actions
                 }
             case .dead:
@@ -90,7 +90,7 @@ struct IOSSessionOmpScreen: View {
                         .font(.callout)
                         .iosBanner(tone: .attention)
                         .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                    sessionBody
+                    sessionBody(ended: model.surface.isOver)
                     actions
                 }
             case .failed(let message):
@@ -138,6 +138,10 @@ struct IOSSessionOmpScreen: View {
         } message: {
             Text(IOSSessionOmpText.stopConfirmMessage)
         }
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .session,
+            isEnabled: IOSSessionOmpModel.gesturesEnabled(client.state)
+        ) { model.refresh() })
     }
 
     // MARK: - Panneau
@@ -159,6 +163,7 @@ struct IOSSessionOmpScreen: View {
         }
         .iosPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         // `.contain` : sans lui, l'identifiant d'écran écrase ceux des gestes
         // (composeur, « Envoyer », « Relancer »…), illisibles par la recette S-6.
         .accessibilityElement(children: .contain)
@@ -212,9 +217,11 @@ struct IOSSessionOmpScreen: View {
         .accessibilityIdentifier(id)
     }
 
-    @ViewBuilder private var sessionBody: some View {
+    /// `ended` : la session hébergée est finie, ses appels restés sans résultat se
+    /// lisent « Interrompu » (S-7 de mac-finitions-hig).
+    @ViewBuilder private func sessionBody(ended: Bool) -> some View {
         if let thread = model.thread {
-            IOSSessionThreadView(model: thread)
+            IOSSessionThreadView(model: thread, sessionEnded: ended)
                 .accessibilityIdentifier(SessionOmpAccessibility.thread)
         }
         composer

@@ -24,14 +24,14 @@ extension StatsPresentation {
     }
 
     /// Les runs des features listées, features puis runs dans l'ordre de S-1 de
-    /// `statistiques`.
-    static func rows(_ project: ProjectStats, nowMs: Double) -> [StatsRow] {
+    /// `statistiques`. Le modèle est nommé par `names` (catalogue), l'id en repli.
+    static func rows(_ project: ProjectStats, nowMs: Double, names: [String: String]?) -> [StatsRow] {
         project.features.flatMap { feature in
-            feature.runs.map { row($0, feature: feature.slug, nowMs: nowMs) }
+            feature.runs.map { row($0, feature: feature.slug, nowMs: nowMs, names: names) }
         }
     }
 
-    private static func row(_ run: RunStats, feature: String, nowMs: Double) -> StatsRow {
+    private static func row(_ run: RunStats, feature: String, nowMs: Double, names: [String: String]?) -> StatsRow {
         var row = StatsRow(
             id: run.sessionFile,
             tag: sessionTag(forSessionFile: run.sessionFile),
@@ -50,7 +50,9 @@ extension StatsPresentation {
         switch run.metrics {
         case .measured(let metrics):
             let duration = durationMs(metrics, isLive: run.isLive, nowMs: nowMs)
-            row.model = metrics.model ?? "—"
+            row.model = metrics.model.map {
+                ModelCatalog.sessionModelName(model: $0, provider: metrics.provider, names: names)
+            } ?? "—"
             row.durationMs = duration ?? -1
             row.durationText = duration.map { ConsoleFormat.duration(ms: $0) } ?? "—"
             row.turns = metrics.turns

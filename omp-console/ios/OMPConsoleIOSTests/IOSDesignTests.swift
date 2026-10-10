@@ -21,6 +21,12 @@ struct IOSDesignTests {
         #expect(IOSMetrics.margin(nil) == 24)
     }
 
+    @Test("ipad-clavier-et-largeur-de-lecture/AC-1 : la colonne de lecture (720 pt marges comprises) garde la surface sous 700 pt")
+    func readableWidthKeepsTheColumnUnder700() {
+        #expect(IOSMetrics.readableWidth == 720)
+        #expect(IOSMetrics.readableWidth - 2 * IOSMetrics.regularMargin <= 700)
+    }
+
     @Test("design-ios/AC-1 : les trois surfaces portent le rayon du tactile (12 pt)")
     func surfacesShareTactileRadius() {
         #expect(IOSSurface.panelRadius == 12)

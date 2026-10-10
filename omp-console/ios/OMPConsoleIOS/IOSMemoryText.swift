@@ -84,6 +84,15 @@ enum IOSMemoryText {
     /// d'attendre un délai fixe.
     static let graphRecipeReady = "memoire-recipe-ready"
 
+    /// La recette `clavier` (ipad-clavier-et-largeur-de-lecture, S-8) : la Mémoire en
+    /// mode liste sur la fixture partagée, sans réseau ni fiche ouverte.
+    static let keyboardRecipe = "clavier"
+
+    /// Le signal de LECTURE de la recette `clavier`, écrit sur la sortie d'erreur à
+    /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
+    /// littéral dans `scripts/ios-clavier-largeur-recette.sh`).
+    static let keyboardRecipeRead = "memoire-recipe-read"
+
     // MARK: - « Sommaire » : icône propre, raison d'indisponibilité
 
     /// Les symboles de la barre d'outils : « Sommaire » et « Liste » ne partagent

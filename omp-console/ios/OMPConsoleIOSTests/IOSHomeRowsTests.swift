@@ -58,9 +58,9 @@ struct IOSHomeRowsTests {
             Issue.record("les recettes dashboard et longTitles doivent rendre un tableau de bord")
             return
         }
-        let rows = long.running + long.delivered
-        #expect(rows.count == 4)
-        #expect(rows.map(\.id) == (reference.running + reference.delivered).map(\.id))
+        let rows = IOSHomeContent.rows(long)
+        #expect(rows.count == 6)
+        #expect(rows.map(\.id) == IOSHomeContent.rows(reference).map(\.id))
         #expect(rows.allSatisfy { $0.title == IOSHomeText.recipeLongTitle })
 
         #expect(long.attention.map(\.card.id) == reference.attention.map(\.card.id))

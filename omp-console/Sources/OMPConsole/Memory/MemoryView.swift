@@ -122,7 +122,7 @@ struct MemoryView: ConsoleSectionView {
             Button {
                 Task { await model.showSummary() }
             } label: {
-                Label(MemoryText.summaryButton, systemImage: "list.bullet")
+                Label(MemoryText.summaryButton, systemImage: "rectangle.stack")
             }
             .help(MemoryText.summaryHelp)
             .disabled(graph.shown || !model.canShowSummary)

@@ -53,7 +53,9 @@ struct TerminalSectionView: ConsoleSectionView {
 struct StatsSectionView: ConsoleSectionView {
     static let section = ConsoleSection.stats
     @ObservedObject var model: StatsModel
-    var body: some View { StatsView(model: model) }
+    /// Le modèle d'action : il porte les noms lisibles du catalogue de modèles.
+    @ObservedObject var actions: ActionsModel
+    var body: some View { StatsView(model: model, modelNames: actions.modelNames) }
 }
 
 /// SEUL endroit qui associe une section à sa vue : le `switch` est exhaustif,
@@ -110,7 +112,7 @@ struct SectionDetail: View {
         case .sessions: SessionsView(console: console)
         case .session: SessionConsoleSectionView(model: sessionModel)
         case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
-        case .stats: StatsSectionView(model: statsModel)
+        case .stats: StatsSectionView(model: statsModel, actions: actions)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .project: ProjectView(model: projectModel)
         case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser)

@@ -34,33 +34,33 @@ struct PipelinesCardSheetTests {
 
     @Test("ios-fiche-carte-pipelines/AC-6 : le nom du catalogue remplace le sélecteur connu, le sélecteur brut reste sinon")
     func modelNameFromCatalog() {
-        #expect(PipelinesModel.modelName(known, names: catalog) == "Claude Opus 5.5")
-        #expect(PipelinesModel.modelName(unknown, names: catalog) == unknown)
-        #expect(PipelinesModel.modelName(known, names: nil) == known)
-        #expect(PipelinesModel.modelName(known, names: [known: "  "]) == known)
-        #expect(PipelinesModel.modelName(known, names: [:]) == known)
+        #expect(ModelCatalog.displayName(known, names: catalog) == "Claude Opus 5.5")
+        #expect(ModelCatalog.displayName(unknown, names: catalog) == unknown)
+        #expect(ModelCatalog.displayName(known, names: nil) == known)
+        #expect(ModelCatalog.displayName(known, names: [known: "  "]) == known)
+        #expect(ModelCatalog.displayName(known, names: [:]) == known)
     }
 
     @Test("ios-fiche-carte-pipelines/AC-6 : les lignes de modèle suivent les groupes de la carte")
     func modelLinesFollowSlots() {
         let both = ModelSlots(reqSpecs: known, implReview: unknown)
         #expect(
-            PipelinesModel.modelLines(card(models: both), names: catalog)
-                == PipelinesModelLines(
-                    reqSpecs: "/req+/specs Claude Opus 5.5",
-                    implReview: "/impl+/review lm-studio/qwen3-coder-30b"
+            KanbanCardPresentation.modelLines(card(models: both), names: catalog)
+                == KanbanModelLines(
+                    reqSpecs: "Modèle /req et /specs : Claude Opus 5.5",
+                    implReview: "Modèle /impl et /review : lm-studio/qwen3-coder-30b"
                 )
         )
         #expect(
-            PipelinesModel.modelLines(card(models: both), names: nil)
-                == PipelinesModelLines(
-                    reqSpecs: "/req+/specs anthropic/claude-opus-5-5",
-                    implReview: "/impl+/review lm-studio/qwen3-coder-30b"
+            KanbanCardPresentation.modelLines(card(models: both), names: nil)
+                == KanbanModelLines(
+                    reqSpecs: "Modèle /req et /specs : anthropic/claude-opus-5-5",
+                    implReview: "Modèle /impl et /review : lm-studio/qwen3-coder-30b"
                 )
         )
         let noReview = ModelSlots(reqSpecs: known, implReview: nil)
-        #expect(PipelinesModel.modelLines(card(models: noReview), names: catalog)?.implReview == "/impl+/review défaut OMP")
-        #expect(PipelinesModel.modelLines(card(models: nil), names: catalog) == nil)
+        #expect(KanbanCardPresentation.modelLines(card(models: noReview), names: catalog)?.implReview == "Modèle /impl et /review : défaut OMP")
+        #expect(KanbanCardPresentation.modelLines(card(models: nil), names: catalog) == nil)
     }
 
     @Test("ios-fiche-carte-pipelines/AC-7 : les identifiants de la fiche sont deux à deux distincts")

@@ -188,7 +188,7 @@ func testFailureKeepsTheSwitchOnAndShowsTheReason() async {
     #expect(model.state == .failed(reason: "port 8787 déjà utilisé"))
     #expect(defaults.object(forKey: RemoteServiceModel.enabledKey) == nil, "aucune préférence écrite")
     #expect(PairingText.failed(reason: "port 8787 déjà utilisé") == "Échec : port 8787 déjà utilisé")
-    #expect(PairingSheet.serviceStatus(model.state)
+    #expect(DevicesSettingsView.serviceStatus(model.state)
         == ConsoleStatus(text: "Échec : port 8787 déjà utilisé", tone: .danger))
 }
 
@@ -204,10 +204,10 @@ func testDeniedStateShowsTheSettingsAction() async {
     await model.startIfEnabled()
     #expect(model.state.isDenied)
     #expect(model.enabled, "l'interrupteur reste sur ON")
-    #expect(PairingSheet.serviceStatus(model.state)
+    #expect(DevicesSettingsView.serviceStatus(model.state)
         == ConsoleStatus(text: "Accès au réseau local refusé à OMP Console.", tone: .attention))
     #expect(PairingText.openLocalNetworkSettings == "Ouvrir Réglages Système")
-    #expect(PairingSheet.localNetworkSettingsURL
+    #expect(DevicesSettingsView.localNetworkSettingsURL
         == "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork")
 }
 
@@ -243,4 +243,176 @@ func testStartIsDeferredUntilSetupIsReady() async {
     await model.startIfEnabled()
     #expect(listener.startCount == 1)
     #expect(model.state.isRunning)
+}
+
+// MARK: - mac-feuille-appairage-debordante : échéance du code
+
+/// Un `PairingModel` sur un registre jetable et une horloge que le test avance.
+@MainActor
+private func expiringPairing() async -> (model: PairingModel, registry: DeviceRegistry, clock: MutableRemoteClock) {
+    let clock = MutableRemoteClock()
+    let registry = DeviceRegistry(
+        file: URL(fileURLWithPath: remoteTempDir("omp-console-pairing-expiry"), isDirectory: true)
+            .appendingPathComponent("devices.json"),
+        store: InMemoryDeviceTokenStore(),
+        clock: clock.clock
+    )
+    await registry.load()
+    return (PairingModel(registry: registry, clock: clock.clock), registry, clock)
+}
+
+@MainActor
+@Test("mac-feuille-appairage-debordante/AC-10 : le décompte décroît, puis le code expiré dit « Code expiré »")
+func pairingCodeCountsDownThenExpires() async {
+    let (model, _, clock) = await expiringPairing()
+    model.generate()
+    #expect(model.expired == false)
+    #expect(model.countdown == "02:00")
+    #expect(model.code != nil)
+
+    clock.advance(ms: 61_000)
+    model.refresh()
+    #expect(model.countdown == "00:59")
+    #expect(model.expired == false)
+
+    clock.advance(ms: 59_000)
+    model.refresh()
+    #expect(model.expired)
+    #expect(model.code == nil)
+    #expect(model.countdown == nil)
+    #expect(model.error == nil)
+    // Une relecture plus tard (registre rechargé) dit toujours « expiré ».
+    clock.advance(ms: 30_000)
+    model.refresh()
+    #expect(model.expired)
+
+    // Un nouveau code efface l'échéance.
+    model.generate()
+    #expect(model.expired == false)
+    #expect(model.countdown == "02:00")
+}
+
+@MainActor
+@Test("mac-feuille-appairage-debordante/AC-10 : un code consommé par un appairage avant l'échéance ne dit pas « Code expiré »")
+func consumedPairingCodeIsNotExpired() async throws {
+    let (model, registry, clock) = await expiringPairing()
+    model.generate()
+    let code = try #require(model.code)
+    clock.advance(ms: 10_000)
+    _ = try await registry.pair(code: code.value, name: "iPhone 17e", deviceKey: "cle")
+    model.refresh()
+    #expect(model.code == nil)
+    #expect(model.countdown == nil)
+    #expect(model.expired == false)
+    // Même après l'échéance qu'aurait eue le code consommé.
+    clock.advance(ms: 200_000)
+    model.refresh()
+    #expect(model.expired == false)
+}
+
+@MainActor
+@Test("mac-feuille-appairage-debordante/S-10 : OMP_CONSOLE_REMOTE_PORT déplace le port d'écoute, une valeur hors 1…65535 garde 8787")
+func remotePortFollowsEnvironment() {
+    let key = RemoteServiceModel.portEnvironmentKey
+    #expect(key == "OMP_CONSOLE_REMOTE_PORT")
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: "18787"]) == 18787)
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: " 18787\n"]) == 18787)
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: "1"]) == 1)
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: "65535"]) == 65535)
+    let fallback = ConsoleAPI.Service.defaultPort
+    #expect(fallback == 8787)
+    #expect(RemoteServiceModel.resolvedPort(environment: [:]) == fallback)
+    for raw in ["", "abc", "0", "-1", "70000", "65536", "18787x"] {
+        #expect(RemoteServiceModel.resolvedPort(environment: [key: raw]) == fallback, "valeur \(raw)")
+    }
+}
+
+// MARK: - reglages-mac-appareils : interrupteur, code annulé, mémoire (S-3)
+
+@MainActor
+@Test("reglages-mac-appareils/AC-4 : couper l'interrupteur arrête le service et annule le code, rallumé il n'y a aucun code")
+func switchOffCancelsThePairingCode() async throws {
+    let (suite, defaults) = remoteDefaultsSuite()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let listener = RecordingListener()
+    let model = makeRemoteServiceModel(defaults: defaults, listener: listener)
+    await model.startIfEnabled()
+    #expect(model.state.isRunning)
+
+    model.pairing.generate()
+    let code = try #require(model.pairing.code)
+    #expect(model.registry.pairing.current == code)
+    #expect(model.pairing.countdown != nil)
+
+    await model.setEnabled(false)
+    #expect(listener.stopCount == 1, "le service distant s'arrête")
+    #expect(model.state == .off)
+    #expect(model.registry.pairing.current == nil, "le code actif est annulé")
+    #expect(model.pairing.code == nil)
+    #expect(model.pairing.countdown == nil)
+    #expect(model.pairing.expired == false, "une annulation n'est pas une échéance")
+    #expect(DevicesSettingsView.codeZone(
+        enabled: model.enabled, state: model.state, code: model.pairing.code,
+        countdown: model.pairing.countdown, expired: model.pairing.expired
+    ) == .serviceOff)
+
+    // Rallumé avant l'échéance : aucun code, jamais l'ancien, qui n'est plus échangeable.
+    await model.setEnabled(true)
+    #expect(model.state.isRunning)
+    #expect(model.registry.pairing.current == nil)
+    #expect(DevicesSettingsView.codeZone(
+        enabled: model.enabled, state: model.state, code: model.pairing.code,
+        countdown: model.pairing.countdown, expired: model.pairing.expired
+    ) == .none)
+    await #expect(throws: ConsoleAPIError.self) {
+        _ = try await model.registry.pair(code: code.value, name: "iPhone 17e", deviceKey: "cle")
+    }
+    #expect(model.registry.devices.isEmpty)
+}
+
+@MainActor
+@Test("reglages-mac-appareils/AC-5 : l'interrupteur retrouve après relance l'état choisi, coupé puis rallumé")
+func switchStateSurvivesRelaunch() async {
+    let (suite, defaults) = remoteDefaultsSuite()
+    defer { defaults.removePersistentDomain(forName: suite) }
+
+    let first = makeRemoteServiceModel(defaults: defaults, listener: RecordingListener())
+    #expect(first.enabled, "clé absente ⇒ actif")
+    await first.startIfEnabled()
+    await first.setEnabled(false)
+
+    // Relance après la coupure : le modèle neuf relit `remote.enabled`.
+    let offListener = RecordingListener()
+    let afterOff = makeRemoteServiceModel(defaults: defaults, listener: offListener)
+    #expect(afterOff.enabled == false)
+    await afterOff.startIfEnabled()
+    #expect(afterOff.state == .off)
+    #expect(offListener.startCount == 0)
+    #expect(afterOff.registry.isLoaded, "coupé, le registre est tout de même chargé")
+
+    // Rallumé, puis relance : le modèle neuf lit `true` et démarre.
+    await afterOff.setEnabled(true)
+    let onListener = RecordingListener()
+    let afterOn = makeRemoteServiceModel(defaults: defaults, listener: onListener)
+    #expect(afterOn.enabled)
+    await afterOn.startIfEnabled()
+    #expect(onListener.startCount == 1)
+    #expect(afterOn.state.isRunning)
+}
+
+@MainActor
+@Test("reglages-mac-appareils/S-3 : l'arrêt à la fermeture de l'app ne touche ni la préférence ni le code")
+func terminationStopKeepsPreferenceAndCode() async throws {
+    let (suite, defaults) = remoteDefaultsSuite()
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let model = makeRemoteServiceModel(defaults: defaults, listener: RecordingListener())
+    await model.startIfEnabled()
+    model.pairing.generate()
+    let code = try #require(model.pairing.code)
+
+    model.stop()
+    #expect(model.state == .off)
+    #expect(model.enabled)
+    #expect(defaults.object(forKey: RemoteServiceModel.enabledKey) == nil)
+    #expect(model.registry.pairing.current == code)
 }

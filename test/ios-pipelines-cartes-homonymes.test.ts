@@ -134,7 +134,7 @@ function regularFaults(root: string): string[] {
   const screen = code(root, SCREEN);
   if (/sizeClass/.test(body(screen, "cardLabel"))) faults.push("cardLabel dépend de la classe de taille : iPhone et iPad divergeraient");
   if (!body(screen, "lanes").includes("ForEach(rows)")) faults.push("l'écran ne rend plus les voies de l'ardoise (ForEach(rows))");
-  if (!body(screen, "boardContent").includes("PipelinesModel.laneRows(")) faults.push("boardContent ne dérive plus les voies de l'ardoise (PipelinesModel.laneRows)");
+  if (!body(screen, "boardContent").includes("KanbanLaneRows.rows(")) faults.push("boardContent ne dérive plus les voies de l'ardoise (KanbanLaneRows.rows)");
   if (!body(screen, "boardContent").includes("lanes(rows")) faults.push("boardContent ne rend plus les voies (lanes(rows:))");
   return faults;
 }

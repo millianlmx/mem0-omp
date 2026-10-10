@@ -34,6 +34,11 @@ final class KanbanModel: ObservableObject {
     @Published var modelsSheetCard: KanbanCard?
     @Published var diagnosticShown = false
     @Published var technicalExpanded = false
+    /// Les voies repliables que l'utilisateur a dépliées (S-2 de
+    /// parite-mac-des-correctifs-ios) : vide à chaque visite de Pipelines
+    /// (`resetLaneFolding`, appelé quand la section quitte l'écran), donc
+    /// Livrées et Arrêtées s'ouvrent repliées.
+    @Published var unfoldedLanes: Set<KanbanLane> = []
 
     /// Le registre des faits de PR (S-5) : l'ardoise est dérivée avec ses faits,
     /// le flux distant les sert à iOS.
@@ -54,6 +59,9 @@ final class KanbanModel: ObservableObject {
     private var hub: StoreHub
     private var task: Task<Void, Never>?
     private var hubStopped = false
+    /// L'ardoise du crochet de recette `-home.recipe` (`HomeRecipe`) : posée
+    /// telle quelle par `start()`, sans abonnement au magasin.
+    private let recipeBoard: KanbanBoardState?
     /// Le dernier instantané lu : re-dérivé quand les faits de PR changent.
     private var lastSnapshot: StoreSnapshot?
     private var cancellables: Set<AnyCancellable> = []
@@ -61,13 +69,16 @@ final class KanbanModel: ObservableObject {
     /// `prStates` nil : le registre de production, lecteur `gh` résolu dans
     /// `environment` (`OMP_CONSOLE_GH_BINARY` compris) ; `gh` introuvable donne un
     /// registre SANS lecteur — aucun fait, toutes les PR restent « PR créée ».
+    /// `recipeBoard` nil (défaut) : comportement de production.
     init(
         hub: StoreHub = StoreHub(),
         prStates: PullRequestStateBook? = nil,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        recipeBoard: KanbanBoardState? = nil
     ) {
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: hub.stateDir, nowMs: hub.nowMs) }
+        self.recipeBoard = recipeBoard
         self.prStates = prStates ?? Self.ghBook(environment: environment)
         // `@Published` émet AVANT l'affectation : la valeur neuve vient du
         // paramètre, jamais d'une relecture de la propriété.
@@ -112,8 +123,13 @@ final class KanbanModel: ObservableObject {
             .eraseToAnyPublisher()
     }
 
-    /// S'abonne au flux global en UNE tâche de longue durée. Idempotent.
+    /// S'abonne au flux global en UNE tâche de longue durée. Idempotent. Sous une
+    /// recette, pose son ardoise et s'arrête là : aucun abonnement.
     func start() {
+        if let recipeBoard {
+            state = recipeBoard
+            return
+        }
         guard task == nil else { return }
         if hubStopped {
             hub = makeHub()
@@ -136,9 +152,33 @@ final class KanbanModel: ObservableObject {
         hubStopped = true
     }
 
+    /// Les voies rendues sur Mac : la règle CONDENSÉE de l'iPhone (S-1) — voies
+    /// sans carte écartées, Livrées et Arrêtées repliées sauf dépliées. Vide
+    /// hors de l'état `.board`.
+    var laneRows: [KanbanLaneRow] {
+        guard let board = state.kanbanBoard else { return [] }
+        return KanbanLaneRows.rows(board.lanes, layout: .condensed, unfolded: unfoldedLanes)
+    }
+
+    /// Replie une voie dépliée, déplie une voie repliée.
+    func toggleLane(_ lane: KanbanLane) {
+        unfoldedLanes.formSymmetricDifference([lane])
+    }
+
+    /// Remet toutes les voies repliables à l'état replié : un départ de la
+    /// section (une feuille ouverte par-dessus n'en est pas un).
+    func resetLaneFolding() {
+        unfoldedLanes = []
+    }
+
     /// Sélectionne une carte : SEUL point de mutation de la sélection (idempotent).
+    /// La voie repliable qui la contient est dépliée — une carte sélectionnée
+    /// n'est jamais cachée, même ouverte depuis une notification (S-2).
     func select(_ id: String) {
         selectedCardID = id
+        guard let lane = state.kanbanBoard?.lanes.first(where: { $0.cards.contains { $0.id == id } })?.lane,
+              KanbanLaneRows.foldable.contains(lane), !unfoldedLanes.contains(lane) else { return }
+        unfoldedLanes.insert(lane)
     }
 
     /// Sélectionne une carte et ouvre sa feuille de détail (double clic, ↩, menu
@@ -169,16 +209,17 @@ final class KanbanModel: ObservableObject {
         return state.card(id)
     }
 
-    /// Un pas de clavier, dans l'ordre de l'ÉCRAN : les voies de gauche à droite
-    /// (`KanbanBoard.lanes`) pour `nextColumn`/`previousColumn`, les cartes de
-    /// haut en bas puis d'une voie à la suivante pour `next`/`previous`. Sans
-    /// sélection, `next`/`nextColumn` prennent la première carte et
+    /// Un pas de clavier, dans l'ordre de l'ÉCRAN, sur les seules cartes
+    /// VISIBLES (S-2) : les voies de gauche à droite pour
+    /// `nextColumn`/`previousColumn`, les cartes de haut en bas puis d'une voie à
+    /// la suivante pour `next`/`previous` ; une voie repliée est sautée. Sans
+    /// sélection visible, `next`/`nextColumn` prennent la première carte et
     /// `previous`/`previousColumn` la dernière. Un déplacement qui sort de
     /// l'ardoise ne change rien.
     func move(by step: KanbanStep) {
-        guard let board = state.kanbanBoard, !board.cards.isEmpty else { return }
-        let lanes = board.lanes.filter { !$0.cards.isEmpty }
-        let cards = lanes.flatMap(\.cards)
+        let lanes = laneRows.map(\.visibleCards).filter { !$0.isEmpty }
+        let cards = lanes.flatMap { $0 }
+        guard !cards.isEmpty else { return }
         guard let current = selectedCardID, let index = cards.firstIndex(where: { $0.id == current }) else {
             selectedCardID = (step == .next || step == .nextColumn) ? cards.first?.id : cards.last?.id
             return
@@ -189,10 +230,10 @@ final class KanbanModel: ObservableObject {
         case .previous:
             selectedCardID = cards[max(index - 1, 0)].id
         case .nextColumn, .previousColumn:
-            guard let laneIndex = lanes.firstIndex(where: { $0.cards.contains { $0.id == current } }) else { return }
+            guard let laneIndex = lanes.firstIndex(where: { $0.contains { $0.id == current } }) else { return }
             let target = step == .nextColumn ? laneIndex + 1 : laneIndex - 1
             if lanes.indices.contains(target) {
-                selectedCardID = lanes[target].cards.first?.id
+                selectedCardID = lanes[target].first?.id
             }
         }
     }

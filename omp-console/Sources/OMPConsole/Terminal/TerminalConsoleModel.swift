@@ -94,7 +94,6 @@ final class TerminalConsoleModel: ObservableObject {
 
     private var window: NSWindow?
     private var windowObserver: NSObjectProtocol?
-    private var paletteObserver: NSObjectProtocol?
     private var pendingColumns = TerminalConsoleModel.defaultColumns
     private var pendingRows = TerminalConsoleModel.defaultRows
     private var frameScheduled = false
@@ -118,7 +117,7 @@ final class TerminalConsoleModel: ObservableObject {
         self.fileManager = fileManager
         self.environment = environment
         self.store = store
-        self.palette = palette ?? TerminalPalette.live()
+        self.palette = palette ?? TerminalPalette.live(for: NSAppearance.currentDrawing())
         if let git {
             self.git = git
             self.gitFailure = nil
@@ -144,22 +143,15 @@ final class TerminalConsoleModel: ObservableObject {
         host.onExit = { [weak self] exit in
             self?.handleExit(exit)
         }
-        // Le fond peint et la réponse OSC 11 doivent rester LA MÊME couleur (S-4) :
-        // la palette est recalculée quand l'app redevient active, seul moment où un
-        // changement d'apparence système est observable sans dépendre d'une API non
-        // documentée.
-        paletteObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.refreshPalette() }
-        }
-
         // Fermeture de l'app : c'est l'UNIQUE chemin de sortie (S-8), et il partage
         // sa séquence avec la fermeture de fenêtre (S-7).
         AppDelegate.terminateTerminal = { [weak self] in
             await self?.shutdown()
+        }
+        // Inventaire du Quitter (mac-quitter-sans-confirmation, S-1) : lu à la
+        // demande de sortie, jamais suivi en continu.
+        AppDelegate.terminalQuitActivity = { [weak self] in
+            self?.quitActivity
         }
         followProjectRoot()
     }
@@ -210,6 +202,13 @@ final class TerminalConsoleModel: ObservableObject {
     var isRunning: Bool {
         if case .running = state { return true }
         return false
+    }
+
+    /// Une commande tourne au premier plan du shell vivant (S-2) : c'est elle, et
+    /// non le shell au repos sur son invite, que le Quitter arrêtera.
+    var quitActivity: QuitActivity? {
+        guard isRunning, let command = host.foregroundCommand() else { return nil }
+        return .terminalCommand(named: command.name)
     }
 
     /// « Lancer omp » n'a de sens que si un shell vit pour lire la commande. Le
@@ -512,12 +511,15 @@ final class TerminalConsoleModel: ObservableObject {
         closeRequested = false
     }
 
-    // MARK: - Palette (S-4)
+    // MARK: - Palette (S-4, S-5 de mac-finitions-hig)
 
-    /// Recalcule la palette depuis l'apparence effective et la pose à l'émulateur :
-    /// la réponse OSC 11 et la peinture gardent ainsi la même source.
-    func refreshPalette() {
-        let fresh = TerminalPalette.live()
+    /// Recalcule la palette pour l'apparence effective de la vue du terminal et
+    /// la pose à l'émulateur : la réponse OSC 11 et la peinture gardent ainsi la
+    /// même source. Appelé par la vue à chaque changement d'apparence (bascule
+    /// système, app active ou non) et à son installation dans une fenêtre ; une
+    /// apparence inchangée ne publie rien.
+    func refreshPalette(for appearance: NSAppearance) {
+        let fresh = TerminalPalette.live(for: appearance)
         guard fresh != palette else { return }
         palette = fresh
         emulator?.palette = fresh

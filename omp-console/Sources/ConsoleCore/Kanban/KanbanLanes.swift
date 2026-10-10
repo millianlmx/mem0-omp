@@ -116,6 +116,69 @@ extension KanbanBoard {
     }
 }
 
+/// La disposition des voies : `condensed` (iPhone et Mac) écarte les voies sans
+/// carte et replie les voies terminales ; `full` (iPad) rend chaque voie de
+/// `lanes`, vides comprises, sans repli — l'affichage d'avant.
+public enum KanbanLaneLayout: Equatable, Sendable {
+    case condensed
+    case full
+}
+
+/// Une voie telle qu'un écran Pipelines la rend.
+public struct KanbanLaneRow: Identifiable, Equatable {
+    /// La voie et TOUTES ses cartes : le compte de l'en-tête reste celui de la
+    /// voie, repliée ou non.
+    public let content: KanbanLaneContent
+    /// L'en-tête replie et déplie la voie.
+    public let foldable: Bool
+    /// Repliée : seul l'en-tête est rendu.
+    public let folded: Bool
+
+    public var id: String { content.id }
+    public var lane: KanbanLane { content.lane }
+    public var visibleCards: [KanbanCard] { folded ? [] : content.cards }
+
+    public init(content: KanbanLaneContent, foldable: Bool, folded: Bool) {
+        self.content = content
+        self.foldable = foldable
+        self.folded = folded
+    }
+}
+
+/// La règle UNIQUE des voies rendues, partagée par les deux coques.
+public enum KanbanLaneRows {
+    /// Les voies que l'en-tête peut replier : les deux voies terminales.
+    public static let foldable: Set<KanbanLane> = [.livrees, .arretees]
+
+    /// Les voies rendues, dans l'ordre de `lanes`. `full` : une rangée par voie,
+    /// voies vides comprises, rien de repliable. `condensed` : seulement les
+    /// voies qui ont au moins une carte ; une voie terminale est repliée sauf si
+    /// elle est dans `unfolded`. Les cartes d'une voie ne sont jamais tronquées.
+    public static func rows(_ lanes: [KanbanLaneContent], layout: KanbanLaneLayout, unfolded: Set<KanbanLane>) -> [KanbanLaneRow] {
+        switch layout {
+        case .full:
+            return lanes.map { KanbanLaneRow(content: $0, foldable: false, folded: false) }
+        case .condensed:
+            return lanes.filter { !$0.cards.isEmpty }.map { content in
+                let isFoldable = Self.foldable.contains(content.lane)
+                return KanbanLaneRow(content: content, foldable: isFoldable, folded: isFoldable && !unfolded.contains(content.lane))
+            }
+        }
+    }
+}
+
+/// Les deux lignes de modèle d'une carte : « Modèle /req et /specs : <nom> » et
+/// « Modèle /impl et /review : <nom> ».
+public struct KanbanModelLines: Equatable, Sendable {
+    public let reqSpecs: String
+    public let implReview: String
+
+    public init(reqSpecs: String, implReview: String) {
+        self.reqSpecs = reqSpecs
+        self.implReview = implReview
+    }
+}
+
 /// Ce qu'une carte montre, en fonctions PURES.
 public enum KanbanCardPresentation {
     /// Le titre sans le préfixe « dépôt/ » des runs hors lot : le dépôt a sa
@@ -158,28 +221,21 @@ public enum KanbanCardPresentation {
         return nil
     }
 
-    /// La ligne « req+specs <A> » d'une carte, `nil` quand elle ne porte aucun
-    /// modèle (aucune ligne n'est alors écrite).
-    public static func reqSpecsLine(_ card: KanbanCard) -> String? {
+    /// Les deux lignes de modèle d'une carte, `nil` quand elle n'en porte aucun
+    /// (aucune ligne n'est alors écrite). Chaque sélecteur est nommé par le
+    /// catalogue (`ModelCatalog.displayName`), le sélecteur en repli ; un groupe
+    /// vide reste « défaut OMP ».
+    public static func modelLines(_ card: KanbanCard, names: [String: String]?) -> KanbanModelLines? {
         guard let models = card.models else { return nil }
-        return modelLine(KanbanText.modelReqSpecs, models.reqSpecs)
+        return KanbanModelLines(
+            reqSpecs: modelLine(KanbanText.modelReqSpecs, models.reqSpecs.map { ModelCatalog.displayName($0, names: names) }),
+            implReview: modelLine(KanbanText.modelImplReview, models.implReview.map { ModelCatalog.displayName($0, names: names) })
+        )
     }
 
-    /// La ligne « impl+review <B> » d'une carte, `nil` quand elle ne porte aucun
-    /// modèle.
-    public static func implReviewLine(_ card: KanbanCard) -> String? {
-        guard let models = card.models else { return nil }
-        return modelLine(KanbanText.modelImplReview, models.implReview)
-    }
-
-    /// `<libellé> <valeur|défaut OMP>` — un groupe vide s'affiche « défaut OMP ».
+    /// `<libellé> : <valeur|défaut OMP>` — un groupe vide s'affiche « défaut OMP ».
     public static func modelLine(_ label: String, _ value: String?) -> String {
-        "\(label) \(value ?? KanbanText.modelDefault)"
-    }
-
-    /// La forme canonique d'une paire : `req+specs <A> · impl+review <B>`.
-    public static func modelsText(_ models: ModelSlots) -> String {
-        KanbanText.modelsLine(models)
+        "\(label) : \(value ?? KanbanText.modelDefault)"
     }
 
     /// L'étape et l'avancement n'ont de sens que pour une feature vivante.

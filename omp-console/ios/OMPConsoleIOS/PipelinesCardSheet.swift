@@ -144,7 +144,7 @@ struct PipelinesCardSheet: View {
 
     @ViewBuilder
     private func information(_ card: KanbanCard) -> some View {
-        let lines = PipelinesModel.modelLines(card, names: modelNames)
+        let lines = KanbanCardPresentation.modelLines(card, names: modelNames)
         VStack(alignment: .leading, spacing: 6) {
             Text(KanbanCardPresentation.title(card))
                 .font(.title3)

@@ -75,6 +75,12 @@ marqueur `[test: <fonction>]` (une fonction de
 - Marge horizontale de 16 pt en largeur compacte, 24 pt en largeur régulière
   (ou inconnue) : `IOSMetrics.margin(_:)` en est l'unique règle.
   `[test: marginFollowsSizeClass]`
+- Colonne de lecture : sur une fenêtre large, Accueil, Sessions, Mémoire (mode
+  Liste), Projet, Statistiques et Session OMP posent leur contenu dans une
+  colonne de 720 pt marges comprises (`IOSMetrics.readableWidth`, surface de
+  672 pt), centrée, mise à l'échelle par Dynamic Type (`iosReadableWidth()`) ;
+  sous ce plafond, rien ne change. Pipelines et le mode Graphe restent pleine
+  largeur. `[test: readableWidthKeepsTheColumnUnder700]`
 - Les marges et les rembourrages des surfaces grandissent avec Dynamic Type
   (`@ScaledMetric`), jamais une constante figée seule. `[capture: iphone-*-light-ax]`
 - Cible tactile minimale : 44 pt (`IOSMetrics.minimumTarget`), la valeur du HIG
@@ -86,6 +92,14 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
+- Clavier de l'iPad : ⌘1…⌘7 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire,
+  Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
+  ouvre « Nouvelle feature… », ⌘F active la recherche de l'écran qui en a une.
+  Les dix commandes vivent dans la barre des menus de l'iPad (menus
+  Présentation et Fichier) avec leur libellé français, toutes avec ⌘ seul :
+  ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
+  `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
 
 ## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
 
@@ -328,6 +342,22 @@ marqueur `[test: <fonction>]` (une fonction de
 - Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
   la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
   libellés. `[test: parityFacts]`
+- Le tableau de bord range chaque carte dans UNE section, dans cet ordre :
+  « À vous », « En cours » (seules les pipelines réellement en marche, avec leur
+  durée, sans puce), « À reprendre » (les pipelines en pause, puce « En pause » et
+  « Reprendre »), « Pas commencées » (titre et sous-titre seuls), « Livrées
+  récemment » ; « À reprendre » et « Pas commencées » disparaissent quand elles
+  sont vides. Mêmes listes et mêmes identifiants que le Mac, préfixés `ios.`
+  (`ios.home.paused.<id>`, `ios.home.notStarted.<id>`). `[test: sectionsMatchTheMac]`
+- Une pipeline en échec ou bloquée (feature de lot relançable seulement) est une
+  carte « À vous » « En échec » (`xmark.octagon.fill`) ou « Bloquée »
+  (`exclamationmark.triangle.fill`), qui nomme l'étape où elle s'est arrêtée,
+  sans texte d'erreur brut, et porte « Reprendre » ; elle n'est dans aucune autre
+  section. `[test: failedAndBlockedAreAttentionOnly]`
+- Ce « Reprendre » emprunte la route de reprise de la carte, que le Mac traduit en
+  relance : envoi en cours, puis refus du Mac sur la carte (« La pipeline n'a pas
+  repris. » et sa cause) ; relancée, la carte passe sous « En cours ».
+  `[test: relaunchCardSendsResumeOfItsCard]`
 - La ligne « Accueil » porte le badge du nombre d'attentes (la fonction partagée
   `HomePresentation.attentionCount`), et rien quand il vaut zéro. `[test: badgeCounts]`
 - Chaque ligne de la liste racine est UN bouton d'accessibilité (`ios.section.<section>`)
@@ -373,7 +403,8 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
-- Les rangées « En cours » et « Livrées récemment » suivent la largeur : en
+- Les rangées « En cours », « À reprendre », « Pas commencées » et « Livrées
+  récemment » suivent la largeur : en
   largeur régulière (iPad), titre, puce et bouton sur une ligne ; en largeur
   compacte (iPhone, iPad en Split View étroit), le titre sur toute la largeur,
   puis la puce et le bouton côte à côte sur une deuxième ligne, sans troncature.
@@ -512,6 +543,15 @@ marqueur `[test: <fonction>]` (une fonction de
 - Une question `ask` est mise en évidence et DÉPLIÉE d'emblée ; la visionneuse
   n'offre AUCUN geste de réponse — lire, plier/déplier, faire défiler seulement.
   `[test: askHighlighted]`
+- Les arguments d'un appel déplié se lisent en clé/valeur (`IOSToolArgumentsView`,
+  lecture partagée `ToolArguments`), jamais en JSON brut : hiérarchie indentée
+  (retrait `@ScaledMetric`), éléments de liste numérotés dès 1, booléens « oui »/« non »,
+  clés dans l'ordre de l'appel, libellés français pour read, write, edit, bash,
+  grep et glob, valeurs « code » à chasse fixe, le reste en police système.
+  « Aucun argument » / « Arguments illisibles » ; le JSON brut reste replié derrière
+  « Afficher le détail brut ». Une valeur longue montre un EXTRAIT de 4 lignes ou
+  280 caractères suivi de « Afficher plus » : c'est une troncature de CONTENU
+  voulue, faite par le noyau, sans aucun `lineLimit`. `[test: toolArgumentsAreFields]`
 - Un ajout d'un run vivant s'ajoute sans relire la session : une seule lecture
   initiale, puis le flux de cette session. `[test: additionsDoNotReload]`
 - Le fil ne colle au bas que tant que l'utilisateur n'a pas remonté, et le

@@ -37,6 +37,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
+├── scripts/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
+├── scripts/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
 ├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
 ├── scripts/mem0-http-test.sh          test d'API mem0-http hors conteneur, dérivé du Dockerfile
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge

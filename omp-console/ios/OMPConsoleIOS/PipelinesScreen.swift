@@ -26,6 +26,9 @@ struct PipelinesScreen: View {
     @State private var unfoldedLanes: Set<KanbanLane> = []
     /// La feuille Connexion de la racine, ouverte par « Se connecter ».
     @Binding var showConnection: Bool
+    /// La demande d'ouvrir « Nouvelle feature » posée par ⌘N depuis la racine :
+    /// consommée à l'apparition ou à son changement, elle ouvre UNE feuille.
+    @Binding var newFeatureRequested: Bool
     /// Le signal de prêt de `-pipelines.board` n'est écrit qu'UNE fois.
     @State private var boardAnnounced = false
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -85,6 +88,11 @@ struct PipelinesScreen: View {
             recipeOpened = true
             sheet = .card(card.id)
         }
+        // ⌘R (menu Présentation) : le même geste que « Rafraîchir », la relecture
+        // de l'état des PR par le Mac ; la commande de scène porte le raccourci.
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: .kanban, isEnabled: canRefresh) { refreshPullRequests() })
+        .onAppear { consumeNewFeatureRequest() }
+        .onChange(of: newFeatureRequested) { consumeNewFeatureRequest() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(PipelinesAccessibility.screen)
         .task {
@@ -94,6 +102,17 @@ struct PipelinesScreen: View {
                 boardRecipe.announce()
             }
         }
+    }
+
+    /// ⌘N : la même feuille que le bouton « + », ouverte une seule fois — la
+    /// demande est un booléen remis à faux avant l'ouverture. Comme le bouton,
+    /// elle n'ouvre rien hors connexion (etats-non-connecte-heterogenes-ios, S-5) :
+    /// la section Pipelines est montrée, avec son état de connexion.
+    private func consumeNewFeatureRequest() {
+        guard newFeatureRequested else { return }
+        newFeatureRequested = false
+        guard connection.gesturesEnabled else { return }
+        sheet = .newFeature
     }
 
     // MARK: - Dérivation
@@ -122,10 +141,18 @@ struct PipelinesScreen: View {
 
     /// Demande au Mac de relire l'état des PR. Aucun message : un échec (Mac
     /// ancien, réseau) laisse le bouton tel quel, le retour visible est le
-    /// libellé des cartes.
+    /// libellé des cartes. ⌘R (`IOSKeyboardCommands`) passe aussi par ici.
+    private func refreshPullRequests() {
+        Task { _ = try? await client.refreshPullRequestStates() }
+    }
+
+    private var canRefresh: Bool {
+        PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing)
+    }
+
     private var refreshButton: some View {
         Button {
-            Task { _ = try? await client.refreshPullRequestStates() }
+            refreshPullRequests()
         } label: {
             if refreshing {
                 ProgressView()
@@ -133,8 +160,7 @@ struct PipelinesScreen: View {
                 Label(KanbanText.refresh, systemImage: "arrow.clockwise")
             }
         }
-        .keyboardShortcut(KeyEquivalent(PipelinesText.refreshKey), modifiers: .command)
-        .disabled(!PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing))
+        .disabled(!canRefresh)
         .accessibilityLabel(KanbanText.refresh)
         .accessibilityIdentifier(PipelinesAccessibility.refresh)
     }
@@ -182,8 +208,8 @@ struct PipelinesScreen: View {
     @ViewBuilder
     private func boardContent(_ board: KanbanBoard) -> some View {
         let showsRepo = Set(board.cards.map(\.repo)).count > 1
-        let rows = PipelinesModel.laneRows(
-            board.lanes, compact: sizeClass == .compact, unfolded: unfoldedLanes)
+        let rows = KanbanLaneRows.rows(
+            board.lanes, layout: sizeClass == .compact ? .condensed : .full, unfolded: unfoldedLanes)
         if rows.isEmpty {
             emptyCard(KanbanText.noPipeline)
         } else if sizeClass == .compact {
@@ -202,7 +228,7 @@ struct PipelinesScreen: View {
     }
 
     @ViewBuilder
-    private func lanes(_ rows: [PipelinesLaneRow], showsRepo: Bool) -> some View {
+    private func lanes(_ rows: [KanbanLaneRow], showsRepo: Bool) -> some View {
         ForEach(rows) { row in
             laneView(row, showsRepo: showsRepo)
         }
@@ -214,7 +240,7 @@ struct PipelinesScreen: View {
     /// Ses cartes sont rigides en hauteur (`cardButton`) : la voie la plus haute
     /// reçoit tout juste sa hauteur idéale et ne comprime aucun titre.
     @ViewBuilder
-    private func laneView(_ row: PipelinesLaneRow, showsRepo: Bool) -> some View {
+    private func laneView(_ row: KanbanLaneRow, showsRepo: Bool) -> some View {
         Group {
             if sizeClass == .compact {
                 laneBody(row, showsRepo: showsRepo)
@@ -232,7 +258,7 @@ struct PipelinesScreen: View {
     }
 
     @ViewBuilder
-    private func laneBody(_ row: PipelinesLaneRow, showsRepo: Bool) -> some View {
+    private func laneBody(_ row: KanbanLaneRow, showsRepo: Bool) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             if row.foldable {
                 Button {
@@ -251,7 +277,7 @@ struct PipelinesScreen: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityAddTraits(.isHeader)
-                .accessibilityValue(row.folded ? PipelinesText.laneFolded : PipelinesText.laneUnfolded)
+                .accessibilityValue(row.folded ? KanbanText.laneFolded : KanbanText.laneUnfolded)
                 .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
             } else {
                 headerLayout { laneTitle(row) }
@@ -288,7 +314,7 @@ struct PipelinesScreen: View {
     /// pour l'en-tête repliable et pour l'en-tête simple. Le titre passe à la
     /// ligne, il n'est jamais tronqué.
     @ViewBuilder
-    private func laneTitle(_ row: PipelinesLaneRow) -> some View {
+    private func laneTitle(_ row: KanbanLaneRow) -> some View {
         Image(systemName: row.lane.symbol)
             .foregroundStyle(row.lane.tone.tint)
             .accessibilityHidden(true)

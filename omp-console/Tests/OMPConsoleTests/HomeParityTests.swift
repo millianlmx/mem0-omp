@@ -33,23 +33,21 @@ private func parityBoard() -> KanbanBoardState {
 
 @Suite("Parité de l'Accueil (fixture partagée)")
 struct HomeParityTests {
-    @Test("ios-accueil/AC-1 : les trois faits d'attention du fixture partagé")
+    @Test("ios-accueil/AC-1, accueil-en-cours-melange-pause-et-compte/AC-3 : les cinq faits d'attention du fixture partagé")
     func attentionFacts() throws {
         let board = parityBoard()
-        #expect(HomePresentation.attentionCount(omp: parityOmp, board: board) == 3)
+        #expect(HomePresentation.attentionCount(omp: parityOmp, board: board) == 5)
 
         guard case .dashboard(let dashboard) = HomePresentation.state(omp: parityOmp, board: board) else {
             Issue.record("le fixture partagé doit donner un tableau de bord")
             return
         }
         let attention = dashboard.attention
-        #expect(attention.count == 3)
-        // L'ordre est celui de l'ardoise (features de lot avant les runs) : les
-        // trois NATURES y sont, chacune avec le libellé partagé de son mot.
-        #expect(Set(attention.map(\.nature)) == Set([.question, .milestoneSpecs, .milestoneReview]))
+        // L'ordre est celui de l'ardoise (features de lot avant les runs).
+        #expect(attention.map(\.nature) == [.milestoneSpecs, .milestoneReview, .failed, .blocked, .question])
         #expect(
-            Set(attention.map { HomeText.natureText($0.nature) })
-                == Set(["Question", "Spécifications à valider", "Revue à accepter"])
+            attention.map { HomeText.natureText($0.nature) }
+                == ["Spécifications à valider", "Revue à accepter", "En échec", "Bloquée", "Question"]
         )
         // La question en vol porte SA question et ses deux options ; les deux
         // jalons portent l'invite partagée de leur nature.
@@ -60,6 +58,18 @@ struct HomeParityTests {
         #expect(question.card.action?.run?.pendingAsk?.options.map(\.label) == ["Avec le drapeau", "Sans le drapeau"])
         #expect(specs.prompt == HomeText.specsPrompt)
         #expect(review.prompt == HomeText.reviewPrompt)
+        // AC-3 : l'échec et le blocage disent leur étape, offrent la relance, et
+        // ne paraissent dans aucune autre section.
+        let failed = try #require(attention.first { $0.nature == .failed })
+        let blocked = try #require(attention.first { $0.nature == .blocked })
+        #expect(failed.card.title == "cache-sessions")
+        #expect(failed.prompt == "L'étape « Implémentation » s'est arrêtée en échec.")
+        #expect(blocked.card.title == "export-csv")
+        #expect(blocked.prompt == "La pipeline est bloquée à l'étape « Spécification ».")
+        #expect(HomePresentation.cardAction(failed) == .relaunch)
+        #expect(HomePresentation.cardAction(blocked) == .relaunch)
+        let others = Set((dashboard.running + dashboard.paused + dashboard.notStarted + dashboard.delivered).map(\.id))
+        #expect(!others.contains(failed.id) && !others.contains(blocked.id))
     }
 
     @Test("ios-accueil/AC-1 : showsRepo vrai et deux livraisons récentes")
@@ -80,21 +90,43 @@ struct HomeParityTests {
         ]))
     }
 
-    @Test("ios-accueil/AC-2 : deux lignes « En cours », dont le lot au pilote mort offre « Reprendre »")
-    func runningAndResume() {
+    @Test("accueil-en-cours-melange-pause-et-compte/AC-1 : deux « En cours » vivants, la pause sous « À reprendre », la feature jamais lancée sous « Pas commencées »")
+    func runningPausedAndNotStarted() {
         guard case .dashboard(let dashboard) = HomePresentation.state(omp: parityOmp, board: parityBoard()) else {
             Issue.record("le fixture partagé doit donner un tableau de bord")
             return
         }
-        #expect(dashboard.running.count == 2)
-        // Un seul lot est `resumable` : celui dont le pilote est mort (lot
-        // `beta`, feature `reprise` rangée en `.echec`).
-        let resumable = dashboard.running.filter { KanbanActionPresentation.resumable($0) }
-        #expect(resumable.count == 1)
-        #expect(resumable.first?.repo == "beta")
-        #expect(resumable.first?.title == "reprise")
-        // L'autre ligne est le run VIVANT, et n'offre jamais « Reprendre ».
-        #expect(dashboard.running.filter { !KanbanActionPresentation.resumable($0) }.map(\.id) == ["run:aaaaaaaaaaaaaaa2"])
+        #expect(dashboard.running.map(\.id) == ["run:aaaaaaaaaaaaaaa2", "run:aaaaaaaaaaaaaaa3"])
+        #expect(!dashboard.running.contains { KanbanActionPresentation.resumable($0) })
+        #expect(!dashboard.running.contains { $0.column == .enAttente })
+        // La pause : le lot `beta` au pilote mort, feature `reprise`.
+        #expect(dashboard.paused.map(\.title) == ["reprise"])
+        #expect(dashboard.paused.first?.repo == "beta")
+        #expect(dashboard.paused.allSatisfy { KanbanActionPresentation.resumable($0) })
+        #expect(dashboard.paused.map { ConsoleStatus.of(card: $0).text } == ["En pause"])
+        #expect(dashboard.notStarted.map(\.title) == ["theme-sombre"])
+        // Aucune carte dans deux sections.
+        let all = (dashboard.attention.map(\.card) + dashboard.running + dashboard.paused
+            + dashboard.notStarted + dashboard.delivered).map(\.id)
+        #expect(Set(all).count == all.count)
+        #expect(HomePresentation.counts(HomeParityTests.unwrap(parityBoard())) == HomeCounts(attention: 5, running: 2))
+    }
+
+    @Test("accueil-en-cours-melange-pause-et-compte/S-8 : HomeParity.board est l'ardoise de parité ; menuBarBoard et pausedOnlyBoard donnent (1, 2) et (0, 0)")
+    func menuBarBoards() {
+        #expect(HomeParity.board == parityBoard())
+        #expect(HomePresentation.counts(Self.unwrap(HomeParity.menuBarBoard)) == HomeCounts(attention: 1, running: 2))
+        #expect(HomePresentation.counts(Self.unwrap(HomeParity.pausedOnlyBoard)) == .zero)
+        let paused = HomePresentation.dashboard(Self.unwrap(HomeParity.pausedOnlyBoard))
+        #expect(paused.paused.count == 1 && paused.notStarted.count == 1)
+    }
+
+    private static func unwrap(_ state: KanbanBoardState) -> KanbanBoard {
+        guard case .board(let board) = state else {
+            Issue.record("la fixture doit donner une ardoise")
+            return KanbanBoard(cards: [], anomalies: [])
+        }
+        return board
     }
 
     @Test("ios-accueil/AC-13 : le bandeau de lancement rend la phrase partagée, et le masquage le retire")

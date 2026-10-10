@@ -28,12 +28,16 @@ struct IOSSessionRowView: View, Equatable {
     let isThinkingOpen: Bool
     /// Replie ou déplie la clé donnée (`row.id` ou `thinkingKey(of:)`).
     let onToggle: (String) -> Void
+    /// La session qui porte le fil est finie : un appel sans résultat se lit
+    /// « Interrompu » (S-7 de mac-finitions-hig).
+    let sessionEnded: Bool
 
     /// La clé de pli de la réflexion d'une ligne, distincte de celle de la ligne.
     static func thinkingKey(of rowId: String) -> String { IOSSessionText.thinkingKey(rowId) }
 
     nonisolated static func == (lhs: IOSSessionRowView, rhs: IOSSessionRowView) -> Bool {
         lhs.row == rhs.row && lhs.isOpen == rhs.isOpen && lhs.isThinkingOpen == rhs.isThinkingOpen
+            && lhs.sessionEnded == rhs.sessionEnded
     }
 
     var body: some View {
@@ -117,7 +121,7 @@ struct IOSSessionRowView: View, Equatable {
                 toolHeader(
                     symbol: ToolVerb.symbol(content.name),
                     title: IOSSessionText.toolTitle(ToolVerb.title(content.name), content.target),
-                    result: content.result
+                    status: ToolCallStatus.of(content.result, sessionEnded: sessionEnded)
                 )
             }
             .buttonStyle(.plain)
@@ -129,7 +133,7 @@ struct IOSSessionRowView: View, Equatable {
                         askBlock(ask)
                     }
                     section(IOSSessionText.arguments) {
-                        monospaced(content.argumentsJSON)
+                        IOSToolArgumentsView(rowId: row.id, arguments: content.readableArguments)
                     }
                     if let result = content.result, hasResult(result) {
                         section(IOSSessionText.result) { resultBody(result) }
@@ -155,7 +159,7 @@ struct IOSSessionRowView: View, Equatable {
                 toolHeader(
                     symbol: ToolVerb.symbol(name),
                     title: IOSSessionText.resultTitle(ToolVerb.title(name)),
-                    result: content
+                    status: ToolCallStatus.of(content, sessionEnded: sessionEnded)
                 )
             }
             .buttonStyle(.plain)
@@ -171,7 +175,7 @@ struct IOSSessionRowView: View, Equatable {
     }
 
     /// L'en-tête d'un appel : chevron, symbole, verbe (et cible), puis le statut.
-    private func toolHeader(symbol: String, title: String, result: ToolResultRow?) -> some View {
+    private func toolHeader(symbol: String, title: String, status: ToolCallStatus) -> some View {
         HStack(spacing: 8) {
             Image(systemName: IOSSessionText.chevron(isOpen))
                 .font(.caption2)
@@ -183,22 +187,28 @@ struct IOSSessionRowView: View, Equatable {
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.leading)
             Spacer(minLength: 8)
-            toolStatus(result)
+            toolStatus(status)
         }
         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
         .contentShape(Rectangle())
     }
 
     @ViewBuilder
-    private func toolStatus(_ result: ToolResultRow?) -> some View {
-        if let result {
-            Image(systemName: result.isError ? IOSSessionText.errorSymbol : IOSSessionText.doneSymbol)
-                .foregroundStyle(result.isError ? Color.red : Color.green)
-                .accessibilityLabel(IOSSessionText.toolStatusLabel(result))
-        } else {
+    private func toolStatus(_ status: ToolCallStatus) -> some View {
+        switch status {
+        case .done, .failed:
+            Image(systemName: status == .failed ? IOSSessionText.errorSymbol : IOSSessionText.doneSymbol)
+                .foregroundStyle(status == .failed ? Color.red : Color.green)
+                .accessibilityLabel(IOSSessionText.toolStatusLabel(status))
+        case .interrupted:
+            Label(IOSSessionText.toolStatusLabel(status), systemImage: ConversationText.toolInterruptedSymbol)
+                .labelStyle(.titleAndIcon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .running:
             ProgressView()
                 .controlSize(.mini)
-                .accessibilityLabel(IOSSessionText.toolStatusLabel(nil))
+                .accessibilityLabel(IOSSessionText.toolStatusLabel(status))
         }
     }
 
@@ -236,19 +246,12 @@ struct IOSSessionRowView: View, Equatable {
             ForEach(Array(bodySegments(in: text).enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .text(let plain):
-                    monospaced(plain)
+                    IOSMonospacedText(plain)
                 case .diff(let lines):
                     diffBlock(lines)
                 }
             }
         }
-    }
-
-    private func monospaced(_ text: String) -> some View {
-        Text(text)
-            .font(.system(.callout, design: .monospaced))
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Une ligne de diff : sa teinte ET son libellé d'accessibilité.
@@ -371,5 +374,22 @@ struct IOSSessionRowView: View, Equatable {
         case .compaction(let summary, _): return summary
         case .branchSummary(let summary, _): return summary
         }
+    }
+}
+
+/// Un corps monospacé, partagé par le résultat d'un appel et la vue de ses
+/// arguments : il se replie sur plusieurs lignes, sans défilement horizontal.
+struct IOSMonospacedText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(.callout, design: .monospaced))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

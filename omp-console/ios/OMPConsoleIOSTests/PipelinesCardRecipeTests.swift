@@ -26,7 +26,7 @@ struct PipelinesCardRecipeTests {
     func recipeCatalogNamesOnlyTheKnownModel() throws {
         let recipe = PipelinesCardRecipe.actions
         let card = try #require(recipe.card)
-        let lines = try #require(PipelinesModel.modelLines(card, names: recipe.modelNames))
+        let lines = try #require(KanbanCardPresentation.modelLines(card, names: recipe.modelNames))
         #expect(lines.reqSpecs.hasSuffix(PipelinesText.recipeModelKnownName))
         #expect(lines.implReview.hasSuffix(PipelinesText.recipeModelUnknown))
     }

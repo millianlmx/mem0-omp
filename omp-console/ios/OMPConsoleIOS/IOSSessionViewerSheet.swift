@@ -56,7 +56,7 @@ struct IOSSessionViewerSheet: View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 12) {
                 header
-                IOSSessionThreadView(model: model)
+                IOSSessionThreadView(model: model, sessionEnded: model.runEnded)
             }
             .iosPanel()
             .navigationTitle(IOSSessionText.viewerNavigationTitle)

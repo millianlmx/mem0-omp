@@ -33,6 +33,18 @@ struct JournalEntry: Identifiable, Equatable, Sendable {
 /// « conduite » désignent le même état.
 typealias SessionRunStatus = ServiceSessionModel.State
 
+extension ServiceSessionModel.State {
+    /// La session est finie : arrêtée, morte ou en échec. Un fil qui la montre
+    /// lit ses appels restés sans résultat « Interrompu » (S-7 de
+    /// mac-finitions-hig). `.stopping` vit encore, jusqu'à `.stopped`.
+    var isOver: Bool {
+        switch self {
+        case .stopped, .dead, .failed: return true
+        case .idle, .launching, .running, .stopping: return false
+        }
+    }
+}
+
 @MainActor
 final class ServiceSessionModel: ObservableObject {
     enum State: Equatable, Sendable {
@@ -72,7 +84,9 @@ final class ServiceSessionModel: ObservableObject {
 
     private var client: ServiceClient?
     private var eventsTask: Task<Void, Never>?
-    private var projectRoot: URL?
+    /// Le dossier avec lequel la session vivante a été lancée (lu par l'inventaire
+    /// du Quitter, mac-quitter-sans-confirmation S-1).
+    private(set) var projectRoot: URL?
     private var journalCounter = 0
     private var stopping = false
 

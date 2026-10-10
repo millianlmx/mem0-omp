@@ -80,11 +80,16 @@ public struct ToolCall: Equatable, Sendable {
     public var name: String
     /// `nil` si absent ou non-objet.
     public var arguments: JSONValue?
+    /// Le texte JSON compact de la valeur `arguments` du bloc, dans l'ordre du
+    /// fichier (`OrderedJSON.rendered`), quel que soit son type. `nil` si la clé
+    /// `arguments` manque ou si la ligne n'a pas pu être relue de façon ordonnée.
+    public var argumentsText: String?
 
-    public init(id: String, name: String, arguments: JSONValue?) {
+    public init(id: String, name: String, arguments: JSONValue?, argumentsText: String? = nil) {
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.argumentsText = argumentsText
     }
 }
 
@@ -104,19 +109,24 @@ public struct AssistantTurn: Equatable, Sendable {
     public var model: String?
     public var usage: TokenUsage?
     public var toolCalls: [ToolCall]
+    /// `message.provider` (« anthropic ») : avec `model`, id NU, il forme le
+    /// sélecteur exact `provider/model` du catalogue. `nil` s'il est absent.
+    public var provider: String?
 
     public init(
         text: String,
         thinking: String?,
         model: String?,
         usage: TokenUsage?,
-        toolCalls: [ToolCall]
+        toolCalls: [ToolCall],
+        provider: String? = nil
     ) {
         self.text = text
         self.thinking = thinking
         self.model = model
         self.usage = usage
         self.toolCalls = toolCalls
+        self.provider = provider
     }
 }
 

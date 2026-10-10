@@ -213,4 +213,178 @@ struct RemotePairingTests {
         #expect(reply.status == 503)
         #expect(reply.errorCode == "unavailable")
     }
+
+    // MARK: - mac-feuille-appairage-debordante : code groupé, identité d'appareil
+
+    @Test("mac-feuille-appairage-debordante/AC-11 : le code affiché « XXXX-XXXX » est accepté tel quel, sans tiret ou en minuscules")
+    func groupedAndLowercaseCodesArePaired() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let forms: [(String) -> String] = [
+            { PairingPresentation.grouped($0) },
+            { $0 },
+            { PairingPresentation.grouped($0).lowercased() },
+        ]
+        for (index, form) in forms.enumerated() {
+            let presented = form(try stack.registry.generateCode().value)
+            let reply = try await stack.call("POST", "/v1/pair", json: ["code": presented, "name": "Téléphone \(index)"])
+            #expect(reply.status == 200, "« \(presented) »")
+        }
+        #expect(stack.registry.devices.count == 3)
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-4 : un réappairage de la même clé remplace la ligne et révoque l'ancien jeton")
+    func repairingSameKeyReplacesRowAndRevokesOldToken() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let first = try await pairReply(stack, name: "iPad Pro 13 pouces (M5)", deviceKey: "cle-tab-a")
+        let firstId = try #require(UUID(uuidString: first.deviceId))
+        #expect(stack.registry.devices.count == 1)
+
+        stack.clock.advance(ms: 3_600_000)
+        let second = try await pairReply(stack, name: "iPad Pro 13 pouces (M5)", deviceKey: "cle-tab-a")
+        let secondId = try #require(UUID(uuidString: second.deviceId))
+
+        // Même nombre de lignes ; la ligne est celle du nouvel appairage.
+        #expect(stack.registry.devices.count == 1)
+        #expect(stack.registry.devices.first?.id == secondId)
+        #expect(secondId != firstId)
+        #expect(stack.registry.devices.first?.pairedAtMs == stack.clock.nowMs)
+
+        // L'ancien jeton est refusé, le nouveau accepté ; l'ancien article du trousseau est retiré.
+        let refused = try await stack.call("GET", "/v1/devices", token: first.token)
+        #expect(refused.status == 401)
+        let accepted = try await stack.call("GET", "/v1/devices", token: second.token)
+        #expect(accepted.status == 200)
+        #expect(await stack.tokens.knownTokens[firstId.uuidString] == nil)
+        #expect(await stack.tokens.knownTokens[secondId.uuidString] == second.token)
+
+        // Le fichier relu ne garde que la nouvelle ligne.
+        await stack.registry.load()
+        #expect(stack.registry.devices.map(\.id) == [secondId])
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-5 : deux appareils distincts du même modèle gardent deux lignes révocables séparément")
+    func twoKeysOfSameModelKeepTwoRows() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let tabA = try await pairReply(stack, name: "iPad Pro 13 pouces (M5)", deviceKey: "cle-tab-a")
+        let tabB = try await pairReply(stack, name: "iPad Pro 13 pouces (M5)", deviceKey: "cle-tab-b")
+        let idA = try #require(UUID(uuidString: tabA.deviceId))
+        let idB = try #require(UUID(uuidString: tabB.deviceId))
+
+        #expect(stack.registry.devices.count == 2)
+        #expect(Set(stack.registry.devices.map(\.id)) == [idA, idB])
+        #expect(stack.registry.devices.allSatisfy { $0.name == "iPad Pro 13 pouces (M5)" })
+
+        await stack.registry.revoke(id: idA)
+        #expect(stack.registry.devices.map(\.id) == [idB])
+        #expect(try await stack.call("GET", "/v1/devices", token: tabA.token).status == 401)
+        #expect(try await stack.call("GET", "/v1/devices", token: tabB.token).status == 200)
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-6 : les lignes héritées sans clé survivent au réappairage et restent révocables")
+    func legacyRowsSurviveRepairingAndStayRevocable() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        // Deux lignes « iPhone » d'un client d'avant : aucune clé.
+        try await stack.pair(name: "iPhone")
+        try await stack.pair(name: "iPhone")
+        let legacy = stack.registry.devices.map(\.id)
+        #expect(stack.registry.devices.allSatisfy { $0.deviceKey == nil })
+
+        _ = try await pairReply(stack, name: "iPhone 17e", deviceKey: "cle-tel")
+        _ = try await pairReply(stack, name: "iPhone 17e", deviceKey: "cle-tel")
+        #expect(stack.registry.devices.count == 3)
+        #expect(Set(legacy).isSubset(of: Set(stack.registry.devices.map(\.id))))
+        #expect(stack.registry.devices.filter { $0.name == "iPhone" }.count == 2)
+
+        await stack.registry.revoke(id: legacy[0])
+        #expect(stack.registry.devices.count == 2)
+        #expect(!stack.registry.devices.contains { $0.id == legacy[0] })
+        #expect(stack.registry.devices.contains { $0.id == legacy[1] })
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-4 : une clé blanche ou trop longue est refusée sans compter de tentative")
+    func blankAndOverlongDeviceKeysAreRejected() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let code = try stack.registry.generateCode().value
+        for key in ["   ", String(repeating: "k", count: 65)] {
+            let reply = try await stack.call(
+                "POST",
+                "/v1/pair",
+                json: ["code": code, "name": "Téléphone", "deviceKey": key]
+            )
+            #expect(reply.status == 400)
+            #expect(reply.errorCode == "bad_request")
+        }
+        #expect(stack.registry.devices.isEmpty)
+        #expect(stack.registry.pairing.current?.failedAttempts == 0)
+        // Le code n'est pas consommé : une clé de 64 caractères passe.
+        let ok = try await stack.call(
+            "POST",
+            "/v1/pair",
+            json: ["code": code, "name": "Téléphone", "deviceKey": String(repeating: "k", count: 64)]
+        )
+        #expect(ok.status == 200)
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-4 : si le nouveau jeton ne peut être rangé, l'ancienne ligne et son jeton restent")
+    func keychainFailureLeavesPreviousRowIntact() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pairing-keychain-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = SwitchableDeviceTokenStore()
+        let registry = DeviceRegistry(file: root.appendingPathComponent("devices.json"), store: store)
+        await registry.load()
+
+        let first = try await registry.pair(
+            code: try registry.generateCode().value, name: "iPhone 17e", deviceKey: "cle-tel"
+        )
+        await store.failSaves(true)
+        var failed = false
+        do {
+            _ = try await registry.pair(code: try registry.generateCode().value, name: "iPhone 17e", deviceKey: "cle-tel")
+        } catch {
+            failed = true
+        }
+        #expect(failed)
+        #expect(registry.devices == [first.device])
+        #expect(registry.authenticate(first.token)?.id == first.device.id)
+        #expect(await store.knownTokens == [first.device.id.uuidString: first.token])
+    }
+}
+
+/// Un appairage HTTP avec une identité d'appareil.
+@MainActor
+private func pairReply(_ stack: RemoteStack, name: String, deviceKey: String) async throws -> RemotePairPayload {
+    let code = try stack.registry.generateCode().value
+    let reply = try await stack.call("POST", "/v1/pair", json: [
+        "code": code,
+        "name": name,
+        "deviceKey": deviceKey,
+        "protocolVersion": ConsoleAPI.protocolVersion,
+    ])
+    guard reply.status == 200 else { throw ConsoleAPIError.server("appairage refusé (\(reply.status))") }
+    return try reply.json(RemotePairPayload.self)
+}
+
+/// Un trousseau dont l'écriture peut être mise en échec.
+private actor SwitchableDeviceTokenStore: DeviceTokenStore {
+    private var tokens: [String: String] = [:]
+    private var failing = false
+
+    func failSaves(_ value: Bool) { failing = value }
+
+    func save(_ token: String, for deviceId: String) async throws {
+        if failing { throw ConsoleAPIError.server("trousseau indisponible") }
+        tokens[deviceId] = token
+    }
+
+    func token(for deviceId: String) async throws -> String? { tokens[deviceId] }
+
+    func remove(deviceId: String) async throws { tokens[deviceId] = nil }
+
+    var knownTokens: [String: String] { tokens }
 }
