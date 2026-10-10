@@ -209,12 +209,12 @@ extension IOSHomeContent {
 
 extension IOSHomeContent {
     /// Le message d'échec d'un geste de l'Accueil, affiché sur sa carte : ce qui
-    /// n'a pas eu lieu, puis une cause en français. Jamais le message ni le code de
-    /// l'API, ni la raison de transport ou de décodage : ces textes peuvent porter
-    /// un chemin, un pid ou du JSON. `nil` pour une révocation (401) : l'Accueil
-    /// passe alors à l'état déconnecté, aucun message n'est affiché sur la carte.
+    /// n'a pas eu lieu, puis la cause et le remède du traducteur partagé
+    /// `IOSMacErrorText` (un motif du Mac n'y passe que s'il ne laisse fuir ni URL,
+    /// ni JSON, ni code HTTP). `nil` pour une révocation (401) : l'Accueil passe
+    /// alors à l'état déconnecté, aucun message n'est affiché sur la carte.
     static func gestureFailure(_ gesture: IOSHomeGesture, error: Error) -> String? {
-        guard let cause = gestureCause(error) else { return nil }
+        guard let cause = IOSMacErrorText.message(for: error) else { return nil }
         let headline: String
         switch gesture {
         case .validateSpecs: headline = IOSHomeText.specsFailed
@@ -222,24 +222,6 @@ extension IOSHomeContent {
         case .resume: headline = IOSHomeText.resumeFailed
         }
         return IOSHomeText.gestureFailure(headline, cause: cause)
-    }
-
-    private static func gestureCause(_ error: Error) -> String? {
-        guard let error = error as? ClientError else { return IOSHomeText.decodingFailure }
-        switch error {
-        case .notConnected: return IOSHomeText.notConnected
-        case .transport: return IOSHomeText.transportFailure
-        case .incompatibleProtocol: return IOSHomeText.incompatibleProtocol
-        case .decoding: return IOSHomeText.decodingFailure
-        case .api(let api):
-            switch api {
-            case .unauthorized: return nil
-            case .conflict: return IOSHomeText.gestureRefused
-            case .notFound: return IOSHomeText.gestureCardGone
-            case .badRequest, .incompatibleProtocol, .unavailable, .server, .decoding, .outdatedService:
-                return IOSHomeText.gestureMacFailed
-            }
-        }
     }
 
     /// Les gestes que le tableau de bord offre : « Valider les specs » et « Accepter

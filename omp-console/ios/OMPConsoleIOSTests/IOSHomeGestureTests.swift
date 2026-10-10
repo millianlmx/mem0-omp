@@ -166,22 +166,23 @@ struct IOSHomeGestureTests {
     @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-10 : l'échec arrive sur la carte du geste, en français, sans détail brut")
     func failureLandsOnItsCardWithoutRawDetail() async {
         let raw = Self.rawDetail
+        func translated(_ failure: IOSMacFailure) -> String { IOSMacErrorText.message(for: failure) }
         let causes: [(Error, String?)] = [
-            (ForeignError(), IOSHomeText.decodingFailure),
-            (ClientError.notConnected, IOSHomeText.notConnected),
-            (ClientError.transport(.unreachable(raw)), IOSHomeText.transportFailure),
-            (ClientError.transport(.closed(raw)), IOSHomeText.transportFailure),
-            (ClientError.incompatibleProtocol(local: 1, remote: 2), IOSHomeText.incompatibleProtocol),
-            (ClientError.decoding(raw), IOSHomeText.decodingFailure),
+            (ForeignError(), translated(.generic)),
+            (ClientError.notConnected, translated(.macUnreachable)),
+            (ClientError.transport(.unreachable(raw)), translated(.macUnreachable)),
+            (ClientError.transport(.closed(raw)), translated(.macUnreachable)),
+            (ClientError.incompatibleProtocol(local: 1, remote: 2), translated(.incompatibleProtocol(local: 1, remote: 2))),
+            (ClientError.decoding(raw), translated(.generic)),
             (ClientError.api(.unauthorized), nil),
-            (ClientError.api(.conflict(raw)), IOSHomeText.gestureRefused),
-            (ClientError.api(.notFound(raw)), IOSHomeText.gestureCardGone),
-            (ClientError.api(.badRequest(raw)), IOSHomeText.gestureMacFailed),
-            (ClientError.api(.incompatibleProtocol(raw)), IOSHomeText.gestureMacFailed),
-            (ClientError.api(.unavailable(raw)), IOSHomeText.gestureMacFailed),
-            (ClientError.api(.server(raw)), IOSHomeText.gestureMacFailed),
-            (ClientError.api(.decoding(raw)), IOSHomeText.gestureMacFailed),
-            (ClientError.api(.outdatedService(raw)), IOSHomeText.gestureMacFailed),
+            (ClientError.api(.conflict(raw)), translated(.generic)),
+            (ClientError.api(.notFound(raw)), translated(.generic)),
+            (ClientError.api(.incompatibleProtocol(raw)), translated(.incompatibleProtocol(local: ConsoleAPI.protocolVersion, remote: nil))),
+            (ClientError.api(.badRequest(raw)), translated(.generic)),
+            (ClientError.api(.unavailable(raw)), translated(.serviceUnavailable)),
+            (ClientError.api(.server(raw)), translated(.generic)),
+            (ClientError.api(.decoding(raw)), translated(.generic)),
+            (ClientError.api(.outdatedService(raw)), translated(.serviceOutdated)),
         ]
         let headlines: [(IOSHomeGesture, String)] = [
             (.validateSpecs, IOSHomeText.specsFailed),
@@ -207,8 +208,8 @@ struct IOSHomeGestureTests {
         await settle { mac.waiting == 2 }
         mac.finish(.failure(ClientError.api(.conflict(raw))))
         await settle { model.inFlight.isEmpty }
-        #expect(model.failures[resumeKey] == "La pipeline n'a pas repris. Le Mac a refusé cette action.")
-        #expect(model.failures[specsKey] == "Les specs n'ont pas été validées. Le Mac a refusé cette action.")
+        #expect(model.failures[resumeKey] == "La pipeline n'a pas repris. " + IOSMacErrorText.message(for: .generic))
+        #expect(model.failures[specsKey] == "Les specs n'ont pas été validées. " + IOSMacErrorText.message(for: .generic))
         #expect(model.failures.count == 2)
         #expect(model.inFlight.isEmpty)
     }
@@ -223,7 +224,7 @@ struct IOSHomeGestureTests {
         mac.finish(.failure(ClientError.notConnected))
         await settle { model.inFlight.isEmpty }
         #expect(model.inFlight.isEmpty)
-        #expect(model.failures[resumeKey] == "La pipeline n'a pas repris. L'app n'est pas connectée au Mac.")
+        #expect(model.failures[resumeKey] == "La pipeline n'a pas repris. " + IOSMacErrorText.message(for: .macUnreachable))
 
         model.tap(resumeKey, send: mac.send)
         #expect(model.failures[resumeKey] == nil)

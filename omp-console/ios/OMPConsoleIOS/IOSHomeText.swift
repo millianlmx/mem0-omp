@@ -70,12 +70,9 @@ enum IOSHomeText {
     static let specsFailed = "Les specs n'ont pas été validées."
     static let reviewFailed = "La revue n'a pas été acceptée."
     static let resumeFailed = "La pipeline n'a pas repris."
-    static let gestureRefused = "Le Mac a refusé cette action."
-    static let gestureCardGone = "Le Mac ne connaît plus cette pipeline."
-    static let gestureMacFailed = "Le Mac n'a pas pu exécuter cette action."
 
     /// Le message d'échec d'un geste, affiché sur sa carte : ce qui n'a pas eu
-    /// lieu, puis la cause, jamais un détail technique brut.
+    /// lieu, puis la cause et le remède de `IOSMacErrorText`.
     static func gestureFailure(_ headline: String, cause: String) -> String { "\(headline) \(cause)" }
 
     // --- valeurs de fil de l'API (jamais dans une vue) ------------------------
