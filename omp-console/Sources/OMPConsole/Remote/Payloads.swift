@@ -80,6 +80,10 @@ struct RemoteToolCall: Codable, Equatable {
     /// texte des arguments. `nil` quand l'appel n'en porte pas — le champ est alors
     /// ABSENT de la charge utile (champ additif optionnel).
     var arguments: JSONValue?
+    /// Le texte des arguments dans l'ORDRE du fichier (`ToolCall.argumentsText`) :
+    /// `arguments` passe par un dictionnaire et l'encodeur trie ses clés, ce texte
+    /// non. Champ additif optionnel, ABSENT quand il est `nil`.
+    var argumentsText: String?
 }
 
 struct RemoteConversationEntry: Codable, Equatable {
@@ -127,7 +131,7 @@ struct RemoteConversationEntry: Codable, Equatable {
             }
             if !turn.toolCalls.isEmpty {
                 toolCalls = turn.toolCalls.map {
-                    RemoteToolCall(id: $0.id, name: $0.name, arguments: $0.arguments)
+                    RemoteToolCall(id: $0.id, name: $0.name, arguments: $0.arguments, argumentsText: $0.argumentsText)
                 }
             }
         case .toolResult(let turn):

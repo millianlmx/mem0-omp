@@ -151,7 +151,8 @@ private func renderNumber(_ number: Double) -> String {
 }
 
 /// Échappement JSON standard, sur les scalaires : le non-ASCII passe verbatim.
-private func escapeJSON(_ text: String) -> String {
+/// Interne au module : `OrderedJSON.rendered` échappe exactement de même.
+func escapeJSON(_ text: String) -> String {
     var escaped = ""
     for scalar in text.unicodeScalars {
         switch scalar {

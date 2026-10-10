@@ -129,7 +129,7 @@ struct IOSSessionRowView: View, Equatable {
                         askBlock(ask)
                     }
                     section(IOSSessionText.arguments) {
-                        monospaced(content.argumentsJSON)
+                        IOSToolArgumentsView(rowId: row.id, arguments: content.readableArguments)
                     }
                     if let result = content.result, hasResult(result) {
                         section(IOSSessionText.result) { resultBody(result) }
@@ -236,19 +236,12 @@ struct IOSSessionRowView: View, Equatable {
             ForEach(Array(bodySegments(in: text).enumerated()), id: \.offset) { _, segment in
                 switch segment {
                 case .text(let plain):
-                    monospaced(plain)
+                    IOSMonospacedText(plain)
                 case .diff(let lines):
                     diffBlock(lines)
                 }
             }
         }
-    }
-
-    private func monospaced(_ text: String) -> some View {
-        Text(text)
-            .font(.system(.callout, design: .monospaced))
-            .multilineTextAlignment(.leading)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Une ligne de diff : sa teinte ET son libellé d'accessibilité.
@@ -371,5 +364,22 @@ struct IOSSessionRowView: View, Equatable {
         case .compaction(let summary, _): return summary
         case .branchSummary(let summary, _): return summary
         }
+    }
+}
+
+/// Un corps monospacé, partagé par le résultat d'un appel et la vue de ses
+/// arguments : il se replie sur plusieurs lignes, sans défilement horizontal.
+struct IOSMonospacedText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(.callout, design: .monospaced))
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

@@ -146,6 +146,7 @@ const FEATURE_FILES = [
   "IOSSessionThreadModel.swift",
   "IOSSessionThreadView.swift",
   "IOSSessionRowView.swift",
+  "IOSToolArgumentsView.swift",
   "IOSSessionViewerSheet.swift",
 ];
 
@@ -157,6 +158,7 @@ const COMPONENT_FILES = [
   "IOSSessionThreadModel.swift",
   "IOSSessionThreadView.swift",
   "IOSSessionRowView.swift",
+  "IOSToolArgumentsView.swift",
   "IOSSessionViewerSheet.swift",
 ];
 

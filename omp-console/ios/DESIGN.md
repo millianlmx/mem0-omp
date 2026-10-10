@@ -292,6 +292,15 @@ marqueur `[test: <fonction>]` (une fonction de
 - Une question `ask` est mise en évidence et DÉPLIÉE d'emblée ; la visionneuse
   n'offre AUCUN geste de réponse — lire, plier/déplier, faire défiler seulement.
   `[test: askHighlighted]`
+- Les arguments d'un appel déplié se lisent en clé/valeur (`IOSToolArgumentsView`,
+  lecture partagée `ToolArguments`), jamais en JSON brut : hiérarchie indentée
+  (retrait `@ScaledMetric`), éléments de liste numérotés dès 1, booléens « oui »/« non »,
+  clés dans l'ordre de l'appel, libellés français pour read, write, edit, bash,
+  grep et glob, valeurs « code » à chasse fixe, le reste en police système.
+  « Aucun argument » / « Arguments illisibles » ; le JSON brut reste replié derrière
+  « Afficher le détail brut ». Une valeur longue montre un EXTRAIT de 4 lignes ou
+  280 caractères suivi de « Afficher plus » : c'est une troncature de CONTENU
+  voulue, faite par le noyau, sans aucun `lineLimit`. `[test: toolArgumentsAreFields]`
 - Un ajout d'un run vivant s'ajoute sans relire la session : une seule lecture
   initiale, puis le flux de cette session. `[test: additionsDoNotReload]`
 - Le fil ne colle au bas que tant que l'utilisateur n'a pas remonté, et le

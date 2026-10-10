@@ -279,9 +279,13 @@ public struct AssistantRow: Equatable, Sendable {
 /// résultat, diff), ce dernier ouvert à la demande.
 public struct ToolCallRow: Equatable, Sendable {
     public var callId: String
-    public var name: String
+    /// Figé comme `argumentsJSON` : `readableArguments` en dépend (libellés S-3).
+    public let name: String
     public var target: String
-    public var argumentsJSON: String
+    /// La source des arguments, dans l'ordre du fichier : le « détail brut ».
+    public let argumentsJSON: String
+    /// Les arguments lus en clé/valeur, calculés une fois depuis `argumentsJSON`.
+    public let readableArguments: ToolArguments
     /// `nil` tant que l'appel n'a pas de réponse : le résultat le COMPLÈTE.
     public var result: ToolResultRow?
     /// Renseigné seulement pour un appel `ask` dont la charge utile est valide.
@@ -299,6 +303,7 @@ public struct ToolCallRow: Equatable, Sendable {
         self.name = name
         self.target = target
         self.argumentsJSON = argumentsJSON
+        self.readableArguments = ToolArguments(tool: name, source: argumentsJSON)
         self.result = result
         self.ask = ask
     }
@@ -455,9 +460,10 @@ public struct SessionRowBuilder: Sendable {
             callId: call.id,
             name: call.name,
             target: primaryArgument(name: call.name, arguments: call.arguments, projectRoot: projectRoot),
-            // Le rendu des arguments est celui du dépôt (`renderJSON` : clés
-            // triées, compact) : jamais une seconde mise en forme.
-            argumentsJSON: renderJSON(call.arguments ?? .null),
+            // Le texte ORDONNÉ du fichier quand il est connu ; sinon (Mac d'avant
+            // la feature, appel construit à la main) le rendu du dépôt
+            // (`renderJSON` : clés triées, compact) — jamais une seconde mise en forme.
+            argumentsJSON: call.argumentsText ?? renderJSON(call.arguments ?? .null),
             result: nil,
             ask: call.name == "ask" ? askSpan(from: call.arguments) : nil
         )

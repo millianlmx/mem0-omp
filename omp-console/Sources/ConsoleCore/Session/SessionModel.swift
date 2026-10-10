@@ -80,11 +80,16 @@ public struct ToolCall: Equatable, Sendable {
     public var name: String
     /// `nil` si absent ou non-objet.
     public var arguments: JSONValue?
+    /// Le texte JSON compact de la valeur `arguments` du bloc, dans l'ordre du
+    /// fichier (`OrderedJSON.rendered`), quel que soit son type. `nil` si la clé
+    /// `arguments` manque ou si la ligne n'a pas pu être relue de façon ordonnée.
+    public var argumentsText: String?
 
-    public init(id: String, name: String, arguments: JSONValue?) {
+    public init(id: String, name: String, arguments: JSONValue?, argumentsText: String? = nil) {
         self.id = id
         self.name = name
         self.arguments = arguments
+        self.argumentsText = argumentsText
     }
 }
 
