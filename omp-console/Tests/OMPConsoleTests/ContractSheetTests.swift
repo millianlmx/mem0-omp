@@ -90,7 +90,7 @@ func sheetWordsForBesoins() {
     #expect(ContractText.open == "Lire le contrat")
     #expect(ContractText.close == "Fermer")
     #expect(ContractText.title(slug: "contrat-display-omp-console") == "Contrat — contrat-display-omp-console")
-    #expect(ContractText.subtitle(.besoins) == "À valider : Besoins et Critères d'acceptation.")
+    #expect(ContractText.subtitle(.besoins) == "À valider : Besoins et Critères d'acceptation.")
 }
 
 @MainActor
@@ -127,7 +127,7 @@ func openingBesoinsSheetReadsBothSections() throws {
 
 @Test("contract-display-omp-console/AC-2 : le sous-titre des specs dit les deux sections à valider")
 func sheetWordsForSpecs() {
-    #expect(ContractText.subtitle(.specs) == "À valider : Spécifications et Lots.")
+    #expect(ContractText.subtitle(.specs) == "À valider : Spécifications et Lots.")
 }
 
 @MainActor
@@ -190,9 +190,9 @@ func eachOpeningRereadsTheFile() throws {
 @Test("jargon-technique-expose-mac-et-ios/AC-6 : contrat absent ou illisible — une phrase et un geste, sans chemin, taille ni UTF-8")
 func absenceMessagesAreExact() {
     #expect(ContractText.missingFile
-        == "Cette feature n'a pas encore de contrat : il apparaîtra quand ses besoins seront validés.")
+        == "Cette feature n’a pas encore de contrat : il apparaîtra quand ses besoins seront validés.")
     #expect(ContractText.unreadable
-        == "Le contrat ne peut pas être affiché pour l'instant. Fermez-le, puis rouvrez-le.")
+        == "Le contrat ne peut pas être affiché pour l’instant. Fermez-le, puis rouvrez-le.")
     for text in [ContractText.missingFile, ContractText.unreadable] {
         #expect(forbiddenTokens(in: text).isEmpty, "\(text)")
         for token in ["/", ".md", "octets", "UTF-8"] {
@@ -207,11 +207,11 @@ func absenceMessagesAreExact() {
 @Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic du contrat garde le chemin, puis la taille ou la raison du système")
 func contractDiagnosticKeepsTheRawDetail() {
     let path = "/w/feature/.omp/pipeline/contract.md"
-    #expect(ContractText.diagnostic(path: path, unreadable: nil) == "\(path) : absent")
+    #expect(ContractText.diagnostic(path: path, unreadable: nil) == "\(path) : absent")
     #expect(ContractText.diagnostic(path: path, unreadable: .notText(bytes: 12))
-        == "\(path) : pas du texte UTF-8 (12 octets)")
+        == "\(path) : pas du texte UTF-8 (12 octets)")
     #expect(ContractText.diagnostic(path: path, unreadable: .error("Permission denied"))
-        == "\(path) : Permission denied")
+        == "\(path) : Permission denied")
 }
 
 @MainActor

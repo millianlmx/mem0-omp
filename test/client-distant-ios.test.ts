@@ -195,10 +195,10 @@ test("client-distant-ios/AC-21 : la feuille de connexion n'emploie que des compo
   assert.match(source, /enum ConnectionText\b/, "la feuille déclare enum ConnectionText");
   const labels = [
     "Non appairé",
-    "Recherche d'un Mac…",
+    "Recherche d’un Mac…",
     "Hors réseau",
     "Jeton révoqué",
-    "Version d'API incompatible",
+    "Version de protocole incompatible",
     "Aucun Mac trouvé.",
     "Adresse manuelle",
     "Appairer",

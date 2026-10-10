@@ -215,7 +215,7 @@ func commandRefusalIsVerbatim() async throws {
 
     #expect(model.journal.first?.state == .refused(reason: motif))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "\(ActionsText.specsLabel) · alpha · refusée : \(motif)")
+        == "\(ActionsText.specsLabel) · alpha · refusée : \(motif)")
 }
 
 @MainActor
@@ -260,7 +260,7 @@ func commandFailureIsAFailureLine() async throws {
     }
     #expect(reason == "service arrêté")
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "\(ActionsText.specsLabel) · alpha · échec : service arrêté")
+        == "\(ActionsText.specsLabel) · alpha · échec : service arrêté")
 }
 
 @MainActor
@@ -361,7 +361,7 @@ func outOfZoneInboxIsRefusedAndJournalled() throws {
     }
     #expect(reason == "chemin refusé (\(outside)) : hors de \(joinPath(fixture.root, "inbox"))")
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "\(ActionsText.textLabel) · depot/alpha · échec : \(reason)")
+        == "\(ActionsText.textLabel) · depot/alpha · échec : \(reason)")
     #expect(!FileManager.default.fileExists(atPath: outside), "aucun dossier hors zone n'est créé")
 }
 
@@ -383,7 +383,7 @@ func blockedBoxInsideZoneJournalsFailure() throws {
     }
     #expect(reason.hasPrefix("écriture impossible ("))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "\(ActionsText.textLabel) · depot/alpha · échec : \(reason)")
+        == "\(ActionsText.textLabel) · depot/alpha · échec : \(reason)")
 }
 
 // MARK: - omp-console-redesign (S-7, S-8, S-10)

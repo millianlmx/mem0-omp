@@ -10,16 +10,16 @@ public enum ProjectViewText {
     // MARK: - États de la fenêtre
 
     public static let emptyTitle = "Aucun projet piloté."
-    public static let emptyHelp = "Choisissez un dépôt pour piloter un projet de bout en bout depuis l'app."
-    public static let notGitRepository = "Ce dossier n'est pas un dépôt git."
+    public static let emptyHelp = "Choisissez un dépôt pour piloter un projet de bout en bout depuis l’app."
+    public static let notGitRepository = "Ce dossier n’est pas un dépôt Git."
     /// Le nom du document du plan et celui du contrat : la MÊME constante que
     /// `RemoteReads.documents` (formule unique).
     public static let docFileName = "PROJECT.md"
     public static let contractFileName = "contract.md"
     public static let noRepository = "Aucun dépôt connu de la coque."
     public static let docLoading = "Lecture du document…"
-    public static let docMissing = "PROJECT.md n'est pas encore publié."
-    public static let projectMissing = "Le plan n'est pas encore disponible."
+    public static let docMissing = "PROJECT.md n’est pas encore publié."
+    public static let projectMissing = "Le plan n’est pas encore disponible."
     public static let sessionStarting = "Lancement de la session…"
     public static let sessionClosing = "Arrêt de la session…"
     public static let waitingBanner = "Le projet attend votre réponse."
@@ -32,7 +32,7 @@ public enum ProjectViewText {
 
     /// `path` est déjà formaté (`ConsoleFormat.path`) : jamais un chemin absolu brut.
     public static func refusal(name: String, path: String) -> String {
-        "« \(name) » est déjà piloté (\(path)). Arrêtez le pilotage en cours avant d'en démarrer un autre."
+        "« \(name) » est déjà piloté (\(path)). Arrêtez le pilotage en cours avant d’en démarrer un autre."
     }
 
     public static func doneBanner(m: Int, n: Int) -> String {
@@ -56,9 +56,9 @@ public enum ProjectViewText {
     // MARK: - Conversation, composeur et dialogue (S-19 R3)
 
     public static let conversationWaitingTitle = "Conversation à venir"
-    public static let conversationWaiting = "La conversation s'affiche dès que la session publie son fichier."
+    public static let conversationWaiting = "La conversation s’affiche dès que la session publie son fichier."
     public static let composerLive = "Écrivez à OMP…"
-    public static let composerIdle = "Le pilotage n'est pas actif."
+    public static let composerIdle = "Le pilotage n’est pas actif."
     public static let composerBlocked = "Répondez au dialogue en cours pour débloquer le tour."
     public static let dialogCancel = "Annuler"
 
@@ -70,8 +70,8 @@ public enum ProjectViewText {
     public static let launchCommit = "Piloter"
     public static let launchCancel = "Annuler"
     public static let closeConduite = "Arrêter le pilotage"
-    public static let closeConfirmTitle = "Arrêter le pilotage de ce projet ?"
-    public static let closeConfirmMessage = "La session d'OMP qui pilote ce projet s'arrête."
+    public static let closeConfirmTitle = "Arrêter le pilotage de ce projet ?"
+    public static let closeConfirmMessage = "La session d’OMP qui pilote ce projet s’arrête."
     public static let chooseRepository = "Choisir…"
     public static let startConduite = "Piloter un projet…"
 
@@ -98,29 +98,29 @@ public enum ProjectViewText {
     // MARK: - États de ligne
 
     public static let removedTitle = "Features retirées"
-    public static let emptyPlan = "Le plan n'est pas encore publié."
+    public static let emptyPlan = "Le plan n’est pas encore publié."
 
     // MARK: - Volet « PR et CI » (BR-3)
 
-    public static let prPaneTitle = "PR et CI"
+    public static let prPaneTitle = "PR et intégration continue"
     public static let prEmpty = "Aucune PR ouverte pour ce projet."
     public static let prLoading = "Lecture des statuts…"
     public static let prUnknownSuffix = " (lecture en cours)"
     public static let prStaleSuffix = " (périmé)"
     public static let prOpen = "Ouvrir la PR"
     public static let prMerge = "Fusionner…"
-    public static let prMergeHelp = "Fusion indisponible : les trois statuts requis doivent être verts."
+    public static let prMergeHelp = "Fusion indisponible : les trois statuts requis doivent être verts."
     public static let prMergeConfirmButton = "Fusionner"
     public static let prMergeCancelButton = "Annuler"
 
     /// Le message de lecture, préfixe du `userMessage` d'une `GhError` (S-7).
     public static func prUnavailable(_ message: String) -> String {
-        "Statuts indisponibles : \(message)"
+        "Statuts indisponibles : \(message)"
     }
 
     /// Une ligne de statut : « <nom> : <état> ».
     public static func prCheckLine(name: String, state: String) -> String {
-        "\(name) : \(state)"
+        "\(name) : \(state)"
     }
 
     /// « PR #<n> — <titre> », « PR #<n> », ou l'URL quand aucun numéro n'est connu.
@@ -140,33 +140,33 @@ public enum ProjectViewText {
     }
 
     /// Le lien d'une vérification rouge vers le détail de son exécution.
-    public static let prRunLink = "Voir l'échec"
+    public static let prRunLink = "Voir l’échec"
 
     /// L'ouverture est refusée quand l'adresse n'est pas http(s) (S-4).
     public static func prNotOpenable(url: String) -> String {
-        "L'adresse de cette PR n'est pas ouvrable dans un navigateur : \(url)."
+        "L’adresse de cette PR n’est pas ouvrable dans un navigateur : \(url)."
     }
 
     public static func prOpenFailed(number: Int?) -> String {
-        guard let number else { return "L'ouverture de la PR dans le navigateur a échoué." }
-        return "L'ouverture de la PR #\(number) dans le navigateur a échoué."
+        guard let number else { return "L’ouverture de la PR dans le navigateur a échoué." }
+        return "L’ouverture de la PR #\(number) dans le navigateur a échoué."
     }
 
     /// Le refus d'une fusion dont les statuts frais ne sont pas tous verts (S-5).
     public static func prMergeRefused(number: Int?) -> String {
-        guard let number else { return "Fusion refusée : les trois statuts requis ne sont pas verts." }
-        return "Fusion refusée : les trois statuts requis ne sont pas verts (PR #\(number))."
+        guard let number else { return "Fusion refusée : les trois statuts requis ne sont pas verts." }
+        return "Fusion refusée : les trois statuts requis ne sont pas verts (PR #\(number))."
     }
 
     /// L'échec d'une fusion refusée par GitHub (S-6).
     public static func prMergeRejected(detail: String, number: Int?) -> String {
-        guard let number else { return "Fusion refusée par GitHub : \(detail)." }
-        return "Fusion refusée par GitHub : \(detail) (PR #\(number))."
+        guard let number else { return "Fusion refusée par GitHub : \(detail)." }
+        return "Fusion refusée par GitHub : \(detail) (PR #\(number))."
     }
 
     public static func prMergeConfirmTitle(number: Int?) -> String {
-        guard let number else { return "Fusionner cette PR ?" }
-        return "Fusionner la PR #\(number) ?"
+        guard let number else { return "Fusionner cette PR ?" }
+        return "Fusionner la PR #\(number) ?"
     }
 
     public static func prMergeConfirmMessage(title: String) -> String {

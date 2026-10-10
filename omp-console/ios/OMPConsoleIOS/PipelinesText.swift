@@ -11,7 +11,7 @@ enum PipelinesText {
     /// La fiche d'une carte qui n'est pas (ou plus) dans l'instantané reçu du
     /// Mac : on ne peut rien affirmer d'elle, donc on le dit. L'écran, lui, dit
     /// l'état de connexion par `IOSConnectionStateView`.
-    static let sheetNoCard = "Aucune donnée reçue du Mac pour l'instant."
+    static let sheetNoCard = "Aucune donnée reçue du Mac pour l’instant."
 
     /// Le compte d'une voie, en texte (l'interpolation vit ici, dans le fichier de
     /// vocabulaire, pas dans la vue).
@@ -80,7 +80,7 @@ enum PipelinesText {
     static let recipeActionsAnchor = "pipelines.card.sheet.actions"
 
     /// Le titre de la carte de fixture : 77 caractères, donc plus d'une ligne sur iPhone.
-    static let recipeTitle = "Corriger la fiche d'une carte Pipelines : titre complet sur plusieurs lignes"
+    static let recipeTitle = "Corriger la fiche d’une carte Pipelines : titre complet sur plusieurs lignes"
 
     /// Les deux modèles de la carte de fixture : l'un connu du catalogue de recette
     /// (nom lisible attendu), l'autre inconnu (sélecteur brut attendu).

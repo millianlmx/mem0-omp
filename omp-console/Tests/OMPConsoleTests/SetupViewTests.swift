@@ -169,7 +169,7 @@ func rowsFollowState() {
     // Échec des composants : aucune ligne n'est marquée terminée à tort.
     let failingComponents = SetupPresentation.rows(state: .failed(.components(.unsupportedMac)), omlx: .unknown, blocking: false)
     #expect(failingComponents.map(\.status) == [.failed, .upcoming, .upcoming, .upcoming])
-    #expect(failingComponents[0].detail == "Ce Mac n'est pas pris en charge (arm64 requis).")
+    #expect(failingComponents[0].detail == "Ce Mac n’est pas pris en charge (arm64 requis).")
     #expect(failingComponents[0].technicalDetail == nil)
 
     // Échec de la pile : seules les deux premières lignes sont terminées.
@@ -226,7 +226,7 @@ func blockingFooterHasNoClose() {
         #expect(!(footer.leading + footer.trailing).contains(.close))
     }
     #expect(SetupAction.allCases.map(SetupPresentation.label)
-        == ["Installer", "Réessayer", "Quitter", "Fermer", "Arrêter l'ancienne pile et reprendre"])
+        == ["Installer", "Réessayer", "Quitter", "Fermer", "Arrêter l’ancienne pile et reprendre"])
 }
 
 @Test("mac-omp-manquant-non-bloquant/AC-4 : OMP présent, le pied propose « Fermer » — seul et proéminent, ou après « Réessayer » sur l'échec")
@@ -244,7 +244,7 @@ func closableFooterOffersClose() {
 @Test("mac-omp-manquant-non-bloquant/AC-9 : un téléchargement de taille connue donne une barre chiffrée qui croît avec l'avancement")
 func determinateProgressFollowsDownload() {
     #expect(SetupPresentation.progress(state: .preparing(.omp(downloaded: 40, total: 100)))
-        == SetupProgress(label: "Téléchargement d'OMP — 40 %", fraction: 0.4))
+        == SetupProgress(label: "Téléchargement d’OMP — 40 %", fraction: 0.4))
     #expect(SetupPresentation.progress(state: .preparing(.podman(downloaded: 30, total: 120)))
         == SetupProgress(label: "Téléchargement de Podman — 25 %", fraction: 0.25))
 
@@ -261,9 +261,9 @@ func determinateProgressFollowsDownload() {
 @Test("mac-omp-manquant-non-bloquant/AC-10 : sans taille connue, la barre est indéterminée et nomme l'étape en cours ; aucun bloc hors préparation")
 func indeterminateProgressNamesTheStep() {
     #expect(SetupPresentation.progress(state: .preparing(.omp(downloaded: 5, total: 0)))
-        == SetupProgress(label: "Téléchargement d'OMP…", fraction: nil))
+        == SetupProgress(label: "Téléchargement d’OMP…", fraction: nil))
     #expect(SetupPresentation.progress(state: .preparing(.ompInstall))
-        == SetupProgress(label: "Installation d'OMP…", fraction: nil))
+        == SetupProgress(label: "Installation d’OMP…", fraction: nil))
     #expect(SetupPresentation.progress(state: .preparing(.machine))
         == SetupProgress(label: "Préparation de la machine de conteneurs…", fraction: nil))
     #expect(SetupPresentation.progress(state: .preparing(.prerequisites))
@@ -278,35 +278,35 @@ func indeterminateProgressNamesTheStep() {
 func failureSplitsSummaryFromDetail() {
     let table: [(SetupFailure, String, String?)] = [
         (.components(.unsupportedMac),
-         "Ce Mac n'est pas pris en charge (arm64 requis).", nil),
+         "Ce Mac n’est pas pris en charge (arm64 requis).", nil),
         (.components(.network(component: "OMP", detail: "NSURLErrorDomain -1009")),
-         "Pas de réseau : « OMP » n'a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.", "NSURLErrorDomain -1009"),
+         "Pas de réseau : « OMP » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.", "NSURLErrorDomain -1009"),
         (.components(.checksum(component: "Podman")),
-         "« Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", nil),
+         "« Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", nil),
         (.components(.install(component: "Podman", detail: "pkgutil absent")),
-         "L'installation de « Podman » a échoué.", "pkgutil absent"),
+         "L’installation de « Podman » a échoué.", "pkgutil absent"),
         (.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")),
          SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé"))),
-         "mem0-qdrant : socket fermé"),
+         "mem0-qdrant : socket fermé"),
         (.migration(.copyFailed(detail: "disque plein")),
          "La copie de la base mémoire existante a échoué.", "disque plein"),
         (.stack(.machineFailed(detail: "libkrun absent")),
          SetupText.failureMessage(.stack(.machineFailed(detail: "libkrun absent"))), "libkrun absent"),
         (.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711))),
          SetupText.failureMessage(.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711)))),
-         "Geste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
+         "Geste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
         (.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))),
          SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http")))),
-         "Geste : podman stop mem0-qdrant mem0-http"),
+         "Geste : podman stop mem0-qdrant mem0-http"),
         (.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")),
          SetupText.failureMessage(.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente"))),
-         "omp-console-qdrant : image absente"),
+         "omp-console-qdrant : image absente"),
         (.stack(.healthTimeout(seconds: 180)),
-         "La mémoire n'a pas répondu dans le délai imparti (180 s).", nil),
+         "La mémoire n’a pas répondu dans le délai imparti (180 s).", nil),
         (.stack(.installationFailed(detail: "disque plein")),
-         "L'identité d'installation de la pile n'a pas pu être écrite.", "disque plein"),
+         "L’identité d’installation de la pile n’a pas pu être écrite.", "disque plein"),
         (.stack(.podmanFailed(command: "machine start", detail: "boom")),
-         SetupText.failureMessage(.stack(.podmanFailed(command: "machine start", detail: "boom"))), "machine start : boom"),
+         SetupText.failureMessage(.stack(.podmanFailed(command: "machine start", detail: "boom"))), "machine start : boom"),
     ]
     for (failure, summary, detail) in table {
         #expect(SetupText.failureSummary(failure) == summary)
@@ -346,7 +346,7 @@ func failureSplitsSummaryFromDetail() {
 
     // Le bandeau de l'Accueil et l'API distante gardent leur phrase complète.
     #expect(SetupText.failureMessage(.components(.install(component: "Podman", detail: "pkgutil absent")))
-        == "L'installation de « Podman » a échoué : pkgutil absent")
+        == "L’installation de « Podman » a échoué : pkgutil absent")
 }
 
 /// La hauteur idéale de la feuille rendue pour un échec d'installation donné.
@@ -380,13 +380,13 @@ func bannerFollowsDismissedState() {
     #expect(SetupText.banner(state: .preparing(.machine), dismissed: true)
         == "Préparation en cours — Préparation de la machine de conteneurs…")
     #expect(SetupText.banner(state: .preparing(.omp(downloaded: 40, total: 100)), dismissed: true)
-        == "Préparation en cours — Téléchargement d'OMP — 40 %")
+        == "Préparation en cours — Téléchargement d’OMP — 40 %")
 
     // Fermée après un échec : le bandeau dit la cause.
     #expect(SetupText.banner(state: .failed(.stack(.healthTimeout(seconds: 180))), dismissed: true)
-        == "Préparation incomplète. La mémoire n'a pas répondu dans le délai imparti (180 s).")
+        == "Préparation incomplète. La mémoire n’a pas répondu dans le délai imparti (180 s).")
     #expect(SetupText.banner(state: .failed(.components(.checksum(component: "Podman"))), dismissed: true)
-        == "Préparation incomplète. « Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
+        == "Préparation incomplète. « Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
 
     // Terminée ou jamais commencée : rien à dire.
     #expect(SetupText.banner(state: .ready, dismissed: true) == nil)
@@ -600,7 +600,7 @@ func takeoverShownOnlyForLegacyConflict() {
     #expect(SetupPresentation.showsTakeover(.preparing(.legacyStop)))
     #expect(SetupPresentation.footer(state: .preparing(.legacyStop), blocking: false)
         == SetupFooter(leading: [], trailing: [.takeover, .retry, .close], prominent: .takeover, disabled: [.takeover, .retry]))
-    #expect(SetupPresentation.label(.takeover) == "Arrêter l'ancienne pile et reprendre")
+    #expect(SetupPresentation.label(.takeover) == "Arrêter l’ancienne pile et reprendre")
 }
 
 @MainActor

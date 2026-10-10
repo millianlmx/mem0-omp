@@ -47,19 +47,19 @@ struct PipelinesCardSheetTests {
         #expect(
             PipelinesModel.modelLines(card(models: both), names: catalog)
                 == PipelinesModelLines(
-                    reqSpecs: "req+specs Claude Opus 5.5",
-                    implReview: "impl+review lm-studio/qwen3-coder-30b"
+                    reqSpecs: "/req+/specs Claude Opus 5.5",
+                    implReview: "/impl+/review lm-studio/qwen3-coder-30b"
                 )
         )
         #expect(
             PipelinesModel.modelLines(card(models: both), names: nil)
                 == PipelinesModelLines(
-                    reqSpecs: "req+specs anthropic/claude-opus-5-5",
-                    implReview: "impl+review lm-studio/qwen3-coder-30b"
+                    reqSpecs: "/req+/specs anthropic/claude-opus-5-5",
+                    implReview: "/impl+/review lm-studio/qwen3-coder-30b"
                 )
         )
         let noReview = ModelSlots(reqSpecs: known, implReview: nil)
-        #expect(PipelinesModel.modelLines(card(models: noReview), names: catalog)?.implReview == "impl+review défaut OMP")
+        #expect(PipelinesModel.modelLines(card(models: noReview), names: catalog)?.implReview == "/impl+/review défaut OMP")
         #expect(PipelinesModel.modelLines(card(models: nil), names: catalog) == nil)
     }
 

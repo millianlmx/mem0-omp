@@ -14,8 +14,8 @@ public enum SessionConsoleText {
     public static let noProjectBody = "Choisissez un dossier de projet pour converser avec OMP."
     public static let readyTitle = "Prête à démarrer"
     public static let starting = "Démarrage de la session…"
-    public static let failedTitle = "La session n'a pas démarré"
-    public static let interrupted = "La session s'est arrêtée. Relancez-la pour reprendre la conversation."
+    public static let failedTitle = "La session n’a pas démarré"
+    public static let interrupted = "La session s’est arrêtée. Relancez-la pour reprendre la conversation."
     public static let composerRunning = "Écrivez à OMP…"
     public static let composerIdle = "Lancez la session pour écrire."
     public static let dialogTitle = "OMP vous demande"
@@ -40,7 +40,7 @@ public enum SessionConsoleText {
     public static let confirm = "Confirmer"
     public static let decline = "Refuser"
     public static let noOption = "Aucune option proposée."
-    public static let noEvent = "Aucun événement pour l'instant."
+    public static let noEvent = "Aucun événement pour l’instant."
 
     /// Le libellé affiché d'une option : la marque anglaise d'OMP
     /// « (Recommended) », en fin de libellé, se dit « (recommandé) ». La valeur
@@ -63,7 +63,7 @@ public enum SessionConsoleText {
         public static let running = "Session active"
         public static let stopping = "Arrêt en cours…"
         public static let stopped = "Session arrêtée"
-        public static let dead = "La session s'est interrompue."
+        public static let dead = "La session s’est interrompue."
     }
 
     public static func relaunchNote(sessionFile: String) -> String {
@@ -87,7 +87,7 @@ public enum SessionConsoleText {
     public static let fieldSessionId = "Identifiant de session"
     public static let fieldMode = "Mode"
     public static let none = "—"
-    public static let noActivity = "Aucune trame pour l'instant."
+    public static let noActivity = "Aucune trame pour l’instant."
     public static let noJournal = "Aucune entrée de journal."
 
     /// Les titres des trames du protocole, humanisées (inspecteur « Détails
@@ -98,9 +98,9 @@ public enum SessionConsoleText {
         public static let localError = "Erreur locale"
         public static let ready = "Session prête"
         public static let promptSent = "Message envoyé"
-        public static let stateRequest = "Demande d'état"
+        public static let stateRequest = "Demande d’état"
         public static let negotiation = "Négociation du protocole"
-        public static let hostAnswer = "Réponse à l'hôte"
+        public static let hostAnswer = "Réponse à l’hôte"
         public static let confirmed = "confirmé"
         public static let declined = "refusé"
         public static let cancelled = "annulé"
@@ -110,19 +110,19 @@ public enum SessionConsoleText {
         public static let agentEnd = "Agent au repos"
         public static let turnStart = "Début du tour"
         public static let turnEnd = "Fin du tour"
-        public static let userMessage = "Message de l'utilisateur"
-        public static let agentMessage = "Message de l'agent"
+        public static let userMessage = "Message de l’utilisateur"
+        public static let agentMessage = "Message de l’agent"
         public static let otherMessage = "Message"
         public static let messageStart = "début"
         public static let thinking = "réflexion"
-        public static let hostQuestion = "Question de l'hôte"
+        public static let hostQuestion = "Question de l’hôte"
         public static let questionWithdrawn = "Question retirée"
-        public static let notification = "Notification de l'hôte"
-        public static let hostStatus = "Statut de l'hôte"
-        public static let hostTitle = "Titre de l'hôte"
-        public static let hostWidget = "Panneau de l'hôte"
-        public static let hostEditorText = "Texte proposé par l'hôte"
-        public static let hostLink = "Lien proposé par l'hôte"
+        public static let notification = "Notification de l’hôte"
+        public static let hostStatus = "Statut de l’hôte"
+        public static let hostTitle = "Titre de l’hôte"
+        public static let hostWidget = "Panneau de l’hôte"
+        public static let hostEditorText = "Texte proposé par l’hôte"
+        public static let hostLink = "Lien proposé par l’hôte"
         public static let commandsUpdate = "Commandes disponibles"
         public static let thinkingLevel = "Niveau de réflexion"
         public static let advisorCost = "Coût du conseiller"
@@ -142,12 +142,12 @@ public enum SessionConsoleText {
         public static func response(_ command: String) -> String { "Réponse · \(command)" }
         public static func failedResponse(_ command: String) -> String { "Échec · \(command)" }
         public static func command(_ type: String) -> String { "Commande · \(type)" }
-        public static func toolCall(_ name: String) -> String { "Appel d'outil · \(name)" }
+        public static func toolCall(_ name: String) -> String { "Appel d’outil · \(name)" }
         public static func toolProgress(_ name: String) -> String { "Outil en cours · \(name)" }
         public static func toolDone(_ name: String) -> String { "Outil terminé · \(name)" }
-        public static func toolFailed(_ name: String) -> String { "Échec d'outil · \(name)" }
-        public static func toolResult(_ name: String) -> String { "Résultat d'outil · \(name)" }
-        public static func hostDisplay(_ method: String) -> String { "Affichage de l'hôte · \(method)" }
+        public static func toolFailed(_ name: String) -> String { "Échec d’outil · \(name)" }
+        public static func toolResult(_ name: String) -> String { "Résultat d’outil · \(name)" }
+        public static func hostDisplay(_ method: String) -> String { "Affichage de l’hôte · \(method)" }
         public static func event(_ type: String) -> String { "Événement · \(type)" }
     }
 

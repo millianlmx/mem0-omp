@@ -426,13 +426,13 @@ func notificationsBannerShowsOnDenialUntilIgnored() {
 
 @Test("omp-console-redesign/AC-5 : le bandeau de lancement dit l'état de la commande, jamais masqué à tort")
 func launchBannerFollowsTheLaunchCommand() {
-    #expect(HomeText.launchBanner(title: "export", state: .awaitingAck) == "Lancement de « export »…")
-    #expect(HomeText.launchBanner(title: "export", state: .taken) == "Pipeline « export » lancée : la collecte des besoins démarre.")
+    #expect(HomeText.launchBanner(title: "export", state: .awaitingAck) == "Lancement de « export »…")
+    #expect(HomeText.launchBanner(title: "export", state: .taken) == "Pipeline « export » lancée : la collecte des besoins démarre.")
     #expect(HomeText.launchBanner(title: "!!!", state: .refused(reason: "contenu de feature vide ou illisible"))
-        == "Lancement de « !!! » refusé : contenu de feature vide ou illisible")
-    #expect(HomeText.launchBanner(title: "export", state: .refused(reason: nil)) == "Lancement de « export » refusé.")
+        == "Lancement de « !!! » refusé : contenu de feature vide ou illisible")
+    #expect(HomeText.launchBanner(title: "export", state: .refused(reason: nil)) == "Lancement de « export » refusé.")
     #expect(HomeText.launchBanner(title: "export", state: .unacknowledged)
-        == "Lancement de « export » : \(ActionsText.unacknowledged)")
+        == "Lancement de « export » : \(ActionsText.unacknowledged)")
 
     let launch = ActionJournalEntry(id: "l1", kindLabel: ActionsText.launchLabel, targetLabel: "export", state: .taken, at: 2)
     let other = ActionJournalEntry(id: "s1", kindLabel: ActionsText.specsLabel, targetLabel: "x", state: .taken, at: 3)

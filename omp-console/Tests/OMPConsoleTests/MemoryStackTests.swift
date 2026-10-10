@@ -626,7 +626,7 @@ func busyPortIsNamedByTheProbe() async throws {
     let failure = SetupFailure.stack(.portConflict(port: 6334, owner: .foreign(process: "python3", pid: 4711)))
     let diagnostic = SetupText.failureDiagnostic(failure)
     #expect(diagnostic.contains("Le port 6334 est déjà tenu par un autre programme (python3, pid 4711)"))
-    #expect(diagnostic.contains("Geste : arrêtez le programme qui tient le port"))
+    #expect(diagnostic.contains("Geste : arrêtez le programme qui tient le port"))
 }
 
 @MainActor
@@ -763,7 +763,7 @@ func legacyContainerBlocksReadiness() async throws {
         .stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http")))
     )
     #expect(diagnostic.contains("l'ancienne pile mémoire (conteneur mem0-http)"))
-    #expect(diagnostic.contains("Geste : podman stop mem0-qdrant mem0-http"))
+    #expect(diagnostic.contains("Geste : podman stop mem0-qdrant mem0-http"))
 }
 
 @MainActor

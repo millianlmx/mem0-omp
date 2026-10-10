@@ -180,7 +180,7 @@ func modelsRefusalIsJournalled() async throws {
 
     #expect(model.journal.first?.state == .refused(reason: motif))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "\(ActionsText.modelsLabel) · alpha · refusée : \(motif)")
+        == "\(ActionsText.modelsLabel) · alpha · refusée : \(motif)")
 }
 
 @MainActor
@@ -206,11 +206,11 @@ func modelLinesAreExact() throws {
         phase: .impl, models: ModelSlots(reqSpecs: "anthropic/claude-opus-4-7", implReview: nil),
         prUrl: nil, startMs: 0, endMs: nil, marks: [], sources: []
     )
-    #expect(KanbanCardPresentation.reqSpecsLine(card) == "req+specs anthropic/claude-opus-4-7")
-    #expect(KanbanCardPresentation.implReviewLine(card) == "impl+review défaut OMP")
+    #expect(KanbanCardPresentation.reqSpecsLine(card) == "/req+/specs anthropic/claude-opus-4-7")
+    #expect(KanbanCardPresentation.implReviewLine(card) == "/impl+/review défaut OMP")
     let slots = try #require(card.models)
     #expect(KanbanCardPresentation.modelsText(slots)
-        == "req+specs anthropic/claude-opus-4-7 · impl+review défaut OMP")
+        == "/req+/specs anthropic/claude-opus-4-7 · /impl+/review défaut OMP")
 
     var bare = card
     bare.models = nil

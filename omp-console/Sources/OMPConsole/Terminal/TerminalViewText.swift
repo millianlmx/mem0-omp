@@ -28,7 +28,7 @@ enum TerminalViewText {
 
     /// Le programme au premier plan, en tête du sous-titre : le shell, ou `omp`
     /// une fois lancé depuis la barre d'outils.
-    static let shellKind = "Shell"
+    static let shellKind = "Interpréteur"
     static let ompKind = "OMP"
 
     // MARK: - États de la fenêtre (S-10)
@@ -38,8 +38,8 @@ enum TerminalViewText {
     /// est ouverte et le catalogue se charge, la fenêtre le dit.
     static let chooseHint = "Choisissez un répertoire…"
     static let listing = "Recherche des dossiers de features…"
-    static let starting = "Lancement du shell…"
-    static let running = "Le shell est actif."
+    static let starting = "Lancement de l’interpréteur…"
+    static let running = "L’interpréteur est actif."
 
     /// La zone sans shell ni projet choisi (S-1 de mac-etats-vides-sans-issue) :
     /// elle porte l'action « Choisir un projet… ». Aucun raccourci nommé.
@@ -49,7 +49,7 @@ enum TerminalViewText {
     /// La zone sans shell, projet choisi (S-4) : le projet dont la feuille
     /// listera les répertoires.
     static func projectNamed(_ name: String) -> String {
-        "Projet « \(name) »"
+        "Projet « \(name) »"
     }
 
     /// L'état en un mot, pour le sous-titre de la fenêtre.
@@ -67,24 +67,24 @@ enum TerminalViewText {
 
     /// La fin du shell : le code de sortie n'apprend rien à l'utilisateur, la
     /// relance est l'unique geste utile.
-    static let exited = "Le shell s'est terminé. Relancez-le pour continuer."
+    static let exited = "L’interpréteur s’est terminé. Relancez-le pour continuer."
 
     // MARK: - Messages d'échec (table unique, S-10)
 
     static func cwdMissing(_ path: String) -> String {
-        "Répertoire introuvable : \(path)."
+        "Répertoire introuvable : \(path)."
     }
 
     static func executableMissing(_ path: String) -> String {
-        "Exécutable introuvable : \(path)."
+        "Exécutable introuvable : \(path)."
     }
 
     /// La phrase affichée (S-7) : la cause en mots, puis le geste.
-    static let ptyUnavailable = "Le terminal n'a pas pu s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres de terminal inutiles, puis relancez."
+    static let ptyUnavailable = "Le terminal n’a pas pu s’ouvrir : le Mac refuse d’en créer un de plus pour l’instant. Fermez des fenêtres de terminal inutiles, puis relancez."
 
     /// Le brut copié par « Copier le diagnostic » (S-7).
     static func ptyUnavailableDiagnostic(code: Int32) -> String {
-        "PTY indisponible (\(code)) : aucun process lancé."
+        "Pseudo-terminal indisponible (\(code)) : aucun processus lancé."
     }
 
     static func writeFailed(_ code: Int32) -> String {
@@ -95,7 +95,7 @@ enum TerminalViewText {
 
     // MARK: - Feuille de choix (S-2, BR-4)
 
-    static let noProject = "Aucun projet ouvert : choisissez d'abord un dossier dans la section « Session OMP »."
+    static let noProject = "Aucun projet ouvert : choisissez d’abord un dossier dans la section « Session OMP »."
     static let loadingTargets = "Recherche des dossiers de features…"
     static let emptyTargets = "Aucun dossier de feature dans ce projet."
     static let targetPath = "Répertoire"

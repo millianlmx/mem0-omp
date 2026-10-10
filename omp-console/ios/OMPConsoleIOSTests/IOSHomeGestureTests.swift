@@ -208,8 +208,8 @@ struct IOSHomeGestureTests {
         await settle { mac.waiting == 2 }
         mac.finish(.failure(ClientError.api(.conflict(raw))))
         await settle { model.inFlight.isEmpty }
-        #expect(model.failures[resumeKey] == "La pipeline n'a pas repris. " + IOSMacErrorText.message(for: .generic))
-        #expect(model.failures[specsKey] == "Les specs n'ont pas été validées. " + IOSMacErrorText.message(for: .generic))
+        #expect(model.failures[resumeKey] == "La pipeline n’a pas repris. " + IOSMacErrorText.message(for: .generic))
+        #expect(model.failures[specsKey] == "Les spécifications n’ont pas été validées. " + IOSMacErrorText.message(for: .generic))
         #expect(model.failures.count == 2)
         #expect(model.inFlight.isEmpty)
     }
@@ -224,7 +224,7 @@ struct IOSHomeGestureTests {
         mac.finish(.failure(ClientError.notConnected))
         await settle { model.inFlight.isEmpty }
         #expect(model.inFlight.isEmpty)
-        #expect(model.failures[resumeKey] == "La pipeline n'a pas repris. " + IOSMacErrorText.message(for: .macUnreachable))
+        #expect(model.failures[resumeKey] == "La pipeline n’a pas repris. " + IOSMacErrorText.message(for: .macUnreachable))
 
         model.tap(resumeKey, send: mac.send)
         #expect(model.failures[resumeKey] == nil)

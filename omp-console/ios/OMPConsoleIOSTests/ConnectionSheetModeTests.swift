@@ -88,7 +88,7 @@ struct ConnectionSheetModeTests {
 
         // L'état dit « Non appairé », le message explique pourquoi.
         #expect(ConnectionText.sheetState(.revoked) == ConnectionText.unpaired)
-        #expect(ConnectionText.refusedMessage == "Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code d'appairage.")
+        #expect(ConnectionText.refusedMessage == "Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code d’appairage.")
 
         // Relancement : le refus n'est pas persisté, le statut lu est `.unpaired`,
         // donc le mode non appairé SANS message.
@@ -125,7 +125,7 @@ struct ConnectionSheetModeTests {
         #expect(resolve(.paired, .searching) == .disconnected(address: nil))
         #expect(resolve(.paired, .incompatibleProtocol(local: 1, remote: 2), effective: other) == .disconnected(address: other.display))
         #expect(ConnectionText.sheetState(.macAbsent(endpoint: manual)) == "Mac injoignable")
-        #expect(ConnectionText.addressEdit == "Modifier l'adresse")
+        #expect(ConnectionText.addressEdit == "Modifier l’adresse")
     }
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-8 : le Mac redevenu joignable fait passer la feuille de déconnecté à connecté")
@@ -143,8 +143,8 @@ struct ConnectionSheetModeTests {
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-9 : la confirmation d'oubli nomme l'effet et offre « Annuler » distinct de l'action")
     func forgetConfirmationWords() {
         #expect(ConnectionText.forget == "Oublier ce Mac")
-        #expect(ConnectionText.forgetTitle == "Oublier ce Mac ?")
-        #expect(ConnectionText.forgetMessage.contains("nouveau code d'appairage"))
+        #expect(ConnectionText.forgetTitle == "Oublier ce Mac ?")
+        #expect(ConnectionText.forgetMessage.contains("nouveau code d’appairage"))
         #expect(ConnectionText.forgetCancel == "Annuler")
         #expect(ConnectionText.forgetCancel != ConnectionText.forget)
         #expect(ConnectionAccessibility.identifiers.contains(ConnectionAccessibility.forgetConfirm))

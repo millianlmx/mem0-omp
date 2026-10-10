@@ -7,7 +7,7 @@ public enum HomeText {
     // --- première fois --------------------------------------------------------
     public static let firstRunTitle = "Lancez votre première feature"
     public static let firstRunBody =
-        "Décrivez un besoin : OMP le clarifie avec vous, le spécifie, l'implémente et ouvre la PR. Vous répondez et validez depuis l'app."
+        "Décrivez un besoin : OMP le clarifie avec vous, le spécifie, l’implémente et ouvre la PR. Vous répondez et validez depuis l’app."
     public static let newFeature = "Nouvelle feature…"
 
     // --- bienvenue ------------------------------------------------------------
@@ -25,7 +25,7 @@ public enum HomeText {
         ),
         HomePromise(
             symbol: "arrow.triangle.pull",
-            title: "Recevez la pull request",
+            title: "Recevez la PR",
             detail: "OMP implémente, relit et ouvre la PR."
         ),
     ]
@@ -45,10 +45,10 @@ public enum HomeText {
     public static let deliveredTitle = "Livrées récemment"
     public static let attentionEmpty = "Rien ne vous attend."
     public static let runningEmpty = "Aucune pipeline en cours."
-    public static let deliveredEmpty = "Aucune PR livrée pour l'instant."
+    public static let deliveredEmpty = "Aucune PR livrée pour l’instant."
     public static let allPipelines = "Tout afficher"
-    public static let questionWithoutText = "L'agent attend une réponse."
-    public static let specsPrompt = "Validez les specs pour lancer l'implémentation."
+    public static let questionWithoutText = "L’agent attend une réponse."
+    public static let specsPrompt = "Validez les spécifications pour lancer l’implémentation."
     public static let reviewPrompt = "Acceptez la revue pour publier la PR."
     public static let answerEllipsis = "Répondre…"
     /// Le champ libre à côté des options (jamais « ou … » en minuscule).
@@ -65,7 +65,7 @@ public enum HomeText {
     public static func natureText(_ nature: HomeAttentionNature) -> String {
         switch nature {
         case .question: "Question"
-        case .milestoneSpecs: "Specs à valider"
+        case .milestoneSpecs: "Spécifications à valider"
         case .milestoneReview: "Revue à accepter"
         }
     }
@@ -85,21 +85,21 @@ public enum HomeText {
     public static func launchBanner(title: String, state: ActionJournalState) -> String {
         switch state {
         case .awaitingAck:
-            "Lancement de « \(title) »…"
+            "Lancement de « \(title) »…"
         case .taken:
-            "Pipeline « \(title) » lancée : la collecte des besoins démarre."
+            "Pipeline « \(title) » lancée : la collecte des besoins démarre."
         case .refused(let reason?):
-            "Lancement de « \(title) » refusé : \(reason)"
+            "Lancement de « \(title) » refusé : \(reason)"
         case .refused(nil):
-            "Lancement de « \(title) » refusé."
+            "Lancement de « \(title) » refusé."
         case .failed(let reason):
-            "Lancement de « \(title) » impossible : \(reason)"
+            "Lancement de « \(title) » impossible : \(reason)"
         case .unacknowledged:
-            "Lancement de « \(title) » : \(ActionsText.unacknowledged)"
+            "Lancement de « \(title) » : \(ActionsText.unacknowledged)"
         case .delivered:
             // Une commande n'est jamais « déposée » comme une livraison : ce cas
             // n'arrive pas pour un lancement ; l'état brut reste lisible.
-            "Lancement de « \(title) » : \(ActionsText.delivered)"
+            "Lancement de « \(title) » : \(ActionsText.delivered)"
         }
     }
 }

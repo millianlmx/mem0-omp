@@ -49,7 +49,7 @@ struct HomeParityTests {
         #expect(Set(attention.map(\.nature)) == Set([.question, .milestoneSpecs, .milestoneReview]))
         #expect(
             Set(attention.map { HomeText.natureText($0.nature) })
-                == Set(["Question", "Specs à valider", "Revue à accepter"])
+                == Set(["Question", "Spécifications à valider", "Revue à accepter"])
         )
         // La question en vol porte SA question et ses deux options ; les deux
         // jalons portent l'invite partagée de leur nature.
@@ -134,11 +134,11 @@ struct HomeParityTests {
         // La phrase rendue pour l'entrée retenue, des deux états testables.
         #expect(
             HomeText.launchBanner(title: "ma-feature", state: .taken)
-                == "Pipeline « ma-feature » lancée : la collecte des besoins démarre."
+                == "Pipeline « ma-feature » lancée : la collecte des besoins démarre."
         )
         #expect(
             HomeText.launchBanner(title: "ma-feature", state: .refused(reason: nil))
-                == "Lancement de « ma-feature » refusé."
+                == "Lancement de « ma-feature » refusé."
         )
     }
 

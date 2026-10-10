@@ -247,7 +247,7 @@ struct SessionParityTests {
                 == [.section, .section, .section, .section, .section, .removed, .added]
         )
         #expect(diffSegment.first?.text == "diff --git a/src/app.swift b/src/app.swift")
-        #expect(SessionDiffText.toneLabel(.section) == "en-tête de diff")
+        #expect(SessionDiffText.toneLabel(.section) == "en-tête de différences")
         #expect(SessionDiffText.toneLabel(.removed) == "ligne supprimée")
 
         // — Les DEUX MARQUEURS, textes verbatim.

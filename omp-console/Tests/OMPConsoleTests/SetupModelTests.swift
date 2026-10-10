@@ -256,7 +256,7 @@ func installFailureStopsTheChain() async {
     #expect(recorder.stackSteps.isEmpty)
     #expect(recorder.onReadyCalls == 0)
     #expect(SetupText.failureMessage(.components(.network(component: "OMP", detail: "hors ligne")))
-        == "Pas de réseau : « OMP » n'a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.")
+        == "Pas de réseau : « OMP » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.")
 }
 
 @MainActor
@@ -648,7 +648,7 @@ func failedTakeOverDoesNotRestartTheChain() async {
     // Le brut (conteneur, code HTTP) reste dans le diagnostic copiable ; la feuille
     // dit la conséquence (jargon-technique-expose-mac-et-ios S-5).
     #expect(SetupText.failureDiagnostic(.legacy(.stopFailed(container: "mem0-qdrant", detail: "code HTTP 500")))
-        == "L'ancienne pile mémoire n'a pas pu être arrêtée (mem0-qdrant) : code HTTP 500")
+        == "L’ancienne pile mémoire n’a pas pu être arrêtée (mem0-qdrant) : code HTTP 500")
     #expect(SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "code HTTP 500")))
         == "\(SetupText.failureLegacyStop) \(SetupText.failureRetryGesture)")
 }
@@ -695,34 +695,34 @@ func setupTextsAreFrozen() {
         SetupText.stackRow,
         SetupText.prerequisitesRow,
     ] == [
-        "Préparation d'OMP Console",
-        "OMP Console installe ses composants — OMP, le moteur de conteneurs et la pile mémoire — puis les démarre. Cette étape n'a lieu qu'une fois.",
-        "OMP n'est pas installé",
-        "Installez OMP depuis la feuille de préparation : les fonctions qui en dépendent se débloquent à la fin de l'installation.",
+        "Préparation d’OMP Console",
+        "OMP Console installe ses composants — OMP, le moteur de conteneurs et la pile mémoire — puis les démarre. Cette étape n’a lieu qu’une fois.",
+        "OMP n’est pas installé",
+        "Installez OMP depuis la feuille de préparation : les fonctions qui en dépendent se débloquent à la fin de l’installation.",
         "Réessayer",
         "Fermer",
         "Installer",
         "Quitter",
-        "OMP n'est pas installé sur ce Mac. Installez-le pour utiliser OMP Console, ou quittez l'app.",
-        "OMP n'est toujours pas installé.",
+        "OMP n’est pas installé sur ce Mac. Installez-le pour utiliser OMP Console, ou quittez l’app.",
+        "OMP n’est toujours pas installé.",
         "Afficher le détail",
         "Masquer le détail",
         "Reprendre…",
         "Préparation terminée.",
-        "Afficher la préparation d'OMP Console",
+        "Afficher la préparation d’OMP Console",
         "Composants",
         "Migration de la mémoire",
         "Pile mémoire",
         "Prérequis",
     ])
 
-    #expect(SetupText.stepDetail(.omp(downloaded: 0, total: 0)) == "Téléchargement d'OMP…")
-    #expect(SetupText.stepDetail(.omp(downloaded: 12, total: 100)) == "Téléchargement d'OMP — 12 %")
-    #expect(SetupText.stepDetail(.ompInstall) == "Installation d'OMP…")
+    #expect(SetupText.stepDetail(.omp(downloaded: 0, total: 0)) == "Téléchargement d’OMP…")
+    #expect(SetupText.stepDetail(.omp(downloaded: 12, total: 100)) == "Téléchargement d’OMP — 12 %")
+    #expect(SetupText.stepDetail(.ompInstall) == "Installation d’OMP…")
     #expect(SetupText.stepDetail(.podman(downloaded: 0, total: 0)) == "Téléchargement de Podman…")
     #expect(SetupText.stepDetail(.podman(downloaded: 200, total: 100)) == "Téléchargement de Podman — 100 %")
     #expect(SetupText.stepDetail(.podmanInstall) == "Installation de Podman…")
-    #expect(SetupText.stepDetail(.legacyStop) == "Arrêt de l'ancienne pile mémoire…")
+    #expect(SetupText.stepDetail(.legacyStop) == "Arrêt de l’ancienne pile mémoire…")
     #expect(SetupText.stepDetail(.migrationCopy) == "Copie de la base mémoire existante…")
     #expect(SetupText.stepDetail(.machine) == "Préparation de la machine de conteneurs…")
     #expect(SetupText.stepDetail(.images) == "Préparation des images de la pile…")
@@ -730,7 +730,7 @@ func setupTextsAreFrozen() {
     #expect(SetupText.stepDetail(.health) == "Attente de la mémoire…")
     #expect(SetupText.stepDetail(.union) == "Rattrapage des souvenirs manquants…")
     #expect(SetupText.stepDetail(.prerequisites) == "Vérification des prérequis…")
-    #expect(SetupText.takeover == "Arrêter l'ancienne pile et reprendre")
+    #expect(SetupText.takeover == "Arrêter l’ancienne pile et reprendre")
 
     #expect(SetupText.omlxWord(.unknown) == "Non vérifié")
     #expect(SetupText.omlxWord(.reachable) == "Disponible")
@@ -739,48 +739,48 @@ func setupTextsAreFrozen() {
 
     // Le DIAGNOSTIC copiable garde l'ancien texte de la feuille, mot pour mot
     // (jargon-technique-expose-mac-et-ios S-5).
-    #expect(SetupText.failureDiagnostic(.components(.unsupportedMac)) == "Ce Mac n'est pas pris en charge (arm64 requis).")
+    #expect(SetupText.failureDiagnostic(.components(.unsupportedMac)) == "Ce Mac n’est pas pris en charge (arm64 requis).")
     #expect(SetupText.failureDiagnostic(.components(.checksum(component: "OMP")))
-        == "« OMP » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
+        == "« OMP » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
     #expect(SetupText.failureDiagnostic(.components(.install(component: "Podman", detail: "pkgutil absent")))
-        == "L'installation de « Podman » a échoué : pkgutil absent")
+        == "L’installation de « Podman » a échoué : pkgutil absent")
     #expect(SetupText.failureDiagnostic(.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")))
-        == "L'ancienne pile mémoire n'a pas pu être arrêtée (mem0-qdrant) : socket fermé")
+        == "L’ancienne pile mémoire n’a pas pu être arrêtée (mem0-qdrant) : socket fermé")
     #expect(SetupText.failureDiagnostic(.stack(.machineFailed(detail: "libkrun absent")))
-        == "La machine de conteneurs n'a pas démarré : libkrun absent")
+        == "La machine de conteneurs n’a pas démarré : libkrun absent")
     #expect(SetupText.failureDiagnostic(.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")))
-        == "Le conteneur omp-console-qdrant n'a pas démarré : image absente")
+        == "Le conteneur omp-console-qdrant n’a pas démarré : image absente")
     #expect(SetupText.failureDiagnostic(.stack(.healthTimeout(seconds: 180)))
-        == "La mémoire n'a pas répondu dans le délai imparti (180 s).")
+        == "La mémoire n’a pas répondu dans le délai imparti (180 s).")
     #expect(SetupText.failureDiagnostic(.stack(.podmanFailed(command: "machine start", detail: "boom")))
-        == "Podman a échoué (machine start) : boom")
+        == "Podman a échoué (machine start) : boom")
     #expect(SetupText.failureDiagnostic(.stack(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))))
-        == "Le port 8321 est déjà tenu par un autre programme (python3, pid 4711) : la pile mémoire ne peut pas démarrer.\nGeste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)")
+        == "Le port 8321 est déjà tenu par un autre programme (python3, pid 4711) : la pile mémoire ne peut pas démarrer.\nGeste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)")
     #expect(SetupText.failureDiagnostic(.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))))
-        == "Le port 8321 est déjà tenu par l'ancienne pile mémoire (conteneur mem0-http) : la pile mémoire ne peut pas démarrer.\nGeste : podman stop mem0-qdrant mem0-http")
+        == "Le port 8321 est déjà tenu par l'ancienne pile mémoire (conteneur mem0-http) : la pile mémoire ne peut pas démarrer.\nGeste : podman stop mem0-qdrant mem0-http")
     #expect(SetupText.failureDiagnostic(.stack(.installationFailed(detail: "disque plein")))
-        == "L'identité d'installation de la pile n'a pas pu être écrite : disque plein")
+        == "L’identité d’installation de la pile n’a pas pu être écrite : disque plein")
 
     // La PHRASE affichée : les cas sans détail Podman gardent leur texte ; les
     // cinq cas Podman disent la conséquence, puis le geste (S-5).
-    #expect(SetupText.failureMessage(.components(.unsupportedMac)) == "Ce Mac n'est pas pris en charge (arm64 requis).")
+    #expect(SetupText.failureMessage(.components(.unsupportedMac)) == "Ce Mac n’est pas pris en charge (arm64 requis).")
     #expect(SetupText.failureMessage(.stack(.healthTimeout(seconds: 180)))
-        == "La mémoire n'a pas répondu dans le délai imparti (180 s).")
-    let retry = "Réessayez ; si l'échec revient, copiez le diagnostic pour le signaler."
+        == "La mémoire n’a pas répondu dans le délai imparti (180 s).")
+    let retry = "Réessayez ; si l’échec revient, copiez le diagnostic pour le signaler."
     #expect(SetupText.failureMessage(.stack(.machineFailed(detail: "libkrun absent")))
-        == "Le moteur de la mémoire n'a pas démarré : les souvenirs sont indisponibles. \(retry)")
+        == "Le moteur de la mémoire n’a pas démarré : les souvenirs sont indisponibles. \(retry)")
     #expect(SetupText.failureMessage(.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")))
-        == "Un composant de la mémoire n'a pas démarré : les souvenirs sont indisponibles. \(retry)")
+        == "Un composant de la mémoire n’a pas démarré : les souvenirs sont indisponibles. \(retry)")
     #expect(SetupText.failureMessage(.stack(.podmanFailed(command: "machine start", detail: "boom")))
-        == "La préparation de la mémoire a échoué : les souvenirs sont indisponibles. \(retry)")
+        == "La préparation de la mémoire a échoué : les souvenirs sont indisponibles. \(retry)")
     #expect(SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")))
-        == "L'ancienne mémoire n'a pas pu être arrêtée : la nouvelle ne peut pas démarrer. \(retry)")
+        == "L’ancienne mémoire n’a pas pu être arrêtée : la nouvelle ne peut pas démarrer. \(retry)")
     #expect(SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))))
-        == "L'ancienne mémoire occupe encore la place de la nouvelle : celle-ci ne peut pas démarrer. Arrêtez l'ancienne mémoire pour reprendre.")
+        == "L’ancienne mémoire occupe encore la place de la nouvelle : celle-ci ne peut pas démarrer. Arrêtez l’ancienne mémoire pour reprendre.")
     #expect(SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))))
-        == "Une autre app occupe la place réservée à la mémoire : celle-ci ne peut pas démarrer. Quittez cette app, puis réessayez ; copiez le diagnostic pour savoir laquelle.")
+        == "Une autre app occupe la place réservée à la mémoire : celle-ci ne peut pas démarrer. Quittez cette app, puis réessayez ; copiez le diagnostic pour savoir laquelle.")
     #expect(SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .unknown(detail: "lsof absent"))))
-        == "La place réservée à la mémoire est occupée : celle-ci ne peut pas démarrer. \(retry)")
+        == "La place réservée à la mémoire est occupée : celle-ci ne peut pas démarrer. \(retry)")
 }
 
 /// Les cinq échecs Podman de S-5 (avec chacun des propriétaires de port), leur

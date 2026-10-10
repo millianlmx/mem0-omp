@@ -250,7 +250,7 @@ type SectionWord = { message: string; constant: string; core: string; detail: st
 
 const SECTION_WORDS: Record<string, SectionWord> = {
   home: { message: "Lancez votre première feature", constant: "HomeText.firstRunTitle", core: "Home/HomeText.swift", detail: "HomeText.firstRunBody" },
-  kanban: { message: "Aucune pipeline pour l'instant.", constant: "KanbanText.noPipeline", core: "Kanban/KanbanText.swift", detail: null },
+  kanban: { message: "Aucune pipeline pour l’instant.", constant: "KanbanText.noPipeline", core: "Kanban/KanbanText.swift", detail: null },
   project: { message: "Aucun projet piloté.", constant: "ProjectViewText.emptyTitle", core: "Project/ProjectViewText.swift", detail: "ProjectViewText.emptyHelp" },
   session: { message: "Aucune session", constant: "SessionConsoleText.noProjectTitle", core: "Session/SessionConsoleText.swift", detail: "SessionConsoleText.noProjectBody" },
   sessions: { message: "Aucune session", constant: "SessionSelectorText.emptyTitle", core: "Viewer/SessionSelectorText.swift", detail: "SessionSelectorText.noRun" },
@@ -548,7 +548,7 @@ test("design-ios/AC-3 : chaque état vide porte le mot partagé, mot pour mot", 
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "Sources", "ConsoleCore", "Kanban", "KanbanText.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucune pipeline pour l\'instant."', '"Aucune pipeline."'));
+  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace('"Aucune pipeline pour l’instant."', '"Aucune pipeline."'));
   assert.ok(screenFaults(copy).some((f) => f.includes("KanbanText")), "un mot réécrit doit faire rougir la garde");
 });
 

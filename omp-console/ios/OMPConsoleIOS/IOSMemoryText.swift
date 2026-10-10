@@ -17,13 +17,13 @@ import ConsoleCore
 enum IOSMemoryText {
     /// L'état vide de l'app quand le Mac n'est pas joignable : on ne peut PAS
     /// affirmer que la mémoire est vide (on ne l'a pas lue), donc on le dit.
-    static let noData = "Aucune donnée reçue du Mac pour l'instant."
+    static let noData = "Aucune donnée reçue du Mac pour l’instant."
 
     /// Aucun projet ouvert : le libellé partagé `MemoryText.noProjectDescription`
     /// accompagne le bouton « Choisir un projet… » de la coque macOS, absent sur
     /// iPhone — l'app garde sa propre phrase, sans bouton, seul mot où elle
     /// s'écarte du noyau.
-    static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
+    static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
     /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
     static let loadingMore = "Chargement des souvenirs suivants…"
@@ -34,15 +34,15 @@ enum IOSMemoryText {
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
     /// Le graphe partiel : le Mac a retiré des lignes à l'une des deux bornes.
-    static let graphPartial = "Graphe partiel : le Mac n'a pas servi tous les souvenirs."
+    static let graphPartial = "Graphe partiel : le Mac n’a pas servi tous les souvenirs."
 
     /// La route graphe est absente côté mem0-http (code partagé `outdated_service`) :
     /// la cause et le remède, sans adresse, sans JSON ni code HTTP.
     static let graphServiceOutdated =
-        "Graphe indisponible : serveur mémoire trop ancien.\nMets à jour mem0-http sur le Mac (redéploie le service), puis réessaie."
+        "Graphe indisponible : serveur mémoire trop ancien.\nMets à jour mem0-http sur le Mac (redéploie le service), puis réessaie."
 
     /// L'app Mac elle-même ne connaît pas la route graphe (`not_found`).
-    static let graphMacOutdated = "Graphe indisponible : app Mac trop ancienne, mets-la à jour."
+    static let graphMacOutdated = "Graphe indisponible : app Mac trop ancienne, mets-la à jour."
 
     /// Le titre du bloc de liens de la fiche.
     static let links = "Liens"
@@ -93,8 +93,8 @@ enum IOSMemoryText {
 
     /// Les raisons pour lesquelles « Sommaire » est grisé (montrées au toucher).
     static let summaryReasonShown = "Le sommaire est déjà affiché."
-    static let summaryReasonSearching = "Une recherche est en cours : le sommaire reviendra quand elle sera finie."
-    static let summaryReasonGraph = "Le sommaire s'affiche en mode Liste : touchez d'abord « Liste »."
+    static let summaryReasonSearching = "Une recherche est en cours : le sommaire reviendra quand elle sera finie."
+    static let summaryReasonGraph = "Le sommaire s’affiche en mode Liste : touchez d’abord « Liste »."
 
     /// La valeur VoiceOver d'un « Sommaire » indisponible.
     static let summaryUnavailable = "Indisponible"

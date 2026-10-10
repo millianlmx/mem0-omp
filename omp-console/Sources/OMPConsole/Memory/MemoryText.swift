@@ -18,14 +18,14 @@ extension MemoryText {
     /// Le détail sélectionnable de l'état « étranger » (BR-9) : l'adresse observée,
     /// le propriétaire et le geste exact, une ligne chacun.
     static func foreignOwnershipDetail(_ ownership: ForeignOwnership) -> String {
-        "\(ownership.address)\nTenu par \(ownership.owner).\nGeste : \(ownership.gesture)"
+        "\(ownership.address)\nTenu par \(ownership.owner).\nGeste : \(ownership.gesture)"
     }
 
     /// Le diagnostic copiable d'oMLX injoignable (S-6 de
     /// jargon-technique-expose-mac-et-ios) : l'ancien texte du bandeau, avec l'URL
     /// RÉELLEMENT sondée.
     static func omlxUnreachableDiagnostic(url: String) -> String {
-        "oMLX est injoignable (\(url)) — la mémoire a besoin de ses embeddings pour chercher."
+        "oMLX est injoignable (\(url)) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
     }
 
     /// Le diagnostic copiable de la clé refusée (S-6) : code, variable et URL.

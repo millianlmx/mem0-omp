@@ -99,7 +99,7 @@ func dedicatedAbsenceHasItsOwnText() {
 
 @Test("visionneuse-de-fichiers-et-diffs/AC-7 : un binaire et une lecture refusée ont chacun leur texte")
 func binaryAndUnreadableTexts() {
-    #expect(FilesContent.binary(bytes: 2048).message(dedicated: nil) == "Ce fichier n'est pas du texte : il ne peut pas être affiché.")
+    #expect(FilesContent.binary(bytes: 2048).message(dedicated: nil) == "Ce fichier n’est pas du texte : il ne peut pas être affiché.")
     // La raison brute ne s'affiche plus : elle part dans le diagnostic de la vue.
     #expect(FilesContent.unreadable("Permission denied").message(dedicated: nil) == FilesText.unreadable)
 }
@@ -137,16 +137,16 @@ func filesPhrasesHaveNoJargon() {
         #expect(!hasNumber, "\(phrase)")
     }
     #expect(FilesError.gitNotFound(searched: [], override: nil, path: "/p").userMessage == FilesText.gitNotFound)
-    #expect(FilesText.gitNotFound == "Les outils de développement d'Apple sont introuvables : les fichiers ne peuvent pas être lus. Installez-les, puis rafraîchissez.")
-    #expect(FilesText.notARepository == "Ce dossier n'est pas un projet suivi : ses fichiers ne peuvent pas être comparés. Choisissez un autre dossier dans la section « Session OMP ».")
-    #expect(FilesText.commandFailed == "La lecture du projet a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l'échec revient, copiez le diagnostic.")
+    #expect(FilesText.gitNotFound == "Les outils de développement d’Apple sont introuvables : les fichiers ne peuvent pas être lus. Installez-les, puis rafraîchissez.")
+    #expect(FilesText.notARepository == "Ce dossier n’est pas un projet suivi : ses fichiers ne peuvent pas être comparés. Choisissez un autre dossier dans la section « Session OMP ».")
+    #expect(FilesText.commandFailed == "La lecture du projet a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l’échec revient, copiez le diagnostic.")
     #expect(FilesText.commandTimedOut == "La lecture du projet a pris trop de temps et a été abandonnée. Rafraîchissez pour réessayer.")
-    #expect(FilesText.gitCommandRefused == "Une lecture non autorisée a été bloquée : rien n'a été modifié. Copiez le diagnostic pour le signaler.")
-    #expect(FilesText.targetGone == "Ce dossier n'existe plus : choisissez-en un autre dans le menu « Dossier ».")
-    #expect(FilesText.watchFailed == "Le suivi des modifications s'est arrêté : l'affichage ne se met plus à jour tout seul. Rafraîchissez pour le relancer.")
-    #expect(FilesText.readFailed == "La lecture a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l'échec revient, copiez le diagnostic.")
-    #expect(FilesText.unreadable == "Ce fichier ne peut pas être lu : il a disparu ou son accès est refusé. Rafraîchissez pour réessayer.")
-    #expect(FilesText.baseUnavailable == "Les différences ne peuvent pas être calculées pour ce dossier : sa version de départ est introuvable.")
+    #expect(FilesText.gitCommandRefused == "Une lecture non autorisée a été bloquée : rien n’a été modifié. Copiez le diagnostic pour le signaler.")
+    #expect(FilesText.targetGone == "Ce dossier n’existe plus : choisissez-en un autre dans le menu « Dossier ».")
+    #expect(FilesText.watchFailed == "Le suivi des modifications s’est arrêté : l’affichage ne se met plus à jour tout seul. Rafraîchissez pour le relancer.")
+    #expect(FilesText.readFailed == "La lecture a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l’échec revient, copiez le diagnostic.")
+    #expect(FilesText.unreadable == "Ce fichier ne peut pas être lu : il a disparu ou son accès est refusé. Rafraîchissez pour réessayer.")
+    #expect(FilesText.baseUnavailable == "Les différences ne peuvent pas être calculées pour ce dossier : sa version de départ est introuvable.")
 }
 
 @Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic de Fichiers garde la commande git, le code, le stderr et le chemin")
@@ -174,7 +174,7 @@ func filesLabelsAreReadable() {
     #expect(FilesText.noFiles == "Aucun fichier dans ce dossier.")
     #expect(FilesText.noContract == "Aucun contrat dans ce dossier.")
     #expect(FilesText.noProjectDocument == "Aucun PROJECT.md dans ce dossier.")
-    #expect(FilesText.binary == "Ce fichier n'est pas du texte : il ne peut pas être affiché.")
+    #expect(FilesText.binary == "Ce fichier n’est pas du texte : il ne peut pas être affiché.")
     for text in [FilesText.targetPicker, FilesText.noFiles, FilesText.noContract, FilesText.noProjectDocument, FilesText.binary, FilesText.baseUnavailable] {
         #expect(!text.lowercased().contains("worktree"), "\(text)")
         #expect(!text.lowercased().contains("cible"), "\(text)")

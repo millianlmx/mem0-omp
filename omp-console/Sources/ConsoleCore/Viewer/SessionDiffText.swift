@@ -12,7 +12,7 @@ public enum SessionDiffText {
         case .added: return "ligne ajoutée"
         case .removed: return "ligne supprimée"
         case .context: return "contexte"
-        case .section: return "en-tête de diff"
+        case .section: return "en-tête de différences"
         }
     }
 }

@@ -16,7 +16,7 @@ public enum ConversationText {
     public static let compaction = "Contexte compacté"
     public static let branchSummary = "Résumé de branche"
     public static let withoutCall = "(sans appel)"
-    public static let waitingTitle = "Aucun échange pour l'instant"
+    public static let waitingTitle = "Aucun échange pour l’instant"
     public static let emptyTitle = "Session vide"
     public static let rewritten = "Fichier réécrit — affichage reconstruit"
     /// Les quatre mots neufs de `ios-sessions` (S-4, S-8) : la coque macOS les lit
@@ -49,7 +49,7 @@ public enum ConversationText {
     }
 
     public static func unreadable(_ message: String) -> String {
-        "Session illisible : \(message). Nouvelle tentative automatique."
+        "Session illisible : \(message). Nouvelle tentative automatique."
     }
 
     /// Le texte d'un message de l'agent en blocs complets (titres, listes,
@@ -163,7 +163,7 @@ public enum ToolVerb {
         "eval": ("Exécution", "play.rectangle"),
         "yield": ("Résultat", "flag.checkered"),
         "todo": ("Tâches", "checklist"),
-        "web_search": ("Recherche web", "globe"),
+        "web_search": ("Recherche Web", "globe"),
         "mem0_search": ("Recherche en mémoire", "brain"),
         "mem0_add": ("Mémorisation", "brain"),
         "mem0_update": ("Mémoire mise à jour", "brain"),

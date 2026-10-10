@@ -10,7 +10,7 @@ import Foundation
 
 public enum SessionSelectorText {
     public static let emptyTitle = "Aucune session"
-    public static let storeAbsent = "Aucune pipeline n'a encore été lancée sur ce Mac."
+    public static let storeAbsent = "Aucune pipeline n’a encore été lancée sur ce Mac."
     public static let noRun = "Les sessions des pipelines apparaîtront ici."
     public static let open = "Ouvrir"
 

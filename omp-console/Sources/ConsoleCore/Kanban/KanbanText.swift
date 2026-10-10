@@ -15,26 +15,26 @@ public enum KanbanText {
     public static let duration = "Durée"
     /// Les deux groupes de modèle d'une feature (B-4) : le libellé court d'une
     /// ligne d'affichage, et le libellé de l'option de choix (en tête des listes).
-    public static let modelReqSpecs = "req+specs"
-    public static let modelImplReview = "impl+review"
+    public static let modelReqSpecs = "/req+/specs"
+    public static let modelImplReview = "/impl+/review"
     public static let modelDefault = "défaut OMP"
     public static let editModels = "Modifier les modèles…"
     public static let editModelsShort = "Modifier…"
-    public static let pullRequest = "Pull request"
+    public static let pullRequest = "PR"
     public static let repository = "Dépôt"
     public static let activity = "Activité"
-    public static let activityHelp = "Les derniers gestes envoyés depuis l'app"
+    public static let activityHelp = "Les derniers gestes envoyés depuis l’app"
     public static let problemsHelp = "Problèmes détectés dans les données des pipelines"
     /// Le bouton « Rafraîchir » de l'ardoise (Mac et iOS) : il relit l'état des
     /// PR sur GitHub ; le retour visible est le libellé des cartes.
     public static let refresh = "Rafraîchir"
-    public static let refreshHelp = "Relire l'état des PR sur GitHub (⌘R)"
+    public static let refreshHelp = "Relire l’état des PR sur GitHub (⌘R)"
     public static let reply = "Répondre…"
     public static let sendMessage = "Envoyer un message…"
     /// Le motif d'une carte sans aucun geste, et celui d'une exécution sans boîte
     /// publiée : les deux coques aiguillent par `KanbanActionPresentation.motif`.
-    public static let noGesture = "Aucune action possible sur cette pipeline pour l'instant."
-    public static let notArmed = "Cette exécution n'accepte pas de message pour l'instant."
+    public static let noGesture = "Aucune action possible sur cette pipeline pour l’instant."
+    public static let notArmed = "Cette exécution n’accepte pas de message pour l’instant."
 
     // --- gestes d'une carte (S-5 à S-12), mot pour mot ceux de macOS -----------
     public static let launch = "Lancer"
@@ -44,22 +44,22 @@ public enum KanbanText {
     public static let cancel = "Annuler"
     public static let validateSpecs = "Valider les specs"
     public static let acceptReview = "Accepter la revue"
-    public static let questionTitle = "Question de l'agent"
+    public static let questionTitle = "Question de l’agent"
     public static let answerPlaceholder = "Autre réponse…"
     public static let replyPlaceholder = "Votre réponse"
     public static let send = "Envoyer"
     public static let stopConfirmMessage =
-        "Le pilote s'arrête et les pipelines en cours dans ce dépôt sont interrompues."
+        "Le pilote s’arrête et les pipelines en cours dans ce dépôt sont interrompues."
 
     // --- deux modèles d'une feature (S-13) ------------------------------------
-    public static let modelReqSpecsField = "Modèle req+specs"
-    public static let modelImplReviewField = "Modèle impl+review"
+    public static let modelReqSpecsField = "Modèle /req+/specs"
+    public static let modelImplReviewField = "Modèle /impl+/review"
     public static let modelCatalogLoading = "chargement des modèles…"
     public static let modelCatalogRetry = "Réessayer"
 
     /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
     public static func stopConfirmTitle(repo: String) -> String {
-        "Arrêter les pipelines de \(repo) ?"
+        "Arrêter les pipelines de \(repo) ?"
     }
 
     /// Le motif d'un catalogue indisponible : les deux listes se réduisent à
@@ -68,37 +68,37 @@ public enum KanbanText {
         "modèles indisponibles — \(reason)"
     }
     public static let diagnosticTitle = "Problèmes détectés"
-    public static let emptyHint = "Lancez une feature avec « Nouvelle feature… » (⌘N)."
+    public static let emptyHint = "Lancez une feature avec « Nouvelle feature… » (⌘N)."
 
     // --- bulle des problèmes : une phrase de conséquence, puis un geste ---------
     // Aucune phrase ne cite de fichier, de pid ni de format : le détail brut de
     // chaque anomalie (`KanbanAnomaly.detail`) ne sort que par « Copier le
     // diagnostic » (`diagnosticReport`).
     public static let anomalyUnreadable =
-        "Les données d'une pipeline sont illisibles : elle peut manquer au tableau ou y paraître incomplète."
+        "Les données d’une pipeline sont illisibles : elle peut manquer au tableau ou y paraître incomplète."
     public static let anomalyUnreadableGesture =
         "Copiez le diagnostic pour retrouver le fichier en cause, puis réparez-le ou supprimez-le."
     public static let anomalyDeadRunGesture = "Relancez-la depuis OMP, dans son dépôt."
     public static let anomalyDeadLotNothingToResume =
-        "Aucune de ses pipelines n'attend de reprise : rien n'est à relancer."
+        "Aucune de ses pipelines n’attend de reprise : rien n’est à relancer."
     public static let anomalyDuplicateGesture =
         "Copiez le diagnostic pour retrouver les deux fichiers, puis supprimez celui qui est en trop."
 
     /// Un run dont le propriétaire est mort ; `label` est le nom de la pipeline,
     /// celui que porte sa carte.
     public static func anomalyDeadRun(label: String) -> String {
-        "\(label) s'est arrêtée de façon inattendue et n'avance plus."
+        "\(label) s’est arrêtée de façon inattendue et n’avance plus."
     }
 
     /// Un lot dont le pilote est mort ; `repo` est le nom du dépôt.
     public static func anomalyDeadLot(repo: String) -> String {
-        "Le pilote de \(repo) s'est arrêté : ses pipelines n'avancent plus."
+        "Le pilote de \(repo) s’est arrêté : ses pipelines n’avancent plus."
     }
 
     /// Deux sources pour une même pipeline, nommée quand l'identité en désigne une.
     public static func anomalyDuplicate(name: String?) -> String {
-        guard let name else { return "Deux sources décrivent la même pipeline. Le tableau n'en montre qu'une." }
-        return "Deux sources décrivent la même pipeline : \(name). Le tableau n'en montre qu'une."
+        guard let name else { return "Deux sources décrivent la même pipeline. Le tableau n’en montre qu’une." }
+        return "Deux sources décrivent la même pipeline : \(name). Le tableau n’en montre qu’une."
     }
 
     /// Le texte de « Copier le diagnostic » de la bulle : le détail brut de chaque
@@ -110,18 +110,18 @@ public enum KanbanText {
     /// L'état vide de la section Pipelines, quand aucune pipeline n'existe : le
     /// même mot pour les deux coques (l'iOS ne peut pas afficher `emptyHint`, qui
     /// nomme un raccourci macOS).
-    public static let noPipeline = "Aucune pipeline pour l'instant."
+    public static let noPipeline = "Aucune pipeline pour l’instant."
 
     /// Les cinq étapes de l'avancement, dans l'ordre de la pipeline.
-    public static let progressSteps = ["Besoins", "Specs", "Implémentation", "Revue", "PR"]
+    public static let progressSteps = ["Besoins", "Spécifications", "Implémentation", "Revue", "PR"]
 
-    public static func marks(_ text: String) -> String { "Marques : \(text)" }
+    public static func marks(_ text: String) -> String { "Marques : \(text)" }
 
     /// La phrase lisible d'une marque, pour une carte de l'iOS : jamais la marque
     /// brute (`KanbanMark.rawValue`).
     public static func markSentence(_ mark: KanbanMark) -> String {
         switch mark {
-        case .mort: return "Elle s'est arrêtée de façon inattendue."
+        case .mort: return "Elle s’est arrêtée de façon inattendue."
         case .illisible: return "Une partie de ses données est illisible."
         case .doublon: return "Deux sources la décrivent."
         }

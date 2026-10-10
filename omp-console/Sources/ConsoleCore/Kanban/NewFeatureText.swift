@@ -11,18 +11,18 @@ public enum NewFeatureText {
     /// ou de menus.
     public static let command = "Nouvelle feature…"
     public static let repo = "Dépôt"
-    public static let noRepo = "Aucun dépôt : choisissez un dossier."
+    public static let noRepo = "Aucun dépôt : choisissez un dossier."
     /// iOS : l'ardoise ne porte encore aucun dépôt connu du magasin — l'app ne
     /// peut pas en proposer un, et l'annonce plutôt que de laisser « Lancer »
     /// silencieusement inerte.
-    public static let noKnownRepo = "Aucun dépôt connu du magasin pour l'instant."
+    public static let noKnownRepo = "Aucun dépôt connu du magasin pour l’instant."
     /// iOS : l'invite du sélecteur de dépôt tant qu'aucun dépôt n'est choisi.
     public static let repoPrompt = "Choisir un dépôt"
     public static let chooseFolder = "Choisir un dossier…"
     public static let panelPrompt = "Choisir"
-    public static let panelMessage = "Choisissez la racine d'un dépôt git"
+    public static let panelMessage = "Choisissez la racine d’un dépôt Git"
     public static let notGitRoot =
-        "Ce dossier n'est pas un dépôt git (aucun .git) : choisissez la racine d'un dépôt."
+        "Ce dossier n’est pas un dépôt Git (aucun .git) : choisissez la racine d’un dépôt."
     public static let featureTitle = "Titre"
     public static let titlePlaceholder = "ex. export-csv"
     public static let titleHelp = "Devient la branche feat/<titre>."

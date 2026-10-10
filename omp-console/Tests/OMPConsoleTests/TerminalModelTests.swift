@@ -217,7 +217,7 @@ func vanishedDirectoryRefusesTheLaunch() async throws {
     model.start(target: makeTarget(gone, label: "disparu"))
 
     #expect(model.state == .failed(TerminalViewText.cwdMissing(gone)))
-    #expect(model.statusText == "Répertoire introuvable : \(gone).")
+    #expect(model.statusText == "Répertoire introuvable : \(gone).")
     #expect(model.emulator == nil)
 }
 
@@ -472,7 +472,7 @@ private final class PTYRefusingHost: TerminalHost {
 func ptyUnavailablePhraseHasNoJargon() {
     let message = TerminalHostError.ptyUnavailable(24).userMessage
     #expect(message == TerminalViewText.ptyUnavailable)
-    #expect(message == "Le terminal n'a pas pu s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres de terminal inutiles, puis relancez.")
+    #expect(message == "Le terminal n’a pas pu s’ouvrir : le Mac refuse d’en créer un de plus pour l’instant. Fermez des fenêtres de terminal inutiles, puis relancez.")
     #expect(!message.contains("PTY"))
     #expect(!message.contains("24"))
     #expect(!message.contains("process"))
@@ -484,8 +484,8 @@ func ptyUnavailablePhraseHasNoJargon() {
 @MainActor
 @Test("jargon-technique-expose-mac-et-ios/AC-7 : l'échec PTY garde son code dans le diagnostic publié par le modèle")
 func ptyUnavailableDiagnosticKeepsTheCode() async throws {
-    #expect(TerminalHostError.ptyUnavailable(24).diagnostic.contains("PTY indisponible (24)"))
-    #expect(TerminalViewText.ptyUnavailableDiagnostic(code: 24) == "PTY indisponible (24) : aucun process lancé.")
+    #expect(TerminalHostError.ptyUnavailable(24).diagnostic.contains("Pseudo-terminal indisponible (24)"))
+    #expect(TerminalViewText.ptyUnavailableDiagnostic(code: 24) == "Pseudo-terminal indisponible (24) : aucun processus lancé.")
 
     let directory = try makeScratchDirectory()
     let shell = try makeScript("exec /bin/cat", in: directory, named: "fake-shell")
@@ -495,7 +495,7 @@ func ptyUnavailableDiagnosticKeepsTheCode() async throws {
     model.start(target: makeTarget(directory, label: "pty"))
     #expect(model.state == .failed(TerminalViewText.ptyUnavailable))
     #expect(model.statusText == TerminalViewText.ptyUnavailable)
-    #expect(model.failureDiagnostic?.contains("PTY indisponible (24)") == true)
+    #expect(model.failureDiagnostic?.contains("Pseudo-terminal indisponible (24)") == true)
 
     // Le lancement suivant remet le diagnostic à zéro avant tout nouvel échec.
     let gone = (directory as NSString).appendingPathComponent("absent")
