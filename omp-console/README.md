@@ -2063,19 +2063,33 @@ aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargem
 premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
 préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
-(« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR ;
+(« Reprendre » ou la durée) et « Livrées récemment » (bouton « Ouvrir la PR » ;
 PR ouvertes, créées, fusionnées ou fermées, closes depuis 7 jours au plus) —
-les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
+les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. En
+largeur compacte (iPhone), chaque rangée « En cours » ou « Livrées récemment »
+tient sur deux lignes : le nom sur toute la largeur, puis la puce et le bouton ;
+en largeur régulière (iPad), une seule ligne ; aux tailles d'accessibilité, titre,
+puce et bouton s'empilent. Les gestes de carte suivent l'envoi : « Valider les
+specs » demande une confirmation (elle lance l'implémentation sur le Mac),
+« Reprendre » et « Accepter la revue » partent aussitôt ; pendant l'envoi, le
+bouton est désactivé et montre « Envoi en cours » jusqu'à la réponse du Mac, sans
+second envoi possible ; un échec s'affiche sur la carte concernée, en français et
+sans détail technique, et le succès n'a pas de message (la carte suit l'ardoise).
+La
 ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
 le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
 ligne n'en porte, et rien à zéro), et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
-`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong>`
-force un état depuis la fixture partagée `HomeParity` pour les captures ; il
-nourrit aussi le badge de la ligne Accueil (3 pour dashboard/answer/contract/contractLong/degraded,
-0 pour loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
+`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong|longTitles|slowMac>`
+force un état depuis la fixture partagée `HomeParity` pour les captures
+(`longTitles` : le tableau de bord dont les rangées « En cours » et « Livrées
+récemment » portent un titre de 40 caractères ; `slowMac` : le tableau de bord
+dont l'envoi des gestes de carte ne répond jamais, pour capturer « Envoi en
+cours ») ; il nourrit aussi le badge de la ligne Accueil (3 pour
+dashboard/answer/contract/contractLong/degraded/longTitles/slowMac, 0 pour
+loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
 d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
 Dynamic Type).
 
@@ -2694,6 +2708,24 @@ pkill -f "idb_companion --udid <UDID>"
 
 idb lance un `idb_companion --udid <UDID>` qui survit à `simctl delete` : sans
 `pkill`, il reste.
+
+### Recette des rangées et des gestes de l'Accueil
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-accueil-rangees-recette.sh
+```
+
+Le script compile l'app sans signature, crée un iPhone 18 Pro et un iPad (A16)
+dédiés sous iOS 27.0 (ou reprend `IOS_RECETTE_IPHONE` / `IOS_RECETTE_IPAD`, en
+refusant le simulateur appairé), et vérifie l'Accueil à l'écran par `idb`. Il
+contrôle les rangées en deux lignes sur iPhone (`-home.recipe longTitles`), sur une
+ligne sur iPad, empilées à `accessibility-extra-large`, puis vérifie que seul
+« Ouvrir la PR » ouvre Safari, la confirmation de « Valider les specs », l'échec
+affiché sur la carte et l'état « Envoi en cours » (`-home.recipe slowMac`). Il
+écrit une ligne `AC-n ✓` ou `AC-n ✗ <raison>` par critère, de AC-1 à AC-10,
+et dépose ses captures dans `omp-console/build/accueil-rangees/`. Codes de sortie
+: `0` tout est ✓, `1` au moins un ✗, `2` outillage manquant. Les simulateurs
+créés sont supprimés à la sortie.
 
 ### Installer sur un appareil réel
 
