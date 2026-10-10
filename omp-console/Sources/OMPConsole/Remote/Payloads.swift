@@ -174,6 +174,8 @@ struct RemoteStatsFeature: Codable, Equatable, Sendable {
     var slug: String
     var input: Int
     var output: Int
+    var cacheRead: Int
+    var cacheWrite: Int
     var turns: Int
     var durationMs: Double
     var liveRuns: Int
@@ -360,10 +362,12 @@ struct RemotePullRequestStatesPayload: Codable, Equatable {
 /// Le catalogue des modèles servis par `omp models --json` (S-14) : les sélecteurs
 /// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué (la
 /// liste est alors vide). Le client affiche le motif — ce n'est pas une erreur de
-/// transport.
+/// transport. `names` (sélecteur → nom lisible) est ADDITIF et optionnel : absent
+/// d'un Mac antérieur et en cas d'échec.
 struct RemoteModelsPayload: Codable, Equatable {
     var selectors: [String]
     var failure: String?
+    var names: [String: String]? = nil
 }
 
 struct RemoteMergedPayload: Codable, Equatable {

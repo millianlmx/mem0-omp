@@ -30,6 +30,10 @@ enum IOSHomeRecipe: String, Equatable {
     case answer
     /// Le tableau de bord avec la feuille Contrat ouverte (capture S-14).
     case contract
+    /// Le tableau de bord avec la feuille Contrat ouverte sur un nom de feature
+    /// LONG et un contrat LONG (`IOSHomeRecipeText`, preuves de
+    /// contrat-ios-markdown-brut, S-4).
+    case contractLong
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSHomeRecipe? {
@@ -65,19 +69,33 @@ enum IOSHomeRecipe: String, Equatable {
 
     /// L'état de l'Accueil forcé, dérivé de la fixture partagée.
     var homeState: IOSHomeState {
+        let inputs = self.inputs
+        return IOSHomeState.resolve(state: inputs.state, board: inputs.board, omp: inputs.omp)
+    }
+
+    /// Le badge de la ligne « Accueil » : le compte d'attentes du MÊME couple
+    /// (omp, board) que l'Accueil forcé, comme en direct (il ignore la connexion).
+    var badge: Int {
+        let inputs = self.inputs
+        return IOSHomeContent.badge(omp: inputs.omp, board: inputs.board)
+    }
+
+    /// La SEULE source du couple (omp, board) — et de l'état de connexion — de
+    /// chaque cas : `homeState` et `badge` ne peuvent pas diverger.
+    private var inputs: (state: ClientState, omp: OmpStatus, board: KanbanBoardState) {
         let omp = OmpStatus.available(URL(fileURLWithPath: ""))
         let connected = ClientState.connected(endpoint: .manual(host: "", port: 0))
         switch self {
-        case .dashboard, .answer, .contract:
-            return IOSHomeState.resolve(state: connected, board: Self.board, omp: omp)
+        case .dashboard, .answer, .contract, .contractLong:
+            return (connected, omp, Self.board)
         case .loading:
-            return IOSHomeState.resolve(state: connected, board: .loading, omp: omp)
+            return (connected, omp, .loading)
         case .firstRun:
-            return IOSHomeState.resolve(state: connected, board: .storeEmpty(dir: ""), omp: omp)
+            return (connected, omp, .storeEmpty(dir: ""))
         case .ompMissing:
-            return IOSHomeState.resolve(state: connected, board: Self.board, omp: .missing)
+            return (connected, .missing, Self.board)
         case .degraded:
-            return IOSHomeState.resolve(state: .unpaired, board: Self.board, omp: omp)
+            return (.unpaired, omp, Self.board)
         }
     }
 
@@ -89,19 +107,35 @@ enum IOSHomeRecipe: String, Equatable {
             return attention.first { IOSHomeContent.attentionButton($0) == .answer }?.card
         case .contract:
             return attention.first { ContractDocument.moment(for: $0.card) != nil }?.card
+        case .contractLong:
+            // La carte de `contract`, dont seul le DERNIER segment de l'identifiant
+            // (le nom de la feature, `IOSHomeContent.contractSlug`) est remplacé.
+            guard var card = Self.contract.sheetCard else { return nil }
+            if let colon = card.id.lastIndex(of: ":") {
+                card.id = String(card.id[...colon]) + IOSHomeRecipeText.longSlug
+            } else {
+                card.id = IOSHomeRecipeText.longSlug
+            }
+            return card
         default:
             return nil
         }
     }
 
     /// La charge utile de contrat de recette : le markdown de la fixture partagée,
-    /// pour que la feuille montre de vraies sections sans réseau.
+    /// pour que la feuille montre de vraies sections sans réseau. `contractLong`
+    /// sert le contrat long de `IOSHomeRecipeText`.
     var contractPayload: RemoteContractPayload? {
-        guard self == .contract else { return nil }
+        let content: String
+        switch self {
+        case .contract: content = HomeParity.contractMarkdown
+        case .contractLong: content = IOSHomeRecipeText.longContract
+        default: return nil
+        }
         return RemoteContractPayload(document: RemoteDocument(
             name: IOSHomeText.contractName,
             state: IOSHomeText.documentText,
-            content: HomeParity.contractMarkdown,
+            content: content,
             reason: nil
         ))
     }

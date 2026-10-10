@@ -18,6 +18,8 @@ struct IOSStatsModelTests {
         slug: String,
         input: Int = 0,
         output: Int = 0,
+        cacheRead: Int? = nil,
+        cacheWrite: Int? = nil,
         turns: Int = 0,
         durationMs: Double,
         liveRuns: Int = 0,
@@ -27,6 +29,8 @@ struct IOSStatsModelTests {
             slug: slug,
             input: input,
             output: output,
+            cacheRead: cacheRead,
+            cacheWrite: cacheWrite,
             turns: turns,
             durationMs: durationMs,
             liveRuns: liveRuns,
@@ -104,6 +108,31 @@ struct IOSStatsModelTests {
         #expect(order.map(\.title) == ["a", "b"])
         #expect(StatsAccessibility.feature("a") == "ios.stats.feature.a")
         #expect(StatsAccessibility.total == "ios.stats.total")
+    }
+
+    @Test("ios-stats-tokens-envoyes-incoherent/AC-1, AC-2, AC-3 : « Tokens envoyés » compte l'entrée, le cache lu et le cache écrit")
+    func statsSentTokensCountTheCache() {
+        let cached = feature(
+            slug: "f", input: 76, output: 40_233, cacheRead: 33_206, cacheWrite: 15_936, durationMs: 0
+        )
+        let bare = feature(slug: "g", input: 5, durationMs: 0)
+
+        // AC-1 : la carte vaut I + R + W, non I seul ; « Tokens reçus » reste la sortie.
+        let card = IOSStatsContent.featureCard(cached, elapsedMs: 0)
+        #expect(card.lines[3].label == StatsPresentation.sentTokens)
+        #expect(card.lines[3].value == ConsoleFormat.tokens(49_218))
+        #expect(card.lines[3].value != ConsoleFormat.tokens(76))
+        #expect(card.lines[4].value == ConsoleFormat.tokens(40_233))
+
+        // AC-2 : le total somme les valeurs entières des features listées.
+        let total = IOSStatsContent.totalCard(payload(features: [cached, bare]), elapsedMs: 0)
+        #expect(total.lines[2].label == StatsPresentation.sentTokens)
+        #expect(total.lines[2].value == ConsoleFormat.tokens(49_223))
+
+        // AC-3 : sans cache (Mac ancien), l'entrée seule, jamais une valeur vide.
+        let plain = IOSStatsContent.featureCard(bare, elapsedMs: 0)
+        #expect(plain.lines[3].value == ConsoleFormat.tokens(5))
+        #expect(!plain.lines[3].value.isEmpty)
     }
 
     @Test("ios-statistiques/AC-3 : la ligne de total somme les features listées, rien d'autre")
@@ -222,10 +251,80 @@ struct IOSStatsModelTests {
         #expect(await eventually { keys.count == 2 })
         #expect(keys == ["k2", "k2"])
 
-        // Une erreur rend la main à l'état d'erreur, avec le message servi.
+        // Une erreur rend la main à l'état d'erreur, avec le message TRADUIT (S-5).
         let failing = makeModel(state: { self.connected }, load: { _ in throw ClientError.notConnected })
         failing.reload(trigger: .appeared)
         #expect(await eventually { failing.failure != nil })
-        #expect(failing.surface == .error(ConnectionText.state(connected)))
+        #expect(failing.surface == .error(IOSMacErrorText.message(for: .macUnreachable)))
+    }
+
+    // MARK: - Erreurs du Mac (ios-erreurs-serveur-lisibles)
+
+    /// Le prédicat « lisible » : ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    private func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http répond 405 : l'adresse et le JSON amont sont
+    /// dans le message. La réponse passe par la vraie traduction du client.
+    private func relayed503() -> ClientError {
+        let detail = MemoryText.unavailableDetail(
+            address: "localhost:8321",
+            error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+        )
+        let body = (try? JSONSerialization.data(
+            withJSONObject: ["error": ["code": "unavailable", "message": detail]]
+        )) ?? Data()
+        return ClientErrorMapping.translate(status: 503, protocolVersion: 1, body: body)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : statsShowsTranslatedFailure — le 503 relayé s'affiche en « service indisponible », sans URL ni JSON")
+    func statsShowsTranslatedFailure() async {
+        let error = relayed503()
+        let model = makeModel(state: { self.connected }, load: { _ in throw error })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.failure != nil })
+        let expected = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(model.surface == .error(expected))
+        #expect(isReadable(expected))
+        #expect(expected.contains("Service indisponible sur le Mac"))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : statsRetryShowsBoard — après un échec, le relevé relancé affiche le tableau")
+    func statsRetryShowsBoard() async {
+        let error = relayed503()
+        var succeed = false
+        let model = makeModel(state: { self.connected }, load: { _ in
+            if !succeed { throw error }
+            return self.payload(features: [self.feature(slug: "a", durationMs: 1)])
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.failure != nil })
+        #expect(model.surface == .error(IOSMacErrorText.message(for: .serviceUnavailable)))
+
+        // Réessayer relance le même relevé (`reload(trigger: .appeared)`).
+        succeed = true
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.payload != nil })
+        #expect(model.failure == nil)
+        #expect(model.surface == .board)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : statsUnauthorizedShowsNoError — un 401 ne pose aucun message ; la surface suit l'état du client")
+    func statsUnauthorizedShowsNoError() async {
+        var current = connected
+        let model = makeModel(state: { current }, load: { _ in throw ClientError.api(.unauthorized) })
+        model.reload(trigger: .appeared)
+        // Le relevé a échoué, puis `reload` a laissé `failure` à nil.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(model.failure == nil)
+        #expect(model.surface == .loading)
+
+        // Le client révoqué : la surface passe par l'état de connexion, jamais par `.error`.
+        current = .revoked
+        #expect(model.failure == nil)
+        #expect(model.surface == .degraded(ConnectionText.state(.revoked)))
     }
 }

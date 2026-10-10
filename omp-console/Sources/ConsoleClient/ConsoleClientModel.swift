@@ -39,6 +39,9 @@ public final class ConsoleClientModel: ObservableObject {
     @Published public private(set) var manualAddress: ClientAddress?
     @Published public private(set) var pairingFailure: ClientPairingFailure?
     @Published public private(set) var localNetworkDenied = false
+    /// Le statut d'appairage (indépendant de `state`) : `.restoring` tant que le
+    /// trousseau n'est pas lu, puis `.paired`, `.unpaired` ou `.refused`.
+    @Published public private(set) var pairing: ClientPairingStatus = .restoring
 
     /// L'ardoise dérivée du dernier instantané reçu (S-8) : `.loading` tant
     /// qu'aucune trame `store` n'est arrivée, puis recalculée à chaque trame et
@@ -89,6 +92,12 @@ public final class ConsoleClientModel: ObservableObject {
     private var deviceId: String?
     private var hasNetwork = true
     private var revoked = false
+    /// Le trousseau a été lu au moins une fois (fin de `restoreToken`).
+    private var tokenRead = false
+    /// L'endpoint vers lequel était partie la requête ou le flux refusé (401) :
+    /// porté par `.refused`, repli de `pairingEndpoint()`. Remis à `nil` par un
+    /// appairage réussi et par `forget()`.
+    private var refusedEndpoint: ClientEndpoint?
     private var incompatible: ClientIncompatibility?
     private var connectedEndpoint: ClientEndpoint?
     private var connectingEndpoint: ClientEndpoint?
@@ -279,7 +288,49 @@ public final class ConsoleClientModel: ObservableObject {
         preferences.set(id, forKey: ClientPreferenceKey.deviceId)
         pairingFailure = nil
         revoked = false
+        refusedEndpoint = nil
         beginConnection(resetCounter: true)
+    }
+
+    /// « Oublier ce Mac » : révocation tentée AU MIEUX sur le Mac, puis oubli local
+    /// quelle que soit l'issue. Ne lève jamais.
+    ///
+    /// La requête `DELETE /v1/devices/self` part UNIQUEMENT si l'appareil est
+    /// appairé ET connecté, vers l'endpoint connecté ; son issue (2xx, 401, autre
+    /// statut, panne, délai) est ignorée. Le jeton est retiré de la mémoire AVANT
+    /// l'envoi : aucun 401 reçu pendant ou après l'oubli n'est absorbé comme un
+    /// refus. L'adresse manuelle et le Mac découvert sont conservés.
+    public func forget() async {
+        let oldToken = token
+        let oldDeviceId = deviceId
+        var target: ClientEndpoint?
+        if pairing == .paired, case .connected(let endpoint) = state { target = endpoint }
+
+        connection?.cancel()
+        connection = nil
+        connectedEndpoint = nil
+        connectingEndpoint = nil
+        lastFailure = nil
+        token = nil
+
+        if let target, let oldToken {
+            // `transport.send` et jamais `perform` : `perform` absorberait le 401.
+            _ = try? await transport.send(
+                ClientHTTPRequest(method: "DELETE", path: ConsoleAPI.Service.basePath + "/devices/self"),
+                to: target,
+                token: oldToken
+            )
+        }
+
+        if let oldDeviceId {
+            try? await tokens.remove(deviceId: oldDeviceId)
+        }
+        deviceId = nil
+        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
+        revoked = false
+        refusedEndpoint = nil
+        pairingFailure = nil
+        publishState()
     }
 
     // MARK: - Flux typé
@@ -707,7 +758,7 @@ public final class ConsoleClientModel: ObservableObject {
         if let incompatible {
             throw ClientError.incompatibleProtocol(local: incompatible.local, remote: incompatible.remote)
         }
-        guard let endpoint = effectiveEndpoint else { throw ClientError.notConnected }
+        guard let endpoint = effectiveEndpoint ?? refusedEndpoint else { throw ClientError.notConnected }
         return endpoint
     }
 
@@ -745,12 +796,15 @@ public final class ConsoleClientModel: ObservableObject {
             lock(local: local, remote: remote)
         case .api(.unauthorized):
             if token != nil {
+                // L'endpoint refusé est capturé AVANT la remise à `nil` : connecté,
+                // sinon en cours de connexion, sinon l'endpoint en vigueur.
+                let refused = connectedEndpoint ?? connectingEndpoint ?? effectiveEndpoint
                 connection?.cancel()
                 connection = nil
                 connectedEndpoint = nil
                 connectingEndpoint = nil
                 lastFailure = nil
-                Task { [weak self] in await self?.revoke() }
+                Task { [weak self] in await self?.revoke(endpoint: refused) }
             }
         default:
             break
@@ -767,19 +821,25 @@ public final class ConsoleClientModel: ObservableObject {
         publishState()
     }
 
-    private func revoke() async {
-        if let deviceId {
-            try? await tokens.remove(deviceId: deviceId)
-        }
-        deviceId = nil
+    /// Ne fait RIEN si le jeton est déjà `nil` quand la tâche s'exécute : deux 401
+    /// concurrents ne donnent qu'un passage à `.refused`, et un 401 reçu pendant ou
+    /// après `forget()` (qui retire le jeton d'abord) est ignoré.
+    private func revoke(endpoint: ClientEndpoint?) async {
+        guard token != nil else { return }
+        let id = deviceId
         token = nil
-        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
+        deviceId = nil
         revoked = true
+        refusedEndpoint = endpoint
         connectedEndpoint = nil
         connectingEndpoint = nil
         lastFailure = nil
         connection?.cancel()
         connection = nil
+        if let id {
+            try? await tokens.remove(deviceId: id)
+        }
+        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
         publishState()
     }
 
@@ -792,6 +852,7 @@ public final class ConsoleClientModel: ObservableObject {
         case .api(.unavailable(let message)): return .unavailable(message)
         case .api(let other): return .unavailable(other.message ?? other.code)
         case .decoding(let message): return .unavailable(message)
+        case .unexpectedStatus(let status): return .unavailable("statut \(status)")
         case .notConnected: return .transport(.unreachable("aucun endpoint connu"))
         }
     }
@@ -804,9 +865,10 @@ public final class ConsoleClientModel: ObservableObject {
             revoked = false
         } else {
             // `deviceId` mémorisé sans jeton : le couple est incohérent, l'appairage
-            // est requis.
+            // est requis. Une erreur de lecture du trousseau compte comme une absence.
             token = nil
         }
+        tokenRead = true
         beginConnection(resetCounter: true)
     }
 
@@ -1090,5 +1152,19 @@ public final class ConsoleClientModel: ObservableObject {
         // Hors `.connected`, la conduite poussée n'est plus la vérité affichable :
         // elle repasse à `nil` (S-6/S-7), jamais un état de repli local.
         if case .connected = state {} else { conduite = nil }
+        // Le statut d'appairage n'est republié qu'à son CHANGEMENT : la feuille
+        // Connexion s'ouvre sur un passage, jamais sur une republication.
+        let status = resolvedPairing
+        if status != pairing { pairing = status }
+    }
+
+    /// Le refus prime ; un jeton détenu vaut `.paired` (même avant la fin de la
+    /// lecture du trousseau, cas d'un appairage déjà réussi) ; avant la lecture,
+    /// `.restoring` ; sinon `.unpaired`.
+    private var resolvedPairing: ClientPairingStatus {
+        if revoked { return .refused(endpoint: refusedEndpoint) }
+        if token != nil { return .paired }
+        if !tokenRead { return .restoring }
+        return .unpaired
     }
 }
