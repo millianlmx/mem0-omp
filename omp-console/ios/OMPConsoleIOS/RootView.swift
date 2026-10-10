@@ -49,6 +49,8 @@ struct RootView: View {
     private let cardRecipe: PipelinesCardRecipe?
     /// Le crochet de recette `-stats.recipe`, quand il est donné.
     private let statsRecipe: IOSStatsRecipe?
+    /// Le crochet de recette `-pipelines.board`, quand il est donné.
+    private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -63,6 +65,7 @@ struct RootView: View {
         pipelinesRecipe: IOSPipelinesRecipe? = nil,
         cardRecipe: PipelinesCardRecipe? = nil,
         statsRecipe: IOSStatsRecipe? = nil,
+        pipelinesBoardRecipe: IOSPipelinesBoardRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
@@ -74,6 +77,7 @@ struct RootView: View {
         self.pipelinesRecipe = pipelinesRecipe
         self.cardRecipe = cardRecipe
         self.statsRecipe = statsRecipe
+        self.pipelinesBoardRecipe = pipelinesBoardRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -122,7 +126,8 @@ struct RootView: View {
                         memoryRecipe: memoryRecipe,
                         pipelinesRecipe: pipelinesRecipe,
                         cardRecipe: cardRecipe,
-                        statsRecipe: statsRecipe
+                        statsRecipe: statsRecipe,
+                        pipelinesBoardRecipe: pipelinesBoardRecipe
                     )
                 }
             }

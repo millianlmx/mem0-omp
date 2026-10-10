@@ -82,6 +82,14 @@ enum PipelinesText {
     static let recipeModelKnown = "anthropic/claude-opus-5-5"
     static let recipeModelUnknown = "lm-studio/qwen3-coder-30b"
     static let recipeModelKnownName = "Claude Opus 5.5"
+
+    // MARK: - Recette `-pipelines.board` (crochet de mesure, pas une fonctionnalité)
+
+    /// Le drapeau de l'ardoise forcée (`IOSPipelinesBoardRecipe`).
+    static let boardRecipeFlag = "-pipelines.board"
+    /// Le signal de prêt écrit sur la sortie d'erreur au premier affichage de
+    /// l'ardoise forcée.
+    static let boardRecipeReady = "pipelines-board-ready"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées

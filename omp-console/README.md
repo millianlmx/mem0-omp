@@ -2235,7 +2235,7 @@ les libellés VoiceOver « Titre » et « Besoin » ; le besoin est une zone
 multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans le
 champ.
 
-Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
+Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, toutes les voies ont la même largeur, qui grandit avec la taille de texte, et s'alignent en haut ; quand elles ne tiennent pas à l'écran, elles défilent horizontalement jusqu'à une marge de fin, après la dernière voie. Le titre d'une carte passe à la ligne et n'est jamais tronqué, dans toutes les voies.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
 (le catalogue de `omp models --json`, qu'aucune route n'exposait ; il rend aussi
@@ -2574,6 +2574,35 @@ tableau), `chargement` garde le premier relevé en cours, `bascule` sert
 DERNIÈRE paire reconnue gagne, une valeur inconnue est ignorée ; à lancer avec
 `-section stats -home.welcomeSeen YES`. Ce sont des crochets de recette, pas des
 fonctionnalités.
+
+`-pipelines.board pleine` rend sur l'écran Pipelines l'ardoise de la fixture
+partagée `KanbanBoardParity` (ConsoleCore) à la place de celle du Mac : une voie
+« Pas commencées » vide, trois cartes « En cours » dont un titre long, une voie
+« Livrées » de 100 cartes (98 avec une PR, 2 sans), deux dépôts dont un nom
+long. Le bandeau de connexion n'est pas affiché, tout le reste est le chemin
+réel ; au premier affichage l'app écrit `pipelines-board-ready` sur sa sortie
+d'erreur. Les deux crochets `-pipelines.*` se combinent.
+
+La recette des voies et des cartes de Pipelines (feature
+`pipelines-ipad-voies-sans-largeur`) s'appuie sur ce crochet :
+
+```bash
+bash scripts/ios-pipelines-voies-recette.sh --phase avant|apres --source reel|fixture \
+  --ipad13 <UDID> --ipad11 <UDID> --iphone <UDID>
+```
+
+Elle compile l'app SIGNÉE, l'installe par-dessus sur les trois simulateurs
+passés (privés, déjà démarrés ; en source `reel`, appairés au Mac), puis capture
+l'écran Pipelines en {large, accessibility-extra-large,
+accessibility-extra-extra-extra-large} × {clair, sombre}, plus le défilement
+horizontal au bout (iPad), la voie « Livrées » dépliée (iPhone) et, en fixture,
+une carte livrée sans PR. Captures, relevés `describe-all` et `pixels.json` vont
+dans `omp-console/build/pipelines-voies/<phase>/<source>/`. Elle imprime une ligne
+`AC-<n> <appareil> <taille> <apparence> : <mesure> — ok|ÉCHEC` par constat (largeur
+et haut des voies, marge de fin, actions des cartes, contraste carte/panneau en
+sombre, rendu clair inchangé par rapport à la phase avant) et sort en 0 (tout
+passe), 1 (au moins un ÉCHEC) ou 2 (non exécutée). Jamais lancée par check.sh ni
+par la CI.
 
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
