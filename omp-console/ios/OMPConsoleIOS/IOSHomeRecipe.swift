@@ -76,7 +76,14 @@ enum IOSHomeRecipe: String, Equatable {
     /// L'état de l'Accueil forcé, dérivé de la fixture partagée.
     var homeState: IOSHomeState {
         let inputs = self.inputs
-        return IOSHomeState.resolve(state: inputs.state, board: inputs.board, omp: inputs.omp)
+        return IOSHomeState.resolve(connection: inputs.connection, board: inputs.board, omp: inputs.omp)
+    }
+
+    /// Le statut de connexion présenté de la recette : la fixture tient lieu de
+    /// Mac (`attemptFollowsFailure: false`) ; seule `degraded` déclare un appareil
+    /// non appairé, qui garde l'ardoise de la fixture sous le bandeau.
+    var connection: IOSConnectionStatus {
+        inputs.connection
     }
 
     /// Le badge de la ligne « Accueil » : le compte d'attentes du MÊME couple
@@ -87,24 +94,26 @@ enum IOSHomeRecipe: String, Equatable {
     }
 
     /// La SEULE source du couple (omp, board) — et de l'état de connexion — de
-    /// chaque cas : `homeState` et `badge` ne peuvent pas diverger.
-    private var inputs: (state: ClientState, omp: OmpStatus, board: KanbanBoardState) {
+    /// chaque cas : `homeState`, `connection` et `badge` ne peuvent pas diverger.
+    private var inputs: (connection: IOSConnectionStatus, omp: OmpStatus, board: KanbanBoardState) {
         let omp = OmpStatus.available(URL(fileURLWithPath: ""))
         let connected = ClientState.connected(endpoint: .manual(host: "", port: 0))
+        let (state, ompStatus, board): (ClientState, OmpStatus, KanbanBoardState)
         switch self {
         case .dashboard, .answer, .contract, .contractLong, .slowMac:
-            return (connected, omp, Self.board)
+            (state, ompStatus, board) = (connected, omp, Self.board)
         case .longTitles:
-            return (connected, omp, Self.longTitlesBoard)
+            (state, ompStatus, board) = (connected, omp, Self.longTitlesBoard)
         case .loading:
-            return (connected, omp, .loading)
+            (state, ompStatus, board) = (connected, omp, .loading)
         case .firstRun:
-            return (connected, omp, .storeEmpty(dir: ""))
+            (state, ompStatus, board) = (connected, omp, .storeEmpty(dir: ""))
         case .ompMissing:
-            return (connected, .missing, Self.board)
+            (state, ompStatus, board) = (connected, .missing, Self.board)
         case .degraded:
-            return (.unpaired, omp, Self.board)
+            (state, ompStatus, board) = (.unpaired, omp, Self.board)
         }
+        return (IOSConnectionStatus.resolve(state, attemptFollowsFailure: false), ompStatus, board)
     }
 
     /// La carte dont une feuille est ouverte par la recette, ou aucune.

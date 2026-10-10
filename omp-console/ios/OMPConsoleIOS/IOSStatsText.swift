@@ -49,7 +49,6 @@ enum StatsAccessibility {
     static let screen = "ios.stats"
     static let project = "ios.stats.project"
     static let loading = "ios.stats.loading"
-    static let banner = "ios.stats.banner"
     static let error = "ios.stats.error"
     static let retry = "ios.stats.retry"
     static let noProject = "ios.stats.noProject"

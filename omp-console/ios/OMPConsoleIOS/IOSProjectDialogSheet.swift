@@ -69,16 +69,17 @@ struct IOSProjectDialogSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .navigationTitle(SessionConsoleText.dialogTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(ProjectViewText.dialogCancel, action: cancelSent)
+                    IOSSheetIconButton(role: .cancel, label: ProjectViewText.dialogCancel, action: cancelSent)
                         .keyboardShortcut(.cancelAction)
                         .disabled(submitting)
                         .accessibilityIdentifier(ProjectAccessibility.dialogCancel)
                 }
                 if dialog.method != .confirm {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button(SessionConsoleText.answer, action: answerSent)
+                        IOSSheetIconButton(role: .confirm, label: SessionConsoleText.answer, action: answerSent)
                             .keyboardShortcut(.defaultAction)
                             .disabled(!canAnswer || submitting)
                             .accessibilityIdentifier(ProjectAccessibility.dialogAnswer)

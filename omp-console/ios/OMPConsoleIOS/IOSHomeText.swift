@@ -1,7 +1,8 @@
 // Le vocabulaire PROPRE à l'Accueil de l'app iOS (S-3, périmètre borné) : les
-// mots absents de la coque macOS — l'état déconnecté, « OMP absent sur le Mac »,
-// l'action de connexion — vivent ICI, dans l'app, et n'entrent jamais dans le
-// noyau partagé `ConsoleCore`.
+// mots absents de la coque macOS — « OMP absent sur le Mac », la feuille Contrat,
+// les échecs des gestes — vivent ICI, dans l'app, et n'entrent jamais dans le
+// noyau partagé `ConsoleCore`. Les mots de l'état de connexion vivent dans
+// `IOSConnectionStateText`, communs aux sept sections.
 //
 // Fichier de VOCABULAIRE de l'app (`*Text.swift`) : la garde `design-ios/AC-5`
 // n'autorise un littéral alphabétique hors de ces fichiers que s'il commence par
@@ -14,13 +15,6 @@
 import ConsoleCore
 
 enum IOSHomeText {
-    // --- état déconnecté (S-10) -----------------------------------------------
-
-    static let disconnectedTitle = "Pas de connexion au Mac"
-    static let disconnectedBody =
-        "Connectez l'app au Mac pour voir ce qui vous attend, ce qui tourne et ce qui est livré."
-    static let connect = "Se connecter"
-
     // --- rangée de la liste racine (lue par VoiceOver) -------------------------
 
     /// Le mot qui suit le nombre d'un badge visible dans le libellé d'une rangée.
@@ -38,6 +32,12 @@ enum IOSHomeText {
     static let macMissingTitle = "OMP absent sur le Mac"
     static let macMissingBody =
         "Le Mac est joignable, mais OMP n'y est pas installé. Installez-le sur le Mac, puis rouvrez l'Accueil."
+
+    // --- feuille Répondre (S-13) ----------------------------------------------
+
+    /// Le titre de barre de la feuille « Répondre » : court et statique, il se lit
+    /// en entier ; le titre de la carte passe en tête du formulaire.
+    static let answerNavigationTitle = "Répondre"
 
     // --- feuille Contrat (S-14) -----------------------------------------------
 

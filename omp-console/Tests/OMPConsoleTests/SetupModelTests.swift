@@ -28,6 +28,8 @@ private final class SetupRecorder {
     var takeoverError: LegacyStackError?
     var omlx: OMLXStatus = .reachable
     var gate: Gate?
+    /// Le binaire d'OMP « placé » au rappel `.ompInstall` (résolveur fictif).
+    var placesOmp: OmpSwitch?
     var takeoverCalls = 0
 
     func record() {
@@ -48,6 +50,7 @@ private final class SetupRecorder {
         ]
         for step in steps {
             installSteps.append(step)
+            if case .ompInstall = step { placesOmp?.present = true }
             progress(step)
             record()
             await Task.yield()
@@ -133,6 +136,59 @@ private func waitUntil(_ timeout: Double = 5, _ condition: () -> Bool) async {
     while !condition(), Date() < deadline {
         try? await Task.sleep(for: .milliseconds(1))
     }
+}
+
+/// La présence d'OMP vue par un `HomeModel` de test : le résolveur réussit tant
+/// que `present` est vrai. (Pas `@MainActor` : le résolveur n'est pas isolé.)
+private final class OmpSwitch {
+    var present: Bool
+
+    init(present: Bool) {
+        self.present = present
+    }
+
+    func resolve(_: [String: String]) -> Result<URL, OmpBinaryError> {
+        present
+            ? .success(URL(fileURLWithPath: "/usr/local/bin/omp"))
+            : .failure(.binaryNotFound(searched: ["/a/omp"], override: nil))
+    }
+}
+
+/// Un `HomeModel` sur le résolveur fictif et des préférences jetables.
+@MainActor
+private func makeHome(_ omp: OmpSwitch) -> HomeModel {
+    let defaults = UserDefaults(suiteName: "setup-tests-\(UUID().uuidString)")!
+    return HomeModel(resolve: { omp.resolve($0) }, environment: { [:] }, defaults: defaults)
+}
+
+/// Le câblage de `OMPConsoleApp` : `refreshOmp` et `onReady` relisent OMP.
+@MainActor
+private func wire(_ model: SetupModel, to home: HomeModel, recorder: SetupRecorder? = nil) {
+    model.refreshOmp = {
+        home.recheck()
+        return home.canLaunch
+    }
+    model.onReady = {
+        recorder?.onReadyCalls += 1
+        home.recheck()
+    }
+}
+
+/// La feuille due, tout le reste étant neutre (bienvenue vue, aucune demande).
+@MainActor
+private func sheet(_ home: HomeModel, _ model: SetupModel) -> MainSheet? {
+    MainSheetPolicy.sheet(
+        omp: home.omp, setup: model.state, setupDismissed: model.dismissed, board: .storeEmpty(dir: "/s"),
+        welcomeSeen: true, welcomeRequested: false, launchFormShown: false, answerCardID: nil,
+        contract: nil, pairing: false
+    )
+}
+
+/// Laisse tourner les tâches en attente : ce qui devait démarrer a démarré.
+@MainActor
+private func settle() async {
+    for _ in 0..<10 { await Task.yield() }
+    try? await Task.sleep(for: .milliseconds(20))
 }
 
 // MARK: - AC-2 : la chaîne et son succès
@@ -237,9 +293,12 @@ func retryRestartsTheWholeChain() async {
     await model.prepare()
     #expect(model.state == .failed(.components(.install(component: "OMP", detail: "binaire illisible"))))
 
+    // OMP présent (feuille fermable) : « Réessayer » relance tout.
     recorder.installError = nil
-    model.present()
+    model.refreshOmp = { true }
+    model.retry()
     #expect(model.dismissed == false)
+    #expect(model.retryMissed == false)
     await waitUntil { model.state == .ready }
     #expect(model.state == .ready)
     #expect(recorder.installCalls == 2)
@@ -303,6 +362,260 @@ func autoPrepareStartsTheChain() async {
     #expect(recorder.installCalls == 1)
 }
 
+// MARK: - mac-omp-manquant-non-bloquant : la feuille bloquante tant qu'OMP manque
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-1 : OMP absent au lancement, rien ne se télécharge et la feuille bloquante s'impose")
+func missingOmpAtLaunchDownloadsNothing() async {
+    let omp = OmpSwitch(present: false)
+    let recorder = SetupRecorder()
+    let home = makeHome(omp)
+    // Le câblage de `OMPConsoleApp` : `autoPrepare: home.canLaunch`.
+    let model = makeModel(recorder, autoPrepare: home.canLaunch)
+    wire(model, to: home)
+    await settle()
+    #expect(home.canLaunch == false)
+    #expect(model.state == .idle)
+    #expect(recorder.installCalls == 0, "aucun téléchargement avant « Installer »")
+    #expect(sheet(home, model) == .setup)
+    // « Fermer » n'existe pas, mais même un `dismissed` forcé ne la ferme pas.
+    model.dismiss()
+    #expect(sheet(home, model) == .setup)
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-7 : OMP supprimé pendant une session précédente, la relance impose la feuille bloquante")
+func relaunchAfterOmpRemovalShowsBlockingSheet() async {
+    // Session précédente : OMP présent, la préparation se fait d'office.
+    let omp = OmpSwitch(present: true)
+    let before = SetupRecorder()
+    let firstHome = makeHome(omp)
+    let firstLaunch = makeModel(before, autoPrepare: firstHome.canLaunch)
+    wire(firstLaunch, to: firstHome)
+    await waitUntil { firstLaunch.state == .ready }
+    #expect(before.installCalls == 1)
+    #expect(sheet(firstHome, firstLaunch) == nil)
+
+    // Le binaire est supprimé, puis l'app relancée : modèles neufs.
+    omp.present = false
+    let after = SetupRecorder()
+    let home = makeHome(omp)
+    let model = makeModel(after, autoPrepare: home.canLaunch)
+    wire(model, to: home)
+    await settle()
+    #expect(home.omp == .missing)
+    #expect(model.state == .idle)
+    #expect(after.installCalls == 0)
+    #expect(sheet(home, model) == .setup)
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-3 : « Réessayer » sans OMP ne télécharge rien et la feuille reste bloquante")
+func retryWithoutOmpKeepsTheBlockingSheet() async {
+    let omp = OmpSwitch(present: false)
+    let recorder = SetupRecorder()
+    let model = makeModel(recorder)
+    let home = makeHome(omp)
+    wire(model, to: home, recorder: recorder)
+
+    model.retry()
+    model.retry()
+    await settle()
+    #expect(model.retryMissed)
+    #expect(model.state == .idle)
+    #expect(recorder.installCalls == 0, "« Réessayer » relit la présence, sans télécharger")
+    #expect(sheet(home, model) == .setup)
+
+    // `.ready` alors qu'OMP manque (chaîne finie, OMP retiré) : relu absent, la
+    // feuille repasse à `.idle`.
+    model.refreshOmp = nil
+    await model.prepare()
+    #expect(model.state == .ready)
+    wire(model, to: home, recorder: recorder)
+    model.retry()
+    #expect(model.state == .idle)
+    #expect(model.retryMissed)
+    #expect(recorder.installCalls == 1)
+    #expect(sheet(home, model) == .setup)
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-4 : OMP présent au lancement, la préparation démarre d'office et « Fermer » la laisse continuer")
+func ompPresentAtLaunchGivesDismissableSheet() async {
+    let omp = OmpSwitch(present: true)
+    let recorder = SetupRecorder()
+    let gate = Gate()
+    recorder.gate = gate
+    let home = makeHome(omp)
+    let model = makeModel(recorder, autoPrepare: home.canLaunch)
+    wire(model, to: home)
+    await waitUntil { recorder.installCalls == 1 }
+    #expect(sheet(home, model) == .setup)
+
+    model.dismiss()
+    #expect(sheet(home, model) == nil, "OMP présent : la feuille fermée cède la place à l'app")
+    gate.release()
+    await waitUntil { model.state == .ready }
+    #expect(model.state == .ready, "fermer n'interrompt pas la préparation")
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-4 : dès que le binaire d'OMP est placé, la feuille bloquante devient fermable (S-2)")
+func placingOmpMakesTheSheetDismissable() async {
+    let omp = OmpSwitch(present: false)
+    let gate = Gate()
+    /// Chaque relecture d'OMP : sa réponse et l'état du modèle à ce moment-là.
+    final class RefreshLog {
+        var reads: [(present: Bool, state: SetupState)] = []
+    }
+    let log = RefreshLog()
+    let model = SetupModel(
+        install: { progress in
+            progress(.omp(downloaded: 0, total: 20))
+            progress(.omp(downloaded: 10, total: 20))
+            progress(.omp(downloaded: 20, total: 20))
+            omp.present = true
+            progress(.ompInstall)
+            progress(.podman(downloaded: 0, total: 20))
+            await gate.wait()
+        },
+        migrate: { _ in },
+        ensureStack: { _ in },
+        probeOMLX: { .unknown },
+        autoPrepare: false
+    )
+    let home = makeHome(omp)
+    wire(model, to: home)
+    let refresh = model.refreshOmp
+    model.refreshOmp = { [unowned model] in
+        let present = refresh?() ?? true
+        log.reads.append((present, model.state))
+        return present
+    }
+    #expect(sheet(home, model) == .setup)
+
+    model.startInstall()
+    await waitUntil { model.state == .preparing(.podman(downloaded: 0, total: 20)) }
+    // Un appel par CAS d'étape (.omp, .ompInstall, .podman), pas par rappel d'octets.
+    #expect(log.reads.map(\.present) == [false, true, true])
+    #expect(log.reads.map(\.state) == [
+        .preparing(.omp(downloaded: 0, total: 20)), .preparing(.ompInstall),
+        .preparing(.podman(downloaded: 0, total: 20)),
+    ])
+    #expect(home.canLaunch)
+    #expect(model.state == .preparing(.podman(downloaded: 0, total: 20)))
+    model.dismiss()
+    #expect(sheet(home, model) == nil, "OMP placé : la feuille se ferme, la préparation continue")
+
+    gate.release()
+    await waitUntil { model.state == .ready }
+    #expect(log.reads.map(\.present) == [false, true, true, true], "OMP est relu au retour de l'installateur")
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-5 : le badge (OMP présent) rouvre la feuille et relance la chaîne, jamais deux fois")
+func reopenWithOmpRestartsTheChain() async {
+    let recorder = SetupRecorder()
+    let model = makeModel(recorder)
+    model.refreshOmp = { true }
+    await model.prepare()
+    #expect(recorder.installCalls == 1)
+
+    model.dismiss()
+    model.reopen()
+    #expect(model.dismissed == false)
+    await waitUntil { recorder.installCalls == 2 && model.state == .ready }
+    #expect(recorder.installCalls == 2, "Podman manquant : la chaîne repart pour l'installer")
+
+    // Pendant une préparation, le clic rouvre la feuille sans rien relancer.
+    let gate = Gate()
+    recorder.gate = gate
+    let running = Task { await model.prepare() }
+    await waitUntil { recorder.installCalls == 3 }
+    model.dismiss()
+    model.reopen()
+    #expect(model.dismissed == false)
+    gate.release()
+    await running.value
+    await settle()
+    #expect(recorder.installCalls == 3)
+    #expect(model.state == .ready)
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-6 : OMP disparu en cours de session, rien ne s'impose, et le badge ouvre la feuille bloquante")
+func reopenWithoutOmpGivesTheBlockingSheet() async {
+    let omp = OmpSwitch(present: true)
+    let recorder = SetupRecorder()
+    let model = makeModel(recorder)
+    let home = makeHome(omp)
+    wire(model, to: home, recorder: recorder)
+    await model.prepare()
+    #expect(model.state == .ready)
+    #expect(sheet(home, model) == nil)
+
+    // Le binaire disparaît : seule la veille du badge le voit, `HomeModel.omp`
+    // n'est pas relu, aucune feuille ne s'impose.
+    omp.present = false
+    await settle()
+    #expect(home.canLaunch)
+    #expect(sheet(home, model) == nil)
+
+    model.reopen()
+    #expect(home.omp == .missing)
+    #expect(model.state == .idle)
+    #expect(model.dismissed == false)
+    await settle()
+    #expect(recorder.installCalls == 1, "le badge ne télécharge rien quand OMP manque")
+    #expect(sheet(home, model) == .setup)
+    model.dismiss()
+    #expect(sheet(home, model) == .setup, "bloquante : rien ne la ferme")
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-8 : « Installer » mène à `.ready` et la politique ferme la feuille d'elle-même")
+func installClosesTheSheetAtReady() async {
+    let omp = OmpSwitch(present: false)
+    let recorder = SetupRecorder()
+    recorder.placesOmp = omp
+    let model = makeModel(recorder)
+    let home = makeHome(omp)
+    wire(model, to: home, recorder: recorder)
+    model.retry()
+    #expect(model.retryMissed)
+    #expect(sheet(home, model) == .setup)
+
+    model.startInstall()
+    model.startInstall()
+    #expect(model.retryMissed == false)
+    await waitUntil { model.state == .ready }
+    await settle()
+    #expect(recorder.installCalls == 1, "deux clics, une seule préparation")
+    #expect(recorder.onReadyCalls == 1)
+    #expect(home.canLaunch)
+    #expect(sheet(home, model) == nil, "la feuille se ferme sans autre clic")
+}
+
+@MainActor
+@Test("mac-omp-manquant-non-bloquant/AC-8 : « Réessayer » qui trouve OMP relance la chaîne, et `.ready` ferme la feuille")
+func retryFindingOmpClosesTheSheetAtReady() async {
+    let omp = OmpSwitch(present: false)
+    let recorder = SetupRecorder()
+    let model = makeModel(recorder)
+    let home = makeHome(omp)
+    wire(model, to: home, recorder: recorder)
+    model.retry()
+    #expect(model.retryMissed)
+
+    omp.present = true
+    model.retry()
+    #expect(model.retryMissed == false)
+    #expect(home.canLaunch)
+    await waitUntil { model.state == .ready }
+    #expect(recorder.installCalls == 1)
+    #expect(sheet(home, model) == nil)
+}
+
 // MARK: - AC-6 : la reprise de l'ancienne pile, sur ordre seulement
 
 @MainActor
@@ -357,7 +670,6 @@ func takeOverWhilePreparingIsIgnored() async {
     await first.value
     #expect(model.state == .ready)
 }
-
 // MARK: - AC-2 : les textes figés
 
 @Test("all-in-one-app/AC-2 : les textes de la préparation sont ceux du contrat, mot pour mot")
@@ -369,8 +681,15 @@ func setupTextsAreFrozen() {
         SetupText.homeMissingBody,
         SetupText.retry,
         SetupText.close,
+        SetupText.install,
+        SetupText.quit,
+        SetupText.ompMissingBody,
+        SetupText.retryMissed,
+        SetupText.showDetail,
+        SetupText.hideDetail,
         SetupText.resume,
         SetupText.done,
+        SetupText.componentsBadgeHelp,
         SetupText.componentsRow,
         SetupText.migrationRow,
         SetupText.stackRow,
@@ -378,12 +697,19 @@ func setupTextsAreFrozen() {
     ] == [
         "Préparation d'OMP Console",
         "OMP Console installe ses composants — OMP, le moteur de conteneurs et la pile mémoire — puis les démarre. Cette étape n'a lieu qu'une fois.",
-        "OMP Console prépare ses composants",
-        "L'installation d'OMP, du moteur de conteneurs et de la pile mémoire est en cours. Les fonctions qui en dépendent se débloquent à la fin.",
+        "OMP n'est pas installé",
+        "Installez OMP depuis la feuille de préparation : les fonctions qui en dépendent se débloquent à la fin de l'installation.",
         "Réessayer",
         "Fermer",
+        "Installer",
+        "Quitter",
+        "OMP n'est pas installé sur ce Mac. Installez-le pour utiliser OMP Console, ou quittez l'app.",
+        "OMP n'est toujours pas installé.",
+        "Afficher le détail",
+        "Masquer le détail",
         "Reprendre…",
         "Préparation terminée.",
+        "Afficher la préparation d'OMP Console",
         "Composants",
         "Migration de la mémoire",
         "Pile mémoire",

@@ -51,6 +51,10 @@ struct RootView: View {
     private let statsRecipe: IOSStatsRecipe?
     /// Le crochet de recette `-pipelines.board`, quand il est donné.
     private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
+    /// Le crochet de recette `-projet.recipe`, quand il est donné.
+    private let projectRecipe: IOSProjectRecipe?
+    /// Le crochet de recette `-sessionomp.recipe`, quand il est donné.
+    private let sessionOmpRecipe: IOSSessionOmpRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -66,6 +70,8 @@ struct RootView: View {
         cardRecipe: PipelinesCardRecipe? = nil,
         statsRecipe: IOSStatsRecipe? = nil,
         pipelinesBoardRecipe: IOSPipelinesBoardRecipe? = nil,
+        projectRecipe: IOSProjectRecipe? = nil,
+        sessionOmpRecipe: IOSSessionOmpRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
@@ -78,6 +84,8 @@ struct RootView: View {
         self.cardRecipe = cardRecipe
         self.statsRecipe = statsRecipe
         self.pipelinesBoardRecipe = pipelinesBoardRecipe
+        self.projectRecipe = projectRecipe
+        self.sessionOmpRecipe = sessionOmpRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -127,13 +135,16 @@ struct RootView: View {
                         pipelinesRecipe: pipelinesRecipe,
                         cardRecipe: cardRecipe,
                         statsRecipe: statsRecipe,
-                        pipelinesBoardRecipe: pipelinesBoardRecipe
+                        pipelinesBoardRecipe: pipelinesBoardRecipe,
+                        projectRecipe: projectRecipe,
+                        sessionOmpRecipe: sessionOmpRecipe,
+                        showConnection: $showConnection
                     )
                 }
             }
             .toolbar { connectionToolbarItem }
         }
-        .sheet(isPresented: $showWelcome, onDismiss: presentConnectionIfNeeded) {
+        .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
             HomeWelcomeSheet(client: client)
         }
         .sheet(isPresented: $showConnection) {
@@ -178,6 +189,13 @@ struct RootView: View {
         } else {
             presentConnectionIfNeeded()
         }
+    }
+
+    /// Toute fermeture de la bienvenue (bouton « Continuer » ou balayage) l'enregistre
+    /// comme vue (`closeWelcome()` est idempotent), puis la connexion suit si besoin.
+    private func welcomeDismissed() {
+        client.closeWelcome()
+        presentConnectionIfNeeded()
     }
 
     private var welcomeDue: Bool {

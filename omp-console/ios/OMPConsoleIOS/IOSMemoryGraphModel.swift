@@ -65,6 +65,16 @@ final class IOSMemoryGraphModel: ObservableObject {
         return false
     }
 
+    /// Un graphe reçu (peuplé ou vide) : hors connexion, il reste affiché sous le
+    /// bandeau ; sinon c'est le composant d'état de connexion en plein écran
+    /// (etats-non-connecte-heterogenes-ios, S-4).
+    static func hasData(_ state: State) -> Bool {
+        switch state {
+        case .graph, .empty: return true
+        case .idle, .loading, .noProject, .serviceOutdated, .macOutdated, .failed: return false
+        }
+    }
+
     /// La classification d'une panne de lecture, par l'entrée Mémoire du traducteur
     /// partagé (`IOSMacFailure.ofMemoryRead`) : la route graphe n'émet aucun 404
     /// métier, tout `not_found` dit « app Mac trop ancienne » (D-4), et un délai

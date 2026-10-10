@@ -114,6 +114,49 @@ marqueur `[test: <fonction>]` (une fonction de
 - Une section hors périmètre (Terminal, Fichiers) n'a aucun contenu d'écran.
   `[test: outOfScopeSectionsHaveNoContent]`
 
+## États de connexion (feature `etats-non-connecte-heterogenes-ios`)
+
+- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion
+  dans les sept sections ; ses mots vivent dans `IOSConnectionStateText` et ses
+  identifiants, tous préfixés `ios.connexion.`, dans
+  `IOSConnectionStateAccessibility`. `[test: connectionIdentifiersAreUniqueAndPrefixed]`
+- Le statut présenté est une fonction pure de l'état du client
+  (`IOSConnectionStatus.resolve`) : une tentative fraîche est « Connexion au
+  Mac… » ; dès qu'une tentative a échoué, l'écran dit « Pas de connexion au Mac »
+  et le reste pendant les relances automatiques. `[test: resolvesEveryClientState]`
+  `[test: retryAfterFailureStaysDisconnected]`
+- « Pas de connexion au Mac » porte une phrase par cause — non appairé, appairage
+  refusé ou révoqué, Mac injoignable, app à mettre à jour, Mac à mettre à jour —
+  sans numéro de version, chemin ni adresse. `[test: causesHaveDistinctPhrases]`
+  `[test: updatePhrasesNameTheAppWithoutVersionNumbers]`
+- Deux formes : plein écran (`ContentUnavailableView`, bouton « Se connecter »
+  proéminent) quand la section n'a rien chargé ; bandeau `attention` suivi de
+  « Se connecter » au-dessus des données conservées. « Connexion au Mac… » est un
+  indicateur d'attente sans bouton (plein écran, ou bandeau `info`). « Se
+  connecter » ouvre la feuille Connexion de la racine. `[test: resolvePriority]`
+- Pipelines, Sessions et Mémoire (liste et graphe) suivent la même règle : rien
+  de reçu hors connexion ⇒ le composant seul, hors du défilement et du panneau ;
+  données reçues ⇒ elles restent, sous le bandeau, et la Mémoire relit au retour
+  du Mac. `[test: unavailableWithoutList]` `[test: listKeptOffline]`
+  `[test: offlineWithoutDataIsTheConnectionComponent]` `[test: offlineKeepsTheLastData]`
+- Projet, Statistiques et Session OMP suivent la même règle et portent leur propre
+  panneau (titre de section, puis contenu) : rien de reçu hors connexion ⇒ le
+  composant seul, hors du panneau ; une conduite, un relevé ou un état de session
+  reçu ⇒ il reste, sous le bandeau, et l'erreur conservée est tue ; les
+  Statistiques relisent au retour du Mac. `[test: projectUnavailableWithoutConduite]`
+  `[test: projectKeepsConduiteOffline]` `[test: statsUnavailableWithoutPayload]`
+  `[test: statsKeepsBoardOffline]` `[test: sessionOmpUnavailableWithoutHosted]`
+  `[test: sessionOmpKeepsHostedOffline]`
+- Les actions qui exigent le Mac (« + » de Pipelines, répondre, valider, reprendre,
+  lancer, arrêter, fusionner, rafraîchir, éditer, écrire dans la Session OMP…)
+  restent visibles mais grisées hors connexion, connexion en cours comprise, et se
+  rouvrent dès la connexion, sans relancer l'app. À l'Accueil, seul « Voir dans
+  Pipelines » reste tapable parmi les gestes d'attente ; les feuilles de dialogue
+  ne s'ouvrent qu'une fois connecté, et une confirmation restée ouverte n'envoie
+  rien. Le champ de recherche de la Mémoire, que `.disabled` ne grise pas en
+  placement `.automatic`, est rendu inerte. `[test: gesturesOnlyWhenConnected]`
+  `[test: attentionNeedsMacExceptOpenInPipelines]` `[test: gesturesReopenOnConnection]`
+
 ## Dynamic Type maximum (S-7)
 
 - À `accessibility-extra-extra-extra-large`, aucun texte n'est tronqué ni
@@ -190,9 +233,11 @@ marqueur `[test: <fonction>]` (une fonction de
 - L'en-tête d'une voie (symbole, titre, compteur) s'empile aux tailles
   d'accessibilité, sur iPad comme sur iPhone, et son titre n'est jamais tronqué.
   `[test: laneHeaderStacksAtAccessibilitySizes]`
-- L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
-  un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
-  affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
+- L'écran ne fabrique aucune donnée : Mac non connecté sans instantané, il rend
+  seul le composant d'état de connexion en plein écran ; une ardoise reçue
+  (même vide, mot partagé `KanbanText.noPipeline`) reste affichée hors
+  connexion, sous le bandeau du composant. `[test: unavailableWithoutSnapshot]`
+  `[test: snapshotKeptOffline]`
 - La feuille d'une carte offre les gestes de la carte via la règle d'aiguillage de
   `KanbanActionPresentation` ; une carte d'historique n'offre aucun geste et le
   dit. `[test: historyCardOffersNothing]`
@@ -253,9 +298,11 @@ marqueur `[test: <fonction>]` (une fonction de
   par défaut comme les autres sections, dans ses cinq états : aucune bande vide
   sous la barre, et le bouton retour reste dans la barre titrée quand le tableau
   de bord défile. `[capture: iphone-home-light]`
-- L'Accueil iOS montre un seul de ses cinq états : déconnecté, « OMP absent sur
-  le Mac », chargement, premiers pas, tableau de bord — dans cet ordre de
-  priorité. `[test: resolvePriority]`
+- L'Accueil iOS montre un seul de ses cinq états : indisponible (le composant
+  d'état de connexion en plein écran, hors connexion et sans ardoise reçue),
+  « OMP absent sur le Mac », chargement, premiers pas, tableau de bord — dans cet
+  ordre de priorité. Hors connexion, une ardoise déjà reçue reste affichée sous
+  le bandeau du composant. `[test: resolvePriority]`
 - Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
   la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
   libellés. `[test: parityFacts]`
@@ -402,13 +449,15 @@ marqueur `[test: <fonction>]` (une fonction de
   (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
   milliseconde par milliseconde et par run vivant, sans un octet de trafic.
   `[test: statsDurationsAdvanceWithLiveRuns]`
-- Sept états à part entière, jamais un écran vide : chargement (« Chargement des
-  statistiques… »), dégradé (hors `.connected`, bandeau `attention`), erreur
+- Sept états à part entière, jamais un écran vide : non connecté (le composant
+  d'état de connexion partagé, en plein écran sans relevé, en bandeau au-dessus du
+  dernier relevé conservé), chargement (« Chargement des statistiques… »), erreur
   (bandeau `danger` + « Réessayer »), aucun projet, bascule vers un autre projet,
   projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+  `[test: statsKeepsBoardOffline]`
 - Le sélecteur de projet nomme le projet CHOISI et se tient en tête des états
   tableau, vide et bascule — pendant la lecture d'un autre projet, il reste
-  au-dessus du chargement ; le premier chargement, le dégradé, l'erreur et
+  au-dessus du chargement ; le premier chargement, le non connecté, l'erreur et
   « Aucun projet » n'en ont pas. `[test: statsProjectSwitchKeepsHeaderAboveLoading]`
 - Depuis l'état « Aucune donnée pour ce projet », on change de projet : le
   sélecteur est au-dessus de la carte vide, et choisir un projet qui a des données
@@ -477,13 +526,16 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Session OMP (feature `ios-session-omp`)
 
 - L'écran porte le titre de navigation `ConsoleSection.session.title` et pose tout
-  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses neuf états
-  (jamais centré verticalement) ; le seul défilement est celui du fil de
+  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses huit états
+  servis (jamais centré verticalement) — seul le composant d'état de connexion
+  plein écran est hors du panneau ; le seul défilement est celui du fil de
   conversation. `[capture: iphone-session-light]`
-- L'écran couvre NEUF états : déconnecté (bandeau `attention`, aucun geste),
-  chargement, aucune session, lancement, arrêt en cours, session vive, arrêtée,
-  interrompue, échec — décidés par la fonction pure
-  `IOSSessionOmpModel.surface(state:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+- L'écran couvre NEUF états : non connecté (le composant d'état de connexion
+  partagé, en plein écran sans état servi, en bandeau au-dessus du dernier état
+  conservé), chargement, aucune session, lancement, arrêt en cours, session vive,
+  arrêtée, interrompue, échec — décidés par la fonction pure
+  `IOSSessionOmpModel.surface(connection:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+  `[test: sessionOmpKeepsHostedOffline]`
 - L'en-tête porte le nom du dépôt servi (`projectName`) et la pastille du mot
   d'état (`stateLabel`) ; un état inconnu du client vaut `idle`, jamais une
   invention. `[test: surfaceFollowsClientAndHosted]`
@@ -550,6 +602,27 @@ marqueur `[test: <fonction>]` (une fonction de
 - « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
   a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
   que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`
+
+## Les feuilles (feature `feuilles-ios-presentation-et-depots`)
+
+- Sur iPad, une feuille au contenu long (Contrat, feuille de session, fiche d'un
+  souvenir) est une feuille « page » (`iosPageSheet()`), plus de 600 pt de contenu ;
+  la Bienvenue, « Piloter un projet » et « Lancer une session OMP » gardent la
+  largeur du formulaire (580 pt) et une hauteur qui suit leur contenu
+  (`iosFittedSheet(contentHeight:)`), à 64 pt au plus sous le dernier élément. Sur
+  iPhone, rien ne change : feuille pleine hauteur, même haut, pleine largeur, et
+  aucun `presentationDetents`. Avant la première mesure, la hauteur idéale est
+  absente, jamais nulle : la feuille n'est pas écrasée. `[test: fittedSheetIdealHeight]`
+- Dans « Piloter un projet » et « Lancer une session OMP », un dépôt est désigné
+  par son seul nom de dossier, suivi de son parent entre parenthèses seulement
+  s'il a un homonyme (`KanbanLaunchRepos.choices`, vue partagée `IOSRepoRows`) ;
+  aucun chemin, texte de couleur normale (jamais bleu lien). Le dépôt choisi porte
+  une coche SF Symbol masquée à VoiceOver, qui annonce le nom et l'état
+  « sélectionné », jamais « coche » ni « ✓ ». `[test: repoRowLabels]`
+- Un chemin du Mac affiché par l'app iOS s'abrège en `~/…` relativement au
+  dossier personnel que le Mac publie (`components.homeDirectory`), jamais deviné
+  sur l'appareil ; un chemin hors de ce dossier reste absolu, un Mac antérieur
+  laisse les chemins absolus. `[test: threadRowsAbbreviateMacHome]`
 
 ## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
 

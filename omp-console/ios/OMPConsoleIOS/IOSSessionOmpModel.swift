@@ -22,6 +22,9 @@ import Foundation
 @MainActor
 protocol IOSSessionOmpClient: IOSSessionSource {
     var state: ClientState { get }
+    /// Une tentative suit un échec : le statut présenté dit « non connecté »
+    /// pendant les relances automatiques (etats-non-connecte-heterogenes-ios, S-1).
+    var attemptFollowsFailure: Bool { get }
     var hosted: RemoteHostedEvent? { get }
     func hostedSession() async throws -> RemoteHostedSessionPayload
     func repos() async throws -> RemoteReposPayload
@@ -34,11 +37,12 @@ protocol IOSSessionOmpClient: IOSSessionSource {
 
 extension ConsoleClientModel: IOSSessionOmpClient {}
 
-/// La surface que l'écran doit montrer, décidée par l'état du client et l'état
-/// servi de la session (S-2, BR-4).
+/// La surface que l'écran doit montrer, décidée par le statut de connexion
+/// présenté et l'état servi de la session (S-2, BR-4 ; etats-non-connecte-heterogenes-ios, S-4).
 enum SessionOmpSurface: Equatable {
-    /// Client hors `.connected` : bandeau `attention`, gestes inactifs.
-    case degraded(String)
+    /// Mac non connecté et aucun état servi reçu : le composant d'état de
+    /// connexion partagé, seul, à la place de l'écran.
+    case unavailable(IOSConnectionStatus)
     /// Premier `GET` en vol (`hosted == nil`).
     case loading
     /// `idle` : aucune session (ou prête à démarrer).
@@ -81,10 +85,11 @@ final class IOSSessionOmpModel: ObservableObject {
         return false
     }
 
-    /// La surface choisie pour un état de client et un état servi (S-2).
-    static func surface(state: ClientState, hosted: RemoteHostedEvent?) -> SessionOmpSurface {
-        guard gesturesEnabled(state) else { return .degraded(ConnectionText.state(state)) }
-        guard let hosted else { return .loading }
+    /// La surface choisie pour un statut de connexion et un état servi (S-2). Un
+    /// état servi reçu est conservé hors connexion : la surface reste calculée
+    /// sur lui, sous le bandeau (etats-non-connecte-heterogenes-ios, S-4).
+    static func surface(connection: IOSConnectionStatus, hosted: RemoteHostedEvent?) -> SessionOmpSurface {
+        guard let hosted else { return connection == .connected ? .loading : .unavailable(connection) }
         switch HostedSessionWire(rawValue: hosted.state) ?? .idle {
         case .idle: return .empty
         case .launching: return .launching
@@ -136,7 +141,11 @@ final class IOSSessionOmpModel: ObservableObject {
 
     // MARK: - Faits dérivés du client
 
-    var surface: SessionOmpSurface { Self.surface(state: client.state, hosted: client.hosted) }
+    /// Le statut de connexion présenté par l'écran (etats-non-connecte-heterogenes-ios, S-1).
+    var connection: IOSConnectionStatus {
+        IOSConnectionStatus.resolve(client.state, attemptFollowsFailure: client.attemptFollowsFailure)
+    }
+    var surface: SessionOmpSurface { Self.surface(connection: connection, hosted: client.hosted) }
     var canLaunch: Bool { Self.canLaunch(client.hosted) }
     var canRelaunch: Bool { Self.canRelaunch(client.hosted) }
     var canStop: Bool { Self.canStop(client.hosted) }

@@ -23,14 +23,14 @@ enum IOSHomeAccessibility {
     static let loading = "ios.home.loading"
     static let firstRun = "ios.home.firstRun"
     static let macMissingOMP = "ios.home.macMissingOMP"
-    static let disconnected = "ios.home.disconnected"
-    static let connect = "ios.home.connect"
     static let setupBanner = "ios.home.setupBanner"
     static let launchBanner = "ios.home.launchBanner"
     static let launchBannerDismiss = "ios.home.launchBanner.dismiss"
     static let allPipelines = "ios.home.allPipelines"
 
     static let answerSheet = "ios.home.answer.sheet"
+    /// Le titre de la carte, en tête du formulaire de la feuille « Répondre ».
+    static let answerTitle = "ios.home.answer.title"
     static let answerQuestion = "ios.home.answer.question"
     static let answerText = "ios.home.answer.text"
     static let answerCancel = "ios.home.answer.cancel"
@@ -80,6 +80,15 @@ enum IOSHomeContent {
     /// Le geste principal d'une carte d'attente (S-11).
     static func attentionButton(_ attention: HomeAttention) -> HomeCardAction {
         HomePresentation.cardAction(attention)
+    }
+
+    /// Le geste d'attente exige-t-il le Mac ? Seul « Voir dans Pipelines » reste
+    /// local et tapable hors connexion (etats-non-connecte-heterogenes-ios, S-5).
+    static func attentionNeedsMac(_ action: HomeCardAction) -> Bool {
+        switch action {
+        case .answer, .validate, .accept: true
+        case .open: false
+        }
     }
 
     /// La zone à laquelle la feuille « Répondre » répond (S-13), ou aucune.

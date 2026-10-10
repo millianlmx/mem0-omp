@@ -2,11 +2,12 @@
 // déclenche les lectures (les pages du sommaire du projet, une recherche), et
 // dérive l'état d'écran par une fonction PURE, testable sans rendre de vue.
 //
-// Aucune scrutation : l'apparition de l'écran et le geste « Rafraîchir »/
-// « Réessayer » relisent la PREMIÈRE page ; l'arrivée du pied de liste à l'écran
-// lit la page SUIVANTE (défilement continu, memoire-ios-expire-a-10-secondes S-4).
-// Le modèle ne relit jamais sur un changement de `ClientState` — une donnée déjà
-// chargée prime, et une donnée jamais chargée laisse parler l'état du client.
+// Aucune scrutation : l'apparition de l'écran, le geste « Rafraîchir »/
+// « Réessayer » et le retour du Mac (`onMacReconnected`, posé par l'écran)
+// relisent la PREMIÈRE page ; l'arrivée du pied de liste à l'écran lit la page
+// SUIVANTE (défilement continu, memoire-ios-expire-a-10-secondes S-4). Une donnée
+// déjà chargée prime sur le statut de connexion ; une donnée jamais chargée
+// laisse parler le composant d'état de connexion.
 
 import Combine
 import ConsoleClient
@@ -95,7 +96,9 @@ enum IOSMemoryMode: Equatable {
 /// Les états d'écran, en une valeur ÉGALABLE : un test les confronte sans rendre
 /// de vue. Mêmes règles et mêmes mots que `MemoryModel.state` de la coque macOS.
 enum IOSMemoryScreenState: Equatable {
-    case clientState(ClientState)
+    /// Rien de chargé, Mac non connecté : le composant d'état de connexion en
+    /// plein écran (etats-non-connecte-heterogenes-ios, S-4).
+    case offline(IOSConnectionStatus)
     case loading
     case noProject
     case failed(IOSMacFailure)
@@ -164,15 +167,32 @@ final class IOSMemoryModel: ObservableObject {
         }
     }
 
-    /// L'état d'écran, dérivé de l'état du client, de la dernière lecture et du
-    /// mode. L'ORDRE est la règle : rien de lu ET client hors `.connected` ⇒ c'est
-    /// l'état du client qui parle ; une page à portée nulle ⇒ « aucun projet »
-    /// AVANT toute autre considération.
-    static func screen(client: ClientState, load: IOSMemoryLoad, mode: IOSMemoryMode) -> IOSMemoryScreenState {
+    /// L'état d'écran, dérivé du statut de connexion présenté, de la dernière
+    /// lecture, du mode et du sommaire déjà servi. Hors connexion, une lecture
+    /// aboutie (page ou recherche) reste affichée ; sinon le sommaire déjà servi
+    /// reprend la main ; sinon c'est le composant d'état de connexion
+    /// (etats-non-connecte-heterogenes-ios, S-4).
+    static func screen(
+        connection: IOSConnectionStatus,
+        load: IOSMemoryLoad,
+        mode: IOSMemoryMode,
+        summary: IOSMemorySummary?
+    ) -> IOSMemoryScreenState {
+        guard connection != .connected else { return reading(load: load, mode: mode) }
         switch load {
-        case .idle:
-            return gesturesEnabled(client) ? .loading : .clientState(client)
-        case .loading:
+        case .page, .search:
+            return reading(load: load, mode: mode)
+        case .idle, .loading, .failed:
+            guard let summary else { return .offline(connection) }
+            return reading(load: .page(summary), mode: .summary)
+        }
+    }
+
+    /// L'état d'une lecture. L'ORDRE est la règle : une page à portée nulle ⇒
+    /// « aucun projet » AVANT toute autre considération.
+    private static func reading(load: IOSMemoryLoad, mode: IOSMemoryMode) -> IOSMemoryScreenState {
+        switch load {
+        case .idle, .loading:
             return .loading
         case .failed(let cause):
             return .failed(cause)
@@ -192,9 +212,10 @@ final class IOSMemoryModel: ObservableObject {
 
     // MARK: - Faits dérivés
 
-    /// L'état d'écran courant, jamais posé à la main (patron `MemoryModel.state`).
-    var state: IOSMemoryScreenState {
-        Self.screen(client: client.state, load: load, mode: mode)
+    /// L'état d'écran courant pour le statut présenté, jamais posé à la main
+    /// (patron `MemoryModel.state`).
+    func state(connection: IOSConnectionStatus) -> IOSMemoryScreenState {
+        Self.screen(connection: connection, load: load, mode: mode, summary: summaryPage)
     }
 
     /// Le sommaire accumulé, ou `nil`.

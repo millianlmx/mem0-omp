@@ -259,11 +259,14 @@ public struct RemoteComponentsPayload: Codable, Equatable, Sendable {
     public var ompInstalled: Bool
     public var ompPath: String?
     public var setupBanner: String?
+    /// Le dossier personnel du Mac ; `nil` quand un Mac antérieur ne l'envoie pas.
+    public var homeDirectory: String?
 
-    public init(ompInstalled: Bool, ompPath: String?, setupBanner: String?) {
+    public init(ompInstalled: Bool, ompPath: String?, setupBanner: String?, homeDirectory: String? = nil) {
         self.ompInstalled = ompInstalled
         self.ompPath = ompPath
         self.setupBanner = setupBanner
+        self.homeDirectory = homeDirectory
     }
 }
 

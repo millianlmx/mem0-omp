@@ -59,6 +59,8 @@ struct IOSMemoryDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier(IOSMemoryAccessibility.detail)
+            .navigationTitle(IOSMemoryText.detailTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     // Forme 44 pt mesurée (D-4) : le bouton de barre par défaut n'a que 36 pt.
@@ -75,6 +77,7 @@ struct IOSMemoryDetailView: View {
                 }
             }
         }
+        .iosPageSheet()
     }
 
     // MARK: - Les liens (mode graphe, S-5)
