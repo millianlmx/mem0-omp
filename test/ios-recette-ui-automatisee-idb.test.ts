@@ -588,7 +588,7 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou u
   assert.equal(appaire.rapport, "", "aucun rapport écrit quand la recette ne conclut pas");
 });
 
-test("marqueur : vrai sur la surface annoncée, faux sur la liste racine, l'Accueil déconnecté ou la feuille sur kanban", () => {
+test("marqueur : vrai sur la surface annoncée, faux sur la liste racine, un écran plein « non connecté » ou « connexion en cours », ou la feuille sur kanban", () => {
   const sonde = (surface: string, elements: Element[]) => {
     const f = path.join(frais("marqueur"), "releve.json");
     fs.writeFileSync(f, JSON.stringify([application(), ...elements]));
@@ -599,9 +599,12 @@ test("marqueur : vrai sur la surface annoncée, faux sur la liste racine, l'Accu
   for (const s of SURFACES) assert.equal(sonde(s, marqueurPropre(s)), 0, s);
   for (const s of SURFACES) assert.equal(sonde(s, []), 1, `${s} vide`);
   const racine: Element = { type: "Button", AXUniqueId: "ios.section.memory", frame: cadre(20, 100, 300, 60) };
-  const deconnecte: Element = { type: "StaticText", AXUniqueId: "ios.home.disconnected", frame: cadre(20, 100, 300, 60) };
   assert.equal(sonde("home", [...marqueurPropre("home"), racine]), 1);
-  assert.equal(sonde("home", [...marqueurPropre("home"), deconnecte]), 1);
+  for (const id of ["ios.connexion.horsLigne.ecran", "ios.connexion.enCours.ecran", "ios.connexion.cause", "ios.connexion.attente"]) {
+    assert.equal(sonde("home", [...marqueurPropre("home"), { type: "StaticText", AXUniqueId: id, frame: cadre(20, 100, 300, 60) }]), 1, id);
+  }
+  const bandeau: Element = { type: "StaticText", AXUniqueId: "ios.connexion.message", frame: cadre(20, 100, 300, 60) };
+  assert.equal(sonde("home", [...marqueurPropre("home"), bandeau]), 0, "un bandeau au-dessus des données n'exclut pas la surface");
   assert.equal(sonde("kanban", [...marqueurPropre("kanban"), ...marqueurPropre("kanban-fiche")]), 1);
   assert.equal(sonde("project", [{ type: "StaticText", AXLabel: "Projet", frame: cadre(20, 100, 100, 44) }]), 1, "libellé sans type Heading");
   assert.equal(sonde("project", [{ type: "StaticText", AXUniqueId: "ios.projet.start", frame: cadre(20, 100, 100, 44) }]), 0);
