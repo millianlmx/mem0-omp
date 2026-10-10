@@ -16,15 +16,15 @@ enum IOSConnectionStateText {
     static func cause(_ cause: IOSDisconnectCause) -> String {
         switch cause {
         case .unpaired:
-            "Cet appareil n'est appairé à aucun Mac."
+            "Cet appareil n’est appairé à aucun Mac."
         case .refused:
-            "Le Mac a refusé ou révoqué l'appairage de cet appareil. Appairez-le de nouveau."
+            "Le Mac a refusé ou révoqué l’appairage de cet appareil. Appairez-le de nouveau."
         case .unreachable:
-            "Le Mac ne répond pas. Vérifiez qu'il est allumé, qu'OMP Console y est ouverte et que cet appareil est sur le même réseau."
+            "Le Mac ne répond pas. Vérifiez qu’il est allumé, qu’OMP Console y est ouverte et que cet appareil est sur le même réseau."
         case .updateApp:
-            "Le Mac utilise une version plus récente d'OMP Console. Mettez à jour l'app sur cet appareil."
+            "Le Mac utilise une version plus récente d’OMP Console. Mettez à jour l’app sur cet appareil."
         case .updateMac:
-            "Le Mac utilise une version plus ancienne d'OMP Console. Mettez à jour OMP Console sur le Mac."
+            "Le Mac utilise une version plus ancienne d’OMP Console. Mettez à jour OMP Console sur le Mac."
         }
     }
 

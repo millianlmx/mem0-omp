@@ -46,11 +46,11 @@ extension SessionConsoleText {
     ) -> String {
         let absent = "absent"
         return [
-            "pid : \(pid.map { String($0) } ?? absent)",
-            "état : \(String(describing: state))",
-            "identifiant de session : \(sessionId ?? absent)",
-            "projet : \(projectPath ?? absent)",
-            "fichier de session : \(sessionFile ?? absent)",
+            "numéro de processus : \(pid.map { String($0) } ?? absent)",
+            "état : \(String(describing: state))",
+            "identifiant de session : \(sessionId ?? absent)",
+            "projet : \(projectPath ?? absent)",
+            "fichier de session : \(sessionFile ?? absent)",
         ].joined(separator: "\n")
     }
 }

@@ -110,7 +110,7 @@ struct QuitFlowTests {
         #expect(harness.quit.request() == .cancelled)
         #expect(harness.prompts.count == 1)
         #expect(harness.prompts.first?.title == QuitText.title)
-        #expect(harness.prompts.first?.message == "La session OMP de « mem0-omp » s'arrêtera.")
+        #expect(harness.prompts.first?.message == "La session OMP de « mem0-omp » s’arrêtera.")
         // Rien d'autre : ni accroche, ni feuille fermée, ni terminaison.
         try? await Task.sleep(for: .milliseconds(100))
         #expect(harness.log == ["alerte"])
@@ -166,7 +166,7 @@ struct QuitFlowTests {
         #expect(harness.quit.request() == .proceeding)
         #expect(harness.prompts.count == 1)
         #expect(harness.prompts.first?.message.components(separatedBy: "\n") == [
-            "La session OMP de « x » s'arrêtera.",
+            "La session OMP de « x » s’arrêtera.",
             "2 pipelines en cours continuent dans OMP.",
         ])
         #expect(await awaitMainTrue { harness.terminated })

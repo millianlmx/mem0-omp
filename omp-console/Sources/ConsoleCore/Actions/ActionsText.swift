@@ -14,7 +14,7 @@ public enum ActionsText {
     // --- libellés des gestes (la première colonne d'une ligne de journal) -----
     public static let answerLabel = "réponse"
     public static let textLabel = "message"
-    public static let specsLabel = "validation des specs"
+    public static let specsLabel = "validation des spécifications"
     public static let reviewLabel = "acceptation de la revue"
     public static let launchLabel = "lancement"
     public static let stopLabel = "arrêt"
@@ -24,23 +24,23 @@ public enum ActionsText {
     public static let awaitingAck = "envoyé au pilote"
     public static let taken = "prise en charge"
     public static let refused = "refusée"
-    public static let delivered = "remis à l'agent"
+    public static let delivered = "remis à l’agent"
     /// Une commande restée sans accusé après `ActionsModel.ackTimeoutMs` (S-8 de
     /// omp-console-redesign) : aucun pilote ne l'a prise — le plus souvent, le
     /// plugin chargé par omp ne porte pas le canal.
     public static let unacknowledged =
-        "le pilote n'a pas répondu après 20 s — vérifiez que le plugin omp-mem0-req est installé"
+        "le pilote n’a pas répondu après 20 s — vérifiez que le module omp-mem0-req est installé"
 
     // --- zone d'action (S-9) -------------------------------------------------
     public static let answer = "Répondre"
-    public static let steerTitle = "Envoyer un message à l'agent"
+    public static let steerTitle = "Envoyer un message à l’agent"
     public static let steerFieldLabel = "Votre message"
-    public static let replyTitle = "Question de l'agent"
+    public static let replyTitle = "Question de l’agent"
     public static let resumeNote = "Le pilote de cette pipeline est arrêté."
 
     // --- journal (S-9, « Activité récente » de S-14) ------------------------
     public static let journalTitle = "Activité récente"
-    public static let journalEmpty = "Aucun geste pour l'instant."
+    public static let journalEmpty = "Aucun geste pour l’instant."
 
     // --- modèles (B-1, B-3, B-4) --------------------------------------------
     /// Le libellé du geste d'édition des deux modèles dans le journal.
@@ -57,12 +57,12 @@ public enum ActionsText {
     /// Le motif d'un refus du pilote : le texte EXACT du canal (AC-9), jamais
     /// recomposé.
     public static func refused(_ reason: String) -> String {
-        "refusée : \(reason)"
+        "refusée : \(reason)"
     }
 
     /// Le motif d'un échec d'écriture local : `<strerror>` porté par l'erreur.
     public static func failed(_ reason: String) -> String {
-        "échec : \(reason)"
+        "échec : \(reason)"
     }
 
     /// L'état d'une entrée de journal, en texte exact (S-4).

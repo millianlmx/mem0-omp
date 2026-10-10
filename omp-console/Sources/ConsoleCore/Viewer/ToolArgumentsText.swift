@@ -20,12 +20,12 @@ public enum ToolArgumentsText {
     public static let no = "non"
     public static let null = "—"
     public static let empty = "vide"
-    public static let separator = " : "
+    public static let separator = " : "
     public static let ellipsis = "…"
 
     /// Le libellé d'une valeur « code », posée SOUS son libellé : `Commande :`.
     public static func codeLabel(_ label: String) -> String {
-        label + " :"
+        label + " :"
     }
 
     /// Le libellé français de la clé `key` d'un appel de l'outil `tool`, à toute

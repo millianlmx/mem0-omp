@@ -57,14 +57,14 @@ func marksTextIsOrdered() {
 
 @Test("jargon-technique-expose-mac-et-ios/AC-5 : la carte iOS dit ses marques par une phrase lisible, jamais par la marque brute")
 func marksSentenceIsReadable() {
-    #expect(KanbanText.marksSentence([.mort]) == "Elle s'est arrêtée de façon inattendue.")
+    #expect(KanbanText.marksSentence([.mort]) == "Elle s’est arrêtée de façon inattendue.")
     #expect(KanbanText.markSentence(.illisible) == "Une partie de ses données est illisible.")
     #expect(KanbanText.markSentence(.doublon) == "Deux sources la décrivent.")
     // Une carte saine n'affiche aucune ligne.
     #expect(KanbanText.marksSentence([]) == nil)
     // Plusieurs marques : les phrases dans l'ordre des marques, jointes par une espace.
     let all = KanbanText.marksSentence(KanbanMark.allCases)
-    #expect(all == "Une partie de ses données est illisible. Elle s'est arrêtée de façon inattendue. Deux sources la décrivent.")
+    #expect(all == "Une partie de ses données est illisible. Elle s’est arrêtée de façon inattendue. Deux sources la décrivent.")
     // Jamais la forme brute : ni « Marques », ni la liste `marksText`, ni les
     // marques `mort` et `doublon` comme mots (« illisible » reste un adjectif
     // français dans sa phrase, pas une marque).

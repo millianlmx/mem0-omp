@@ -21,12 +21,12 @@ public enum ContractText {
     /// des titres vient de `ContractDocument.titles(for:)`, jamais d'un second
     /// littéral.
     public static func subtitle(_ moment: ContractMoment) -> String {
-        "À valider : \(ContractDocument.titles(for: moment).joined(separator: " et "))."
+        "À valider : \(ContractDocument.titles(for: moment).joined(separator: " et "))."
     }
 
     /// Fichier absent : la phrase ne cite pas le chemin, qui reste au diagnostic.
     public static let missingFile =
-        "Cette feature n'a pas encore de contrat : il apparaîtra quand ses besoins seront validés."
+        "Cette feature n’a pas encore de contrat : il apparaîtra quand ses besoins seront validés."
 
     // --- le geste et la feuille (S-6, S-7) ------------------------------------
 
@@ -45,18 +45,18 @@ public enum ContractText {
 
     /// Fichier non textuel ou erreur système : une seule phrase, le brut reste au
     /// diagnostic.
-    public static let unreadable = "Le contrat ne peut pas être affiché pour l'instant. Fermez-le, puis rouvrez-le."
+    public static let unreadable = "Le contrat ne peut pas être affiché pour l’instant. Fermez-le, puis rouvrez-le."
 
     /// Le détail brut d'un contrat absent ou illisible : le chemin lu, puis la
     /// taille ou la raison du système.
     public static func diagnostic(path: String, unreadable: ContractUnreadable?) -> String {
         switch unreadable {
         case nil:
-            return "\(path) : absent"
+            return "\(path) : absent"
         case .notText(let bytes):
-            return "\(path) : pas du texte UTF-8 (\(bytes) octets)"
+            return "\(path) : pas du texte UTF-8 (\(bytes) octets)"
         case .error(let reason):
-            return "\(path) : \(reason)"
+            return "\(path) : \(reason)"
         }
     }
 

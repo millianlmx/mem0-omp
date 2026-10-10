@@ -192,7 +192,7 @@ struct IOSMemoryDelayTests {
             == ConnectionText.pairingFailure(.transport(.unreachable("r"))))
 
         // Les mots d'avant, inchangés.
-        #expect(IOSHomeText.transportFailure == "Le Mac n'a pas répondu.")
+        #expect(IOSHomeText.transportFailure == "Le Mac n’a pas répondu.")
 
         // Le bandeau du fil de session : le même dans les deux cas.
         var banners: [String?] = []

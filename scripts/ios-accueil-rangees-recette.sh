@@ -42,11 +42,11 @@ TYPE_TABLET="com.apple.CoreSimulator.SimDeviceType.iPad-A16"
 # Mots de l'app (miroirs de IOSHomeText / KanbanText).
 VALIDATE_SPECS="Valider les specs"
 SPECS_CONFIRM="Valider"
-SPECS_TITLE="Valider les specs de « specs-a-valider » ?"
-SPECS_TITLE_PREFIX="Valider les specs de « "
+SPECS_TITLE="Valider les specs de « specs-a-valider » ?"
+SPECS_TITLE_PREFIX="Valider les specs de « "
 IN_FLIGHT="Envoi en cours"
-SPECS_FAILED="Les specs n'ont pas été validées."
-RESUME_FAILED="La pipeline n'a pas repris."
+SPECS_FAILED="Les spécifications n’ont pas été validées."
+RESUME_FAILED="La pipeline n’a pas repris."
 # Point hors de la bulle du dialogue (mesuré sur iPhone 18 Pro) : l'annule.
 OUTSIDE_X=60
 OUTSIDE_Y=120

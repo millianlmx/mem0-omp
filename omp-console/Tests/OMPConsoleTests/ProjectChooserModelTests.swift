@@ -285,7 +285,7 @@ func terminalPlaceholderFollowsTheProject() throws {
     let name = (repo.root as NSString).lastPathComponent
     #expect(TerminalPlaceholder.of(terminal) == .waiting(projectName: name))
     #expect(terminal.statusText == "Choisissez un répertoire…")
-    #expect(TerminalViewText.projectNamed(name) == "Projet « \(name) »")
+    #expect(TerminalViewText.projectNamed(name) == "Projet « \(name) »")
 }
 
 @MainActor

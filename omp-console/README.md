@@ -919,7 +919,7 @@ pied de liste (`viewer.selector.footer`).
   le texte du résultat, et le diff d'un appel d'édition d'OMP (`details.diff`) est
   classé ligne à ligne. Ajout, suppression, contexte et en-têtes sont distingués —
   par la couleur ET par la valeur d'accessibilité de chaque ligne (« ligne
-  ajoutée », « ligne supprimée », « contexte », « en-tête de diff »).
+  ajoutée », « ligne supprimée », « contexte », « en-tête de différences »).
 - **Une question `ask` est mise en évidence, et ne se répond pas ici** : la
   visionneuse affiche la question et ses options, sans aucun geste pour y répondre.
 - **Suivi automatique** : la vue ouvre le fil par la fin, puis suit les faits
@@ -1407,16 +1407,16 @@ projet dans lequel ouvrir un terminal. » — avec le bouton **Choisir un projet
 feuille « Choisir un répertoire » s'ouvre aussitôt sur ses répertoires. Avec un
 projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Recherche
 des dossiers de features… » (feuille ouverte ; « Aucun dossier de feature dans ce
-projet. » quand seul le dépôt principal existe), « Lancement du shell… », « shell
-vivant (pid <n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec
+projet. » quand seul le dépôt principal existe), « Lancement de l’interpréteur… »,
+« L’interpréteur est actif. », « L’interpréteur s’est terminé. Relancez-le pour continuer. » avec
 le bouton **Relancer**, et l'erreur explicite en cas d'échec (« Exécutable
 introuvable : … », « Répertoire introuvable : … », « Le terminal n'a pas pu
 s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres
 de terminal inutiles, puis relancez. »). Un échec du shell affiche **Copier le
 diagnostic** (`terminal.diagnostic.copy`, dans le bandeau `terminal.status` ou
 sous le message de `terminal.view`) : il copie le brut
-(`TerminalHostError.diagnostic`, par exemple « PTY indisponible (<errno>) :
-aucun process lancé. »). Dans la feuille, un échec de lecture du catalogue montre
+(`TerminalHostError.diagnostic`, par exemple « Pseudo-terminal indisponible (<errno>) :
+aucun processus lancé. »). Dans la feuille, un échec de lecture du catalogue montre
 « Réessayer » puis **Copier le diagnostic** (`terminal.launch.diagnostic`, jamais
 sur ↩) ; « Aucun projet ouvert » n'a rien à copier. Le sous-titre dit « OMP ·
 Actif » une fois OMP lancé. Aucun état n'est un rectangle vide.
@@ -1557,9 +1557,9 @@ réponses dans la session `purpose:"project"` (`POST /v1/sessions/{id}/dialogs/{
 Aucune reprise automatique : relancer l'app n'ouvre **aucune** session et n'arme
 **aucun** `/project` ; c'est toujours un geste de l'utilisateur.
 
-### PR et CI du projet
+### PR et intégration continue du projet
 
-Le volet **PR et CI** de la vue **Projet** affiche les PR ouvertes par le projet
+Le volet **PR et intégration continue** de la vue **Projet** affiche les PR ouvertes par le projet
 conduit — une ligne par feature au statut « PR ouverte » portant une `prUrl`, dans
 l'ordre du plan.
 
@@ -1602,7 +1602,7 @@ moins une feature « PR ouverte »).
    open "omp-console/build/OMP Console.app"
    ```
 
-2. Ouvrir la vue **Projet** : le volet **PR et CI** liste la PR, avec ses trois
+2. Ouvrir la vue **Projet** : le volet **PR et intégration continue** liste la PR, avec ses trois
    statuts requis et leur état ; un statut rouge affiche « Voir l'échec », lien
    cliquable vers le journal de l'exécution.
 3. Cliquer **Ouvrir la PR** : le navigateur par défaut ouvre l'URL de la PR.
@@ -1617,7 +1617,7 @@ moins une feature « PR ouverte »).
    ```
 
 7. Laisser passer ≤ 60 s + 2 s : le pilote marque la feature `merged`, la ligne
-   disparaît du volet **PR et CI** et le volet **Plan** passe le segment suivant
+   disparaît du volet **PR et intégration continue** et le volet **Plan** passe le segment suivant
    « en cours » — sans autre geste.
 
 Consigner dans la section `## Revue` du contrat le numéro de PR, le sha de fusion et
@@ -2350,6 +2350,14 @@ ou capture « avant » manquante, `2` non exécuté (hors macOS, session verroui
 Space plein écran d'une autre app, bundle absent, manifeste du bundle différent du
 support réel, Accessibilité refusée au terminal).
 
+## Vocabulaire et typographie
+
+Les textes visibles des fichiers `*Text.swift` (ConsoleCore, coque Mac, coque iOS)
+suivent [`GLOSSAIRE.md`](GLOSSAIRE.md) : un seul terme français par notion, sauf les
+termes conservés (« pipeline », « feature », « PR », /req, /specs, /impl, /review, noms
+propres), et la typographie française (’, espace insécable avant ; : ! ? et dans « »,
+…). La garde `test/typographie-et-glossaire-francais.test.ts` le vérifie.
+
 ## Structure du paquet
 
 ```
@@ -2455,7 +2463,7 @@ omp-console/
 │   │   ├── PullRequests.swift     statuts requis, lignes et décodage : fonctions pures
 │   │   ├── PRService.swift        lecture et fusion d'une PR (protocole + service `gh`)
 │   │   ├── URLOpening.swift       ouvreur d'URL (NSWorkspace)
-│   │   ├── ProjectPRPane.swift    le volet « PR et CI » et ses lignes
+│   │   ├── ProjectPRPane.swift    le volet « PR et intégration continue » et ses lignes
 │   │   ├── ProjectConsoleView.swift la fenêtre (en-tête d'informations, barre d'outils, PR, plan, document, conversation, feuille, inspecteur)
 │   │   ├── ProjectView.swift      la section « Projet » (même surface)
 │   │   └── ProjectLaunchSheet.swift la feuille « Piloter un projet… »
@@ -3622,7 +3630,7 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
 4. **Valider le plan** — à l'escalade de revue, « Corriger le plan » ouvre une
    feuille **préremplie avec le plan courant** ; éditer puis ✓ (« Répondre »)
    renvoie le texte corrigé, ou ✕ (« Annuler ») refuse.
-5. **Suivre la PR** — dans le volet « PR et CI », chaque PR affiche
+5. **Suivre la PR** — dans le volet « PR et intégration continue », chaque PR affiche
    « PR #<n> — <titre> » et l'état des trois contrôles requis (« check
    (ubuntu-latest) », « check (macos-latest) », « release-simulation »), chacun en
    mots (vert / rouge / en cours / ignoré). « Relire les statuts » rafraîchit. Le

@@ -24,17 +24,17 @@ extension SetupText {
     static func stepDetail(_ step: SetupStep) -> String {
         switch step {
         case .omp(let downloaded, let total):
-            if total <= 0 { return "Téléchargement d'OMP…" }
-            return "Téléchargement d'OMP — \(percent(downloaded, total)) %"
+            if total <= 0 { return "Téléchargement d’OMP…" }
+            return "Téléchargement d’OMP — \(percent(downloaded, total)) %"
         case .ompInstall:
-            return "Installation d'OMP…"
+            return "Installation d’OMP…"
         case .podman(let downloaded, let total):
             if total <= 0 { return "Téléchargement de Podman…" }
             return "Téléchargement de Podman — \(percent(downloaded, total)) %"
         case .podmanInstall:
             return "Installation de Podman…"
         case .legacyStop:
-            return "Arrêt de l'ancienne pile mémoire…"
+            return "Arrêt de l’ancienne pile mémoire…"
         case .migrationCopy:
             return "Copie de la base mémoire existante…"
         case .machine:
@@ -68,29 +68,29 @@ extension SetupText {
     static func failureDiagnostic(_ failure: SetupFailure) -> String {
         switch failure {
         case .components(.unsupportedMac):
-            return "Ce Mac n'est pas pris en charge (arm64 requis)."
+            return "Ce Mac n’est pas pris en charge (arm64 requis)."
         case .components(.network(let component, _)):
-            return "Pas de réseau : « \(component) » n'a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
+            return "Pas de réseau : « \(component) » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
         case .components(.checksum(let component)):
-            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
+            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
         case .components(.install(let component, let detail)):
-            return "L'installation de « \(component) » a échoué : \(detail)"
+            return "L’installation de « \(component) » a échoué : \(detail)"
         case .migration(.copyFailed(let detail)):
-            return "La copie de la base mémoire existante a échoué : \(detail)"
+            return "La copie de la base mémoire existante a échoué : \(detail)"
         case .legacy(.stopFailed(let name, let detail)):
-            return "L'ancienne pile mémoire n'a pas pu être arrêtée (\(name)) : \(detail)"
+            return "L’ancienne pile mémoire n’a pas pu être arrêtée (\(name)) : \(detail)"
         case .stack(.machineFailed(let detail)):
-            return "La machine de conteneurs n'a pas démarré : \(detail)"
+            return "La machine de conteneurs n’a pas démarré : \(detail)"
         case .stack(.portConflict(let port, let owner)):
-            return "Le port \(port) est déjà tenu par \(owner.userDescription) : la pile mémoire ne peut pas démarrer.\nGeste : \(owner.gesture)"
+            return "Le port \(port) est déjà tenu par \(owner.userDescription) : la pile mémoire ne peut pas démarrer.\nGeste : \(owner.gesture)"
         case .stack(.containerFailed(let name, let detail)):
-            return "Le conteneur \(name) n'a pas démarré : \(detail)"
+            return "Le conteneur \(name) n’a pas démarré : \(detail)"
         case .stack(.healthTimeout(let seconds)):
-            return "La mémoire n'a pas répondu dans le délai imparti (\(seconds) s)."
+            return "La mémoire n’a pas répondu dans le délai imparti (\(seconds) s)."
         case .stack(.installationFailed(let detail)):
-            return "L'identité d'installation de la pile n'a pas pu être écrite : \(detail)"
+            return "L’identité d’installation de la pile n’a pas pu être écrite : \(detail)"
         case .stack(.podmanFailed(let command, let detail)):
-            return "Podman a échoué (\(command)) : \(detail)"
+            return "Podman a échoué (\(command)) : \(detail)"
         }
     }
 
@@ -141,22 +141,22 @@ extension SetupText {
     static func failureSummary(_ failure: SetupFailure) -> String {
         switch failure {
         case .components(.unsupportedMac):
-            return "Ce Mac n'est pas pris en charge (arm64 requis)."
+            return "Ce Mac n’est pas pris en charge (arm64 requis)."
         case .components(.network(let component, _)):
-            return "Pas de réseau : « \(component) » n'a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
+            return "Pas de réseau : « \(component) » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
         case .components(.checksum(let component)):
-            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
+            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
         case .components(.install(let component, _)):
-            return "L'installation de « \(component) » a échoué."
+            return "L’installation de « \(component) » a échoué."
         case .legacy(.stopFailed), .stack(.machineFailed), .stack(.containerFailed),
              .stack(.podmanFailed), .stack(.portConflict):
             return failureMessage(failure)
         case .migration(.copyFailed):
             return "La copie de la base mémoire existante a échoué."
         case .stack(.healthTimeout(let seconds)):
-            return "La mémoire n'a pas répondu dans le délai imparti (\(seconds) s)."
+            return "La mémoire n’a pas répondu dans le délai imparti (\(seconds) s)."
         case .stack(.installationFailed):
-            return "L'identité d'installation de la pile n'a pas pu être écrite."
+            return "L’identité d’installation de la pile n’a pas pu être écrite."
         }
     }
 
@@ -170,7 +170,7 @@ extension SetupText {
         case .components(.unsupportedMac), .components(.checksum), .stack(.healthTimeout):
             return nil
         case .stack(.portConflict(_, let owner)):
-            return "Geste : \(owner.gesture)"
+            return "Geste : \(owner.gesture)"
         case .components(.network(_, let detail)), .components(.install(_, let detail)),
              .migration(.copyFailed(let detail)), .stack(.machineFailed(let detail)),
              .stack(.installationFailed(let detail)):
@@ -181,7 +181,7 @@ extension SetupText {
             (subject, raw) = (command, detail)
         }
         guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        return subject.map { "\($0) : \(raw)" } ?? raw
+        return subject.map { "\($0) : \(raw)" } ?? raw
     }
 
     /// Le bandeau de l'Accueil quand la feuille a été fermée : `nil` tant qu'elle

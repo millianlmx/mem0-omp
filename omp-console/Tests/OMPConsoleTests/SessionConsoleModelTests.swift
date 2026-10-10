@@ -319,24 +319,24 @@ func inspectorDiagnosticCarriesThePid() {
         sessionFile: "/tmp/projet/session.jsonl"
     )
     #expect(running == """
-    pid : 4242
-    état : running
-    identifiant de session : sess-1
-    projet : /tmp/projet
-    fichier de session : /tmp/projet/session.jsonl
+    numéro de processus : 4242
+    état : running
+    identifiant de session : sess-1
+    projet : /tmp/projet
+    fichier de session : /tmp/projet/session.jsonl
     """)
 
     let pasteboard = NSPasteboard.withUniqueName()
     defer { pasteboard.releaseGlobally() }
     DiagnosticPasteboard.copy(running, to: pasteboard)
-    #expect(pasteboard.string(forType: .string)?.contains("pid : 4242") == true)
+    #expect(pasteboard.string(forType: .string)?.contains("numéro de processus : 4242") == true)
 
     // Service non joint : le pid est absent, le diagnostic reste copiable.
     let unreached = SessionConsoleText.diagnostic(
         pid: nil, state: .idle, sessionId: nil, projectPath: nil, sessionFile: nil
     )
     #expect(unreached.split(separator: "\n").count == 5)
-    #expect(unreached.hasPrefix("pid : absent\n"))
+    #expect(unreached.hasPrefix("numéro de processus : absent\n"))
     #expect(!unreached.isEmpty)
 
     // Échec : le motif brut vit dans le diagnostic, pas sur la ligne « État ».

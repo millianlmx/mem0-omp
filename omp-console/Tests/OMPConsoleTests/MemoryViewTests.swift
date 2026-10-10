@@ -67,8 +67,8 @@ func memoryErrorTextsAreReadable() {
 func ac3ListTextsAreFrozen() {
     #expect(MemoryText.summaryCount(1) == "1 souvenir")
     #expect(MemoryText.summaryCount(3) == "3 souvenirs")
-    #expect(MemoryText.emptySummary("mem0-omp") == "Aucun souvenir dans la mémoire du projet « mem0-omp ».")
-    #expect(MemoryText.searchResults("sujet") == "Résultats pour « sujet »")
+    #expect(MemoryText.emptySummary("mem0-omp") == "Aucun souvenir dans la mémoire du projet « mem0-omp ».")
+    #expect(MemoryText.searchResults("sujet") == "Résultats pour « sujet »")
 }
 
 @Test("omp-console-redesign/S-18 : un souvenir se lit en un titre et une ligne de contexte (date · étiquettes)")
@@ -193,15 +193,15 @@ func ac6PrerequisiteTextsAreFrozen() {
     // (conséquence + geste) ; le brut d'avant reste le diagnostic copiable.
     #expect(
         MemoryText.omlxUnreachable
-            == "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
+            == "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
     )
     #expect(
         MemoryText.omlxUnreachableDiagnostic(url: "http://127.0.0.1:8000/models")
-            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
+            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
     )
     #expect(
         MemoryText.omlxUnauthorized
-            == "oMLX refuse la clé d'accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d'accès d'oMLX dans la configuration de la mémoire, puis rafraîchissez."
+            == "oMLX refuse la clé d’accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d’accès d’oMLX dans la configuration de la mémoire, puis rafraîchissez."
     )
     #expect(
         MemoryText.omlxUnauthorizedDiagnostic(url: "http://127.0.0.1:8000/models")
@@ -226,13 +226,13 @@ func ac6PrerequisiteTextsAreFrozen() {
 
 @Test("bug-embedded-podman-machine/AC-4 : les textes de l'état étranger sont FIGÉS (titre, description, détail, bouton)")
 func ac4ForeignOwnershipTextsAreFrozen() {
-    #expect(MemoryText.foreignTitle == "Ce n'est pas la pile d'OMP Console")
+    #expect(MemoryText.foreignTitle == "Ce n’est pas la pile d’OMP Console")
     #expect(
         MemoryText.foreignDescription
-            == "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port."
+            == "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n’est pas celle d’OMP Console tant que sa pile n’occupe pas le port."
     )
-    #expect(MemoryText.takeover == "Arrêter l'ancienne pile et reprendre")
-    #expect(MemoryText.foreignService == "Ce service n'est pas la pile d'OMP Console : son jeton d'installation est absent ou différent.")
+    #expect(MemoryText.takeover == "Arrêter l’ancienne pile et reprendre")
+    #expect(MemoryText.foreignService == "Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent.")
 
     // Le détail : adresse, propriétaire et geste, une ligne chacun.
     let legacy = ForeignOwnership(
@@ -243,7 +243,7 @@ func ac4ForeignOwnershipTextsAreFrozen() {
     )
     #expect(
         MemoryText.foreignOwnershipDetail(legacy)
-            == "http://localhost:8321\nTenu par l'ancienne pile mémoire (conteneur mem0-http).\nGeste : podman stop mem0-qdrant mem0-http"
+            == "http://localhost:8321\nTenu par l'ancienne pile mémoire (conteneur mem0-http).\nGeste : podman stop mem0-qdrant mem0-http"
     )
 
     let foreign = ForeignOwnership(

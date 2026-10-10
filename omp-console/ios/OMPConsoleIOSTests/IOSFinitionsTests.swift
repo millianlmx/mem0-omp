@@ -53,9 +53,9 @@ struct IOSFinitionsTests {
         }
         #expect(IOSMemoryText.summaryReasonShown == "Le sommaire est déjà affiché.")
         #expect(IOSMemoryText.summaryReasonSearching
-            == "Une recherche est en cours : le sommaire reviendra quand elle sera finie.")
+            == "Une recherche est en cours : le sommaire reviendra quand elle sera finie.")
         #expect(IOSMemoryText.summaryReasonGraph
-            == "Le sommaire s'affiche en mode Liste : touchez d'abord « Liste ».")
+            == "Le sommaire s’affiche en mode Liste : touchez d’abord « Liste ».")
     }
 
     // MARK: - Nom de feature (S-7)

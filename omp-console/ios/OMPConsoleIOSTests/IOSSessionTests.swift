@@ -606,7 +606,7 @@ struct IOSSessionTests {
         #expect(segment.map(\.tone) == [.section, .section, .section, .section, .section, .removed, .added])
         #expect(SessionDiffText.toneLabel(.added) == "ligne ajoutée")
         #expect(SessionDiffText.toneLabel(.removed) == "ligne supprimée")
-        #expect(SessionDiffText.toneLabel(.section) == "en-tête de diff")
+        #expect(SessionDiffText.toneLabel(.section) == "en-tête de différences")
         #expect(SessionDiffText.toneLabel(.context) == "contexte")
     }
 

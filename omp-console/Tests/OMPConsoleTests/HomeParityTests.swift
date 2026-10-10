@@ -47,7 +47,7 @@ struct HomeParityTests {
         #expect(attention.map(\.nature) == [.milestoneSpecs, .milestoneReview, .failed, .blocked, .question])
         #expect(
             attention.map { HomeText.natureText($0.nature) }
-                == ["Specs à valider", "Revue à accepter", "En échec", "Bloquée", "Question"]
+                == ["Spécifications à valider", "Revue à accepter", "En échec", "Bloquée", "Question"]
         )
         // La question en vol porte SA question et ses deux options ; les deux
         // jalons portent l'invite partagée de leur nature.
@@ -63,9 +63,9 @@ struct HomeParityTests {
         let failed = try #require(attention.first { $0.nature == .failed })
         let blocked = try #require(attention.first { $0.nature == .blocked })
         #expect(failed.card.title == "cache-sessions")
-        #expect(failed.prompt == "L'étape « Implémentation » s'est arrêtée en échec.")
+        #expect(failed.prompt == "L’étape « Implémentation » s’est arrêtée en échec.")
         #expect(blocked.card.title == "export-csv")
-        #expect(blocked.prompt == "La pipeline est bloquée à l'étape « Spécification ».")
+        #expect(blocked.prompt == "La pipeline est bloquée à l’étape « Spécification ».")
         #expect(HomePresentation.cardAction(failed) == .relaunch)
         #expect(HomePresentation.cardAction(blocked) == .relaunch)
         let others = Set((dashboard.running + dashboard.paused + dashboard.notStarted + dashboard.delivered).map(\.id))
@@ -166,11 +166,11 @@ struct HomeParityTests {
         // La phrase rendue pour l'entrée retenue, des deux états testables.
         #expect(
             HomeText.launchBanner(title: "ma-feature", state: .taken)
-                == "Pipeline « ma-feature » lancée : la collecte des besoins démarre."
+                == "Pipeline « ma-feature » lancée : la collecte des besoins démarre."
         )
         #expect(
             HomeText.launchBanner(title: "ma-feature", state: .refused(reason: nil))
-                == "Lancement de « ma-feature » refusé."
+                == "Lancement de « ma-feature » refusé."
         )
     }
 

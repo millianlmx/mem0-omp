@@ -172,9 +172,9 @@ func dashboardRanksEachCardInOneSection() {
 func failedAndBlockedCardsReadAsPlainFrench() {
     #expect(HomeText.natureText(.failed) == "En échec")
     #expect(HomeText.natureText(.blocked) == "Bloquée")
-    #expect(HomeText.failedPrompt(.impl) == "L'étape « Implémentation » s'est arrêtée en échec.")
-    #expect(HomeText.failedPrompt(nil) == "La pipeline s'est arrêtée en échec.")
-    #expect(HomeText.blockedPrompt(.specs) == "La pipeline est bloquée à l'étape « Spécification ».")
+    #expect(HomeText.failedPrompt(.impl) == "L’étape « Implémentation » s’est arrêtée en échec.")
+    #expect(HomeText.failedPrompt(nil) == "La pipeline s’est arrêtée en échec.")
+    #expect(HomeText.blockedPrompt(.specs) == "La pipeline est bloquée à l’étape « Spécification ».")
     #expect(HomeText.blockedPrompt(nil) == "La pipeline est bloquée.")
 
     let prompts = PipelinePhase.allCases.flatMap { [HomeText.failedPrompt($0), HomeText.blockedPrompt($0)] }
@@ -549,13 +549,13 @@ func notificationsBannerShowsOnDenialUntilIgnored() {
 
 @Test("omp-console-redesign/AC-5 : le bandeau de lancement dit l'état de la commande, jamais masqué à tort")
 func launchBannerFollowsTheLaunchCommand() {
-    #expect(HomeText.launchBanner(title: "export", state: .awaitingAck) == "Lancement de « export »…")
-    #expect(HomeText.launchBanner(title: "export", state: .taken) == "Pipeline « export » lancée : la collecte des besoins démarre.")
+    #expect(HomeText.launchBanner(title: "export", state: .awaitingAck) == "Lancement de « export »…")
+    #expect(HomeText.launchBanner(title: "export", state: .taken) == "Pipeline « export » lancée : la collecte des besoins démarre.")
     #expect(HomeText.launchBanner(title: "!!!", state: .refused(reason: "contenu de feature vide ou illisible"))
-        == "Lancement de « !!! » refusé : contenu de feature vide ou illisible")
-    #expect(HomeText.launchBanner(title: "export", state: .refused(reason: nil)) == "Lancement de « export » refusé.")
+        == "Lancement de « !!! » refusé : contenu de feature vide ou illisible")
+    #expect(HomeText.launchBanner(title: "export", state: .refused(reason: nil)) == "Lancement de « export » refusé.")
     #expect(HomeText.launchBanner(title: "export", state: .unacknowledged)
-        == "Lancement de « export » : \(ActionsText.unacknowledged)")
+        == "Lancement de « export » : \(ActionsText.unacknowledged)")
 
     let launch = ActionJournalEntry(id: "l1", kindLabel: ActionsText.launchLabel, targetLabel: "export", state: .taken, at: 2)
     let other = ActionJournalEntry(id: "s1", kindLabel: ActionsText.specsLabel, targetLabel: "x", state: .taken, at: 3)

@@ -18,8 +18,8 @@ enum IOSSessionOmpText {
     static let emptyHelp = "Choisissez un dépôt du Mac et lancez la session."
 
     /// La confirmation d'arrêt (AC-13, S-7).
-    static let stopConfirmTitle = "Arrêter la session ?"
-    static let stopConfirmMessage = "La session hébergée sur le Mac s'arrêtera."
+    static let stopConfirmTitle = "Arrêter la session ?"
+    static let stopConfirmMessage = "La session hébergée sur le Mac s’arrêtera."
 
     /// Le libellé d'accessibilité de l'en-tête : le dépôt, puis l'état (S-2).
     static func headerLabel(_ project: String, _ state: String) -> String { "\(project) — \(state)" }

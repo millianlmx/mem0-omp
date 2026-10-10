@@ -92,7 +92,7 @@ func refusalIsVerbatim() async throws {
     model.accept(cardAction())
     await waitForCommand(model)
     #expect(model.journal.first?.state == .refused(reason: "lot illisible : feature absente"))
-    #expect(ActionsText.stateText(model.journal.first!.state) == "refusée : lot illisible : feature absente")
+    #expect(ActionsText.stateText(model.journal.first!.state) == "refusée : lot illisible : feature absente")
 }
 
 @MainActor

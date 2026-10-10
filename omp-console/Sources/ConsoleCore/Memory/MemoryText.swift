@@ -18,13 +18,13 @@ public enum MemoryText {
     public static let noProjectTitle = "Aucun projet ouvert"
     public static let noProjectDescription = "Choisissez le projet dont vous voulez consulter la mémoire."
     public static let unavailableTitle = "Mémoire indisponible"
-    public static let unavailableDescription = "Le service de mémoire ne répond pas. Vérifiez qu'il est démarré, puis réessayez."
+    public static let unavailableDescription = "Le service de mémoire ne répond pas. Vérifiez qu’il est démarré, puis réessayez."
     public static let retry = "Réessayer"
     public static let loading = "Chargement de la mémoire du projet…"
     public static let emptySummaryTitle = "Aucun souvenir"
     public static let noResultTitle = "Aucun résultat"
     public static let noMatch = "La mémoire du projet ne contient aucun souvenir correspondant."
-    public static let belowThreshold = "Aucun souvenir n'est assez proche de cette recherche."
+    public static let belowThreshold = "Aucun souvenir n’est assez proche de cette recherche."
     public static let searchUnsupportedTitle = "Recherche impossible"
     public static let noSemanticScore = "Ce service de mémoire ne sait pas classer les souvenirs par pertinence."
     public static let nothingSelected = "Sélectionnez un souvenir pour le lire."
@@ -38,14 +38,14 @@ public enum MemoryText {
 
     // Quelqu'un répond à l'adresse du service SANS porter le jeton d'installation
     // de l'app : la section Mémoire le NOMME au lieu de rendre un état disponible.
-    public static let foreignTitle = "Ce n'est pas la pile d'OMP Console"
-    public static let foreignDescription = "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port."
+    public static let foreignTitle = "Ce n’est pas la pile d’OMP Console"
+    public static let foreignDescription = "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n’est pas celle d’OMP Console tant que sa pile n’occupe pas le port."
     /// Le libellé du bouton de reprise (S-6), partagé avec la feuille de
     /// préparation (`SetupText.takeover`) : une seule action, un seul mot.
-    public static let takeover = "Arrêter l'ancienne pile et reprendre"
+    public static let takeover = "Arrêter l’ancienne pile et reprendre"
     /// Le message d'erreur du client quand `/health` répond sans notre jeton (S-4) :
     /// il alimente le détail de l'état « indisponible ».
-    public static let foreignService = "Ce service n'est pas la pile d'OMP Console : son jeton d'installation est absent ou différent."
+    public static let foreignService = "Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent."
 
     // MARK: - Prérequis système (S-6, all-in-one-app/AC-6)
 
@@ -57,17 +57,17 @@ public enum MemoryText {
     /// la conséquence, puis le geste. L'URL sondée vit dans le diagnostic copiable
     /// (`omlxUnreachableDiagnostic(url:)`, coque).
     public static let omlxUnreachable =
-        "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
+        "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
 
     /// oMLX répond 401/403 : la clé configurée est refusée, la recherche ne peut
     /// pas obtenir ses embeddings. Ni code, ni nom de variable à l'écran.
     public static let omlxUnauthorized =
-        "oMLX refuse la clé d'accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d'accès d'oMLX dans la configuration de la mémoire, puis rafraîchissez."
+        "oMLX refuse la clé d’accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d’accès d’oMLX dans la configuration de la mémoire, puis rafraîchissez."
 
     /// Une écriture du graphe (création, modification, suppression) a échoué : la
     /// réponse brute du service reste dans le diagnostic copiable.
     public static let saveFailed =
-        "La modification n'a pas été enregistrée : la mémoire n'a pas répondu comme prévu. Réessayez ; si l'échec revient, copiez le diagnostic."
+        "La modification n’a pas été enregistrée : la mémoire n’a pas répondu comme prévu. Réessayez ; si l’échec revient, copiez le diagnostic."
 
     /// L'adresse du service et la DERNIÈRE erreur (S-6.3), en détail secondaire de
     /// « Mémoire indisponible » : une ligne chacune, pour qu'aucune ne disparaisse.
@@ -81,12 +81,12 @@ public enum MemoryText {
     }
 
     public static func emptySummary(_ scope: String) -> String {
-        "Aucun souvenir dans la mémoire du projet « \(scope) »."
+        "Aucun souvenir dans la mémoire du projet « \(scope) »."
     }
 
     /// Le rappel de la requête au-dessus d'une liste de résultats de recherche.
     public static func searchResults(_ query: String) -> String {
-        "Résultats pour « \(query) »"
+        "Résultats pour « \(query) »"
     }
 
     public static func unexpectedStatus(code: Int, detail: String) -> String {
@@ -118,7 +118,7 @@ public enum MemoryText {
     public static let zoomOut = "Réduire"
     public static let zoomOutHelp = "Réduire (⌘−)"
     public static let recenter = "Recentrer"
-    public static let recenterHelp = "Recadrer le graphe sur l'écran (⌘0)"
+    public static let recenterHelp = "Recadrer le graphe sur l’écran (⌘0)"
 
     public static let createMemory = "Nouveau souvenir"
     public static let createMemoryHelp = "Écrire un souvenir dans un projet"
@@ -155,8 +155,8 @@ public enum MemoryText {
     public static let editTitle = "Modifier le souvenir"
     public static let delete = "Supprimer…"
     public static let deleteHelp = "Supprimer ce souvenir de la mémoire"
-    public static let deleteConfirmTitle = "Supprimer ce souvenir ?"
-    public static let deleteConfirmMessage = "Le souvenir disparaît de la mémoire du service ; ses liens manuels sont supprimés."
+    public static let deleteConfirmTitle = "Supprimer ce souvenir ?"
+    public static let deleteConfirmMessage = "Le souvenir disparaît de la mémoire du service ; ses liens manuels sont supprimés."
     public static let deleteConfirm = "Supprimer"
     public static let cancel = "Annuler"
     public static let save = "Enregistrer"
@@ -175,7 +175,7 @@ public enum MemoryText {
     public static let noCandidate = "Aucun souvenir à relier."
     public static let detach = "Détacher"
     public static let noManualLink = "Aucun lien manuel."
-    public static let linkNotSaved = "Le lien n'a pas pu être enregistré sur le disque."
+    public static let linkNotSaved = "Le lien n’a pas pu être enregistré sur le disque."
     public static let link = "Relier"
 
     // MARK: - Ligne de la liste et détail (omp-console-redesign S-18 R7)

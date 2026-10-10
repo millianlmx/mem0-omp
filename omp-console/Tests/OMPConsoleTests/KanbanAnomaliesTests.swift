@@ -429,14 +429,14 @@ func bubbleLinesSpeakConsequenceAndGesture() throws {
     // Les phrases, mot pour mot (S-2) ; les deux lots morts sont rangés par clé
     // de dépôt croissante.
     let deadLots = [
-        (resumableKey, "Le pilote de bulle-reprenable s'est arrêté : ses pipelines n'avancent plus."),
-        (closedKey, "Le pilote de bulle-close s'est arrêté : ses pipelines n'avancent plus."),
+        (resumableKey, "Le pilote de bulle-reprenable s’est arrêté : ses pipelines n’avancent plus."),
+        (closedKey, "Le pilote de bulle-close s’est arrêté : ses pipelines n’avancent plus."),
     ].sorted { $0.0 < $1.0 }.map(\.1)
     #expect(board.anomalies.map(\.text) == [
         KanbanText.anomalyUnreadable,
-        "\(runLabel) s'est arrêtée de façon inattendue et n'avance plus.",
+        "\(runLabel) s’est arrêtée de façon inattendue et n’avance plus.",
     ] + deadLots + [
-        "Deux sources décrivent la même pipeline : double. Le tableau n'en montre qu'une.",
+        "Deux sources décrivent la même pipeline : double. Le tableau n’en montre qu’une.",
     ])
 
     // `.resume` exactement pour le lot reprenable, sur sa PREMIÈRE carte

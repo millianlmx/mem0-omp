@@ -34,7 +34,7 @@ APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsol
 BUNDLE_ID="com.omp.console.ios"
 RECIPE_LOGS="$ROOT/omp-console/build/ios-recipe-logs"
 
-TITLE="Corriger la fiche d'une carte Pipelines : titre complet sur plusieurs lignes"
+TITLE="Corriger la fiche d’une carte Pipelines : titre complet sur plusieurs lignes"
 READY="pipelines-recipe-ready"
 ID_TITLE="pipelines.card.sheet.title"
 ID_CLOSE="pipelines.card.sheet.close"

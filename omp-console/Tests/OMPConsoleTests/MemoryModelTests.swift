@@ -343,7 +343,7 @@ func ac6OMLXConnectionRefusedIsNamed() async {
     #expect(model.omlxBanner?.message == MemoryText.omlxUnreachable)
     #expect(
         model.omlxBanner?.diagnostic
-            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
+            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
     )
     // Le prérequis manquant n'efface JAMAIS la mémoire : la liste reste servie.
     #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))

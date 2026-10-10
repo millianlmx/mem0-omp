@@ -106,11 +106,11 @@ enum IOSMacErrorText {
     static func cause(_ failure: IOSMacFailure) -> String {
         switch failure {
         case .macOutdated:
-            return "Fonction indisponible : app Mac trop ancienne."
+            return "Fonction indisponible : app Mac trop ancienne."
         case .macUnreachable:
             return "Mac injoignable."
         case .macTimedOut:
-            return "Délai dépassé : le Mac a mis trop de temps à répondre."
+            return "Délai dépassé : le Mac a mis trop de temps à répondre."
         case .serviceUnavailable:
             return "Service indisponible sur le Mac."
         case .refused:
@@ -118,7 +118,7 @@ enum IOSMacErrorText {
         case .serviceOutdated:
             return IOSMemoryText.graphServiceOutdated
         case .rejected(let motive):
-            return "Le Mac n'a pas pu traiter la demande : \(presentable(motive))."
+            return "Le Mac n’a pas pu traiter la demande : \(presentable(motive))."
         case .incompatibleProtocol(let local, let remote):
             return ConnectionText.incompatibleProtocol(local: local, remote: remote) + "."
         case .generic:
@@ -131,21 +131,21 @@ enum IOSMacErrorText {
         case .macOutdated:
             return "Mets à jour OMP Console sur le Mac, puis réessaie."
         case .macUnreachable:
-            return "Vérifie que le Mac est allumé, sur le même réseau que cet appareil, et qu'OMP Console y est ouvert, puis réessaie."
+            return "Vérifie que le Mac est allumé, sur le même réseau que cet appareil, et qu’OMP Console y est ouvert, puis réessaie."
         case .macTimedOut:
             return "Réessaie dans un instant."
         case .serviceUnavailable:
-            return "Ouvre OMP Console sur le Mac et vérifie que ses services sont démarrés (redéploie le service mémoire s'il le faut), puis réessaie."
+            return "Ouvre OMP Console sur le Mac et vérifie que ses services sont démarrés (redéploie le service mémoire s’il le faut), puis réessaie."
         case .refused:
             return "Vérifie dans OMP Console sur le Mac que cet appareil est toujours appairé, puis réessaie."
         case .serviceOutdated:
             return ""
         case .rejected:
-            return "Vérifie la demande ou actualise l'écran, puis réessaie."
+            return "Vérifie la demande ou actualise l’écran, puis réessaie."
         case .incompatibleProtocol:
-            return "Mets à jour l'app de cet appareil et OMP Console sur le Mac pour qu'elles parlent la même version."
+            return "Mets à jour l’app de cet appareil et OMP Console sur le Mac pour qu’elles parlent la même version."
         case .generic:
-            return "Réessaie dans un instant ; si l'erreur revient, redémarre OMP Console sur le Mac."
+            return "Réessaie dans un instant ; si l’erreur revient, redémarre OMP Console sur le Mac."
         }
     }
 

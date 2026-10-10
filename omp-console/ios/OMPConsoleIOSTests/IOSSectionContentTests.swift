@@ -33,7 +33,7 @@ struct IOSSectionContentTests {
         // Les mots sont ceux de la coque macOS : les figer ici, c'est figer la
         // valeur du noyau partagé, pas une seconde déclaration.
         #expect(HomeText.firstRunTitle == "Lancez votre première feature")
-        #expect(KanbanText.noPipeline == "Aucune pipeline pour l'instant.")
+        #expect(KanbanText.noPipeline == "Aucune pipeline pour l’instant.")
         #expect(ProjectViewText.emptyTitle == "Aucun projet piloté.")
         #expect(SessionConsoleText.noProjectTitle == "Aucune session")
         #expect(SessionSelectorText.emptyTitle == "Aucune session")

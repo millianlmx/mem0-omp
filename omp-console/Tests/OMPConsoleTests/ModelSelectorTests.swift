@@ -180,7 +180,7 @@ func modelsRefusalIsJournalled() async throws {
 
     #expect(model.journal.first?.state == .refused(reason: motif))
     #expect(ActionsText.journalLine(for: try #require(model.journal.first))
-        == "\(ActionsText.modelsLabel) · alpha · refusée : \(motif)")
+        == "\(ActionsText.modelsLabel) · alpha · refusée : \(motif)")
 }
 
 @MainActor

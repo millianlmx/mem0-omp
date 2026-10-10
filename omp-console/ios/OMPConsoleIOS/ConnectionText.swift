@@ -25,7 +25,7 @@ enum ConnectionText {
 
     static let stateTitle = "État"
     static let unpaired = "Non appairé"
-    static let searching = "Recherche d'un Mac…"
+    static let searching = "Recherche d’un Mac…"
     static let noNetwork = "Hors réseau"
     static let revoked = "Jeton révoqué"
 
@@ -40,14 +40,14 @@ enum ConnectionText {
     /// « Mac injoignable » sans adresse (`sheetState`).
     static func macAbsent(endpoint: String) -> String { "\(macAbsentState) — \(endpoint)" }
 
-    /// « Version d'API incompatible (app <local>, Mac <remote>) », et
+    /// « Version de protocole incompatible (app <local>, Mac <remote>) », et
     /// « …, Mac inconnu) » quand le numéro du Mac est nul : les DEUX numéros sont
     /// rendus dès que le Mac les a annoncés.
     static func incompatibleProtocol(local: Int, remote: Int?) -> String {
         if let remote {
-            return "Version d'API incompatible (app \(local), Mac \(remote))"
+            return "Version de protocole incompatible (app \(local), Mac \(remote))"
         }
-        return "Version d'API incompatible (app \(local), Mac inconnu)"
+        return "Version de protocole incompatible (app \(local), Mac inconnu)"
     }
 
     /// Le libellé de la zone d'état, composé depuis l'état publié du modèle.
@@ -79,7 +79,7 @@ enum ConnectionText {
     static let macAbsentState = "Mac injoignable"
 
     /// Le mode « lecture du trousseau » : l'appairage n'est pas encore connu.
-    static let restoring = "Lecture de l'appairage…"
+    static let restoring = "Lecture de l’appairage…"
 
     /// Le libellé de la zone d'état DE LA FEUILLE : jamais d'adresse, pour que
     /// l'adresse ne s'y lise qu'une fois (`connection.endpoint`).
@@ -103,7 +103,7 @@ enum ConnectionText {
     }
 
     /// Le Mac a refusé le jeton conservé : il a été effacé.
-    static let refusedMessage = "Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code d'appairage."
+    static let refusedMessage = "Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code d’appairage."
 
     // MARK: - Découverte
 
@@ -112,7 +112,7 @@ enum ConnectionText {
     static let noMacFound = "Aucun Mac trouvé."
 
     /// « Adresse manuelle utilisée ; le Mac trouvé n'est pas utilisé. »
-    static let manualAddressInUse = "Adresse manuelle utilisée ; le Mac trouvé n'est pas utilisé."
+    static let manualAddressInUse = "Adresse manuelle utilisée ; le Mac trouvé n’est pas utilisé."
 
     // MARK: - Adresse manuelle
 
@@ -124,27 +124,27 @@ enum ConnectionText {
 
     /// Le groupe replié qui porte la modification de l'adresse d'un appareil
     /// appairé dont le Mac est injoignable.
-    static let addressEdit = "Modifier l'adresse"
+    static let addressEdit = "Modifier l’adresse"
 
     // MARK: - Appairage
 
-    static let codeTitle = "Code d'appairage"
+    static let codeTitle = "Code d’appairage"
     static let codeField = "8 caractères"
     static let codePair = "Appairer"
 
     /// Le code mal formé (aucune requête émise). Les lettres exclues sont celles
     /// de A–Z absentes de `ConsoleAPI.Service.pairingCodeAlphabet` (Crockford).
-    static let codeMalformed = "Le code fait 8 caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U."
+    static let codeMalformed = "Le code fait 8 caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U."
 
     /// Où trouver le code sur le Mac : `PairingText.menuItem`, le raccourci de
     /// `RemoteCommands`, puis `PairingText.generate`, mot pour mot.
-    static let codeHelp = "Sur le Mac : menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code »."
+    static let codeHelp = "Sur le Mac : menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code »."
 
     /// Le refus UNIQUE des trois causes indistinguables (expiré, consommé, verrouillé).
     static let codeRefused = "Code refusé — demandez un code frais au Mac."
 
     /// Le Mac n'a pas répondu, ou a répondu de travers : réessayer est licite.
-    static let codeUnavailable = "Le Mac n'a pas confirmé l'appairage — réessayez."
+    static let codeUnavailable = "Le Mac n’a pas confirmé l’appairage — réessayez."
     static let retry = "Réessayer"
 
     /// Le message d'un échec d'appairage publié par le modèle.
@@ -175,8 +175,8 @@ enum ConnectionText {
     // MARK: - Oublier ce Mac
 
     static let forget = "Oublier ce Mac"
-    static let forgetTitle = "Oublier ce Mac ?"
-    static let forgetMessage = "Cet appareil ne sera plus appairé. Pour le reconnecter, il faudra un nouveau code d'appairage."
+    static let forgetTitle = "Oublier ce Mac ?"
+    static let forgetMessage = "Cet appareil ne sera plus appairé. Pour le reconnecter, il faudra un nouveau code d’appairage."
     static let forgetCancel = "Annuler"
 
     // MARK: - Privilège réseau local

@@ -177,12 +177,12 @@ struct IOSHomeTests {
 
         #expect(failed.nature == .failed)
         #expect(HomeText.natureText(failed.nature) == "En échec")
-        #expect(failed.prompt == "L'étape « Implémentation » s'est arrêtée en échec.")
+        #expect(failed.prompt == "L’étape « Implémentation » s’est arrêtée en échec.")
         #expect(IOSHomeText.natureSymbol(failed.nature) == "xmark.octagon.fill")
 
         #expect(blocked.nature == .blocked)
         #expect(HomeText.natureText(blocked.nature) == "Bloquée")
-        #expect(blocked.prompt == "La pipeline est bloquée à l'étape « Spécification ».")
+        #expect(blocked.prompt == "La pipeline est bloquée à l’étape « Spécification ».")
         #expect(IOSHomeText.natureSymbol(blocked.nature) == "exclamationmark.triangle.fill")
 
         for attention in [failed, blocked] {

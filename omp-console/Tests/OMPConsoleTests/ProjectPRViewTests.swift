@@ -13,7 +13,7 @@ func prPaneTextsAreExact() {
     // Le message de lecture préfixe le `userMessage` d'une GhError (S-7).
     #expect(
         ProjectViewText.prUnavailable("gh est introuvable")
-            == "Statuts indisponibles : gh est introuvable"
+            == "Statuts indisponibles : gh est introuvable"
     )
 }
 
@@ -22,11 +22,11 @@ func prPaneTextsAreExact() {
 func prOpenTextsAreExact() {
     #expect(
         ProjectViewText.prNotOpenable(url: "issoir-1 pane")
-            == "L'adresse de cette PR n'est pas ouvrable dans un navigateur : issoir-1 pane."
+            == "L’adresse de cette PR n’est pas ouvrable dans un navigateur : issoir-1 pane."
     )
     #expect(
         ProjectViewText.prOpenFailed(number: 45)
-            == "L'ouverture de la PR #45 dans le navigateur a échoué."
+            == "L’ouverture de la PR #45 dans le navigateur a échoué."
     )
 }
 
@@ -35,13 +35,13 @@ func prOpenTextsAreExact() {
 func prMergeTextsAreExact() {
     #expect(
         ProjectViewText.prMergeRefused(number: 45)
-            == "Fusion refusée : les trois statuts requis ne sont pas verts (PR #45)."
+            == "Fusion refusée : les trois statuts requis ne sont pas verts (PR #45)."
     )
     #expect(
         ProjectViewText.prMergeRejected(detail: "la branche a divergé", number: 45)
-            == "Fusion refusée par GitHub : la branche a divergé (PR #45)."
+            == "Fusion refusée par GitHub : la branche a divergé (PR #45)."
     )
-    #expect(ProjectViewText.prMergeConfirmTitle(number: 45) == "Fusionner la PR #45 ?")
+    #expect(ProjectViewText.prMergeConfirmTitle(number: 45) == "Fusionner la PR #45 ?")
     #expect(
         ProjectViewText.prMergeConfirmMessage(title: "Ma PR")
             == "Ma PR — les trois statuts requis sont verts."
@@ -51,13 +51,13 @@ func prMergeTextsAreExact() {
 @Test("suivi-pr-ci/AC-1 : la ligne d'un statut a ses quatre états en toutes lettres")
 func checkLineHasFourStates() {
     #expect(ProjectViewText.prCheckLine(name: "check (ubuntu-latest)", state: PRCheckState.green.label)
-        == "check (ubuntu-latest) : vert")
+        == "check (ubuntu-latest) : vert")
     #expect(ProjectViewText.prCheckLine(name: "check (macos-latest)", state: PRCheckState.red.label)
-        == "check (macos-latest) : rouge")
+        == "check (macos-latest) : rouge")
     #expect(ProjectViewText.prCheckLine(name: "release-simulation", state: PRCheckState.pending.label)
-        == "release-simulation : en cours")
+        == "release-simulation : en cours")
     #expect(ProjectViewText.prCheckLine(name: "release-simulation", state: PRCheckState.ignored.label)
-        == "release-simulation : ignoré")
+        == "release-simulation : ignoré")
 }
 
 @Test("suivi-pr-ci/AC-1 : `headline` a ses trois formes")

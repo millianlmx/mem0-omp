@@ -20,7 +20,7 @@ enum FilesText {
     static let deletedBadge = "Supprimé"
 
     // Comparaison (affichée seulement en mode Modifications)
-    static let comparedToHead = "Comparé au dernier commit"
+    static let comparedToHead = "Comparé à la dernière version validée"
     static let comparedToBranchStart = "Comparé au départ de la branche"
 
     // États
@@ -28,7 +28,7 @@ enum FilesText {
     static let noProjectDescription = "Choisissez le projet dont vous voulez parcourir les fichiers."
     static let errorTitle = "Lecture impossible"
     static let noFiles = "Aucun fichier dans ce dossier."
-    static let nothingSelected = "Choisissez un fichier dans l'arborescence."
+    static let nothingSelected = "Choisissez un fichier dans l’arborescence."
     static let missingFile = "Ce fichier a été supprimé du disque."
     static let emptyFile = "Fichier vide."
     static let emptyNewFile = "Nouveau fichier vide."
@@ -47,19 +47,19 @@ enum FilesText {
         "Lecture de \(path)…"
     }
 
-    static let baseUnavailable = "Les différences ne peuvent pas être calculées pour ce dossier : sa version de départ est introuvable."
-    static let binary = "Ce fichier n'est pas du texte : il ne peut pas être affiché."
-    static let unreadable = "Ce fichier ne peut pas être lu : il a disparu ou son accès est refusé. Rafraîchissez pour réessayer."
+    static let baseUnavailable = "Les différences ne peuvent pas être calculées pour ce dossier : sa version de départ est introuvable."
+    static let binary = "Ce fichier n’est pas du texte : il ne peut pas être affiché."
+    static let unreadable = "Ce fichier ne peut pas être lu : il a disparu ou son accès est refusé. Rafraîchissez pour réessayer."
 
     // Échecs de lecture (S-8) : la phrase affichée ; le brut est `FilesError.diagnostic`.
-    static let gitNotFound = "Les outils de développement d'Apple sont introuvables : les fichiers ne peuvent pas être lus. Installez-les, puis rafraîchissez."
-    static let notARepository = "Ce dossier n'est pas un projet suivi : ses fichiers ne peuvent pas être comparés. Choisissez un autre dossier dans la section « Session OMP »."
-    static let commandFailed = "La lecture du projet a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l'échec revient, copiez le diagnostic."
+    static let gitNotFound = "Les outils de développement d’Apple sont introuvables : les fichiers ne peuvent pas être lus. Installez-les, puis rafraîchissez."
+    static let notARepository = "Ce dossier n’est pas un projet suivi : ses fichiers ne peuvent pas être comparés. Choisissez un autre dossier dans la section « Session OMP »."
+    static let commandFailed = "La lecture du projet a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l’échec revient, copiez le diagnostic."
     static let commandTimedOut = "La lecture du projet a pris trop de temps et a été abandonnée. Rafraîchissez pour réessayer."
-    static let gitCommandRefused = "Une lecture non autorisée a été bloquée : rien n'a été modifié. Copiez le diagnostic pour le signaler."
-    static let targetGone = "Ce dossier n'existe plus : choisissez-en un autre dans le menu « Dossier »."
-    static let watchFailed = "Le suivi des modifications s'est arrêté : l'affichage ne se met plus à jour tout seul. Rafraîchissez pour le relancer."
-    static let readFailed = "La lecture a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l'échec revient, copiez le diagnostic."
+    static let gitCommandRefused = "Une lecture non autorisée a été bloquée : rien n’a été modifié. Copiez le diagnostic pour le signaler."
+    static let targetGone = "Ce dossier n’existe plus : choisissez-en un autre dans le menu « Dossier »."
+    static let watchFailed = "Le suivi des modifications s’est arrêté : l’affichage ne se met plus à jour tout seul. Rafraîchissez pour le relancer."
+    static let readFailed = "La lecture a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l’échec revient, copiez le diagnostic."
 
     /// Le badge d'une entrée, ou `nil` pour un fichier suivi : seul ce qui diffère
     /// du dépôt mérite d'être signalé.

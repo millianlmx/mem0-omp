@@ -43,7 +43,7 @@ struct ConnectionTextTests {
         let text = ConnectionText.state(.incompatibleProtocol(local: 3, remote: 5))
         #expect(text.contains("app 3"))
         #expect(text.contains("Mac 5"))
-        #expect(text.contains("Version d'API incompatible"))
+        #expect(text.contains("Version de protocole incompatible"))
 
         // Le numéro du Mac absent : le libellé le dit, il n'invente pas de valeur.
         let unknown = ConnectionText.incompatibleProtocol(local: 3, remote: nil)
@@ -56,7 +56,7 @@ struct ConnectionTextTests {
         #expect(ConnectionText.stateTitle == "État")
         #expect(ConnectionText.discoveryTitle == "Découverte")
         #expect(ConnectionText.addressTitle == "Adresse manuelle")
-        #expect(ConnectionText.codeTitle == "Code d'appairage")
+        #expect(ConnectionText.codeTitle == "Code d’appairage")
 
         // Les mots d'action de chaque zone, écrits une seule fois dans ConnectionText.
         #expect(ConnectionText.macFound == "Mac trouvé")

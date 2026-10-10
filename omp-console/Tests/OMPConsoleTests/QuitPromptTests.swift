@@ -10,7 +10,7 @@ import Testing
 func quitPromptSessionAlone() throws {
     let prompt = try #require(QuitPrompt.make([.session(name: "mem0-omp")]))
     #expect(prompt.title == "Quitter arrêtera des activités en cours.")
-    #expect(prompt.message == "La session OMP de « mem0-omp » s'arrêtera.")
+    #expect(prompt.message == "La session OMP de « mem0-omp » s’arrêtera.")
     for word in ["pilotage", "Terminal", "pipeline"] {
         #expect(!prompt.message.contains(word))
     }
@@ -25,9 +25,9 @@ func quitPromptThreeActivities() throws {
     ]))
     let lines = prompt.message.components(separatedBy: "\n")
     #expect(lines == [
-        "La session OMP de « mem0-omp » s'arrêtera.",
-        "La commande « sleep » du Terminal s'arrêtera.",
-        "Le pilotage de « mon-projet » continue dans OMP : vous le retrouverez en pilotant de nouveau ce projet.",
+        "La session OMP de « mem0-omp » s’arrêtera.",
+        "La commande « sleep » du Terminal s’arrêtera.",
+        "Le pilotage de « mon-projet » continue dans OMP : vous le retrouverez en pilotant de nouveau ce projet.",
     ])
     #expect(lines[2].contains("continue dans OMP"))
     #expect(lines[2].contains("en pilotant de nouveau ce projet"))
@@ -37,7 +37,7 @@ func quitPromptThreeActivities() throws {
 func quitPromptSessionAndPipelines() throws {
     let prompt = try #require(QuitPrompt.make([.pipelines(count: 2), .session(name: "x")]))
     #expect(prompt.message.components(separatedBy: "\n") == [
-        "La session OMP de « x » s'arrêtera.",
+        "La session OMP de « x » s’arrêtera.",
         "2 pipelines en cours continuent dans OMP.",
     ])
 }
@@ -45,7 +45,7 @@ func quitPromptSessionAndPipelines() throws {
 @Test("mac-quitter-sans-confirmation/AC-1 : une commande du Terminal seule déclenche l'alerte")
 func quitPromptTerminalAlone() throws {
     let prompt = try #require(QuitPrompt.make([.terminalCommand(name: "sleep")]))
-    #expect(prompt.message == "La commande « sleep » du Terminal s'arrêtera.")
+    #expect(prompt.message == "La commande « sleep » du Terminal s’arrêtera.")
 }
 
 @Test("mac-quitter-sans-confirmation/AC-8 : rien qui s'arrête, aucune alerte — même avec un pilotage et des pipelines")
@@ -63,9 +63,9 @@ func quitPromptUnnamedVariants() throws {
         .pilotage(named: nil),
     ]))
     #expect(prompt.message.components(separatedBy: "\n") == [
-        "La session OMP s'arrêtera.",
-        "La commande en cours dans le Terminal s'arrêtera.",
-        "Le pilotage en cours continue dans OMP : vous le retrouverez en pilotant de nouveau ce projet.",
+        "La session OMP s’arrêtera.",
+        "La commande en cours dans le Terminal s’arrêtera.",
+        "Le pilotage en cours continue dans OMP : vous le retrouverez en pilotant de nouveau ce projet.",
     ])
 }
 
