@@ -1260,8 +1260,9 @@ absolu, sinon `/bin/zsh -l`) ; `omp` se lance **à la demande** dans ce shell.
    écran — et suit le redimensionnement de la fenêtre.
 4. **Fermer la fenêtre principale** (bouton rouge, ⌘W) : le process est tué avec
    **tout son groupe** (SIGTERM, puis SIGKILL après 2 s), sans confirmation.
-   **⌘Q** tue de la même façon les terminaux vivants : aucun shell ni `omp` ne
-   survit à la fermeture de l'app.
+   **⌘Q** tue de la même façon les terminaux vivants, une fois la sortie confirmée
+   si une commande tourne (voir « Confirmation au Quitter ») : aucun shell ni `omp`
+   ne survit à la fermeture de l'app.
 
 Le terminal et la section **Session OMP** (session servie par l'API locale) vivent
 **en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
@@ -1326,7 +1327,41 @@ sont pas) :
    et l'app reste vivante ;
 5. redimensionner la fenêtre : la TUI se réaffiche à la nouvelle taille ;
 6. fermer la fenêtre : `pgrep -fl -P <pid de l'app>` ne rend plus rien ;
-7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun shell ni `omp` ne survit.
+7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun shell ni `omp` ne survit
+   (avec `omp` au premier plan, l'alerte « Quitter arrêtera… » le cite d'abord).
+
+## Confirmation au Quitter
+
+Quitter l'app — **⌘Q**, menu « Quitter OMP Console », Dock ▸ Quitter, ou la
+fermeture de session, le redémarrage et l'extinction de macOS — passe par UN seul
+déroulé (`QuitFlow`, `Sources/OMPConsole/Quit/`). Il demande confirmation par une
+alerte « Quitter arrêtera des activités en cours. » (Annuler / Quitter) dès que la
+sortie arrêterait quelque chose :
+
+- une **Session OMP** lancée ou en cours de lancement : « La session OMP de « nom »
+  s'arrêtera. » (la session est fermée par `DELETE`) ;
+- une **commande au premier plan** d'un shell du Terminal (`sleep 600`, `omp`…) :
+  « La commande « sleep » du Terminal s'arrêtera. ». Un shell au repos sur son
+  invite, une tâche de fond (`sleep 600 &`) ou `exec <commande>` ne comptent pas.
+
+Quand l'alerte s'affiche, elle cite EN PLUS ce qui **continue dans OMP** : le
+pilotage (« Le pilotage de « nom » continue dans OMP : vous le retrouverez en
+pilotant de nouveau ce projet. ») et les pipelines en cours (« 2 pipelines en cours
+continuent dans OMP. »). Un pilotage ou des pipelines seuls font quitter **sans**
+alerte : quitter ne les arrête pas.
+
+- **Quitter** (Retour) : les accroches de sortie tournent comme avant (session
+  fermée, pilotage détaché, shell tué, service distant arrêté), les feuilles
+  ouvertes sont fermées, puis l'app quitte. Une feuille ouverte (Bienvenue,
+  préparation bloquante) ne bloque jamais la sortie ; la Bienvenue fermée ainsi
+  reparaîtra au prochain lancement.
+- **Annuler** (Échap) : rien ne s'arrête, l'app reste ouverte ; le ⌘Q suivant
+  redemande. Sur une fermeture de session macOS, Annuler l'interrompt (l'Apple
+  Event de quit reçoit `userCanceledErr`, -128) ; sans activité, la fermeture de
+  session n'est plus interrompue par l'app.
+- Une seule alerte par sortie, aucune option « Ne plus demander ».
+- Fermer la fenêtre (⌘W, bouton rouge) ne demande rien : le shell est tué comme
+  avant.
 
 ## Section Projet (pilotage)
 
@@ -1371,7 +1406,9 @@ la fois** (un second démarrage est refusé jusqu'à l'arrêt du pilotage en cou
    reste `running` côté pilote ; la reprise éventuelle est le fait du pilote au
    prochain `/project`. Fermer l'app (⌘Q, bouton rouge) n'envoie **rien** : l'app
    se détache, la conduite reste vivante dans le service, ses segments avancent et
-   sa question en attente attend la réouverture.
+   sa question en attente attend la réouverture. Un pilotage seul ne fait pas
+   poser l'alerte du Quitter ; elle le cite quand une session ou une commande du
+   Terminal la fait poser.
 
 **Ce que l'app n'écrit jamais** : ni `<stateDir>/projects/<clé>.json`, ni le
 worktree `.doc`, ni le lot. Elle ne réimplémente non plus aucune règle du pilote
