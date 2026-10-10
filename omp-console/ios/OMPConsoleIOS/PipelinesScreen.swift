@@ -252,7 +252,7 @@ struct PipelinesScreen: View {
     /// l'état des sous-vues.
     private var headerLayout: AnyLayout {
         switch PipelinesModel.headerAxis(dynamicTypeSize) {
-        case .horizontal: AnyLayout(HStackLayout(spacing: 6))
+        case .horizontal, .twoLine: AnyLayout(HStackLayout(spacing: 6))
         case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
         }
     }
