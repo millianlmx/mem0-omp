@@ -131,3 +131,47 @@ func modelReportsUnavailableDeliverer() async {
     // Le livreur indisponible ne fait rien : aucune exception, aucun appel système.
     #expect(await awaitMainTrue { model.status.counters != nil })
 }
+
+// MARK: - AC-5 : `ingest(_:)` est la décision extraite d'`apply(_:stateDir:)`
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-5 : `ingest` enregistre la clé AVANT de livrer, et ne renotifie pas")
+func ingestRegistersBeforeDelivering() async {
+    let fixture = StoreFixture()
+    let ledgerPath = fixtureLedgerPath(fixture)
+    let deliverer = RecorderAlertDeliverer()
+    let model = fixtureAlertsModel(fixture, deliverer: deliverer, frontmost: false, ledgerPath: ledgerPath)
+    let event = AlertEvent(
+        key: "stack-ownership-lost:8321:process:4711",
+        kind: .stackOwnershipLost,
+        title: "La pile mémoire d'OMP Console a perdu le port 8321",
+        body: "un autre programme l'occupe désormais."
+    )
+
+    await model.ingest(event)
+    #expect(deliverer.keys == [event.key])
+    #expect(AlertLedger(path: ledgerPath).contains(event.key))
+
+    // La clé est déjà au registre : aucune seconde livraison (sémantique d'`apply`).
+    await model.ingest(event)
+    #expect(deliverer.keys == [event.key])
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-5 : `ingest` enregistre même fenêtre au premier plan, sans livrer")
+func ingestAtFrontmostRecordsWithoutDelivering() async {
+    let fixture = StoreFixture()
+    let ledgerPath = fixtureLedgerPath(fixture)
+    let deliverer = RecorderAlertDeliverer()
+    let model = fixtureAlertsModel(fixture, deliverer: deliverer, frontmost: true, ledgerPath: ledgerPath)
+    let event = AlertEvent(
+        key: "stack-ownership-lost:6333:unknown",
+        kind: .stackOwnershipLost,
+        title: "t",
+        body: "b"
+    )
+
+    await model.ingest(event)
+    #expect(deliverer.messages.isEmpty)
+    #expect(AlertLedger(path: ledgerPath).contains(event.key))
+}

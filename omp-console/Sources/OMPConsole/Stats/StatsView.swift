@@ -1,16 +1,27 @@
 // La fenêtre « Statistiques » (S-5 de `statistiques`, S-17 de
 // omp-console-redesign) : un tableau de bord en LECTURE SEULE — un sélecteur de
 // projet (dans la barre d'outils, S-12, seul à nommer le projet : pas de
-// sous-titre qui le répète), quatre tuiles de totaux, les tokens par feature en
-// deux panneaux, un tableau triable des exécutions, la note des features masquées.
+// sous-titre qui le répète ; présent dans le tableau ET dans l'état « Aucune
+// donnée », d'où l'on change de projet), quatre tuiles de totaux, les tokens par
+// feature en deux panneaux, un tableau triable des exécutions, la note des
+// features masquées.
+//
+// Le tableau de bord DÉFILE verticalement (S-4 de
+// statistiques-etat-vide-et-non-defilables) : les graphiques sont bornés en
+// hauteur et la table montre toutes ses lignes, sans défilement vertical
+// interne, pour que sa dernière ligne soit atteignable à toute taille de fenêtre.
 //
 // Aucun attribut macro SwiftUI (`@State`, `@Preview`) : interdits sous les Command
 // Line Tools seuls. `@ObservedObject` est une vraie property wrapper, donc
 // autorisée ; le tri du tableau vit dans le modèle (`sortOrder`).
 //
-// L'horloge de rendu est `TimelineView(.periodic)` (Doc-4) : les durées et les
-// totaux se recalculent à l'instant de rendu, donc une exécution vivante qui
-// attend une réponse fait monter sa durée sans qu'un octet soit écrit.
+// L'horloge de rendu est limitée aux durées des exécutions VIVANTES (S-5 de
+// statistiques-etat-vide-et-non-defilables) : seules la tuile « Temps passé » et
+// les cellules « Durée » de ces exécutions sont des `StatsLiveText`, dont la
+// `TimelineView(.periodic)` recalcule la durée depuis l'instant du tic — une
+// exécution qui attend une réponse fait monter sa durée sans qu'un octet soit
+// écrit. Le reste du tableau de bord n'est réévalué que quand le modèle publie ;
+// sans exécution vivante, aucune `TimelineView` n'existe et rien ne se redessine.
 
 import Charts
 import ConsoleCore
@@ -27,28 +38,29 @@ struct StatsView: View {
     static let chartIdentifier = "stats.chart"
     static let hiddenIdentifier = "stats.hidden"
     static func runIdentifier(_ tag: String) -> String { "stats.run.\(tag)" }
+    /// La cellule « Durée » d'une exécution : la sonde AX y relève la durée.
+    static func durationIdentifier(_ tag: String) -> String { "stats.duration.\(tag)" }
+    /// Le `ScrollView` du tableau de bord : la sonde AX y lit la barre verticale.
+    static let boardIdentifier = "stats.board"
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            content(nowMs: context.date.timeIntervalSince1970 * 1000)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { model.start() }
-        .onDisappear { model.stop() }
-        // Hors du `TimelineView` : la barre d'outils n'est pas reconstruite à
-        // chaque seconde de l'horloge de rendu.
-        .toolbar {
-            if case .board(let board) = model.state {
-                // À droite, avec les autres commandes de la fenêtre : en
-                // `.principal`, il poussait « Nouvelle feature » au centre.
-                ToolbarItem(placement: .primaryAction) {
-                    projectPicker(board)
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onAppear { model.start() }
+            .onDisappear { model.stop() }
+            .toolbar {
+                if let board = model.state.shownBoard {
+                    // À droite, avec les autres commandes de la fenêtre : en
+                    // `.principal`, il poussait « Nouvelle feature » au centre.
+                    ToolbarItem(placement: .primaryAction) {
+                        projectPicker(board)
+                    }
                 }
             }
-        }
     }
 
-    /// Le sélecteur de projet, présent seulement quand un tableau est affiché.
+    /// Le sélecteur de projet, présent quand un projet est affiché : tableau ou
+    /// état « Aucune donnée ».
     private func projectPicker(_ board: StatsBoard) -> some View {
         Picker(
             "Projet",
@@ -71,7 +83,7 @@ struct StatsView: View {
     }
 
     @ViewBuilder
-    private func content(nowMs: Double) -> some View {
+    private var content: some View {
         switch model.state {
         case .loading:
             VStack(spacing: 8) {
@@ -100,22 +112,64 @@ struct StatsView: View {
             ContentUnavailableView(StatsText.empty, systemImage: "chart.bar.xaxis")
                 .accessibilityIdentifier(Self.emptyIdentifier)
         case .board(let board):
-            boardView(board, nowMs: nowMs)
+            boardView(board)
         }
     }
 
-    /// Le tableau de bord : tuiles, graphique, tableau, note des features masquées.
-    private func boardView(_ board: StatsBoard, nowMs: Double) -> some View {
+    /// Le tableau de bord : tuiles, graphique, tableau, note des features
+    /// masquées, dans un défilement vertical. Totaux, barres et lignes sont
+    /// calculés à l'instant de CETTE évaluation — qui n'a lieu que quand le modèle
+    /// publie ; seules les valeurs vivantes avancent ensuite, par `StatsLiveText`.
+    private func boardView(_ board: StatsBoard) -> some View {
+        let nowMs = Date().timeIntervalSince1970 * 1000
         let totals = projectTotals(board.project, nowMs: nowMs)
         let bars = StatsPresentation.bars(board.project, nowMs: nowMs)
         let rows = StatsPresentation.rows(board.project, nowMs: nowMs)
         let features = board.project.features.map(\.slug)
-        return VStack(alignment: .leading, spacing: 18) {
+        let liveStarts = statsLiveStarts(board.project)
+        return ScrollView(.vertical) {
+            boardContent(
+                board,
+                totals: totals,
+                bars: bars,
+                rows: rows,
+                features: features,
+                liveStarts: liveStarts
+            )
+        }
+        .accessibilityIdentifier(Self.boardIdentifier)
+    }
+
+    private func boardContent(
+        _ board: StatsBoard,
+        totals: StatsTotals,
+        bars: [StatsBar],
+        rows: [StatsRow],
+        features: [String],
+        liveStarts: [String: Double]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 12)], spacing: 12) {
-                tile(StatsText.sentTokens, systemImage: "arrow.up.circle", value: ConsoleFormat.tokens(totals.input))
-                tile(StatsText.receivedTokens, systemImage: "arrow.down.circle", value: ConsoleFormat.tokens(totals.output))
-                tile(StatsText.timeSpent, systemImage: "clock", value: ConsoleFormat.duration(ms: totals.durationMs))
-                tile(StatsText.turns, systemImage: "arrow.triangle.2.circlepath", value: "\(totals.turns)")
+                tile(StatsText.sentTokens, systemImage: "arrow.up.circle") {
+                    Text(ConsoleFormat.tokens(totals.input))
+                }
+                tile(StatsText.receivedTokens, systemImage: "arrow.down.circle") {
+                    Text(ConsoleFormat.tokens(totals.output))
+                }
+                tile(StatsText.timeSpent, systemImage: "clock") {
+                    // Avance à la seconde SEULEMENT s'il y a une exécution vivante
+                    // horodatée : sinon, un `Text` figé, sans horloge.
+                    if liveStarts.isEmpty {
+                        Text(ConsoleFormat.duration(ms: totals.durationMs))
+                    } else {
+                        StatsLiveText { nowMs in
+                            projectTotals(board.project, nowMs: nowMs).durationMs
+                        }
+                    }
+                }
+                tile(StatsText.turns, systemImage: "arrow.triangle.2.circlepath") {
+                    Text("\(totals.turns)")
+                }
             }
             .accessibilityIdentifier(Self.aggregateIdentifier)
 
@@ -142,7 +196,7 @@ struct StatsView: View {
 
             Text(StatsText.tableTitle)
                 .font(.headline)
-            runsTable(rows)
+            runsTable(rows, liveStarts: liveStarts)
 
             if board.project.hiddenPlanFeatures > 0 {
                 Text(StatsText.hidden(board.project.hiddenPlanFeatures))
@@ -152,7 +206,7 @@ struct StatsView: View {
             }
         }
         .padding(20)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
     }
 
     /// Un panneau du graphique : une série, ses barres horizontales par feature.
@@ -186,18 +240,22 @@ struct StatsView: View {
                     }
                 }
             }
-            .frame(height: CGFloat(max(1, features.count)) * 28 + 28)
+            .frame(height: StatsLayout.chartHeight(features: features.count))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func tile(_ title: String, systemImage: String, value: String) -> some View {
+    private func tile<Value: View>(
+        _ title: String,
+        systemImage: String,
+        @ViewBuilder value: () -> Value
+    ) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 6) {
                 Label(title, systemImage: systemImage)
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Text(value)
+                value()
                     .font(.system(size: 28, weight: .semibold, design: .rounded).monospacedDigit())
                     .lineLimit(1)
                     .minimumScaleFactor(0.5)
@@ -209,7 +267,7 @@ struct StatsView: View {
     /// Les exécutions, triables par en-tête de colonne ; un tri vide garde l'ordre
     /// de S-1. Sans fond alterné : sous les lignes réelles, l'espace restant restait
     /// rayé de lignes VIDES (capture C13).
-    private func runsTable(_ rows: [StatsRow]) -> some View {
+    private func runsTable(_ rows: [StatsRow], liveStarts: [String: Double]) -> some View {
         Table(
             rows.sorted(using: model.sortOrder),
             sortOrder: Binding(
@@ -219,42 +277,104 @@ struct StatsView: View {
         ) {
             TableColumn(StatsText.columnFeature, value: \.feature) { row in
                 Text(row.feature)
+                    .lineLimit(1)
                     .truncationMode(.middle)
                     .accessibilityIdentifier(Self.runIdentifier(row.tag))
             }
             .width(min: 100, ideal: 150)
             TableColumn(StatsText.columnStep, value: \.phaseOrder) { row in
                 Text(row.phaseTitle)
+                    .lineLimit(1)
             }
             .width(min: 80, ideal: 110)
             TableColumn(StatsText.columnModel, value: \.model) { row in
                 Text(row.model)
+                    .lineLimit(1)
                     .truncationMode(.middle)
                     .help(row.model)
             }
             .width(min: 110, ideal: 170)
             TableColumn(StatsText.columnDuration, value: \.durationMs) { row in
-                Text(row.durationText)
-                    .monospacedDigit()
+                // Seule la durée d'une exécution vivante horodatée avance ; le tri
+                // garde la `durationMs` de la dernière publication du modèle.
+                Group {
+                    if let first = liveStarts[row.id] {
+                        StatsLiveText { nowMs in max(0, nowMs - first) }
+                    } else {
+                        Text(row.durationText)
+                    }
+                }
+                .lineLimit(1)
+                .monospacedDigit()
+                .accessibilityIdentifier(Self.durationIdentifier(row.tag))
             }
             .width(min: 80, ideal: 110)
             TableColumn(StatsText.columnTurns, value: \.turns) { row in
                 Text("\(row.turns)")
+                    .lineLimit(1)
                     .monospacedDigit()
             }
             .width(min: 40, ideal: 60)
             TableColumn(StatsText.columnTokens, value: \.tokens) { row in
                 Text(row.tokensText)
+                    .lineLimit(1)
                     .monospacedDigit()
             }
             .width(min: 60, ideal: 80)
             TableColumn(StatsText.columnState) { row in
                 StatusBadge(status: row.status)
+                    .lineLimit(1)
                     .help(row.unreadableReason ?? "")
             }
             .width(min: 90, ideal: 110)
         }
         .alternatingRowBackgrounds(.disabled)
-        .frame(minHeight: 140)
+        // Dans un `ScrollView` vertical, une Table sans hauteur explicite
+        // s'écrase à 0 (Doc-4 a) : elle prend la hauteur de TOUTES ses lignes.
+        .frame(height: StatsLayout.tableHeight(rows: rows.count))
+    }
+}
+
+/// Les hauteurs du tableau de bord défilant. MESURÉ 2026-10-10 macOS 27.2
+/// (Doc-4) : une `Table` de style `.inset` à lignes automatiques — aucune doc Apple
+/// ne fixe ces valeurs, la recette AX les revérifie.
+private enum StatsLayout {
+    /// En-tête de colonnes de la table.
+    static let tableHeader: CGFloat = 28
+    /// Marges haute (5 pt) et basse (10 pt) du style `.inset`.
+    static let tableInsets: CGFloat = 15
+    /// Une ligne : 27 pt, imposés par la pastille `StatusBadge` de la colonne
+    /// « État » (une ligne de texte seul, `.lineLimit(1)`, en mesure 24).
+    static let tableRow: CGFloat = 27
+    /// La place d'une barre de défilement horizontale permanente quand la largeur
+    /// manque (19 pt à la taille minimale de la fenêtre).
+    static let horizontalScroller: CGFloat = 19
+    /// Une barre du graphique, et la marge de son axe.
+    static let chartRow: CGFloat = 28
+    /// Au-delà, les barres s'amincissent au lieu de pousser la table hors de vue.
+    static let chartMaxHeight: CGFloat = 240
+
+    static func tableHeight(rows: Int) -> CGFloat {
+        tableHeader + tableInsets + tableRow * CGFloat(rows) + horizontalScroller
+    }
+
+    static func chartHeight(features: Int) -> CGFloat {
+        min(chartRow * CGFloat(max(1, features)) + chartRow, chartMaxHeight)
+    }
+}
+
+/// Une durée VIVANTE : la seule partie du tableau de bord sous horloge (S-5 de
+/// statistiques-etat-vide-et-non-defilables). La `TimelineView` ne réévalue que
+/// son contenu à chaque tic (Doc-3, MESURÉ : le corps parent n'est pas
+/// réévalué) ; la durée se RECALCULE depuis l'instant du tic, jamais par
+/// incrément, car `.periodic` peut tourner plus lentement que demandé.
+private struct StatsLiveText: View {
+    /// La durée en millisecondes à l'instant `nowMs`.
+    let durationMs: (Double) -> Double
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            Text(ConsoleFormat.duration(ms: durationMs(context.date.timeIntervalSince1970 * 1000)))
+        }
     }
 }

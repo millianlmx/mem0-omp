@@ -17,6 +17,7 @@ ruptures silencieuses, qui ne se voient qu'à l'exécution de la route concerné
   - search prend top_k, plus limit.
 """
 import inspect
+import os
 import sys
 import types
 from datetime import datetime, timedelta, timezone
@@ -635,6 +636,50 @@ def main() -> int:
             [("texte d'origine", rewritten), (rewritten, second)],
         )
         verify("AC-9 · l'id et la portée survivent à la mise à jour", (after_keep.get("agent_id"), after_keep.get("user_id")), ("P", "moi"))
+
+        # ------------------------------------------------------------------
+        # S-4 / BR-4 : /health rend `installation` de façon ADDITIVE — absent
+        # quand OMP_INSTALLATION_TOKEN est absente ou vide, rendu TEL QUEL sinon.
+        # La constante est lue à l'IMPORT du serveur : chaque forme est donc
+        # obtenue en rechargeant le module sous un environnement contrôlé, le
+        # double restant patché avant l'import (même style que la couche 1).
+        # ------------------------------------------------------------------
+        import importlib
+
+        def health_body(token):
+            saved = os.environ.get("OMP_INSTALLATION_TOKEN")
+            if token is None:
+                os.environ.pop("OMP_INSTALLATION_TOKEN", None)
+            else:
+                os.environ["OMP_INSTALLATION_TOKEN"] = token
+            try:
+                with patch("http_server.AsyncMemory", StubMemory):
+                    importlib.reload(http_server)
+                    return TestClient(http_server.app).get("/health").json()
+            finally:
+                if saved is None:
+                    os.environ.pop("OMP_INSTALLATION_TOKEN", None)
+                else:
+                    os.environ["OMP_INSTALLATION_TOKEN"] = saved
+
+        absent = health_body(None)
+        vide = health_body("")
+        pose = health_body("jeton-installation-abc")
+        verify(
+            "S-4 · variable absente ⇒ ok=True et champ installation ABSENT",
+            (absent.get("ok"), "installation" in absent),
+            (True, False),
+        )
+        verify(
+            "S-4 · variable vide ⇒ ok=True et champ installation ABSENT",
+            (vide.get("ok"), "installation" in vide),
+            (True, False),
+        )
+        verify(
+            "S-4 · variable posée ⇒ installation rendu TEL QUEL",
+            (pose.get("ok"), pose.get("installation")),
+            (True, "jeton-installation-abc"),
+        )
 
         print()
         print("Conforme." if failures == 0 else f"{failures} échec(s).")

@@ -130,6 +130,20 @@ struct IOSMemoryDetailView: View {
         MemoryText.subtitle(updatedAt: row.updatedAt, tags: row.tags, nowMs: nowMs)
     }
 
+    /// Les segments de la ligne de contexte, un par ligne aux tailles
+    /// d'accessibilité : date relative puis étiquettes, segments absents omis.
+    /// Joints par `MemoryText.separator`, ils redonnent `subtitle(_:nowMs:)`.
+    static func subtitleSegments(_ row: RemoteMemoryRow, nowMs: Double) -> [String] {
+        var segments: [String] = []
+        if let ms = MemoryText.updatedAtMs(row.updatedAt) {
+            segments.append(ConsoleFormat.relative(ms: ms, nowMs: nowMs))
+        }
+        if !row.tags.isEmpty {
+            segments.append(MemoryText.tagList(row.tags))
+        }
+        return segments
+    }
+
     /// La portée : celle de la ligne, sinon celle du sommaire, sinon « Sans projet ».
     static func scopeText(_ row: RemoteMemoryRow, scope: String?) -> String {
         MemoryText.scopeLabel(row.agentId ?? scope)

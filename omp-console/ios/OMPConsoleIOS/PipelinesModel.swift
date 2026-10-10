@@ -1,6 +1,6 @@
 import ConsoleClient
 import ConsoleCore
-import Foundation
+import SwiftUI
 
 /// L'état de l'écran Pipelines (S-4), dans l'ordre de priorité : chargement,
 /// déconnecté sans instantané, puis l'ardoise (absente, vide ou peuplée). Une
@@ -109,6 +109,23 @@ enum PipelinesModel {
             let foldable = foldableLanes.contains(content.lane)
             return PipelinesLaneRow(content: content, foldable: foldable, folded: foldable && !unfolded.contains(content.lane))
         }
+    }
+
+    /// La largeur d'une voie en largeur régulière (iPad) : `scaled`
+    /// (`IOSMetrics.laneWidth` mise à l'échelle par Dynamic Type), plafonnée à la
+    /// largeur visible du défilement moins la marge de fin, pour qu'une voie
+    /// défilée jusqu'au bout tienne entière à l'écran. Un conteneur pas encore
+    /// mesuré (ou plus étroit que la marge) laisse `scaled`. Le contenu de la voie
+    /// n'intervient jamais : toutes les voies ont la même largeur.
+    nonisolated static func laneWidth(scaled: CGFloat, container: CGFloat, endMargin: CGFloat) -> CGFloat {
+        let visible = container - endMargin
+        return visible > 0 ? min(scaled, visible) : scaled
+    }
+
+    /// L'axe de l'en-tête d'une voie (symbole, titre, compte) : la règle des
+    /// rangées de l'Accueil, empilé aux tailles d'accessibilité.
+    static func headerAxis(_ size: DynamicTypeSize) -> IOSHomeRowAxis {
+        IOSHomeContent.rowAxis(size, width: .regular)
     }
 
     /// Le nom lisible d'un sélecteur d'après le catalogue servi par le Mac

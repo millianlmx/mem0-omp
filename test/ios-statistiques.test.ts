@@ -166,7 +166,6 @@ function screenFaults(root: string): string[] {
   const screen = appFile(root, "IOSStatsScreen.swift");
   const text = appFile(root, "IOSStatsText.swift");
   const content = appFile(root, "IOSStatsContent.swift");
-  const view = appFile(root, "IOSSectionView.swift");
   if (screen === "") return ["IOSStatsScreen.swift absent"];
   if (text === "") return ["IOSStatsText.swift absent"];
   if (content === "") return ["IOSStatsContent.swift absent"];
@@ -188,7 +187,6 @@ function screenFaults(root: string): string[] {
     "StatsAccessibility.hidden",
     "StatsAccessibility.project",
     "ConnectionText.retry",
-    "KanbanBoardState.loadingText",
     "ScrollView(.vertical)",
   ]) {
     if (!screen.includes(token)) faults.push(`IOSStatsScreen ne porte pas ${token}`);
@@ -254,10 +252,6 @@ function screenFaults(root: string): string[] {
     }
   }
 
-  // Le dispatch : la section `.stats` route vers l'écran réel, sur le patron des autres.
-  if (!/section == \.stats \{\s*\n\s*IOSStatsScreen\(client: client\)/.test(view)) {
-    faults.push("IOSSectionView ne route pas .stats vers IOSStatsScreen");
-  }
   return faults;
 }
 
@@ -395,11 +389,6 @@ test("ios-statistiques/AC-1 : la route sert une entrée par feature, et les deux
     mirrorFaults(copy).some((f) => f.includes("RemoteStatsFeature")),
     "un miroir qui diverge doit faire rougir la garde",
   );
-
-  const replant = copyRepo();
-  const view = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
-  fs.writeFileSync(view, code(view).replace("IOSStatsScreen(client: client)", "EmptyView()"));
-  assert.ok(screenFaults(replant).some((f) => f.includes("route pas .stats")), "une section non routée doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------

@@ -6,8 +6,9 @@
 // n'est composée : les mots viennent du noyau partagé (`MemoryText`) ou du
 // vocabulaire de l'app (`IOSMemoryText`). Aucun geste d'écriture, aucun graphe.
 //
-// Contrôles SYSTÈME uniquement (aucun `onTapGesture`), cibles ≥ 44 pt, aucun
-// `lineLimit` numérique : Dynamic Type maximum ne tronque rien.
+// Contrôles SYSTÈME uniquement (aucun `onTapGesture`), cibles ≥ 44 pt. Le texte
+// d'un souvenir est plafonné dans la liste par `IOSMetrics.memoryRowLines(_:)`
+// (« … » en fin), et intégral dans la feuille ; rien d'autre n'est tronqué.
 
 import ConsoleClient
 import ConsoleCore
@@ -21,6 +22,13 @@ struct IOSMemoryScreen: View {
     let graphRecipe: IOSMemoryGraphRecipe?
     @StateObject private var model: IOSMemoryModel
     @StateObject private var graph: IOSMemoryGraphModel
+    /// La largeur disponible : elle fixe le plafond de lignes d'un souvenir (S-5).
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// La taille de texte système : elle décide de l'axe de la ligne de contexte (S-6).
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// La marge verticale d'une rangée, mise à l'échelle comme le corps de
+    /// texte : aucun texte ne touche le filet voisin (rangees-sessions-memoire-serrees, S-4).
+    @ScaledMetric(relativeTo: .body) private var rowPadding: CGFloat = IOSMetrics.rowVerticalPadding
     /// La raison montrée dans la bulle de « Sommaire » : figée au toucher, tant que
     /// la bulle est ouverte.
     @State private var summaryReason: String?
@@ -366,7 +374,23 @@ struct IOSMemoryScreen: View {
         VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: IOSMemoryDetailView.text(row))
                 .font(.body)
+                .lineLimit(IOSMetrics.memoryRowLines(horizontalSizeClass))
+                .truncationMode(.tail)
                 .multilineTextAlignment(.leading)
+            rowContext(row, nowMs: nowMs)
+        }
+        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
+        .padding(.vertical, rowPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// La ligne de contexte : une bande jointe par « · » aux tailles ordinaires,
+    /// un segment par ligne aux tailles d'accessibilité (règle de l'Accueil,
+    /// `IOSHomeContent.rowAxis`, lue sur la SEULE taille système, largeur `nil`).
+    @ViewBuilder
+    private func rowContext(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
+        switch IOSHomeContent.rowAxis(dynamicTypeSize, width: nil) {
+        case .horizontal, .twoLine:
             let subtitle = IOSMemoryDetailView.subtitle(row, nowMs: nowMs)
             if !subtitle.isEmpty {
                 Text(verbatim: subtitle)
@@ -374,7 +398,18 @@ struct IOSMemoryScreen: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
             }
+        case .stacked:
+            let segments = IOSMemoryDetailView.subtitleSegments(row, nowMs: nowMs)
+            if !segments.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(segments, id: \.self) { segment in
+                        Text(verbatim: segment)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.leading)
+                    }
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }

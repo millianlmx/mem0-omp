@@ -142,7 +142,7 @@ sessions et les conducteurs ; la commande part à l'API par
 |---|---|
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
-| Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau est affiché |
+| Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau ou l'état « Aucune donnée » est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
 Identifiants de l'Accueil et des feuilles : `home.loading`, `home.firstRun`
@@ -920,7 +920,11 @@ et podman (S-1, S-4) :
 | podman (pkg extrait par `pkgutil --expand-full`, jamais installé) | `…/components/podman/6.1.3/{bin,lib,share}` | 6.1.3 |
 | configuration XDG de la machine podman | `…/config/` (`XDG_CONFIG_HOME`) | |
 | disque et cache de la machine podman | `…/data/` (`XDG_DATA_HOME`) | |
+| artefacts runtime de podman (gvproxy, sockets de la machine) | `…/tmp/` (`TMPDIR` de la machine) | |
 | pile mémoire | `…/stack/` (`qdrant_storage/`, `env`, `machine.json`, `migration.json`) | |
+| jeton d'installation de la pile | `…/stack/installation-token` (0600) | |
+| trace de la dernière union des bases | `…/stack/union.json` | |
+| copie de staging de l'union | `…/stack/union-staging/` | |
 
 - **Badge du coin inférieur gauche** — le pied de la barre latérale porte l'état
   des composants embarqués (identifiant AX `components.badge`) : « Tout est
@@ -942,18 +946,42 @@ et podman (S-1, S-4) :
   `docker://quay.io/podman/machine-os:6.1`, 4 CPU, 4 Gio, 50 Gio de disque, avec
   `helper_binaries_dir` pointé sur les `bin/` du composant ; sa configuration et
   son disque vivent sous la racine de l'app, donc elle ne voit jamais une machine
-  podman système.
+  podman système. Son état est jugé à son **API** (une commande `info` portée par
+  son podman et son `TMPDIR` privés), pas au seul `machine inspect` : une VM qui
+  vit mais dont l'API ne répond pas est **réparée automatiquement** (`machine stop
+  omp-console` puis `machine start omp-console`), sans geste manuel (AC-2). Si
+  cette réparation échoue, le geste de secours est documenté ci-dessous.
 - **Conteneurs** — réseau `omp-console-stack`, `omp-console-qdrant`
   (`qdrant/qdrant:v1.19.0`, ports `127.0.0.1:6333/6334`) et
   `omp-console-mem0-http` (image construite depuis le contexte embarqué
   `Contents/Resources/Stack/mem0-http`, port `127.0.0.1:8321`), tous deux
-  `--restart unless-stopped`.
-- **Migration** (une fois par racine) — l'app découvre l'ancienne pile par l'API
-  Docker sur socket Unix (`~/.docker/run/docker.sock`, puis
-  `/var/run/docker.sock`), l'arrête (`mem0-qdrant`, `mem0-http`), copie
-  `qdrant_storage` (la source reste INTACTE, une base déjà présente n'est JAMAIS
-  recouverte), importe le `.env` voisin dans `stack/env` (0600) et écrit
-  `stack/migration.json` (informatif).
+  `--restart unless-stopped`. Ces conteneurs sont les seuls propriétaires légitimes
+  de `127.0.0.1:8321` et `127.0.0.1:6333`.
+- **Étiquette d'image par empreinte** — l'image mem0-http est étiquetée par
+  l'empreinte des sources embarquées
+  (`omp-console-mem0-http:<12 premiers hexadécimaux>` de
+  `mem0-stack/mem0-http/STACK_FINGERPRINT`) et n'est **reconstruite que si cette
+  étiquette manque** : sources inchangées ⇒ aucune reconstruction (AC-7), source
+  modifiée ⇒ nouvelle étiquette ⇒ reconstruction (AC-8). Après toute modification
+  de `mem0-stack/mem0-http/`, régénérer l'empreinte versionnée :
+  `bun scripts/stack-fingerprint.ts --write` ; le test `stack/AC-24` échoue si le
+  fichier versionné diverge des sources du dépôt (il nomme le fichier et la
+  commande).
+- **Migration** (une fois par racine) — l'app découvre la source de l'ancienne
+  pile par l'API Docker sur socket Unix (`~/.docker/run/docker.sock`, puis
+  `/var/run/docker.sock`), copie `qdrant_storage` **quand elle est quiescente**
+  (aucun conteneur legacy en marche : on ne copie pas une base RocksDB vivante),
+  la source reste INTACTE (une base déjà présente n'est JAMAIS recouverte),
+  importe le `.env` voisin dans `stack/env` (0600) et écrit `stack/migration.json`
+  (informatif). L'arrêt des conteneurs legacy n'est **jamais automatique** : il n'a
+  lieu que sur une action explicite de l'utilisateur (voir « Ancienne pile »).
+- **Ancienne pile** — si ses conteneurs tiennent `127.0.0.1:8321`/`6333`, l'app
+  nomme le conflit et le geste exact à exécuter, et ne reprend jamais ces ports
+  seule. Le geste, dans un terminal : `podman stop mem0-qdrant mem0-http` (ou
+  `docker stop …` selon le moteur qui porte l'ancienne pile). Dans l'app, le bouton
+  **« Arrêter l'ancienne pile et reprendre »** exécute ce même arrêt (par le socket
+  Docker, transport déjà en place) puis relance la préparation complète — c'est la
+  seule façon dont l'app arrête un conteneur d'une autre pile (AC-6).
 - **`stack/env`** — mêmes clés que `mem0-stack/.env` : `QDRANT_API_KEY`,
   `MEM0_HTTP_TOKEN`, `OMLX_BASE_URL`, `OMLX_API_TOKEN`, `OMLX_LLM_MODEL`,
   `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS`. Sans fichier, les défauts de
@@ -961,6 +989,20 @@ et podman (S-1, S-4) :
 - **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
   (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
   devient alors le seul candidat (les recettes s'en servent).
+
+### Geste de secours de la machine podman (AC-2)
+
+La réparation est automatique (voir « Machine podman dédiée ») ; si elle échoue,
+relancer la machine à la main, dans un terminal, avec l'environnement privé de
+l'app et le joker du dossier de version de podman :
+
+```bash
+XDG_CONFIG_HOME="$HOME/Library/Application Support/com.omp.console/config" \
+XDG_DATA_HOME="$HOME/Library/Application Support/com.omp.console/data" \
+TMPDIR="$HOME/Library/Application Support/com.omp.console/tmp" \
+"$HOME/Library/Application Support/com.omp.console/components/podman/"*/bin/podman machine stop omp-console
+# puis la même ligne avec `machine start`
+```
 
 ### Recettes gatées de la préparation
 
@@ -979,9 +1021,14 @@ MEM0_STACK_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
   --filter recetteReelleDeLaPile -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
-# Migration : arrête réellement l'ancienne pile, copie dans une racine temporaire
+# Migration : copie la base quand l'ancienne pile est quiescente, sans jamais l'arrêter
 MEM0_MIGRATION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
-  --filter recetteMigrationArreteEtCopieLAncienneBase -Xswiftc -plugin-path \
+  --filter recetteMigrationCopieSansArreterLAncienneBase -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+
+# Union : rejoue l'union réelle contre la pile de l'app (staging + conteneur lecteur)
+MEM0_UNION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recetteUnionReelleContreLaPileDeLApp -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
 # Session composant + run terminal : une session servie vit sur le composant de
@@ -991,7 +1038,7 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
   -Xswiftc -plugin-path -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 ```
 
-### Preuves manuelles (AC-3, AC-5)
+### Preuves manuelles (AC-3, AC-5, AC-10)
 
 - **AC-3 — l'app n'utilise aucun binaire système** : renommez l'`omp` du système
   (`mv ~/.bun/bin/omp ~/.bun/bin/omp.bak` — sans toucher à la racine de l'app),
@@ -1004,6 +1051,11 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
   sur un dépôt : `omp -p "résume ce dépôt"`. Le run reçoit le rappel mémoire du
   plugin (`mem0-recall` dans son fichier de session) parce que la pile de l'app
   tourne toujours en arrière-plan.
+- **AC-10 — la voie manuelle reste intacte** : dans `mem0-stack/`,
+  `docker compose up -d` puis `curl http://localhost:8321/health` rend toujours
+  `ok` — aucune variable nouvelle n'est obligatoire, le champ additif
+  `installation` n'apparaissant que si `OMP_INSTALLATION_TOKEN` est posée (ce que
+  la voie manuelle ne fait pas). L'app ne modifie jamais `mem0-stack/`.
 
 ## Piloter le service
 
@@ -1302,8 +1354,8 @@ tour = un cycle complet prompt → réponse finale), par run puis agrégés par 
 et par projet. **Aucun montant en dollars** n'y apparaît — le domaine `Stats` ne
 lit jamais `usage.cost`.
 
-Le tableau de bord est celui du **projet affiché** (sélecteur `Projet` de la barre
-d'outils, nom du projet en sous-titre) : quatre tuiles (« Tokens envoyés »,
+Le tableau de bord est celui du **projet affiché**, que nomme le sélecteur `Projet`
+de la barre d'outils (aucun sous-titre ne le répète) : quatre tuiles (« Tokens envoyés »,
 « Tokens reçus », « Temps passé », « Tours ») totalisent le projet ; le graphique
 « Tokens par feature » montre, par feature listée, deux barres empilées
 (envoyés, reçus) ; le tableau « Runs » liste un run par ligne en sept colonnes
@@ -1313,18 +1365,27 @@ du plan n'est **listée** que si elle porte au moins un run **lisible** ; les au
 sont **masquées** et comptées en pied (`<n> feature(s) du plan sans run lisible`,
 absent à 0).
 
+Le tableau de bord **défile** verticalement, à toute taille de fenêtre (minimum
+760 × 480) : chaque graphique est borné à 240 pt de haut (au-delà de 7 features, les
+barres s'amincissent), et la table prend la hauteur de **toutes** ses lignes, sans
+défilement vertical interne ; la molette au-dessus d'elle fait défiler le tableau de
+bord, et sa dernière ligne s'atteint en bas. Ses hauteurs (en-tête 28 pt, ligne
+27 pt imposée par la pastille d'état, barre horizontale 19 pt) sont MESURÉES sur
+macOS 27.2 et revérifiées par la recette AX (`StatsLayout`, StatsView.swift).
+
 ### Les cinq états
 
 | État | Condition | Texte exact | AX |
 |---|---|---|---|
-| Chargement | aucun instantané reçu | `Chargement des pipelines…` | `stats.state` |
+| Chargement | aucun instantané reçu | `Chargement des statistiques…` | `stats.state` |
 | Magasin absent | racine `.absent` | `Aucune pipeline pour l'instant.` | `stats.state` |
 | Aucun projet | racine présente, aucun `projects/*.json` | `Les statistiques apparaîtront dès qu'un projet sera piloté.` | `stats.state` |
-| Aucune donnée | projet affiché, features vides | `Aucune donnée pour ce projet` | `stats.empty` |
+| Aucune donnée | projet affiché, features vides ; le sélecteur reste dans la barre d'outils | `Aucune donnée pour ce projet` | `stats.empty` |
 | Tableau | projet affiché avec ≥ 1 feature listée | voir ci-dessous | — |
 
-Les textes du chargement et du magasin absent sont **repris mot pour mot** de
-`KanbanBoardState` (une seule formulation par situation dans l'app).
+Le texte du magasin absent est **repris mot pour mot** de `KanbanBoardState` (une
+seule formulation par situation dans l'app) ; celui du chargement dit ce qu'il
+charge (`StatsPresentation.loading`, partagé avec l'app iOS).
 
 ### Identifiants d'accessibilité
 
@@ -1332,9 +1393,11 @@ Les textes du chargement et du magasin absent sont **repris mot pour mot** de
 |---|---|
 | Sélecteur de projet | `stats.project` |
 | Tuiles du projet | `stats.aggregate` |
+| Tableau de bord défilant (`ScrollView`) | `stats.board` |
 | Graphique « Tokens par feature » | `stats.chart` |
 | Compte des features masquées | `stats.hidden` |
 | Feature d'une ligne du tableau | `stats.run.<tag>` (`tag` = `sessionTag(forSessionFile:)`) |
+| Durée d'une ligne du tableau | `stats.duration.<tag>` |
 
 ### Forme d'une ligne
 
@@ -1346,12 +1409,21 @@ exclu des sommes.
 
 ### Mise à jour en direct
 
-Aucun geste n'est nécessaire : le magasin, la veille du fichier de session de
-chaque run **vivant** et l'horloge de rendu (`TimelineView`, une seconde) font
-monter seuls les tokens, les tours et les durées. Un run est **vivant** si le pid
-de son entrée `running` vit — jamais d'après le badge `isStale` du magasin
-(`publishRunning` n'écrit rien quand seul `updatedAt` change, donc un run vivant au
-repos est marqué périmé).
+Aucun geste n'est nécessaire : le magasin et la veille du fichier de session de
+chaque run **vivant** font monter seuls les tokens et les tours. Un run est
+**vivant** si le pid de son entrée `running` vit — jamais d'après le badge
+`isStale` du magasin (`publishRunning` n'écrit rien quand seul `updatedAt`
+change, donc un run vivant au repos est marqué périmé).
+
+L'horloge de rendu (`TimelineView`, une seconde) ne fait avancer que les durées
+des runs vivants, lisibles et horodatés (`statsLiveStarts`) : la cellule
+« Durée » de chacun et la tuile « Temps passé ». Le reste du tableau de bord —
+tuiles, graphiques, table, défilement — n'est reconstruit que quand le modèle
+publie (magasin, session vivante écrite, projet choisi, tri) ; les tics ne
+déplacent donc pas le défilement. Sans run vivant, aucune horloge n'existe et
+rien ne se redessine à la seconde. Le tri par « Durée » s'appuie sur la durée de
+la dernière publication : un run vivant peut y être classé avec quelques
+secondes de retard.
 
 ### Non-objectifs
 
@@ -1562,6 +1634,16 @@ la recherche et le graphe, 10 s pour les autres), et il n'y a **aucun sondage
 périodique** : la sonde part à l'apparition de la section, au bouton « Rafraîchir »
 et avant chaque recherche.
 
+**L'identité de la pile.** `GET /health` reste à la même adresse, avec le même
+protocole et les mêmes autres champs ; la pile de l'app y ajoute un champ
+**additif** `installation` qui porte le jeton d'installation de cette installation
+(`<racine de support>/stack/installation-token`, 0600). L'app n'accepte comme
+« sa » pile qu'une réponse `200` dont `ok` vaut `true` **et** dont `installation`
+égale son jeton : un `200` nu rendu par un autre service est traité comme étranger
+(état « Ce n'est pas la pile d'OMP Console »). Le contrat du plugin mémoire est
+inchangé — il ne lit que `health.ok` —, et la voie manuelle `mem0-stack/` (sans
+`OMP_INSTALLATION_TOKEN`) garde son `/health` identique.
+
 > La route `GET /memory/graph` et l'extension `PUT` (étiquettes) sont **nouvelles
 > côté service** : une pile construite avant cette version répond 404/405. L'iPhone
 > affiche alors « Graphe indisponible : serveur mémoire trop ancien » (la fenêtre
@@ -1647,6 +1729,7 @@ rechargement suivant.
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
 | portée incalculable (liste) | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
 | service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
+| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », le détail `<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>` (sélectionnable) et, **seulement quand le propriétaire est l'ancienne pile**, le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
 | sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
 | recherche sans ligne | « Aucun résultat » — « La mémoire du projet ne contient aucun souvenir correspondant. » |
@@ -1658,7 +1741,8 @@ rechargement suivant.
 | détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée de la ligne, pertinence (en recherche) ; en mode graphe, les actions d'écriture et le bloc « Liens manuels » |
 
 **Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
-`memoire.unavailable.detail`, `memoire.summary.count`, `memoire.search.results`,
+`memoire.unavailable.detail`, `memoire.foreignOwned.detail`,
+`memoire.foreignOwned.takeover`, `memoire.summary.count`, `memoire.search.results`,
 `memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
 `memoire.detail.copy`, `memoire.detail.technical` ; mode graphe :
 `memoire.graph.toggle`, `memoire.graph.canvas` (libellé = bandeau de compte),
@@ -1857,12 +1941,19 @@ omp-console/
 │   │   ├── SetupModel.swift       la chaîne composants → migration → pile → oMLX
 │   │   ├── SetupText.swift        tous les textes de la préparation, en un endroit
 │   │   └── SetupView.swift        la feuille : quatre lignes, états, boutons
-│   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-6)
+│   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-4, S-6, S-7, S-8)
 │   │   ├── PodmanCommand.swift    argv purs et environnement XDG d'une commande podman
 │   │   ├── StackConfig.swift      la config `stack/env` (mêmes clés que mem0-stack)
+│   │   ├── InstallationToken.swift le jeton d'installation (0600) et sa sonde identitaire
+│   │   ├── StackSources.swift     l'empreinte des sources embarquées et l'étiquette d'image
 │   │   ├── MemoryStack.swift      machine `omp-console`, conteneurs, attentes, `/health`
 │   │   ├── DockerSocket.swift     l'API Docker sur socket Unix (curl), décodage tolérant
-│   │   ├── StackMigration.swift   arrêt de l'ancienne pile, copie gardée, import `.env`
+│   │   ├── StackOwnership.swift   qui tient un port : lsof, classification, geste exact
+│   │   ├── StackOwnershipModel.swift le superviseur d'ownership et son évènement d'alerte
+│   │   ├── LegacyStack.swift      la seule autorité sur l'ancienne pile (découverte, arrêt sur ordre)
+│   │   ├── StackMigration.swift   copie gardée quand la source est quiescente, import `.env`
+│   │   ├── MemoryUnion.swift      l'union id-par-id des deux bases (scroll/retrieve/upsert)
+│   │   ├── MemoryUnionRunner.swift l'orchestration de l'union (staging, conteneur lecteur, trace)
 │   │   └── OMLXProbe.swift        la sonde oMLX (budget 5 s, jamais bruyante)
 │   ├── Terminal/                  la fenêtre de terminal : un shell de connexion dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
@@ -1945,6 +2036,7 @@ omp-console/
 │   │   ├── MemorySearch.swift     la sélection de pertinence (portée du plugin)
 │   │   ├── MemoryText.swift       tous les textes de la section, en un endroit
 │   │   ├── MemoryModel.swift      l'état de la LISTE : portée, sommaire, recherche, sélection
+│   │   ├── MemoryOwnership.swift  le propriétaire de l'adresse (étranger) et son geste
 │   │   ├── MemoryGraph.swift      la dérivation pure du graphe : nœuds, liens, visibilité
 │   │   ├── MemoryGraphLayout.swift placement (Fruchterman-Reingold), vue écran, clic, scène
 │   │   ├── MemoryLinkStore.swift  les liens manuels, dans `<racine de support>/memory-links.json`
@@ -2045,19 +2137,33 @@ aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargem
 premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
 préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
-(« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR ;
+(« Reprendre » ou la durée) et « Livrées récemment » (bouton « Ouvrir la PR » ;
 PR ouvertes, créées, fusionnées ou fermées, closes depuis 7 jours au plus) —
-les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
+les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. En
+largeur compacte (iPhone), chaque rangée « En cours » ou « Livrées récemment »
+tient sur deux lignes : le nom sur toute la largeur, puis la puce et le bouton ;
+en largeur régulière (iPad), une seule ligne ; aux tailles d'accessibilité, titre,
+puce et bouton s'empilent. Les gestes de carte suivent l'envoi : « Valider les
+specs » demande une confirmation (elle lance l'implémentation sur le Mac),
+« Reprendre » et « Accepter la revue » partent aussitôt ; pendant l'envoi, le
+bouton est désactivé et montre « Envoi en cours » jusqu'à la réponse du Mac, sans
+second envoi possible ; un échec s'affiche sur la carte concernée, en français et
+sans détail technique, et le succès n'a pas de message (la carte suit l'ardoise).
+La
 ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
 le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
 ligne n'en porte, et rien à zéro), et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
-`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong>`
-force un état depuis la fixture partagée `HomeParity` pour les captures ; il
-nourrit aussi le badge de la ligne Accueil (3 pour dashboard/answer/contract/contractLong/degraded,
-0 pour loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
+`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong|longTitles|slowMac>`
+force un état depuis la fixture partagée `HomeParity` pour les captures
+(`longTitles` : le tableau de bord dont les rangées « En cours » et « Livrées
+récemment » portent un titre de 40 caractères ; `slowMac` : le tableau de bord
+dont l'envoi des gestes de carte ne répond jamais, pour capturer « Envoi en
+cours ») ; il nourrit aussi le badge de la ligne Accueil (3 pour
+dashboard/answer/contract/contractLong/degraded/longTitles/slowMac, 0 pour
+loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
 d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
 Dynamic Type).
 
@@ -2131,7 +2237,7 @@ les libellés VoiceOver « Titre » et « Besoin » ; le besoin est une zone
 multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans le
 champ.
 
-Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
+Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, toutes les voies ont la même largeur, qui grandit avec la taille de texte, et s'alignent en haut ; quand elles ne tiennent pas à l'écran, elles défilent horizontalement jusqu'à une marge de fin, après la dernière voie. Le titre d'une carte passe à la ligne et n'est jamais tronqué, dans toutes les voies.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
 (le catalogue de `omp models --json`, qu'aucune route n'exposait ; il rend aussi
@@ -2147,9 +2253,13 @@ contrat de la feature. La recette de design iOS fait autorité et vit dans
 La section Sessions liste les runs du magasin d'état — ceux de tous les dépôts et
 de tous les processus OMP du Mac, y compris une session lancée par un `omp` en
 terminal hors coque — groupés par jour sous les mêmes en-têtes que la coque macOS
-(« Aujourd'hui », « Hier », puis la date). Un `Picker` filtre la liste par projet ;
-choisir « Tous les projets » la restitue entière et les en-têtes de jour se
-recalculent. La liste vient de la dérivation partagée `ConsoleCore` (`SessionList`,
+(« Aujourd'hui », « Hier », puis la date). Un menu filtre la liste par projet :
+son libellé visible est la valeur choisie, entière à toute taille de texte, et
+VoiceOver l'annonce « Projet, <valeur> » ; choisir « Tous les projets » la
+restitue entière et les en-têtes de jour se recalculent. Chaque ligne a une marge
+verticale qui grandit avec la taille du texte ; aux tailles d'accessibilité,
+l'icône d'étape, les textes et la puce d'état s'empilent au lieu d'être coupés.
+La liste vient de la dérivation partagée `ConsoleCore` (`SessionList`,
 `SessionDays`), alimentée par l'instantané que la trame `store` publie — aucune
 route n'est appelée pour lister.
 
@@ -2551,6 +2661,45 @@ choix simple, qu'une réponse ou une annulation ferme sans réseau ;
 `-sessionomp.recipe lancement` ouvre « Lancer une session OMP » sur la même
 fixture. Ce sont des crochets de recette, pas des fonctionnalités.
 
+`-stats.recipe <vide|chargement|bascule>` ouvre la section Statistiques sur son
+modèle et son écran réels, nourris par une lecture en mémoire (projets
+`recette-vide` et `recette-pleine`) et un client forcé connecté, sans appairage :
+`vide` sert `recette-vide` (choisir `recette-pleine` dans le sélecteur sert son
+tableau), `chargement` garde le premier relevé en cours, `bascule` sert
+`recette-pleine` puis choisit `recette-vide`, dont le relevé reste en cours. La
+DERNIÈRE paire reconnue gagne, une valeur inconnue est ignorée ; à lancer avec
+`-section stats -home.welcomeSeen YES`. Ce sont des crochets de recette, pas des
+fonctionnalités.
+
+`-pipelines.board pleine` rend sur l'écran Pipelines l'ardoise de la fixture
+partagée `KanbanBoardParity` (ConsoleCore) à la place de celle du Mac : une voie
+« Pas commencées » vide, trois cartes « En cours » dont un titre long, une voie
+« Livrées » de 100 cartes (98 avec une PR, 2 sans), deux dépôts dont un nom
+long. Le bandeau de connexion n'est pas affiché, tout le reste est le chemin
+réel ; au premier affichage l'app écrit `pipelines-board-ready` sur sa sortie
+d'erreur. Les deux crochets `-pipelines.*` se combinent.
+
+La recette des voies et des cartes de Pipelines (feature
+`pipelines-ipad-voies-sans-largeur`) s'appuie sur ce crochet :
+
+```bash
+bash scripts/ios-pipelines-voies-recette.sh --phase avant|apres --source reel|fixture \
+  --ipad13 <UDID> --ipad11 <UDID> --iphone <UDID>
+```
+
+Elle compile l'app SIGNÉE, l'installe par-dessus sur les trois simulateurs
+passés (privés, déjà démarrés ; en source `reel`, appairés au Mac), puis capture
+l'écran Pipelines en {large, accessibility-extra-large,
+accessibility-extra-extra-extra-large} × {clair, sombre}, plus le défilement
+horizontal au bout (iPad), la voie « Livrées » dépliée (iPhone) et, en fixture,
+une carte livrée sans PR. Captures, relevés `describe-all` et `pixels.json` vont
+dans `omp-console/build/pipelines-voies/<phase>/<source>/`. Elle imprime une ligne
+`AC-<n> <appareil> <taille> <apparence> : <mesure> — ok|ÉCHEC` par constat (largeur
+et haut des voies, marge de fin, actions des cartes, contraste carte/panneau en
+sombre, rendu clair inchangé par rapport à la phase avant) et sort en 0 (tout
+passe), 1 (au moins un ÉCHEC) ou 2 (non exécutée). Jamais lancée par check.sh ni
+par la CI.
+
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
 ```bash
@@ -2761,6 +2910,24 @@ pkill -f "idb_companion --udid <UDID>"
 idb lance un `idb_companion --udid <UDID>` qui survit à `simctl delete` : sans
 `pkill`, il reste.
 
+### Recette des rangées et des gestes de l'Accueil
+
+```bash
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-accueil-rangees-recette.sh
+```
+
+Le script compile l'app sans signature, crée un iPhone 18 Pro et un iPad (A16)
+dédiés sous iOS 27.0 (ou reprend `IOS_RECETTE_IPHONE` / `IOS_RECETTE_IPAD`, en
+refusant le simulateur appairé), et vérifie l'Accueil à l'écran par `idb`. Il
+contrôle les rangées en deux lignes sur iPhone (`-home.recipe longTitles`), sur une
+ligne sur iPad, empilées à `accessibility-extra-large`, puis vérifie que seul
+« Ouvrir la PR » ouvre Safari, la confirmation de « Valider les specs », l'échec
+affiché sur la carte et l'état « Envoi en cours » (`-home.recipe slowMac`). Il
+écrit une ligne `AC-n ✓` ou `AC-n ✗ <raison>` par critère, de AC-1 à AC-10,
+et dépose ses captures dans `omp-console/build/accueil-rangees/`. Codes de sortie
+: `0` tout est ✓, `1` au moins un ✗, `2` outillage manquant. Les simulateurs
+créés sont supprimés à la sortie.
+
 ### Installer sur un appareil réel
 
 Ce geste appartient à l'utilisateur : il n'est pas nécessaire à la validation du
@@ -2846,13 +3013,15 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 1. **Appairer** l'app au Mac (feuille de connexion), un projet étant ouvert dans la
    fenêtre « Session OMP » du Mac : la section affiche l'en-tête « N souvenirs » (le
    total de la portée) puis les lignes de la première page du sommaire, chacune avec
-   le texte COMPLET du souvenir tel qu'il est stocké (aucun rendu Markdown), dans
-   l'ordre du service (les plus récents d'abord). En faisant défiler jusqu'en bas, le
-   pied « Chargement des souvenirs suivants… » lit la page suivante de lui-même
-   (défilement continu, 100 souvenirs par page), jusqu'au dernier souvenir de la
-   portée — chaque souvenir une seule fois, plus de ligne de troncature. Si une page
-   suivante échoue, le pied dit pourquoi et offre « Réessayer », les lignes déjà lues
-   restent.
+   le texte du souvenir tel qu'il est stocké (aucun rendu Markdown), sur 3 lignes au
+   plus (4 sur iPad), terminé par « … » s'il est plus long — le texte intégral est
+   dans la feuille (étape 2) —, dans l'ordre du service (les plus récents d'abord).
+   En faisant défiler jusqu'en bas, le pied « Chargement des souvenirs suivants… »
+   lit la page suivante de lui-même (défilement continu, 100 souvenirs par page),
+   jusqu'au dernier souvenir de la portée — chaque souvenir une seule fois, plus de
+   ligne de troncature. Si une page suivante échoue, le pied dit pourquoi et offre
+   « Réessayer », les lignes déjà lues restent. Aux tailles d'accessibilité, la date
+   et les étiquettes d'une ligne s'empilent sous le texte.
 2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre la date relative et
    les étiquettes, puis le texte intégral tel qu'il est stocké (un `*` reste un `*`),
    et l'identifiant et la portée sous « Détails techniques » ; se fermer par le geste
@@ -2950,13 +3119,16 @@ ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
 Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
-   « Connecté », et la section Statistiques montre un bref indicateur
-   d'activité puis son tableau. *(hors appairage, la section affiche le bandeau
-   d'attente « Non appairé » / « Mac injoignable — … » et n'émet aucun relevé)*
+   « Connecté », et la section Statistiques montre un bref « Chargement des
+   statistiques… » puis son tableau. *(hors appairage, la section affiche le
+   bandeau d'attente « Non appairé » / « Mac injoignable — … » et n'émet aucun relevé)*
 2. **Choisir un projet** — le sélecteur en haut de la section propose les projets
    connus du Mac, dans l'ordre de la coque (le libellé du dépôt, jamais une clé) ;
-   il affiche celui que le Mac sert. Choisir un autre projet : quelques secondes
-   plus tard le tableau devient celui de ce projet.
+   il nomme le projet choisi, au-dessus du tableau comme au-dessus de l'état
+   « Aucune donnée pour ce projet ». Choisir un autre projet : le sélecteur le
+   nomme aussitôt, au-dessus de « Chargement des statistiques… », puis le tableau
+   (ou l'état vide) de ce projet s'affiche. Un projet sans données ne retient donc
+   jamais l'écran : on en choisit un autre depuis l'état vide.
 3. **Comparer avec le Mac** — ouvrir la fenêtre **Statistiques** macOS sur le même
    projet : chaque feature de l'app porte les MÊMES tokens reçus, le même modèle,
    la même durée et le même nombre de tours ; ses tokens envoyés, eux, ajoutent le

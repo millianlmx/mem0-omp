@@ -25,6 +25,9 @@ enum IOSSessionText {
     static let loading = "Chargement des sessions…"
     /// Le choix « aucun projet » du filtre (S-2).
     static let allProjects = "Tous les projets"
+    /// Le symbole qui suit la valeur du filtre de projet : celui des menus
+    /// système à choix unique (rangees-sessions-memoire-serrees, S-3).
+    static let filterSymbol = "chevron.up.chevron.down"
 
     // MARK: - La feuille d'une session
 

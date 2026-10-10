@@ -34,6 +34,10 @@ marqueur `[test: <fonction>]` (une fonction de
 - Trois surfaces seulement, et rien d'autre : `iosPanel()` pour le panneau d'un
   écran, `iosCard()` pour la carte d'un état vide, `iosBanner(tone:)` pour un
   bandeau. `[garde: design-ios/AC-1]`
+- La carte de l'écran Pipelines est la même surface en relief,
+  `iosCard(raised: true)` : fond `tertiarySystemGroupedBackground`, identique au
+  panneau en clair et plus clair que lui en sombre.
+  `[test: raisedCardStandsOutOnlyInDark]` `[capture: ipad-kanban-dark]`
 - Chaque écran des sept sections pose son contenu sur `iosPanel()`. `[capture: iphone-*-light]`
 - Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
   régulier), fixe — c'est la marge de l'écran, le rembourrage intérieur seul suit
@@ -60,7 +64,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
   sources de l'app. `[garde: design-ios/AC-7]`
 - Aucun `lineLimit` numérique : les textes se replient sur plusieurs lignes.
-  Seule exception : la PLAGE de hauteur d'un champ de saisie vertical
+  Deux exceptions : le texte d'un souvenir dans la liste de la Mémoire, plafonné
+  par la fonction nommée `IOSMetrics.memoryRowLines(_:)` (texte intégral dans la
+  feuille), et la PLAGE de hauteur d'un champ de saisie vertical
   (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
   tronqué, le champ défile. `[garde: design-ios/AC-7]`
 
@@ -111,7 +117,9 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Dynamic Type maximum (S-7)
 
 - À `accessibility-extra-extra-extra-large`, aucun texte n'est tronqué ni
-  chevauché : aucune hauteur fixe, aucune largeur figée, aucune troncature.
+  chevauché : aucune hauteur fixe, aucune largeur figée, aucune troncature —
+  sauf le texte d'un souvenir dans la liste de la Mémoire, plafonné par
+  `IOSMetrics.memoryRowLines(_:)` et intégral dans la feuille.
   `[capture: iphone-*-dark-ax]`
 - L'iPad tient la même taille maximale, barre latérale à deux groupes comprise.
   `[capture: ipad-*-light-ax]`
@@ -174,8 +182,14 @@ marqueur `[test: <fonction>]` (une fonction de
   visite : leur en-tête, un bouton de 44 pt (`pipelines.lane.<voie>.header`,
   valeur d'accessibilité « replié »/« déplié »), les déplie et les replie ;
   l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
-- En largeur RÉGULIÈRE (iPad), l'ardoise est inchangée : voies permanentes même
-  vides, voies terminales dépliées. `[test: regularKeepsLanesUnchanged]`
+- En largeur RÉGULIÈRE (iPad), voies permanentes même vides et voies terminales
+  dépliées ; chaque voie a la même largeur, `IOSMetrics.laneWidth` (280 pt) mise à
+  l'échelle par Dynamic Type et plafonnée à la largeur visible moins la marge de
+  fin ; voies alignées en haut ; le défilement horizontal finit sur une marge
+  `IOSMetrics.margin`. `[test: laneWidthNeverExceedsTheViewport]` `[test: regularKeepsLanesUnchanged]`
+- L'en-tête d'une voie (symbole, titre, compteur) s'empile aux tailles
+  d'accessibilité, sur iPad comme sur iPhone, et son titre n'est jamais tronqué.
+  `[test: laneHeaderStacksAtAccessibilitySizes]`
 - L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
   un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
   affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
@@ -187,6 +201,12 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+- Une carte n'a de ligne d'action que si elle porte une adresse de PR ouvrable :
+  un filet espacé sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
+  d'au moins 44 pt, sa taille de texte bornée à `.accessibility3` ; une carte
+  sans PR n'a ni filet ni espace réservé. Une carte est rigide en hauteur : dans
+  la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
+  ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
 - Le bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au clavier de l'iPad), placé
   avant « Nouvelle feature », demande au Mac de relire l'état des PR sur GitHub ;
   il n'est actif que connecté et hors relecture, et montre un indicateur
@@ -255,8 +275,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Sa barre dit « Contrat » en ligne ; le nom complet de la feature est en tête du
   panneau, en en-tête, et passe à la ligne au lieu d'être tronqué.
   `[test: longRecipeNamesTheWholeFeature]`
-- Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
-  exploitable. `[test: deliveredLinks]`
+- Une livraison récente ouvre sa PR par son seul bouton « Ouvrir la PR », par
+  `openURL`, seulement quand l'URL est exploitable ; le titre et la puce ne sont
+  pas des cibles. `[test: deliveredLinks]`
 - « Livrées récemment » et la voie « Livrées » portent l'état réel de la PR
   (« PR ouverte », « PR fusionnée », « PR fermée », « PR créée » tant qu'il est
   inconnu), les mêmes libellés que le Mac (`ConsoleStatus.of(card:)`) ; une
@@ -277,11 +298,23 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
-- Les rangées « En cours » et « Livrées récemment » restent sur une ligne aux
-  tailles standard et s'empilent (titre, puce, bouton) aux tailles
-  d'accessibilité ; leurs boutons sont bornés à `accessibility3` et leur texte à
-  `accessibility4` (au-delà, un mot comme « Implémentation » est coupé en deux).
-  `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Les rangées « En cours » et « Livrées récemment » suivent la largeur : en
+  largeur régulière (iPad), titre, puce et bouton sur une ligne ; en largeur
+  compacte (iPhone, iPad en Split View étroit), le titre sur toute la largeur,
+  puis la puce et le bouton côte à côte sur une deuxième ligne, sans troncature.
+  `[test: compactWidthSplitsRowsInTwoLines]`
+- Aux tailles d'accessibilité, quelle que soit la largeur, ces rangées
+  s'empilent (titre, puce, bouton) ; leurs boutons sont bornés à `accessibility3`
+  et leur texte à `accessibility4` (au-delà, un mot comme « Implémentation » est
+  coupé en deux). `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Un geste de carte montre son envoi en cours et n'envoie rien de plus jusqu'à la
+  réponse du Mac : bouton désactivé, indicateur devant le libellé, valeur
+  d'accessibilité « Envoi en cours ». `[test: resumeIgnoresSecondTapWhileInFlight]`
+- « Valider les specs » demande une confirmation, « Reprendre » et « Accepter la
+  revue » partent aussitôt. `[test: specsTapAsksConfirmationWithoutSending]`
+- L'échec d'un geste s'affiche sur sa carte, en français, sans détail technique ;
+  le succès n'a pas de message, la carte suit l'ardoise.
+  `[test: failureLandsOnItsCardWithoutRawDetail]`
 - Le nom d'une feature passe par `IOSHomeText.featureName(_:)` : il se replie en
   entier et la coupure tombe AVANT un tiret, jamais après.
   `[test: featureNameNeverEndsALineWithAHyphen]`
@@ -313,6 +346,13 @@ marqueur `[test: <fonction>]` (une fonction de
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
   — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
+- Le texte d'un souvenir tient en 3 lignes au plus en largeur compacte et 4 en
+  largeur régulière, terminé par « … », quelle que soit la taille de texte ; la
+  feuille montre le texte intégral. `[test: memoryRowLinesFollowTheWidth]`
+- Chaque rangée a la même marge verticale que les Sessions ; la date et les
+  étiquettes tiennent sur une ligne, jointes par « · », aux tailles standard et
+  s'empilent (date, puis étiquettes) aux tailles d'accessibilité, texte borné à
+  `accessibility4`. `[test: memoryRowContextSplitsIntoSegments]`
 - « Sommaire » reste toujours visible ; indisponible, il est grisé et un toucher
   montre la raison dans une bulle — jamais un bouton masqué ni muet.
   `[test: summaryReasonNamesEachUnavailableCase]`
@@ -356,9 +396,17 @@ marqueur `[test: <fonction>]` (une fonction de
   (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
   milliseconde par milliseconde et par run vivant, sans un octet de trafic.
   `[test: statsDurationsAdvanceWithLiveRuns]`
-- Six états à part entière, jamais un écran vide : chargement, dégradé (hors
-  `.connected`, bandeau `attention`), erreur (bandeau `danger` + « Réessayer »),
-  aucun projet, projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+- Sept états à part entière, jamais un écran vide : chargement (« Chargement des
+  statistiques… »), dégradé (hors `.connected`, bandeau `attention`), erreur
+  (bandeau `danger` + « Réessayer »), aucun projet, bascule vers un autre projet,
+  projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+- Le sélecteur de projet nomme le projet CHOISI et se tient en tête des états
+  tableau, vide et bascule — pendant la lecture d'un autre projet, il reste
+  au-dessus du chargement ; le premier chargement, le dégradé, l'erreur et
+  « Aucun projet » n'en ont pas. `[test: statsProjectSwitchKeepsHeaderAboveLoading]`
+- Depuis l'état « Aucune donnée pour ce projet », on change de projet : le
+  sélecteur est au-dessus de la carte vide, et choisir un projet qui a des données
+  affiche son tableau. `[test: statsEmptyProjectOffersTheSwitch]`
 - Un relevé est relancé par quatre déclencheurs seulement — apparition, changement
   de projet, nouvel état du magasin, mise à jour de session — et JAMAIS tant que le
   client n'est pas connecté : aucune minuterie de scrutation.
@@ -370,7 +418,7 @@ marqueur `[test: <fonction>]` (une fonction de
 - La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et
   son groupement par jour (`SessionDays`) : mêmes runs, mêmes en-têtes que macOS,
   y compris une session lancée hors coque. `[test: listGroupsByDay]`
-- Un `Picker` de projet restreint la liste AVANT le groupement, donc les
+- Un menu de projet restreint la liste AVANT le groupement, donc les
   en-têtes de jour se recalculent ; « Tous les projets » la restitue entière.
   `[test: projectFilter]`
 - Le fil de la visionneuse vient du modèle de lignes PARTAGÉ
@@ -412,6 +460,13 @@ marqueur `[test: <fonction>]` (une fonction de
 - Le symbole d'étape occupe une colonne de largeur fixe (`IOSMetrics.phaseIconWidth`,
   mise à l'échelle par `@ScaledMetric`) : les titres des lignes partagent la même
   abscisse à toute taille de texte. `[test: phasesRecipeShowsEveryPhase]`
+- Chaque rangée a une marge verticale `IOSMetrics.rowVerticalPadding` mise à
+  l'échelle (`@ScaledMetric`), reste sur une ligne aux tailles standard et
+  s'empile (icône, textes, puce) aux tailles d'accessibilité, texte borné à
+  `accessibility4`. `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Le filtre de projet est un menu dont le libellé visible est la valeur choisie,
+  entière à toute taille de texte (repliée, jamais tronquée) ; VoiceOver annonce
+  « Projet, <valeur> ». `[test: sessionFilterSaysProjectThenItsValue]`
 
 ## Session OMP (feature `ios-session-omp`)
 

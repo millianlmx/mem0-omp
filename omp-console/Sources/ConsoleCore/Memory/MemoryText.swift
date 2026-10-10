@@ -34,6 +34,19 @@ public enum MemoryText {
     public static let tokenRefused = "jeton refusé (401)"
     public static let unreadableResponse = "réponse illisible"
 
+    // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)
+
+    // Quelqu'un répond à l'adresse du service SANS porter le jeton d'installation
+    // de l'app : la section Mémoire le NOMME au lieu de rendre un état disponible.
+    public static let foreignTitle = "Ce n'est pas la pile d'OMP Console"
+    public static let foreignDescription = "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port."
+    /// Le libellé du bouton de reprise (S-6), partagé avec la feuille de
+    /// préparation (`SetupText.takeover`) : une seule action, un seul mot.
+    public static let takeover = "Arrêter l'ancienne pile et reprendre"
+    /// Le message d'erreur du client quand `/health` répond sans notre jeton (S-4) :
+    /// il alimente le détail de l'état « indisponible ».
+    public static let foreignService = "Ce service n'est pas la pile d'OMP Console : son jeton d'installation est absent ou différent."
+
     // MARK: - Prérequis système (S-6, all-in-one-app/AC-6)
 
     // oMLX est un prérequis SYSTÈME (embeddings de la recherche) : l'app ne

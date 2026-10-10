@@ -26,6 +26,10 @@ struct IOSSectionView: View {
     /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` de l'écran
     /// Pipelines (fiche d'une carte).
     let cardRecipe: PipelinesCardRecipe?
+    /// Le crochet de recette `-stats.recipe` de la section Statistiques.
+    let statsRecipe: IOSStatsRecipe?
+    /// Le crochet de recette `-pipelines.board` de l'écran Pipelines.
+    let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
     /// Le crochet de recette `-projet.recipe <lancement|dialogue>` de l'écran Projet.
     let projectRecipe: IOSProjectRecipe?
     /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
@@ -37,7 +41,8 @@ struct IOSSectionView: View {
 
     var body: some View {
         if section == .kanban {
-            PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe, cardRecipe: cardRecipe)
+            PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe,
+                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe)
         } else if section == .sessions {
@@ -54,7 +59,7 @@ struct IOSSectionView: View {
             if section == .project {
                 IOSProjectScreen(client: client, recipe: projectRecipe)
             } else if section == .stats {
-                IOSStatsScreen(client: client)
+                IOSStatsScreen(client: client, recipe: statsRecipe)
             } else {
                 if let status = content?.status {
                     IOSStatusChip(status: status)
