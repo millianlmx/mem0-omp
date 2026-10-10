@@ -83,17 +83,22 @@ struct RootView: View {
                         ForEach(IOSSection.sections(of: group)) { section in
                             let badge = IOSHomeContent.rowBadge(
                                 for: section, attentionCount: attentionCount)
-                            Label(section.title, systemImage: IOSSection.systemImage(of: section))
-                                .badge(badge)
-                                .tag(section)
-                                .accessibilityElement(children: .ignore)
-                                .accessibilityLabel(IOSHomeText.sectionRowLabel(section.title, badge: badge))
-                                .accessibilityAddTraits(.isButton)
-                                .accessibilityIdentifier("ios.section." + section.rawValue)
+                            // Le lien rend les chevrons du SYSTÈME : dessinés en
+                            // pile (iPhone), absents en barre latérale (iPad).
+                            NavigationLink(value: section) {
+                                Label(section.title, systemImage: IOSSection.systemImage(of: section))
+                                    .badge(badge)
+                            }
+                            .tag(section)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel(IOSHomeText.sectionRowLabel(section.title, badge: badge))
+                            .accessibilityAddTraits(.isButton)
+                            .accessibilityIdentifier("ios.section." + section.rawValue)
                         }
                     }
                 }
             }
+            .navigationTitle(IOSHomeText.rootTitle)
             .toolbar {
                 if sizeClass == .compact {
                     connectionToolbarItem

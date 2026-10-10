@@ -258,10 +258,13 @@ struct PipelinesCardSheet: View {
                 _ = try await client.resume(cardId: card.id)
             }
         case .openPR:
-            Button(HomeText.openPR) {
+            Button {
                 if let url = httpURL(card.prUrl ?? "") { openURL(url) }
+            } label: {
+                Text(HomeText.openPR)
+                    .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                    .contentShape(Rectangle())
             }
-            .frame(minHeight: IOSMetrics.minimumTarget)
             .accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))
         case .merge:
             Button(ProjectViewText.prMerge) { loadMerge(card) }

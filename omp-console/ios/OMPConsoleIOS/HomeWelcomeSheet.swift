@@ -25,6 +25,7 @@ struct HomeWelcomeSheet: View {
                         HStack(alignment: .top, spacing: 12) {
                             Image(systemName: promise.symbol)
                                 .foregroundStyle(.tint)
+                                .accessibilityHidden(true)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(promise.title).font(.headline)
                                 Text(promise.detail).font(.callout).foregroundStyle(.secondary)

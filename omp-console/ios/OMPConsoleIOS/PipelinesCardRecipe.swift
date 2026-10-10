@@ -1,12 +1,15 @@
-// Le crochet de RECETTE `-pipelines.recipe <fiche|actions|arret>` (ios-fiche-carte-pipelines) :
-// il ouvre, UNE fois, la fiche d'une carte de fixture sur l'écran Pipelines, sans
-// réseau et sans écran fabriqué — la vraie `PipelinesCardSheet` est rendue, sur la
-// carte dérivée de la fixture partagée `HomeParity` par la même dérivation que
-// l'Accueil de recette.
+// Le crochet de RECETTE `-pipelines.recipe <fiche|actions|arret|ardoise>`
+// (ios-fiche-carte-pipelines, accessibilite-et-localisation-ios-residu) : il ouvre,
+// UNE fois, la fiche d'une carte de fixture sur l'écran Pipelines, ou il montre
+// l'ardoise de fixture, sans réseau et sans écran fabriqué — la vraie
+// `PipelinesCardSheet` ou le vrai écran est rendu, sur l'ardoise dérivée de la
+// fixture partagée `HomeParity` par la même dérivation que l'Accueil de recette.
 //
 //   fiche   : la fiche en haut ;
 //   actions : la fiche défilée jusqu'à la liste des gestes ;
-//   arret   : comme `actions`, puis la confirmation d'arrêt ouverte.
+//   arret   : comme `actions`, puis la confirmation d'arrêt ouverte ;
+//   ardoise : l'écran montre l'ardoise de fixture à la place de l'instantané du
+//             Mac, sans appairage ; aucune feuille ne s'ouvre.
 //
 // Sans l'argument : aucun effet. Comme `IOSSection.resolve` et `IOSMemoryGraphRecipe`,
 // la DERNIÈRE paire reconnue gagne ; une valeur inconnue est ignorée.
@@ -22,6 +25,7 @@ enum PipelinesCardRecipe: Equatable {
     case fiche
     case actions
     case arret
+    case ardoise
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> PipelinesCardRecipe? {
@@ -44,17 +48,26 @@ enum PipelinesCardRecipe: Equatable {
         case PipelinesText.recipeFiche: return .fiche
         case PipelinesText.recipeActions: return .actions
         case PipelinesText.recipeArret: return .arret
+        case PipelinesText.recipeArdoise: return .ardoise
         default: return nil
         }
     }
 
     /// Faut-il défiler jusqu'à la liste des gestes ?
-    var scrollsToActions: Bool { self != .fiche }
+    var scrollsToActions: Bool { self == .actions || self == .arret }
 
     /// La carte de fixture : la première de l'ardoise dérivée de `HomeParity` qui offre
     /// « Reprendre » ET « Arrêter… », avec le titre long et les deux modèles de recette.
-    /// `nil` quand aucune carte ne qualifie : aucune fiche ne s'ouvre, aucun signal.
-    var card: KanbanCard? { Self.fixtureCard }
+    /// `nil` quand aucune carte ne qualifie, ou pour `ardoise` (aucune fiche ne
+    /// s'ouvre) : aucune fiche, aucun signal.
+    var card: KanbanCard? { self == .ardoise ? nil : Self.fixtureCard }
+
+    /// L'ardoise qui remplace l'instantané du Mac : celle de la fixture pour `ardoise`
+    /// quand elle porte au moins une carte ; `nil` sinon (l'écran suit le Mac, aucun signal).
+    var forcedBoard: KanbanBoardState? {
+        guard self == .ardoise, Self.board.kanbanBoard?.cards.isEmpty == false else { return nil }
+        return Self.board
+    }
 
     /// Le catalogue de recette : seul le premier modèle y figure, le second reste brut.
     var modelNames: [String: String] {
@@ -68,7 +81,7 @@ enum PipelinesCardRecipe: Equatable {
     }
 
     /// L'ardoise de la fixture, horloge fixe (même dérivation que `IOSHomeRecipe`).
-    private static let board: KanbanBoardState = KanbanBoardState.derive(
+    static let board: KanbanBoardState = KanbanBoardState.derive(
         snapshot: HomeParity.snapshot,
         nowMs: 1_700_000_000_000,
         stateDir: "",

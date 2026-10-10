@@ -43,4 +43,23 @@ struct PipelinesCardRecipeTests {
         #expect(PipelinesCardRecipe.actions.scrollsToActions)
         #expect(PipelinesCardRecipe.arret.scrollsToActions)
     }
+
+    @Test("accessibilite-et-localisation-ios-residu — le crochet `ardoise` montre l'ardoise de fixture, sans fiche, avec une voie d'au moins deux cartes (appui de AC-4)")
+    func ardoiseRecipeForcesTheFixtureBoard() throws {
+        let flag = PipelinesText.recipeFlag
+        #expect(PipelinesCardRecipe.resolve([flag, PipelinesText.recipeArdoise]) == .ardoise)
+        #expect(PipelinesCardRecipe.resolve([flag, PipelinesText.recipeArdoise, flag, PipelinesText.recipeFiche]) == .fiche)
+        #expect(PipelinesCardRecipe.resolve([flag, PipelinesText.recipeFiche, flag, PipelinesText.recipeArdoise]) == .ardoise)
+        #expect(PipelinesCardRecipe.ardoise.card == nil)
+        #expect(PipelinesCardRecipe.ardoise.scrollsToActions == false)
+        #expect(PipelinesCardRecipe.fiche.forcedBoard == nil)
+        let forced = try #require(PipelinesCardRecipe.ardoise.forcedBoard)
+        #expect(forced == PipelinesCardRecipe.board)
+        let board = try #require(forced.kanbanBoard)
+        #expect(board.lanes.contains { $0.cards.count >= 2 })
+        let delivered = try #require(board.lanes.first { $0.lane == .livrees })
+        let ids = Set(delivered.cards.map(\.id))
+        #expect(ids.contains("feature:ade5316c34182862:terminee"))
+        #expect(ids.contains("project:ddddddddddddddd1:livree-avec-pr"))
+    }
 }
