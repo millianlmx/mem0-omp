@@ -381,8 +381,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// L'instantané de S-1, dans l'ordre session, Terminal, pilotage, pipelines.
+    /// Les pipelines en cours sont la liste « En cours » de l'Accueil (comptes de
+    /// `AlertsStatus`, source unique depuis accueil-en-cours-melange-pause-et-compte).
     private func quitActivities() -> [QuitActivity] {
-        let busy = alerts.status.counters?.busy ?? 0
+        let busy = alerts.status.counts?.running ?? 0
         return [
             Self.sessionQuitActivity?(),
             Self.terminalQuitActivity?(),
