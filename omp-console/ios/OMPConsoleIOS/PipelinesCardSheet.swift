@@ -58,6 +58,14 @@ struct PipelinesCardSheet: View {
         return PipelinesModel.boardState(of: client, nowMs: Self.nowMs)?.card(cardId)
     }
 
+    /// Le statut présenté (etats-non-connecte-heterogenes-ios, S-5) : sous la recette,
+    /// la fixture tient lieu de Mac et la feuille est connectée (S-4) ; sinon celui du
+    /// client. Les gestes vers le Mac ne sont actifs qu'à `.connected`.
+    private var connection: IOSConnectionStatus {
+        if recipe != nil { return .connected }
+        return IOSConnectionStatus.of(client)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
@@ -75,7 +83,7 @@ struct PipelinesCardSheet: View {
                             gestureList(card)
                                 .id(PipelinesText.recipeActionsAnchor)
                         } else {
-                            Text(PipelinesText.noSnapshot)
+                            Text(PipelinesText.sheetNoCard)
                                 .font(.headline)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .iosCard()
@@ -200,6 +208,8 @@ struct PipelinesCardSheet: View {
             titleVisibility: .visible
         ) {
             Button(KanbanText.stopConfirm, role: .destructive) {
+                // Confirmation ouverte avant la coupure : rien ne part hors connexion (S-5).
+                guard connection.gesturesEnabled else { return }
                 perform { _ = try await client.stop(cardId: card.id) }
             }
             Button(KanbanText.cancel, role: .cancel) {}
@@ -239,7 +249,7 @@ struct PipelinesCardSheet: View {
             .buttonBorderShape(.capsule)
             .tint(ConsoleTone.danger.tint)
             .overlay(Capsule().strokeBorder(ConsoleTone.danger.tint, lineWidth: 1))
-            .disabled(busy)
+            .disabled(!connection.gesturesEnabled || busy)
             .accessibilityIdentifier(PipelinesAccessibility.gesture(KanbanText.stop, card.id))
         case .launch:
             actionButton(label: KanbanText.launch, id: KanbanText.launch, card: card) {
@@ -254,7 +264,7 @@ struct PipelinesCardSheet: View {
         case .merge:
             Button(ProjectViewText.prMerge) { loadMerge(card) }
                 .frame(minHeight: IOSMetrics.minimumTarget)
-                .disabled(busy)
+                .disabled(!connection.gesturesEnabled || busy)
                 .accessibilityIdentifier(PipelinesAccessibility.gesture(ProjectViewText.prMerge, card.id))
         }
     }
@@ -300,6 +310,7 @@ struct PipelinesCardSheet: View {
                 }
                 .buttonStyle(.plain)
                 .iosCard()
+                .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(PipelinesAccessibility.option(item.offset))
             }
             textZone(card, prompt: nil, placeholder: KanbanText.answerPlaceholder, customKind: true, toolCallId: toolCallId)
@@ -324,6 +335,7 @@ struct PipelinesCardSheet: View {
             }
             TextField(placeholder, text: $freeText, axis: .vertical)
                 .textFieldStyle(.roundedBorder)
+                .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(PipelinesAccessibility.answerField)
             Button(KanbanText.send) {
                 let text = freeText
@@ -343,7 +355,7 @@ struct PipelinesCardSheet: View {
                 }
             }
             .frame(minHeight: IOSMetrics.minimumTarget)
-            .disabled(busy || isBlank(freeText))
+            .disabled(!connection.gesturesEnabled || busy || isBlank(freeText))
             .accessibilityIdentifier(PipelinesAccessibility.answerSend)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -372,13 +384,13 @@ struct PipelinesCardSheet: View {
         if prominent {
             button
                 .buttonStyle(.borderedProminent)
-                .disabled(busy)
+                .disabled(!connection.gesturesEnabled || busy)
                 .accessibilityIdentifier(PipelinesAccessibility.gesture(id, card.id))
         } else {
             button
                 .buttonStyle(.plain)
                 .iosCard()
-                .disabled(busy)
+                .disabled(!connection.gesturesEnabled || busy)
                 .accessibilityIdentifier(PipelinesAccessibility.gesture(id, card.id))
         }
     }
@@ -426,6 +438,8 @@ struct PipelinesCardSheet: View {
     }
 
     private func confirmMerge(_ row: ProjectPRRow) {
+        // Confirmation ouverte avant la coupure : rien ne part hors connexion (S-5).
+        guard connection.gesturesEnabled else { return }
         guard let slug = card?.action?.slug, let repoKey = card?.action?.repoKey, let headOid = row.headOid else {
             return
         }

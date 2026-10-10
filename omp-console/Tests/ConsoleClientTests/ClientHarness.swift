@@ -13,6 +13,8 @@ struct ClientHarness {
     let preferences: InMemoryClientPreferences
     let tokens: InMemoryTokenStore
     let pacer: RecordingPacer
+    /// L'attente du délai de recherche : par défaut, rendue sans attendre.
+    let searchPacer: any ClientPacer
     let model: ConsoleClientModel
 
     init(
@@ -21,11 +23,13 @@ struct ClientHarness {
         pacerLimit: Int = Int.max,
         deviceName: String = "iPhone",
         localProtocolVersion: Int = 1,
-        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }
+        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
+        searchPacer: any ClientPacer = RecordingPacer()
     ) {
         preferences = InMemoryClientPreferences(initialPreferences)
         tokens = InMemoryTokenStore(initialTokens)
         pacer = RecordingPacer(limit: pacerLimit)
+        self.searchPacer = searchPacer
         model = ConsoleClientModel(
             transport: transport,
             discovery: discovery,
@@ -35,7 +39,8 @@ struct ClientHarness {
             pathSource: path,
             deviceName: deviceName,
             localProtocolVersion: localProtocolVersion,
-            nowMs: nowMs
+            nowMs: nowMs,
+            searchPacer: searchPacer
         )
     }
 

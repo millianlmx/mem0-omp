@@ -1951,8 +1951,16 @@ refuse alors d'écrire le jeton d'appairage : l'état connecté serait
 inatteignable) et veut des simulateurs dédiés, que les autres runs
 (`ios-shots.sh`) ne pilotent pas.
 
-L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
-aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
+Hors connexion, les sept sections suivent la même règle, sur iPhone comme sur
+iPad. Rien encore chargé : la section n'affiche QUE le composant « non connecté »
+— « Pas de connexion au Mac », une phrase de cause (non appairé, appairage refusé
+ou révoqué, Mac injoignable, ou l'app à mettre à jour) et « Se connecter », qui
+ouvre la feuille Connexion — ou, pendant une tentative, le composant « Connexion
+au Mac… » avec son indicateur d'attente et aucun bouton. Données déjà chargées :
+elles restent affichées, sous le même composant en bandeau, qui disparaît seul à
+la reconnexion. Tant que le Mac n'est pas connecté, les gestes qui l'exigent
+restent visibles mais grisés. L'**Accueil** est ensuite un écran à quatre états :
+« OMP absent sur le Mac », chargement,
 premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
 préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
@@ -2331,6 +2339,52 @@ d'UIKit déclenche déjà un bouton de 20 pt jusqu'à environ 19 à 25 pt au-des
 du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La garde
 textuelle de la correction est `test/ios-cibles-tactiles-sous-44pt.test.ts`.
 
+### Recette : états non connecté
+
+```bash
+bash scripts/ios-etats-connexion-recette.sh [--avant <ref>] --source <UDID appairé>
+```
+
+La recette prouve, sur un iPhone 17 Pro puis un iPad Pro 13 pouces privés, les deux
+composants de connexion des sept sections et le grisage des gestes qui exigent le
+Mac (feature etats-non-connecte-heterogenes-ios, AC-1 à AC-10).
+
+Prérequis : macOS, Xcode (`DEVELOPER_DIR`), `idb`, `python3`, `sqlite3`, `curl` ; la
+coque macOS sert `127.0.0.1:8787` ; `--source` désigne un simulateur démarré, appairé
+au Mac et portant l'app, dont le trousseau et la préférence `client.deviceId` sont
+copiés (lecture seule) sur les appareils privés. Le script compile lui-même une app
+SIGNÉE sous `/tmp`, crée les deux simulateurs, les démarre l'un après l'autre et les
+supprime à la sortie avec leur `idb_companion` ; il ne touche aucun autre simulateur
+et aucun geste n'écrit sur le Mac. Les mots attendus sont lus dans
+`IOSConnectionStateText.swift` de l'arbre de travail, y compris avec `--avant`.
+
+Contrôles, dans les sept sections (lancement `-section <raw>`), par appareil :
+
+1. jamais appairé : « non connecté » plein écran, cause « non appairé », aucune
+   ancienne forme (« Non appairé », « Mac absent — … », `pipelines.banner`…) ;
+2. « Se connecter » ouvre la feuille Connexion (six sections hors Accueil) ;
+4. appairage greffé, port fermé : cause « Mac injoignable » ; « + » de Pipelines
+   grisé, sans feuille au toucher ;
+5. serveur muet : « Connexion au Mac… » seul, sans « Se connecter » ; « + » grisé ;
+6. le serveur muet répond une erreur à 8 s : « non connecté » remplace « connexion
+   en cours » ;
+7. relais vers le Mac, données chargées, puis coupure : bandeau au-dessus des
+   données conservées, gestes grisés, sans feuille au toucher (le point touché est
+   relu dans le relevé d'après la coupure, le bandeau décalant le contenu) ; en
+   Mémoire, le champ de recherche touché puis saisi par `idb ui text` garde sa
+   requête ;
+8. relais rétabli : bandeau parti, les mêmes gestes de nouveau actifs, sans
+   relancer l'app ; en Mémoire, la même saisie passe, témoin du contrôle 7 ;
+3. joué en dernier (il efface le jeton de l'appareil privé) : réponse 401, cause
+   « refusé ou révoqué » ; puis les trois phrases relevées doivent être distinctes.
+
+Sorties dans `omp-console/build/etats-non-connecte-heterogenes-ios/<avant|apres>/`
+(vidé au début du relevé) : `<ctrl>-<section>-<appareil>.png` et `.json`
+(`idb ui describe-all`), `rapport.txt` (une ligne `ok|échec|sauté <AC> <appareil>
+<section> <détail>` par contrôle, puis `bilan : …`), `build.log`. Codes de sortie :
+**0** tout « ok » (les « sauté » motivés sont tolérés) ; **1** au moins un échec, ou
+build, simulateur ou argument en défaut ; **2** non exécuté. Une passe dure ~12 min.
+
 ### Installer sur un appareil réel
 
 Ce geste appartient à l'utilisateur : il n'est pas nécessaire à la validation du
@@ -2359,8 +2413,9 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
    « Connecté à … ». La section Projet affiche alors « Aucun projet piloté. » et
-   le bouton « Piloter un projet… ». *(hors appairage, la section affiche le
-   bandeau d'attente « Non appairé » / « Mac absent — … » et aucun geste actif)*
+   le bouton « Piloter un projet… ». *(hors connexion, la section affiche le
+   composant « Pas de connexion au Mac » avec sa cause et « Se connecter », en
+   bandeau au-dessus de la conduite déjà reçue ; ses gestes sont grisés)*
 2. **Piloter un projet** — toucher « Piloter un projet… » : la feuille liste les
    dépôts connus de la coque (« Dépôt », chacun avec son nom et son chemin),
    y compris un dépôt jamais cadré. Choisir un dépôt (il porte la marque ✓), le
@@ -2433,8 +2488,10 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
    sommaire dès que la pile répond de nouveau.
 6. **Aucun projet ouvert** — fermer le projet côté Mac puis « Rafraîchir » : la carte
    dit « Aucun projet ouvert », sans lire la mémoire.
-7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau de connexion
-   s'affiche, et aucune cause mémoire n'est inventée.
+7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau « Pas de
+   connexion au Mac » et sa cause s'affichent au-dessus des souvenirs déjà lus,
+   « Rafraîchir » est grisé, et aucune cause mémoire n'est inventée ; rien de lu,
+   la section n'affiche que le composant « non connecté ».
 8. **Le graphe** — toucher « Graphe » : le canevas montre les nœuds-souvenirs, les
    nœuds-étiquettes, les arêtes de proximité (trait plein gris) et les liens
    manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
@@ -2476,8 +2533,9 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
    « Connecté à … », et la section Statistiques montre un bref indicateur
-   d'activité puis son tableau. *(hors appairage, la section affiche le bandeau
-   d'attente « Non appairé » / « Mac absent — … » et n'émet aucun relevé)*
+   d'activité puis son tableau. *(hors connexion, la section affiche le composant
+   « Pas de connexion au Mac » avec sa cause, en bandeau au-dessus du dernier
+   relevé s'il y en a un, et n'émet aucun relevé)*
 2. **Choisir un projet** — le sélecteur en haut de la section propose les projets
    connus du Mac, dans l'ordre de la coque (le libellé du dépôt, jamais une clé) ;
    il affiche celui que le Mac sert. Choisir un autre projet : quelques secondes

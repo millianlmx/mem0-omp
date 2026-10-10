@@ -20,20 +20,23 @@ struct PipelinesScreen: View {
     /// Les voies terminales dépliées pendant CETTE visite (S-3) : remis à vide
     /// à la sortie de l'écran, jamais écrit nulle part.
     @State private var unfoldedLanes: Set<KanbanLane> = []
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.openURL) private var openURL
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 12) {
-                if let banner = recipe.banner, let message = recipe.bannerMessage {
-                    Text(message)
-                        .font(.callout)
-                        .iosBanner(tone: banner.tone)
-                }
-                content
+        Group {
+            switch screenState {
+            case .unavailable(let status):
+                // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
+                // du défilement et du panneau (S-4).
+                IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
+            case .loading:
+                panel { emptyCard(KanbanBoardState.loadingText) }
+            case .board(let boardState):
+                panel { boardBody(boardState) }
             }
-            .iosPanel()
         }
         .navigationTitle(ConsoleSection.kanban.title)
         .toolbar {
@@ -41,6 +44,8 @@ struct PipelinesScreen: View {
                 Button { sheet = .newFeature } label: {
                     Label(NewFeatureText.command, systemImage: "plus")
                 }
+                // Le Mac crée la feature : visible mais grisé hors connexion (etats-non-connecte-heterogenes-ios, S-5).
+                .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(PipelinesAccessibility.newFeature)
             }
         }
@@ -68,37 +73,51 @@ struct PipelinesScreen: View {
 
     private static var nowMs: Double { Date().timeIntervalSince1970 * 1000 }
 
+    /// Le statut présenté. Sous un crochet `-pipelines.recipe`, la fixture tient
+    /// lieu de Mac : l'écran est connecté (S-4).
+    private var connection: IOSConnectionStatus {
+        if newFeatureRecipe != nil || cardRecipe != nil { return .connected }
+        return IOSConnectionStatus.of(client)
+    }
+
     private var screenState: PipelinesScreenState {
         PipelinesModel.screen(
-            connection: client.state,
+            connection: connection,
             board: PipelinesModel.boardState(of: client, nowMs: Self.nowMs)
         )
     }
 
     // MARK: - Contenu
 
-    @ViewBuilder
-    private var content: some View {
-        if let banner = PipelinesModel.connectionBanner(connection: client.state) {
-            Text(banner.text)
-                .font(.callout)
-                .iosBanner(tone: banner.tone)
-                .accessibilityIdentifier(PipelinesAccessibility.banner)
+    /// Le panneau, contenu du seul défilement vertical de l'écran : le bandeau de
+    /// connexion en tête quand l'ardoise conservée est affichée hors connexion,
+    /// puis le bandeau du crochet `-ios.state`, puis le contenu.
+    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                if connection != .connected {
+                    IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+                }
+                if let banner = recipe.banner, let message = recipe.bannerMessage {
+                    Text(message)
+                        .font(.callout)
+                        .iosBanner(tone: banner.tone)
+                }
+                content()
+            }
+            .iosPanel()
         }
-        switch screenState {
+    }
+
+    @ViewBuilder
+    private func boardBody(_ boardState: KanbanBoardState) -> some View {
+        switch boardState {
         case .loading:
             emptyCard(KanbanBoardState.loadingText)
-        case .noSnapshot:
-            emptyCard(PipelinesText.noSnapshot)
-        case .board(let boardState):
-            switch boardState {
-            case .loading:
-                emptyCard(KanbanBoardState.loadingText)
-            case .storeAbsent, .storeEmpty:
-                emptyCard(KanbanText.noPipeline)
-            case .board(let board):
-                boardContent(board)
-            }
+        case .storeAbsent, .storeEmpty:
+            emptyCard(KanbanText.noPipeline)
+        case .board(let board):
+            boardContent(board)
         }
     }
 

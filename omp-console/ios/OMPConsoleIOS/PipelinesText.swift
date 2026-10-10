@@ -11,10 +11,10 @@ import ConsoleClient
 import ConsoleCore
 
 enum PipelinesText {
-    /// L'état vide de l'app quand le Mac n'est pas joignable et qu'aucun
-    /// instantané n'est jamais arrivé : on ne peut PAS affirmer que le magasin est
-    /// vide (on ne l'a pas lu), donc on le dit.
-    static let noSnapshot = "Aucune donnée reçue du Mac pour l'instant."
+    /// La fiche d'une carte qui n'est pas (ou plus) dans l'instantané reçu du
+    /// Mac : on ne peut rien affirmer d'elle, donc on le dit. L'écran, lui, dit
+    /// l'état de connexion par `IOSConnectionStateView`.
+    static let sheetNoCard = "Aucune donnée reçue du Mac pour l'instant."
 
     /// Le compte d'une voie, en texte (l'interpolation vit ici, dans le fichier de
     /// vocabulaire, pas dans la vue).
@@ -112,7 +112,6 @@ enum PipelinesText {
 enum PipelinesAccessibility {
     static let screen = "pipelines.screen"
     static let newFeature = "pipelines.newFeature"
-    static let banner = "pipelines.banner"
     static let emptyCard = "pipelines.empty"
 
     static func lane(_ id: String) -> String { "pipelines.lane.\(id)" }

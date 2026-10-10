@@ -45,7 +45,7 @@ struct IOSSessionOmpLaunchSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(SessionConsoleText.launch, action: commit)
-                        .disabled(selected == nil || submitting)
+                        .disabled(!IOSConnectionStatus.of(client).gesturesEnabled || selected == nil || submitting)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier(SessionOmpAccessibility.launchCommit)
                 }

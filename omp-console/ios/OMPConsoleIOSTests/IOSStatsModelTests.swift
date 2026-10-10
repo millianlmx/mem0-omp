@@ -167,24 +167,35 @@ struct IOSStatsModelTests {
     @Test("ios-statistiques/AC-1 : chaque état de la section a sa surface, dans l'ordre de priorité")
     func statsSurfacesCoverEveryState() {
         let board = payload(features: [feature(slug: "a", durationMs: 0)])
-        // Hors `.connected` : dégradé, portant le mot de ConnectionText.
-        for state in [
-            ClientState.unpaired,
-            .searching,
-            .connecting(endpoint: endpoint),
-            .noNetwork,
-            .macAbsent(endpoint: endpoint),
-            .revoked,
-            .incompatibleProtocol(local: 3, remote: 2),
-        ] {
-            #expect(IOSStatsModel.surface(state: state, payload: board, failure: nil) == .degraded(ConnectionText.state(state)))
-        }
         // Connecté : chargement, erreur, aucun projet, vide, tableau.
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: nil) == .loading)
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: "relevé refusé") == .error("relevé refusé"))
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil) == .noProject)
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil) == .empty)
-        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil) == .board)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: nil, failure: nil) == .loading)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: nil, failure: "relevé refusé") == .error("relevé refusé"))
+        #expect(IOSStatsModel.surface(connection: .connected, payload: board, failure: "relevé refusé") == .error("relevé refusé"))
+        #expect(IOSStatsModel.surface(connection: .connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil) == .noProject)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: payload(features: []), failure: nil) == .empty)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: board, failure: nil) == .board)
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : pas connecté et aucun relevé reçu → le composant d'état de connexion")
+    func statsUnavailableWithoutPayload() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired),
+                       .disconnected(.refused), .disconnected(.updateApp), .disconnected(.updateMac)] {
+            #expect(IOSStatsModel.surface(connection: status, payload: nil, failure: nil) == .unavailable(status))
+            // Un échec conservé sans relevé ne remplace pas le composant.
+            #expect(IOSStatsModel.surface(connection: status, payload: nil, failure: "relevé refusé") == .unavailable(status))
+        }
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : le dernier relevé reste affiché hors connexion, sans état d'erreur")
+    func statsKeepsBoardOffline() {
+        let board = payload(features: [feature(slug: "a", durationMs: 0)])
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            #expect(IOSStatsModel.surface(connection: status, payload: board, failure: nil) == .board)
+            // L'échec conservé est tu : le bandeau de connexion est le seul bandeau d'état.
+            #expect(IOSStatsModel.surface(connection: status, payload: board, failure: "relevé refusé") == .board)
+            #expect(IOSStatsModel.surface(connection: status, payload: payload(features: []), failure: "relevé refusé") == .empty)
+            #expect(IOSStatsModel.surface(connection: status, payload: payload(projectKey: nil, features: [], projects: []), failure: nil) == .noProject)
+        }
     }
 
     @Test("ios-statistiques/AC-6 : les quatre déclencheurs relancent un relevé, jamais hors `.connected`")
@@ -226,6 +237,6 @@ struct IOSStatsModelTests {
         let failing = makeModel(state: { self.connected }, load: { _ in throw ClientError.notConnected })
         failing.reload(trigger: .appeared)
         #expect(await eventually { failing.failure != nil })
-        #expect(failing.surface == .error(ConnectionText.state(connected)))
+        #expect(failing.surface(connection: .connected) == .error(ConnectionText.state(connected)))
     }
 }

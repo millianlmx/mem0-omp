@@ -9,6 +9,11 @@
 //
 // Chaque état est un état à part entière ; aucun `onTapGesture`, uniquement des
 // contrôles système atteignables au clavier.
+//
+// Hors connexion (etats-non-connecte-heterogenes-ios, S-4) : sans relevé reçu, le
+// composant d'état de connexion partagé SEUL, hors du panneau ; avec un relevé
+// conservé, le tableau reste sous le bandeau du composant, et la section relit au
+// retour du Mac.
 
 import ConsoleClient
 import ConsoleCore
@@ -18,38 +23,72 @@ import SwiftUI
 struct IOSStatsScreen: View {
     @ObservedObject var client: ConsoleClientModel
     @StateObject private var model: IOSStatsModel
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
 
-    init(client: ConsoleClientModel) {
+    init(client: ConsoleClientModel, showConnection: Binding<Bool>) {
         self.client = client
+        _showConnection = showConnection
         _model = StateObject(wrappedValue: IOSStatsModel(client: client))
     }
 
     var body: some View {
-        // La liste défile verticalement quand elle dépasse la hauteur (S-4) ;
-        // l'horloge de rendu reste À L'INTÉRIEUR pour que la position de
-        // défilement ne soit jamais reconstruite par un tic (Doc-1).
-        ScrollView(.vertical) {
-            TimelineView(.periodic(from: .now, by: 1)) { context in
-                content(nowMs: context.date.timeIntervalSince1970 * 1000)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+        Group {
+            switch surface {
+            case .unavailable(let status):
+                // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
+                // du panneau (S-4).
+                IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
+            default:
+                panel
             }
         }
+        .navigationTitle(ConsoleSection.stats.title)
         .onAppear { model.reload(trigger: .appeared) }
         // Un nouvel état du magasin (trame `store` dérivée en ardoise) ou une mise
         // à jour de session relancent le relevé, sans geste de l'utilisateur (S-5).
         .onChange(of: client.board) { model.reload(trigger: .boardChanged) }
         .onChange(of: client.sessionUpdates) { model.reload(trigger: .sessionsChanged) }
-        .accessibilityIdentifier(StatsAccessibility.screen)
+        // Retour du Mac : le relevé conservé est relu (etats-non-connecte-heterogenes-ios, S-4).
+        .onMacReconnected(client) { model.reload(trigger: .appeared) }
+    }
+
+    /// Le statut de connexion présenté.
+    private var connection: IOSConnectionStatus { IOSConnectionStatus.of(client) }
+
+    private var surface: IOSStatsSurface { model.surface(connection: connection) }
+
+    /// Le cadre de la section : le panneau, son titre, le bandeau de connexion
+    /// quand un relevé conservé est affiché hors connexion (S-4), puis la liste.
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(ConsoleSection.stats.title)
+                .font(.title2)
+            if connection != .connected {
+                IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+            }
+            // La liste défile verticalement quand elle dépasse la hauteur (S-4) ;
+            // l'horloge de rendu reste À L'INTÉRIEUR pour que la position de
+            // défilement ne soit jamais reconstruite par un tic (Doc-1).
+            ScrollView(.vertical) {
+                TimelineView(.periodic(from: .now, by: 1)) { context in
+                    content(nowMs: context.date.timeIntervalSince1970 * 1000)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .accessibilityIdentifier(StatsAccessibility.screen)
+        }
+        .iosPanel()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ios.screen." + ConsoleSection.stats.rawValue)
     }
 
     @ViewBuilder
     private func content(nowMs: Double) -> some View {
-        switch model.surface {
-        case .degraded(let message):
-            Text(message)
-                .font(.callout)
-                .iosBanner(tone: .attention)
-                .accessibilityIdentifier(StatsAccessibility.banner)
+        switch surface {
+        case .unavailable:
+            // Rendu par `body`, hors du panneau.
+            EmptyView()
         case .loading:
             HStack(spacing: 8) {
                 ProgressView()
@@ -79,6 +118,7 @@ struct IOSStatsScreen: View {
                 model.reload(trigger: .appeared)
             }
             .frame(minHeight: IOSMetrics.minimumTarget)
+            .disabled(!connection.gesturesEnabled)
             .accessibilityIdentifier(StatsAccessibility.retry)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,6 +190,7 @@ struct IOSStatsScreen: View {
             .pickerStyle(.menu)
             .labelsHidden()
             .frame(minHeight: IOSMetrics.minimumTarget)
+            .disabled(!connection.gesturesEnabled)
             .accessibilityIdentifier(StatsAccessibility.project)
         }
     }

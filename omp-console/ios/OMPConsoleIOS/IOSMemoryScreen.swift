@@ -19,13 +19,23 @@ struct IOSMemoryScreen: View {
     let recipe: IOSScreenState
     /// Le crochet de recette `-memoire.recipe` du mode graphe.
     let graphRecipe: IOSMemoryGraphRecipe?
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
     @StateObject private var model: IOSMemoryModel
     @StateObject private var graph: IOSMemoryGraphModel
+    /// La présentation du champ de recherche, lue par `searchPresentedBinding`.
+    @State private var searchPresented = false
 
-    init(client: ConsoleClientModel, recipe: IOSScreenState, graphRecipe: IOSMemoryGraphRecipe? = nil) {
+    init(
+        client: ConsoleClientModel,
+        recipe: IOSScreenState,
+        graphRecipe: IOSMemoryGraphRecipe? = nil,
+        showConnection: Binding<Bool>
+    ) {
         self.client = client
         self.recipe = recipe
         self.graphRecipe = graphRecipe
+        _showConnection = showConnection
         _model = StateObject(wrappedValue: IOSMemoryModel(client: client))
         _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: client))
     }
@@ -43,7 +53,7 @@ struct IOSMemoryScreen: View {
                     } label: {
                         Label(MemoryText.refresh, systemImage: "arrow.clockwise")
                     }
-                    .disabled(graph.shown ? graph.state == .loading : !model.canRefresh)
+                    .disabled(!connection.gesturesEnabled || (graph.shown ? graph.state == .loading : !model.canRefresh))
                     .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
                 }
                 if !graph.shown {
@@ -76,6 +86,13 @@ struct IOSMemoryScreen: View {
                 IOSMemoryDetailView(row: target.row, scope: model.scope)
             }
             .task { await model.refresh() }
+            .onMacReconnected(client) {
+                // Retour du Mac (S-4) : la liste relit, et le graphe s'il est affiché.
+                Task {
+                    await model.refresh()
+                    if graph.shown { await graph.refresh() }
+                }
+            }
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
@@ -86,6 +103,35 @@ struct IOSMemoryScreen: View {
     private func applyGraphRecipe() {
         guard let graphRecipe else { return }
         Task { await graphRecipe.activate(graph) }
+    }
+
+    // MARK: - Statut de connexion
+
+    /// Le statut présenté. Sous le crochet `-memoire.recipe`, la fixture tient
+    /// lieu de Mac : l'écran est connecté (etats-non-connecte-heterogenes-ios, S-4).
+    private var connection: IOSConnectionStatus {
+        if graphRecipe != nil { return .connected }
+        return IOSConnectionStatus.of(client)
+    }
+
+    /// L'état de la liste pour le statut présenté.
+    private var listState: IOSMemoryScreenState {
+        model.state(connection: connection)
+    }
+
+    /// Le statut à rendre EN PLEIN ÉCRAN, à la place du panneau : hors connexion,
+    /// quand le mode affiché n'a rien chargé (S-4). `nil` sinon.
+    private var fullScreenStatus: IOSConnectionStatus? {
+        guard connection != .connected else { return nil }
+        if graph.shown {
+            return IOSMemoryGraphModel.hasData(graph.state) ? nil : connection
+        }
+        if case .offline(let status) = listState { return status }
+        return nil
+    }
+
+    private func openConnection() {
+        showConnection = true
     }
 
     // MARK: - Panneau et champ de recherche
@@ -102,10 +148,14 @@ struct IOSMemoryScreen: View {
             content
                 .searchable(
                     text: queryBinding,
+                    isPresented: searchPresentedBinding,
                     placement: .automatic,
                     prompt: Text(verbatim: MemoryText.searchPrompt)
                 )
-                .onSubmit(of: .search) { Task { await model.submitQuery() } }
+                .onSubmit(of: .search) {
+                    guard connection.gesturesEnabled else { return }
+                    Task { await model.submitQuery() }
+                }
         } else {
             content
         }
@@ -124,7 +174,11 @@ struct IOSMemoryScreen: View {
             }
             displayed
         }
-        if graph.shown {
+        if let status = fullScreenStatus {
+            // Rien de chargé, Mac non connecté : le composant partagé SEUL, hors
+            // du défilement et du panneau.
+            IOSConnectionStateView(status: status, layout: .screen, onConnect: openConnection)
+        } else if graph.shown {
             stack.iosPanel()
         } else {
             ScrollView(.vertical) {
@@ -133,16 +187,45 @@ struct IOSMemoryScreen: View {
         }
     }
 
+    /// La saisie de la recherche. Hors connexion, la recherche (soumise au Mac)
+    /// est inerte : les écritures sont ignorées (etats-non-connecte-heterogenes-ios,
+    /// S-5). Écart MESURÉ à D-2 : un `.disabled` sur la vue qui porte `.searchable`
+    /// laisse le champ `.automatic` actif sur iOS 27 et grise tout le panneau, dont
+    /// « Se connecter » du bandeau et les rangées. Une écriture ignorée redessine
+    /// aussitôt l'écran : sans cela, le champ garde la frappe affichée jusqu'au
+    /// rendu suivant (MESURÉ par la recette, contrôle 7).
     private var queryBinding: Binding<String> {
         Binding(
             get: { model.query },
-            set: { model.updateQuery($0) }
+            set: {
+                if connection.gesturesEnabled {
+                    model.updateQuery($0)
+                } else {
+                    model.objectWillChange.send()
+                }
+            }
+        )
+    }
+
+    /// La présentation du champ : forcée à `false` hors connexion, le toucher
+    /// n'ouvre ni focus ni clavier (etats-non-connecte-heterogenes-ios, S-5). Une
+    /// présentation refusée redessine aussitôt l'écran, qui referme le champ.
+    private var searchPresentedBinding: Binding<Bool> {
+        Binding(
+            get: { searchPresented && connection.gesturesEnabled },
+            set: {
+                if connection.gesturesEnabled {
+                    searchPresented = $0
+                } else {
+                    model.objectWillChange.send()
+                }
+            }
         )
     }
 
     private var offersSearch: Bool {
         guard !graph.shown else { return false }
-        switch model.state {
+        switch listState {
         case .summary, .summaryEmpty, .search, .searchEmptyNoMatch, .searchEmptyNoScore, .searchEmptyBelowThreshold:
             return true
         default:
@@ -154,7 +237,7 @@ struct IOSMemoryScreen: View {
     /// sinon (mode d'ouverture, B-4).
     @ViewBuilder private var displayed: some View {
         if graph.shown {
-            IOSMemoryGraphView(client: client, model: graph)
+            IOSMemoryGraphView(model: graph, connection: connection, showConnection: $showConnection)
         } else {
             subject
         }
@@ -164,10 +247,14 @@ struct IOSMemoryScreen: View {
 
     @ViewBuilder
     private var subject: some View {
-        switch model.state {
-        case .clientState(let state):
-            banner(ConnectionText.state(state), tone: .attention)
-            card(IOSMemoryText.noData)
+        if connection != .connected {
+            // Données conservées hors connexion : le bandeau en tête (S-4).
+            IOSConnectionStateView(status: connection, layout: .banner, onConnect: openConnection)
+        }
+        switch listState {
+        case .offline:
+            // Rendu en plein écran par `surface`, jamais dans le panneau.
+            EmptyView()
         case .loading:
             ProgressView()
             Text(verbatim: MemoryText.loading)
@@ -241,7 +328,7 @@ struct IOSMemoryScreen: View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
         }
-        .disabled(!model.canRefresh)
+        .disabled(!connection.gesturesEnabled || !model.canRefresh)
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
     }
 

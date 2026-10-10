@@ -111,7 +111,8 @@ struct RootView: View {
                         recipe: sessionRecipe,
                         memoryRecipe: memoryRecipe,
                         pipelinesRecipe: pipelinesRecipe,
-                        cardRecipe: cardRecipe
+                        cardRecipe: cardRecipe,
+                        showConnection: $showConnection
                     )
                 }
             }

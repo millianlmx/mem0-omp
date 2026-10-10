@@ -15,6 +15,9 @@ struct IOSProjectPRView: View {
     let failure: String?
     let stale: Bool
     let isLoading: Bool
+    /// Faux hors connexion : « Relire les statuts » est alors grisé
+    /// (etats-non-connecte-heterogenes-ios, S-5).
+    let gesturesEnabled: Bool
     let onRefresh: () -> Void
 
     var body: some View {
@@ -26,7 +29,7 @@ struct IOSProjectPRView: View {
                 Button(action: onRefresh) {
                     Label(ProjectText.refresh, systemImage: "arrow.clockwise")
                 }
-                .disabled(isLoading)
+                .disabled(!gesturesEnabled || isLoading)
                 .accessibilityIdentifier(ProjectAccessibility.refresh)
             }
             if isLoading {

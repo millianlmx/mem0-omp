@@ -1,5 +1,5 @@
 // Les preuves Swift du modèle de l'écran Mémoire de l'app iOS (BR-2) : les états
-// dérivés des huit `ClientState`, la classification des erreurs, les trois « rien
+// dérivés du statut de connexion et de la lecture, la classification des erreurs, les trois « rien
 // trouvé » distincts, le retour au sommaire sans requête, et le geste de
 // rafraîchissement qui suit la panne.
 //
@@ -83,35 +83,39 @@ struct IOSMemoryModelTests {
     @Test("ios-memoire/AC-7 : une portée nulle est « aucun projet », une portée servie est le sommaire")
     func memoryFollowsTheClientTheScopeAndTheLoad() {
         let empty = RemoteMemoryPagePayload(scope: nil, total: 0, rows: [], truncated: false)
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(empty), mode: .summary) == .noProject)
+        #expect(Self.connectedScreen(.page(empty), .summary) == .noProject)
         // Même en mode recherche : la portée nulle reste « aucun projet ».
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(empty), mode: .search("x")) == .noProject)
+        #expect(Self.connectedScreen(.page(empty), .search("x")) == .noProject)
 
         let rows = [row("m1", text: "un"), row("m2", text: "deux")]
         let page = RemoteMemoryPagePayload(scope: "projet", total: 2, rows: rows, truncated: false)
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(page), mode: .summary)
+        #expect(Self.connectedScreen(.page(page), .summary)
             == .summary(scope: "projet", total: 2, rows: rows, truncated: false))
 
         let truncated = RemoteMemoryPagePayload(scope: "projet", total: 900, rows: rows, truncated: true)
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(truncated), mode: .summary)
+        #expect(Self.connectedScreen(.page(truncated), .summary)
             == .summary(scope: "projet", total: 900, rows: rows, truncated: true))
 
         let none = RemoteMemoryPagePayload(scope: "projet", total: 0, rows: [], truncated: false)
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(none), mode: .summary)
+        #expect(Self.connectedScreen(.page(none), .summary)
             == .summaryEmpty(scope: "projet"))
+    }
+
+    /// La surface pure, Mac connecté, sans sommaire déjà servi.
+    private static func connectedScreen(_ load: IOSMemoryLoad, _ mode: IOSMemoryMode) -> IOSMemoryScreenState {
+        IOSMemoryModel.screen(connection: .connected, load: load, mode: mode, summary: nil)
     }
 
     // MARK: - AC-8
 
-    @Test("ios-memoire/AC-8 : l'état du client parle quand rien n'est lu, jamais une cause mémoire inventée")
-    func theClientStateExplainsWhateverIsNotLoaded() {
+    @Test("ios-memoire/AC-8 : seul .connected lit, et une panne de transport n'invente jamais de cause mémoire")
+    func transportFailuresNeverInventAMemoryCause() {
         for state in allStates where state != connected {
-            #expect(IOSMemoryModel.screen(client: state, load: .idle, mode: .summary) == .clientState(state))
             #expect(!IOSMemoryModel.gesturesEnabled(state))
         }
         #expect(IOSMemoryModel.gesturesEnabled(connected))
         // Connecté, rien de lu : un chargement, jamais un vide muet.
-        #expect(IOSMemoryModel.screen(client: connected, load: .idle, mode: .summary) == .loading)
+        #expect(Self.connectedScreen(.idle, .summary) == .loading)
 
         // Les quatre erreurs de TRANSPORT ⇒ macUnreachable, jamais unavailable.
         let transportFailures: [ClientError] = [
@@ -122,14 +126,49 @@ struct IOSMemoryModelTests {
         ]
         for failure in transportFailures {
             #expect(IOSMemoryModel.load(from: failure) == .macUnreachable)
-            #expect(IOSMemoryModel.screen(client: connected, load: .macUnreachable, mode: .summary) == .macUnreachable)
+            #expect(Self.connectedScreen(.macUnreachable, .summary) == .macUnreachable)
         }
+    }
 
-        // Une donnée DÉJÀ chargée n'est jamais effacée par une bascule du client.
+    // MARK: - etats-non-connecte-heterogenes-ios
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : non connectée et rien de chargé → le composant d'état de connexion")
+    func offlineWithoutDataIsTheConnectionComponent() {
+        let statuses: [IOSConnectionStatus] = [.connecting, .disconnected(.unreachable), .disconnected(.unpaired), .disconnected(.refused)]
+        for status in statuses {
+            // Rien lu, une lecture en vol, une panne : aucune donnée, aucun sommaire.
+            for load: IOSMemoryLoad in [.idle, .loading, .macUnreachable, .memoryUnavailable("panne")] {
+                #expect(IOSMemoryModel.screen(connection: status, load: load, mode: .summary, summary: nil) == .offline(status))
+            }
+        }
+        // Le graphe : rien de reçu ⇒ plein écran ; reçu (même vide) ⇒ gardé.
+        for state: IOSMemoryGraphModel.State in [.idle, .loading, .macUnreachable, .serviceOutdated, .macOutdated, .unavailable(detail: "x")] {
+            #expect(!IOSMemoryGraphModel.hasData(state))
+        }
+        #expect(IOSMemoryGraphModel.hasData(.empty))
+        #expect(IOSMemoryGraphModel.hasData(.graph(nodes: [], links: [], positions: [:], truncated: false)))
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : hors connexion, la lecture reçue ou le sommaire déjà servi restent affichés")
+    func offlineKeepsTheLastData() {
         let rows = [row("m1", text: "un")]
         let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
-        #expect(IOSMemoryModel.screen(client: .unpaired, load: .page(page), mode: .summary)
-            == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        let summary = IOSMemoryScreenState.summary(scope: "projet", total: 1, rows: rows, truncated: false)
+        let found = [row("m2", text: "deux", score: 0.9)]
+        let search = RemoteMemorySearchPayload(rows: found, candidates: 3, scored: 3)
+        for status: IOSConnectionStatus in [.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            // La page reçue reste affichée.
+            #expect(IOSMemoryModel.screen(connection: status, load: .page(page), mode: .summary, summary: page) == summary)
+            // La recherche reçue reste affichée.
+            #expect(IOSMemoryModel.screen(connection: status, load: .search(search), mode: .search("deux"), summary: page)
+                == .search(query: "deux", rows: found))
+            // Une recherche coupée en vol (ou en panne) rend le sommaire déjà servi.
+            for load: IOSMemoryLoad in [.idle, .loading, .macUnreachable, .memoryUnavailable("panne")] {
+                #expect(IOSMemoryModel.screen(connection: status, load: load, mode: .search("deux"), summary: page) == summary)
+            }
+        }
+        // Connecté, la panne d'une lecture reste dite, même avec un sommaire servi.
+        #expect(IOSMemoryModel.screen(connection: .connected, load: .macUnreachable, mode: .summary, summary: page) == .macUnreachable)
     }
 
     // MARK: - AC-6
@@ -140,12 +179,12 @@ struct IOSMemoryModelTests {
         // par `MemoryText.unavailableDetail` (le test CLT éprouve la valeur réelle).
         let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "connexion refusée")
         #expect(IOSMemoryModel.load(from: ClientError.api(.unavailable(detail))) == .memoryUnavailable(detail))
-        #expect(IOSMemoryModel.screen(client: connected, load: .memoryUnavailable(detail), mode: .summary)
+        #expect(Self.connectedScreen(.memoryUnavailable(detail), .summary)
             == .unavailable(detail: detail))
-        #expect(IOSMemoryModel.screen(client: connected, load: .memoryUnavailable(detail), mode: .search("x"))
+        #expect(Self.connectedScreen(.memoryUnavailable(detail), .search("x"))
             == .unavailable(detail: detail))
         // Un 401 sans message ⇒ le mot de repli, jamais une phrase vide.
-        #expect(IOSMemoryModel.screen(client: connected, load: .memoryUnavailable(""), mode: .summary)
+        #expect(Self.connectedScreen(.memoryUnavailable(""), .summary)
             == .unavailable(detail: IOSMemoryText.noData))
         // Le bandeau porte le titre partagé PUIS le détail relayé.
         #expect(IOSMemoryText.unavailable(detail: detail) == MemoryText.unavailableTitle + "\n" + detail)
@@ -158,10 +197,9 @@ struct IOSMemoryModelTests {
     func searchEmptiesAreThreeDistinctWords() {
         let mode = IOSMemoryMode.search("terme")
         func screen(candidates: Int, scored: Int, rows: [RemoteMemoryRow]) -> IOSMemoryScreenState {
-            IOSMemoryModel.screen(
-                client: connected,
-                load: .search(RemoteMemorySearchPayload(rows: rows, candidates: candidates, scored: scored)),
-                mode: mode
+            Self.connectedScreen(
+                .search(RemoteMemorySearchPayload(rows: rows, candidates: candidates, scored: scored)),
+                mode
             )
         }
         // (1) Aucun candidat au-dessus du pool du service.
@@ -189,7 +227,7 @@ struct IOSMemoryModelTests {
 
         await model.refresh()
         #expect(reader.pageReads == 1)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
 
         model.updateQuery("mémoire du projet")
         await model.submitQuery()
@@ -200,7 +238,7 @@ struct IOSMemoryModelTests {
         model.updateQuery("   ")
         #expect(!model.isSearching)
         #expect(model.summary == page)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
         // AUCUNE lecture ajoutée, ni sommaire ni recherche.
         #expect(reader.pageReads == 1)
         #expect(reader.searchReads == 1)
@@ -211,7 +249,7 @@ struct IOSMemoryModelTests {
         #expect(reader.searchReads == 2)
         model.showSummary()
         #expect(!model.isSearching)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
         #expect(reader.pageReads == 1)
         #expect(reader.searchReads == 2)
 
@@ -233,21 +271,21 @@ struct IOSMemoryModelTests {
 
         await model.refresh()
         #expect(reader.pageReads == 1)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
 
         // La pile mémoire tombe ensuite : le geste relaie la panne avec sa cause.
         let detail = MemoryText.unavailableDetail(address: "http://127.0.0.1:8321", error: "connexion refusée")
         reader.page = .failure(ClientError.api(.unavailable(detail)))
         await model.refresh()
         #expect(reader.pageReads == 2)
-        #expect(model.state == .unavailable(detail: detail))
+        #expect(model.state(connection: .connected) == .unavailable(detail: detail))
         #expect(!model.isLoading)
 
         // La mémoire revient : le MÊME geste repasse au sommaire.
         reader.page = .success(page)
         await model.refresh()
         #expect(reader.pageReads == 3)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
 
         // Un client qui ne joint plus le Mac n'émet AUCUNE lecture.
         reader.state = .unpaired

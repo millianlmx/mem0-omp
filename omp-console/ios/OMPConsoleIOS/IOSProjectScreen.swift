@@ -3,8 +3,12 @@
 // « PR et CI » en lecture seule, document PROJECT.md rendu, et les gestes
 // « Piloter un projet… » / « Arrêter le pilotage ».
 //
-// Chaque état (dégradé, vide, démarrage, erreur, succès) est couvert ; aucun
+// Chaque état (non connecté, vide, démarrage, erreur, succès) est couvert ; aucun
 // `onTapGesture`, uniquement des contrôles système atteignables au clavier.
+//
+// Hors connexion (etats-non-connecte-heterogenes-ios, S-4) : sans conduite reçue,
+// le composant d'état de connexion partagé SEUL, hors du panneau ; avec une
+// conduite conservée, le panneau garde son contenu sous le bandeau du composant.
 
 import ConsoleClient
 import ConsoleCore
@@ -13,6 +17,9 @@ import SwiftUI
 struct IOSProjectScreen: View {
     @ObservedObject var client: ConsoleClientModel
     @StateObject private var model: IOSProjectModel
+
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
 
     @State private var pane: Pane = .plan
     @State private var showingLaunch = false
@@ -24,28 +31,34 @@ struct IOSProjectScreen: View {
         case document
     }
 
-    init(client: ConsoleClientModel) {
+    init(client: ConsoleClientModel, showConnection: Binding<Bool>) {
         self.client = client
+        _showConnection = showConnection
         _model = StateObject(wrappedValue: IOSProjectModel(client: client))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Group {
             switch model.surface {
-            case .degraded(let message):
-                Text(message)
-                    .font(.callout)
-                    .iosBanner(tone: .attention)
+            case .unavailable(let status):
+                // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
+                // du panneau (S-4).
+                IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             case .empty:
-                emptyState
-                actions
+                panel {
+                    emptyState
+                    actions
+                }
             case .starting:
-                startingState
-                actions
+                panel {
+                    startingState
+                    actions
+                }
             case .live:
-                liveState
+                panel { liveState }
             }
         }
+        .navigationTitle(ConsoleSection.project.title)
         .onAppear {
             model.appeared()
             model.reloadDocumentIfNeeded()
@@ -84,11 +97,37 @@ struct IOSProjectScreen: View {
             titleVisibility: .visible
         ) {
             Button(ProjectViewText.closeConduite, role: .destructive) {
+                guard model.connection.gesturesEnabled else { return }
                 Task { await model.stop() }
             }
             Button(SessionConsoleText.cancel, role: .cancel) {}
         } message: {
             Text(ProjectViewText.closeConfirmMessage)
+        }
+    }
+
+    // MARK: - Panneau
+
+    /// Le cadre de la section : le panneau, son titre, puis le contenu de l'écran.
+    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(ConsoleSection.project.title)
+                .font(.title2)
+            screenContent(content)
+        }
+        .iosPanel()
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ios.screen." + ConsoleSection.project.rawValue)
+    }
+
+    /// Le contenu de l'écran : le bandeau de connexion en tête quand la conduite
+    /// conservée est affichée hors connexion (S-4), puis l'état.
+    private func screenContent<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if model.connection != .connected {
+                IOSConnectionStateView(status: model.connection, layout: .banner, onConnect: { showConnection = true })
+            }
+            content()
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(ProjectAccessibility.screen)
@@ -121,7 +160,7 @@ struct IOSProjectScreen: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             waitingBanner
-            if let banner = model.banner {
+            if let banner = IOSProjectModel.shownFailure(model.banner, connection: model.connection) {
                 Text(banner)
                     .font(.callout)
                     .iosBanner(tone: .danger)
@@ -219,9 +258,10 @@ struct IOSProjectScreen: View {
     private var prPane: some View {
         IOSProjectPRView(
             rows: model.prRows,
-            failure: model.prFailure,
+            failure: IOSProjectModel.shownFailure(model.prFailure, connection: model.connection),
             stale: model.prStale,
             isLoading: model.isRefreshingPRs,
+            gesturesEnabled: model.connection.gesturesEnabled,
             onRefresh: { model.reloadPRs() }
         )
     }
@@ -233,11 +273,11 @@ struct IOSProjectScreen: View {
                     .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                     .contentShape(Rectangle())
             }
-                .disabled(!IOSProjectModel.gesturesEnabled(client.state))
+                .disabled(!model.connection.gesturesEnabled)
                 .accessibilityIdentifier(ProjectAccessibility.start)
             if model.isConduiteLive {
                 Button(ProjectViewText.closeConduite) { showingStop = true }
-                    .disabled(!model.canStop)
+                    .disabled(!model.connection.gesturesEnabled || !model.canStop)
                     .accessibilityIdentifier(ProjectAccessibility.stop)
             }
         }
@@ -263,8 +303,10 @@ struct IOSProjectScreen: View {
         return ProjectViewText.refusal(name: name, path: root)
     }
 
+    /// Le dialogue n'est présenté que connecté ; encore en attente, il se rouvre à
+    /// la reconnexion (etats-non-connecte-heterogenes-ios, S-5).
     private var pendingDialogBinding: Binding<RpcDialogRequest?> {
-        Binding(get: { model.pendingDialog }, set: { _ in })
+        Binding(get: { model.connection == .connected ? model.pendingDialog : nil }, set: { _ in })
     }
 
     private func startTapped() {

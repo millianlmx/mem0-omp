@@ -105,6 +105,49 @@ marqueur `[test: <fonction>]` (une fonction de
 - Une section hors périmètre (Terminal, Fichiers) n'a aucun contenu d'écran.
   `[test: outOfScopeSectionsHaveNoContent]`
 
+## États de connexion (feature `etats-non-connecte-heterogenes-ios`)
+
+- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion
+  dans les sept sections ; ses mots vivent dans `IOSConnectionStateText` et ses
+  identifiants, tous préfixés `ios.connexion.`, dans
+  `IOSConnectionStateAccessibility`. `[test: connectionIdentifiersAreUniqueAndPrefixed]`
+- Le statut présenté est une fonction pure de l'état du client
+  (`IOSConnectionStatus.resolve`) : une tentative fraîche est « Connexion au
+  Mac… » ; dès qu'une tentative a échoué, l'écran dit « Pas de connexion au Mac »
+  et le reste pendant les relances automatiques. `[test: resolvesEveryClientState]`
+  `[test: retryAfterFailureStaysDisconnected]`
+- « Pas de connexion au Mac » porte une phrase par cause — non appairé, appairage
+  refusé ou révoqué, Mac injoignable, app à mettre à jour, Mac à mettre à jour —
+  sans numéro de version, chemin ni adresse. `[test: causesHaveDistinctPhrases]`
+  `[test: updatePhrasesNameTheAppWithoutVersionNumbers]`
+- Deux formes : plein écran (`ContentUnavailableView`, bouton « Se connecter »
+  proéminent) quand la section n'a rien chargé ; bandeau `attention` suivi de
+  « Se connecter » au-dessus des données conservées. « Connexion au Mac… » est un
+  indicateur d'attente sans bouton (plein écran, ou bandeau `info`). « Se
+  connecter » ouvre la feuille Connexion de la racine. `[test: resolvePriority]`
+- Pipelines, Sessions et Mémoire (liste et graphe) suivent la même règle : rien
+  de reçu hors connexion ⇒ le composant seul, hors du défilement et du panneau ;
+  données reçues ⇒ elles restent, sous le bandeau, et la Mémoire relit au retour
+  du Mac. `[test: unavailableWithoutList]` `[test: listKeptOffline]`
+  `[test: offlineWithoutDataIsTheConnectionComponent]` `[test: offlineKeepsTheLastData]`
+- Projet, Statistiques et Session OMP suivent la même règle et portent leur propre
+  panneau (titre de section, puis contenu) : rien de reçu hors connexion ⇒ le
+  composant seul, hors du panneau ; une conduite, un relevé ou un état de session
+  reçu ⇒ il reste, sous le bandeau, et l'erreur conservée est tue ; les
+  Statistiques relisent au retour du Mac. `[test: projectUnavailableWithoutConduite]`
+  `[test: projectKeepsConduiteOffline]` `[test: statsUnavailableWithoutPayload]`
+  `[test: statsKeepsBoardOffline]` `[test: sessionOmpUnavailableWithoutHosted]`
+  `[test: sessionOmpKeepsHostedOffline]`
+- Les actions qui exigent le Mac (« + » de Pipelines, répondre, valider, reprendre,
+  lancer, arrêter, fusionner, rafraîchir, éditer, écrire dans la Session OMP…)
+  restent visibles mais grisées hors connexion, connexion en cours comprise, et se
+  rouvrent dès la connexion, sans relancer l'app. À l'Accueil, seul « Voir dans
+  Pipelines » reste tapable parmi les gestes d'attente ; les feuilles de dialogue
+  ne s'ouvrent qu'une fois connecté, et une confirmation restée ouverte n'envoie
+  rien. Le champ de recherche de la Mémoire, que `.disabled` ne grise pas en
+  placement `.automatic`, est rendu inerte. `[test: gesturesOnlyWhenConnected]`
+  `[test: attentionNeedsMacExceptOpenInPipelines]` `[test: gesturesReopenOnConnection]`
+
 ## Dynamic Type maximum (S-7)
 
 - À `accessibility-extra-extra-extra-large`, aucun texte n'est tronqué ni
@@ -173,9 +216,11 @@ marqueur `[test: <fonction>]` (une fonction de
   l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
 - En largeur RÉGULIÈRE (iPad), l'ardoise est inchangée : voies permanentes même
   vides, voies terminales dépliées. `[test: regularKeepsLanesUnchanged]`
-- L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
-  un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
-  affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
+- L'écran ne fabrique aucune donnée : Mac non connecté sans instantané, il rend
+  seul le composant d'état de connexion en plein écran ; une ardoise reçue
+  (même vide, mot partagé `KanbanText.noPipeline`) reste affichée hors
+  connexion, sous le bandeau du composant. `[test: unavailableWithoutSnapshot]`
+  `[test: snapshotKeptOffline]`
 - La feuille d'une carte offre les gestes de la carte via la règle d'aiguillage de
   `KanbanActionPresentation` ; une carte d'historique n'offre aucun geste et le
   dit. `[test: historyCardOffersNothing]`
@@ -216,9 +261,11 @@ marqueur `[test: <fonction>]` (une fonction de
   par défaut comme les autres sections, dans ses cinq états : aucune bande vide
   sous la barre, et le bouton retour reste dans la barre titrée quand le tableau
   de bord défile. `[capture: iphone-home-light]`
-- L'Accueil iOS montre un seul de ses cinq états : déconnecté, « OMP absent sur
-  le Mac », chargement, premiers pas, tableau de bord — dans cet ordre de
-  priorité. `[test: resolvePriority]`
+- L'Accueil iOS montre un seul de ses cinq états : indisponible (le composant
+  d'état de connexion en plein écran, hors connexion et sans ardoise reçue),
+  « OMP absent sur le Mac », chargement, premiers pas, tableau de bord — dans cet
+  ordre de priorité. Hors connexion, une ardoise déjà reçue reste affichée sous
+  le bandeau du composant. `[test: resolvePriority]`
 - Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
   la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
   libellés. `[test: parityFacts]`
@@ -311,9 +358,11 @@ marqueur `[test: <fonction>]` (une fonction de
   (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
   milliseconde par milliseconde et par run vivant, sans un octet de trafic.
   `[test: statsDurationsAdvanceWithLiveRuns]`
-- Six états à part entière, jamais un écran vide : chargement, dégradé (hors
-  `.connected`, bandeau `attention`), erreur (bandeau `danger` + « Réessayer »),
+- Six états à part entière, jamais un écran vide : non connecté (le composant
+  d'état de connexion partagé, en plein écran sans relevé, en bandeau au-dessus du
+  dernier relevé conservé), chargement, erreur (bandeau `danger` + « Réessayer »),
   aucun projet, projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+  `[test: statsKeepsBoardOffline]`
 - Un relevé est relancé par quatre déclencheurs seulement — apparition, changement
   de projet, nouvel état du magasin, mise à jour de session — et JAMAIS tant que le
   client n'est pas connecté : aucune minuterie de scrutation.
@@ -364,13 +413,16 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Session OMP (feature `ios-session-omp`)
 
 - L'écran porte le titre de navigation `ConsoleSection.session.title` et pose tout
-  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses neuf états
-  (jamais centré verticalement) ; le seul défilement est celui du fil de
+  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses huit états
+  servis (jamais centré verticalement) — seul le composant d'état de connexion
+  plein écran est hors du panneau ; le seul défilement est celui du fil de
   conversation. `[capture: iphone-session-light]`
-- L'écran couvre NEUF états : déconnecté (bandeau `attention`, aucun geste),
-  chargement, aucune session, lancement, arrêt en cours, session vive, arrêtée,
-  interrompue, échec — décidés par la fonction pure
-  `IOSSessionOmpModel.surface(state:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+- L'écran couvre NEUF états : non connecté (le composant d'état de connexion
+  partagé, en plein écran sans état servi, en bandeau au-dessus du dernier état
+  conservé), chargement, aucune session, lancement, arrêt en cours, session vive,
+  arrêtée, interrompue, échec — décidés par la fonction pure
+  `IOSSessionOmpModel.surface(connection:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+  `[test: sessionOmpKeepsHostedOffline]`
 - L'en-tête porte le nom du dépôt servi (`projectName`) et la pastille du mot
   d'état (`stateLabel`) ; un état inconnu du client vaut `idle`, jamais une
   invention. `[test: surfaceFollowsClientAndHosted]`

@@ -29,6 +29,13 @@ struct IOSProjectLaunchSheet: View {
         selected != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// La garde de `commit()`, que la touche Retour du champ nom atteint même quand
+    /// « Valider » est grisé : hors connexion, ni requête ni fermeture (S-5, AC-9).
+    static func mayCommit(gesturesEnabled: Bool, selected: String?, name: String, submitting: Bool) -> Bool {
+        gesturesEnabled && selected != nil && !submitting
+            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -57,7 +64,7 @@ struct IOSProjectLaunchSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(ProjectViewText.launchCommit, action: commit)
-                        .disabled(!canCommit || submitting)
+                        .disabled(!IOSConnectionStatus.of(client).gesturesEnabled || !canCommit || submitting)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier(ProjectAccessibility.launchCommit)
                 }
@@ -117,7 +124,10 @@ struct IOSProjectLaunchSheet: View {
     }
 
     private func commit() {
-        guard let repoKey = selected, canCommit, !submitting else { return }
+        guard let repoKey = selected,
+              Self.mayCommit(gesturesEnabled: IOSConnectionStatus.of(client).gesturesEnabled,
+                             selected: selected, name: name, submitting: submitting)
+        else { return }
         submitting = true
         Task {
             let message = await onLaunch(repoKey, name)
