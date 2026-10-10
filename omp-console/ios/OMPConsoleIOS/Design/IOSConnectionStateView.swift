@@ -55,9 +55,8 @@ struct IOSConnectionStateView: View {
             Text(IOSConnectionStateText.cause(cause))
                 .accessibilityIdentifier(IOSConnectionStateAccessibility.cause)
         } actions: {
-            Button(IOSConnectionStateText.connect, action: onConnect)
+            connectButton
                 .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier(IOSConnectionStateAccessibility.connect)
         }
         .padding(IOSMetrics.margin(sizeClass))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -77,12 +76,23 @@ struct IOSConnectionStateView: View {
             }
             .iosBanner(tone: .attention)
             .accessibilityIdentifier(IOSConnectionStateAccessibility.message)
-            Button(IOSConnectionStateText.connect, action: onConnect)
+            connectButton
                 .buttonStyle(.bordered)
-                .accessibilityIdentifier(IOSConnectionStateAccessibility.connect)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSConnectionStateAccessibility.offlineBanner)
+    }
+
+    /// « Se connecter », la même cible dans les deux formes : le cadre de 44 pt
+    /// est porté par le LIBELLÉ, donc par le cadre d'accessibilité du bouton
+    /// (accessibilite-et-localisation-ios-residu, S-4).
+    private var connectButton: some View {
+        Button { onConnect() } label: {
+            Text(IOSConnectionStateText.connect)
+                .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                .contentShape(Rectangle())
+        }
+        .accessibilityIdentifier(IOSConnectionStateAccessibility.connect)
     }
 
     // MARK: - « connexion en cours » (aucun bouton)
