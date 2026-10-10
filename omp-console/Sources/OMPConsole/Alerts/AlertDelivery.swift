@@ -28,12 +28,13 @@ enum AlertAuthorization: String, Sendable {
 
 /// Le message remis à un livreur : la clé sert d'identifiant de requête (une même
 /// clé ré-`add` irait s'écraser, mais S-7 empêche déjà la seconde livraison) ;
-/// `opening` est la destination du clic (famille + carte).
+/// `opening` est la destination du clic (famille + carte) ; `nil` pour un évènement
+/// sans carte, dont le clic mène à l'Accueil.
 struct AlertMessage: Sendable, Equatable {
     var key: String
     var title: String
     var body: String
-    var opening: AlertOpening
+    var opening: AlertOpening? = nil
 }
 
 /// Le résultat d'une livraison — `delivered`, ou l'échec nommé. Un échec n'est PAS
@@ -117,7 +118,9 @@ final class SystemAlertDeliverer: AlertDelivering {
         let content = UNMutableNotificationContent()
         content.title = message.title
         content.body = message.body
-        content.userInfo = message.opening.userInfo
+        if let opening = message.opening {
+            content.userInfo = opening.userInfo
+        }
         let request = UNNotificationRequest(identifier: message.key, content: content, trigger: nil)
         return await withCheckedContinuation { continuation in
             UNUserNotificationCenter.current().add(request) { error in

@@ -153,6 +153,9 @@ func ingestRegistersBeforeDelivering() async {
     await model.ingest(event)
     #expect(deliverer.keys == [event.key])
     #expect(AlertLedger(path: ledgerPath).contains(event.key))
+    // Une perte d'ownership ne concerne aucune carte : aucun lien profond, le clic
+    // mène à l'Accueil (notifications-mac-lien-profond).
+    #expect(deliverer.messages.first?.opening == nil)
 
     // La clé est déjà au registre : aucune seconde livraison (sémantique d'`apply`).
     await model.ingest(event)

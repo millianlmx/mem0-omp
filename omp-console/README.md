@@ -1632,7 +1632,7 @@ besoins et leurs six familles :
 | attend une validation (revue) | idem avec `waitKind = review` | « Revue à accepter » · nom affiché de la carte (repli : `<slug>`) |
 | échoué (feature de lot) | feature de lot `failed` | « Échec » · nom affiché de la carte (repli : `<slug>`) |
 | échoué (run clos) | `history/<id>.json`, `finalState = failed` | « Échec » · nom affiché de la carte (repli : `<label>`) |
-| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | « Fusionnée » · nom affiché de la carte (repli : `<slug>`) |
+| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | « PR fusionnée » · nom affiché de la carte (repli : `<slug>`) |
 
 Le titre est le libellé d'état que l'Accueil affiche pour la carte, tiré des mêmes
 fonctions (`HomeText.natureText`, `ConsoleStatus.of(column:)`) ; un échec reste
@@ -1659,12 +1659,13 @@ au premier plan, puis ouvre :
 | Specs à valider | feuille **Contrat** de la carte |
 | Revue à accepter | **fiche** de la carte (elle porte « Accepter la revue ») |
 | Échec (lot ou run) | **fiche** de la carte |
-| Fusionnée | **fiche** de la carte |
+| PR fusionnée | **fiche** de la carte |
 
 - **Notification périmée** (question déjà répondue, jalon déjà validé, carte sortie
   de l'état notifié) : la **fiche** de la carte si elle existe encore, l'**Accueil**
   si elle a disparu — sans feuille ni message d'erreur. Une notification sans
-  `userInfo` (livrée par une version antérieure) ou illisible mène à l'Accueil.
+  `userInfo` (livrée par une version antérieure, ou perte d'un port par la pile de
+  l'app, qui ne concerne aucune carte) ou illisible mène à l'Accueil.
 - **Fenêtre fermée**, l'app vivante dans la barre des menus : la fenêtre se rouvre,
   puis la destination s'applique. Si l'ardoise n'est pas encore chargée, l'ouverture
   attend sa première publication (seule la plus récente est gardée). Le lancement à

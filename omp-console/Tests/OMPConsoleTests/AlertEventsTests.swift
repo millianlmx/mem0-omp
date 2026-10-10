@@ -232,7 +232,7 @@ func mergedPullRequestEvents() {
     #expect(events.count == 1)
     #expect(events.first?.key == "merged-pr:\(key):fusionnee")
     #expect(events.first?.kind == .mergedPullRequest)
-    #expect(events.first?.title == "Fusionnée")
+    #expect(events.first?.title == "PR fusionnée")
     #expect(events.first?.body == "fusionnee")
     #expect(events.first?.cardID == "project:\(key):fusionnee")
     // Une seconde lecture ne crée pas une seconde clé.
@@ -390,7 +390,7 @@ func homeAlignedTextsAndCardIDs() throws {
     #expect(specsEvent.cardID == "feature:\(repoKey):jalon-specs")
     #expect(specsEvent.title == "Specs à valider")
     #expect(specsEvent.body == "jalon-specs")
-    #expect(specsEvent.body == (try card(specsEvent.cardID)).title)
+    #expect(specsEvent.body == (try card(try #require(specsEvent.cardID))).title)
 
     // Les six familles, avec la carte attendue pour chacune.
     let expected: [(key: String, kind: AlertKind, cardID: String)] = [
@@ -419,6 +419,8 @@ func homeAlignedTextsAndCardIDs() throws {
             // (b) Titre == libellé d'état de l'Accueil pour la même carte.
             let label = try #require(homeLabel(of: row.cardID, in: board), "\(row.cardID) absente de l'Accueil")
             #expect(alert.title == label, "\(row.key)")
+        case .stackOwnershipLost:
+            Issue.record("\(row.key) : une perte d'ownership ne vient jamais du magasin")
         }
     }
     #expect(try event("answer:\(absorbedRun):call-9").body == "feature-question")

@@ -178,6 +178,11 @@ final class AlertsModel: ObservableObject {
         // Une fenêtre au premier plan consomme l'évènement sans notifier.
         guard !isWindowFrontmost() else { return }
         guard isFresh else { return }
-        _ = await deliverer.deliver(AlertMessage(key: event.key, title: event.title, body: event.body))
+        // Le clic mène à la carte concernée ; un évènement sans carte (perte
+        // d'ownership) ne porte aucune destination, son clic mène à l'Accueil.
+        _ = await deliverer.deliver(AlertMessage(
+            key: event.key, title: event.title, body: event.body,
+            opening: event.cardID.map { AlertOpening(kind: event.kind, cardID: $0) }
+        ))
     }
 }

@@ -49,9 +49,10 @@ enum AlertKind: String, Sendable, Equatable {
 struct AlertEvent: Sendable, Equatable {
     var key: String
     var kind: AlertKind
-    /// L'identifiant `KanbanCard.id` de la carte concernée — jamais vide, même quand
-    /// la carte n'est pas (ou plus) sur l'ardoise.
-    var cardID: String
+    /// L'identifiant `KanbanCard.id` de la carte concernée — jamais vide pour une
+    /// famille du magasin, même quand la carte n'est pas (ou plus) sur l'ardoise ;
+    /// `nil` pour un évènement sans carte (`stackOwnershipLost`).
+    var cardID: String? = nil
     var title: String
     var body: String
 }
@@ -70,11 +71,11 @@ enum AlertDerivation {
         // Une clé déjà vue garde sa PREMIÈRE valeur : un doublon d'instantané
         // (deux lots du même dépôt, même slug) n'émet qu'un évènement.
         func keep(key: String, kind: AlertKind, cardID: String, fallbackBody: String) {
-            guard byKey[key] == nil else { return }
+            guard byKey[key] == nil, let title = title(of: kind) else { return }
             let card = cards.first { $0.id == cardID }
             byKey[key] = AlertEvent(
                 key: key, kind: kind, cardID: cardID,
-                title: title(of: kind), body: card?.title ?? fallbackBody
+                title: title, body: card?.title ?? fallbackBody
             )
         }
 
@@ -155,13 +156,16 @@ enum AlertDerivation {
 
     /// Le titre d'une famille : le libellé d'état de l'Accueil pour la carte notifiée,
     /// sauf les échecs, toujours « Échec » (même quand l'Accueil montre « En pause »).
-    static func title(of kind: AlertKind) -> String {
+    /// `nil` pour `stackOwnershipLost`, qui ne vient pas du magasin : son texte est
+    /// écrit par `StackOwnershipModel`.
+    static func title(of kind: AlertKind) -> String? {
         switch kind {
         case .pendingAnswer: HomeText.natureText(.question)
         case .milestoneSpecs: HomeText.natureText(.milestoneSpecs)
         case .milestoneReview: HomeText.natureText(.milestoneReview)
         case .failedLot, .failedRun: ConsoleStatus.of(column: .echec).text
         case .mergedPullRequest: ConsoleStatus.of(column: .fusionne).text
+        case .stackOwnershipLost: nil
         }
     }
 }

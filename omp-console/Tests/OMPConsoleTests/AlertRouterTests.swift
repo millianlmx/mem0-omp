@@ -130,6 +130,9 @@ func alertDestinationTable() throws {
     #expect(AlertRoute.destination(for: nil, board: .loading) == .home)
     #expect(AlertRoute.destination(for: AlertOpening(userInfo: [:]), board: board) == .home)
     #expect(AlertRoute.destination(for: AlertOpening(userInfo: ["kind": "inconnu", "cardID": "run:a"]), board: board) == .home)
+    // Une perte d'ownership ne concerne aucune carte : même nommée par un payload,
+    // elle mène à l'Accueil.
+    #expect(AlertRoute.destination(for: clicked(.stackOwnershipLost, "run:a"), board: board) == .home)
     for kind in kinds {
         #expect(AlertRoute.destination(for: clicked(kind, "run:a"), board: .loading) == nil)
     }

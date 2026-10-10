@@ -77,6 +77,10 @@ enum AlertRoute {
                 : .detail(cardID: opening.cardID)
         case .milestoneReview, .failedLot, .failedRun, .mergedPullRequest:
             return .detail(cardID: opening.cardID)
+        // Une perte d'ownership ne concerne aucune carte : jamais livrée avec un
+        // payload, elle mène à l'Accueil si un payload la nomme quand même.
+        case .stackOwnershipLost:
+            return .home
         }
     }
 }
