@@ -299,11 +299,12 @@ function parseGlossary(markdown: string): Glossary {
 
 type Exception = { file: string; reason: string } & ({ literal: string } | { constant: string });
 
-/** Les chaînes techniques des `*Text.swift`, exemptées de toutes les règles (S-4, E-1 à E-15). */
+/** Les chaînes techniques des `*Text.swift`, exemptées de toutes les règles (S-4, E-1 à E-16). */
 const EXCEPTIONS: readonly Exception[] = [
   { file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift", literal: ":", reason: "caractère comparé par `titleHead` et `reducePaths`, jamais affiché" },
   { file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift", literal: ".!?", reason: "fins de phrase cherchées par `titleHead`, jamais affichées" },
   { file: "omp-console/Sources/ConsoleCore/Memory/MemoryText.swift", literal: String.raw`!?\[([^\]]*)\]\([^)]*\)`, reason: "expression régulière (chaîne brute) des liens Markdown" },
+  { file: "omp-console/Sources/ConsoleCore/Viewer/ToolArgumentsText.swift", literal: "diff", reason: "clé brute d’un appel de l’outil `edit`, comparée à l’appel, jamais affichée" },
   { file: "omp-console/ios/OMPConsoleIOS/ConnectionText.swift", literal: "hôte ou hôte:port", reason: "notation de saisie : `hôte:port` est une syntaxe d’adresse" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift", literal: "specs", reason: "valeur de fil `verdict` de l’API (`verdictSpecs`)" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift", literal: "review", reason: "valeur de fil `verdict` de l’API (`verdictReview`)" },
@@ -416,10 +417,10 @@ function assertSane(): void {
   assert.deepEqual(BASE, [], `l'arbre réel doit être sain :\n  ${BASE.join("\n  ")}`);
 }
 
-test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 34 *Text.swift de ConsoleCore, de la coque Mac et de la coque iOS", () => {
+test("typographie-et-glossaire-francais/AC-1 : la garde passe sur les 37 *Text.swift de ConsoleCore, de la coque Mac et de la coque iOS", () => {
   assertSane();
   const scoped = [...SOURCES.keys()].filter(inScope);
-  assert.equal(scoped.length, 34, `34 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
+  assert.equal(scoped.length, 37, `37 fichiers *Text.swift attendus :\n  ${scoped.join("\n  ")}`);
   for (const base of ROOTS) {
     assert.ok(scoped.some((file) => file.startsWith(`${base}/`)), `aucun *Text.swift sous ${base}`);
   }

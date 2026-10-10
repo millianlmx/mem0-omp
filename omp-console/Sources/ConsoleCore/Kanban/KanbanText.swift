@@ -64,7 +64,7 @@ public enum KanbanText {
 
     /// Le titre de la confirmation d'arrêt : l'arrêt vise le dépôt entier.
     public static func stopConfirmTitle(repo: String) -> String {
-        "Arrêter les pipelines de \(repo) ?"
+        "Arrêter les pipelines de \(repo) ?"
     }
 
     /// Le motif d'un catalogue indisponible : les deux listes se réduisent à

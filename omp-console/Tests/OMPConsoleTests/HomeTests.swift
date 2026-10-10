@@ -172,9 +172,9 @@ func dashboardRanksEachCardInOneSection() {
 func failedAndBlockedCardsReadAsPlainFrench() {
     #expect(HomeText.natureText(.failed) == "En échec")
     #expect(HomeText.natureText(.blocked) == "Bloquée")
-    #expect(HomeText.failedPrompt(.impl) == "L'étape « Implémentation » s'est arrêtée en échec.")
-    #expect(HomeText.failedPrompt(nil) == "La pipeline s'est arrêtée en échec.")
-    #expect(HomeText.blockedPrompt(.specs) == "La pipeline est bloquée à l'étape « Spécification ».")
+    #expect(HomeText.failedPrompt(.impl) == "L’étape « Implémentation » s’est arrêtée en échec.")
+    #expect(HomeText.failedPrompt(nil) == "La pipeline s’est arrêtée en échec.")
+    #expect(HomeText.blockedPrompt(.specs) == "La pipeline est bloquée à l’étape « Spécification ».")
     #expect(HomeText.blockedPrompt(nil) == "La pipeline est bloquée.")
 
     let prompts = PipelinePhase.allCases.flatMap { [HomeText.failedPrompt($0), HomeText.blockedPrompt($0)] }

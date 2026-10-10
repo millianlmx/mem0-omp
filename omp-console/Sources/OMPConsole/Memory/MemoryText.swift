@@ -32,16 +32,4 @@ extension MemoryText {
     static func omlxUnauthorizedDiagnostic(url: String) -> String {
         "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\n\(url)"
     }
-
-    /// Le diagnostic copiable d'oMLX injoignable (S-6 de
-    /// jargon-technique-expose-mac-et-ios) : l'ancien texte du bandeau, avec l'URL
-    /// RÉELLEMENT sondée.
-    static func omlxUnreachableDiagnostic(url: String) -> String {
-        "oMLX est injoignable (\(url)) — la mémoire a besoin de ses embeddings pour chercher."
-    }
-
-    /// Le diagnostic copiable de la clé refusée (S-6) : code, variable et URL.
-    static func omlxUnauthorizedDiagnostic(url: String) -> String {
-        "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\n\(url)"
-    }
 }

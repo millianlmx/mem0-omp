@@ -545,7 +545,7 @@ func relaunchRefusalIsJournalled() async throws {
 
     let entry = try #require(model.journal.first)
     #expect(entry.state == .refused(reason: motif))
-    #expect(ActionsText.journalLine(for: entry) == "\(ActionsText.resumeLabel) · alpha · refusée : \(motif)")
+    #expect(ActionsText.journalLine(for: entry) == "\(ActionsText.resumeLabel) · alpha · refusée : \(motif)")
 }
 
 @MainActor

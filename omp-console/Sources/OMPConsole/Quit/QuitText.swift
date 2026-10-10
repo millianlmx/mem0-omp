@@ -20,19 +20,19 @@ enum QuitText {
     static let title = "Quitter arrêtera des activités en cours."
 
     static func sessionStops(name: String?) -> String {
-        guard let name else { return "La session OMP s'arrêtera." }
-        return "La session OMP de « \(name) » s'arrêtera."
+        guard let name else { return "La session OMP s’arrêtera." }
+        return "La session OMP de « \(name) » s’arrêtera."
     }
 
     static func terminalStops(command: String?) -> String {
-        guard let command else { return "La commande en cours dans le Terminal s'arrêtera." }
-        return "La commande « \(command) » du Terminal s'arrêtera."
+        guard let command else { return "La commande en cours dans le Terminal s’arrêtera." }
+        return "La commande « \(command) » du Terminal s’arrêtera."
     }
 
     static func pilotageContinues(name: String?) -> String {
-        let suffix = "continue dans OMP : vous le retrouverez en pilotant de nouveau ce projet."
+        let suffix = "continue dans OMP : vous le retrouverez en pilotant de nouveau ce projet."
         guard let name else { return "Le pilotage en cours \(suffix)" }
-        return "Le pilotage de « \(name) » \(suffix)"
+        return "Le pilotage de « \(name) » \(suffix)"
     }
 
     static func pipelinesContinue(count: Int) -> String {

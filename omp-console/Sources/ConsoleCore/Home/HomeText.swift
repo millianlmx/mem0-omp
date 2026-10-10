@@ -77,14 +77,14 @@ public enum HomeText {
     /// L'invite d'une carte « En échec » : le maillon où la feature s'est
     /// arrêtée, jamais le texte d'erreur brut.
     public static func failedPrompt(_ phase: PipelinePhase?) -> String {
-        guard let phase else { return "La pipeline s'est arrêtée en échec." }
-        return "L'étape « \(PhaseText.title(phase)) » s'est arrêtée en échec."
+        guard let phase else { return "La pipeline s’est arrêtée en échec." }
+        return "L’étape « \(PhaseText.title(phase)) » s’est arrêtée en échec."
     }
 
     /// L'invite d'une carte « Bloquée » : le maillon où la feature attend.
     public static func blockedPrompt(_ phase: PipelinePhase?) -> String {
         guard let phase else { return "La pipeline est bloquée." }
-        return "La pipeline est bloquée à l'étape « \(PhaseText.title(phase)) »."
+        return "La pipeline est bloquée à l’étape « \(PhaseText.title(phase)) »."
     }
 
     /// Le résumé de l'item de barre de menus (info-bulle et description

@@ -101,7 +101,7 @@ func milestoneEvents() {
         "milestone:\(repoKey):jalon-specs:specs",
         "milestone:\(repoKey):jalon-revue:review",
     ])
-    #expect(events[0].title == "Specs à valider")
+    #expect(events[0].title == "Spécifications à valider")
     #expect(events[0].body == "jalon-specs")
     #expect(events[0].cardID == "feature:\(repoKey):jalon-specs")
     #expect(events[1].kind == .milestoneReview)
@@ -135,7 +135,7 @@ func milestoneEdgeCases() {
     fixture.publish(.lots, "\(fixtureId(0xb3)).json", object: lotObject(id: fixtureId(0xb3), features: [custom]))
     let events = alertEvents(fixture)
     #expect(events.count == 1)
-    #expect(events.first?.title == "Specs à valider")
+    #expect(events.first?.title == "Spécifications à valider")
     #expect(events.first?.body == "avec-nom")
 }
 
@@ -384,11 +384,11 @@ func homeAlignedTextsAndCardIDs() throws {
         try #require(board.cards.first { $0.id == id }, "carte \(id) absente de l'ardoise")
     }
 
-    // (a) Jalon specs : « Specs à valider », corps = nom affiché par l'Accueil (le slug).
+    // (a) Jalon specs : « Spécifications à valider », corps = nom affiché par l'Accueil (le slug).
     let specsEvent = try event("milestone:\(repoKey):jalon-specs:specs")
     #expect(specsEvent.kind == .milestoneSpecs)
     #expect(specsEvent.cardID == "feature:\(repoKey):jalon-specs")
-    #expect(specsEvent.title == "Specs à valider")
+    #expect(specsEvent.title == "Spécifications à valider")
     #expect(specsEvent.body == "jalon-specs")
     #expect(specsEvent.body == (try card(try #require(specsEvent.cardID))).title)
 
@@ -438,7 +438,7 @@ func homeAlignedTextsWithoutBoard() {
     fixture.publish(.lots, "\(fixtureId(0xf7)).json", object: lotObject(id: fixtureId(0xf7), repoRoot: repoRoot, features: [specs]))
 
     let events = AlertDerivation.events(from: alertsSnapshot(fixture), board: nil)
-    #expect(events.map(\.title) == ["Question", "Specs à valider"])
+    #expect(events.map(\.title) == ["Question", "Spécifications à valider"])
     #expect(events.map(\.body) == ["depot/sans-ardoise", "repli-specs"])
     #expect(events.map(\.cardID) == ["run:\(runId)", "feature:\(repoKey):repli-specs"])
 }
