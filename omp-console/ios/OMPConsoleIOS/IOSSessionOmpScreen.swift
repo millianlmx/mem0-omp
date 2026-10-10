@@ -23,8 +23,12 @@ struct IOSSessionOmpScreen: View {
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
-    init(client: ConsoleClientModel) {
+    /// Le crochet de recette `-sessionomp.recipe lancement`, quand il est donné.
+    private let recipe: IOSSessionOmpRecipe?
+
+    init(client: ConsoleClientModel, recipe: IOSSessionOmpRecipe? = nil) {
         self.client = client
+        self.recipe = recipe
         _model = StateObject(wrappedValue: IOSSessionOmpModel(client: client))
     }
 
@@ -94,9 +98,13 @@ struct IOSSessionOmpScreen: View {
         }
         .onChange(of: client.hosted) { model.syncThread() }
         .sheet(isPresented: $showingLaunch) {
-            IOSSessionOmpLaunchSheet(client: client) { repoKey in
+            IOSSessionOmpLaunchSheet(client: client, recipe: recipe == .lancement ? IOSLaunchRecipe.fixture : nil) { repoKey in
                 await model.launch(repoKey: repoKey)
             }
+        }
+        .task {
+            // Le crochet de recette ouvre la feuille d'elle-même, sur la fixture.
+            if recipe == .lancement { showingLaunch = true }
         }
         .sheet(item: pendingDialogBinding) { dialog in
             IOSProjectDialogSheet(dialog: dialog) { request in

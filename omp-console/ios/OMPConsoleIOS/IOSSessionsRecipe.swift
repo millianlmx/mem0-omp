@@ -276,4 +276,7 @@ final class IOSSessionsRecipeSource: IOSSessionSource {
     }
 
     func run(forFile file: String) -> RunChoice? { run }
+
+    /// Aucun Mac derrière la recette : les chemins restent absolus.
+    var macHomeDirectory: String? { nil }
 }

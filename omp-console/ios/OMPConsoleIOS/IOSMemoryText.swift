@@ -27,6 +27,9 @@ enum IOSMemoryText {
     /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
     static let loadingMore = "Chargement des souvenirs suivants…"
 
+    /// Le titre de la barre de la fiche d'un souvenir (feuilles-ios-presentation-et-depots, S-6).
+    static let detailTitle = "Souvenir"
+
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
     /// Le graphe partiel : le Mac a retiré des lignes à l'une des deux bornes.
@@ -68,8 +71,11 @@ enum IOSMemoryText {
     static let graphRecipePlate = "graphe"
     static let graphRecipeZoom = "zoom"
     static let graphRecipeSheet = "fiche"
+    /// La recette `liste` : la fiche du souvenir de la fixture ouverte depuis la LISTE
+    /// (feuilles-ios-presentation-et-depots), le graphe restant masqué.
+    static let graphRecipeList = "liste"
 
-    /// Le souvenir de la fixture dont la recette `fiche` ouvre la feuille.
+    /// Le souvenir de la fixture dont les recettes `fiche` et `liste` ouvrent la feuille.
     static let graphRecipeMemory = "m1"
 
     /// Le signal de PRÊT, écrit sur la sortie d'erreur quand l'état forcé de la recette

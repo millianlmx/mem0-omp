@@ -52,6 +52,7 @@ struct ConnectionSheet: View {
             }
             .accessibilityIdentifier(ConnectionAccessibility.sheet)
             .navigationTitle(ConnectionText.title)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(ConnectionText.close) { dismiss() }

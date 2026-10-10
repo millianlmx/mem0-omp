@@ -45,6 +45,8 @@ private final class SessionStubSource: IOSSessionSource {
     func feed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem> { stream }
 
     func run(forFile file: String) -> RunChoice? { run }
+
+    var macHomeDirectory: String? { nil }
 }
 
 @MainActor
@@ -367,7 +369,7 @@ struct IOSSessionTests {
     @Test("ios-sessions/AC-3 : la charge utile de la fixture rend les mêmes lignes que macOS")
     func parityRows() throws {
         let payload = try Self.payload()
-        let rows = IOSSessionThreadFacts.rows(of: payload)
+        let rows = IOSSessionThreadFacts.rows(of: payload, home: nil)
 
         // Les mêmes lignes, une par une — les faits pinnés du contrat.
         #expect(rows == Self.pinnedRows)
@@ -793,7 +795,7 @@ struct IOSSessionTests {
         )
         await model.read()
         #expect(source.readCount == 1)
-        #expect(model.rows == IOSSessionThreadFacts.rows(of: payload))
+        #expect(model.rows == IOSSessionThreadFacts.rows(of: payload, home: nil))
         #expect(model.notes == [ConversationText.ignored(2)])
 
         // Le rendu se monte sur le modèle SEUL : aucune référence de client, aucune

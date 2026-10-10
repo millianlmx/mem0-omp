@@ -105,10 +105,16 @@ struct IOSMemoryScreen: View {
     }
 
     /// Le crochet de recette force le mode graphe sur la fixture partagée, sans
-    /// réseau : le chemin de rendu est celui de production.
+    /// réseau : le chemin de rendu est celui de production. La recette `liste` garde
+    /// la LISTE et ouvre la fiche de son souvenir par le présentateur de la liste.
     private func applyGraphRecipe() {
         guard let graphRecipe else { return }
-        Task { await graphRecipe.activate(graph) }
+        Task {
+            await graphRecipe.activate(graph)
+            if let selection = graphRecipe.listSelection(graph) {
+                model.selection = selection
+            }
+        }
     }
 
     // MARK: - Panneau et champ de recherche

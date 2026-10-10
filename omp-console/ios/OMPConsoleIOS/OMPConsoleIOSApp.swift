@@ -25,7 +25,11 @@ import SwiftUI
 ///   choisi, titre, besoin), pour capturer la feuille sans appairage ;
 ///   `-pipelines.recipe <fiche|actions|arret>` : la fiche d'une carte de fixture
 ///   ouverte sur l'écran Pipelines (ios-fiche-carte-pipelines), sans réseau — des
-///   crochets de recette, pas des fonctionnalités.
+///   crochets de recette, pas des fonctionnalités ;
+/// - `-projet.recipe <lancement|dialogue>` et `-sessionomp.recipe lancement` : la
+///   feuille « Piloter un projet… », « OMP vous demande » ou « Lancer une session
+///   OMP » ouverte d'elle-même sur une fixture (feuilles-ios-presentation-et-depots),
+///   sans réseau — des crochets de recette, pas des fonctionnalités.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -42,6 +46,8 @@ struct OMPConsoleIOSApp: App {
     private let memoryRecipe: IOSMemoryGraphRecipe?
     private let pipelinesRecipe: IOSPipelinesRecipe?
     private let cardRecipe: PipelinesCardRecipe?
+    private let projectRecipe: IOSProjectRecipe?
+    private let sessionOmpRecipe: IOSSessionOmpRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -54,6 +60,8 @@ struct OMPConsoleIOSApp: App {
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
         pipelinesRecipe = IOSPipelinesRecipe.resolve(arguments)
         cardRecipe = PipelinesCardRecipe.resolve(arguments)
+        projectRecipe = IOSProjectRecipe.resolve(arguments)
+        sessionOmpRecipe = IOSSessionOmpRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -68,6 +76,8 @@ struct OMPConsoleIOSApp: App {
                 memoryRecipe: memoryRecipe,
                 pipelinesRecipe: pipelinesRecipe,
                 cardRecipe: cardRecipe,
+                projectRecipe: projectRecipe,
+                sessionOmpRecipe: sessionOmpRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

@@ -40,6 +40,14 @@ struct HomeAnswerSheet: View {
     var body: some View {
         NavigationStack {
             Form {
+                // Le titre de la carte, entier, en tête du formulaire : la barre ne
+                // porte que le titre court et statique de la feuille.
+                Section {
+                    Text(verbatim: card.title)
+                        .font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier(IOSHomeAccessibility.answerTitle)
+                }
                 if let failure {
                     Section {
                         Text(failure)
@@ -50,14 +58,15 @@ struct HomeAnswerSheet: View {
                 zoneSection
                 textSection
             }
-            .navigationTitle(card.title)
+            .navigationTitle(IOSHomeText.answerNavigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(KanbanText.cancel) { dismiss() }
+                    IOSSheetIconButton(role: .cancel, label: KanbanText.cancel) { dismiss() }
                         .accessibilityIdentifier(IOSHomeAccessibility.answerCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(ActionsText.answer) { submit() }
+                    IOSSheetIconButton(role: .confirm, label: ActionsText.answer) { submit() }
                         .disabled(!canSubmit)
                         .accessibilityIdentifier(IOSHomeAccessibility.answerSubmit)
                 }

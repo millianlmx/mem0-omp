@@ -26,6 +26,10 @@ struct IOSSectionView: View {
     /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` de l'écran
     /// Pipelines (fiche d'une carte).
     let cardRecipe: PipelinesCardRecipe?
+    /// Le crochet de recette `-projet.recipe <lancement|dialogue>` de l'écran Projet.
+    let projectRecipe: IOSProjectRecipe?
+    /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
+    let sessionOmpRecipe: IOSSessionOmpRecipe?
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -39,7 +43,7 @@ struct IOSSectionView: View {
         } else if section == .sessions {
             IOSSessionsScreen(client: client, recipe: recipe)
         } else if section == .session {
-            IOSSessionOmpScreen(client: client)
+            IOSSessionOmpScreen(client: client, recipe: sessionOmpRecipe)
         } else {
             genericBody
         }
@@ -48,7 +52,7 @@ struct IOSSectionView: View {
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 12) {
             if section == .project {
-                IOSProjectScreen(client: client)
+                IOSProjectScreen(client: client, recipe: projectRecipe)
             } else if section == .stats {
                 IOSStatsScreen(client: client)
             } else {
