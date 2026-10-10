@@ -25,6 +25,11 @@ public enum ConversationText {
     public static let starting = "Démarrage"
     public static let live = "En direct"
     public static let backToLive = "Revenir au direct"
+    /// L'état d'un appel d'outil resté sans résultat dans une session finie
+    /// (S-7 de mac-finitions-hig) : un mot et un symbole FIXE, jamais un
+    /// indicateur qui tourne.
+    public static let toolInterrupted = "Interrompu"
+    public static let toolInterruptedSymbol = "stop.circle"
 
     /// Le cache du rendu Markdown : assez large pour une longue session affichée
     /// (une entrée par message, réflexion ou résumé RENDU), borné pour qu'une

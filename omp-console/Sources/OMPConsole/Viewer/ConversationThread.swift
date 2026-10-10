@@ -22,6 +22,10 @@ private let viewerEndId = "viewer.end"
 
 struct ConversationThread: View {
     @ObservedObject var model: SessionViewerModel
+    /// La session qui porte le fil est finie (fin du run pour la visionneuse, fin
+    /// de la session hébergée pour Session OMP et Projet) : ses appels restés sans
+    /// résultat se lisent « Interrompu » (S-7 de mac-finitions-hig).
+    let sessionEnded: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -78,7 +82,8 @@ struct ConversationThread: View {
                                 row: row,
                                 isOpen: model.isExpanded(row.id),
                                 isThinkingOpen: model.isExpanded(SessionRowView.thinkingKey(of: row.id)),
-                                onToggle: { [model] key in model.toggleFold(key) }
+                                onToggle: { [model] key in model.toggleFold(key) },
+                                sessionEnded: sessionEnded
                             )
                             .equatable()
                             .id(row.id)

@@ -30,7 +30,10 @@ struct SessionViewerContent: View {
     }
 
     var body: some View {
-        ConversationThread(model: model)
+        // Une seule lecture de la fin du run : elle masque la pilule ET fait lire
+        // « Interrompu » aux appels restés sans résultat (S-7 de mac-finitions-hig).
+        let runEnded = RunChoice.hasEnded(runs.run(forFile: model.target.sessionFile))
+        ConversationThread(model: model, sessionEnded: runEnded)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .navigationTitle(model.target.title)
             .navigationSubtitle(model.target.subtitle ?? "")
@@ -39,7 +42,7 @@ struct SessionViewerContent: View {
                     state: model.state,
                     following: model.following,
                     isEmpty: model.rows.isEmpty,
-                    runEnded: RunChoice.hasEnded(runs.run(forFile: model.target.sessionFile))
+                    runEnded: runEnded
                 ) {
                     // La pilule est son propre verre : pas de second fond.
                     ToolbarItem(placement: .primaryAction) {

@@ -83,10 +83,15 @@ enum IOSSessionText {
     static func sessionFile(_ directory: String, _ id: String) -> String { "\(directory)/\(id).jsonl" }
 
     /// Le statut d'un appel d'outil, dit pour l'accessibilité (le symbole ne
-    /// porte pas le sens seul).
-    static func toolStatusLabel(_ result: ToolResultRow?) -> String {
-        guard let result else { return statusPending }
-        return result.isError ? statusError : statusDone
+    /// porte pas le sens seul). « Interrompu » est le mot partagé du noyau
+    /// (S-7 de mac-finitions-hig).
+    static func toolStatusLabel(_ status: ToolCallStatus) -> String {
+        switch status {
+        case .running: return statusPending
+        case .failed: return statusError
+        case .done: return statusDone
+        case .interrupted: return ConversationText.toolInterrupted
+        }
     }
 
     private static let statusPending = "en cours"

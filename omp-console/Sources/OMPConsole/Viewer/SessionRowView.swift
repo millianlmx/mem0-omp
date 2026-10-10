@@ -20,7 +20,8 @@
 // ligne garde son marqueur d'origine ET porte une valeur d'accessibilité
 // (« ligne ajoutée », « ligne supprimée », « contexte », « en-tête de diff »).
 // Le statut d'un appel d'outil, montré par un symbole, porte de même un libellé
-// d'accessibilité.
+// d'accessibilité. Un appel sans résultat dans une session FINIE se lit
+// « Interrompu », icône fixe (S-7 de mac-finitions-hig) : plus de spinner sans fin.
 
 import AppKit
 import ConsoleCore
@@ -38,6 +39,9 @@ struct SessionRowView: View, Equatable {
     let isThinkingOpen: Bool
     /// Replie ou déplie la clé donnée (`row.id` ou `thinkingKey(of:)`).
     let onToggle: (String) -> Void
+    /// La session qui porte le fil est finie : un appel sans résultat n'en
+    /// recevra plus (`ToolCallStatus.of`).
+    let sessionEnded: Bool
 
     /// La clé de pli de la réflexion d'une ligne, distincte de celle de la ligne :
     /// replier la réflexion ne touche pas la ligne du message.
@@ -45,6 +49,7 @@ struct SessionRowView: View, Equatable {
 
     nonisolated static func == (lhs: SessionRowView, rhs: SessionRowView) -> Bool {
         lhs.row == rhs.row && lhs.isOpen == rhs.isOpen && lhs.isThinkingOpen == rhs.isThinkingOpen
+            && lhs.sessionEnded == rhs.sessionEnded
     }
 
     var body: some View {
@@ -139,7 +144,7 @@ struct SessionRowView: View, Equatable {
                     isOpen: isOpen,
                     symbol: ToolVerb.symbol(content.name),
                     title: title,
-                    result: content.result,
+                    status: ToolCallStatus.of(content.result, sessionEnded: sessionEnded),
                     headerId: "viewer.toolcall.header.\(row.id)"
                 )
             }
@@ -170,12 +175,13 @@ struct SessionRowView: View, Equatable {
     }
 
     /// L'en-tête d'un appel : chevron, symbole, verbe (et cible), puis le statut —
-    /// en attente tant qu'aucun résultat n'est arrivé, terminé ou en erreur ensuite.
+    /// en attente tant qu'aucun résultat n'est arrivé dans une session vivante,
+    /// interrompu dans une session finie, terminé ou en erreur ensuite.
     private func toolHeader(
         isOpen: Bool,
         symbol: String,
         title: String,
-        result: ToolResultRow?,
+        status: ToolCallStatus,
         headerId: String?
     ) -> some View {
         HStack(spacing: 8) {
@@ -190,7 +196,7 @@ struct SessionRowView: View, Equatable {
                 headerTitle(title)
             }
             Spacer(minLength: 8)
-            toolStatus(result)
+            toolStatus(status)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
@@ -205,18 +211,22 @@ struct SessionRowView: View, Equatable {
     }
 
     @ViewBuilder
-    private func toolStatus(_ result: ToolResultRow?) -> some View {
-        if let result {
-            if result.isError {
-                Image(systemName: "xmark.circle.fill")
-                    .foregroundStyle(.red)
-                    .accessibilityLabel("erreur")
-            } else {
-                Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .accessibilityLabel("terminé")
-            }
-        } else {
+    private func toolStatus(_ status: ToolCallStatus) -> some View {
+        switch status {
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .foregroundStyle(.red)
+                .accessibilityLabel("erreur")
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .accessibilityLabel("terminé")
+        case .interrupted:
+            Label(ConversationText.toolInterrupted, systemImage: ConversationText.toolInterruptedSymbol)
+                .labelStyle(.titleAndIcon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        case .running:
             ProgressView()
                 .controlSize(.mini)
                 .accessibilityLabel("en cours")
@@ -237,7 +247,7 @@ struct SessionRowView: View, Equatable {
                     isOpen: isOpen,
                     symbol: ToolVerb.symbol(name),
                     title: "\(ToolVerb.title(name)) \(ConversationText.withoutCall)",
-                    result: content,
+                    status: ToolCallStatus.of(content, sessionEnded: sessionEnded),
                     headerId: nil
                 )
             }
