@@ -108,8 +108,10 @@ final class AlertsModel: ObservableObject {
 
     /// Le cœur de la décision (S-7).
     private func apply(_ snapshot: StoreSnapshot, stateDir: String) async {
+        // Aucun fait de PR : les compteurs ne lisent que les cartes en cours et en
+        // attente, que l'état GitHub ne range jamais.
         status = AlertsStatus.from(boardState: KanbanBoardState.derive(
-            snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal
+            snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal, prFacts: [:]
         ))
         let events = AlertDerivation.events(from: snapshot)
         let fresh = Set(events.filter { !ledger.contains($0.key) }.map(\.key))

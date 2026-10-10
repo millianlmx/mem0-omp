@@ -349,6 +349,14 @@ struct RemotePullRequestsPayload: Codable, Equatable {
     var stale: Bool
 }
 
+/// Les faits de PR de l'ardoise (S-6 de pipelines-livrees-statut-pr-faux-et-doub),
+/// trame SSE `pull-request-states` : la liste ENTIÈRE à chaque fois, triée par URL,
+/// et l'état de relecture du Mac.
+struct RemotePullRequestStatesPayload: Codable, Equatable {
+    var facts: [PullRequestFact]
+    var refreshing: Bool
+}
+
 /// Le catalogue des modèles servis par `omp models --json` (S-14) : les sélecteurs
 /// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué (la
 /// liste est alors vide). Le client affiche le motif — ce n'est pas une erreur de

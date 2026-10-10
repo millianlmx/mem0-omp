@@ -8,6 +8,7 @@
 
 import AppKit
 import Combine
+import ConsoleCore
 import Foundation
 @testable import OMPConsole
 
@@ -330,7 +331,16 @@ struct GhStub {
     let script: URL
     let log: URL
 
-    init(viewJSON: String?, checksJSON: String?, viewStderr: String? = nil, mergeSucceeds: Bool = true) throws {
+    /// `stateJSON`/`stateCode` : la sortie et le code de la lecture d'ÉTAT (`pr view`
+    /// portant `state,mergedAt,closedAt`), routée à part des autres `pr view`.
+    init(
+        viewJSON: String?,
+        checksJSON: String?,
+        viewStderr: String? = nil,
+        mergeSucceeds: Bool = true,
+        stateJSON: String = "{}",
+        stateCode: Int32 = 0
+    ) throws {
         directory = FileManager.default.temporaryDirectory.appendingPathComponent("gh-stub-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         script = directory.appendingPathComponent("gh")
@@ -340,10 +350,13 @@ struct GhStub {
         let checks = directory.appendingPathComponent("checks.json")
         try Data((viewJSON ?? "{}").utf8).write(to: view)
         try Data((checksJSON ?? "[]").utf8).write(to: checks)
+        let state = directory.appendingPathComponent("state.json")
+        try Data(stateJSON.utf8).write(to: state)
 
         var lines = [
             "#!/bin/sh",
             "printf '%s\\n' \"$@\" >> '#LOG#'",
+            "if [ \"$1 $2 $4\" = \"pr view state,mergedAt,closedAt\" ]; then cat '#STATE#'; exit #STATECODE#; fi",
         ]
         if let viewStderr {
             let line = "if [ \"$1 $2\" = \"pr view\" ]; then printf '%s\\n' '#VIEWERR#' >&2; exit 1; fi"
@@ -361,6 +374,8 @@ struct GhStub {
             .replacingOccurrences(of: "#LOG#", with: log.path)
             .replacingOccurrences(of: "#VIEW#", with: view.path)
             .replacingOccurrences(of: "#CHECKS#", with: checks.path)
+            .replacingOccurrences(of: "#STATE#", with: state.path)
+            .replacingOccurrences(of: "#STATECODE#", with: String(stateCode))
             .replacingOccurrences(of: "#MERGECODE#", with: mergeSucceeds ? "0" : "1")
         try Data(body.utf8).write(to: script)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
@@ -373,6 +388,74 @@ struct GhStub {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map(String.init)
             .filter { !$0.isEmpty } ?? []
+    }
+}
+
+/// Un lecteur d'état de PR scripté (registre des faits, S-5 de pipelines-livrees) :
+/// chaque URL reçoit une suite de résultats consommés dans l'ordre (le dernier se
+/// répète) ; une URL sans script échoue. Il compte les lectures par URL et le
+/// nombre maximal de lectures simultanées ; `delay` retient chaque lecture.
+final class ScriptedPullRequestStateReader: PullRequestStateReading, @unchecked Sendable {
+    private let lock = NSLock()
+    private var scripts: [String: [Result<PullRequestFact, GhError>]] = [:]
+    private var counts: [String: Int] = [:]
+    private var inFlight = 0
+    private var _maxInFlight = 0
+    private var _completed = 0
+    private var _delay: Duration
+
+    init(delay: Duration = .zero) {
+        _delay = delay
+    }
+
+    func script(_ url: String, _ results: [Result<PullRequestFact, GhError>]) {
+        withLock { scripts[url] = results }
+    }
+
+    func script(_ url: String, _ state: PullRequestState, closedAtMs: Double? = nil) {
+        script(url, [.success(PullRequestFact(url: url, state: state, closedAtMs: closedAtMs))])
+    }
+
+    func fail(_ url: String) {
+        script(url, [.failure(.commandFailed(command: "pr view", code: 1, detail: "hors ligne"))])
+    }
+
+    var delay: Duration {
+        get { withLock { _delay } }
+        set { withLock { _delay = newValue } }
+    }
+
+    func readCount(_ url: String) -> Int { withLock { counts[url] ?? 0 } }
+    var totalReads: Int { withLock { counts.values.reduce(0, +) } }
+    var maxInFlight: Int { withLock { _maxInFlight } }
+    var completed: Int { withLock { _completed } }
+
+    func state(prUrl: String) async throws -> PullRequestFact {
+        let delay: Duration = withLock {
+            counts[prUrl, default: 0] += 1
+            inFlight += 1
+            _maxInFlight = max(_maxInFlight, inFlight)
+            return _delay
+        }
+        if delay != .zero { try? await Task.sleep(for: delay) }
+        let result: Result<PullRequestFact, GhError>? = withLock {
+            inFlight -= 1
+            _completed += 1
+            guard var queue = scripts[prUrl], !queue.isEmpty else { return nil }
+            let next = queue.removeFirst()
+            if !queue.isEmpty { scripts[prUrl] = queue }
+            return next
+        }
+        guard let result else {
+            throw GhError.unreadableOutput(command: "pr view", detail: "aucun script pour \(prUrl)")
+        }
+        return try result.get()
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
     }
 }
 

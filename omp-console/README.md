@@ -86,7 +86,9 @@ Tout se fait depuis l'app, sans terminal :
    `reply`) ; « Valider les specs » et « Accepter la revue » agissent depuis la
    carte, et « Lire le contrat » (secondaire) ouvre la feuille **Contrat** pour un
    besoin ou des specs à valider. La PR livrée apparaît sous « Livrées récemment »
-   avec « Ouvrir la PR ».
+   avec « Ouvrir la PR » et l'état réel de la PR (« PR ouverte », « PR fusionnée »,
+   « PR fermée », ou « PR créée » tant que GitHub n'a pas répondu) ; une PR
+   fusionnée ou fermée depuis plus de 7 jours en sort.
 6. **Reprendre** — une pipeline dont le pilote est mort (service arrêté, session
    fermée) est « En pause » sous « En cours » avec « Reprendre », qui poste
    `POST /v1/repos/{repo}/pilot` ; le service réveille un conducteur qui adopte le
@@ -288,7 +290,7 @@ jamais par le tableau lui-même.
 
 ### Les cinq voies
 
-Les onze colonnes de l'ardoise (`KanbanColumn`, parité avec `/pipelines`) restent
+Les treize colonnes de l'ardoise (`KanbanColumn`, parité avec `/pipelines`) restent
 le modèle, mais l'écran les regroupe en **voies** (`KanbanLane`) qui suivent le
 cours d'une feature, de même largeur, sur toute la largeur de la fenêtre (elles
 ne défilent horizontalement que sous 240 pt par voie) :
@@ -298,11 +300,64 @@ ne défilent horizontalement que sous 240 pt par voie) :
 | Pas commencées (`pas-commencees`) | `en-attente` |
 | En cours (`en-cours`) | `en-cours`, et toute carte que « Reprendre » peut relancer (en pause) |
 | À vous (`a-vous`) | `question-en-vol`, `jalon-specs`, `jalon-review` |
-| Livrées (`livrees`) | `pr-ouverte`, `fusionne`, `terminee-sans-pr` |
+| Livrées (`livrees`) | `pr-ouverte`, `pr-creee`, `fusionne`, `pr-fermee`, `terminee-sans-pr` |
 | Arrêtées (`arretees`, montrée seulement si elle a des cartes) | `echec`, `bloquee`, `annulee-retiree` |
 
 Dans une voie, les cartes suivent l'ordre des colonnes (question, puis specs, puis
 revue), puis l'ordre de l'ardoise. Une voie vide le dit en une phrase.
+
+Une carte livrée avec PR (feature de lot `done` portant une `prUrl`, feature de
+projet `pr` ou `merged`) porte l'**état réel** de sa PR lu sur GitHub par le Mac :
+« PR ouverte », « PR fusionnée » ou « PR fermée ». Tant que cet état est inconnu
+(hors ligne, `gh` absent, échec de lecture), elle porte « PR créée » — jamais « PR
+ouverte » par défaut ; seule une feature de projet que le magasin dit déjà `merged`
+reste « PR fusionnée » sans fait GitHub. L'état GitHub prime toujours sur le statut
+du magasin.
+
+Le Mac lit cet état par `gh pr view --json state,mergedAt,closedAt -- <url>` (20 s
+au plus par appel, quatre `gh` simultanés au plus), et le tient dans un registre
+unique en mémoire (`PullRequestStateBook`) : toutes les URLs au premier instantané
+du magasin, puis chaque URL nouvelle une fois, puis à chaque rafraîchissement
+manuel — qui relit tout sauf les PR déjà fusionnées (état terminal). Aucune
+minuterie, aucune écriture sur disque. Une lecture en échec retire le fait : la
+carte repasse en « PR créée ». Sans `gh` (`OMP_CONSOLE_GH_BINARY` compris), rien
+n'est lu. Le rafraîchissement manuel est le bouton **Rafraîchir** de la barre
+d'outils (`kanban.refresh`, ⌘R), désactivé pendant une relecture ; aucun message
+d'erreur ni de confirmation, le retour visible est le libellé des cartes. L'app
+iOS reçoit les mêmes faits par la trame `pull-request-states` et dérive la même
+ardoise ; elle demande une relecture à chaque ouverture du flux (lancement,
+reconnexion) et par son propre bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au
+clavier de l'iPad, actif seulement connecté et hors relecture).
+
+« Livrées » est bornée à **7 jours** pour les seules livraisons closes (PR
+fusionnée, PR fermée, livraison sans PR) : une carte close depuis plus de 7 jours
+(`KanbanBoard.deliveredWindowMs`) quitte l'ardoise, Accueil compris. La date de
+référence est la date de fusion ou de fermeture lue sur GitHub, sinon la fin de la
+pipeline, sinon la date de la feature de projet ; une carte « PR ouverte » ou « PR
+créée » reste quel que soit son âge.
+
+Les clôtures de `history/` (omp-mem0-req en écrit une par maillon) ne font pas de
+carte à part : une clôture dont le `cwd` réel est le worktree d'une feature de lot
+devient une **source** de la carte de cette feature. Les autres sont groupées par
+`cwd` réel, et chaque groupe fait UNE carte, celle de la clôture la plus récente
+(« Terminée », ou « Échec » si elle a échoué).
+
+Recette sur le magasin RÉEL (manuelle, gatée par `MEM0_LIVREES_RECIPE`) : la pile
+Mac de test (`RemoteStack`, même `KanbanModel` que l'app, lecteur `gh` réel) sert une
+COPIE du magasin et imprime `PORT`, un `CODE` d'appairage toutes les 90 s, puis
+chaque carte de « Livrées » (`<id>\t<titre>\t<pastille>`) après la première relecture
+et à chaque changement des faits. `MEM0_LIVREES_OFFLINE=1` résout `gh` sur
+`/nonexistent` (tout en « PR créée ») ; `MEM0_LIVREES_STORE` change la copie servie,
+`MEM0_LIVREES_SECONDS` la durée (1800 s). Lancer sous un pty (sortie tamponnée dans
+un tube), puis appairer un simulateur privé lancé avec
+`-client.manualAddress 127.0.0.1:<PORT>` :
+
+```bash
+cp -R ~/.omp/agent/pipeline /tmp/livrees-store
+cd omp-console && MEM0_LIVREES_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recetteLivreesServeLeMagasinReel -Xswiftc -plugin-path \
+  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
+```
 
 Une carte montre son titre (sans le préfixe « dépôt/ » des runs hors lot), son
 dépôt (seulement quand l'ardoise mêle plusieurs dépôts), ses deux **modèles**
@@ -328,7 +383,8 @@ ne sont jamais tues. Le bouton `kanban.diagnosticButton` de la barre d'outils
 ouvre une bulle « Problèmes détectés » (`kanban.diagnostic`) qui les dit en
 phrases (« cache-sessions s'est arrêtée de façon inattendue. ») ; le fichier et le
 pid ne sont que dans son pli **Détails techniques**, replié par défaut. Le bouton
-« Activité » (`kanban.activityButton`) ouvre le journal des gestes dans une bulle.
+« Activité » (`kanban.activityButton`) ouvre le journal des gestes dans une bulle ;
+« Rafraîchir » (`kanban.refresh`, ⌘R) relit l'état des PR sur GitHub.
 La section n'a plus de barre basse.
 
 ### La feuille de détail
@@ -359,6 +415,7 @@ pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
 | `kanban.lane.<rawValue>` | une voie |
 | `kanban.card.<id>` | une carte (`feature:<clé>:<slug>`, `project:<clé>:<slug>`, `run:<id>`, `history:<id>`) |
 | `kanban.activityButton` | le bouton « Activité » de la barre d'outils |
+| `kanban.refresh` | le bouton « Rafraîchir » de la barre d'outils (⌘R, relit l'état des PR) |
 | `kanban.diagnosticButton` | le bouton « n problème(s) » de la barre d'outils (absent sans anomalie) |
 | `kanban.diagnostic` | la bulle « Problèmes détectés » |
 | `kanban.anomaly.<i>` | une ligne d'anomalie dans la bulle |
@@ -1377,7 +1434,8 @@ besoins et leurs six familles :
 `<name>` est le `name` de la feature s'il n'est pas blanc, sinon son `slug` ; le
 `label` est celui que le dépôt écrit lui-même. Une PR absente de `projects/` n'émet
 rien (une PR non suivie), et une feature de **lot** `done` avec `prUrl` (colonne
-« PR ouverte » du Kanban) n'est pas une fusion. Les sources sont bornées comme le
+« PR ouverte », « PR créée » ou « PR fusionnée » du Kanban selon l'état GitHub)
+n'est pas une fusion. Les sources sont bornées comme le
 magasin : 200 entrées `running`, 20 rangs `history`, un lot et un projet par dépôt.
 
 ### Notifications refusées
@@ -1676,11 +1734,21 @@ un flux temps réel.
   (`{entries:[…]}`, le plus récent en tête) ; `GET /v1/cards/{id}/contract` sert le
   contrat d'une carte sous `{document: {name, state, content, reason}}` — `404`
   carte inconnue, `409` carte sans contrat (moment ou worktree absent).
+- **Faits de PR de l'ardoise** : `POST /v1/pull-request-states/refresh` (sans corps)
+  relance la lecture des états de PR sur GitHub sans l'attendre et répond `202
+  {"accepted":true}`, même quand `gh` est absent ; le résultat arrive par la trame
+  `pull-request-states` (`{facts:[{url, state, closedAtMs?}], refreshing}`, faits
+  triés par URL), rediffusée à chaque fait publié et à chaque bascule de relecture.
+  Le client (`ConsoleClientModel`) envoie cette requête, tolérante, à chaque
+  ouverture du flux et sur `refreshPullRequestStates()` ; il publie la trame dans
+  `pullRequestStates` et en dérive `board` (`prFacts`). Un Mac plus ancien répond
+  404 : les cartes restent « PR créée ».
 - **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
-  `store`, `devices`, `components`, `journal`, `sessions` et `hosted`, avec un
-  battement de cœur toutes les 15 secondes. À l'abonnement, l'ordre est `hello`,
-  `store`, `devices`, `components`, `journal`. La révocation d'un appareil coupe son
-  flux immédiatement.
+  `store`, `conduite`, `devices`, `components`, `journal`, `pull-request-states`,
+  `sessions` et `hosted`, avec un battement de cœur toutes les 15 secondes. À
+  l'abonnement, l'ordre est `hello`, `store`, `conduite`, `devices`, `components`,
+  `journal`, `pull-request-states`. La révocation d'un appareil coupe son flux
+  immédiatement.
 
 ### Sonde CLI
 
@@ -1944,7 +2012,8 @@ aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargem
 premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
 préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
-(« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR) —
+(« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR ;
+PR ouvertes, créées, fusionnées ou fermées, closes depuis 7 jours au plus) —
 les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
 ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte

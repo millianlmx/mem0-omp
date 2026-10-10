@@ -96,7 +96,8 @@ struct RemoteStack {
         },
         journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
         componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
+        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
+        prStates: PullRequestStateBook? = nil
     ) async throws -> RemoteStack {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("omp-console-remote-\(UUID().uuidString)", isDirectory: true)
@@ -113,7 +114,9 @@ struct RemoteStack {
         )
         await registry.load()
         let stats = StatsModel(stateDir: dir)
-        let kanban = KanbanModel(hub: hub)
+        // Hermétique par défaut : un registre SANS lecteur ne lance jamais le `gh`
+        // du poste (une URL github.com d'une fixture ne lit pas le réseau).
+        let kanban = KanbanModel(hub: hub, prStates: prStates ?? PullRequestStateBook(reader: nil))
         let actions = actionsModel ?? ActionsModel()
         let session = sessionModel ?? SessionConsoleModel()
         let project = projectModel ?? ProjectConsoleModel()
@@ -126,7 +129,10 @@ struct RemoteStack {
             components: components,
             journal: journal,
             componentsChanges: componentsChanges,
-            journalChanges: journalChanges
+            journalChanges: journalChanges,
+            // Le câblage de PRODUCTION (`RemoteServiceModel`) des faits de PR.
+            pullRequestStates: { kanban.pullRequestStatesPayload() },
+            pullRequestStatesChanges: kanban.pullRequestStatesChanges()
         )
         // Le câblage de PRODUCTION (`RemoteServiceModel`) : le registre publie
         // l'évènement `devices` par le flux. Sans lui, l'ordre RÉEL des trames

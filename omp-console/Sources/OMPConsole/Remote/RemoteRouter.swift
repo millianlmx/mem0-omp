@@ -96,6 +96,7 @@ final class RemoteRouter {
         .of("POST", "v1/session/dialogs/:id", "hosted.dialog"),
         .of("GET", "v1/projects/:repoKey/pull-requests", "prs"),
         .of("POST", "v1/projects/:repoKey/pull-requests/:slug/merge", "prs.merge"),
+        .of("POST", "v1/pull-request-states/refresh", "prStates.refresh"),
     ]
 
     // MARK: - Entrée
@@ -253,6 +254,8 @@ final class RemoteRouter {
                 slug: parameters["slug"] ?? "",
                 body: request.body
             ))
+        case "prStates.refresh":
+            return try json(actions.refreshPullRequestStates(), code: 202)
         default:
             return respond(.notFound("route inconnue"))
         }

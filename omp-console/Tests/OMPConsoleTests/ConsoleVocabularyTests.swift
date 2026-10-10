@@ -38,7 +38,9 @@ func statusIsAWordDoubledByATone() {
         .enCours: ConsoleStatus(text: "En cours", tone: .info),
         .questionEnVol: ConsoleStatus(text: "À vous", tone: .attention),
         .prOuverte: ConsoleStatus(text: "PR ouverte", tone: .success),
-        .fusionne: ConsoleStatus(text: "Fusionnée", tone: .success),
+        .prCreee: ConsoleStatus(text: "PR créée", tone: .neutral),
+        .fusionne: ConsoleStatus(text: "PR fusionnée", tone: .success),
+        .prFermee: ConsoleStatus(text: "PR fermée", tone: .neutral),
         .echec: ConsoleStatus(text: "Échec", tone: .danger),
         .jalonSpecs: ConsoleStatus(text: "Specs à valider", tone: .attention),
         .jalonReview: ConsoleStatus(text: "Revue à accepter", tone: .attention),
@@ -106,7 +108,9 @@ func progressFollowsTheStepAndTheOutcome() {
     #expect(states(vocabularyCard(.jalonSpecs, phase: .specs)) == [.done, .current, .upcoming, .upcoming, .upcoming])
     #expect(states(vocabularyCard(.jalonReview, phase: .review)) == [.done, .done, .done, .current, .upcoming])
     #expect(states(vocabularyCard(.prOuverte, phase: .release)) == [.done, .done, .done, .done, .current])
+    #expect(states(vocabularyCard(.prCreee, phase: .release)) == [.done, .done, .done, .done, .current])
     #expect(states(vocabularyCard(.fusionne, phase: .release)) == [.done, .done, .done, .done, .done])
+    #expect(states(vocabularyCard(.prFermee, phase: .release)) == [.done, .done, .done, .done, .upcoming])
     #expect(states(vocabularyCard(.echec, phase: .impl)) == [.done, .done, .failed, .upcoming, .upcoming])
     // Le pilote est mort, la feature vit : l'étape reste en cours, « Reprendre » la relance.
     let resumable = vocabularyCard(.echec, phase: .impl, action: KanbanCardAction(

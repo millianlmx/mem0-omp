@@ -534,6 +534,18 @@ public struct RemotePullRequestsPayload: Codable, Equatable, Sendable {
     public var stale: Bool
 }
 
+/// Miroir de la trame `pull-request-states` : les faits de PR lus par le Mac,
+/// triés par URL, et son état de relecture.
+public struct RemotePullRequestStatesPayload: Codable, Equatable, Sendable {
+    public var facts: [PullRequestFact]
+    public var refreshing: Bool
+
+    public init(facts: [PullRequestFact], refreshing: Bool) {
+        self.facts = facts
+        self.refreshing = refreshing
+    }
+}
+
 public struct RemoteMergedPayload: Codable, Equatable, Sendable {
     public var merged: Bool
     public var number: Int?

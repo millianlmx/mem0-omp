@@ -52,6 +52,10 @@ enum PipelinesText {
 
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
+
+    /// La touche du raccourci ⌘R de « Rafraîchir » (clavier de l'iPad), la même
+    /// que sur le Mac.
+    static let refreshKey: Character = "r"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
@@ -59,6 +63,7 @@ enum PipelinesText {
 enum PipelinesAccessibility {
     static let screen = "pipelines.screen"
     static let newFeature = "pipelines.newFeature"
+    static let refresh = "pipelines.refresh"
     static let banner = "pipelines.banner"
     static let emptyCard = "pipelines.empty"
 

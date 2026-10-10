@@ -73,5 +73,6 @@ public extension ClientRoute {
             method: "POST",
             path: "/v1/projects/{repoKey}/pull-requests/{slug}/merge"
         ),
+        ClientRoute(name: "prStates.refresh", method: "POST", path: "/v1/pull-request-states/refresh"),
     ]
 }

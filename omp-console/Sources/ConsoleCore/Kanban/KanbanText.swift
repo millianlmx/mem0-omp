@@ -25,6 +25,10 @@ public enum KanbanText {
     public static let activity = "Activité"
     public static let activityHelp = "Les derniers gestes envoyés depuis l'app"
     public static let problemsHelp = "Problèmes détectés dans les données des pipelines"
+    /// Le bouton « Rafraîchir » de l'ardoise (Mac et iOS) : il relit l'état des
+    /// PR sur GitHub ; le retour visible est le libellé des cartes.
+    public static let refresh = "Rafraîchir"
+    public static let refreshHelp = "Relire l'état des PR sur GitHub (⌘R)"
     public static let reply = "Répondre…"
     public static let sendMessage = "Envoyer un message…"
     /// Le motif d'une carte sans aucun geste, et celui d'une exécution sans boîte

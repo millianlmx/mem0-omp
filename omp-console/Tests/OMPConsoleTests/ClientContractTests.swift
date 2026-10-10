@@ -66,8 +66,8 @@ struct ClientContractTests {
     func catalogIsImageOfRouter() async throws {
         // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
         let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
-        #expect(served.count == 37)
-        #expect(ClientRoute.all.count == 37)
+        #expect(served.count == 38)
+        #expect(ClientRoute.all.count == 38)
         #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
 
         // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
@@ -124,6 +124,11 @@ struct ClientContractTests {
 
     @Test("BR-3 : les charges utiles miroir conduite/dépôts sont l'image exacte de celles de la coque")
     func mirrorPayloadShapes() throws {
+        #expect(try contractSameShape(
+            #"{"facts":[{"url":"https://github.com/o/r/pull/1","state":"MERGED","closedAtMs":1.5},{"url":"https://github.com/o/r/pull/2","state":"OPEN"}],"refreshing":true}"#,
+            client: ConsoleClient.RemotePullRequestStatesPayload.self,
+            host: OMPConsole.RemotePullRequestStatesPayload.self
+        ))
         #expect(try contractSameShape(
             #"{"repoKey":"k","repoRoot":"/tmp/r","name":"r"}"#,
             client: ConsoleClient.RemoteRepoRow.self,
