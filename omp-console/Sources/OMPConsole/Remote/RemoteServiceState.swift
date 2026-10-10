@@ -1,5 +1,5 @@
 // L'état publié du service d'API distante (S-1). Il nomme les cinq situations que
-// la feuille d'appairage affiche, et rien d'autre : les textes exacts vivent dans
+// l'onglet « Appareils » des Réglages affiche, et rien d'autre : les textes exacts vivent dans
 // `PairingText` (BR-9).
 
 import Foundation

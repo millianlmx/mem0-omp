@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Recette scriptée de la feuille « Appairage » du Mac (S-10, lot BR-4 de la
-# feature mac-feuille-appairage-debordante) : AC-1 à AC-12 rejoués sur une
-# instance de recette DISTINCTE de celle de l'utilisateur.
+# Recette scriptée des Réglages › Appareils du Mac (S-6, lot BR-4 de la feature
+# reglages-mac-appareils) : AC-1, 2, 3, 6, 10, 11 de cette feature, et les
+# contrôles encore valides de mac-feuille-appairage-debordante (AC-3 à AC-11),
+# rejoués sur une instance de recette DISTINCTE de celle de l'utilisateur.
 #
 # L'instance est lancée en arrière-plan (`open -g -n`) sur un état jetable :
 # un registre de 12 appareils hérités « iPhone » sans identifiant d'appareil,
@@ -31,15 +32,19 @@
 # La saisie passe par `idb ui text` et la table AZERTY du contrat (Doc-8).
 #
 # Autres options : `--bundle <chemin .app>` (défaut `omp-console/build/OMP
-# Console.app`), `--captures-only` (ouvre la feuille avec 12 appareils, capture
-# haut et bas, n'évalue rien : captures « avant » d'un bundle de la base),
+# Console.app`), `--captures-only` (ouvre par « Appairage… » avec 12 appareils,
+# capture haut et bas, n'évalue rien : captures « avant » d'un bundle de la base,
+# dont la feuille est capturée en `feuille-*.png`),
 # `--out <dossier>` (défaut `/tmp/mac-appairage-recette-<horodatage>` : captures
 # PNG, mesures JSON et `rapport.txt`).
 #
-# Une ligne par critère : `✔ AC-n — <constat>` ou `✗ AC-n — <attendu> / <obtenu>`.
-# Codes de sortie : 0 tout vert, 1 au moins un critère rouge, 2 non exécuté (hors
-# macOS, session verrouillée, bundle absent, Accessibilité refusée, outil absent).
-# Le nettoyage (révocation des appareils de la recette, fermeture de la feuille,
+# Une ligne qualifiée par contrôle : `✔ reglages-mac-appareils/AC-n — <constat>`
+# (ou `mac-feuille-appairage-debordante/AC-n`), `✗ … — <attendu> / <obtenu>`.
+# Codes de sortie : 0 tout vert, 1 au moins un critère rouge (ou focus volé),
+# 2 non exécuté (hors macOS, session verrouillée, Space plein écran, bundle absent,
+# Accessibilité refusée, outil absent). La recette ne touche jamais l'interrupteur
+# (AC-4, AC-5, AC-9 sont prouvés par les tests Swift).
+# Le nettoyage (révocation des appareils de la recette, fermeture des Réglages,
 # `kill -TERM` du seul pid lancé, suppression de l'état jetable) passe par un
 # `trap` : il a lieu même après un échec ou une interruption.
 set -uo pipefail
@@ -98,6 +103,9 @@ say() { printf '%s\n' "$*" | tee -a "$REPORT"; }
 not_run() { say "non exécuté : $*"; exit 2; }
 pass() { say "✔ $1 — $2"; }
 fail() { say "✗ $1 — $2"; RED=1; }
+# Un contrôle dont le préalable manque pour une cause extérieure à l'app testée
+# (préparation de l'instance de recette en échec) : ni vert, ni rouge.
+skip() { say "– $1 — non évalué ($2)"; }
 # Les verdicts calculés par l'outil Python : recopiés au rapport, et un seul ✗
 # rend la recette rouge.
 verdicts() {
@@ -117,7 +125,7 @@ judge() {
   fi
 }
 
-say "Recette de la feuille d'appairage — $(date '+%Y-%m-%d %H:%M:%S')"
+say "Recette des Réglages › Appareils — $(date '+%Y-%m-%d %H:%M:%S')"
 say "bundle : $BUNDLE"
 say "sorties : $OUT"
 if [ -n "$CAPTURES_ONLY" ] && [ -n "$IOS" ]; then
@@ -203,7 +211,7 @@ cleanup() {
   trap - EXIT INT TERM
   if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
     revoke_foreign
-    "$SONDE" presser "$APP_PID" pairing.close >/dev/null 2>&1
+    "$SONDE" fermer "$APP_PID" >/dev/null 2>&1 || "$SONDE" presser "$APP_PID" pairing.close >/dev/null 2>&1
     kill -TERM "$APP_PID" 2>/dev/null
     for _ in $(seq 1 40); do
       kill -0 "$APP_PID" 2>/dev/null || break
@@ -245,6 +253,8 @@ FIRST_DATE = "Appairé le 10 oct. 2026 à 21:54"
 IPAD = "iPad Pro 13 pouces (M5)"
 IPHONE = "iPhone 17e"
 MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."]
+NEW = "reglages-mac-appareils/"
+OLD = "mac-feuille-appairage-debordante/"
 
 
 def load(path):
@@ -306,46 +316,77 @@ def fixture(remote_dir):
     print("\n".join(ids))
 
 
-def top(path, first_id, count):
+def opened(first_path, tabs_path):
+    """AC-1 : « Réglages… » ouvre une fenêtre « Appareils » à un seul onglet."""
+    m, tabs = load(first_path), load(tabs_path)
+    if m["conteneur"] == "fenetre" and m["titre"] == "Appareils" and tabs == ["Appareils"] and m["feuilles"] == 0:
+        ok(NEW + "AC-1", "« Réglages… » ouvre la fenêtre « %s », barre d'onglets %s, aucune feuille" % (m["titre"], tabs))
+    else:
+        ko(NEW + "AC-1", "fenêtre « Appareils », onglets [\"Appareils\"], aucune feuille",
+           "conteneur=%s, titre=%s, onglets=%s, feuilles=%s" % (m["conteneur"], m["titre"], tabs, m["feuilles"]))
+
+
+def again(second_path, count):
+    """AC-2 : un 2e « Réglages… » ramène la même fenêtre, sans en créer une 2e."""
+    m = load(second_path)
+    if m["conteneur"] == "fenetre" and m["deja"] and int(count) == 1:
+        ok(NEW + "AC-2", "2e « Réglages… » : fenêtre déjà ouverte, %s fenêtre CG « Appareils » pour le pid" % count)
+    else:
+        ko(NEW + "AC-2", "1 fenêtre CG « Appareils », déjà ouverte",
+           "%s fenêtre(s), deja=%s, conteneur=%s" % (count, m["deja"], m["conteneur"]))
+
+
+def reopened(path):
+    """AC-10, AC-11 : « Appairage… », Réglages fermés, ouvre la fenêtre, aucune feuille."""
+    m = load(path)
+    good = m["conteneur"] == "fenetre" and m["feuilles"] == 0 and not m["deja"] and m["titre"] == "Appareils"
+    got = "conteneur=%s, titre=%s, feuilles=%s, deja=%s" % (m["conteneur"], m["titre"], m["feuilles"], m["deja"])
+    if good:
+        ok(NEW + "AC-10", "« Appairage… », Réglages fermés, ouvre la fenêtre « Appareils » ; aucune AXSheet dans l'app")
+        ok(NEW + "AC-11", "le seul chemin vers l'ancienne feuille (menu « Appairage… », inventaire S-5) mène aux Réglages › Appareils, sans feuille")
+    else:
+        ko(NEW + "AC-10", "fenêtre « Appareils », aucune feuille", got)
+        ko(NEW + "AC-11", "aucune feuille d'appairage, Réglages › Appareils", got)
+
+
+def top(path, first_id, count, service_note=""):
     count = int(count)
     m = load(path)
-    texts = m["textes"]
-    jargon = [t for t in texts if "API distante" in t]
-    if "Appairage" in texts and not jargon:
-        ok("AC-12", "titre « Appairage » présent ; ni « API distante » ni « Service d'API distante » dans la feuille")
+    window = m["fenetre"]
+    parts = {"interrupteur": m["interrupteur"], "Générer un code": m["generer"]}
+    out = [name for name, rect in parts.items() if not inside(rect, window)]
+    if m["conteneur"] == "fenetre" and not out and len(m["lignes"]) == count:
+        ok(NEW + "AC-6", "%d appareils : interrupteur %s et « Générer un code » %s entièrement dans la fenêtre %s"
+           % (count, show(m["interrupteur"]), show(m["generer"]), show(window)))
     else:
-        ko("AC-12", "« Appairage » présent, aucun « API distante »", "titre présent=%s, jargon=%s" % ("Appairage" in texts, jargon))
-    screen = m["ecran"]
-    parts = {"feuille": m["feuille"], "titre": m["titre"], "Fermer": m["fermer"]}
-    out = [name for name, rect in parts.items() if not inside(rect, screen)]
-    if not out:
-        ok("AC-1", "feuille %s, titre %s et « Fermer » %s dans l'écran %s" % (show(m["feuille"]), show(m["titre"]), show(m["fermer"]), show(screen)))
-    else:
-        ko("AC-1", "feuille, titre et « Fermer » dans l'écran %s" % show(screen),
-           ", ".join("%s %s hors écran" % (name, show(parts[name])) for name in out))
+        ko(NEW + "AC-6", "%d lignes ; interrupteur et « Générer un code » dans la fenêtre %s" % (count, show(window)),
+           "conteneur=%s, %d lignes, hors fenêtre : %s"
+           % (m["conteneur"], len(m["lignes"]), ", ".join("%s %s" % (n, show(parts[n])) for n in out) or "aucun"))
     rows = m["lignes"]
     bad = [r for r in rows if not r["nom"] or r["nom"] not in r["ax"] or r["ax"] == "Révoquer"]
     if len(rows) == count and not bad:
-        ok("AC-7", "%d boutons « Révoquer » nommés par leur appareil (ex. « %s »)" % (len(rows), rows[0]["ax"]))
+        ok(OLD + "AC-7", "%d boutons « Révoquer » nommés par leur appareil (ex. « %s »)" % (len(rows), rows[0]["ax"]))
     else:
-        ko("AC-7", "%d libellés « Révoquer <nom> »" % count,
+        ko(OLD + "AC-7", "%d libellés « Révoquer <nom> »" % count,
            "%d lignes, fautifs : %s" % (len(rows), [(r["nom"], r["ax"]) for r in bad]))
     first = row(m, first_id)
     if first and first["date"] == FIRST_DATE:
-        ok("AC-8", "« %s » sur la ligne appairée le 10/10/2026 à 21:54" % first["date"])
+        ok(OLD + "AC-8", "« %s » sur la ligne appairée le 10/10/2026 à 21:54" % first["date"])
     else:
-        ko("AC-8", FIRST_DATE, first["date"] if first else "ligne absente")
-    if m["adresse"] and m["occurrencesAdresse"] == 1:
-        ok("AC-9", "adresse « %s » affichée une seule fois" % m["adresse"])
+        ko(OLD + "AC-8", FIRST_DATE, first["date"] if first else "ligne absente")
+    if service_note:
+        print("– %sAC-9 — non évalué (%s)" % (OLD, service_note))
+    elif m["adresse"] and m["occurrencesAdresse"] == 1:
+        ok(OLD + "AC-9", "adresse « %s » affichée une seule fois" % m["adresse"])
     else:
-        ko("AC-9", "adresse du service présente exactement 1 fois",
+        ko(OLD + "AC-9", "adresse du service présente exactement 1 fois",
            "adresse=%s, occurrences=%s" % (m["adresse"], m["occurrencesAdresse"]))
 
 
 def bottom(top_path, bottom_path):
     a, b = load(top_path), load(bottom_path)
     if not b["lignes"]:
-        ko("AC-2", "liste défilée jusqu'à la dernière ligne", "aucune ligne lue")
+        ko(NEW + "AC-6", "liste défilée jusqu'à la dernière ligne", "aucune ligne lue")
         return
     last_top, last = a["lignes"][-1] if a["lignes"] else None, b["lignes"][-1]
     hidden_before = last_top is not None and not inside(last_top["cadre"], a["liste"])
@@ -354,15 +395,28 @@ def bottom(top_path, bottom_path):
     def same(r1, r2):
         return r1 and r2 and all(abs(r1[k] - r2[k]) <= 0.5 for k in ("x", "y", "w", "h"))
 
-    fixed = same(a["titre"], b["titre"]) and same(a["fermer"], b["fermer"])
-    on_screen = inside(b["titre"], b["ecran"]) and inside(b["fermer"], b["ecran"])
-    if visible and fixed and on_screen:
-        ok("AC-2", "la %de ligne devient visible dans la liste %s (masquée avant défilement : %s) ; titre et « Fermer » immobiles"
+    fixed = same(a["interrupteur"], b["interrupteur"]) and same(a["generer"], b["generer"])
+    kept = inside(b["interrupteur"], b["fenetre"]) and inside(b["generer"], b["fenetre"])
+    if visible and fixed and kept:
+        ok(NEW + "AC-6", "la %de ligne devient visible dans la liste %s (masquée avant défilement : %s) ; interrupteur et « Générer un code » immobiles, dans la fenêtre"
            % (len(b["lignes"]), show(b["liste"]), "oui" if hidden_before else "non"))
     else:
-        ko("AC-2", "dernière ligne visible, titre et « Fermer » immobiles et dans l'écran",
-           "ligne %s dans liste %s ; titre %s→%s ; Fermer %s→%s"
-           % (show(last["cadre"]), show(b["liste"]), show(a["titre"]), show(b["titre"]), show(a["fermer"]), show(b["fermer"])))
+        ko(NEW + "AC-6", "dernière ligne visible, interrupteur et « Générer un code » immobiles et dans la fenêtre",
+           "ligne %s dans liste %s ; interrupteur %s→%s ; Générer %s→%s"
+           % (show(last["cadre"]), show(b["liste"]), show(a["interrupteur"]), show(b["interrupteur"]),
+              show(a["generer"]), show(b["generer"])))
+
+
+def last_id(path):
+    rows = load(path)["lignes"]
+    if not rows:
+        sys.exit(1)
+    print(rows[-1]["id"])
+
+
+def key(path, name):
+    value = load(path).get(name)
+    print(value if isinstance(value, str) else json.dumps(value))
 
 
 def countdown(first, second):
@@ -372,16 +426,16 @@ def countdown(first, second):
         s1 = int(m1.group(1)) * 60 + int(m1.group(2))
         s2 = int(m2.group(1)) * 60 + int(m2.group(2))
         if s2 < s1:
-            ok("AC-10", "« %s » puis « %s » : le décompte décroît" % (first, second))
+            ok(OLD + "AC-10", "« %s » puis « %s » : le décompte décroît" % (first, second))
             return
-    ko("AC-10", "« Expire dans mm:ss » deux fois, décroissant", "« %s » puis « %s »" % (first, second))
+    ko(OLD + "AC-10", "« Expire dans mm:ss » deux fois, décroissant", "« %s » puis « %s »" % (first, second))
 
 
 def expired(text, code_shown):
     if text == "Code expiré" and code_shown == "0":
-        ok("AC-10", "après l'échéance : « Code expiré », plus aucun code ni décompte")
+        ok(OLD + "AC-10", "après l'échéance : « Code expiré », plus aucun code ni décompte")
     else:
-        ko("AC-10", "« Code expiré » sans code", "« %s », code affiché=%s" % (text, code_shown == "1"))
+        ko(OLD + "AC-10", "« Code expiré » sans code", "« %s », code affiché=%s" % (text, code_shown == "1"))
 
 
 def ids(path):
@@ -406,13 +460,13 @@ def ios(path, tab_a, phone, tab_b):
     a, t, b = row(m, tab_a), row(m, phone), row(m, tab_b)
     names = (a["nom"] if a else "absente", t["nom"] if t else "absente")
     if names == (IPAD, IPHONE):
-        ok("AC-3", "ligne de l'iPad « %s », ligne de l'iPhone « %s » ; aucune ne vaut « iPhone »" % names)
+        ok(OLD + "AC-3", "ligne de l'iPad « %s », ligne de l'iPhone « %s » ; aucune ne vaut « iPhone »" % names)
     else:
-        ko("AC-3", "« %s » et « %s »" % (IPAD, IPHONE), "« %s » et « %s »" % names)
+        ko(OLD + "AC-3", "« %s » et « %s »" % (IPAD, IPHONE), "« %s » et « %s »" % names)
     if a and b and a["id"] != b["id"] and a["nom"] == IPAD and b["nom"] == IPAD and a["ax"] and b["ax"]:
-        ok("AC-5", "deux lignes « %s » d'ids distincts (%s…, %s…), chacune avec son « %s »" % (IPAD, a["id"][:8], b["id"][:8], a["ax"]))
+        ok(OLD + "AC-5", "deux lignes « %s » d'ids distincts (%s…, %s…), chacune avec son « %s »" % (IPAD, a["id"][:8], b["id"][:8], a["ax"]))
     else:
-        ko("AC-5", "deux lignes « %s » distinctes, révocables" % IPAD,
+        ko(OLD + "AC-5", "deux lignes « %s » distinctes, révocables" % IPAD,
            "tab-a=%s, tab-b=%s" % (a and (a["id"], a["nom"], a["ax"]), b and (b["id"], b["nom"], b["ax"])))
 
 
@@ -433,10 +487,10 @@ def repair(path, old_a, new_a, tab_b, count_before, start_ms, end_ms):
     if b is None:
         problems.append("la ligne de tab-b a disparu")
     if not problems:
-        ok("AC-4", "réappairage de tab-a : %d lignes avant et après, ligne remplacée (« %s »), tab-b intacte ; "
+        ok(OLD + "AC-4", "réappairage de tab-a : %d lignes avant et après, ligne remplacée (« %s »), tab-b intacte ; "
            "refus de l'ancien jeton prouvé par RemotePairingTests" % (count, a["date"]))
     else:
-        ko("AC-4", "même nombre de lignes, ligne de tab-a remplacée et datée du réappairage", " ; ".join(problems))
+        ko(OLD + "AC-4", "même nombre de lignes, ligne de tab-a remplacée et datée du réappairage", " ; ".join(problems))
 
 
 # --- Relevés idb (`idb ui describe-all --json` / `describe-point --json`) ---
@@ -533,7 +587,8 @@ def typing(layout, text):
 
 
 commands = {
-    "fixture": fixture, "haut": top, "bas": bottom, "decompte": countdown, "expire": expired,
+    "fixture": fixture, "ouvert": opened, "rouvert": again, "appairage": reopened,
+    "haut": top, "bas": bottom, "dernier": last_id, "cle": key, "decompte": countdown, "expire": expired,
     "ids": ids, "champ": field, "heritees": legacy, "ios": ios, "reappairage": repair,
     "element": element, "bouton": button, "largeur": width, "point": point, "frappe": typing,
     "revele": reveal,
@@ -583,7 +638,7 @@ revoke_row() {
   return 1
 }
 # Nettoyage : toute ligne qui n'est pas une des 12 héritées vient de la recette.
-# La révoquer par la feuille efface aussi son jeton du trousseau du Mac.
+# La révoquer par l'onglet Appareils efface aussi son jeton du trousseau du Mac.
 revoke_foreign() {
   [ ${#LEGACY_IDS[@]} -gt 0 ] || return 0
   "$SONDE" ouvrir "$APP_PID" >/dev/null 2>&1 || return 0
@@ -629,7 +684,7 @@ if [ -n "$IOS" ]; then
       -configuration Debug -destination "generic/platform=iOS Simulator" -derivedDataPath "$IOS_DERIVED" \
       CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=NO -quiet >"$OUT/xcodebuild.log" 2>&1 \
       || [ ! -d "$IOS_APP" ]; then
-    fail "AC-11" "app iOS construite / échec de xcodebuild (voir $OUT/xcodebuild.log)"
+    fail "mac-feuille-appairage-debordante/AC-11" "app iOS construite / échec de xcodebuild (voir $OUT/xcodebuild.log)"
     IOS=""
   fi
 fi
@@ -638,7 +693,7 @@ if [ -n "$IOS" ]; then
   SIM_TAB_B="$(simulator appairage-tab-b "$IOS_TABLET")" || SIM_TAB_B=""
   SIM_TEL="$(simulator appairage-tel "$IOS_PHONE")" || SIM_TEL=""
   if [ -z "$SIM_TAB_A" ] || [ -z "$SIM_TAB_B" ] || [ -z "$SIM_TEL" ]; then
-    fail "AC-11" "trois simulateurs démarrés, app installée / tab-a=${SIM_TAB_A:-?} tab-b=${SIM_TAB_B:-?} tel=${SIM_TEL:-?}"
+    fail "mac-feuille-appairage-debordante/AC-11" "trois simulateurs démarrés, app installée / tab-a=${SIM_TAB_A:-?} tab-b=${SIM_TAB_B:-?} tel=${SIM_TEL:-?}"
     IOS=""
   else
     say "simulateurs : appairage-tab-a=$SIM_TAB_A appairage-tab-b=$SIM_TAB_B appairage-tel=$SIM_TEL"
@@ -669,45 +724,119 @@ while IFS= read -r id; do LEGACY_IDS+=("$id"); done < <(python3 "$TOOL" fixture 
 # ---------------------------------------------------------------------------
 # 3. Instance de recette en arrière-plan ; son pid exclut tout pid antérieur.
 # ---------------------------------------------------------------------------
+# Space plein écran d'une autre app : l'instance de recette n'y exposerait aucune
+# fenêtre en AX et `screencapture -l` échouerait (MESURÉ) — sans l'activer
+# (interdit), rien n'est mesurable.
+if full="$("$SONDE" plein-ecran)"; then
+  not_run "l'écran affiche un Space plein écran (« $full ») : l'instance de recette n'aurait aucune fenêtre accessible ; revenir sur le Bureau puis relancer"
+fi
 PATTERN="$(printf '%s' "$BUNDLE/Contents/MacOS" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
 BEFORE="$(pgrep -f "$PATTERN" || true)"
 open -g -n "$BUNDLE" \
   --env "OMP_CONSOLE_SUPPORT_ROOT=$R/support" \
   --env "MEM0_PIPELINE_STATE_DIR=$R/pipeline" \
   --env "OMP_CONSOLE_REMOTE_PORT=$PORT" \
-  --env "TZ=Europe/Paris" || { fail "AC-1" "instance de recette lancée / open a échoué"; exit 1; }
+  --env "TZ=Europe/Paris" || { fail "reglages-mac-appareils/AC-1" "instance de recette lancée / open a échoué"; exit 1; }
 sleep 8
 for pid in $(pgrep -f "$PATTERN" || true); do
   printf '%s\n' "$BEFORE" | grep -qx "$pid" || APP_PID="$pid"
 done
-[ -n "$APP_PID" ] || { fail "AC-1" "instance de recette lancée / aucun nouveau processus"; exit 1; }
+[ -n "$APP_PID" ] || { fail "reglages-mac-appareils/AC-1" "instance de recette lancée / aucun nouveau processus"; exit 1; }
 say "instance de recette : pid $APP_PID, port $PORT"
 
-# ---------------------------------------------------------------------------
-# 4. Ouverture par le menu « OMP Console › Appairage… ».
-# ---------------------------------------------------------------------------
-if ! "$SONDE" ouvrir "$APP_PID" >/dev/null 2>"$WORK/ouvrir.err"; then
-  fail "AC-1" "feuille ouverte par « OMP Console › Appairage… » / feuille non ouverte par le menu ($(cat "$WORK/ouvrir.err"))"
-  exit 1
-fi
-# Le service démarre à la fin de la préparation des composants : l'adresse
-# n'apparaît qu'alors (AC-9 se lit service démarré).
-"$SONDE" attendre "$APP_PID" pairing.address present 60 || say "note : pairing.address absent après 60 s (service non démarré ?)"
+# Presse un item du menu de l'app par la sonde (`reglages` ou `ouvrir`) et écrit
+# son rapport JSON dans $3. Arbre AX sans fenêtre ⇒ « non exécuté » ; instance
+# de recette passée au premier plan ⇒ « focus volé », la recette s'arrête (1).
+menu_open() {
+  local status
+  "$SONDE" "$1" "$APP_PID" > "$3" 2>"$WORK/menu.err"
+  status=$?
+  case "$status" in
+    0) return 0 ;;
+    2) not_run "$(cat "$WORK/menu.err")" ;;
+    4) fail "$2" "aucun vol de focus / $(cat "$WORK/menu.err")"; exit 1 ;;
+  esac
+  return 1
+}
 
 PREFIX="apres-"
 [ -z "$CAPTURES_ONLY" ] || PREFIX=""
 
 # ---------------------------------------------------------------------------
-# 5. Feuille en haut : AC-12, AC-1 (cadre), AC-7, AC-8, AC-9.
+# Captures « avant » (`--captures-only`) : ouverture par « Appairage… » — la
+# feuille de la base ou la fenêtre des Réglages —, haut et bas, sans évaluation.
 # ---------------------------------------------------------------------------
-measure "$OUT/mesure-haut.json" || { fail "AC-1" "feuille mesurable / $(cat "$WORK/sonde.err")"; exit 1; }
-capture "${PREFIX}feuille-haut.png"
-if [ -z "$CAPTURES_ONLY" ]; then
-  judge haut "$OUT/mesure-haut.json" "${LEGACY_IDS[0]}" "$LEGACY_COUNT"
+if [ -n "$CAPTURES_ONLY" ]; then
+  # Bundle de la base : la feuille « Appairage » partage la fenêtre principale
+  # avec la feuille de préparation, prioritaire. Préparation de l'instance de
+  # recette en échec ⇒ « Fermer » de cette feuille (instance jetable), puis
+  # nouvelle tentative.
+  if ! menu_open ouvrir "captures" "$OUT/ouverture.json"; then
+    if "$SONDE" presser "$APP_PID" sheet.setup.close >/dev/null 2>&1; then
+      say "note : feuille de préparation de l'instance de recette fermée ($(cat "$WORK/menu.err"))"
+      sleep 1
+    fi
+    menu_open ouvrir "captures" "$OUT/ouverture.json" \
+      || { fail "captures" "ouverture par « OMP Console › Appairage… » / $(cat "$WORK/menu.err")"; exit 1; }
+  fi
+  kind="$(python3 "$TOOL" cle "$OUT/ouverture.json" conteneur)"
+  shot="reglages"
+  [ "$kind" = "feuille" ] && shot="feuille"
+  "$SONDE" attendre "$APP_PID" pairing.address present 60 || say "note : pairing.address absent après 60 s (service non démarré ?)"
+  measure "$OUT/mesure-haut.json" || say "note : mesure du haut impossible ($(cat "$WORK/sonde.err"))"
+  capture "${shot}-haut.png"
+  "$SONDE" defiler "$APP_PID" 1.0 >/dev/null 2>"$WORK/defiler.err" && sleep 1 \
+    || say "note : défilement impossible ($(cat "$WORK/defiler.err"))"
+  measure "$OUT/mesure-bas.json" || say "note : mesure après défilement impossible"
+  capture "${shot}-bas.png"
+  if [ -s "$OUT/${shot}-haut.png" ] && [ -s "$OUT/${shot}-bas.png" ]; then
+    say "captures ($kind) : $OUT/${shot}-haut.png, $OUT/${shot}-bas.png (aucune évaluation)"
+    exit 0
+  fi
+  fail "captures" "${shot}-haut.png et ${shot}-bas.png écrites / au moins une capture manquante"
+  exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Défilement de la liste : AC-2.
+# 4. « OMP Console › Réglages… » : AC-1 ; une 2e fois : AC-2.
+# ---------------------------------------------------------------------------
+if ! menu_open reglages "reglages-mac-appareils/AC-1" "$OUT/reglages-1.json"; then
+  fail "reglages-mac-appareils/AC-1" "Réglages ouverts par « OMP Console › Réglages… » / $(cat "$WORK/menu.err")"
+  exit 1
+fi
+"$SONDE" onglets "$APP_PID" > "$OUT/onglets.json" 2>"$WORK/onglets.err" || echo '[]' > "$OUT/onglets.json"
+[ -s "$WORK/onglets.err" ] && say "note : onglets illisibles ($(cat "$WORK/onglets.err"))"
+judge ouvert "$OUT/reglages-1.json" "$OUT/onglets.json"
+
+if menu_open reglages "reglages-mac-appareils/AC-2" "$OUT/reglages-2.json"; then
+  judge rouvert "$OUT/reglages-2.json" "$("$SONDE" compter "$APP_PID" Appareils 2>/dev/null || echo 0)"
+else
+  fail "reglages-mac-appareils/AC-2" "2e « Réglages… » ramène la fenêtre / $(cat "$WORK/menu.err")"
+fi
+# Le service démarre à la fin de la préparation des composants : l'adresse
+# n'apparaît qu'alors (AC-3 et l'adresse unique se lisent service démarré).
+# Préparation de l'instance de recette en échec (`sheet.setup.failure` lisible :
+# par exemple le port de la pile mémoire tenu par celle de l'utilisateur) : le
+# service ne démarre pas, pour une cause extérieure à l'onglet. Les contrôles qui
+# exigent le service actif sont alors « non évalués », jamais verts ni rouges.
+SERVICE_NOTE=""
+if ! "$SONDE" attendre "$APP_PID" pairing.address present 60; then
+  setup_failure="$("$SONDE" lire "$APP_PID" sheet.setup.failure 2>/dev/null)"
+  [ -z "$setup_failure" ] \
+    || SERVICE_NOTE="service distant non démarré : préparation de l'instance de recette en échec, « $setup_failure »"
+  say "note : pairing.address absent après 60 s${SERVICE_NOTE:+ — $SERVICE_NOTE}"
+fi
+
+# ---------------------------------------------------------------------------
+# 5. Onglet en haut (12 appareils) : AC-6 (en-tête dans la fenêtre), et
+#    mac-feuille-appairage-debordante AC-7, AC-8, AC-9.
+# ---------------------------------------------------------------------------
+measure "$OUT/mesure-haut.json" || { fail "reglages-mac-appareils/AC-6" "onglet mesurable / $(cat "$WORK/sonde.err")"; exit 1; }
+capture "${PREFIX}reglages-haut.png"
+judge haut "$OUT/mesure-haut.json" "${LEGACY_IDS[0]}" "$LEGACY_COUNT" "$SERVICE_NOTE"
+
+# ---------------------------------------------------------------------------
+# 6. Défilement de la liste jusqu'au dernier appareil, puis sa révocation : AC-6.
 # ---------------------------------------------------------------------------
 if "$SONDE" defiler "$APP_PID" 1.0 >/dev/null 2>"$WORK/defiler.err"; then
   sleep 1
@@ -715,20 +844,50 @@ else
   say "note : défilement impossible ($(cat "$WORK/defiler.err"))"
 fi
 measure "$OUT/mesure-bas.json" || say "note : mesure après défilement impossible"
-capture "${PREFIX}feuille-bas.png"
-if [ -n "$CAPTURES_ONLY" ]; then
-  say "captures : $OUT/feuille-haut.png, $OUT/feuille-bas.png (aucune évaluation)"
-  exit 0
-fi
+capture "${PREFIX}reglages-bas.png"
 judge bas "$OUT/mesure-haut.json" "$OUT/mesure-bas.json"
 
+# La dernière ligne est la 12e héritée (liste triée par date d'appairage
+# décroissante) : la phase iOS compte ensuite sur les 11 premières.
+last="$(python3 "$TOOL" dernier "$OUT/mesure-bas.json" 2>/dev/null)"
+if [ "$last" != "${LEGACY_IDS[11]}" ]; then
+  fail "reglages-mac-appareils/AC-6" "dernière ligne = 12e appareil hérité ${LEGACY_IDS[11]} / ${last:-aucune}"
+elif revoke_row "$last"; then
+  count="$(row_count)"
+  if [ "$count" -eq $((LEGACY_COUNT - 1)) ]; then
+    pass "reglages-mac-appareils/AC-6" "la dernière ligne, révélée par défilement, est révoquée puis confirmée : $LEGACY_COUNT → $count lignes"
+    pass "mac-feuille-appairage-debordante/AC-6" "(Mac) « Révoquer » puis la confirmation suppriment la 12e ligne héritée : $LEGACY_COUNT → $count lignes"
+  else
+    fail "reglages-mac-appareils/AC-6" "$((LEGACY_COUNT - 1)) lignes après révocation de la dernière / $count"
+    fail "mac-feuille-appairage-debordante/AC-6" "(Mac) $((LEGACY_COUNT - 1)) lignes après révocation / $count"
+  fi
+else
+  fail "reglages-mac-appareils/AC-6" "dernière ligne révoquée / la ligne $last est restée"
+  fail "mac-feuille-appairage-debordante/AC-6" "(Mac) ligne héritée révoquée / la ligne $last est restée"
+fi
+
 # ---------------------------------------------------------------------------
-# 7. Décompte puis échéance du code : AC-10.
+# 7. Service actif : interrupteur, code, liste (AC-3) ; décompte puis échéance
+#    (mac-feuille-appairage-debordante AC-10).
 # ---------------------------------------------------------------------------
+toggle="$("$SONDE" lire "$APP_PID" pairing.toggle 2>/dev/null)"
+address="$("$SONDE" lire "$APP_PID" pairing.address 2>/dev/null)"
+if "$SONDE" attendre "$APP_PID" pairing.devices.list present 2; then listed=1; else listed=0; fi
 if "$SONDE" presser "$APP_PID" pairing.generate >/dev/null 2>&1; then
   generated=$(date +%s)
   sleep 1
   first="$("$SONDE" lire "$APP_PID" pairing.codeExpiry 2>/dev/null)"
+  code="$("$SONDE" lire "$APP_PID" pairing.code 2>/dev/null)"
+  # Crockford base32 groupé : ni I, ni L, ni O, ni U.
+  measured="interrupteur=${toggle:-?}, adresse=${address:-absente}, code=${code:-absent}, liste=$listed"
+  if [ -n "$SERVICE_NOTE" ]; then
+    skip "reglages-mac-appareils/AC-3" "$SERVICE_NOTE ; relevé : $measured"
+  elif [ "$toggle" = "1" ] && [ -n "$address" ] && [ "$listed" = "1" ] \
+      && [[ "$code" =~ ^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$ ]]; then
+    pass "reglages-mac-appareils/AC-3" "service actif (« $address »), interrupteur activé, « Générer un code » ⇒ « $code », liste des appareils présente"
+  else
+    fail "reglages-mac-appareils/AC-3" "interrupteur à 1, adresse, code XXXX-XXXX, liste présente / $measured"
+  fi
   sleep 2
   second="$("$SONDE" lire "$APP_PID" pairing.codeExpiry 2>/dev/null)"
   judge decompte "$first" "$second"
@@ -740,34 +899,28 @@ if "$SONDE" presser "$APP_PID" pairing.generate >/dev/null 2>&1; then
   judge expire "$third" "$shown"
   capture "apres-code-expire.png"
 else
-  fail "AC-10" "« Générer un code » pressé / pairing.generate absent ou inactif"
+  fail "reglages-mac-appareils/AC-3" "« Générer un code » pressé / pairing.generate absent ou inactif"
+  fail "mac-feuille-appairage-debordante/AC-10" "« Générer un code » pressé / pairing.generate absent ou inactif"
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Révocation manuelle d'une ligne héritée : AC-6 (partie Mac).
+# 8. Réglages fermés par leur bouton de fermeture, puis « OMP Console ›
+#    Appairage… » : la fenêtre « Appareils », aucune feuille (AC-10, AC-11).
 # ---------------------------------------------------------------------------
-if revoke_row "${LEGACY_IDS[11]}"; then
-  count="$(row_count)"
-  if [ "$count" -eq $((LEGACY_COUNT - 1)) ]; then
-    pass "AC-6" "(Mac) « Révoquer » puis la confirmation suppriment la 12e ligne héritée : $LEGACY_COUNT → $count lignes"
-  else
-    fail "AC-6" "(Mac) $((LEGACY_COUNT - 1)) lignes après révocation / $count"
-  fi
+if ! "$SONDE" fermer "$APP_PID" >/dev/null 2>"$WORK/fermer.err"; then
+  fail "reglages-mac-appareils/AC-10" "Réglages fermés avant « Appairage… » / $(cat "$WORK/fermer.err")"
+  exit 1
+fi
+if menu_open ouvrir "reglages-mac-appareils/AC-10" "$OUT/appairage.json"; then
+  judge appairage "$OUT/appairage.json"
 else
-  fail "AC-6" "(Mac) ligne héritée révoquée / la ligne ${LEGACY_IDS[11]} est restée"
+  fail "reglages-mac-appareils/AC-10" "Réglages › Appareils ouverts par « Appairage… » / $(cat "$WORK/menu.err")"
+  fail "reglages-mac-appareils/AC-11" "Réglages › Appareils ouverts par « Appairage… » / non ouverts"
+  exit 1
 fi
-
-# 8 bis. « Fermer » ferme la feuille (AC-1), puis réouverture pour la suite.
-if "$SONDE" presser "$APP_PID" pairing.close >/dev/null 2>&1 \
-    && "$SONDE" attendre "$APP_PID" pairing.sheet absent 2; then
-  pass "AC-1" "« Fermer » ferme la feuille (pairing.sheet disparu en ≤ 2 s)"
-else
-  fail "AC-1" "« Fermer » ferme la feuille / pairing.sheet toujours présent"
-fi
-"$SONDE" ouvrir "$APP_PID" >/dev/null 2>&1 || { fail "AC-1" "feuille rouverte par le menu / échec"; exit 1; }
 
 # ---------------------------------------------------------------------------
-# 9. Phase iOS/iPadOS : AC-11, AC-3, AC-5, AC-4, AC-6.
+# 9. Phase iOS/iPadOS : mac-feuille-appairage-debordante AC-11, AC-3, AC-5, AC-4, AC-6.
 # ---------------------------------------------------------------------------
 UI="$WORK/ui.json"
 ui() { idb ui describe-all --udid "$1" --json > "$UI" 2>/dev/null; }
@@ -955,8 +1108,10 @@ appairer() {
   return 1
 }
 
-if [ -z "$IOS" ]; then
-  for ac in AC-3 AC-4 AC-5 AC-11; do say "– $ac — non évalué (phase --ios absente)"; done
+if [ -z "$IOS" ] || [ -n "$SERVICE_NOTE" ]; then
+  for ac in AC-3 AC-4 AC-5 AC-11; do
+    skip "mac-feuille-appairage-debordante/$ac" "${SERVICE_NOTE:-phase --ios absente}"
+  done
 else
   ok_forms=0
   notes=()
@@ -967,9 +1122,9 @@ else
   appairer tab-b "$SIM_TAB_B" sans && ok_forms=$((ok_forms + 1))
   ID_TAB_B="$PAIRED_ID"; notes+=("tab-b « sans » : $PAIR_NOTE")
   if [ "$ok_forms" -eq 3 ]; then
-    pass "AC-11" "trois appairages réussis — $(IFS='; '; echo "${notes[*]}")"
+    pass "mac-feuille-appairage-debordante/AC-11" "trois appairages réussis — $(IFS='; '; echo "${notes[*]}")"
   else
-    fail "AC-11" "trois appairages réussis / $ok_forms sur 3 — $(IFS='; '; echo "${notes[*]}")"
+    fail "mac-feuille-appairage-debordante/AC-11" "trois appairages réussis / $ok_forms sur 3 — $(IFS='; '; echo "${notes[*]}")"
   fi
   measure "$OUT/mesure-ios.json"
   judge ios "$OUT/mesure-ios.json" "${ID_TAB_A:-none}" "${ID_TEL:-none}" "${ID_TAB_B:-none}"
@@ -991,21 +1146,26 @@ else
     after="$(python3 "$TOOL" heritees "$WORK/apres.json" "${remaining[@]}" 2>/dev/null)"
     after="${after:-0}"
     if [ "$after" -eq 10 ]; then
-      pass "AC-6" "après les appairages iOS, les 11 lignes héritées sont toujours là ; « Révoquer » sur l'une ⇒ 10"
+      pass "mac-feuille-appairage-debordante/AC-6" "après les appairages iOS, les 11 lignes héritées sont toujours là ; « Révoquer » sur l'une ⇒ 10"
     else
-      fail "AC-6" "10 lignes héritées après révocation / $after"
+      fail "mac-feuille-appairage-debordante/AC-6" "10 lignes héritées après révocation / $after"
     fi
   else
-    fail "AC-6" "11 lignes héritées présentes puis révocables / $present présentes"
+    fail "mac-feuille-appairage-debordante/AC-6" "11 lignes héritées présentes puis révocables / $present présentes"
   fi
-  capture "apres-feuille-ios.png"
+  capture "apres-reglages-ios.png"
 fi
 
 # ---------------------------------------------------------------------------
 # Bilan (le nettoyage suit, par le trap).
 # ---------------------------------------------------------------------------
+skipped="$(grep -c '^– ' "$REPORT")"
 if [ "$RED" -eq 0 ]; then
-  say "bilan : tout vert — rapport $REPORT"
+  if [ "$skipped" -gt 0 ]; then
+    say "bilan : vert sur les contrôles évalués, $skipped non évalué(s) — rapport $REPORT"
+  else
+    say "bilan : tout vert — rapport $REPORT"
+  fi
   exit 0
 fi
 say "bilan : au moins un critère rouge — rapport $REPORT"

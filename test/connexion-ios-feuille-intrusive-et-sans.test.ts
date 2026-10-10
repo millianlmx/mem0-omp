@@ -12,7 +12,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const PAIRING_SHEET = path.join(ROOT, "omp-console", "Sources", "OMPConsole", "Remote", "PairingSheet.swift");
+const DEVICES_SETTINGS = path.join(ROOT, "omp-console", "Sources", "OMPConsole", "Remote", "DevicesSettingsView.swift");
 const CONNECTION_TEXT = path.join(ROOT, "omp-console", "ios", "OMPConsoleIOS", "ConnectionText.swift");
 const CONSOLE_API = path.join(ROOT, "omp-console", "Sources", "ConsoleCore", "Design", "ConsoleAPI.swift");
 
@@ -22,13 +22,13 @@ function literal(source: string, name: string): string | null {
   return match ? match[1] : null;
 }
 
-/** Les manques de la ligne d'aide face aux mots de la feuille d'appairage du Mac. */
-function helpFaults(pairingSheet: string, connectionText: string): string[] {
+/** Les manques de la ligne d'aide face aux mots de l'onglet « Appareils » des Réglages du Mac. */
+function helpFaults(devicesSettings: string, connectionText: string): string[] {
   const faults: string[] = [];
   const help = literal(connectionText, "codeHelp");
   if (help === null) return ["ConnectionText.codeHelp absent"];
   for (const name of ["menuItem", "generate"]) {
-    const word = literal(pairingSheet, name);
+    const word = literal(devicesSettings, name);
     if (word === null) faults.push(`PairingText.${name} absent`);
     else if (!help.includes(word)) faults.push(`codeHelp ne contient pas PairingText.${name} « ${word} »`);
   }
@@ -50,13 +50,13 @@ function malformedFaults(connectionText: string, consoleAPI: string): string[] {
 }
 
 test("connexion-ios-feuille-intrusive-et-sans/AC-12 : la ligne d'aide iOS nomme le menu et le bouton réels de l'app Mac", () => {
-  const pairingSheet = fs.readFileSync(PAIRING_SHEET, "utf8");
+  const devicesSettings = fs.readFileSync(DEVICES_SETTINGS, "utf8");
   const connectionText = fs.readFileSync(CONNECTION_TEXT, "utf8");
-  assert.deepEqual(helpFaults(pairingSheet, connectionText), [], "l'arbre réel doit être sain");
+  assert.deepEqual(helpFaults(devicesSettings, connectionText), [], "l'arbre réel doit être sain");
 
   // La garde discrimine : un menu renommé côté Mac fait rougir la ligne d'aide.
-  const renamed = pairingSheet.replace('static let menuItem = "Appairage…"', 'static let menuItem = "Appareils…"');
-  assert.notEqual(renamed, pairingSheet, "la faute plantée doit s'appliquer");
+  const renamed = devicesSettings.replace('static let menuItem = "Appairage…"', 'static let menuItem = "Appareils…"');
+  assert.notEqual(renamed, devicesSettings, "la faute plantée doit s'appliquer");
   assert.ok(helpFaults(renamed, connectionText).some((f) => f.includes("menuItem")));
 });
 

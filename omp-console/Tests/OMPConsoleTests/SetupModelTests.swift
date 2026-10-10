@@ -179,7 +179,7 @@ private func sheet(_ home: HomeModel, _ model: SetupModel) -> MainSheet? {
     MainSheetPolicy.sheet(
         omp: home.omp, setup: model.state, setupDismissed: model.dismissed, board: .storeEmpty(dir: "/s"),
         welcomeSeen: true, welcomeRequested: false, launchFormShown: false, answerCardID: nil,
-        contract: nil, pairing: false
+        contract: nil
     )
 }
 

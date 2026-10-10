@@ -57,9 +57,9 @@ struct ConsoleRootView: View {
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
     /// latérale le montre et se recalcule sans redémarrage.
     @ObservedObject var components: ComponentPresenceModel
-    /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition et
-    /// présente sa feuille d'appairage.
-    @ObservedObject var remote: RemoteServiceModel
+    /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition.
+    /// Son interrupteur, le code et les appareils vivent dans Réglages › Appareils.
+    let remote: RemoteServiceModel
 
     /// Les modèles des sections Session OMP, Terminal et Statistiques : à
     /// l'échelle de l'app (`OMPConsoleApp`), comme les autres.
@@ -89,8 +89,7 @@ struct ConsoleRootView: View {
             welcomeRequested: home.welcomeRequested,
             launchFormShown: actions.launchFormShown,
             answerCardID: home.answerCardID,
-            contract: contract.sheet,
-            pairing: remote.sheetShown
+            contract: contract.sheet
         )
     }
 
@@ -108,7 +107,6 @@ struct ConsoleRootView: View {
                 case .newFeature: actions.launchFormShown = false
                 case .answer: home.dismissAnswer(actions: actions)
                 case .contract: contract.close()
-                case .pairing: remote.sheetShown = false
                 case nil: break
                 }
             }
@@ -220,8 +218,6 @@ struct ConsoleRootView: View {
                 }
             case .contract(let sheet):
                 ContractSheetView(sheet: sheet)
-            case .pairing:
-                PairingSheet(remote: remote, pairing: remote.pairing, registry: remote.registry)
             }
         }
         // L'Accueil et Pipelines lisent le même tableau : l'abonnement est ouvert

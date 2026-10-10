@@ -130,13 +130,13 @@ func setupImposesItsSheetFirst() {
             #expect(MainSheetPolicy.sheet(
                 omp: available, setup: .preparing(.machine), setupDismissed: false, board: board,
                 welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask",
-                contract: nil, pairing: false
+                contract: nil
             ) == .setup)
             // Règle 2 : préparation prête mais composant OMP absent.
             #expect(MainSheetPolicy.sheet(
                 omp: .missing, setup: .ready, setupDismissed: false, board: board,
                 welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask",
-                contract: nil, pairing: false
+                contract: nil
             ) == .setup)
         }
     }
@@ -144,18 +144,18 @@ func setupImposesItsSheetFirst() {
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .failed(.components(.unsupportedMac)), setupDismissed: false,
         board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
-        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+        launchFormShown: false, answerCardID: nil, contract: nil
     ) == .setup)
     // Ignorée : les autres règles reprennent la main.
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .preparing(.machine), setupDismissed: true, board: .storeEmpty(dir: "/s"),
         welcomeSeen: true, welcomeRequested: false, launchFormShown: true, answerCardID: nil,
-        contract: nil, pairing: false
+        contract: nil
     ) == .newFeature)
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .failed(.components(.unsupportedMac)), setupDismissed: true,
         board: .storeEmpty(dir: "/s"), welcomeSeen: false, welcomeRequested: true,
-        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+        launchFormShown: false, answerCardID: nil, contract: nil
     ) == .welcome)
 
     // `onReady` revérifie OMP : une fois le composant installé, l'Accueil ouvre.
@@ -191,12 +191,12 @@ func missingOmpSheetIgnoresEveryOtherInput() {
         for dismissed in [false, true] {
             for board in boards {
                 for contract in contracts {
-                    for flag in 0..<16 {
+                    for flag in 0..<8 {
                         let sheet = MainSheetPolicy.sheet(
                             omp: .missing, setup: setup, setupDismissed: dismissed, board: board,
                             welcomeSeen: flag & 1 != 0, welcomeRequested: flag & 2 != 0,
                             launchFormShown: flag & 4 != 0, answerCardID: "ask",
-                            contract: contract, pairing: flag & 8 != 0
+                            contract: contract
                         )
                         #expect(sheet == .setup, "setup=\(setup) dismissed=\(dismissed) flags=\(flag)")
                         cases += 1
@@ -205,12 +205,12 @@ func missingOmpSheetIgnoresEveryOtherInput() {
             }
         }
     }
-    #expect(cases == 5 * 2 * 4 * 2 * 16)
+    #expect(cases == 5 * 2 * 4 * 2 * 8)
     // OMP présent, la feuille ignorée cède la place (elle est fermable).
     #expect(MainSheetPolicy.sheet(
         omp: available, setup: .preparing(.podman(downloaded: 0, total: 20)), setupDismissed: true,
         board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
-        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+        launchFormShown: false, answerCardID: nil, contract: nil
     ) == nil)
 }
 
@@ -270,7 +270,7 @@ func welcomeOpensOnceOnAFreshInstall() {
         MainSheetPolicy.sheet(
             omp: home.omp, setup: .ready, setupDismissed: false, board: board, welcomeSeen: home.welcomeSeen,
             welcomeRequested: home.welcomeRequested, launchFormShown: launchFormShown,
-            answerCardID: home.answerCardID, contract: nil, pairing: false
+            answerCardID: home.answerCardID, contract: nil
         )
     }
     #expect(policy(first, .storeEmpty(dir: "/s")) == .welcome)
@@ -300,7 +300,7 @@ func answerOpensTheCardSheetWhileItWaits() {
     func policy(_ board: KanbanBoardState, answerCardID: String?) -> MainSheet? {
         MainSheetPolicy.sheet(
             omp: available, setup: .ready, setupDismissed: false, board: board, welcomeSeen: true,
-            welcomeRequested: false, launchFormShown: false, answerCardID: answerCardID, contract: nil, pairing: false
+            welcomeRequested: false, launchFormShown: false, answerCardID: answerCardID, contract: nil
         )
     }
 
