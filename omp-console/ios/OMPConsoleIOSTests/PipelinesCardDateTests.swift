@@ -67,11 +67,11 @@ struct PipelinesCardDateTests {
         // Le type de l'instantané est déduit de la fixture partagée : la garde
         // coque-ios/AC-8 interdit de nommer le type du magasin dans les sources iOS.
         let snapshot = Self.decode(like: HomeParity.snapshot, json)
-        return KanbanBoard.build(snapshot: snapshot, nowMs: base, isAlive: .transported(snapshot))
+        return KanbanBoard.build(snapshot: snapshot, nowMs: base, isAlive: .transported(snapshot), prFacts: [:])
     }
 
     private var parityBoard: KanbanBoard {
-        KanbanBoard.build(snapshot: HomeParity.snapshot, nowMs: base, isAlive: .transported(HomeParity.snapshot))
+        KanbanBoard.build(snapshot: HomeParity.snapshot, nowMs: base, isAlive: .transported(HomeParity.snapshot), prFacts: [:])
     }
 
     private static func decode<T: Decodable>(like _: T, _ json: String) -> T {
@@ -136,7 +136,7 @@ struct PipelinesCardDateTests {
             .pasCommencees: ["Pas commencée"],
             .enCours: ["En cours", "En pause"],
             .aVous: ["À vous", "Specs à valider", "Revue à accepter"],
-            .livrees: ["PR ouverte", "Fusionnée", "Terminée"],
+            .livrees: ["PR ouverte", "PR créée", "PR fusionnée", "PR fermée", "Terminée"],
             .arretees: ["Échec", "Bloquée", "Annulée"],
         ]
         func check(_ card: KanbanCard) {
