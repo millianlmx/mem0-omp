@@ -1,7 +1,10 @@
-// Le transport de production : `URLSession`, deux sessions éphémères (Doc-7) —
-// inactivité 10 s pour une requête ordinaire, 60 s pour le flux (plus de deux
-// battements de 15 s). Aucun cache. Le jeton ne sort jamais autrement que par
-// l'en-tête `Authorization`, jamais dans une URL.
+// Le transport de production : `URLSession`, trois sessions éphémères (Doc-7) —
+// profil `.standard` : 10 s d'inactivité, 60 s au total ; profil `.memory`
+// (page de liste, graphe) : 60 s d'inactivité, 180 s au total, borne de corps
+// de 16 Mio ; flux : 60 s d'inactivité (plus de deux battements de 15 s). Aucun
+// cache. Un `URLError.timedOut` devient `.transport(.timedOut)`, toute autre
+// panne d'ouverture `.transport(.unreachable)`. Le jeton ne sort jamais
+// autrement que par l'en-tête `Authorization`, jamais dans une URL.
 
 import ConsoleCore
 import Foundation
@@ -9,15 +12,12 @@ import Foundation
 /// Le transport HTTP/SSE de production.
 public struct URLSessionTransport: ClientTransport {
     private let plainSession: URLSession
+    private let memorySession: URLSession
     private let streamSession: URLSession
 
     public init(configuration: URLSessionConfiguration = .ephemeral) {
-        let plain = configuration.copy() as! URLSessionConfiguration
-        plain.urlCache = nil
-        plain.requestCachePolicy = .reloadIgnoringLocalCacheData
-        plain.timeoutIntervalForRequest = 10
-        plain.timeoutIntervalForResource = 60
-        plainSession = URLSession(configuration: plain)
+        plainSession = URLSession(configuration: Self.configuration(configuration, profile: .standard))
+        memorySession = URLSession(configuration: Self.configuration(configuration, profile: .memory))
 
         let streaming = configuration.copy() as! URLSessionConfiguration
         streaming.urlCache = nil
@@ -25,6 +25,26 @@ public struct URLSessionTransport: ClientTransport {
         streaming.timeoutIntervalForRequest = 60
         streaming.timeoutIntervalForResource = 3600
         streamSession = URLSession(configuration: streaming)
+    }
+
+    /// La configuration d'une session de requête : une copie de `base`, sans
+    /// cache, aux deux délais du profil.
+    static func configuration(
+        _ base: URLSessionConfiguration,
+        profile: ClientRequestProfile
+    ) -> URLSessionConfiguration {
+        let configured = base.copy() as! URLSessionConfiguration
+        configured.urlCache = nil
+        configured.requestCachePolicy = .reloadIgnoringLocalCacheData
+        switch profile {
+        case .standard:
+            configured.timeoutIntervalForRequest = 10
+            configured.timeoutIntervalForResource = 60
+        case .memory:
+            configured.timeoutIntervalForRequest = ClientLimits.memoryRequestTimeout
+            configured.timeoutIntervalForResource = ClientLimits.memoryResourceTimeout
+        }
+        return configured
     }
 
     // MARK: - Requête
@@ -35,12 +55,14 @@ public struct URLSessionTransport: ClientTransport {
         token: String?
     ) async throws -> ClientHTTPResponse {
         let urlRequest = try makeRequest(request, to: endpoint, token: token)
+        let session = request.profile == .memory ? memorySession : plainSession
+        let bodyLimit = request.profile == .memory ? ClientLimits.memoryResponseBody : ClientLimits.responseBody
         do {
-            let (data, response) = try await plainSession.data(for: urlRequest)
+            let (data, response) = try await session.data(for: urlRequest)
             guard let http = response as? HTTPURLResponse else {
                 throw ClientError.decoding("réponse non HTTP")
             }
-            guard data.count <= ClientLimits.responseBody else {
+            guard data.count <= bodyLimit else {
                 throw ClientError.decoding("corps de réponse au-delà de la borne")
             }
             return ClientHTTPResponse(
@@ -51,7 +73,7 @@ public struct URLSessionTransport: ClientTransport {
         } catch let error as ClientError {
             throw error
         } catch {
-            throw ClientError.transport(.unreachable(reason(from: error)))
+            throw ClientError.transport(openingFailure(error))
         }
     }
 
@@ -68,7 +90,7 @@ public struct URLSessionTransport: ClientTransport {
         do {
             (bytes, response) = try await streamSession.bytes(for: urlRequest)
         } catch {
-            throw ClientError.transport(.unreachable(reason(from: error)))
+            throw ClientError.transport(openingFailure(error))
         }
         guard let http = response as? HTTPURLResponse else {
             throw ClientError.decoding("réponse non HTTP")
@@ -152,6 +174,15 @@ public struct URLSessionTransport: ClientTransport {
             return nil
         }
         return Int(raw.trimmingCharacters(in: .whitespaces))
+    }
+
+    /// L'échec d'ouverture d'un échange : un délai expiré est distinct d'un Mac
+    /// injoignable ; le texte reste celui de `reason(from:)`.
+    private func openingFailure(_ error: Error) -> ClientTransportFailure {
+        if let urlError = error as? URLError, urlError.code == .timedOut {
+            return .timedOut(reason(from: error))
+        }
+        return .unreachable(reason(from: error))
     }
 
     private func reason(from error: Error) -> String {

@@ -6,6 +6,7 @@
 // et corps sont capturés tels que `HTTPMemoryService` les produit — aucune socket,
 // aucun service requis.
 
+import Darwin
 import Foundation
 import Testing
 
@@ -343,15 +344,16 @@ func s18RowTagsComeFromMetadata() {
 
 // MARK: - S-6, S-7 : sonde, erreurs, config et jeton
 
-@Test("memoire-mem0/AC-7 : la sonde /health rend « disponible » quand le service répond ok")
+@Test("memoire-mem0/AC-7 : la sonde /health rend « disponible » quand le service répond ok AVEC notre jeton d'installation")
 func ac7HealthReportsAvailability() async throws {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "mem0": "2.2.1", "user": "millian"])))
-    let service = stubbedHTTPMemoryService()
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "mem0": "2.2.1", "user": "millian", "installation": "jeton"])))
+    let service = stubbedHTTPMemoryService(installationToken: "jeton")
 
     let health = await service.health()
 
     #expect(health.isAvailable)
+    #expect(!health.isForeign)
     #expect(health.errorMessage == nil)
     #expect(StubURLProtocol.requests.first?.url?.path == "/health")
     #expect(StubURLProtocol.requests.first?.httpMethod == "GET")
@@ -436,6 +438,174 @@ func ac8ConfigAndToken() async throws {
     StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
     _ = await stubbedHTTPMemoryService(token: "").health()
     #expect(StubURLProtocol.requests.first?.value(forHTTPHeaderField: "X-Mem0-Token") == nil)
+}
+
+// MARK: - S-4 : identité d'installation de la pile
+
+@Test("bug-embedded-podman-machine/AC-4 : deux corps `/health` — seul celui qui porte le jeton est accepté")
+func ac4OnlyTheInstallationTokenIsAccepted() async {
+    // Jeton égal : accepté.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "installation": "jeton"])))
+    let ours = await stubbedHTTPMemoryService(installationToken: "jeton").health()
+    #expect(ours.isAvailable)
+    #expect(!ours.isForeign)
+    #expect(ours.errorMessage == nil)
+
+    // Champ absent (service sans identité) : étranger, jamais disponible.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true])))
+    let bare = await stubbedHTTPMemoryService(installationToken: "jeton").health()
+    #expect(!bare.isAvailable)
+    #expect(bare.isForeign)
+    #expect(bare.errorMessage == MemoryText.foreignService)
+
+    // Jeton différent : étranger.
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": true, "installation": "autre"])))
+    let other = await stubbedHTTPMemoryService(installationToken: "jeton").health()
+    #expect(!other.isAvailable)
+    #expect(other.isForeign)
+
+    // `ok` faux : l'erreur existante, jamais « étranger ».
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/health", .init(body: memoryJSON(["ok": false, "installation": "jeton"])))
+    let notOk = await stubbedHTTPMemoryService(installationToken: "jeton").health()
+    #expect(!notOk.isAvailable)
+    #expect(!notOk.isForeign)
+    #expect(notOk.errorMessage == MemoryText.unreadableResponse)
+}
+
+@Test("bug-embedded-podman-machine/AC-4 : un listener HTTP RÉEL — refus du corps sans jeton, puis acceptation du MÊME avec")
+func ac4RealListenerRefusesThenAcceptsTheInstallationToken() async {
+    guard let server = EphemeralHTTPServer(bodies: [
+        memoryJSON(["ok": true]),
+        memoryJSON(["ok": true, "installation": "jeton-reel"]),
+    ]) else {
+        Issue.record("impossible d'ouvrir un listener HTTP éphémère")
+        return
+    }
+    server.start()
+    defer { server.stop() }
+
+    let config = MemoryServiceConfig(
+        baseURL: URL(string: "http://127.0.0.1:\(server.port)")!,
+        token: "",
+        installationToken: "jeton-reel"
+    )
+    let service = HTTPMemoryService(config: config)
+
+    let refused = await service.health()
+    #expect(!refused.isAvailable)
+    #expect(refused.isForeign)
+    #expect(refused.errorMessage == MemoryText.foreignService)
+
+    let accepted = await service.health()
+    #expect(accepted.isAvailable)
+    #expect(!accepted.isForeign)
+}
+
+/// Un VRAI mini-serveur HTTP sur `127.0.0.1`, port éphémère attribué par le noyau
+/// (jamais 8321) : il rend les corps fournis DANS L'ORDRE, puis ferme chaque
+/// connexion. C'est la seule preuve qui traverse `URLSession` jusqu'à un socket
+/// réel (S-4) — le stub ne prouve que le client, pas le dialogue complet.
+private final class EphemeralHTTPServer: @unchecked Sendable {
+    let port: Int
+    private let fd: Int32
+    private let bodies: [Data]
+    private let lock = NSLock()
+    private var index = 0
+    private var thread: Thread?
+
+    init?(bodies: [Data]) {
+        self.bodies = bodies
+
+        let descriptor = socket(AF_INET, SOCK_STREAM, 0)
+        guard descriptor >= 0 else { return nil }
+        var reuse: Int32 = 1
+        setsockopt(descriptor, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: INADDR_LOOPBACK.bigEndian)
+
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(descriptor, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0, listen(descriptor, 8) == 0 else {
+            close(descriptor)
+            return nil
+        }
+
+        var local = sockaddr_in()
+        var length = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &local) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(descriptor, $0, &length)
+            }
+        }
+        guard named == 0 else {
+            close(descriptor)
+            return nil
+        }
+
+        self.fd = descriptor
+        self.port = Int(UInt16(bigEndian: local.sin_port))
+    }
+
+    func start() {
+        let thread = Thread { [self] in acceptLoop() }
+        thread.name = "ephemeral-http"
+        self.thread = thread
+        thread.start()
+    }
+
+    func stop() {
+        close(fd)
+    }
+
+    private func acceptLoop() {
+        while true {
+            let client = accept(fd, nil, nil)
+            if client < 0 { return }
+            respond(client)
+        }
+    }
+
+    private func respond(_ client: Int32) {
+        // Lire la requête jusqu'à la fin des en-têtes (« \r\n\r\n ») suffit : la
+        // sonde n'envoie aucun corps.
+        var request = Data()
+        var buffer = [UInt8](repeating: 0, count: 1024)
+        while request.range(of: Data("\r\n\r\n".utf8)) == nil {
+            let read = read(client, &buffer, buffer.count)
+            if read <= 0 { break }
+            request.append(contentsOf: buffer[0 ..< read])
+        }
+
+        lock.lock()
+        let body = index < bodies.count ? bodies[index] : (bodies.last ?? Data())
+        index += 1
+        lock.unlock()
+
+        let header = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: \(body.count)\r\nConnection: close\r\n\r\n"
+        var response = Data(header.utf8)
+        response.append(body)
+        response.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var written = 0
+            while written < raw.count {
+                let count = write(client, base + written, raw.count - written)
+                if count <= 0 { break }
+                written += count
+            }
+        }
+        close(client)
+    }
 }
 
 /// Le corps JSON d'une requête capturée : `URLSession` le remet en flux, pas en

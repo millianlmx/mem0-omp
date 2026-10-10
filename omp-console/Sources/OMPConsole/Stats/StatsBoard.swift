@@ -139,6 +139,8 @@ func featureTotals(_ feature: FeatureStats, nowMs: Double) -> StatsTotals {
         guard case .measured(let metrics) = run.metrics else { continue }
         totals.input += metrics.input
         totals.output += metrics.output
+        totals.cacheRead += metrics.cacheRead
+        totals.cacheWrite += metrics.cacheWrite
         totals.turns += metrics.turns
         totals.durationMs += durationMs(metrics, isLive: run.isLive, nowMs: nowMs) ?? 0
     }
@@ -153,6 +155,8 @@ func projectTotals(_ project: ProjectStats, nowMs: Double) -> StatsTotals {
         let feature = featureTotals(feature, nowMs: nowMs)
         totals.input += feature.input
         totals.output += feature.output
+        totals.cacheRead += feature.cacheRead
+        totals.cacheWrite += feature.cacheWrite
         totals.turns += feature.turns
         totals.durationMs += feature.durationMs
     }
@@ -178,4 +182,19 @@ func featureLiveRuns(_ feature: FeatureStats) -> Int {
         guard run.isLive, case .measured = run.metrics else { return }
         count += 1
     }
+}
+
+/// Le début de chaque exécution VIVANTE, LISIBLE et HORODATÉE du projet,
+/// `sessionFile → firstMs` (S-5 de statistiques-etat-vide-et-non-defilables) :
+/// ce sont les seules durées qui avancent à la seconde. Vide ⇒ aucune horloge de
+/// rendu sur le tableau de bord.
+func statsLiveStarts(_ project: ProjectStats) -> [String: Double] {
+    var starts: [String: Double] = [:]
+    for feature in project.features {
+        for run in feature.runs where run.isLive {
+            guard case .measured(let metrics) = run.metrics, let first = metrics.firstMs else { continue }
+            starts[run.sessionFile] = first
+        }
+    }
+    return starts
 }

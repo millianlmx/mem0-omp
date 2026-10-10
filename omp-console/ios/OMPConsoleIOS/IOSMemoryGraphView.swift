@@ -16,16 +16,22 @@ struct IOSMemoryGraphView: View {
     @ObservedObject var client: ConsoleClientModel
     @ObservedObject var model: IOSMemoryGraphModel
 
+    /// Le panneau du graphe occupe toute la hauteur restante et aligne son contenu en
+    /// haut à gauche, dans chaque état (S-7) : sans ce cadre, le panneau hors
+    /// `ScrollView` de `IOSMemoryScreen` serait centré verticalement.
     var body: some View {
-        content
-            .sheet(item: detailBinding) { target in
-                IOSMemoryDetailView(
-                    row: target.row,
-                    scope: target.row.agentId,
-                    links: model.links(of: target.row.id),
-                    labels: model.nodeLabels
-                )
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            content
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .sheet(item: detailBinding) { target in
+            IOSMemoryDetailView(
+                row: target.row,
+                scope: target.row.agentId,
+                links: model.links(of: target.row.id),
+                labels: model.nodeLabels
+            )
+        }
     }
 
     // MARK: - Chaque état du graphe
@@ -38,18 +44,23 @@ struct IOSMemoryGraphView: View {
             switch model.state {
             case .idle, .loading:
                 loading
-            case .macUnreachable:
-                banner(IOSMemoryText.macUnreachable, tone: .attention)
-                card(IOSMemoryText.noData)
+            case .failed(.macTimedOut):
+                banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
                 retry
+            case .noProject:
+                card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
             case .serviceOutdated:
                 banner(IOSMemoryText.graphServiceOutdated, tone: .attention)
                 retry
             case .macOutdated:
                 banner(IOSMemoryText.graphMacOutdated, tone: .attention)
                 retry
-            case let .unavailable(detail):
-                banner(IOSMemoryText.unavailable(detail: detail), tone: .danger)
+            case .failed(.macUnreachable):
+                banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
+                card(IOSMemoryText.noData)
+                retry
+            case let .failed(cause):
+                banner(IOSMacErrorText.message(for: cause), tone: .danger)
                 retry
             case .empty:
                 ContentUnavailableView(
@@ -259,17 +270,27 @@ struct IOSMemoryGraphView: View {
             .accessibilityIdentifier(IOSMemoryAccessibility.banner)
     }
 
-    private func card(_ message: String) -> some View {
-        Text(verbatim: message)
-            .font(.headline)
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.leading)
-            .iosCard()
+    private func card(_ message: String, detail: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(verbatim: message)
+                .font(.headline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+            if let detail {
+                Text(verbatim: detail)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
+        }
+        .iosCard()
     }
 
     private var retry: some View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                .frame(minHeight: IOSMetrics.minimumTarget)
+                .contentShape(Rectangle())
         }
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
     }

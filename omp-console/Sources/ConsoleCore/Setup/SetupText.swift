@@ -14,6 +14,9 @@ public enum SetupText {
     /// « Réessayer » : sur l'échec, et en mode bloquant pour relire la présence
     /// d'OMP sans rien télécharger.
     public static let retry = "Réessayer"
+    /// Le geste explicite de reprise de l'ancienne pile (S-6) : la SEULE voie qui
+    /// arrête des conteneurs legacy, et seulement sur ordre de l'utilisateur.
+    public static let takeover = "Arrêter l'ancienne pile et reprendre"
     /// « Fermer » n'existe qu'en mode fermable (OMP présent) : fermer n'interrompt
     /// rien. Tant qu'OMP manque, la feuille n'a pas de « Fermer ».
     public static let close = "Fermer"

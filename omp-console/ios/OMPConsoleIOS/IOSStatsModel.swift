@@ -23,10 +23,25 @@ enum IOSStatsSurface: Equatable {
     case error(String)
     /// Le magasin ne porte aucun projet : carte « Aucun projet ».
     case noProject
-    /// Le projet affiché n'a aucune feature listée : carte « Aucune donnée… ».
+    /// Un relevé est affiché, mais le projet CHOISI n'est pas celui qu'il sert :
+    /// la lecture du projet choisi est en cours. En-tête, puis ligne de chargement.
+    case switching
+    /// Le projet affiché n'a aucune feature listée : en-tête, puis carte « Aucune
+    /// donnée… ».
     case empty
-    /// Le tableau : sélecteur, cartes de feature, ligne de total.
+    /// Le tableau : en-tête, cartes de feature, ligne de total.
     case board
+
+    /// L'en-tête de projet (le sélecteur, qui nomme le projet choisi) est en tête
+    /// du contenu de la bascule, de l'état vide et du tableau, et de ceux-là
+    /// seulement : le premier chargement, la perte de connexion, l'erreur et
+    /// l'absence de projet gardent leur écran propre.
+    var showsProjectHeader: Bool {
+        switch self {
+        case .switching, .empty, .board: return true
+        case .degraded, .loading, .error, .noProject: return false
+        }
+    }
 }
 
 /// Les quatre sources d'un relevé (S-5). Elles existent pour que chaque
@@ -83,14 +98,21 @@ final class IOSStatsModel: ObservableObject {
 
     // MARK: - Décisions PURES (testables sans render)
 
-    /// La surface choisie pour un état de client, un relevé et un échec (S-4).
-    /// L'ordre de priorité est celui de la lecture : hors `.connected` d'abord
-    /// (aucun relevé n'a été émis), puis l'échec, puis l'absence de relevé.
-    static func surface(state: ClientState, payload: RemoteStatsPayload?, failure: String?) -> IOSStatsSurface {
+    /// La surface choisie pour un état de client, un relevé, un échec et le projet
+    /// choisi (S-1). L'ordre de priorité est celui de la lecture : hors
+    /// `.connected` d'abord (aucun relevé n'a été émis), puis l'échec, puis
+    /// l'absence de relevé, puis un projet choisi que le relevé ne sert pas encore.
+    static func surface(
+        state: ClientState,
+        payload: RemoteStatsPayload?,
+        failure: String?,
+        selectedKey: String?
+    ) -> IOSStatsSurface {
         guard case .connected = state else { return .degraded(ConnectionText.state(state)) }
         if let failure { return .error(failure) }
         guard let payload else { return .loading }
         guard payload.projectKey != nil else { return .noProject }
+        guard selectedKey == payload.projectKey else { return .switching }
         return payload.features.isEmpty ? .empty : .board
     }
 
@@ -105,14 +127,11 @@ final class IOSStatsModel: ObservableObject {
     // MARK: - Faits dérivés du relevé
 
     var surface: IOSStatsSurface {
-        Self.surface(state: state(), payload: payload, failure: failure)
+        Self.surface(state: state(), payload: payload, failure: failure, selectedKey: selectedKey)
     }
 
     /// Les options du sélecteur : EXACTEMENT les projets servis par le Mac (S-3).
     var projects: [RemoteStatsProject] { payload?.projects ?? [] }
-
-    /// La clé du projet que le contrôle affiche, quand elle est connue.
-    var shownProjectKey: String? { payload?.projectKey }
 
     /// Le temps écoulé depuis la réception du relevé (ms), pour l'avancement.
     func elapsedMs(at nowMs: Double) -> Double {
@@ -139,7 +158,7 @@ final class IOSStatsModel: ObservableObject {
                 self.failure = nil
             } catch {
                 if Task.isCancelled { return }
-                self.failure = IOSStatsText.failure(error, state: self.state())
+                self.failure = IOSStatsText.failure(error)
             }
         }
     }

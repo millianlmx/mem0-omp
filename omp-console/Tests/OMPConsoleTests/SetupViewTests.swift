@@ -173,7 +173,11 @@ func rowsFollowState() {
     #expect(failingComponents[0].technicalDetail == nil)
 
     // Échec de la pile : seules les deux premières lignes sont terminées.
-    let failingStack = SetupPresentation.rows(state: .failed(.stack(.portBusy(port: 6333))), omlx: .unknown, blocking: false)
+    let failingStack = SetupPresentation.rows(
+        state: .failed(.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711)))),
+        omlx: .unknown,
+        blocking: false
+    )
     #expect(failingStack.map(\.status) == [.done, .done, .failed, .upcoming])
 }
 
@@ -519,4 +523,85 @@ func closableKeyboardClosesEverywhere() async {
     #expect(pressEscape(on: failedWindow))
     #expect(failing.dismissed)
     failedWindow.close()
+}
+
+// MARK: - AC-6 : la reprise de l'ancienne pile (BR-9)
+
+/// Un modèle qui échoue sur le conflit de port legacy, avec une reprise fournie.
+@MainActor
+private func legacyConflictModel(
+    takeover: @escaping @MainActor () async throws -> Void = {}
+) -> SetupModel {
+    SetupModel(
+        install: { _ in },
+        migrate: { _ in },
+        ensureStack: { _ in
+            throw MemoryStackError.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))
+        },
+        probeOMLX: { .unknown },
+        takeover: takeover,
+        autoPrepare: false
+    )
+}
+
+private let legacyConflictFailure = SetupFailure.stack(
+    .portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))
+)
+
+@Test("bug-embedded-podman-machine/AC-6 : la reprise n'apparaît QUE sur un conflit tenu par l'ancienne pile")
+func takeoverShownOnlyForLegacyConflict() {
+    let legacy = SetupState.failed(legacyConflictFailure)
+    let foreign = SetupState.failed(.stack(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))))
+
+    #expect(SetupPresentation.showsTakeover(legacy))
+    #expect(!SetupPresentation.showsTakeover(foreign))
+    #expect(!SetupPresentation.showsTakeover(.failed(.components(.unsupportedMac))))
+    #expect(!SetupPresentation.showsTakeover(.preparing(.health)))
+    #expect(!SetupPresentation.showsTakeover(.ready))
+    #expect(!SetupPresentation.showsTakeover(.idle))
+
+    // « Réessayer » reste visible sur le conflit legacy, mais « Fermer » n'est plus
+    // proéminent : c'est la reprise qui porte ↩.
+    #expect(SetupPresentation.showsRetry(legacy))
+    #expect(!SetupPresentation.closeIsProminent(legacy))
+
+    // Pendant l'action, les DEUX boutons restent affichés et DÉSACTIVÉS.
+    #expect(SetupPresentation.showsTakeover(.preparing(.legacyStop)))
+    #expect(SetupPresentation.showsRetry(.preparing(.legacyStop)))
+    #expect(SetupPresentation.isActing(.preparing(.legacyStop)))
+    #expect(!SetupPresentation.isActing(legacy))
+    // Aucun raccourci ↩ n'est perdu : « Fermer » garde ⎋ dans tous les états.
+    #expect(!SetupPresentation.closeIsProminent(.preparing(.legacyStop)))
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-6 : ↩ porte la REPRISE (pas « Réessayer »), ⎋ ferme, et l'action désactive les deux boutons")
+func keyboardPrefersTakeoverAndEscapeCloses() async {
+    let gate = KeyboardGate()
+    let calls = CallCounter()
+    let model = legacyConflictModel(takeover: {
+        calls.count += 1
+        await gate.wait()
+    })
+
+    Task { await model.prepare() }
+    await waitFor { model.state == .failed(legacyConflictFailure) }
+
+    let window = shortcutWindow(SetupView(setup: model))
+    // ↩ déclenche la reprise : « Réessayer » n'a plus de raccourci dans ce cas.
+    #expect(pressReturn(on: window))
+    await waitFor { calls.count == 1 }
+    await waitFor { model.state == .preparing(.legacyStop) }
+    #expect(SetupPresentation.isActing(model.state))
+
+    // Un second ↩ n'atteint pas un bouton désactivé : le compteur ne bouge pas.
+    _ = pressReturn(on: window)
+    #expect(calls.count == 1)
+
+    // ⎋ reste « Fermer », même pendant l'action.
+    #expect(pressEscape(on: window))
+    #expect(model.dismissed)
+
+    gate.open()
+    window.close()
 }

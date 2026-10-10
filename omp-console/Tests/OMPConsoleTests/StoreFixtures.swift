@@ -367,15 +367,27 @@ func deadPid() -> Int {
 
 /// L'ardoise d'une fixture, telle que le tableau la construit : lecture complète
 /// puis `KanbanBoard.build` — les deux étapes séparées, comme en production.
-func kanbanBoard(_ fixture: StoreFixture, nowMs: Double = fixtureT0, liveness: PipelineLiveness = .processLocal) -> KanbanBoard {
+func kanbanBoard(
+    _ fixture: StoreFixture,
+    nowMs: Double = fixtureT0,
+    liveness: PipelineLiveness = .processLocal,
+    prFacts: [String: PullRequestFact] = [:]
+) -> KanbanBoard {
     let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
-    return KanbanBoard.build(snapshot: snapshot, nowMs: nowMs, isAlive: liveness)
+    return KanbanBoard.build(snapshot: snapshot, nowMs: nowMs, isAlive: liveness, prFacts: prFacts)
 }
 
 /// L'état publié pour une fixture : la dérivation complète (racine, vide, tableau).
-func kanbanState(_ fixture: StoreFixture, nowMs: Double = fixtureT0, liveness: PipelineLiveness = .processLocal) -> KanbanBoardState {
+func kanbanState(
+    _ fixture: StoreFixture,
+    nowMs: Double = fixtureT0,
+    liveness: PipelineLiveness = .processLocal,
+    prFacts: [String: PullRequestFact] = [:]
+) -> KanbanBoardState {
     let snapshot = StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
-    return KanbanBoardState.derive(snapshot: snapshot, nowMs: nowMs, stateDir: fixture.root, isAlive: liveness)
+    return KanbanBoardState.derive(
+        snapshot: snapshot, nowMs: nowMs, stateDir: fixture.root, isAlive: liveness, prFacts: prFacts
+    )
 }
 
 /// Un répertoire RÉEL sous la fixture, avec son chemin réel : les comparaisons

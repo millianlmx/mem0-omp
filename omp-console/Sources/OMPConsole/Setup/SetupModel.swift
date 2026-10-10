@@ -31,14 +31,18 @@ enum SetupStep: Equatable, Sendable {
     case images
     case containers
     case health
+    /// Le rattrapage des souvenirs manquants (S-8), sur la ligne « Pile mémoire ».
+    case union
     case prerequisites
 }
 
-/// La cause d'un échec : l'une des trois machines, dans son vocabulaire à elle.
+/// La cause d'un échec : l'une des machines, dans son vocabulaire à elle.
 enum SetupFailure: Equatable, Sendable {
     case components(ComponentInstallError)
     case migration(StackMigrationError)
     case stack(MemoryStackError)
+    /// L'ancienne pile n'a pas pu être arrêtée sur ordre de l'utilisateur (S-6).
+    case legacy(LegacyStackError)
 }
 
 enum SetupState: Equatable, Sendable {
@@ -64,12 +68,12 @@ extension SetupStep {
         case .images: self = .images
         case .containers: self = .containers
         case .health: self = .health
+        case .union: self = .union
         }
     }
 
     init(_ step: MigrationStep) {
         switch step {
-        case .legacyStop: self = .legacyStop
         case .copy: self = .migrationCopy
         }
     }
@@ -113,6 +117,8 @@ final class SetupModel: ObservableObject {
     private let migrate: @MainActor (_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> Void
     private let ensureStack: @MainActor (_ progress: @escaping @MainActor (StackStep) -> Void) async throws -> Void
     private let probeOMLX: @MainActor () async -> OMLXStatus
+    /// L'arrêt de l'ancienne pile — SEULEMENT sur action explicite (S-6).
+    private let takeover: @MainActor () async throws -> Void
     /// Une seule préparation à la fois : « Réessayer » pendant une préparation est
     /// sans effet (le bouton est désactivé, la garde est ici aussi).
     private var preparing = false
@@ -122,6 +128,7 @@ final class SetupModel: ObservableObject {
         migrate: @escaping @MainActor (_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> Void,
         ensureStack: @escaping @MainActor (_ progress: @escaping @MainActor (StackStep) -> Void) async throws -> Void,
         probeOMLX: @escaping @MainActor () async -> OMLXStatus,
+        takeover: @escaping @MainActor () async throws -> Void = {},
         onReady: (@MainActor () -> Void)? = nil,
         autoPrepare: Bool = true
     ) {
@@ -129,6 +136,7 @@ final class SetupModel: ObservableObject {
         self.migrate = migrate
         self.ensureStack = ensureStack
         self.probeOMLX = probeOMLX
+        self.takeover = takeover
         self.onReady = onReady
         if autoPrepare {
             Task { [weak self] in await self?.prepare() }
@@ -160,6 +168,14 @@ final class SetupModel: ObservableObject {
             probeOMLX: {
                 let config = StackEnvStore.load(at: paths.stackEnv) ?? .defaults
                 return await OMLXProbe.status(config: config, session: session)
+            },
+            takeover: {
+                // La SEULE autorité sur l'arrêt de l'ancienne pile (S-6) : le
+                // socket Docker, jamais un conteneur de l'app.
+                _ = try await LegacyStack.stop(
+                    environment: ProcessInfo.processInfo.environment,
+                    run: .live
+                )
             },
             autoPrepare: autoPrepare
         )
@@ -256,9 +272,28 @@ final class SetupModel: ObservableObject {
         refreshOmp?() ?? true
     }
 
+    /// La reprise de l'ancienne pile (S-6), déclenchée par l'utilisateur
+    /// UNIQUEMENT (bouton de la feuille ou de la section Mémoire) : sans effet si
+    /// une préparation tourne déjà ; publie `.preparing(.legacyStop)` ; arrête les
+    /// conteneurs legacy par le socket Docker ; un arrêt raté ⇒
+    /// `.failed(.legacy(error))` SANS relance ; un arrêt réussi ⇒ relance
+    /// COMPLÈTE de la chaîne (même chemin que « Réessayer »).
+    func takeOverLegacyStack() async {
+        guard !preparing else { return }
+        state = .preparing(.legacyStop)
+        do {
+            try await takeover()
+        } catch {
+            state = .failed(Self.failure(of: error))
+            return
+        }
+        await prepare()
+    }
+
     private static func failure(of error: Error) -> SetupFailure {
         if let error = error as? ComponentInstallError { return .components(error) }
         if let error = error as? StackMigrationError { return .migration(error) }
+        if let error = error as? LegacyStackError { return .legacy(error) }
         if let error = error as? MemoryStackError { return .stack(error) }
         // Une erreur inattendue (lancement d'un binaire, typage) est dite dans le
         // vocabulaire de la pile : c'est elle qui tourne à ce moment-là.

@@ -70,7 +70,9 @@ extension ConsoleStatus {
         case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
         case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
         case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
-        case .fusionne: return ConsoleStatus(text: "Fusionnée", tone: .success)
+        case .prCreee: return ConsoleStatus(text: "PR créée", tone: .neutral)
+        case .fusionne: return ConsoleStatus(text: "PR fusionnée", tone: .success)
+        case .prFermee: return ConsoleStatus(text: "PR fermée", tone: .neutral)
         case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
         case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
         case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
@@ -170,5 +172,12 @@ public enum ConsoleFormat {
     public static func time(ms: Double) -> String {
         Date(timeIntervalSince1970: ms / 1000)
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
+    }
+
+    /// La date et l'heure à la minute, « 9 oct. 2026 à 14:32 ».
+    public static func dateTime(ms: Double, timeZone: TimeZone = .current) -> String {
+        var style = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)
+        style.timeZone = timeZone
+        return Date(timeIntervalSince1970: ms / 1000).formatted(style)
     }
 }

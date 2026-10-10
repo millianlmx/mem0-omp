@@ -68,6 +68,41 @@ struct VersionTests {
         )
     }
 
+    /// Une réponse de la doublure : statut, corps, erreur attendue du client.
+    struct StatusCase: Sendable, CustomTestStringConvertible {
+        let status: Int
+        let body: String
+        let expected: ClientError
+        var testDescription: String { "\(status) \(body)" }
+    }
+
+    nonisolated static let statusCases: [StatusCase] = [
+        StatusCase(status: 403, body: "oops", expected: .unexpectedStatus(403)),
+        StatusCase(status: 404, body: "oops", expected: .unexpectedStatus(404)),
+        StatusCase(status: 405, body: "oops", expected: .unexpectedStatus(405)),
+        StatusCase(status: 500, body: "oops", expected: .unexpectedStatus(500)),
+        StatusCase(status: 503, body: "oops", expected: .unexpectedStatus(503)),
+        StatusCase(status: 403, body: "", expected: .unexpectedStatus(403)),
+        StatusCase(status: 405, body: #"{"detail":"Method Not Allowed"}"#, expected: .unexpectedStatus(405)),
+        StatusCase(status: 418, body: #"{"error":{"code":"teapot"}}"#, expected: .unexpectedStatus(418)),
+        StatusCase(status: 403, body: #"{"error":{"code":"forbidden","message":"x"}}"#, expected: .unexpectedStatus(403)),
+        StatusCase(status: 404, body: #"{"error":{"code":"futur","message":"m"}}"#, expected: .api(.notFound("m"))),
+    ]
+
+    @Test(
+        "ios-erreurs-serveur-lisibles/AC-1 : translateKeepsStatusWithoutEnvelope — le statut survit quand l'enveloppe manque ou que le code est inconnu",
+        arguments: statusCases
+    )
+    func translateKeepsStatusWithoutEnvelope(_ row: StatusCase) {
+        let error = ClientErrorMapping.translate(
+            status: row.status,
+            protocolVersion: 1,
+            body: Data(row.body.utf8),
+            localVersion: 1
+        )
+        #expect(error == row.expected)
+    }
+
     @Test("un Mac sans en-tête de version donne un verrou à numéro distant nul")
     func missingHeaderLocks() async {
         let harness = ClientHarness(

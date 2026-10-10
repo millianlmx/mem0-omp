@@ -24,10 +24,12 @@ private final class SetupRecorder {
     var installError: ComponentInstallError?
     var migrationError: StackMigrationError?
     var stackError: MemoryStackError?
+    var takeoverError: LegacyStackError?
     var omlx: OMLXStatus = .reachable
     var gate: Gate?
     /// Le binaire d'OMP « placé » au rappel `.ompInstall` (résolveur fictif).
     var placesOmp: OmpSwitch?
+    var takeoverCalls = 0
 
     func record() {
         if let model { states.append(model.state) }
@@ -56,7 +58,7 @@ private final class SetupRecorder {
 
     func migrate(_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws {
         if let migrationError { throw migrationError }
-        for step in [MigrationStep.legacyStop, .copy] {
+        for step in [MigrationStep.copy] {
             migrationSteps.append(step)
             progress(step)
             record()
@@ -66,12 +68,19 @@ private final class SetupRecorder {
 
     func ensureStack(_ progress: @escaping @MainActor (StackStep) -> Void) async throws {
         if let stackError { throw stackError }
-        for step in [StackStep.machine, .images, .containers, .health] {
+        for step in [StackStep.machine, .images, .containers, .health, .union] {
             stackSteps.append(step)
             progress(step)
             record()
             await Task.yield()
         }
+    }
+
+    /// L'arrêt de l'ancienne pile, sur ordre (S-6).
+    func takeOver() async throws {
+        takeoverCalls += 1
+        record()
+        if let takeoverError { throw takeoverError }
     }
 
     func probe() async -> OMLXStatus {
@@ -99,12 +108,17 @@ private final class Gate {
 }
 
 @MainActor
-private func makeModel(_ recorder: SetupRecorder, autoPrepare: Bool = false) -> SetupModel {
+private func makeModel(
+    _ recorder: SetupRecorder,
+    autoPrepare: Bool = false,
+    takeover: (@MainActor () async throws -> Void)? = nil
+) -> SetupModel {
     SetupModel(
         install: { progress in try await recorder.install(progress) },
         migrate: { progress in try await recorder.migrate(progress) },
         ensureStack: { progress in try await recorder.ensureStack(progress) },
         probeOMLX: { await recorder.probe() },
+        takeover: takeover ?? { try await recorder.takeOver() },
         onReady: {
             recorder.onReadyCalls += 1
             recorder.record()
@@ -195,20 +209,20 @@ func setupChainPublishesEveryStepThenReady() async {
         .podman(downloaded: 0, total: 0),
         .podmanInstall,
     ])
-    #expect(recorder.migrationSteps == [.legacyStop, .copy])
-    #expect(recorder.stackSteps == [.machine, .images, .containers, .health])
+    #expect(recorder.migrationSteps == [.copy])
+    #expect(recorder.stackSteps == [.machine, .images, .containers, .health, .union])
 
     // L'état publié suit les étapes : composants, puis migration, puis pile, puis
     // prérequis — et il finit prêt.
     #expect(recorder.states.first == .preparing(.omp(downloaded: 0, total: 0)))
     #expect(recorder.states.contains(.preparing(.omp(downloaded: 100, total: 100))))
-    #expect(recorder.states.contains(.preparing(.legacyStop)))
     #expect(recorder.states.contains(.preparing(.migrationCopy)))
     #expect(recorder.states.contains(.preparing(.machine)))
+    #expect(recorder.states.contains(.preparing(.union)))
     #expect(recorder.states.contains(.preparing(.prerequisites)))
     #expect(recorder.states.last == .ready)
     // L'ordre migration → pile est réel : les états sont émis dans l'ordre.
-    let migrationIndex = recorder.states.firstIndex(of: .preparing(.legacyStop))
+    let migrationIndex = recorder.states.firstIndex(of: .preparing(.migrationCopy))
     let stackIndex = recorder.states.firstIndex(of: .preparing(.machine))
     #expect(migrationIndex != nil && stackIndex != nil && migrationIndex! < stackIndex!)
 }
@@ -255,10 +269,10 @@ func failuresAreClassifiedByMachine() async {
     #expect(migration.stackSteps.isEmpty)
 
     let stack = SetupRecorder()
-    stack.stackError = .portBusy(port: 8321)
+    stack.stackError = .portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))
     let stackModel = makeModel(stack)
     await stackModel.prepare()
-    #expect(stackModel.state == .failed(.stack(.portBusy(port: 8321))))
+    #expect(stackModel.state == .failed(.stack(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711)))))
 
     let checksum = SetupRecorder()
     checksum.installError = .checksum(component: "Podman")
@@ -601,6 +615,56 @@ func retryFindingOmpClosesTheSheetAtReady() async {
     #expect(sheet(home, model) == nil)
 }
 
+// MARK: - AC-6 : la reprise de l'ancienne pile, sur ordre seulement
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-6 : la reprise publie l'arrêt, arrête l'ancienne pile puis relance la chaîne COMPLÈTE")
+func takeOverStopsThenRestartsTheChain() async {
+    let recorder = SetupRecorder()
+    let model = makeModel(recorder)
+    recorder.model = model
+
+    await model.takeOverLegacyStack()
+
+    #expect(recorder.takeoverCalls == 1)
+    #expect(recorder.installCalls == 1, "un arrêt réussi relance toute la chaîne (même chemin que « Réessayer »)")
+    #expect(model.state == .ready)
+    #expect(recorder.states.contains(.preparing(.legacyStop)))
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-6 : un arrêt d'ancienne pile refusé rend `.failed(.legacy(…))` et ne relance RIEN")
+func failedTakeOverDoesNotRestartTheChain() async {
+    let recorder = SetupRecorder()
+    recorder.takeoverError = .stopFailed(container: "mem0-qdrant", detail: "code HTTP 500")
+    let model = makeModel(recorder)
+
+    await model.takeOverLegacyStack()
+
+    #expect(model.state == .failed(.legacy(.stopFailed(container: "mem0-qdrant", detail: "code HTTP 500"))))
+    #expect(recorder.installCalls == 0)
+    #expect(recorder.takeoverCalls == 1)
+    #expect(SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "code HTTP 500")))
+        == "L'ancienne pile mémoire n'a pas pu être arrêtée (mem0-qdrant) : code HTTP 500")
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-6 : une reprise demandée PENDANT une préparation est sans effet")
+func takeOverWhilePreparingIsIgnored() async {
+    let recorder = SetupRecorder()
+    let gate = Gate()
+    recorder.gate = gate
+    let model = makeModel(recorder)
+
+    let first = Task { await model.prepare() }
+    await waitUntil { recorder.installCalls == 1 }
+    await model.takeOverLegacyStack()
+    #expect(recorder.takeoverCalls == 0)
+
+    gate.release()
+    await first.value
+    #expect(model.state == .ready)
+}
 // MARK: - AC-2 : les textes figés
 
 @Test("all-in-one-app/AC-2 : les textes de la préparation sont ceux du contrat, mot pour mot")
@@ -659,7 +723,9 @@ func setupTextsAreFrozen() {
     #expect(SetupText.stepDetail(.images) == "Préparation des images de la pile…")
     #expect(SetupText.stepDetail(.containers) == "Démarrage de la pile mémoire…")
     #expect(SetupText.stepDetail(.health) == "Attente de la mémoire…")
+    #expect(SetupText.stepDetail(.union) == "Rattrapage des souvenirs manquants…")
     #expect(SetupText.stepDetail(.prerequisites) == "Vérification des prérequis…")
+    #expect(SetupText.takeover == "Arrêter l'ancienne pile et reprendre")
 
     #expect(SetupText.omlxWord(.unknown) == "Non vérifié")
     #expect(SetupText.omlxWord(.reachable) == "Disponible")
@@ -671,7 +737,7 @@ func setupTextsAreFrozen() {
         == "« OMP » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
     #expect(SetupText.failureMessage(.components(.install(component: "Podman", detail: "pkgutil absent")))
         == "L'installation de « Podman » a échoué : pkgutil absent")
-    #expect(SetupText.failureMessage(.migration(.legacyStopFailed(container: "mem0-qdrant", detail: "socket fermé")))
+    #expect(SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")))
         == "L'ancienne pile mémoire n'a pas pu être arrêtée (mem0-qdrant) : socket fermé")
     #expect(SetupText.failureMessage(.stack(.machineFailed(detail: "libkrun absent")))
         == "La machine de conteneurs n'a pas démarré : libkrun absent")
@@ -681,4 +747,10 @@ func setupTextsAreFrozen() {
         == "La mémoire n'a pas répondu dans le délai imparti (180 s).")
     #expect(SetupText.failureMessage(.stack(.podmanFailed(command: "machine start", detail: "boom")))
         == "Podman a échoué (machine start) : boom")
+    #expect(SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))))
+        == "Le port 8321 est déjà tenu par un autre programme (python3, pid 4711) : la pile mémoire ne peut pas démarrer.\nGeste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)")
+    #expect(SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))))
+        == "Le port 8321 est déjà tenu par l'ancienne pile mémoire (conteneur mem0-http) : la pile mémoire ne peut pas démarrer.\nGeste : podman stop mem0-qdrant mem0-http")
+    #expect(SetupText.failureMessage(.stack(.installationFailed(detail: "disque plein")))
+        == "L'identité d'installation de la pile n'a pas pu être écrite : disque plein")
 }

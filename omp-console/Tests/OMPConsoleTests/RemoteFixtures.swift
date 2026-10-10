@@ -84,8 +84,13 @@ struct RemoteStack {
 
     var base: String { "http://127.0.0.1:\(port)" }
 
+    /// `liveMemory` remplace le service scripté AUPRÈS DES ROUTES (banc de recette
+    /// sur la vraie mémoire, `memoryDelayServe`) ; `memoryConfig` remplace l'adresse
+    /// fictive. Nuls ⇒ comportement historique : routes servies par `memory`.
     static func make(
         memory: ScriptedMemoryService = ScriptedMemoryService(),
+        liveMemory: (any MemoryServing)? = nil,
+        memoryConfig: MemoryServiceConfig? = nil,
         stateDir: String? = nil,
         clock: MutableRemoteClock = MutableRemoteClock(),
         projectModel: ProjectConsoleModel? = nil,
@@ -96,7 +101,8 @@ struct RemoteStack {
         },
         journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
         componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
+        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
+        prStates: PullRequestStateBook? = nil
     ) async throws -> RemoteStack {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("omp-console-remote-\(UUID().uuidString)", isDirectory: true)
@@ -113,7 +119,9 @@ struct RemoteStack {
         )
         await registry.load()
         let stats = StatsModel(stateDir: dir)
-        let kanban = KanbanModel(hub: hub)
+        // Hermétique par défaut : un registre SANS lecteur ne lance jamais le `gh`
+        // du poste (une URL github.com d'une fixture ne lit pas le réseau).
+        let kanban = KanbanModel(hub: hub, prStates: prStates ?? PullRequestStateBook(reader: nil))
         let actions = actionsModel ?? ActionsModel()
         let session = sessionModel ?? SessionConsoleModel()
         let project = projectModel ?? ProjectConsoleModel()
@@ -126,17 +134,20 @@ struct RemoteStack {
             components: components,
             journal: journal,
             componentsChanges: componentsChanges,
-            journalChanges: journalChanges
+            journalChanges: journalChanges,
+            // Le câblage de PRODUCTION (`RemoteServiceModel`) des faits de PR.
+            pullRequestStates: { kanban.pullRequestStatesPayload() },
+            pullRequestStatesChanges: kanban.pullRequestStatesChanges()
         )
         // Le câblage de PRODUCTION (`RemoteServiceModel`) : le registre publie
         // l'évènement `devices` par le flux. Sans lui, l'ordre RÉEL des trames
         // d'ouverture resterait invisible aux tests (S-13).
         registry.changeHandler = { [weak streams] in streams?.broadcastDevices() }
-        let config = MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
+        let config = memoryConfig ?? MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
         let reads = RemoteReads(
             hub: hub,
             registry: registry,
-            service: memory,
+            service: liveMemory ?? memory,
             memoryConfig: config,
             memoryLinks: root.appendingPathComponent("memory-links.json"),
             environment: [:],

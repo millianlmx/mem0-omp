@@ -20,6 +20,10 @@ import Foundation
 struct MemoryServiceConfig: Equatable, Sendable {
     var baseURL: URL
     var token: String
+    /// Le jeton d'INSTALLATION exigé de `/health` (S-4) : vide tant qu'il n'a pas
+    /// été lu (`AppPaths.installationToken`) — un service qui ne le rend pas n'est
+    /// alors jamais accepté comme « sa » pile.
+    var installationToken: String = ""
 
     /// Littéral prouvé valide : le seul force-unwrap du module, et il ne porte
     /// aucune donnée réseau.
@@ -30,6 +34,19 @@ struct MemoryServiceConfig: Equatable, Sendable {
         let baseURL = raw.flatMap { URL(string: $0) } ?? defaultBaseURL
         let token = environment["MEM0_HTTP_TOKEN"].flatMap { $0.isEmpty ? nil : $0 } ?? ""
         return MemoryServiceConfig(baseURL: baseURL, token: token)
+    }
+
+    /// La configuration EFFECTIVE du client : l'environnement, PLUS le jeton
+    /// d'installation lu sur le disque (S-4). Un jeton absent (pile jamais
+    /// préparée) laisse le champ vide : aucune réponse ne sera acceptée avant que
+    /// la pile ne porte le sien.
+    static func resolved(
+        environment: [String: String],
+        paths: AppPaths
+    ) -> MemoryServiceConfig {
+        var config = fromEnvironment(environment)
+        config.installationToken = InstallationTokenStore.load(at: paths.installationToken) ?? ""
+        return config
     }
 }
 
@@ -81,6 +98,10 @@ enum MemoryWritePath: Equatable, Sendable {
 struct MemoryHealth: Equatable, Sendable {
     var isAvailable: Bool
     var errorMessage: String?
+    /// Vrai quand un `200 ok` répond SANS porter le jeton d'installation (S-4) :
+    /// l'adresse répond, mais ce n'est pas la pile de l'app. Cet état n'est JAMAIS
+    /// « disponible » (S-5, BR-9).
+    var isForeign: Bool = false
 }
 
 // `MemoryRow` et `MemoryGraphEdge` vivent désormais dans `ConsoleCore`
@@ -333,12 +354,27 @@ struct HTTPMemoryService: MemoryServing {
     }
 
     /// La sonde `/health` ne lève JAMAIS : l'état est une valeur, pas une erreur
-    /// (S-6.1).
+    /// (S-6.1). Elle est aussi la sonde IDENTITAIRE (S-4) : un `200 ok` n'est
+    /// accepté que s'il porte le jeton d'installation de l'app ; un `200 ok` sans
+    /// ce jeton (ou avec un autre) est « étranger » — jamais « disponible ».
     func health() async -> MemoryHealth {
         do {
             let json = try await send(url(for: .health), method: MemoryRoute.health.method, body: nil, timeout: Self.otherTimeout)
-            let ok = (json as? [String: Any])?["ok"] as? Bool ?? false
-            return MemoryHealth(isAvailable: ok, errorMessage: ok ? nil : MemoryText.unreadableResponse)
+            let object = json as? [String: Any]
+            let ok = object?["ok"] as? Bool ?? false
+            // Corps illisible ou `ok` faux : l'erreur existante, jamais « étranger »
+            // (un service muet n'est pas un autre service prouvé).
+            guard ok else {
+                return MemoryHealth(isAvailable: false, errorMessage: MemoryText.unreadableResponse)
+            }
+            let returned = object?["installation"] as? String
+            let expected = config.installationToken
+            if !expected.isEmpty, returned == expected {
+                return MemoryHealth(isAvailable: true, errorMessage: nil)
+            }
+            // `ok` vrai, jeton absent ou différent : quelqu'un répond, mais ce n'est
+            // pas la pile de l'app.
+            return MemoryHealth(isAvailable: false, errorMessage: MemoryText.foreignService, isForeign: true)
         } catch {
             return MemoryHealth(isAvailable: false, errorMessage: MemoryServiceError.message(for: error))
         }

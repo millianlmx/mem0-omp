@@ -24,20 +24,8 @@ enum IOSMemoryText {
     /// l'app s'écarte du noyau.
     static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
-    /// Le Mac n'a pas répondu : c'est l'état du CLIENT, jamais une cause mémoire.
-    static let macUnreachable = "Le Mac n'a pas répondu."
-
-    /// Le bandeau de l'indisponibilité mémoire : le titre partagé, puis le détail
-    /// relayé par le Mac (adresse sondée et dernier message d'erreur).
-    static func unavailable(detail: String) -> String {
-        MemoryText.unavailableTitle + "\n" + detail
-    }
-
-    /// La ligne de troncature du sommaire : ce qui est montré, puis le total servi.
-    static func truncated(shown: Int, total: Int) -> String {
-        "\(ConsoleFormat.count(shown, "souvenir", "souvenirs")) sur "
-            + "\(ConsoleFormat.count(total, "souvenir", "souvenirs")) — liste tronquée."
-    }
+    /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
+    static let loadingMore = "Chargement des souvenirs suivants…"
 
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
@@ -88,6 +76,21 @@ enum IOSMemoryText {
     /// est atteint. `scripts/ios-shots.sh` le lit (miroir littéral dans le script) au lieu
     /// d'attendre un délai fixe.
     static let graphRecipeReady = "memoire-recipe-ready"
+
+    // MARK: - « Sommaire » : icône propre, raison d'indisponibilité
+
+    /// Les symboles de la barre d'outils : « Sommaire » et « Liste » ne partagent
+    /// plus la même icône. « Graphe » garde son symbole dans la vue.
+    static let summarySymbol = "rectangle.stack"
+    static let listSymbol = "list.bullet"
+
+    /// Les raisons pour lesquelles « Sommaire » est grisé (montrées au toucher).
+    static let summaryReasonShown = "Le sommaire est déjà affiché."
+    static let summaryReasonSearching = "Une recherche est en cours : le sommaire reviendra quand elle sera finie."
+    static let summaryReasonGraph = "Le sommaire s'affiche en mode Liste : touchez d'abord « Liste »."
+
+    /// La valeur VoiceOver d'un « Sommaire » indisponible.
+    static let summaryUnavailable = "Indisponible"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
@@ -100,8 +103,12 @@ enum IOSMemoryAccessibility {
     static let summary = "ios.memoire.summary"
     static let count = "ios.memoire.count"
     static let results = "ios.memoire.results"
-    static let truncated = "ios.memoire.truncated"
+    /// Le pied de liste : chargement de la page suivante, ou son échec.
+    static let more = "ios.memoire.more"
+    static let moreRetry = "ios.memoire.more.retry"
     static let detail = "ios.memoire.detail"
+    static let close = "ios.memoire.close"
+    static let summaryReason = "ios.memoire.summary.reason"
 
     static func row(_ id: String) -> String { "ios.memoire.row.\(id)" }
 

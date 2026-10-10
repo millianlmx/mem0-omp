@@ -18,6 +18,8 @@ struct IOSStatsModelTests {
         slug: String,
         input: Int = 0,
         output: Int = 0,
+        cacheRead: Int? = nil,
+        cacheWrite: Int? = nil,
         turns: Int = 0,
         durationMs: Double,
         liveRuns: Int = 0,
@@ -27,6 +29,8 @@ struct IOSStatsModelTests {
             slug: slug,
             input: input,
             output: output,
+            cacheRead: cacheRead,
+            cacheWrite: cacheWrite,
             turns: turns,
             durationMs: durationMs,
             liveRuns: liveRuns,
@@ -106,6 +110,31 @@ struct IOSStatsModelTests {
         #expect(StatsAccessibility.total == "ios.stats.total")
     }
 
+    @Test("ios-stats-tokens-envoyes-incoherent/AC-1, AC-2, AC-3 : « Tokens envoyés » compte l'entrée, le cache lu et le cache écrit")
+    func statsSentTokensCountTheCache() {
+        let cached = feature(
+            slug: "f", input: 76, output: 40_233, cacheRead: 33_206, cacheWrite: 15_936, durationMs: 0
+        )
+        let bare = feature(slug: "g", input: 5, durationMs: 0)
+
+        // AC-1 : la carte vaut I + R + W, non I seul ; « Tokens reçus » reste la sortie.
+        let card = IOSStatsContent.featureCard(cached, elapsedMs: 0)
+        #expect(card.lines[3].label == StatsPresentation.sentTokens)
+        #expect(card.lines[3].value == ConsoleFormat.tokens(49_218))
+        #expect(card.lines[3].value != ConsoleFormat.tokens(76))
+        #expect(card.lines[4].value == ConsoleFormat.tokens(40_233))
+
+        // AC-2 : le total somme les valeurs entières des features listées.
+        let total = IOSStatsContent.totalCard(payload(features: [cached, bare]), elapsedMs: 0)
+        #expect(total.lines[2].label == StatsPresentation.sentTokens)
+        #expect(total.lines[2].value == ConsoleFormat.tokens(49_223))
+
+        // AC-3 : sans cache (Mac ancien), l'entrée seule, jamais une valeur vide.
+        let plain = IOSStatsContent.featureCard(bare, elapsedMs: 0)
+        #expect(plain.lines[3].value == ConsoleFormat.tokens(5))
+        #expect(!plain.lines[3].value.isEmpty)
+    }
+
     @Test("ios-statistiques/AC-3 : la ligne de total somme les features listées, rien d'autre")
     func statsTotalSumsOnlyListedFeatures() {
         let p = payload(
@@ -177,14 +206,35 @@ struct IOSStatsModelTests {
             .revoked,
             .incompatibleProtocol(local: 3, remote: 2),
         ] {
-            #expect(IOSStatsModel.surface(state: state, payload: board, failure: nil) == .degraded(ConnectionText.state(state)))
+            #expect(IOSStatsModel.surface(state: state, payload: board, failure: nil, selectedKey: "k") == .degraded(ConnectionText.state(state)))
         }
-        // Connecté : chargement, erreur, aucun projet, vide, tableau.
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: nil) == .loading)
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: "relevé refusé") == .error("relevé refusé"))
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil) == .noProject)
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil) == .empty)
-        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil) == .board)
+        // Connecté : chargement, erreur, aucun projet, bascule, vide, tableau.
+        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: nil, selectedKey: nil) == .loading)
+        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: "relevé refusé", selectedKey: "k") == .error("relevé refusé"))
+        // L'échec l'emporte sur une bascule en cours (écran d'erreur inchangé).
+        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: "relevé refusé", selectedKey: "k2") == .error("relevé refusé"))
+        #expect(IOSStatsModel.surface(state: connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil, selectedKey: nil) == .noProject)
+        // Un projet choisi que le relevé ne sert pas encore : la bascule, avant
+        // l'état vide comme avant le tableau.
+        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil, selectedKey: "k2") == .switching)
+        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil, selectedKey: "k2") == .switching)
+        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil, selectedKey: "k") == .empty)
+        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil, selectedKey: "k") == .board)
+
+        // L'en-tête de projet : en tête de la bascule, de l'état vide et du
+        // tableau, jamais ailleurs.
+        let headers: [(IOSStatsSurface, Bool)] = [
+            (.degraded(ConnectionText.state(.revoked)), false),
+            (.loading, false),
+            (.error("relevé refusé"), false),
+            (.noProject, false),
+            (.switching, true),
+            (.empty, true),
+            (.board, true),
+        ]
+        for (surface, shows) in headers {
+            #expect(surface.showsProjectHeader == shows)
+        }
     }
 
     @Test("ios-statistiques/AC-6 : les quatre déclencheurs relancent un relevé, jamais hors `.connected`")
@@ -222,10 +272,159 @@ struct IOSStatsModelTests {
         #expect(await eventually { keys.count == 2 })
         #expect(keys == ["k2", "k2"])
 
-        // Une erreur rend la main à l'état d'erreur, avec le message servi.
+        // Une erreur rend la main à l'état d'erreur, avec le message TRADUIT (S-5).
         let failing = makeModel(state: { self.connected }, load: { _ in throw ClientError.notConnected })
         failing.reload(trigger: .appeared)
         #expect(await eventually { failing.failure != nil })
-        #expect(failing.surface == .error(ConnectionText.state(connected)))
+        #expect(failing.surface == .error(IOSMacErrorText.message(for: .macUnreachable)))
+    }
+
+    // MARK: - Erreurs du Mac (ios-erreurs-serveur-lisibles)
+
+    /// Le prédicat « lisible » : ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    private func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http répond 405 : l'adresse et le JSON amont sont
+    /// dans le message. La réponse passe par la vraie traduction du client.
+    private func relayed503() -> ClientError {
+        let detail = MemoryText.unavailableDetail(
+            address: "localhost:8321",
+            error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+        )
+        let body = (try? JSONSerialization.data(
+            withJSONObject: ["error": ["code": "unavailable", "message": detail]]
+        )) ?? Data()
+        return ClientErrorMapping.translate(status: 503, protocolVersion: 1, body: body)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : statsShowsTranslatedFailure — le 503 relayé s'affiche en « service indisponible », sans URL ni JSON")
+    func statsShowsTranslatedFailure() async {
+        let error = relayed503()
+        let model = makeModel(state: { self.connected }, load: { _ in throw error })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.failure != nil })
+        let expected = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(model.surface == .error(expected))
+        #expect(isReadable(expected))
+        #expect(expected.contains("Service indisponible sur le Mac"))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : statsRetryShowsBoard — après un échec, le relevé relancé affiche le tableau")
+    func statsRetryShowsBoard() async {
+        let error = relayed503()
+        var succeed = false
+        let model = makeModel(state: { self.connected }, load: { _ in
+            if !succeed { throw error }
+            return self.payload(features: [self.feature(slug: "a", durationMs: 1)])
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.failure != nil })
+        #expect(model.surface == .error(IOSMacErrorText.message(for: .serviceUnavailable)))
+
+        // Réessayer relance le même relevé (`reload(trigger: .appeared)`).
+        succeed = true
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.payload != nil })
+        #expect(model.failure == nil)
+        #expect(model.surface == .board)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : statsUnauthorizedShowsNoError — un 401 ne pose aucun message ; la surface suit l'état du client")
+    func statsUnauthorizedShowsNoError() async {
+        var current = connected
+        let model = makeModel(state: { current }, load: { _ in throw ClientError.api(.unauthorized) })
+        model.reload(trigger: .appeared)
+        // Le relevé a échoué, puis `reload` a laissé `failure` à nil.
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(model.failure == nil)
+        #expect(model.surface == .loading)
+
+        // Le client révoqué : la surface passe par l'état de connexion, jamais par `.error`.
+        current = .revoked
+        #expect(model.failure == nil)
+        #expect(model.surface == .degraded(ConnectionText.state(.revoked)))
+    }
+
+    // MARK: - En-tête de projet (statistiques-etat-vide-et-non-defilables)
+
+    /// Deux projets servis : `k1` sans feature listée, `k2` avec une feature. La
+    /// lecture rend le projet demandé (`nil` : le premier).
+    private func twoProjects(_ key: String?) -> RemoteStatsPayload {
+        let projects = [RemoteStatsProject(key: "k1", label: "vide"), RemoteStatsProject(key: "k2", label: "pleine")]
+        if key == "k2" {
+            return payload(projectKey: "k2", features: [feature(slug: "a", durationMs: 0)], projects: projects)
+        }
+        return payload(projectKey: "k1", features: [], projects: projects, hiddenPlanFeatures: 1)
+    }
+
+    /// Le libellé que le sélecteur affiche : celui du projet CHOISI.
+    private func shownLabel(_ model: IOSStatsModel) -> String? {
+        model.projects.first { $0.key == model.selectedKey }?.label
+    }
+
+    @Test("statistiques-etat-vide-et-non-defilables/AC-1 : un projet sans données montre son nom et le sélecteur au-dessus de l'état vide")
+    func statsEmptyProjectNamesItsProject() async {
+        let model = makeModel(state: { self.connected }, load: { self.twoProjects($0) })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.surface == .empty })
+        #expect(model.surface.showsProjectHeader)
+        #expect(model.selectedKey == "k1")
+        #expect(shownLabel(model) == "vide")
+        // Le sélecteur offre les deux projets servis.
+        #expect(model.projects.map(\.key) == ["k1", "k2"])
+    }
+
+    @Test("statistiques-etat-vide-et-non-defilables/AC-2 : depuis l'état vide, choisir un projet qui a des données affiche son tableau sous son nom")
+    func statsEmptyProjectOffersTheSwitch() async {
+        var keys: [String?] = []
+        let model = makeModel(state: { self.connected }, load: { key in
+            keys.append(key)
+            return self.twoProjects(key)
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.surface == .empty })
+
+        model.select(project: "k2")
+        #expect(await eventually { model.surface == .board })
+        #expect(keys == [nil, "k2"])
+        #expect(model.payload?.projectKey == "k2")
+        #expect(model.selectedKey == "k2")
+        #expect(shownLabel(model) == "pleine")
+        #expect(model.surface.showsProjectHeader)
+    }
+
+    @Test("statistiques-etat-vide-et-non-defilables/AC-3 : pendant la lecture du projet choisi, le sélecteur le nomme au-dessus du chargement")
+    func statsProjectSwitchKeepsHeaderAboveLoading() async {
+        // La porte du test : la lecture de « k2 » attend que le test l'ouvre.
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        var keys: [String?] = []
+        let model = makeModel(state: { self.connected }, load: { key in
+            keys.append(key)
+            if key == "k2" {
+                for await _ in gate { break }
+            }
+            return self.twoProjects(key == "k2" ? "k2" : "k1")
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.payload?.projectKey == "k1" })
+
+        model.select(project: "k2")
+        #expect(await eventually { keys == [nil, "k2"] })
+        // La lecture de « k2 » est en vol : bascule, en-tête, projet CHOISI nommé.
+        #expect(model.surface == .switching)
+        #expect(model.surface.showsProjectHeader)
+        #expect(model.selectedKey == "k2")
+        #expect(shownLabel(model) == "pleine")
+        // L'ancien relevé reste celui de « k1 » tant que la porte est fermée.
+        #expect(model.payload?.projectKey == "k1")
+
+        open.yield(())
+        #expect(await eventually { model.surface == .board })
+        #expect(model.payload?.projectKey == "k2")
+        #expect(shownLabel(model) == "pleine")
     }
 }

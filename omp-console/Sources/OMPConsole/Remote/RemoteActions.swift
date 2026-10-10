@@ -548,6 +548,14 @@ final class RemoteActions {
         return RemoteMergedPayload(merged: true, number: proposal.number ?? row.number, url: row.url)
     }
 
+    /// Le rafraîchissement manuel des faits de PR (S-6 de pipelines-livrees) :
+    /// lancé SANS être attendu, accepté même quand `gh` est absent — le résultat
+    /// arrive par la trame `pull-request-states`.
+    func refreshPullRequestStates() -> RemoteAcceptedPayload {
+        kanban.refreshPullRequestStates()
+        return RemoteAcceptedPayload(accepted: true)
+    }
+
     /// `gh` absent : la route le dit en `503`, jamais en `500` (S-12).
     static func refuseIfGhMissing(_ environment: [String: String]) throws {
         if case .failure(let error) = GhBinary.resolve(environment: environment) {

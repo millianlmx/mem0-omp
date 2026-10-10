@@ -58,7 +58,7 @@ extension SetupStep {
         switch self {
         case .omp, .ompInstall, .podman, .podmanInstall: .components
         case .legacyStop, .migrationCopy: .migration
-        case .machine, .images, .containers, .health: .stack
+        case .machine, .images, .containers, .health, .union: .stack
         case .prerequisites: .prerequisites
         }
     }
@@ -82,6 +82,9 @@ extension SetupFailure {
         case .components: .components
         case .migration: .migration
         case .stack: .stack
+        // L'arrêt refusé de l'ancienne pile appartient à la ligne « Migration de
+        // la mémoire », dont il est le geste explicite (S-6).
+        case .legacy: .migration
         }
     }
 }
@@ -147,6 +150,20 @@ enum SetupPresentation {
     static func progress(state: SetupState) -> SetupProgress? {
         guard case .preparing(let step) = state else { return nil }
         return SetupProgress(label: SetupText.stepDetail(step), fraction: step.fraction)
+    }
+
+    /// La reprise de l'ancienne pile (S-6, BR-9) : proposée SEULEMENT sur un
+    /// conflit dont le propriétaire EST l'ancienne pile (`legacyContainer != nil`),
+    /// et maintenue — désactivée — pendant l'action qu'elle a déclenchée.
+    static func showsTakeover(_ state: SetupState) -> Bool {
+        switch state {
+        case let .failed(.stack(.portConflict(_, owner))):
+            return owner.legacyContainer != nil
+        case .preparing(.legacyStop):
+            return true
+        default:
+            return false
+        }
     }
 
     /// Le pied de la feuille (S-1/S-2, table du lot BR-2).
