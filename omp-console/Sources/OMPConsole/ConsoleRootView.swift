@@ -72,6 +72,9 @@ struct ConsoleRootView: View {
     /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
     /// (S-2 de mac-etats-vides-sans-issue), à l'échelle de l'app.
     let projectChooser: ProjectChooserModel
+    /// Le crochet de recette `-surface.recipe` (S-5 de recette-ui-mac-automatisee),
+    /// `nil` hors recette : appliqué une seule fois, au premier affichage.
+    let surfaceRecipe: SurfaceRecipe?
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -232,6 +235,22 @@ struct ConsoleRootView: View {
             // l'autorise (BR-9) ; `SetupModel.onReady` le relancera si la
             // préparation n'était pas terminée.
             Task { await remote.startIfEnabled() }
+            if let surfaceRecipe {
+                Task {
+                    await surfaceRecipe.applyOnce(
+                        console: model,
+                        setup: setup,
+                        home: home,
+                        actions: actions,
+                        kanban: kanban,
+                        contract: contract,
+                        project: projectModel,
+                        session: sessionModel,
+                        terminal: terminalModel,
+                        memoryGraph: memoryGraph
+                    )
+                }
+            }
         }
         .frame(minWidth: 760, minHeight: 480)
     }

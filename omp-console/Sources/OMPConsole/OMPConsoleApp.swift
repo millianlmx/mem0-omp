@@ -60,6 +60,9 @@ struct OMPConsoleApp: App {
     /// la session et lit les projets connus dans le magasin du service d'API.
     @StateObject private var projectChooser: ProjectChooserModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// Le crochet de recette `-surface.recipe` (racine jetable seulement), lu une
+    /// fois au lancement : la racine l'applique à son premier affichage.
+    private let surfaceRecipe = SurfaceRecipe.current()
 
     /// Un `ActionsModel` pour l'app : il poste au service les gestes des cartes
     /// (S-9), sans lancer aucun process. Les accroches de terminaison des modèles
@@ -180,7 +183,8 @@ struct OMPConsoleApp: App {
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel,
-                projectChooser: projectChooser
+                projectChooser: projectChooser,
+                surfaceRecipe: surfaceRecipe
             )
         }
         .commands {
@@ -380,10 +384,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
         // son titre suivra l'état publié, et l'autorisation sera demandée. Le clic
-        // est branché AVANT `start()`, qui pose le délégué du centre.
+        // est branché AVANT `start()`, qui pose le délégué du centre. Sous le
+        // crochet `-surface.recipe`, le modèle ne démarre pas : ni demande
+        // d'autorisation, ni sonde des ports de la pile de l'utilisateur.
         statusItemController = StatusItemController(model: alerts)
         alerts.onOpen = { AppDelegate.openAlert?($0) }
-        alerts.start()
+        if SurfaceRecipe.current() == nil {
+            alerts.start()
+        }
         // S-1 : plus de séparateur en tête, en fin ni en double dans la barre des
         // menus, au lancement puis à chaque mise à jour d'un menu.
         menuObservers = MainMenuSeparators.observe()
