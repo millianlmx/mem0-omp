@@ -24,6 +24,9 @@ struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
+    /// Les gestes de carte de l'Accueil : l'état en vol survit à une sortie puis un
+    /// retour sur l'Accueil.
+    @StateObject private var homeGestures = IOSHomeGestureModel()
     @State private var showConnection: Bool
     @State private var showWelcome = false
 
@@ -81,6 +84,7 @@ struct RootView: View {
             if selection == .home {
                 HomeView(
                     client: client,
+                    gestures: homeGestures,
                     recipe: recipe,
                     recipeRow: recipeRow,
                     showConnection: $showConnection,

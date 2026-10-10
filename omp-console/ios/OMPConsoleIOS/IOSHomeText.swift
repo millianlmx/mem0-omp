@@ -50,6 +50,26 @@ enum IOSHomeText {
     static let decodingFailure = "La réponse du Mac est illisible."
     static let incompatibleProtocol = "La version d'API du Mac n'est pas la même que celle de l'app."
 
+    // --- gestes de l'Accueil : confirmation, envoi en cours, échec sur la carte
+
+    /// Le titre de la confirmation de « Valider les specs » d'une carte.
+    static func specsConfirmTitle(_ title: String) -> String { "Valider les specs de « \(title) » ?" }
+    static let specsConfirmMessage = "L'implémentation démarre sur le Mac dès la validation."
+    static let specsConfirm = "Valider"
+    /// La valeur d'accessibilité d'un bouton de geste dont l'envoi est en cours.
+    static let gestureInFlight = "Envoi en cours"
+
+    static let specsFailed = "Les specs n'ont pas été validées."
+    static let reviewFailed = "La revue n'a pas été acceptée."
+    static let resumeFailed = "La pipeline n'a pas repris."
+    static let gestureRefused = "Le Mac a refusé cette action."
+    static let gestureCardGone = "Le Mac ne connaît plus cette pipeline."
+    static let gestureMacFailed = "Le Mac n'a pas pu exécuter cette action."
+
+    /// Le message d'échec d'un geste, affiché sur sa carte : ce qui n'a pas eu
+    /// lieu, puis la cause, jamais un détail technique brut.
+    static func gestureFailure(_ headline: String, cause: String) -> String { "\(headline) \(cause)" }
+
     // --- valeurs de fil de l'API (jamais dans une vue) ------------------------
 
     static let documentText = "text"
@@ -60,6 +80,11 @@ enum IOSHomeText {
     static let kindCustom = "custom"
     static let verdictSpecs = "specs"
     static let verdictReview = "review"
+
+    // --- recette `-home.recipe longTitles` (jamais hors recette) --------------
+
+    /// Le titre long (40 caractères) des rangées de la recette `longTitles`.
+    static let recipeLongTitle = "Rangées de l'Accueil écrasées sur iPhone"
 
     // --- symboles SF de l'Accueil ---------------------------------------------
 

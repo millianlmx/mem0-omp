@@ -194,8 +194,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - La feuille Contrat découpe le markdown par les fonctions partagées
   (`ContractDocument`), affiche chaque section verbatim et le message d'une
   section absente. `[test: contractOutputs]`
-- Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
-  exploitable. `[test: deliveredLinks]`
+- Une livraison récente ouvre sa PR par son seul bouton « Ouvrir la PR », par
+  `openURL`, seulement quand l'URL est exploitable ; le titre et la puce ne sont
+  pas des cibles. `[test: deliveredLinks]`
 - Le lien « Tout afficher » sélectionne la section Pipelines. `[test: allPipelinesSection]`
 - Le bandeau de préparation vient du Mac (`components.setupBanner`), jamais
   inventé ; l'Accueil ne porte AUCUN bouton dessus. `[test: setupBanner]`
@@ -211,11 +212,23 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
-- Les rangées « En cours » et « Livrées récemment » restent sur une ligne aux
-  tailles standard et s'empilent (titre, puce, bouton) aux tailles
-  d'accessibilité ; leurs boutons sont bornés à `accessibility3` et leur texte à
-  `accessibility4` (au-delà, un mot comme « Implémentation » est coupé en deux).
-  `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Les rangées « En cours » et « Livrées récemment » suivent la largeur : en
+  largeur régulière (iPad), titre, puce et bouton sur une ligne ; en largeur
+  compacte (iPhone, iPad en Split View étroit), le titre sur toute la largeur,
+  puis la puce et le bouton côte à côte sur une deuxième ligne, sans troncature.
+  `[test: compactWidthSplitsRowsInTwoLines]`
+- Aux tailles d'accessibilité, quelle que soit la largeur, ces rangées
+  s'empilent (titre, puce, bouton) ; leurs boutons sont bornés à `accessibility3`
+  et leur texte à `accessibility4` (au-delà, un mot comme « Implémentation » est
+  coupé en deux). `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Un geste de carte montre son envoi en cours et n'envoie rien de plus jusqu'à la
+  réponse du Mac : bouton désactivé, indicateur devant le libellé, valeur
+  d'accessibilité « Envoi en cours ». `[test: resumeIgnoresSecondTapWhileInFlight]`
+- « Valider les specs » demande une confirmation, « Reprendre » et « Accepter la
+  revue » partent aussitôt. `[test: specsTapAsksConfirmationWithoutSending]`
+- L'échec d'un geste s'affiche sur sa carte, en français, sans détail technique ;
+  le succès n'a pas de message, la carte suit l'ardoise.
+  `[test: failureLandsOnItsCardWithoutRawDetail]`
 
 ## Mémoire (feature `ios-memoire`)
 
