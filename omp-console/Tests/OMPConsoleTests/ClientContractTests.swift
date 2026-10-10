@@ -201,6 +201,22 @@ struct ClientContractTests {
         ))
     }
 
+    @Test("feuilles-ios-presentation-et-depots/AC-7 : homeDirectory des composants a la même forme des deux côtés, et un Mac antérieur donne nil")
+    func componentsHomeDirectoryMirror() throws {
+        let json = #"{"ompInstalled":true,"ompPath":"/opt/omp/bin/omp","setupBanner":null,"homeDirectory":"/Users/recette"}"#
+        #expect(try contractSameShape(
+            json,
+            client: ConsoleClient.RemoteComponentsPayload.self,
+            host: OMPConsole.RemoteComponentsPayload.self
+        ))
+        let client = try JSONDecoder().decode(ConsoleClient.RemoteComponentsPayload.self, from: Data(json.utf8))
+        #expect(client.homeDirectory == "/Users/recette")
+
+        // Un Mac d'avant la feature n'envoie pas la clé : le client lit nil, sans erreur.
+        let older = Data(#"{"ompInstalled":true}"#.utf8)
+        #expect(try JSONDecoder().decode(ConsoleClient.RemoteComponentsPayload.self, from: older).homeDirectory == nil)
+    }
+
     @Test("S-1 (AC-1) : une charge d'un Mac d'avant la feature (sans text, tags, truncated) reste lisible des deux côtés")
     func olderMacGraphPayloadStaysReadable() throws {
         let json = ##"{"nodes":[{"id":"memory:m1","label":"titre","scope":"p"},{"id":"tag:a","label":"#a","scope":""}],"links":[{"a":"memory:m1","b":"tag:a","kind":"tag"}],"total":2}"##

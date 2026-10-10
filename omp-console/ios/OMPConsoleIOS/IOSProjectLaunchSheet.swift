@@ -1,7 +1,7 @@
 // La feuille « Piloter un projet… » de l'app iOS (S-8, S-9, BR-4) : la liste des
-// dépôts CONNUS de la coque (y compris un dépôt jamais cadré), chacun avec son nom
-// et son chemin, puis le nom du projet. Le client ne calcule JAMAIS le `repoKey` :
-// il le reçoit dans la liste.
+// dépôts CONNUS de la coque (y compris un dépôt jamais cadré), chacun désigné par son
+// nom (`IOSRepoRows`), puis le nom du projet. Le client ne calcule JAMAIS le
+// `repoKey` : il le reçoit dans la liste.
 //
 // La feuille ne se ferme que sur succès ; un échec laisse la feuille ouverte et
 // affiche le message servi.
@@ -12,6 +12,9 @@ import SwiftUI
 
 struct IOSProjectLaunchSheet: View {
     @ObservedObject var client: ConsoleClientModel
+    /// La fixture du crochet de recette `-projet.recipe lancement` : elle remplace
+    /// `client.repos()` et présélectionne un dépôt. `nil` hors recette.
+    private let recipe: IOSLaunchRecipe.Fixture?
     /// Rend `nil` sur succès, sinon le message d'échec à afficher.
     let onLaunch: (String, String) async -> String?
 
@@ -24,9 +27,22 @@ struct IOSProjectLaunchSheet: View {
     @State private var error: String?
     @State private var submitting = false
     @FocusState private var nameFocused: Bool
+    /// La hauteur mesurée du formulaire : la hauteur de la feuille ajustée sur
+    /// iPad, qui suit chaque état (chargement, liste, erreur).
+    @State private var contentHeight: CGFloat = 0
 
     private var canCommit: Bool {
         selected != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    init(
+        client: ConsoleClientModel,
+        recipe: IOSLaunchRecipe.Fixture? = nil,
+        onLaunch: @escaping (String, String) async -> String?
+    ) {
+        self.client = client
+        self.recipe = recipe
+        self.onLaunch = onLaunch
     }
 
     var body: some View {
@@ -48,15 +64,17 @@ struct IOSProjectLaunchSheet: View {
                         .accessibilityIdentifier(ProjectAccessibility.launchError)
                 }
             }
+            .iosSheetContentHeight($contentHeight)
             .navigationTitle(ProjectViewText.launchTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button(ProjectViewText.launchCancel) { dismiss() }
+                    IOSSheetIconButton(role: .cancel, label: ProjectViewText.launchCancel) { dismiss() }
                         .keyboardShortcut(.cancelAction)
                         .accessibilityIdentifier(ProjectAccessibility.launchCancel)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(ProjectViewText.launchCommit, action: commit)
+                    IOSSheetIconButton(role: .confirm, label: ProjectViewText.launchCommit, action: commit)
                         .disabled(!canCommit || submitting)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier(ProjectAccessibility.launchCommit)
@@ -65,6 +83,7 @@ struct IOSProjectLaunchSheet: View {
             .accessibilityIdentifier(ProjectAccessibility.launchSheet)
             .task { await load() }
         }
+        .iosFittedSheet(contentHeight: contentHeight)
     }
 
     @ViewBuilder private var repositoryList: some View {
@@ -77,29 +96,23 @@ struct IOSProjectLaunchSheet: View {
             Text(ProjectViewText.noRepository)
                 .foregroundStyle(.secondary)
         } else {
-            ForEach(repos, id: \.repoKey) { repo in
-                Button { choose(repo) } label: {
-                    HStack(spacing: 8) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(repo.name)
-                                .foregroundStyle(.primary)
-                            Text(ConsoleFormat.path(repo.repoRoot))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 8)
-                        if selected == repo.repoKey {
-                            Text(ProjectText.selectedMark)
-                        }
-                    }
-                }
-                .accessibilityAddTraits(selected == repo.repoKey ? .isSelected : [])
-                .accessibilityIdentifier(ProjectAccessibility.launchRepo(repo.repoKey))
-            }
+            IOSRepoRows(
+                repos: repos,
+                selected: selected,
+                identifier: ProjectAccessibility.launchRepo,
+                choose: choose)
         }
     }
 
     private func load() async {
+        if let recipe {
+            repos = recipe.repos
+            loading = false
+            if let chosen = recipe.repos.first(where: { $0.repoKey == recipe.selectedKey }) {
+                choose(chosen)
+            }
+            return
+        }
         loading = true
         loadFailure = nil
         do {

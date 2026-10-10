@@ -62,6 +62,8 @@ private final class FailingSessionSource: IOSSessionSource {
     }
 
     func run(forFile file: String) -> RunChoice? { nil }
+
+    var macHomeDirectory: String? { nil }
 }
 
 @MainActor

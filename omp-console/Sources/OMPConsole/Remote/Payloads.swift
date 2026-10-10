@@ -223,10 +223,14 @@ struct RemoteReposPayload: Codable, Equatable, Sendable {
 /// L'état RÉEL des composants de la coque (S-4) : `ompPath` porte le chemin du
 /// binaire OMP quand il est présent, `nil` sinon ; `setupBanner` la phrase de
 /// `SetupText.banner(state:dismissed: true)` (non nulle en préparation/échec).
+/// `homeDirectory` est le dossier personnel du Mac (l'app n'est pas sandboxée) :
+/// l'app iOS s'en sert pour abréger les chemins en « ~/… ». Toute construction
+/// le porte sans le nommer.
 struct RemoteComponentsPayload: Codable, Equatable {
     var ompInstalled: Bool
     var ompPath: String?
     var setupBanner: String?
+    var homeDirectory: String? = NSHomeDirectory()
 }
 
 /// Le journal des gestes, servi tel quel (S-5) : borné par le modèle.

@@ -35,6 +35,10 @@ import SwiftUI
 ///   partagée `KanbanBoardParity` (une voie vide, une voie « Livrées » de 100
 ///   cartes, des noms longs) à la place de celle du Mac, pour mesurer les voies et
 ///   les cartes sans appairage — un crochet de recette, pas une fonctionnalité.
+/// - `-projet.recipe <lancement|dialogue>` et `-sessionomp.recipe lancement` : la
+///   feuille « Piloter un projet… », « OMP vous demande » ou « Lancer une session
+///   OMP » ouverte d'elle-même sur une fixture (feuilles-ios-presentation-et-depots),
+///   sans réseau — des crochets de recette, pas des fonctionnalités.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -53,6 +57,8 @@ struct OMPConsoleIOSApp: App {
     private let cardRecipe: PipelinesCardRecipe?
     private let statsRecipe: IOSStatsRecipe?
     private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
+    private let projectRecipe: IOSProjectRecipe?
+    private let sessionOmpRecipe: IOSSessionOmpRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -67,6 +73,8 @@ struct OMPConsoleIOSApp: App {
         cardRecipe = PipelinesCardRecipe.resolve(arguments)
         statsRecipe = IOSStatsRecipe.resolve(arguments)
         pipelinesBoardRecipe = IOSPipelinesBoardRecipe.resolve(arguments)
+        projectRecipe = IOSProjectRecipe.resolve(arguments)
+        sessionOmpRecipe = IOSSessionOmpRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -83,6 +91,8 @@ struct OMPConsoleIOSApp: App {
                 cardRecipe: cardRecipe,
                 statsRecipe: statsRecipe,
                 pipelinesBoardRecipe: pipelinesBoardRecipe,
+                projectRecipe: projectRecipe,
+                sessionOmpRecipe: sessionOmpRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

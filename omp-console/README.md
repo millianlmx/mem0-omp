@@ -1832,8 +1832,10 @@ un flux temps réel.
   (du magasin) et `contract.md` (de la racine du projet), chacun avec son état
   (`text`, `missing`, `binary`, `unreadable`).
 - **État du Mac pour l'Accueil** : `GET /v1/components` sert
-  `{ompInstalled, ompPath?, setupBanner?}` (la présence réelle du composant OMP et
-  le bandeau de préparation) ; `GET /v1/journal` sert les 20 derniers gestes
+  `{ompInstalled, ompPath?, setupBanner?, homeDirectory?}` (la présence réelle du
+  composant OMP et le bandeau de préparation). `homeDirectory` est le dossier
+  personnel du Mac ; l'app iOS s'en sert pour abréger les chemins en `~/…` (un Mac
+  antérieur ne l'envoie pas : les chemins restent absolus). `GET /v1/journal` sert les 20 derniers gestes
   (`{entries:[…]}`, le plus récent en tête) ; `GET /v1/cards/{id}/contract` sert le
   contrat d'une carte sous `{document: {name, state, content, reason}}` — `404`
   carte inconnue, `409` carte sans contrat (moment ou worktree absent).
@@ -2401,6 +2403,93 @@ rejouent **à la main**. Côté code, AC-4 est prouvé par `PairingStatusTests` 
   confirmer. Attendu : la feuille passe en « Non appairé », et l'appareil disparaît
   de la liste « Appareils appairés » de la feuille « Appairage… » du Mac.
 
+### Les feuilles
+
+Les feuilles de l'app iOS ont toutes leur titre EN LIGNE dans la barre, lu en
+entier (jamais « … »), sur iPhone comme sur iPad. Sur iPhone, leur taille ne
+change pas (pleine hauteur, pleine largeur) ; sur iPad, elles suivent deux
+familles :
+
+| Feuille | Titre de barre | Boutons de barre | Taille iPad |
+|---|---|---|---|
+| Bienvenue | « Bienvenue dans OMP Console » | aucun (« Continuer » dans le contenu) | ajustée |
+| Répondre | « Répondre » (le titre de la carte ouvre le contenu) | ✕ / ✓ | par défaut |
+| Contrat | « Contrat » | « Fermer » | page |
+| Connexion | « Connexion » | « Fermer » | par défaut |
+| Piloter un projet | « Piloter un projet » | ✕ / ✓ | ajustée |
+| OMP vous demande | « OMP vous demande » | ✕ / ✓ (✕ seul pour une confirmation) | par défaut |
+| Lancer une session OMP | « Lancer une session OMP » | ✕ / ✓ | ajustée |
+| Session (visionneuse) | « Session » (le titre de la feature ouvre l'en-tête) | « Fermer » | page |
+| Nouvelle feature | « Nouvelle feature » | ✕ / ✓ | par défaut |
+| Souvenir (fiche) | « Souvenir » | « Fermer » | page |
+
+- **page** : quasi pleine largeur, pour un contenu long ; **ajustée** : la largeur
+  du formulaire (580 pt) et une hauteur qui suit le contenu, y compris quand il
+  change après l'ouverture (chargement, puis liste ou erreur).
+- Deux boutons TEXTE ne laissent pas la place d'un titre en ligne sur un iPhone de
+  390 pt : « Annuler » et le bouton de validation sont donc des icônes ✕ / ✓ de
+  44 pt (`IOSSheetIconButton`), à la même place. VoiceOver lit le texte de
+  l'ancien bouton (« Annuler », « Piloter », « Lancer la session »…) ; le ✓ est
+  gris quand il est inactif, de la couleur d'accent sinon. Les feuilles à un seul
+  bouton gardent « Fermer » en texte.
+- La Bienvenue est enregistrée comme vue à TOUTE fermeture — « Continuer » ou
+  balayage vers le bas — et ne réapparaît pas au lancement suivant. Ses icônes
+  occupent une colonne de largeur fixe, à l'échelle du texte : titres et détails
+  des trois promesses commencent au même x.
+- Dans « Piloter un projet » et « Lancer une session OMP », un dépôt est désigné
+  par son nom de dossier, suivi du parent entre parenthèses s'il a un homonyme ;
+  le dépôt choisi porte une coche, et VoiceOver annonce son nom et l'état
+  « sélectionné ». Les chemins du Mac encore affichés (en-tête de l'écran Projet,
+  cibles d'outil du fil de session) s'abrègent en `~/…` grâce au dossier personnel
+  publié par le Mac (`homeDirectory` de `GET /v1/components`).
+
+Les règles jugeables vivent dans `omp-console/ios/DESIGN.md` (« Les feuilles »).
+
+### Recette : les feuilles
+
+`scripts/ios-feuilles-recette.sh` capture les dix feuilles (Bienvenue, Répondre,
+Contrat, Connexion, Piloter un projet, OMP vous demande, Lancer une session OMP,
+Session, Nouvelle feature, Souvenir) sur un iPhone 17e et un iPad Pro 11" (M5)
+**privés** (`feuilles-recette-tel`, `feuilles-recette-tab`, iOS 27, apparence
+claire, taille de texte `large`), créés par le script et supprimés à la sortie.
+Il construit l'app **signée** depuis l'arbre de travail (DerivedData sous
+`/tmp`) et ne touche ni à un autre simulateur, ni à l'app Mac, ni au focus du
+Mac. Lancé à la main depuis la racine du dépôt, jamais par `check.sh` ni la CI :
+
+```bash
+# Relevé « avant » (avant toute retouche visuelle), puis « après » en fin de feature.
+bash scripts/ios-feuilles-recette.sh avant [--source <udid appairé>]
+bash scripts/ios-feuilles-recette.sh apres [--source <udid appairé>]
+```
+
+- Les feuilles s'ouvrent par les crochets de recette (`-home.recipe`,
+  `-projet.recipe`, `-sessionomp.recipe`, `-sessions.recipe visionneuse`,
+  `-pipelines.recipe choisi`, `-memoire.recipe liste`), sans écriture vers le Mac.
+- `--source <udid>` désigne un simulateur DÉJÀ appairé au Mac : son trousseau et
+  `com.omp.console.ios.plist` sont greffés sur l'iPad privé ; il n'est que lu.
+  L'iPhone privé n'est jamais appairé.
+- Sorties dans `omp-console/build/feuilles-ios-presentation-et-depots/<avant|apres>/`
+  (ignoré par git, vidé au début du run) : `<feuille>-<tel|tab>.png` et `.json`
+  (`idb ui describe-all`), `rapport.txt` (une ligne `ok|échec|sauté <AC>
+  <tel|tab> <feuille> <détail>` par contrôle) et `build.log`.
+- La ligne de provenance du rapport dit d'où viennent les captures iPad :
+  `provenance ipad appairé` quand l'iPad greffé affiche « Connecté à » dans les
+  60 s, sinon `provenance ipad recette <raison>` — `--source absent`, ou
+  `greffe : pas de « Connecté à » en 60 s` — et les feuilles s'ouvrent alors sur
+  les seules données de recette.
+- Contrôles : largeur « page » (AC-1), hauteur ajustée (AC-2), iPhone inchangé
+  par rapport au relevé `avant` (AC-3), titre exposé et place suffisante entre les
+  boutons de barre (AC-4), libellés des dépôts sans chemin ni bleu lien (AC-5),
+  rangée choisie `Selected` avec coche visible et non lue (AC-6), colonne
+  d'icônes de la Bienvenue (AC-8), Bienvenue absente après balayage puis
+  relance, et après « Continuer » puis relance (AC-9), barre et marges de la
+  fiche d'un souvenir (AC-10).
+- Codes de sortie : en `avant`, 0 dès que les 20 captures sont écrites (les
+  échecs y sont attendus et seulement consignés) ; en `apres`, 0 si tout est
+  `ok`, 1 sur tout `échec` (ou build, appareil, feuille non ouverte en défaut),
+  2 non exécuté (hors macOS, Xcode inutilisable, idb ou Python 3 + Pillow absents,
+  aucun runtime iOS ≥ 26, app non signée).
+
 ### Section Session OMP
 
 La section Session OMP pilote, depuis l'iPad, l'**UNIQUE** session hébergée du
@@ -2431,8 +2520,9 @@ coque macOS en service. Chaque geste et son attendu observable :
    « Aucune session » (ou « Prête à démarrer » si un dossier est déjà mémorisé sur
    le Mac) et le bouton « Lancer la session ».
 2. **Choisir un dépôt** — « Lancer la session » ouvre la feuille : la liste des
-   dépôts connus du Mac, chacun avec son nom et son chemin. Aucune saisie de
-   chemin. Sélectionner un dépôt (marque « ✓ »), puis « Lancer la session ».
+   dépôts connus du Mac, chacun par son seul nom de dossier (parent entre
+   parenthèses s'il a un homonyme). Aucun chemin, aucune saisie de chemin.
+   Sélectionner un dépôt (il porte une coche), puis ✓ (« Lancer la session »).
 3. **Voir la session démarrer** — l'écran montre « Lancement de la session… », puis
    l'en-tête du dépôt avec la pastille « Session active » et le fil. Sur le Mac, la
    fenêtre « Session OMP » affiche la MÊME session, ouverte.
@@ -2441,8 +2531,8 @@ coque macOS en service. Chaque geste et son attendu observable :
    geste. Le champ se vide après un envoi réussi.
 5. **Répondre à un dialogue** — quand la session pose une question, la feuille
    « OMP vous demande » s'ouvre : choisir une option (ou saisir un texte, ou
-   éditer un plan prérempli), « Répondre » ; pour une confirmation, « Confirmer »
-   ou « Refuser » ; « Annuler » annule le dialogue. La feuille se ferme et la
+   éditer un plan prérempli), puis ✓ (« Répondre ») ; pour une confirmation,
+   « Confirmer » ou « Refuser » ; ✕ (« Annuler ») annule le dialogue. La feuille se ferme et la
    session reprend.
 6. **Reconnecter** — fermer puis rouvrir l'app : la section retrouve la session
    dans le même état, et un dialogue posé pendant la déconnexion reste tranchable.
@@ -2556,14 +2646,20 @@ Un crochet de recette se pose en argument de lancement : `-section <rawValue>`
 ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
 `memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
 sept écrans, `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
-section Mémoire sur la fixture partagée `MemoryGraphParity`, et
+section Mémoire sur la fixture partagée `MemoryGraphParity` (`liste` charge la
+même fixture mais reste en mode LISTE et y ouvre la fiche d'un souvenir), et
 `-pipelines.recipe` accepte deux familles de valeurs. `<vide|choisi|rempli>` ouvre
 l'écran Pipelines sur la feuille « Nouvelle feature » avec des dépôts, un titre et
 un besoin forcés (le reste est le chemin réel de la feuille) ; `<fiche|actions|arret>`
 ouvre, avec `-section kanban`, la fiche de la carte de fixture (`actions` la défile
 jusqu'aux gestes, `arret` y ouvre la confirmation d'arrêt) et l'app écrit
-`pipelines-recipe-ready` sur la sortie d'erreur une fois l'état atteint — des
-crochets de recette, pas des fonctionnalités.
+`pipelines-recipe-ready` sur la sortie d'erreur une fois l'état atteint.
+`-projet.recipe lancement` ouvre « Piloter un projet » sur trois dépôts de fixture
+(deux homonymes `mem0-omp`, un `site-vitrine`) avec `mem0-omp (Projets)`
+présélectionné ; `-projet.recipe dialogue` présente « OMP vous demande » sur un
+choix simple, qu'une réponse ou une annulation ferme sans réseau ;
+`-sessionomp.recipe lancement` ouvre « Lancer une session OMP » sur la même
+fixture. Ce sont des crochets de recette, pas des fonctionnalités.
 
 `-stats.recipe <vide|chargement|bascule>` ouvre la section Statistiques sur son
 modèle et son écran réels, nourris par une lecture en mémoire (projets
@@ -2863,16 +2959,17 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
    le bouton « Piloter un projet… ». *(hors appairage, la section affiche le
    bandeau d'attente « Non appairé » / « Mac injoignable — … » et aucun geste actif)*
 2. **Piloter un projet** — toucher « Piloter un projet… » : la feuille liste les
-   dépôts connus de la coque (« Dépôt », chacun avec son nom et son chemin),
-   y compris un dépôt jamais cadré. Choisir un dépôt (il porte la marque ✓), le
-   nom se préremplit, puis « Piloter ». La feuille se ferme et l'en-tête du projet
-   apparaît (nom, chemin du dépôt, pastille « Démarrage… » puis « Active »).
+   dépôts connus de la coque (« Dépôt »), chacun par son seul nom de dossier
+   (parent entre parenthèses s'il a un homonyme, aucun chemin), y compris un
+   dépôt jamais cadré. Choisir un dépôt (il porte une coche), le nom se
+   préremplit, puis ✓ (« Piloter »). La feuille se ferme et l'en-tête du projet
+   apparaît (nom, chemin du dépôt abrégé en `~/…`, pastille « Démarrage… » puis « Active »).
 3. **Répondre au cadrage** — quand la feuille « OMP vous demande » s'ouvre
    (compteur « Question n sur m »), choisir une option ou saisir le texte, puis
-   « Répondre » : l'escalade quitte la file d'attente.
+   ✓ (« Répondre ») : l'escalade quitte la file d'attente.
 4. **Valider le plan** — à l'escalade de revue, « Corriger le plan » ouvre une
-   feuille **préremplie avec le plan courant** ; éditer puis « Répondre » renvoie
-   le texte corrigé, ou « Annuler » refuse.
+   feuille **préremplie avec le plan courant** ; éditer puis ✓ (« Répondre »)
+   renvoie le texte corrigé, ou ✕ (« Annuler ») refuse.
 5. **Suivre la PR** — dans le volet « PR et CI », chaque PR affiche
    « PR #<n> — <titre> » et l'état des trois contrôles requis (« check
    (ubuntu-latest) », « check (macos-latest) », « release-simulation »), chacun en

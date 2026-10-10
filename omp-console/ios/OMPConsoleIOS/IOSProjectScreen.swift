@@ -18,14 +18,20 @@ struct IOSProjectScreen: View {
     @State private var showingLaunch = false
     @State private var showingRefusal = false
     @State private var showingStop = false
+    /// Le dialogue de la recette `-projet.recipe dialogue`, tant qu'il est ouvert.
+    @State private var recipeDialog: RpcDialogRequest?
+
+    /// Le crochet de recette `-projet.recipe <lancement|dialogue>`, quand il est donné.
+    private let recipe: IOSProjectRecipe?
 
     private enum Pane: Hashable {
         case plan
         case document
     }
 
-    init(client: ConsoleClientModel) {
+    init(client: ConsoleClientModel, recipe: IOSProjectRecipe? = nil) {
         self.client = client
+        self.recipe = recipe
         _model = StateObject(wrappedValue: IOSProjectModel(client: client))
     }
 
@@ -64,15 +70,21 @@ struct IOSProjectScreen: View {
             if pane == .document { model.reloadDocumentIfNeeded() }
         }
         .sheet(isPresented: $showingLaunch) {
-            IOSProjectLaunchSheet(client: client) { repoKey, name in
+            IOSProjectLaunchSheet(client: client, recipe: recipe == .lancement ? IOSLaunchRecipe.fixture : nil) { repoKey, name in
                 await model.start(repoKey: repoKey, name: name)
             }
         }
         .sheet(item: pendingDialogBinding) { dialog in
             IOSProjectDialogSheet(dialog: dialog) { request in
-                await model.send(request)
+                // Le dialogue de recette se ferme sans réseau.
+                if recipeDialog != nil {
+                    recipeDialog = nil
+                    return nil
+                }
+                return await model.send(request)
             }
         }
+        .task { applyRecipe() }
         .alert(ProjectViewText.refusalTitle, isPresented: $showingRefusal) {
             Button(SessionConsoleText.cancel, role: .cancel) {}
         } message: {
@@ -145,7 +157,7 @@ struct IOSProjectScreen: View {
                 }
             }
             if let root = client.conduite?.repoRoot {
-                Text(ConsoleFormat.path(root))
+                Text(ConsoleFormat.path(root, home: client.macHomeDirectory))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -260,12 +272,21 @@ struct IOSProjectScreen: View {
 
     private var refusalMessage: String {
         let name = client.conduite?.name ?? model.draft?.name ?? ""
-        let root = ConsoleFormat.path(client.conduite?.repoRoot ?? "")
+        let root = ConsoleFormat.path(client.conduite?.repoRoot ?? "", home: client.macHomeDirectory)
         return ProjectViewText.refusal(name: name, path: root)
     }
 
     private var pendingDialogBinding: Binding<RpcDialogRequest?> {
-        Binding(get: { model.pendingDialog }, set: { _ in })
+        Binding(get: { recipeDialog ?? model.pendingDialog }, set: { _ in })
+    }
+
+    /// Le crochet de recette ouvre sa feuille d'elle-même, sur la fixture.
+    private func applyRecipe() {
+        switch recipe {
+        case .lancement: showingLaunch = true
+        case .dialogue: recipeDialog = IOSLaunchRecipe.dialog
+        case nil: break
+        }
     }
 
     private func startTapped() {

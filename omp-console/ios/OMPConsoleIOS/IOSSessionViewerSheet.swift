@@ -59,7 +59,7 @@ struct IOSSessionViewerSheet: View {
                 IOSSessionThreadView(model: model)
             }
             .iosPanel()
-            .navigationTitle(model.title)
+            .navigationTitle(IOSSessionText.viewerNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -68,16 +68,22 @@ struct IOSSessionViewerSheet: View {
                 }
             }
         }
+        .iosPageSheet()
         .onAppear { model.start() }
         .onDisappear { model.finish() }
         .onChange(of: client.snapshot) { model.refreshRunStatus() }
         .accessibilityIdentifier(IOSSessionsAccessibility.viewer)
     }
 
-    /// L'en-tête : le sous-titre de la session (l'étape et le dépôt) et l'état de
-    /// son run. Le titre est porté par la barre de navigation.
+    /// L'en-tête : le titre de la feature (entier, sur autant de lignes qu'il
+    /// faut), le sous-titre de la session (l'étape et le dépôt) et l'état de son
+    /// run. La barre ne porte que le titre court et statique de la feuille.
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: model.title)
+                .font(.headline)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(IOSSessionsAccessibility.viewerTitle)
             if let subtitle = model.subtitle {
                 Text(subtitle)
                     .font(.caption)
