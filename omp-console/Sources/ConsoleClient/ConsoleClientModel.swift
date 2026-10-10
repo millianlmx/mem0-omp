@@ -32,13 +32,20 @@ public final class ConsoleClientModel: ObservableObject {
     @Published public private(set) var devices: [RemoteDeviceRow] = []
     @Published public private(set) var sessionUpdates: [RemoteSessionsEvent] = []
     @Published public private(set) var hosted: RemoteHostedEvent?
-    /// L'état RÉDUIT de la conduite (S-6/S-11) : posé par l'évènement `conduite`,
-    /// remis à `nil` dès que l'état publié quitte `.connected`.
+    /// L'état RÉDUIT de la conduite (S-6/S-11) : posé par l'évènement `conduite`.
+    /// Hors `.connected`, la dernière charge reçue est CONSERVÉE ; la trame
+    /// `conduite` que le Mac pousse à l'ouverture du flux la remplace à la
+    /// reconnexion.
     @Published public private(set) var conduite: RemoteConduiteStatePayload?
     @Published public private(set) var discovered: DiscoveredMac?
     @Published public private(set) var manualAddress: ClientAddress?
     @Published public private(set) var pairingFailure: ClientPairingFailure?
     @Published public private(set) var localNetworkDenied = false
+    /// La tentative en cours suit-elle un échec ? Vrai après l'échec d'une
+    /// tentative (`lastFailure`, gardé pendant les relances automatiques) ou
+    /// après `ClientRetry.searchGrace` passées en `.searching` sans Mac trouvé.
+    /// Recalculé à chaque `publishState()`, toujours `false` en `.connected`.
+    @Published public private(set) var attemptFollowsFailure = false
     /// Le statut d'appairage (indépendant de `state`) : `.restoring` tant que le
     /// trousseau n'est pas lu, puis `.paired`, `.unpaired` ou `.refused`.
     @Published public private(set) var pairing: ClientPairingStatus = .restoring
@@ -78,6 +85,8 @@ public final class ConsoleClientModel: ObservableObject {
     private let preferences: any ClientPreferences
     private let tokens: any TokenStore
     private let pacer: any ClientPacer
+    /// L'attente du délai de recherche Bonjour (`ClientRetry.searchGrace`).
+    private let searchPacer: any ClientPacer
     private let pathSource: any ClientPathSource
     private let deviceName: String
     private let localProtocolVersion: Int
@@ -104,6 +113,10 @@ public final class ConsoleClientModel: ObservableObject {
     private var lastFailure: ClientEndpoint?
     private var attempt = 0
     private var connection: Task<Void, Never>?
+    /// Resté `.searching` au-delà de `ClientRetry.searchGrace` ; remis à `false`
+    /// à chaque `beginConnection` et à `stop()`.
+    private var searchExpired = false
+    private var searchTask: Task<Void, Never>?
     /// Les abonnés du flux d'une session vivante (S-8), par fichier. Un dictionnaire
     /// de continuateurs, pas un `@Published` : chacun ne voit QUE son fichier.
     private var sessionFeeds: [String: [UUID: AsyncStream<RemoteSessionFeedItem>.Continuation]] = [:]
@@ -119,7 +132,8 @@ public final class ConsoleClientModel: ObservableObject {
         pathSource: any ClientPathSource,
         deviceName: String = "iPhone",
         localProtocolVersion: Int = ConsoleAPI.protocolVersion,
-        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }
+        nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
+        searchPacer: any ClientPacer = LiveClientPacer()
     ) {
         self.transport = transport
         self.discovery = discovery
@@ -130,6 +144,7 @@ public final class ConsoleClientModel: ObservableObject {
         self.deviceName = deviceName
         self.localProtocolVersion = localProtocolVersion
         self.nowMs = nowMs
+        self.searchPacer = searchPacer
     }
 
     /// La production : le vrai transport, la vraie découverte, le vrai trousseau.
@@ -153,6 +168,11 @@ public final class ConsoleClientModel: ObservableObject {
         if let components, components.ompInstalled == false { return .missing }
         return .available(URL(fileURLWithPath: components?.ompPath ?? ""))
     }
+
+    /// Le dossier personnel du Mac, publié par `components` : l'app iOS abrège les
+    /// chemins du Mac en « ~/… » contre LUI, jamais contre son bac à sable. `nil`
+    /// avant la première trame `components`, ou face à un Mac antérieur.
+    public var macHomeDirectory: String? { components?.homeDirectory }
 
     /// La feuille de bienvenue a été vue : la préférence passe à `true` (S-8).
     public func closeWelcome() {
@@ -181,6 +201,9 @@ public final class ConsoleClientModel: ObservableObject {
         running = false
         connection?.cancel()
         connection = nil
+        searchTask?.cancel()
+        searchTask = nil
+        searchExpired = false
         discovery.stop()
         pathSource.stop()
     }
@@ -885,6 +908,9 @@ public final class ConsoleClientModel: ObservableObject {
         if resetCounter { attempt = 0 }
         connection?.cancel()
         connection = nil
+        searchTask?.cancel()
+        searchTask = nil
+        searchExpired = false
         connectedEndpoint = nil
         guard running, !revoked, incompatible == nil else {
             connectingEndpoint = nil
@@ -898,6 +924,7 @@ public final class ConsoleClientModel: ObservableObject {
         }
         guard let endpoint = effectiveEndpoint else {
             connectingEndpoint = nil
+            if hasNetwork { startSearchGrace() }
             publishState()
             return
         }
@@ -911,6 +938,23 @@ public final class ConsoleClientModel: ObservableObject {
         publishState()
         connection = Task { @MainActor [weak self] in
             await self?.connectionLoop(endpoint: endpoint)
+        }
+    }
+
+    /// `.searching` (jeton, réseau, ni révoqué ni verrouillé, aucun Mac) : passé
+    /// `ClientRetry.searchGrace`, la recherche compte comme un échec. Un sommeil
+    /// interrompu (annulation ou autre) ne change rien.
+    private func startSearchGrace() {
+        let pacer = searchPacer
+        searchTask = Task { @MainActor [weak self] in
+            do {
+                try await pacer.sleep(seconds: ClientRetry.searchGrace)
+            } catch {
+                return
+            }
+            guard let self, !Task.isCancelled, self.effectiveEndpoint == nil else { return }
+            self.searchExpired = true
+            self.publishState()
         }
     }
 
@@ -1158,9 +1202,11 @@ public final class ConsoleClientModel: ObservableObject {
             connectingEndpoint: connectingEndpoint,
             lastFailure: lastFailure
         ))
-        // Hors `.connected`, la conduite poussée n'est plus la vérité affichable :
-        // elle repasse à `nil` (S-6/S-7), jamais un état de repli local.
-        if case .connected = state {} else { conduite = nil }
+        if case .connected = state {
+            attemptFollowsFailure = false
+        } else {
+            attemptFollowsFailure = lastFailure != nil || searchExpired
+        }
         // Le statut d'appairage n'est republié qu'à son CHANGEMENT : la feuille
         // Connexion s'ouvre sur un passage, jamais sur une republication.
         let status = resolvedPairing

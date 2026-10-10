@@ -1,16 +1,17 @@
 import ConsoleClient
 import ConsoleCore
-import Foundation
+import SwiftUI
 
-/// L'état de l'écran Pipelines (S-4), dans l'ordre de priorité : chargement,
-/// déconnecté sans instantané, puis l'ardoise (absente, vide ou peuplée). Une
-/// fonction pure de `(instantané, état de connexion)` — l'écran ne tient AUCUN
-/// cache propre (S-3).
+/// L'état de l'écran Pipelines (S-4), dans l'ordre de priorité : l'ardoise
+/// reçue (absente, vide ou peuplée), le chargement, puis le composant d'état de
+/// connexion. Une fonction pure de `(instantané, statut de connexion)` — l'écran
+/// ne tient AUCUN cache propre (S-3).
 enum PipelinesScreenState: Equatable {
     /// L'app est connectée, l'instantané n'est pas encore arrivé.
     case loading
-    /// L'app n'est pas connectée et n'a jamais reçu d'instantané.
-    case noSnapshot
+    /// L'app n'est pas connectée et n'a jamais reçu d'instantané : le composant
+    /// d'état de connexion en plein écran (etats-non-connecte-heterogenes-ios, S-4).
+    case unavailable(IOSConnectionStatus)
     /// Un instantané connu : absent, vide, ou l'ardoise.
     case board(KanbanBoardState)
 }
@@ -78,19 +79,14 @@ enum PipelinesModel {
         return !refreshing
     }
 
-    /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée si
-    /// la connexion est ensuite perdue) ; connectée sans instantané = chargement ;
-    /// pas connectée sans instantané = déconnecté explicite.
-    static func screen(connection: ClientState, board: KanbanBoardState?) -> PipelinesScreenState {
+    /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée,
+    /// sous le bandeau de connexion, si la connexion est ensuite perdue) ;
+    /// connectée sans instantané = chargement ; pas connectée sans instantané =
+    /// le composant d'état de connexion.
+    static func screen(connection: IOSConnectionStatus, board: KanbanBoardState?) -> PipelinesScreenState {
         if let board { return .board(board) }
-        if case .connected = connection { return .loading }
-        return .noSnapshot
-    }
-
-    /// Le bandeau de l'état de connexion, `nil` quand l'app est connectée.
-    static func connectionBanner(connection: ClientState) -> ConsoleStatus? {
-        if case .connected = connection { return nil }
-        return ConsoleStatus(text: ConnectionText.state(connection), tone: .attention)
+        if connection == .connected { return .loading }
+        return .unavailable(connection)
     }
 
     /// Les voies que l'en-tête peut replier : les deux voies terminales.
@@ -109,6 +105,23 @@ enum PipelinesModel {
             let foldable = foldableLanes.contains(content.lane)
             return PipelinesLaneRow(content: content, foldable: foldable, folded: foldable && !unfolded.contains(content.lane))
         }
+    }
+
+    /// La largeur d'une voie en largeur régulière (iPad) : `scaled`
+    /// (`IOSMetrics.laneWidth` mise à l'échelle par Dynamic Type), plafonnée à la
+    /// largeur visible du défilement moins la marge de fin, pour qu'une voie
+    /// défilée jusqu'au bout tienne entière à l'écran. Un conteneur pas encore
+    /// mesuré (ou plus étroit que la marge) laisse `scaled`. Le contenu de la voie
+    /// n'intervient jamais : toutes les voies ont la même largeur.
+    nonisolated static func laneWidth(scaled: CGFloat, container: CGFloat, endMargin: CGFloat) -> CGFloat {
+        let visible = container - endMargin
+        return visible > 0 ? min(scaled, visible) : scaled
+    }
+
+    /// L'axe de l'en-tête d'une voie (symbole, titre, compte) : la règle des
+    /// rangées de l'Accueil, empilé aux tailles d'accessibilité.
+    static func headerAxis(_ size: DynamicTypeSize) -> IOSHomeRowAxis {
+        IOSHomeContent.rowAxis(size, width: .regular)
     }
 
     /// Le nom lisible d'un sélecteur d'après le catalogue servi par le Mac

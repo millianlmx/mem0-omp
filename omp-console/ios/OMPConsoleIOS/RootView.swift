@@ -28,6 +28,9 @@ struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
+    /// Les gestes de carte de l'Accueil : l'état en vol survit à une sortie puis un
+    /// retour sur l'Accueil.
+    @StateObject private var homeGestures = IOSHomeGestureModel()
     @State private var showConnection: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showWelcome = false
@@ -46,6 +49,12 @@ struct RootView: View {
     private let cardRecipe: PipelinesCardRecipe?
     /// Le crochet de recette `-stats.recipe`, quand il est donné.
     private let statsRecipe: IOSStatsRecipe?
+    /// Le crochet de recette `-pipelines.board`, quand il est donné.
+    private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
+    /// Le crochet de recette `-projet.recipe`, quand il est donné.
+    private let projectRecipe: IOSProjectRecipe?
+    /// Le crochet de recette `-sessionomp.recipe`, quand il est donné.
+    private let sessionOmpRecipe: IOSSessionOmpRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -60,6 +69,9 @@ struct RootView: View {
         pipelinesRecipe: IOSPipelinesRecipe? = nil,
         cardRecipe: PipelinesCardRecipe? = nil,
         statsRecipe: IOSStatsRecipe? = nil,
+        pipelinesBoardRecipe: IOSPipelinesBoardRecipe? = nil,
+        projectRecipe: IOSProjectRecipe? = nil,
+        sessionOmpRecipe: IOSSessionOmpRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
@@ -71,6 +83,9 @@ struct RootView: View {
         self.pipelinesRecipe = pipelinesRecipe
         self.cardRecipe = cardRecipe
         self.statsRecipe = statsRecipe
+        self.pipelinesBoardRecipe = pipelinesBoardRecipe
+        self.projectRecipe = projectRecipe
+        self.sessionOmpRecipe = sessionOmpRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -109,6 +124,7 @@ struct RootView: View {
                 if selection == .home {
                     HomeView(
                         client: client,
+                        gestures: homeGestures,
                         recipe: recipe,
                         recipeRow: recipeRow,
                         showConnection: $showConnection,
@@ -123,13 +139,17 @@ struct RootView: View {
                         memoryRecipe: memoryRecipe,
                         pipelinesRecipe: pipelinesRecipe,
                         cardRecipe: cardRecipe,
-                        statsRecipe: statsRecipe
+                        statsRecipe: statsRecipe,
+                        pipelinesBoardRecipe: pipelinesBoardRecipe,
+                        projectRecipe: projectRecipe,
+                        sessionOmpRecipe: sessionOmpRecipe,
+                        showConnection: $showConnection
                     )
                 }
             }
             .toolbar { connectionToolbarItem }
         }
-        .sheet(isPresented: $showWelcome, onDismiss: presentConnectionIfNeeded) {
+        .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
             HomeWelcomeSheet(client: client)
         }
         .sheet(isPresented: $showConnection) {
@@ -174,6 +194,13 @@ struct RootView: View {
         } else {
             presentConnectionIfNeeded()
         }
+    }
+
+    /// Toute fermeture de la bienvenue (bouton « Continuer » ou balayage) l'enregistre
+    /// comme vue (`closeWelcome()` est idempotent), puis la connexion suit si besoin.
+    private func welcomeDismissed() {
+        client.closeWelcome()
+        presentConnectionIfNeeded()
     }
 
     private var welcomeDue: Bool {

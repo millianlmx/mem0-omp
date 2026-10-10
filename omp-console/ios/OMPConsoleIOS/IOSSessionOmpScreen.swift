@@ -3,8 +3,12 @@
 //
 // Un seul écran, quatre zones : en-tête (dépôt + pastille d'état), bandeau d'état,
 // fil réutilisé `IOSSessionThreadView`, composeur et actions. Chaque état est
-// couvert (dégradé, chargement, vide, lancement, arrêt, vivant, arrêtée,
+// couvert (non connecté, chargement, vide, lancement, arrêt, vivant, arrêtée,
 // interrompue, échec) ; aucun `onTapGesture`, uniquement des contrôles système.
+//
+// Hors connexion (etats-non-connecte-heterogenes-ios, S-4) : sans état servi reçu,
+// le composant d'état de connexion partagé SEUL, hors du panneau ; avec un état
+// conservé, le panneau garde son contenu sous le bandeau du composant.
 //
 // Aucun littéral alphabétique (les mots viennent de `IOSSessionOmpText`,
 // `SessionConsoleText`, `ProjectViewText` ou `ConnectionText`) ; la feuille de
@@ -17,75 +21,89 @@ import SwiftUI
 struct IOSSessionOmpScreen: View {
     @ObservedObject var client: ConsoleClientModel
     @StateObject private var model: IOSSessionOmpModel
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
 
     @State private var showingLaunch = false
     @State private var showingStop = false
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
 
-    init(client: ConsoleClientModel) {
+    /// Le crochet de recette `-sessionomp.recipe lancement`, quand il est donné.
+    private let recipe: IOSSessionOmpRecipe?
+
+    init(client: ConsoleClientModel, recipe: IOSSessionOmpRecipe? = nil, showConnection: Binding<Bool>) {
         self.client = client
+        self.recipe = recipe
+        _showConnection = showConnection
         _model = StateObject(wrappedValue: IOSSessionOmpModel(client: client))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if let error = model.error {
-                Text(error)
-                    .font(.callout)
-                    .iosBanner(tone: .danger)
-                    .accessibilityIdentifier(SessionOmpAccessibility.banner)
-            }
+        Group {
             switch model.surface {
-            case .degraded(let message):
-                Text(message)
-                    .font(.callout)
-                    .iosBanner(tone: .attention)
-                    .accessibilityIdentifier(SessionOmpAccessibility.banner)
+            case .unavailable(let status):
+                // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
+                // du panneau (S-4).
+                IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             case .loading:
-                HStack(spacing: 8) {
-                    ProgressView()
+                panel {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                    }
+                    .accessibilityIdentifier(SessionOmpAccessibility.loading)
                 }
-                .accessibilityIdentifier(SessionOmpAccessibility.loading)
             case .empty:
-                emptyState
-                actions
+                panel {
+                    emptyState
+                    actions
+                }
             case .launching:
-                header
-                startingState(ProjectViewText.sessionStarting, id: SessionOmpAccessibility.launching)
+                panel {
+                    header
+                    startingState(ProjectViewText.sessionStarting, id: SessionOmpAccessibility.launching)
+                }
             case .stopping:
-                header
-                startingState(ProjectViewText.sessionClosing, id: SessionOmpAccessibility.stopping)
+                panel {
+                    header
+                    startingState(ProjectViewText.sessionClosing, id: SessionOmpAccessibility.stopping)
+                }
             case .live:
-                sessionBody
-                actions
+                panel {
+                    sessionBody
+                    actions
+                }
             case .stopped:
-                header
-                Text(SessionConsoleText.Status.stopped)
-                    .font(.callout)
-                    .iosBanner(tone: .neutral)
-                    .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                sessionBody
-                actions
+                panel {
+                    header
+                    Text(SessionConsoleText.Status.stopped)
+                        .font(.callout)
+                        .iosBanner(tone: .neutral)
+                        .accessibilityIdentifier(SessionOmpAccessibility.banner)
+                    sessionBody
+                    actions
+                }
             case .dead:
-                header
-                Text(SessionConsoleText.interrupted)
-                    .font(.callout)
-                    .iosBanner(tone: .attention)
-                    .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                sessionBody
-                actions
+                panel {
+                    header
+                    Text(SessionConsoleText.interrupted)
+                        .font(.callout)
+                        .iosBanner(tone: .attention)
+                        .accessibilityIdentifier(SessionOmpAccessibility.banner)
+                    sessionBody
+                    actions
+                }
             case .failed(let message):
-                header
-                Text(message)
-                    .font(.callout)
-                    .iosBanner(tone: .danger)
-                    .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                actions
+                panel {
+                    header
+                    Text(message)
+                        .font(.callout)
+                        .iosBanner(tone: .danger)
+                        .accessibilityIdentifier(SessionOmpAccessibility.banner)
+                    actions
+                }
             }
         }
-        .iosPanel()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(ConsoleSection.session.title)
         .onAppear { model.appeared() }
         .onDisappear { model.disappeared() }
@@ -94,9 +112,13 @@ struct IOSSessionOmpScreen: View {
         }
         .onChange(of: client.hosted) { model.syncThread() }
         .sheet(isPresented: $showingLaunch) {
-            IOSSessionOmpLaunchSheet(client: client) { repoKey in
+            IOSSessionOmpLaunchSheet(client: client, recipe: recipe == .lancement ? IOSLaunchRecipe.fixture : nil) { repoKey in
                 await model.launch(repoKey: repoKey)
             }
+        }
+        .task {
+            // Le crochet de recette ouvre la feuille d'elle-même, sur la fixture.
+            if recipe == .lancement { showingLaunch = true }
         }
         .sheet(item: pendingDialogBinding) { dialog in
             IOSProjectDialogSheet(dialog: dialog) { request in
@@ -109,12 +131,37 @@ struct IOSSessionOmpScreen: View {
             titleVisibility: .visible
         ) {
             Button(SessionConsoleText.stop, role: .destructive) {
+                guard model.connection.gesturesEnabled else { return }
                 Task { await model.stop() }
             }
             Button(SessionConsoleText.cancel, role: .cancel) {}
         } message: {
             Text(IOSSessionOmpText.stopConfirmMessage)
         }
+    }
+
+    // MARK: - Panneau
+
+    /// Le panneau de l'écran, ancré en haut : le bandeau de connexion en tête quand
+    /// l'état conservé est affiché hors connexion (S-4) — sinon l'erreur de geste,
+    /// tue hors connexion —, puis l'état.
+    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if model.connection != .connected {
+                IOSConnectionStateView(status: model.connection, layout: .banner, onConnect: { showConnection = true })
+            } else if let error = model.error {
+                Text(error)
+                    .font(.callout)
+                    .iosBanner(tone: .danger)
+                    .accessibilityIdentifier(SessionOmpAccessibility.banner)
+            }
+            content()
+        }
+        .iosPanel()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // `.contain` : sans lui, l'identifiant d'écran écrase ceux des gestes
+        // (composeur, « Envoyer », « Relancer »…), illisibles par la recette S-6.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(SessionOmpAccessibility.screen)
     }
 
@@ -180,10 +227,11 @@ struct IOSSessionOmpScreen: View {
                     .textFieldStyle(.roundedBorder)
                     .focused($composerFocused)
                     .onSubmit { submit() }
+                    .disabled(!model.connection.gesturesEnabled)
                     .accessibilityIdentifier(SessionOmpAccessibility.composer)
                 Button(SessionConsoleText.send, action: submit)
                     .buttonStyle(.borderedProminent)
-                    .disabled(!canSend)
+                    .disabled(!model.connection.gesturesEnabled || !canSend)
                     .accessibilityIdentifier(SessionOmpAccessibility.send)
             }
             Text(IOSSessionOmpModel.composerHint(state: client.hosted?.state, dialogs: dialogs))
@@ -197,6 +245,7 @@ struct IOSSessionOmpScreen: View {
             if model.canLaunch {
                 Button(SessionConsoleText.launch) { showingLaunch = true }
                     .buttonStyle(.borderedProminent)
+                    .disabled(!model.connection.gesturesEnabled)
                     .accessibilityIdentifier(SessionOmpAccessibility.launch)
             }
             if model.canRelaunch {
@@ -204,11 +253,13 @@ struct IOSSessionOmpScreen: View {
                     Task { await model.relaunch() }
                 }
                 .buttonStyle(.bordered)
+                .disabled(!model.connection.gesturesEnabled)
                 .accessibilityIdentifier(SessionOmpAccessibility.relaunch)
             }
             if model.canStop {
                 Button(SessionConsoleText.stop) { showingStop = true }
                     .buttonStyle(.bordered)
+                    .disabled(!model.connection.gesturesEnabled)
                     .accessibilityIdentifier(SessionOmpAccessibility.stop)
             }
         }
@@ -222,8 +273,10 @@ struct IOSSessionOmpScreen: View {
         IOSSessionOmpModel.canSendPrompt(state: client.hosted?.state, dialogs: dialogs, text: draft)
     }
 
+    /// Le dialogue n'est présenté que connecté ; encore en attente, il se rouvre à
+    /// la reconnexion (etats-non-connecte-heterogenes-ios, S-5).
     private var pendingDialogBinding: Binding<RpcDialogRequest?> {
-        Binding(get: { dialogs.first }, set: { _ in })
+        Binding(get: { model.connection == .connected ? dialogs.first : nil }, set: { _ in })
     }
 
     private func submit() {

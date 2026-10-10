@@ -125,7 +125,7 @@ final class MemoryGraphModel: ObservableObject {
         layoutSeed: UInt64 = MemoryGraphLayout.defaultSeed,
         layoutIterations: Int = MemoryGraphLayout.defaultIterations
     ) {
-        let config = MemoryServiceConfig.fromEnvironment(environment)
+        let config = MemoryServiceConfig.resolved(environment: environment, paths: paths)
         self.service = service ?? HTTPMemoryService(config: config)
         self.address = config.baseURL.absoluteString
         self.paths = paths

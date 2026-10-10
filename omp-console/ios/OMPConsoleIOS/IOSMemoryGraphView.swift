@@ -13,8 +13,13 @@ import ConsoleCore
 import SwiftUI
 
 struct IOSMemoryGraphView: View {
-    @ObservedObject var client: ConsoleClientModel
     @ObservedObject var model: IOSMemoryGraphModel
+    /// Le statut présenté par l'écran Mémoire. Hors connexion, l'écran ne rend
+    /// cette vue que sur un graphe reçu (`IOSMemoryGraphModel.hasData`) : il reste
+    /// affiché sous le bandeau (etats-non-connecte-heterogenes-ios, S-4).
+    let connection: IOSConnectionStatus
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
 
     /// Le panneau du graphe occupe toute la hauteur restante et aligne son contenu en
     /// haut à gauche, dans chaque état (S-7) : sans ce cadre, le panneau hors
@@ -37,40 +42,38 @@ struct IOSMemoryGraphView: View {
     // MARK: - Chaque état du graphe
 
     @ViewBuilder private var content: some View {
-        if !IOSMemoryGraphModel.gesturesEnabled(client.state), model.state == .idle {
-            banner(ConnectionText.state(client.state), tone: .attention)
+        if connection != .connected {
+            IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+        }
+        switch model.state {
+        case .idle, .loading:
+            loading
+        case .failed(.macTimedOut):
+            banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
+            retry
+        case .noProject:
+            card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
+        case .serviceOutdated:
+            banner(IOSMemoryText.graphServiceOutdated, tone: .attention)
+            retry
+        case .macOutdated:
+            banner(IOSMemoryText.graphMacOutdated, tone: .attention)
+            retry
+        case .failed(.macUnreachable):
+            banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
             card(IOSMemoryText.noData)
-        } else {
-            switch model.state {
-            case .idle, .loading:
-                loading
-            case .failed(.macTimedOut):
-                banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
-                retry
-            case .noProject:
-                card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
-            case .serviceOutdated:
-                banner(IOSMemoryText.graphServiceOutdated, tone: .attention)
-                retry
-            case .macOutdated:
-                banner(IOSMemoryText.graphMacOutdated, tone: .attention)
-                retry
-            case .failed(.macUnreachable):
-                banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
-                card(IOSMemoryText.noData)
-                retry
-            case let .failed(cause):
-                banner(IOSMacErrorText.message(for: cause), tone: .danger)
-                retry
-            case .empty:
-                ContentUnavailableView(
-                    MemoryText.emptySummaryTitle,
-                    systemImage: "brain",
-                    description: Text(verbatim: MemoryText.emptyGraphDescription)
-                )
-            case .graph:
-                graphBody
-            }
+            retry
+        case let .failed(cause):
+            banner(IOSMacErrorText.message(for: cause), tone: .danger)
+            retry
+        case .empty:
+            ContentUnavailableView(
+                MemoryText.emptySummaryTitle,
+                systemImage: "brain",
+                description: Text(verbatim: MemoryText.emptyGraphDescription)
+            )
+        case .graph:
+            graphBody
         }
     }
 
@@ -293,6 +296,7 @@ struct IOSMemoryGraphView: View {
                 .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                 .contentShape(Rectangle())
         }
+        .disabled(!connection.gesturesEnabled)
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
     }
 

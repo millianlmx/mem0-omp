@@ -84,7 +84,7 @@ struct IOSMemoryPagingTests {
     }
 
     private func more(_ model: IOSMemoryModel) -> IOSMemoryMore? {
-        guard case let .summary(_, _, _, more) = model.state else { return nil }
+        guard case let .summary(_, _, _, more) = model.state(connection: .connected) else { return nil }
         return more
     }
 
@@ -97,7 +97,7 @@ struct IOSMemoryPagingTests {
 
         #expect(reader.calls == [.init(scope: nil, offset: 0, limit: nil)])
         #expect(ids(model) == (0..<100).map { "m" + String($0) })
-        #expect(model.state == .summary(
+        #expect(model.state(connection: .connected) == .summary(
             scope: "projet",
             total: 250,
             rows: (0..<100).map(PagingMemoryReader.row),

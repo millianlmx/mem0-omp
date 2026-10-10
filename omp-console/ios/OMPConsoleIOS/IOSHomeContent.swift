@@ -23,14 +23,14 @@ enum IOSHomeAccessibility {
     static let loading = "ios.home.loading"
     static let firstRun = "ios.home.firstRun"
     static let macMissingOMP = "ios.home.macMissingOMP"
-    static let disconnected = "ios.home.disconnected"
-    static let connect = "ios.home.connect"
     static let setupBanner = "ios.home.setupBanner"
     static let launchBanner = "ios.home.launchBanner"
     static let launchBannerDismiss = "ios.home.launchBanner.dismiss"
     static let allPipelines = "ios.home.allPipelines"
 
     static let answerSheet = "ios.home.answer.sheet"
+    /// Le titre de la carte, en tête du formulaire de la feuille « Répondre ».
+    static let answerTitle = "ios.home.answer.title"
     static let answerQuestion = "ios.home.answer.question"
     static let answerText = "ios.home.answer.text"
     static let answerCancel = "ios.home.answer.cancel"
@@ -52,6 +52,8 @@ enum IOSHomeAccessibility {
     static func resume(_ id: String) -> String { "ios.home.resume.\(id)" }
     static func delivered(_ id: String) -> String { "ios.home.delivered.\(id)" }
     static func deliveredOpen(_ id: String) -> String { "ios.home.delivered.open.\(id)" }
+    static func rowTitle(_ id: String) -> String { "ios.home.row.title.\(id)" }
+    static func failure(_ cardId: String) -> String { "ios.home.failure.\(cardId)" }
     static func answerOption(_ index: Int) -> String { "ios.home.answer.option.\(index)" }
 }
 
@@ -78,6 +80,15 @@ enum IOSHomeContent {
     /// Le geste principal d'une carte d'attente (S-11).
     static func attentionButton(_ attention: HomeAttention) -> HomeCardAction {
         HomePresentation.cardAction(attention)
+    }
+
+    /// Le geste d'attente exige-t-il le Mac ? Seul « Voir dans Pipelines » reste
+    /// local et tapable hors connexion (etats-non-connecte-heterogenes-ios, S-5).
+    static func attentionNeedsMac(_ action: HomeCardAction) -> Bool {
+        switch action {
+        case .answer, .validate, .accept: true
+        case .open: false
+        }
     }
 
     /// La zone à laquelle la feuille « Répondre » répond (S-13), ou aucune.
@@ -169,13 +180,19 @@ enum IOSHomeContent {
     }
 }
 
-/// La disposition d'une rangée « titre | puce | bouton » de l'Accueil.
-enum IOSHomeRowAxis: Equatable { case horizontal, stacked }
+/// La disposition d'une rangée « titre | puce | bouton » de l'Accueil : une ligne,
+/// deux lignes (titre, puis puce + bouton), ou empilée (chacun sur sa ligne).
+enum IOSHomeRowAxis: Equatable { case horizontal, twoLine, stacked }
 
 extension IOSHomeContent {
-    /// `.stacked` si et seulement si `size.isAccessibilitySize`, sinon `.horizontal`.
-    static func rowAxis(_ size: DynamicTypeSize) -> IOSHomeRowAxis {
-        size.isAccessibilitySize ? .stacked : .horizontal
+    /// L'axe d'une rangée selon la taille de texte SYSTÈME et la classe de largeur,
+    /// la première règle vraie gagnant : taille d'accessibilité → `.stacked`, quelle
+    /// que soit la largeur ; largeur compacte (iPhone, iPad en Split View étroit) →
+    /// `.twoLine` ; largeur régulière ou inconnue → `.horizontal`.
+    static func rowAxis(_ size: DynamicTypeSize, width: UserInterfaceSizeClass?) -> IOSHomeRowAxis {
+        if size.isAccessibilitySize { return .stacked }
+        if width == .compact { return .twoLine }
+        return .horizontal
     }
 
     /// La plus grande taille de texte des boutons de rangée : au-delà, « Reprendre »
@@ -196,5 +213,41 @@ extension IOSHomeContent {
         let rows = dashboard.running + dashboard.delivered
         guard rows.indices.contains(index) else { return nil }
         return rows[index].id
+    }
+}
+
+extension IOSHomeContent {
+    /// Le message d'échec d'un geste de l'Accueil, affiché sur sa carte : ce qui
+    /// n'a pas eu lieu, puis la cause et le remède du traducteur partagé
+    /// `IOSMacErrorText` (un motif du Mac n'y passe que s'il ne laisse fuir ni URL,
+    /// ni JSON, ni code HTTP). `nil` pour une révocation (401) : l'Accueil passe
+    /// alors à l'état déconnecté, aucun message n'est affiché sur la carte.
+    static func gestureFailure(_ gesture: IOSHomeGesture, error: Error) -> String? {
+        guard let cause = IOSMacErrorText.message(for: error) else { return nil }
+        let headline: String
+        switch gesture {
+        case .validateSpecs: headline = IOSHomeText.specsFailed
+        case .acceptReview: headline = IOSHomeText.reviewFailed
+        case .resume: headline = IOSHomeText.resumeFailed
+        }
+        return IOSHomeText.gestureFailure(headline, cause: cause)
+    }
+
+    /// Les gestes que le tableau de bord offre : « Valider les specs » et « Accepter
+    /// la revue » des cartes « À vous », « Reprendre » des rangées « En cours ». Un
+    /// échec ou une confirmation dont la clé n'y figure plus est effacé.
+    static func offeredGestures(_ dashboard: HomeDashboard) -> Set<IOSHomeGestureKey> {
+        var offered: Set<IOSHomeGestureKey> = []
+        for attention in dashboard.attention {
+            switch attentionButton(attention) {
+            case .validate: offered.insert(IOSHomeGestureKey(cardId: attention.card.id, gesture: .validateSpecs))
+            case .accept: offered.insert(IOSHomeGestureKey(cardId: attention.card.id, gesture: .acceptReview))
+            case .answer, .open: break
+            }
+        }
+        for card in dashboard.running where KanbanActionPresentation.resumable(card) && card.action != nil {
+            offered.insert(IOSHomeGestureKey(cardId: card.id, gesture: .resume))
+        }
+        return offered
     }
 }

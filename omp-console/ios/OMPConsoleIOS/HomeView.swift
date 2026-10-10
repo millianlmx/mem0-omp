@@ -1,17 +1,25 @@
-// L'écran Accueil de l'app iOS (S-10, S-11) : cinq états — déconnecté, « OMP
-// absent sur le Mac », chargement, premiers pas, tableau de bord — et, dans le
-// tableau de bord, les deux bandeaux, la section « À vous », « En cours » et
-// « Livrées récemment ».
+// L'écran Accueil de l'app iOS (S-10, S-11) : cinq états — indisponible (le
+// composant partagé d'état de connexion en plein écran), « OMP absent sur le
+// Mac », chargement, premiers pas, tableau de bord — et, dans le tableau de bord,
+// les deux bandeaux, la section « À vous », « En cours » et « Livrées récemment ».
+// Hors connexion, une ardoise déjà reçue reste affichée sous le bandeau du
+// composant partagé (feature etats-non-connecte-heterogenes-ios, S-4).
 //
 // Aucune phrase n'est composée ici : les mots viennent du noyau partagé
 // (`HomeText`, `ActionsText`, `ContractText`) et de `IOSHomeText` ; la vue rend
 // les décisions pures de `IOSHomeState` et `IOSHomeContent`. Les rangées « En
-// cours » et « Livrées récemment » s'empilent aux tailles d'accessibilité
-// (`IOSHomeContent.rowAxis`) et restent sur une ligne aux tailles standard.
+// cours » et « Livrées récemment » suivent `IOSHomeContent.rowAxis` : une ligne en
+// largeur régulière, deux lignes (titre, puis puce + bouton) en largeur compacte,
+// empilées aux tailles d'accessibilité.
+//
+// Les gestes de carte (« Valider les specs », « Accepter la revue », « Reprendre »)
+// passent par `IOSHomeGestureModel`, possédé par la racine : bouton désactivé avec
+// « Envoi en cours » jusqu'à la réponse du Mac, confirmation pour les specs
+// seulement, échec affiché sur la carte, aucun message de succès.
 //
 // Surfaces : `iosPanel()`/`iosCard()`/`iosBanner(tone:)`/`IOSStatusChip`, les
 // composants système, jamais un contrôle maison (`onTapGesture` interdit ; les
-// lignes tappables sont des `Button`).
+// seules cibles sont des `Button`, le texte d'une rangée n'en est pas une).
 
 import ConsoleClient
 import ConsoleCore
@@ -25,12 +33,14 @@ private struct SelectedCard: Identifiable {
 
 struct HomeView: View {
     @ObservedObject var client: ConsoleClientModel
+    /// Les gestes de carte : état en vol, échecs, confirmation des specs.
+    @ObservedObject var gestures: IOSHomeGestureModel
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     let recipe: IOSHomeRecipe?
     /// Le crochet de recette `-home.row`, quand il est donné : la rangée à amener en
     /// haut du tableau de bord (captures des rangées en Dynamic Type).
     let recipeRow: Int?
-    /// La feuille de connexion de la racine, ouverte par l'état déconnecté.
+    /// La feuille de connexion de la racine, ouverte par « Se connecter ».
     @Binding var showConnection: Bool
     /// Sélection d'une section depuis l'Accueil (« Tout afficher », « Voir dans Pipelines »).
     let onSelectSection: (ConsoleSection) -> Void
@@ -42,34 +52,41 @@ struct HomeView: View {
     @State private var answerCard: SelectedCard?
     @State private var contractCard: SelectedCard?
     @State private var dismissedBannerID: String?
-    @State private var gestureFailure: String?
 
     init(
         client: ConsoleClientModel,
+        gestures: IOSHomeGestureModel,
         recipe: IOSHomeRecipe? = nil,
         recipeRow: Int? = nil,
         showConnection: Binding<Bool>,
         onSelectSection: @escaping (ConsoleSection) -> Void
     ) {
         self.client = client
+        self.gestures = gestures
         self.recipe = recipe
         self.recipeRow = recipeRow
         _showConnection = showConnection
         self.onSelectSection = onSelectSection
     }
 
+    /// Le statut de connexion présenté : celui du crochet de recette, sinon celui
+    /// du client.
+    private var connection: IOSConnectionStatus {
+        recipe?.connection ?? IOSConnectionStatus.of(client)
+    }
+
     /// L'état de l'Accueil : le crochet de recette prime, sinon la machine à
     /// états partagée.
     private var state: IOSHomeState {
         if let recipe { return recipe.homeState }
-        return IOSHomeState.resolve(state: client.state, board: client.board, omp: client.omp)
+        return IOSHomeState.resolve(connection: connection, board: client.board, omp: client.omp)
     }
 
     var body: some View {
         Group {
             switch state {
-            case .disconnected(let clientState):
-                disconnectedView(clientState)
+            case .unavailable(let status):
+                IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             case .macMissingOMP:
                 macMissingView
             case .loading:
@@ -83,7 +100,7 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(ConsoleSection.home.title)
         .sheet(item: $answerCard) { selected in
-            HomeAnswerSheet(card: selected.card, client: client)
+            HomeAnswerSheet(card: selected.card, client: client, connection: connection)
         }
         .sheet(item: $contractCard) { selected in
             HomeContractSheet(card: selected.card, client: client, recipePayload: recipe?.contractPayload)
@@ -104,34 +121,10 @@ struct HomeView: View {
 
     // MARK: - États
 
-    private func disconnectedView(_ clientState: ClientState) -> some View {
-        VStack(spacing: 16) {
-            setupBanner
-            ContentUnavailableView {
-                Label(IOSHomeText.disconnectedTitle, systemImage: "wifi.slash")
-            } description: {
-                VStack(spacing: 6) {
-                    Text(ConnectionText.state(clientState))
-                    Text(IOSHomeText.disconnectedBody)
-                }
-            } actions: {
-                Button { showConnection = true } label: {
-                    Text(IOSHomeText.connect)
-                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier(IOSHomeAccessibility.connect)
-            }
-        }
-        .padding(IOSMetrics.margin(sizeClass))
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(IOSHomeAccessibility.disconnected)
-    }
 
     private var macMissingView: some View {
         VStack(spacing: 16) {
+            connectionBanner
             setupBanner
             ContentUnavailableView(
                 IOSHomeText.macMissingTitle,
@@ -160,6 +153,7 @@ struct HomeView: View {
 
     private var firstRunView: some View {
         VStack(spacing: 16) {
+            connectionBanner
             setupBanner
             ContentUnavailableView {
                 Label(HomeText.firstRunTitle, systemImage: "sparkles")
@@ -181,13 +175,9 @@ struct HomeView: View {
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
+                    connectionBanner
                     setupBanner
                     launchBanner
-                    if let gestureFailure {
-                        Text(gestureFailure)
-                            .font(.callout)
-                            .iosBanner(tone: .danger)
-                    }
                     attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
                     runningSection(dashboard, showsRepo: showsRepo)
                     deliveredSection(dashboard, showsRepo: showsRepo)
@@ -198,6 +188,13 @@ struct HomeView: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSHomeAccessibility.dashboard)
             .onAppear { scrollToRecipeRow(dashboard, proxy: proxy) }
+            .onChange(of: IOSHomeContent.offeredGestures(dashboard), initial: true) { _, offered in
+                gestures.retain(offered)
+            }
+            .onChange(of: gestures.failures) { old, new in
+                guard let key = new.keys.first(where: { old[$0] == nil }) else { return }
+                withAnimation { proxy.scrollTo(IOSHomeAccessibility.failure(key.cardId), anchor: nil) }
+            }
         }
     }
 
@@ -305,9 +302,11 @@ struct HomeView: View {
                             .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier(IOSHomeAccessibility.attentionContract(card.id))
+                    .disabled(!connection.gesturesEnabled)
                 }
                 attentionButton(attention, prominent: prominent)
             }
+            failureBanner(attentionGestureKey(attention))
         }
         .iosCard()
         .accessibilityElement(children: .contain)
@@ -318,7 +317,22 @@ struct HomeView: View {
     private func attentionButton(_ attention: HomeAttention, prominent: Bool) -> some View {
         let card = attention.card
         styledButton(attentionButtonLabel(attention, card: card), prominent: prominent)
+            .disabled(IOSHomeContent.attentionNeedsMac(IOSHomeContent.attentionButton(attention)) && !connection.gesturesEnabled)
             .accessibilityIdentifier(IOSHomeAccessibility.attentionAction(card.id))
+            .confirmationDialog(
+                IOSHomeText.specsConfirmTitle(card.title),
+                isPresented: specsConfirmationShown(card.id),
+                titleVisibility: .visible
+            ) {
+                // Ouverte avant une coupure, la confirmation n'envoie rien hors connexion.
+                Button(IOSHomeText.specsConfirm) {
+                    guard connection.gesturesEnabled else { return }
+                    gestures.confirmSpecs(cardId: card.id, send: send)
+                }
+                Button(KanbanText.cancel, role: .cancel) {}
+            } message: {
+                Text(IOSHomeText.specsConfirmMessage)
+            }
     }
 
     @ViewBuilder
@@ -327,12 +341,31 @@ struct HomeView: View {
         case .answer:
             Button(HomeText.answerEllipsis) { answerCard = SelectedCard(card: card) }
         case .validate:
-            Button(KanbanText.validateSpecs) { sendVerdict(card, verdict: IOSHomeText.verdictSpecs) }
+            gestureButton(KanbanText.validateSpecs, key: IOSHomeGestureKey(cardId: card.id, gesture: .validateSpecs))
         case .accept:
-            Button(KanbanText.acceptReview) { sendVerdict(card, verdict: IOSHomeText.verdictReview) }
+            gestureButton(KanbanText.acceptReview, key: IOSHomeGestureKey(cardId: card.id, gesture: .acceptReview))
         case .open:
             Button(HomeText.openInPipelines) { onSelectSection(IOSHomeContent.allPipelinesSection) }
         }
+    }
+
+    /// La clé du geste d'une carte « À vous », quand son bouton en envoie un.
+    private func attentionGestureKey(_ attention: HomeAttention) -> IOSHomeGestureKey? {
+        switch IOSHomeContent.attentionButton(attention) {
+        case .validate: IOSHomeGestureKey(cardId: attention.card.id, gesture: .validateSpecs)
+        case .accept: IOSHomeGestureKey(cardId: attention.card.id, gesture: .acceptReview)
+        case .answer, .open: nil
+        }
+    }
+
+    /// La confirmation de « Valider les specs » de la carte : ouverte tant que le
+    /// modèle la désigne ; fermée par le système (« Annuler », toucher hors de la
+    /// bulle, ou après « Valider »), elle s'efface sans rien envoyer.
+    private func specsConfirmationShown(_ cardId: String) -> Binding<Bool> {
+        Binding(
+            get: { gestures.specsConfirmation == cardId },
+            set: { if !$0 { gestures.cancelSpecs() } }
+        )
     }
 
     @ViewBuilder
@@ -347,9 +380,24 @@ struct HomeView: View {
     // MARK: - Lignes
 
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            runningRowLine(card, showsRepo: showsRepo)
+            failureBanner(IOSHomeGestureKey(cardId: card.id, gesture: .resume))
+        }
+        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(IOSHomeAccessibility.running(card.id))
+    }
+
+    /// La ligne « titre | puce | contrôle » d'une rangée « En cours ».
+    private func runningRowLine(_ card: KanbanCard, showsRepo: Bool) -> some View {
         rowLayout {
             VStack(alignment: .leading, spacing: 2) {
-                Text(IOSHomeText.featureName(card.title)).font(.body.weight(.medium)).accessibilityLabel(card.title)
+                Text(IOSHomeText.featureName(card.title))
+                    .font(.body.weight(.medium))
+                    .accessibilityLabel(card.title)
+                    .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
                 if let subtitle = HomeText.cardSubtitle(
                     card,
                     noPhase: ConsoleStatus.of(card: card).text,
@@ -359,80 +407,90 @@ struct HomeView: View {
                 }
             }
             if rowAxis == .horizontal { Spacer() }
-            IOSStatusChip(status: ConsoleStatus.of(card: card))
-            if KanbanActionPresentation.resumable(card), card.action != nil {
-                Button(KanbanText.resume) { resume(card) }
-                    .buttonStyle(.bordered)
-                    .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                    .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
-            } else {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
-                        .font(.callout)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+            controlsLayout {
+                IOSStatusChip(status: ConsoleStatus.of(card: card))
+                if rowAxis == .twoLine { Spacer() }
+                if KanbanActionPresentation.resumable(card), card.action != nil {
+                    gestureButton(KanbanText.resume, key: IOSHomeGestureKey(cardId: card.id, gesture: .resume))
+                        .buttonStyle(.bordered)
+                        .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
+                        .disabled(!connection.gesturesEnabled)
+                        .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
+                } else {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
+                            .font(.callout)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+
+    /// L'axe des rangées « titre | puce | bouton » (règle pure : `IOSHomeContent.rowAxis`),
+    /// lu sur la taille de texte SYSTÈME et la classe de largeur.
+    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize, width: sizeClass) }
+
+    /// La disposition extérieure d'une rangée : bloc titre puis groupe puce + contrôle.
+    /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
+    private var rowLayout: AnyLayout {
+        switch rowAxis {
+        case .horizontal: AnyLayout(HStackLayout(spacing: 12))
+        case .twoLine, .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        }
+    }
+
+    /// La disposition intérieure d'une rangée : la puce et son contrôle, côte à côte
+    /// sauf aux tailles d'accessibilité.
+    private var controlsLayout: AnyLayout {
+        switch rowAxis {
+        case .horizontal, .twoLine: AnyLayout(HStackLayout(spacing: 12))
+        case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        }
+    }
+
+    /// Une livraison récente : seul « Ouvrir la PR » est une cible ; le titre, le
+    /// dépôt et la puce ne réagissent pas au toucher.
+    private func deliveredRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        let link = IOSHomeContent.deliveredLink(card)
+        return rowLayout {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(IOSHomeText.featureName(card.title))
+                    .accessibilityLabel(card.title)
+                    .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
+                if showsRepo {
+                    Text(card.repo).foregroundStyle(.secondary)
+                }
+            }
+            if rowAxis == .horizontal { Spacer() }
+            controlsLayout {
+                IOSStatusChip(status: ConsoleStatus.of(card: card))
+                if let link {
+                    if rowAxis == .twoLine { Spacer() }
+                    Button(HomeText.openPR) { openURL(link) }
+                        .buttonStyle(.bordered)
+                        .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
+                        .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
                 }
             }
         }
         .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(IOSHomeAccessibility.running(card.id))
-    }
-
-    /// L'axe des rangées « titre | puce | bouton » (règle pure : `IOSHomeContent.rowAxis`).
-    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize) }
-
-    /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
-    private var rowLayout: AnyLayout {
-        switch rowAxis {
-        case .horizontal: AnyLayout(HStackLayout(spacing: 12))
-        case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-        }
-    }
-
-    private func deliveredRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        let link = IOSHomeContent.deliveredLink(card)
-        return rowLayout {
-            if let link {
-                Button { openURL(link) } label: {
-                    deliveredLabel(card, showsRepo: showsRepo)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
-                Button { openURL(link) } label: {
-                    Text(HomeText.openPR)
-                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.bordered)
-                .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
-            } else {
-                deliveredLabel(card, showsRepo: showsRepo)
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
-            }
-        }
-        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
-        .padding(.vertical, 8)
-    }
-
-    private func deliveredLabel(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        rowLayout {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(IOSHomeText.featureName(card.title)).accessibilityLabel(card.title)
-                if showsRepo {
-                    Text(card.repo).foregroundStyle(.secondary)
-                }
-            }
-            if rowAxis == .horizontal { Spacer() }
-            IOSStatusChip(status: ConsoleStatus.of(card: card))
-        }
-        .contentShape(Rectangle())
+        .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
     }
 
     // MARK: - Bandeaux
+
+    /// Hors connexion, le bandeau du composant partagé au-dessus des données
+    /// conservées (S-4) ; il disparaît dès la connexion.
+    @ViewBuilder
+    private var connectionBanner: some View {
+        if connection != .connected {
+            IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+        }
+    }
 
     @ViewBuilder
     private var setupBanner: some View {
@@ -461,25 +519,42 @@ struct HomeView: View {
 
     // MARK: - Gestes
 
-    private func sendVerdict(_ card: KanbanCard, verdict: String) {
-        gestureFailure = nil
-        Task {
-            do {
-                _ = try await client.verdict(cardId: card.id, verdict: verdict)
-            } catch {
-                gestureFailure = IOSHomeContent.failure(error)
-            }
-        }
+    /// L'envoi des gestes : celui de la recette quand elle en donne un (`slowMac`),
+    /// sinon les routes du client.
+    private var send: IOSHomeGestureModel.Send {
+        recipe?.gestureSend ?? IOSHomeGestureModel.live(client)
     }
 
-    private func resume(_ card: KanbanCard) {
-        gestureFailure = nil
-        Task {
-            do {
-                _ = try await client.resume(cardId: card.id)
-            } catch {
-                gestureFailure = IOSHomeContent.failure(error)
+    /// Un bouton de geste : en vol, il est désactivé et montre un indicateur devant
+    /// son libellé (la largeur ne saute pas) avec la valeur « Envoi en cours ».
+    private func gestureButton(_ title: String, key: IOSHomeGestureKey) -> some View {
+        let sending = gestures.inFlight.contains(key)
+        return Button {
+            gestures.tap(key, send: send)
+        } label: {
+            if sending {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text(title)
+                }
+            } else {
+                Text(title)
             }
+        }
+        .disabled(sending)
+        .accessibilityValue(sending ? IOSHomeText.gestureInFlight : "")
+    }
+
+    /// L'échec du geste d'une carte, sur la carte : pleine largeur, ton `danger`.
+    /// Son `id` sert au défilement minimal qui le rend visible à son apparition.
+    @ViewBuilder
+    private func failureBanner(_ key: IOSHomeGestureKey?) -> some View {
+        if let key, let message = gestures.failures[key] {
+            Text(message)
+                .font(.callout)
+                .iosBanner(tone: .danger)
+                .accessibilityIdentifier(IOSHomeAccessibility.failure(key.cardId))
+                .id(IOSHomeAccessibility.failure(key.cardId))
         }
     }
 }

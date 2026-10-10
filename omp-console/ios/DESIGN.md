@@ -34,6 +34,10 @@ marqueur `[test: <fonction>]` (une fonction de
 - Trois surfaces seulement, et rien d'autre : `iosPanel()` pour le panneau d'un
   écran, `iosCard()` pour la carte d'un état vide, `iosBanner(tone:)` pour un
   bandeau. `[garde: design-ios/AC-1]`
+- La carte de l'écran Pipelines est la même surface en relief,
+  `iosCard(raised: true)` : fond `tertiarySystemGroupedBackground`, identique au
+  panneau en clair et plus clair que lui en sombre.
+  `[test: raisedCardStandsOutOnlyInDark]` `[capture: ipad-kanban-dark]`
 - Chaque écran des sept sections pose son contenu sur `iosPanel()`. `[capture: iphone-*-light]`
 - Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
   régulier), fixe — c'est la marge de l'écran, le rembourrage intérieur seul suit
@@ -60,7 +64,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
   sources de l'app. `[garde: design-ios/AC-7]`
 - Aucun `lineLimit` numérique : les textes se replient sur plusieurs lignes.
-  Seule exception : la PLAGE de hauteur d'un champ de saisie vertical
+  Deux exceptions : le texte d'un souvenir dans la liste de la Mémoire, plafonné
+  par la fonction nommée `IOSMetrics.memoryRowLines(_:)` (texte intégral dans la
+  feuille), et la PLAGE de hauteur d'un champ de saisie vertical
   (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
   tronqué, le champ défile. `[garde: design-ios/AC-7]`
 
@@ -130,10 +136,55 @@ marqueur `[test: <fonction>]` (une fonction de
 - Une section hors périmètre (Terminal, Fichiers) n'a aucun contenu d'écran.
   `[test: outOfScopeSectionsHaveNoContent]`
 
+## États de connexion (feature `etats-non-connecte-heterogenes-ios`)
+
+- Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion
+  dans les sept sections ; ses mots vivent dans `IOSConnectionStateText` et ses
+  identifiants, tous préfixés `ios.connexion.`, dans
+  `IOSConnectionStateAccessibility`. `[test: connectionIdentifiersAreUniqueAndPrefixed]`
+- Le statut présenté est une fonction pure de l'état du client
+  (`IOSConnectionStatus.resolve`) : une tentative fraîche est « Connexion au
+  Mac… » ; dès qu'une tentative a échoué, l'écran dit « Pas de connexion au Mac »
+  et le reste pendant les relances automatiques. `[test: resolvesEveryClientState]`
+  `[test: retryAfterFailureStaysDisconnected]`
+- « Pas de connexion au Mac » porte une phrase par cause — non appairé, appairage
+  refusé ou révoqué, Mac injoignable, app à mettre à jour, Mac à mettre à jour —
+  sans numéro de version, chemin ni adresse. `[test: causesHaveDistinctPhrases]`
+  `[test: updatePhrasesNameTheAppWithoutVersionNumbers]`
+- Deux formes : plein écran (`ContentUnavailableView`, bouton « Se connecter »
+  proéminent) quand la section n'a rien chargé ; bandeau `attention` suivi de
+  « Se connecter » au-dessus des données conservées. « Connexion au Mac… » est un
+  indicateur d'attente sans bouton (plein écran, ou bandeau `info`). « Se
+  connecter » ouvre la feuille Connexion de la racine. `[test: resolvePriority]`
+- Pipelines, Sessions et Mémoire (liste et graphe) suivent la même règle : rien
+  de reçu hors connexion ⇒ le composant seul, hors du défilement et du panneau ;
+  données reçues ⇒ elles restent, sous le bandeau, et la Mémoire relit au retour
+  du Mac. `[test: unavailableWithoutList]` `[test: listKeptOffline]`
+  `[test: offlineWithoutDataIsTheConnectionComponent]` `[test: offlineKeepsTheLastData]`
+- Projet, Statistiques et Session OMP suivent la même règle et portent leur propre
+  panneau (titre de section, puis contenu) : rien de reçu hors connexion ⇒ le
+  composant seul, hors du panneau ; une conduite, un relevé ou un état de session
+  reçu ⇒ il reste, sous le bandeau, et l'erreur conservée est tue ; les
+  Statistiques relisent au retour du Mac. `[test: projectUnavailableWithoutConduite]`
+  `[test: projectKeepsConduiteOffline]` `[test: statsUnavailableWithoutPayload]`
+  `[test: statsKeepsBoardOffline]` `[test: sessionOmpUnavailableWithoutHosted]`
+  `[test: sessionOmpKeepsHostedOffline]`
+- Les actions qui exigent le Mac (« + » de Pipelines, répondre, valider, reprendre,
+  lancer, arrêter, fusionner, rafraîchir, éditer, écrire dans la Session OMP…)
+  restent visibles mais grisées hors connexion, connexion en cours comprise, et se
+  rouvrent dès la connexion, sans relancer l'app. À l'Accueil, seul « Voir dans
+  Pipelines » reste tapable parmi les gestes d'attente ; les feuilles de dialogue
+  ne s'ouvrent qu'une fois connecté, et une confirmation restée ouverte n'envoie
+  rien. Le champ de recherche de la Mémoire, que `.disabled` ne grise pas en
+  placement `.automatic`, est rendu inerte. `[test: gesturesOnlyWhenConnected]`
+  `[test: attentionNeedsMacExceptOpenInPipelines]` `[test: gesturesReopenOnConnection]`
+
 ## Dynamic Type maximum (S-7)
 
 - À `accessibility-extra-extra-extra-large`, aucun texte n'est tronqué ni
-  chevauché : aucune hauteur fixe, aucune largeur figée, aucune troncature.
+  chevauché : aucune hauteur fixe, aucune largeur figée, aucune troncature —
+  sauf le texte d'un souvenir dans la liste de la Mémoire, plafonné par
+  `IOSMetrics.memoryRowLines(_:)` et intégral dans la feuille.
   `[capture: iphone-*-dark-ax]`
 - L'iPad tient la même taille maximale, barre latérale à deux groupes comprise.
   `[capture: ipad-*-light-ax]`
@@ -196,11 +247,19 @@ marqueur `[test: <fonction>]` (une fonction de
   visite : leur en-tête, un bouton de 44 pt (`pipelines.lane.<voie>.header`,
   valeur d'accessibilité « replié »/« déplié »), les déplie et les replie ;
   l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
-- En largeur RÉGULIÈRE (iPad), l'ardoise est inchangée : voies permanentes même
-  vides, voies terminales dépliées. `[test: regularKeepsLanesUnchanged]`
-- L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
-  un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
-  affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
+- En largeur RÉGULIÈRE (iPad), voies permanentes même vides et voies terminales
+  dépliées ; chaque voie a la même largeur, `IOSMetrics.laneWidth` (280 pt) mise à
+  l'échelle par Dynamic Type et plafonnée à la largeur visible moins la marge de
+  fin ; voies alignées en haut ; le défilement horizontal finit sur une marge
+  `IOSMetrics.margin`. `[test: laneWidthNeverExceedsTheViewport]` `[test: regularKeepsLanesUnchanged]`
+- L'en-tête d'une voie (symbole, titre, compteur) s'empile aux tailles
+  d'accessibilité, sur iPad comme sur iPhone, et son titre n'est jamais tronqué.
+  `[test: laneHeaderStacksAtAccessibilitySizes]`
+- L'écran ne fabrique aucune donnée : Mac non connecté sans instantané, il rend
+  seul le composant d'état de connexion en plein écran ; une ardoise reçue
+  (même vide, mot partagé `KanbanText.noPipeline`) reste affichée hors
+  connexion, sous le bandeau du composant. `[test: unavailableWithoutSnapshot]`
+  `[test: snapshotKeptOffline]`
 - La feuille d'une carte offre les gestes de la carte via la règle d'aiguillage de
   `KanbanActionPresentation` ; une carte d'historique n'offre aucun geste et le
   dit. `[test: historyCardOffersNothing]`
@@ -209,6 +268,12 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+- Une carte n'a de ligne d'action que si elle porte une adresse de PR ouvrable :
+  un filet espacé sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
+  d'au moins 44 pt, sa taille de texte bornée à `.accessibility3` ; une carte
+  sans PR n'a ni filet ni espace réservé. Une carte est rigide en hauteur : dans
+  la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
+  ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
 - Le bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au clavier de l'iPad), placé
   avant « Nouvelle feature », demande au Mac de relire l'état des PR sur GitHub ;
   il n'est actif que connecté et hors relecture, et montre un indicateur
@@ -249,9 +314,11 @@ marqueur `[test: <fonction>]` (une fonction de
   par défaut comme les autres sections, dans ses cinq états : aucune bande vide
   sous la barre, et le bouton retour reste dans la barre titrée quand le tableau
   de bord défile. `[capture: iphone-home-light]`
-- L'Accueil iOS montre un seul de ses cinq états : déconnecté, « OMP absent sur
-  le Mac », chargement, premiers pas, tableau de bord — dans cet ordre de
-  priorité. `[test: resolvePriority]`
+- L'Accueil iOS montre un seul de ses cinq états : indisponible (le composant
+  d'état de connexion en plein écran, hors connexion et sans ardoise reçue),
+  « OMP absent sur le Mac », chargement, premiers pas, tableau de bord — dans cet
+  ordre de priorité. Hors connexion, une ardoise déjà reçue reste affichée sous
+  le bandeau du composant. `[test: resolvePriority]`
 - Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
   la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
   libellés. `[test: parityFacts]`
@@ -277,8 +344,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Sa barre dit « Contrat » en ligne ; le nom complet de la feature est en tête du
   panneau, en en-tête, et passe à la ligne au lieu d'être tronqué.
   `[test: longRecipeNamesTheWholeFeature]`
-- Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
-  exploitable. `[test: deliveredLinks]`
+- Une livraison récente ouvre sa PR par son seul bouton « Ouvrir la PR », par
+  `openURL`, seulement quand l'URL est exploitable ; le titre et la puce ne sont
+  pas des cibles. `[test: deliveredLinks]`
 - « Livrées récemment » et la voie « Livrées » portent l'état réel de la PR
   (« PR ouverte », « PR fusionnée », « PR fermée », « PR créée » tant qu'il est
   inconnu), les mêmes libellés que le Mac (`ConsoleStatus.of(card:)`) ; une
@@ -299,11 +367,23 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
-- Les rangées « En cours » et « Livrées récemment » restent sur une ligne aux
-  tailles standard et s'empilent (titre, puce, bouton) aux tailles
-  d'accessibilité ; leurs boutons sont bornés à `accessibility3` et leur texte à
-  `accessibility4` (au-delà, un mot comme « Implémentation » est coupé en deux).
-  `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Les rangées « En cours » et « Livrées récemment » suivent la largeur : en
+  largeur régulière (iPad), titre, puce et bouton sur une ligne ; en largeur
+  compacte (iPhone, iPad en Split View étroit), le titre sur toute la largeur,
+  puis la puce et le bouton côte à côte sur une deuxième ligne, sans troncature.
+  `[test: compactWidthSplitsRowsInTwoLines]`
+- Aux tailles d'accessibilité, quelle que soit la largeur, ces rangées
+  s'empilent (titre, puce, bouton) ; leurs boutons sont bornés à `accessibility3`
+  et leur texte à `accessibility4` (au-delà, un mot comme « Implémentation » est
+  coupé en deux). `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Un geste de carte montre son envoi en cours et n'envoie rien de plus jusqu'à la
+  réponse du Mac : bouton désactivé, indicateur devant le libellé, valeur
+  d'accessibilité « Envoi en cours ». `[test: resumeIgnoresSecondTapWhileInFlight]`
+- « Valider les specs » demande une confirmation, « Reprendre » et « Accepter la
+  revue » partent aussitôt. `[test: specsTapAsksConfirmationWithoutSending]`
+- L'échec d'un geste s'affiche sur sa carte, en français, sans détail technique ;
+  le succès n'a pas de message, la carte suit l'ardoise.
+  `[test: failureLandsOnItsCardWithoutRawDetail]`
 - Le nom d'une feature passe par `IOSHomeText.featureName(_:)` : il se replie en
   entier et la coupure tombe AVANT un tiret, jamais après.
   `[test: featureNameNeverEndsALineWithAHyphen]`
@@ -335,6 +415,13 @@ marqueur `[test: <fonction>]` (une fonction de
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
   — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
+- Le texte d'un souvenir tient en 3 lignes au plus en largeur compacte et 4 en
+  largeur régulière, terminé par « … », quelle que soit la taille de texte ; la
+  feuille montre le texte intégral. `[test: memoryRowLinesFollowTheWidth]`
+- Chaque rangée a la même marge verticale que les Sessions ; la date et les
+  étiquettes tiennent sur une ligne, jointes par « · », aux tailles standard et
+  s'empilent (date, puis étiquettes) aux tailles d'accessibilité, texte borné à
+  `accessibility4`. `[test: memoryRowContextSplitsIntoSegments]`
 - « Sommaire » reste toujours visible ; indisponible, il est grisé et un toucher
   montre la raison dans une bulle — jamais un bouton masqué ni muet.
   `[test: summaryReasonNamesEachUnavailableCase]`
@@ -378,13 +465,15 @@ marqueur `[test: <fonction>]` (une fonction de
   (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
   milliseconde par milliseconde et par run vivant, sans un octet de trafic.
   `[test: statsDurationsAdvanceWithLiveRuns]`
-- Sept états à part entière, jamais un écran vide : chargement (« Chargement des
-  statistiques… »), dégradé (hors `.connected`, bandeau `attention`), erreur
+- Sept états à part entière, jamais un écran vide : non connecté (le composant
+  d'état de connexion partagé, en plein écran sans relevé, en bandeau au-dessus du
+  dernier relevé conservé), chargement (« Chargement des statistiques… »), erreur
   (bandeau `danger` + « Réessayer »), aucun projet, bascule vers un autre projet,
   projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+  `[test: statsKeepsBoardOffline]`
 - Le sélecteur de projet nomme le projet CHOISI et se tient en tête des états
   tableau, vide et bascule — pendant la lecture d'un autre projet, il reste
-  au-dessus du chargement ; le premier chargement, le dégradé, l'erreur et
+  au-dessus du chargement ; le premier chargement, le non connecté, l'erreur et
   « Aucun projet » n'en ont pas. `[test: statsProjectSwitchKeepsHeaderAboveLoading]`
 - Depuis l'état « Aucune donnée pour ce projet », on change de projet : le
   sélecteur est au-dessus de la carte vide, et choisir un projet qui a des données
@@ -400,7 +489,7 @@ marqueur `[test: <fonction>]` (une fonction de
 - La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et
   son groupement par jour (`SessionDays`) : mêmes runs, mêmes en-têtes que macOS,
   y compris une session lancée hors coque. `[test: listGroupsByDay]`
-- Un `Picker` de projet restreint la liste AVANT le groupement, donc les
+- Un menu de projet restreint la liste AVANT le groupement, donc les
   en-têtes de jour se recalculent ; « Tous les projets » la restitue entière.
   `[test: projectFilter]`
 - Le fil de la visionneuse vient du modèle de lignes PARTAGÉ
@@ -442,17 +531,27 @@ marqueur `[test: <fonction>]` (une fonction de
 - Le symbole d'étape occupe une colonne de largeur fixe (`IOSMetrics.phaseIconWidth`,
   mise à l'échelle par `@ScaledMetric`) : les titres des lignes partagent la même
   abscisse à toute taille de texte. `[test: phasesRecipeShowsEveryPhase]`
+- Chaque rangée a une marge verticale `IOSMetrics.rowVerticalPadding` mise à
+  l'échelle (`@ScaledMetric`), reste sur une ligne aux tailles standard et
+  s'empile (icône, textes, puce) aux tailles d'accessibilité, texte borné à
+  `accessibility4`. `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Le filtre de projet est un menu dont le libellé visible est la valeur choisie,
+  entière à toute taille de texte (repliée, jamais tronquée) ; VoiceOver annonce
+  « Projet, <valeur> ». `[test: sessionFilterSaysProjectThenItsValue]`
 
 ## Session OMP (feature `ios-session-omp`)
 
 - L'écran porte le titre de navigation `ConsoleSection.session.title` et pose tout
-  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses neuf états
-  (jamais centré verticalement) ; le seul défilement est celui du fil de
+  son contenu sur `iosPanel()`, ancré en haut sous le titre dans ses huit états
+  servis (jamais centré verticalement) — seul le composant d'état de connexion
+  plein écran est hors du panneau ; le seul défilement est celui du fil de
   conversation. `[capture: iphone-session-light]`
-- L'écran couvre NEUF états : déconnecté (bandeau `attention`, aucun geste),
-  chargement, aucune session, lancement, arrêt en cours, session vive, arrêtée,
-  interrompue, échec — décidés par la fonction pure
-  `IOSSessionOmpModel.surface(state:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+- L'écran couvre NEUF états : non connecté (le composant d'état de connexion
+  partagé, en plein écran sans état servi, en bandeau au-dessus du dernier état
+  conservé), chargement, aucune session, lancement, arrêt en cours, session vive,
+  arrêtée, interrompue, échec — décidés par la fonction pure
+  `IOSSessionOmpModel.surface(connection:hosted:)`. `[test: surfaceFollowsClientAndHosted]`
+  `[test: sessionOmpKeepsHostedOffline]`
 - L'en-tête porte le nom du dépôt servi (`projectName`) et la pastille du mot
   d'état (`stateLabel`) ; un état inconnu du client vaut `idle`, jamais une
   invention. `[test: surfaceFollowsClientAndHosted]`
@@ -519,6 +618,27 @@ marqueur `[test: <fonction>]` (une fonction de
 - « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
   a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
   que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`
+
+## Les feuilles (feature `feuilles-ios-presentation-et-depots`)
+
+- Sur iPad, une feuille au contenu long (Contrat, feuille de session, fiche d'un
+  souvenir) est une feuille « page » (`iosPageSheet()`), plus de 600 pt de contenu ;
+  la Bienvenue, « Piloter un projet » et « Lancer une session OMP » gardent la
+  largeur du formulaire (580 pt) et une hauteur qui suit leur contenu
+  (`iosFittedSheet(contentHeight:)`), à 64 pt au plus sous le dernier élément. Sur
+  iPhone, rien ne change : feuille pleine hauteur, même haut, pleine largeur, et
+  aucun `presentationDetents`. Avant la première mesure, la hauteur idéale est
+  absente, jamais nulle : la feuille n'est pas écrasée. `[test: fittedSheetIdealHeight]`
+- Dans « Piloter un projet » et « Lancer une session OMP », un dépôt est désigné
+  par son seul nom de dossier, suivi de son parent entre parenthèses seulement
+  s'il a un homonyme (`KanbanLaunchRepos.choices`, vue partagée `IOSRepoRows`) ;
+  aucun chemin, texte de couleur normale (jamais bleu lien). Le dépôt choisi porte
+  une coche SF Symbol masquée à VoiceOver, qui annonce le nom et l'état
+  « sélectionné », jamais « coche » ni « ✓ ». `[test: repoRowLabels]`
+- Un chemin du Mac affiché par l'app iOS s'abrège en `~/…` relativement au
+  dossier personnel que le Mac publie (`components.homeDirectory`), jamais deviné
+  sur l'appareil ; un chemin hors de ce dossier reste absolu, un Mac antérieur
+  laisse les chemins absolus. `[test: threadRowsAbbreviateMacHome]`
 
 ## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
 

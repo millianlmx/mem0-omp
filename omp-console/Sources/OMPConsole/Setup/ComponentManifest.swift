@@ -27,8 +27,17 @@ struct ComponentManifest: Equatable, Sendable {
     let machineImage: String
     /// L'image Qdrant tirée par la pile de l'app.
     let qdrantImage: String
-    /// L'étiquette de l'image mem0-http construite par l'app.
-    let stackImageTag: String
+    /// Le dépôt de l'image mem0-http construite par l'app ; l'étiquette complète
+    /// est dérivée de l'empreinte des sources embarquées (`StackSources`), jamais
+    /// d'un simple numéro de version — un `:1` figé ne verrait pas une source
+    /// modifiée (bogue du passé, S-7).
+    let stackImageRepository: String
+
+    /// L'étiquette de l'image mem0-http pour une empreinte de sources donnée :
+    /// `<dépôt>:<12 premiers caractères hexadécimaux>`.
+    func stackImageTag(fingerprint: String) -> String {
+        "\(stackImageRepository):\(fingerprint.prefix(12))"
+    }
 
     static let current = ComponentManifest(
         ompVersion: "18.6.0",
@@ -45,6 +54,6 @@ struct ComponentManifest: Equatable, Sendable {
         ),
         machineImage: "docker://quay.io/podman/machine-os:6.1",
         qdrantImage: "docker.io/qdrant/qdrant:v1.19.0",
-        stackImageTag: "omp-console-mem0-http:1"
+        stackImageRepository: "omp-console-mem0-http"
     )
 }

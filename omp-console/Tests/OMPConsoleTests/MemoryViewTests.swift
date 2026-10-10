@@ -169,3 +169,67 @@ func ac6PrerequisiteTextsAreFrozen() {
     #expect(ghOverride.contains("OMP_CONSOLE_GH_BINARY"))
     #expect(ghOverride.contains("/custom/gh"))
 }
+
+// MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)
+
+@Test("bug-embedded-podman-machine/AC-4 : les textes de l'état étranger sont FIGÉS (titre, description, détail, bouton)")
+func ac4ForeignOwnershipTextsAreFrozen() {
+    #expect(MemoryText.foreignTitle == "Ce n'est pas la pile d'OMP Console")
+    #expect(
+        MemoryText.foreignDescription
+            == "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port."
+    )
+    #expect(MemoryText.takeover == "Arrêter l'ancienne pile et reprendre")
+    #expect(MemoryText.foreignService == "Ce service n'est pas la pile d'OMP Console : son jeton d'installation est absent ou différent.")
+
+    // Le détail : adresse, propriétaire et geste, une ligne chacun.
+    let legacy = ForeignOwnership(
+        address: "http://localhost:8321",
+        owner: "l'ancienne pile mémoire (conteneur mem0-http)",
+        gesture: "podman stop mem0-qdrant mem0-http",
+        isLegacy: true
+    )
+    #expect(
+        MemoryText.foreignOwnershipDetail(legacy)
+            == "http://localhost:8321\nTenu par l'ancienne pile mémoire (conteneur mem0-http).\nGeste : podman stop mem0-qdrant mem0-http"
+    )
+
+    let foreign = ForeignOwnership(
+        address: "http://127.0.0.1:8321",
+        owner: "un autre programme (python3, pid 4711)",
+        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)",
+        isLegacy: false
+    )
+    #expect(MemoryText.foreignOwnershipDetail(foreign).contains("Tenu par un autre programme (python3, pid 4711)."))
+    // Aucun bouton de reprise n'est offert quand le propriétaire n'est pas l'ancienne pile.
+    #expect(!foreign.isLegacy)
+    #expect(legacy.isLegacy)
+
+    // Les textes de l'état étranger ne portent AUCUN vocabulaire d'écriture (AC-4).
+    for label in [MemoryText.foreignTitle, MemoryText.foreignDescription, MemoryText.takeover, MemoryText.foreignService] {
+        let lowered = label.lowercased()
+        #expect(!lowered.contains("ajout"))
+        #expect(!lowered.contains("supprim"))
+        #expect(!lowered.contains("modifi"))
+        #expect(!lowered.contains("enregistrer"))
+        #expect(!lowered.contains("éditer"))
+    }
+}
+
+@Test("bug-embedded-podman-machine/AC-4 : l'état d'écran `foreignOwned` se construit et s'égale (jamais un état disponible)")
+func ac4ForeignOwnedStateCarriesItsOwner() {
+    let ownership = ForeignOwnership(
+        address: "http://localhost:8321",
+        owner: "une autre pile (importée)",
+        gesture: "arrêtez-la",
+        isLegacy: false
+    )
+    let state = MemoryModel.State.foreignOwned(ownership)
+    #expect(state == .foreignOwned(ownership))
+    if case let .foreignOwned(carried) = state {
+        #expect(carried.address == "http://localhost:8321")
+        #expect(carried.owner == "une autre pile (importée)")
+    } else {
+        Issue.record("état attendu `foreignOwned`")
+    }
+}

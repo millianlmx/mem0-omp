@@ -59,6 +59,8 @@ struct IOSMemoryDetailView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .accessibilityIdentifier(IOSMemoryAccessibility.detail)
+            .navigationTitle(IOSMemoryText.detailTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     // Forme 44 pt mesurée (D-4) : le bouton de barre par défaut n'a que 36 pt.
@@ -75,6 +77,7 @@ struct IOSMemoryDetailView: View {
                 }
             }
         }
+        .iosPageSheet()
     }
 
     // MARK: - Les liens (mode graphe, S-5)
@@ -125,6 +128,20 @@ struct IOSMemoryDetailView: View {
     /// La ligne de contexte : date relative puis étiquettes, segments absents omis.
     static func subtitle(_ row: RemoteMemoryRow, nowMs: Double) -> String {
         MemoryText.subtitle(updatedAt: row.updatedAt, tags: row.tags, nowMs: nowMs)
+    }
+
+    /// Les segments de la ligne de contexte, un par ligne aux tailles
+    /// d'accessibilité : date relative puis étiquettes, segments absents omis.
+    /// Joints par `MemoryText.separator`, ils redonnent `subtitle(_:nowMs:)`.
+    static func subtitleSegments(_ row: RemoteMemoryRow, nowMs: Double) -> [String] {
+        var segments: [String] = []
+        if let ms = MemoryText.updatedAtMs(row.updatedAt) {
+            segments.append(ConsoleFormat.relative(ms: ms, nowMs: nowMs))
+        }
+        if !row.tags.isEmpty {
+            segments.append(MemoryText.tagList(row.tags))
+        }
+        return segments
     }
 
     /// La portée : celle de la ligne, sinon celle du sommaire, sinon « Sans projet ».

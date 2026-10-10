@@ -23,6 +23,8 @@ enum StackStep: Equatable, Sendable {
     case images
     case containers
     case health
+    /// Le rattrapage des souvenirs manquants (S-8), après la disponibilité.
+    case union
 }
 
 /// Les échecs de la pile (S-2), chacun porteur de son contexte : le message
@@ -30,9 +32,14 @@ enum StackStep: Equatable, Sendable {
 enum MemoryStackError: Error, Equatable, Sendable {
     case podmanFailed(command: String, detail: String)
     case machineFailed(detail: String)
-    case portBusy(port: Int)
+    /// Un port publié par la pile est tenu par autre chose : le propriétaire est
+    /// NOMMÉ (`MemoryPortOwnership`), jamais deviné (S-2).
+    case portConflict(port: Int, owner: MemoryPortOwnership)
     case containerFailed(name: String, detail: String)
     case healthTimeout(seconds: Int)
+    /// Le jeton d'installation n'a pas pu être écrit (S-4) : la préparation
+    /// s'arrête AVANT de créer le conteneur.
+    case installationFailed(detail: String)
 }
 
 /// L'état décodé d'une machine, tolérant aux formes de `machine inspect`.
@@ -45,6 +52,10 @@ struct MachineState: Equatable, Sendable {
 struct ContainerState: Equatable, Sendable {
     var running: Bool
     var image: String?
+    /// L'environnement du conteneur (`Config.Env`, `KEY=VALUE`), vide si absent :
+    /// il porte le jeton d'installation (S-4), et son absence prouve qu'un
+    /// conteneur existant n'est pas le nôtre.
+    var env: [String] = []
 }
 
 @MainActor
@@ -79,6 +90,10 @@ final class MemoryStack {
     var commandTimeout: Double = 3600
     /// Délai maximal d'UNE sonde HTTP.
     var probeTimeout: Double = 5
+    /// Délai maximal d'UNE sonde `info` de l'API de la machine (S-3).
+    var apiTimeout: Double = 20
+    /// Attente maximale de l'API après une réparation (S-3) — 60 s en production.
+    var apiBudget: Double = 60
 
     private let paths: AppPaths
     private let manifest: ComponentManifest
@@ -109,11 +124,12 @@ final class MemoryStack {
     // MARK: - Entrée
 
     /// Garantit que la pile tourne : dossiers et `containers.conf`, machine,
-    /// réseau, images, conteneurs, puis disponibilité (`/readyz` et `/health`).
+    /// réseau, images, conteneurs, disponibilité (`/readyz` et `/health`), puis
+    /// rattrapage des souvenirs manquants.
     func ensureRunning(progress: @escaping @MainActor (StackStep) -> Void) async throws {
         // 1. Le support d'abord : le `containers.conf` app-privé doit exister
         // AVANT toute commande machine (S-2), sinon `machine start` ne trouverait
-        // ni gvproxy ni krunkit.
+        // ni gvproxy ni krunkit. Le `TMPDIR` privé (S-1) est créé ici aussi.
         try prepareSupportDirectories()
         let config = StackEnvStore.load(at: paths.stackEnv) ?? .defaults
 
@@ -123,20 +139,45 @@ final class MemoryStack {
         // Le réseau appartient à la préparation de l'infrastructure de la pile.
         progress(.images)
         try await ensureNetwork()
-        try await ensureImages()
+        let stackTag = try await ensureImages()
+
+        // Le jeton d'installation est écrit AVANT l'étape conteneurs (S-4) : un
+        // conteneur mem0 existant qui ne le porte pas est recréé à l'étape
+        // suivante, et un conteneur neuf naît avec lui.
+        let installationToken: String
+        do {
+            installationToken = try InstallationTokenStore.loadOrCreate(at: paths.installationToken)
+        } catch {
+            throw MemoryStackError.installationFailed(detail: bounded(error.localizedDescription))
+        }
 
         progress(.containers)
-        try await ensureContainers(config: config)
+        try await ensureContainers(config: config, installationToken: installationToken, stackTag: stackTag)
 
         progress(.health)
-        try await awaitStackReady(config: config)
+        try await awaitStackReady(config: config, installationToken: installationToken)
+
+        // Le rattrapage des souvenirs (S-8) vient APRÈS la disponibilité : il a
+        // besoin d'une cible vivante, et son échec ne fait pas échouer la
+        // préparation (la pile est saine, la trace vit dans `stack/union.json`).
+        progress(.union)
+        _ = await MemoryUnionRunner(
+            paths: paths,
+            manifest: manifest,
+            environment: baseEnvironment,
+            run: run,
+            session: session
+        ).run()
     }
 
-    /// La seconde sonde de S-2 seule : `GET http://127.0.0.1:8321/health` →
-    /// `{"ok":true}`. Un état, jamais une exception.
+    /// La seconde sonde de S-2 seule : `GET http://127.0.0.1:8321/health`, accepté
+    /// SEULEMENT s'il porte le jeton d'installation (S-4). Un état, jamais une
+    /// exception.
     func health() async -> Bool {
-        guard let result = await probe(Self.mem0HealthURL, headers: [:]) else { return false }
-        return Self.isMem0Healthy(result)
+        guard let token = InstallationTokenStore.load(at: paths.installationToken),
+              let result = await probe(Self.mem0HealthURL, headers: [:])
+        else { return false }
+        return Self.isOurMem0(result, token: token)
     }
 
     // MARK: - Dossiers et configuration
@@ -147,6 +188,13 @@ final class MemoryStack {
             let containersDir = paths.configDir
                 .appendingPathComponent("containers", isDirectory: true)
             try fileManager.createDirectory(at: containersDir, withIntermediateDirectories: true)
+            // Le TMPDIR privé de podman (S-1) : créé en 0700 AVANT la première
+            // commande machine — sinon podman retomberait sur le TMPDIR système et
+            // ses artefacts (`gvproxy.pid`, `gvproxy.log`, sockets) seraient
+            // partagés avec la machine système. `setAttributes` après création :
+            // `createDirectory` ne pose pas de mode.
+            try fileManager.createDirectory(at: paths.tmpDir, withIntermediateDirectories: true)
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: paths.tmpDir.path)
             let helperBinariesDir = paths.podmanDir(manifest.podmanVersion)
                 .appendingPathComponent("bin", isDirectory: true)
             let content = PodmanCommand.containersConf(helperBinariesDir: helperBinariesDir)
@@ -177,6 +225,10 @@ final class MemoryStack {
                 try await initializeMachine()
             } else if !state.running {
                 try await startMachine()
+            } else if !(await apiReachable()) {
+                // La VM vit mais son API ne répond pas (forwarder mort — état
+                // mesuré le 2026-10-06) : la préparation la répare elle-même (S-3).
+                try await repairMachine()
             }
             return
         }
@@ -209,6 +261,19 @@ final class MemoryStack {
     }
 
     private func startMachine() async throws {
+        try await runMachineStart()
+        // Un `start` rendu 0 (ou « already running ») ne prouve PAS la santé :
+        // seule l'API qui répond le fait (S-3).
+        let probe = await waitForAPI(budget: apiBudget)
+        guard probe.reachable else {
+            throw MemoryStackError.machineFailed(detail: probe.detail)
+        }
+    }
+
+    /// L'invocation `machine start` seule : la tolérance « already running » reste
+    /// (un autre processus a démarré la machine), mais elle n'est plus jugée sur
+    /// `inspect` — l'appelant vérifie l'API.
+    private func runMachineStart() async throws {
         let arguments = PodmanCommand.machineStart(Self.machineName)
         let result: ProcessRun
         do {
@@ -218,12 +283,67 @@ final class MemoryStack {
         }
         if result.code == 0 { return }
         let detail = bounded(result.stderr.isEmpty ? result.stdout : result.stderr)
-        // « already running » : un autre processus a démarré la machine — succès,
-        // à condition que l'état REVÉRIFIÉ le confirme (S-2).
-        if Self.isAlreadyRunning(detail), let state = await machineState(), state.running {
-            return
-        }
+        if Self.isAlreadyRunning(detail) { return }
         throw MemoryStackError.machineFailed(detail: detail)
+    }
+
+    /// La réparation de S-3 : `machine stop <nom>` (tout code de sortie est toléré,
+    /// le détail conservé) puis `machine start <nom>`, puis une re-sonde `info`
+    /// bornée par `apiBudget`. Toujours injoignable ⇒ `machineFailed` porte le
+    /// texte MESURÉ de `info` (et, s'il a échoué, le détail de l'arrêt).
+    private func repairMachine() async throws {
+        let stop = await performTolerated(PodmanCommand.machineStop(Self.machineName))
+        try await runMachineStart()
+        let probe = await waitForAPI(budget: apiBudget)
+        guard probe.reachable else {
+            let detail = stop.isEmpty ? probe.detail : "\(probe.detail) — arrêt préalable : \(stop)"
+            throw MemoryStackError.machineFailed(detail: bounded(detail))
+        }
+    }
+
+    /// L'API de la machine répond-elle ? `info` traverse connexion → socket →
+    /// forwarder → API : c'est la source de vérité de la JOIGNABILITÉ (S-3).
+    func apiReachable() async -> Bool {
+        await apiProbe().reachable
+    }
+
+    /// Exécute une commande podman sans juger son code : rend le détail borné
+    /// (vide en cas de succès). Aucune exception — la sonde finale juge.
+    private func performTolerated(_ arguments: [String]) async -> String {
+        guard let result = try? await invoke(arguments) else { return "invocation impossible" }
+        guard result.code != 0 else { return "" }
+        return bounded(result.stderr.isEmpty ? result.stdout : result.stderr)
+    }
+
+    /// Une sonde `info` : joignable (exit 0) ou le détail mesuré du refus.
+    private func apiProbe() async -> (reachable: Bool, detail: String) {
+        let environment = PodmanCommand.environment(base: baseEnvironment, paths: paths)
+        do {
+            let result = try await run(podman, PodmanCommand.info(), environment, apiTimeout)
+            if result.code == 0 { return (true, "") }
+            let detail = result.stderr.isEmpty ? result.stdout : result.stderr
+            return (false, bounded(detail))
+        } catch {
+            return (false, bounded(error.localizedDescription))
+        }
+    }
+
+    private func waitForAPI(budget: Double) async -> (reachable: Bool, detail: String) {
+        let deadline = Date().addingTimeInterval(budget)
+        while true {
+            let probe = await apiProbe()
+            if probe.reachable { return probe }
+            if Date() >= deadline { return probe }
+            try? await Task.sleep(for: .seconds(pollInterval))
+        }
+    }
+
+    /// Le détail d'un `info` raté prouve-t-il que l'API est injoignable (texte
+    /// mesuré le 2026-10-06) ?
+    nonisolated static func isApiUnreachable(_ detail: String) -> Bool {
+        let lowered = detail.lowercased()
+        return lowered.contains("unable to connect to podman socket")
+            || lowered.contains("cannot connect to podman")
     }
 
     @discardableResult
@@ -284,7 +404,10 @@ final class MemoryStack {
 
     // MARK: - Images
 
-    private func ensureImages() async throws {
+    /// Prépare les images et rend l'étiquette de l'image mem0-http (S-7) : elle est
+    /// dérivée de l'empreinte des sources embarquées, jamais d'un numéro de
+    /// version. Sans empreinte exploitable, RIEN n'est tiré ni construit.
+    private func ensureImages() async throws -> String {
         // Le contexte de build est embarqué dans le bundle (S-1) ; sans lui,
         // l'image mem0-http n'est pas constructible — on le dit AVANT de tirer ou
         // de construire quoi que ce soit.
@@ -294,14 +417,19 @@ final class MemoryStack {
                 detail: "contexte de build introuvable (\(buildContext.path))"
             )
         }
+        guard let tag = StackSources.embeddedTag(repository: manifest.stackImageRepository, context: buildContext) else {
+            throw MemoryStackError.containerFailed(
+                name: Self.mem0Container,
+                detail: "empreinte de la pile embarquée introuvable (\(buildContext.path)/STACK_FINGERPRINT)"
+            )
+        }
         if !(await imageExists(manifest.qdrantImage)) {
             try await runSucceeding(PodmanCommand.imagePull(manifest.qdrantImage))
         }
-        if !(await imageExists(manifest.stackImageTag)) {
-            try await runSucceeding(
-                PodmanCommand.imageBuild(tag: manifest.stackImageTag, context: buildContext)
-            )
+        if !(await imageExists(tag)) {
+            try await runSucceeding(PodmanCommand.imageBuild(tag: tag, context: buildContext))
         }
+        return tag
     }
 
     private func imageExists(_ reference: String) async -> Bool {
@@ -311,7 +439,7 @@ final class MemoryStack {
 
     // MARK: - Conteneurs
 
-    private func ensureContainers(config: StackConfig) async throws {
+    private func ensureContainers(config: StackConfig, installationToken: String, stackTag: String) async throws {
         try await ensureContainer(
             name: Self.qdrantContainer,
             image: manifest.qdrantImage,
@@ -325,24 +453,39 @@ final class MemoryStack {
         )
         try await ensureContainer(
             name: Self.mem0Container,
-            image: manifest.stackImageTag,
+            image: stackTag,
             arguments: PodmanCommand.mem0Run(
                 name: Self.mem0Container,
-                image: manifest.stackImageTag,
+                image: stackTag,
                 network: Self.networkName,
                 qdrantHost: Self.qdrantContainer,
-                config: config
-            )
+                config: config,
+                installationToken: installationToken
+            ),
+            // Un conteneur mem0 existant qui ne porte pas le jeton COURANT n'est
+            // pas le nôtre (S-4) : il est recréé comme si son image différait.
+            requiredEnvEntry: "OMP_INSTALLATION_TOKEN=\(installationToken)"
         )
     }
 
-    private func ensureContainer(name: String, image: String, arguments: [String]) async throws {
+    private func ensureContainer(
+        name: String,
+        image: String,
+        arguments: [String],
+        requiredEnvEntry: String? = nil
+    ) async throws {
         guard let state = await containerState(name) else {
             try await createContainer(name: name, arguments: arguments)
             return
         }
         if !PodmanCommand.sameImage(state.image ?? "", image) {
             // Image différente : recreate (S-2).
+            try await runSucceeding(PodmanCommand.containerRemove(name))
+            try await createContainer(name: name, arguments: arguments)
+            return
+        }
+        if let requiredEnvEntry, !state.env.contains(requiredEnvEntry) {
+            // Identité différente (jeton absent ou périmé, S-4) : recreate.
             try await runSucceeding(PodmanCommand.containerRemove(name))
             try await createContainer(name: name, arguments: arguments)
             return
@@ -366,7 +509,16 @@ final class MemoryStack {
         let detail = bounded(result.stderr.isEmpty ? result.stdout : result.stderr)
         if Self.isAddressInUse(detail),
            let port = Self.busyPort(in: detail, ports: PodmanCommand.publishedPorts(in: arguments)) {
-            throw MemoryStackError.portBusy(port: port)
+            // Le diagnostic « address already in use » est conservé, mais le
+            // conflit est construit depuis la SONDE (S-2) : il nomme qui tient le
+            // port au lieu de le deviner.
+            let owner = await StackOwnership.holder(
+                ofPort: port,
+                paths: paths,
+                environment: baseEnvironment,
+                run: run
+            )
+            throw MemoryStackError.portConflict(port: port, owner: owner)
         }
         throw MemoryStackError.containerFailed(name: name, detail: detail)
     }
@@ -380,7 +532,10 @@ final class MemoryStack {
 
     // MARK: - Attentes
 
-    private func awaitStackReady(config: StackConfig) async throws {
+    private func awaitStackReady(config: StackConfig, installationToken: String) async throws {
+        // La porte de S-2 : QUI tient les deux ports, avant toute attente.
+        try await guardPortOwnership()
+
         let ready = await waitUntil(
             url: Self.qdrantReadyURL,
             headers: ["api-key": config.qdrantApiKey],
@@ -394,10 +549,32 @@ final class MemoryStack {
             url: Self.mem0HealthURL,
             headers: [:],
             budget: healthBudget,
-            accept: Self.isMem0Healthy
+            accept: { Self.isOurMem0($0, token: installationToken) }
         )
         guard healthy else {
             throw MemoryStackError.healthTimeout(seconds: Self.seconds(healthBudget))
+        }
+    }
+
+    /// La porte de propriété des ports (S-2) : un port tenu par autre chose que la
+    /// pile de l'app est un conflit NOMMÉ, jamais un « prêt » silencieux. `.ours`,
+    /// `.free` et `.unknown` laissent la suite décider — `.unknown` parce que
+    /// `lsof` peut rater sa course avec gvproxy au démarrage, et qu'on n'invente
+    /// pas une accusation.
+    private func guardPortOwnership() async throws {
+        for port in [PodmanCommand.mem0HostPort, PodmanCommand.qdrantHostPorts[0]] {
+            let owner = await StackOwnership.holder(
+                ofPort: port,
+                paths: paths,
+                environment: baseEnvironment,
+                run: run
+            )
+            switch owner {
+            case .foreign, .legacyStack:
+                throw MemoryStackError.portConflict(port: port, owner: owner)
+            case .free, .ours, .unknown:
+                continue
+            }
         }
     }
 
@@ -496,7 +673,8 @@ final class MemoryStack {
         let image = (dictionary["ImageName"] as? String)
             ?? (config?["Image"] as? String)
             ?? (dictionary["Image"] as? String)
-        return ContainerState(running: running, image: image)
+        let env = (config?["Env"] as? [Any])?.compactMap { $0 as? String } ?? []
+        return ContainerState(running: running, image: image, env: env)
     }
 
     /// Le premier objet d'un JSON qui peut être un tableau ou un objet ; `nil` si
@@ -537,6 +715,19 @@ final class MemoryStack {
             return port
         }
         return ports.first
+    }
+
+    /// Le prédicat d'ACCEPTATION de la sonde identitaire (S-4) : 200, `ok == true`
+    /// ET le champ `installation` égal au jeton de l'installation. Un `200` nu —
+    /// autre service, ancienne image, voie manuelle sans variable — n'est JAMAIS
+    /// accepté comme « notre » pile.
+    nonisolated static func isOurMem0(_ result: (status: Int, body: Data), token: String) -> Bool {
+        guard !token.isEmpty, result.status == 200, isMem0Healthy(result) else { return false }
+        guard let raw = try? JSONSerialization.jsonObject(
+            with: result.body,
+            options: [.fragmentsAllowed]
+        ), let object = raw as? [String: Any] else { return false }
+        return (object["installation"] as? String) == token
     }
 
     nonisolated static func isMem0Healthy(_ result: (status: Int, body: Data)) -> Bool {

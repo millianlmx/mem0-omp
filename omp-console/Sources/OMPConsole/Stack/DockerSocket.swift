@@ -22,6 +22,16 @@ struct DockerContainerSummary: Equatable, Sendable {
     let name: String
     let id: String
     let running: Bool
+    /// Les ports publiés sur l'hôte (`Ports[].PublicPort`), décodés TOLÉRAMMENT :
+    /// un conteneur sans `Ports` (ou une entrée sans `PublicPort`) rend `[]`.
+    let publishedPorts: [Int]
+
+    init(name: String, id: String, running: Bool, publishedPorts: [Int] = []) {
+        self.name = name
+        self.id = id
+        self.running = running
+        self.publishedPorts = publishedPorts
+    }
 }
 
 /// Un montage tel que `GET /containers/{id}/json` le décrit (`Type`, `Source`,
@@ -149,8 +159,21 @@ enum DockerSocket {
             id: string(object["Id"]) ?? "",
             // Seul « running » vaut tourne (swagger : « created », « exited »,
             // « paused »… ne tournent pas).
-            running: string(object["State"]) == "running"
+            running: string(object["State"]) == "running",
+            publishedPorts: publishedPorts(of: object)
         )
+    }
+
+    /// `Ports[].PublicPort` : les ports publiés sur l'hôte. Décodage TOLÉRANT —
+    /// `Ports` absent ou d'un autre type rend `[]`, une entrée sans `PublicPort`
+    /// numérique est ignorée (jamais de crash de type).
+    private static func publishedPorts(of object: [String: Any]) -> [Int] {
+        (object["Ports"] as? [Any] ?? []).compactMap { raw in
+            let port = (raw as? [String: Any])?["PublicPort"]
+            if let value = port as? Int { return value }
+            if let value = port as? NSNumber { return value.intValue }
+            return nil
+        }
     }
 
     private static func detail(of json: [String: Any]) -> DockerContainerDetail {
