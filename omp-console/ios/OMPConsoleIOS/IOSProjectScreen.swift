@@ -116,6 +116,13 @@ struct IOSProjectScreen: View {
         } message: {
             Text(ProjectViewText.closeConfirmMessage)
         }
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .project,
+            isEnabled: IOSProjectModel.gesturesEnabled(client.state)
+        ) {
+            model.reloadDocument()
+            model.reloadPRs()
+        })
     }
 
     // MARK: - Panneau
@@ -128,6 +135,7 @@ struct IOSProjectScreen: View {
         }
         .iosPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + ConsoleSection.project.rawValue)
     }

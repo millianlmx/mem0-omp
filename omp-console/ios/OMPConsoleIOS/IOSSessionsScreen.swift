@@ -71,6 +71,7 @@ struct IOSSessionsScreen: View {
             }
         }
         .onAppear { applyRecipe() }
+        .focusedSceneValue(\.iosRefresh, IOSKeyboard.storeRefresh(client: client, owner: .sessions))
         .accessibilityIdentifier(IOSSessionsAccessibility.screen)
     }
 
@@ -138,6 +139,7 @@ struct IOSSessionsScreen: View {
                 content()
             }
             .iosPanel()
+            .iosReadableWidth()
         }
     }
 

@@ -75,6 +75,12 @@ marqueur `[test: <fonction>]` (une fonction de
 - Marge horizontale de 16 pt en largeur compacte, 24 pt en largeur régulière
   (ou inconnue) : `IOSMetrics.margin(_:)` en est l'unique règle.
   `[test: marginFollowsSizeClass]`
+- Colonne de lecture : sur une fenêtre large, Accueil, Sessions, Mémoire (mode
+  Liste), Projet, Statistiques et Session OMP posent leur contenu dans une
+  colonne de 720 pt marges comprises (`IOSMetrics.readableWidth`, surface de
+  672 pt), centrée, mise à l'échelle par Dynamic Type (`iosReadableWidth()`) ;
+  sous ce plafond, rien ne change. Pipelines et le mode Graphe restent pleine
+  largeur. `[test: readableWidthKeepsTheColumnUnder700]`
 - Les marges et les rembourrages des surfaces grandissent avec Dynamic Type
   (`@ScaledMetric`), jamais une constante figée seule. `[capture: iphone-*-light-ax]`
 - Cible tactile minimale : 44 pt (`IOSMetrics.minimumTarget`), la valeur du HIG
@@ -86,6 +92,14 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
+- Clavier de l'iPad : ⌘1…⌘7 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire,
+  Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
+  ouvre « Nouvelle feature… », ⌘F active la recherche de l'écran qui en a une.
+  Les dix commandes vivent dans la barre des menus de l'iPad (menus
+  Présentation et Fichier) avec leur libellé français, toutes avec ⌘ seul :
+  ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
+  `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
 
 ## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
 

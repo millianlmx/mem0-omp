@@ -14,6 +14,13 @@ enum IOSSection {
         group.sections.filter { all.contains($0) }
     }
 
+    /// Les sept sections dans l'ordre AFFICHÉ par la barre latérale : groupe par
+    /// groupe, comme la `List` de `RootView`. Les raccourcis ⌘1…⌘7 suivent cet
+    /// ordre ; si la barre latérale change, ils la suivent.
+    static var sidebarOrder: [ConsoleSection] {
+        ConsoleSectionGroup.allCases.flatMap(sections(of:))
+    }
+
     /// Le symbole SF d'une section sur iOS : celui de `ConsoleSection`, sauf Sessions
     /// (`IOSSessionText.sectionSymbol`), pour qu'elle ne ressemble plus à Session OMP.
     static func systemImage(of section: ConsoleSection) -> String {

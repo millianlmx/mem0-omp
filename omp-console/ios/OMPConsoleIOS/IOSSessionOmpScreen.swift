@@ -138,6 +138,10 @@ struct IOSSessionOmpScreen: View {
         } message: {
             Text(IOSSessionOmpText.stopConfirmMessage)
         }
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .session,
+            isEnabled: IOSSessionOmpModel.gesturesEnabled(client.state)
+        ) { model.refresh() })
     }
 
     // MARK: - Panneau
@@ -159,6 +163,7 @@ struct IOSSessionOmpScreen: View {
         }
         .iosPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         // `.contain` : sans lui, l'identifiant d'écran écrase ceux des gestes
         // (composeur, « Envoyer », « Relancer »…), illisibles par la recette S-6.
         .accessibilityElement(children: .contain)

@@ -18,7 +18,7 @@ struct IOSMemoryScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
-    /// Le crochet de recette `-memoire.recipe` du mode graphe.
+    /// Le crochet de recette `-memoire.recipe` : mode graphe, ou liste sur fixture.
     let graphRecipe: IOSMemoryGraphRecipe?
     /// La feuille Connexion de la racine, ouverte par « Se connecter ».
     @Binding var showConnection: Bool
@@ -34,8 +34,11 @@ struct IOSMemoryScreen: View {
     /// La raison montrée dans la bulle de « Sommaire » : figée au toucher, tant que
     /// la bulle est ouverte.
     @State private var summaryReason: String?
-    /// La présentation du champ de recherche, lue par `searchPresentedBinding`.
+    /// La présentation du champ de recherche, lue par `searchPresentedBinding`
+    /// (⌘F la présente ; la bascule Graphe/Liste la retire).
     @State private var searchPresented = false
+    /// Le focus du champ de recherche, posé par ⌘F.
+    @FocusState private var searchFocused: Bool
 
     init(
         client: ConsoleClientModel,
@@ -47,7 +50,8 @@ struct IOSMemoryScreen: View {
         self.recipe = recipe
         self.graphRecipe = graphRecipe
         _showConnection = showConnection
-        _model = StateObject(wrappedValue: IOSMemoryModel(client: client))
+        let reader: any IOSMemoryReading = graphRecipe == .clavier ? IOSMemoryRecipeReader() : client
+        _model = StateObject(wrappedValue: IOSMemoryModel(client: reader))
         _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: client))
     }
 
@@ -55,21 +59,16 @@ struct IOSMemoryScreen: View {
         panel
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        if graph.shown {
-                            Task { await graph.refresh() }
-                        } else {
-                            Task { await model.refresh() }
-                        }
-                    } label: {
+                    Button { refreshShown() } label: {
                         Label(MemoryText.refresh, systemImage: "arrow.clockwise")
                     }
-                    .disabled(!connection.gesturesEnabled || (graph.shown ? graph.state == .loading : !model.canRefresh))
+                    .disabled(!connection.gesturesEnabled || !canRefreshShown)
                     .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
                 }
                 ToolbarItem(placement: .topBarTrailing) { summaryButton }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        searchPresented = false
                         if graph.shown {
                             graph.hide()
                         } else {
@@ -98,6 +97,14 @@ struct IOSMemoryScreen: View {
             }
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
+            .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+                owner: .memory,
+                isEnabled: connection.gesturesEnabled && canRefreshShown
+            ) { refreshShown() })
+            .focusedSceneValue(\.iosSearch, IOSCommandAction(owner: .memory, isEnabled: offersSearch) {
+                searchPresented = true
+                searchFocused = true
+            })
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
     }
@@ -130,11 +137,29 @@ struct IOSMemoryScreen: View {
         .accessibilityIdentifier(IOSMemoryAccessibility.summary)
     }
 
+    /// Le rafraîchissement de la vue affichée : le bouton Rafraîchir de la barre
+    /// d'outils et ⌘R passent tous deux par ici.
+    private func refreshShown() {
+        if graph.shown {
+            Task { await graph.refresh() }
+        } else {
+            Task { await model.refresh() }
+        }
+    }
+
+    /// Le contraire du `.disabled` du bouton Rafraîchir (hors connexion à part) :
+    /// aucune relecture pendant une lecture en cours.
+    private var canRefreshShown: Bool {
+        graph.shown ? graph.state != .loading : model.canRefresh
+    }
+
     /// Le crochet de recette force le mode graphe sur la fixture partagée, sans
     /// réseau : le chemin de rendu est celui de production. La recette `liste` garde
-    /// la LISTE et ouvre la fiche de son souvenir par le présentateur de la liste.
+    /// la LISTE et ouvre la fiche de son souvenir par le présentateur de la liste ;
+    /// la recette `clavier` garde la liste sans fiche : seul son lecteur de fixture
+    /// change (`init`).
     private func applyGraphRecipe() {
-        guard let graphRecipe else { return }
+        guard let graphRecipe, graphRecipe != .clavier else { return }
         Task {
             await graphRecipe.activate(graph)
             if let selection = graphRecipe.listSelection(graph) {
@@ -190,6 +215,7 @@ struct IOSMemoryScreen: View {
                     placement: .automatic,
                     prompt: Text(verbatim: MemoryText.searchPrompt)
                 )
+                .searchFocused($searchFocused)
                 .onSubmit(of: .search) {
                     guard connection.gesturesEnabled else { return }
                     Task { await model.submitQuery() }
@@ -220,7 +246,7 @@ struct IOSMemoryScreen: View {
             stack.iosPanel()
         } else {
             ScrollView(.vertical) {
-                stack.iosPanel()
+                stack.iosPanel().iosReadableWidth()
             }
         }
     }
