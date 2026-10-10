@@ -350,6 +350,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var alerts = AlertsModel(ownership: ownership, recipeBoard: HomeRecipe.current()?.board)
 
     private var statusItemController: StatusItemController?
+    /// Les jetons des observateurs de `MainMenuSeparators.observe()` (S-1).
+    private var menuObservers: [NSObjectProtocol] = []
+
+    /// S-1 : aucune fenêtre ne se regroupe en onglets, donc ni Présentation ni
+    /// Fenêtre n'ont d'entrée d'onglet. Posé AVANT la première fenêtre (D-1).
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
 
     /// Le déroulé de la sortie (S-4) : instantané des activités, AU PLUS une
     /// alerte, puis accroches, fermeture des feuilles et terminaison redemandée.
@@ -384,6 +392,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if SurfaceRecipe.current() == nil {
             alerts.start()
         }
+        // S-1 : plus de séparateur en tête, en fin ni en double dans la barre des
+        // menus, au lancement puis à chaque mise à jour d'un menu.
+        menuObservers = MainMenuSeparators.observe()
+        if let mainMenu = NSApp.mainMenu { MainMenuSeparators.tidy(mainMenu) }
         // Le Quitter du Dock, `osascript … quit` et la fermeture de session macOS
         // arrivent en Apple Event : ce gestionnaire les reçoit même quand une
         // feuille est attachée, ce que `applicationShouldTerminate` ne fait pas

@@ -140,14 +140,20 @@ public struct TerminalPalette: Equatable, Sendable {
 }
 
 extension TerminalPalette {
-    /// La palette de l'apparence effective : le fond et l'avant du texte
-    /// système, convertis en sRGB. Recalculée à chaque changement d'apparence ;
-    /// le rendu et la réponse OSC 11 lisent toujours cette même instance (S-4).
+    /// La palette d'UNE apparence : le fond et l'avant du texte système, résolus
+    /// sous `appearance` puis convertis en sRGB. Recalculée à chaque changement
+    /// d'apparence de la vue du terminal ; le rendu et la réponse OSC 11 lisent
+    /// toujours cette même instance (S-4). Les couleurs indexées et RVB ne
+    /// dépendent pas de l'apparence, comme dans Terminal.app.
     @MainActor
-    public static func live() -> TerminalPalette {
-        TerminalPalette(
-            defaultForeground: TerminalRGB(srgb: NSColor.textColor),
-            defaultBackground: TerminalRGB(srgb: NSColor.textBackgroundColor)
-        )
+    public static func live(for appearance: NSAppearance) -> TerminalPalette {
+        var palette = TerminalPalette(defaultForeground: TerminalRGB(0, 0, 0), defaultBackground: TerminalRGB(0, 0, 0))
+        appearance.performAsCurrentDrawingAppearance {
+            palette = TerminalPalette(
+                defaultForeground: TerminalRGB(srgb: NSColor.textColor),
+                defaultBackground: TerminalRGB(srgb: NSColor.textBackgroundColor)
+            )
+        }
+        return palette
     }
 }

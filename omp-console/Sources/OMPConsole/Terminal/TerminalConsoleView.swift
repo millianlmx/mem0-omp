@@ -105,7 +105,8 @@ struct TerminalConsoleView: View {
                     emulator: emulator,
                     palette: model.palette,
                     onResize: { columns, rows in model.viewDidMeasure(columns: columns, rows: rows) },
-                    onKey: { bytes in model.send(keys: bytes) }
+                    onKey: { bytes in model.send(keys: bytes) },
+                    onAppearanceChange: { appearance in model.refreshPalette(for: appearance) }
                 )
                 .accessibilityIdentifier("terminal.view")
             }

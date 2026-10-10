@@ -820,8 +820,35 @@ struct IOSSessionTests {
         // Le rendu se monte sur le modèle SEUL : aucune référence de client, aucune
         // référence de section (`test/ios-sessions.test.ts` interdit leurs noms dans
         // ces fichiers).
-        _ = IOSSessionThreadView(model: model)
-        _ = IOSSessionRowView(row: model.rows[0], isOpen: false, isThinkingOpen: false, onToggle: { _ in })
+        _ = IOSSessionThreadView(model: model, sessionEnded: false)
+        _ = IOSSessionRowView(
+            row: model.rows[0], isOpen: false, isThinkingOpen: false, onToggle: { _ in }, sessionEnded: false
+        )
+    }
+
+    // MARK: - mac-finitions-hig S-7 : « Interrompu » à la place du spinner
+
+    @Test("mac-finitions-hig/AC-8 : un appel sans résultat d'une session hébergée finie se lit « Interrompu »")
+    func interruptedToolCallInEndedSession() {
+        #expect(SessionOmpSurface.stopped.isOver)
+        #expect(SessionOmpSurface.dead.isOver)
+        #expect(ToolCallStatus.of(nil, sessionEnded: SessionOmpSurface.dead.isOver) == .interrupted)
+        #expect(IOSSessionText.toolStatusLabel(.interrupted) == "Interrompu")
+        #expect(IOSSessionText.toolStatusLabel(.interrupted) == ConversationText.toolInterrupted)
+        // Les libellés des autres états ne changent pas.
+        #expect(IOSSessionText.toolStatusLabel(.done) == "terminé")
+        #expect(IOSSessionText.toolStatusLabel(.failed) == "erreur")
+    }
+
+    @Test("mac-finitions-hig/AC-9 : un appel en attente d'une session vivante garde « en cours »")
+    func runningToolCallInLiveSession() {
+        #expect(!SessionOmpSurface.live.isOver)
+        // Aucune autre surface vivante ou sans fil ne déclare la session finie.
+        for surface: SessionOmpSurface in [.unavailable(.disconnected(.unpaired)), .loading, .empty, .launching, .stopping, .failed("x")] {
+            #expect(!surface.isOver, "\(surface)")
+        }
+        #expect(ToolCallStatus.of(nil, sessionEnded: SessionOmpSurface.live.isOver) == .running)
+        #expect(IOSSessionText.toolStatusLabel(.running) == "en cours")
     }
 
     // MARK: - visionneuse-session-vide-a-l-ouverture : chargement, vide, suivi
