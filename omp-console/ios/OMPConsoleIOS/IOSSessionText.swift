@@ -182,6 +182,15 @@ enum IOSSessionsAccessibility {
     static func markerBody(_ rowId: String) -> String { "ios.session.marker.\(rowId).body" }
     static func diff(_ rowId: String, _ index: Int) -> String { "ios.session.diff.\(rowId).\(index)" }
 
+    /// Les identifiants de la vue clé/valeur des arguments d'un appel
+    /// (visionneuse-appels-outils-lisibles, S-5) ; `line` est `ArgumentLine.id`.
+    static func toolArguments(_ rowId: String) -> String { "ios.session.toolcall.\(rowId).args" }
+    static func argumentLine(_ rowId: String, _ line: String) -> String { "\(toolArguments(rowId)).\(line)" }
+    static func argumentMore(_ rowId: String, _ line: String) -> String { "\(argumentLine(rowId, line)).more" }
+    static func argumentsStatus(_ rowId: String) -> String { "\(toolArguments(rowId)).status" }
+    static func argumentsRawToggle(_ rowId: String) -> String { "\(toolArguments(rowId)).rawToggle" }
+    static func argumentsRaw(_ rowId: String) -> String { "\(toolArguments(rowId)).raw" }
+
     /// Les identifiants du bloc `ask` (S-7), tels que S-7 les nomme.
     static func ask(_ rowId: String) -> String { "ios.session.ask.\(rowId)" }
     static func askQuestion(_ rowId: String, _ index: Int) -> String { "ios.session.ask.\(rowId).question.\(index)" }

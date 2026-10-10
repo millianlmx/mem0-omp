@@ -798,6 +798,20 @@ pied de liste (`viewer.selector.footer`).
   Session OMP et Projet sur Mac, feuille Sessions et Session OMP sur iOS).
   Déplié, il montre arguments, résultat et diff dans un bloc
   opaque ; les longues lignes défilent en largeur, le fil seulement en hauteur.
+- **Les arguments d'un appel se lisent en clé/valeur** (`ToolArgumentsView`, sur la
+  lecture partagée `ToolArguments` de `ConsoleCore`), jamais en JSON brut : une
+  ligne « libellé : valeur » par membre, les objets et listes imbriqués en
+  hiérarchie indentée (éléments de liste numérotés dès 1), les booléens rendus
+  « oui »/« non », les clés dans l'ordre de l'appel tel que le fichier l'écrit
+  (`ToolCall.argumentsText`, relu par `OrderedJSON`). Les clés de read, write,
+  edit, bash, grep et glob portent un libellé français (« Fichier », « Commande »,
+  « Motif »…) ; tout autre outil, et toute clé sans libellé, garde son nom brut.
+  Le code (commande bash, contenu écrit, ancien/nouveau texte d'un edit, motif
+  grep/glob) est à chasse fixe, le reste en police système. Une valeur de plus de
+  4 lignes ou 280 caractères montre un extrait et **« Afficher plus »**. Un appel
+  sans argument dit « Aucun argument », des arguments qui ne sont pas un objet
+  JSON « Arguments illisibles » ; le JSON brut reste consultable, replié, derrière
+  **« Afficher le détail brut »**. Le résultat de l'appel est rendu comme avant.
 - **Diffs colorés par contenu** : tout diff unifié reçu d'un outil est détecté dans
   le texte du résultat, et le diff d'un appel d'édition d'OMP (`details.diff`) est
   classé ligne à ligne. Ajout, suppression, contexte et en-têtes sont distingués —
@@ -2656,7 +2670,12 @@ Ouvrir une ligne pousse une **visionneuse en LECTURE SEULE** : elle rend le fil
 d'une session par le même modèle de lignes que macOS (`SessionRowBuilder`),
 messages et rôles, pensées repliables, appels d'outil et leurs résultats, diffs
 colorés et libellés par `SessionDiffText`, question `ask` mise en évidence et
-dépliée d'emblée — sans aucun moyen de répondre ni d'écrire dans la session. Un
+dépliée d'emblée — sans aucun moyen de répondre ni d'écrire dans la session. Les
+arguments d'un appel déplié s'y lisent en clé/valeur comme sur macOS
+(`IOSToolArgumentsView`, même lecture `ToolArguments`) : hiérarchie indentée,
+libellés français des six outils courants, code à chasse fixe, extrait et
+« Afficher plus » pour une valeur longue, « Aucun argument » / « Arguments
+illisibles », JSON brut replié derrière « Afficher le détail brut ». Un
 run vivant s'ajoute en direct (une seule lecture, puis le flux de cette session),
 en préservant la position et l'état replié/déplié, et le fil reste collé au bas
 tant que l'utilisateur n'a pas remonté. Le fil s'ouvre sur sa fin (pile `VStack`
@@ -2664,8 +2683,8 @@ non paresseuse et ancre initiale
 `defaultScrollAnchor(.bottom, for: .initialOffset)`), précédé de « Chargement de
 la session… » tant que la lecture n'est pas finie ; le fil de Session OMP se lit
 et s'abonne dès que l'écran le monte. Les composants du fil (modèle, vue, ligne,
-feuille) sont réutilisables par la section Session OMP : leur seul contrat
-d'entrée est une référence de session et une source.
+arguments, feuille) sont réutilisables par la section Session OMP : leur seul
+contrat d'entrée est une référence de session et une source.
 
 L'en-tête de la feuille porte l'état du RUN (`IOSSessionThreadModel.runStatus` :
 « En cours », « À vous », « Terminé » ou « Échec ») ; le fil porte, lui, sa puce

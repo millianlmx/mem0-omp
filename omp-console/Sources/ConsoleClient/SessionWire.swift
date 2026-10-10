@@ -41,7 +41,7 @@ extension ConversationEntry {
                         )
                     },
                     toolCalls: (wire.toolCalls ?? []).map {
-                        ToolCall(id: $0.id, name: $0.name, arguments: $0.arguments)
+                        ToolCall(id: $0.id, name: $0.name, arguments: $0.arguments, argumentsText: $0.argumentsText)
                     }
                 )
             )

@@ -415,6 +415,27 @@ struct IOSSessionTests {
         #expect(payload.unreadableReason == nil)
     }
 
+    @Test("visionneuse-appels-outils-lisibles/AC-4 : l'appel read du fil client se lit en clé/valeur, libellés français")
+    func toolArgumentsAreFields() throws {
+        let rows = IOSSessionThreadFacts.rows(of: try Self.payload(), home: nil)
+        let read = try #require(Self.toolCall(rows, "call-read"))
+
+        // Le chemin client (charge utile du Mac → lignes du fil) donne des champs,
+        // jamais le JSON brut, et le JSON brut reste le détail replié.
+        guard case .fields(let lines) = read.readableArguments.content else {
+            Issue.record("l'appel read n'est pas lu en champs : \(read.readableArguments.content)")
+            return
+        }
+        #expect(lines.map(\.label) == ["Intention", "À partir de la ligne", "Fichier"])
+        #expect(lines.map(\.value) == [
+            .plain("lire le fichier"),
+            .plain("2"),
+            .plain("/tmp/omp-parity/src/app.swift"),
+        ])
+        #expect(lines.allSatisfy { $0.depth == 0 && $0.excerpt == nil })
+        #expect(read.readableArguments.raw == read.argumentsJSON)
+    }
+
     // MARK: - AC-4 : illisible, tronqué, absent
 
     @Test("ios-sessions/AC-4 : illisible, tronqué et fichier absent ne laissent jamais un écran muet")

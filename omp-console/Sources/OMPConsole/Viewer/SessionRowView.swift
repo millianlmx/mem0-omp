@@ -157,7 +157,7 @@ struct SessionRowView: View, Equatable {
                         askBlock(ask)
                     }
                     section("Arguments") {
-                        monospaced(content.argumentsJSON)
+                        ToolArgumentsView(rowId: row.id, arguments: content.readableArguments)
                     }
                     if let result = content.result, hasResult(result) {
                         section("Résultat") { resultBody(result) }
@@ -361,19 +361,6 @@ struct SessionRowView: View, Equatable {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    /// Un corps monospacé et sélectionnable. Il ne se coupe PAS à la largeur du
-    /// fil : une ligne longue défile en largeur dans son bloc plutôt que d'être
-    /// tronquée (AC-3 de `visionneuse-de-session`).
-    private func monospaced(_ text: String) -> some View {
-        ScrollView(.horizontal) {
-            Text(text)
-                .font(.system(.callout, design: .monospaced))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: false)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private func resultBody(_ result: ToolResultRow) -> some View {
         let pieces = pieces(for: result)
         return VStack(alignment: .leading, spacing: 4) {
@@ -387,7 +374,7 @@ struct SessionRowView: View, Equatable {
     private func pieceView(_ piece: ResultPiece) -> some View {
         switch piece {
         case .text(let text):
-            monospaced(text)
+            MonospacedText(text)
         case .diff(let lines):
             diffView(lines)
         }
@@ -447,6 +434,28 @@ struct SessionRowView: View, Equatable {
         case .context: return .primary
         case .section: return .secondary
         }
+    }
+}
+
+/// Un corps monospacé et sélectionnable, partagé par le résultat d'un appel et
+/// la vue de ses arguments. Il ne se coupe PAS à la largeur du fil : une ligne
+/// longue défile en largeur dans son bloc plutôt que d'être tronquée (AC-3 de
+/// `visionneuse-de-session`).
+struct MonospacedText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            Text(text)
+                .font(.system(.callout, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
