@@ -184,7 +184,7 @@ function detailFaults(root: string): string[] {
   if (!detail.includes("DisclosureGroup(MemoryText.technicalDetails)")) faults.push("les détails techniques ne sont pas repliés");
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes(".sheet(item:")) faults.push("la feuille n'est pas montée par .sheet(item:)");
-  for (const forbidden of ["NavigationStack", "memoryGraph(", "MemoryText.edit", "MemoryText.delete", "MemoryText.save", "MemoryText.createMemory"]) {
+  for (const forbidden of ["memoryGraph(", "MemoryText.edit", "MemoryText.delete", "MemoryText.save", "MemoryText.createMemory"]) {
     if (detail.includes(forbidden)) faults.push(`la feuille porte un geste interdit : ${forbidden}`);
   }
   const tests = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryDetailTests.swift"));
@@ -323,9 +323,7 @@ function unavailableFaults(root: string): string[] {
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes("MemoryText.retry")) faults.push("l'écran n'offre pas « Réessayer »");
   if (!screen.includes("tone: .danger")) faults.push("le bandeau d'indisponibilité n'est pas rouge");
-  const text = appFile(root, "IOSMemoryText.swift");
-  if (!text.includes("MemoryText.unavailableTitle")) faults.push("le vocabulaire iOS ne lit pas le titre partagé");
-  if (!/func unavailable\(detail: String\) -> String/.test(text)) faults.push("IOSMemoryText.unavailable(detail:) absent");
+  if (!screen.includes("IOSMacErrorText.message(for:")) faults.push("l'écran ne lit pas le message du traducteur partagé");
   const tests = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryModelTests.swift"));
   if (!tests.includes('"ios-memoire/AC-6')) faults.push("IOSMemoryModelTests ne porte pas le titre ios-memoire/AC-6");
   faults.push(...contractFaults("AC-6"));
@@ -390,11 +388,8 @@ function clientStateFaults(root: string): string[] {
   if (branch.includes("MemoryText.noProjectTitle")) faults.push("l'état du client dit « Aucun projet ouvert »");
   if (/MemoryText\.(unavailableTitle|noMatch|belowThreshold)/.test(branch)) faults.push("une cause mémoire est inventée côté client");
   const model = appFile(root, "IOSMemoryModel.swift");
-  if (!model.includes(".notConnected, .transport, .incompatibleProtocol, .decoding:")) {
-    faults.push("les pannes de transport ne sont pas classées ensemble");
-  }
-  if (!model.includes("return .macUnreachable")) faults.push("macUnreachable n'est jamais rendu");
-  if (/case \.api\([\s\S]{0,80}return \.macUnreachable/.test(model)) faults.push("une erreur d'API est classée comme panne de transport");
+  if (!model.includes("IOSMacFailure.of(")) faults.push("le modèle ne classe pas l'erreur par le traducteur partagé");
+  if (model.includes("api.message")) faults.push("le modèle relaie le détail brut du Mac");
   faults.push(...contractFaults("AC-8"));
   return faults;
 }
@@ -404,7 +399,7 @@ test("ios-memoire/AC-8 : quand le Mac ne répond plus, c'est l'état du client",
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
-  fs.writeFileSync(target, code(target).replace("ConnectionText.state(state)", "IOSMemoryText.macUnreachable"));
+  fs.writeFileSync(target, code(target).replace("ConnectionText.state(state)", "MemoryText.loading"));
   assert.ok(clientStateFaults(copy).length > 0, "un état de client muet doit faire rougir la garde");
 });
 

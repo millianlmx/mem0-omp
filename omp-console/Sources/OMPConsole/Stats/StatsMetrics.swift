@@ -15,6 +15,10 @@ struct SessionMetrics: Equatable, Sendable {
     var input: Int
     /// Σ `usage.output`.
     var output: Int
+    /// Σ `usage.cacheRead` : tokens lus en cache, hors `input` (disjoints).
+    var cacheRead: Int = 0
+    /// Σ `usage.cacheWrite` : tokens écrits en cache, hors `input`.
+    var cacheWrite: Int = 0
     /// Nombre d'entrées `user` : un tour = un prompt, JAMAIS une « réponse
     /// finale » (un run `-p` n'en porte aucune, Doc-1).
     var turns: Int
@@ -47,6 +51,8 @@ func sessionMetrics(_ conversation: SessionConversation) -> SessionMetrics {
             if let usage = turn.usage {
                 metrics.input += usage.input
                 metrics.output += usage.output
+                metrics.cacheRead += usage.cacheRead
+                metrics.cacheWrite += usage.cacheWrite
             }
             if let model = turn.model, !model.isEmpty { metrics.model = model }
         case .toolResult, .compaction, .branchSummary:

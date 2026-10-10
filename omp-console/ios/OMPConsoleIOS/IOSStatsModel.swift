@@ -139,7 +139,7 @@ final class IOSStatsModel: ObservableObject {
                 self.failure = nil
             } catch {
                 if Task.isCancelled { return }
-                self.failure = IOSStatsText.failure(error, state: self.state())
+                self.failure = IOSStatsText.failure(error)
             }
         }
     }

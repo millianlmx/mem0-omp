@@ -50,6 +50,8 @@ struct StatsBoard: Equatable, Sendable {
 struct StatsTotals: Equatable, Sendable {
     var input: Int
     var output: Int
+    var cacheRead: Int = 0
+    var cacheWrite: Int = 0
     var turns: Int
     var durationMs: Double
 

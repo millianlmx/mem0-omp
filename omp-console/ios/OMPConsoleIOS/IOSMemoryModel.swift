@@ -81,14 +81,8 @@ enum IOSMemoryLoad: Equatable {
     case page(IOSMemorySummary)
     /// Une recherche, telle que le Mac l'a sélectionnée.
     case search(RemoteMemorySearchPayload)
-    /// La mémoire est injoignable côté Mac : le message relayé porte sa cause.
-    case memoryUnavailable(String)
-    /// Le Mac est injoignable : l'état du CLIENT, jamais une cause mémoire.
-    case macUnreachable
-    /// Le Mac a été joint mais la lecture a dépassé son délai.
-    case macTimedOut
-    /// L'app Mac ne connaît pas la route de page : elle est trop ancienne.
-    case macOutdated
+    /// La lecture a échoué : la cause distinguable rendue par le traducteur partagé.
+    case failed(IOSMacFailure)
 }
 
 /// Ce que la section affiche : le sommaire du projet, ou les résultats d'une
@@ -104,10 +98,7 @@ enum IOSMemoryScreenState: Equatable {
     case clientState(ClientState)
     case loading
     case noProject
-    case unavailable(detail: String)
-    case macUnreachable
-    case macTimedOut
-    case macOutdated
+    case failed(IOSMacFailure)
     case summaryEmpty(scope: String)
     case summary(scope: String, total: Int, rows: [RemoteMemoryRow], more: IOSMemoryMore)
     case searchEmptyNoMatch
@@ -153,38 +144,23 @@ final class IOSMemoryModel: ObservableObject {
         return false
     }
 
-    /// La classification d'une erreur de lecture (S-4, S-5) : une panne de
-    /// TRANSPORT n'est jamais présentée comme une panne mémoire, un délai dépassé
-    /// n'est jamais présenté comme un Mac injoignable, et une erreur du contrat
-    /// d'API l'est toujours — sauf la route inconnue d'une app Mac trop ancienne.
+    /// La classification d'une erreur de lecture : la cause vient du traducteur
+    /// partagé, par son entrée Mémoire `IOSMacFailure.ofMemoryRead` — un délai
+    /// dépassé n'y est jamais présenté comme un Mac injoignable (S-5). `nil` ⇔ 401 :
+    /// le parcours de jeton révoqué parle seul, la section retombe sur l'état du client.
     static func load(from error: Error) -> IOSMemoryLoad {
-        guard let failure = error as? ClientError else { return .macUnreachable }
-        switch failure {
-        case .transport(.timedOut):
-            return .macTimedOut
-        case .notConnected, .transport, .incompatibleProtocol, .decoding:
-            return .macUnreachable
-        case .api(.notFound):
-            return .macOutdated
-        case .api(let api):
-            return .memoryUnavailable(api.message ?? "")
-        }
+        guard let cause = IOSMacFailure.ofMemoryRead(error) else { return .idle }
+        return .failed(cause)
     }
 
     /// Le message d'une panne, tel que l'écran le montre : celui du pied de liste
     /// quand la page SUIVANTE échoue (S-5).
     static func failureMessage(_ load: IOSMemoryLoad) -> String {
         switch load {
-        case .macTimedOut:
-            return IOSMemoryText.macTimedOut
-        case .macUnreachable:
-            return IOSMemoryText.macUnreachable
-        case .macOutdated:
-            return IOSMemoryText.macOutdated
-        case .memoryUnavailable(let message):
-            return IOSMemoryText.unavailable(detail: message.isEmpty ? IOSMemoryText.noData : message)
+        case .failed(let cause):
+            return IOSMacErrorText.message(for: cause)
         case .idle, .loading, .page, .search:
-            return IOSMemoryText.macUnreachable
+            return IOSMacErrorText.message(for: .macUnreachable)
         }
     }
 
@@ -198,14 +174,8 @@ final class IOSMemoryModel: ObservableObject {
             return gesturesEnabled(client) ? .loading : .clientState(client)
         case .loading:
             return .loading
-        case .macUnreachable:
-            return .macUnreachable
-        case .macTimedOut:
-            return .macTimedOut
-        case .macOutdated:
-            return .macOutdated
-        case .memoryUnavailable(let message):
-            return .unavailable(detail: message.isEmpty ? IOSMemoryText.noData : message)
+        case .failed(let cause):
+            return .failed(cause)
         case .page(let payload):
             guard let scope = payload.scope else { return .noProject }
             if case .search = mode { return .loading }
@@ -243,6 +213,20 @@ final class IOSMemoryModel: ObservableObject {
     var isSearching: Bool { if case .search = mode { return true }; return false }
     var canRefresh: Bool { !isLoading }
     var canShowSummary: Bool { isSearching && !isLoading }
+
+    /// Pourquoi « Sommaire » est indisponible, ou `nil` s'il l'est. La première
+    /// règle qui s'applique gagne : le graphe, puis le sommaire déjà courant, puis
+    /// une recherche en vol. `nil` ⇔ `canShowSummary` hors graphe.
+    static func summaryUnavailableReason(graphShown: Bool, isSearching: Bool, isLoading: Bool) -> String? {
+        if graphShown { return IOSMemoryText.summaryReasonGraph }
+        if !isSearching { return IOSMemoryText.summaryReasonShown }
+        if isLoading { return IOSMemoryText.summaryReasonSearching }
+        return nil
+    }
+
+    func summaryUnavailableReason(graphShown: Bool) -> String? {
+        Self.summaryUnavailableReason(graphShown: graphShown, isSearching: isSearching, isLoading: isLoading)
+    }
 
     // MARK: - Gestes : les seuls déclencheurs réseau (S-9)
 

@@ -36,6 +36,9 @@ public enum ClientError: Error, Equatable, Sendable {
     case api(ConsoleAPIError)
     /// Corps de réponse illisible, ou plus gros que la borne servie.
     case decoding(String)
+    /// Le Mac a répondu sans enveloppe d'erreur lisible, ou avec un code inconnu sur un
+    /// statut que la table ne range pas : seul le statut HTTP est fiable.
+    case unexpectedStatus(Int)
 }
 
 /// L'échec d'un appairage : quatre causes, jamais un demi-appairage.

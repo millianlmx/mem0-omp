@@ -24,12 +24,10 @@ final class IOSMemoryGraphModel: ObservableObject {
     enum State: Equatable {
         case idle
         case loading
-        case macUnreachable
-        case macTimedOut
         case noProject
         case serviceOutdated
         case macOutdated
-        case unavailable(detail: String)
+        case failed(IOSMacFailure)
         case empty
         case graph(
             nodes: [MemoryGraphNode],
@@ -67,22 +65,17 @@ final class IOSMemoryGraphModel: ObservableObject {
         return false
     }
 
-    /// La classification d'une panne de lecture : une panne de TRANSPORT n'est
-    /// jamais présentée comme une panne mémoire, et une erreur du contrat d'API
-    /// l'est toujours (patron `IOSMemoryModel.load(from:)`).
+    /// La classification d'une panne de lecture, par l'entrée Mémoire du traducteur
+    /// partagé (`IOSMacFailure.ofMemoryRead`) : la route graphe n'émet aucun 404
+    /// métier, tout `not_found` dit « app Mac trop ancienne » (D-4), et un délai
+    /// dépassé reste distinct du Mac injoignable. Un 401 (`nil`) laisse l'état
+    /// `.idle`, le parcours de révocation parle seul.
     static func failure(from error: Error) -> State {
-        guard let failure = error as? ClientError else { return .macUnreachable }
-        switch failure {
-        case .transport(.timedOut):
-            return .macTimedOut
-        case .notConnected, .transport, .incompatibleProtocol, .decoding:
-            return .macUnreachable
-        case .api(.outdatedService):
-            return .serviceOutdated
-        case .api(.notFound):
-            return .macOutdated
-        case .api(let api):
-            return .unavailable(detail: api.message ?? "")
+        guard let cause = IOSMacFailure.ofMemoryRead(error) else { return .idle }
+        switch cause {
+        case .serviceOutdated: return .serviceOutdated
+        case .macOutdated: return .macOutdated
+        default: return .failed(cause)
         }
     }
 

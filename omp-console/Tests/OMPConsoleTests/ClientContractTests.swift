@@ -1,5 +1,6 @@
 // Le contrat du client contre la VRAIE pile : la confrontation des catalogues
-// (AC-13), la découverte Bonjour réelle (AC-1) et la recette gated (AC-20).
+// (AC-13), la découverte Bonjour réelle (AC-1), les requêtes et l'appairage par
+// une adresse zonée (bonjour-adresse-ipv4-invalide) et la recette gated (AC-20).
 //
 // Ce fichier vit dans OMPConsoleTests parce qu'il a besoin de `RemoteStack` et de
 // la table de routes de la coque ; les `Remote…` de ConsoleClient y sont donc
@@ -66,8 +67,8 @@ struct ClientContractTests {
     func catalogIsImageOfRouter() async throws {
         // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
         let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
-        #expect(served.count == 37)
-        #expect(ClientRoute.all.count == 37)
+        #expect(served.count == 38)
+        #expect(ClientRoute.all.count == 38)
         #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
 
         // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
@@ -175,6 +176,24 @@ struct ClientContractTests {
             client: ConsoleClient.RemoteMemoryPagePayload.self,
             host: OMPConsole.RemoteMemoryPagePayload.self
         ))
+        #expect(try contractSameShape(
+            #"{"selectors":["a/b"],"failure":null,"names":{"a/b":"B"}}"#,
+            client: ConsoleClient.RemoteModelsPayload.self,
+            host: OMPConsole.RemoteModelsPayload.self
+        ))
+    }
+
+    @Test("ios-fiche-carte-pipelines/AC-6 : un Mac d'avant la feature (catalogue sans names) reste lisible, names vaut nil")
+    func olderMacModelsPayloadStaysReadable() throws {
+        let json = #"{"selectors":["a/b"],"failure":null}"#
+        let data = Data(json.utf8)
+        #expect(try JSONDecoder().decode(ConsoleClient.RemoteModelsPayload.self, from: data).names == nil)
+        #expect(try JSONDecoder().decode(OMPConsole.RemoteModelsPayload.self, from: data).names == nil)
+        #expect(try contractSameShape(
+            json,
+            client: ConsoleClient.RemoteModelsPayload.self,
+            host: OMPConsole.RemoteModelsPayload.self
+        ))
     }
 
     @Test("S-1 (AC-1) : une charge d'un Mac d'avant la feature (sans text, tags, truncated) reste lisible des deux côtés")
@@ -235,6 +254,66 @@ struct ClientContractTests {
         #expect(model.discovered?.name == ConsoleAPI.Service.bonjourName)
         #expect(model.discovered?.endpoint.host.isEmpty == false)
         #expect(model.discovered?.endpoint.port != 0)
+        model.stop()
+    }
+
+    /// Network.framework résout un Mac découvert en IPv4 AVEC sa zone d'interface
+    /// (`192.168.1.175%en0`) : la requête doit partir quand même, et atteindre la
+    /// coque. `127.0.0.1%en0` joue ce rôle sur la boucle locale (la zone d'une IPv4
+    /// ne change pas sa destination).
+    @Test("bonjour-adresse-ipv4-invalide/AC-1 : une requête vers un Mac découvert en IPv4 zoné atteint le Mac")
+    func zonedIPv4RequestReachesMac() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let response = try await ConsoleClient.URLSessionTransport().send(
+            ClientHTTPRequest(method: "GET", path: "/v1/version"),
+            to: .bonjour(name: ConsoleAPI.Service.bonjourName, host: "127.0.0.1%en0", port: Int(stack.port)),
+            token: nil
+        )
+        // L'en-tête de version n'est posé que par la coque : la requête l'a atteinte.
+        #expect(response.protocolVersion == ConsoleAPI.protocolVersion)
+    }
+
+    /// Non-régression du correctif du 2026-10-08 : un lien-local IPv6 garde sa zone
+    /// (échappée en `%25`), sans laquelle il est injoignable. `fe80::1%lo0` existe
+    /// par défaut sur macOS.
+    @Test("bonjour-adresse-ipv4-invalide/AC-2 : une requête vers un Mac en IPv6 lien-local zoné atteint toujours le Mac")
+    func zonedLinkLocalIPv6RequestReachesMac() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let response = try await ConsoleClient.URLSessionTransport().send(
+            ClientHTTPRequest(method: "GET", path: "/v1/version"),
+            to: .bonjour(name: ConsoleAPI.Service.bonjourName, host: "fe80::1%lo0", port: Int(stack.port)),
+            token: nil
+        )
+        #expect(response.protocolVersion == ConsoleAPI.protocolVersion)
+    }
+
+    /// L'appairage complet SANS adresse saisie, contre la vraie pile jointe par une
+    /// IPv4 zonée : la preuve principale de B-3, exécutable Mac verrouillé. La
+    /// découverte est une doublure : une app OMP Console vivante annonce le même nom.
+    @Test("bonjour-adresse-ipv4-invalide/AC-4 : un client non appairé s'appaire au Mac découvert en IPv4 zoné, sans adresse saisie")
+    func pairsWithZonedIPv4DiscoveredMac() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let code = try stack.registry.generateCode()
+        let discovery = ContractDiscovery()
+        let model = makeModel(discovery: discovery)
+        // `start()` branche `discovery.onChange` : sans lui, la découverte est ignorée.
+        model.start()
+        discovery.onChange?([DiscoveredMac(
+            name: ConsoleAPI.Service.bonjourName,
+            endpoint: .bonjour(name: ConsoleAPI.Service.bonjourName, host: "127.0.0.1%en0", port: Int(stack.port))
+        )])
+
+        try await model.pair(code: code.value, deviceName: "Bonjour IPv4")
+
+        #expect(model.manualAddress == nil)
+        #expect(model.effectiveEndpoint?.host == "127.0.0.1%en0")
+        #expect(model.pairingFailure == nil)
+        #expect(try await model.version() == ConsoleAPI.protocolVersion)
+        let devices = try await model.devices()
+        #expect(devices.devices.contains { $0.name == "Bonjour IPv4" })
         model.stop()
     }
 

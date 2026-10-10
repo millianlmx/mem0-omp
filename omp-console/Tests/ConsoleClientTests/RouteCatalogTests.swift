@@ -1,4 +1,4 @@
-// Le catalogue des routes (S-1) : 30 entrées, chacune unique, normalisée comme la
+// Le catalogue des routes (S-1) : 38 entrées, chacune unique, normalisée comme la
 // table de la coque.
 
 @testable import ConsoleClient
@@ -8,11 +8,11 @@ import Testing
 @Suite("Catalogue des routes")
 @MainActor
 struct RouteCatalogTests {
-    @Test("le catalogue porte 37 routes uniques")
+    @Test("le catalogue porte 38 routes uniques")
     func catalogSize() {
-        #expect(ClientRoute.all.count == 37)
+        #expect(ClientRoute.all.count == 38)
         let keys = ClientRoute.all.map { "\($0.method) \($0.normalized.path)" }
-        #expect(Set(keys).count == 37, "deux routes identiques dans le catalogue")
+        #expect(Set(keys).count == 38, "deux routes identiques dans le catalogue")
     }
 
     @Test("chaque méthode typée a sa route dans le catalogue")
@@ -24,7 +24,7 @@ struct RouteCatalogTests {
             "GET /v1/projects", "GET /v1/repos", "GET /v1/projects/{repoKey}/documents", "GET /v1/stats",
             "GET /v1/devices", "GET /v1/models", "GET /v1/components", "GET /v1/journal", "GET /v1/cards/{id}/contract",
             "GET /v1/memory/page", "GET /v1/memory/search", "GET /v1/memory/graph",
-            "GET /v1/stream", "POST /v1/pair", "POST /v1/cards/{id}/answer", "POST /v1/cards/{id}/reply",
+            "GET /v1/stream", "POST /v1/pair", "DELETE /v1/devices/self", "POST /v1/cards/{id}/answer", "POST /v1/cards/{id}/reply",
             "POST /v1/cards/{id}/text", "POST /v1/cards/{id}/verdict", "POST /v1/cards/{id}/resume",
             "POST /v1/cards/{id}/stop", "POST /v1/features", "POST /v1/projects/{repoKey}/conduite",
             "DELETE /v1/projects/{repoKey}/conduite", "GET /v1/conduite", "POST /v1/conduite/dialogs/{id}",
