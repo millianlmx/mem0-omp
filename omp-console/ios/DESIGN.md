@@ -60,7 +60,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
   sources de l'app. `[garde: design-ios/AC-7]`
 - Aucun `lineLimit` numérique : les textes se replient sur plusieurs lignes.
-  Seule exception : la PLAGE de hauteur d'un champ de saisie vertical
+  Deux exceptions : le texte d'un souvenir dans la liste de la Mémoire, plafonné
+  par la fonction nommée `IOSMetrics.memoryRowLines(_:)` (texte intégral dans la
+  feuille), et la PLAGE de hauteur d'un champ de saisie vertical
   (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
   tronqué, le champ défile. `[garde: design-ios/AC-7]`
 
@@ -111,7 +113,9 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Dynamic Type maximum (S-7)
 
 - À `accessibility-extra-extra-extra-large`, aucun texte n'est tronqué ni
-  chevauché : aucune hauteur fixe, aucune largeur figée, aucune troncature.
+  chevauché : aucune hauteur fixe, aucune largeur figée, aucune troncature —
+  sauf le texte d'un souvenir dans la liste de la Mémoire, plafonné par
+  `IOSMetrics.memoryRowLines(_:)` et intégral dans la feuille.
   `[capture: iphone-*-dark-ax]`
 - L'iPad tient la même taille maximale, barre latérale à deux groupes comprise.
   `[capture: ipad-*-light-ax]`
@@ -326,6 +330,13 @@ marqueur `[test: <fonction>]` (une fonction de
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
   — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
+- Le texte d'un souvenir tient en 3 lignes au plus en largeur compacte et 4 en
+  largeur régulière, terminé par « … », quelle que soit la taille de texte ; la
+  feuille montre le texte intégral. `[test: memoryRowLinesFollowTheWidth]`
+- Chaque rangée a la même marge verticale que les Sessions ; la date et les
+  étiquettes tiennent sur une ligne, jointes par « · », aux tailles standard et
+  s'empilent (date, puis étiquettes) aux tailles d'accessibilité, texte borné à
+  `accessibility4`. `[test: memoryRowContextSplitsIntoSegments]`
 - « Sommaire » reste toujours visible ; indisponible, il est grisé et un toucher
   montre la raison dans une bulle — jamais un bouton masqué ni muet.
   `[test: summaryReasonNamesEachUnavailableCase]`
@@ -391,7 +402,7 @@ marqueur `[test: <fonction>]` (une fonction de
 - La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et
   son groupement par jour (`SessionDays`) : mêmes runs, mêmes en-têtes que macOS,
   y compris une session lancée hors coque. `[test: listGroupsByDay]`
-- Un `Picker` de projet restreint la liste AVANT le groupement, donc les
+- Un menu de projet restreint la liste AVANT le groupement, donc les
   en-têtes de jour se recalculent ; « Tous les projets » la restitue entière.
   `[test: projectFilter]`
 - Le fil de la visionneuse vient du modèle de lignes PARTAGÉ
@@ -433,6 +444,13 @@ marqueur `[test: <fonction>]` (une fonction de
 - Le symbole d'étape occupe une colonne de largeur fixe (`IOSMetrics.phaseIconWidth`,
   mise à l'échelle par `@ScaledMetric`) : les titres des lignes partagent la même
   abscisse à toute taille de texte. `[test: phasesRecipeShowsEveryPhase]`
+- Chaque rangée a une marge verticale `IOSMetrics.rowVerticalPadding` mise à
+  l'échelle (`@ScaledMetric`), reste sur une ligne aux tailles standard et
+  s'empile (icône, textes, puce) aux tailles d'accessibilité, texte borné à
+  `accessibility4`. `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Le filtre de projet est un menu dont le libellé visible est la valeur choisie,
+  entière à toute taille de texte (repliée, jamais tronquée) ; VoiceOver annonce
+  « Projet, <valeur> ». `[test: sessionFilterSaysProjectThenItsValue]`
 
 ## Session OMP (feature `ios-session-omp`)
 

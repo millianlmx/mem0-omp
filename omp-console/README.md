@@ -2251,9 +2251,13 @@ contrat de la feature. La recette de design iOS fait autorité et vit dans
 La section Sessions liste les runs du magasin d'état — ceux de tous les dépôts et
 de tous les processus OMP du Mac, y compris une session lancée par un `omp` en
 terminal hors coque — groupés par jour sous les mêmes en-têtes que la coque macOS
-(« Aujourd'hui », « Hier », puis la date). Un `Picker` filtre la liste par projet ;
-choisir « Tous les projets » la restitue entière et les en-têtes de jour se
-recalculent. La liste vient de la dérivation partagée `ConsoleCore` (`SessionList`,
+(« Aujourd'hui », « Hier », puis la date). Un menu filtre la liste par projet :
+son libellé visible est la valeur choisie, entière à toute taille de texte, et
+VoiceOver l'annonce « Projet, <valeur> » ; choisir « Tous les projets » la
+restitue entière et les en-têtes de jour se recalculent. Chaque ligne a une marge
+verticale qui grandit avec la taille du texte ; aux tailles d'accessibilité,
+l'icône d'étape, les textes et la puce d'état s'empilent au lieu d'être coupés.
+La liste vient de la dérivation partagée `ConsoleCore` (`SessionList`,
 `SessionDays`), alimentée par l'instantané que la trame `store` publie — aucune
 route n'est appelée pour lister.
 
@@ -2883,13 +2887,15 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 1. **Appairer** l'app au Mac (feuille de connexion), un projet étant ouvert dans la
    fenêtre « Session OMP » du Mac : la section affiche l'en-tête « N souvenirs » (le
    total de la portée) puis les lignes de la première page du sommaire, chacune avec
-   le texte COMPLET du souvenir tel qu'il est stocké (aucun rendu Markdown), dans
-   l'ordre du service (les plus récents d'abord). En faisant défiler jusqu'en bas, le
-   pied « Chargement des souvenirs suivants… » lit la page suivante de lui-même
-   (défilement continu, 100 souvenirs par page), jusqu'au dernier souvenir de la
-   portée — chaque souvenir une seule fois, plus de ligne de troncature. Si une page
-   suivante échoue, le pied dit pourquoi et offre « Réessayer », les lignes déjà lues
-   restent.
+   le texte du souvenir tel qu'il est stocké (aucun rendu Markdown), sur 3 lignes au
+   plus (4 sur iPad), terminé par « … » s'il est plus long — le texte intégral est
+   dans la feuille (étape 2) —, dans l'ordre du service (les plus récents d'abord).
+   En faisant défiler jusqu'en bas, le pied « Chargement des souvenirs suivants… »
+   lit la page suivante de lui-même (défilement continu, 100 souvenirs par page),
+   jusqu'au dernier souvenir de la portée — chaque souvenir une seule fois, plus de
+   ligne de troncature. Si une page suivante échoue, le pied dit pourquoi et offre
+   « Réessayer », les lignes déjà lues restent. Aux tailles d'accessibilité, la date
+   et les étiquettes d'une ligne s'empilent sous le texte.
 2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre la date relative et
    les étiquettes, puis le texte intégral tel qu'il est stocké (un `*` reste un `*`),
    et l'identifiant et la portée sous « Détails techniques » ; se fermer par le geste
