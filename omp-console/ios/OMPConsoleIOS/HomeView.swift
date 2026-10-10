@@ -468,10 +468,14 @@ struct HomeView: View {
                 IOSStatusChip(status: ConsoleStatus.of(card: card))
                 if let link {
                     if rowAxis == .twoLine { Spacer() }
-                    Button(HomeText.openPR) { openURL(link) }
-                        .buttonStyle(.bordered)
-                        .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                        .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
+                    Button { openURL(link) } label: {
+                        Text(HomeText.openPR)
+                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.bordered)
+                    .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
+                    .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
                 }
             }
         }

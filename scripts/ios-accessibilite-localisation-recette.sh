@@ -546,10 +546,10 @@ def home_recipe(device, udid):
 
 def home_unpaired(device, udid):
     launch(udid, "-section", "home", "-home.welcomeSeen", "YES")
-    elements = stable(udid, lambda els: "ios.home.connect" in ids(els), f"Accueil non appairé {device}")
+    elements = stable(udid, lambda els: "ios.connexion.connect" in ids(els), f"Accueil non appairé {device}")
     capture(udid, "accueil-non-appaire", device, elements)
     return [no_container_id(device, "Accueil non appairé", elements),
-            target(device, "Accueil non appairé", one(elements, "ios.home.connect"), "Se connecter")]
+            target(device, "Accueil non appairé", one(elements, "ios.connexion.connect"), "Se connecter")]
 
 
 def welcome(device, udid):
@@ -704,7 +704,7 @@ def heading_of(elements):
 
 def root_list(device, udid):
     launch(udid, "-section", "home", "-home.welcomeSeen", "YES")
-    elements = stable(udid, lambda els: "ios.home.connect" in ids(els), f"Accueil non appairé {device}")
+    elements = stable(udid, lambda els: "ios.connexion.connect" in ids(els), f"Accueil non appairé {device}")
     w, _ = screen(elements)
     if device == "iphone":
         back = next((e for e in describe_point(udid, 38, 84) if ident(e) == "BackButton"), None)
@@ -751,7 +751,7 @@ def to_english(udid):
 
 def sidebar_button(device, udid):
     launch(udid, "-section", "home", "-home.welcomeSeen", "YES")
-    elements = stable(udid, lambda els: "ios.home.connect" in ids(els), f"Accueil en anglais {device}")
+    elements = stable(udid, lambda els: "ios.connexion.connect" in ids(els), f"Accueil en anglais {device}")
     capture(udid, "ac6-barre-laterale", device, elements)
     labels = {label(e) for e in elements if e.get("type") == "Button"}
     if SIDEBAR_FR not in labels and SIDEBAR_EN not in labels:

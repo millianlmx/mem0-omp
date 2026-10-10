@@ -82,7 +82,7 @@ PROTEGES_CIBLE_44 = {
     "libellé:Tout afficher",
     "libellé:Lire le contrat",
     "libellé:Piloter un projet…",
-    "id:ios.home.connect",
+    "id:ios.connexion.connect",
     "id:ios.memoire.retry",
     "id:ios.memoire.graphe.etiquette",
 }

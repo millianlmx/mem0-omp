@@ -2916,7 +2916,7 @@ relevé. Ces familles sont **protégées**, car elles masqueraient les défauts 
 par l'audit : `cible-44` sur « Tout afficher », « Lire le contrat » et « Piloter un
 projet… » (`ios.home.allPipelines`, `ios.home.attention.*.contract`,
 `ios.projet.start`), sur « Ouvrir la PR » de l'Accueil (`ios.home.delivered.open.*`),
-« Se connecter » (`ios.home.connect`), « Réessayer » de la Mémoire
+« Se connecter » (`ios.connexion.connect`), « Réessayer » de la Mémoire
 (`ios.memoire.retry`) et le menu d'étiquettes du graphe
 (`ios.memoire.graphe.etiquette`) ; `id-duplique` sur `pipelines.card.sheet.title` et
 `ios.memoire.screen` ; `bord` en source `capture` sur `kanban`, `sessions`, `memory`

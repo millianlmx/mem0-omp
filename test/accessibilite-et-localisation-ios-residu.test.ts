@@ -37,6 +37,7 @@ const PBXPROJ = path.join("omp-console", "ios", "OMPConsoleIOS.xcodeproj", "proj
 const INFO_PLIST = path.join("omp-console", "ios", "OMPConsoleIOS-Info.plist");
 const ROOT_VIEW = path.join(APP, "RootView.swift");
 const HOME_TEXT = path.join(APP, "IOSHomeText.swift");
+const CONNECTION_STATE = path.join(APP, "Design", "IOSConnectionStateView.swift");
 
 /** Les fichiers lus par les gardes, chemin relatif → texte. */
 type Sources = Map<string, string>;
@@ -74,7 +75,7 @@ function stripComments(text: string): string {
 function repoSources(): Sources {
   const files = [
     HOME_VIEW, WELCOME, PIPELINES, CARD_SHEET, CARD_RECIPE, PIPELINES_TEXT, PLAN, PROJECT,
-    SECTION_VIEW, MEMORY, GRAPH, KANBAN_TEXT, NEW_FEATURE_TEXT, ROOT_VIEW, HOME_TEXT,
+    SECTION_VIEW, MEMORY, GRAPH, KANBAN_TEXT, NEW_FEATURE_TEXT, ROOT_VIEW, HOME_TEXT, CONNECTION_STATE,
   ];
   const sources: Sources = new Map();
   for (const rel of files) sources.set(rel, stripComments(fs.readFileSync(path.join(ROOT, rel), "utf8")));
@@ -137,7 +138,8 @@ function meaningfulFaults(sources: Sources): string[] {
   } else if (!screen.slice(start, end).includes(".accessibilityLabel(KanbanText.refresh)")) {
     faults.push("PipelinesScreen.refreshButton : .accessibilityLabel(KanbanText.refresh) manque sur le Button");
   }
-  if (!/Label\(NewFeatureText\.command, systemImage: "plus"\)\s*\}\s*\.accessibilityIdentifier\(PipelinesAccessibility\.newFeature\)/.test(screen)) {
+  // `.disabled(…)` : le « + » est grisé hors connexion (etats-non-connecte-heterogenes-ios, S-5).
+  if (!/Label\(NewFeatureText\.command, systemImage: "plus"\)\s*\}\s*(?:\.disabled\([^()]*\)\s*)?\.accessibilityIdentifier\(PipelinesAccessibility\.newFeature\)/.test(screen)) {
     faults.push("PipelinesScreen : le bouton pipelines.newFeature n'a plus Label(NewFeatureText.command, systemImage: \"plus\") pour libellé");
   }
   if (!get(sources, KANBAN_TEXT).includes('public static let refresh = "Rafraîchir"')) {
@@ -224,7 +226,7 @@ interface Target {
 }
 
 const TARGETS: Target[] = [
-  { name: "Se connecter", file: HOME_VIEW, label: "Text(IOSHomeText.connect)", anchor: ".accessibilityIdentifier(IOSHomeAccessibility.connect)" },
+  { name: "Se connecter", file: CONNECTION_STATE, label: "Text(IOSConnectionStateText.connect)", anchor: ".accessibilityIdentifier(IOSConnectionStateAccessibility.connect)" },
   { name: "Ouvrir la PR (Accueil)", file: HOME_VIEW, label: "Text(HomeText.openPR)", anchor: ".accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))" },
   { name: "Ouvrir la PR (carte Pipelines)", file: PIPELINES, label: "Text(HomeText.openPR)", anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))" },
   { name: "Ouvrir la PR (fiche de carte)", file: CARD_SHEET, label: "Text(HomeText.openPR)", anchor: ".accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))" },
@@ -235,12 +237,13 @@ const TARGETS: Target[] = [
   { name: "Menu d'étiquettes du graphe", file: GRAPH, label: "Label(MemoryText.tagMenu,", anchor: ".accessibilityIdentifier(IOSMemoryAccessibility.graphTagMenu)" },
 ];
 
-const SHAPE = String.raw`[^{}]*?\.frame\(minWidth: IOSMetrics\.minimumTarget, minHeight: IOSMetrics\.minimumTarget\)\s*\.contentShape\(Rectangle\(\)\)\s*\}`;
+/** Le cadre de 44 pt du libellé : carré minimal, ou ligne pleine largeur d'au moins 44 pt de haut (« Ouvrir la PR » d'une carte Pipelines). */
+const SHAPE = String.raw`[^{}]*?\.frame\((?:minWidth: IOSMetrics\.minimumTarget, minHeight: IOSMetrics\.minimumTarget|maxWidth: \.infinity, minHeight: IOSMetrics\.minimumTarget, alignment: \.leading)\)\s*\.contentShape\(Rectangle\(\)\)\s*\}`;
 
 /** Les entrées d'exception que S-4 interdit désormais. */
 const PROTECTED_S4: ExceptionEntry[] = [
   { regle: "cible-44", element: "id:ios.home.delivered.open.feature:ade5316c34182862:terminee" },
-  { regle: "cible-44", element: "id:ios.home.connect" },
+  { regle: "cible-44", element: "id:ios.connexion.connect" },
   { regle: "cible-44", element: "id:ios.memoire.retry" },
   { regle: "cible-44", element: "id:ios.memoire.graphe.etiquette" },
   { regle: "id-duplique", element: "id:ios.memoire.screen" },
@@ -270,7 +273,7 @@ function targetFaults(sources: Sources): string[] {
     const segment = target.opens ? text.slice(labelAt) : text.slice(labelAt, anchorAt);
     const shape = new RegExp(`^${escape(target.label)}${SHAPE}`).exec(segment);
     if (shape === null) {
-      faults.push(`${target.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) puis .contentShape(Rectangle())`);
+      faults.push(`${target.name} : le libellé doit porter .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget) (ou une ligne .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)) puis .contentShape(Rectangle())`);
       continue;
     }
     if (!target.opens) {
@@ -371,9 +374,9 @@ test("accessibilite-et-localisation-ios-residu/AC-5 : Ouvrir la PR, Se connecter
   // La forme posée HORS du libellé (sur le Button) n'agrandit pas le cadre AX : refusée.
   const outside = plant(
     sources,
-    HOME_VIEW,
-    /Text\(IOSHomeText\.connect\)\s*\.frame\(minWidth: IOSMetrics\.minimumTarget, minHeight: IOSMetrics\.minimumTarget\)\s*\.contentShape\(Rectangle\(\)\)\s*\}/,
-    "Text(IOSHomeText.connect)\n                }\n                .frame(minHeight: IOSMetrics.minimumTarget)",
+    CONNECTION_STATE,
+    /Text\(IOSConnectionStateText\.connect\)\s*\.frame\(minWidth: IOSMetrics\.minimumTarget, minHeight: IOSMetrics\.minimumTarget\)\s*\.contentShape\(Rectangle\(\)\)\s*\}/,
+    "Text(IOSConnectionStateText.connect)\n        }\n        .frame(minHeight: IOSMetrics.minimumTarget)",
   );
   assert.ok(targetFaults(outside).some((f) => f.startsWith("Se connecter")), "une cible posée sur le Button doit faire rougir la garde");
   const menu = plant(sources, GRAPH, /(Label\(MemoryText\.tagMenu, systemImage: "tag"\)\s*\.frame\([^)]*\))\s*\.contentShape\(Rectangle\(\)\)/, "$1");
