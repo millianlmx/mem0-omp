@@ -1,8 +1,8 @@
-// Le crochet de RECETTE `-pipelines.board pleine` : l'écran Pipelines rend
-// l'ardoise de la fixture partagée `KanbanBoardParity` (ConsoleCore) à la place de
-// celle dérivée du client, pour mesurer les voies et les cartes sans appairage —
-// un crochet de recette, pas une fonctionnalité (feature
-// pipelines-ipad-voies-sans-largeur, S-8).
+// Les crochets de RECETTE `-pipelines.board pleine|marques` : l'écran Pipelines
+// rend une ardoise de fixture à la place de celle dérivée du client, pour mesurer
+// les voies et les cartes sans appairage — un crochet de recette, pas une
+// fonctionnalité (features pipelines-ipad-voies-sans-largeur, S-8, et
+// jargon-technique-expose-mac-et-ios, S-4).
 //
 // Seule la DONNÉE est forcée : voies, en-têtes, cartes et feuilles sont le chemin
 // RÉEL de l'écran ; le bandeau de connexion n'est pas affiché. Le drapeau est
@@ -21,6 +21,11 @@ enum IOSPipelinesBoardRecipe: String, Equatable {
     /// L'ardoise pleine de `KanbanBoardParity` : une voie vide, une voie
     /// « Livrées » de 100 cartes, des noms longs.
     case pleine
+
+    /// L'ardoise DÉRIVÉE de `HomeParity` (même dérivation que
+    /// `PipelinesCardRecipe`) : elle porte la carte du lot mort `beta`, pour
+    /// voir la phrase qui remplace les marques brutes.
+    case marques
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSPipelinesBoardRecipe? {
@@ -42,8 +47,18 @@ enum IOSPipelinesBoardRecipe: String, Equatable {
     var screenState: PipelinesScreenState {
         switch self {
         case .pleine: return .board(.board(KanbanBoardParity.board))
+        case .marques: return .board(Self.derivedBoard)
         }
     }
+
+    /// L'ardoise de `HomeParity`, horloge fixe (même appel que `PipelinesCardRecipe`).
+    static let derivedBoard: KanbanBoardState = KanbanBoardState.derive(
+        snapshot: HomeParity.snapshot,
+        nowMs: 1_700_000_000_000,
+        stateDir: "",
+        isAlive: .transported(HomeParity.snapshot),
+        prFacts: [:]
+    )
 
     /// Le signal de PRÊT sur la sortie d'erreur du lancement (`--stderr`), lu par
     /// `scripts/ios-pipelines-voies-recette.sh` avant la capture.

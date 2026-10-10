@@ -274,6 +274,12 @@ marqueur `[test: <fonction>]` (une fonction de
   sans PR n'a ni filet ni espace réservé. Une carte est rigide en hauteur : dans
   la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
   ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
+- Une carte ne montre jamais de marque brute (« Marques : mort ») : ses marques
+  se lisent par la phrase partagée `KanbanText.marksSentence` (« Elle s'est
+  arrêtée de façon inattendue. »…), en `.caption` secondaire, sur autant de
+  lignes qu'il faut ; une carte saine n'a aucune ligne. L'ardoise qui porte une
+  carte au pilote arrêté se capture par `-pipelines.board marques`, sans
+  appairage. `[test: boardRecipeMarquesShowsSentences]`
 - Le bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au clavier de l'iPad), placé
   avant « Nouvelle feature », demande au Mac de relire l'état des PR sur GitHub ;
   il n'est actif que connecté et hors relecture, et montre un indicateur

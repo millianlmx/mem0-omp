@@ -26,7 +26,7 @@ final class KanbanModel: ObservableObject {
     // État de vue de la section (S-14 de omp-console-redesign, `@State` interdit
     // sous CLT) : la feuille de détail de la carte sélectionnée, la confirmation
     // d'arrêt demandée depuis le menu contextuel d'une carte, la bulle des
-    // problèmes et les plis « Détails techniques » (feuille, bulle).
+    // problèmes et le pli « Détails techniques » de la feuille.
     @Published var detailShown = false
     @Published var stopRequest: KanbanCard?
     /// La carte dont la feuille « Modèles » est ouverte (menu contextuel de
@@ -34,7 +34,6 @@ final class KanbanModel: ObservableObject {
     @Published var modelsSheetCard: KanbanCard?
     @Published var diagnosticShown = false
     @Published var technicalExpanded = false
-    @Published var diagnosticTechnicalExpanded = false
 
     /// Le registre des faits de PR (S-5) : l'ardoise est dérivée avec ses faits,
     /// le flux distant les sert à iOS.

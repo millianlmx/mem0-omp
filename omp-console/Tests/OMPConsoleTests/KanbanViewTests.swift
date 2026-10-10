@@ -55,6 +55,37 @@ func marksTextIsOrdered() {
     #expect(healthy.marksText == nil)
 }
 
+@Test("jargon-technique-expose-mac-et-ios/AC-5 : la carte iOS dit ses marques par une phrase lisible, jamais par la marque brute")
+func marksSentenceIsReadable() {
+    #expect(KanbanText.marksSentence([.mort]) == "Elle s'est arrêtée de façon inattendue.")
+    #expect(KanbanText.markSentence(.illisible) == "Une partie de ses données est illisible.")
+    #expect(KanbanText.markSentence(.doublon) == "Deux sources la décrivent.")
+    // Une carte saine n'affiche aucune ligne.
+    #expect(KanbanText.marksSentence([]) == nil)
+    // Plusieurs marques : les phrases dans l'ordre des marques, jointes par une espace.
+    let all = KanbanText.marksSentence(KanbanMark.allCases)
+    #expect(all == "Une partie de ses données est illisible. Elle s'est arrêtée de façon inattendue. Deux sources la décrivent.")
+    // Jamais la forme brute : ni « Marques », ni la liste `marksText`, ni les
+    // marques `mort` et `doublon` comme mots (« illisible » reste un adjectif
+    // français dans sa phrase, pas une marque).
+    #expect(all?.contains("Marques") == false)
+    let card = KanbanCard(
+        id: "run:x", column: .echec, repo: "depot", title: "depot/x", state: "tourne",
+        phase: .impl, models: nil, prUrl: nil, startMs: 0, endMs: nil,
+        marks: KanbanMark.allCases, sources: []
+    )
+    #expect(all?.contains(card.marksText ?? "") == false)
+    for raw in [KanbanMark.mort.rawValue, KanbanMark.doublon.rawValue] {
+        #expect(all?.range(of: "\\b\(raw)\\b", options: .regularExpression) == nil)
+    }
+    for mark in KanbanMark.allCases {
+        let sentence = KanbanText.markSentence(mark)
+        #expect(sentence != mark.rawValue)
+        #expect(sentence.first?.isUppercase == true)
+        #expect(sentence.hasSuffix("."))
+    }
+}
+
 private func laneCard(_ column: KanbanColumn, id: String = "feature:k:export", marks: [KanbanMark] = []) -> KanbanCard {
     let action = KanbanCardAction(
         repoRoot: "/tmp/depot", slug: "export", waitKind: nil, featureState: .running, run: nil

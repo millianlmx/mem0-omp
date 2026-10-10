@@ -303,6 +303,21 @@ struct SetupView: View {
                         .accessibilityHidden(true)
                 }
             }
+            // Le brut de l'échec (commande, stderr, propriétaire du port) ne
+            // s'affiche pas : il se copie (S-5). Le bouton a sa propre ligne,
+            // sous les gestes et aligné sur eux : à 520 pt, « Arrêter l'ancienne
+            // pile et reprendre » + « Réessayer » + « Fermer » occupent déjà la
+            // rangée (MESURÉ : un 4e bouton y tronque deux libellés). Il vient
+            // après les gestes dans l'ordre de tabulation et ne porte jamais ↩.
+            if case let .failed(failure) = setup.state {
+                HStack {
+                    Spacer()
+                    DiagnosticCopyButton(
+                        diagnostic: SetupText.failureDiagnostic(failure),
+                        identifier: "sheet.setup.diagnostic"
+                    )
+                }
+            }
         }
         .padding(20)
         .frame(width: 520)

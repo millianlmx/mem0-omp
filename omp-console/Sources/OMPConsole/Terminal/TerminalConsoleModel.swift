@@ -69,6 +69,12 @@ final class TerminalConsoleModel: ObservableObject {
     /// Le refus de S-2 (« Répertoire introuvable : … ») : la feuille reste OUVERTE,
     /// donc il ne peut pas vivre dans `state`.
     @Published private(set) var sheetError: String?
+    /// Le brut d'un échec de la feuille venu de Fichiers (S-8) ; nil pour « Aucun
+    /// projet ouvert », qui n'a rien à copier.
+    @Published private(set) var targetsDiagnostic: String?
+    /// Le brut de l'échec du shell (S-7), copié par « Copier le diagnostic » ; remis
+    /// à nil au lancement suivant.
+    @Published private(set) var failureDiagnostic: String?
 
     /// Le projet choisi de l'app, tel que la section le montre (S-4 de
     /// mac-etats-vides-sans-issue) : `nil` ⇒ l'état vide « Aucun projet ouvert ».
@@ -84,7 +90,7 @@ final class TerminalConsoleModel: ObservableObject {
     private let environment: [String: String]
     private let store: StoreReader
     private let git: GitCLI?
-    private let gitFailure: String?
+    private let gitFailure: ReadableFailure?
 
     private var window: NSWindow?
     private var windowObserver: NSObjectProtocol?
@@ -128,7 +134,7 @@ final class TerminalConsoleModel: ObservableObject {
                 self.gitFailure = nil
             case let .failure(error):
                 self.git = nil
-                self.gitFailure = error.userMessage
+                self.gitFailure = error.failure
             }
         }
 
@@ -260,6 +266,7 @@ final class TerminalConsoleModel: ObservableObject {
         guard canStart else { return }
         self.target = target
         ompLaunched = false
+        failureDiagnostic = nil
         guard isDirectory(target.path) else {
             state = .failed(TerminalViewText.cwdMissing(target.path))
             return
@@ -282,6 +289,7 @@ final class TerminalConsoleModel: ObservableObject {
             )
         } catch let error as TerminalHostError {
             self.emulator = nil
+            failureDiagnostic = error.diagnostic
             state = .failed(error.userMessage)
             return
         } catch {
@@ -325,7 +333,10 @@ final class TerminalConsoleModel: ObservableObject {
         } catch let error as TerminalHostError {
             // Une écriture refusée par un process encore vivant est un état
             // affichable ; quand le process est mort, c'est `onExit` qui fait foi.
-            if host.isRunning { state = .failed(error.userMessage) }
+            if host.isRunning {
+                failureDiagnostic = error.diagnostic
+                state = .failed(error.userMessage)
+            }
         } catch {
             // Inatteignable : le host ne lève que des `TerminalHostError`.
         }
@@ -407,10 +418,12 @@ final class TerminalConsoleModel: ObservableObject {
     /// énumération de worktrees n'existe ici.
     func loadTargets() async {
         targetsState = .loading
+        targetsDiagnostic = nil
         targets = []
         selectedTargetPath = nil
         guard let git else {
-            targetsState = .failed(gitFailure ?? TerminalViewText.noProject)
+            targetsDiagnostic = gitFailure?.diagnostic
+            targetsState = .failed(gitFailure?.message ?? TerminalViewText.noProject)
             return
         }
         guard let root = ProjectRoot.resolve(defaults: defaults, fileManager: fileManager) else {
@@ -427,7 +440,9 @@ final class TerminalConsoleModel: ObservableObject {
                 ?? listed.first
             selectedTargetPath = preselected?.path
         } catch {
-            targetsState = .failed(FilesError.message(for: error))
+            let failure = FilesError.failure(for: error)
+            targetsDiagnostic = failure.diagnostic
+            targetsState = .failed(failure.message)
         }
     }
 

@@ -72,6 +72,13 @@ Tout se fait depuis l'app, sans terminal :
      la chaîne. Sur un port tenu par l'ancienne pile mémoire, « Arrêter l'ancienne
      pile et reprendre » (`↩`) passe devant « Réessayer » ; pendant l'arrêt, les
      deux restent affichés mais éteints, et « Fermer » (Échap) reste disponible.
+     Un échec de la pile (Podman, machine, conteneur, port occupé, ancienne pile
+     qui ne s'arrête pas) dit la conséquence puis le geste (« Le moteur de la
+     mémoire n'a pas démarré : les souvenirs sont indisponibles. Réessayez ; … ») ;
+     « Copier le diagnostic » (`sheet.setup.diagnostic`, sous « Réessayer » et
+     « Fermer ») met la commande, le stderr, le port et le geste shell dans le
+     presse-papiers, et le bandeau de l'Accueil (relayé à l'iPhone) ne porte que
+     la conséquence.
 
    À la fin de toute la préparation, la feuille se ferme d'elle-même. Rien ne
    dépend d'un `omp` système.
@@ -167,7 +174,7 @@ sessions et les conducteurs ; la commande part à l'API par
 
 | Section | Barre d'outils (en plus de « Nouvelle feature… », `toolbar.newFeature`, inactif avec l'infobulle « OMP Console prépare ses composants » sans composant OMP) |
 |---|---|
-| Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
+| Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer OMP » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau ou l'état « Aucune donnée » est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
@@ -182,16 +189,18 @@ prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
 `home.running.<carte>`, `home.paused.<carte>` (bouton `home.resume.<carte>`),
 `home.notStarted.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
 feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.install`,
-`sheet.setup.retry`, `sheet.setup.quit`, `sheet.setup.close`,
-`sheet.setup.ompMissing`, `sheet.setup.retryMissed`, bloc de progression
-`sheet.setup.progress` avec `sheet.setup.progress.label` et
+`sheet.setup.retry`, `sheet.setup.takeover`, `sheet.setup.quit`,
+`sheet.setup.close`, `sheet.setup.ompMissing`, `sheet.setup.retryMissed`, bloc de
+progression `sheet.setup.progress` avec `sheet.setup.progress.label` et
 `sheet.setup.progress.bar`, échec `sheet.setup.failure`,
-`sheet.setup.detail.toggle`, `sheet.setup.detail`) ; feuille Bienvenue
-`welcome.sheet` (`welcome.continue`) ;
+`sheet.setup.detail.toggle`, `sheet.setup.detail`, `sheet.setup.diagnostic`) ;
+feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
 feuille « Répondre » `answer.sheet` (`answer.question`,
 `kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
 **Contrat** `contract.sheet` (corps `contract.sheet.body`, fermeture
-`contract.sheet.close`) ; feuille
+`contract.sheet.close` ; contrat absent ou illisible : une phrase sans chemin, puis
+« Copier le diagnostic » `contract.sheet.diagnostic`, qui emporte le chemin lu et la
+taille ou la raison du système) ; feuille
 « Nouvelle feature » `launch.sheet`,
 `launch.repo`, `launch.chooseFolder`, `launch.repoError`, `launch.title`,
 `launch.description`, `launch.cancel`, `launch.submit` ; les deux sélecteurs de
@@ -428,9 +437,15 @@ L'emplacement du magasin est un détail technique : il n'est jamais affiché.
 Un magasin qui ne contient que des fichiers illisibles rend le **tableau** (voies
 vides + bouton « n problème(s) », au vrai pluriel), jamais « vide » : les anomalies
 ne sont jamais tues. Le bouton `kanban.diagnosticButton` de la barre d'outils
-ouvre une bulle « Problèmes détectés » (`kanban.diagnostic`) qui les dit en
-phrases (« cache-sessions s'est arrêtée de façon inattendue. ») ; le fichier et le
-pid ne sont que dans son pli **Détails techniques**, replié par défaut. Le bouton
+ouvre une bulle « Problèmes détectés » (`kanban.diagnostic`) qui dit chacune par
+une phrase de conséquence (« mem0-omp/cache-sessions s'est arrêtée de façon
+inattendue et n'avance plus. »), suivie d'un geste : le bouton « Reprendre »
+quand le pilote d'un lot est mort et qu'une de ses cartes offre la reprise
+(la première par identifiant), sinon une consigne écrite (« Relancez-la depuis
+OMP, dans son dépôt. »). Le fichier et le pid ne sont jamais affichés : le bouton
+**Copier le diagnostic** (`kanban.diagnostic.copy`) met dans le presse-papiers le
+détail brut de chaque anomalie, une par ligne (« propriétaire mort —
+running/<id>.json : pid 1234 »). Le bouton
 « Activité » (`kanban.activityButton`) ouvre le journal des gestes dans une bulle ;
 « Rafraîchir » (`kanban.refresh`, ⌘R) relit l'état des PR sur GitHub.
 La section n'a plus de barre basse.
@@ -466,8 +481,10 @@ pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
 | `kanban.refresh` | le bouton « Rafraîchir » de la barre d'outils (⌘R, relit l'état des PR) |
 | `kanban.diagnosticButton` | le bouton « n problème(s) » de la barre d'outils (absent sans anomalie) |
 | `kanban.diagnostic` | la bulle « Problèmes détectés » |
-| `kanban.anomaly.<i>` | une ligne d'anomalie dans la bulle |
-| `kanban.diagnostic.technical` | le pli « Détails techniques » de la bulle |
+| `kanban.anomaly.<i>` | la phrase d'une ligne d'anomalie dans la bulle |
+| `kanban.anomaly.<i>.resume` | le bouton « Reprendre » d'une ligne (lot mort reprenable) |
+| `kanban.anomaly.<i>.instruction` | la consigne d'une ligne (aucune action de l'app ne règle le cas) |
+| `kanban.diagnostic.copy` | le bouton « Copier le diagnostic » de la bulle (détail brut, pid compris) |
 | `kanban.detail` | la feuille de détail (carte sélectionnée) |
 | `kanban.detail.close` | le bouton « Fermer » de la feuille |
 | `kanban.detail.technical` | le pli « Détails techniques » de la feuille |
@@ -645,7 +662,7 @@ remplit l'écran courant sans changer de section. Un panneau annulé, ou un proj
 dont le dossier a disparu entre-temps (il sort alors du menu), laisse l'état vide
 tel quel.
 
-1. **Choisir la cible** — le sélecteur « Cible » de l'en-tête. La cible par défaut
+1. **Choisir la cible** — le sélecteur « Dossier » de l'en-tête. La cible par défaut
    est celle du projet ouvert (la préférence partagée `session.projectRoot` avec la
    section « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
    base de comparaison : `HEAD` pour le principal, ou `base <sha7>` — la base
@@ -680,6 +697,20 @@ tel quel.
    l'arbre et le document à jour sans geste, au plus un rechargement par 300 ms
    d'accalmie. Pas de scrutation périodique. **⌘R** (ou « Rafraîchir ») force un
    rechargement immédiat.
+
+**Échecs lisibles.** Aucun texte affiché ne cite de commande git, de code de
+sortie, de stderr ni de chemin : chaque `FilesError` a sa phrase dans `FilesText`
+(« Les outils de développement d'Apple sont introuvables… », « Ce dossier n'est
+pas un projet suivi… », « La lecture du projet a échoué… », etc.) et le détail brut
+(`FilesError.diagnostic` : commande, code, stderr, chemin) ne part que par le bouton
+**Copier le diagnostic** (presse-papiers, retour « Diagnostic copié » pendant 2 s).
+L'état d'erreur montre la phrase, « Rafraîchir » (`files.error.refresh`, même action
+que ⌘R) puis la copie (`files.error.diagnostic`) ; le bandeau d'avis (veille
+arrêtée, dossier disparu) porte `files.notice.diagnostic` ; un fichier illisible,
+une base de comparaison introuvable ou un diff en échec portent
+`files.document.diagnostic`. Un fichier binaire dit « Ce fichier n'est pas du
+texte : il ne peut pas être affiché. », sans taille ; un dossier vide « Aucun
+fichier dans ce dossier. ».
 
 **Garanties de lecture seule.** Les seules commandes git employées sont
 `ls-files -z --cached`, `ls-files -z --others --exclude-standard`,
@@ -1173,9 +1204,14 @@ une session morte garde sa conversation sous un bandeau « La session s'est
 arrêtée. Relancez-la pour reprendre la conversation. » (**Relancer** ouvre une
 nouvelle session sur le même `.jsonl`). Les détails techniques vivent dans
 l'inspecteur « Détails techniques » (`session.details`), en formulaire groupé :
-**Session** (projet, état, pid du service, identifiant de session, statut détaillé)
-et **Journal** (les messages absorbés par l'app : ouverture de session, coupures,
-erreurs). Aucune trame de protocole brute n'est affichée. Un prompt n'est jamais
+**Session** (projet, état lisible — « En marche », « En attente » ou « Arrêtée » —,
+identifiant de session, statut détaillé, puis « Copier le diagnostic »,
+`session.diagnostic.copy`) et **Journal** (les messages absorbés par l'app :
+ouverture de session, coupures, erreurs). Le pid du service n'est jamais affiché :
+il ne vit que dans le diagnostic copié (cinq lignes : pid, état brut, identifiant
+de session, projet, fichier de session ; une valeur inconnue s'y dit « absent »).
+L'inspecteur de la section **Projet** suit le même patron (`projet.diagnostic.copy`).
+Aucune trame de protocole brute n'est affichée. Un prompt n'est jamais
 relancé tout seul après une mort : la relance est un clic.
 
 L'écriture d'un prompt passe par le service (`POST /v1/sessions/{id}/prompt`) : un
@@ -1191,7 +1227,7 @@ des composants et au catalogue `omp models --json` — **jamais** aux sessions, 
 le service possède. `PATH`, `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin` et
 l'ancienne préférence `omp.chosenPath` ne sont plus consultés pour ce binaire : la
 feuille « OMP est requis » n'existe plus (la préparation la remplace). Le bouton
-« Lancer omp » du terminal, lui, tape `omp` dans le shell, qui le résout par son
+« Lancer OMP » du terminal, lui, tape `omp` dans le shell, qui le résout par son
 `PATH` complété (voir « Section Terminal »).
 
 - **`OMP_CONSOLE_OMP_BINARY`** (échappatoire de test) — posée et non vide, c'est le
@@ -1218,7 +1254,7 @@ absolu, sinon `/bin/zsh -l`) ; `omp` se lance **à la demande** dans ce shell.
 2. **Ouvrir** (↩) : le shell démarre dans ce répertoire, dans un PTY dont la taille
    est celle de la zone d'affichage, avec l'environnement de `TerminalEnvironment`
    (`PATH` complété : `omp` y est trouvé même quand l'app est lancée par le Finder).
-3. **Lancer omp** (`terminal.launchOmp`, actif tant qu'un shell vit) tape `omp↩`
+3. **Lancer OMP** (`terminal.launchOmp`, actif tant qu'un shell vit) tape `omp↩`
    dans le shell ; la frappe part ensuite dans `omp` (flèches, Entrée, Tab, Échap,
    Ctrl-C, Ctrl-D), l'affichage est celui du TUI — couleurs vraies, curseur, plein
    écran — et suit le redimensionnement de la fenêtre.
@@ -1235,12 +1271,21 @@ deux sens, et ils peuvent même viser le même répertoire.
 projet dans lequel ouvrir un terminal. » — avec le bouton **Choisir un projet…**
 (`terminal.chooseProject`, voir la section Fichiers) : le projet choisi, la
 feuille « Choisir un répertoire » s'ouvre aussitôt sur ses répertoires. Avec un
-projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Lecture
-des worktrees… » (feuille ouverte), « Lancement du shell… », « shell vivant (pid
-<n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec le bouton
-**Relancer**, et l'erreur explicite en cas d'échec (« Exécutable introuvable :
-… », « Répertoire introuvable : … », « PTY indisponible (<errno>) : aucun process
-lancé. »). Aucun état n'est un rectangle vide.
+projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Recherche
+des dossiers de features… » (feuille ouverte ; « Aucun dossier de feature dans ce
+projet. » quand seul le dépôt principal existe), « Lancement du shell… », « shell
+vivant (pid <n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec
+le bouton **Relancer**, et l'erreur explicite en cas d'échec (« Exécutable
+introuvable : … », « Répertoire introuvable : … », « Le terminal n'a pas pu
+s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres
+de terminal inutiles, puis relancez. »). Un échec du shell affiche **Copier le
+diagnostic** (`terminal.diagnostic.copy`, dans le bandeau `terminal.status` ou
+sous le message de `terminal.view`) : il copie le brut
+(`TerminalHostError.diagnostic`, par exemple « PTY indisponible (<errno>) :
+aucun process lancé. »). Dans la feuille, un échec de lecture du catalogue montre
+« Réessayer » puis **Copier le diagnostic** (`terminal.launch.diagnostic`, jamais
+sur ↩) ; « Aucun projet ouvert » n'a rien à copier. Le sous-titre dit « OMP ·
+Actif » une fois OMP lancé. Aucun état n'est un rectangle vide.
 
 **Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
 scrollback : la ligne qui sort de l'écran est perdue), pas de sélection ni de copie,
@@ -1275,7 +1320,7 @@ sont pas) :
    racine du dépôt ;
 2. menu **Fichier ▸ « Ouvrir un terminal OMP… »**, puis « Choisir un répertoire… »,
    choisir un worktree, « Ouvrir » : le shell démarre ;
-3. « Lancer omp » ; vérifier `pgrep -fl -P <pid de l'app>` : un seul shell, enfant
+3. « Lancer OMP » ; vérifier `pgrep -fl -P <pid de l'app>` : un seul shell, enfant
    direct, et `omp` enfant du shell ;
 4. taper un prompt dans la fenêtre : la TUI y répond ; **Ctrl-C** interrompt `omp`
    et l'app reste vivante ;
@@ -1723,7 +1768,12 @@ défaut une connexion HTTP vers une IP littérale. Une variable posée mais **vi
 est traitée comme absente. Les budgets d'inactivité sont ceux du plugin (20 s pour
 la recherche et le graphe, 10 s pour les autres), et il n'y a **aucun sondage
 périodique** : la sonde part à l'apparition de la section, au bouton « Rafraîchir »
-et avant chaque recherche.
+et avant chaque recherche. Quand oMLX est en défaut, un bandeau orange
+(`memory.omlxBanner`) le dit sans URL ni code : « oMLX ne répond pas : la recherche
+de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez. » ou « oMLX
+refuse la clé d'accès configurée : … », avec « Rafraîchir »
+(`memory.omlxBanner.refresh`, refait la sonde) et « Copier le diagnostic »
+(`memory.omlxBanner.diagnostic` : URL sondée, code, `OMLX_API_TOKEN`).
 
 **L'identité de la pile.** `GET /health` reste à la même adresse, avec le même
 protocole et les mêmes autres champs ; la pile de l'app y ajoute un champ
@@ -1821,8 +1871,9 @@ rechargement suivant.
 |---|---|
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
 | portée incalculable (liste) | « Aucun projet ouvert » — « Choisissez le projet dont vous voulez consulter la mémoire. » + bouton « Choisir un projet… » : menu des projets connus puis « Choisir un dossier… », ou, sans projet connu, le panneau de Session OMP ; le choix recharge la liste sur place |
-| service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
-| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », le détail `<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>` (sélectionnable) et, **seulement quand le propriétaire est l'ancienne pile**, le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation) |
+| service indisponible | « Mémoire indisponible » + bouton « Réessayer », puis « Copier le diagnostic » (adresse du service et dernière erreur, jamais affichées) — jamais une liste vide, jamais un graphe partiel silencieux |
+| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », **seulement quand le propriétaire est l'ancienne pile** le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation), puis « Copier le diagnostic » (`<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>`) |
+| écriture refusée (graphe) | « La modification n'a pas été enregistrée : la mémoire n'a pas répondu comme prévu. Réessayez ; si l'échec revient, copiez le diagnostic. », feuille laissée ouverte, et « Copier le diagnostic » (réponse brute du service) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
 | sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
 | recherche sans ligne | « Aucun résultat » — « La mémoire du projet ne contient aucun souvenir correspondant. » |
@@ -1834,7 +1885,7 @@ rechargement suivant.
 | détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée de la ligne, pertinence (en recherche) ; en mode graphe, les actions d'écriture et le bloc « Liens manuels » |
 
 **Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
-`memoire.unavailable.detail`, `memoire.foreignOwned.detail`,
+`memoire.unavailable.diagnostic`, `memoire.foreignOwned.diagnostic`,
 `memoire.foreignOwned.takeover`, `memoire.summary.count`, `memoire.search.results`,
 `memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
 `memoire.detail.copy`, `memoire.detail.technical` ; mode graphe :
@@ -1842,9 +1893,10 @@ rechargement suivant.
 `memoire.graph.project`, `memoire.graph.tag`, `memoire.graph.zoomIn`,
 `memoire.graph.zoomOut`, `memoire.graph.recenter`, `memoire.graph.create`,
 `memoire.graph.edit`, `memoire.graph.delete`, `memoire.graph.link`,
-`memoire.graph.detach.<id>`, `memoire.graph.error`, `memoire.create.sheet`,
+`memoire.graph.detach.<id>`, `memoire.graph.error` (et `.diagnostic`),
+`memoire.graph.unavailable.diagnostic`, `memoire.create.sheet`,
 `memoire.edit.sheet`, `memoire.link.sheet` (et `.text`, `.tags`, `.project`,
-`.cancel`, `.save`, `.error` sur chacune). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
+`.cancel`, `.save`, `.error`, `.error.diagnostic` sur chacune). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
 mise en page, `Retour` dans le champ de recherche lance la recherche du mode
 courant, le vider (ou sa croix) ramène la liste au sommaire et lève la restriction
 du graphe sans requête, les flèches haut/bas déplacent la sélection de la liste, les
@@ -2111,7 +2163,7 @@ omp-console/
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
 │   │   │                          hérités ≥ 3, écriture,
 │   │   │                          escalade SIGTERM/SIGKILL du groupe, récolte
-│   │   ├── TerminalShell.swift    le shell lancé ($SHELL -l, sinon /bin/zsh) et « Lancer omp »
+│   │   ├── TerminalShell.swift    le shell lancé ($SHELL -l, sinon /bin/zsh) et « Lancer OMP »
 │   │   ├── TerminalHostError.swift les échecs du PTY et leur seule table de texte
 │   │   ├── TerminalEnvironment.swift l'environnement de l'enfant (TERM, COLORTERM ; PATH par OmpEnvironment)
 │   │   ├── TerminalScreen.swift   la grille : cellules, attributs, marges, largeur UAX #11
@@ -2409,6 +2461,14 @@ multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans 
 champ.
 
 Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, toutes les voies ont la même largeur, qui grandit avec la taille de texte, et s'alignent en haut ; quand elles ne tiennent pas à l'écran, elles défilent horizontalement jusqu'à une marge de fin, après la dernière voie. Le titre d'une carte passe à la ligne et n'est jamais tronqué, dans toutes les voies.
+
+Une carte ne montre jamais de marque brute (« Marques : mort ») : une carte dont
+le pilote s'est arrêté dit « Elle s'est arrêtée de façon inattendue. », une carte
+dont une source est illisible « Une partie de ses données est illisible. », une
+carte décrite deux fois « Deux sources la décrivent. » (phrases partagées
+`KanbanText.marksSentence`, dans l'ordre des marques) ; une carte saine n'a
+aucune ligne. L'iOS n'a pas de « Copier le diagnostic » : le détail technique
+reste sur le Mac.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
 (le catalogue de `omp models --json`, qu'aucune route n'exposait ; il rend aussi
@@ -2852,6 +2912,11 @@ partagée `KanbanBoardParity` (ConsoleCore) à la place de celle du Mac : une vo
 long. Le bandeau de connexion n'est pas affiché, tout le reste est le chemin
 réel ; au premier affichage l'app écrit `pipelines-board-ready` sur sa sortie
 d'erreur. Les deux crochets `-pipelines.*` se combinent.
+
+`-pipelines.board marques` rend à la place l'ardoise DÉRIVÉE de la fixture
+`HomeParity` (la même que `-pipelines.recipe`, horloge fixe), qui porte la carte
+« reprise » du lot `beta` au pilote arrêté : elle montre la phrase de ses marques
+sans appairage, avec le même signal `pipelines-board-ready`.
 
 La recette des voies et des cartes de Pipelines (feature
 `pipelines-ipad-voies-sans-largeur`) s'appuie sur ce crochet :

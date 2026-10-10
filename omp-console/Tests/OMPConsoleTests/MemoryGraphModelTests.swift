@@ -477,9 +477,55 @@ func ac9FailedUpdateKeepsTheSheetOpen() async {
     await model.saveDraft()
 
     #expect(model.sheet == MemoryGraphModel.Sheet.edit("m-1"))
-    #expect(model.sheetError == "réponse 500 du service (oMLX injoignable)")
+    #expect(model.sheetError?.message == MemoryText.saveFailed)
+    #expect(model.sheetError?.diagnostic == "réponse 500 du service (oMLX injoignable)")
     // Aucun rechargement, donc aucun compteur d'écriture.
     #expect(model.mutations == 0)
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-6 : une écriture refusée par le service (500) s'affiche sans code ni corps de réponse, la feuille reste ouverte")
+func failedSaveShowsAReadableSentence() async {
+    let service = ScriptedMemoryService(
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "un", scope: "a")])),
+        writeFailure: .unexpectedStatus(500, "oMLX injoignable")
+    )
+    let model = memoryGraphModel(service: service)
+    await model.activate()
+    model.beginEdit("m-1")
+    model.draftText = "corrigé"
+    await model.saveDraft()
+
+    let message = model.sheetError?.message ?? ""
+    #expect(model.sheet == MemoryGraphModel.Sheet.edit("m-1"))
+    #expect(!message.isEmpty)
+    #expect(!message.contains("500"))
+    #expect(!message.contains("oMLX injoignable"))
+    #expect(forbiddenTokens(in: message).isEmpty, "« \(message) »")
+
+    model.closeSheet()
+    model.select("m-1")
+    model.requestDelete("m-1")
+    await model.confirmDelete()
+    let line = model.errorLine?.message ?? ""
+    #expect(line == MemoryText.saveFailed)
+    #expect(forbiddenTokens(in: line).isEmpty)
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic d'une écriture refusée porte le code et le corps de la réponse du service")
+func failedSaveDiagnosticKeepsTheStatus() async {
+    let service = ScriptedMemoryService(
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "un", scope: "a")])),
+        writeFailure: .unexpectedStatus(500, "déjà supprimé")
+    )
+    let model = memoryGraphModel(service: service)
+    await model.activate()
+    model.select("m-1")
+    model.requestDelete("m-1")
+    await model.confirmDelete()
+
+    #expect(model.errorLine?.diagnostic == "réponse 500 du service (déjà supprimé)")
 }
 
 @MainActor
@@ -600,7 +646,8 @@ func ac11FailedDeleteKeepsEverything() async {
     model.requestDelete("m-1")
     await model.confirmDelete()
 
-    #expect(model.errorLine == "réponse 500 du service (déjà supprimé)")
+    #expect(model.errorLine?.message == MemoryText.saveFailed)
+    #expect(model.errorLine?.diagnostic == "réponse 500 du service (déjà supprimé)")
     #expect(model.mutations == 0)
     #expect(model.rows.count == 1)
     #expect(model.selection == "m-1")
@@ -733,5 +780,5 @@ func ac13LinkSaveFailureIsReported() async throws {
     model.createLink()
 
     #expect(model.manualLinks == [MemoryLink(a: "m-1", b: "m-2")])
-    #expect(model.errorLine == MemoryText.linkNotSaved)
+    #expect(model.errorLine == ReadableFailure(message: MemoryText.linkNotSaved, diagnostic: MemoryText.linkNotSaved))
 }

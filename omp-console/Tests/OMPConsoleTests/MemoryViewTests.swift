@@ -22,6 +22,47 @@ func ac8UnavailableDetailKeepsAddressAndError() {
     #expect(MemoryText.unexpectedStatus(code: 503, detail: "en panne") == "réponse 503 du service (en panne)")
 }
 
+@Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic de « Mémoire indisponible » et de la pile étrangère porte l'adresse, le code et le geste shell")
+func unavailableDiagnosticKeepsAddressAndCode() {
+    let status = MemoryServiceError.unexpectedStatus(503, "en panne").userMessage
+    let diagnostic = MemoryText.unavailableDetail(address: "http://localhost:8321", error: status)
+    #expect(diagnostic.contains("http://localhost:8321"))
+    #expect(diagnostic.contains("503"))
+    #expect(diagnostic.contains("en panne"))
+
+    let foreign = ForeignOwnership(
+        address: "http://127.0.0.1:8321",
+        owner: "un autre programme (python3, pid 4711)",
+        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)",
+        isLegacy: false
+    )
+    let owned = MemoryText.foreignOwnershipDetail(foreign)
+    #expect(owned.contains("http://127.0.0.1:8321"))
+    #expect(owned.contains("pid 4711"))
+    #expect(owned.contains("lsof"))
+}
+
+@Test("jargon-technique-expose-mac-et-ios/AC-6 : les textes affichés de la Mémoire en erreur (indisponible, pile étrangère, oMLX, écriture) ne portent ni URL, ni code, ni OMLX_API_TOKEN")
+func memoryErrorTextsAreReadable() {
+    let shown = [
+        MemoryText.unavailableTitle,
+        MemoryText.unavailableDescription,
+        MemoryText.foreignTitle,
+        MemoryText.foreignDescription,
+        MemoryText.omlxUnreachable,
+        MemoryText.omlxUnauthorized,
+        MemoryText.saveFailed,
+        MemoryText.linkNotSaved,
+    ]
+    for text in shown {
+        #expect(forbiddenTokens(in: text).isEmpty, "« \(text) »")
+    }
+    // Chaque phrase d'erreur porte son geste : rafraîchir, ou réessayer.
+    #expect(MemoryText.omlxUnreachable.contains("rafraîchissez"))
+    #expect(MemoryText.omlxUnauthorized.contains("rafraîchissez"))
+    #expect(MemoryText.saveFailed.contains("Réessayez"))
+}
+
 @Test("memoire-mem0/AC-3 : les messages de liste sont figés, et le compte prend un vrai pluriel")
 func ac3ListTextsAreFrozen() {
     #expect(MemoryText.summaryCount(1) == "1 souvenir")
@@ -120,7 +161,7 @@ func ac4ListHasNoWriteVocabularyAndGraphDoes() {
         MemoryText.noProjectTitle,
         MemoryText.unavailableTitle,
         MemoryText.omlxUnauthorized,
-        MemoryText.omlxUnreachable(url: "http://127.0.0.1:8000/models"),
+        MemoryText.omlxUnreachable,
     ]
     for label in listLabels {
         let lowered = label.lowercased()
@@ -148,17 +189,28 @@ func ac4ListHasNoWriteVocabularyAndGraphDoes() {
 
 @Test("all-in-one-app/AC-6 : les textes des prérequis systèmes manquants sont figés (S-6)")
 func ac6PrerequisiteTextsAreFrozen() {
-    // oMLX : les deux phrases EXACTES de S-6, chaque état en une phrase.
+    // oMLX : les deux phrases EXACTES de S-6 de jargon-technique-expose-mac-et-ios
+    // (conséquence + geste) ; le brut d'avant reste le diagnostic copiable.
     #expect(
-        MemoryText.omlxUnreachable(url: "http://127.0.0.1:8000/models")
+        MemoryText.omlxUnreachable
+            == "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
+    )
+    #expect(
+        MemoryText.omlxUnreachableDiagnostic(url: "http://127.0.0.1:8000/models")
             == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
     )
-    let unauthorized = "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN."
-    #expect(MemoryText.omlxUnauthorized == unauthorized)
+    #expect(
+        MemoryText.omlxUnauthorized
+            == "oMLX refuse la clé d'accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d'accès d'oMLX dans la configuration de la mémoire, puis rafraîchissez."
+    )
+    #expect(
+        MemoryText.omlxUnauthorizedDiagnostic(url: "http://127.0.0.1:8000/models")
+            == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/models"
+    )
 
     // git et gh : la spec ne fait que FIGER que leurs messages existants nomment le
     // prérequis au moment de l'usage — aucun comportement nouveau ici.
-    let git = FilesError.gitNotFound(searched: ["/nowhere/git"], override: nil, path: "/tmp/projet").userMessage
+    let git = FilesError.gitNotFound(searched: ["/nowhere/git"], override: nil, path: "/tmp/projet").diagnostic
     #expect(git.contains("git est introuvable"))
     #expect(git.contains("/tmp/projet"))
 

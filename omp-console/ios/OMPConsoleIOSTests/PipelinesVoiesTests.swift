@@ -13,7 +13,7 @@ import UIKit
 @MainActor
 @Suite("pipelines-ipad-voies-sans-largeur — voies iPad, en-têtes et cartes")
 struct PipelinesVoiesTests {
-    @Test("pipelines-ipad-voies-sans-largeur/AC-14 : le crochet -pipelines.board ne reconnaît que « pleine », la dernière paire reconnue gagne")
+    @Test("pipelines-ipad-voies-sans-largeur/AC-14 : le crochet -pipelines.board reconnaît « pleine », la dernière paire reconnue gagne")
     func boardRecipeResolves() {
         let flag = PipelinesText.boardRecipeFlag
         #expect(IOSPipelinesBoardRecipe.resolve([flag, "pleine"]) == .pleine)
@@ -24,6 +24,29 @@ struct PipelinesVoiesTests {
         // Distinct du crochet de la feuille « Nouvelle feature ».
         #expect(IOSPipelinesBoardRecipe.resolve([PipelinesText.recipeFlag, "pleine"]) == nil)
         #expect(IOSPipelinesBoardRecipe.pleine.screenState == .board(.board(KanbanBoardParity.board)))
+    }
+
+    @Test("jargon-technique-expose-mac-et-ios/AC-5 : -pipelines.board marques rend l'ardoise de HomeParity, dont la carte au pilote arrêté se lit par une phrase, sans marque brute")
+    func boardRecipeMarquesShowsSentences() throws {
+        let flag = PipelinesText.boardRecipeFlag
+        #expect(IOSPipelinesBoardRecipe.resolve([flag, "marques"]) == .marques)
+        #expect(IOSPipelinesBoardRecipe.resolve([flag, "marques", flag, "pleine"]) == .pleine)
+        #expect(IOSPipelinesBoardRecipe.marques.screenState == .board(IOSPipelinesBoardRecipe.derivedBoard))
+
+        let board = try #require(IOSPipelinesBoardRecipe.derivedBoard.kanbanBoard)
+        let dead = board.cards.filter { $0.marks.contains(.mort) }
+        #expect(!dead.isEmpty)
+        for card in dead {
+            let sentence = try #require(KanbanText.marksSentence(card.marks))
+            #expect(sentence.contains(KanbanText.markSentence(.mort)))
+            #expect(!sentence.contains("Marques"))
+            for raw in [KanbanMark.mort.rawValue, KanbanMark.doublon.rawValue] {
+                #expect(sentence.range(of: "\\b\(raw)\\b", options: .regularExpression) == nil)
+            }
+        }
+        // Une carte saine ne montre aucune ligne.
+        let healthy = try #require(board.cards.first { $0.marks.isEmpty })
+        #expect(KanbanText.marksSentence(healthy.marks) == nil)
     }
 
     @Test("pipelines-ipad-voies-sans-largeur/AC-14 : la fixture reproduit les défauts mesurés — voie vide, 100 livrées, noms longs")

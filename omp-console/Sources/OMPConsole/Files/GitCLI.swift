@@ -228,7 +228,21 @@ enum FilesError: Error, Equatable, Sendable {
     case targetGone(path: String)
     case watchFailed(path: String)
 
+    /// La phrase affichée (S-8) : jamais de commande, de code ni de chemin.
     var userMessage: String {
+        switch self {
+        case .gitNotFound: FilesText.gitNotFound
+        case .notARepository: FilesText.notARepository
+        case .commandFailed: FilesText.commandFailed
+        case .commandTimedOut: FilesText.commandTimedOut
+        case .gitCommandRefused: FilesText.gitCommandRefused
+        case .targetGone: FilesText.targetGone
+        case .watchFailed: FilesText.watchFailed
+        }
+    }
+
+    /// Le brut copié par « Copier le diagnostic » : commande, code, stderr, chemin.
+    var diagnostic: String {
         switch self {
         case let .gitNotFound(searched, override, path):
             let detail: String
@@ -253,9 +267,17 @@ enum FilesError: Error, Equatable, Sendable {
         }
     }
 
-    /// Le message d'une erreur quelconque, sans jamais exposer un `NSError` brut.
-    static func message(for error: Error) -> String {
-        (error as? FilesError)?.userMessage ?? error.localizedDescription
+    /// L'échec lisible d'une erreur quelconque : jamais un `NSError` brut à l'écran,
+    /// son texte part dans le diagnostic.
+    static func failure(for error: Error) -> ReadableFailure {
+        if let error = error as? FilesError {
+            return error.failure
+        }
+        return ReadableFailure(message: FilesText.readFailed, diagnostic: error.localizedDescription)
+    }
+
+    var failure: ReadableFailure {
+        ReadableFailure(message: userMessage, diagnostic: diagnostic)
     }
 
     /// La DERNIÈRE ligne non vide de `stderr` : c'est celle qui nomme la cause dans
