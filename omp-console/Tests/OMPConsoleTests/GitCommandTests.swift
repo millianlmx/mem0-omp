@@ -94,6 +94,7 @@ func gitNotFoundIsNamed() {
         return
     }
     #expect(error == .gitNotFound(searched: ["/nowhere/git"], override: "/nowhere/git", path: "/tmp/projet"))
-    #expect(error.userMessage.contains("git est introuvable"))
-    #expect(error.userMessage.contains("/tmp/projet"))
+    #expect(error.diagnostic.contains("git est introuvable"))
+    #expect(error.diagnostic.contains("/tmp/projet"))
+    #expect(error.userMessage == FilesText.gitNotFound)
 }

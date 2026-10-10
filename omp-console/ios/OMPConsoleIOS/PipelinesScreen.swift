@@ -16,8 +16,8 @@ struct PipelinesScreen: View {
     /// de la carte de fixture s'ouvre UNE fois, ou l'ardoise de fixture remplace
     /// l'instantané du Mac (`ardoise`), sans instantané du Mac.
     var cardRecipe: PipelinesCardRecipe?
-    /// Le crochet de recette `-pipelines.board` : l'ardoise de la fixture
-    /// `KanbanBoardParity` à la place de celle du client, sans bandeau de connexion.
+    /// Le crochet de recette `-pipelines.board` : une ardoise de fixture à la place
+    /// de celle du client, sans bandeau de connexion.
     let boardRecipe: IOSPipelinesBoardRecipe?
     @State private var sheet: PipelinesSheet?
     @State private var recipeOpened = false
@@ -367,8 +367,8 @@ struct PipelinesScreen: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
             }
-            if let marks = card.marksText {
-                Text(KanbanText.marks(marks))
+            if let sentence = KanbanText.marksSentence(card.marks) {
+                Text(sentence)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

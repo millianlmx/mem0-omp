@@ -99,6 +99,16 @@ func pathIsShortenedForDisplay() {
     #expect(ConsoleFormat.path("/tmp/x") == "/tmp/x")
 }
 
+@Test("mac-feuille-appairage-debordante/AC-8 : une date complète dit le jour, le mois abrégé, l'année et l'heure")
+func dateTimeShowsTheWholeDate() throws {
+    let paris = try #require(TimeZone(identifier: "Europe/Paris"))
+    #expect(ConsoleFormat.dateTime(ms: 1_791_662_040_000, timeZone: paris) == "10 oct. 2026 à 21:54")
+    // 5 janvier 2026 09:07 et 24 décembre 2026 18:30, heure de Paris (l'heure
+    // n'a pas de zéro initial en fr_FR).
+    #expect(ConsoleFormat.dateTime(ms: 1_767_600_420_000, timeZone: paris) == "5 janv. 2026 à 9:07")
+    #expect(ConsoleFormat.dateTime(ms: 1_798_133_400_000, timeZone: paris) == "24 déc. 2026 à 18:30")
+}
+
 @Test("feuilles-ios-presentation-et-depots/AC-7 : un chemin sous le dossier personnel donné s'abrège en « ~ », jamais un préfixe homonyme")
 func pathAbbreviatesGivenHome() {
     #expect(ConsoleFormat.path("/Users/x/a", home: "/Users/x") == "~/a")

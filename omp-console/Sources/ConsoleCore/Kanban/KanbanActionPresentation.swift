@@ -89,6 +89,21 @@ public enum KanbanActionPresentation {
             return false
         }
     }
+
+    /// La carte offre « Reprendre » au sens RELANCE (S-3 de
+    /// accueil-en-cours-melange-pause-et-compte) : une feature de LOT en échec ou
+    /// bloquée, que la commande de service `relaunch` accepte. Les cartes
+    /// `history:`, `run:` et `project:` sans feature de lot n'ont pas de slug, donc
+    /// aucun chemin de relance. Disjoint de `resumable` : leurs ensembles d'états
+    /// ne se recouvrent pas.
+    public static func relaunchable(_ card: KanbanCard) -> Bool {
+        guard card.column == .echec || card.column == .bloquee,
+              let action = card.action,
+              action.slug != nil, action.repoRoot != nil,
+              let state = action.featureState
+        else { return false }
+        return state == .failed || state == .blocked
+    }
 }
 
 /// Les dépôts proposés au formulaire de lancement (S-7) : les dépôts RÉELS portés

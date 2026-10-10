@@ -72,6 +72,13 @@ Tout se fait depuis l'app, sans terminal :
      la chaîne. Sur un port tenu par l'ancienne pile mémoire, « Arrêter l'ancienne
      pile et reprendre » (`↩`) passe devant « Réessayer » ; pendant l'arrêt, les
      deux restent affichés mais éteints, et « Fermer » (Échap) reste disponible.
+     Un échec de la pile (Podman, machine, conteneur, port occupé, ancienne pile
+     qui ne s'arrête pas) dit la conséquence puis le geste (« Le moteur de la
+     mémoire n'a pas démarré : les souvenirs sont indisponibles. Réessayez ; … ») ;
+     « Copier le diagnostic » (`sheet.setup.diagnostic`, sous « Réessayer » et
+     « Fermer ») met la commande, le stderr, le port et le geste shell dans le
+     presse-papiers, et le bandeau de l'Accueil (relayé à l'iPhone) ne porte que
+     la conséquence.
 
    À la fin de toute la préparation, la feuille se ferme d'elle-même. Rien ne
    dépend d'un `omp` système.
@@ -96,20 +103,30 @@ Tout se fait depuis l'app, sans terminal :
    les sessions par l'API et poste les commandes. Un dépôt sans pilote vivant se
    réveille par `POST /v1/repos/{repo}/pilot` : le service crée ou adopte son
    conducteur, un seul par dépôt, et il vit tant que le service vit.
-5. **À vous** — les questions de l'agent et les jalons arrivent en tête de
-   l'Accueil, en cartes (badge sur « Accueil ») : « Répondre… » ouvre la feuille
+5. **À vous** — les questions de l'agent, les jalons et les pipelines en échec ou
+   bloquées arrivent en tête de l'Accueil, en cartes (badge sur « Accueil ») :
+   « Répondre… » ouvre la feuille
    « Répondre » — une question `ask` en vol se répond par ses options ou un texte
    libre, une question en **texte** d'un maillon terminé par un texte (commande
    `reply`) ; « Valider les specs » et « Accepter la revue » agissent depuis la
    carte, et « Lire le contrat » (secondaire) ouvre la feuille **Contrat** pour un
-   besoin ou des specs à valider. La PR livrée apparaît sous « Livrées récemment »
+   besoin ou des specs à valider. Sous « À vous », l'Accueil range ensuite, chaque
+   pipeline dans UNE seule section : « En cours » (réellement en marche, avec sa
+   durée), « À reprendre » (en pause) et « Pas commencées » (jamais lancées), ces
+   deux dernières masquées quand elles sont vides. La PR livrée apparaît sous « Livrées récemment »
    avec « Ouvrir la PR » et l'état réel de la PR (« PR ouverte », « PR fusionnée »,
    « PR fermée », ou « PR créée » tant que GitHub n'a pas répondu) ; une PR
    fusionnée ou fermée depuis plus de 7 jours en sort.
 6. **Reprendre** — une pipeline dont le pilote est mort (service arrêté, session
-   fermée) est « En pause » sous « En cours » avec « Reprendre », qui poste
+   fermée) est « En pause » sous « À reprendre » avec « Reprendre », qui poste
    `POST /v1/repos/{repo}/pilot` ; le service réveille un conducteur qui adopte le
-   lot.
+   lot. Une feature de lot en échec ou bloquée est une carte « En échec » /
+   « Bloquée » de « À vous », qui nomme l'étape arrêtée (« L'étape
+   « Implémentation » s'est arrêtée en échec. ») sans aucun texte d'erreur brut ;
+   son « Reprendre » poste la commande `relaunch`, le service reprend le maillon
+   arrêté et la carte passe sous « En cours » à l'instantané suivant. Les runs
+   d'historique et les échecs de projet sans feature de lot restent dans
+   Pipelines › Arrêtées.
 
 **La pile mémoire survit à ⌘Q** : l'app ne possède aucun site d'arrêt — les
 processus de la machine (`krunkit`, `gvproxy`) sont lancés par des invocations
@@ -157,7 +174,7 @@ sessions et les conducteurs ; la commande part à l'API par
 
 | Section | Barre d'outils (en plus de « Nouvelle feature… », `toolbar.newFeature`, inactif avec l'infobulle « OMP Console prépare ses composants » sans composant OMP) |
 |---|---|
-| Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
+| Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer OMP » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau ou l'état « Aucune donnée » est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
@@ -169,19 +186,21 @@ prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
 `home.notificationsBanner` (`home.notifications.openSettings`,
 `home.notifications.ignore`), `home.launchBanner`, `home.attention.<carte>`
 (boutons `home.attention.<carte>.action` et `home.attention.<carte>.contract`),
-`home.running.<carte>`,
-`home.resume.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
+`home.running.<carte>`, `home.paused.<carte>` (bouton `home.resume.<carte>`),
+`home.notStarted.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
 feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.install`,
-`sheet.setup.retry`, `sheet.setup.quit`, `sheet.setup.close`,
-`sheet.setup.ompMissing`, `sheet.setup.retryMissed`, bloc de progression
-`sheet.setup.progress` avec `sheet.setup.progress.label` et
+`sheet.setup.retry`, `sheet.setup.takeover`, `sheet.setup.quit`,
+`sheet.setup.close`, `sheet.setup.ompMissing`, `sheet.setup.retryMissed`, bloc de
+progression `sheet.setup.progress` avec `sheet.setup.progress.label` et
 `sheet.setup.progress.bar`, échec `sheet.setup.failure`,
-`sheet.setup.detail.toggle`, `sheet.setup.detail`) ; feuille Bienvenue
-`welcome.sheet` (`welcome.continue`) ;
+`sheet.setup.detail.toggle`, `sheet.setup.detail`, `sheet.setup.diagnostic`) ;
+feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
 feuille « Répondre » `answer.sheet` (`answer.question`,
 `kanban.actions.options`, `answer.text`, `answer.submit`, `answer.cancel`) ; feuille
 **Contrat** `contract.sheet` (corps `contract.sheet.body`, fermeture
-`contract.sheet.close`) ; feuille
+`contract.sheet.close` ; contrat absent ou illisible : une phrase sans chemin, puis
+« Copier le diagnostic » `contract.sheet.diagnostic`, qui emporte le chemin lu et la
+taille ou la raison du système) ; feuille
 « Nouvelle feature » `launch.sheet`,
 `launch.repo`, `launch.chooseFolder`, `launch.repoError`, `launch.title`,
 `launch.description`, `launch.cancel`, `launch.submit` ; les deux sélecteurs de
@@ -205,6 +224,21 @@ cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
 ```
 
 (`-home.welcomeSeen NO` remontre la bienvenue sur un magasin vide.)
+
+Le crochet de recette `-home.recipe <dashboard|menuBar|pausedOnly>` pose l'ardoise
+de la fixture partagée `HomeParity` dans l'Accueil ET dans l'item de barre de
+menus, sans abonnement au magasin ni notification : `dashboard` = 5 « À vous »,
+2 « En cours », 1 « À reprendre », 1 « Pas commencées », 2 livraisons ;
+`menuBar` = 1 « À vous » et 2 « En cours » ; `pausedOnly` = une pause et une
+feature pas commencée seulement. Il n'agit que si `OMP_CONSOLE_SUPPORT_ROOT` est
+posée et non vide, jamais sur la racine réelle :
+
+```bash
+open -g -n "<chemin>/omp-console/build/OMP Console.app" \
+  --env OMP_CONSOLE_SUPPORT_ROOT=/tmp/recette/support \
+  --env MEM0_PIPELINE_STATE_DIR=/tmp/recette/state \
+  --args -home.recipe dashboard -home.welcomeSeen YES
+```
 
 ## Cibles
 
@@ -484,9 +518,15 @@ L'emplacement du magasin est un détail technique : il n'est jamais affiché.
 Un magasin qui ne contient que des fichiers illisibles rend le **tableau** (voies
 vides + bouton « n problème(s) », au vrai pluriel), jamais « vide » : les anomalies
 ne sont jamais tues. Le bouton `kanban.diagnosticButton` de la barre d'outils
-ouvre une bulle « Problèmes détectés » (`kanban.diagnostic`) qui les dit en
-phrases (« cache-sessions s'est arrêtée de façon inattendue. ») ; le fichier et le
-pid ne sont que dans son pli **Détails techniques**, replié par défaut. Le bouton
+ouvre une bulle « Problèmes détectés » (`kanban.diagnostic`) qui dit chacune par
+une phrase de conséquence (« mem0-omp/cache-sessions s'est arrêtée de façon
+inattendue et n'avance plus. »), suivie d'un geste : le bouton « Reprendre »
+quand le pilote d'un lot est mort et qu'une de ses cartes offre la reprise
+(la première par identifiant), sinon une consigne écrite (« Relancez-la depuis
+OMP, dans son dépôt. »). Le fichier et le pid ne sont jamais affichés : le bouton
+**Copier le diagnostic** (`kanban.diagnostic.copy`) met dans le presse-papiers le
+détail brut de chaque anomalie, une par ligne (« propriétaire mort —
+running/<id>.json : pid 1234 »). Le bouton
 « Activité » (`kanban.activityButton`) ouvre le journal des gestes dans une bulle ;
 « Rafraîchir » (`kanban.refresh`, ⌘R) relit l'état des PR sur GitHub.
 La section n'a plus de barre basse.
@@ -522,8 +562,10 @@ pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
 | `kanban.refresh` | le bouton « Rafraîchir » de la barre d'outils (⌘R, relit l'état des PR) |
 | `kanban.diagnosticButton` | le bouton « n problème(s) » de la barre d'outils (absent sans anomalie) |
 | `kanban.diagnostic` | la bulle « Problèmes détectés » |
-| `kanban.anomaly.<i>` | une ligne d'anomalie dans la bulle |
-| `kanban.diagnostic.technical` | le pli « Détails techniques » de la bulle |
+| `kanban.anomaly.<i>` | la phrase d'une ligne d'anomalie dans la bulle |
+| `kanban.anomaly.<i>.resume` | le bouton « Reprendre » d'une ligne (lot mort reprenable) |
+| `kanban.anomaly.<i>.instruction` | la consigne d'une ligne (aucune action de l'app ne règle le cas) |
+| `kanban.diagnostic.copy` | le bouton « Copier le diagnostic » de la bulle (détail brut, pid compris) |
 | `kanban.detail` | la feuille de détail (carte sélectionnée) |
 | `kanban.detail.close` | le bouton « Fermer » de la feuille |
 | `kanban.detail.technical` | le pli « Détails techniques » de la feuille |
@@ -603,7 +645,8 @@ récente** en bas de la section (une ligne par geste : symbole d'état, libellé
 heure) : l'accusé affiché est celui de la **réponse** du service — `state:"taken"`
 (prise en charge) ou `state:"refused"` avec son motif, affiché verbatim. Aucun
 fichier d'accusé, aucune relecture périodique. « Reprendre » poste
-`POST /v1/repos/{repo}/pilot`.
+`POST /v1/repos/{repo}/pilot` sur une pipeline en pause, et la commande `relaunch`
+sur une carte « En échec » / « Bloquée » de l'Accueil.
 
 | Geste | Où | Écrit |
 |---|---|---|
@@ -613,7 +656,8 @@ fichier d'accusé, aucune relecture périodique. « Reprendre » poste
 | Lire le contrat (besoin ou specs à valider) | carte « À vous » de l'Accueil (secondaire), zone d'action de la feuille de détail, menu contextuel de la carte | rien : la console lit `<worktree>/.omp/pipeline/contract.md` et ouvre la feuille Contrat |
 | Accepter la revue | feuille de détail, menu contextuel ou carte « À vous » (feature en attente revue) | `POST /v1/repos/{repo}/commands` — `{kind:"verdict", verdict:"y"}` |
 | Répondre à une question en texte d'un maillon terminé | feuille de détail ou feuille « Répondre » (feature en attente de réponse, sans question en vol) | `POST /v1/repos/{repo}/commands` — `{kind:"reply", slug, text}` |
-| Reprendre | feuille de détail, menu contextuel ou ligne « En cours » de l'Accueil (carte marquée `mort`, feature vivante) | rien de plus : `POST /v1/repos/{repo}/pilot` réveille le conducteur du service |
+| Reprendre | feuille de détail, menu contextuel ou ligne « À reprendre » de l'Accueil (carte marquée `mort`, feature vivante) | rien de plus : `POST /v1/repos/{repo}/pilot` réveille le conducteur du service |
+| Reprendre une pipeline en échec ou bloquée | carte « En échec » / « Bloquée » de « À vous » (feature de lot `failed` ou `blocked`) | `POST /v1/repos/{repo}/commands` — `{kind:"relaunch", slug}` |
 | Arrêter… | feuille de détail ou menu contextuel (carte portant un lot), après confirmation | `POST /v1/repos/{repo}/commands` — `{kind:"stop", repo}` |
 | Lancer une feature | feuille « Nouvelle feature » (barre d'outils, ⌘N) | `POST /v1/repos/{repo}/commands` — `{kind:"launch", title, description, repo}` |
 
@@ -699,7 +743,7 @@ remplit l'écran courant sans changer de section. Un panneau annulé, ou un proj
 dont le dossier a disparu entre-temps (il sort alors du menu), laisse l'état vide
 tel quel.
 
-1. **Choisir la cible** — le sélecteur « Cible » de l'en-tête. La cible par défaut
+1. **Choisir la cible** — le sélecteur « Dossier » de l'en-tête. La cible par défaut
    est celle du projet ouvert (la préférence partagée `session.projectRoot` avec la
    section « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
    base de comparaison : `HEAD` pour le principal, ou `base <sha7>` — la base
@@ -734,6 +778,20 @@ tel quel.
    l'arbre et le document à jour sans geste, au plus un rechargement par 300 ms
    d'accalmie. Pas de scrutation périodique. **⌘R** (ou « Rafraîchir ») force un
    rechargement immédiat.
+
+**Échecs lisibles.** Aucun texte affiché ne cite de commande git, de code de
+sortie, de stderr ni de chemin : chaque `FilesError` a sa phrase dans `FilesText`
+(« Les outils de développement d'Apple sont introuvables… », « Ce dossier n'est
+pas un projet suivi… », « La lecture du projet a échoué… », etc.) et le détail brut
+(`FilesError.diagnostic` : commande, code, stderr, chemin) ne part que par le bouton
+**Copier le diagnostic** (presse-papiers, retour « Diagnostic copié » pendant 2 s).
+L'état d'erreur montre la phrase, « Rafraîchir » (`files.error.refresh`, même action
+que ⌘R) puis la copie (`files.error.diagnostic`) ; le bandeau d'avis (veille
+arrêtée, dossier disparu) porte `files.notice.diagnostic` ; un fichier illisible,
+une base de comparaison introuvable ou un diff en échec portent
+`files.document.diagnostic`. Un fichier binaire dit « Ce fichier n'est pas du
+texte : il ne peut pas être affiché. », sans taille ; un dossier vide « Aucun
+fichier dans ce dossier. ».
 
 **Garanties de lecture seule.** Les seules commandes git employées sont
 `ls-files -z --cached`, `ls-files -z --others --exclude-standard`,
@@ -1112,7 +1170,10 @@ et podman (S-1, S-4) :
   `mem0-stack/.env.example` s'appliquent.
 - **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
   (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
-  devient alors le seul candidat (les recettes s'en servent). Sous une racine
+  devient alors le seul candidat (les recettes s'en servent) ;
+  `OMP_CONSOLE_REMOTE_PORT` déplace le port de l'API distante (entier de 1 à
+  65535 ; toute autre valeur garde 8787), pour qu'une instance de recette écoute
+  à côté de celle de l'utilisateur. Sous une racine
   jetable SEULEMENT, l'argument de lancement `-setup.recipe <valeur>`
   (`Setup/SetupRecipe.swift`) remplace l'installateur par un script, sans réseau
   ni pile : `progression` (téléchargement chiffré de 0 à 100 % en 10 s, puis
@@ -1224,9 +1285,14 @@ une session morte garde sa conversation sous un bandeau « La session s'est
 arrêtée. Relancez-la pour reprendre la conversation. » (**Relancer** ouvre une
 nouvelle session sur le même `.jsonl`). Les détails techniques vivent dans
 l'inspecteur « Détails techniques » (`session.details`), en formulaire groupé :
-**Session** (projet, état, pid du service, identifiant de session, statut détaillé)
-et **Journal** (les messages absorbés par l'app : ouverture de session, coupures,
-erreurs). Aucune trame de protocole brute n'est affichée. Un prompt n'est jamais
+**Session** (projet, état lisible — « En marche », « En attente » ou « Arrêtée » —,
+identifiant de session, statut détaillé, puis « Copier le diagnostic »,
+`session.diagnostic.copy`) et **Journal** (les messages absorbés par l'app :
+ouverture de session, coupures, erreurs). Le pid du service n'est jamais affiché :
+il ne vit que dans le diagnostic copié (cinq lignes : pid, état brut, identifiant
+de session, projet, fichier de session ; une valeur inconnue s'y dit « absent »).
+L'inspecteur de la section **Projet** suit le même patron (`projet.diagnostic.copy`).
+Aucune trame de protocole brute n'est affichée. Un prompt n'est jamais
 relancé tout seul après une mort : la relance est un clic.
 
 L'écriture d'un prompt passe par le service (`POST /v1/sessions/{id}/prompt`) : un
@@ -1242,7 +1308,7 @@ des composants et au catalogue `omp models --json` — **jamais** aux sessions, 
 le service possède. `PATH`, `~/.bun/bin`, `/opt/homebrew/bin`, `/usr/local/bin` et
 l'ancienne préférence `omp.chosenPath` ne sont plus consultés pour ce binaire : la
 feuille « OMP est requis » n'existe plus (la préparation la remplace). Le bouton
-« Lancer omp » du terminal, lui, tape `omp` dans le shell, qui le résout par son
+« Lancer OMP » du terminal, lui, tape `omp` dans le shell, qui le résout par son
 `PATH` complété (voir « Section Terminal »).
 
 - **`OMP_CONSOLE_OMP_BINARY`** (échappatoire de test) — posée et non vide, c'est le
@@ -1269,14 +1335,15 @@ absolu, sinon `/bin/zsh -l`) ; `omp` se lance **à la demande** dans ce shell.
 2. **Ouvrir** (↩) : le shell démarre dans ce répertoire, dans un PTY dont la taille
    est celle de la zone d'affichage, avec l'environnement de `TerminalEnvironment`
    (`PATH` complété : `omp` y est trouvé même quand l'app est lancée par le Finder).
-3. **Lancer omp** (`terminal.launchOmp`, actif tant qu'un shell vit) tape `omp↩`
+3. **Lancer OMP** (`terminal.launchOmp`, actif tant qu'un shell vit) tape `omp↩`
    dans le shell ; la frappe part ensuite dans `omp` (flèches, Entrée, Tab, Échap,
    Ctrl-C, Ctrl-D), l'affichage est celui du TUI — couleurs vraies, curseur, plein
    écran — et suit le redimensionnement de la fenêtre.
 4. **Fermer la fenêtre principale** (bouton rouge, ⌘W) : le process est tué avec
    **tout son groupe** (SIGTERM, puis SIGKILL après 2 s), sans confirmation.
-   **⌘Q** tue de la même façon les terminaux vivants : aucun shell ni `omp` ne
-   survit à la fermeture de l'app.
+   **⌘Q** tue de la même façon les terminaux vivants, une fois la sortie confirmée
+   si une commande tourne (voir « Confirmation au Quitter ») : aucun shell ni `omp`
+   ne survit à la fermeture de l'app.
 
 Le terminal et la section **Session OMP** (session servie par l'API locale) vivent
 **en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
@@ -1286,12 +1353,21 @@ deux sens, et ils peuvent même viser le même répertoire.
 projet dans lequel ouvrir un terminal. » — avec le bouton **Choisir un projet…**
 (`terminal.chooseProject`, voir la section Fichiers) : le projet choisi, la
 feuille « Choisir un répertoire » s'ouvre aussitôt sur ses répertoires. Avec un
-projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Lecture
-des worktrees… » (feuille ouverte), « Lancement du shell… », « shell vivant (pid
-<n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec le bouton
-**Relancer**, et l'erreur explicite en cas d'échec (« Exécutable introuvable :
-… », « Répertoire introuvable : … », « PTY indisponible (<errno>) : aucun process
-lancé. »). Aucun état n'est un rectangle vide.
+projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Recherche
+des dossiers de features… » (feuille ouverte ; « Aucun dossier de feature dans ce
+projet. » quand seul le dépôt principal existe), « Lancement du shell… », « shell
+vivant (pid <n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec
+le bouton **Relancer**, et l'erreur explicite en cas d'échec (« Exécutable
+introuvable : … », « Répertoire introuvable : … », « Le terminal n'a pas pu
+s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres
+de terminal inutiles, puis relancez. »). Un échec du shell affiche **Copier le
+diagnostic** (`terminal.diagnostic.copy`, dans le bandeau `terminal.status` ou
+sous le message de `terminal.view`) : il copie le brut
+(`TerminalHostError.diagnostic`, par exemple « PTY indisponible (<errno>) :
+aucun process lancé. »). Dans la feuille, un échec de lecture du catalogue montre
+« Réessayer » puis **Copier le diagnostic** (`terminal.launch.diagnostic`, jamais
+sur ↩) ; « Aucun projet ouvert » n'a rien à copier. Le sous-titre dit « OMP ·
+Actif » une fois OMP lancé. Aucun état n'est un rectangle vide.
 
 **Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
 scrollback : la ligne qui sort de l'écran est perdue), pas de sélection ni de copie,
@@ -1326,13 +1402,47 @@ sont pas) :
    racine du dépôt ;
 2. menu **Fichier ▸ « Ouvrir un terminal OMP… »**, puis « Choisir un répertoire… »,
    choisir un worktree, « Ouvrir » : le shell démarre ;
-3. « Lancer omp » ; vérifier `pgrep -fl -P <pid de l'app>` : un seul shell, enfant
+3. « Lancer OMP » ; vérifier `pgrep -fl -P <pid de l'app>` : un seul shell, enfant
    direct, et `omp` enfant du shell ;
 4. taper un prompt dans la fenêtre : la TUI y répond ; **Ctrl-C** interrompt `omp`
    et l'app reste vivante ;
 5. redimensionner la fenêtre : la TUI se réaffiche à la nouvelle taille ;
 6. fermer la fenêtre : `pgrep -fl -P <pid de l'app>` ne rend plus rien ;
-7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun shell ni `omp` ne survit.
+7. relancer l'app, ouvrir un terminal, puis **⌘Q** : aucun shell ni `omp` ne survit
+   (avec `omp` au premier plan, l'alerte « Quitter arrêtera… » le cite d'abord).
+
+## Confirmation au Quitter
+
+Quitter l'app — **⌘Q**, menu « Quitter OMP Console », Dock ▸ Quitter, ou la
+fermeture de session, le redémarrage et l'extinction de macOS — passe par UN seul
+déroulé (`QuitFlow`, `Sources/OMPConsole/Quit/`). Il demande confirmation par une
+alerte « Quitter arrêtera des activités en cours. » (Annuler / Quitter) dès que la
+sortie arrêterait quelque chose :
+
+- une **Session OMP** lancée ou en cours de lancement : « La session OMP de « nom »
+  s'arrêtera. » (la session est fermée par `DELETE`) ;
+- une **commande au premier plan** d'un shell du Terminal (`sleep 600`, `omp`…) :
+  « La commande « sleep » du Terminal s'arrêtera. ». Un shell au repos sur son
+  invite, une tâche de fond (`sleep 600 &`) ou `exec <commande>` ne comptent pas.
+
+Quand l'alerte s'affiche, elle cite EN PLUS ce qui **continue dans OMP** : le
+pilotage (« Le pilotage de « nom » continue dans OMP : vous le retrouverez en
+pilotant de nouveau ce projet. ») et les pipelines en cours (« 2 pipelines en cours
+continuent dans OMP. »). Un pilotage ou des pipelines seuls font quitter **sans**
+alerte : quitter ne les arrête pas.
+
+- **Quitter** (Retour) : les accroches de sortie tournent comme avant (session
+  fermée, pilotage détaché, shell tué, service distant arrêté), les feuilles
+  ouvertes sont fermées, puis l'app quitte. Une feuille ouverte (Bienvenue,
+  préparation bloquante) ne bloque jamais la sortie ; la Bienvenue fermée ainsi
+  reparaîtra au prochain lancement.
+- **Annuler** (Échap) : rien ne s'arrête, l'app reste ouverte ; le ⌘Q suivant
+  redemande. Sur une fermeture de session macOS, Annuler l'interrompt (l'Apple
+  Event de quit reçoit `userCanceledErr`, -128) ; sans activité, la fermeture de
+  session n'est plus interrompue par l'app.
+- Une seule alerte par sortie, aucune option « Ne plus demander ».
+- Fermer la fenêtre (⌘W, bouton rouge) ne demande rien : le shell est tué comme
+  avant.
 
 ## Section Projet (pilotage)
 
@@ -1377,7 +1487,9 @@ la fois** (un second démarrage est refusé jusqu'à l'arrêt du pilotage en cou
    reste `running` côté pilote ; la reprise éventuelle est le fait du pilote au
    prochain `/project`. Fermer l'app (⌘Q, bouton rouge) n'envoie **rien** : l'app
    se détache, la conduite reste vivante dans le service, ses segments avancent et
-   sa question en attente attend la réouverture.
+   sa question en attente attend la réouverture. Un pilotage seul ne fait pas
+   poser l'alerte du Quitter ; elle le cite quand une session ou une commande du
+   Terminal la fait poser.
 
 **Ce que l'app n'écrit jamais** : ni `<stateDir>/projects/<clé>.json`, ni le
 worktree `.doc`, ni le lot. Elle ne réimplémente non plus aucune règle du pilote
@@ -1617,9 +1729,11 @@ intégré) »).
 
 L'app est une **app de barre de menus** : fermer la fenêtre ne la quitte pas (seul
 **⌘Q** quitte), l'item de barre reste présent, et un clic sur cet item ramène la
-fenêtre visible et au premier plan. Le titre de l'item suit les compteurs —
-`<occupés>·<en attente>` (point médian U+00B7) dès que l'un des deux est non nul,
-l'icône seule sinon (`square.grid.2x2`) ; un menu déroulant n'est **pas** posé, un
+fenêtre visible et au premier plan. Le titre de l'item est **un seul chiffre**, le
+nombre de lignes « À vous » de l'Accueil, et l'icône seule (`square.grid.2x2`)
+quand ce nombre est nul. Son info-bulle et sa description VoiceOver disent toutes
+deux **« N à vous · M en cours »** (point médian U+00B7, zéros écrits ; « 0 à vous ·
+0 en cours » tant que rien n'est connu). Un menu déroulant n'est **pas** posé, un
 menu demanderait deux clics là où un seul doit ramener la fenêtre.
 
 ### Les notifications
@@ -1631,19 +1745,56 @@ besoins et leurs six familles :
 
 | Évènement | Source | Titre · corps |
 |---|---|---|
-| attend une réponse | `running/<id>.json`, `pendingAsk` en vol et propriétaire vivant | `<label> attend une réponse` · « Une question attend votre réponse. » |
-| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | `<name> attend une validation` · « Jalon specs : validez le contrat pour continuer. » |
-| attend une validation (revue) | idem avec `waitKind = review` | `<name> attend une validation` · « Jalon revue : validez la livraison pour continuer. » |
-| échoué (feature de lot) | feature de lot `failed` | `<name> a échoué` · « La feature `<slug>` a échoué. » |
-| échoué (run clos) | `history/<id>.json`, `finalState = failed` | `<label> a échoué` · « Le run a échoué. » |
-| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | `PR fusionnée : <slug>` · « La PR de `<slug>` est fusionnée. » |
+| attend une réponse | `running/<id>.json`, `pendingAsk` en vol et propriétaire vivant | « Question » · nom affiché de la carte (repli : `<label>`) |
+| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | « Specs à valider » · nom affiché de la carte (repli : `<slug>`) |
+| attend une validation (revue) | idem avec `waitKind = review` | « Revue à accepter » · nom affiché de la carte (repli : `<slug>`) |
+| échoué (feature de lot) | feature de lot `failed` | « Échec » · nom affiché de la carte (repli : `<slug>`) |
+| échoué (run clos) | `history/<id>.json`, `finalState = failed` | « Échec » · nom affiché de la carte (repli : `<label>`) |
+| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | « PR fusionnée » · nom affiché de la carte (repli : `<slug>`) |
 
-`<name>` est le `name` de la feature s'il n'est pas blanc, sinon son `slug` ; le
-`label` est celui que le dépôt écrit lui-même. Une PR absente de `projects/` n'émet
+Le titre est le libellé d'état que l'Accueil affiche pour la carte, tiré des mêmes
+fonctions (`HomeText.natureText`, `ConsoleStatus.of(column:)`) ; un échec reste
+« Échec » même quand l'Accueil le montre « En pause ». Le corps est le nom affiché
+par l'Accueil (`KanbanCard.title` : le slug d'une feature, le `label` d'un run, que
+le dépôt écrit lui-même) — une question posée par le run d'une feature porte le slug
+de la feature. Le repli ne sert que si la carte n'est pas sur l'ardoise du même
+instantané. Une PR absente de `projects/` n'émet
 rien (une PR non suivie), et une feature de **lot** `done` avec `prUrl` (colonne
 « PR ouverte », « PR créée » ou « PR fusionnée » du Kanban selon l'état GitHub)
 n'est pas une fusion. Les sources sont bornées comme le
 magasin : 200 entrées `running`, 20 rangs `history`, un lot et un projet par dépôt.
+
+### Cliquer une notification
+
+Chaque notification porte, dans son `userInfo`, sa famille et l'identifiant de sa
+carte (`["kind": …, "cardID": …]`, chaînes seulement). Un clic sur la bannière ou
+sur son entrée du Centre de notifications ramène **toujours** la fenêtre principale
+au premier plan, puis ouvre :
+
+| Famille | Destination |
+|---|---|
+| Question | feuille **Répondre** de la carte |
+| Specs à valider | feuille **Contrat** de la carte |
+| Revue à accepter | **fiche** de la carte (elle porte « Accepter la revue ») |
+| Échec (lot ou run) | **fiche** de la carte |
+| PR fusionnée | **fiche** de la carte |
+
+- **Notification périmée** (question déjà répondue, jalon déjà validé, carte sortie
+  de l'état notifié) : la **fiche** de la carte si elle existe encore, l'**Accueil**
+  si elle a disparu — sans feuille ni message d'erreur. Une notification sans
+  `userInfo` (livrée par une version antérieure, ou perte d'un port par la pile de
+  l'app, qui ne concerne aucune carte) ou illisible mène à l'Accueil.
+- **Fenêtre fermée**, l'app vivante dans la barre des menus : la fenêtre se rouvre,
+  puis la destination s'applique. Si l'ardoise n'est pas encore chargée, l'ouverture
+  attend sa première publication (seule la plus récente est gardée). Le lancement à
+  froid d'une app quittée n'est pas couvert.
+- **Feuille déjà ouverte** dans la fenêtre (Répondre avec une saisie en cours, Contrat,
+  fiche, dialogue…) : elle n'est **jamais** remplacée ni fermée ; seule la fenêtre
+  revient au premier plan.
+
+La destination est une fonction pure (`AlertRoute.destination`, Alerts/AlertRouter.swift)
+appliquée par `AlertRouter` ; le clic lui parvient par `AlertOpenReceiver` (délégué du
+centre, retenu par le livreur système) → `AlertsModel.onOpen` → `AppDelegate.openAlert`.
 
 ### Notifications refusées
 
@@ -1654,10 +1805,12 @@ Notifications) et « Ignorer », qui le masque pour de bon (préférence
 `home.notificationsBannerDismissed`). La fenêtre n'affiche plus de compteurs : ils
 vivent dans l'item de la barre des menus.
 
-Dans l'item de barre, « occupés » compte les cartes de la colonne **En cours** ; « en attente » les cartes
-« À vous », « Specs à valider » et « Revues à accepter » — deux catégories
-**exclusives**, calculées sur l'ardoise que la fenêtre affiche. La colonne « Pas
-commencées » de Pipelines (features `pending`, non lancées) n'est **pas** ce compteur.
+Dans l'item de barre, N et M sont les tailles des listes « À vous » et « En cours »
+de l'Accueil (`HomePresentation.counts`, mêmes règles que `HomePresentation.dashboard`) :
+les pipelines en pause (« À reprendre ») et les features jamais lancées (« Pas
+commencées ») ne comptent **jamais**, et une pipeline en échec ou bloquée relançable
+compte dans « À vous ». Le chiffre, l'info-bulle et la description changent au même
+instantané que les sections de l'Accueil.
 
 ### Le registre persisté
 
@@ -1688,7 +1841,8 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
   nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" >/tmp/omp-console.log 2>&1 &
 ```
 
-1. Accorder le dialogue d'autorisation ; vérifier l'item de barre à l'icône seule.
+1. Accorder le dialogue d'autorisation ; vérifier l'item de barre à l'icône seule
+   (sonde AX : `AXTitle` vide, `AXDescription` = `AXHelp` = « 0 à vous · 0 en cours »).
 2. Mettre une autre app au premier plan, puis produire un **vrai** évènement par une
    **session servie réelle** (une session du service sur le magasin jetable, avec
    un prompt demandant une question à choix multiples) : une bannière apparaît, nomme le run,
@@ -1705,6 +1859,12 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 6. Fermer la fenêtre (bouton rouge) ⇒ l'app reste vivante, l'item de barre est là,
    ⌘Q quitte ; presser l'item (sonde AX `AXPress`) ⇒ la fenêtre redevient visible et
    au premier plan.
+7. Cliquer chaque bannière (ou son entrée du Centre de notifications), fenêtre
+   ouverte puis fermée, et constater la destination de « Cliquer une notification » :
+   Répondre, Contrat, fiche, ou Accueil pour une carte disparue ; puis cliquer avec
+   une feuille Répondre ouverte et du texte saisi ⇒ la feuille et son texte restent.
+   Cette étape reste **manuelle** : un clic sur une notification active l'app et
+   vole le focus, ce qu'aucune recette automatisée ne doit faire.
 
 ### Trois pièges mesurés
 
@@ -1712,11 +1872,15 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
    dans un binaire nu (ou un processus de `swift test`) tue le process sur une
    exception Objective-C non rattrapable (`bundleProxyForCurrentProcess is nil`). La
    garde d'instanciation est donc `Bundle.main.bundleURL.pathExtension == "app"`, et
-   **aucun** appel UserNotifications ne vit ailleurs que dans `AlertDelivery.swift`.
+   **aucun** appel UserNotifications ne vit ailleurs que dans `AlertDelivery.swift` —
+   le récepteur de clics (`AlertOpenReceiver`, posé en `delegate` du centre) compris :
+   les tests passent par l'enregistreur (`RecorderAlertDeliverer.simulateOpen`).
 2. **`NSStatusBar` interdit dans la suite.** `NSStatusBar.system.statusItem(withLength:)`
    tue un processus de test (signal 6, pile `-[NSStatusBar _statusItemWithLength:withPriority:]`).
-   `StatusItemController` n'y est donc jamais construit : sa logique de titre est une
-   fonction pure (`StatusItemTitle`), et son câblage AppKit est prouvé par la recette.
+   `StatusItemController` n'y est donc jamais construit : son titre et son résumé
+   sont des fonctions pures (`StatusItemTitle.text`, `.summary`) qu'il se borne à
+   recopier dans `title`, `toolTip` (`AXHelp`) et `setAccessibilityLabel`
+   (`AXDescription`) ; ce câblage AppKit est prouvé par la recette.
 3. **`activate()` coopératif est refusé.** Sans intention utilisateur,
    `NSApplication.activate()` rend la fenêtre visible mais pas clé ni principale ;
    seule `activate(ignoringOtherApps: true)` (dépréciée avec le SDK du poste, assumé)
@@ -1767,7 +1931,12 @@ défaut une connexion HTTP vers une IP littérale. Une variable posée mais **vi
 est traitée comme absente. Les budgets d'inactivité sont ceux du plugin (20 s pour
 la recherche et le graphe, 10 s pour les autres), et il n'y a **aucun sondage
 périodique** : la sonde part à l'apparition de la section, au bouton « Rafraîchir »
-et avant chaque recherche.
+et avant chaque recherche. Quand oMLX est en défaut, un bandeau orange
+(`memory.omlxBanner`) le dit sans URL ni code : « oMLX ne répond pas : la recherche
+de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez. » ou « oMLX
+refuse la clé d'accès configurée : … », avec « Rafraîchir »
+(`memory.omlxBanner.refresh`, refait la sonde) et « Copier le diagnostic »
+(`memory.omlxBanner.diagnostic` : URL sondée, code, `OMLX_API_TOKEN`).
 
 **L'identité de la pile.** `GET /health` reste à la même adresse, avec le même
 protocole et les mêmes autres champs ; la pile de l'app y ajoute un champ
@@ -1865,8 +2034,9 @@ rechargement suivant.
 |---|---|
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
 | portée incalculable (liste) | « Aucun projet ouvert » — « Choisissez le projet dont vous voulez consulter la mémoire. » + bouton « Choisir un projet… » : menu des projets connus puis « Choisir un dossier… », ou, sans projet connu, le panneau de Session OMP ; le choix recharge la liste sur place |
-| service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
-| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », le détail `<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>` (sélectionnable) et, **seulement quand le propriétaire est l'ancienne pile**, le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation) |
+| service indisponible | « Mémoire indisponible » + bouton « Réessayer », puis « Copier le diagnostic » (adresse du service et dernière erreur, jamais affichées) — jamais une liste vide, jamais un graphe partiel silencieux |
+| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », **seulement quand le propriétaire est l'ancienne pile** le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation), puis « Copier le diagnostic » (`<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>`) |
+| écriture refusée (graphe) | « La modification n'a pas été enregistrée : la mémoire n'a pas répondu comme prévu. Réessayez ; si l'échec revient, copiez le diagnostic. », feuille laissée ouverte, et « Copier le diagnostic » (réponse brute du service) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
 | sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
 | recherche sans ligne | « Aucun résultat » — « La mémoire du projet ne contient aucun souvenir correspondant. » |
@@ -1878,7 +2048,7 @@ rechargement suivant.
 | détail | un titre (`MemoryText.title`), la ligne de contexte, le bouton « Copier » (presse-papiers), le texte **complet** rendu en Markdown et sélectionnable, puis « Détails techniques » repliés : identifiant (monospacé), portée de la ligne, pertinence (en recherche) ; en mode graphe, les actions d'écriture et le bloc « Liens manuels » |
 
 **Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
-`memoire.unavailable.detail`, `memoire.foreignOwned.detail`,
+`memoire.unavailable.diagnostic`, `memoire.foreignOwned.diagnostic`,
 `memoire.foreignOwned.takeover`, `memoire.summary.count`, `memoire.search.results`,
 `memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
 `memoire.detail.copy`, `memoire.detail.technical` ; mode graphe :
@@ -1886,9 +2056,10 @@ rechargement suivant.
 `memoire.graph.project`, `memoire.graph.tag`, `memoire.graph.zoomIn`,
 `memoire.graph.zoomOut`, `memoire.graph.recenter`, `memoire.graph.create`,
 `memoire.graph.edit`, `memoire.graph.delete`, `memoire.graph.link`,
-`memoire.graph.detach.<id>`, `memoire.graph.error`, `memoire.create.sheet`,
+`memoire.graph.detach.<id>`, `memoire.graph.error` (et `.diagnostic`),
+`memoire.graph.unavailable.diagnostic`, `memoire.create.sheet`,
 `memoire.edit.sheet`, `memoire.link.sheet` (et `.text`, `.tags`, `.project`,
-`.cancel`, `.save`, `.error` sur chacune). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
+`.cancel`, `.save`, `.error`, `.error.diagnostic` sur chacune). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
 mise en page, `Retour` dans le champ de recherche lance la recherche du mode
 courant, le vider (ou sa croix) ramène la liste au sommaire et lève la restriction
 du graphe sans requête, les flèches haut/bas déplacent la sélection de la liste, les
@@ -1918,7 +2089,8 @@ statistiques, la mémoire, et les gestes du tableau — et pousse ses changement
 un flux temps réel.
 
 - **Transport** : HTTP/1.1 en clair, sur la **seule interface du réseau local**.
-  Le port par défaut est **8787** et le service est annoncé par **Bonjour** sous le
+  Le port par défaut est **8787** (`OMP_CONSOLE_REMOTE_PORT` le déplace, pour une
+  instance de recette) et le service est annoncé par **Bonjour** sous le
   type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
   protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
   adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
@@ -1945,22 +2117,40 @@ un flux temps réel.
   servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
   sans lire le service. La route ne rend jamais `404`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
-  `{"code":"XXXXXXXX","name":"<appareil>","protocolVersion":1}` et rend un jeton
-  d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres routes). Le code
-  est généré depuis la feuille « Appairage… » (menu de l'app, ⌥⌘A), affiché huit
-  caractères Crockford base32 groupés `XXXX-XXXX`, valable **120 secondes** et à
-  **usage unique** ; au-delà de 5 échecs, le code se verrouille et seul un code neuf
-  le déverrouille. Un code expiré disparaît de la feuille.
+  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":1}`
+  et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
+  routes). Le code est généré depuis la feuille « Appairage » (menu « OMP Console ›
+  Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
+  valable **120 secondes** et à **usage unique** ; au-delà de 5 échecs, le code se
+  verrouille et seul un code neuf le déverrouille. Le code est accepté **avec ou sans
+  tiret, en majuscules comme en minuscules** (`ABCD-EFGH`, `ABCDEFGH`, `abcd-efgh`) :
+  l'app iOS/iPadOS, le client et le serveur le normalisent par le même
+  `PairingCodeFormat` (ConsoleCore).
+- **Nom et identité de l'appareil** : l'app iOS/iPadOS transmet le **modèle précis**
+  de l'appareil (« iPad Pro 13 pouces (M4) », « iPhone 17e »), jamais son nom
+  personnel, et un identifiant d'installation (`deviceKey`, champ optionnel). Un
+  **réappairage** du même appareil **remplace sa ligne** et révoque l'ancien jeton ;
+  deux appareils distincts du même modèle gardent chacun leur ligne. Les anciennes
+  lignes sans `deviceKey` (les « iPhone » d'avant) ne sont ni fusionnées ni
+  supprimées : on les révoque à la main.
+- **Feuille « Appairage »** : son interrupteur « Accès depuis l'iPhone et l'iPad »,
+  en tête, est **actif par défaut** et mémorisé (`remote.enabled`) ; le couper arrête
+  le serveur et son annonce Bonjour. La feuille tient dans l'écran : seule la liste
+  des appareils défile, le titre et « Fermer » restent visibles. Le code affiche
+  « Expire dans mm:ss », puis « Code expiré » à l'échéance ; l'adresse du service
+  n'apparaît qu'une fois, et c'est d'abord une adresse privée du réseau local
+  (192.168/16, 10/8, 172.16/12), avant une adresse Tailscale (100.64/10) puis
+  lien-local : l'app iOS/iPadOS n'atteint en HTTP que le réseau local (ATS), et une
+  adresse Tailscale tapée à la main y échoue ; chaque ligne porte la date complète
+  (« Appairé le 10 oct. 2026 à 21:54 ») et un bouton « Révoquer » que VoiceOver
+  annonce « Révoquer <nom> ».
 - **Oubli par l'appareil** : `DELETE /v1/devices/self` (authentifiée, sans corps)
   révoque l'appareil **porteur du jeton**, et lui seul, exactement comme « Révoquer »
-  dans la feuille « Appairage… » : jeton, ligne de `devices.json`, article du
+  dans la feuille « Appairage » : jeton, ligne de `devices.json`, article du
   trousseau, flux SSE coupés, liste « Appareils appairés » mise à jour. Réponse
   `200 {"accepted":true}` ; `401 unauthorized` pour un jeton absent, inconnu ou déjà
   révoqué (un second appel rend donc `401`). C'est l'appel de « Oublier ce Mac » de
   l'app iOS, tenté au mieux : l'app oublie son jeton même si le Mac ne répond pas.
-- **Interrupteur** : « Service d'API distante », en tête de la feuille, est **actif
-  par défaut** et mémorisé (`remote.enabled`) ; le couper arrête le serveur et son
-  annonce Bonjour.
 - **Permission macOS** : la première opération Bonjour d'un bundle lancé depuis le
   Finder déclenche l'alerte « Réseau local » (TN3179) ; la feuille explique le refus
   et ouvre les Réglages Système. Un outil lancé depuis le Terminal (`swift test`,
@@ -2021,6 +2211,44 @@ swift test --filter AC-1                          # annonce Bonjour + source loc
 `AC-1` ne demande que `dns-sd` ; `AC-20` demande `omp` et `bun` — sans eux, la
 recette est **sautée**, jamais verte à tort.
 
+#### Recette de la feuille « Appairage »
+
+```bash
+bash scripts/swift-app.sh --no-tests              # le bundle à éprouver
+bash scripts/mac-appairage-recette.sh             # Mac seul : AC-1, 2, 6, 7, 8, 9, 10, 12
+bash scripts/mac-appairage-recette.sh --ios       # + iOS/iPadOS : AC-3, 4, 5, 6, 11
+bash scripts/mac-appairage-recette.sh --captures-only --bundle <app de la base>   # captures « avant »
+```
+
+Elle lance une **instance de recette distincte** en arrière-plan (`open -g -n`), sur
+un état jetable : 12 appareils hérités « iPhone » sans `deviceKey`, un magasin de
+pipeline vide, le port `OMP_CONSOLE_REMOTE_PORT=18787`. Les composants, les données
+et la pile de l'utilisateur sont **liés** : la préparation de l'instance y écrit
+(`ComponentInstaller` purge toute version d'omp ou de podman autre que celle du
+bundle, `MemoryStack` recrée la machine podman si l'image de `stack/machine.json`
+diffère et réécrit `stack/migration.json`). D'où la **garde du manifeste** : avant
+tout lancement, les versions épinglées dans le binaire du bundle (omp, podman,
+image de machine) doivent être exactement celles du support réel —
+`components/omp/<v>` et `components/podman/<v>` seuls dans leur dossier, même image
+dans `stack/machine.json` — sinon la recette sort en `2` sans rien lancer. La
+configuration podman (`config`) est **copiée** : la préparation réécrit
+`config/containers/containers.conf`, qui ne doit jamais viser le dossier jetable de
+la recette. `caffeinate -d` empêche la veille d'écran (et le verrouillage qui la
+suit) pendant la passe.
+La sonde AX `scripts/mac-appairage-sonde.swift` (compilée par `swiftc`) presse et
+lit la feuille sans activer l'app ni la redimensionner : l'instance de
+l'utilisateur et le focus ne sont jamais touchés. `--ios` construit une app signée
+ad hoc (`omp-console/.build-ios-recette`) et appaire trois simulateurs dédiés
+(`appairage-tab-a`, `appairage-tab-b`, `appairage-tel`, conservés d'un passage à
+l'autre, jamais désinstallés) en saisissant le code sous ses trois formes.
+Sorties (`--out`, défaut `/tmp/mac-appairage-recette-<horodatage>`) : `rapport.txt`
+(une ligne `✔`/`✗` par critère), mesures JSON et captures PNG. En fin de passe,
+les appareils appairés par la recette sont révoqués par la feuille (leurs jetons
+quittent le trousseau du Mac) et l'instance reçoit `kill -TERM`. Codes de sortie :
+`0` tout vert, `1` au moins un critère rouge, `2` non exécuté (hors macOS, session
+verrouillée, bundle absent, manifeste du bundle différent du support réel,
+Accessibilité refusée au terminal).
+
 ## Structure du paquet
 
 ```
@@ -2049,6 +2277,7 @@ omp-console/
 │   │   ├── HomePresentation.swift état de l'écran, listes, geste d'une carte (purs)
 │   │   ├── HomeText.swift         tous les textes de l'Accueil
 │   │   ├── HomeView.swift         les quatre états, dont le fond « prépare ses composants »
+│   │   ├── HomeRecipe.swift       crochet de recette `-home.recipe` (ardoises de `HomeParity`)
 │   │   ├── MainSheet.swift        la feuille due, une seule à la fois (politique pure)
 │   │   ├── WelcomeSheet.swift     la feuille « Bienvenue »
 │   │   └── AnswerSheet.swift      la feuille « Répondre »
@@ -2097,7 +2326,7 @@ omp-console/
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
 │   │   │                          hérités ≥ 3, écriture,
 │   │   │                          escalade SIGTERM/SIGKILL du groupe, récolte
-│   │   ├── TerminalShell.swift    le shell lancé ($SHELL -l, sinon /bin/zsh) et « Lancer omp »
+│   │   ├── TerminalShell.swift    le shell lancé ($SHELL -l, sinon /bin/zsh) et « Lancer OMP »
 │   │   ├── TerminalHostError.swift les échecs du PTY et leur seule table de texte
 │   │   ├── TerminalEnvironment.swift l'environnement de l'enfant (TERM, COLORTERM ; PATH par OmpEnvironment)
 │   │   ├── TerminalScreen.swift   la grille : cellules, attributs, marges, largeur UAX #11
@@ -2197,9 +2426,10 @@ omp-console/
 │   │   └── ScrollBottomObserver.swift la géométrie du défilement et ses gestes
 │   ├── Alerts/                    les notifications macOS
 │   │   ├── AlertEvents.swift      dérivation des six familles, clés et textes purs
-│   │   ├── AlertDelivery.swift    livreur réel/no-op, autorisation (SEUL import UserNotifications)
+│   │   ├── AlertDelivery.swift    livreur réel/no-op, autorisation, récepteur de clics (SEUL import UserNotifications)
 │   │   ├── AlertLedger.swift      registre persisté des clés, lecture tolérante
-│   │   └── AlertsModel.swift      abonnement, décision, compteurs, autorisation
+│   │   ├── AlertsModel.swift      abonnement, décision, compteurs, autorisation, clic
+│   │   └── AlertRouter.swift      clic d'une notification : payload, destination pure, routeur
 │   ├── Stats/                     la section « Statistiques » (lecture seule)
 │   │   ├── StatsMetrics.swift     les métriques d'une session (fonctions pures)
 │   │   ├── StatsModels.swift      types du tableau et textes exacts de la vue
@@ -2226,8 +2456,8 @@ omp-console/
 │   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
 │   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service
 │   │   └── PairingSheet.swift     la feuille d'appairage, ses états et ses textes
-│   └── MenuBar/                   l'item de barre de menus et ses compteurs
-│       ├── RunCounters.swift      occupés / en attente et l'état publié
+│   └── MenuBar/                   l'item de barre de menus et ses comptes
+│       ├── AlertsStatus.swift     l'état publié : comptes « À vous » / « En cours » de l'Accueil
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
 ├── Tests/OMPConsoleTests/         la suite Swift Testing (Service/ : ServiceClientTests,
 │                                  ServiceSessionModelTests, ServiceActionsTests ;
@@ -2281,13 +2511,22 @@ la reconnexion. Tant que le Mac n'est pas connecté, les gestes qui l'exigent
 restent visibles mais grisés. L'**Accueil** est ensuite un écran à quatre états :
 « OMP absent sur le Mac », chargement,
 premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
-préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
-« Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
-(« Reprendre » ou la durée) et « Livrées récemment » (bouton « Ouvrir la PR » ;
-PR ouvertes, créées, fusionnées ou fermées, closes depuis 7 jours au plus) —
-les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. En
-largeur compacte (iPhone), chaque rangée « En cours » ou « Livrées récemment »
-tient sur deux lignes : le nom sur toute la largeur, puis la puce et le bouton ;
+préparation, l'accusé de commande, puis cinq sections où chaque carte n'apparaît
+qu'une fois : « À vous » (cartes d'attente avec « Répondre… », « Valider les
+specs », « Accepter la revue », « Lire le contrat », et les pipelines « En échec »
+ou « Bloquée » avec l'étape où elles se sont arrêtées et « Reprendre »), « En
+cours » (pipelines réellement en marche, avec leur durée), « À reprendre »
+(pipelines en pause, puce « En pause » et « Reprendre »), « Pas commencées »
+(features jamais lancées) — ces deux-là masquées quand elles sont vides — et
+« Livrées récemment » (bouton « Ouvrir la PR » ; PR ouvertes, créées, fusionnées
+ou fermées, closes depuis 7 jours au plus) — les MÊMES listes que l'Accueil macOS,
+dérivées du noyau partagé `ConsoleCore` (`HomePresentation.dashboard`). Le
+« Reprendre » d'une carte en échec ou bloquée part par la même route que celui
+d'une pause (`POST v1/cards/:id/resume`) ; le Mac y reconnaît une pipeline
+relançable et poste la commande `relaunch`, et un refus s'affiche sur la carte
+(« La pipeline n'a pas repris. » et sa cause). En largeur compacte (iPhone),
+chaque rangée tient sur deux lignes : le nom sur toute la largeur, puis la puce
+et le bouton ;
 en largeur régulière (iPad), une seule ligne ; aux tailles d'accessibilité, titre,
 puce et bouton s'empilent. Les gestes de carte suivent l'envoi : « Valider les
 specs » demande une confirmation (elle lance l'implémentation sur le Mac),
@@ -2304,10 +2543,11 @@ libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (prem
 installation neuve, avant la feuille de connexion). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong|longTitles|slowMac>`
 force un état depuis la fixture partagée `HomeParity` pour les captures
-(`longTitles` : le tableau de bord dont les rangées « En cours » et « Livrées
-récemment » portent un titre de 40 caractères ; `slowMac` : le tableau de bord
-dont l'envoi des gestes de carte ne répond jamais, pour capturer « Envoi en
-cours ») ; il nourrit aussi le badge de la ligne Accueil (3 pour
+(`longTitles` : le tableau de bord dont les rangées « En cours », « À reprendre »,
+« Pas commencées » et « Livrées récemment » portent un titre de 40 caractères ;
+`slowMac` : le tableau de bord dont l'envoi des gestes de carte ne répond jamais,
+pour capturer « Envoi en cours ») ; il nourrit aussi le badge de la ligne Accueil
+(5 pour
 dashboard/answer/contract/contractLong/degraded/longTitles/slowMac, 0 pour
 loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
 d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
@@ -2316,7 +2556,8 @@ Dynamic Type).
 La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas de
 jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
 trousseau au lancement, jamais pour un appareil appairé : un Mac injoignable
-(veille, autre réseau) laisse l'Accueil dans son état « Mac injoignable — … ».
+(veille, autre réseau) laisse l'Accueil sur le composant « non connecté », cause
+« Mac injoignable ».
 Elle a quatre modes, décidés par le statut d'appairage du client :
 
 - **lecture de l'appairage** : « Lecture de l'appairage… » et un indicateur ;
@@ -2384,6 +2625,14 @@ multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans 
 champ.
 
 Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, toutes les voies ont la même largeur, qui grandit avec la taille de texte, et s'alignent en haut ; quand elles ne tiennent pas à l'écran, elles défilent horizontalement jusqu'à une marge de fin, après la dernière voie. Le titre d'une carte passe à la ligne et n'est jamais tronqué, dans toutes les voies.
+
+Une carte ne montre jamais de marque brute (« Marques : mort ») : une carte dont
+le pilote s'est arrêté dit « Elle s'est arrêtée de façon inattendue. », une carte
+dont une source est illisible « Une partie de ses données est illisible. », une
+carte décrite deux fois « Deux sources la décrivent. » (phrases partagées
+`KanbanText.marksSentence`, dans l'ordre des marques) ; une carte saine n'a
+aucune ligne. L'iOS n'a pas de « Copier le diagnostic » : le détail technique
+reste sur le Mac.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
 (le catalogue de `omp models --json`, qu'aucune route n'exposait ; il rend aussi
@@ -2486,7 +2735,8 @@ bash scripts/ios-connexion-feuille-recette.sh --source <udid appairé>
 
 - `--avant <ref>` construit depuis `git archive <ref> omp-console` ; sans lui,
   depuis l'arbre de travail. Les valeurs attendues sont toujours lues dans
-  `ConnectionText.swift` de l'arbre de travail : la base est jugée contre la
+  `ConnectionText.swift` et `IOSConnectionStateText.swift` (cause « Mac
+  injoignable » de l'Accueil) de l'arbre de travail : la base est jugée contre la
   spécification corrigée.
 - `--source <udid>` désigne un simulateur déjà appairé au Mac : son trousseau
   (copie `sqlite3 .backup` de `keychain-2-debug.db`) et sa préférence
@@ -2513,7 +2763,8 @@ Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
    caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U. », jamais
    « A–Z, 0–9 ».
 5. **Mac injoignable** (AC-2, AC-5, AC-7) — appairé, adresse `127.0.0.1:9` : aucune
-   feuille, l'Accueil dit « Mac injoignable — 127.0.0.1:9 ». « Se connecter » ouvre
+   feuille, l'Accueil montre « Pas de connexion au Mac » et la cause « Mac
+   injoignable » (`ios.connexion.cause`, sans adresse). « Se connecter » ouvre
    la feuille : « Mac injoignable », l'adresse une fois, « Réessayer », « Modifier
    l'adresse » (replié), « Oublier ce Mac », aucun champ du code, aucun champ
    focalisé, pas de clavier.
@@ -2525,9 +2776,9 @@ Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
    pendant 15 s, l'Accueil s'affiche. La feuille ouverte à la demande montre
    « Connecté », l'adresse une fois et « Oublier ce Mac », sans code, champ
    d'adresse, découverte ni focus. Elle s'ouvre par le bouton antenne quand il est
-   affiché ; sinon (base sans la PR #89), depuis l'Accueil « Mac injoignable »,
-   puis un relais rend le Mac joignable et la feuille passe d'elle-même en mode
-   connecté.
+   affiché ; sinon (base sans la PR #89), depuis l'Accueil « non connecté » de cause
+   « Mac injoignable », puis un relais rend le Mac joignable et la feuille passe
+   d'elle-même en mode connecté.
 8. **Oublier, puis annuler** (AC-9) — « Oublier ce Mac » ouvre la confirmation ;
    l'annuler (toucher hors de la bulle : iOS 27 n'y montre pas « Annuler ») laisse
    « Connecté ». Rien n'est émis vers le Mac.
@@ -2747,7 +2998,8 @@ TROISIÈME groupe capture le **mode graphe de la Mémoire** (feature
 pan/zoom et une fiche ouverte — 3 états × {iPhone, iPad} × {clair, sombre} =
 **12 PNG**. Un QUATRIÈME groupe capture les **rangées de l'Accueil en Dynamic
 Type** (feature `ios-accueil-dynamic-type-casse`) via `-home.row <n>`, qui amène la
-rangée d'index `n` (« En cours » puis « Livrées récemment ») en haut du tableau de
+rangée d'index `n` (« En cours », « À reprendre », « Pas commencées », puis
+« Livrées récemment ») en haut du tableau de
 bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
 `accessibility-extra-extra-extra-large`), iPhone clair seulement = **12 PNG**
 (`iphone-home-row<n>-<taille>.png`). Un CINQUIÈME groupe capture la feuille
@@ -2824,6 +3076,11 @@ partagée `KanbanBoardParity` (ConsoleCore) à la place de celle du Mac : une vo
 long. Le bandeau de connexion n'est pas affiché, tout le reste est le chemin
 réel ; au premier affichage l'app écrit `pipelines-board-ready` sur sa sortie
 d'erreur. Les deux crochets `-pipelines.*` se combinent.
+
+`-pipelines.board marques` rend à la place l'ardoise DÉRIVÉE de la fixture
+`HomeParity` (la même que `-pipelines.recipe`, horloge fixe), qui porte la carte
+« reprise » du lot `beta` au pilote arrêté : elle montre la phrase de ses marques
+sans appairage, avec le même signal `pipelines-board-ready`.
 
 La recette des voies et des cartes de Pipelines (feature
 `pipelines-ipad-voies-sans-largeur`) s'appuie sur ce crochet :
@@ -3085,6 +3342,19 @@ affiché sur la carte et l'état « Envoi en cours » (`-home.recipe slowMac`). 
 et dépose ses captures dans `omp-console/build/accueil-rangees/`. Codes de sortie
 : `0` tout est ✓, `1` au moins un ✗, `2` outillage manquant. Les simulateurs
 créés sont supprimés à la sortie.
+
+### Recette des sections de l'Accueil et de l'item de barre de menus
+
+`bash scripts/accueil-sections-recette.sh [--avant]` : `--avant` capture l'Accueil
+iOS de la base `8079e6e` (worktree détaché temporaire) et lit en AX l'item de
+l'instance OMP Console de l'utilisateur, sans l'activer ; sans option, il capture
+l'Accueil iOS (iPhone, iPad) et Mac (2e instance `-home.recipe dashboard`, racine
+jetable, port 8797), lit l'item sous `dashboard`, `menuBar` et `pausedOnly`, et écrit
+une ligne `AC-n ✓|✗` pour AC-1, AC-2, AC-3, AC-5, AC-6, AC-8 et AC-9 ; captures et
+arbres AX dans `omp-console/build/accueil-sections/{avant,apres}/`. Codes de sortie
+: `0`, `1` au moins un ✗, `2` outillage, autorisation d'accessibilité manquante ou
+simulateur appairé refusé. Une capture d'item noire (Space plein écran) est une
+limite consignée, la preuve restant la lecture AX.
 
 ### Recette : états non connecté
 

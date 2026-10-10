@@ -13,9 +13,10 @@
 #    quand le Mac ne sert pas 127.0.0.1:8787, ces contrôles sont « sauté ».
 #
 # Les valeurs ATTENDUES (aide du code, message de format, libellés d'état) sont lues
-# dans `ConnectionText.swift` de l'ARBRE DE TRAVAIL, y compris pour `--avant` : la
-# base est jugée contre la spécification corrigée, ses échecs prouvent que la
-# recette discrimine.
+# dans `ConnectionText.swift` de l'ARBRE DE TRAVAIL, et la phrase de cause « Mac
+# injoignable » de l'Accueil dans `IOSConnectionStateText.swift` (état « non
+# connecté » partagé, #118), y compris pour `--avant` : la base est jugée contre la
+# spécification corrigée, ses échecs prouvent que la recette discrimine.
 #
 # Isolement (contraintes du brief) :
 #  · build SIGNÉ hors dépôt (DerivedData sous /tmp) : sans droit
@@ -63,6 +64,7 @@ BUNDLE_ID="com.omp.console.ios"
 SLUG="connexion-ios-feuille-intrusive-et-sans"
 OUT="$ROOT/omp-console/build/$SLUG/$MOMENT"
 TEXT_SWIFT="$ROOT/omp-console/ios/OMPConsoleIOS/ConnectionText.swift"
+STATE_SWIFT="$ROOT/omp-console/ios/OMPConsoleIOS/IOSConnectionStateText.swift"
 PHONE_NAME="omp-connexion-tel-$MOMENT"
 PAD_NAME="omp-connexion-tab-$MOMENT"
 # DerivedData STABLE par relevé : une seconde exécution recompile en incrémental.
@@ -103,10 +105,12 @@ if [ "$?" -ne 0 ] || [ -z "$showsdks" ]; then
   exit 2
 fi
 
-if [ ! -f "$TEXT_SWIFT" ]; then
-  echo "  ✗ $TEXT_SWIFT introuvable (valeurs attendues)" >&2
-  exit 1
-fi
+for file in "$TEXT_SWIFT" "$STATE_SWIFT"; do
+  if [ ! -f "$file" ]; then
+    echo "  ✗ $file introuvable (valeurs attendues)" >&2
+    exit 1
+  fi
+done
 
 if [ -n "$AVANT" ] && ! git rev-parse --verify --quiet "$AVANT^{commit}" >/dev/null; then
   echo "  ✗ référence inconnue : $AVANT" >&2
@@ -288,7 +292,7 @@ cat >"$WORK/recette.py" <<'PY'
 import json, os, re, socket, subprocess, sys, threading, time
 from concurrent.futures import ThreadPoolExecutor
 
-out, moment, text_swift, mac, source_keychain, source_plist, phone, pad = sys.argv[1:9]
+out, moment, text_swift, state_swift, mac, source_keychain, source_plist, phone, pad = sys.argv[1:10]
 BUNDLE = "com.omp.console.ios"
 DEVICES = (("iphone", phone), ("ipad", pad))
 # Le délai de S-8 pour un état attendu après un lancement ou un geste.
@@ -304,7 +308,15 @@ for needed in ("title", "connectedState", "macAbsentState", "codeHelp", "codeMal
     if needed not in TEXT:
         print(f"  ✗ ConnectionText.{needed} introuvable dans {text_swift}", file=sys.stderr)
         sys.exit(1)
-ABSENT_PREFIX = TEXT["macAbsentState"] + " — "
+# La phrase de cause « Mac injoignable » de l'état « non connecté » partagé
+# (IOSConnectionStateView, #118), lue dans IOSConnectionStateText.swift : l'Accueil
+# d'un appareil appairé dont le Mac ne répond pas la montre sous
+# `ios.connexion.cause`, sans adresse.
+STATE_SOURCE = open(state_swift, encoding="utf-8").read().split("enum IOSConnectionStateAccessibility")[0]
+UNREACHABLE = dict(re.findall(r'case \.(\w+):\s*"((?:[^"\\]|\\.)*)"', STATE_SOURCE)).get("unreachable")
+if not UNREACHABLE:
+    print(f"  ✗ IOSConnectionStateText.cause(.unreachable) introuvable dans {state_swift}", file=sys.stderr)
+    sys.exit(1)
 
 lines = []
 failed = False
@@ -466,13 +478,19 @@ def sheet_shown(elements):
     return one(elements, "connection.sheet") is not None
 
 
-def mac_absent_text(elements, endpoint=None):
-    wanted = ABSENT_PREFIX + endpoint if endpoint else None
-    for e in elements:
-        text = label(e)
-        if text.startswith(ABSENT_PREFIX) and (wanted is None or text == wanted):
-            return e
-    return None
+def offline_cause(elements, cause=None):
+    """L'élément `ios.connexion.cause` de l'écran plein « non connecté » partagé
+    (avec son bouton `ios.connexion.connect`), de phrase `cause` si elle est donnée."""
+    said = one(elements, "ios.connexion.cause")
+    if said is None or one(elements, "ios.connexion.connect") is None:
+        return None
+    return said if cause is None or label(said) == cause else None
+
+
+def offline_shown(elements):
+    """L'état « non connecté » partagé, plein écran (`ios.connexion.cause`) ou en
+    bandeau (`ios.connexion.message`), quelle que soit sa cause."""
+    return one(elements, "ios.connexion.cause") or one(elements, "ios.connexion.message")
 
 
 def state_is(text):
@@ -722,28 +740,29 @@ def graft(udid):
 # ── Contrôles avec le Mac (5 à 9) ────────────────────────────────────────────
 
 def open_from_home_absent(udid, endpoint):
-    """Lance vers `endpoint` injoignable ; rend (relevé de l'Accueil, feuille ouverte
-    par `ios.home.connect`, motif d'échec)."""
+    """Lance vers `endpoint` injoignable ; rend (relevé de l'Accueil « non connecté »
+    de cause « Mac injoignable », feuille ouverte par `ios.connexion.connect`, motif
+    d'échec)."""
     seen_sheet = []
     launch(udid, "-client.manualAddress", endpoint)
-    home, ok = wait(udid, lambda els: mac_absent_text(els, endpoint) is not None,
+    home, ok = wait(udid, lambda els: offline_cause(els, UNREACHABLE) is not None,
                     watch=lambda els: seen_sheet.append(True) if sheet_shown(els) else None)
     if seen_sheet:
         return home, None, "la feuille Connexion s'est ouverte d'elle-même"
     if not ok:
-        return home, None, f"« {ABSENT_PREFIX}{endpoint} » absent de l'Accueil après {LIMIT} s"
-    connect = one(home, "ios.home.connect")
-    if connect is None:
-        return home, None, "bouton ios.home.connect introuvable"
+        shown = label(one(home, "ios.connexion.cause"))
+        return home, None, (f"Accueil « non connecté » de cause « {UNREACHABLE} » absent après {LIMIT} s"
+                            + (f" (cause affichée « {shown} »)" if shown else ""))
+    connect = one(home, "ios.connexion.connect")
     tap_element(udid, connect)
     sheet, ok = wait(udid, sheet_shown, limit=10)
     if not ok:
-        return home, sheet, "la feuille ne s'ouvre pas par ios.home.connect"
+        return home, sheet, "la feuille ne s'ouvre pas par ios.connexion.connect"
     return home, sheet, None
 
 
 def control_absent(device, udid):
-    """Contrôle 5 : Mac injoignable — Accueil dégradé, feuille sans focus."""
+    """Contrôle 5 : Mac injoignable — Accueil « non connecté », feuille sans focus."""
     home, sheet, failure = open_from_home_absent(udid, "127.0.0.1:9")
     if failure:
         capture(udid, "c5-injoignable", device, sheet or home)
@@ -768,7 +787,7 @@ def control_absent(device, udid):
     if one(sheet, "connection.code") is not None:
         problems.append("connection.code présent")
     emit("échec" if problems else "ok", "AC-2,AC-5,AC-7", device,
-         " ; ".join(problems) or f"Accueil « {ABSENT_PREFIX}127.0.0.1:9 » sans feuille ; feuille « {state} », adresse une fois, Réessayer, Oublier, Modifier l'adresse, sans code ni focus")
+         " ; ".join(problems) or f"Accueil « non connecté » de cause « {UNREACHABLE} » sans feuille ; feuille « {state} », adresse une fois, Réessayer, Oublier, Modifier l'adresse, sans code ni focus")
     return not problems
 
 
@@ -843,8 +862,9 @@ def open_connected_sheet(udid, home):
     """Ouvre la feuille d'un appareil appairé et CONNECTÉ. Par le bouton antenne
     quand il existe (PR #89 : `connection.open`, iPhone et iPad) ; sinon — base sans
     #89, aucun bouton antenne affiché — la feuille est ouverte depuis l'Accueil
-    « Mac injoignable » (`ios.home.connect`) vers un port libre, puis un relais vers
-    8787 rend le Mac joignable et la feuille passe d'elle-même au mode connecté.
+    « non connecté » de cause « Mac injoignable » (`ios.connexion.connect`) vers un
+    port libre, puis un relais vers 8787 rend le Mac joignable et la feuille passe
+    d'elle-même au mode connecté.
     Rend (relevé, adresse, chemin, relais|None, motif d'échec|None)."""
     button = antenna(udid, home)
     if button is not None:
@@ -873,7 +893,7 @@ def control_connected(device, udid):
     # Toute la fenêtre est observée : la feuille ne doit apparaître à AUCUN relevé.
     home, _ = wait(udid, lambda els: False,
                    watch=lambda els: seen_sheet.append(True) if sheet_shown(els) else None)
-    absent = mac_absent_text(home)
+    absent = offline_shown(home)
     capture(udid, "c7-accueil", device, home)
     problems = []
     if seen_sheet:
@@ -1059,7 +1079,7 @@ with open(os.path.join(out, "rapport.txt"), "w", encoding="utf-8") as report:
 sys.exit(1 if failed else 0)
 PY
 
-python3 "$WORK/recette.py" "$OUT" "$MOMENT" "$TEXT_SWIFT" "$MAC" \
+python3 "$WORK/recette.py" "$OUT" "$MOMENT" "$TEXT_SWIFT" "$STATE_SWIFT" "$MAC" \
   "${SOURCE_KEYCHAIN:-}" "${SOURCE_PLIST:-}" "$iphone" "$ipad"
 status=$?
 

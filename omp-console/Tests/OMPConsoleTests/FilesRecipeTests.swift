@@ -53,7 +53,7 @@ func recetteManuelleRendUneVraieCible() async throws {
     if let chosen = model.target {
         line("\(chosen.label) — \(chosen.path) — branche \(chosen.branch ?? "—") — base \(chosen.base.label)")
     } else {
-        line("aucune cible — erreur : \(model.errorMessage ?? "aucune")")
+        line("aucune cible — erreur : \(model.errorMessage?.diagnostic ?? "aucune")")
     }
     line("")
     line("== catalogue (\(model.targets.count) cibles)")
@@ -133,7 +133,7 @@ func recetteManuelleRendUneVraieCible() async throws {
     }
 
     line("== état")
-    line("veille armée : \(model.notice ?? "oui") — erreur : \(model.errorMessage ?? "aucune")")
+    line("veille armée : \(model.notice?.diagnostic ?? "oui") — erreur : \(model.errorMessage?.diagnostic ?? "aucune")")
 
     try report.write(toFile: output, atomically: true, encoding: .utf8)
     print(

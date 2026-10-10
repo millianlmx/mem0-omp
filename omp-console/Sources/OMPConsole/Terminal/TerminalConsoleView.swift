@@ -87,11 +87,18 @@ struct TerminalConsoleView: View {
             // affichée (S-1), sous un bandeau qui dit la fin du shell.
             VStack(spacing: 0) {
                 if showsEndBanner {
-                    Text(model.statusText)
+                    HStack(spacing: 8) {
+                        Text(model.statusText)
+                        if let diagnostic = model.failureDiagnostic {
+                            DiagnosticCopyButton(diagnostic: diagnostic, identifier: "terminal.diagnostic.copy")
+                        }
+                    }
                         .consoleBanner(tint: isFailure ? .red : .orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
+                        // Conteneur : « Copier le diagnostic » garde son identifiant.
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("terminal.status")
                 }
                 TerminalViewRepresentable(
@@ -106,7 +113,8 @@ struct TerminalConsoleView: View {
             placeholder
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Un groupe AX : sans lui, l'identifiant de la zone recouvrirait
-                // celui du bouton « Choisir un projet… » (`terminal.chooseProject`).
+                // ceux des boutons « Choisir un projet… » (`terminal.chooseProject`)
+                // et « Copier le diagnostic » (`terminal.diagnostic.copy`).
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("terminal.view")
         }
@@ -125,7 +133,13 @@ struct TerminalConsoleView: View {
                 Text(TerminalViewText.projectNamed(projectName))
             }
         case let .status(text, systemImage):
-            ContentUnavailableView(text, systemImage: systemImage)
+            ContentUnavailableView {
+                Label(text, systemImage: systemImage)
+            } actions: {
+                if let diagnostic = model.failureDiagnostic {
+                    DiagnosticCopyButton(diagnostic: diagnostic, identifier: "terminal.diagnostic.copy")
+                }
+            }
         }
     }
 }

@@ -335,6 +335,60 @@ func writeReachesChildAndEchoComesBack() async throws {
     await host.kill()
 }
 
+// MARK: - mac-quitter-sans-confirmation, S-2 : la commande au premier plan
+
+@Test("mac-quitter-sans-confirmation/AC-2 : la commande au premier plan du shell est détectée, pas le shell au repos")
+@MainActor
+func foregroundCommandIsDetectedButNotTheIdleShell() async throws {
+    // Un VRAI shell interactif (Doc-10) : c'est lui qui met ses commandes au
+    // premier plan du terminal, comme dans la fenêtre Terminal de l'app.
+    let recorder = TerminalRecorder()
+    let host = TerminalHost()
+    host.onOutput = { recorder.append($0) }
+    #expect(host.foregroundCommand() == nil)  // hors exécution
+
+    try host.start(
+        executable: URL(fileURLWithPath: "/bin/zsh"),
+        arguments: ["-f", "-i"],
+        cwd: try makeTemporaryDirectory(),
+        columns: 80,
+        rows: 24
+    )
+    let shell = try #require(host.pid)
+
+    // Au repos : on attend que le shell ait LU une commande (« 42 » n'apparaît que
+    // calculé, jamais dans l'écho de la saisie), donc qu'il tienne le terminal sur
+    // son invite. Le premier plan est alors le sien : rien à arrêter
+    // (mac-quitter-sans-confirmation/AC-8 : un shell au repos n'est pas une activité).
+    try host.write(Array("echo $((40+2))\n".utf8))
+    #expect(await waitUntil(timeout: 8) { recorder.text.contains("42") })
+    #expect(host.foregroundCommand() == nil)
+
+    // Une commande au premier plan : son groupe, et son nom court.
+    try host.write(Array("sleep 600\n".utf8))
+    #expect(await waitUntil(timeout: 8) { host.foregroundCommand()?.name == "sleep" })
+    let command = try #require(host.foregroundCommand())
+    #expect(command.processGroup != shell)
+
+    // Ctrl-C : le shell revient à son invite, plus rien au premier plan.
+    try host.write([0x03])
+    #expect(await waitUntil(timeout: 8) { host.foregroundCommand() == nil })
+
+    // Une tâche de fond ne prend pas le terminal : elle ne compte pas.
+    let beforeJob = recorder.text.count
+    try host.write(Array("sleep 600 &\n".utf8))
+    #expect(await waitUntil(timeout: 8) { recorder.text.dropFirst(beforeJob).contains("[1]") })
+    try? await Task.sleep(for: .seconds(1))
+    #expect(host.foregroundCommand() == nil)
+
+    // La tâche de fond a son PROPRE groupe : `kill()` (qui vise celui du shell) ne
+    // l'atteindrait pas, donc le shell la tue lui-même avant.
+    try host.write(Array("kill %1\n".utf8))
+    try? await Task.sleep(for: .milliseconds(300))
+    await host.kill()
+    #expect(host.foregroundCommand() == nil)  // shell mort, PTY fermé
+}
+
 @Test("terminal-integre/BR-1 : écrire sans process vivant est refusé")
 @MainActor
 func writeWithoutRunningChildIsRefused() async throws {

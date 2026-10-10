@@ -33,6 +33,9 @@ struct ConsoleRootView: View {
     /// notifications. Il vit à l'échelle de l'app (porté par le délégué), comme les
     /// autres.
     @ObservedObject var alerts: AlertsModel
+    /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
+    /// la feuille de préparation bloquante y passe, comme ⌘Q.
+    let quit: QuitFlow
     /// Le modèle d'action : l'état des gestes et de la feuille de lancement survit
     /// au passage d'une section à l'autre.
     @ObservedObject var actions: ActionsModel
@@ -82,11 +85,9 @@ struct ConsoleRootView: View {
         )
     }
 
-    /// La feuille due, selon l'ordre des règles de `MainSheetPolicy` — aucune une
-    /// fois « Quitter » demandé (la feuille doit se fermer pour que l'app quitte).
+    /// La feuille due, selon l'ordre des règles de `MainSheetPolicy`.
     private var currentSheet: MainSheet? {
-        if home.quitRequested { return nil }
-        return MainSheetPolicy.sheet(
+        MainSheetPolicy.sheet(
             omp: home.omp,
             setup: setup.state,
             setupDismissed: setup.dismissed,
@@ -207,15 +208,13 @@ struct ConsoleRootView: View {
             // L'action principale se déplace, mais ne se retire pas.
             .customizationBehavior(.reorderable)
         }
-        .sheet(item: mainSheet, onDismiss: {
-            if home.quitRequested { NSApp.terminate(nil) }
-        }) { sheet in
+        .sheet(item: mainSheet) { sheet in
             switch sheet {
             case .setup:
                 // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋
-                // (Doc-1), « Quitter » ferme d'abord la feuille par programme,
-                // puis `onDismiss` termine l'app (Doc-2).
-                SetupView(setup: setup, omp: home.omp, quit: { home.requestQuit() })
+                // (Doc-1) ; « Quitter » passe par le déroulé de la sortie, qui
+                // ferme lui-même les feuilles attachées.
+                SetupView(setup: setup, omp: home.omp, quit: { quit.request() })
                     .interactiveDismissDisabled(!home.canLaunch)
             case .welcome:
                 WelcomeSheet(home: home)

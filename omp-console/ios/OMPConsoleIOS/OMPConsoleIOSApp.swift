@@ -39,6 +39,9 @@ import SwiftUI
 ///   feuille « Piloter un projet… », « OMP vous demande » ou « Lancer une session
 ///   OMP » ouverte d'elle-même sur une fixture (feuilles-ios-presentation-et-depots),
 ///   sans réseau — des crochets de recette, pas des fonctionnalités.
+/// - `-pipelines.board marques` : l'écran Pipelines rend l'ardoise dérivée de
+///   `HomeParity` (celle de `-pipelines.recipe`), qui porte une carte au pilote
+///   arrêté, pour voir la phrase de ses marques sans appairage.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,

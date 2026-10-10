@@ -109,6 +109,8 @@ enum IOSHomeText {
         case .question: "questionmark.bubble.fill"
         case .milestoneSpecs: "doc.text.magnifyingglass"
         case .milestoneReview: "checkmark.seal.fill"
+        case .failed: "xmark.octagon.fill"
+        case .blocked: "exclamationmark.triangle.fill"
         }
     }
 

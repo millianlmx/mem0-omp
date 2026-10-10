@@ -18,6 +18,8 @@ final class RecorderAlertDeliverer: AlertDelivering, @unchecked Sendable {
     private var recordedOutcomes: [AlertDeliveryOutcome] = []
     private var current: AlertAuthorization
     private var authorizationRequestCount = 0
+    private var openingHandler: (@MainActor @Sendable (AlertOpening?) -> Void)?
+    private var openingObservations = 0
 
     init(authorization: AlertAuthorization = .authorized) {
         current = authorization
@@ -51,6 +53,25 @@ final class RecorderAlertDeliverer: AlertDelivering, @unchecked Sendable {
         }
     }
 
+    func observeOpenings(_ handler: @escaping @MainActor @Sendable (AlertOpening?) -> Void) {
+        withLock {
+            openingObservations += 1
+            openingHandler = handler
+        }
+    }
+
+    /// Le clic sur une notification, tel que le délégué système le remet : le
+    /// payload déjà décodé, livré sur le `MainActor`.
+    @MainActor
+    func simulateOpen(_ opening: AlertOpening?) {
+        withLock { openingHandler }?(opening)
+    }
+
+    /// Le nombre d'enregistrements du traitement des clics.
+    var openingObservationCount: Int {
+        withLock { openingObservations }
+    }
+
     var messages: [AlertMessage] {
         withLock { recorded }
     }
@@ -73,9 +94,10 @@ func alertsSnapshot(_ fixture: StoreFixture) -> StoreSnapshot {
     StoreReader(stateDir: fixture.root, clock: fixtureClock).readAll()
 }
 
-/// Les évènements dérivés d'une fixture, à l'instant de référence.
+/// Les évènements dérivés d'une fixture, à l'instant de référence, avec l'ardoise
+/// dérivée du même magasin (comme `AlertsModel.apply`).
 func alertEvents(_ fixture: StoreFixture) -> [AlertEvent] {
-    AlertDerivation.events(from: alertsSnapshot(fixture))
+    AlertDerivation.events(from: alertsSnapshot(fixture), board: kanbanBoard(fixture))
 }
 
 // --- fabriques d'objets utiles -------------------------------------------------
