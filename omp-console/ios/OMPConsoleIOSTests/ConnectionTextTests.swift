@@ -27,6 +27,17 @@ struct ConnectionTextTests {
         #expect(ConnectionText.state(.connected(endpoint: endpoint)).contains("127.0.0.1:8787"))
     }
 
+    @Test("ConnectionText : un Mac découvert avec une zone s'affiche sans zone")
+    func zonedEndpointShownWithoutZone() {
+        let endpoint = ClientEndpoint.bonjour(name: "OMP Console", host: "192.168.1.175%en0", port: 8787)
+        for state in [ConnectionText.state(.connecting(endpoint: endpoint)),
+                      ConnectionText.state(.connected(endpoint: endpoint)),
+                      ConnectionText.state(.macAbsent(endpoint: endpoint))] {
+            #expect(state.contains("192.168.1.175:8787"))
+            #expect(!state.contains("%"))
+        }
+    }
+
     @Test("ConnectionText : l'état version incompatible porte les deux numéros")
     func incompatibleProtocolHasBothNumbers() {
         let text = ConnectionText.state(.incompatibleProtocol(local: 3, remote: 5))
@@ -68,7 +79,7 @@ struct ConnectionTextTests {
     @Test("ConnectionAccessibility : les identifiants sont uniques, préfixés et complets")
     func identifiersAreUniqueAndComplete() {
         let identifiers = ConnectionAccessibility.identifiers
-        #expect(identifiers.count == 19)
+        #expect(identifiers.count == 20)
         #expect(Set(identifiers).count == identifiers.count)
         #expect(identifiers.allSatisfy { $0.hasPrefix("connection.") })
         #expect(identifiers.contains(ConnectionAccessibility.sheet))
@@ -83,5 +94,6 @@ struct ConnectionTextTests {
             #expect(identifiers.contains(added))
         }
         #expect(identifiers.contains(ConnectionAccessibility.close))
+        #expect(identifiers.contains(ConnectionAccessibility.open))
     }
 }

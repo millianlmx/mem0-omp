@@ -184,12 +184,13 @@ struct PairingStatusTests {
         harness.stop()
     }
 
-    @Test("connexion-ios-feuille-intrusive-et-sans/AC-4 : l'adresse préremplie est hôte:port, IPv6 entre crochets, sans nom d'instance")
+    @Test("connexion-ios-feuille-intrusive-et-sans/AC-4 : l'adresse préremplie est hôte:port, IPv6 entre crochets, sans zone ni nom d'instance")
     func endpointAddress() {
         #expect(ClientEndpoint.manual(host: "mac.local", port: 8787).address == "mac.local:8787")
         #expect(ClientEndpoint.manual(host: "mac.local", port: 8787).address
             == ClientEndpoint.manual(host: "mac.local", port: 8787).display)
         #expect(ClientEndpoint.bonjour(name: "OMP Console", host: "10.0.0.2", port: 9000).address == "10.0.0.2:9000")
-        #expect(ClientEndpoint.bonjour(name: "OMP Console", host: "fe80::1%en0", port: 8787).address == "[fe80::1%en0]:8787")
+        #expect(ClientEndpoint.bonjour(name: "OMP Console", host: "fe80::1%en0", port: 8787).address == "[fe80::1]:8787")
+        #expect(ClientEndpoint.bonjour(name: "OMP Console", host: "192.168.1.175%en0", port: 8787).address == "192.168.1.175:8787")
     }
 }

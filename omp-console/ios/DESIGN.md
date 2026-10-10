@@ -59,7 +59,9 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
   sources de l'app. `[garde: design-ios/AC-7]`
 - Aucun `lineLimit` numérique : les textes se replient sur plusieurs lignes.
-  `[garde: design-ios/AC-7]`
+  Seule exception : la PLAGE de hauteur d'un champ de saisie vertical
+  (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
+  tronqué, le champ défile. `[garde: design-ios/AC-7]`
 
 ## Marges et cibles tactiles
 
@@ -69,7 +71,11 @@ marqueur `[test: <fonction>]` (une fonction de
 - Les marges et les rembourrages des surfaces grandissent avec Dynamic Type
   (`@ScaledMetric`), jamais une constante figée seule. `[capture: iphone-*-light-ax]`
 - Cible tactile minimale : 44 pt (`IOSMetrics.minimumTarget`), la valeur du HIG
-  iOS/iPadOS. `[test: minimumTargetIsFortyFour]`
+  iOS/iPadOS. Un bouton texte sans style (« Tout afficher », « Lire le
+  contrat », « Piloter un projet… ») porte cette cible sur son libellé —
+  `.frame(minWidth:minHeight: IOSMetrics.minimumTarget)` puis
+  `.contentShape(Rectangle())`, style automatique conservé.
+  `[test: minimumTargetIsFortyFour]`
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
@@ -156,8 +162,17 @@ marqueur `[test: <fonction>]` (une fonction de
 - En largeur COMPACTE (iPhone portrait), les voies s'empilent verticalement dans
   le défilement de l'écran ; en largeur RÉGULIÈRE (iPad), elles sont côte à côte
   dans un défilement horizontal posé dans ce défilement vertical — toutes les
-  voies et toutes les cartes restent atteignables.
+  voies montrées et toutes leurs cartes restent atteignables.
   `[capture: iphone-kanban-light]`
+- En largeur COMPACTE, une voie sans carte n'est pas montrée — « Pas commencées »
+  comprise — et sans aucune voie à montrer l'écran affiche le mot partagé
+  `KanbanText.noPipeline`. `[test: compactHidesEveryEmptyLane]`
+- En largeur COMPACTE, « Livrées » et « Arrêtées » s'ouvrent repliées à chaque
+  visite : leur en-tête, un bouton de 44 pt (`pipelines.lane.<voie>.header`,
+  valeur d'accessibilité « replié »/« déplié »), les déplie et les replie ;
+  l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
+- En largeur RÉGULIÈRE (iPad), l'ardoise est inchangée : voies permanentes même
+  vides, voies terminales dépliées. `[test: regularKeepsLanesUnchanged]`
 - L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
   un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
   affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
@@ -169,6 +184,32 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+- Dans la feuille « Nouvelle feature », le sélecteur de dépôt montre le NOM du
+  dossier (jamais un chemin absolu), complété par les derniers segments du
+  parent pour les seuls homonymes ; la valeur lancée reste la racine complète.
+  `[test: repoChoicesUseFolderNames]`
+- Le mot « Dépôt » n'apparaît qu'une fois ; sans dépôt choisi, le sélecteur
+  affiche l'invite « Choisir un dépôt » et « Lancer » est inactif.
+  `[capture: iphone-nouvelle-feature-vide-light]`
+- Les champs titre et besoin portent les libellés VoiceOver « Titre » et
+  « Besoin », sans libellé visible ajouté.
+  `[capture: iphone-nouvelle-feature-choisi-light]`
+- Le champ besoin montre 3 lignes à vide, grandit jusqu'à 8 lignes puis défile
+  dans le champ, sans second défilement de feuille.
+  `[capture: iphone-nouvelle-feature-rempli-light]`
+- La feuille se capture par le crochet de recette `-pipelines.recipe`
+  (`vide`, `choisi`, `rempli`), sans appairage. `[test: pipelinesRecipeResolves]`
+- La fiche d'une carte affiche son titre complet une seule fois, dans le corps, sur
+  autant de lignes qu'il faut ; la barre porte « Pipelines » et « Fermer » (44 pt).
+  `[capture: iphone-pipelines-fiche-*]`
+- « Reprendre » est l'action principale (bouton plein, accent) ; « Arrêter… » est
+  secondaire, rouge à contour, et passe par sa confirmation.
+  `[capture: iphone-pipelines-fiche-actions-*]`
+- Le modèle s'affiche par son nom lisible du catalogue servi par le Mac, l'identifiant
+  brut sinon. `[test: modelNameFromCatalog]`
+- Chaque élément de la fiche porte son propre identifiant `pipelines.card.sheet.*`.
+  `[test: sheetIdentifiersAreDistinct]`
+
 ## L'Accueil (S-10, S-11)
 
 - L'écran porte le titre de navigation `ConsoleSection.home.title`, en grand titre
@@ -187,13 +228,22 @@ marqueur `[test: <fonction>]` (une fonction de
   dont le libellé est le titre de la section, suivi de « , N en attente » quand le
   badge est visible — la même valeur alimente le badge et le libellé.
   `[test: sectionRowLabelFollowsShownBadge]`
+- Le badge ne dépend pas de la section affichée : la liste racine de l'iPhone le
+  montre au retour de n'importe quel écran, la barre latérale de l'iPad aussi
+  quand une autre section est sélectionnée ; aucune autre ligne n'en porte.
+  `[test: homeRowCarriesPositiveCount]`
 - La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
   (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
   `textQuestion`) ; une option sélectionnée prime sur le champ libre. `[test: answerZones]`
 - La feuille Contrat découpe le markdown par les fonctions partagées
-  (`ContractDocument`), affiche chaque section verbatim et le message d'une
-  section absente. `[test: contractOutputs]`
+  (`ContractDocument`) et rend chaque section en Markdown, bloc par bloc, par
+  `IOSMarkdownView`, sans sa ligne « ## Titre » (l'en-tête de la feuille suffit) ;
+  une section absente ou vide a son message, sans syntaxe Markdown brute.
+  `[test: contractSectionsDropTheirHeading]`
+- Sa barre dit « Contrat » en ligne ; le nom complet de la feature est en tête du
+  panneau, en en-tête, et passe à la ligne au lieu d'être tronqué.
+  `[test: longRecipeNamesTheWholeFeature]`
 - Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
   exploitable. `[test: deliveredLinks]`
 - Le lien « Tout afficher » sélectionne la section Pipelines. `[test: allPipelinesSection]`
@@ -228,7 +278,7 @@ marqueur `[test: <fonction>]` (une fonction de
   « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
 - Le texte d'un souvenir s'affiche TEL QU'IL EST STOCKÉ (`Text(verbatim:)`), dans la
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
-  — un `*` reste un `*`. Seuls les autres contenus (documents projet, réponses) passent
+  — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`

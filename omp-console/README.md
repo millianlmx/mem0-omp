@@ -1944,7 +1944,19 @@ sont hors périmètre), une seule navigation adaptative — barre latérale à d
 groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
 état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
-trousseau et feuille de connexion.
+trousseau et feuille de connexion. Le Mac découvert est joint par son adresse
+IPv4 ou IPv6, lien-local zoné compris ; une adresse s'affiche toujours sans sa
+zone d'interface (`192.168.1.175:8787`, `[fe80::1]:8787`).
+Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
+connecté ou non : sur iPhone, dans la barre de la liste des sections et dans celle
+de chaque écran poussé ; sur iPad, une seule fois, dans la barre du détail. La
+recette `scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
+--ipad <UDID>` le prouve au simulateur avec `idb` (captures sous
+`omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
+(`scripts/ios-build.sh` compile sans signature, et le trousseau du simulateur
+refuse alors d'écrire le jeton d'appairage : l'état connecté serait
+inatteignable) et veut des simulateurs dédiés, que les autres runs
+(`ios-shots.sh`) ne pilotent pas.
 
 L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
 aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
@@ -1953,14 +1965,18 @@ préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Ré
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
 (« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR) —
 les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
-ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
+ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
+le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
+ligne n'en porte, et rien à zéro), et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
-libre), Contrat (sections verbatim) et Bienvenue (première ouverture d'une
+libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
-`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract>`
-force un état depuis la fixture partagée `HomeParity` pour les captures ; le
-crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
-l'écran (captures des rangées en Dynamic Type).
+`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong>`
+force un état depuis la fixture partagée `HomeParity` pour les captures ; il
+nourrit aussi le badge de la ligne Accueil (3 pour dashboard/answer/contract/contractLong/degraded,
+0 pour loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
+d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
+Dynamic Type).
 
 La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas de
 jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
@@ -2002,10 +2018,20 @@ valider un jalon (specs ou revue), lancer une feature jamais en route, l'arrête
 fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 « Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
 deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
-sans aucune action sur le Mac.
+sans aucune action sur le Mac. Le sélecteur de dépôt affiche le NOM du dossier
+(jamais un chemin absolu ; pour les seuls homonymes, il y ajoute les derniers
+segments du dossier parent, p. ex. « mem0-omp (Projets) »), ou l'invite « Choisir
+un dépôt » tant qu'aucun n'est choisi — « Lancer » reste alors inactif ; la
+valeur lancée est toujours le chemin complet. Les champs titre et besoin portent
+les libellés VoiceOver « Titre » et « Besoin » ; le besoin est une zone
+multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans le
+champ.
+
+Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
-(le catalogue de `omp models --json`, qu'aucune route n'exposait) et le champ
+(le catalogue de `omp models --json`, qu'aucune route n'exposait ; il rend aussi
+`names`, sélecteur → nom lisible, absent d'un Mac antérieur) et le champ
 additif `headOid` de la ligne de PR (sans lui, la fusion est impossible). La
 recette de bout en bout (dépôt jetable, iPad, Mac en service) est un test gated
 par `MEM0_PIPELINES_RECIPE` ; le scénario iPad reste manuel et vit dans le
@@ -2264,9 +2290,32 @@ Type** (feature `ios-accueil-dynamic-type-casse`) via `-home.row <n>`, qui amèn
 rangée d'index `n` (« En cours » puis « Livrées récemment ») en haut du tableau de
 bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
 `accessibility-extra-extra-extra-large`), iPhone clair seulement = **12 PNG**
-(`iphone-home-row<n>-<taille>.png`). Le total attendu est **112** (56 + 32 + 12 +
-12). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
-toutes PORTRAIT — une capture inattendue ferait échouer le script.
+(`iphone-home-row<n>-<taille>.png`). Un CINQUIÈME groupe capture la feuille
+**« Nouvelle feature »** (feature `ios-nouvelle-feature-formulaire`) via
+`-pipelines.recipe <vide|choisi|rempli>` — aucun dépôt choisi, un dépôt et un
+besoin court, un besoin de douze lignes — 3 recettes × {iPhone, iPad} × {clair,
+sombre} = **12 PNG**, sans appairage. Un SIXIÈME groupe capture la **fiche d'une
+carte Pipelines** (feature `ios-fiche-carte-pipelines`) via `-pipelines.recipe
+<fiche|actions|arret>` : la vraie feuille ouverte sur une carte de fixture dérivée
+de `HomeParity`, sans réseau — iPhone clair × {taille par défaut, AX-XL, maximum}
+× {`fiche`, `actions`}, la confirmation d'arrêt (`arret`) à la taille par défaut,
+et la fiche sur iPad = **8 PNG** `*-pipelines-fiche*.png`. Le script contrôle 124
+captures avant ce groupe (56 + 32 + 12 + 12 + 12), refuse un groupe de fiche qui
+n'en compte pas 8 et annonce le total réellement produit (**132**). Chaque capture
+est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAIT —
+une capture inattendue ferait échouer le script.
+
+La feuille Contrat a sa propre recette idb, pour les preuves avant/après de la
+feature `contrat-ios-markdown-brut` : `bash scripts/ios-contrat-recette.sh
+<avant|apres>` ouvre la feuille sur un contrat long (`-home.recipe contractLong`)
+dans deux simulateurs PRIVÉS, `omp-contrat-telephone` et `omp-contrat-tablette`
+(créés au besoin sur le runtime iOS ≥ 26 le plus récent, jamais désinstallés ni
+effacés), la fait défiler page par page et écrit captures, relevés
+d'accessibilité et `rapport.txt` dans
+`omp-console/build/contrat-ios-markdown-brut/<avant|apres>/` (ignoré par git).
+Codes de sortie : 0 relevé écrit (en mode `apres`, toutes les lignes `ok`), 1
+app absente, appareil en échec ou, en mode `apres`, un critère en `échec`, 2 non
+exécuté (idb ou runtime absent). Elle n'entre pas dans le compte des 112 captures.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,
@@ -2282,9 +2331,15 @@ sur le poste, la ligne pourra revenir avec ses quatorze captures.
 Un crochet de recette se pose en argument de lancement : `-section <rawValue>`
 ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
 `memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
-sept écrans, et `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
-section Mémoire sur la fixture partagée `MemoryGraphParity` — un crochet de
-recette, pas une fonctionnalité.
+sept écrans, `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
+section Mémoire sur la fixture partagée `MemoryGraphParity`, et
+`-pipelines.recipe` accepte deux familles de valeurs. `<vide|choisi|rempli>` ouvre
+l'écran Pipelines sur la feuille « Nouvelle feature » avec des dépôts, un titre et
+un besoin forcés (le reste est le chemin réel de la feuille) ; `<fiche|actions|arret>`
+ouvre, avec `-section kanban`, la fiche de la carte de fixture (`actions` la défile
+jusqu'aux gestes, `arret` y ouvre la confirmation d'arrêt) et l'app écrit
+`pipelines-recipe-ready` sur la sortie d'erreur une fois l'état atteint — des
+crochets de recette, pas des fonctionnalités.
 
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
@@ -2298,6 +2353,94 @@ La capture de l'état d'erreur (artefact de PR, hors des 56) :
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section session -ios.state error
 xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-session.png
 ```
+
+### Recette idb de la fiche d'une carte
+
+```bash
+IOS_RECETTE_IPHONE=<UDID> IOS_RECETTE_IPAD=<UDID> bash scripts/ios-fiche-carte-recette.sh
+```
+
+Le script compile l'app, l'installe sur un iPhone et un iPad du simulateur, lance
+`-pipelines.recipe` et lit l'arbre d'accessibilité (`idb ui describe-all`) : titre
+unique, identifiants distincts, lignes de modèle, hauteurs ≥ 44 pt de « Reprendre »,
+« Arrêter… » et « Fermer » (aux trois tailles de Dynamic Type), confirmation d'arrêt
+puis annulation, fermeture de la fiche, fiche iPad. Une ligne `AC-<n> ✓ …` par
+constat, `AC-<n> ✗ … (<valeur observée>)` sinon. `IOS_RECETTE_IPHONE` et
+`IOS_RECETTE_IPAD` désignent les simulateurs à employer ; sans eux, le script prend
+le premier iPhone et le premier iPad du runtime iOS ≥ 26 le plus récent — des
+appareils PARTAGÉS avec les autres lancements, donc à éviter pendant un constat.
+`content_size` est remis à `large` à la sortie. Codes de sortie : `0` tout passe,
+`1` un constat (ou le build) échoue, `2` « non exécuté » (macOS, Xcode, idb ou
+runtime iOS ≥ 26 absents). Sur iOS 27, la confirmation d'arrêt est une bulle
+ancrée qui n'a pas de bouton « Annuler » : le script la referme en touchant à côté.
+
+### Recette : cibles tactiles de 44 pt
+
+Les trois boutons texte relevés à 20 pt par l'audit idb du 2026-10-09 — « Tout afficher »
+et « Lire le contrat » de l'Accueil, « Piloter un projet… » de l'écran Projet — doivent
+offrir une cible d'au moins 44 × 44 pt (`IOSMetrics.minimumTarget`) SANS changer
+d'apparence. La recette rejoue la preuve sur de vrais simulateurs, par la lecture
+d'accessibilité d'idb :
+
+```bash
+bash scripts/ios-cibles-tactiles-recette.sh --iphone <UDID> --ipad <UDID> [--avant]
+```
+
+Préconditions, jamais satisfaites par le script (il n'appaire pas) : `idb`, Xcode 27,
+`python3` avec Pillow ; les DEUX simulateurs iOS 27 démarrés ; l'app déjà APPAIRÉE au Mac
+sur chacun (jeton au trousseau du simulateur — l'écran Projet n'offre « Piloter un
+projet… » qu'une fois connecté) ; l'app Mac OMP Console en service sur `127.0.0.1:8787`.
+Le script compile lui-même une app SIGNÉE dans
+`omp-console/build/ios-cibles-tactiles-derived` (`scripts/ios-build.sh` compile sans
+signature : le trousseau du simulateur refuserait le jeton) et l'installe sur les deux
+appareils.
+
+Simulateurs PRIVÉS, nommés SANS « iPhone » ni « iPad » (par exemple `cible44-tel` et
+`cible44-tab`) : `ios-shots.sh` et `ios-build.sh` des autres worktrees s'emparent des
+appareils dont le nom contient ces mots, y réinstallent l'app et changent la taille de
+texte en plein relevé. Un simulateur appairé se clone — `xcrun simctl shutdown <src> &&
+xcrun simctl clone <src> <nom> && xcrun simctl boot <src>`, puis `boot` du clone — et le
+jeton suit le clone ; à supprimer ensuite (`simctl shutdown` puis `simctl delete`, après
+avoir vérifié que `pgrep -fl <UDID>` ne rend rien).
+
+Deux passes, dans cet ordre :
+
+1. `--avant`, AVANT toute correction Swift : relevé de référence dans
+   `omp-console/build/ios-cibles-tactiles-sous-44pt/avant/` (ignoré par git, vidé au
+   début de la passe ; l'autre dossier n'est jamais touché). Aucune vérification ;
+   sortie 0 quand toutes les captures et lectures existent.
+2. Sans option, sur l'app corrigée : relevé dans `.../apres/` puis les vérifications,
+   une ligne par contrôle — `AC-<n> <appareil> <écran> <taille> <identifiant> — ok` ou
+   `— ÉCHEC (<détail>)` —, `bilan : <n> ok, <m> échec`, et la liste des PNG à LIRE
+   (libellés entiers, sans « … », sans chevauchement aux grandes tailles de texte et sur
+   iPad). Le rapport est aussi écrit dans `apres/rapport.txt`.
+
+La matrice : iPhone = Accueil (`-home.recipe dashboard`) et Projet × les trois tailles
+(`large`, `accessibility-extra-large`, `accessibility-extra-extra-extra-large`) ; iPad =
+Accueil × `large` seulement (l'écran Projet n'offre « Piloter un projet… » qu'appairé au Mac,
+et le code d'appairage exige un Mac déverrouillé : tant qu'aucun iPad simulateur n'est
+appairé, « Piloter un projet… » n'est prouvé que sur iPhone). Chaque case produit `<appareil>-<écran>-<taille>.json` (la
+lecture brute de `idb ui describe-all`) et `.png` ; un contrôle hors de l'écran (taille
+maximum) est amené par `idb ui swipe` (au plus 8), chaque défilement qui en découvre un de
+plus ajoutant `-defil<k>.json` et `-defil<k>.png`. Les vérifications : AC-1 cadres ≥ 44 ×
+44 pt (iPhone, `large`) ; AC-2 identifiant propre, non vide et distinct par contrôle
+(`ios.home.allPipelines`, `ios.home.attention.<id>.contract`, `ios.projet.start` — et plus
+`ios.screen.project`) ; AC-3 tap à `(x + w/2, y + 3)` du cadre, l'app relancée avant
+chaque tap ; AC-4 apparence inchangée à `large` (la bande de texte de chaque contrôle est
+comparée pixel à pixel à `avant/`, à ±6 px de décalage vertical, et les lignes situées à
+2 pt des bords du cadre doivent rester unies : aucune bordure, capsule ni fond ajouté) ;
+AC-5 la même chose aux deux grandes tailles de texte ; AC-6 la même chose sur iPad. Sans
+capture homologue dans `avant/`, la ligne de comparaison vaut `— sans objet` et ne compte
+ni comme ok ni comme échec.
+
+Codes de sortie : **0** aucune ligne ÉCHEC ; **1** au moins un ÉCHEC ; **2** non lancé ou
+interrompu (argument manquant, outil absent, simulateur non démarré, build ou installation
+en échec, app non connectée au Mac, capture absente ou uniforme, relevé instable).
+
+Limite connue : le tap d'AC-3 ne distingue PAS l'avant de l'après. Le « touch slop »
+d'UIKit déclenche déjà un bouton de 20 pt jusqu'à environ 19 à 25 pt au-dessus du centre
+du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La garde
+textuelle de la correction est `test/ios-cibles-tactiles-sous-44pt.test.ts`.
 
 ### Installer sur un appareil réel
 

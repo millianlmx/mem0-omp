@@ -299,7 +299,7 @@ function screenFaults(root: string): string[] {
   return faults;
 }
 
-/** Les noms des captures produites (S-6, AC-6) : 56 écrans + 12 graphe. */
+/** Les noms des captures produites (S-6, AC-6) : 56 écrans + 12 graphe + 12 nouvelle feature + 8 fiche de carte. */
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
@@ -318,6 +318,22 @@ function expectedShotNames(): string[] {
       names.push(`${device}-memoire-graphe-fiche-${appearance}.png`);
     }
   }
+  // ios-nouvelle-feature-formulaire : 3 recettes × {iPhone, iPad} × {clair, sombre}.
+  for (const appearance of APPEARANCES) {
+    for (const device of ["iphone", "ipad"]) {
+      for (const recipe of ["vide", "choisi", "rempli"]) {
+        names.push(`${device}-nouvelle-feature-${recipe}-${appearance}.png`);
+      }
+    }
+  }
+  // ios-fiche-carte-pipelines : la fiche d'une carte, en clair — iPhone × 3 tailles de
+  // Dynamic Type × {fiche, actions}, l'arrêt à la taille par défaut, et la fiche sur iPad.
+  for (const size of ["large", "accessibility-extra-large", "accessibility-extra-extra-extra-large"]) {
+    names.push(`iphone-pipelines-fiche-${size}.png`);
+    names.push(`iphone-pipelines-fiche-actions-${size}.png`);
+  }
+  names.push("iphone-pipelines-fiche-arret-large.png");
+  names.push("ipad-pipelines-fiche-large.png");
   return names;
 }
 
@@ -557,7 +573,7 @@ test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire"
 test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.equal(expectedShotNames().length, 68, "la matrice attendue fait 68 noms");
+  assert.equal(expectedShotNames().length, 88, "la matrice attendue fait 88 noms");
 
   const copy = copyRepo();
   const target = path.join(copy, "scripts", "ios-shots.sh");

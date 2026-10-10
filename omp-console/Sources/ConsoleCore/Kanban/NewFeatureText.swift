@@ -16,6 +16,8 @@ public enum NewFeatureText {
     /// peut pas en proposer un, et l'annonce plutôt que de laisser « Lancer »
     /// silencieusement inerte.
     public static let noKnownRepo = "Aucun dépôt connu du magasin pour l'instant."
+    /// iOS : l'invite du sélecteur de dépôt tant qu'aucun dépôt n'est choisi.
+    public static let repoPrompt = "Choisir un dépôt"
     public static let chooseFolder = "Choisir un dossier…"
     public static let panelPrompt = "Choisir"
     public static let panelMessage = "Choisissez la racine d'un dépôt git"

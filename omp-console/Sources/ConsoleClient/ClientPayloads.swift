@@ -517,14 +517,17 @@ public struct ProjectPRRow: Codable, Equatable, Sendable {
 
 /// Le catalogue des modèles servi par `GET /v1/models` (S-14) : les sélecteurs
 /// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué
-/// (la liste est alors vide). Miroir EXACT de la charge utile du serveur.
+/// (la liste est alors vide). Miroir EXACT de la charge utile du serveur ;
+/// `names` (sélecteur → nom lisible) est absent d'un Mac antérieur.
 public struct RemoteModelsPayload: Codable, Equatable, Sendable {
     public var selectors: [String]
     public var failure: String?
+    public var names: [String: String]?
 
-    public init(selectors: [String], failure: String?) {
+    public init(selectors: [String], failure: String?, names: [String: String]? = nil) {
         self.selectors = selectors
         self.failure = failure
+        self.names = names
     }
 }
 

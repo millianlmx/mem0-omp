@@ -19,6 +19,12 @@ struct IOSSectionView: View {
     let recipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
     let memoryRecipe: IOSMemoryGraphRecipe?
+    /// Le crochet de recette `-pipelines.recipe <vide|choisi|rempli>` de l'écran
+    /// Pipelines (feuille « Nouvelle feature »).
+    let pipelinesRecipe: IOSPipelinesRecipe?
+    /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` de l'écran
+    /// Pipelines (fiche d'une carte).
+    let cardRecipe: PipelinesCardRecipe?
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -26,7 +32,7 @@ struct IOSSectionView: View {
 
     var body: some View {
         if section == .kanban {
-            PipelinesScreen(client: client, recipe: state)
+            PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe, cardRecipe: cardRecipe)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe)
         } else if section == .sessions {
@@ -62,6 +68,7 @@ struct IOSSectionView: View {
         }
         .iosPanel()
         .navigationTitle(section.title)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)
     }
 

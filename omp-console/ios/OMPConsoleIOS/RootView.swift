@@ -20,13 +20,16 @@ import SwiftUI
 /// feuille de connexion SEULEMENT quand l'appareil n'a pas de jeton ou que le Mac
 /// l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune section n'a été
 /// demandée par `-section` ; un Mac injoignable laisse l'Accueil dans son état
-/// dégradé. Une `ToolbarItem` la rouvre à la demande. La ligne « Accueil » porte
-/// le badge du nombre d'attentes (S-12) quand l'Accueil est la section affichée.
+/// dégradé. Le bouton antenne `connectionToolbarItem` la rouvre à la demande :
+/// sur la liste des sections en largeur compacte, et sur la colonne détail
+/// toujours — exactement un bouton à l'écran. La ligne « Accueil » porte le badge
+/// du nombre d'attentes (S-12), quelle que soit la section affichée.
 struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
     @State private var showConnection: Bool
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showWelcome = false
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
@@ -37,6 +40,10 @@ struct RootView: View {
     private let sessionRecipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe`, quand il est donné.
     private let memoryRecipe: IOSMemoryGraphRecipe?
+    /// Le crochet de recette `-pipelines.recipe`, quand il est donné.
+    private let pipelinesRecipe: IOSPipelinesRecipe?
+    /// Le crochet de recette de la fiche d'une carte (`-pipelines.recipe <fiche|actions|arret>`).
+    private let cardRecipe: PipelinesCardRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -48,6 +55,8 @@ struct RootView: View {
         recipeRow: Int? = nil,
         sessionRecipe: IOSSessionsRecipe? = nil,
         memoryRecipe: IOSMemoryGraphRecipe? = nil,
+        pipelinesRecipe: IOSPipelinesRecipe? = nil,
+        cardRecipe: PipelinesCardRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
@@ -56,6 +65,8 @@ struct RootView: View {
         self.recipeRow = recipeRow
         self.sessionRecipe = sessionRecipe
         self.memoryRecipe = memoryRecipe
+        self.pipelinesRecipe = pipelinesRecipe
+        self.cardRecipe = cardRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -67,7 +78,7 @@ struct RootView: View {
                     Section(group.title) {
                         ForEach(IOSSection.sections(of: group)) { section in
                             let badge = IOSHomeContent.rowBadge(
-                                for: section, selection: selection, attentionCount: attentionCount)
+                                for: section, attentionCount: attentionCount)
                             Label(section.title, systemImage: section.systemImage)
                                 .badge(badge)
                                 .tag(section)
@@ -79,39 +90,40 @@ struct RootView: View {
                     }
                 }
             }
-        } detail: {
-            if selection == .home {
-                HomeView(
-                    client: client,
-                    recipe: recipe,
-                    recipeRow: recipeRow,
-                    showConnection: $showConnection,
-                    onSelectSection: { selection = $0 }
-                )
-            } else {
-                IOSSectionView(
-                    section: selection ?? .home,
-                    state: state,
-                    client: client,
-                    recipe: sessionRecipe,
-                    memoryRecipe: memoryRecipe
-                )
+            .toolbar {
+                if sizeClass == .compact {
+                    connectionToolbarItem
+                }
             }
+        } detail: {
+            Group {
+                if selection == .home {
+                    HomeView(
+                        client: client,
+                        recipe: recipe,
+                        recipeRow: recipeRow,
+                        showConnection: $showConnection,
+                        onSelectSection: { selection = $0 }
+                    )
+                } else {
+                    IOSSectionView(
+                        section: selection ?? .home,
+                        state: state,
+                        client: client,
+                        recipe: sessionRecipe,
+                        memoryRecipe: memoryRecipe,
+                        pipelinesRecipe: pipelinesRecipe,
+                        cardRecipe: cardRecipe
+                    )
+                }
+            }
+            .toolbar { connectionToolbarItem }
         }
         .sheet(isPresented: $showWelcome, onDismiss: presentConnectionIfNeeded) {
             HomeWelcomeSheet(client: client)
         }
         .sheet(isPresented: $showConnection) {
             ConnectionSheet(model: client)
-        }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showConnection = true
-                } label: {
-                    Label(ConnectionText.title, systemImage: "antenna.radiowaves.left.and.right")
-                }
-            }
         }
         .onAppear {
             client.start()
@@ -124,11 +136,25 @@ struct RootView: View {
         }
     }
 
-    /// Le compte d'attentes de la ligne « Accueil » ; `IOSHomeContent.rowBadge` décide
-    /// s'il est visible (Accueil sélectionnée, compte > 0, S-12), et ce même badge
-    /// nourrit le libellé d'accessibilité de la ligne.
+    /// Le bouton antenne (« Connexion ») : rouvre la feuille de connexion, sans
+    /// condition. Il est posé sur CHAQUE colonne qui porte une barre — jamais sur
+    /// le `NavigationSplitView` lui-même, dont la barre n'est affichée nulle part.
+    @ToolbarContentBuilder
+    private var connectionToolbarItem: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showConnection = true
+            } label: {
+                Label(ConnectionText.title, systemImage: "antenna.radiowaves.left.and.right")
+            }
+            .accessibilityIdentifier(ConnectionAccessibility.open)
+        }
+    }
+
+    /// Le compte d'attentes de la ligne « Accueil » : celui de la recette quand
+    /// `-home.recipe` est donné, sinon le compte en direct (S-12).
     private var attentionCount: Int {
-        IOSHomeContent.badge(omp: client.omp, board: client.board)
+        recipe?.badge ?? IOSHomeContent.badge(omp: client.omp, board: client.board)
     }
 
     /// L'ordre de S-15 : la bienvenue d'abord, la connexion ensuite.
