@@ -26,6 +26,9 @@ final class AlertsModel: ObservableObject {
     @Published private(set) var status: AlertsStatus = .loading
     /// L'état d'autorisation, relu au démarrage puis à chaque activation de l'app.
     @Published private(set) var authorization: AlertAuthorization = .unknown
+    /// Le clic d'une notification (notifications-mac-lien-profond S-3) : posé par
+    /// `AppDelegate`, il remet la destination décodée au routeur de la fenêtre.
+    var onOpen: (@MainActor (AlertOpening?) -> Void)?
 
     /// Comment ouvrir un abonnement NEUF : un `StoreHub` arrêté ne se rouvre pas.
     private let makeHub: () -> StoreHub
@@ -38,6 +41,7 @@ final class AlertsModel: ObservableObject {
     private let isWindowFrontmost: @MainActor () -> Bool
     private let nowMs: @Sendable () -> Double
     private var activationObserver: NSObjectProtocol?
+    private var openingsObserved = false
 
     init(
         hub: StoreHub = StoreHub(),
@@ -62,9 +66,14 @@ final class AlertsModel: ObservableObject {
     }
 
     /// Charge le registre, s'abonne au flux, demande l'autorisation, relit le statut
-    /// à chaque activation. Idempotent.
+    /// à chaque activation, et confie les clics au livreur (une seule fois, même
+    /// après `stop()`). Idempotent.
     func start() {
         guard task == nil else { return }
+        if !openingsObserved {
+            openingsObserved = true
+            deliverer.observeOpenings { [weak self] in self?.onOpen?($0) }
+        }
         if hubStopped {
             hub = makeHub()
             hubStopped = false
@@ -108,10 +117,13 @@ final class AlertsModel: ObservableObject {
 
     /// Le cœur de la décision (S-7).
     private func apply(_ snapshot: StoreSnapshot, stateDir: String) async {
-        status = AlertsStatus.from(boardState: KanbanBoardState.derive(
+        // L'ardoise du MÊME instantané sert aux compteurs et aux évènements (carte
+        // concernée, nom affiché par l'Accueil).
+        let boardState = KanbanBoardState.derive(
             snapshot: snapshot, nowMs: nowMs(), stateDir: stateDir, isAlive: .processLocal
-        ))
-        let events = AlertDerivation.events(from: snapshot)
+        )
+        status = AlertsStatus.from(boardState: boardState)
+        let events = AlertDerivation.events(from: snapshot, board: boardState.kanbanBoard)
         let fresh = Set(events.filter { !ledger.contains($0.key) }.map(\.key))
         // (3) On enregistre TOUTES les clés dérivées ; l'écriture n'a lieu que si au
         // moins une est neuve — un registre inchangé ne se réécrit pas.
@@ -121,7 +133,10 @@ final class AlertsModel: ObservableObject {
         // (4) Une fenêtre au premier plan consomme l'évènement sans notifier.
         guard !isWindowFrontmost() else { return }
         for event in events where fresh.contains(event.key) {
-            _ = await deliverer.deliver(AlertMessage(key: event.key, title: event.title, body: event.body))
+            _ = await deliverer.deliver(AlertMessage(
+                key: event.key, title: event.title, body: event.body,
+                opening: AlertOpening(kind: event.kind, cardID: event.cardID)
+            ))
         }
     }
 }

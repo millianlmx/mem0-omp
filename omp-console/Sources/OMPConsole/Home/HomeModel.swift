@@ -97,6 +97,15 @@ final class HomeModel: ObservableObject {
         quitRequested = true
     }
 
+    /// « Répondre… » sur une carte, ou le clic d'une notification de question :
+    /// la feuille s'ouvre sur cette carte avec une saisie vierge. SEUL chemin
+    /// d'ouverture de la feuille « Répondre ».
+    func openAnswer(_ cardID: String, actions: ActionsModel) {
+        actions.clearAnswer()
+        actions.replyText = ""
+        answerCardID = cardID
+    }
+
     /// « Annuler » ou Échap sur la feuille « Répondre » : la saisie ne suit pas.
     func dismissAnswer(actions: ActionsModel) {
         answerCardID = nil
