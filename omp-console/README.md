@@ -1660,6 +1660,13 @@ un flux temps réel.
   caractères Crockford base32 groupés `XXXX-XXXX`, valable **120 secondes** et à
   **usage unique** ; au-delà de 5 échecs, le code se verrouille et seul un code neuf
   le déverrouille. Un code expiré disparaît de la feuille.
+- **Oubli par l'appareil** : `DELETE /v1/devices/self` (authentifiée, sans corps)
+  révoque l'appareil **porteur du jeton**, et lui seul, exactement comme « Révoquer »
+  dans la feuille « Appairage… » : jeton, ligne de `devices.json`, article du
+  trousseau, flux SSE coupés, liste « Appareils appairés » mise à jour. Réponse
+  `200 {"accepted":true}` ; `401 unauthorized` pour un jeton absent, inconnu ou déjà
+  révoqué (un second appel rend donc `401`). C'est l'appel de « Oublier ce Mac » de
+  l'app iOS, tenté au mieux : l'app oublie son jeton même si le Mac ne répond pas.
 - **Interrupteur** : « Service d'API distante », en tête de la feuille, est **actif
   par défaut** et mémorisé (`remote.enabled`) ; le couper arrête le serveur et son
   annonce Bonjour.
@@ -1955,6 +1962,30 @@ force un état depuis la fixture partagée `HomeParity` pour les captures ; le
 crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
 l'écran (captures des rangées en Dynamic Type).
 
+La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas de
+jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
+trousseau au lancement, jamais pour un appareil appairé : un Mac injoignable
+(veille, autre réseau) laisse l'Accueil dans son état « Mac injoignable — … ».
+Elle a quatre modes, décidés par le statut d'appairage du client :
+
+- **lecture de l'appairage** : « Lecture de l'appairage… » et un indicateur ;
+- **non appairé** : état, Macs découverts, adresse manuelle, code d'appairage
+  (focalisé, clavier levé) et une ligne d'aide qui indique où trouver le code sur
+  le Mac (« menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code » »).
+  Quand le Mac a refusé le jeton, le message « Le Mac ne reconnaît plus cet
+  appareil. Saisissez un nouveau code d'appairage. » s'y ajoute et l'adresse
+  connue est préremplie ;
+- **connecté** : « Connecté », l'adresse du Mac une seule fois, « Oublier ce Mac » ;
+- **déconnecté** : l'état (« Mac injoignable », « Hors réseau »…), l'adresse une
+  fois, « Réessayer », la modification de l'adresse dans le groupe replié
+  « Modifier l'adresse » (une nouvelle adresse où le Mac répond reconnecte avec
+  le jeton existant, sans code), et « Oublier ce Mac ».
+
+Sur un appareil appairé, aucun champ n'a le focus à l'ouverture. « Oublier ce
+Mac » demande confirmation, tente au mieux `DELETE /v1/devices/self` quand le Mac
+est joint, puis efface le jeton local dans tous les cas ; la feuille passe alors
+en mode non appairé.
+
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
 `omp-console/ios/DESIGN.md`. Chaque règle y porte un marqueur `[test: …]`,
@@ -2039,6 +2070,86 @@ compris), `omp-console/ios/OMPConsoleIOSTests/IOSRowAccessibilityTests.swift`
 (rangées lues par VoiceOver) et `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
 côté macOS ; la garde textuelle est `test/ios-sessions.test.ts`. La recette de
 design iOS fait autorité et vit dans `omp-console/ios/DESIGN.md`.
+
+### Recette : la feuille Connexion
+
+`scripts/ios-connexion-feuille-recette.sh` rejoue les contrôles de la feuille
+Connexion sur un iPhone et un iPad **privés**, créés par le script (noms
+`omp-connexion-tel-<moment>` / `omp-connexion-tab-<moment>`, sans « iPhone » ni
+« iPad ») puis supprimés à la sortie. Il construit l'app **signée** hors dépôt
+(DerivedData sous `/tmp`), ne touche à aucun autre simulateur, ni à l'app Mac, ni
+au focus du Mac :
+
+```bash
+# Relevé « avant » sur la base, puis « après » sur l'arbre de travail.
+bash scripts/ios-connexion-feuille-recette.sh --avant <ref> --source <udid appairé>
+bash scripts/ios-connexion-feuille-recette.sh --source <udid appairé>
+```
+
+- `--avant <ref>` construit depuis `git archive <ref> omp-console` ; sans lui,
+  depuis l'arbre de travail. Les valeurs attendues sont toujours lues dans
+  `ConnectionText.swift` de l'arbre de travail : la base est jugée contre la
+  spécification corrigée.
+- `--source <udid>` désigne un simulateur déjà appairé au Mac : son trousseau
+  (copie `sqlite3 .backup` de `keychain-2-debug.db`) et sa préférence
+  `client.deviceId` sont greffés sur les appareils privés. Il n'est que lu. Sans
+  `--source`, ou si la coque ne sert pas `127.0.0.1:8787`, les contrôles 5 à 9
+  sont « sauté ».
+- Sorties dans `omp-console/build/connexion-ios-feuille-intrusive-et-sans/<avant|apres>/` :
+  une capture PNG et un relevé `idb ui describe-all` (JSON) par contrôle et par
+  appareil, `rapport.txt` (une ligne `ok|échec|sauté <AC> <appareil> <détail>`
+  par contrôle), `build.log`. Codes de sortie : 0 tous les contrôles exécutés
+  sont « ok », 1 au moins un « échec », 2 non exécuté (hors macOS, Xcode
+  inutilisable, idb absent, aucun runtime iOS ≥ 26, app non signée).
+
+Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
+
+1. **Premier lancement** (AC-3, AC-12) — sans jeton : la feuille s'ouvre d'elle-même
+   en « Non appairé », avec le champ du code, et la ligne d'aide sous le code dit
+   « Sur le Mac : menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code ». ».
+2. **Adresse vide** (AC-14) — « Utiliser cette adresse » est inactif ; après la
+   saisie de `1`, il devient actif.
+3. **« Effacer »** (AC-15) — lancé avec `-client.manualAddress 127.0.0.1:9` : la
+   cible de « Effacer » fait au moins 44 × 44 pt.
+4. **Code mal formé** (AC-13) — `IIIIIIII` puis « Appairer » : « Le code fait 8
+   caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U. », jamais
+   « A–Z, 0–9 ».
+5. **Mac injoignable** (AC-2, AC-5, AC-7) — appairé, adresse `127.0.0.1:9` : aucune
+   feuille, l'Accueil dit « Mac injoignable — 127.0.0.1:9 ». « Se connecter » ouvre
+   la feuille : « Mac injoignable », l'adresse une fois, « Réessayer », « Modifier
+   l'adresse » (replié), « Oublier ce Mac », aucun champ du code, aucun champ
+   focalisé, pas de clavier.
+6. **Nouvelle adresse, puis « Réessayer »** (AC-7, AC-8) — déplier « Modifier
+   l'adresse », saisir `127.0.0.1:8787` et valider : « Connecté » sans code. Puis,
+   vers un port libre injoignable, ouvrir la feuille, démarrer un relais vers 8787
+   et toucher « Réessayer » : « Connecté ».
+7. **Mac joignable** (AC-1, AC-5, AC-6) — adresse `127.0.0.1:8787` : aucune feuille
+   pendant 15 s, l'Accueil s'affiche. La feuille ouverte à la demande montre
+   « Connecté », l'adresse une fois et « Oublier ce Mac », sans code, champ
+   d'adresse, découverte ni focus. Elle s'ouvre par le bouton antenne quand il est
+   affiché ; sinon (base sans la PR #89), depuis l'Accueil « Mac injoignable »,
+   puis un relais rend le Mac joignable et la feuille passe d'elle-même en mode
+   connecté.
+8. **Oublier, puis annuler** (AC-9) — « Oublier ce Mac » ouvre la confirmation ;
+   l'annuler (toucher hors de la bulle : iOS 27 n'y montre pas « Annuler ») laisse
+   « Connecté ». Rien n'est émis vers le Mac.
+9. **Oublier hors ligne** (AC-11) — adresse `127.0.0.1:9`, « Oublier ce Mac » puis
+   confirmer : la feuille passe en non appairé ; un relancement rouvre la feuille
+   non appairée, sans « Oublier ce Mac ». L'adresse est injoignable : le jeton du
+   simulateur source n'est pas révoqué.
+
+Deux scénarios révoquent un jeton sur le Mac et exigent un appairage frais : ils se
+rejouent **à la main**. Côté code, AC-4 est prouvé par `PairingStatusTests` et
+`ConnectionSheetModeTests`, AC-10 par `ForgetTests` et `DeviceForgetTests` :
+
+- **AC-4 — jeton révoqué** : sur le Mac, « Appairage… » puis « Révoquer »
+  l'appareil ; relancer l'app. Attendu : la feuille s'ouvre avec « Le Mac ne
+  reconnaît plus cet appareil. Saisissez un nouveau code d'appairage. », le champ
+  du code et l'adresse du Mac préremplie. Relancer sans saisir de code : la
+  feuille est en « Non appairé », sans ce message.
+- **AC-10 — oublier un Mac joignable** : appareil connecté, « Oublier ce Mac » puis
+  confirmer. Attendu : la feuille passe en « Non appairé », et l'appareil disparaît
+  de la liste « Appareils appairés » de la feuille « Appairage… » du Mac.
 
 ### Section Session OMP
 
@@ -2215,9 +2326,9 @@ jamais de clé de dépôt et n'écrit rien sur l'appareil : tout vient du flux.
 Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
-   « Connecté à … ». La section Projet affiche alors « Aucun projet piloté. » et
+   « Connecté ». La section Projet affiche alors « Aucun projet piloté. » et
    le bouton « Piloter un projet… ». *(hors appairage, la section affiche le
-   bandeau d'attente « Non appairé » / « Mac absent — … » et aucun geste actif)*
+   bandeau d'attente « Non appairé » / « Mac injoignable — … » et aucun geste actif)*
 2. **Piloter un projet** — toucher « Piloter un projet… » : la feuille liste les
    dépôts connus de la coque (« Dépôt », chacun avec son nom et son chemin),
    y compris un dépôt jamais cadré. Choisir un dépôt (il porte la marque ✓), le
@@ -2332,9 +2443,9 @@ ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
 Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
-   « Connecté à … », et la section Statistiques montre un bref indicateur
+   « Connecté », et la section Statistiques montre un bref indicateur
    d'activité puis son tableau. *(hors appairage, la section affiche le bandeau
-   d'attente « Non appairé » / « Mac absent — … » et n'émet aucun relevé)*
+   d'attente « Non appairé » / « Mac injoignable — … » et n'émet aucun relevé)*
 2. **Choisir un projet** — le sélecteur en haut de la section propose les projets
    connus du Mac, dans l'ordre de la coque (le libellé du dépôt, jamais une clé) ;
    il affiche celui que le Mac sert. Choisir un autre projet : quelques secondes

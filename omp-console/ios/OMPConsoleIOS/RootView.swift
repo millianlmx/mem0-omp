@@ -16,10 +16,12 @@ import SwiftUI
 ///
 /// La racine POSSÈDE aussi le modèle du client distant (`ConsoleClientModel.live()`,
 /// créé UNE fois) : elle démarre la découverte et la connexion, présente la
-/// feuille de bienvenue (S-15, avant la connexion) puis la feuille de connexion
-/// au lancement quand aucune section n'a été demandée par `-section`, et la
-/// rouvre par une `ToolbarItem`. La ligne « Accueil » porte le badge du nombre
-/// d'attentes (S-12) quand l'Accueil est la section affichée.
+/// feuille de bienvenue (S-15, avant la connexion), puis ouvre d'elle-même la
+/// feuille de connexion SEULEMENT quand l'appareil n'a pas de jeton ou que le Mac
+/// l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune section n'a été
+/// demandée par `-section` ; un Mac injoignable laisse l'Accueil dans son état
+/// dégradé. Une `ToolbarItem` la rouvre à la demande. La ligne « Accueil » porte
+/// le badge du nombre d'attentes (S-12) quand l'Accueil est la section affichée.
 struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
@@ -115,6 +117,11 @@ struct RootView: View {
             client.start()
             presentInitialSheets()
         }
+        .onChange(of: client.pairing) { _, _ in
+            // Un statut qui VIENT d'être atteint ; pendant la bienvenue, c'est sa
+            // fermeture qui réévalue (`onDismiss`).
+            if !showWelcome { presentConnectionIfNeeded() }
+        }
     }
 
     /// Le compte d'attentes de la ligne « Accueil » ; `IOSHomeContent.rowBadge` décide
@@ -137,16 +144,11 @@ struct RootView: View {
         IOSHomeContent.welcomeDue(welcomeSeen: client.welcomeSeen, section: selection ?? .home)
     }
 
+    /// La feuille s'ouvre d'elle-même sans jeton ou sur un jeton refusé, jamais
+    /// pendant la lecture du trousseau ni pour un appareil appairé (S-2).
     private func presentConnectionIfNeeded() {
-        if autoPresentConnection, !isConnected {
+        if autoPresentConnection, ConnectionSheetMode.autoPresents(client.pairing) {
             showConnection = true
         }
-    }
-
-    /// L'app est-elle connectée ? Au lancement elle ne l'est jamais : la feuille
-    /// de connexion s'ouvre donc d'elle-même quand aucune section n'est demandée.
-    private var isConnected: Bool {
-        if case .connected = client.state { return true }
-        return false
     }
 }

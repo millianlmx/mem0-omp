@@ -22,7 +22,7 @@ struct ConnectionTextTests {
         #expect(ConnectionText.state(.connected(endpoint: endpoint)) == ConnectionText.connected(endpoint: endpoint.display))
         #expect(ConnectionText.state(.noNetwork) == ConnectionText.noNetwork)
         #expect(ConnectionText.state(.macAbsent(endpoint: endpoint)) == ConnectionText.macAbsent(endpoint: endpoint.display))
-        #expect(ConnectionText.state(.revoked) == ConnectionText.revoked)
+        #expect(ConnectionText.state(.macAbsent(endpoint: endpoint)).hasPrefix("Mac injoignable"))
         #expect(ConnectionText.state(.connecting(endpoint: endpoint)).contains("127.0.0.1:8787"))
         #expect(ConnectionText.state(.connected(endpoint: endpoint)).contains("127.0.0.1:8787"))
     }
@@ -68,11 +68,20 @@ struct ConnectionTextTests {
     @Test("ConnectionAccessibility : les identifiants sont uniques, préfixés et complets")
     func identifiersAreUniqueAndComplete() {
         let identifiers = ConnectionAccessibility.identifiers
-        #expect(identifiers.count == 14)
+        #expect(identifiers.count == 19)
         #expect(Set(identifiers).count == identifiers.count)
         #expect(identifiers.allSatisfy { $0.hasPrefix("connection.") })
         #expect(identifiers.contains(ConnectionAccessibility.sheet))
         #expect(identifiers.contains(ConnectionAccessibility.codePair))
+        for added in [
+            ConnectionAccessibility.refused,
+            ConnectionAccessibility.help,
+            ConnectionAccessibility.forget,
+            ConnectionAccessibility.forgetConfirm,
+            ConnectionAccessibility.addressEdit,
+        ] {
+            #expect(identifiers.contains(added))
+        }
         #expect(identifiers.contains(ConnectionAccessibility.close))
     }
 }

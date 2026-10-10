@@ -41,6 +41,12 @@ public enum ClientEndpoint: Equatable, Sendable, Hashable {
         }
     }
 
+    /// L'adresse seule, `hôte:port`, sans le nom de l'instance Bonjour : la forme
+    /// qui préremplit le champ d'adresse quand le Mac a refusé le jeton.
+    public var address: String {
+        "\(Self.shownHost(host)):\(port)"
+    }
+
     /// Un littéral IPv6 s'écrit entre crochets (`fe80::1%en0` → `[fe80::1%en0]`) ;
     /// Network.framework rend ainsi l'adresse lien-local d'un Mac découvert par
     /// Bonjour sur un partage de connexion, et `URL` refuse la forme nue.

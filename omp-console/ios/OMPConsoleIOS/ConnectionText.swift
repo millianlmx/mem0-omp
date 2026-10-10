@@ -35,8 +35,10 @@ enum ConnectionText {
     /// « Connecté à <endpoint> »
     static func connected(endpoint: String) -> String { "Connecté à \(endpoint)" }
 
-    /// « Mac absent — <endpoint> » : une seule cause honnête, l'endpoint nommé.
-    static func macAbsent(endpoint: String) -> String { "Mac absent — \(endpoint)" }
+    /// « Mac injoignable — <endpoint> » : une seule cause honnête, l'endpoint nommé.
+    /// C'est le libellé des bandeaux des autres écrans ; la feuille, elle, dit
+    /// « Mac injoignable » sans adresse (`sheetState`).
+    static func macAbsent(endpoint: String) -> String { "\(macAbsentState) — \(endpoint)" }
 
     /// « Version d'API incompatible (app <local>, Mac <remote>) », et
     /// « …, Mac inconnu) » quand le numéro du Mac est nul : les DEUX numéros sont
@@ -70,6 +72,39 @@ enum ConnectionText {
         }
     }
 
+    // MARK: - État dans la feuille (l'adresse n'y figure qu'une fois, à part)
+
+    static let connectingState = "Connexion…"
+    static let connectedState = "Connecté"
+    static let macAbsentState = "Mac injoignable"
+
+    /// Le mode « lecture du trousseau » : l'appairage n'est pas encore connu.
+    static let restoring = "Lecture de l'appairage…"
+
+    /// Le libellé de la zone d'état DE LA FEUILLE : jamais d'adresse, pour que
+    /// l'adresse ne s'y lise qu'une fois (`connection.endpoint`).
+    static func sheetState(_ state: ClientState) -> String {
+        switch state {
+        case .unpaired, .revoked:
+            return unpaired
+        case .searching:
+            return searching
+        case .connecting:
+            return connectingState
+        case .connected:
+            return connectedState
+        case .noNetwork:
+            return noNetwork
+        case .macAbsent:
+            return macAbsentState
+        case .incompatibleProtocol(let local, let remote):
+            return incompatibleProtocol(local: local, remote: remote)
+        }
+    }
+
+    /// Le Mac a refusé le jeton conservé : il a été effacé.
+    static let refusedMessage = "Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code d'appairage."
+
     // MARK: - Découverte
 
     static let discoveryTitle = "Découverte"
@@ -87,14 +122,23 @@ enum ConnectionText {
     static let addressClear = "Effacer"
     static let addressInvalid = "Adresse invalide."
 
+    /// Le groupe replié qui porte la modification de l'adresse d'un appareil
+    /// appairé dont le Mac est injoignable.
+    static let addressEdit = "Modifier l'adresse"
+
     // MARK: - Appairage
 
     static let codeTitle = "Code d'appairage"
     static let codeField = "8 caractères"
     static let codePair = "Appairer"
 
-    /// Le code mal formé (aucune requête émise).
-    static let codeMalformed = "Le code doit faire 8 caractères (A–Z, 0–9)."
+    /// Le code mal formé (aucune requête émise). Les lettres exclues sont celles
+    /// de A–Z absentes de `ConsoleAPI.Service.pairingCodeAlphabet` (Crockford).
+    static let codeMalformed = "Le code fait 8 caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U."
+
+    /// Où trouver le code sur le Mac : `PairingText.menuItem`, le raccourci de
+    /// `RemoteCommands`, puis `PairingText.generate`, mot pour mot.
+    static let codeHelp = "Sur le Mac : menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code »."
 
     /// Le refus UNIQUE des trois causes indistinguables (expiré, consommé, verrouillé).
     static let codeRefused = "Code refusé — demandez un code frais au Mac."
@@ -128,6 +172,13 @@ enum ConnectionText {
         return codeUnavailable
     }
 
+    // MARK: - Oublier ce Mac
+
+    static let forget = "Oublier ce Mac"
+    static let forgetTitle = "Oublier ce Mac ?"
+    static let forgetMessage = "Cet appareil ne sera plus appairé. Pour le reconnecter, il faudra un nouveau code d'appairage."
+    static let forgetCancel = "Annuler"
+
     // MARK: - Privilège réseau local
 
     static let localNetworkDenied = "Accès au réseau local refusé à OMP Console."
@@ -149,6 +200,11 @@ enum ConnectionAccessibility {
     static let codePair = "connection.code.pair"
     static let codeError = "connection.code.error"
     static let retry = "connection.retry"
+    static let refused = "connection.refused"
+    static let help = "connection.help"
+    static let forget = "connection.forget"
+    static let forgetConfirm = "connection.forget.confirm"
+    static let addressEdit = "connection.addressEdit"
     static let close = "connection.close"
 
     /// Tous les identifiants, dans l'ordre de S-11 — c'est la liste que le test
@@ -169,5 +225,10 @@ enum ConnectionAccessibility {
         codeError,
         retry,
         close,
+        refused,
+        help,
+        forget,
+        forgetConfirm,
+        addressEdit,
     ]
 }
