@@ -124,7 +124,7 @@ struct IOSHomeTests {
 
     /// Le tableau de bord que l'Accueil iOS rend, client connecté, sur la fixture.
     private static var connectedDashboard: HomeDashboard? {
-        let resolved = IOSHomeState.resolve(state: .connected(endpoint: endpoint), board: board, omp: ompAvailable)
+        let resolved = IOSHomeState.resolve(connection: .connected, board: board, omp: ompAvailable)
         guard case .dashboard(let dashboard) = resolved else { return nil }
         return dashboard
     }
@@ -359,6 +359,7 @@ struct IOSHomeTests {
         #expect(IOSHomeContent.attentionNeedsMac(.answer))
         #expect(IOSHomeContent.attentionNeedsMac(.validate))
         #expect(IOSHomeContent.attentionNeedsMac(.accept))
+        #expect(IOSHomeContent.attentionNeedsMac(.relaunch))
         #expect(!IOSHomeContent.attentionNeedsMac(.open))
     }
 
