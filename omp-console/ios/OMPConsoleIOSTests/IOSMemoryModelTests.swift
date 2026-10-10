@@ -222,6 +222,22 @@ struct IOSMemoryModelTests {
         #expect(!model.isSearching)
     }
 
+    @Test("ios-finitions-titres-icones/AC-6 : « Sommaire » est disponible après une recherche terminée, et dit pourquoi sinon")
+    func summaryIsAvailableAfterACompletedSearch() async {
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: [row("m1", text: "un")], truncated: false)
+        let model = IOSMemoryModel(client: CountingMemoryReader(page: .success(page)))
+
+        await model.refresh()
+        #expect(model.summaryUnavailableReason(graphShown: false) == IOSMemoryText.summaryReasonShown)
+        #expect(!model.canShowSummary)
+
+        model.updateQuery("mémoire du projet")
+        await model.submitQuery()
+        #expect(model.summaryUnavailableReason(graphShown: false) == nil)
+        #expect(model.canShowSummary)
+        #expect(model.summaryUnavailableReason(graphShown: true) == IOSMemoryText.summaryReasonGraph)
+    }
+
     // MARK: - AC-9
 
     @Test("ios-memoire/AC-9 : un geste émet UNE lecture, et une panne après un succès bascule l'état")

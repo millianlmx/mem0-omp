@@ -21,6 +21,9 @@ struct IOSMemoryScreen: View {
     let graphRecipe: IOSMemoryGraphRecipe?
     @StateObject private var model: IOSMemoryModel
     @StateObject private var graph: IOSMemoryGraphModel
+    /// La raison montrée dans la bulle de « Sommaire » : figée au toucher, tant que
+    /// la bulle est ouverte.
+    @State private var summaryReason: String?
 
     init(client: ConsoleClientModel, recipe: IOSScreenState, graphRecipe: IOSMemoryGraphRecipe? = nil) {
         self.client = client
@@ -46,15 +49,7 @@ struct IOSMemoryScreen: View {
                     .disabled(graph.shown ? graph.state == .loading : !model.canRefresh)
                     .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
                 }
-                if !graph.shown {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { model.showSummary() } label: {
-                            Label(MemoryText.summaryButton, systemImage: "list.bullet")
-                        }
-                        .disabled(!model.canShowSummary)
-                        .accessibilityIdentifier(IOSMemoryAccessibility.summary)
-                    }
-                }
+                ToolbarItem(placement: .topBarTrailing) { summaryButton }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         if graph.shown {
@@ -64,7 +59,7 @@ struct IOSMemoryScreen: View {
                         }
                     } label: {
                         if graph.shown {
-                            Label(MemoryText.listButton, systemImage: "list.bullet")
+                            Label(MemoryText.listButton, systemImage: IOSMemoryText.listSymbol)
                         } else {
                             Label(MemoryText.graphButton, systemImage: "point.3.connected.trianglepath.dotted")
                         }
@@ -79,6 +74,34 @@ struct IOSMemoryScreen: View {
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
+    }
+
+    /// « Sommaire » est TOUJOURS là. Indisponible, il est grisé et un toucher en
+    /// dit la raison dans une bulle — il n'appelle pas `showSummary()`. Le grisé passe
+    /// par `.tint` : la barre d'outils ignore `.foregroundStyle` et `.opacity` (mesuré).
+    private var summaryButton: some View {
+        let reason = model.summaryUnavailableReason(graphShown: graph.shown)
+        return Button {
+            if let reason {
+                summaryReason = reason
+            } else {
+                model.showSummary()
+            }
+        } label: {
+            Label(MemoryText.summaryButton, systemImage: IOSMemoryText.summarySymbol)
+        }
+        .tint(reason == nil ? nil : Color(uiColor: .tertiaryLabel))
+        .accessibilityValue(reason == nil ? "" : IOSMemoryText.summaryUnavailable)
+        .accessibilityHint(reason ?? "")
+        .popover(isPresented: Binding(get: { summaryReason != nil }, set: { if !$0 { summaryReason = nil } })) {
+            Text(summaryReason ?? "")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding()
+                .presentationCompactAdaptation(.popover)
+                .accessibilityIdentifier(IOSMemoryAccessibility.summaryReason)
+        }
+        .accessibilityIdentifier(IOSMemoryAccessibility.summary)
     }
 
     /// Le crochet de recette force le mode graphe sur la fixture partagée, sans

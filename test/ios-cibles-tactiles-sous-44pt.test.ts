@@ -111,12 +111,25 @@ interface Control {
   label: string;
   /** L'identifiant d'accessibilité, tel qu'écrit dans `.accessibilityIdentifier(…)`. */
   identifier: string;
+  /**
+   * Le style que le contrat d'une autre feature IMPOSE à ce contrôle, retiré de son
+   * expression avant la garde « aucun style ajouté » (AC-4).
+   */
+  ownStyle?: string;
 }
 
 const CONTROLS: Control[] = [
   { name: "Tout afficher", file: HOME_VIEW, label: "HomeText.allPipelines", identifier: "IOSHomeAccessibility.allPipelines" },
   { name: "Lire le contrat", file: HOME_VIEW, label: "ContractText.open", identifier: "IOSHomeAccessibility.attentionContract(card.id)" },
-  { name: "Piloter un projet…", file: PROJECT_SCREEN, label: "ProjectViewText.startConduite", identifier: "ProjectAccessibility.start" },
+  // ios-finitions-titres-icones (état vide de Projet) fait de « Piloter un projet… »
+  // le bouton plein de l'écran : ce style-là est le sien, tout autre reste interdit.
+  {
+    name: "Piloter un projet…",
+    file: PROJECT_SCREEN,
+    label: "ProjectViewText.startConduite",
+    identifier: "ProjectAccessibility.start",
+    ownStyle: ".buttonStyle(.borderedProminent)",
+  },
 ];
 
 /** Les formes courtes `Button("mot")` dont le libellé n'a aucun cadre. */
@@ -189,11 +202,12 @@ function identifierFaults(root: string): string[] {
 function forbiddenFaults(root: string, forbidden: string[]): string[] {
   const faults: string[] = [];
   for (const control of CONTROLS) {
-    const expr = expression(root, control);
-    if (expr === null) {
+    const found = expression(root, control);
+    if (found === null) {
       faults.push(`${control.name} : expression introuvable dans ${control.file}`);
       continue;
     }
+    const expr = control.ownStyle ? found.replace(control.ownStyle, "") : found;
     for (const token of forbidden) {
       if (expr.includes(token)) faults.push(`${control.name} : ${token} est interdit sur ce contrôle`);
     }

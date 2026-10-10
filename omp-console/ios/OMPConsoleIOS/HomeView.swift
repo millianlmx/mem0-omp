@@ -285,7 +285,7 @@ struct HomeView: View {
                     }
                 }
             }
-            Text(card.title).font(.headline)
+            Text(IOSHomeText.featureName(card.title)).font(.headline).accessibilityLabel(card.title)
             if showsRepo {
                 Text(card.repo).font(.callout).foregroundStyle(.secondary)
             }
@@ -344,7 +344,7 @@ struct HomeView: View {
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         rowLayout {
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.title).font(.body.weight(.medium))
+                Text(IOSHomeText.featureName(card.title)).font(.body.weight(.medium)).accessibilityLabel(card.title)
                 if let subtitle = HomeText.cardSubtitle(
                     card,
                     noPhase: ConsoleStatus.of(card: card).text,
@@ -412,7 +412,7 @@ struct HomeView: View {
     private func deliveredLabel(_ card: KanbanCard, showsRepo: Bool) -> some View {
         rowLayout {
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.title)
+                Text(IOSHomeText.featureName(card.title)).accessibilityLabel(card.title)
                 if showsRepo {
                     Text(card.repo).foregroundStyle(.secondary)
                 }

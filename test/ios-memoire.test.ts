@@ -184,7 +184,7 @@ function detailFaults(root: string): string[] {
   if (!detail.includes("DisclosureGroup(MemoryText.technicalDetails)")) faults.push("les détails techniques ne sont pas repliés");
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes(".sheet(item:")) faults.push("la feuille n'est pas montée par .sheet(item:)");
-  for (const forbidden of ["NavigationStack", "memoryGraph(", "MemoryText.edit", "MemoryText.delete", "MemoryText.save", "MemoryText.createMemory"]) {
+  for (const forbidden of ["memoryGraph(", "MemoryText.edit", "MemoryText.delete", "MemoryText.save", "MemoryText.createMemory"]) {
     if (detail.includes(forbidden)) faults.push(`la feuille porte un geste interdit : ${forbidden}`);
   }
   const tests = source(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests", "IOSMemoryDetailTests.swift"));

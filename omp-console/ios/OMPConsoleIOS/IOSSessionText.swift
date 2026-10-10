@@ -94,6 +94,9 @@ enum IOSSessionText {
     // MARK: - Symboles SF (jamais en dur dans une vue)
 
     static func chevron(_ open: Bool) -> String { open ? "chevron.down" : "chevron.right" }
+    /// Le symbole iOS de la section Sessions, distinct de Session OMP (bulle) ; le
+    /// macOS garde `ConsoleSection.systemImage`.
+    static let sectionSymbol = "clock.arrow.circlepath"
     static let waitingSymbol = "hourglass"
     static let emptySymbol = "bubble.left"
     static let errorSymbol = "xmark.circle.fill"

@@ -53,7 +53,8 @@ marqueur `[test: <fonction>]` (une fonction de
 
 ## Échelle typographique (rôle → style)
 
-- Titre d'écran `.title2`, mot d'état vide `.headline`, détail `.callout`,
+- Le titre d'un écran est celui de la barre de navigation (`.navigationTitle`),
+  jamais répété dans le contenu ; mot d'état vide `.headline`, détail `.callout`,
   pastille `.caption.weight(.medium)`, icône SF `.title3` — des styles
   sémantiques, qui suivent Dynamic Type. `[garde: design-ios/AC-7]`
 - Aucune taille de police en points : `.system(size:)` est interdit dans les
@@ -91,8 +92,10 @@ marqueur `[test: <fonction>]` (une fonction de
 
 - Chaque section affiche son état vide RÉEL, avec le mot partagé du noyau, mot
   pour mot : aucune donnée inventée, aucun état de chargement. `[test: emptyStatesUseSharedWords]`
-- Le titre et l'icône d'un écran viennent de `ConsoleSection` (ConsoleCore),
-  jamais d'une seconde table. `[test: titlesAndIconsComeFromConsoleCore]`
+- Le titre d'un écran vient de `ConsoleSection` (ConsoleCore) ; son icône aussi,
+  sauf l'unique surcharge iOS `IOSSection.systemImage(of:)` (Sessions :
+  `clock.arrow.circlepath`, pour la distinguer de Session OMP) — le macOS garde
+  les icônes de `ConsoleSection`. `[test: titlesAndIconsComeFromConsoleCore]`
 - La section Session OMP porte la pastille de l'état partagé « Aucun projet »
   (`ConsoleStatus`, ton `neutral`). `[test: sessionCarriesSharedStatus]`
 - En état d'erreur, les SEPT sections portent le bandeau `danger` avec le
@@ -266,6 +269,9 @@ marqueur `[test: <fonction>]` (une fonction de
   d'accessibilité ; leurs boutons sont bornés à `accessibility3` et leur texte à
   `accessibility4` (au-delà, un mot comme « Implémentation » est coupé en deux).
   `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Le nom d'une feature passe par `IOSHomeText.featureName(_:)` : il se replie en
+  entier et la coupure tombe AVANT un tiret, jamais après.
+  `[test: featureNameNeverEndsALineWithAHyphen]`
 
 ## Mémoire (feature `ios-memoire`)
 
@@ -280,6 +286,9 @@ marqueur `[test: <fonction>]` (une fonction de
   liste, la feuille et la fiche du graphe : aucun rendu Markdown, aucun titre raccourci
   — un `*` reste un `*`. Seuls les autres contenus (documents projet, contrat, réponses) passent
   par `IOSMarkdownView`. `[test: listDetailAndGraphSheetShowTheStoredText]`
+- « Sommaire » reste toujours visible ; indisponible, il est grisé et un toucher
+  montre la raison dans une bulle — jamais un bouton masqué ni muet.
+  `[test: summaryReasonNamesEachUnavailableCase]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
 
