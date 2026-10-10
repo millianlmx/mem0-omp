@@ -37,7 +37,7 @@ struct OMPConsoleApp: App {
     @StateObject private var actionsModel: ActionsModel
     @StateObject private var projectModel: ProjectConsoleModel
     @StateObject private var statsModel: StatsModel
-    @StateObject private var memoryModel = MemoryModel()
+    @StateObject private var memoryModel: MemoryModel
     /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, comme
     /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
     /// sélection, ni les filtres.
@@ -55,6 +55,10 @@ struct OMPConsoleApp: App {
     /// il possède le registre des appareils, l'interrupteur persistant et la
     /// feuille d'appairage.
     @StateObject private var remoteModel: RemoteServiceModel
+    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
+    /// (S-2 de mac-etats-vides-sans-issue) : à l'échelle de l'app, il écrit par
+    /// la session et lit les projets connus dans le magasin du service d'API.
+    @StateObject private var projectChooser: ProjectChooserModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     /// Un `ActionsModel` pour l'app : il poste au service les gestes des cartes
@@ -67,10 +71,20 @@ struct OMPConsoleApp: App {
         _contractModel = StateObject(wrappedValue: contract)
         let actions = ActionsModel()
         _actionsModel = StateObject(wrappedValue: actions)
-        let kanban = KanbanModel()
+        // Le crochet de recette `-home.recipe` (`HomeRecipe`) : nil hors recette,
+        // donc le comportement de production.
+        let kanban = KanbanModel(recipeBoard: HomeRecipe.current()?.board)
         _kanbanModel = StateObject(wrappedValue: kanban)
         let session = SessionConsoleModel()
         _sessionModel = StateObject(wrappedValue: session)
+        // UN magasin pour la liste des projets connus : celui que le service
+        // d'API sert par `GET /v1/repos`, donc le sélecteur des états vides
+        // montre exactement la même liste, sans seconde veille.
+        let storeHub = StoreHub()
+        _projectChooser = StateObject(wrappedValue: ProjectChooserModel(
+            session: session,
+            knownRoots: { KnownProjects.roots(in: storeHub.current()) }
+        ))
         let project = ProjectConsoleModel()
         _projectModel = StateObject(wrappedValue: project)
         let stats = StatsModel()
@@ -81,14 +95,19 @@ struct OMPConsoleApp: App {
         _homeModel = StateObject(wrappedValue: home)
         // La préparation et la présence des composants sont construites AVANT le
         // service d'API : il les sert (`GET /v1/components`, évènement `components`).
-        let setup = SetupModel.standard()
+        // OMP absent au lancement : rien ne se télécharge d'office, la feuille
+        // bloquante attend « Installer ». Le crochet de recette `-setup.recipe`
+        // (racine jetable seulement) remplace l'installateur par un script.
+        let setup = SetupRecipe.current()?.model(autoPrepare: home.canLaunch)
+            ?? SetupModel.standard(autoPrepare: home.canLaunch)
         let presence = ComponentPresenceModel()
         _componentsModel = StateObject(wrappedValue: presence)
         // Le service d'API distante partage les modèles de l'app : ce que l'API
         // sert à distance est l'état que la fenêtre montre. Il démarre à
         // l'apparition de la racine ET sur `onReady` (S-14).
         let remote = RemoteServiceModel(
-            storeHub: StoreHub(),
+            port: RemoteServiceModel.resolvedPort(environment: ProcessInfo.processInfo.environment),
+            storeHub: storeHub,
             kanban: kanban,
             actions: actions,
             session: session,
@@ -114,6 +133,10 @@ struct OMPConsoleApp: App {
         // S-14 : le service ne démarre jamais tant que la préparation des composants
         // n'est pas terminée — `onReady` en fait le démarrage différé.
         remote.isSetupReady = { [weak setup] in setup?.state == .ready }
+        setup.refreshOmp = {
+            home.recheck()
+            return home.canLaunch
+        }
         setup.onReady = {
             home.recheck()
             Task { await remote.startIfEnabled() }
@@ -124,6 +147,11 @@ struct OMPConsoleApp: App {
         // le retient.
         let router = AlertRouter(console: console, home: home, kanban: kanban, contract: contract, actions: actions)
         AppDelegate.openAlert = { router.open($0) }
+        // La section Mémoire reprend l'ancienne pile par LA MÊME action que la
+        // feuille de préparation (S-6) : une seule implémentation.
+        let memory = MemoryModel()
+        memory.recoverOwnership = { await setup.takeOverLegacyStack() }
+        _memoryModel = StateObject(wrappedValue: memory)
     }
 
     var body: some Scene {
@@ -150,7 +178,8 @@ struct OMPConsoleApp: App {
                 remote: remoteModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
-                statsModel: statsModel
+                statsModel: statsModel,
+                projectChooser: projectChooser
             )
         }
         .commands {
@@ -278,9 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// routeur de la fenêtre (`nil` : payload absent ou illisible → Accueil).
     static var openAlert: (@MainActor (AlertOpening?) -> Void)?
 
+    /// Le superviseur de l'ownership des ports (S-5) : unique à l'app, démarré
+    /// par `alerts.start()` — aucune autre surface ne le démarre.
+    lazy var ownership = StackOwnershipModel()
+
     /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
-    /// construisent donc pas).
-    lazy var alerts = AlertsModel()
+    /// construisent donc pas). Sous `-home.recipe`, il suit l'ardoise de la
+    /// recette, comme l'Accueil.
+    lazy var alerts = AlertsModel(ownership: ownership, recipeBoard: HomeRecipe.current()?.board)
 
     private var statusItemController: StatusItemController?
 

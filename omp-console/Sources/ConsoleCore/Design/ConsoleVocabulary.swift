@@ -76,7 +76,9 @@ extension ConsoleStatus {
         case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
         case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)
         case .prOuverte: return ConsoleStatus(text: "PR ouverte", tone: .success)
-        case .fusionne: return ConsoleStatus(text: "Fusionnée", tone: .success)
+        case .prCreee: return ConsoleStatus(text: "PR créée", tone: .neutral)
+        case .fusionne: return ConsoleStatus(text: "PR fusionnée", tone: .success)
+        case .prFermee: return ConsoleStatus(text: "PR fermée", tone: .neutral)
         case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
         case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
         case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
@@ -140,18 +142,37 @@ public enum ConsoleFormat {
         "\(n.formatted(.number.locale(locale))) \(abs(n) <= 1 ? singular : plural)"
     }
 
-    /// Un chemin pour l'œil : le dossier personnel devient « ~ ». Un chemin
-    /// relatif à `root` (s'il est dessous) est rendu relatif.
-    public static func path(_ path: String, relativeTo root: String? = nil) -> String {
+    /// Le dossier personnel de CETTE machine : celui de l'utilisateur sur macOS,
+    /// aucun sur iOS (le bac à sable de l'app n'est le dossier de personne ; le
+    /// dossier du Mac arrive par `RemoteComponentsPayload.homeDirectory`).
+    public static var localHome: String? {
+        #if os(macOS)
+        NSHomeDirectory()
+        #else
+        nil
+        #endif
+    }
+
+    /// Un chemin pour l'œil : relatif à `root` s'il est dessous, sinon sous « ~ »
+    /// relativement à `home`. Sans `home` (ou vide), le chemin reste absolu.
+    public static func path(_ path: String, relativeTo root: String? = nil, home: String?) -> String {
         if let root, !root.isEmpty {
             let base = root.hasSuffix("/") ? root : root + "/"
             if path.hasPrefix(base) { return String(path.dropFirst(base.count)) }
             if path == root { return (root as NSString).lastPathComponent }
         }
-        let home = NSHomeDirectory()
+        guard var home, !home.isEmpty else { return path }
+        while home.count > 1, home.hasSuffix("/") { home.removeLast() }
         if path == home { return "~" }
         if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
         return path
+    }
+
+    /// La forme historique, abrégée sous le dossier personnel LOCAL. Interdite
+    /// sur iOS : le dossier local y est le bac à sable, jamais celui du Mac.
+    @available(iOS, unavailable)
+    public static func path(_ path: String, relativeTo root: String? = nil) -> String {
+        self.path(path, relativeTo: root, home: NSHomeDirectory())
     }
 
     /// « 1,2 k », « 2,5 M ».
@@ -176,5 +197,13 @@ public enum ConsoleFormat {
     public static func time(ms: Double) -> String {
         Date(timeIntervalSince1970: ms / 1000)
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
+    }
+
+    /// La date et l'heure en entier, à la minute, « 10 oct. 2026 à 21:54 » : jour,
+    /// mois abrégé, année et heure, dans le fuseau donné (celui du process par défaut).
+    public static func dateTime(ms: Double, timeZone: TimeZone = .current) -> String {
+        var style = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)
+        style.timeZone = timeZone
+        return Date(timeIntervalSince1970: ms / 1000).formatted(style)
     }
 }

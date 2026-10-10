@@ -111,6 +111,26 @@ func catalogParsesSelectors() {
     #expect(ModelCatalog.choices(.failed("x")) == [ModelCatalog.defaultChoice])
 }
 
+@Test("ios-fiche-carte-pipelines/AC-6 : le catalogue garde le premier nom lisible non blanc de chaque sélecteur")
+func catalogKeepsFirstReadableName() {
+    let json = """
+    {"models":[
+      {"selector":"anthropic/claude-opus-5-5","name":"Claude Opus 5.5"},
+      {"selector":"lm-studio/blank","name":"  "},
+      {"selector":"lm-studio/sans-nom"},
+      {"selector":"anthropic/claude-opus-5-5","name":"Autre nom"},
+      {"selector":"  ","name":"Sans sélecteur"},
+      {"name":"Sans clé"}
+    ]}
+    """
+    #expect(ModelCatalog.names(fromJSON: Data(json.utf8)) == [
+        "anthropic/claude-opus-5-5": "Claude Opus 5.5",
+    ])
+    #expect(ModelCatalog.names(fromJSON: Data(#"{"models":[]}"#.utf8)) == [:])
+    #expect(ModelCatalog.names(fromJSON: Data("{ pas du json".utf8)) == nil)
+    #expect(ModelCatalog.names(fromJSON: Data("{}".utf8)) == nil)
+}
+
 // MARK: - AC-5 : édition — la commande models et le refus du pilote
 
 @MainActor

@@ -461,3 +461,16 @@ func alertOpeningPayloadRoundTrip() {
     #expect(AlertOpening(userInfo: ["kind": "inconnue", "cardID": "run:a"]) == nil)
     #expect(AlertOpening(userInfo: ["kind": "pendingAnswer", "cardID": ""]) == nil)
 }
+
+// MARK: - AC-5 : le rang de `stackOwnershipLost`
+
+@Test("bug-embedded-podman-machine/AC-5 : `stackOwnershipLost` a le rang 6, juste après `mergedPullRequest`")
+func stackOwnershipLostIsRankedLast() {
+    #expect(AlertKind.mergedPullRequest.rank == 5)
+    #expect(AlertKind.stackOwnershipLost.rank == 6)
+    // Le rang suit l'ORDRE DE DÉCLARATION : aucun trou, aucun doublon.
+    #expect([
+        AlertKind.pendingAnswer, .milestoneSpecs, .milestoneReview,
+        .failedLot, .failedRun, .mergedPullRequest, .stackOwnershipLost,
+    ].map(\.rank) == [0, 1, 2, 3, 4, 5, 6])
+}

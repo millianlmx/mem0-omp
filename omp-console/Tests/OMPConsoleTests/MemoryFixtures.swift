@@ -185,7 +185,8 @@ func memoryModel(
     query: String? = nil,
     paths: AppPaths? = nil,
     stackConfig: StackConfig? = nil,
-    omlxSession: URLSession? = nil
+    omlxSession: URLSession? = nil,
+    portOwner: (@Sendable (String) async -> ForeignOwnership?)? = nil
 ) -> MemoryModel {
     let model = MemoryModel(
         service: service,
@@ -195,7 +196,8 @@ func memoryModel(
             supportRoot: URL(fileURLWithPath: "/nonexistent-omp-console-support", isDirectory: true)
         ),
         stackConfig: stackConfig,
-        omlxSession: omlxSession ?? StubURLProtocol.session()
+        omlxSession: omlxSession ?? StubURLProtocol.session(),
+        portOwner: portOwner
     )
     if let query { model.updateQuery(query) }
     return model
@@ -301,10 +303,11 @@ final class StubURLProtocol: URLProtocol, @unchecked Sendable {
 }
 
 /// Un client HTTP réel sur le stub, sans jeton par défaut.
-func stubbedHTTPMemoryService(token: String = "") -> HTTPMemoryService {
+func stubbedHTTPMemoryService(token: String = "", installationToken: String = "") -> HTTPMemoryService {
     let config = MemoryServiceConfig(
         baseURL: URL(string: "http://localhost:8321")!,
-        token: token
+        token: token,
+        installationToken: installationToken
     )
     return HTTPMemoryService(config: config, session: StubURLProtocol.session())
 }

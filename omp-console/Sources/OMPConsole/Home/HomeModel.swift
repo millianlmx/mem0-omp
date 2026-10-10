@@ -7,8 +7,9 @@
 // `MainSheetPolicy`.
 //
 // `recheck()` est le seul geste de vérification : `SetupModel.onReady` l'appelle
-// quand l'app a fini d'installer ses composants, et il reste disponible pour les
-// cas où le binaire du composant est réinstallé après coup.
+// quand l'app a fini d'installer ses composants, et `SetupModel.refreshOmp` au
+// clic de « Réessayer » ou du badge, et pendant l'installation. La veille de
+// présence du badge ne le relit jamais.
 
 import Combine
 import ConsoleCore

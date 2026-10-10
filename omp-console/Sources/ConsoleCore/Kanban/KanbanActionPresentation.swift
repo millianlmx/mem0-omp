@@ -89,6 +89,21 @@ public enum KanbanActionPresentation {
             return false
         }
     }
+
+    /// La carte offre « Reprendre » au sens RELANCE (S-3 de
+    /// accueil-en-cours-melange-pause-et-compte) : une feature de LOT en échec ou
+    /// bloquée, que la commande de service `relaunch` accepte. Les cartes
+    /// `history:`, `run:` et `project:` sans feature de lot n'ont pas de slug, donc
+    /// aucun chemin de relance. Disjoint de `resumable` : leurs ensembles d'états
+    /// ne se recouvrent pas.
+    public static func relaunchable(_ card: KanbanCard) -> Bool {
+        guard card.column == .echec || card.column == .bloquee,
+              let action = card.action,
+              action.slug != nil, action.repoRoot != nil,
+              let state = action.featureState
+        else { return false }
+        return state == .failed || state == .blocked
+    }
 }
 
 /// Les dépôts proposés au formulaire de lancement (S-7) : les dépôts RÉELS portés
@@ -114,5 +129,52 @@ public enum KanbanLaunchRepos {
         if let selected = selectedRepoRoot.map(realpathOr), options.contains(selected) { return selected }
         if let project = projectRoot.map(realpathOr), options.contains(project) { return project }
         return options.first
+    }
+}
+
+/// Un dépôt proposé au formulaire de lancement, avec son libellé d'affichage :
+/// `root` est le chemin COMPLET (la valeur lancée), `label` ce que l'on montre.
+public struct KanbanLaunchRepoChoice: Equatable, Sendable, Identifiable {
+    public let root: String
+    public let label: String
+    public var id: String { root }
+
+    public init(root: String, label: String) {
+        self.root = root
+        self.label = label
+    }
+}
+
+extension KanbanLaunchRepos {
+    /// Les libellés d'affichage des dépôts : le nom du dossier racine, élargi par
+    /// les derniers segments du dossier parent pour les seuls homonymes, jusqu'à
+    /// ce que les libellés d'un groupe soient distincts. Dérivation pure : aucune
+    /// lecture du disque. L'ordre de l'entrée est conservé, les doublons écartés.
+    public static func choices(_ roots: [String]) -> [KanbanLaunchRepoChoice] {
+        var seen = Set<String>()
+        let unique = roots.filter { seen.insert($0).inserted }
+        let segments = unique.map { $0.split(separator: "/", omittingEmptySubsequences: true).map(String.init) }
+
+        var groups: [String: [Int]] = [:]
+        for (index, parts) in segments.enumerated() {
+            if let name = parts.last { groups[name, default: []].append(index) }
+        }
+
+        var labels = unique
+        for (name, members) in groups {
+            guard members.count > 1 else { labels[members[0]] = name; continue }
+            let parents = members.map { Array(segments[$0].dropLast()) }
+            func complement(_ parent: [String], _ k: Int) -> String {
+                let joined = parent.suffix(min(k, parent.count)).joined(separator: "/")
+                return joined.isEmpty ? "/" : joined
+            }
+            let widest = parents.map(\.count).max() ?? 0
+            var k = 1
+            while k < widest, Set(parents.map { complement($0, k) }).count < members.count { k += 1 }
+            for (offset, index) in members.enumerated() {
+                labels[index] = "\(name) (\(complement(parents[offset], k)))"
+            }
+        }
+        return zip(unique, labels).map { KanbanLaunchRepoChoice(root: $0, label: $1) }
     }
 }

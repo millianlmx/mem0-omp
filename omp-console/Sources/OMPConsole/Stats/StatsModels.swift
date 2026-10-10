@@ -50,6 +50,8 @@ struct StatsBoard: Equatable, Sendable {
 struct StatsTotals: Equatable, Sendable {
     var input: Int
     var output: Int
+    var cacheRead: Int = 0
+    var cacheWrite: Int = 0
     var turns: Int
     var durationMs: Double
 
@@ -67,16 +69,28 @@ enum StatsViewState: Equatable, Sendable {
     case loading
     case storeAbsent(dir: String)
     case noProject(dir: String)
-    case empty
+    /// Le projet affiché n'a aucune feature listée : il reste nommé par le
+    /// sélecteur, d'où l'on choisit un autre projet.
+    case empty(StatsBoard)
     case board(StatsBoard)
+
+    /// Le tableau du projet affiché, avec ou sans feature listée : c'est lui qui
+    /// porte le sélecteur de projet. `nil` quand aucun projet n'est affiché.
+    var shownBoard: StatsBoard? {
+        switch self {
+        case .board(let board), .empty(let board): return board
+        case .loading, .storeAbsent, .noProject: return nil
+        }
+    }
 }
 
-/// Les textes exacts de la fenêtre. Le chargement et le magasin absent sont REPRIS
-/// MOT POUR MOT de `KanbanBoardState` : une seule formulation par situation dans
-/// l'app. Aucun chemin, aucune clé, aucun mot du protocole n'est montré (audit HIG
-/// du 2026-10-01) ; un « run » se dit « exécution ».
+/// Les textes exacts de la fenêtre. Le magasin absent est REPRIS MOT POUR MOT de
+/// `KanbanBoardState` : une seule formulation par situation dans l'app. Le
+/// chargement dit ce qu'il charge, mot partagé avec iOS (`StatsPresentation`).
+/// Aucun chemin, aucune clé, aucun mot du protocole n'est montré (audit HIG du
+/// 2026-10-01) ; un « run » se dit « exécution ».
 enum StatsText {
-    static let loading = KanbanBoardState.loadingText
+    static let loading = StatsPresentation.loading
 
     static func storeAbsent(dir: String) -> String {
         KanbanBoardState.absentText(dir: dir)

@@ -14,6 +14,12 @@ enum IOSSection {
         group.sections.filter { all.contains($0) }
     }
 
+    /// Le symbole SF d'une section sur iOS : celui de `ConsoleSection`, sauf Sessions
+    /// (`IOSSessionText.sectionSymbol`), pour qu'elle ne ressemble plus à Session OMP.
+    static func systemImage(of section: ConsoleSection) -> String {
+        section == .sessions ? IOSSessionText.sectionSymbol : section.systemImage
+    }
+
     /// La section désignée par l'argument de lancement `-section <rawValue>`.
     ///
     /// La DERNIÈRE paire reconnue gagne. Rien à lire, un drapeau sans valeur ou une

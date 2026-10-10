@@ -26,16 +26,44 @@ public enum HomeState: Equatable, Sendable {
 }
 
 /// Le tableau de bord : ce qui attend l'utilisateur, ce qui tourne, ce qui est
-/// livré.
+/// en pause, ce qui n'a jamais été lancé, ce qui est livré. Chaque carte est
+/// dans AU PLUS UNE liste (`HomePresentation.dashboard`).
 public struct HomeDashboard: Equatable, Sendable {
     public var attention: [HomeAttention]
+    /// « En cours » : les pipelines réellement en marche (colonne `.enCours`).
     public var running: [KanbanCard]
+    /// « À reprendre » : les pipelines en pause (`KanbanActionPresentation.resumable`).
+    public var paused: [KanbanCard]
+    /// « Pas commencées » : les features jamais lancées (colonne `.enAttente`).
+    public var notStarted: [KanbanCard]
     public var delivered: [KanbanCard]
 
-    public init(attention: [HomeAttention], running: [KanbanCard], delivered: [KanbanCard]) {
+    public init(
+        attention: [HomeAttention],
+        running: [KanbanCard],
+        paused: [KanbanCard],
+        notStarted: [KanbanCard],
+        delivered: [KanbanCard]
+    ) {
         self.attention = attention
         self.running = running
+        self.paused = paused
+        self.notStarted = notStarted
         self.delivered = delivered
+    }
+}
+
+/// Les deux comptes de l'item de barre de menus : « À vous » et « En cours »,
+/// pris sur les MÊMES listes que l'Accueil.
+public struct HomeCounts: Equatable, Sendable {
+    public var attention: Int
+    public var running: Int
+
+    public static let zero = HomeCounts(attention: 0, running: 0)
+
+    public init(attention: Int, running: Int) {
+        self.attention = attention
+        self.running = running
     }
 }
 
@@ -43,6 +71,10 @@ public enum HomeAttentionNature: Equatable, Sendable {
     case question
     case milestoneSpecs
     case milestoneReview
+    /// Une feature de lot en échec, relançable (`KanbanActionPresentation.relaunchable`).
+    case failed
+    /// Une feature de lot bloquée, relançable.
+    case blocked
 }
 
 /// Une attente : la carte, sa nature et la question à montrer.
@@ -61,7 +93,7 @@ public struct HomeAttention: Equatable, Identifiable, Sendable {
 
 /// Le bouton d'une carte d'attente.
 public enum HomeCardAction: Equatable {
-    case answer, validate, accept, open
+    case answer, validate, accept, relaunch, open
 }
 
 public enum HomePresentation {
@@ -81,12 +113,23 @@ public enum HomePresentation {
         }
     }
 
-    /// Les trois listes, chacune dans l'ordre de l'ardoise.
+    /// Les cinq listes, chacune dans l'ordre de l'ardoise. Les règles
+    /// s'appliquent dans cet ordre ; la première qui s'applique gagne, donc une
+    /// carte n'est jamais dans deux listes.
     public static func dashboard(_ board: KanbanBoard) -> HomeDashboard {
         var attention: [HomeAttention] = []
         var running: [KanbanCard] = []
+        var paused: [KanbanCard] = []
+        var notStarted: [KanbanCard] = []
         var delivered: [KanbanCard] = []
         for card in board.cards {
+            // 1. En pause (pilote mort, « Reprendre » la relance par le pilote),
+            // quelle que soit sa colonne : une question ou un jalon au pilote mort
+            // attend d'abord d'être repris.
+            if KanbanActionPresentation.resumable(card) {
+                paused.append(card)
+                continue
+            }
             switch card.column {
             case .questionEnVol:
                 let prompt = card.action?.run?.pendingAsk?.question
@@ -97,19 +140,36 @@ public enum HomePresentation {
                 attention.append(HomeAttention(card: card, nature: .milestoneSpecs, prompt: HomeText.specsPrompt))
             case .jalonReview:
                 attention.append(HomeAttention(card: card, nature: .milestoneReview, prompt: HomeText.reviewPrompt))
-            case .enAttente, .enCours:
-                running.append(card)
             case .echec:
-                // Une carte `en-cours` au pilote mort est rangée en échec ; elle
-                // reste « en cours » ici tant que « Reprendre » peut la relancer.
-                if KanbanActionPresentation.resumable(card) { running.append(card) }
-            case .prOuverte, .fusionne:
+                // Seule une feature de lot relançable remonte ; les runs
+                // d'historique et les échecs de projet n'ont aucun geste.
+                if KanbanActionPresentation.relaunchable(card) {
+                    attention.append(HomeAttention(card: card, nature: .failed, prompt: HomeText.failedPrompt(card.phase)))
+                }
+            case .bloquee:
+                if KanbanActionPresentation.relaunchable(card) {
+                    attention.append(HomeAttention(card: card, nature: .blocked, prompt: HomeText.blockedPrompt(card.phase)))
+                }
+            case .enCours:
+                running.append(card)
+            case .enAttente:
+                notStarted.append(card)
+            case .prOuverte, .prCreee, .fusionne, .prFermee:
                 if delivered.count < deliveredLimit { delivered.append(card) }
-            case .bloquee, .termineeSansPr, .annuleeRetiree:
+            case .termineeSansPr, .annuleeRetiree:
                 break
             }
         }
-        return HomeDashboard(attention: attention, running: running, delivered: delivered)
+        return HomeDashboard(
+            attention: attention, running: running, paused: paused, notStarted: notStarted, delivered: delivered
+        )
+    }
+
+    /// Les comptes de l'item de barre de menus : « À vous » et « En cours » de
+    /// l'Accueil. Les pauses et les features pas commencées ne comptent jamais.
+    public static func counts(_ board: KanbanBoard) -> HomeCounts {
+        let dashboard = dashboard(board)
+        return HomeCounts(attention: dashboard.attention.count, running: dashboard.running.count)
     }
 
     /// Le nombre d'attentes (badge de la barre latérale), 0 hors tableau de bord.
@@ -119,8 +179,8 @@ public enum HomePresentation {
     }
 
     /// Le geste du bouton d'une carte d'attente : répondre tant qu'elle attend une
-    /// réponse, valider ou accepter un jalon actionnable, sinon l'ouvrir dans
-    /// Pipelines.
+    /// réponse, valider ou accepter un jalon actionnable, relancer une pipeline en
+    /// échec ou bloquée, sinon l'ouvrir dans Pipelines.
     public static func cardAction(_ attention: HomeAttention) -> HomeCardAction {
         let zones = KanbanActionPresentation.zones(for: attention.card)
         switch attention.nature {
@@ -134,13 +194,15 @@ public enum HomePresentation {
             if zones.contains(where: { if case .milestone(_, .review) = $0 { true } else { false } }) {
                 return .accept
             }
+        case .failed, .blocked:
+            return .relaunch
         }
         return .open
     }
 
     /// La carte d'attente dont le bouton est PROÉMINENT : la première qui offre
-    /// un vrai geste (répondre, valider, accepter). Un seul bouton proéminent à
-    /// l'écran (HIG Buttons) ; « Voir dans Pipelines » ne l'est jamais.
+    /// un vrai geste (répondre, valider, accepter, relancer). Un seul bouton
+    /// proéminent à l'écran (HIG Buttons) ; « Voir dans Pipelines » ne l'est jamais.
     public static func prominentAttentionID(_ dashboard: HomeDashboard) -> String? {
         dashboard.attention.first { cardAction($0) != .open }?.id
     }
@@ -148,7 +210,8 @@ public enum HomePresentation {
     /// Le dépôt se lit sous chaque carte et ligne seulement quand le tableau de
     /// bord en montre plusieurs : un dépôt unique répété partout est du bruit.
     public static func showsRepo(_ dashboard: HomeDashboard) -> Bool {
-        let cards = dashboard.attention.map(\.card) + dashboard.running + dashboard.delivered
+        let cards = dashboard.attention.map(\.card) + dashboard.running + dashboard.paused
+            + dashboard.notStarted + dashboard.delivered
         return Set(cards.map(\.repo)).count > 1
     }
 

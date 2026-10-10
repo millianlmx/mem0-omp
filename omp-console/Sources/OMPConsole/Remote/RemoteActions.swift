@@ -145,6 +145,13 @@ final class RemoteActions {
     func resume(cardId: String) async throws -> RemoteAcceptedPayload {
         let card = try card(cardId)
         let action = try action(card)
+        // Une feature de lot en échec ou bloquée se RELANCE par la commande de
+        // service `relaunch` (S-3 de accueil-en-cours-melange-pause-et-compte) :
+        // même route, même charge utile, donc un client iOS déjà installé obtient
+        // la relance sans mise à jour. Toute autre carte garde la reprise du pilote.
+        if KanbanActionPresentation.relaunchable(card) {
+            return try await relaunch(action)
+        }
         guard action.repoRoot != nil else { throw ConsoleAPIError.conflict("carte sans dépôt") }
         guard let entryId = actions.resume(action) else {
             // Carte sans dépôt : le geste n'a rien à armer (l'effet de bord
@@ -171,6 +178,28 @@ final class RemoteActions {
             throw ConsoleAPIError.unavailable(message)
         }
         return RemoteAcceptedPayload(accepted: true)
+    }
+
+    /// La relance d'une carte relançable : la réponse attend l'accusé du service
+    /// (`commandTask`), puis relit l'entrée de journal par l'identifiant de la
+    /// commande. Un refus est un 409 au motif du service, une panne d'envoi un 503.
+    private func relaunch(_ action: KanbanCardAction) async throws -> RemoteAcceptedPayload {
+        guard let entryId = actions.relaunch(action) else {
+            throw ConsoleAPIError.server("le geste de reprise n'a rien consigné")
+        }
+        let task = actions.commandTask
+        await task?.value
+        guard let entry = actions.journal.first(where: { $0.id == entryId }) else {
+            throw ConsoleAPIError.server("le geste de reprise n'a rien consigné")
+        }
+        switch entry.state {
+        case .refused(let reason):
+            throw ConsoleAPIError.conflict(reason ?? "relance refusée")
+        case .failed(let reason):
+            throw ConsoleAPIError.unavailable(reason)
+        default:
+            return RemoteAcceptedPayload(accepted: true)
+        }
     }
 
     func stop(cardId: String) async throws -> RemoteAcceptedPayload {
@@ -216,24 +245,13 @@ final class RemoteActions {
     /// dédupliqués par chemin puis triés. La clé est celle du pilote
     /// (`KanbanRepoKey`, seule implémentation), jamais recalculée.
     func knownRepos() -> [RemoteRepoRow] {
-        let snapshot = hub.current()
-        var roots = Set<String>()
-        for lot in snapshot.lots.lots where !lot.repoRoot.isEmpty {
-            roots.insert(realpathOr(lot.repoRoot))
+        KnownProjects.roots(in: hub.current()).map { path in
+            RemoteRepoRow(
+                repoKey: KanbanRepoKey.key(forRoot: path),
+                repoRoot: path,
+                name: (path as NSString).lastPathComponent
+            )
         }
-        for project in snapshot.projects.projects where !project.repoRoot.isEmpty {
-            roots.insert(realpathOr(project.repoRoot))
-        }
-        return roots
-            .filter { LaunchRepo.isGitRoot(path: $0) }
-            .sorted()
-            .map { path in
-                RemoteRepoRow(
-                    repoKey: KanbanRepoKey.key(forRoot: path),
-                    repoRoot: path,
-                    name: (path as NSString).lastPathComponent
-                )
-            }
     }
 
     /// L'état réduit de la conduite (S-11, S-9) : même source que l'en-tête macOS,
@@ -546,6 +564,14 @@ final class RemoteActions {
         await self.project.confirmMerge()
         if let failure = self.project.prActionFailure { throw ConsoleAPIError.server(failure) }
         return RemoteMergedPayload(merged: true, number: proposal.number ?? row.number, url: row.url)
+    }
+
+    /// Le rafraîchissement manuel des faits de PR (S-6 de pipelines-livrees) :
+    /// lancé SANS être attendu, accepté même quand `gh` est absent — le résultat
+    /// arrive par la trame `pull-request-states`.
+    func refreshPullRequestStates() -> RemoteAcceptedPayload {
+        kanban.refreshPullRequestStates()
+        return RemoteAcceptedPayload(accepted: true)
     }
 
     /// `gh` absent : la route le dit en `503`, jamais en `500` (S-12).

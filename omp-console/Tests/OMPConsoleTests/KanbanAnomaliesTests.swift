@@ -4,6 +4,7 @@
 // fichiers (tronqué, `version: 2`, pid mort, lien symbolique), donc un mock ne les
 // prouverait pas.
 
+import AppKit
 import Foundation
 import Testing
 @testable import OMPConsole
@@ -293,14 +294,14 @@ func normalPairingIsNotADuplicate() throws {
 func boardStateDistinguishesAbsentEmptyAndBoard() async {
     // (a) RACINE ABSENTE : aucun répertoire n'est créé.
     let absent = StoreFixture(stores: [])
-    let absentModel = KanbanModel(hub: StoreHub(stateDir: absent.root, nowMs: { fixtureT0 }))
+    let absentModel = KanbanModel(hub: StoreHub(stateDir: absent.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { absentModel.stop() }
     absentModel.start()
     #expect(await awaitMainTrue { absentModel.state == .storeAbsent(dir: absent.root) })
 
     // (b) MAGASIN VIDE : la racine et ses six répertoires existent, aucun fichier.
     let empty = StoreFixture()
-    let emptyModel = KanbanModel(hub: StoreHub(stateDir: empty.root, nowMs: { fixtureT0 }))
+    let emptyModel = KanbanModel(hub: StoreHub(stateDir: empty.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { emptyModel.stop() }
     emptyModel.start()
     #expect(await awaitMainTrue { emptyModel.state == .storeEmpty(dir: empty.root) })
@@ -309,7 +310,7 @@ func boardStateDistinguishesAbsentEmptyAndBoard() async {
     // les anomalies ne sont jamais tues.
     let illisible = StoreFixture()
     illisible.put(.running, "\(fixtureId(0xe7)).json", text: "{\"version\":1,")
-    let illisibleModel = KanbanModel(hub: StoreHub(stateDir: illisible.root, nowMs: { fixtureT0 }))
+    let illisibleModel = KanbanModel(hub: StoreHub(stateDir: illisible.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { illisibleModel.stop() }
     illisibleModel.start()
     #expect(await awaitMainTrue { illisibleModel.state.kanbanBoard != nil })
@@ -321,7 +322,7 @@ func boardStateDistinguishesAbsentEmptyAndBoard() async {
 @Test("kanban-des-pipelines/AC-14 : une racine créée pendant la session cesse d'être « absente »")
 func rootAppearingDuringTheSessionIsSeen() async {
     let fixture = StoreFixture(stores: [])
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state == .storeAbsent(dir: fixture.root) })
@@ -332,4 +333,142 @@ func rootAppearingDuringTheSessionIsSeen() async {
         try? FileManager.default.createDirectory(atPath: fixture.directory(store), withIntermediateDirectories: true)
     }
     #expect(await awaitMainTrue { model.state == .storeEmpty(dir: fixture.root) })
+}
+
+// MARK: - jargon-technique-expose-mac-et-ios : la bulle « n problèmes » (S-2)
+
+/// Les pids « morts » de la bulle : 1234 (run) et 5678/9012 (lots). Une vivacité
+/// INJECTÉE, pas `processLocal` : un pid choisi peut vivre sur la machine.
+private let bubbleLiveness = PipelineLiveness { pid in
+    guard let pid else { return false }
+    return ![1234, 5678, 9012].contains(pid)
+}
+
+/// L'ardoise de la bulle : un run au propriétaire mort (pid 1234), un
+/// `lots/<k>.json` illisible, un lot mort REPRENABLE (deux features vivantes),
+/// un lot mort dont toutes les features sont closes, et deux features de même
+/// slug (doublon).
+private func bubbleBoard() -> (board: KanbanBoard, runLabel: String, resumableKey: String, closedKey: String) {
+    let fixture = StoreFixture()
+    let runId = fixtureId(0xb1)
+    let runLabel = "mem0-omp/cache-sessions"
+    fixture.publish(
+        .running, "\(runId).json",
+        object: runningObject(
+            id: runId, cwd: "/tmp/kanban/bulle-run", label: runLabel,
+            phaseStartedAt: fixtureT0 - 5_000, updatedAt: fixtureT0 - 1_000, ownerPid: 1234
+        )
+    )
+    fixture.put(.lots, "\(KanbanRepoKey.key(forRoot: "/tmp/kanban/bulle-illisible")).json", text: "{\"version\":1,")
+
+    let resumableRoot = "/tmp/kanban/bulle-reprenable"
+    let resumableKey = KanbanRepoKey.key(forRoot: resumableRoot)
+    fixture.publish(
+        .lots, "\(resumableKey).json",
+        object: lotObject(
+            id: resumableKey, repoRoot: resumableRoot,
+            features: [
+                lotFeatureObject(slug: "zeta", state: "running", worktree: "/tmp/kanban/bulle-zeta"),
+                lotFeatureObject(slug: "alpha", state: "waiting", phase: "specs",
+                                 worktree: "/tmp/kanban/bulle-alpha", waitKind: "specs"),
+                lotFeatureObject(slug: "double", worktree: "/tmp/kanban/bulle-double"),
+                lotFeatureObject(slug: "double", worktree: "/tmp/kanban/bulle-double"),
+            ],
+            ownerPid: 5678
+        )
+    )
+
+    let closedRoot = "/tmp/kanban/bulle-close"
+    let closedKey = KanbanRepoKey.key(forRoot: closedRoot)
+    fixture.publish(
+        .lots, "\(closedKey).json",
+        object: lotObject(
+            id: closedKey, repoRoot: closedRoot,
+            features: [
+                lotFeatureObject(slug: "livree", state: "done", phase: "review",
+                                 worktree: "/tmp/kanban/bulle-livree", endedAt: fixtureT0 - 1_000),
+            ],
+            ownerPid: 9012
+        )
+    )
+    return (kanbanBoard(fixture, liveness: bubbleLiveness), runLabel, resumableKey, closedKey)
+}
+
+/// Les jetons interdits d'un texte affiché (conventions des specs) : `\b\d{3}\b`
+/// couvre un code HTTP ; `/` est l'indice d'un chemin. Partagé par les gardes
+/// AC-1 et AC-6 de jargon-technique-expose-mac-et-ios.
+func forbiddenTokens(in text: String) -> [String] {
+    let literal = ["pid", "JSON", "http", "OMLX_API_TOKEN", "PTY", "podman", "lsof", "stderr", "/", ".json", ".jsonl"]
+    var found = literal.filter { text.localizedCaseInsensitiveContains($0) }
+    if text.range(of: #"\b\d{3}\b"#, options: .regularExpression) != nil { found.append("nombre à 3 chiffres") }
+    if text.range(of: #"\bmort\b"#, options: .regularExpression) != nil { found.append("mort") }
+    return found
+}
+
+@Test("jargon-technique-expose-mac-et-ios/AC-1 : chaque ligne de la bulle dit une conséquence et un geste, sans pid, 1234, JSON, marque brute ni chemin")
+func bubbleLinesSpeakConsequenceAndGesture() throws {
+    let (board, runLabel, resumableKey, closedKey) = bubbleBoard()
+    #expect(board.anomalies.map(\.kind) == [.illisible, .mort, .mort, .mort, .doublon])
+
+    for anomaly in board.anomalies {
+        // Le nom de la pipeline (`<dépôt>/<feature>`) est le titre de sa carte,
+        // pas un chemin : il est retiré avant la recherche des jetons.
+        let sentence = anomaly.text.replacingOccurrences(of: runLabel, with: "")
+        #expect(forbiddenTokens(in: sentence).isEmpty, "phrase : \(anomaly.text)")
+        #expect(!anomaly.text.contains("1234"))
+        switch anomaly.gesture {
+        case .instruction(let instruction):
+            #expect(!instruction.isEmpty)
+            #expect(forbiddenTokens(in: instruction).isEmpty, "consigne : \(instruction)")
+            #expect(!instruction.contains("1234"))
+        case .resume(let cardId):
+            #expect(board.cards.contains { $0.id == cardId })
+        }
+    }
+
+    // Les phrases, mot pour mot (S-2) ; les deux lots morts sont rangés par clé
+    // de dépôt croissante.
+    let deadLots = [
+        (resumableKey, "Le pilote de bulle-reprenable s'est arrêté : ses pipelines n'avancent plus."),
+        (closedKey, "Le pilote de bulle-close s'est arrêté : ses pipelines n'avancent plus."),
+    ].sorted { $0.0 < $1.0 }.map(\.1)
+    #expect(board.anomalies.map(\.text) == [
+        KanbanText.anomalyUnreadable,
+        "\(runLabel) s'est arrêtée de façon inattendue et n'avance plus.",
+    ] + deadLots + [
+        "Deux sources décrivent la même pipeline : double. Le tableau n'en montre qu'une.",
+    ])
+
+    // `.resume` exactement pour le lot reprenable, sur sa PREMIÈRE carte
+    // reprenable par `id` croissant ; le lot clos reçoit sa consigne.
+    let resumes = board.anomalies.compactMap { anomaly -> String? in
+        if case .resume(let cardId) = anomaly.gesture { return cardId }
+        return nil
+    }
+    #expect(resumes == ["feature:\(resumableKey):alpha"])
+    let closedLine = try #require(board.anomalies.first { $0.text.contains("bulle-close") })
+    #expect(closedLine.gesture == .instruction(KanbanText.anomalyDeadLotNothingToResume))
+    let runLine = try #require(board.anomalies.first { $0.text.hasPrefix(runLabel) })
+    #expect(runLine.gesture == .instruction(KanbanText.anomalyDeadRunGesture))
+    #expect(board.anomalies.first?.gesture == .instruction(KanbanText.anomalyUnreadableGesture))
+    #expect(board.anomalies.last?.gesture == .instruction(KanbanText.anomalyDuplicateGesture))
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-2 : « Copier le diagnostic » de la bulle met le détail brut de chaque anomalie, pid 1234 compris")
+func bubbleDiagnosticCarriesEveryRawDetail() throws {
+    let (board, _, _, _) = bubbleBoard()
+    let report = KanbanText.diagnosticReport(board.anomalies)
+    #expect(report.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+            == board.anomalies.map(\.detail))
+    #expect(report.contains("pid 1234"))
+    #expect(report.contains("pid 5678"))
+    #expect(report.contains("JSON illisible"))
+
+    // La même chaîne, passée par le presse-papiers (nommé unique, jamais celui de
+    // l'utilisateur), se relit à l'identique.
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    DiagnosticPasteboard.copy(report, to: pasteboard)
+    #expect(pasteboard.string(forType: .string) == report)
 }

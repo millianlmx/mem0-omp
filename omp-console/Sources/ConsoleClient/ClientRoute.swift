@@ -1,4 +1,4 @@
-// Le catalogue des routes du client (S-1) : l'image EXACTE des 37 routes servies
+// Le catalogue des routes du client (S-1) : l'image EXACTE des 38 routes servies
 // par la coque (`RemoteRouter.routes`), méthode et chemin mis à part. Un test
 // confronte les deux — c'est le seul garde-fou contre une route oubliée.
 
@@ -30,7 +30,7 @@ public struct ClientRoute: Equatable, Sendable {
 }
 
 public extension ClientRoute {
-    /// La liste UNIQUE des routes du client : 37 entrées, ni plus ni moins.
+    /// La liste UNIQUE des routes du client : 38 entrées, ni plus ni moins.
     static let all: [ClientRoute] = [
         ClientRoute(name: "version", method: "GET", path: "/v1/version"),
         ClientRoute(name: "store", method: "GET", path: "/v1/store"),
@@ -45,11 +45,12 @@ public extension ClientRoute {
         ClientRoute(name: "components", method: "GET", path: "/v1/components"),
         ClientRoute(name: "journal", method: "GET", path: "/v1/journal"),
         ClientRoute(name: "card.contract", method: "GET", path: "/v1/cards/{id}/contract"),
-        ClientRoute(name: "memory", method: "GET", path: "/v1/memory"),
+        ClientRoute(name: "memory.page", method: "GET", path: "/v1/memory/page"),
         ClientRoute(name: "memory.search", method: "GET", path: "/v1/memory/search"),
         ClientRoute(name: "memory.graph", method: "GET", path: "/v1/memory/graph"),
         ClientRoute(name: "stream", method: "GET", path: "/v1/stream"),
         ClientRoute(name: "pair", method: "POST", path: "/v1/pair"),
+        ClientRoute(name: "devices.forget", method: "DELETE", path: "/v1/devices/self"),
         ClientRoute(name: "card.answer", method: "POST", path: "/v1/cards/{id}/answer"),
         ClientRoute(name: "card.reply", method: "POST", path: "/v1/cards/{id}/reply"),
         ClientRoute(name: "card.text", method: "POST", path: "/v1/cards/{id}/text"),
@@ -73,5 +74,6 @@ public extension ClientRoute {
             method: "POST",
             path: "/v1/projects/{repoKey}/pull-requests/{slug}/merge"
         ),
+        ClientRoute(name: "prStates.refresh", method: "POST", path: "/v1/pull-request-states/refresh"),
     ]
 }

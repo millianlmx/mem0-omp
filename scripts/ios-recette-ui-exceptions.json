@@ -1,0 +1,200 @@
+[
+  {
+    "surface": "home",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.attention.feature:a93975b707dfed6e:specs-a-valider.action",
+    "justification": "HomeView.swift, attentionButton/styledButton : Button en .bordered ou .borderedProminent à la taille de contrôle par défaut, sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt, qui ne corrige que « Tout afficher », « Lire le contrat » et « Piloter un projet… »."
+  },
+  {
+    "surface": "home",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.attention.feature:a93975b707dfed6e:specs-a-valider.action",
+    "justification": "HomeView.swift, attentionButton/styledButton : Button en .bordered ou .borderedProminent à la taille de contrôle par défaut, sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt, qui ne corrige que « Tout afficher », « Lire le contrat » et « Piloter un projet… »."
+  },
+  {
+    "surface": "home",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.attention.feature:a93975b707dfed6e:revue-a-accepter.action",
+    "justification": "HomeView.swift, attentionButton/styledButton : Button en .bordered ou .borderedProminent à la taille de contrôle par défaut, sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt, qui ne corrige que « Tout afficher », « Lire le contrat » et « Piloter un projet… »."
+  },
+  {
+    "surface": "home",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.attention.feature:a93975b707dfed6e:revue-a-accepter.action",
+    "justification": "HomeView.swift, attentionButton/styledButton : Button en .bordered ou .borderedProminent à la taille de contrôle par défaut, sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt, qui ne corrige que « Tout afficher », « Lire le contrat » et « Piloter un projet… »."
+  },
+  {
+    "surface": "home",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.attention.run:aaaaaaaaaaaaaaa1.action",
+    "justification": "HomeView.swift, attentionButton/styledButton : Button en .bordered ou .borderedProminent à la taille de contrôle par défaut, sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt, qui ne corrige que « Tout afficher », « Lire le contrat » et « Piloter un projet… »."
+  },
+  {
+    "surface": "home",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.attention.run:aaaaaaaaaaaaaaa1.action",
+    "justification": "HomeView.swift, attentionButton/styledButton : Button en .bordered ou .borderedProminent à la taille de contrôle par défaut, sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt, qui ne corrige que « Tout afficher », « Lire le contrat » et « Piloter un projet… »."
+  },
+  {
+    "surface": "home",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.resume.feature:dd087f294c57be25:reprise",
+    "justification": "HomeView.swift, pausedRow : Button(KanbanText.resume) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+  },
+  {
+    "surface": "home",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.resume.feature:dd087f294c57be25:reprise",
+    "justification": "HomeView.swift, pausedRow : Button(KanbanText.resume) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+  },
+  {
+    "surface": "home",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.delivered.feature:ade5316c34182862:terminee",
+    "justification": "HomeView.swift, deliveredRow : Button(.plain) autour de deliveredLabel, dont la hauteur vient de .padding(.vertical, 8) sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+  },
+  {
+    "surface": "home",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.delivered.feature:ade5316c34182862:terminee",
+    "justification": "HomeView.swift, deliveredRow : Button(.plain) autour de deliveredLabel, dont la hauteur vient de .padding(.vertical, 8) sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+  },
+  {
+    "surface": "home",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.delivered.project:ddddddddddddddd1:livree-avec-pr",
+    "justification": "HomeView.swift, deliveredRow : Button(.plain) autour de deliveredLabel, dont la hauteur vient de .padding(.vertical, 8) sans .frame(minHeight: IOSMetrics.minimumTarget) ; même rangée « livrée » que la carte terminee, 42,7 pt déjà sur la base 032a0df. Hors du périmètre de accessibilite-et-localisation-ios-residu (non-objectifs communs)."
+  },
+  {
+    "surface": "home",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.home.delivered.project:ddddddddddddddd1:livree-avec-pr",
+    "justification": "HomeView.swift, deliveredRow : Button(.plain) autour de deliveredLabel, dont la hauteur vient de .padding(.vertical, 8) sans .frame(minHeight: IOSMetrics.minimumTarget) ; même rangée « livrée » que la carte terminee, 42,7 pt déjà sur la base 032a0df. Hors du périmètre de accessibilite-et-localisation-ios-residu (non-objectifs communs)."
+  },
+  {
+    "surface": "home",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "id-duplique",
+    "source": "ax",
+    "element": "id:ios.status",
+    "justification": "Design/IOSStatusChip.swift : IOSStatusChip porte l'identifiant fixe « ios.status » sur chaque pastille, et HomeView.swift en affiche une par rangée (runningRow, deliveredLabel) : plusieurs éléments partagent donc l'identifiant sur l'Accueil. Hors du périmètre des trois branches intégrées."
+  },
+  {
+    "surface": "kanban",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Pipelines",
+    "justification": "PipelinesScreen.swift : .navigationTitle(ConsoleSection.kanban.title) ; la barre de navigation système de la NavigationStack est pleine largeur par construction, et son identifiant est le titre."
+  },
+  {
+    "surface": "home",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Accueil",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.home.title) : pleine largeur par construction, et son identifiant est le titre. Relevée identique sur la base 032a0df (recette accessibilite-et-localisation-ios-residu --avant)."
+  },
+  {
+    "surface": "project",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Projet",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.project.title) : pleine largeur par construction, et son identifiant est le titre. Relevée identique sur la base 032a0df (recette accessibilite-et-localisation-ios-residu --avant)."
+  },
+  {
+    "surface": "session",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Session OMP",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.session.title) : pleine largeur par construction, et son identifiant est le titre."
+  },
+  {
+    "surface": "sessions",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Sessions",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.sessions.title) : pleine largeur par construction, et son identifiant est le titre."
+  },
+  {
+    "surface": "stats",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Statistiques",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.stats.title) : pleine largeur par construction, et son identifiant est le titre."
+  },
+  {
+    "surface": "sessions",
+    "apparence": "clair",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.sessions.filter",
+    "justification": "IOSSessionsScreen.swift, listBody : Picker(.menu) du filtre de projet sans .frame(minHeight: IOSMetrics.minimumTarget) ; hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+  },
+  {
+    "surface": "sessions",
+    "apparence": "sombre",
+    "taille": "defaut",
+    "regle": "cible-44",
+    "source": "ax",
+    "element": "id:ios.sessions.filter",
+    "justification": "IOSSessionsScreen.swift, listBody : Picker(.menu) du filtre de projet sans .frame(minHeight: IOSMetrics.minimumTarget) ; hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+  },
+  {
+    "surface": "memory",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Mémoire",
+    "justification": "IOSMemoryScreen.swift, panel : .navigationTitle(ConsoleSection.memory.title) ; la barre de navigation système de la NavigationStack est pleine largeur par construction, et son identifiant est le titre."
+  }
+]

@@ -122,7 +122,7 @@ function mirrorFaults(root: string): string[] {
 
   const expected: Record<string, string[]> = {
     RemoteStatsProject: ["key", "label"],
-    RemoteStatsFeature: ["slug", "input", "output", "turns", "durationMs", "liveRuns", "model"],
+    RemoteStatsFeature: ["slug", "input", "output", "cacheRead", "cacheWrite", "turns", "durationMs", "liveRuns", "model"],
     RemoteStatsPayload: ["projectKey", "project", "projects", "features", "hiddenPlanFeatures"],
   };
   for (const [name, fields] of Object.entries(expected)) {
@@ -149,11 +149,11 @@ function mirrorFaults(root: string): string[] {
   if (/stats:\s*StatsModel/.test(reads)) faults.push("RemoteReads dépend encore de StatsModel");
   if (!/func statistics\(project: String\?\)/.test(reads)) faults.push("RemoteReads.statistics n'a pas le paramètre project");
   if (!/SessionMetricsCache/.test(reads)) faults.push("RemoteReads n'emploie pas SessionMetricsCache");
-  // La route est INCHANGÉE : 37 entrées (les routes de la session hébergée s'y sont ajoutées), et le paramètre est lu de la requête.
+  // La route est INCHANGÉE : 39 entrées (les routes de la session hébergée, `devices.forget` puis le rafraîchissement des faits de PR s'y sont ajoutés), et le paramètre est lu de la requête.
   const router = repoCode(root, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteRouter.swift"));
   const routes = router.split("static let routes: [Route] = [")[1]?.split("]")[0] ?? "";
   const count = (routes.match(/\.of\(/g) ?? []).length;
-  if (count !== 37) faults.push(`${count} routes servies (37 attendues)`);
+  if (count !== 39) faults.push(`${count} routes servies (39 attendues)`);
   if (!/case "stats":\s*\n\s*return try json\(reads\.statistics\(project: request\.query\["project"\]\)\)/.test(router)) {
     faults.push("le case « stats » ne lit pas le paramètre project de la requête");
   }
@@ -171,16 +171,16 @@ function screenFaults(root: string): string[] {
   if (text === "") return ["IOSStatsText.swift absent"];
   if (content === "") return ["IOSStatsContent.swift absent"];
 
-  // Les SIX états de S-4 existent, chacun identifié.
+  // Les états de S-4 existent, chacun identifié. L'état « non connecté » est le
+  // composant partagé (etats-non-connecte-heterogenes-ios, S-4) : plus de
+  // bandeau propre à la section.
   for (const token of [
-    "case .degraded(let message):",
     "case .loading:",
     "case .error(let message):",
     "case .noProject:",
     "case .empty:",
     "case .board:",
     "StatsAccessibility.loading",
-    "StatsAccessibility.banner",
     "StatsAccessibility.error",
     "StatsAccessibility.noProject",
     "StatsAccessibility.empty",
@@ -188,7 +188,6 @@ function screenFaults(root: string): string[] {
     "StatsAccessibility.hidden",
     "StatsAccessibility.project",
     "ConnectionText.retry",
-    "KanbanBoardState.loadingText",
     "ScrollView(.vertical)",
   ]) {
     if (!screen.includes(token)) faults.push(`IOSStatsScreen ne porte pas ${token}`);
@@ -255,7 +254,7 @@ function screenFaults(root: string): string[] {
   }
 
   // Le dispatch : la section `.stats` route vers l'écran réel, sur le patron des autres.
-  if (!/section == \.stats \{\s*\n\s*IOSStatsScreen\(client: client\)/.test(view)) {
+  if (!/section == \.stats \{\s*\n\s*IOSStatsScreen\(client: client\b/.test(view)) {
     faults.push("IOSSectionView ne route pas .stats vers IOSStatsScreen");
   }
   return faults;
@@ -276,10 +275,10 @@ function advanceFaults(root: string): string[] {
   const model = repoCode(root, path.join("omp-console", "Sources", "ConsoleClient", "ConsoleClientModel.swift"));
   if (!/func statistics\(project: String\? = nil\)/.test(model)) faults.push("statistics n'a pas de paramètre project");
   if (!/"\/v1\/stats\?project=" \+ encode\(/.test(model)) faults.push("statistics n'encode pas la clé du projet");
-  // Le catalogue de routes est INCHANGÉ.
+  // Le catalogue de routes reste l'image des routes servies (39 depuis `devices.forget` et le rafraîchissement des faits de PR).
   const catalog = repoCode(root, path.join("omp-console", "Sources", "ConsoleClient", "ClientRoute.swift"));
   const entries = (catalog.match(/Route\(/g) ?? []).length;
-  if (entries !== 37) faults.push(`ClientRoute porte ${entries} constructions (37 attendues)`);
+  if (entries !== 39) faults.push(`ClientRoute porte ${entries} constructions (39 attendues)`);
   // Aucune scrutation : l'écran n'arme aucune minuterie, il suit le client.
   const screen = appFile(root, "IOSStatsScreen.swift");
   for (const token of [
@@ -398,7 +397,7 @@ test("ios-statistiques/AC-1 : la route sert une entrée par feature, et les deux
 
   const replant = copyRepo();
   const view = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
-  fs.writeFileSync(view, code(view).replace("IOSStatsScreen(client: client)", "EmptyView()"));
+  fs.writeFileSync(view, code(view).replace(/IOSStatsScreen\(client: client[^)]*\)/, "EmptyView()"));
   assert.ok(screenFaults(replant).some((f) => f.includes("route pas .stats")), "une section non routée doit faire rougir la garde");
 });
 

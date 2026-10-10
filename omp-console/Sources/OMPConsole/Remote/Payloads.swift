@@ -13,11 +13,15 @@ import Foundation
 enum RemoteLimits {
     static let responseBody = 2 * 1024 * 1024
     static let sessionEntries = 2000
-    /// Le sommaire mémoire, borné en NOMBRE comme ses voisines : au-delà, la
-    /// charge dépasserait la borne de corps et le client refuserait la réponse.
-    static let memoryRows = 2000
+    /// La taille par défaut d'une page de mémoire (`GET /v1/memory/page`) : la
+    /// liste se lit par tranches, jamais d'un seul bloc.
+    static let memoryPageSize = 100
     static let transcriptLines = 500
     static let memoryLimitMax = 200
+    /// La borne d'octets PROPRE au graphe : le graphe d'une portée réelle
+    /// (~1 600 souvenirs avec texte et étiquettes) pèse ~3 Mo, au-delà de
+    /// `responseBody` ; il est servi entier tant qu'il tient sous cette borne.
+    static let memoryGraphBody = 16 * 1024 * 1024
 }
 
 // MARK: - Lectures
@@ -174,6 +178,8 @@ struct RemoteStatsFeature: Codable, Equatable, Sendable {
     var slug: String
     var input: Int
     var output: Int
+    var cacheRead: Int
+    var cacheWrite: Int
     var turns: Int
     var durationMs: Double
     var liveRuns: Int
@@ -217,10 +223,14 @@ struct RemoteReposPayload: Codable, Equatable, Sendable {
 /// L'état RÉEL des composants de la coque (S-4) : `ompPath` porte le chemin du
 /// binaire OMP quand il est présent, `nil` sinon ; `setupBanner` la phrase de
 /// `SetupText.banner(state:dismissed: true)` (non nulle en préparation/échec).
+/// `homeDirectory` est le dossier personnel du Mac (l'app n'est pas sandboxée) :
+/// l'app iOS s'en sert pour abréger les chemins en « ~/… ». Toute construction
+/// le porte sans le nommer.
 struct RemoteComponentsPayload: Codable, Equatable {
     var ompInstalled: Bool
     var ompPath: String?
     var setupBanner: String?
+    var homeDirectory: String? = NSHomeDirectory()
 }
 
 /// Le journal des gestes, servi tel quel (S-5) : borné par le modèle.
@@ -254,14 +264,16 @@ struct RemoteMemoryRow: Codable, Equatable {
     }
 }
 
-/// Le sommaire d'une portée (S-1) : `scope` vaut `nil` quand AUCUN projet n'est
-/// ouvert — c'est LE signal de « aucun projet », sans champ booléen séparé ;
-/// `truncated` dit qu'une ligne a été retirée par la borne de nombre ou d'octets.
+/// Une page du sommaire d'une portée (S-1) : `scope` vaut `nil` quand AUCUN projet
+/// n'est ouvert — c'est LE signal de « aucun projet », sans champ booléen séparé.
+/// `total` est le total du service, `offset` le rang de la première ligne servie,
+/// `nextOffset` le rang de la page suivante, ABSENT quand la portée est épuisée.
 struct RemoteMemoryPagePayload: Codable, Equatable {
     var scope: String?
     var total: Int
+    var offset: Int
     var rows: [RemoteMemoryRow]
-    var truncated: Bool
+    var nextOffset: Int?
 }
 
 struct RemoteMemorySearchPayload: Codable, Equatable {
@@ -290,11 +302,14 @@ struct RemoteMemoryGraphLink: Codable, Equatable {
 }
 
 struct RemoteMemoryGraphPayload: Codable, Equatable {
+    /// La portée RÉSOLUE du graphe ; `nil` quand aucun projet n'est ouvert.
+    var scope: String?
     var nodes: [RemoteMemoryGraphNode]
     var links: [RemoteMemoryGraphLink]
     var total: Int
-    /// Vrai dès qu'une LIGNE a été retirée par l'une des deux bornes (nombre ou
-    /// octets) — le graphe affiché est alors partiel, et l'app le dit.
+    /// Vrai dès qu'une LIGNE a été retirée par la borne d'octets du graphe
+    /// (`RemoteLimits.memoryGraphBody`) — le graphe affiché est alors partiel, et
+    /// l'app le dit.
     var truncated: Bool
 }
 
@@ -304,6 +319,7 @@ extension RemoteMemoryGraphPayload {
     /// garder l'init memberwise utilisé par `RemoteReads.graphPayload`.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope)
         nodes = try container.decode([RemoteMemoryGraphNode].self, forKey: .nodes)
         links = try container.decode([RemoteMemoryGraphLink].self, forKey: .links)
         total = try container.decode(Int.self, forKey: .total)
@@ -349,13 +365,23 @@ struct RemotePullRequestsPayload: Codable, Equatable {
     var stale: Bool
 }
 
+/// Les faits de PR de l'ardoise (S-6 de pipelines-livrees-statut-pr-faux-et-doub),
+/// trame SSE `pull-request-states` : la liste ENTIÈRE à chaque fois, triée par URL,
+/// et l'état de relecture du Mac.
+struct RemotePullRequestStatesPayload: Codable, Equatable {
+    var facts: [PullRequestFact]
+    var refreshing: Bool
+}
+
 /// Le catalogue des modèles servis par `omp models --json` (S-14) : les sélecteurs
 /// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué (la
 /// liste est alors vide). Le client affiche le motif — ce n'est pas une erreur de
-/// transport.
+/// transport. `names` (sélecteur → nom lisible) est ADDITIF et optionnel : absent
+/// d'un Mac antérieur et en cas d'échec.
 struct RemoteModelsPayload: Codable, Equatable {
     var selectors: [String]
     var failure: String?
+    var names: [String: String]? = nil
 }
 
 struct RemoteMergedPayload: Codable, Equatable {
@@ -400,6 +426,8 @@ struct TranscriptLine: Identifiable, Equatable, Sendable, Codable {
 struct RemotePairRequest: Decodable, Equatable {
     var code: String
     var name: String
+    /// L'identité de l'installation cliente ; absente pour un client d'avant.
+    var deviceKey: String?
     var protocolVersion: Int?
 }
 

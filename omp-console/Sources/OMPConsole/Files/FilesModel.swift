@@ -51,9 +51,9 @@ final class FilesModel: ObservableObject {
     /// raison pour laquelle il n'y a pas de diff.
     @Published private(set) var diffBase: FilesBase?
     @Published private(set) var content: FilesContent?
-    @Published private(set) var diffFailure: String?
-    @Published private(set) var notice: String?
-    @Published private(set) var errorMessage: String?
+    @Published private(set) var diffFailure: ReadableFailure?
+    @Published private(set) var notice: ReadableFailure?
+    @Published private(set) var errorMessage: ReadableFailure?
     @Published private(set) var isLoading = false
     /// Ce que montre le document (S-18 R5) : rendu ou source d'un Markdown, contenu
     /// d'un fichier de code, diff. Le choix survit au changement de fichier ; un
@@ -64,7 +64,7 @@ final class FilesModel: ObservableObject {
     var nodes: [FilesNode] { tree?.nodes ?? [] }
 
     private let git: GitCLI?
-    private let gitFailure: String?
+    private let gitFailure: ReadableFailure?
     private let store: StoreReader
     private let defaults: UserDefaults
     private let fileManager: FileManager
@@ -110,7 +110,7 @@ final class FilesModel: ObservableObject {
                 self.gitFailure = nil
             case let .failure(error):
                 self.git = nil
-                self.gitFailure = error.userMessage
+                self.gitFailure = error.failure
             }
         }
         self.errorMessage = self.gitFailure
@@ -161,11 +161,11 @@ final class FilesModel: ObservableObject {
             }
             try await load(target: chosen, git: git, generation: generation)
             if let vanished {
-                notice = FilesError.targetGone(path: vanished).userMessage
+                notice = FilesError.targetGone(path: vanished).failure
             }
         } catch {
             guard generation == self.generation else { return }
-            errorMessage = FilesError.message(for: error)
+            errorMessage = FilesError.failure(for: error)
             targets = []
             target = nil
             publish(tree: nil)
@@ -344,7 +344,7 @@ final class FilesModel: ObservableObject {
             guard generation == self.generation else { return }
             // La liste des cibles reste affichée : c'est elle qui permet d'en
             // choisir une autre quand celle-ci a disparu.
-            errorMessage = FilesError.message(for: error)
+            errorMessage = FilesError.failure(for: error)
             publish(tree: nil)
             resetDocument()
             stopWatching()
@@ -361,7 +361,7 @@ final class FilesModel: ObservableObject {
         } catch {
             guard generation == self.generation else { return }
             publish(diff: nil)
-            diffFailure = FilesError.message(for: error)
+            diffFailure = FilesError.failure(for: error)
         }
     }
 
@@ -423,7 +423,7 @@ final class FilesModel: ObservableObject {
         let watcher = TreeWatcher(watch: target.path)
         self.watcher = watcher
         watchedPath = target.path
-        notice = watcher.isArmed ? nil : FilesError.watchFailed(path: target.path).userMessage
+        notice = watcher.isArmed ? nil : FilesError.watchFailed(path: target.path).failure
         watchTask = Task { [weak self] in
             for await _ in watcher.changes() {
                 guard let self else { return }

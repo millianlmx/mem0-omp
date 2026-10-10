@@ -24,3 +24,5 @@ omp-console/.build-recipe/
 omp-console/build/
 # DerivedData de l'app iOS (xcodebuild -derivedDataPath omp-console/.build-ios)
 omp-console/.build-ios/
+# DerivedData de l'app iOS signée ad hoc de scripts/mac-appairage-recette.sh --ios
+omp-console/.build-ios-recette/

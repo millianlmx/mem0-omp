@@ -78,7 +78,9 @@ final class RemoteServiceModel: ObservableObject {
             // Un changement de la présence des composants OU de l'état de
             // préparation pousse le même évènement `components` (S-4).
             componentsChanges: presenceChanges.merge(with: setupChanges).eraseToAnyPublisher(),
-            journalChanges: actions.$journal.voidChanges()
+            journalChanges: actions.$journal.voidChanges(),
+            pullRequestStates: { kanban.pullRequestStatesPayload() },
+            pullRequestStatesChanges: kanban.pullRequestStatesChanges()
         )
         let reads = RemoteReads(
             hub: storeHub,
@@ -194,20 +196,40 @@ final class RemoteServiceModel: ObservableObject {
         }
         return config
     }
+
+    /// La variable qui déplace le port d'écoute (S-10) : une instance de recette
+    /// lancée à côté de celle de l'utilisateur ne peut pas écouter sur 8787.
+    static let portEnvironmentKey = "OMP_CONSOLE_REMOTE_PORT"
+
+    /// Le port d'écoute : la valeur de `OMP_CONSOLE_REMOTE_PORT` si, rognée, c'est
+    /// un entier de 1 à 65535 ; sinon le port par défaut du service.
+    static func resolvedPort(environment: [String: String]) -> Int {
+        let raw = environment[portEnvironmentKey]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let port = Int(raw), (1...65535).contains(port) else {
+            return ConsoleAPI.Service.defaultPort
+        }
+        return port
+    }
 }
 
 /// Le modèle de la zone d'appairage (S-5, S-6) : le code affiché, son compte à
-/// rebours, et la révocation en cours.
+/// rebours, son échéance atteinte, et la révocation en cours.
 @MainActor
 final class PairingModel: ObservableObject {
     @Published private(set) var code: PairingCode?
     @Published private(set) var countdown: String?
+    /// Le code affiché a atteint son échéance (« Code expiré ») — jamais quand il a
+    /// été consommé par un appairage avant elle.
+    @Published private(set) var expired = false
     @Published private(set) var error: String?
     @Published private(set) var revoking: Set<UUID> = []
 
     private let registry: DeviceRegistry
     private let clock: RemoteClock
     private var timer: Timer?
+    /// Le dernier code affiché, gardé après son échéance pour que les relectures
+    /// suivantes disent encore « expiré » ; oublié quand il est consommé.
+    private var shown: PairingCode?
 
     init(registry: DeviceRegistry, clock: RemoteClock) {
         self.registry = registry
@@ -223,27 +245,39 @@ final class PairingModel: ObservableObject {
             error = failure.message ?? DeviceRegistry.loadMessage("raison inconnue")
             code = nil
             countdown = nil
+            expired = false
+            shown = nil
             stopTimer()
             return
         } catch {
             self.error = DeviceRegistry.loadMessage("raison inconnue")
+            expired = false
             return
         }
+        expired = false
         refresh()
         startTimer()
     }
 
-    /// Relit le code actif : à l'échéance, le code et le compte à rebours
-    /// disparaissent sans message d'erreur.
+    /// Relit le code actif. À l'échéance, le code et le compte à rebours cèdent la
+    /// place à « Code expiré » ; consommé avant, il disparaît sans mot.
     func refresh() {
         let now = clock.nowMs()
         registry.pruneExpiredCode(at: now)
         guard let active = registry.pairing.current, !active.isExpired(at: now) else {
+            if let shown, now >= shown.expiresAtMs {
+                expired = true
+            } else {
+                expired = false
+                shown = nil
+            }
             code = nil
             countdown = nil
             stopTimer()
             return
         }
+        shown = active
+        expired = false
         code = active
         countdown = PairingPresentation.countdown(expiresAtMs: active.expiresAtMs, nowMs: now)
     }

@@ -1,7 +1,8 @@
 // La section Pipelines : les VOIES du tableau (`KanbanLane` — pas commencées, en
 // cours, à vous, livrées, arrêtées) sur toute la largeur, la feuille de détail
-// de la carte sélectionnée, et deux boutons de barre d'outils : « Activité »
-// (journal des gestes) et « n problèmes » (anomalies du magasin), chacun dans
+// de la carte sélectionnée, et trois boutons de barre d'outils : « Rafraîchir »
+// (relit l'état des PR sur GitHub, ⌘R), « Activité » (journal des gestes) et
+// « n problèmes » (anomalies du magasin), ces deux derniers chacun dans
 // une bulle. Le lancement d'une feature passe par la feuille « Nouvelle
 // feature » (barre d'outils, ⌘N) ; l'abonnement au magasin est tenu par la
 // racine de la fenêtre, que l'Accueil lit aussi.
@@ -65,6 +66,20 @@ struct KanbanView: ConsoleSectionView {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // « Rafraîchir » (S-7) relit l'état des PR sur GitHub ; aucun message,
+        // le retour visible est le libellé des cartes. Désactivé pendant une
+        // relecture ; sans `gh`, l'action ne fait rien de visible.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.refreshPullRequestStates()
+            } label: {
+                Label(KanbanText.refresh, systemImage: "arrow.clockwise")
+            }
+            .help(KanbanText.refreshHelp)
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(model.prRefreshing)
+            .accessibilityIdentifier("kanban.refresh")
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 actions.journalExpanded.toggle()
@@ -105,7 +120,7 @@ struct KanbanView: ConsoleSectionView {
                     get: { model.diagnosticShown },
                     set: { model.diagnosticShown = $0 }
                 )) {
-                    KanbanDiagnosticView(model: model, anomalies: anomalies)
+                    KanbanDiagnosticView(model: model, actions: actions, anomalies: anomalies)
                 }
             }
         }
@@ -326,50 +341,64 @@ private struct KanbanCardMenu: View {
     }
 }
 
-/// La bulle des problèmes : une phrase par anomalie du magasin (S-8, S-9, S-10),
-/// puis, repliés, leurs détails techniques (fichier, pid) sélectionnables. Une
+/// La bulle des problèmes : par anomalie du magasin (S-8, S-9, S-10), une phrase
+/// de conséquence puis son geste — « Reprendre » quand une carte de l'ardoise
+/// offre la reprise, sinon une consigne. Le détail brut (fichier, pid) n'est
+/// jamais affiché : « Copier le diagnostic » le met dans le presse-papiers. Une
 /// anomalie sans carte (entrée illisible, doublon) n'est visible qu'ici.
-private struct KanbanDiagnosticView: View {
+struct KanbanDiagnosticView: View {
     @ObservedObject var model: KanbanModel
+    @ObservedObject var actions: ActionsModel
     let anomalies: [KanbanAnomaly]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(KanbanText.diagnosticTitle)
                 .font(.headline)
             ForEach(Array(anomalies.enumerated()), id: \.offset) { index, anomaly in
                 Label {
-                    Text(anomaly.text)
-                        .font(.callout)
-                        .fixedSize(horizontal: false, vertical: true)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(anomaly.text)
+                            .font(.callout)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityIdentifier("kanban.anomaly.\(index)")
+                        gesture(anomaly.gesture, index: index)
+                    }
                 } icon: {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
-                .accessibilityIdentifier("kanban.anomaly.\(index)")
             }
-            DisclosureGroup(
-                KanbanText.technical,
-                isExpanded: Binding(
-                    get: { model.diagnosticTechnicalExpanded },
-                    set: { model.diagnosticTechnicalExpanded = $0 }
-                )
-            ) {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(anomalies.enumerated()), id: \.offset) { _, anomaly in
-                        Text(verbatim: anomaly.detail)
-                            .font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .accessibilityIdentifier("kanban.diagnostic.technical")
+            DiagnosticCopyButton(
+                diagnostic: KanbanText.diagnosticReport(anomalies),
+                identifier: "kanban.diagnostic.copy"
+            )
         }
         .padding(16)
         .frame(width: 420, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("kanban.diagnostic")
+    }
+
+    @ViewBuilder
+    private func gesture(_ gesture: KanbanAnomalyGesture, index: Int) -> some View {
+        switch gesture {
+        case .resume(let cardId):
+            Button(KanbanText.resume) {
+                // La carte est relue dans le tableau COURANT : disparue entre-temps,
+                // le bouton ne fait rien et le tableau suivant recalcule le geste.
+                guard let action = model.state.kanbanBoard?.cards.first(where: { $0.id == cardId })?.action
+                else { return }
+                actions.resume(action)
+            }
+            .controlSize(.small)
+            .accessibilityIdentifier("kanban.anomaly.\(index).resume")
+        case .instruction(let text):
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("kanban.anomaly.\(index).instruction")
+        }
     }
 }

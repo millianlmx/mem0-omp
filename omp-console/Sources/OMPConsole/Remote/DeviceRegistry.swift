@@ -21,6 +21,10 @@ struct DeviceFile: Codable, Equatable, Sendable {
 struct DeviceRecord: Identifiable, Equatable, Sendable, Codable {
     var id: UUID
     var name: String
+    /// L'identité de l'installation cliente (`client.installationId`) : un
+    /// réappairage de la même clé remplace la ligne. `nil` pour une ligne d'un
+    /// client d'avant — jamais remplacée ni fusionnée. Omise du fichier quand nil.
+    var deviceKey: String?
     var pairedAtMs: Double
     var lastSeenAtMs: Double
 }
@@ -104,7 +108,11 @@ final class DeviceRegistry: ObservableObject {
 
     /// Présente un code : succès ⇒ un jeton, l'appareil inscrit et le code consommé.
     /// Tout refus est un `401 unauthorized` indiscernable (S-2).
-    func pair(code presented: String, name: String) async throws -> PairedDevice {
+    ///
+    /// Avec une `deviceKey`, les lignes qui portent la MÊME clé sont remplacées :
+    /// leur jeton est refusé dès cet instant, leur article du trousseau retiré et
+    /// leurs flux fermés. Si le nouveau jeton ne peut être rangé, rien ne change.
+    func pair(code presented: String, name: String, deviceKey: String?) async throws -> PairedDevice {
         if let loadError { throw ConsoleAPIError.unavailable(Self.loadMessage(loadError)) }
         let outcome = pairing.attempt(presented, at: clock.nowMs())
         guard outcome == .paired else { throw ConsoleAPIError.unauthorized }
@@ -112,15 +120,30 @@ final class DeviceRegistry: ObservableObject {
         let device = DeviceRecord(
             id: UUID(),
             name: name,
+            deviceKey: deviceKey,
             pairedAtMs: clock.nowMs(),
             lastSeenAtMs: clock.nowMs()
         )
         let token = Self.makeToken()
         try await store.save(token, for: device.id.uuidString)
+
+        // Évaluées APRÈS l'attente du trousseau : un appairage concurrent a pu
+        // inscrire entre-temps une ligne de la même clé.
+        let replaced = deviceKey.map { key in devices.filter { $0.deviceKey == key }.map(\.id) } ?? []
+        let replacedSet = Set(replaced)
+        tokens = tokens.filter { !replacedSet.contains($0.value) }
+        devices.removeAll { replacedSet.contains($0.id) }
+        connected.subtract(replacedSet)
         tokens[token] = device.id
         devices.insert(device, at: 0)
         persist()
+        for id in replaced {
+            try? await store.remove(deviceId: id.uuidString)
+        }
         changeHandler?()
+        for id in replaced {
+            revokeHandler?(id)
+        }
         return PairedDevice(device: device, token: token)
     }
 

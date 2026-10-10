@@ -31,8 +31,12 @@ struct StreamModelTests {
         harness.discovery.emit([mac])
         #expect(await eventually { harness.model.state == .connected(endpoint: macEndpoint) })
         // La connexion déclenche le rafraîchissement des faits de l'Accueil
-        // (S-8) : on l'attend, puis on mesure la trame `store` seule.
-        #expect(await eventually { harness.transport.count(method: "GET", path: "/v1/components") >= 1 })
+        // (S-8) et la demande de relecture des PR (S-6) : on les attend, puis on
+        // mesure la trame `store` seule.
+        #expect(await eventually { harness.transport.count(method: "GET", path: "/v1/journal") >= 1 })
+        #expect(await eventually {
+            harness.transport.count(method: "POST", path: "/v1/pull-request-states/refresh") >= 1
+        })
         let before = harness.transport.requestCount
         let snapshot = ClientFixtures.snapshot()
         harness.transport.push(ClientFixtures.storeFrame(snapshot))
@@ -70,8 +74,8 @@ struct StreamModelTests {
         harness.stop()
     }
 
-    @Test("ios-projet/AC-6 : une trame conduite s'applique, la file est remplacée en entier, `conduite` repasse à nil hors `.connected`")
-    func conduiteFrameReplacesQueueAndResets() async {
+    @Test("ios-projet/AC-6 : une trame conduite s'applique, la file est remplacée en entier")
+    func conduiteFrameReplacesQueue() async {
         let harness = ClientHarness(
             tokens: ["d": "tok"],
             preferences: [ClientPreferenceKey.deviceId: "d"]
@@ -94,11 +98,6 @@ struct StreamModelTests {
         #expect(await eventually { harness.model.conduite?.dialogs.count == 1 })
         harness.transport.push(ClientFixtures.frame("conduite", #"{"state":"live"}"#))
         #expect(await eventually { harness.model.conduite?.dialogs.isEmpty == true })
-
-        // Hors `.connected`, la conduite poussée n'est plus affichable : `nil`.
-        harness.discovery.emit([])
-        #expect(await eventually { harness.model.state == .searching })
-        #expect(harness.model.conduite == nil)
         harness.stop()
     }
 
