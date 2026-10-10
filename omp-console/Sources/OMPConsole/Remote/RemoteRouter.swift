@@ -262,17 +262,24 @@ final class RemoteRouter {
 
     private func pair(_ request: HTTPRequest) async throws -> RemoteHandlerOutcome {
         let body = try RemoteBody.decode(RemotePairRequest.self, from: request)
-        let code = body.code.uppercased()
-        let alphabet = Set(ConsoleAPI.Service.pairingCodeAlphabet)
-        guard code.count == ConsoleAPI.Service.pairingCodeLength,
-              code.allSatisfy({ alphabet.contains($0) }) else {
+        // Le code s'affiche groupé `XXXX-XXXX` : tiret, blancs et casse ne comptent pas.
+        let code = PairingCodeFormat.normalize(body.code)
+        guard PairingCodeFormat.isWellFormed(code) else {
             throw ConsoleAPIError.badRequest("code d'appairage mal formé")
         }
         let name = body.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty, name.count <= 64 else {
             throw ConsoleAPIError.badRequest("nom d'appareil invalide")
         }
-        let paired = try await registry.pair(code: code, name: name)
+        var deviceKey: String?
+        if let presented = body.deviceKey {
+            let trimmed = presented.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed.count <= 64 else {
+                throw ConsoleAPIError.badRequest("identifiant d'appareil invalide")
+            }
+            deviceKey = trimmed
+        }
+        let paired = try await registry.pair(code: code, name: name, deviceKey: deviceKey)
         return try json(RemotePairPayload(
             deviceId: paired.device.id.uuidString.lowercased(),
             token: paired.token,

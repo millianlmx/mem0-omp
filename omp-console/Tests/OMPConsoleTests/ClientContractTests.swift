@@ -30,14 +30,19 @@ private final class ContractPath: ClientPathSource {
 }
 
 @MainActor
-private func makeModel(discovery: any DiscoverySource, tokens: InMemoryTokenStore = InMemoryTokenStore()) -> ConsoleClientModel {
+private func makeModel(
+    discovery: any DiscoverySource,
+    tokens: InMemoryTokenStore = InMemoryTokenStore(),
+    deviceName: String = "Tests"
+) -> ConsoleClientModel {
     ConsoleClientModel(
         transport: ConsoleClient.URLSessionTransport(),
         discovery: discovery,
         preferences: InMemoryClientPreferences(),
         tokens: tokens,
         pacer: LiveClientPacer(),
-        pathSource: ContractPath()
+        pathSource: ContractPath(),
+        deviceName: deviceName
     )
 }
 
@@ -120,6 +125,32 @@ struct ClientContractTests {
         }
         #expect(sawHello)
         model.stop()
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-3 : un iPad et un iPhone appairés apparaissent sur le Mac sous leur modèle précis")
+    func pairedDevicesShowTheirPreciseModel() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let ipad = ClientDeviceModel.displayName(forIdentifier: "iPad17,4")
+        let iphone = ClientDeviceModel.displayName(forIdentifier: "iPhone18,5")
+        for name in [ipad, iphone] {
+            let model = makeModel(discovery: ContractDiscovery(), deviceName: name)
+            _ = model.setManualAddress("127.0.0.1:\(stack.port)")
+            // Le chemin de l'app : `pair(code:)`, nom pris du modèle.
+            try await model.pair(code: PairingPresentation.grouped(try stack.registry.generateCode().value))
+            #expect(model.pairingFailure == nil)
+            model.stop()
+        }
+        let names = Set(stack.registry.devices.map(\.name))
+        #expect(names == ["iPad Pro 13 pouces (M5)", "iPhone 17e"])
+        #expect(!names.contains("iPhone"))
+        // Deux installations distinctes : deux identités, deux lignes.
+        #expect(Set(stack.registry.devices.compactMap(\.deviceKey)).count == 2)
+        #expect(try contractSameShape(
+            #"{"code":"ABCDEFGH","name":"iPhone 17e","deviceKey":"k","protocolVersion":1}"#,
+            client: ConsoleClient.RemotePairRequest.self,
+            host: OMPConsole.RemotePairRequest.self
+        ))
     }
 
     @Test("BR-3 : les charges utiles miroir conduite/dépôts sont l'image exacte de celles de la coque")

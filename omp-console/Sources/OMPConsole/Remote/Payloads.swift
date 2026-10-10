@@ -400,6 +400,8 @@ struct TranscriptLine: Identifiable, Equatable, Sendable, Codable {
 struct RemotePairRequest: Decodable, Equatable {
     var code: String
     var name: String
+    /// L'identité de l'installation cliente ; absente pour un client d'avant.
+    var deviceKey: String?
     var protocolVersion: Int?
 }
 

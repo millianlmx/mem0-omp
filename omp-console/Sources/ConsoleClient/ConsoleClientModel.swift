@@ -97,7 +97,7 @@ public final class ConsoleClientModel: ObservableObject {
         tokens: any TokenStore,
         pacer: any ClientPacer = LiveClientPacer(),
         pathSource: any ClientPathSource,
-        deviceName: String = "iPhone",
+        deviceName: String = ClientDeviceModel.current,
         localProtocolVersion: Int = ConsoleAPI.protocolVersion,
         nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 }
     ) {
@@ -113,7 +113,7 @@ public final class ConsoleClientModel: ObservableObject {
     }
 
     /// La production : le vrai transport, la vraie découverte, le vrai trousseau.
-    public static func live(deviceName: String = "iPhone") -> ConsoleClientModel {
+    public static func live(deviceName: String = ClientDeviceModel.current) -> ConsoleClientModel {
         ConsoleClientModel(
             transport: URLSessionTransport(),
             discovery: BonjourDiscoverySource(),
@@ -220,18 +220,20 @@ public final class ConsoleClientModel: ObservableObject {
         try await pair(code: code, deviceName: deviceName)
     }
 
-    /// Appaire par le code affiché par le Mac. Un refus laisse l'état `unpaired`,
-    /// n'écrit AUCUN jeton et ne programme AUCUN réessai.
+    /// Appaire par le code affiché par le Mac (avec ou sans tiret, toute casse).
+    /// Un refus laisse l'état `unpaired`, n'écrit AUCUN jeton et ne programme
+    /// AUCUN réessai. Chaque appairage porte l'identité de l'installation : le
+    /// Mac remplace la ligne de cet appareil au lieu d'en ajouter une.
     public func pair(code: String, deviceName: String) async throws {
-        let normalized = ClientPairing.normalizeCode(code)
-        guard ClientPairing.isValidCode(normalized) else {
+        let normalized = PairingCodeFormat.normalize(code)
+        guard PairingCodeFormat.isWellFormed(normalized) else {
             pairingFailure = .malformedCode
             return
         }
         let endpoint = try pairingEndpoint()
         let name = ClientPairing.normalizeDeviceName(deviceName)
         guard let body = try? JSONEncoder().encode(
-            RemotePairRequest(code: normalized, name: name, protocolVersion: nil)
+            RemotePairRequest(code: normalized, name: name, deviceKey: installationId(), protocolVersion: nil)
         ) else {
             pairingFailure = .unavailable("corps d'appairage non encodable")
             return
@@ -269,6 +271,17 @@ public final class ConsoleClientModel: ObservableObject {
         pairingFailure = nil
         revoked = false
         beginConnection(resetCounter: true)
+    }
+
+    /// L'identité de l'installation : relue, ou créée (UUID minuscule) au premier
+    /// appairage. Rien ne l'efface — la révocation n'oublie que `deviceId`.
+    private func installationId() -> String {
+        if let known = preferences.string(forKey: ClientPreferenceKey.installationId), !known.isEmpty {
+            return known
+        }
+        let created = UUID().uuidString.lowercased()
+        preferences.set(created, forKey: ClientPreferenceKey.installationId)
+        return created
     }
 
     // MARK: - Flux typé
