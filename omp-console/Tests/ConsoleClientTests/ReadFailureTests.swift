@@ -121,7 +121,7 @@ struct ReadFailureTests {
     fileprivate func macDoubleFailuresReachTheCaller(_ row: MacRow) async {
         let harness = await connectedHarness(answering: row.reply)
         await #expect(throws: row.expected) {
-            _ = try await harness.model.memory(scope: nil, limit: nil)
+            _ = try await harness.model.memoryPage(scope: nil, offset: 0, limit: nil)
         }
         harness.stop()
     }
@@ -132,13 +132,13 @@ struct ReadFailureTests {
             answering: .http(status: 401, body: envelope("unauthorized"))
         )
         await #expect(throws: ClientError.api(.unauthorized)) {
-            _ = try await harness.model.memory(scope: nil, limit: nil)
+            _ = try await harness.model.memoryPage(scope: nil, offset: 0, limit: nil)
         }
         #expect(await eventually { harness.model.state == .revoked })
         #expect(await harness.tokens.knownTokens.isEmpty, "le secret est effacé du trousseau")
         // Les appels suivants n'émettent plus rien.
         await #expect(throws: ClientError.notConnected) {
-            _ = try await harness.model.memory(scope: nil, limit: nil)
+            _ = try await harness.model.memoryPage(scope: nil, offset: 0, limit: nil)
         }
         harness.stop()
     }

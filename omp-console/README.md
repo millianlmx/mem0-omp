@@ -1711,6 +1711,18 @@ un flux temps réel.
   route). Le message est celui des autres pannes mémoire ; un client qui ne connaît
   pas ce code lit le `503` comme `unavailable`. La liste, la recherche et les autres
   pannes du graphe (service injoignable, `500`, délai dépassé) gardent `unavailable`.
+  Le graphe lit la **seule portée résolue**, par la même règle que la liste (`scope`
+  explicite non vide, sinon le projet courant) ; sans portée résolue il rend un graphe
+  vide sans lire le service. Sa charge utile porte `scope` (la portée lue) ; il n'a
+  plus de borne en nombre de souvenirs, seulement une borne d'octets de **16 Mio**.
+- **Page de mémoire** : `GET /v1/memory/page` remplace `GET /v1/memory` et sert la
+  liste par pages. Paramètres : `scope` (facultatif, même résolution que le graphe),
+  `offset` (entier ≥ 0, défaut 0) et `limit` (1 à 200, défaut 100). Un `offset` ou
+  un `limit` hors bornes rend `400 bad_request`, vérifié AVANT toute lecture du
+  service. Charge utile `{scope, total, offset, rows, nextOffset}` : `nextOffset` est
+  absent sur la dernière page ; une page dépassant 2 Mio est raccourcie, sans jamais
+  servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
+  sans lire le service. La route ne rend jamais `404`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
   `{"code":"XXXXXXXX","name":"<appareil>","protocolVersion":1}` et rend un jeton
   d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres routes). Le code
@@ -2735,10 +2747,15 @@ rien ne se rafraîchit en continu.
 Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion), un projet étant ouvert dans la
-   fenêtre « Session OMP » du Mac : la section affiche l'en-tête « N souvenirs »
-   puis les lignes du sommaire, chacune avec le texte COMPLET du souvenir tel qu'il
-   est stocké (aucun rendu Markdown), dans l'ordre du service (les plus récents
-   d'abord), et la ligne de troncature si la liste a été bornée.
+   fenêtre « Session OMP » du Mac : la section affiche l'en-tête « N souvenirs » (le
+   total de la portée) puis les lignes de la première page du sommaire, chacune avec
+   le texte COMPLET du souvenir tel qu'il est stocké (aucun rendu Markdown), dans
+   l'ordre du service (les plus récents d'abord). En faisant défiler jusqu'en bas, le
+   pied « Chargement des souvenirs suivants… » lit la page suivante de lui-même
+   (défilement continu, 100 souvenirs par page), jusqu'au dernier souvenir de la
+   portée — chaque souvenir une seule fois, plus de ligne de troncature. Si une page
+   suivante échoue, le pied dit pourquoi et offre « Réessayer », les lignes déjà lues
+   restent.
 2. **Ouvrir un souvenir** — toucher une ligne : la feuille montre la date relative et
    les étiquettes, puis le texte intégral tel qu'il est stocké (un `*` reste un `*`),
    et l'identifiant et la portée sous « Détails techniques » ; se fermer par le geste
@@ -2761,15 +2778,29 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau de connexion
    s'affiche ; une lecture qui échoue faute de réseau dit « Mac injoignable. » et
    son remède, sur un bandeau orange avec « Réessayer ». Aucune cause mémoire n'est
-   inventée.
-8. **Le graphe** — toucher « Graphe » : le canevas montre les nœuds-souvenirs, les
-   nœuds-étiquettes, les arêtes de proximité (trait plein gris) et les liens
+   inventée — jamais « Délai dépassé ».
+8. **Délai dépassé** — si le Mac, joint, met trop longtemps à servir une page ou le
+   graphe (mémoire très chargée), la section dit « Délai dépassé : le Mac a mis trop
+   de temps à répondre. » puis « Réessaie dans un instant. », avec « Réessayer ». Les
+   lectures Mémoire (pages et graphe) ont un délai propre, plus long que celui des
+   autres lectures ; les autres sections gardent « Mac injoignable. » (le traducteur
+   partagé ne distingue le délai dépassé que pour la Mémoire).
+9. **App Mac trop ancienne** — face à une app Mac qui précède la lecture par pages
+   (route `GET /v1/memory/page` inconnue), la liste dit « Fonction indisponible : app
+   Mac trop ancienne. » puis « Mets à jour OMP Console sur le Mac, puis réessaie. »,
+   sans code HTTP ni JSON. Les deux apps se mettent à jour ensemble : aucun mode de
+   compatibilité.
+10. **Le graphe** — toucher « Graphe » : le panneau commence en haut, sous la barre de
+   navigation ; le compte dit « N souvenirs · 1 projet » — le graphe ne montre QUE
+   le projet ouvert, tous ses souvenirs, aucun d'une autre portée. Le canevas montre
+   les nœuds-souvenirs, les nœuds-étiquettes, les arêtes de proximité (trait plein
+   gris) et les liens
    manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
    toucher un souvenir pour ouvrir sa fiche (texte intégral tel qu'il est stocké, étiquettes, liens),
    toucher un nœud-étiquette pour n'afficher que sa famille, puis « Étiquette ▸
    Toutes les étiquettes » pour revenir. Toucher « Liste » rend le sommaire
    inchangé — c'est le mode d'ouverture.
-9. **Graphe et pile trop ancienne** — avec une pile mem0-http sans la route
+11. **Graphe et pile trop ancienne** — avec une pile mem0-http sans la route
    `/memory/graph` (voir « Pile de l'app » dans « Consulter et corriger la mémoire du
    projet »), toucher « Graphe » : le bandeau dit « Graphe indisponible : serveur
    mémoire trop ancien. » puis « Mets à jour mem0-http sur le Mac (redéploie le
@@ -2787,6 +2818,26 @@ est gardé par la variable `MEM0_MEMOIRE_RECIPE` et se lance par :
 
 ```bash
 MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
+```
+
+Banc sur la mémoire RÉELLE, sans toucher à l'app Mac : le test Swift gated
+`memoryDelayServe` (`omp-console/Tests/OMPConsoleTests/MemoryDelayServeTests.swift`)
+monte une coque construite depuis l'arbre de travail, branchée sur la vraie pile
+mem0-http, avec pour projet ouvert la racine `MEM0_MEMOIRE_DELAI_ROOT`. Variables :
+`MEM0_MEMOIRE_DELAI_SERVE=1` (sans elle, le test rend la main), `MEM0_MEMOIRE_DELAI_ROOT`
+(requise), `MEM0_MEMOIRE_DELAI_MINUTES` (durée de service, défaut 20 ; 0 = contrôles
+seuls) et `MEM0_MEMOIRE_DELAI_LATENCE` (secondes ajoutées avant chaque lecture lourde,
+défaut 0, pour provoquer un « Délai dépassé »). Il imprime `SCOPE <portée>`, puis, sans
+latence, `PAGES <n> LIGNES <n> DOUBLONS <d> TOTAL <total>` (toutes les pages lues par le
+client de production : lignes = total, aucun doublon) et `GRAPHE SOUVENIRS <n>
+AUTRES-PORTEES <k> TRONQUE <bool>` (un nœud par souvenir de la portée, aucun d'une
+autre, non tronqué), enfin `PORT <port>` et un `CODE <code>` d'appairage frais toutes
+les 90 s, à saisir dans un simulateur lancé avec `-client.manualAddress
+127.0.0.1:<port>`. Lancer sans tube (sous un terminal) : la sortie est tamponnée sinon.
+
+```bash
+MEM0_MEMOIRE_DELAI_SERVE=1 MEM0_MEMOIRE_DELAI_ROOT=/chemin/du/depot \
+  MEM0_MEMOIRE_DELAI_MINUTES=0 swift test --filter memoryDelayServe
 ```
 
 

@@ -24,6 +24,7 @@ final class IOSMemoryGraphModel: ObservableObject {
     enum State: Equatable {
         case idle
         case loading
+        case noProject
         case serviceOutdated
         case macOutdated
         case failed(IOSMacFailure)
@@ -64,13 +65,13 @@ final class IOSMemoryGraphModel: ObservableObject {
         return false
     }
 
-    /// La classification d'une panne de lecture. La route graphe n'émet aucun 404
-    /// métier : tout `not_found` dit « app Mac trop ancienne » (D-4). Le reste passe
-    /// par le traducteur partagé (`IOSMacFailure`) : un 401 (`nil`) laisse l'état
+    /// La classification d'une panne de lecture, par l'entrée Mémoire du traducteur
+    /// partagé (`IOSMacFailure.ofMemoryRead`) : la route graphe n'émet aucun 404
+    /// métier, tout `not_found` dit « app Mac trop ancienne » (D-4), et un délai
+    /// dépassé reste distinct du Mac injoignable. Un 401 (`nil`) laisse l'état
     /// `.idle`, le parcours de révocation parle seul.
     static func failure(from error: Error) -> State {
-        if case ClientError.api(.notFound) = error { return .macOutdated }
-        guard let cause = IOSMacFailure.of(error) else { return .idle }
+        guard let cause = IOSMacFailure.ofMemoryRead(error) else { return .idle }
         switch cause {
         case .serviceOutdated: return .serviceOutdated
         case .macOutdated: return .macOutdated
@@ -287,6 +288,12 @@ final class IOSMemoryGraphModel: ObservableObject {
     /// Le placement (hors du fil principal) puis la publication de l'état : le
     /// chargement couvre la lecture ET le placement, le canevas n'est jamais vide.
     private func publish(_ payload: RemoteMemoryGraphPayload) async {
+        // La coque n'a résolu aucune portée : « aucun projet », jamais un graphe vide.
+        guard payload.scope != nil else {
+            resetVanished(nodes: [])
+            state = .noProject
+            return
+        }
         let nodes = payload.nodes.compactMap(Self.node)
         let links = payload.links.compactMap(Self.link)
         // La frontière d'isolation ne transporte qu'un tableau de points (POD) : un

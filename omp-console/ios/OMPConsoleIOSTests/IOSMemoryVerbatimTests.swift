@@ -21,8 +21,8 @@ private final class VerbatimGraphReader: IOSMemoryReading {
         self.payload = payload
     }
 
-    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
-        RemoteMemoryPagePayload(scope: "projet", total: 0, rows: [], truncated: false)
+    func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
+        RemoteMemoryPagePayload(scope: "projet", total: 0, offset: offset, rows: [], nextOffset: nil)
     }
 
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
@@ -78,7 +78,7 @@ struct IOSMemoryVerbatimTests {
             text: stored,
             tags: []
         )
-        let reader = VerbatimGraphReader(payload: RemoteMemoryGraphPayload(nodes: [node], links: [], total: 1))
+        let reader = VerbatimGraphReader(payload: RemoteMemoryGraphPayload(scope: "projet", nodes: [node], links: [], total: 1))
         let model = IOSMemoryGraphModel(client: reader)
         await model.activate()
 

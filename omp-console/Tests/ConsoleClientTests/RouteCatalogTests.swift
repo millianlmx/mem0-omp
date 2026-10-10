@@ -1,4 +1,4 @@
-// Le catalogue des routes (S-1) : 30 entrées, chacune unique, normalisée comme la
+// Le catalogue des routes (S-1) : 38 entrées, chacune unique, normalisée comme la
 // table de la coque.
 
 @testable import ConsoleClient
@@ -23,7 +23,7 @@ struct RouteCatalogTests {
             "GET /v1/version", "GET /v1/store", "GET /v1/sessions", "GET /v1/sessions/{id}",
             "GET /v1/projects", "GET /v1/repos", "GET /v1/projects/{repoKey}/documents", "GET /v1/stats",
             "GET /v1/devices", "GET /v1/models", "GET /v1/components", "GET /v1/journal", "GET /v1/cards/{id}/contract",
-            "GET /v1/memory", "GET /v1/memory/search", "GET /v1/memory/graph",
+            "GET /v1/memory/page", "GET /v1/memory/search", "GET /v1/memory/graph",
             "GET /v1/stream", "POST /v1/pair", "DELETE /v1/devices/self", "POST /v1/cards/{id}/answer", "POST /v1/cards/{id}/reply",
             "POST /v1/cards/{id}/text", "POST /v1/cards/{id}/verdict", "POST /v1/cards/{id}/resume",
             "POST /v1/cards/{id}/stop", "POST /v1/features", "POST /v1/projects/{repoKey}/conduite",

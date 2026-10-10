@@ -131,7 +131,7 @@ struct IOSMacErrorTests {
 
     @Test("ios-erreurs-serveur-lisibles/AC-7 : everyCauseHasItsOwnRemedy — chaque cause a son remède, deux à deux différents, et son message porte cause et remède")
     func everyCauseHasItsOwnRemedy() {
-        let causes: [IOSMacFailure] = [.macOutdated, .macUnreachable, .serviceUnavailable, .refused, .generic]
+        let causes: [IOSMacFailure] = [.macOutdated, .macUnreachable, .macTimedOut, .serviceUnavailable, .refused, .generic]
         for failure in causes {
             let message = IOSMacErrorText.message(for: failure)
             #expect(message.contains(IOSMacErrorText.cause(failure)))

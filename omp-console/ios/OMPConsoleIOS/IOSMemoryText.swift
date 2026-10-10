@@ -24,11 +24,8 @@ enum IOSMemoryText {
     /// l'app s'écarte du noyau.
     static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
-    /// La ligne de troncature du sommaire : ce qui est montré, puis le total servi.
-    static func truncated(shown: Int, total: Int) -> String {
-        "\(ConsoleFormat.count(shown, "souvenir", "souvenirs")) sur "
-            + "\(ConsoleFormat.count(total, "souvenir", "souvenirs")) — liste tronquée."
-    }
+    /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
+    static let loadingMore = "Chargement des souvenirs suivants…"
 
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
@@ -106,7 +103,9 @@ enum IOSMemoryAccessibility {
     static let summary = "ios.memoire.summary"
     static let count = "ios.memoire.count"
     static let results = "ios.memoire.results"
-    static let truncated = "ios.memoire.truncated"
+    /// Le pied de liste : chargement de la page suivante, ou son échec.
+    static let more = "ios.memoire.more"
+    static let moreRetry = "ios.memoire.more.retry"
     static let detail = "ios.memoire.detail"
     static let close = "ios.memoire.close"
     static let summaryReason = "ios.memoire.summary.reason"

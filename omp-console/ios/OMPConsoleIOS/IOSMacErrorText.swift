@@ -16,6 +16,10 @@ enum IOSMacFailure: Equatable {
     case macOutdated
     /// Transport, aucun endpoint connu.
     case macUnreachable
+    /// Délai dépassé d'une lecture Mémoire : le Mac a été joint mais n'a pas répondu à
+    /// temps. Seule `ofMemoryRead` le rend ; partout ailleurs, un délai dépassé reste
+    /// `.macUnreachable` (memoire-ios-expire-a-10-secondes, B-4).
+    case macTimedOut
     /// 503.
     case serviceUnavailable
     /// 403.
@@ -64,6 +68,21 @@ enum IOSMacFailure: Equatable {
         }
     }
 
+    /// La cause d'une erreur d'une lecture Mémoire (page, recherche, graphe) : la section
+    /// Mémoire seule distingue le délai dépassé du Mac injoignable, et ses routes n'émettent
+    /// aucun 404 métier — tout `not_found` y dit « app Mac trop ancienne ». Le reste est
+    /// la cause commune de `of(_:)`.
+    static func ofMemoryRead(_ error: Error) -> IOSMacFailure? {
+        switch error as? ClientError {
+        case .transport(.timedOut):
+            return .macTimedOut
+        case .api(.notFound):
+            return .macOutdated
+        default:
+            return of(error)
+        }
+    }
+
     /// La cause d'un statut HTTP dont seul le code est fiable.
     static func of(status: Int) -> IOSMacFailure {
         switch status {
@@ -90,6 +109,8 @@ enum IOSMacErrorText {
             return "Fonction indisponible : app Mac trop ancienne."
         case .macUnreachable:
             return "Mac injoignable."
+        case .macTimedOut:
+            return "Délai dépassé : le Mac a mis trop de temps à répondre."
         case .serviceUnavailable:
             return "Service indisponible sur le Mac."
         case .refused:
@@ -111,6 +132,8 @@ enum IOSMacErrorText {
             return "Mets à jour OMP Console sur le Mac, puis réessaie."
         case .macUnreachable:
             return "Vérifie que le Mac est allumé, sur le même réseau que cet appareil, et qu'OMP Console y est ouvert, puis réessaie."
+        case .macTimedOut:
+            return "Réessaie dans un instant."
         case .serviceUnavailable:
             return "Ouvre OMP Console sur le Mac et vérifie que ses services sont démarrés (redéploie le service mémoire s'il le faut), puis réessaie."
         case .refused:

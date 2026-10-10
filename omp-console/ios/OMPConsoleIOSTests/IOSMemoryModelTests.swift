@@ -26,13 +26,13 @@ private final class CountingMemoryReader: IOSMemoryReading {
 
     init(
         page: Result<RemoteMemoryPagePayload, Error> = .success(
-            RemoteMemoryPagePayload(scope: "projet", total: 0, rows: [], truncated: false)
+            RemoteMemoryPagePayload(scope: "projet", total: 0, offset: 0, rows: [], nextOffset: nil)
         ),
         search: Result<RemoteMemorySearchPayload, Error> = .success(
             RemoteMemorySearchPayload(rows: [], candidates: 0, scored: 0)
         ),
         graph: Result<RemoteMemoryGraphPayload, Error> = .success(
-            RemoteMemoryGraphPayload(nodes: [], links: [], total: 0, truncated: false)
+            RemoteMemoryGraphPayload(scope: "projet", nodes: [], links: [], total: 0, truncated: false)
         )
     ) {
         self.page = page
@@ -40,7 +40,7 @@ private final class CountingMemoryReader: IOSMemoryReading {
         self.graph = graph
     }
 
-    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         pageReads += 1
         return try page.get()
     }
@@ -83,21 +83,22 @@ struct IOSMemoryModelTests {
 
     @Test("ios-memoire/AC-7 : une portée nulle est « aucun projet », une portée servie est le sommaire")
     func memoryFollowsTheClientTheScopeAndTheLoad() {
-        let empty = RemoteMemoryPagePayload(scope: nil, total: 0, rows: [], truncated: false)
+        let empty = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil))
         #expect(IOSMemoryModel.screen(client: connected, load: .page(empty), mode: .summary) == .noProject)
         // Même en mode recherche : la portée nulle reste « aucun projet ».
         #expect(IOSMemoryModel.screen(client: connected, load: .page(empty), mode: .search("x")) == .noProject)
 
         let rows = [row("m1", text: "un"), row("m2", text: "deux")]
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 2, rows: rows, truncated: false)
+        let page = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 2, offset: 0, rows: rows, nextOffset: nil))
         #expect(IOSMemoryModel.screen(client: connected, load: .page(page), mode: .summary)
-            == .summary(scope: "projet", total: 2, rows: rows, truncated: false))
+            == .summary(scope: "projet", total: 2, rows: rows, more: .complete))
 
-        let truncated = RemoteMemoryPagePayload(scope: "projet", total: 900, rows: rows, truncated: true)
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(truncated), mode: .summary)
-            == .summary(scope: "projet", total: 900, rows: rows, truncated: true))
+        // Une première page d'une portée plus longue : le pied annonce la suite.
+        let head = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 900, offset: 0, rows: rows, nextOffset: 2))
+        #expect(IOSMemoryModel.screen(client: connected, load: .page(head), mode: .summary)
+            == .summary(scope: "projet", total: 900, rows: rows, more: .available))
 
-        let none = RemoteMemoryPagePayload(scope: "projet", total: 0, rows: [], truncated: false)
+        let none = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 0, offset: 0, rows: [], nextOffset: nil))
         #expect(IOSMemoryModel.screen(client: connected, load: .page(none), mode: .summary)
             == .summaryEmpty(scope: "projet"))
     }
@@ -129,9 +130,9 @@ struct IOSMemoryModelTests {
 
         // Une donnée DÉJÀ chargée n'est jamais effacée par une bascule du client.
         let rows = [row("m1", text: "un")]
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
+        let page = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil))
         #expect(IOSMemoryModel.screen(client: .unpaired, load: .page(page), mode: .summary)
-            == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+            == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
     }
 
     // MARK: - AC-6
@@ -182,13 +183,13 @@ struct IOSMemoryModelTests {
     @Test("ios-memoire/AC-3 : vider la requête revient au sommaire déjà lu, sans aucune requête")
     func blankQueryReturnsToTheCachedSummary() async {
         let rows = [row("m1", text: "un")]
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil)
         let reader = CountingMemoryReader(page: .success(page))
         let model = IOSMemoryModel(client: reader)
 
         await model.refresh()
         #expect(reader.pageReads == 1)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         model.updateQuery("mémoire du projet")
         await model.submitQuery()
@@ -198,8 +199,8 @@ struct IOSMemoryModelTests {
         // (1) Vider le champ (blancs) revient au sommaire DÉJÀ lu.
         model.updateQuery("   ")
         #expect(!model.isSearching)
-        #expect(model.summary == page)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.summary == IOSMemorySummary(firstPage: page))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
         // AUCUNE lecture ajoutée, ni sommaire ni recherche.
         #expect(reader.pageReads == 1)
         #expect(reader.searchReads == 1)
@@ -210,7 +211,7 @@ struct IOSMemoryModelTests {
         #expect(reader.searchReads == 2)
         model.showSummary()
         #expect(!model.isSearching)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
         #expect(reader.pageReads == 1)
         #expect(reader.searchReads == 2)
 
@@ -223,7 +224,7 @@ struct IOSMemoryModelTests {
 
     @Test("ios-finitions-titres-icones/AC-6 : « Sommaire » est disponible après une recherche terminée, et dit pourquoi sinon")
     func summaryIsAvailableAfterACompletedSearch() async {
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: [row("m1", text: "un")], truncated: false)
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: [row("m1", text: "un")], nextOffset: nil)
         let model = IOSMemoryModel(client: CountingMemoryReader(page: .success(page)))
 
         await model.refresh()
@@ -242,13 +243,13 @@ struct IOSMemoryModelTests {
     @Test("ios-memoire/AC-9 : un geste émet UNE lecture, et une panne après un succès bascule l'état")
     func gestureRefreshReloadsOnceAndFollowsTheFailure() async {
         let rows = [row("m1", text: "un")]
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil)
         let reader = CountingMemoryReader(page: .success(page))
         let model = IOSMemoryModel(client: reader)
 
         await model.refresh()
         #expect(reader.pageReads == 1)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // La pile mémoire tombe ensuite : le geste relaie la panne avec sa cause.
         let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "connexion refusée")
@@ -262,7 +263,7 @@ struct IOSMemoryModelTests {
         reader.page = .success(page)
         await model.refresh()
         #expect(reader.pageReads == 3)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // Un client qui ne joint plus le Mac n'émet AUCUNE lecture.
         reader.state = .unpaired
@@ -326,7 +327,7 @@ struct IOSMemoryModelTests {
     @Test("ios-erreurs-serveur-lisibles/AC-7 : memoryRetryShowsData — Réessayer relance la lecture et les lignes s'affichent")
     func memoryRetryShowsData() async {
         let rows = [row("m1", text: "un")]
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil)
         let reader = CountingMemoryReader(page: .failure(MacMemoryDouble.relayed503))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
@@ -335,7 +336,7 @@ struct IOSMemoryModelTests {
         reader.page = .success(page)
         await model.refresh()
         #expect(reader.pageReads == 2)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // Réessayer relance aussi la RECHERCHE quand le mode courant en est une.
         let hit = RemoteMemorySearchPayload(rows: rows, candidates: 1, scored: 1)
@@ -383,7 +384,7 @@ private final class RevokingReader: IOSMemoryReading {
         self.state = inner.state
     }
 
-    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         state = .revoked
         throw ClientError.api(.unauthorized)
     }
