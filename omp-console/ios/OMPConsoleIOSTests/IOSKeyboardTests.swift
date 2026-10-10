@@ -1,6 +1,6 @@
 // Les preuves Swift des commandes clavier de l'iPad (ipad-clavier-et-largeur-de-lecture,
 // S-2, S-8) : la table qui alimente la barre des menus (libellés, touches,
-// modificateur) et le lecteur de fixture de la recette `-memoire.recipe liste`.
+// modificateur) et le lecteur de fixture de la recette `-memoire.recipe clavier`.
 // La barre des menus elle-même n'est pas capturée : depuis iPadOS 26 elle remplace
 // la superposition ⌘, et ce qu'elle liste est exactement cette table.
 
@@ -57,27 +57,29 @@ struct IOSKeyboardTests {
         #expect(IOSKeyboard.modifiers == .command)
     }
 
-    @Test("ipad-clavier-et-largeur-de-lecture/AC-5 : la recette liste sert la fixture au modèle réel et la relit à chaque rafraîchissement")
+    @Test("ipad-clavier-et-largeur-de-lecture/AC-5 : la recette clavier sert la fixture au modèle réel et la relit à chaque rafraîchissement")
     func listRecipeServesTheFixtureOnEveryRefresh() async {
+        #expect(IOSMemoryGraphRecipe.resolve(["-memoire.recipe", "clavier"]) == .clavier)
+        #expect(IOSMemoryGraphRecipe.resolve(["-memoire.recipe", "clavier", "-memoire.recipe", "graphe"]) == .graphe)
+        // La recette `liste` (fiche ouverte depuis la liste) reste distincte.
         #expect(IOSMemoryGraphRecipe.resolve(["-memoire.recipe", "liste"]) == .liste)
-        #expect(IOSMemoryGraphRecipe.resolve(["-memoire.recipe", "liste", "-memoire.recipe", "graphe"]) == .graphe)
 
         let reader = IOSMemoryRecipeReader()
         #expect(IOSMemoryModel.gesturesEnabled(reader.state))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
-        guard case let .summary(_, total, rows, truncated) = model.state else {
-            Issue.record("sommaire attendu, obtenu \(model.state)")
+        guard case let .summary(_, total, rows, more) = model.state(connection: .connected) else {
+            Issue.record("sommaire attendu, obtenu \(model.state(connection: .connected))")
             return
         }
-        // Les huit souvenirs de la fixture qui portent un texte (m6 est vide).
+        // Les huit souvenirs de la fixture qui portent un texte (m6 est vide), en une page.
         #expect(total == 8)
         #expect(rows.map(\.id) == ["m1", "m2", "m3", "m4", "m5", "m7", "m8", "m9"])
-        #expect(!truncated)
+        #expect(more == .complete)
         #expect(model.canRefresh)
 
         await model.refresh()
-        if case let .summary(_, again, _, _) = model.state {
+        if case let .summary(_, again, _, _) = model.state(connection: .connected) {
             #expect(again == 8)
         } else {
             Issue.record("la relecture doit rendre le même sommaire")

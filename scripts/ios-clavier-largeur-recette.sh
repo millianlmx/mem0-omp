@@ -600,7 +600,7 @@ def hooks_for(screen):
     if screen == "sessions":
         return ("-sessions.recipe", "liste"), None
     if screen == "memoire" and phase == "apres":
-        return ("-memoire.recipe", "liste"), "memoire-recipe-read"
+        return ("-memoire.recipe", "clavier"), "memoire-recipe-read"
     # Projet, Statistiques, Session OMP : l'état non connecté réel, panneau visible ;
     # Pipelines : sans ardoise, panneau pleine largeur ; Mémoire avant : sans crochet.
     return (), None
@@ -760,15 +760,15 @@ if phase == "apres":
     # mesurée sur l'hôte AZERTY.
     digit_shift = next((s for s in worked if s is not None), True)
 
-    # AC-5 (fixture) : ⌘R sur la Mémoire `-memoire.recipe liste` relit la fixture
+    # AC-5 (fixture) : ⌘R sur la Mémoire `-memoire.recipe clavier` relit la fixture
     # une fois, sans changer de section.
     name = "ipad-ac5"
-    elements = launch(ipad, name, "memoire", ("-memoire.recipe", "liste"), "memoire-recipe-read")
+    elements = launch(ipad, name, "memoire", ("-memoire.recipe", "clavier"), "memoire-recipe-read")
     time.sleep(1)
     before_count = read_log(name).count("memoire-recipe-read")
     if before_count == 0:
         emit("échec", "AC-5", "ipad",
-             "mémoire liste : aucun signal memoire-recipe-read au lancement (crochet -memoire.recipe liste absent ?)")
+             "mémoire liste : aucun signal memoire-recipe-read au lancement (crochet -memoire.recipe clavier absent ?)")
     else:
         key(ipad, KEY_R)
         deadline = time.time() + 5
@@ -787,8 +787,11 @@ if phase == "apres":
     # AC-6 : ⌘N depuis la Mémoire bascule sur Pipelines et ouvre « Nouvelle feature » ;
     # garde modale : ⌘1 sous la feuille ne fait rien. La feuille se reconnaît à son
     # champ titre, présent dans tous ses états (le menu des dépôts n'existe que
-    # quand le magasin en connaît : jamais en fixture, non appairée).
-    elements = launch(ipad, "ipad-ac6", "memoire", ("-memoire.recipe", "liste"), "memoire-recipe-read")
+    # quand le magasin en connaît : jamais en fixture, non appairée). Comme le
+    # bouton « + », ⌘N n'ouvre rien hors connexion : l'ardoise de fixture
+    # (`-pipelines.recipe ardoise`) tient lieu de Mac connecté pour Pipelines.
+    elements = launch(ipad, "ipad-ac6", "memoire",
+                      ("-memoire.recipe", "clavier", "-pipelines.recipe", "ardoise"), "memoire-recipe-read")
     key(ipad, KEY_N)
     elements = wait_for(ipad, lambda els: any(ident(e) == NEW_FEATURE_FIELD for e in els), 6)
     opened = any(ident(e) == NEW_FEATURE_FIELD for e in elements)
@@ -820,7 +823,7 @@ if phase == "apres":
 
     # AC-7 : ⌘F sur la Mémoire liste met le focus dans le champ de recherche. Le
     # champ vit dans la barre de navigation : il se lit par `bar_elements`.
-    elements = launch(ipad, "ipad-ac7", "memoire", ("-memoire.recipe", "liste"), "memoire-recipe-read")
+    elements = launch(ipad, "ipad-ac7", "memoire", ("-memoire.recipe", "clavier"), "memoire-recipe-read")
     key(ipad, KEY_F)
     time.sleep(1.5)
     fields = editing_search(bar_elements(ipad))
