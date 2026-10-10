@@ -142,7 +142,7 @@ sessions et les conducteurs ; la commande part à l'API par
 |---|---|
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
-| Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau est affiché |
+| Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau ou l'état « Aucune donnée » est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
 Identifiants de l'Accueil et des feuilles : `home.loading`, `home.firstRun`
@@ -1302,8 +1302,8 @@ tour = un cycle complet prompt → réponse finale), par run puis agrégés par 
 et par projet. **Aucun montant en dollars** n'y apparaît — le domaine `Stats` ne
 lit jamais `usage.cost`.
 
-Le tableau de bord est celui du **projet affiché** (sélecteur `Projet` de la barre
-d'outils, nom du projet en sous-titre) : quatre tuiles (« Tokens envoyés »,
+Le tableau de bord est celui du **projet affiché**, que nomme le sélecteur `Projet`
+de la barre d'outils (aucun sous-titre ne le répète) : quatre tuiles (« Tokens envoyés »,
 « Tokens reçus », « Temps passé », « Tours ») totalisent le projet ; le graphique
 « Tokens par feature » montre, par feature listée, deux barres empilées
 (envoyés, reçus) ; le tableau « Runs » liste un run par ligne en sept colonnes
@@ -1313,18 +1313,27 @@ du plan n'est **listée** que si elle porte au moins un run **lisible** ; les au
 sont **masquées** et comptées en pied (`<n> feature(s) du plan sans run lisible`,
 absent à 0).
 
+Le tableau de bord **défile** verticalement, à toute taille de fenêtre (minimum
+760 × 480) : chaque graphique est borné à 240 pt de haut (au-delà de 7 features, les
+barres s'amincissent), et la table prend la hauteur de **toutes** ses lignes, sans
+défilement vertical interne ; la molette au-dessus d'elle fait défiler le tableau de
+bord, et sa dernière ligne s'atteint en bas. Ses hauteurs (en-tête 28 pt, ligne
+27 pt imposée par la pastille d'état, barre horizontale 19 pt) sont MESURÉES sur
+macOS 27.2 et revérifiées par la recette AX (`StatsLayout`, StatsView.swift).
+
 ### Les cinq états
 
 | État | Condition | Texte exact | AX |
 |---|---|---|---|
-| Chargement | aucun instantané reçu | `Chargement des pipelines…` | `stats.state` |
+| Chargement | aucun instantané reçu | `Chargement des statistiques…` | `stats.state` |
 | Magasin absent | racine `.absent` | `Aucune pipeline pour l'instant.` | `stats.state` |
 | Aucun projet | racine présente, aucun `projects/*.json` | `Les statistiques apparaîtront dès qu'un projet sera piloté.` | `stats.state` |
-| Aucune donnée | projet affiché, features vides | `Aucune donnée pour ce projet` | `stats.empty` |
+| Aucune donnée | projet affiché, features vides ; le sélecteur reste dans la barre d'outils | `Aucune donnée pour ce projet` | `stats.empty` |
 | Tableau | projet affiché avec ≥ 1 feature listée | voir ci-dessous | — |
 
-Les textes du chargement et du magasin absent sont **repris mot pour mot** de
-`KanbanBoardState` (une seule formulation par situation dans l'app).
+Le texte du magasin absent est **repris mot pour mot** de `KanbanBoardState` (une
+seule formulation par situation dans l'app) ; celui du chargement dit ce qu'il
+charge (`StatsPresentation.loading`, partagé avec l'app iOS).
 
 ### Identifiants d'accessibilité
 
@@ -1332,9 +1341,11 @@ Les textes du chargement et du magasin absent sont **repris mot pour mot** de
 |---|---|
 | Sélecteur de projet | `stats.project` |
 | Tuiles du projet | `stats.aggregate` |
+| Tableau de bord défilant (`ScrollView`) | `stats.board` |
 | Graphique « Tokens par feature » | `stats.chart` |
 | Compte des features masquées | `stats.hidden` |
 | Feature d'une ligne du tableau | `stats.run.<tag>` (`tag` = `sessionTag(forSessionFile:)`) |
+| Durée d'une ligne du tableau | `stats.duration.<tag>` |
 
 ### Forme d'une ligne
 
@@ -1346,12 +1357,21 @@ exclu des sommes.
 
 ### Mise à jour en direct
 
-Aucun geste n'est nécessaire : le magasin, la veille du fichier de session de
-chaque run **vivant** et l'horloge de rendu (`TimelineView`, une seconde) font
-monter seuls les tokens, les tours et les durées. Un run est **vivant** si le pid
-de son entrée `running` vit — jamais d'après le badge `isStale` du magasin
-(`publishRunning` n'écrit rien quand seul `updatedAt` change, donc un run vivant au
-repos est marqué périmé).
+Aucun geste n'est nécessaire : le magasin et la veille du fichier de session de
+chaque run **vivant** font monter seuls les tokens et les tours. Un run est
+**vivant** si le pid de son entrée `running` vit — jamais d'après le badge
+`isStale` du magasin (`publishRunning` n'écrit rien quand seul `updatedAt`
+change, donc un run vivant au repos est marqué périmé).
+
+L'horloge de rendu (`TimelineView`, une seconde) ne fait avancer que les durées
+des runs vivants, lisibles et horodatés (`statsLiveStarts`) : la cellule
+« Durée » de chacun et la tuile « Temps passé ». Le reste du tableau de bord —
+tuiles, graphiques, table, défilement — n'est reconstruit que quand le modèle
+publie (magasin, session vivante écrite, projet choisi, tri) ; les tics ne
+déplacent donc pas le défilement. Sans run vivant, aucune horloge n'existe et
+rien ne se redessine à la seconde. Le tri par « Durée » s'appuie sur la durée de
+la dernière publication : un run vivant peut y être classé avec quelques
+secondes de retard.
 
 ### Non-objectifs
 
@@ -2455,6 +2475,16 @@ jusqu'aux gestes, `arret` y ouvre la confirmation d'arrêt) et l'app écrit
 `pipelines-recipe-ready` sur la sortie d'erreur une fois l'état atteint — des
 crochets de recette, pas des fonctionnalités.
 
+`-stats.recipe <vide|chargement|bascule>` ouvre la section Statistiques sur son
+modèle et son écran réels, nourris par une lecture en mémoire (projets
+`recette-vide` et `recette-pleine`) et un client forcé connecté, sans appairage :
+`vide` sert `recette-vide` (choisir `recette-pleine` dans le sélecteur sert son
+tableau), `chargement` garde le premier relevé en cours, `bascule` sert
+`recette-pleine` puis choisit `recette-vide`, dont le relevé reste en cours. La
+DERNIÈRE paire reconnue gagne, une valeur inconnue est ignorée ; à lancer avec
+`-section stats -home.welcomeSeen YES`. Ce sont des crochets de recette, pas des
+fonctionnalités.
+
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
 ```bash
@@ -2853,13 +2883,16 @@ ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
 Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
-   « Connecté », et la section Statistiques montre un bref indicateur
-   d'activité puis son tableau. *(hors appairage, la section affiche le bandeau
-   d'attente « Non appairé » / « Mac injoignable — … » et n'émet aucun relevé)*
+   « Connecté », et la section Statistiques montre un bref « Chargement des
+   statistiques… » puis son tableau. *(hors appairage, la section affiche le
+   bandeau d'attente « Non appairé » / « Mac injoignable — … » et n'émet aucun relevé)*
 2. **Choisir un projet** — le sélecteur en haut de la section propose les projets
    connus du Mac, dans l'ordre de la coque (le libellé du dépôt, jamais une clé) ;
-   il affiche celui que le Mac sert. Choisir un autre projet : quelques secondes
-   plus tard le tableau devient celui de ce projet.
+   il nomme le projet choisi, au-dessus du tableau comme au-dessus de l'état
+   « Aucune donnée pour ce projet ». Choisir un autre projet : le sélecteur le
+   nomme aussitôt, au-dessus de « Chargement des statistiques… », puis le tableau
+   (ou l'état vide) de ce projet s'affiche. Un projet sans données ne retient donc
+   jamais l'écran : on en choisit un autre depuis l'état vide.
 3. **Comparer avec le Mac** — ouvrir la fenêtre **Statistiques** macOS sur le même
    projet : chaque feature de l'app porte les MÊMES tokens reçus, le même modèle,
    la même durée et le même nombre de tours ; ses tokens envoyés, eux, ajoutent le

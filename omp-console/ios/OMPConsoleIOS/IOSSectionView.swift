@@ -26,6 +26,8 @@ struct IOSSectionView: View {
     /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` de l'écran
     /// Pipelines (fiche d'une carte).
     let cardRecipe: PipelinesCardRecipe?
+    /// Le crochet de recette `-stats.recipe` de la section Statistiques.
+    let statsRecipe: IOSStatsRecipe?
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -50,7 +52,7 @@ struct IOSSectionView: View {
             if section == .project {
                 IOSProjectScreen(client: client)
             } else if section == .stats {
-                IOSStatsScreen(client: client)
+                IOSStatsScreen(client: client, recipe: statsRecipe)
             } else {
                 if let status = content?.status {
                     IOSStatusChip(status: status)

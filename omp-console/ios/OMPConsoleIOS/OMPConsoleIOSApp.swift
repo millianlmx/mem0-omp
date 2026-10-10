@@ -26,6 +26,11 @@ import SwiftUI
 ///   `-pipelines.recipe <fiche|actions|arret>` : la fiche d'une carte de fixture
 ///   ouverte sur l'écran Pipelines (ios-fiche-carte-pipelines), sans réseau — des
 ///   crochets de recette, pas des fonctionnalités.
+/// - `-stats.recipe <vide|chargement|bascule>` : la section Statistiques ouverte
+///   sur son modèle et son écran RÉELS, nourris par une lecture en mémoire et un
+///   client forcé connecté (S-6 de statistiques-etat-vide-et-non-defilables), pour
+///   capturer l'état vide, le chargement et la bascule de projet — un crochet de
+///   recette, pas une fonctionnalité. À lancer avec `-section stats`.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -42,6 +47,7 @@ struct OMPConsoleIOSApp: App {
     private let memoryRecipe: IOSMemoryGraphRecipe?
     private let pipelinesRecipe: IOSPipelinesRecipe?
     private let cardRecipe: PipelinesCardRecipe?
+    private let statsRecipe: IOSStatsRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -54,6 +60,7 @@ struct OMPConsoleIOSApp: App {
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
         pipelinesRecipe = IOSPipelinesRecipe.resolve(arguments)
         cardRecipe = PipelinesCardRecipe.resolve(arguments)
+        statsRecipe = IOSStatsRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -68,6 +75,7 @@ struct OMPConsoleIOSApp: App {
                 memoryRecipe: memoryRecipe,
                 pipelinesRecipe: pipelinesRecipe,
                 cardRecipe: cardRecipe,
+                statsRecipe: statsRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

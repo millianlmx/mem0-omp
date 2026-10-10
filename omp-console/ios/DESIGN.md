@@ -356,9 +356,17 @@ marqueur `[test: <fonction>]` (une fonction de
   (`TimelineView(.periodic(from:by:))`) : un run vivant fait avancer sa durée d'un
   milliseconde par milliseconde et par run vivant, sans un octet de trafic.
   `[test: statsDurationsAdvanceWithLiveRuns]`
-- Six états à part entière, jamais un écran vide : chargement, dégradé (hors
-  `.connected`, bandeau `attention`), erreur (bandeau `danger` + « Réessayer »),
-  aucun projet, projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+- Sept états à part entière, jamais un écran vide : chargement (« Chargement des
+  statistiques… »), dégradé (hors `.connected`, bandeau `attention`), erreur
+  (bandeau `danger` + « Réessayer »), aucun projet, bascule vers un autre projet,
+  projet sans feature listée, tableau. `[test: statsSurfacesCoverEveryState]`
+- Le sélecteur de projet nomme le projet CHOISI et se tient en tête des états
+  tableau, vide et bascule — pendant la lecture d'un autre projet, il reste
+  au-dessus du chargement ; le premier chargement, le dégradé, l'erreur et
+  « Aucun projet » n'en ont pas. `[test: statsProjectSwitchKeepsHeaderAboveLoading]`
+- Depuis l'état « Aucune donnée pour ce projet », on change de projet : le
+  sélecteur est au-dessus de la carte vide, et choisir un projet qui a des données
+  affiche son tableau. `[test: statsEmptyProjectOffersTheSwitch]`
 - Un relevé est relancé par quatre déclencheurs seulement — apparition, changement
   de projet, nouvel état du magasin, mise à jour de session — et JAMAIS tant que le
   client n'est pas connecté : aucune minuterie de scrutation.

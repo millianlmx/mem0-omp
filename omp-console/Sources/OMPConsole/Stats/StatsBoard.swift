@@ -183,3 +183,18 @@ func featureLiveRuns(_ feature: FeatureStats) -> Int {
         count += 1
     }
 }
+
+/// Le début de chaque exécution VIVANTE, LISIBLE et HORODATÉE du projet,
+/// `sessionFile → firstMs` (S-5 de statistiques-etat-vide-et-non-defilables) :
+/// ce sont les seules durées qui avancent à la seconde. Vide ⇒ aucune horloge de
+/// rendu sur le tableau de bord.
+func statsLiveStarts(_ project: ProjectStats) -> [String: Double] {
+    var starts: [String: Double] = [:]
+    for feature in project.features {
+        for run in feature.runs where run.isLive {
+            guard case .measured(let metrics) = run.metrics, let first = metrics.firstMs else { continue }
+            starts[run.sessionFile] = first
+        }
+    }
+    return starts
+}
