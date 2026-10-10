@@ -39,7 +39,7 @@ func selectionIsSingleAndThePanelFollows() async throws {
         )
     )
 
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state.kanbanBoard?.cards.count == 2 })
@@ -75,7 +75,7 @@ func keyboardMovesWithinTheBoard() async {
         )
     )
 
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state.kanbanBoard?.cards.count == 2 })
@@ -111,7 +111,7 @@ func vanishedCardClearsTheSelection() async {
     let runId = fixtureId(0xf5)
     publishRun(fixture, id: runId, label: "depot/transitoire", started: fixtureT0 - 5_000)
 
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state.card("run:\(runId)") != nil })
@@ -132,7 +132,7 @@ func selectionDoesNotChangeTheSection() async {
     let runId = fixtureId(0xf6)
     publishRun(fixture, id: runId, label: "depot/section", started: fixtureT0 - 5_000)
 
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     let console = ConsoleModel()
     let initial = console.selection
@@ -163,7 +163,7 @@ func panelDurationGrowsOnlyWhileOpen() async throws {
         )
     )
 
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state.kanbanBoard?.cards.count == 2 })
@@ -185,7 +185,7 @@ func panelDurationGrowsOnlyWhileOpen() async throws {
 @Test("kanban-des-pipelines/AC-10 : une carte apparaît, disparaît et change de colonne sans geste")
 func boardFollowsTheStore() async {
     let fixture = StoreFixture()
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     // Magasin VIDE : la racine existe, aucune carte, aucune anomalie.
@@ -228,7 +228,7 @@ func boardFollowsTheStore() async {
 @Test("kanban-des-pipelines/AC-10 : après stop(), un nouvel abonnement reçoit bien un instantané neuf")
 func restartSubscribesAgain() async {
     let fixture = StoreFixture()
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state == .storeEmpty(dir: fixture.root) })
@@ -264,7 +264,7 @@ private func waitingCard(slug: String, worktree: String) -> KanbanCard {
 @Test("contract-display-omp-console/AC-1 : « Lire le contrat » depuis le détail ferme le détail, et la demande se consomme UNE fois")
 func contractRequestClosesDetailAndIsConsumedOnce() {
     let fixture = StoreFixture()
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     let card = waitingCard(slug: "contrat", worktree: "/tmp/kanban/arbre-contrat")
 
     model.openDetail(card.id)
@@ -284,7 +284,7 @@ func contractRequestClosesDetailAndIsConsumedOnce() {
 @Test("contract-display-omp-console/AC-2 : la demande consommée porte la carte du jalon specs, worktree compris")
 func contractRequestCarriesTheSpecsCard() {
     let fixture = StoreFixture()
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     let card = waitingCard(slug: "specs-a-valider", worktree: "/tmp/kanban/arbre-specs")
 
     model.requestContract(card)

@@ -7,9 +7,6 @@
 // Fichier de VOCABULAIRE (`*Text.swift`) : la garde `design-ios/AC-5` autorise
 // les littéraux alphabétiques ici, et seulement ici, dans l'app.
 
-import ConsoleClient
-import ConsoleCore
-
 enum PipelinesText {
     /// La fiche d'une carte qui n'est pas (ou plus) dans l'instantané reçu du
     /// Mac : on ne peut rien affirmer d'elle, donc on le dit. L'écran, lui, dit
@@ -29,34 +26,14 @@ enum PipelinesText {
     /// mais le Mac ne la suit pas.
     static let noPullRequestRow = "La PR est ouverte, mais le Mac ne la suit pas encore."
 
-    /// L'app n'est pas connectée au Mac : aucun geste n'est émis.
-    static let notConnected = "L'app n'est pas connectée au Mac."
-
-    /// Le Mac n'a pas répondu.
-    static let transportError = "Le Mac n'a pas répondu."
-
-    /// Le message d'une erreur de geste : le texte du serveur tel quel, jamais
-    /// recomposé ; un échec de transport n'invente pas de cause.
-    static func gestureError(_ error: Error) -> String {
-        guard let client = error as? ClientError else { return transportError }
-        switch client {
-        case .notConnected:
-            return notConnected
-        case .incompatibleProtocol(let local, let remote):
-            return ConnectionText.incompatibleProtocol(local: local, remote: remote)
-        case .api(let api):
-            return api.message ?? transportError
-        case .transport:
-            return transportError
-        case .decoding(let detail):
-            return detail
-        }
-    }
-
     // MARK: - Identifiants de feuille
 
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
+
+    /// La touche du raccourci ⌘R de « Rafraîchir » (clavier de l'iPad), la même
+    /// que sur le Mac.
+    static let refreshKey: Character = "r"
 
     /// Le chevron du sélecteur de dépôt (un menu : il se déroule, il ne navigue pas).
     static let repoMenuSymbol = "chevron.up.chevron.down"
@@ -105,6 +82,14 @@ enum PipelinesText {
     static let recipeModelKnown = "anthropic/claude-opus-5-5"
     static let recipeModelUnknown = "lm-studio/qwen3-coder-30b"
     static let recipeModelKnownName = "Claude Opus 5.5"
+
+    // MARK: - Recette `-pipelines.board` (crochet de mesure, pas une fonctionnalité)
+
+    /// Le drapeau de l'ardoise forcée (`IOSPipelinesBoardRecipe`).
+    static let boardRecipeFlag = "-pipelines.board"
+    /// Le signal de prêt écrit sur la sortie d'erreur au premier affichage de
+    /// l'ardoise forcée.
+    static let boardRecipeReady = "pipelines-board-ready"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
@@ -112,6 +97,7 @@ enum PipelinesText {
 enum PipelinesAccessibility {
     static let screen = "pipelines.screen"
     static let newFeature = "pipelines.newFeature"
+    static let refresh = "pipelines.refresh"
     static let emptyCard = "pipelines.empty"
 
     static func lane(_ id: String) -> String { "pipelines.lane.\(id)" }
@@ -125,6 +111,7 @@ enum PipelinesAccessibility {
     static let answerField = "pipelines.card.sheet.answer"
     static let answerSend = "pipelines.card.sheet.send"
     static let error = "pipelines.card.sheet.error"
+    static let retry = "pipelines.card.sheet.retry"
 
     // Un identifiant PAR élément de la fiche : un identifiant posé sur un
     // conteneur sans `.contain` est porté par tous ses descendants.
@@ -150,4 +137,5 @@ enum PipelinesAccessibility {
     static let launchButton = "pipelines.newFeature.launch"
     static let cancelButton = "pipelines.newFeature.cancel"
     static let modelRetry = "pipelines.newFeature.modelRetry"
+    static let modelFailure = "pipelines.newFeature.modelFailure"
 }

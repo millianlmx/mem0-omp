@@ -103,7 +103,7 @@ public enum HomePresentation {
                 // Une carte `en-cours` au pilote mort est rangée en échec ; elle
                 // reste « en cours » ici tant que « Reprendre » peut la relancer.
                 if KanbanActionPresentation.resumable(card) { running.append(card) }
-            case .prOuverte, .fusionne:
+            case .prOuverte, .prCreee, .fusionne, .prFermee:
                 if delivered.count < deliveredLimit { delivered.append(card) }
             case .bloquee, .termineeSansPr, .annuleeRetiree:
                 break

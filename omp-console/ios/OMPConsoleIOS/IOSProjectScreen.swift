@@ -108,14 +108,14 @@ struct IOSProjectScreen: View {
 
     // MARK: - Panneau
 
-    /// Le cadre de la section : le panneau, son titre, puis le contenu de l'écran.
+    /// Le cadre de la section : le panneau, puis le contenu de l'écran ; le titre
+    /// est celui de la barre de navigation.
     private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(ConsoleSection.project.title)
-                .font(.title2)
             screenContent(content)
         }
         .iosPanel()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + ConsoleSection.project.rawValue)
     }
@@ -273,8 +273,9 @@ struct IOSProjectScreen: View {
                     .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                     .contentShape(Rectangle())
             }
-                .disabled(!model.connection.gesturesEnabled)
-                .accessibilityIdentifier(ProjectAccessibility.start)
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.connection.gesturesEnabled)
+            .accessibilityIdentifier(ProjectAccessibility.start)
             if model.isConduiteLive {
                 Button(ProjectViewText.closeConduite) { showingStop = true }
                     .disabled(!model.connection.gesturesEnabled || !model.canStop)

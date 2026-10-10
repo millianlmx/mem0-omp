@@ -24,10 +24,10 @@ final class IOSMemoryGraphModel: ObservableObject {
     enum State: Equatable {
         case idle
         case loading
-        case macUnreachable
+        case noProject
         case serviceOutdated
         case macOutdated
-        case unavailable(detail: String)
+        case failed(IOSMacFailure)
         case empty
         case graph(
             nodes: [MemoryGraphNode],
@@ -71,24 +71,21 @@ final class IOSMemoryGraphModel: ObservableObject {
     static func hasData(_ state: State) -> Bool {
         switch state {
         case .graph, .empty: return true
-        case .idle, .loading, .macUnreachable, .serviceOutdated, .macOutdated, .unavailable: return false
+        case .idle, .loading, .noProject, .serviceOutdated, .macOutdated, .failed: return false
         }
     }
 
-    /// La classification d'une panne de lecture : une panne de TRANSPORT n'est
-    /// jamais présentée comme une panne mémoire, et une erreur du contrat d'API
-    /// l'est toujours (patron `IOSMemoryModel.load(from:)`).
+    /// La classification d'une panne de lecture, par l'entrée Mémoire du traducteur
+    /// partagé (`IOSMacFailure.ofMemoryRead`) : la route graphe n'émet aucun 404
+    /// métier, tout `not_found` dit « app Mac trop ancienne » (D-4), et un délai
+    /// dépassé reste distinct du Mac injoignable. Un 401 (`nil`) laisse l'état
+    /// `.idle`, le parcours de révocation parle seul.
     static func failure(from error: Error) -> State {
-        guard let failure = error as? ClientError else { return .macUnreachable }
-        switch failure {
-        case .notConnected, .transport, .incompatibleProtocol, .decoding:
-            return .macUnreachable
-        case .api(.outdatedService):
-            return .serviceOutdated
-        case .api(.notFound):
-            return .macOutdated
-        case .api(let api):
-            return .unavailable(detail: api.message ?? "")
+        guard let cause = IOSMacFailure.ofMemoryRead(error) else { return .idle }
+        switch cause {
+        case .serviceOutdated: return .serviceOutdated
+        case .macOutdated: return .macOutdated
+        default: return .failed(cause)
         }
     }
 
@@ -301,6 +298,12 @@ final class IOSMemoryGraphModel: ObservableObject {
     /// Le placement (hors du fil principal) puis la publication de l'état : le
     /// chargement couvre la lecture ET le placement, le canevas n'est jamais vide.
     private func publish(_ payload: RemoteMemoryGraphPayload) async {
+        // La coque n'a résolu aucune portée : « aucun projet », jamais un graphe vide.
+        guard payload.scope != nil else {
+            resetVanished(nodes: [])
+            state = .noProject
+            return
+        }
         let nodes = payload.nodes.compactMap(Self.node)
         let links = payload.links.compactMap(Self.link)
         // La frontière d'isolation ne transporte qu'un tableau de points (POD) : un

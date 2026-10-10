@@ -17,6 +17,7 @@ struct PipelinesCardSheet: View {
     @State private var modelNames: [String: String]?
     @State private var busy = false
     @State private var error: String?
+    @State private var mergeFailed = false
     @State private var freeText = ""
     @State private var stopShown = false
     @State private var mergeShown = false
@@ -76,6 +77,17 @@ struct PipelinesCardSheet: View {
                                 .font(.callout)
                                 .iosBanner(tone: .danger)
                                 .accessibilityIdentifier(PipelinesAccessibility.error)
+                            if mergeFailed, let card {
+                                Button {
+                                    loadMerge(card)
+                                } label: {
+                                    Label(ConnectionText.retry, systemImage: "arrow.clockwise")
+                                        .frame(minHeight: IOSMetrics.minimumTarget)
+                                        .contentShape(Rectangle())
+                                }
+                                .disabled(busy)
+                                .accessibilityIdentifier(PipelinesAccessibility.retry)
+                            }
                         }
                         if let card {
                             information(card)
@@ -405,22 +417,25 @@ struct PipelinesCardSheet: View {
         Task { @MainActor in
             busy = true
             error = nil
+            mergeFailed = false
             do {
                 try await action()
             } catch {
-                self.error = PipelinesText.gestureError(error)
+                self.error = IOSMacErrorText.message(for: error)
             }
             busy = false
         }
     }
 
     /// Fusionner : lire les PR du dépôt, trouver la ligne du slug, puis demander
-    /// confirmation AVANT tout effet (S-12).
+    /// confirmation AVANT tout effet (S-12). Un échec de LECTURE des PR est un
+    /// chargement : il offre Réessayer (`mergeFailed`) ; un échec de geste, non.
     private func loadMerge(_ card: KanbanCard) {
         guard let slug = card.action?.slug, let repoKey = card.action?.repoKey else { return }
         Task { @MainActor in
             busy = true
             error = nil
+            mergeFailed = false
             do {
                 let payload = try await client.pullRequests(repoKey: repoKey)
                 guard let row = payload.rows.first(where: { $0.slug == slug }) else {
@@ -431,7 +446,8 @@ struct PipelinesCardSheet: View {
                 mergeRow = row
                 mergeShown = true
             } catch {
-                self.error = PipelinesText.gestureError(error)
+                self.error = IOSMacErrorText.message(for: error)
+                mergeFailed = self.error != nil
             }
             busy = false
         }

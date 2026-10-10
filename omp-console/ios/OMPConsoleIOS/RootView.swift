@@ -16,16 +16,21 @@ import SwiftUI
 ///
 /// La racine POSSÈDE aussi le modèle du client distant (`ConsoleClientModel.live()`,
 /// créé UNE fois) : elle démarre la découverte et la connexion, présente la
-/// feuille de bienvenue (S-15, avant la connexion) puis la feuille de connexion
-/// au lancement quand aucune section n'a été demandée par
-/// `-section`, et la rouvre par le bouton antenne `connectionToolbarItem` : sur
-/// la liste des sections en largeur compacte, et sur la colonne détail toujours
-/// — exactement un bouton à l'écran. La ligne « Accueil » porte le badge du
-/// nombre d'attentes (S-12), quelle que soit la section affichée.
+/// feuille de bienvenue (S-15, avant la connexion), puis ouvre d'elle-même la
+/// feuille de connexion SEULEMENT quand l'appareil n'a pas de jeton ou que le Mac
+/// l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune section n'a été
+/// demandée par `-section` ; un Mac injoignable laisse l'Accueil dans son état
+/// dégradé. Le bouton antenne `connectionToolbarItem` la rouvre à la demande :
+/// sur la liste des sections en largeur compacte, et sur la colonne détail
+/// toujours — exactement un bouton à l'écran. La ligne « Accueil » porte le badge
+/// du nombre d'attentes (S-12), quelle que soit la section affichée.
 struct RootView: View {
     @State private var selection: ConsoleSection?
     @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
+    /// Les gestes de carte de l'Accueil : l'état en vol survit à une sortie puis un
+    /// retour sur l'Accueil.
+    @StateObject private var homeGestures = IOSHomeGestureModel()
     @State private var showConnection: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showWelcome = false
@@ -42,6 +47,10 @@ struct RootView: View {
     private let pipelinesRecipe: IOSPipelinesRecipe?
     /// Le crochet de recette de la fiche d'une carte (`-pipelines.recipe <fiche|actions|arret>`).
     private let cardRecipe: PipelinesCardRecipe?
+    /// Le crochet de recette `-stats.recipe`, quand il est donné.
+    private let statsRecipe: IOSStatsRecipe?
+    /// Le crochet de recette `-pipelines.board`, quand il est donné.
+    private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -55,6 +64,8 @@ struct RootView: View {
         memoryRecipe: IOSMemoryGraphRecipe? = nil,
         pipelinesRecipe: IOSPipelinesRecipe? = nil,
         cardRecipe: PipelinesCardRecipe? = nil,
+        statsRecipe: IOSStatsRecipe? = nil,
+        pipelinesBoardRecipe: IOSPipelinesBoardRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _selection = State(initialValue: selection)
@@ -65,6 +76,8 @@ struct RootView: View {
         self.memoryRecipe = memoryRecipe
         self.pipelinesRecipe = pipelinesRecipe
         self.cardRecipe = cardRecipe
+        self.statsRecipe = statsRecipe
+        self.pipelinesBoardRecipe = pipelinesBoardRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -77,7 +90,7 @@ struct RootView: View {
                         ForEach(IOSSection.sections(of: group)) { section in
                             let badge = IOSHomeContent.rowBadge(
                                 for: section, attentionCount: attentionCount)
-                            Label(section.title, systemImage: section.systemImage)
+                            Label(section.title, systemImage: IOSSection.systemImage(of: section))
                                 .badge(badge)
                                 .tag(section)
                                 .accessibilityElement(children: .ignore)
@@ -98,6 +111,7 @@ struct RootView: View {
                 if selection == .home {
                     HomeView(
                         client: client,
+                        gestures: homeGestures,
                         recipe: recipe,
                         recipeRow: recipeRow,
                         showConnection: $showConnection,
@@ -112,6 +126,8 @@ struct RootView: View {
                         memoryRecipe: memoryRecipe,
                         pipelinesRecipe: pipelinesRecipe,
                         cardRecipe: cardRecipe,
+                        statsRecipe: statsRecipe,
+                        pipelinesBoardRecipe: pipelinesBoardRecipe,
                         showConnection: $showConnection
                     )
                 }
@@ -127,6 +143,11 @@ struct RootView: View {
         .onAppear {
             client.start()
             presentInitialSheets()
+        }
+        .onChange(of: client.pairing) { _, _ in
+            // Un statut qui VIENT d'être atteint ; pendant la bienvenue, c'est sa
+            // fermeture qui réévalue (`onDismiss`).
+            if !showWelcome { presentConnectionIfNeeded() }
         }
     }
 
@@ -164,16 +185,11 @@ struct RootView: View {
         IOSHomeContent.welcomeDue(welcomeSeen: client.welcomeSeen, section: selection ?? .home)
     }
 
+    /// La feuille s'ouvre d'elle-même sans jeton ou sur un jeton refusé, jamais
+    /// pendant la lecture du trousseau ni pour un appareil appairé (S-2).
     private func presentConnectionIfNeeded() {
-        if autoPresentConnection, !isConnected {
+        if autoPresentConnection, ConnectionSheetMode.autoPresents(client.pairing) {
             showConnection = true
         }
-    }
-
-    /// L'app est-elle connectée ? Au lancement elle ne l'est jamais : la feuille
-    /// de connexion s'ouvre donc d'elle-même quand aucune section n'est demandée.
-    private var isConnected: Bool {
-        if case .connected = client.state { return true }
-        return false
     }
 }

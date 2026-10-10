@@ -11,9 +11,10 @@ import SwiftUI
 /// pour que le composant d'état de connexion plein écran soit rendu hors de tout
 /// panneau (etats-non-connecte-heterogenes-ios, S-4).
 ///
-/// Ordre du rendu (sections à contenu) : panneau → titre → pastille → carte de
-/// l'état vide → bandeau. Aucune phrase n'est composée ici : les mots viennent du
-/// noyau partagé, le message provisoire du bandeau vient de `IOSText`.
+/// Ordre du rendu (sections à contenu) : panneau → pastille → carte de l'état
+/// vide → bandeau ; le titre est celui de la barre de navigation. Aucune phrase
+/// n'est composée ici : les mots viennent du noyau partagé, le message provisoire
+/// du bandeau vient de `IOSText`.
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
@@ -28,6 +29,10 @@ struct IOSSectionView: View {
     /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` de l'écran
     /// Pipelines (fiche d'une carte).
     let cardRecipe: PipelinesCardRecipe?
+    /// Le crochet de recette `-stats.recipe` de la section Statistiques.
+    let statsRecipe: IOSStatsRecipe?
+    /// Le crochet de recette `-pipelines.board` de l'écran Pipelines.
+    let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
     /// La feuille Connexion de la racine, ouverte par « Se connecter » du
     /// composant d'état de connexion des sections.
     @Binding var showConnection: Bool
@@ -39,7 +44,7 @@ struct IOSSectionView: View {
     var body: some View {
         if section == .kanban {
             PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe,
-                            cardRecipe: cardRecipe, showConnection: $showConnection)
+                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe, showConnection: $showConnection)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe, showConnection: $showConnection)
         } else if section == .sessions {
@@ -49,7 +54,7 @@ struct IOSSectionView: View {
         } else if section == .project {
             IOSProjectScreen(client: client, showConnection: $showConnection)
         } else if section == .stats {
-            IOSStatsScreen(client: client, showConnection: $showConnection)
+            IOSStatsScreen(client: client, recipe: statsRecipe, showConnection: $showConnection)
         } else {
             genericBody
         }
@@ -57,8 +62,6 @@ struct IOSSectionView: View {
 
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(section.title)
-                .font(.title2)
             if let status = content?.status {
                 IOSStatusChip(status: status)
             }
@@ -72,6 +75,7 @@ struct IOSSectionView: View {
             }
         }
         .iosPanel()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(section.title)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)

@@ -152,9 +152,17 @@ final class IOSSessionOmpModel: ObservableObject {
 
     // MARK: - Cycle de vie (S-6)
 
-    /// À l'apparition : une lecture de l'état servi.
+    /// À l'apparition : une lecture de l'état servi, puis la synchronisation du
+    /// fil, qui le relance s'il a été terminé à la disparition.
     func appeared() {
         refresh()
+    }
+
+    /// À la disparition : le fil hébergé termine son abonné et sa lecture, comme
+    /// la feuille de la section Sessions à sa fermeture. La réapparition le relance
+    /// par `appeared()` → `refresh()` → `syncThread()`.
+    func disappeared() {
+        thread?.finish()
     }
 
     /// Relit `GET /v1/session` — appelé à l'apparition et à chaque retour de la
@@ -176,22 +184,26 @@ final class IOSSessionOmpModel: ObservableObject {
     }
 
     /// Monte le fil du fichier servi, ou le démonte quand il n'y en a pas. Un
-    /// fichier INCHANGÉ garde le même fil (S-4) : aucun remontage.
+    /// fichier inchangé garde le même fil, relancé s'il a été terminé (S-4) : le
+    /// fil se lit et s'abonne dès qu'il est synchronisé, et `start()`, idempotent,
+    /// ne fait rien de plus aux appels répétés.
     func syncThread() {
         guard let file = client.hosted?.sessionFile, !file.isEmpty else {
             thread?.finish()
             thread = nil
             return
         }
-        if thread?.file == file { return }
-        thread?.finish()
-        thread = IOSSessionThreadModel(
-            source: client,
-            file: file,
-            title: client.hosted?.projectName ?? "",
-            subtitle: client.hosted?.stateLabel,
-            tracksRun: false
-        )
+        if thread?.file != file {
+            thread?.finish()
+            thread = IOSSessionThreadModel(
+                source: client,
+                file: file,
+                title: client.hosted?.projectName ?? "",
+                subtitle: client.hosted?.stateLabel,
+                tracksRun: false
+            )
+        }
+        thread?.start()
     }
 
     // MARK: - Gestes

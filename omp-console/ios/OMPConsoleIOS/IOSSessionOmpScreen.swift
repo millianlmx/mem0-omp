@@ -102,6 +102,7 @@ struct IOSSessionOmpScreen: View {
         }
         .navigationTitle(ConsoleSection.session.title)
         .onAppear { model.appeared() }
+        .onDisappear { model.disappeared() }
         .onChange(of: client.state) {
             if case .connected = client.state { model.refresh() }
         }

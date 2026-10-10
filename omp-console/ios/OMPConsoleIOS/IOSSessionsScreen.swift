@@ -28,6 +28,11 @@ struct IOSSessionsScreen: View {
     /// La largeur de la colonne de l'icône d'étape, mise à l'échelle comme le
     /// corps de texte que suit le glyphe : les titres partagent une abscisse.
     @ScaledMetric(relativeTo: .body) private var phaseIconWidth: CGFloat = IOSMetrics.phaseIconWidth
+    /// La marge verticale d'une rangée, mise à l'échelle comme le corps de
+    /// texte : aucun texte ne touche le filet voisin (rangees-sessions-memoire-serrees, S-1).
+    @ScaledMetric(relativeTo: .body) private var rowPadding: CGFloat = IOSMetrics.rowVerticalPadding
+    /// La taille de texte système : elle décide de l'axe des rangées (S-2).
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// La cible de la feuille : un run de la liste, ou la session d'une recette.
     private enum SessionOpen: Identifiable {
@@ -140,16 +145,7 @@ struct IOSSessionsScreen: View {
 
     private func listBody(days: [SessionDay], projects: [String]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Picker(selection: projectBinding(projects)) {
-                Text(IOSSessionText.allProjects).tag(String?.none)
-                ForEach(projects, id: \.self) { name in
-                    Text(name).tag(String?.some(name))
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.menu)
-            .accessibilityIdentifier(IOSSessionsAccessibility.filter)
+            projectFilter(projects)
 
             LazyVStack(alignment: .leading, spacing: 12) {
                 ForEach(days) { day in
@@ -184,6 +180,36 @@ struct IOSSessionsScreen: View {
         }
     }
 
+    /// Le filtre de projet (rangees-sessions-memoire-serrees, S-3) : un menu
+    /// dont le libellé visible est la valeur choisie, replié sur plusieurs
+    /// lignes au besoin — jamais rogné ni tronqué — et annoncé « Projet,
+    /// <valeur> ». L'option courante est cochée par le `Picker` inline.
+    private func projectFilter(_ projects: [String]) -> some View {
+        let shown = IOSSessionsModel.filterTitle(project, projects: projects)
+        return Menu {
+            Picker(selection: projectBinding(projects)) {
+                Text(IOSSessionText.allProjects).tag(String?.none)
+                ForEach(projects, id: \.self) { name in
+                    Text(name).tag(String?.some(name))
+                }
+            } label: {
+                EmptyView()
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 4) {
+                Text(verbatim: shown)
+                    .multilineTextAlignment(.leading)
+                Image(systemName: IOSSessionText.filterSymbol)
+                    .imageScale(.small)
+            }
+            .frame(minHeight: IOSMetrics.minimumTarget)
+        }
+        .accessibilityLabel(ConsoleSection.project.title)
+        .accessibilityValue(shown)
+        .accessibilityIdentifier(IOSSessionsAccessibility.filter)
+    }
+
     /// La sélection du filtre : un projet DISPARU retombe sur « tous » dans le
     /// même rendu — jamais une liste vide muette (S-2).
     private func projectBinding(_ projects: [String]) -> Binding<String?> {
@@ -194,9 +220,11 @@ struct IOSSessionsScreen: View {
     }
 
     /// Une ligne : le symbole de l'étape, la feature, sa situation (« étape ·
-    /// dépôt »), l'heure de début et la pastille d'état du run.
+    /// dépôt »), l'heure de début et la pastille d'état du run. Sur une bande
+    /// aux tailles standard, empilée aux tailles d'accessibilité, avec une
+    /// marge verticale mise à l'échelle (rangees-sessions-memoire-serrees, S-1, S-2).
     private func row(_ choice: RunChoice) -> some View {
-        HStack(spacing: 10) {
+        rowLayout {
             Image(systemName: PhaseText.symbol(choice.phase))
                 .foregroundStyle(.secondary)
                 .frame(width: phaseIconWidth)
@@ -213,11 +241,29 @@ struct IOSSessionsScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
+            if rowAxis == .horizontal {
+                Spacer(minLength: 8)
+            }
             IOSStatusChip(status: ConsoleStatus.of(run: choice))
         }
+        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
+        .padding(.vertical, rowPadding)
         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    /// L'axe des rangées, règle de l'Accueil (`IOSHomeContent.rowAxis`) lue sur
+    /// la SEULE taille système (largeur `nil`) : les rangées de Sessions restent sur
+    /// une ligne aux tailles standard, la mise sur deux lignes en largeur compacte
+    /// est propre à l'Accueil. Le plafond `rowTextMaximumSize` ne change pas l'axe.
+    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize, width: nil) }
+
+    /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
+    private var rowLayout: AnyLayout {
+        switch rowAxis {
+        case .horizontal, .twoLine: AnyLayout(HStackLayout(spacing: 10))
+        case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+        }
     }
 
     // MARK: - Les autres états

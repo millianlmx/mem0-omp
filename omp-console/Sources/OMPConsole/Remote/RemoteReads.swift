@@ -185,6 +185,8 @@ final class RemoteReads {
                 slug: feature.slug,
                 input: totals.input,
                 output: totals.output,
+                cacheRead: totals.cacheRead,
+                cacheWrite: totals.cacheWrite,
                 turns: totals.turns,
                 durationMs: totals.durationMs,
                 liveRuns: featureLiveRuns(feature),
@@ -261,25 +263,26 @@ final class RemoteReads {
 
     // MARK: - Mémoire
 
-    /// Le sommaire d'une portée (S-1) : la portée est résolue AVANT toute lecture,
-    /// et une portée nulle rend la page vide SANS appeler le service (S-2) — c'est
-    /// le signal « aucun projet ouvert », jamais un 200 muet ni une liste vide.
-    /// Les lignes sont bornées en NOMBRE (`RemoteLimits.memoryRows`) puis en octets,
-    /// la TÊTE (les plus récentes) conservée, `truncated` posé dès qu'une ligne est
-    /// retirée.
-    func memory(scope: String?, limit rawLimit: String?) async throws -> RemoteMemoryPagePayload {
-        let limit = try Self.memoryLimit(rawLimit)
+    /// Une page du sommaire d'une portée (S-1) : les bornes `offset`/`limit` sont
+    /// vérifiées AVANT toute lecture, la portée est résolue ensuite, et une portée
+    /// nulle rend la page vide SANS appeler le service — c'est le signal « aucun
+    /// projet ouvert ». Sinon UNE lecture du service, dont on sert la tranche
+    /// `[offset, offset+limit)` dans l'ordre du service (`pagePayload`).
+    func memoryPage(scope: String?, offset rawOffset: String?, limit rawLimit: String?) async throws -> RemoteMemoryPagePayload {
+        let offset = try Self.memoryOffset(rawOffset)
+        let limit = try Self.memoryLimit(rawLimit) ?? RemoteLimits.memoryPageSize
         let scope = await resolvedScope(scope)
         guard let scope else {
-            return RemoteMemoryPagePayload(scope: nil, total: 0, rows: [], truncated: false)
+            return RemoteMemoryPagePayload(scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil)
         }
         do {
             let page = try await service.all(scope: scope)
-            return Self.memoryPage(
+            return Self.pagePayload(
                 scope: scope,
                 total: page.total,
                 rows: page.rows,
-                limit: limit ?? RemoteLimits.memoryRows
+                offset: offset,
+                limit: limit
             )
         } catch {
             throw Self.memoryError(error, config: memoryConfig)
@@ -311,21 +314,22 @@ final class RemoteReads {
         }
     }
 
-    /// Le graphe complet d'une base, en LECTURE SEULE (S-1, AC-1/2/8) : les mêmes
-    /// nœuds et arêtes que le mode graphe de la coque macOS pour la même base.
+    /// Le graphe d'UNE portée, en LECTURE SEULE (S-6) : la portée est résolue
+    /// comme pour la liste et la recherche (explicite, sinon le projet courant) ;
+    /// sans portée résolue, un graphe vide `scope: nil` SANS appel au service.
+    /// Nœuds et liens sont dérivés par le noyau sur les SEULES lignes de la
+    /// portée : arêtes et liens manuels dont une extrémité est hors portée
+    /// n'apparaissent pas. La coque macOS lit `MemoryServing` directement et
+    /// n'est pas concernée.
     ///
-    /// `scope` NON VIDE ⇒ les souvenirs de cette portée ; absent ou vide ⇒ TOUTES
-    /// les portées, SANS repli sur le projet courant (la coque macOS lit
-    /// `service.all(scope: nil)` : un repli ferait diverger les deux graphes dès
-    /// qu'un projet est ouvert).
-    ///
-    /// Les lignes sont bornées en NOMBRE (`RemoteLimits.memoryRows`, TÊTE conservée)
-    /// puis en OCTETS : tant que la charge dépasse `RemoteLimits.responseBody`, on
-    /// retire la moitié de la queue et l'on RE-DÉRIVE nœuds et liens sur les lignes
-    /// gardées — jamais un lien dont une extrémité a disparu, jamais un
-    /// nœud-étiquette orphelin.
+    /// Aucune borne en NOMBRE ; la borne d'OCTETS est celle du graphe
+    /// (`RemoteLimits.memoryGraphBody`) : au-delà seulement, on retire la moitié
+    /// de la queue et l'on RE-DÉRIVE nœuds et liens sur les lignes gardées.
     func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
-        let scope = (scope?.isEmpty == false) ? scope : nil
+        let scope = await resolvedScope(scope)
+        guard let scope else {
+            return RemoteMemoryGraphPayload(scope: nil, nodes: [], links: [], total: 0, truncated: false)
+        }
         let page: MemoryPage
         do {
             page = try await service.all(scope: scope)
@@ -339,7 +343,7 @@ final class RemoteReads {
             throw Self.graphError(error, config: memoryConfig)
         }
         let manual = MemoryLinkStore.load(memoryLinks)
-        return Self.memoryGraph(rows: page.rows, edges: edges, manual: manual)
+        return Self.memoryGraph(scope: scope, rows: page.rows, edges: edges, manual: manual)
     }
 
     private func resolvedScope(_ scope: String?) async -> String? {
@@ -397,21 +401,23 @@ final class RemoteReads {
         return nil
     }
 
-    /// Le graphe borné (S-1) : la dérivation partagée des lignes gardées, bornée en
-    /// NOMBRE (tête conservée) puis en OCTETS — chaque retrait RE-DÉRIVE nœuds et
-    /// liens, donc aucun lien orphelin ni nœud-étiquette sans porteur.
+    /// Le graphe borné (S-6) : la dérivation partagée de toutes les lignes, bornée
+    /// en OCTETS seulement (`bodyLimit`) — chaque retrait RE-DÉRIVE nœuds et liens,
+    /// donc aucun lien orphelin ni nœud-étiquette sans porteur.
     static func memoryGraph(
+        scope: String,
         rows: [MemoryRow],
         edges: [MemoryGraphEdge],
-        manual: Set<MemoryLink>
+        manual: Set<MemoryLink>,
+        bodyLimit: Int = RemoteLimits.memoryGraphBody
     ) -> RemoteMemoryGraphPayload {
-        var kept = Array(rows.prefix(max(0, RemoteLimits.memoryRows)))
-        var truncated = rows.count > kept.count
-        var payload = graphPayload(rows: kept, edges: edges, manual: manual, truncated: truncated)
-        while (try? HTTPJSON.encode(payload))?.count ?? 0 > RemoteLimits.responseBody, kept.count > 0 {
+        var kept = rows
+        var truncated = false
+        var payload = graphPayload(scope: scope, rows: kept, edges: edges, manual: manual, truncated: truncated)
+        while (try? HTTPJSON.encode(payload))?.count ?? 0 > bodyLimit, kept.count > 0 {
             kept = Array(kept.dropLast(max(1, kept.count / 2)))
             truncated = true
-            payload = graphPayload(rows: kept, edges: edges, manual: manual, truncated: truncated)
+            payload = graphPayload(scope: scope, rows: kept, edges: edges, manual: manual, truncated: truncated)
         }
         return payload
     }
@@ -419,6 +425,7 @@ final class RemoteReads {
     /// La projection filaire des faits du noyau : `text`/`tags` pour les seuls
     /// nœuds-souvenirs, `score` pour les seules arêtes `semantic`.
     private static func graphPayload(
+        scope: String,
         rows: [MemoryRow],
         edges: [MemoryGraphEdge],
         manual: Set<MemoryLink>,
@@ -427,6 +434,7 @@ final class RemoteReads {
         let nodes = MemoryGraph.nodes(rows: rows)
         let links = MemoryGraph.links(rows: rows, edges: edges, manual: manual)
         return RemoteMemoryGraphPayload(
+            scope: scope,
             nodes: nodes.map { node in
                 RemoteMemoryGraphNode(
                     id: MemoryGraphWire.id(node.id),
@@ -459,24 +467,45 @@ final class RemoteReads {
         return value
     }
 
-    /// La page bornée (S-1) : le NOMBRE d'abord (tête conservée), puis les OCTETS —
-    /// tant que la charge dépasse `RemoteLimits.responseBody`, on retire la moitié
-    /// de la QUEUE et l'on pose `truncated`. La tête (les plus récents, l'ordre du
-    /// service est `updated_at` décroissant) est ce qu'on garde, contrairement aux
-    /// sessions et aux statistiques qui gardent la fin de leur liste.
-    static func memoryPage(
+    /// `offset` : entier FACULTATIF ≥ 0, 0 quand il est absent ; non entier ou
+    /// négatif → 400.
+    static func memoryOffset(_ raw: String?) throws -> Int {
+        guard let raw, !raw.isEmpty else { return 0 }
+        guard let value = Int(raw), value >= 0 else {
+            throw ConsoleAPIError.badRequest("offset hors bornes")
+        }
+        return value
+    }
+
+    /// La tranche `[offset, offset+limit)` des lignes du service, dans SON ordre
+    /// (`updated_at` décroissant), puis la borne d'OCTETS : tant que la charge
+    /// dépasse `RemoteLimits.responseBody` et que la tranche compte plus d'une
+    /// ligne, on retire la moitié de la QUEUE — une ligne au moins est toujours
+    /// servie. `nextOffset` vaut `offset + rows.count` tant qu'il reste des lignes
+    /// au service, absent sinon ; un `offset` au-delà de la fin rend une page vide.
+    static func pagePayload(
         scope: String,
         total: Int,
         rows: [MemoryRow],
+        offset: Int,
         limit: Int
     ) -> RemoteMemoryPagePayload {
-        var kept = Array(rows.prefix(max(0, limit)).map(RemoteMemoryRow.init))
-        var truncated = rows.count > kept.count
-        var payload = RemoteMemoryPagePayload(scope: scope, total: total, rows: kept, truncated: truncated)
-        while (try? HTTPJSON.encode(payload))?.count ?? 0 > RemoteLimits.responseBody, kept.count > 0 {
+        let start = min(max(0, offset), rows.count)
+        var kept = Array(rows[start...].prefix(max(1, limit)).map(RemoteMemoryRow.init))
+        func page() -> RemoteMemoryPagePayload {
+            let next = start + kept.count
+            return RemoteMemoryPagePayload(
+                scope: scope,
+                total: total,
+                offset: offset,
+                rows: kept,
+                nextOffset: next < rows.count ? next : nil
+            )
+        }
+        var payload = page()
+        while (try? HTTPJSON.encode(payload))?.count ?? 0 > RemoteLimits.responseBody, kept.count > 1 {
             kept = Array(kept.dropLast(max(1, kept.count / 2)))
-            truncated = true
-            payload = RemoteMemoryPagePayload(scope: scope, total: total, rows: kept, truncated: truncated)
+            payload = page()
         }
         return payload
     }

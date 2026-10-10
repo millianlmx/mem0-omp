@@ -161,12 +161,17 @@ struct NewFeatureSheetView: View {
                 Text(KanbanText.modelCatalogLoading)
                     .foregroundStyle(.secondary)
             }
-            if case .failed(let reason) = catalog {
-                Text(KanbanText.modelCatalogUnavailable(reason))
+            if case .failed(let message) = catalog {
+                Text(message)
                     .font(.callout)
-                    .foregroundStyle(.secondary)
-                Button(KanbanText.modelCatalogRetry) {
+                    .iosBanner(tone: .danger)
+                    .accessibilityIdentifier(PipelinesAccessibility.modelFailure)
+                Button {
                     Task { await loadCatalog() }
+                } label: {
+                    Text(KanbanText.modelCatalogRetry)
+                        .frame(minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
                 }
                 .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(PipelinesAccessibility.modelRetry)
@@ -192,16 +197,7 @@ struct NewFeatureSheetView: View {
 
     private func loadCatalog() async {
         catalog = .loading
-        do {
-            let payload = try await client.models()
-            if let failure = payload.failure {
-                catalog = .failed(failure)
-            } else {
-                catalog = .loaded(payload.selectors)
-            }
-        } catch {
-            catalog = .failed(PipelinesText.gestureError(error))
-        }
+        catalog = await PipelinesModel.catalog { try await client.models() }
     }
 
     private func submit() {
@@ -224,7 +220,7 @@ struct NewFeatureSheetView: View {
                 busy = false
                 dismiss()
             } catch {
-                self.error = PipelinesText.gestureError(error)
+                self.error = IOSMacErrorText.message(for: error)
                 busy = false
             }
         }

@@ -138,6 +138,48 @@ func containersDecodeNamesIdAndState() async {
     ])
 }
 
+@Test("bug-embedded-podman-machine/AC-1 : `Ports[].PublicPort` est décodé (en marche ou arrêté) et `Ports` absent rend `[]`")
+func containersDecodePublishedPorts() async {
+    let double = DockerCurlDouble()
+    double.route = { _, _ in
+        ProcessRun(code: 0, stdout: """
+        [
+          {"Id":"q1","Names":["/mem0-qdrant"],"State":"running",
+           "Ports":[{"IP":"127.0.0.1","PrivatePort":6333,"PublicPort":6333,"Type":"tcp"},
+                    {"IP":"127.0.0.1","PrivatePort":6334,"PublicPort":6334,"Type":"tcp"}]},
+          {"Id":"h1","Names":["/mem0-http"],"State":"exited",
+           "Ports":[{"IP":"127.0.0.1","PrivatePort":8321,"PublicPort":8321,"Type":"tcp"}]},
+          {"Id":"n1","Names":["/sans-ports"],"State":"running"}
+        ]
+        """, stderr: "", timedOut: false)
+    }
+    let containers = await DockerSocket.containers(socket: "/tmp/d.sock", run: double.runner)
+    #expect(containers == [
+        DockerContainerSummary(name: "mem0-qdrant", id: "q1", running: true, publishedPorts: [6333, 6334]),
+        DockerContainerSummary(name: "mem0-http", id: "h1", running: false, publishedPorts: [8321]),
+        DockerContainerSummary(name: "sans-ports", id: "n1", running: true, publishedPorts: []),
+    ])
+}
+
+@Test("bug-embedded-podman-machine/AC-1 : un `Ports` illisible (type inattendu, entrée sans `PublicPort`) rend `[]` sans échouer")
+func containersTolerateMalformedPorts() async {
+    let double = DockerCurlDouble()
+    double.route = { _, _ in
+        ProcessRun(code: 0, stdout: """
+        [
+          {"Id":"a1","Names":["/garbage"],"State":"running","Ports":"pas un tableau"},
+          {"Id":"a2","Names":["/partiel"],"State":"running",
+           "Ports":[{"PrivatePort":8321},{"PublicPort":"8321"},{"PublicPort":6333}]}
+        ]
+        """, stderr: "", timedOut: false)
+    }
+    let containers = await DockerSocket.containers(socket: "/tmp/d.sock", run: double.runner)
+    #expect(containers == [
+        DockerContainerSummary(name: "garbage", id: "a1", running: true, publishedPorts: []),
+        DockerContainerSummary(name: "partiel", id: "a2", running: true, publishedPorts: [6333]),
+    ])
+}
+
 @Test("all-in-one-app/AC-4 : un socket illisible ou une charge illisible ne sont pas des erreurs — la lecture rend `nil`")
 func unreadableReadsYieldNil() async {
     // Lancement impossible.

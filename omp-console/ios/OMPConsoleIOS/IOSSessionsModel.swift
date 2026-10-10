@@ -41,6 +41,12 @@ enum IOSSessionsModel {
         return repo
     }
 
+    /// La valeur affichée ET annoncée par le filtre (rangees-sessions-memoire-
+    /// serrees, S-3) : le projet retenu, ou « Tous les projets ».
+    static func filterTitle(_ project: String?, projects: [String]) -> String {
+        resolvedProject(project, projects: projects) ?? IOSSessionText.allProjects
+    }
+
     /// Les jours affichés : le filtre s'applique AVANT le groupement, donc les
     /// en-têtes de jour se recalculent (S-2).
     static func days(of list: SessionList, project: String?, nowMs: Double, calendar: Calendar) -> [SessionDay] {

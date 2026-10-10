@@ -218,8 +218,11 @@ struct HomeBoardTests {
         #expect(harness.transport.requests.contains { $0.method == "POST" && $0.path == "/v1/cards/c1/resume" })
 
         // Aucune écriture du magasin : toutes les écritures partent par une route
-        // de carte (aucune ne vise le magasin).
-        let writes = harness.transport.requests.filter { $0.method != "GET" }
+        // de carte (aucune ne vise le magasin). La relecture des PR demandée à
+        // l'ouverture du flux (S-6) n'écrit rien : elle est hors de ce compte.
+        let writes = harness.transport.requests.filter {
+            $0.method != "GET" && $0.path != "/v1/pull-request-states/refresh"
+        }
         #expect(writes.allSatisfy { $0.path.hasPrefix("/v1/cards/") })
         harness.stop()
     }

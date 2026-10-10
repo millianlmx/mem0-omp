@@ -46,6 +46,9 @@ public final class ConsoleClientModel: ObservableObject {
     /// après `ClientRetry.searchGrace` passées en `.searching` sans Mac trouvé.
     /// Recalculé à chaque `publishState()`, toujours `false` en `.connected`.
     @Published public private(set) var attemptFollowsFailure = false
+    /// Le statut d'appairage (indépendant de `state`) : `.restoring` tant que le
+    /// trousseau n'est pas lu, puis `.paired`, `.unpaired` ou `.refused`.
+    @Published public private(set) var pairing: ClientPairingStatus = .restoring
 
     /// L'ardoise dérivée du dernier instantané reçu (S-8) : `.loading` tant
     /// qu'aucune trame `store` n'est arrivée, puis recalculée à chaque trame et
@@ -58,6 +61,17 @@ public final class ConsoleClientModel: ObservableObject {
     /// Le journal des gestes (S-8), posé par la trame `journal` et par la lecture
     /// `journal()`.
     @Published public private(set) var journal: [ActionJournalEntry] = []
+    /// Les faits de PR servis par le Mac et son état de relecture (S-6), posés
+    /// par la trame `pull-request-states`. `nil` tant qu'aucune trame n'est
+    /// arrivée (cartes à PR « PR créée ») ; le dernier reçu est CONSERVÉ à la
+    /// déconnexion, comme l'instantané.
+    @Published public private(set) var pullRequestStates: RemotePullRequestStatesPayload?
+
+    /// Les faits de PR indexés par URL : l'entrée `prFacts` de toute dérivation
+    /// de l'ardoise côté client (S-6).
+    public var pullRequestFacts: [String: PullRequestFact] {
+        PullRequestFacts.index(pullRequestStates?.facts ?? [])
+    }
     /// La préférence de bienvenue (S-8), lue au `start()`.
     @Published public private(set) var welcomeSeen = false
 
@@ -87,6 +101,12 @@ public final class ConsoleClientModel: ObservableObject {
     private var deviceId: String?
     private var hasNetwork = true
     private var revoked = false
+    /// Le trousseau a été lu au moins une fois (fin de `restoreToken`).
+    private var tokenRead = false
+    /// L'endpoint vers lequel était partie la requête ou le flux refusé (401) :
+    /// porté par `.refused`, repli de `pairingEndpoint()`. Remis à `nil` par un
+    /// appairage réussi et par `forget()`.
+    private var refusedEndpoint: ClientEndpoint?
     private var incompatible: ClientIncompatibility?
     private var connectedEndpoint: ClientEndpoint?
     private var connectingEndpoint: ClientEndpoint?
@@ -286,7 +306,49 @@ public final class ConsoleClientModel: ObservableObject {
         preferences.set(id, forKey: ClientPreferenceKey.deviceId)
         pairingFailure = nil
         revoked = false
+        refusedEndpoint = nil
         beginConnection(resetCounter: true)
+    }
+
+    /// « Oublier ce Mac » : révocation tentée AU MIEUX sur le Mac, puis oubli local
+    /// quelle que soit l'issue. Ne lève jamais.
+    ///
+    /// La requête `DELETE /v1/devices/self` part UNIQUEMENT si l'appareil est
+    /// appairé ET connecté, vers l'endpoint connecté ; son issue (2xx, 401, autre
+    /// statut, panne, délai) est ignorée. Le jeton est retiré de la mémoire AVANT
+    /// l'envoi : aucun 401 reçu pendant ou après l'oubli n'est absorbé comme un
+    /// refus. L'adresse manuelle et le Mac découvert sont conservés.
+    public func forget() async {
+        let oldToken = token
+        let oldDeviceId = deviceId
+        var target: ClientEndpoint?
+        if pairing == .paired, case .connected(let endpoint) = state { target = endpoint }
+
+        connection?.cancel()
+        connection = nil
+        connectedEndpoint = nil
+        connectingEndpoint = nil
+        lastFailure = nil
+        token = nil
+
+        if let target, let oldToken {
+            // `transport.send` et jamais `perform` : `perform` absorberait le 401.
+            _ = try? await transport.send(
+                ClientHTTPRequest(method: "DELETE", path: ConsoleAPI.Service.basePath + "/devices/self"),
+                to: target,
+                token: oldToken
+            )
+        }
+
+        if let oldDeviceId {
+            try? await tokens.remove(deviceId: oldDeviceId)
+        }
+        deviceId = nil
+        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
+        revoked = false
+        refusedEndpoint = nil
+        pairingFailure = nil
+        publishState()
     }
 
     // MARK: - Flux typé
@@ -416,6 +478,16 @@ public final class ConsoleClientModel: ObservableObject {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/journal"), as: RemoteJournalPayload.self)
     }
 
+    /// Demande au Mac de relire l'état des PR sur GitHub (S-6, S-7). Le Mac
+    /// répond 202 sans attendre la relecture : les faits arrivent par la trame
+    /// `pull-request-states`.
+    public func refreshPullRequestStates() async throws -> RemoteAcceptedPayload {
+        try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/pull-request-states/refresh"),
+            as: RemoteAcceptedPayload.self
+        )
+    }
+
     public func contract(cardId: String) async throws -> RemoteContractPayload {
         try await perform(
             ClientHTTPRequest(method: "GET", path: "/v1/cards/" + encode(cardId) + "/contract"),
@@ -423,12 +495,18 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
-    public func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    /// Une page du sommaire d'une portée (`GET /v1/memory/page`) : `offset`
+    /// toujours transmis, `scope` et `limit` seulement quand ils sont posés.
+    public func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         var query: [String] = []
         if let scope { query.append("scope=" + encode(scope)) }
+        query.append("offset=\(offset)")
         if let limit { query.append("limit=\(limit)") }
-        let path = "/v1/memory" + (query.isEmpty ? "" : "?" + query.joined(separator: "&"))
-        return try await perform(ClientHTTPRequest(method: "GET", path: path), as: RemoteMemoryPagePayload.self)
+        let path = "/v1/memory/page?" + query.joined(separator: "&")
+        return try await perform(
+            ClientHTTPRequest(method: "GET", path: path, profile: .memory),
+            as: RemoteMemoryPagePayload.self
+        )
     }
 
     public func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
@@ -441,7 +519,10 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
         let path = scope.map { "/v1/memory/graph?scope=" + encode($0) } ?? "/v1/memory/graph"
-        return try await perform(ClientHTTPRequest(method: "GET", path: path), as: RemoteMemoryGraphPayload.self)
+        return try await perform(
+            ClientHTTPRequest(method: "GET", path: path, profile: .memory),
+            as: RemoteMemoryGraphPayload.self
+        )
     }
 
     // MARK: - Gestes
@@ -704,7 +785,7 @@ public final class ConsoleClientModel: ObservableObject {
         if let incompatible {
             throw ClientError.incompatibleProtocol(local: incompatible.local, remote: incompatible.remote)
         }
-        guard let endpoint = effectiveEndpoint else { throw ClientError.notConnected }
+        guard let endpoint = effectiveEndpoint ?? refusedEndpoint else { throw ClientError.notConnected }
         return endpoint
     }
 
@@ -742,12 +823,15 @@ public final class ConsoleClientModel: ObservableObject {
             lock(local: local, remote: remote)
         case .api(.unauthorized):
             if token != nil {
+                // L'endpoint refusé est capturé AVANT la remise à `nil` : connecté,
+                // sinon en cours de connexion, sinon l'endpoint en vigueur.
+                let refused = connectedEndpoint ?? connectingEndpoint ?? effectiveEndpoint
                 connection?.cancel()
                 connection = nil
                 connectedEndpoint = nil
                 connectingEndpoint = nil
                 lastFailure = nil
-                Task { [weak self] in await self?.revoke() }
+                Task { [weak self] in await self?.revoke(endpoint: refused) }
             }
         default:
             break
@@ -764,19 +848,25 @@ public final class ConsoleClientModel: ObservableObject {
         publishState()
     }
 
-    private func revoke() async {
-        if let deviceId {
-            try? await tokens.remove(deviceId: deviceId)
-        }
-        deviceId = nil
+    /// Ne fait RIEN si le jeton est déjà `nil` quand la tâche s'exécute : deux 401
+    /// concurrents ne donnent qu'un passage à `.refused`, et un 401 reçu pendant ou
+    /// après `forget()` (qui retire le jeton d'abord) est ignoré.
+    private func revoke(endpoint: ClientEndpoint?) async {
+        guard token != nil else { return }
+        let id = deviceId
         token = nil
-        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
+        deviceId = nil
         revoked = true
+        refusedEndpoint = endpoint
         connectedEndpoint = nil
         connectingEndpoint = nil
         lastFailure = nil
         connection?.cancel()
         connection = nil
+        if let id {
+            try? await tokens.remove(deviceId: id)
+        }
+        preferences.set(nil, forKey: ClientPreferenceKey.deviceId)
         publishState()
     }
 
@@ -789,6 +879,7 @@ public final class ConsoleClientModel: ObservableObject {
         case .api(.unavailable(let message)): return .unavailable(message)
         case .api(let other): return .unavailable(other.message ?? other.code)
         case .decoding(let message): return .unavailable(message)
+        case .unexpectedStatus(let status): return .unavailable("statut \(status)")
         case .notConnected: return .transport(.unreachable("aucun endpoint connu"))
         }
     }
@@ -801,9 +892,10 @@ public final class ConsoleClientModel: ObservableObject {
             revoked = false
         } else {
             // `deviceId` mémorisé sans jeton : le couple est incohérent, l'appairage
-            // est requis.
+            // est requis. Une erreur de lecture du trousseau compte comme une absence.
             token = nil
         }
+        tokenRead = true
         beginConnection(resetCounter: true)
     }
 
@@ -916,6 +1008,7 @@ public final class ConsoleClientModel: ObservableObject {
         attempt = 0
         publishState()
         refreshHomeFacts()
+        requestPullRequestStates()
         for try await chunk in stream {
             if Task.isCancelled { throw CancellationError() }
             for event in parser.consume(chunk) {
@@ -953,6 +1046,10 @@ public final class ConsoleClientModel: ObservableObject {
             components = payload
         case .journal(let payload):
             journal = payload.entries
+        case .pullRequestStates(let payload):
+            guard payload != pullRequestStates else { return }
+            pullRequestStates = payload
+            if let snapshot { deriveBoard(snapshot) }
         case .unknown:
             break
         }
@@ -1004,11 +1101,18 @@ public final class ConsoleClientModel: ObservableObject {
     private func applyStore(_ snapshot: StoreSnapshot) {
         guard snapshot != self.snapshot else { return }
         self.snapshot = snapshot
+        deriveBoard(snapshot)
+    }
+
+    /// Recalcule l'ardoise depuis l'instantané et les faits de PR connus (S-6) :
+    /// sans fait, une carte à PR reste « PR créée ».
+    private func deriveBoard(_ snapshot: StoreSnapshot) {
         board = KanbanBoardState.derive(
             snapshot: snapshot,
             nowMs: nowMs(),
             stateDir: "",
-            isAlive: .transported(snapshot)
+            isAlive: .transported(snapshot),
+            prFacts: pullRequestFacts
         )
     }
 
@@ -1021,6 +1125,16 @@ public final class ConsoleClientModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             await self.loadHomeFacts()
+        }
+    }
+
+    /// Demande une relecture des PR à chaque ouverture du flux (lancement et
+    /// reconnexion, S-6). TOLÉRANTE : un Mac plus ancien rend 404 et les cartes
+    /// restent « PR créée » ; aucune erreur n'est propagée.
+    private func requestPullRequestStates() {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.refreshPullRequestStates()
         }
     }
 
@@ -1088,5 +1202,19 @@ public final class ConsoleClientModel: ObservableObject {
         } else {
             attemptFollowsFailure = lastFailure != nil || searchExpired
         }
+        // Le statut d'appairage n'est republié qu'à son CHANGEMENT : la feuille
+        // Connexion s'ouvre sur un passage, jamais sur une republication.
+        let status = resolvedPairing
+        if status != pairing { pairing = status }
+    }
+
+    /// Le refus prime ; un jeton détenu vaut `.paired` (même avant la fin de la
+    /// lecture du trousseau, cas d'un appairage déjà réussi) ; avant la lecture,
+    /// `.restoring` ; sinon `.unpaired`.
+    private var resolvedPairing: ClientPairingStatus {
+        if revoked { return .refused(endpoint: refusedEndpoint) }
+        if token != nil { return .paired }
+        if !tokenRead { return .restoring }
+        return .unpaired
     }
 }
