@@ -83,10 +83,15 @@ enum IOSSessionText {
     static func sessionFile(_ directory: String, _ id: String) -> String { "\(directory)/\(id).jsonl" }
 
     /// Le statut d'un appel d'outil, dit pour l'accessibilité (le symbole ne
-    /// porte pas le sens seul).
-    static func toolStatusLabel(_ result: ToolResultRow?) -> String {
-        guard let result else { return statusPending }
-        return result.isError ? statusError : statusDone
+    /// porte pas le sens seul). « Interrompu » est le mot partagé du noyau
+    /// (S-7 de mac-finitions-hig).
+    static func toolStatusLabel(_ status: ToolCallStatus) -> String {
+        switch status {
+        case .running: return statusPending
+        case .failed: return statusError
+        case .done: return statusDone
+        case .interrupted: return ConversationText.toolInterrupted
+        }
     }
 
     private static let statusPending = "en cours"
@@ -176,6 +181,15 @@ enum IOSSessionsAccessibility {
     static func marker(_ rowId: String) -> String { "ios.session.marker.\(rowId)" }
     static func markerBody(_ rowId: String) -> String { "ios.session.marker.\(rowId).body" }
     static func diff(_ rowId: String, _ index: Int) -> String { "ios.session.diff.\(rowId).\(index)" }
+
+    /// Les identifiants de la vue clé/valeur des arguments d'un appel
+    /// (visionneuse-appels-outils-lisibles, S-5) ; `line` est `ArgumentLine.id`.
+    static func toolArguments(_ rowId: String) -> String { "ios.session.toolcall.\(rowId).args" }
+    static func argumentLine(_ rowId: String, _ line: String) -> String { "\(toolArguments(rowId)).\(line)" }
+    static func argumentMore(_ rowId: String, _ line: String) -> String { "\(argumentLine(rowId, line)).more" }
+    static func argumentsStatus(_ rowId: String) -> String { "\(toolArguments(rowId)).status" }
+    static func argumentsRawToggle(_ rowId: String) -> String { "\(toolArguments(rowId)).rawToggle" }
+    static func argumentsRaw(_ rowId: String) -> String { "\(toolArguments(rowId)).raw" }
 
     /// Les identifiants du bloc `ask` (S-7), tels que S-7 les nomme.
     static func ask(_ rowId: String) -> String { "ios.session.ask.\(rowId)" }

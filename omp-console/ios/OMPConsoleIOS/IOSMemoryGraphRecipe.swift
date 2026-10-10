@@ -1,10 +1,12 @@
-// Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche|liste>` (BR-7) : il force le
-// mode graphe de la section Mémoire sur la fixture PARTAGÉE `MemoryGraphParity`
+// Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche|liste|clavier>` (BR-7) : il
+// force le mode graphe de la section Mémoire sur la fixture PARTAGÉE `MemoryGraphParity`
 // (ConsoleCore), sans réseau et sans écran fabriqué — les API réelles du modèle
 // (`apply`, `magnify`, `drag`, `select`) sont employées telles quelles. La recette
 // `liste` (feuilles-ios-presentation-et-depots) charge la même fixture SANS montrer le
 // graphe : l'écran reste en mode LISTE et ouvre la fiche d'un souvenir par le
-// présentateur de la liste (`listSelection`).
+// présentateur de la liste (`listSelection`). La recette `clavier`
+// (ipad-clavier-et-largeur-de-lecture, S-8) garde, elle, le mode liste SANS fiche et
+// branche le modèle de la liste sur `IOSMemoryRecipeReader`, lecteur de la même fixture.
 //
 // Sans l'argument : aucun effet. Comme `IOSSection.resolve` et `IOSHomeRecipe`, la
 // DERNIÈRE paire reconnue gagne ; une valeur inconnue est ignorée.
@@ -23,6 +25,8 @@ enum IOSMemoryGraphRecipe: Equatable {
     case zoom
     case fiche
     case liste
+    /// Le mode liste sur la fixture, lu par `IOSMemoryRecipeReader` (S-8).
+    case clavier
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSMemoryGraphRecipe? {
@@ -46,6 +50,7 @@ enum IOSMemoryGraphRecipe: Equatable {
         case IOSMemoryText.graphRecipeZoom: return .zoom
         case IOSMemoryText.graphRecipeSheet: return .fiche
         case IOSMemoryText.graphRecipeList: return .liste
+        case IOSMemoryText.keyboardRecipe: return .clavier
         default: return nil
         }
     }
@@ -87,7 +92,7 @@ enum IOSMemoryGraphRecipe: Equatable {
         let center = CGPoint(x: 195, y: 350)
         let size = CGSize(width: 390, height: 700)
         switch self {
-        case .graphe, .liste:
+        case .graphe, .liste, .clavier:
             break
         case .zoom:
             model.magnify(by: 2, at: center, size: size)
@@ -115,7 +120,7 @@ enum IOSMemoryGraphRecipe: Equatable {
     @MainActor private func announce(_ model: IOSMemoryGraphModel) {
         guard model.shown, case .graph = model.state else { return }
         switch self {
-        case .graphe, .liste:
+        case .graphe, .liste, .clavier:
             break
         case .zoom:
             guard model.zoom != 1 else { return }

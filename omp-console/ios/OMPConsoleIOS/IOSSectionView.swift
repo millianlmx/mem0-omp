@@ -40,6 +40,8 @@ struct IOSSectionView: View {
     /// La feuille Connexion de la racine, ouverte par « Se connecter » du
     /// composant d'état de connexion des sections.
     @Binding var showConnection: Bool
+    /// La demande d'ouvrir « Nouvelle feature » (⌘N), transmise à Pipelines.
+    @Binding var newFeatureRequested: Bool
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -48,7 +50,8 @@ struct IOSSectionView: View {
     var body: some View {
         if section == .kanban {
             PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe,
-                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe, showConnection: $showConnection)
+                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe, showConnection: $showConnection,
+                            newFeatureRequested: $newFeatureRequested)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe, showConnection: $showConnection)
         } else if section == .sessions {
@@ -80,6 +83,7 @@ struct IOSSectionView: View {
         }
         .iosPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .navigationTitle(section.title)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)

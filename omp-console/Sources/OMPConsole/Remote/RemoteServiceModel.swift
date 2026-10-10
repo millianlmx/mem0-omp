@@ -17,7 +17,6 @@ final class RemoteServiceModel: ObservableObject {
 
     @Published private(set) var state: RemoteServiceState = .off
     @Published private(set) var enabled: Bool
-    @Published var sheetShown = false
     private(set) var address: String?
 
     /// La préparation des composants est-elle terminée (S-14) ? Le service ne
@@ -155,8 +154,9 @@ final class RemoteServiceModel: ObservableObject {
         address = nil
     }
 
-    /// Le geste de l'interrupteur. Couper arrête le service et son annonce Bonjour ;
-    /// rallumer repart sur le même port.
+    /// Le geste de l'interrupteur. Couper arrête le service et son annonce Bonjour,
+    /// puis annule le code actif (il ne pourra plus être échangé, même après
+    /// rallumage) ; rallumer repart sur le même port.
     func setEnabled(_ on: Bool) async {
         enabled = on
         defaults.set(on, forKey: Self.enabledKey)
@@ -164,6 +164,8 @@ final class RemoteServiceModel: ObservableObject {
             await start()
         } else {
             stop()
+            registry.cancelCode()
+            pairing.refresh()
         }
     }
 
@@ -176,10 +178,6 @@ final class RemoteServiceModel: ObservableObject {
     func reloadRegistry() async {
         await registry.load()
         pairing.refresh()
-    }
-
-    func requestPairingSheet() {
-        sheetShown = true
     }
 
     private func apply(_ newState: RemoteServiceState) {

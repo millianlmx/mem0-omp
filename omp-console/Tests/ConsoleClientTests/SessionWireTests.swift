@@ -192,6 +192,45 @@ struct SessionWireTests {
         #expect(call.target == "", "sans arguments, la cible reste vide — le nom suffit")
     }
 
+    @Test("visionneuse-appels-outils-lisibles/AC-9 : le texte ordonné des arguments arrive intact, et prime sur le rendu trié")
+    func argumentsTextTravelsIntact() throws {
+        let payload = try Self.decode(
+            #"{"entries":[{"index":1,"offset":0,"kind":"assistant","text":"x","toolCalls":[{"id":"c1","name":"read","arguments":{"path":"a","i":"lire"},"argumentsText":"{\"path\":\"a\",\"i\":\"lire\"}"}]}],"skipped":[],"truncated":false}"#
+        )
+        let entry = try #require(SessionWire.entries(payload).first)
+        guard case .assistant(let turn) = entry.kind else {
+            Issue.record("l'entrée assistant n'a pas été reconstruite")
+            return
+        }
+        #expect(turn.toolCalls.first?.argumentsText == #"{"path":"a","i":"lire"}"#)
+
+        var builder = SessionRowBuilder()
+        builder.append([entry])
+        guard case .toolCall(let call)? = builder.rows.last?.kind else {
+            Issue.record("l'appel d'outil n'a pas produit de ligne")
+            return
+        }
+        #expect(call.argumentsJSON == #"{"path":"a","i":"lire"}"#, "l'ordre du fichier, pas l'ordre trié")
+    }
+
+    @Test("visionneuse-appels-outils-lisibles/AC-9 : un Mac d'avant la feature n'envoie pas de texte — repli sur le rendu trié")
+    func missingArgumentsTextFallsBackOnSortedRender() throws {
+        let entry = try #require(SessionWire.entries(Self.decode(Self.wireJSON)).first { $0.index == 2 })
+        guard case .assistant(let turn) = entry.kind else {
+            Issue.record("l'entrée assistant n'a pas été reconstruite")
+            return
+        }
+        #expect(turn.toolCalls.map(\.argumentsText) == [nil, nil])
+
+        var builder = SessionRowBuilder()
+        builder.append([entry])
+        let calls = builder.rows.compactMap { row -> ToolCallRow? in
+            guard case .toolCall(let call) = row.kind else { return nil }
+            return call
+        }
+        #expect(calls.first?.argumentsJSON == #"{"i":"lire","path":"/tmp/proj/a.txt"}"#)
+    }
+
     @Test("le motif d'un fichier illisible est transporté, et absent quand la lecture est saine")
     func unreadableReasonTravels() throws {
         let broken = try Self.decode(

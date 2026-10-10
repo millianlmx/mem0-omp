@@ -63,6 +63,11 @@ struct IOSStatsScreen: View {
         .onChange(of: model.payload?.projectKey) { recipe?.advance(model) }
         // Retour du Mac : le relevé conservé est relu (etats-non-connecte-heterogenes-ios, S-4).
         .onMacReconnected(client) { model.reload(trigger: .appeared) }
+        // ⌘R : le même relevé que le bouton Réessayer, actif client connecté.
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .stats,
+            isEnabled: IOSStatsModel.reloads(.appeared, state: client.state)
+        ) { model.reload(trigger: .appeared) })
     }
 
     /// Le statut de connexion présenté. Sous le crochet `-stats.recipe`, la
@@ -95,6 +100,7 @@ struct IOSStatsScreen: View {
         }
         .iosPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + ConsoleSection.stats.rawValue)
     }

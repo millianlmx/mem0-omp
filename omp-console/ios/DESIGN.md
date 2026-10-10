@@ -75,6 +75,12 @@ marqueur `[test: <fonction>]` (une fonction de
 - Marge horizontale de 16 pt en largeur compacte, 24 pt en largeur régulière
   (ou inconnue) : `IOSMetrics.margin(_:)` en est l'unique règle.
   `[test: marginFollowsSizeClass]`
+- Colonne de lecture : sur une fenêtre large, Accueil, Sessions, Mémoire (mode
+  Liste), Projet, Statistiques et Session OMP posent leur contenu dans une
+  colonne de 720 pt marges comprises (`IOSMetrics.readableWidth`, surface de
+  672 pt), centrée, mise à l'échelle par Dynamic Type (`iosReadableWidth()`) ;
+  sous ce plafond, rien ne change. Pipelines et le mode Graphe restent pleine
+  largeur. `[test: readableWidthKeepsTheColumnUnder700]`
 - Les marges et les rembourrages des surfaces grandissent avec Dynamic Type
   (`@ScaledMetric`), jamais une constante figée seule. `[capture: iphone-*-light-ax]`
 - Cible tactile minimale : 44 pt (`IOSMetrics.minimumTarget`), la valeur du HIG
@@ -86,6 +92,14 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
+- Clavier de l'iPad : ⌘1…⌘7 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire,
+  Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
+  ouvre « Nouvelle feature… », ⌘F active la recherche de l'écran qui en a une.
+  Les dix commandes vivent dans la barre des menus de l'iPad (menus
+  Présentation et Fichier) avec leur libellé français, toutes avec ⌘ seul :
+  ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
+  `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
 
 ## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
 
@@ -529,6 +543,15 @@ marqueur `[test: <fonction>]` (une fonction de
 - Une question `ask` est mise en évidence et DÉPLIÉE d'emblée ; la visionneuse
   n'offre AUCUN geste de réponse — lire, plier/déplier, faire défiler seulement.
   `[test: askHighlighted]`
+- Les arguments d'un appel déplié se lisent en clé/valeur (`IOSToolArgumentsView`,
+  lecture partagée `ToolArguments`), jamais en JSON brut : hiérarchie indentée
+  (retrait `@ScaledMetric`), éléments de liste numérotés dès 1, booléens « oui »/« non »,
+  clés dans l'ordre de l'appel, libellés français pour read, write, edit, bash,
+  grep et glob, valeurs « code » à chasse fixe, le reste en police système.
+  « Aucun argument » / « Arguments illisibles » ; le JSON brut reste replié derrière
+  « Afficher le détail brut ». Une valeur longue montre un EXTRAIT de 4 lignes ou
+  280 caractères suivi de « Afficher plus » : c'est une troncature de CONTENU
+  voulue, faite par le noyau, sans aucun `lineLimit`. `[test: toolArgumentsAreFields]`
 - Un ajout d'un run vivant s'ajoute sans relire la session : une seule lecture
   initiale, puis le flux de cette session. `[test: additionsDoNotReload]`
 - Le fil ne colle au bas que tant que l'utilisateur n'a pas remonté, et le

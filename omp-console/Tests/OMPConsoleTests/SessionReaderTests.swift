@@ -261,7 +261,8 @@ func conversationFollowsFileOrder() throws {
                                 arguments: .object([
                                     "path": .string("/tmp/a.txt"),
                                     "offset": .number(2),
-                                ])
+                                ]),
+                                argumentsText: #"{"path":"/tmp/a.txt","offset":2}"#
                             )
                         ]
                     )
@@ -687,4 +688,60 @@ func entriesCarryTheirParsedTimestamp() throws {
         #expect(abs((entries[0].timestampMs ?? 0) - 1_767_225_600_500) < 0.01)
         #expect(abs((entries[1].timestampMs ?? 0) - 1_767_225_602_000) < 0.01)
     }
+}
+
+// MARK: - Texte ordonné des arguments (feature visionneuse-appels-outils-lisibles, S-1)
+
+/// Les appels d'outil de la seule entrée assistant d'une session écrite à la main.
+private func toolCalls(readingContent content: String) throws -> [ToolCall] {
+    var calls: [ToolCall] = []
+    try withFixture([Lines.header(), Lines.assistant(content: content)]) { fixture in
+        let reader = SessionReader(path: fixture.path)
+        #expect(reader.read().issue == nil)
+        let entries = reader.conversation.entries
+        #expect(entries.count == 1)
+        calls = try #require(entries.first.flatMap(turn(of:))).toolCalls
+    }
+    return calls
+}
+
+@Test("visionneuse-appels-outils-lisibles/AC-2 : le texte des arguments garde l'ordre des clés du fichier")
+func argumentsTextKeepsTheFileOrder() throws {
+    let calls = try toolCalls(
+        readingContent: #"[{"type":"toolCall","id":"c1","name":"multi","arguments":{"zeta":1,"alpha":{"b":true,"a":null}}}]"#
+    )
+    #expect(calls.count == 1)
+    #expect(calls.first?.argumentsText == #"{"zeta":1,"alpha":{"b":true,"a":null}}"#)
+    // Le dictionnaire reste servi tel quel à la cible et au rendu texte.
+    #expect(calls.first?.arguments == .object(["zeta": .number(1), "alpha": .object(["b": .bool(true), "a": .null])]))
+}
+
+@Test("visionneuse-appels-outils-lisibles/AC-8 : des arguments non-objet n'ont pas de dictionnaire mais gardent leur texte")
+func nonObjectArgumentsKeepTheirText() throws {
+    let calls = try toolCalls(
+        readingContent: #"[{"type":"toolCall","id":"c1","name":"write","arguments":"{\"path\":"}]"#
+    )
+    #expect(calls.first?.arguments == nil)
+    #expect(calls.first?.argumentsText == #""{\"path\":""#)
+}
+
+@Test("visionneuse-appels-outils-lisibles/AC-9 : le k-ième bloc toolCall va au k-ième appel ; sans clé arguments, pas de texte")
+func argumentsTextsArePairedByPosition() throws {
+    let calls = try toolCalls(
+        readingContent: #"[{"type":"text","text":"je lance"},{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"ls","i":"lister"}},{"type":"thinking","thinking":"puis"},{"type":"toolCall","id":"c2","name":"noop"},{"type":"toolCall","id":"c3","name":"read","arguments":{"path":"a","offset":-0.5e3}}]"#
+    )
+    #expect(calls.map(\.id) == ["c1", "c2", "c3"])
+    #expect(calls.map(\.argumentsText) == [#"{"command":"ls","i":"lister"}"#, nil, #"{"path":"a","offset":-0.5e3}"#])
+}
+
+@Test("visionneuse-appels-outils-lisibles/AC-9 : une relecture ordonnée impossible ne laisse AUCUN texte, et ne retire rien")
+func failedOrderedReadLeavesNoText() throws {
+    // Une virgule finale dans un objet : `JSONSerialization` la tolère (mesuré le
+    // 2026-10-10, macOS 27), la RFC 8259 non (`OrderedJSON` refuse) — tout ou rien,
+    // aucun appariement partiel.
+    let calls = try toolCalls(
+        readingContent: #"[{"type":"text","text":"a",},{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"a"}},{"type":"toolCall","id":"c2","name":"read","arguments":{"path":"b"}}]"#
+    )
+    #expect(calls.map(\.argumentsText) == [nil, nil])
+    #expect(calls.map(\.arguments) == [.object(["path": .string("a")]), .object(["path": .string("b")])])
 }

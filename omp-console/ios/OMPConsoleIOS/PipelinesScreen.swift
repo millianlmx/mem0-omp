@@ -26,6 +26,9 @@ struct PipelinesScreen: View {
     @State private var unfoldedLanes: Set<KanbanLane> = []
     /// La feuille Connexion de la racine, ouverte par « Se connecter ».
     @Binding var showConnection: Bool
+    /// La demande d'ouvrir « Nouvelle feature » posée par ⌘N depuis la racine :
+    /// consommée à l'apparition ou à son changement, elle ouvre UNE feuille.
+    @Binding var newFeatureRequested: Bool
     /// Le signal de prêt de `-pipelines.board` n'est écrit qu'UNE fois.
     @State private var boardAnnounced = false
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -85,6 +88,11 @@ struct PipelinesScreen: View {
             recipeOpened = true
             sheet = .card(card.id)
         }
+        // ⌘R (menu Présentation) : le même geste que « Rafraîchir », la relecture
+        // de l'état des PR par le Mac ; la commande de scène porte le raccourci.
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: .kanban, isEnabled: canRefresh) { refreshPullRequests() })
+        .onAppear { consumeNewFeatureRequest() }
+        .onChange(of: newFeatureRequested) { consumeNewFeatureRequest() }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(PipelinesAccessibility.screen)
         .task {
@@ -94,6 +102,17 @@ struct PipelinesScreen: View {
                 boardRecipe.announce()
             }
         }
+    }
+
+    /// ⌘N : la même feuille que le bouton « + », ouverte une seule fois — la
+    /// demande est un booléen remis à faux avant l'ouverture. Comme le bouton,
+    /// elle n'ouvre rien hors connexion (etats-non-connecte-heterogenes-ios, S-5) :
+    /// la section Pipelines est montrée, avec son état de connexion.
+    private func consumeNewFeatureRequest() {
+        guard newFeatureRequested else { return }
+        newFeatureRequested = false
+        guard connection.gesturesEnabled else { return }
+        sheet = .newFeature
     }
 
     // MARK: - Dérivation
@@ -122,10 +141,18 @@ struct PipelinesScreen: View {
 
     /// Demande au Mac de relire l'état des PR. Aucun message : un échec (Mac
     /// ancien, réseau) laisse le bouton tel quel, le retour visible est le
-    /// libellé des cartes.
+    /// libellé des cartes. ⌘R (`IOSKeyboardCommands`) passe aussi par ici.
+    private func refreshPullRequests() {
+        Task { _ = try? await client.refreshPullRequestStates() }
+    }
+
+    private var canRefresh: Bool {
+        PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing)
+    }
+
     private var refreshButton: some View {
         Button {
-            Task { _ = try? await client.refreshPullRequestStates() }
+            refreshPullRequests()
         } label: {
             if refreshing {
                 ProgressView()
@@ -133,8 +160,7 @@ struct PipelinesScreen: View {
                 Label(KanbanText.refresh, systemImage: "arrow.clockwise")
             }
         }
-        .keyboardShortcut(KeyEquivalent(PipelinesText.refreshKey), modifiers: .command)
-        .disabled(!PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing))
+        .disabled(!canRefresh)
         .accessibilityLabel(KanbanText.refresh)
         .accessibilityIdentifier(PipelinesAccessibility.refresh)
     }

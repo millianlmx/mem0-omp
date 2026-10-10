@@ -274,7 +274,7 @@ private enum LineClassifier {
         switch type {
         case "session": return headerLine(object)
         case "title": return .silent
-        case "message": return messageLine(object, entryTimestamp(object))
+        case "message": return messageLine(object, entryTimestamp(object), line)
         case "compaction": return compactionLine(object, entryTimestamp(object))
         case "branch_summary": return branchSummaryLine(object, entryTimestamp(object))
         default: return outOfScopeTypes.contains(type) ? .silent : .skipped(.unknownType)
@@ -307,7 +307,11 @@ private enum LineClassifier {
         )
     }
 
-    private static func messageLine(_ object: [String: Any], _ timestampMs: Double?) -> ClassifiedLine {
+    private static func messageLine(
+        _ object: [String: Any],
+        _ timestampMs: Double?,
+        _ line: ArraySlice<UInt8>
+    ) -> ClassifiedLine {
         guard let message = object["message"] as? [String: Any],
             let role = message["role"] as? String
         else { return .skipped(.malformed) }
@@ -318,7 +322,7 @@ private enum LineClassifier {
         case "user":
             return .entry(.user(UserTurn(text: bodyText(message["content"]))), timestampMs)
         case "assistant":
-            return .entry(.assistant(assistantTurn(message)), timestampMs)
+            return .entry(.assistant(assistantTurn(message, line)), timestampMs)
         case "toolResult":
             return .entry(.toolResult(toolResultTurn(message)), timestampMs)
         default:
@@ -326,12 +330,12 @@ private enum LineClassifier {
         }
     }
 
-    private static func assistantTurn(_ message: [String: Any]) -> AssistantTurn {
+    private static func assistantTurn(_ message: [String: Any], _ line: ArraySlice<UInt8>) -> AssistantTurn {
         let blocks = contentBlocks(message["content"])
         let thinking = blocks
             .filter { $0["type"] as? String == "thinking" }
             .compactMap { $0["thinking"] as? String }
-        let toolCalls = blocks.compactMap { block -> ToolCall? in
+        var toolCalls = blocks.compactMap { block -> ToolCall? in
             guard block["type"] as? String == "toolCall" else { return nil }
             var arguments: JSONValue?
             if let raw = block["arguments"] as? [String: Any] { arguments = jsonValue(raw) }
@@ -340,6 +344,9 @@ private enum LineClassifier {
                 name: block["name"] as? String ?? "",
                 arguments: arguments
             )
+        }
+        if !toolCalls.isEmpty, let texts = orderedArgumentsTexts(line, count: toolCalls.count) {
+            for position in toolCalls.indices { toolCalls[position].argumentsText = texts[position] }
         }
         return AssistantTurn(
             text: bodyText(message["content"]),
@@ -351,6 +358,19 @@ private enum LineClassifier {
             toolCalls: toolCalls,
             provider: message["provider"] as? String
         )
+    }
+
+    /// Le texte ORDONNÉ des arguments de chaque appel de la ligne (S-1) : la ligne
+    /// est relue par `OrderedJSON`, seul analyseur qui garde l'ordre du fichier, et
+    /// le k-ième bloc `toolCall` va au k-ième `ToolCall`. Tout ou rien : si la
+    /// relecture échoue ou si le nombre de blocs diffère, `nil` — aucun appariement
+    /// partiel, les appels gardent ce qu'ils ont déjà.
+    private static func orderedArgumentsTexts(_ line: ArraySlice<UInt8>, count: Int) -> [String?]? {
+        guard case .array(let content)? = OrderedJSON.parse(line)?.member("message")?.member("content")
+        else { return nil }
+        let calls = content.filter { $0.member("type") == .string("toolCall") }
+        guard calls.count == count else { return nil }
+        return calls.map { $0.member("arguments")?.rendered }
     }
 
     private static func toolResultTurn(_ message: [String: Any]) -> ToolResultTurn {

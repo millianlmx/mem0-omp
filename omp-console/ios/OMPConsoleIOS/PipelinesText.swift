@@ -26,10 +26,6 @@ enum PipelinesText {
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
 
-    /// La touche du raccourci ⌘R de « Rafraîchir » (clavier de l'iPad), la même
-    /// que sur le Mac.
-    static let refreshKey: Character = "r"
-
     /// Le chevron du sélecteur de dépôt (un menu : il se déroule, il ne navigue pas).
     static let repoMenuSymbol = "chevron.up.chevron.down"
 

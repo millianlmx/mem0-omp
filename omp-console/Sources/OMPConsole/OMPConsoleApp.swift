@@ -52,14 +52,17 @@ struct OMPConsoleApp: App {
     /// badge se recalcule sans redémarrage. Le service d'API le sert aussi (S-4).
     @StateObject private var componentsModel: ComponentPresenceModel
     /// Le service d'API distante (BR-9) : à l'échelle de l'app, comme les autres —
-    /// il possède le registre des appareils, l'interrupteur persistant et la
-    /// feuille d'appairage.
+    /// il possède le registre des appareils et l'interrupteur persistant, que
+    /// montre l'onglet « Appareils » des Réglages.
     @StateObject private var remoteModel: RemoteServiceModel
     /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
     /// (S-2 de mac-etats-vides-sans-issue) : à l'échelle de l'app, il écrit par
     /// la session et lit les projets connus dans le magasin du service d'API.
     @StateObject private var projectChooser: ProjectChooserModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    /// Le crochet de recette `-surface.recipe` (racine jetable seulement), lu une
+    /// fois au lancement : la racine l'applique à son premier affichage.
+    private let surfaceRecipe = SurfaceRecipe.current()
 
     /// Un `ActionsModel` pour l'app : il poste au service les gestes des cartes
     /// (S-9), sans lancer aucun process. Les accroches de terminaison des modèles
@@ -155,12 +158,12 @@ struct OMPConsoleApp: App {
     }
 
     var body: some Scene {
-        // UNE seule scène : la fenêtre principale. Session OMP, Terminal, Projet,
-        // Statistiques et la visionneuse sont des sections (ou une vue poussée)
-        // de cette fenêtre — en plein écran, une fenêtre annexe partait dans son
-        // propre espace (demande du 2026-10-02). Sans titre de scène : la fenêtre
-        // porte celui de la section courante (`ConsoleRootView`), jamais le nom
-        // de l'app. L'identifiant sert à `MainWindow.reveal()` pour la retrouver.
+        // La fenêtre principale : Session OMP, Terminal, Projet, Statistiques et
+        // la visionneuse sont des sections (ou une vue poussée) de cette fenêtre
+        // — en plein écran, une fenêtre annexe partait dans son propre espace
+        // (demande du 2026-10-02). Sans titre de scène : la fenêtre porte celui
+        // de la section courante (`ConsoleRootView`), jamais le nom de l'app.
+        // L'identifiant sert à `MainWindow.reveal()` pour la retrouver.
         WindowGroup(id: MainWindow.sceneID) {
             ConsoleRootView(
                 model: model,
@@ -180,7 +183,8 @@ struct OMPConsoleApp: App {
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
                 statsModel: statsModel,
-                projectChooser: projectChooser
+                projectChooser: projectChooser,
+                surfaceRecipe: surfaceRecipe
             )
         }
         .commands {
@@ -191,8 +195,14 @@ struct OMPConsoleApp: App {
             // personnalisable.
             ToolbarCommands()
             WelcomeCommands(home: homeModel)
-            RemoteCommands(remote: remoteModel)
+            RemoteCommands()
             QuitCommands(quit: appDelegate.quit)
+        }
+        // Le panneau Réglages (⌘, ou « Réglages… » du menu de l'app, créés par
+        // SwiftUI) : un seul onglet, « Appareils ». SwiftUI garantit une seule
+        // fenêtre : une nouvelle demande la ramène au premier plan.
+        Settings {
+            ConsoleSettingsView(remote: remoteModel)
         }
     }
 }
@@ -271,16 +281,14 @@ struct WelcomeCommands: Commands {
     }
 }
 
-/// Menu de l'application ▸ « Appairage… » (⌥⌘A, S-5) : ramène la fenêtre
-/// principale, puis demande la feuille d'appairage au service d'API distante.
+/// Menu de l'application ▸ « Appairage… » (⌥⌘A) : ouvre le panneau Réglages sur
+/// l'onglet « Appareils » (ou le ramène devant s'il est déjà ouvert). Aucune
+/// feuille, et la fenêtre principale n'est ni ramenée ni modifiée.
 struct RemoteCommands: Commands {
-    @ObservedObject var remote: RemoteServiceModel
-
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button(PairingText.menuItem) {
-                MainWindow.reveal()
-                remote.requestPairingSheet()
+            SettingsLink {
+                Text(PairingText.menuItem)
             }
             .keyboardShortcut("a", modifiers: [.command, .option])
         }
@@ -342,6 +350,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var alerts = AlertsModel(ownership: ownership, recipeBoard: HomeRecipe.current()?.board)
 
     private var statusItemController: StatusItemController?
+    /// Les jetons des observateurs de `MainMenuSeparators.observe()` (S-1).
+    private var menuObservers: [NSObjectProtocol] = []
+
+    /// S-1 : aucune fenêtre ne se regroupe en onglets, donc ni Présentation ni
+    /// Fenêtre n'ont d'entrée d'onglet. Posé AVANT la première fenêtre (D-1).
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
 
     /// Le déroulé de la sortie (S-4) : instantané des activités, AU PLUS une
     /// alerte, puis accroches, fermeture des feuilles et terminaison redemandée.
@@ -368,10 +384,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
         // son titre suivra l'état publié, et l'autorisation sera demandée. Le clic
-        // est branché AVANT `start()`, qui pose le délégué du centre.
+        // est branché AVANT `start()`, qui pose le délégué du centre. Sous le
+        // crochet `-surface.recipe`, le modèle ne démarre pas : ni demande
+        // d'autorisation, ni sonde des ports de la pile de l'utilisateur.
         statusItemController = StatusItemController(model: alerts)
         alerts.onOpen = { AppDelegate.openAlert?($0) }
-        alerts.start()
+        if SurfaceRecipe.current() == nil {
+            alerts.start()
+        }
+        // S-1 : plus de séparateur en tête, en fin ni en double dans la barre des
+        // menus, au lancement puis à chaque mise à jour d'un menu.
+        menuObservers = MainMenuSeparators.observe()
+        if let mainMenu = NSApp.mainMenu { MainMenuSeparators.tidy(mainMenu) }
         // Le Quitter du Dock, `osascript … quit` et la fermeture de session macOS
         // arrivent en Apple Event : ce gestionnaire les reçoit même quand une
         // feuille est attachée, ce que `applicationShouldTerminate` ne fait pas

@@ -34,6 +34,9 @@ struct RootView: View {
     @State private var showConnection: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showWelcome = false
+    /// La demande d'ouvrir « Nouvelle feature » (⌘N), consommée par Pipelines : la
+    /// feuille y reste un état privé, la racine ne fait que la demander.
+    @State private var newFeatureRequested = false
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     private let recipe: IOSHomeRecipe?
@@ -143,12 +146,18 @@ struct RootView: View {
                         pipelinesBoardRecipe: pipelinesBoardRecipe,
                         projectRecipe: projectRecipe,
                         sessionOmpRecipe: sessionOmpRecipe,
-                        showConnection: $showConnection
+                        showConnection: $showConnection,
+                        newFeatureRequested: $newFeatureRequested
                     )
                 }
             }
             .toolbar { connectionToolbarItem }
         }
+        .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: selection) { selection = $0 })
+        .focusedSceneValue(\.iosNewFeature, IOSCommandAction(owner: .kanban, isEnabled: true) {
+            selection = .kanban
+            newFeatureRequested = true
+        })
         .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
             HomeWelcomeSheet(client: client)
         }
