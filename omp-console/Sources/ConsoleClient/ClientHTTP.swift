@@ -4,19 +4,35 @@
 
 import Foundation
 
+/// Le profil d'une requête : il choisit la session du transport, donc ses délais
+/// et sa borne de corps. `.memory` sert les lectures Mémoire lentes (page de
+/// liste, graphe) ; tout le reste est `.standard`.
+public enum ClientRequestProfile: Equatable, Sendable {
+    case standard
+    case memory
+}
+
 /// Une requête du client : la méthode, le chemin AVEC sa chaîne de requête, le
-/// corps JSON éventuel, et le fait qu'elle ouvre un flux SSE.
+/// corps JSON éventuel, le fait qu'elle ouvre un flux SSE, et son profil.
 public struct ClientHTTPRequest: Equatable, Sendable {
     public var method: String
     public var path: String
     public var body: Data?
     public var isStream: Bool
+    public var profile: ClientRequestProfile
 
-    public init(method: String, path: String, body: Data? = nil, isStream: Bool = false) {
+    public init(
+        method: String,
+        path: String,
+        body: Data? = nil,
+        isStream: Bool = false,
+        profile: ClientRequestProfile = .standard
+    ) {
         self.method = method
         self.path = path
         self.body = body
         self.isStream = isStream
+        self.profile = profile
     }
 }
 

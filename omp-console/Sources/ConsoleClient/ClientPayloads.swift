@@ -276,20 +276,22 @@ public struct RemoteMemoryRow: Codable, Equatable, Sendable {
     }
 }
 
-/// Le sommaire d'une portée (miroir de `remote.RemoteMemoryPagePayload`, S-1) :
-/// `scope` vaut `nil` quand aucun projet n'est ouvert ; `truncated` dit qu'une
-/// ligne a été retirée par la borne de nombre ou d'octets.
+/// Une page du sommaire d'une portée (miroir de `remote.RemoteMemoryPagePayload`,
+/// S-1) : `scope` vaut `nil` quand aucun projet n'est ouvert ; `nextOffset` est
+/// le rang de la page suivante, absent quand la portée est épuisée.
 public struct RemoteMemoryPagePayload: Codable, Equatable, Sendable {
     public var scope: String?
     public var total: Int
+    public var offset: Int
     public var rows: [RemoteMemoryRow]
-    public var truncated: Bool
+    public var nextOffset: Int?
 
-    public init(scope: String?, total: Int, rows: [RemoteMemoryRow], truncated: Bool) {
+    public init(scope: String?, total: Int, offset: Int, rows: [RemoteMemoryRow], nextOffset: Int?) {
         self.scope = scope
         self.total = total
+        self.offset = offset
         self.rows = rows
-        self.truncated = truncated
+        self.nextOffset = nextOffset
     }
 }
 
@@ -340,12 +342,15 @@ public struct RemoteMemoryGraphLink: Codable, Equatable, Sendable {
 }
 
 public struct RemoteMemoryGraphPayload: Codable, Equatable, Sendable {
+    /// La portée résolue par la coque ; `nil` quand aucun projet n'est ouvert.
+    public var scope: String?
     public var nodes: [RemoteMemoryGraphNode]
     public var links: [RemoteMemoryGraphLink]
     public var total: Int
     public var truncated: Bool
 
-    public init(nodes: [RemoteMemoryGraphNode], links: [RemoteMemoryGraphLink], total: Int, truncated: Bool = false) {
+    public init(scope: String?, nodes: [RemoteMemoryGraphNode], links: [RemoteMemoryGraphLink], total: Int, truncated: Bool = false) {
+        self.scope = scope
         self.nodes = nodes
         self.links = links
         self.total = total
@@ -358,6 +363,7 @@ extension RemoteMemoryGraphPayload {
     /// l'émet pas, et la charge reste lisible (absent ⇒ faux).
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope)
         nodes = try container.decode([RemoteMemoryGraphNode].self, forKey: .nodes)
         links = try container.decode([RemoteMemoryGraphLink].self, forKey: .links)
         total = try container.decode(Int.self, forKey: .total)

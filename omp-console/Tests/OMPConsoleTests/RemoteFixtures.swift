@@ -84,8 +84,13 @@ struct RemoteStack {
 
     var base: String { "http://127.0.0.1:\(port)" }
 
+    /// `liveMemory` remplace le service scripté AUPRÈS DES ROUTES (banc de recette
+    /// sur la vraie mémoire, `memoryDelayServe`) ; `memoryConfig` remplace l'adresse
+    /// fictive. Nuls ⇒ comportement historique : routes servies par `memory`.
     static func make(
         memory: ScriptedMemoryService = ScriptedMemoryService(),
+        liveMemory: (any MemoryServing)? = nil,
+        memoryConfig: MemoryServiceConfig? = nil,
         stateDir: String? = nil,
         clock: MutableRemoteClock = MutableRemoteClock(),
         projectModel: ProjectConsoleModel? = nil,
@@ -132,11 +137,11 @@ struct RemoteStack {
         // l'évènement `devices` par le flux. Sans lui, l'ordre RÉEL des trames
         // d'ouverture resterait invisible aux tests (S-13).
         registry.changeHandler = { [weak streams] in streams?.broadcastDevices() }
-        let config = MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
+        let config = memoryConfig ?? MemoryServiceConfig(baseURL: URL(string: "http://127.0.0.1:8321")!, token: "")
         let reads = RemoteReads(
             hub: hub,
             registry: registry,
-            service: memory,
+            service: liveMemory ?? memory,
             memoryConfig: config,
             memoryLinks: root.appendingPathComponent("memory-links.json"),
             environment: [:],

@@ -29,9 +29,9 @@ private final class GraphReader: IOSMemoryReading {
         self.graph = graph
     }
 
-    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         pageReads += 1
-        return RemoteMemoryPagePayload(scope: "projet", total: 0, rows: [], truncated: false)
+        return RemoteMemoryPagePayload(scope: "projet", total: 0, offset: offset, rows: [], nextOffset: nil)
     }
 
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
@@ -177,7 +177,7 @@ struct IOSMemoryGraphTests {
         #expect(other.state == .macUnreachable)
 
         // Un graphe VIDE est un état « vide », jamais un canevas muet.
-        let empty = GraphReader(graph: .success(RemoteMemoryGraphPayload(nodes: [], links: [], total: 0)))
+        let empty = GraphReader(graph: .success(RemoteMemoryGraphPayload(scope: "projet", nodes: [], links: [], total: 0)))
         let blank = IOSMemoryGraphModel(client: empty)
         await blank.activate()
         #expect(blank.state == .empty)

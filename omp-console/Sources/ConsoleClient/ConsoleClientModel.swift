@@ -405,12 +405,18 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
-    public func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    /// Une page du sommaire d'une portée (`GET /v1/memory/page`) : `offset`
+    /// toujours transmis, `scope` et `limit` seulement quand ils sont posés.
+    public func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         var query: [String] = []
         if let scope { query.append("scope=" + encode(scope)) }
+        query.append("offset=\(offset)")
         if let limit { query.append("limit=\(limit)") }
-        let path = "/v1/memory" + (query.isEmpty ? "" : "?" + query.joined(separator: "&"))
-        return try await perform(ClientHTTPRequest(method: "GET", path: path), as: RemoteMemoryPagePayload.self)
+        let path = "/v1/memory/page?" + query.joined(separator: "&")
+        return try await perform(
+            ClientHTTPRequest(method: "GET", path: path, profile: .memory),
+            as: RemoteMemoryPagePayload.self
+        )
     }
 
     public func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
@@ -423,7 +429,10 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
         let path = scope.map { "/v1/memory/graph?scope=" + encode($0) } ?? "/v1/memory/graph"
-        return try await perform(ClientHTTPRequest(method: "GET", path: path), as: RemoteMemoryGraphPayload.self)
+        return try await perform(
+            ClientHTTPRequest(method: "GET", path: path, profile: .memory),
+            as: RemoteMemoryGraphPayload.self
+        )
     }
 
     // MARK: - Gestes

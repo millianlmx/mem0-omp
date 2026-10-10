@@ -177,6 +177,13 @@ struct IOSMemoryScreen: View {
             banner(IOSMemoryText.macUnreachable, tone: .attention)
             card(IOSMemoryText.noData)
             retryButton
+        case .macTimedOut:
+            banner(IOSMemoryText.macTimedOut, tone: .attention)
+            card(IOSMemoryText.noData)
+            retryButton
+        case .macOutdated:
+            banner(IOSMemoryText.macOutdated, tone: .attention)
+            retryButton
         case .noProject:
             card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
         case .unavailable(let detail):
@@ -184,18 +191,12 @@ struct IOSMemoryScreen: View {
             retryButton
         case .summaryEmpty(let scope):
             card(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))
-        case .summary(_, let total, let rows, let truncated):
+        case .summary(_, let total, let rows, let more):
             header(MemoryText.summaryCount(total), identifier: IOSMemoryAccessibility.count)
-            if truncated {
-                Text(verbatim: IOSMemoryText.truncated(shown: rows.count, total: total))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .accessibilityIdentifier(IOSMemoryAccessibility.truncated)
-            }
-            rowsList(rows)
+            rowsList(rows, more: more)
         case .search(let query, let rows):
             header(MemoryText.searchResults(query), identifier: IOSMemoryAccessibility.results)
-            rowsList(rows)
+            rowsList(rows, more: nil)
         case .searchEmptyNoMatch:
             card(MemoryText.noResultTitle, detail: MemoryText.noMatch)
         case .searchEmptyNoScore:
@@ -247,8 +248,10 @@ struct IOSMemoryScreen: View {
 
     /// La liste des souvenirs, dans l'ORDRE reçu (aucun tri local) : la ligne de
     /// contexte est rafraîchie à la minute par `TimelineView`, SANS relire la
-    /// mémoire.
-    private func rowsList(_ rows: [RemoteMemoryRow]) -> some View {
+    /// mémoire. Le pied de la page suivante est le DERNIER élément du
+    /// `LazyVStack` : il n'est créé qu'à l'approche du bas, et change d'identité
+    /// à chaque page pour que son apparition relise la suivante.
+    private func rowsList(_ rows: [RemoteMemoryRow], more: IOSMemoryMore?) -> some View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             let nowMs = context.date.timeIntervalSince1970 * 1000
             LazyVStack(alignment: .leading, spacing: 0) {
@@ -263,9 +266,69 @@ struct IOSMemoryScreen: View {
                     .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                     .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
                 }
+                if let more {
+                    moreFooter(more)
+                        .id(rows.count)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Le pied de liste selon l'état de la page suivante (S-4) : seule la vue
+    /// `.available` lit à son apparition ; hors `.connected`, elle laisse parler
+    /// l'état du client au lieu d'un chargement qui n'aurait pas lieu, et la
+    /// reconnexion la remonte (donc relit) ; un échec garde les lignes et offre
+    /// Réessayer ; une liste complète n'a aucun pied.
+    @ViewBuilder
+    private func moreFooter(_ more: IOSMemoryMore) -> some View {
+        switch more {
+        case .complete:
+            EmptyView()
+        case .available:
+            if IOSMemoryModel.gesturesEnabled(client.state) {
+                moreProgress
+                    .onAppear { Task { await model.loadMore() } }
+            } else {
+                Text(verbatim: ConnectionText.state(client.state))
+                    .font(.callout)
+                    .iosBanner(tone: .attention)
+                    .padding(.top, 12)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.more)
+            }
+        case .loading:
+            moreProgress
+        case .failed(let message):
+            VStack(alignment: .leading, spacing: 8) {
+                Text(verbatim: message)
+                    .font(.callout)
+                    .iosBanner(tone: .attention)
+                Button { Task { await model.loadMore() } } label: {
+                    Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                }
+                .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                .accessibilityIdentifier(IOSMemoryAccessibility.moreRetry)
+            }
+            .padding(.top, 12)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(IOSMemoryAccessibility.more)
+        }
+    }
+
+    /// Le retour visuel de la lecture de la page suivante : un seul élément
+    /// accessible, dont le libellé est le texte affiché.
+    private var moreProgress: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text(verbatim: IOSMemoryText.loadingMore)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(verbatim: IOSMemoryText.loadingMore))
+        .accessibilityIdentifier(IOSMemoryAccessibility.more)
     }
 
     private func rowLabel(_ row: RemoteMemoryRow, nowMs: Double) -> some View {

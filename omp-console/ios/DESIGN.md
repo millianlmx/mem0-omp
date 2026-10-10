@@ -220,9 +220,22 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Mémoire (feature `ios-memoire`)
 
 - L'écran Mémoire montre le sommaire du projet ouvert, dans l'ordre servi par le
-  Mac — les mêmes souvenirs que la section macOS, aucun tri local, la TÊTE
-  conservée quand la liste est tronquée, et « Aucun projet ouvert » quand la
-  portée est nulle. `[test: memoryFollowsTheClientTheScopeAndTheLoad]`
+  Mac — les mêmes souvenirs que la section macOS, aucun tri local, et « Aucun projet
+  ouvert » quand la portée est nulle. `[test: memoryFollowsTheClientTheScopeAndTheLoad]`
+- La liste se lit PAR PAGES bornées de la seule portée du projet (`GET /v1/memory/page`,
+  100 souvenirs par page) : arrivé en bas, le pied « Chargement des souvenirs
+  suivants… » lit la page suivante de lui-même (défilement continu), jusqu'au dernier
+  souvenir, chaque souvenir une seule fois. Plus de troncature ni de ligne de
+  troncature. L'échec d'une page suivante s'affiche dans le pied, avec « Réessayer »,
+  et garde les lignes déjà lues. `[test: scrollingToTheEndLoadsEveryRowOnce]`
+- Un délai dépassé n'est PAS un Mac injoignable : dans la Mémoire seulement, « Délai
+  dépassé : le Mac a mis trop de temps à répondre. Réessaie dans un instant. » et
+  « Mac injoignable : vérifie que l'app Mac est ouverte et sur le même réseau. » sont
+  deux bandeaux distincts, chacun avec « Réessayer ». Les autres sections gardent
+  leurs mots. `[test: listTimeoutSaysDelayExceeded]`
+- Face à une app Mac antérieure (qui ignore la route de page), la liste dit
+  « Mémoire indisponible : app Mac trop ancienne, mets-la à jour. », sans code HTTP ni
+  JSON ; aucun code de compatibilité. `[test: listOnOlderMacSaysMacOutdated]`
 - Le détail d'un souvenir ouvre une feuille : la ligne de contexte (date relative,
   étiquettes), le texte intégral tel qu'il est stocké, identifiant et portée sous
   « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
@@ -248,6 +261,14 @@ marqueur `[test: <fonction>]` (une fonction de
   celle du noyau PARTAGÉ (`MemoryGraphStyle.hue(for:)`, `Color.accentColor`,
   `.secondary`, `.primary`), exactement comme la coque macOS — une seule peinture,
   deux coques. `[capture: iphone-memoire-graphe-light.png]`
+- Le graphe ne montre que la portée du PROJET OUVERT — la même que la liste, résolue
+  par le Mac —, tous ses souvenirs, sans borne en nombre (seule une charge au-delà de
+  16 Mio est retirée et annoncée « Graphe partiel »). Sans projet ouvert, il dit
+  « Aucun projet ouvert » et ne dessine aucun canevas. `[test: graphWithoutProjectSaysNoProject]`
+- Un graphe qui dépasse son délai dit « Délai dépassé : le Mac a mis trop de temps à
+  répondre. Réessaie dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
+  le panneau commence en haut, sous la barre de navigation, dans tous les états.
+  `[test: graphTimeoutSaysDelayExceeded]`
 
 ## La section Statistiques (feature `ios-statistiques`)
 

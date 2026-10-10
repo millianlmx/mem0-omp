@@ -105,7 +105,7 @@ struct ClientContractTests {
         _ = try await model.projects()
         _ = try await model.statistics()
         _ = try await model.devices()
-        _ = try await model.memory(scope: "inconnu", limit: nil)
+        _ = try await model.memoryPage(scope: "inconnu", offset: 0, limit: nil)
         _ = try await model.memorySearch(query: "memoire", scope: "inconnu", limit: nil)
         _ = try await model.memoryGraph(scope: nil)
         _ = try await model.hostedSession()
@@ -165,9 +165,15 @@ struct ClientContractTests {
             host: OMPConsole.RemoteMemoryGraphLink.self
         ))
         #expect(try contractSameShape(
-            #"{"nodes":[{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}],"links":[{"a":"memory:m1","b":"tag:a","kind":"tag"}],"total":1,"truncated":true}"#,
+            #"{"scope":"p","nodes":[{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}],"links":[{"a":"memory:m1","b":"tag:a","kind":"tag"}],"total":1,"truncated":true}"#,
             client: ConsoleClient.RemoteMemoryGraphPayload.self,
             host: OMPConsole.RemoteMemoryGraphPayload.self
+        ))
+        // La page de la liste : `offset` toujours présent, `nextOffset` tant qu'il reste des lignes.
+        #expect(try contractSameShape(
+            #"{"scope":"p","total":3,"offset":0,"rows":[{"id":"m1","text":"un","updatedAt":"2026-01-01T00:00:00Z","score":0.5,"tags":["a"],"agentId":"x"}],"nextOffset":1}"#,
+            client: ConsoleClient.RemoteMemoryPagePayload.self,
+            host: OMPConsole.RemoteMemoryPagePayload.self
         ))
     }
 
@@ -178,11 +184,13 @@ struct ClientContractTests {
 
         let client = try JSONDecoder().decode(ConsoleClient.RemoteMemoryGraphPayload.self, from: data)
         #expect(client.total == 2)
+        #expect(client.scope == nil)
         #expect(client.truncated == false)
         #expect(client.nodes.allSatisfy { $0.text == nil && $0.tags == nil })
 
         let host = try JSONDecoder().decode(OMPConsole.RemoteMemoryGraphPayload.self, from: data)
         #expect(host.total == 2)
+        #expect(host.scope == nil)
         #expect(host.truncated == false)
         #expect(host.nodes.allSatisfy { $0.text == nil && $0.tags == nil })
 

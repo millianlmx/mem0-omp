@@ -25,6 +25,8 @@ final class IOSMemoryGraphModel: ObservableObject {
         case idle
         case loading
         case macUnreachable
+        case macTimedOut
+        case noProject
         case serviceOutdated
         case macOutdated
         case unavailable(detail: String)
@@ -71,6 +73,8 @@ final class IOSMemoryGraphModel: ObservableObject {
     static func failure(from error: Error) -> State {
         guard let failure = error as? ClientError else { return .macUnreachable }
         switch failure {
+        case .transport(.timedOut):
+            return .macTimedOut
         case .notConnected, .transport, .incompatibleProtocol, .decoding:
             return .macUnreachable
         case .api(.outdatedService):
@@ -291,6 +295,12 @@ final class IOSMemoryGraphModel: ObservableObject {
     /// Le placement (hors du fil principal) puis la publication de l'état : le
     /// chargement couvre la lecture ET le placement, le canevas n'est jamais vide.
     private func publish(_ payload: RemoteMemoryGraphPayload) async {
+        // La coque n'a résolu aucune portée : « aucun projet », jamais un graphe vide.
+        guard payload.scope != nil else {
+            resetVanished(nodes: [])
+            state = .noProject
+            return
+        }
         let nodes = payload.nodes.compactMap(Self.node)
         let links = payload.links.compactMap(Self.link)
         // La frontière d'isolation ne transporte qu'un tableau de points (POD) : un

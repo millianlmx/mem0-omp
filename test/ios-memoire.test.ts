@@ -135,14 +135,14 @@ function relayFaults(root: string): string[] {
   const mirrorPage = structBlock(mirror, "RemoteMemoryPagePayload");
   for (const [name, block] of [["Payloads.swift", internalPage], ["ClientPayloads.swift", mirrorPage]]) {
     if (!block.includes("scope: String?")) faults.push(`${name} : RemoteMemoryPagePayload sans scope`);
-    if (!block.includes("truncated: Bool")) faults.push(`${name} : RemoteMemoryPagePayload sans truncated`);
+    if (!block.includes("nextOffset: Int?")) faults.push(`${name} : RemoteMemoryPagePayload sans nextOffset`);
   }
-  if (!/static let memoryRows = 2000/.test(internal)) faults.push("RemoteLimits.memoryRows n'est pas figé à 2000");
+  if (!/static let memoryPageSize = 100/.test(internal)) faults.push("RemoteLimits.memoryPageSize n'est pas figé à 100");
   const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  if (!reads.includes("RemoteLimits.memoryRows")) faults.push("RemoteReads.memory ne borne pas par RemoteLimits.memoryRows");
+  if (!reads.includes("RemoteLimits.memoryPageSize")) faults.push("RemoteReads.memoryPage ne borne pas par RemoteLimits.memoryPageSize");
   const screen = appFile(root, "IOSMemoryScreen.swift");
   if (!screen.includes("MemoryText.summaryCount(")) faults.push("l'écran n'emploie pas MemoryText.summaryCount");
-  if (!screen.includes("IOSMemoryText.truncated(")) faults.push("l'écran ne dit pas la troncature");
+  if (!screen.includes("IOSMemoryText.loadingMore")) faults.push("l'écran ne dit pas le chargement de la page suivante");
   const model = appFile(root, "IOSMemoryModel.swift");
   if (!model.includes("static func screen(client: ClientState, load: IOSMemoryLoad, mode: IOSMemoryMode)")) {
     faults.push("IOSMemoryModel.screen(client:load:mode:) absent");
@@ -162,7 +162,7 @@ test("ios-memoire/AC-1 : le sommaire relayé est miroité, borné, et rendu par 
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
-  fs.writeFileSync(target, code(target).replaceAll("RemoteLimits.memoryRows", "RemoteLimits.statsRows"));
+  fs.writeFileSync(target, code(target).replaceAll("RemoteLimits.memoryPageSize", "RemoteLimits.statsRows"));
   assert.ok(relayFaults(copy).length > 0, "une borne de sommaire retirée doit faire rougir la garde");
 });
 
@@ -348,9 +348,9 @@ test("ios-memoire/AC-6 : « Mémoire indisponible » porte l'adresse sondée et 
 function noProjectFaults(root: string): string[] {
   const faults: string[] = [];
   const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  const early = reads.indexOf("scope: nil, total: 0, rows: [], truncated: false");
+  const early = reads.indexOf("scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil");
   const firstAll = reads.indexOf("service.all(scope:");
-  if (early === -1) faults.push("RemoteReads.memory ne rend pas la page vide sans portée");
+  if (early === -1) faults.push("RemoteReads.memoryPage ne rend pas la page vide sans portée");
   if (firstAll === -1) faults.push("service.all absent de RemoteReads");
   if (early !== -1 && firstAll !== -1 && early > firstAll) {
     faults.push("la page vide est rendue APRÈS l'appel au service");
@@ -372,7 +372,7 @@ test("ios-memoire/AC-7 : sans projet, la page est vide et le service n'est pas a
 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
-  fs.writeFileSync(target, code(target).replace("scope: nil, total: 0, rows: [], truncated: false", "scope: scope, total: 0, rows: [], truncated: false"));
+  fs.writeFileSync(target, code(target).replace("scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil", "scope: scope, total: 0, offset: 0, rows: [], nextOffset: nil"));
   assert.ok(noProjectFaults(copy).length > 0, "un retour anticipé supprimé doit faire rougir la garde");
 });
 

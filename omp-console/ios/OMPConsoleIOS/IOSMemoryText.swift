@@ -24,8 +24,18 @@ enum IOSMemoryText {
     /// l'app s'écarte du noyau.
     static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
-    /// Le Mac n'a pas répondu : c'est l'état du CLIENT, jamais une cause mémoire.
-    static let macUnreachable = "Le Mac n'a pas répondu."
+    /// Le Mac est injoignable (connexion refusée, réseau coupé, réponse
+    /// illisible) : c'est l'état du CLIENT, jamais une cause mémoire.
+    static let macUnreachable = "Mac injoignable : vérifie que l'app Mac est ouverte et sur le même réseau."
+
+    /// Une lecture Mémoire a dépassé son délai (`ClientTransportFailure.timedOut`) :
+    /// le Mac a été joint mais n'a pas répondu à temps — jamais confondu avec
+    /// « Mac injoignable ».
+    static let macTimedOut = "Délai dépassé : le Mac a mis trop de temps à répondre. Réessaie dans un instant."
+
+    /// L'app Mac ne connaît pas la route de page (`not_found`) : elle précède la
+    /// correction, seule une mise à jour y remédie (B-6, aucune compatibilité).
+    static let macOutdated = "Mémoire indisponible : app Mac trop ancienne, mets-la à jour."
 
     /// Le bandeau de l'indisponibilité mémoire : le titre partagé, puis le détail
     /// relayé par le Mac (adresse sondée et dernier message d'erreur).
@@ -33,11 +43,8 @@ enum IOSMemoryText {
         MemoryText.unavailableTitle + "\n" + detail
     }
 
-    /// La ligne de troncature du sommaire : ce qui est montré, puis le total servi.
-    static func truncated(shown: Int, total: Int) -> String {
-        "\(ConsoleFormat.count(shown, "souvenir", "souvenirs")) sur "
-            + "\(ConsoleFormat.count(total, "souvenir", "souvenirs")) — liste tronquée."
-    }
+    /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
+    static let loadingMore = "Chargement des souvenirs suivants…"
 
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
@@ -100,7 +107,9 @@ enum IOSMemoryAccessibility {
     static let summary = "ios.memoire.summary"
     static let count = "ios.memoire.count"
     static let results = "ios.memoire.results"
-    static let truncated = "ios.memoire.truncated"
+    /// Le pied de liste : chargement de la page suivante, ou son échec.
+    static let more = "ios.memoire.more"
+    static let moreRetry = "ios.memoire.more.retry"
     static let detail = "ios.memoire.detail"
 
     static func row(_ id: String) -> String { "ios.memoire.row.\(id)" }

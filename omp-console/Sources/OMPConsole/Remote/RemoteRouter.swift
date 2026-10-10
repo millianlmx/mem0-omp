@@ -71,7 +71,7 @@ final class RemoteRouter {
         .of("GET", "v1/components", "components"),
         .of("GET", "v1/journal", "journal"),
         .of("GET", "v1/cards/:id/contract", "card.contract"),
-        .of("GET", "v1/memory", "memory"),
+        .of("GET", "v1/memory/page", "memory.page"),
         .of("GET", "v1/memory/search", "memory.search"),
         .of("GET", "v1/memory/graph", "memory.graph"),
         .of("GET", "v1/stream", "stream"),
@@ -187,8 +187,12 @@ final class RemoteRouter {
             return try json(reads.journal())
         case "card.contract":
             return try json(try reads.cardContract(cardId: parameters["id"] ?? ""))
-        case "memory":
-            return try json(await reads.memory(scope: request.query["scope"], limit: request.query["limit"]))
+        case "memory.page":
+            return try json(await reads.memoryPage(
+                scope: request.query["scope"],
+                offset: request.query["offset"],
+                limit: request.query["limit"]
+            ))
         case "memory.search":
             return try json(await reads.memorySearch(
                 query: request.query["q"],
