@@ -55,6 +55,9 @@ final class KanbanModel: ObservableObject {
     private var hub: StoreHub
     private var task: Task<Void, Never>?
     private var hubStopped = false
+    /// L'ardoise du crochet de recette `-home.recipe` (`HomeRecipe`) : posée
+    /// telle quelle par `start()`, sans abonnement au magasin.
+    private let recipeBoard: KanbanBoardState?
     /// Le dernier instantané lu : re-dérivé quand les faits de PR changent.
     private var lastSnapshot: StoreSnapshot?
     private var cancellables: Set<AnyCancellable> = []
@@ -62,13 +65,16 @@ final class KanbanModel: ObservableObject {
     /// `prStates` nil : le registre de production, lecteur `gh` résolu dans
     /// `environment` (`OMP_CONSOLE_GH_BINARY` compris) ; `gh` introuvable donne un
     /// registre SANS lecteur — aucun fait, toutes les PR restent « PR créée ».
+    /// `recipeBoard` nil (défaut) : comportement de production.
     init(
         hub: StoreHub = StoreHub(),
         prStates: PullRequestStateBook? = nil,
-        environment: [String: String] = ProcessInfo.processInfo.environment
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        recipeBoard: KanbanBoardState? = nil
     ) {
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: hub.stateDir, nowMs: hub.nowMs) }
+        self.recipeBoard = recipeBoard
         self.prStates = prStates ?? Self.ghBook(environment: environment)
         // `@Published` émet AVANT l'affectation : la valeur neuve vient du
         // paramètre, jamais d'une relecture de la propriété.
@@ -113,8 +119,13 @@ final class KanbanModel: ObservableObject {
             .eraseToAnyPublisher()
     }
 
-    /// S'abonne au flux global en UNE tâche de longue durée. Idempotent.
+    /// S'abonne au flux global en UNE tâche de longue durée. Idempotent. Sous une
+    /// recette, pose son ardoise et s'arrête là : aucun abonnement.
     func start() {
+        if let recipeBoard {
+            state = recipeBoard
+            return
+        }
         guard task == nil else { return }
         if hubStopped {
             hub = makeHub()

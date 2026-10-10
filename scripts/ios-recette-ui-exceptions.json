@@ -60,7 +60,7 @@
     "regle": "cible-44",
     "source": "ax",
     "element": "id:ios.home.resume.feature:dd087f294c57be25:reprise",
-    "justification": "HomeView.swift, runningRow : Button(KanbanText.resume) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+    "justification": "HomeView.swift, pausedRow : Button(KanbanText.resume) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
   },
   {
     "surface": "home",
@@ -69,7 +69,7 @@
     "regle": "cible-44",
     "source": "ax",
     "element": "id:ios.home.resume.feature:dd087f294c57be25:reprise",
-    "justification": "HomeView.swift, runningRow : Button(KanbanText.resume) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+    "justification": "HomeView.swift, pausedRow : Button(KanbanText.resume) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
   },
   {
     "surface": "home",

@@ -1,25 +1,33 @@
-// L'item de la barre de menus (BR-5, S-2) : un titre qui suit les compteurs, et un
-// clic qui ramène la fenêtre au premier plan.
+// L'item de la barre de menus (S-6, S-7 de accueil-en-cours-melange-pause-et-compte) :
+// un titre = le nombre de lignes « À vous » de l'Accueil, une info-bulle et une
+// description VoiceOver « N à vous · M en cours », et un clic qui ramène la fenêtre
+// au premier plan.
 //
-// `StatusItemTitle.text(for:)` est PUR et testable sans rien construire d'AppKit :
-// mesuré (Doc-9), instancier `NSStatusBar.system.statusItem(withLength:)` dans un
+// `StatusItemTitle` est PUR et testable sans rien construire d'AppKit : mesuré
+// (Doc-9), instancier `NSStatusBar.system.statusItem(withLength:)` dans un
 // processus de `swift test` lève une exception Objective-C non rattrapable et tue
 // toute la suite. `StatusItemController` — SEUL type du dépôt qui touche
-// `NSStatusBar` — n'est donc JAMAIS construit dans les tests ; son câblage AppKit est
-// prouvé par la recette (S-10).
+// `NSStatusBar` — n'est donc JAMAIS construit dans les tests : il se borne à
+// recopier le titre et le résumé, et son câblage AppKit est prouvé par lecture AX
+// dans la recette (`AXTitle`, `AXDescription`, `AXHelp`).
 
 import AppKit
 import Combine
+import ConsoleCore
 
-/// Le titre de l'item : `""` (icône seule) tant que rien n'est connu ou que les deux
-/// compteurs sont nuls, sinon `« occupés »·« en attente »` (U+00B7, deux entiers
-/// décimaux, dans cet ordre).
+/// Ce que l'item affiche, en fonctions pures de l'état publié.
 enum StatusItemTitle {
+    /// Le titre : `""` (icône seule) tant que rien n'est connu ou que « À vous » est
+    /// vide, sinon le nombre de lignes « À vous » en entier décimal.
     static func text(for status: AlertsStatus) -> String {
-        guard let counters = status.counters, counters.busy != 0 || counters.waiting != 0 else {
-            return ""
-        }
-        return "\(counters.busy)\u{00B7}\(counters.waiting)"
+        guard let counts = status.counts, counts.attention != 0 else { return "" }
+        return "\(counts.attention)"
+    }
+
+    /// L'info-bulle ET la description VoiceOver : « N à vous · M en cours », zéros
+    /// écrits ; un état inconnu se lit comme deux zéros.
+    static func summary(for status: AlertsStatus) -> String {
+        HomeText.countsSummary(status.counts ?? .zero)
     }
 }
 
@@ -71,14 +79,22 @@ final class StatusItemController: NSObject {
         button?.target = self
         button?.action = #selector(revealWindow)
         apply(model.status)
-        // Le titre suit l'état publié, sur le fil principal (S-2).
+        // Le titre, l'info-bulle et la description suivent l'état publié, sur le fil
+        // principal (S-6, S-7).
         subscription = model.statusPublisher
             .receive(on: RunLoop.main)
             .sink { [weak self] status in self?.apply(status) }
     }
 
+    /// Recopie, sans rien calculer : le titre donne `AXTitle`, l'info-bulle
+    /// `AXHelp` et le label `AXDescription` (D-1). L'image garde sa description
+    /// « OMP Console ».
     private func apply(_ status: AlertsStatus) {
-        statusItem.button?.title = StatusItemTitle.text(for: status)
+        guard let button = statusItem.button else { return }
+        let summary = StatusItemTitle.summary(for: status)
+        button.title = StatusItemTitle.text(for: status)
+        button.toolTip = summary
+        button.setAccessibilityLabel(summary)
     }
 
     /// Un clic : la fenêtre principale redevient visible et au premier plan.
