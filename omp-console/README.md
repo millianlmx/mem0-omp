@@ -2263,6 +2263,74 @@ appareils PARTAGÉS avec les autres lancements, donc à éviter pendant un const
 runtime iOS ≥ 26 absents). Sur iOS 27, la confirmation d'arrêt est une bulle
 ancrée qui n'a pas de bouton « Annuler » : le script la referme en touchant à côté.
 
+### Recette : cibles tactiles de 44 pt
+
+Les trois boutons texte relevés à 20 pt par l'audit idb du 2026-10-09 — « Tout afficher »
+et « Lire le contrat » de l'Accueil, « Piloter un projet… » de l'écran Projet — doivent
+offrir une cible d'au moins 44 × 44 pt (`IOSMetrics.minimumTarget`) SANS changer
+d'apparence. La recette rejoue la preuve sur de vrais simulateurs, par la lecture
+d'accessibilité d'idb :
+
+```bash
+bash scripts/ios-cibles-tactiles-recette.sh --iphone <UDID> --ipad <UDID> [--avant]
+```
+
+Préconditions, jamais satisfaites par le script (il n'appaire pas) : `idb`, Xcode 27,
+`python3` avec Pillow ; les DEUX simulateurs iOS 27 démarrés ; l'app déjà APPAIRÉE au Mac
+sur chacun (jeton au trousseau du simulateur — l'écran Projet n'offre « Piloter un
+projet… » qu'une fois connecté) ; l'app Mac OMP Console en service sur `127.0.0.1:8787`.
+Le script compile lui-même une app SIGNÉE dans
+`omp-console/build/ios-cibles-tactiles-derived` (`scripts/ios-build.sh` compile sans
+signature : le trousseau du simulateur refuserait le jeton) et l'installe sur les deux
+appareils.
+
+Simulateurs PRIVÉS, nommés SANS « iPhone » ni « iPad » (par exemple `cible44-tel` et
+`cible44-tab`) : `ios-shots.sh` et `ios-build.sh` des autres worktrees s'emparent des
+appareils dont le nom contient ces mots, y réinstallent l'app et changent la taille de
+texte en plein relevé. Un simulateur appairé se clone — `xcrun simctl shutdown <src> &&
+xcrun simctl clone <src> <nom> && xcrun simctl boot <src>`, puis `boot` du clone — et le
+jeton suit le clone ; à supprimer ensuite (`simctl shutdown` puis `simctl delete`, après
+avoir vérifié que `pgrep -fl <UDID>` ne rend rien).
+
+Deux passes, dans cet ordre :
+
+1. `--avant`, AVANT toute correction Swift : relevé de référence dans
+   `omp-console/build/ios-cibles-tactiles-sous-44pt/avant/` (ignoré par git, vidé au
+   début de la passe ; l'autre dossier n'est jamais touché). Aucune vérification ;
+   sortie 0 quand toutes les captures et lectures existent.
+2. Sans option, sur l'app corrigée : relevé dans `.../apres/` puis les vérifications,
+   une ligne par contrôle — `AC-<n> <appareil> <écran> <taille> <identifiant> — ok` ou
+   `— ÉCHEC (<détail>)` —, `bilan : <n> ok, <m> échec`, et la liste des PNG à LIRE
+   (libellés entiers, sans « … », sans chevauchement aux grandes tailles de texte et sur
+   iPad). Le rapport est aussi écrit dans `apres/rapport.txt`.
+
+La matrice : iPhone = Accueil (`-home.recipe dashboard`) et Projet × les trois tailles
+(`large`, `accessibility-extra-large`, `accessibility-extra-extra-extra-large`) ; iPad =
+Accueil × `large` seulement (l'écran Projet n'offre « Piloter un projet… » qu'appairé au Mac,
+et le code d'appairage exige un Mac déverrouillé : tant qu'aucun iPad simulateur n'est
+appairé, « Piloter un projet… » n'est prouvé que sur iPhone). Chaque case produit `<appareil>-<écran>-<taille>.json` (la
+lecture brute de `idb ui describe-all`) et `.png` ; un contrôle hors de l'écran (taille
+maximum) est amené par `idb ui swipe` (au plus 8), chaque défilement qui en découvre un de
+plus ajoutant `-defil<k>.json` et `-defil<k>.png`. Les vérifications : AC-1 cadres ≥ 44 ×
+44 pt (iPhone, `large`) ; AC-2 identifiant propre, non vide et distinct par contrôle
+(`ios.home.allPipelines`, `ios.home.attention.<id>.contract`, `ios.projet.start` — et plus
+`ios.screen.project`) ; AC-3 tap à `(x + w/2, y + 3)` du cadre, l'app relancée avant
+chaque tap ; AC-4 apparence inchangée à `large` (la bande de texte de chaque contrôle est
+comparée pixel à pixel à `avant/`, à ±6 px de décalage vertical, et les lignes situées à
+2 pt des bords du cadre doivent rester unies : aucune bordure, capsule ni fond ajouté) ;
+AC-5 la même chose aux deux grandes tailles de texte ; AC-6 la même chose sur iPad. Sans
+capture homologue dans `avant/`, la ligne de comparaison vaut `— sans objet` et ne compte
+ni comme ok ni comme échec.
+
+Codes de sortie : **0** aucune ligne ÉCHEC ; **1** au moins un ÉCHEC ; **2** non lancé ou
+interrompu (argument manquant, outil absent, simulateur non démarré, build ou installation
+en échec, app non connectée au Mac, capture absente ou uniforme, relevé instable).
+
+Limite connue : le tap d'AC-3 ne distingue PAS l'avant de l'après. Le « touch slop »
+d'UIKit déclenche déjà un bouton de 20 pt jusqu'à environ 19 à 25 pt au-dessus du centre
+du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La garde
+textuelle de la correction est `test/ios-cibles-tactiles-sous-44pt.test.ts`.
+
 ### Installer sur un appareil réel
 
 Ce geste appartient à l'utilisateur : il n'est pas nécessaire à la validation du

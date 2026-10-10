@@ -71,7 +71,11 @@ marqueur `[test: <fonction>]` (une fonction de
 - Les marges et les rembourrages des surfaces grandissent avec Dynamic Type
   (`@ScaledMetric`), jamais une constante figée seule. `[capture: iphone-*-light-ax]`
 - Cible tactile minimale : 44 pt (`IOSMetrics.minimumTarget`), la valeur du HIG
-  iOS/iPadOS. `[test: minimumTargetIsFortyFour]`
+  iOS/iPadOS. Un bouton texte sans style (« Tout afficher », « Lire le
+  contrat », « Piloter un projet… ») porte cette cible sur son libellé —
+  `.frame(minWidth:minHeight: IOSMetrics.minimumTarget)` puis
+  `.contentShape(Rectangle())`, style automatique conservé.
+  `[test: minimumTargetIsFortyFour]`
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
