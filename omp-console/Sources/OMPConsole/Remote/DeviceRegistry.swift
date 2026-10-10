@@ -176,6 +176,12 @@ final class DeviceRegistry: ObservableObject {
         pairing.pruneExpired(at: nowMs)
     }
 
+    /// Annule le code actif (service coupé). Rien n'est persisté : le code ne vit
+    /// qu'en mémoire.
+    func cancelCode() {
+        pairing.cancel()
+    }
+
     func markConnected(_ id: UUID, _ isConnected: Bool) {
         if isConnected { connected.insert(id) } else { connected.remove(id) }
         changeHandler?()
