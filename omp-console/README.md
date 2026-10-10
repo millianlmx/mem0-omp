@@ -603,6 +603,21 @@ La section **Fichiers** est une visionneuse **strictement en lecture** de l'arbr
 d'une cible git — le dépôt principal ou l'un des worktrees `feat/*` connus, une
 seule cible à la fois.
 
+**Sans projet choisi** (la préférence `session.projectRoot` absente ou vers un
+dossier disparu), la section affiche « Aucun projet ouvert » — « Choisissez le
+projet dont vous voulez parcourir les fichiers. » — et un bouton **Choisir un
+projet…** (`files.chooseProject`). Le même bouton porte l'état vide de
+**Mémoire** et du **Terminal** : quand l'app connaît des projets (les dépôts des
+lots et des projets du magasin, la liste même de `GET /v1/repos`), il ouvre un
+menu d'une entrée par projet — nommée par son dossier, « nom — dossier parent »
+quand deux projets portent le même nom —, puis « Choisir un dossier… » ; quand
+elle n'en connaît aucun, c'est un bouton simple qui ouvre directement le panneau
+de **Session OMP** (« Choisissez le dossier du projet à héberger. »). Le choix
+devient le projet de l'app, exactement comme un choix fait dans Session OMP, et
+remplit l'écran courant sans changer de section. Un panneau annulé, ou un projet
+dont le dossier a disparu entre-temps (il sort alors du menu), laisse l'état vide
+tel quel.
+
 1. **Choisir la cible** — le sélecteur « Cible » de l'en-tête. La cible par défaut
    est celle du projet ouvert (la préférence partagée `session.projectRoot` avec la
    section « Session OMP ») ; à défaut, le dépôt principal. Chaque cible affiche sa
@@ -1186,13 +1201,16 @@ Le terminal et la section **Session OMP** (session servie par l'API locale) vive
 **en même temps**, sans exclusivité : ouvrir l'un ne perturbe pas l'autre, dans les
 deux sens, et ils peuvent même viser le même répertoire.
 
-États affichés : « Choisissez un répertoire… », « Lecture des worktrees… » (feuille
-ouverte), « Lancement du shell… », « shell vivant (pid <n>) · <cible> », « Le shell
-s'est terminé (code|signal <n>). » avec le bouton **Relancer**, et l'erreur
-explicite en cas d'échec (« Exécutable introuvable : … », « Répertoire
-introuvable : … », « PTY indisponible (<errno>) : aucun process lancé. »). Aucun
-état n'est un
-rectangle vide.
+États affichés : sans projet choisi, « Aucun projet ouvert » — « Choisissez le
+projet dans lequel ouvrir un terminal. » — avec le bouton **Choisir un projet…**
+(`terminal.chooseProject`, voir la section Fichiers) : le projet choisi, la
+feuille « Choisir un répertoire » s'ouvre aussitôt sur ses répertoires. Avec un
+projet, « Choisissez un répertoire… » sous « Projet « <nom> » », puis « Lecture
+des worktrees… » (feuille ouverte), « Lancement du shell… », « shell vivant (pid
+<n>) · <cible> », « Le shell s'est terminé (code|signal <n>). » avec le bouton
+**Relancer**, et l'erreur explicite en cas d'échec (« Exécutable introuvable :
+… », « Répertoire introuvable : … », « PTY indisponible (<errno>) : aucun process
+lancé. »). Aucun état n'est un rectangle vide.
 
 **Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
 scrollback : la ligne qui sort de l'écran est perdue), pas de sélection ni de copie,
@@ -1715,8 +1733,10 @@ inchangé — il ne lit que `health.ok` —, et la voie manuelle `mem0-stack/` (
 `package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, puis le premier
 `*.xcodeproj`, puis le nom du répertoire. `_global` n'est jamais envoyé : la liste
 ne montre que la mémoire du projet. Sans portée calculable (aucun projet ouvert,
-`git` en échec), la liste affiche « Aucun projet ouvert » et n'émet aucun appel de
-portée — le GRAPHE, lui, n'en dépend pas : il montre toutes les portées du service.
+`git` en échec), la liste affiche « Aucun projet ouvert » avec le bouton **Choisir
+un projet…** (`memory.chooseProject`, voir la section Fichiers) et n'émet aucun
+appel de portée — le GRAPHE, lui, n'en dépend pas : il montre toutes les portées du
+service.
 
 **La recherche** reproduit `mem0_search` : pool sur-échantillonné
 `min(6 × 4, 50) = 24`, seuil de cosinus brut **0,55**, `explain` vrai, puis
@@ -1763,7 +1783,7 @@ rechargement suivant.
 | État | Rendu |
 |---|---|
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
-| portée incalculable (liste) | « Aucun projet ouvert » + renvoi vers « Session OMP » (⌥⌘N) |
+| portée incalculable (liste) | « Aucun projet ouvert » — « Choisissez le projet dont vous voulez consulter la mémoire. » + bouton « Choisir un projet… » : menu des projets connus puis « Choisir un dossier… », ou, sans projet connu, le panneau de Session OMP ; le choix recharge la liste sur place |
 | service indisponible | « Mémoire indisponible » + bouton « Réessayer », l'adresse et la dernière erreur en détail secondaire — jamais une liste vide, jamais un graphe partiel silencieux |
 | adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », le détail `<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>` (sélectionnable) et, **seulement quand le propriétaire est l'ancienne pile**, le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |

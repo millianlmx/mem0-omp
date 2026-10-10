@@ -22,6 +22,9 @@ struct MemoryView: ConsoleSectionView {
     /// la liste, pour que la position, la sélection et les filtres survivent au
     /// passage d'une section à l'autre.
     @ObservedObject var graph: MemoryGraphModel
+    /// Le sélecteur de projet de l'état « Aucun projet ouvert » (S-1 de
+    /// mac-etats-vides-sans-issue), à l'échelle de l'app.
+    let chooser: ProjectChooserModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -171,11 +174,11 @@ struct MemoryView: ConsoleSectionView {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         case .noProject:
-            ContentUnavailableView(
-                MemoryText.noProjectTitle,
-                systemImage: "folder.badge.questionmark",
-                description: Text(MemoryText.noProjectDescription)
-            )
+            // Le projet se choisit sur place : la section ne change pas, la
+            // liste se recalcule pour le projet choisi (S-3).
+            NoProjectView(state: .memory, chooser: chooser) {
+                Task { await model.refresh() }
+            }
 
         case let .unavailable(address, detail):
             // L'indisponibilité dit d'abord quoi faire ; l'adresse du service et la
