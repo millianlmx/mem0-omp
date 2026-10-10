@@ -735,4 +735,129 @@ struct IOSSessionTests {
         _ = IOSSessionThreadView(model: model)
         _ = IOSSessionRowView(row: model.rows[0], isOpen: false, isThinkingOpen: false, onToggle: { _ in })
     }
+
+    // MARK: - visionneuse-session-vide-a-l-ouverture : chargement, vide, suivi
+
+    /// Attend qu'une condition devienne vraie (motif de `IOSStatsModelTests`) :
+    /// les recettes `chargement` et `suivi` vivent dans le temps, pas dans un seul tour.
+    private static func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return condition()
+    }
+
+    /// Un fil monté sur une recette, sans run suivi : la feuille et le modèle ne
+    /// voient qu'une `IOSSessionSource`.
+    private static func recipeModel(_ thread: IOSSessionsRecipeThread) -> IOSSessionThreadModel {
+        IOSSessionThreadModel(
+            source: IOSSessionsRecipeSource(thread: thread),
+            file: thread.file,
+            title: thread.title,
+            subtitle: thread.subtitle,
+            tracksRun: false
+        )
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-4 : le chargement couvre l'attente de la lecture et la reconstruction")
+    func threadShowsLoadingUntilRead() async throws {
+        // (i) Une lecture qui ne se termine pas : le fil reste en chargement, sans
+        // ligne et sans état vide — jamais une zone muette.
+        #expect(IOSSessionsRecipe.resolve([IOSSessionText.recipeFlag, IOSSessionText.recipeChargement]) == .chargement)
+        let pending = try #require(IOSSessionsRecipe.chargement.thread)
+        #expect(pending.readNeverEnds)
+        #expect(pending.run == nil)
+        let waiting = Self.recipeModel(pending)
+        waiting.start()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(waiting.isLoading)
+        #expect(waiting.rows.isEmpty)
+        #expect(waiting.state == .waiting)
+        #expect(waiting.errorBanner == nil)
+        // Fermer la feuille annule l'attente ; une lecture annulée ne touche pas à l'état.
+        waiting.finish()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(waiting.isLoading)
+        #expect(waiting.errorBanner == nil)
+
+        // (ii) Une réécriture repasse par le chargement jusqu'à la fin de la relecture.
+        let source = SessionStubSource(payload: try Self.payload())
+        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
+        await model.read()
+        #expect(!model.isLoading)
+        #expect(model.rows.count == 10)
+        model.apply(.rewrote)
+        #expect(model.isLoading, "la reconstruction s'annonce aussitôt, jamais « Session vide »")
+        #expect(model.rows.isEmpty)
+        #expect(await Self.eventually { source.readCount == 2 && !model.isLoading })
+        #expect(model.rows.count == 10)
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-5 : une session sans message rend l'état vide, jamais un chargement sans fin")
+    func emptySessionIsExplicit() async throws {
+        #expect(IOSSessionsRecipe.resolve([IOSSessionText.recipeFlag, IOSSessionText.recipeFilVide]) == .filVide)
+        let empty = try #require(IOSSessionsRecipe.filVide.thread)
+        #expect(empty.payload.entries.isEmpty)
+        #expect(empty.payload.skipped.isEmpty)
+        #expect(empty.payload.header != nil, "l'en-tête de la fixture est conservé")
+        #expect(IOSSessionsRecipe.filVide.list.choices.count == 1, "la feuille s'ouvre sur la session de la fixture")
+        let model = Self.recipeModel(empty)
+        await model.read()
+        #expect(!model.isLoading)
+        #expect(model.state == .ready)
+        #expect(model.rows.isEmpty)
+        #expect(model.errorBanner == nil)
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-6 : la recette suivi ajoute trois messages et le suivi garde sa règle")
+    func followRecipeKeepsFollowPolicy() async throws {
+        #expect(IOSSessionsRecipe.resolve([IOSSessionText.recipeFlag, IOSSessionText.recipeSuivi]) == .suivi)
+        let follow = try #require(IOSSessionsRecipe.suivi.thread)
+        #expect(follow.run?.state == .live(.running))
+        #expect(follow.additions.map(\.text) == (1...3).map { IOSSessionText.recipeFollowMessage($0) })
+        let fixtureOffsets = follow.payload.entries.map { $0.offset ?? $0.index }
+        let addedOffsets = follow.additions.compactMap(\.offset)
+        #expect(addedOffsets.count == 3)
+        #expect(Set(addedOffsets).count == 3)
+        #expect(addedOffsets.allSatisfy { offset in fixtureOffsets.allSatisfy { offset > $0 } })
+        #expect(follow.additionTimes == [.seconds(8), .seconds(12), .seconds(16)])
+
+        func timed(_ times: [Duration]) -> IOSSessionsRecipeThread {
+            IOSSessionsRecipeThread(
+                payload: follow.payload,
+                run: follow.run,
+                file: follow.file,
+                title: follow.title,
+                subtitle: follow.subtitle,
+                additions: follow.additions,
+                additionTimes: times,
+                readNeverEnds: follow.readNeverEnds
+            )
+        }
+
+        // (a) Au bas : chaque ajout s'affiche et redemande un défilement, sans geste.
+        let atBottom = Self.recipeModel(timed([.milliseconds(1), .milliseconds(2), .milliseconds(3)]))
+        atBottom.start()
+        #expect(await Self.eventually { atBottom.rows.count == 13 })
+        #expect(atBottom.rows.suffix(3).map(\.id) == follow.additions.compactMap(\.offset).map { "r\($0)" })
+        #expect(atBottom.following)
+        // Une demande à la lecture (la valeur après chargement), puis une par ajout.
+        #expect(atBottom.scrollRequest == 4, "collé au bas, chaque ajout demande un défilement")
+        atBottom.finish()
+
+        // (b) Remonté par un geste avant les ajouts : la position n'est plus forcée.
+        let scrolledUp = Self.recipeModel(timed([.milliseconds(300), .milliseconds(310), .milliseconds(320)]))
+        scrolledUp.start()
+        #expect(await Self.eventually { !scrolledUp.isLoading })
+        #expect(scrolledUp.rows.count == 10, "aucun ajout avant le geste")
+        scrolledUp.reportBottomGap(ViewerScrollGeometry(gap: 400, origin: 120))
+        scrolledUp.reportUserScroll(deltaY: 1)
+        #expect(!scrolledUp.following)
+        let suspended = scrolledUp.scrollRequest
+        #expect(await Self.eventually { scrolledUp.rows.count == 13 })
+        #expect(scrolledUp.scrollRequest == suspended, "remonté, les ajouts ne déplacent pas le fil")
+        #expect(!scrolledUp.following)
+        scrolledUp.finish()
+    }
 }

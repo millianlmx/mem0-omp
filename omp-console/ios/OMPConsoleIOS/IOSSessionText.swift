@@ -28,6 +28,9 @@ enum IOSSessionText {
 
     // MARK: - Le fil (S-3, S-6)
 
+    /// Sous l'en-tête, tant que le fil n'est pas lu (première lecture, ou
+    /// relecture après une réécriture) : jamais une zone muette.
+    static let threadLoading = "Chargement de la session…"
     /// Le titre de la section des arguments d'un appel d'outil.
     static let arguments = "Arguments"
     /// Le titre de la section du résultat d'un appel d'outil.
@@ -107,6 +110,13 @@ enum IOSSessionText {
     static let recipeIllisible = "illisible"
     static let recipeEnDirect = "en-direct"
     static let recipePhases = "phases"
+    static let recipeChargement = "chargement"
+    static let recipeFilVide = "fil-vide"
+    static let recipeSuivi = "suivi"
+
+    /// Le texte du n-ième message ajouté par la recette `suivi` : chaque ajout
+    /// se reconnaît à l'œil sur une capture.
+    static func recipeFollowMessage(_ n: Int) -> String { "Message de suivi n° \(n)" }
 
     /// L'identifiant d'une session de la recette `phases` : celui de l'en-tête de
     /// la fixture, suffixé par l'étape, pour que les cinq lignes soient distinctes.
@@ -138,7 +148,7 @@ enum IOSSessionsAccessibility {
     static let viewer = "ios.session.viewer"
     static let close = "ios.session.close"
     static let thread = "ios.session.thread"
-    static let threadEnd = "ios.session.thread.end"
+    static let threadLoading = "ios.session.loading"
     static let threadStatus = "ios.session.thread.status"
     static let placeholder = "ios.session.placeholder"
     static let unreadable = "ios.session.unreadable"

@@ -2025,7 +2025,11 @@ colorés et libellés par `SessionDiffText`, question `ask` mise en évidence et
 dépliée d'emblée — sans aucun moyen de répondre ni d'écrire dans la session. Un
 run vivant s'ajoute en direct (une seule lecture, puis le flux de cette session),
 en préservant la position et l'état replié/déplié, et le fil reste collé au bas
-tant que l'utilisateur n'a pas remonté. Les composants du fil (modèle, vue, ligne,
+tant que l'utilisateur n'a pas remonté. Le fil s'ouvre sur sa fin (pile `VStack`
+non paresseuse et ancre initiale
+`defaultScrollAnchor(.bottom, for: .initialOffset)`), précédé de « Chargement de
+la session… » tant que la lecture n'est pas finie ; le fil de Session OMP se lit
+et s'abonne dès que l'écran le monte. Les composants du fil (modèle, vue, ligne,
 feuille) sont réutilisables par la section Session OMP : leur seul contrat
 d'entrée est une référence de session et une source.
 
@@ -2048,7 +2052,7 @@ partagée `SessionParity`, sans écran fabriqué ; la DERNIÈRE paire reconnue g
 et une valeur inconnue est ignorée :
 
 ```
--sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases>
+-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|chargement|fil-vide|suivi>
 ```
 
 - `liste` — la liste peuplée de la session de la fixture ;
@@ -2057,7 +2061,15 @@ et une valeur inconnue est ignorée :
 - `illisible` — le cas d'une session illisible ;
 - `en-direct` — le fil d'un run vivant ;
 - `phases` — une session terminée par étape de pipeline (mêmes titre, dépôt et
-  heure) : les icônes d'étape diffèrent, les titres doivent rester alignés.
+  heure) : les icônes d'étape diffèrent, les titres doivent rester alignés ;
+- `chargement` — la feuille ouverte sur une lecture qui ne se termine jamais :
+  « Chargement de la session… » reste affiché sous l'en-tête ;
+- `fil-vide` — la feuille ouverte sur la fixture sans aucune entrée : l'état vide
+  « Session vide » ;
+- `suivi` — la feuille d'un run vivant, puis trois messages « Message de suivi
+  n° 1…3 » ajoutés par le flux à +8 s, +12 s et +16 s après l'ouverture : au bas,
+  ils s'affichent sans geste ; remonté, la position ne bouge pas et « Revenir au
+  direct » apparaît.
 
 Les preuves Swift de la section vivent dans
 `omp-console/ios/OMPConsoleIOSTests/IOSSessionTests.swift` (motif de parité
