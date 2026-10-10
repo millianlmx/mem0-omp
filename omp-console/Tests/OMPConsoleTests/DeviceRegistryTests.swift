@@ -158,6 +158,69 @@ struct DeviceRegistryTests {
         #expect(reloaded.authenticate(token) != nil)
         #expect(reloaded.authenticate("jeton-inconnu") == nil)
     }
+
+    // MARK: - Identité d'appareil (mac-feuille-appairage-debordante)
+
+    @Test("mac-feuille-appairage-debordante/AC-6 : un devices.json d'avant (sans deviceKey) se relit et se réécrit sans la clé")
+    func legacyFileWithoutDeviceKeyIsReadAndRewrittenAsIs() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let file = stack.supportRoot.appendingPathComponent("remote/devices.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let legacyId = UUID()
+        try Data("""
+        {"version":1,"devices":[{"id":"\(legacyId.uuidString)","name":"iPhone","pairedAtMs":1000,"lastSeenAtMs":2000}]}
+        """.utf8).write(to: file)
+
+        await stack.registry.load()
+        #expect(stack.registry.loadError == nil)
+        #expect(stack.registry.devices == [DeviceRecord(id: legacyId, name: "iPhone", pairedAtMs: 1000, lastSeenAtMs: 2000)])
+
+        // Un appairage sans clé réécrit le fichier : aucune clé `deviceKey` n'apparaît.
+        try await stack.pair(name: "Téléphone")
+        let rewritten = try String(contentsOf: file, encoding: .utf8)
+        #expect(!rewritten.contains("deviceKey"))
+        #expect(rewritten.contains(legacyId.uuidString))
+
+        // Une ligne qui porte une clé l'écrit, et seulement elle.
+        let code = try stack.registry.generateCode().value
+        let reply = try await stack.call("POST", "/v1/pair", json: ["code": code, "name": "iPhone 17e", "deviceKey": "cle-tel"])
+        #expect(reply.status == 200)
+        let keyed = try String(contentsOf: file, encoding: .utf8)
+        #expect(keyed.components(separatedBy: "\"deviceKey\"").count == 2)
+        await stack.registry.load()
+        #expect(stack.registry.devices.count == 3)
+        #expect(stack.registry.devices.first?.deviceKey == "cle-tel")
+    }
+
+    @Test("mac-feuille-appairage-debordante/AC-4 : le réappairage coupe le flux en cours de l'ancienne ligne")
+    func repairingCutsTheReplacedDeviceStream() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        wireRevocation(to: stack)
+
+        let first = try await keyedPair(stack, deviceKey: "cle-tab-a")
+        let session = consoleStreamSession()
+        defer { session.invalidateAndCancel() }
+        let bytes = try await openConsoleStream(session, base: stack.base, token: first)
+        var iterator = bytes.lines.makeAsyncIterator()
+        var frames: [String] = []
+        while let line = try await iterator.next() {
+            if line.hasPrefix("event: ") { frames.append(line) }
+            if frames.count >= 2 { break }
+        }
+        #expect(frames == ["event: hello", "event: store"])
+
+        _ = try await keyedPair(stack, deviceKey: "cle-tab-a")
+        let started = Date()
+        do {
+            while let _ = try await iterator.next() {}
+        } catch {
+            // Une fermeture peut aussi se manifester en erreur de lecture : c'est une fin.
+        }
+        #expect(Date().timeIntervalSince(started) < 4)
+        #expect(stack.registry.devices.count == 1)
+    }
 }
 
 // MARK: - Outils de flux
@@ -169,6 +232,19 @@ private func wireRevocation(to stack: RemoteStack) {
     stack.registry.revokeHandler = { [streams = stack.streams] deviceId in
         streams.close(deviceId: deviceId)
     }
+}
+
+/// Un appairage HTTP portant une identité d'appareil ; rend le jeton.
+@MainActor
+private func keyedPair(_ stack: RemoteStack, deviceKey: String) async throws -> String {
+    let code = try stack.registry.generateCode().value
+    let reply = try await stack.call("POST", "/v1/pair", json: [
+        "code": code,
+        "name": "iPad Pro 13 pouces (M5)",
+        "deviceKey": deviceKey,
+    ])
+    guard reply.status == 200 else { throw ConsoleAPIError.server("appairage refusé (\(reply.status))") }
+    return try reply.json(RemotePairPayload.self).token
 }
 
 /// Une session à configuration éphémère, bornée dans le temps : le test ne peut

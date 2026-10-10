@@ -617,6 +617,8 @@ public struct RemoteHostedSessionPayload: Codable, Equatable, Sendable {
 public struct RemotePairRequest: Codable, Equatable, Sendable {
     public var code: String
     public var name: String
+    /// L'identité de l'installation : le Mac remplace la ligne qui la porte déjà.
+    public var deviceKey: String?
     public var protocolVersion: Int?
 }
 

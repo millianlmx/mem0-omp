@@ -18,14 +18,14 @@ import SwiftUI
 
 /// Les mots de la feuille — seul endroit où ils sont écrits (S-5, S-6, S-14).
 enum PairingText {
-    static let title = "API distante"
+    static let title = "Appairage"
     static let menuItem = "Appairage…"
-    static let toggle = "Service d'API distante"
+    static let toggle = "Accès depuis l'iPhone et l'iPad"
 
     // États du service (S-14).
     static let off = "Coupé"
     static let starting = "Démarrage…"
-    static func active(address: String) -> String { "Actif — \(address)" }
+    static let active = "Actif"
     static let localNetworkDenied = "Accès au réseau local refusé à OMP Console."
     static let openLocalNetworkSettings = "Ouvrir Réglages Système"
     static func failed(reason: String) -> String { "Échec : \(reason)" }
@@ -34,7 +34,8 @@ enum PairingText {
     // Zone code (S-5).
     static let generate = "Générer un code"
     static let noCode = "Aucun code actif."
-    static func codeExpiry(_ countdown: String) -> String { "Code expiré dans \(countdown)" }
+    static func codeExpiry(_ countdown: String) -> String { "Expire dans \(countdown)" }
+    static let codeExpired = "Code expiré"
     static let serviceOff = "Le service est coupé."
 
     // Appareils (S-6).
@@ -44,29 +45,34 @@ enum PairingText {
     static func registryUnreadable(reason: String) -> String {
         "Le registre des appareils est illisible : \(reason)"
     }
-    static func pairedOn(_ time: String) -> String { "appairé le \(time)" }
-    static func lastSeen(_ relative: String) -> String { "dernière activité \(relative)" }
+    static func pairedOn(_ dateTime: String) -> String { "Appairé le \(dateTime)" }
+    static func lastSeen(_ relative: String) -> String { "Dernière activité \(relative)" }
     static let revoke = "Révoquer"
     static let revoking = "Révocation…"
+    /// Ce que VoiceOver annonce du bouton d'une ligne : l'appareil est nommé.
+    static func revokeAccessibility(name: String) -> String { "Révoquer \(name)" }
+    static func revokingAccessibility(name: String) -> String { "Révocation de \(name)…" }
     static func revokeConfirmTitle(name: String) -> String { "Révoquer \(name) ?" }
     static let cancel = "Annuler"
 
     static let close = "Fermer"
 }
 
-/// L'état de la zone code (S-5) : aucun / actif / service coupé / service en échec.
-/// Une fonction PURE en déduit la valeur depuis l'interrupteur, l'état du service
-/// et le code affiché — `expiré` retombe sur `aucun`, sans message d'erreur.
+/// L'état de la zone code (S-5) : aucun / actif / expiré / service coupé / service
+/// en échec. Une fonction PURE en déduit la valeur depuis l'interrupteur, l'état du
+/// service, le code affiché et son échéance atteinte.
 enum PairingCodeZone: Equatable {
     case none
     case active(code: String, countdown: String)
+    /// Le code affiché a atteint son échéance : « Code expiré », sans décompte.
+    case expired
     case serviceOff
     case serviceUnavailable(String)
 
     /// « Générer un code » n'a de sens que service utilisable (S-5).
     var isGeneratable: Bool {
         switch self {
-        case .none, .active: true
+        case .none, .active, .expired: true
         case .serviceOff, .serviceUnavailable: false
         }
     }
@@ -80,9 +86,11 @@ enum PairingDevicesZone: Equatable {
     case devices([DeviceRecord])
 }
 
-/// Le libellé et l'état du bouton de révocation d'une ligne (S-6).
+/// Le libellé, le libellé d'accessibilité et l'état du bouton de révocation d'une
+/// ligne (S-6) : l'accessibilité nomme l'appareil, le titre visible reste court.
 struct PairingRevokeControl: Equatable {
     var label: String
+    var accessibilityLabel: String
     var disabled: Bool
 }
 
@@ -95,6 +103,7 @@ enum PairingAccessibility {
     static let codeExpiry = "pairing.codeExpiry"
     static let address = "pairing.address"
     static let devices = "pairing.devices"
+    static let devicesList = "pairing.devices.list"
     static let devicesRetry = "pairing.devices.retry"
     static let retry = "pairing.retry"
     static let openLocalNetworkSettings = "pairing.openLocalNetworkSettings"
@@ -104,6 +113,13 @@ enum PairingAccessibility {
     static func revoke(_ id: UUID) -> String { "pairing.devices.revoke.\(id.uuidString.lowercased())" }
 }
 
+/// Les mesures de la feuille : la liste des appareils épouse son contenu et
+/// plafonne ici, pour que la feuille tienne dans l'écran quel que soit le nombre
+/// d'appareils (titre et « Fermer » toujours visibles).
+enum PairingLayout {
+    static let devicesMaxHeight: CGFloat = 320
+}
+
 /// La confirmation de révocation ouverte (`@State` interdit sous les Command Line
 /// Tools : l'état vit dans un petit `ObservableObject`, patron `KanbanStopPrompt`).
 final class PairingRevokePrompt: ObservableObject {
@@ -111,7 +127,7 @@ final class PairingRevokePrompt: ObservableObject {
 }
 
 /// La feuille d'appairage : en-tête (interrupteur + état du service), zone code,
-/// liste des appareils, pied « Fermer ».
+/// liste des appareils — seule partie qui défile —, pied « Fermer ».
 struct PairingSheet: View {
     @ObservedObject var remote: RemoteServiceModel
     @ObservedObject var pairing: PairingModel
@@ -145,15 +161,16 @@ struct PairingSheet: View {
 
     // MARK: - Déductions pures
 
-    /// L'état du service en un mot et un ton : le mot porte le sens (S-14).
+    /// L'état du service en un mot et un ton : le mot porte le sens (S-14). L'adresse
+    /// n'y figure pas : la zone code l'affiche, une seule fois.
     static func serviceStatus(_ state: RemoteServiceState) -> ConsoleStatus {
         switch state {
         case .off:
             ConsoleStatus(text: PairingText.off, tone: .neutral)
         case .starting:
             ConsoleStatus(text: PairingText.starting, tone: .info)
-        case .running(let address):
-            ConsoleStatus(text: PairingText.active(address: address), tone: .success)
+        case .running:
+            ConsoleStatus(text: PairingText.active, tone: .success)
         case .denied:
             ConsoleStatus(text: PairingText.localNetworkDenied, tone: .attention)
         case .failed(let reason):
@@ -161,12 +178,14 @@ struct PairingSheet: View {
         }
     }
 
-    /// L'état de la zone code : `expiré` (aucun code) retombe sur `aucun`.
+    /// L'état de la zone code : le service indisponible prime, puis le code actif,
+    /// puis l'échéance atteinte du code affiché, sinon aucun code.
     static func codeZone(
         enabled: Bool,
         state: RemoteServiceState,
         code: PairingCode?,
-        countdown: String?
+        countdown: String?,
+        expired: Bool
     ) -> PairingCodeZone {
         guard enabled else { return .serviceOff }
         switch state {
@@ -178,7 +197,7 @@ struct PairingSheet: View {
             break
         }
         if let code, let countdown { return .active(code: code.value, countdown: countdown) }
-        return .none
+        return expired ? .expired : .none
     }
 
     /// L'état de la liste : chargement tant que le registre n'est pas lu, puis
@@ -194,12 +213,20 @@ struct PairingSheet: View {
         return .devices(devices)
     }
 
-    /// Le bouton d'une ligne pendant sa révocation : « Révocation… », désactivé.
-    static func revokeControl(inProgress: Bool) -> PairingRevokeControl {
-        PairingRevokeControl(
-            label: inProgress ? PairingText.revoking : PairingText.revoke,
-            disabled: inProgress
-        )
+    /// Le bouton d'une ligne : « Révoquer », puis « Révocation… » désactivé pendant
+    /// la révocation ; le libellé d'accessibilité nomme l'appareil de la ligne.
+    static func revokeControl(inProgress: Bool, name: String) -> PairingRevokeControl {
+        inProgress
+            ? PairingRevokeControl(
+                label: PairingText.revoking,
+                accessibilityLabel: PairingText.revokingAccessibility(name: name),
+                disabled: true
+            )
+            : PairingRevokeControl(
+                label: PairingText.revoke,
+                accessibilityLabel: PairingText.revokeAccessibility(name: name),
+                disabled: false
+            )
     }
 
     // MARK: - En-tête
@@ -239,7 +266,8 @@ struct PairingSheet: View {
             enabled: remote.enabled,
             state: remote.state,
             code: pairing.code,
-            countdown: pairing.countdown
+            countdown: pairing.countdown,
+            expired: pairing.expired
         )
         return VStack(alignment: .leading, spacing: 8) {
             Button(PairingText.generate) { pairing.generate() }
@@ -286,6 +314,11 @@ struct PairingSheet: View {
                     .textSelection(.enabled)
                     .accessibilityIdentifier(PairingAccessibility.codeExpiry)
             }
+        case .expired:
+            Text(PairingText.codeExpired)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier(PairingAccessibility.codeExpiry)
         case .serviceOff:
             Text(PairingText.serviceOff)
                 .foregroundStyle(.secondary)
@@ -329,22 +362,30 @@ struct PairingSheet: View {
             Text(PairingText.devicesEmpty)
                 .foregroundStyle(.secondary)
         case .devices(let devices):
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(devices) { device in
-                    deviceRow(device)
+            // Seule la liste défile : elle épouse son contenu et plafonne à
+            // `PairingLayout.devicesMaxHeight` (une `VStack`, pas une `LazyVStack`,
+            // dont la hauteur idéale serait sous-estimée).
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(devices) { device in
+                        deviceRow(device)
+                    }
                 }
             }
+            .frame(maxHeight: PairingLayout.devicesMaxHeight)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier(PairingAccessibility.devicesList)
         }
     }
 
     private func deviceRow(_ device: DeviceRecord) -> some View {
-        let control = Self.revokeControl(inProgress: pairing.revoking.contains(device.id))
+        let control = Self.revokeControl(inProgress: pairing.revoking.contains(device.id), name: device.name)
         let nowMs = registry.clock.nowMs()
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(device.name)
                     .font(.headline)
-                Text(PairingText.pairedOn(ConsoleFormat.time(ms: device.pairedAtMs)))
+                Text(PairingText.pairedOn(ConsoleFormat.dateTime(ms: device.pairedAtMs)))
                 Text(PairingText.lastSeen(ConsoleFormat.relative(ms: device.lastSeenAtMs, nowMs: nowMs)))
             }
             .font(.caption)
@@ -353,6 +394,7 @@ struct PairingSheet: View {
             Button(control.label) { prompt.pending = device.id }
                 .consoleButtonProminence(false)
                 .disabled(control.disabled)
+                .accessibilityLabel(control.accessibilityLabel)
                 .accessibilityIdentifier(PairingAccessibility.revoke(device.id))
                 .confirmationDialog(
                     PairingText.revokeConfirmTitle(name: device.name),

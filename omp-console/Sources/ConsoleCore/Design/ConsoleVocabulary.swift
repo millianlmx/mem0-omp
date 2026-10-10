@@ -193,7 +193,8 @@ public enum ConsoleFormat {
             .formatted(Date.FormatStyle(date: .omitted, time: .shortened).locale(locale))
     }
 
-    /// La date et l'heure à la minute, « 9 oct. 2026 à 14:32 ».
+    /// La date et l'heure en entier, à la minute, « 10 oct. 2026 à 21:54 » : jour,
+    /// mois abrégé, année et heure, dans le fuseau donné (celui du process par défaut).
     public static func dateTime(ms: Double, timeZone: TimeZone = .current) -> String {
         var style = Date.FormatStyle(date: .abbreviated, time: .shortened).locale(locale)
         style.timeZone = timeZone

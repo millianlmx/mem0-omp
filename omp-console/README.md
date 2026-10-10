@@ -1058,7 +1058,10 @@ et podman (S-1, S-4) :
   `mem0-stack/.env.example` s'appliquent.
 - **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
   (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
-  devient alors le seul candidat (les recettes s'en servent). Sous une racine
+  devient alors le seul candidat (les recettes s'en servent) ;
+  `OMP_CONSOLE_REMOTE_PORT` déplace le port de l'API distante (entier de 1 à
+  65535 ; toute autre valeur garde 8787), pour qu'une instance de recette écoute
+  à côté de celle de l'utilisateur. Sous une racine
   jetable SEULEMENT, l'argument de lancement `-setup.recipe <valeur>`
   (`Setup/SetupRecipe.swift`) remplace l'installateur par un script, sans réseau
   ni pile : `progression` (téléchargement chiffré de 0 à 100 % en 10 s, puis
@@ -1871,7 +1874,8 @@ statistiques, la mémoire, et les gestes du tableau — et pousse ses changement
 un flux temps réel.
 
 - **Transport** : HTTP/1.1 en clair, sur la **seule interface du réseau local**.
-  Le port par défaut est **8787** et le service est annoncé par **Bonjour** sous le
+  Le port par défaut est **8787** (`OMP_CONSOLE_REMOTE_PORT` le déplace, pour une
+  instance de recette) et le service est annoncé par **Bonjour** sous le
   type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
   protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
   adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
@@ -1898,22 +1902,40 @@ un flux temps réel.
   servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
   sans lire le service. La route ne rend jamais `404`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
-  `{"code":"XXXXXXXX","name":"<appareil>","protocolVersion":1}` et rend un jeton
-  d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres routes). Le code
-  est généré depuis la feuille « Appairage… » (menu de l'app, ⌥⌘A), affiché huit
-  caractères Crockford base32 groupés `XXXX-XXXX`, valable **120 secondes** et à
-  **usage unique** ; au-delà de 5 échecs, le code se verrouille et seul un code neuf
-  le déverrouille. Un code expiré disparaît de la feuille.
+  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":1}`
+  et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
+  routes). Le code est généré depuis la feuille « Appairage » (menu « OMP Console ›
+  Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
+  valable **120 secondes** et à **usage unique** ; au-delà de 5 échecs, le code se
+  verrouille et seul un code neuf le déverrouille. Le code est accepté **avec ou sans
+  tiret, en majuscules comme en minuscules** (`ABCD-EFGH`, `ABCDEFGH`, `abcd-efgh`) :
+  l'app iOS/iPadOS, le client et le serveur le normalisent par le même
+  `PairingCodeFormat` (ConsoleCore).
+- **Nom et identité de l'appareil** : l'app iOS/iPadOS transmet le **modèle précis**
+  de l'appareil (« iPad Pro 13 pouces (M4) », « iPhone 17e »), jamais son nom
+  personnel, et un identifiant d'installation (`deviceKey`, champ optionnel). Un
+  **réappairage** du même appareil **remplace sa ligne** et révoque l'ancien jeton ;
+  deux appareils distincts du même modèle gardent chacun leur ligne. Les anciennes
+  lignes sans `deviceKey` (les « iPhone » d'avant) ne sont ni fusionnées ni
+  supprimées : on les révoque à la main.
+- **Feuille « Appairage »** : son interrupteur « Accès depuis l'iPhone et l'iPad »,
+  en tête, est **actif par défaut** et mémorisé (`remote.enabled`) ; le couper arrête
+  le serveur et son annonce Bonjour. La feuille tient dans l'écran : seule la liste
+  des appareils défile, le titre et « Fermer » restent visibles. Le code affiche
+  « Expire dans mm:ss », puis « Code expiré » à l'échéance ; l'adresse du service
+  n'apparaît qu'une fois, et c'est d'abord une adresse privée du réseau local
+  (192.168/16, 10/8, 172.16/12), avant une adresse Tailscale (100.64/10) puis
+  lien-local : l'app iOS/iPadOS n'atteint en HTTP que le réseau local (ATS), et une
+  adresse Tailscale tapée à la main y échoue ; chaque ligne porte la date complète
+  (« Appairé le 10 oct. 2026 à 21:54 ») et un bouton « Révoquer » que VoiceOver
+  annonce « Révoquer <nom> ».
 - **Oubli par l'appareil** : `DELETE /v1/devices/self` (authentifiée, sans corps)
   révoque l'appareil **porteur du jeton**, et lui seul, exactement comme « Révoquer »
-  dans la feuille « Appairage… » : jeton, ligne de `devices.json`, article du
+  dans la feuille « Appairage » : jeton, ligne de `devices.json`, article du
   trousseau, flux SSE coupés, liste « Appareils appairés » mise à jour. Réponse
   `200 {"accepted":true}` ; `401 unauthorized` pour un jeton absent, inconnu ou déjà
   révoqué (un second appel rend donc `401`). C'est l'appel de « Oublier ce Mac » de
   l'app iOS, tenté au mieux : l'app oublie son jeton même si le Mac ne répond pas.
-- **Interrupteur** : « Service d'API distante », en tête de la feuille, est **actif
-  par défaut** et mémorisé (`remote.enabled`) ; le couper arrête le serveur et son
-  annonce Bonjour.
 - **Permission macOS** : la première opération Bonjour d'un bundle lancé depuis le
   Finder déclenche l'alerte « Réseau local » (TN3179) ; la feuille explique le refus
   et ouvre les Réglages Système. Un outil lancé depuis le Terminal (`swift test`,
@@ -1973,6 +1995,44 @@ swift test --filter AC-1                          # annonce Bonjour + source loc
 
 `AC-1` ne demande que `dns-sd` ; `AC-20` demande `omp` et `bun` — sans eux, la
 recette est **sautée**, jamais verte à tort.
+
+#### Recette de la feuille « Appairage »
+
+```bash
+bash scripts/swift-app.sh --no-tests              # le bundle à éprouver
+bash scripts/mac-appairage-recette.sh             # Mac seul : AC-1, 2, 6, 7, 8, 9, 10, 12
+bash scripts/mac-appairage-recette.sh --ios       # + iOS/iPadOS : AC-3, 4, 5, 6, 11
+bash scripts/mac-appairage-recette.sh --captures-only --bundle <app de la base>   # captures « avant »
+```
+
+Elle lance une **instance de recette distincte** en arrière-plan (`open -g -n`), sur
+un état jetable : 12 appareils hérités « iPhone » sans `deviceKey`, un magasin de
+pipeline vide, le port `OMP_CONSOLE_REMOTE_PORT=18787`. Les composants, les données
+et la pile de l'utilisateur sont **liés** : la préparation de l'instance y écrit
+(`ComponentInstaller` purge toute version d'omp ou de podman autre que celle du
+bundle, `MemoryStack` recrée la machine podman si l'image de `stack/machine.json`
+diffère et réécrit `stack/migration.json`). D'où la **garde du manifeste** : avant
+tout lancement, les versions épinglées dans le binaire du bundle (omp, podman,
+image de machine) doivent être exactement celles du support réel —
+`components/omp/<v>` et `components/podman/<v>` seuls dans leur dossier, même image
+dans `stack/machine.json` — sinon la recette sort en `2` sans rien lancer. La
+configuration podman (`config`) est **copiée** : la préparation réécrit
+`config/containers/containers.conf`, qui ne doit jamais viser le dossier jetable de
+la recette. `caffeinate -d` empêche la veille d'écran (et le verrouillage qui la
+suit) pendant la passe.
+La sonde AX `scripts/mac-appairage-sonde.swift` (compilée par `swiftc`) presse et
+lit la feuille sans activer l'app ni la redimensionner : l'instance de
+l'utilisateur et le focus ne sont jamais touchés. `--ios` construit une app signée
+ad hoc (`omp-console/.build-ios-recette`) et appaire trois simulateurs dédiés
+(`appairage-tab-a`, `appairage-tab-b`, `appairage-tel`, conservés d'un passage à
+l'autre, jamais désinstallés) en saisissant le code sous ses trois formes.
+Sorties (`--out`, défaut `/tmp/mac-appairage-recette-<horodatage>`) : `rapport.txt`
+(une ligne `✔`/`✗` par critère), mesures JSON et captures PNG. En fin de passe,
+les appareils appairés par la recette sont révoqués par la feuille (leurs jetons
+quittent le trousseau du Mac) et l'instance reçoit `kill -TERM`. Codes de sortie :
+`0` tout vert, `1` au moins un critère rouge, `2` non exécuté (hors macOS, session
+verrouillée, bundle absent, manifeste du bundle différent du support réel,
+Accessibilité refusée au terminal).
 
 ## Structure du paquet
 

@@ -102,6 +102,7 @@ struct OMPConsoleApp: App {
         // sert à distance est l'état que la fenêtre montre. Il démarre à
         // l'apparition de la racine ET sur `onReady` (S-14).
         let remote = RemoteServiceModel(
+            port: RemoteServiceModel.resolvedPort(environment: ProcessInfo.processInfo.environment),
             storeHub: storeHub,
             kanban: kanban,
             actions: actions,
