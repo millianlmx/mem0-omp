@@ -10,7 +10,9 @@
 //
 // Deux invariants de S-9 sont tenus par la forme du code :
 //   - le choix du projet n'est JAMAIS écrit en `UserDefaults` sans un geste
-//     explicite (`chooseProject`) : `init` ne fait que LIRE ;
+//     explicite : `select(projectRoot:)` est l'UNIQUE point d'écriture (appelé
+//     par `chooseProject`, `launch(projectRoot:)` et le sélecteur des états
+//     vides), `init` ne fait que LIRE ;
 //   - la section « Session OMP » est à instance unique, donc « une seule session
 //     servie » est structurellement vrai ; `canLaunch` est faux dès que l'état est
 //     `launching|running|stopping`.
@@ -86,6 +88,10 @@ final class SessionConsoleModel: ObservableObject {
         AppDelegate.terminateSession = { [weak self] in
             await self?.host.terminateForQuit()
         }
+        // Inventaire du Quitter (mac-quitter-sans-confirmation, S-1).
+        AppDelegate.sessionQuitActivity = { [weak self] in
+            self?.quitActivity
+        }
     }
 
     // MARK: - Persistance
@@ -124,6 +130,14 @@ final class SessionConsoleModel: ObservableObject {
         case .launching, .running: return true
         default: return false
         }
+    }
+
+    /// La session vivante que le Quitter arrêtera, nommée par le dossier avec
+    /// lequel ELLE a été lancée (`host.projectRoot`), pas par le projet choisi
+    /// depuis (`projectRoot`), qui peut avoir changé.
+    var quitActivity: QuitActivity? {
+        guard canStop else { return nil }
+        return .session(named: host.projectRoot?.lastPathComponent)
     }
 
     var canRelaunch: Bool {
@@ -183,7 +197,19 @@ final class SessionConsoleModel: ObservableObject {
 
     // MARK: - Actions (S-9)
 
-    func chooseProject() {
+    /// L'UNIQUE écrivain du projet choisi de l'app (S-3 de
+    /// mac-etats-vides-sans-issue) : la section publiée et la préférence partagée
+    /// avec Mémoire, Fichiers et Terminal. Le panneau de Session OMP, la route
+    /// distante et le sélecteur des états vides passent tous par ici, donc un
+    /// choix a le même effet d'où qu'il vienne.
+    func select(projectRoot url: URL) {
+        projectRoot = url
+        defaults.set(url.path, forKey: Self.projectRootKey)
+    }
+
+    /// `true` quand un dossier a été choisi ; un panneau annulé n'écrit rien.
+    @discardableResult
+    func chooseProject() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -191,9 +217,9 @@ final class SessionConsoleModel: ObservableObject {
         panel.canCreateDirectories = false
         panel.prompt = "Choisir"
         panel.message = "Choisissez le dossier du projet à héberger."
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        projectRoot = url
-        defaults.set(url.path, forKey: Self.projectRootKey)
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        select(projectRoot: url)
+        return true
     }
 
     func launch() {
@@ -213,8 +239,7 @@ final class SessionConsoleModel: ObservableObject {
     /// session NEUVE : aucun fichier à reprendre.
     func launch(projectRoot url: URL) async throws {
         guard canStart else { throw ServiceSessionError.alreadyRunning }
-        projectRoot = url
-        defaults.set(url.path, forKey: Self.projectRootKey)
+        select(projectRoot: url)
         try await host.start(projectRoot: url, resumeFile: nil)
     }
 

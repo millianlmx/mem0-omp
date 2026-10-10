@@ -1,4 +1,4 @@
-// Modèles de valeur du tableau Kanban (S-1 … S-5, S-11) : les onze colonnes, une
+// Modèles de valeur du tableau Kanban (S-1 … S-5, S-11) : les treize colonnes, une
 // carte, ses sources citables, ses marques, les anomalies du magasin et l'état
 // publié par le modèle.
 //
@@ -16,7 +16,7 @@ import Foundation
 
 // --- colonnes (S-1) ----------------------------------------------------------
 
-/// Les onze colonnes de l'ardoise, dans l'ordre de S-1 (parité avec
+/// Les treize colonnes de l'ardoise, dans l'ordre de S-1 (parité avec
 /// `/pipelines`). L'écran ne les montre plus une à une : il les regroupe en
 /// voies (`KanbanLane`), et l'ordre de déclaration ordonne les cartes DANS une
 /// voie.
@@ -28,7 +28,11 @@ public enum KanbanColumn: String, CaseIterable, Sendable {
     case enCours = "en-cours"
     case questionEnVol = "question-en-vol"
     case prOuverte = "pr-ouverte"
+    /// Une PR dont l'état GitHub est INCONNU (aucun fait lu) : jamais « ouverte »
+    /// par défaut.
+    case prCreee = "pr-creee"
     case fusionne = "fusionne"
+    case prFermee = "pr-fermee"
     case echec = "echec"
     case jalonSpecs = "jalon-specs"
     case jalonReview = "jalon-review"
@@ -217,19 +221,31 @@ public struct KanbanCard: Sendable, Equatable, Identifiable {
     }
 }
 
+/// Le geste qui accompagne une anomalie dans la bulle des problèmes : un bouton
+/// « Reprendre » quand une carte de l'ardoise offre déjà la reprise, sinon une
+/// consigne écrite. Aucune action nouvelle n'est créée pour une anomalie.
+public enum KanbanAnomalyGesture: Equatable, Sendable {
+    /// Reprendre la carte d'id `cardId` (zone `.resume` de `KanbanActionPresentation`).
+    case resume(cardId: String)
+    /// Une consigne écrite, quand aucune action de l'app ne règle le cas.
+    case instruction(String)
+}
+
 /// Une anomalie du magasin, telle que la bulle des problèmes la nomme : sa nature
-/// (la marque correspondante), une phrase pour l'utilisateur qui nomme la
-/// pipeline, et le détail technique (fichier, pid, identité) qui ne s'affiche que
-/// sous « Détails techniques ».
+/// (la marque correspondante), une phrase de conséquence pour l'utilisateur, son
+/// geste, et le détail technique (fichier, pid, identité) qui n'est jamais
+/// affiché : il ne sort que par « Copier le diagnostic ».
 public struct KanbanAnomaly: Sendable, Equatable {
     public var kind: KanbanMark
     public var text: String
     public var detail: String
+    public let gesture: KanbanAnomalyGesture
 
-    public init(kind: KanbanMark, text: String, detail: String) {
+    public init(kind: KanbanMark, text: String, detail: String, gesture: KanbanAnomalyGesture) {
         self.kind = kind
         self.text = text
         self.detail = detail
+        self.gesture = gesture
     }
 }
 

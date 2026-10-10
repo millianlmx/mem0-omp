@@ -25,13 +25,17 @@ public enum ClientEndpoint: Equatable, Sendable, Hashable {
 
     /// La base HTTP de l'endpoint, sans chemin : c'est le transport qui ajoute le
     /// chemin de la route. `nil` quand l'hôte saisi ne s'écrit pas en URL (jamais
-    /// de `!` : une adresse manuelle libre ne doit pas faire planter l'app).
+    /// de `!` : une adresse manuelle libre ne doit pas faire planter l'app), ou
+    /// quand il ne reste rien une fois la zone retirée (`%en0`) : `URL(string:)`
+    /// ne garantit pas `nil` devant un hôte vide.
     public var baseURL: URL? {
-        URL(string: "http://\(Self.urlHost(host)):\(port)")
+        guard !Self.zoneless(host).isEmpty else { return nil }
+        return URL(string: "http://\(Self.urlHost(host)):\(port)")
     }
 
     /// La forme affichée : `192.168.1.12:8787` pour une adresse, et
-    /// `OMP Console — 192.168.1.12:8787` pour un service Bonjour résolu.
+    /// `OMP Console — 192.168.1.12:8787` pour un service Bonjour résolu. Jamais de
+    /// zone d'interface : `%en0` ne dit rien à l'utilisateur.
     public var display: String {
         switch self {
         case .manual(let host, let port):
@@ -41,18 +45,46 @@ public enum ClientEndpoint: Equatable, Sendable, Hashable {
         }
     }
 
-    /// Un littéral IPv6 s'écrit entre crochets (`fe80::1%en0` → `[fe80::1%en0]`) ;
-    /// Network.framework rend ainsi l'adresse lien-local d'un Mac découvert par
-    /// Bonjour sur un partage de connexion, et `URL` refuse la forme nue.
-    private static func shownHost(_ host: String) -> String {
-        guard host.contains(":"), !host.hasPrefix("[") else { return host }
-        return "[\(host)]"
+    /// L'adresse seule, `hôte:port`, sans le nom de l'instance Bonjour : la forme
+    /// qui préremplit le champ d'adresse quand le Mac a refusé le jeton. Comme
+    /// `display`, elle ne montre jamais de zone d'interface.
+    public var address: String {
+        "\(Self.shownHost(host)):\(port)"
     }
 
-    /// Dans une URL, la zone d'un lien-local s'écrit `%25en0` (le `%` est échappé).
+    /// L'hôte sans sa zone d'interface : du PREMIER `%` jusqu'à la fin, ou jusqu'au
+    /// `]` exclu pour un hôte déjà entre crochets (`[fe80::1%en0]` → `[fe80::1]`).
+    /// Network.framework rend la zone EN IPv4 comme en IPv6 (`192.168.1.175%en0`,
+    /// `NWEndpoint.Host` décrit l'interface de résolution).
+    private static func zoneless(_ host: String) -> String {
+        guard let percent = host.firstIndex(of: "%") else { return host }
+        if host.hasPrefix("["), let close = host[percent...].firstIndex(of: "]") {
+            return String(host[..<percent] + host[close...])
+        }
+        return String(host[..<percent])
+    }
+
+    /// Un littéral IPv6 s'affiche entre crochets (`fe80::1%en0` → `[fe80::1]`),
+    /// zone retirée comme pour toute adresse montrée.
+    private static func shownHost(_ host: String) -> String {
+        let bare = zoneless(host)
+        guard bare.contains(":"), !bare.hasPrefix("[") else { return bare }
+        return "[\(bare)]"
+    }
+
+    /// L'hôte tel qu'il s'écrit dans une URL. Un lien-local IPv6 GARDE sa zone,
+    /// échappée en `%25en0` et entre crochets : sans elle, le système ne sait pas
+    /// par quelle interface joindre le lien (Mac découvert sur un partage de
+    /// connexion). Un IPv4 ou un nom PERD la sienne : `URL` refuse le `%` nu, et
+    /// `%25en0` fait résoudre l'hôte comme un nom (`NSURLErrorCannotFindHost`) ;
+    /// une adresse IPv4 n'a pas de zone, la retirer ne change pas la destination.
+    /// Un hôte déjà entre crochets (saisie manuelle) passe tel quel.
     private static func urlHost(_ host: String) -> String {
-        guard host.contains(":"), !host.hasPrefix("[") else { return host }
-        return "[\(host.replacingOccurrences(of: "%", with: "%25"))]"
+        if host.contains(":"), !host.hasPrefix("[") {
+            return "[\(host.replacingOccurrences(of: "%", with: "%25"))]"
+        }
+        guard host.contains(":") else { return zoneless(host) }
+        return host
     }
 }
 

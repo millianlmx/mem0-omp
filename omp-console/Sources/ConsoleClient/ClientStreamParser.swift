@@ -19,6 +19,9 @@ public enum ClientStreamEvent: Equatable, Sendable {
     case devices(RemoteDevicesEvent)
     case components(RemoteComponentsPayload)
     case journal(RemoteJournalPayload)
+    /// Les faits de PR lus par le Mac et son état de relecture, ENTIERS à chaque
+    /// fois (S-6) : envoyée à l'ouverture du flux puis à chaque changement.
+    case pullRequestStates(RemotePullRequestStatesPayload)
     /// Nom inconnu, ou charge utile illisible : ignoré par le modèle.
     case unknown(String)
 
@@ -33,6 +36,7 @@ public enum ClientStreamEvent: Equatable, Sendable {
         case .devices: return "devices"
         case .components: return "components"
         case .journal: return "journal"
+        case .pullRequestStates: return "pull-request-states"
         case .unknown(let name): return name
         }
     }
@@ -96,6 +100,9 @@ public struct ClientStreamParser {
         case "journal":
             return (try? decoder.decode(RemoteJournalPayload.self, from: data)).map(ClientStreamEvent.journal)
                 ?? .unknown(name)
+        case "pull-request-states":
+            return (try? decoder.decode(RemotePullRequestStatesPayload.self, from: data))
+                .map(ClientStreamEvent.pullRequestStates) ?? .unknown(name)
         default:
             return .unknown(name)
         }

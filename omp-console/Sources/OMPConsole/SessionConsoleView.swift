@@ -259,11 +259,7 @@ struct SessionConsoleView: View {
                         .truncationMode(.middle)
                         .accessibilityIdentifier("session.project")
                 }
-                LabeledContent(SessionConsoleText.fieldState, value: model.stateTitle)
-                LabeledContent(
-                    SessionConsoleText.fieldPid,
-                    value: host.pid.map { String($0) } ?? SessionConsoleText.none
-                )
+                LabeledContent(SessionConsoleText.fieldState, value: SessionConsoleText.inspectorState(host.state))
                 LabeledContent(SessionConsoleText.fieldSessionId) {
                     Text(host.sessionId ?? SessionConsoleText.none)
                         .font(.system(.callout, design: .monospaced))
@@ -284,6 +280,16 @@ struct SessionConsoleView: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                 }
+                DiagnosticCopyButton(
+                    diagnostic: SessionConsoleText.diagnostic(
+                        pid: host.pid,
+                        state: host.state,
+                        sessionId: host.sessionId,
+                        projectPath: model.projectRoot?.path,
+                        sessionFile: host.sessionFile
+                    ),
+                    identifier: "session.diagnostic.copy"
+                )
             }
 
             Section(SessionConsoleText.sectionJournal) {

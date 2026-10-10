@@ -487,3 +487,87 @@ func conductorFailureFailsPendingEntryAndResumeJournals() async throws {
     #expect(recorder.pilots.count == 2)
     #expect(recorder.posts.count == 1, "l'arrêt, lui, poste une commande stop")
 }
+
+@MainActor
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : « Reprendre » une feature en échec poste une commande relaunch exacte et journalise « reprise · <slug> »")
+func relaunchPostsExactCommand() async throws {
+    let fixture = StoreFixture()
+    let recorder = ServiceRecorder()
+    let model = makeModel(
+        fixture,
+        post: { repo, body in try recorder.post(repo, body) },
+        pilot: { repo in try recorder.pilot(repo) }
+    )
+
+    let id = try #require(model.relaunch(cardAction(repoRoot: fixture.root, inbox: nil, featureState: .failed)))
+    #expect(id == "console-1700000000000-abcd")
+    let entry = try #require(model.journal.first)
+    #expect(entry.id == id, "l'entrée de journal porte l'identifiant de la commande")
+    #expect(entry.kindLabel == ActionsText.resumeLabel)
+    #expect(entry.targetLabel == "alpha")
+    #expect(entry.state == .awaitingAck)
+
+    await model.commandTask?.value
+    #expect(model.journal.first?.state == .taken)
+    let post = try #require(recorder.posts.first)
+    #expect(post.repo == realpathOr(fixture.root))
+    let body = post.body
+    #expect(Set(body.keys) == ["version", "id", "sentAt", "repo", "kind", "slug"])
+    #expect((body["version"] as? NSNumber)?.intValue == 1)
+    #expect(body["id"] as? String == id)
+    #expect((body["sentAt"] as? NSNumber)?.doubleValue == t0)
+    #expect(body["repo"] as? String == realpathOr(fixture.root))
+    #expect(body["kind"] as? String == "relaunch")
+    #expect(body["slug"] as? String == "alpha")
+    #expect(recorder.pilots.isEmpty, "relancer ne sollicite pas le conducteur")
+
+    // Une feature BLOQUÉE se relance de la même façon.
+    #expect(model.relaunch(cardAction(repoRoot: fixture.root, inbox: nil, featureState: .blocked)) != nil)
+    await model.commandTask?.value
+    #expect(recorder.posts.count == 2)
+    #expect(recorder.posts.last?.body["kind"] as? String == "relaunch")
+}
+
+@MainActor
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : une relance refusée par le service est journalisée « refusée » au motif verbatim")
+func relaunchRefusalIsJournalled() async throws {
+    let fixture = StoreFixture()
+    let motif = "relance possible sur une feature bloquée, échouée ou annulée"
+    let model = makeModel(fixture, post: { repo, body in
+        ServiceCommandAck(
+            id: body["id"] as? String ?? "x", repo: repo, kind: "relaunch",
+            state: .refused, reason: motif, at: t0
+        )
+    })
+
+    model.relaunch(cardAction(repoRoot: fixture.root, inbox: nil, featureState: .failed))
+    await model.commandTask?.value
+
+    let entry = try #require(model.journal.first)
+    #expect(entry.state == .refused(reason: motif))
+    #expect(ActionsText.journalLine(for: entry) == "\(ActionsText.resumeLabel) · alpha · refusée : \(motif)")
+}
+
+@MainActor
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : sans slug, sans dépôt ou hors échec/blocage, la relance ne fait RIEN")
+func relaunchGuardsLeaveNoTrace() {
+    let fixture = StoreFixture()
+    let recorder = ServiceRecorder()
+    let model = makeModel(
+        fixture,
+        post: { repo, body in try recorder.post(repo, body) },
+        pilot: { repo in try recorder.pilot(repo) }
+    )
+    var noRepo = cardAction(repoRoot: fixture.root, inbox: nil, featureState: .failed)
+    noRepo.repoRoot = nil
+
+    #expect(model.relaunch(cardAction(repoRoot: fixture.root, inbox: nil, slug: nil, featureState: .failed)) == nil)
+    #expect(model.relaunch(noRepo) == nil)
+    for state in [LotFeatureState.pending, .running, .waiting, .done, .cancelled] {
+        #expect(model.relaunch(cardAction(repoRoot: fixture.root, inbox: nil, featureState: state)) == nil)
+    }
+    #expect(model.relaunch(cardAction(repoRoot: fixture.root, inbox: nil, featureState: nil)) == nil)
+    #expect(model.journal.isEmpty)
+    #expect(model.commandTask == nil)
+    #expect(recorder.posts.isEmpty)
+}

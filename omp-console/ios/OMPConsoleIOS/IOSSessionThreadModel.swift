@@ -34,6 +34,9 @@ protocol IOSSessionSource: AnyObject {
     func feed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem>
     /// Le run de cette session dans l'instantané courant, `nil` s'il en a disparu.
     func run(forFile file: String) -> RunChoice?
+    /// Le dossier personnel du Mac, contre lequel les chemins hors du projet
+    /// s'abrègent en « ~/… » ; `nil` tant qu'il est inconnu (chemins absolus).
+    var macHomeDirectory: String? { get }
 }
 
 extension ConsoleClientModel: IOSSessionSource {
@@ -60,18 +63,20 @@ extension ConsoleClientModel: IOSSessionSource {
 enum IOSSessionThreadFacts {
     /// Le builder amorcé sur une charge utile : la dérivation PARTAGÉE des lignes,
     /// avec la racine de projet de l'en-tête (les chemins d'appel s'affichent
-    /// relatifs). C'est lui que le modèle garde pour accrocher les ajouts suivants.
-    static func builder(of payload: RemoteSessionPayload) -> SessionRowBuilder {
+    /// relatifs) et le dossier personnel du Mac (les autres s'abrègent en « ~ »).
+    /// C'est lui que le modèle garde pour accrocher les ajouts suivants.
+    static func builder(of payload: RemoteSessionPayload, home: String?) -> SessionRowBuilder {
         var builder = SessionRowBuilder()
         let root = payload.header?.cwd
         if let root, !root.isEmpty { builder.projectRoot = root }
+        builder.home = home
         builder.append(SessionWire.entries(payload))
         return builder
     }
 
     /// Les lignes d'une charge utile — le point d'entrée de la parité iOS (S-11).
-    static func rows(of payload: RemoteSessionPayload) -> [SessionRow] {
-        builder(of: payload).rows
+    static func rows(of payload: RemoteSessionPayload, home: String?) -> [SessionRow] {
+        builder(of: payload, home: home).rows
     }
 
     /// L'état de lecture d'une charge utile (S-4) : un motif OS prime, la lecture
@@ -146,8 +151,10 @@ final class IOSSessionThreadModel: ObservableObject {
     /// Le motif d'un échec de LECTURE (transport, décodage) : la session n'est pas
     /// illisible, on ne l'a pas lue. `nil` quand tout va bien.
     @Published private(set) var errorBanner: String?
-    /// La lecture initiale est-elle encore en cours ? (la vue montre un
-    /// `ProgressView`).
+    /// Le fil est-il en cours de lecture ? Vrai de la création jusqu'à la fin de
+    /// la première lecture (réussie ou non), et de nouveau pendant une
+    /// reconstruction, jusqu'à la fin de la relecture qu'elle lance. Une lecture
+    /// annulée ne le touche pas. La vue montre alors « Chargement de la session… ».
     @Published private(set) var isLoading = true
 
     private let source: any IOSSessionSource
@@ -222,7 +229,8 @@ final class IOSSessionThreadModel: ObservableObject {
     // MARK: - Lecture (S-3, S-4)
 
     /// UNE lecture complète. Ne lève jamais : un fichier absent est un état
-    /// (`waiting`), un échec de lecture un bandeau.
+    /// (`waiting`), un échec de lecture un bandeau traduit par le traducteur
+    /// partagé (nil sur un 401 : le parcours de jeton révoqué parle seul).
     func read() async {
         do {
             let payload = try await source.read(file: file)
@@ -231,13 +239,24 @@ final class IOSSessionThreadModel: ObservableObject {
         } catch {
             if Task.isCancelled { return }
             isLoading = false
-            if let clientError = error as? ClientError, case .api(.notFound) = clientError {
+            if let clientError = error as? ClientError,
+               case .api(.notFound(let motive)) = clientError,
+               motive != IOSMacFailure.unknownRoute {
                 // Fichier absent : exactement l'état que macOS montre (S-4).
                 state = .waiting
             } else {
-                errorBanner = ConversationText.readError
+                errorBanner = IOSMacErrorText.message(for: error)
             }
         }
+    }
+
+    /// Réessayer après un échec de lecture : efface le bandeau, remontre le
+    /// chargement et relit la session.
+    func retry() {
+        readTask?.cancel()
+        errorBanner = nil
+        isLoading = true
+        readTask = Task { [weak self] in await self?.read() }
     }
 
     /// Une lecture complète : l'état, les lignes (dérivation partagée), les plis
@@ -248,7 +267,7 @@ final class IOSSessionThreadModel: ObservableObject {
         state = IOSSessionThreadFacts.state(of: payload)
         guard case .ready = state else { return }
         truncatedNotice = payload.truncated
-        builder = IOSSessionThreadFacts.builder(of: payload)
+        builder = IOSSessionThreadFacts.builder(of: payload, home: source.macHomeDirectory)
         rows = builder.rows
         expanded = IOSSessionThreadFacts.expanded(after: rows, startingAt: 0, in: expanded)
         ignoredCount = payload.skipped.count
@@ -278,12 +297,14 @@ final class IOSSessionThreadModel: ObservableObject {
     /// puis une relecture complète.
     private func reconstructed() {
         builder = SessionRowBuilder()
+        builder.home = source.macHomeDirectory
         rows = []
         expanded = []
         ignoredCount = 0
         truncatedNotice = false
         reconstructions += 1
         state = .ready
+        isLoading = true
         readTask?.cancel()
         readTask = Task { [weak self] in await self?.read() }
     }

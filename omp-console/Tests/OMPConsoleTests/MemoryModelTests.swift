@@ -340,8 +340,9 @@ func ac6OMLXConnectionRefusedIsNamed() async {
         Issue.record("une connexion refusée doit rendre `.unreachable`, pas \(model.omlx)")
         return
     }
+    #expect(model.omlxBanner?.message == MemoryText.omlxUnreachable)
     #expect(
-        model.omlxBanner
+        model.omlxBanner?.diagnostic
             == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
     )
     // Le prérequis manquant n'efface JAMAIS la mémoire : la liste reste servie.
@@ -358,7 +359,49 @@ func ac6OMLXUnauthorizedIsNamed() async {
     await model.refresh()
 
     #expect(model.omlx == .unauthorized)
-    #expect(model.omlxBanner == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.")
+    #expect(model.omlxBanner?.message == MemoryText.omlxUnauthorized)
+    #expect(model.omlxBanner?.diagnostic
+        == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/models")
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-6 : le bandeau oMLX (injoignable ou clé refusée) dit la conséquence et le geste, sans URL, OMLX_API_TOKEN ni code")
+func omlxBannerIsReadable() async {
+    for reply in [StubURLProtocol.Reply(error: URLError(.cannotConnectToHost)), .init(status: 401)] {
+        StubURLProtocol.reset()
+        StubURLProtocol.reply("/models", reply)
+        let model = memoryModel(service: ScriptedMemoryService())
+        await model.refresh()
+
+        guard let banner = model.omlxBanner else {
+            Issue.record("oMLX en défaut sans bandeau : \(model.omlx)")
+            continue
+        }
+        #expect(forbiddenTokens(in: banner.message).isEmpty, "bandeau : \(banner.message)")
+        #expect(!banner.message.contains("127.0.0.1"))
+        #expect(!banner.message.contains("401"))
+        // Le geste : « rafraîchissez » nomme le bouton « Rafraîchir » du bandeau.
+        #expect(banner.message.contains("rafraîchissez"))
+    }
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic du bandeau oMLX porte l'URL sondée, et OMLX_API_TOKEN avec le code pour une clé refusée")
+func omlxBannerDiagnosticKeepsTheRawDetail() async {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(error: URLError(.cannotConnectToHost)))
+    let unreachable = memoryModel(service: ScriptedMemoryService())
+    await unreachable.refresh()
+    #expect(unreachable.omlxBanner?.diagnostic.contains("http://127.0.0.1:8000/models") == true)
+
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 401))
+    let refused = memoryModel(service: ScriptedMemoryService())
+    await refused.refresh()
+    let diagnostic = refused.omlxBanner?.diagnostic ?? ""
+    #expect(diagnostic.contains("http://127.0.0.1:8000/models"))
+    #expect(diagnostic.contains("OMLX_API_TOKEN"))
+    #expect(diagnostic.contains("401"))
 }
 
 @MainActor
@@ -417,4 +460,101 @@ func ac6StackEnvDrivesTheProbeURL() async throws {
     let present = memoryModel(service: ScriptedMemoryService(), paths: paths)
     await present.refresh()
     #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:9999/models"])
+}
+
+// MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)
+
+/// Un drapeau porté par une classe : la closure de reprise est `@MainActor`, et
+/// une `var` capturée par une closure concurrente ne compile pas sous Swift 6.
+@MainActor
+private final class OwnershipFlag {
+    var tookOver = false
+}
+
+/// Une boîte `Sendable` : la sonde de propriété est appelée depuis une closure
+/// `@Sendable`, une `var` capturée ne compilerait pas.
+private final class AddressBox: @unchecked Sendable {
+    var value: String?
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-4 : une adresse qui répond sans le jeton rend « pas la pile d'OMP Console », jamais « disponible »")
+func ac4ForeignAddressShowsForeignOwned() async {
+    let service = ScriptedMemoryService(
+        health: [MemoryHealth(isAvailable: false, errorMessage: MemoryText.foreignService, isForeign: true)],
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    )
+    let ownership = ForeignOwnership(
+        address: "http://localhost:8321",
+        owner: "l'ancienne pile mémoire (conteneur mem0-http)",
+        gesture: "podman stop mem0-qdrant mem0-http",
+        isLegacy: true
+    )
+    let model = memoryModel(service: service, portOwner: { _ in ownership })
+
+    await model.refresh()
+
+    #expect(model.state == .foreignOwned(ownership))
+    #expect(model.serviceAvailable == false)
+    // L'indisponibilité étrangère n'est JAMAIS une liste : aucune requête de liste.
+    #expect(service.allScopes.isEmpty)
+
+    // La sonde de propriété reçoit l'adresse EFFECTIVE du service.
+    let probed = ScriptedMemoryService(health: [MemoryHealth(isAvailable: false, errorMessage: MemoryText.foreignService, isForeign: true)])
+    let box = AddressBox()
+    let probing = memoryModel(service: probed, portOwner: { address in box.value = address; return ownership })
+    await probing.refresh()
+    #expect(box.value == "http://localhost:8321")
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-4 : un service redevenu le nôtre efface l'état étranger au rafraîchissement")
+func ac4RecoveredServiceLeavesForeignState() async {
+    let service = ScriptedMemoryService(
+        health: [
+            MemoryHealth(isAvailable: false, errorMessage: MemoryText.foreignService, isForeign: true),
+            MemoryHealth(isAvailable: true, errorMessage: nil),
+        ],
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    )
+    let ownership = ForeignOwnership(address: "http://localhost:8321", owner: "un autre programme (python3, pid 4711)", gesture: "arrêtez-le", isLegacy: false)
+    let model = memoryModel(service: service, portOwner: { _ in ownership })
+
+    await model.refresh()
+    #expect(model.state == .foreignOwned(ownership))
+
+    await model.refresh()
+    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-6 : le bouton de reprise appelle l'action de l'app PUIS recharge la section")
+func ac6TakeoverCallsActionThenRefreshes() async {
+    let service = ScriptedMemoryService(
+        health: [
+            MemoryHealth(isAvailable: false, errorMessage: MemoryText.foreignService, isForeign: true),
+            MemoryHealth(isAvailable: true, errorMessage: nil),
+        ],
+        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    )
+    let ownership = ForeignOwnership(
+        address: "http://localhost:8321",
+        owner: "l'ancienne pile mémoire (conteneur mem0-http)",
+        gesture: "podman stop mem0-qdrant mem0-http",
+        isLegacy: true
+    )
+    let model = memoryModel(service: service, portOwner: { _ in ownership })
+    let flag = OwnershipFlag()
+    model.recoverOwnership = { flag.tookOver = true }
+
+    await model.refresh()
+    #expect(model.state == .foreignOwned(ownership))
+
+    await model.takeOverLegacyStack()
+
+    #expect(flag.tookOver)
+    // Après l'action, la section RECHARGE par une sonde neuve — aucun état inventé.
+    #expect(model.serviceAvailable)
+    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
+    #expect(service.healthCalls == 2)
 }

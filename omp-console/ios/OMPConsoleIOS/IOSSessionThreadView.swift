@@ -9,8 +9,19 @@
 //   — `onScrollPhaseChange` distingue le GESTE de l'utilisateur (`tracking`,
 //     `interacting`, `decelerating`) du défilement PROGRAMMÉ (`animating`, qui
 //     n'est jamais un geste) ;
-//   — l'ancre de fin est un zéro de hauteur après tout le contenu, et
-//     `scrollRequest` la fait viser par `ScrollViewReader` (le motif du dépôt).
+//   — la pile des lignes est une `VStack`, PAS une `LazyVStack` : une pile
+//     paresseuse n'a qu'une hauteur ESTIMÉE pour ses lignes non matérialisées,
+//     et l'offset de départ calculé dessus partait au-delà du contenu (zone
+//     vide sous l'en-tête, MESURÉ sur iOS 27 avec l'ancre initiale comme avec
+//     `scrollTo(edge:)`). Le prix accepté : toutes les lignes sont mises en
+//     page à l'ouverture ;
+//   — l'OUVERTURE est confiée à l'ancre initiale
+//     `defaultScrollAnchor(.bottom, for: .initialOffset)`. La forme sans rôle
+//     est INTERDITE : elle régirait aussi `.sizeChanges` et collerait le fil au
+//     bas à chaque ajout, même remonté par l'utilisateur ; `.alignment` reste
+//     en haut, un fil court n'est jamais poussé vers le bas ;
+//   — le SUIVI en direct reste à `scrollRequest`, qui fait défiler par
+//     `ScrollPosition.scrollTo(edge: .bottom)` jusqu'au bord RÉEL du contenu.
 //
 // Aucun littéral alphabétique : les mots viennent d'`IOSSessionText` ou du noyau.
 
@@ -23,6 +34,7 @@ struct IOSSessionThreadView: View {
     /// liste, fin de la session hébergée pour Session OMP) : ses appels restés sans
     /// résultat se lisent « Interrompu » (S-7 de mac-finitions-hig).
     let sessionEnded: Bool
+    @State private var position = ScrollPosition(idType: String.self)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -35,6 +47,12 @@ struct IOSSessionThreadView: View {
                     .font(.callout)
                     .iosBanner(tone: .danger)
                     .accessibilityIdentifier(IOSSessionsAccessibility.errorBanner)
+                Button { model.retry() } label: {
+                    Label(ConnectionText.retry, systemImage: "arrow.clockwise")
+                        .frame(minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier(IOSSessionsAccessibility.retry)
             }
             if case .unreadable(let reason) = model.state {
                 // L'erreur de lecture s'affiche MÊME quand des faits sont déjà là :
@@ -45,8 +63,12 @@ struct IOSSessionThreadView: View {
                     .accessibilityIdentifier(IOSSessionsAccessibility.unreadable)
             }
             if model.isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(IOSSessionText.threadLoading).font(.callout)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier(IOSSessionsAccessibility.threadLoading)
             } else if model.rows.isEmpty {
                 placeholder
             } else {
@@ -105,66 +127,54 @@ struct IOSSessionThreadView: View {
     // MARK: - Le fil
 
     private var thread: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(spacing: 0) {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(model.rows) { row in
-                            // Valeurs, pas le modèle : une publication ne réévalue
-                            // que les lignes dont la valeur a changé.
-                            IOSSessionRowView(
-                                row: row,
-                                isOpen: model.isExpanded(row.id),
-                                isThinkingOpen: model.isExpanded(IOSSessionRowView.thinkingKey(of: row.id)),
-                                onToggle: { key in model.toggleFold(key) },
-                                sessionEnded: sessionEnded
-                            )
-                            .equatable()
-                            .id(row.id)
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    // L'ancre de fin : un zéro de hauteur APRÈS tout le contenu.
-                    Color.clear
-                        .frame(height: 0)
-                        .id(IOSSessionsAccessibility.threadEnd)
+        ScrollView(.vertical) {
+            // Une pile NON paresseuse : l'offset de départ se calcule sur la
+            // hauteur RÉELLE des lignes (voir l'en-tête).
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(model.rows) { row in
+                    // Valeurs, pas le modèle : une publication ne réévalue
+                    // que les lignes dont la valeur a changé.
+                    IOSSessionRowView(
+                        row: row,
+                        isOpen: model.isExpanded(row.id),
+                        isThinkingOpen: model.isExpanded(IOSSessionRowView.thinkingKey(of: row.id)),
+                        onToggle: { key in model.toggleFold(key) },
+                        sessionEnded: sessionEnded
+                    )
+                    .equatable()
                 }
             }
-            .accessibilityIdentifier(IOSSessionsAccessibility.thread)
-            .onScrollGeometryChange(for: ViewerScrollGeometry.self) { geometry in
-                ViewerScrollGeometry(
-                    gap: geometry.contentSize.height - geometry.visibleRect.maxY,
-                    origin: geometry.contentOffset.y
-                )
-            } action: { _, geometry in
-                model.reportBottomGap(geometry)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .scrollPosition($position)
+        .defaultScrollAnchor(.bottom, for: .initialOffset)
+        .accessibilityIdentifier(IOSSessionsAccessibility.thread)
+        .onScrollGeometryChange(for: ViewerScrollGeometry.self) { geometry in
+            ViewerScrollGeometry(
+                gap: geometry.contentSize.height - geometry.visibleRect.maxY,
+                origin: geometry.contentOffset.y
+            )
+        } action: { _, geometry in
+            model.reportBottomGap(geometry)
+        }
+        .onScrollPhaseChange { _, phase in
+            // Seul un GESTE suspend le suivi : `animating` est notre propre
+            // défilement, `idle` n'est rien.
+            switch phase {
+            case .tracking, .interacting, .decelerating:
+                model.reportUserScroll(deltaY: 1)
+            default:
+                break
             }
-            .onScrollPhaseChange { _, phase in
-                // Seul un GESTE suspend le suivi : `animating` est notre propre
-                // défilement, `idle` n'est rien.
-                switch phase {
-                case .tracking, .interacting, .decelerating:
-                    model.reportUserScroll(deltaY: 1)
-                default:
-                    break
-                }
-            }
-            .onAppear {
-                // À l'ouverture, le fil se lit par la FIN : la demande de
-                // défilement initiale est déjà posée quand la vue apparaît, et
-                // `onChange` ne voit pas la valeur initiale.
-                scroll(proxy)
-            }
-            .onChange(of: model.scrollRequest) { _, _ in
-                scroll(proxy)
-            }
+        }
+        .onChange(of: model.scrollRequest) { _, _ in
+            scroll()
         }
     }
 
-    private func scroll(_ proxy: ScrollViewProxy) {
-        guard let last = model.rows.last else { return }
-        proxy.scrollTo(last.id, anchor: .bottom)
-        proxy.scrollTo(IOSSessionsAccessibility.threadEnd, anchor: .bottom)
+    private func scroll() {
+        guard !model.rows.isEmpty else { return }
+        position.scrollTo(edge: .bottom)
     }
 }

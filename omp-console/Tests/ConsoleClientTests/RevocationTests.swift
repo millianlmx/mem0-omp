@@ -25,8 +25,9 @@ struct RevocationTests {
             preferences: [ClientPreferenceKey.deviceId: "d"]
         )
         // Les lectures des faits de l'Accueil (S-8, rafraîchies à la connexion)
-        // répondent 200 : la révocation de ce test est déclenchée par `version()`,
-        // pas par le rafraîchissement de fond.
+        // et la demande de relecture des PR (envoyée à l'ouverture du flux)
+        // répondent normalement : la révocation de ce test est déclenchée par
+        // `version()`, pas par une requête de fond.
         harness.transport.respond { request in
             if request.path == "/v1/components" {
                 return .success(ClientHTTPResponse(
@@ -40,6 +41,13 @@ struct RevocationTests {
                     status: 200,
                     protocolVersion: 1,
                     body: Data(#"{"entries":[]}"#.utf8)
+                ))
+            }
+            if request.path == "/v1/pull-request-states/refresh" {
+                return .success(ClientHTTPResponse(
+                    status: 202,
+                    protocolVersion: 1,
+                    body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }
             return .success(ClientHTTPResponse(
@@ -90,6 +98,13 @@ struct RevocationTests {
                     status: 200,
                     protocolVersion: 1,
                     body: Data(#"{"entries":[]}"#.utf8)
+                ))
+            }
+            if request.path == "/v1/pull-request-states/refresh" {
+                return .success(ClientHTTPResponse(
+                    status: 202,
+                    protocolVersion: 1,
+                    body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }
             return .success(ClientHTTPResponse(

@@ -85,7 +85,7 @@ func makeRemoteServiceModel(
         port: port,
         environment: [:],
         storeHub: hub,
-        kanban: KanbanModel(hub: hub),
+        kanban: KanbanModel(hub: hub, prStates: PullRequestStateBook(reader: nil)),
         actions: ActionsModel(),
         session: SessionConsoleModel(host: sessionHost, defaults: defaults),
         project: makeProjectModel(
@@ -243,4 +243,86 @@ func testStartIsDeferredUntilSetupIsReady() async {
     await model.startIfEnabled()
     #expect(listener.startCount == 1)
     #expect(model.state.isRunning)
+}
+
+// MARK: - mac-feuille-appairage-debordante : échéance du code
+
+/// Un `PairingModel` sur un registre jetable et une horloge que le test avance.
+@MainActor
+private func expiringPairing() async -> (model: PairingModel, registry: DeviceRegistry, clock: MutableRemoteClock) {
+    let clock = MutableRemoteClock()
+    let registry = DeviceRegistry(
+        file: URL(fileURLWithPath: remoteTempDir("omp-console-pairing-expiry"), isDirectory: true)
+            .appendingPathComponent("devices.json"),
+        store: InMemoryDeviceTokenStore(),
+        clock: clock.clock
+    )
+    await registry.load()
+    return (PairingModel(registry: registry, clock: clock.clock), registry, clock)
+}
+
+@MainActor
+@Test("mac-feuille-appairage-debordante/AC-10 : le décompte décroît, puis le code expiré dit « Code expiré »")
+func pairingCodeCountsDownThenExpires() async {
+    let (model, _, clock) = await expiringPairing()
+    model.generate()
+    #expect(model.expired == false)
+    #expect(model.countdown == "02:00")
+    #expect(model.code != nil)
+
+    clock.advance(ms: 61_000)
+    model.refresh()
+    #expect(model.countdown == "00:59")
+    #expect(model.expired == false)
+
+    clock.advance(ms: 59_000)
+    model.refresh()
+    #expect(model.expired)
+    #expect(model.code == nil)
+    #expect(model.countdown == nil)
+    #expect(model.error == nil)
+    // Une relecture plus tard (registre rechargé) dit toujours « expiré ».
+    clock.advance(ms: 30_000)
+    model.refresh()
+    #expect(model.expired)
+
+    // Un nouveau code efface l'échéance.
+    model.generate()
+    #expect(model.expired == false)
+    #expect(model.countdown == "02:00")
+}
+
+@MainActor
+@Test("mac-feuille-appairage-debordante/AC-10 : un code consommé par un appairage avant l'échéance ne dit pas « Code expiré »")
+func consumedPairingCodeIsNotExpired() async throws {
+    let (model, registry, clock) = await expiringPairing()
+    model.generate()
+    let code = try #require(model.code)
+    clock.advance(ms: 10_000)
+    _ = try await registry.pair(code: code.value, name: "iPhone 17e", deviceKey: "cle")
+    model.refresh()
+    #expect(model.code == nil)
+    #expect(model.countdown == nil)
+    #expect(model.expired == false)
+    // Même après l'échéance qu'aurait eue le code consommé.
+    clock.advance(ms: 200_000)
+    model.refresh()
+    #expect(model.expired == false)
+}
+
+@MainActor
+@Test("mac-feuille-appairage-debordante/S-10 : OMP_CONSOLE_REMOTE_PORT déplace le port d'écoute, une valeur hors 1…65535 garde 8787")
+func remotePortFollowsEnvironment() {
+    let key = RemoteServiceModel.portEnvironmentKey
+    #expect(key == "OMP_CONSOLE_REMOTE_PORT")
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: "18787"]) == 18787)
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: " 18787\n"]) == 18787)
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: "1"]) == 1)
+    #expect(RemoteServiceModel.resolvedPort(environment: [key: "65535"]) == 65535)
+    let fallback = ConsoleAPI.Service.defaultPort
+    #expect(fallback == 8787)
+    #expect(RemoteServiceModel.resolvedPort(environment: [:]) == fallback)
+    for raw in ["", "abc", "0", "-1", "70000", "65536", "18787x"] {
+        #expect(RemoteServiceModel.resolvedPort(environment: [key: raw]) == fallback, "valeur \(raw)")
+    }
 }

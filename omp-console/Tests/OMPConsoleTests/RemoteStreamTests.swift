@@ -429,3 +429,113 @@ func publishedSourcesSubscribeOffTheMainActor() async throws {
         "la veille du journal doit être abonnée (échec=\(collector.failure ?? "aucun"))"
     )
 }
+
+// MARK: - Faits de PR (pipelines-livrees-statut-pr-faux-et-doub, S-6 côté Mac)
+
+private let servedPR = "https://github.com/proprietaire/depot/pull/9"
+private let servedRepo = "/tmp/pr-states/servi"
+
+/// Publie dans le magasin de la pile une feature de lot terminée livrée par
+/// `servedPR`, close il y a deux jours (temps de la pile).
+@MainActor
+private func publishDeliveredFeature(_ stack: RemoteStack) {
+    let repoKey = KanbanRepoKey.key(forRoot: servedRepo)
+    let lot = lotObject(id: repoKey, repoRoot: servedRepo, features: [
+        lotFeatureObject(slug: "servie", state: "done", phase: "release", prUrl: servedPR, endedAt: stack.clock.nowMs - 2 * 86_400_000),
+    ])
+    let data = (try? JSONSerialization.data(withJSONObject: lot, options: [.sortedKeys])) ?? Data()
+    let directory = PipelineStore.directory(.lots, stateDir: stack.stateDir)
+    try? FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    try? data.write(to: URL(fileURLWithPath: (directory as NSString).appendingPathComponent("\(repoKey).json")))
+}
+
+@MainActor
+@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-1 : la trame `pull-request-states` suit `journal` à l'ouverture et porte les faits du Mac")
+func openingFramesEndWithPullRequestStates() async throws {
+    let reader = ScriptedPullRequestStateReader()
+    reader.script(servedPR, .merged, closedAtMs: 1_000)
+    let stack = try await RemoteStack.make(prStates: PullRequestStateBook(reader: reader))
+    defer { stack.stop() }
+    publishDeliveredFeature(stack)
+    stack.kanban.start()
+    defer { stack.kanban.stop() }
+    #expect(await awaitMainTrue(timeout: 5) { stack.kanban.prStates.facts[servedPR] != nil && !stack.kanban.prRefreshing })
+    let token = try await stack.pair()
+
+    let collector = SSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+    let frame = try #require(await collector.waitFor("pull-request-states"))
+
+    #expect(
+        Array(collector.events.map(\.name).prefix(7))
+            == ["hello", "store", "conduite", "devices", "components", "journal", "pull-request-states"],
+        "ordre reçu : \(collector.events.map(\.name))"
+    )
+    let payload = try JSONDecoder().decode(RemotePullRequestStatesPayload.self, from: Data(frame.utf8))
+    #expect(payload == RemotePullRequestStatesPayload(
+        facts: [PullRequestFact(url: servedPR, state: .merged, closedAtMs: 1_000)],
+        refreshing: false
+    ))
+}
+
+@MainActor
+@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-5 : `POST /v1/pull-request-states/refresh` répond 202 sans attendre, et la relecture est rediffusée sur le flux")
+func refreshRouteRebroadcastsFacts() async throws {
+    let reader = ScriptedPullRequestStateReader()
+    reader.script(servedPR, .open)
+    let stack = try await RemoteStack.make(prStates: PullRequestStateBook(reader: reader))
+    defer { stack.stop() }
+    publishDeliveredFeature(stack)
+    stack.kanban.start()
+    defer { stack.kanban.stop() }
+    #expect(await awaitMainTrue(timeout: 5) { stack.kanban.prStates.facts[servedPR]?.state == .open && !stack.kanban.prRefreshing })
+    let token = try await stack.pair()
+
+    let collector = SSECollector()
+    collector.start(stack.request("GET", "/v1/stream", token: token))
+    defer { collector.stop() }
+    let opening = try #require(await collector.waitFor("pull-request-states"))
+    #expect(opening.contains("\"state\":\"OPEN\""))
+
+    // La PR est fusionnée sur GitHub (hier) ; l'appareil demande la relecture.
+    let mergedAt = stack.clock.nowMs - 86_400_000
+    reader.script(servedPR, .merged, closedAtMs: mergedAt)
+    reader.delay = .milliseconds(300)
+    let reply = try await stack.call("POST", "/v1/pull-request-states/refresh", token: token)
+    #expect(reply.status == 202)
+    #expect(try reply.json(RemoteAcceptedPayload.self) == RemoteAcceptedPayload(accepted: true))
+    #expect(await awaitMainTrue(timeout: 5) { reader.readCount(servedPR) == 2 }, "la route déclenche la relecture")
+
+    // Bascule de relecture, puis le fait neuf : chaque changement est poussé.
+    let started = try #require(await collector.waitFor("pull-request-states", occurrence: 2))
+    #expect(started.contains("\"refreshing\":true"))
+    var merged: RemotePullRequestStatesPayload?
+    for occurrence in 3...4 {
+        guard let data = await collector.waitFor("pull-request-states", occurrence: occurrence) else { break }
+        let payload = try JSONDecoder().decode(RemotePullRequestStatesPayload.self, from: Data(data.utf8))
+        if payload.facts.first?.state == .merged, !payload.refreshing { merged = payload; break }
+    }
+    #expect(merged == RemotePullRequestStatesPayload(
+        facts: [PullRequestFact(url: servedPR, state: .merged, closedAtMs: mergedAt)],
+        refreshing: false
+    ))
+    #expect(stack.kanban.state.card("feature:\(KanbanRepoKey.key(forRoot: servedRepo)):servie")?.column == .fusionne)
+}
+
+@MainActor
+@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-4 : sans gh, la route de rafraîchissement répond 202 et ne lit rien ; sans jeton, 401")
+func refreshRouteWithoutGh() async throws {
+    let stack = try await RemoteStack.make()
+    defer { stack.stop() }
+    let token = try await stack.pair()
+
+    let reply = try await stack.call("POST", "/v1/pull-request-states/refresh", token: token)
+    #expect(reply.status == 202)
+    #expect(try reply.json(RemoteAcceptedPayload.self) == RemoteAcceptedPayload(accepted: true))
+    #expect(!stack.kanban.prRefreshing)
+    #expect(stack.kanban.prStates.facts.isEmpty)
+
+    let anonymous = try await stack.call("POST", "/v1/pull-request-states/refresh")
+    #expect(anonymous.status == 401)
+}

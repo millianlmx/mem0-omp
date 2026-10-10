@@ -8,6 +8,7 @@
 import ConsoleClient
 import ConsoleCore
 import CoreGraphics
+import Foundation
 import Testing
 
 @testable import OMPConsoleIOS
@@ -29,9 +30,9 @@ private final class GraphReader: IOSMemoryReading {
         self.graph = graph
     }
 
-    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         pageReads += 1
-        return RemoteMemoryPagePayload(scope: "projet", total: 0, rows: [], truncated: false)
+        return RemoteMemoryPagePayload(scope: "projet", total: 0, offset: offset, rows: [], nextOffset: nil)
     }
 
     func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
@@ -169,15 +170,15 @@ struct IOSMemoryGraphTests {
         let reader = GraphReader(graph: .failure(ClientError.api(.unavailable(detail))))
         let model = IOSMemoryGraphModel(client: reader)
         await model.activate()
-        #expect(model.state == .unavailable(detail: detail))
+        #expect(model.state == .failed(.serviceUnavailable))
 
         let transport = GraphReader(graph: .failure(ClientError.transport(.unreachable("refus"))))
         let other = IOSMemoryGraphModel(client: transport)
         await other.activate()
-        #expect(other.state == .macUnreachable)
+        #expect(other.state == .failed(.macUnreachable))
 
         // Un graphe VIDE est un état « vide », jamais un canevas muet.
-        let empty = GraphReader(graph: .success(RemoteMemoryGraphPayload(nodes: [], links: [], total: 0)))
+        let empty = GraphReader(graph: .success(RemoteMemoryGraphPayload(scope: "projet", nodes: [], links: [], total: 0)))
         let blank = IOSMemoryGraphModel(client: empty)
         await blank.activate()
         #expect(blank.state == .empty)
@@ -236,26 +237,94 @@ struct IOSMemoryGraphTests {
 
     @Test("ios-graphe-memoire-405-erreur-brute/AC-6 : otherFailuresNeverClaimOutdated — les autres pannes restent celles d'avant, sans « trop ancien »")
     func otherFailuresNeverClaimOutdated() async {
-        let detail = MemoryText.unavailableDetail(address: "http://127.0.0.1:8321", error: "réponse 500 du service (boom)")
+        let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "réponse 500 du service (boom)")
         let unavailable = await stateAfter(ClientError.api(.unavailable(detail)))
-        #expect(unavailable == .unavailable(detail: detail))
-        #expect(IOSMemoryText.unavailable(detail: detail) == MemoryText.unavailableTitle + "\n" + detail)
+        #expect(unavailable == .failed(.serviceUnavailable))
 
         let server = await stateAfter(ClientError.api(.server("mémoire indisponible")))
-        #expect(server == .unavailable(detail: "mémoire indisponible"))
+        #expect(server == .failed(.generic))
 
         let transport = await stateAfter(ClientError.transport(.unreachable("refus")))
-        #expect(transport == .macUnreachable)
+        #expect(transport == .failed(.macUnreachable))
 
         let texts = [
-            IOSMemoryText.unavailable(detail: detail),
-            IOSMemoryText.unavailable(detail: "mémoire indisponible"),
-            IOSMemoryText.macUnreachable,
+            IOSMacErrorText.message(for: .serviceUnavailable),
+            IOSMacErrorText.message(for: .generic),
+            IOSMacErrorText.message(for: .macUnreachable),
         ]
         for text in texts {
             #expect(!text.contains("trop ancien"))
             #expect(!text.contains("mets-la à jour"))
         }
+    }
+
+    // MARK: - ios-erreurs-serveur-lisibles (S-4)
+
+    /// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
+    private func macError(status: Int, code: String, message: String) -> ClientError {
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]])) ?? Data()
+        return ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http répond 405 : l'adresse et le JSON amont
+    /// sont dans le message.
+    private var relayed503: ClientError {
+        macError(
+            status: 503,
+            code: "unavailable",
+            message: MemoryText.unavailableDetail(
+                address: "localhost:8321",
+                error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+            )
+        )
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-9 : graphKeepsOutdatedDistinction — outdated_service dit « serveur mémoire trop ancien », 404 not_found dit « app Mac trop ancienne »")
+    func graphKeepsOutdatedDistinction() async {
+        let outdated = macError(status: 503, code: "outdated_service", message: "localhost:8321 réponse 405 du service")
+        #expect(await stateAfter(outdated) == .serviceOutdated)
+        #expect(IOSMemoryText.graphServiceOutdated.contains("serveur mémoire trop ancien"))
+
+        let notFound = macError(status: 404, code: "not_found", message: "route inconnue")
+        #expect(await stateAfter(notFound) == .macOutdated)
+        #expect(IOSMemoryText.graphMacOutdated.contains("app Mac trop ancienne"))
+        #expect(IOSMemoryText.graphServiceOutdated != IOSMemoryText.graphMacOutdated)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : graphShowsTranslatedFailure — le graphe porte la cause du traducteur partagé, lisible")
+    func graphShowsTranslatedFailure() async {
+        let unavailable = await stateAfter(relayed503)
+        #expect(unavailable == .failed(.serviceUnavailable))
+        let server = await stateAfter(macError(status: 500, code: "server", message: "erreur inattendue"))
+        #expect(server == .failed(.generic))
+        let transport = await stateAfter(ClientError.transport(.unreachable("Could not connect to the server. (127.0.0.1:8787)")))
+        #expect(transport == .failed(.macUnreachable))
+
+        for cause in [IOSMacFailure.serviceUnavailable, .generic, .macUnreachable] {
+            #expect(isReadable(IOSMacErrorText.message(for: cause)))
+        }
+        #expect(IOSMacErrorText.message(for: .serviceUnavailable).contains("Service indisponible sur le Mac"))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : graphRetryShowsGraph — Réessayer relit le graphe et l'affiche")
+    func graphRetryShowsGraph() async {
+        let reader = GraphReader(graph: .failure(relayed503))
+        let model = IOSMemoryGraphModel(client: reader)
+        await model.activate()
+        #expect(model.state == .failed(.serviceUnavailable))
+
+        reader.graph = .success(IOSMemoryGraphRecipe.graphe.payload)
+        await model.refresh()
+        #expect(reader.graphReads == 2)
+        if case .graph = model.state {} else {
+            Issue.record("le graphe n'est pas affiché après Réessayer : \(model.state)")
+        }
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : graphUnauthorizedIsIdle — un 401 ne pose aucun message de graphe")
+    func graphUnauthorizedIsIdle() async {
+        #expect(IOSMemoryGraphModel.failure(from: ClientError.api(.unauthorized)) == .idle)
+        #expect(await stateAfter(ClientError.api(.unauthorized)) == .idle)
     }
 
     // MARK: - AC-4, AC-5 : pincer et glisser

@@ -18,16 +18,25 @@ import ConsoleCore
 enum IOSSessionText {
     // MARK: - L'écran de la liste (S-1)
 
-    /// L'app n'est pas connectée au Mac et n'a jamais reçu d'instantané : on ne
-    /// peut PAS affirmer que le magasin est vide.
-    static let noConnection = "Pas de connexion au Mac"
     /// Connectée, l'instantané du magasin n'est pas encore arrivé.
     static let loading = "Chargement des sessions…"
     /// Le choix « aucun projet » du filtre (S-2).
     static let allProjects = "Tous les projets"
+    /// Le symbole qui suit la valeur du filtre de projet : celui des menus
+    /// système à choix unique (rangees-sessions-memoire-serrees, S-3).
+    static let filterSymbol = "chevron.up.chevron.down"
+
+    // MARK: - La feuille d'une session
+
+    /// Le titre de barre de la feuille d'une session : court et statique, il se
+    /// lit en entier ; le titre de la feature passe en tête de l'en-tête.
+    static let viewerNavigationTitle = "Session"
 
     // MARK: - Le fil (S-3, S-6)
 
+    /// Sous l'en-tête, tant que le fil n'est pas lu (première lecture, ou
+    /// relecture après une réécriture) : jamais une zone muette.
+    static let threadLoading = "Chargement de la session…"
     /// Le titre de la section des arguments d'un appel d'outil.
     static let arguments = "Arguments"
     /// Le titre de la section du résultat d'un appel d'outil.
@@ -96,6 +105,9 @@ enum IOSSessionText {
     // MARK: - Symboles SF (jamais en dur dans une vue)
 
     static func chevron(_ open: Bool) -> String { open ? "chevron.down" : "chevron.right" }
+    /// Le symbole iOS de la section Sessions, distinct de Session OMP (bulle) ; le
+    /// macOS garde `ConsoleSection.systemImage`.
+    static let sectionSymbol = "clock.arrow.circlepath"
     static let waitingSymbol = "hourglass"
     static let emptySymbol = "bubble.left"
     static let errorSymbol = "xmark.circle.fill"
@@ -112,6 +124,13 @@ enum IOSSessionText {
     static let recipeIllisible = "illisible"
     static let recipeEnDirect = "en-direct"
     static let recipePhases = "phases"
+    static let recipeChargement = "chargement"
+    static let recipeFilVide = "fil-vide"
+    static let recipeSuivi = "suivi"
+
+    /// Le texte du n-ième message ajouté par la recette `suivi` : chaque ajout
+    /// se reconnaît à l'œil sur une capture.
+    static func recipeFollowMessage(_ n: Int) -> String { "Message de suivi n° \(n)" }
 
     /// L'identifiant d'une session de la recette `phases` : celui de l'en-tête de
     /// la fixture, suffixé par l'étape, pour que les cinq lignes soient distinctes.
@@ -133,7 +152,6 @@ enum IOSSessionsAccessibility {
     static let list = "ios.sessions.list"
     static let loading = "ios.sessions.loading"
     static let empty = "ios.sessions.empty"
-    static let noConnection = "ios.sessions.noConnection"
 
     static func day(_ id: String) -> String { "ios.sessions.day.\(id)" }
     static func row(_ id: String) -> String { "ios.sessions.row.\(id)" }
@@ -142,12 +160,15 @@ enum IOSSessionsAccessibility {
 
     static let viewer = "ios.session.viewer"
     static let close = "ios.session.close"
+    /// Le titre de la feature, en tête de l'en-tête de la feuille d'une session.
+    static let viewerTitle = "ios.session.title"
     static let thread = "ios.session.thread"
-    static let threadEnd = "ios.session.thread.end"
+    static let threadLoading = "ios.session.loading"
     static let threadStatus = "ios.session.thread.status"
     static let placeholder = "ios.session.placeholder"
     static let unreadable = "ios.session.unreadable"
     static let errorBanner = "ios.session.error"
+    static let retry = "ios.session.retry"
     static let notes = "ios.session.notes"
     static let backToLive = "ios.session.backToLive"
 

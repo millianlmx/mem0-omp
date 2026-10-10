@@ -84,7 +84,9 @@ final class ServiceSessionModel: ObservableObject {
 
     private var client: ServiceClient?
     private var eventsTask: Task<Void, Never>?
-    private var projectRoot: URL?
+    /// Le dossier avec lequel la session vivante a été lancée (lu par l'inventaire
+    /// du Quitter, mac-quitter-sans-confirmation S-1).
+    private(set) var projectRoot: URL?
     private var journalCounter = 0
     private var stopping = false
 
