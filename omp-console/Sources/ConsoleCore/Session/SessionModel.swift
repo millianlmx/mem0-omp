@@ -109,19 +109,24 @@ public struct AssistantTurn: Equatable, Sendable {
     public var model: String?
     public var usage: TokenUsage?
     public var toolCalls: [ToolCall]
+    /// `message.provider` (« anthropic ») : avec `model`, id NU, il forme le
+    /// sélecteur exact `provider/model` du catalogue. `nil` s'il est absent.
+    public var provider: String?
 
     public init(
         text: String,
         thinking: String?,
         model: String?,
         usage: TokenUsage?,
-        toolCalls: [ToolCall]
+        toolCalls: [ToolCall],
+        provider: String? = nil
     ) {
         self.text = text
         self.thinking = thinking
         self.model = model
         self.usage = usage
         self.toolCalls = toolCalls
+        self.provider = provider
     }
 }
 

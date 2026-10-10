@@ -24,6 +24,9 @@ struct SessionMetrics: Equatable, Sendable {
     var turns: Int
     /// `model` de la DERNIÈRE entrée assistant qui en porte un (non vide).
     var model: String?
+    /// `provider` de la MÊME entrée assistant que `model` : ensemble, ils
+    /// désignent le sélecteur exact du catalogue.
+    var provider: String? = nil
     /// min des `timestampMs` des entrées de conversation.
     var firstMs: Double?
     /// max des `timestampMs` des entrées de conversation.
@@ -54,7 +57,10 @@ func sessionMetrics(_ conversation: SessionConversation) -> SessionMetrics {
                 metrics.cacheRead += usage.cacheRead
                 metrics.cacheWrite += usage.cacheWrite
             }
-            if let model = turn.model, !model.isEmpty { metrics.model = model }
+            if let model = turn.model, !model.isEmpty {
+                metrics.model = model
+                metrics.provider = turn.provider
+            }
         case .toolResult, .compaction, .branchSummary:
             break
         }

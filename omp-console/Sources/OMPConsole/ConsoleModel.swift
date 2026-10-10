@@ -24,6 +24,12 @@ final class ConsoleModel: ObservableObject {
         selection = section
     }
 
+    /// L'arrivée après « Lancer » dans la feuille Nouvelle feature : Pipelines,
+    /// où iOS présente la feuille et où la carte apparaît, depuis toute section.
+    func showLaunchedFeature() {
+        select(.kanban)
+    }
+
     /// Montre une session dans la section Sessions (remplace celle qui était
     /// ouverte : une seule visionneuse à la fois).
     func openSession(_ target: ViewerTarget) {

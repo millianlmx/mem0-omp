@@ -95,12 +95,17 @@ Tout se fait depuis l'app, sans terminal :
    `home.notificationsBannerDismissed`).
 3. **Nouvelle feature** (barre d'outils, menu Fichier ou ⌘N) — une feuille : le
    dépôt (dépôts connus du tableau, ou « Choisir un dossier… », qui n'accepte
-   qu'une racine git), les deux **modèles** (`Modèle req+specs` / `Modèle
-   impl+review`, chaque liste menée par `défaut OMP (aucun modèle)` puis les
-   sélecteurs de `omp models --json`), le titre (il devient la branche
-   `feat/<titre>`) et le besoin.
-   « Lancer » (↩, bouton par défaut) poste une commande `launch` au service et revient à
-   l'Accueil, dont le bandeau suit l'accusé.
+   qu'une racine git), désigné par son **nom de dossier** comme sur iOS
+   (`KanbanLaunchRepos.choices` : « nom (parent) » pour les seuls homonymes, jamais
+   de chemin ; la valeur lancée reste la racine complète), les deux **modèles**
+   (`Modèle /req et /specs` / `Modèle /impl et /review`, chaque liste menée par
+   `défaut OMP (aucun modèle)` puis les modèles de `omp models --json` par leur
+   **nom lisible** — « nom (fournisseur) », sinon « nom (id) », quand deux modèles
+   portent le même nom ; l'identifiant brut à défaut de nom), le titre (il devient
+   la branche `feat/<titre>`) et le besoin.
+   « Lancer » (↩, bouton par défaut) poste une commande `launch` au service, ferme
+   la feuille et mène à **Pipelines**, comme sur iOS — depuis toute section, jamais
+   à l'Accueil.
 4. **Le service** — l'app ne lance **aucun** process `omp` pour les sessions :
    elle lit l'enregistrement `service.json` du service local (jeton, port), crée
    les sessions par l'API et poste les commandes. Un dépôt sans pilote vivant se
@@ -452,10 +457,22 @@ ne défilent horizontalement que sous 240 pt par voie) :
 | En cours (`en-cours`) | `en-cours`, et toute carte que « Reprendre » peut relancer (en pause) |
 | À vous (`a-vous`) | `question-en-vol`, `jalon-specs`, `jalon-review` |
 | Livrées (`livrees`) | `pr-ouverte`, `pr-creee`, `fusionne`, `pr-fermee`, `terminee-sans-pr` |
-| Arrêtées (`arretees`, montrée seulement si elle a des cartes) | `echec`, `bloquee`, `annulee-retiree` |
+| Arrêtées (`arretees`) | `echec`, `bloquee`, `annulee-retiree` |
 
 Dans une voie, les cartes suivent l'ordre des colonnes (question, puis specs, puis
-revue), puis l'ordre de l'ardoise. Une voie vide le dit en une phrase.
+revue), puis l'ordre de l'ardoise.
+
+Comme sur iPhone (règle partagée `KanbanLaneRows.rows(…, layout: .condensed, …)` de
+ConsoleCore ; l'iPad garde `.full`, toutes les voies dépliées), une voie **sans
+carte n'est pas rendue** et la largeur égale se partage entre les voies affichées ;
+« Livrées » et « Arrêtées » s'ouvrent **repliées** — en-tête, compteur et chevron,
+sans carte. Leur en-tête (`kanban.lane.<rawValue>.header`, porté aussi par les
+voies non repliables) est un bouton : un clic, ou Espace / ↩ au clavier, les
+déplie ; VoiceOver lit « replié » / « déplié ». Le repli est **remis à chaque
+visite** de Pipelines (quitter la section le réinitialise ; une feuille ouverte
+par-dessus, non). Les flèches ne parcourent que les cartes visibles, et
+sélectionner une carte d'une voie repliée (notification comprise) la déplie.
+Une ardoise sans aucune carte affiche la vue vide `kanban.empty`.
 
 Une carte livrée avec PR (feature de lot `done` portant une `prUrl`, feature de
 projet `pr` ou `merged`) porte l'**état réel** de sa PR lu sur GitHub par le Mac :
@@ -512,8 +529,9 @@ cd omp-console && MEM0_LIVREES_RECIPE=1 swift test --scratch-path .build-recipe 
 
 Une carte montre son titre (sans le préfixe « dépôt/ » des runs hors lot), son
 dépôt (seulement quand l'ardoise mêle plusieurs dépôts), ses deux **modèles**
-(`req+specs <A>` puis `impl+review <B>`, la valeur ou `défaut OMP`, une ligne par
-groupe renseigné, coupées au milieu), un badge quand la voie ne
+(`Modèle /req et /specs : <A>` puis `Modèle /impl et /review : <B>`, le nom lisible
+du catalogue, l'identifiant brut à défaut, ou `défaut OMP`, une ligne par
+groupe, coupées au milieu), un badge quand la voie ne
 dit pas déjà son état (« Question », « Specs à valider », « En pause », « PR
 ouverte »…), la question de l'agent en aperçu, puis — pour une feature en cours ou
 qui vous attend — sa barre d'avancement en cinq segments, son étape et sa durée à
@@ -554,15 +572,17 @@ en-tête (titre, « dépôt · étape », badge d'état), une **frise d'avanceme
 `PipelineProgress`), **Action** (la zone d'action, voir « Agir depuis Pipelines » —
 elle porte aussi « Lire le contrat » quand la carte attend un besoin ou des specs à
 valider : depuis cette feuille, le geste ferme d'abord le détail, puis la feuille
-**Contrat** s'ouvre), **Informations** (étape, durée, les deux modèles `req+specs` /
-`impl+review` avec un bouton **Modifier…**, lien de PR) et un pli **Détails
+**Contrat** s'ouvre), **Informations** (étape, durée, les deux modèles `Modèle /req
+et /specs` / `Modèle /impl et /review` par leur nom lisible, l'identifiant brut à
+défaut, avec un bouton **Modifier…**, lien de PR) et un pli **Détails
 techniques** replié. En bas : « Arrêter… » (destructif, confirmé) à gauche,
 « Fermer » (Échap) à droite. Le menu contextuel d'une carte expose aussi ses
 gestes (Afficher les détails, Lire le contrat, **Modifier les modèles…**, Répondre…,
 Valider les specs, Accepter la revue, Reprendre, Ouvrir la PR, Arrêter…). Le bouton
 **Modifier…** et l'entrée « Modifier les modèles… » ouvrent la feuille
 d'édition `models.sheet` (titre `Modèles de <slug>`, les deux sélecteurs
-pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
+pré-positionnés sur les valeurs courantes et libellés comme ceux de la feuille
+Nouvelle feature, `Annuler` / `Appliquer`).
 
 ### Identifiants d'accessibilité
 
@@ -570,6 +590,7 @@ pré-positionnés sur les valeurs courantes, `Annuler` / `Appliquer`).
 |---|---|
 | `kanban.board` | la zone des **voies** (focus clavier et flèches) |
 | `kanban.lane.<rawValue>` | une voie |
+| `kanban.lane.<rawValue>.header` | l'en-tête d'une voie (bouton qui replie / déplie « Livrées » et « Arrêtées ») |
 | `kanban.card.<id>` | une carte (`feature:<clé>:<slug>`, `project:<clé>:<slug>`, `run:<id>`, `history:<id>`) |
 | `kanban.activityButton` | le bouton « Activité » de la barre d'outils |
 | `kanban.refresh` | le bouton « Rafraîchir » de la barre d'outils (⌘R, relit l'état des PR) |
@@ -1644,7 +1665,10 @@ de la barre d'outils (aucun sous-titre ne le répète) : quatre tuiles (« Token
 « Tokens par feature » montre, par feature listée, deux barres empilées
 (envoyés, reçus) ; le tableau « Runs » liste un run par ligne en sept colonnes
 (Feature, Étape, Modèle, Durée, Tours, Tokens, État), triable par un clic sur un
-en-tête (re-clic inverse ; sans tri, l'ordre est features puis runs). Une feature
+en-tête (re-clic inverse ; sans tri, l'ordre est features puis runs). La colonne
+Modèle nomme le modèle d'un run par son **nom lisible** (cherché par
+`fournisseur/id` du tour assistant, `ModelCatalog.sessionModelName`), l'id nu à
+défaut de nom ou de catalogue, « — » sans modèle. Une feature
 du plan n'est **listée** que si elle porte au moins un run **lisible** ; les autres
 sont **masquées** et comptées en pied (`<n> feature(s) du plan sans run lisible`,
 absent à 0).
@@ -2704,7 +2728,8 @@ valider un jalon (specs ou revue), lancer une feature jamais en route, l'arrête
 (avec confirmation), la reprendre, ouvrir la PR dans le navigateur et la
 fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 « Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
-deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
+deux modèles (« Modèle /req et /specs », « Modèle /impl et /review », mêmes libellés
+que sur le Mac et sur la fiche d'une carte), un titre et un besoin, et crée la feature
 sans aucune action sur le Mac. Le sélecteur de dépôt affiche le NOM du dossier
 (jamais un chemin absolu ; pour les seuls homonymes, il y ajoute les derniers
 segments du dossier parent, p. ex. « mem0-omp (Projets) »), ou l'invite « Choisir

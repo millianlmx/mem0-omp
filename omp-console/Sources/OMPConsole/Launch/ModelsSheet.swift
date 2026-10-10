@@ -8,22 +8,26 @@
 import ConsoleCore
 import SwiftUI
 
-/// Les deux sélecteurs `Modèle req+specs` / `Modèle impl+review`, alimentés par le
+/// Les deux sélecteurs `Modèle /req et /specs` / `Modèle /impl et /review`, alimentés par le
 /// catalogue `omp models --json`. L'option de tête `défaut OMP (aucun modèle)`
-/// vaut `nil`. Pendant le chargement ou en échec, la liste se réduit à cette
-/// option — plus la valeur courante quand elle n'y figure pas — et l'édition reste
-/// possible.
+/// vaut `nil` ; chaque autre option est libellée par son nom lisible
+/// (`ModelCatalog.choiceLabels`, nom départagé pour les homonymes, sélecteur en
+/// repli) et porte le sélecteur exact. Pendant le chargement ou en échec, la
+/// liste se réduit à cette option — plus la valeur courante quand elle n'y
+/// figure pas — et l'édition reste possible.
 struct ModelSlotsPicker: View {
     let catalog: ModelCatalogState
+    /// Les noms lisibles du catalogue (sélecteur → nom).
+    let names: [String: String]
     @Binding var reqSpecs: String?
     @Binding var implReview: String?
     let onRetry: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            picker(KanbanText.modelReqSpecsField, selection: $reqSpecs, current: reqSpecs)
+            picker(KanbanText.modelReqSpecs, selection: $reqSpecs, current: reqSpecs)
                 .accessibilityIdentifier("models.reqSpecs")
-            picker(KanbanText.modelImplReviewField, selection: $implReview, current: implReview)
+            picker(KanbanText.modelImplReview, selection: $implReview, current: implReview)
                 .accessibilityIdentifier("models.implReview")
             switch catalog {
             case .loading:
@@ -52,11 +56,11 @@ struct ModelSlotsPicker: View {
             Text(label).font(.headline)
             Picker(label, selection: selection) {
                 Text(ModelCatalog.defaultChoice).tag(Optional<String>.none)
-                ForEach(options(including: current), id: \.self) { selector in
-                    Text(verbatim: selector)
+                ForEach(Self.options(catalog, including: current, names: names)) { option in
+                    Text(verbatim: option.label)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .tag(Optional(selector))
+                        .tag(Optional(option.selector))
                 }
             }
             .labelsHidden()
@@ -64,13 +68,24 @@ struct ModelSlotsPicker: View {
         }
     }
 
-    /// `défaut` en tête, les sélecteurs du catalogue, puis la valeur COURANTE si
-    /// elle n'y figure pas (catalogue indisponible) — la sélection reste visible.
-    private func options(including value: String?) -> [String] {
-        var list = ModelCatalog.choices(catalog)
-        if let value, !value.isEmpty, !list.contains(value) { list.append(value) }
-        return list
+    /// Les options qui suivent le défaut (posé une seule fois, balisé `nil`) : les
+    /// sélecteurs du catalogue chargé, puis la valeur COURANTE si elle n'y figure
+    /// pas (catalogue indisponible) — la sélection reste visible. Chacune est
+    /// libellée par `ModelCatalog.choiceLabels` et porte le sélecteur exact.
+    static func options(_ catalog: ModelCatalogState, including value: String?, names: [String: String]) -> [ModelSlotOption] {
+        var selectors: [String] = []
+        if case .loaded(let loaded) = catalog { selectors = loaded }
+        if let value, !value.isEmpty, !selectors.contains(value) { selectors.append(value) }
+        let labels = ModelCatalog.choiceLabels(selectors, names: names)
+        return selectors.map { ModelSlotOption(selector: $0, label: labels[$0] ?? $0) }
     }
+}
+
+/// Une option d'un sélecteur de modèle : le libellé affiché, le sélecteur transmis.
+struct ModelSlotOption: Identifiable, Equatable {
+    let selector: String
+    let label: String
+    var id: String { selector }
 }
 
 /// La feuille d'édition des modèles de la feature d'une carte, ouverte par le menu
@@ -90,6 +105,7 @@ struct ModelsSheet: View {
                 .bold()
             ModelSlotsPicker(
                 catalog: actions.modelCatalog,
+                names: actions.modelNames,
                 reqSpecs: $actions.editModelReqSpecs,
                 implReview: $actions.editModelImplReview,
                 onRetry: { actions.loadModelCatalog() }

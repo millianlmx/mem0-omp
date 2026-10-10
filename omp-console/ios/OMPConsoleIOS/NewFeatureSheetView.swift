@@ -146,13 +146,13 @@ struct NewFeatureSheetView: View {
     @ViewBuilder
     private var modelSection: some View {
         Section {
-            Picker(KanbanText.modelReqSpecsField, selection: $reqSpecs) {
+            Picker(KanbanText.modelReqSpecs, selection: $reqSpecs) {
                 ForEach(choices, id: \.self) { choice in
                     Text(verbatim: choice).tag(choice)
                 }
             }
             .accessibilityIdentifier(PipelinesAccessibility.reqSpecsField)
-            Picker(KanbanText.modelImplReviewField, selection: $implReview) {
+            Picker(KanbanText.modelImplReview, selection: $implReview) {
                 ForEach(choices, id: \.self) { choice in
                     Text(verbatim: choice).tag(choice)
                 }

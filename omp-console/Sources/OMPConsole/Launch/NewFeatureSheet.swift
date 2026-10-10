@@ -2,6 +2,10 @@
 // besoin, puis « Lancer ». Présentée par la barre d'outils, par ⌘N et par l'écran
 // de première fois de l'Accueil ; elle remplace le formulaire du tableau.
 //
+// Comme sur iOS (parite-mac-des-correctifs-ios, S-8, S-9) : chaque dépôt est
+// nommé par `KanbanLaunchRepos.choices` (nom du dossier, « nom (parent) » pour
+// les homonymes, jamais de chemin) et « Lancer » mène à Pipelines.
+//
 // L'état vit dans `ActionsModel` (`@State` interdit sous les CLT) : annuler garde
 // la saisie, et la rouvrir la retrouve. Les liaisons passent par l'`ObservedObject`
 // ou par `Binding(get:set:)`.
@@ -55,19 +59,13 @@ struct NewFeatureSheet: View {
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        // Le chemin pour l'œil (`~/…`), coupé au MILIEU : le nom du
-                        // dépôt, en fin de chemin, reste lisible.
                         Picker(NewFeatureText.repo, selection: selection) {
-                            ForEach(options, id: \.self) { root in
-                                Text(verbatim: ConsoleFormat.path(root))
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                    .tag(root)
+                            ForEach(KanbanLaunchRepos.choices(options)) { choice in
+                                Text(verbatim: choice.label).tag(choice.root)
                             }
                         }
                         .labelsHidden()
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(ConsoleFormat.path(selected))
                         .accessibilityIdentifier("launch.repo")
                     }
                     Button(NewFeatureText.chooseFolder) { chooseFolder() }
@@ -84,6 +82,7 @@ struct NewFeatureSheet: View {
 
             ModelSlotsPicker(
                 catalog: actions.modelCatalog,
+                names: actions.modelNames,
                 reqSpecs: $actions.launchModelReqSpecs,
                 implReview: $actions.launchModelImplReview,
                 onRetry: { actions.loadModelCatalog() }
@@ -127,15 +126,7 @@ struct NewFeatureSheet: View {
                     .keyboardShortcut(.cancelAction)
                     .accessibilityIdentifier("launch.cancel")
                 Button(NewFeatureText.launch) {
-                    actions.launch(
-                        title: actions.launchTitle,
-                        description: actions.launchDescription,
-                        repoRoot: selected,
-                        modelReqSpecs: actions.launchModelReqSpecs,
-                        modelImplReview: actions.launchModelImplReview
-                    )
-                    actions.launchRepoError = nil
-                    console.select(.home)
+                    Self.submit(actions: actions, console: console, repoRoot: selected)
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!ready)
@@ -146,6 +137,21 @@ struct NewFeatureSheet: View {
         .frame(width: 520)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("launch.sheet")
+    }
+
+    /// « Lancer » : la commande part, la feuille se ferme (`launch` remet
+    /// `launchFormShown` à faux) et Pipelines s'affiche, comme sur iOS.
+    @MainActor
+    static func submit(actions: ActionsModel, console: ConsoleModel, repoRoot: String) {
+        actions.launch(
+            title: actions.launchTitle,
+            description: actions.launchDescription,
+            repoRoot: repoRoot,
+            modelReqSpecs: actions.launchModelReqSpecs,
+            modelImplReview: actions.launchModelImplReview
+        )
+        actions.launchRepoError = nil
+        console.showLaunchedFeature()
     }
 
     /// « Choisir un dossier… » : un dossier qui n'est pas une racine git est
