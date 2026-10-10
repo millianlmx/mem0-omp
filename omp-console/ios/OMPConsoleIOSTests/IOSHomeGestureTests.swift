@@ -286,7 +286,7 @@ struct IOSHomeGestureTests {
         #expect(model.specsConfirmation == nil)
     }
 
-    @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-10 : la fixture offre un « Valider les specs », un « Accepter la revue » et un « Reprendre »")
+    @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-10, accueil-en-cours-melange-pause-et-compte/AC-4 : la fixture offre un « Valider les specs », un « Accepter la revue » et trois « Reprendre » (la pause, l'échec, le blocage)")
     func offeredGesturesFollowTheDashboard() {
         guard case .dashboard(let dashboard) = IOSHomeRecipe.dashboard.homeState else {
             Issue.record("la recette dashboard doit rendre un tableau de bord")
@@ -295,18 +295,60 @@ struct IOSHomeGestureTests {
         let offered = IOSHomeContent.offeredGestures(dashboard)
         #expect(offered.filter { $0.gesture == .validateSpecs }.count == 1)
         #expect(offered.filter { $0.gesture == .acceptReview }.count == 1)
-        #expect(offered.filter { $0.gesture == .resume }.count == 1)
-        #expect(offered.count == 3)
+        #expect(offered.filter { $0.gesture == .resume }.count == 3)
+        #expect(offered.count == 5)
 
         let attentionIDs = Set(dashboard.attention.map(\.card.id))
-        let runningIDs = Set(dashboard.running.map(\.id))
+        let relaunchIDs = Set(dashboard.attention.filter { IOSHomeContent.attentionButton($0) == .relaunch }.map(\.card.id))
+        let pausedIDs = Set(dashboard.paused.map(\.id))
+        #expect(relaunchIDs.count == 2)
         for key in offered {
             if key.gesture == .resume {
-                #expect(runningIDs.contains(key.cardId))
+                #expect(pausedIDs.contains(key.cardId) || relaunchIDs.contains(key.cardId))
             } else {
                 #expect(attentionIDs.contains(key.cardId))
             }
         }
+        // « En cours » n'offre plus aucun geste.
+        let runningIDs = Set(dashboard.running.map(\.id))
+        #expect(!offered.contains { runningIDs.contains($0.cardId) })
+    }
+
+    @Test("accueil-en-cours-melange-pause-et-compte/AC-4 : « Reprendre » d'une carte en échec part par la route de reprise de la carte, en vol puis en échec sur la carte")
+    func relaunchCardSendsResumeOfItsCard() async throws {
+        guard case .dashboard(let dashboard) = IOSHomeRecipe.dashboard.homeState else {
+            Issue.record("la recette dashboard doit rendre un tableau de bord")
+            return
+        }
+        let failed = try #require(dashboard.attention.first { $0.card.action?.slug == "cache-sessions" })
+        #expect(IOSHomeContent.attentionButton(failed) == .relaunch)
+        let key = try #require(IOSHomeContent.attentionGestureKey(failed))
+        #expect(key == IOSHomeGestureKey(cardId: failed.card.id, gesture: .resume))
+
+        // Envoi : aucune confirmation, la clé de la carte part, le bouton est en vol.
+        let model = IOSHomeGestureModel()
+        let mac = GestureSendDouble()
+        model.tap(key, send: mac.send)
+        #expect(model.specsConfirmation == nil)
+        #expect(model.inFlight.contains(key))
+        model.tap(key, send: mac.send)
+        await settle { mac.waiting == 1 }
+        #expect(mac.keys == [key], "un second toucher en vol n'envoie rien")
+
+        // Refus du Mac (relance refusée) : le motif lisible arrive sur la carte.
+        let reason = "relance possible sur une feature bloquée, échouée ou annulée"
+        mac.finish(.failure(ClientError.api(.conflict(reason))))
+        await settle { model.inFlight.isEmpty }
+        let message = try #require(model.failures[key])
+        #expect(message.hasPrefix(IOSHomeText.resumeFailed))
+        #expect(message.contains(reason))
+        #expect(IOSHomeContent.offeredGestures(dashboard).contains(key), "l'échec reste affiché tant que la carte est « À vous »")
+
+        // Succès : la carte quitte « À vous » à l'instantané suivant, la clé est purgée.
+        model.retain(IOSHomeContent.offeredGestures(HomeDashboard(
+            attention: [], running: [failed.card], paused: [], notStarted: [], delivered: []
+        )))
+        #expect(model.failures[key] == nil)
     }
 
     @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-6 (recette) : slowMac seule remplace l'envoi des gestes")

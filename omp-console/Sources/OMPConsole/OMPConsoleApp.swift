@@ -67,7 +67,9 @@ struct OMPConsoleApp: App {
     init() {
         let actions = ActionsModel()
         _actionsModel = StateObject(wrappedValue: actions)
-        let kanban = KanbanModel()
+        // Le crochet de recette `-home.recipe` (`HomeRecipe`) : nil hors recette,
+        // donc le comportement de production.
+        let kanban = KanbanModel(recipeBoard: HomeRecipe.current()?.board)
         _kanbanModel = StateObject(wrappedValue: kanban)
         let session = SessionConsoleModel()
         _sessionModel = StateObject(wrappedValue: session)
@@ -297,8 +299,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var ownership = StackOwnershipModel()
 
     /// Le modèle d'alertes, créé à la demande (les tests du délégué ne le
-    /// construisent donc pas).
-    lazy var alerts = AlertsModel(ownership: ownership)
+    /// construisent donc pas). Sous `-home.recipe`, il suit l'ardoise de la
+    /// recette, comme l'Accueil.
+    lazy var alerts = AlertsModel(ownership: ownership, recipeBoard: HomeRecipe.current()?.board)
 
     private var statusItemController: StatusItemController?
 

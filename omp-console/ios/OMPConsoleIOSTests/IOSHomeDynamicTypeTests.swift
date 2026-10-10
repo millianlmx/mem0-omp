@@ -46,7 +46,7 @@ struct IOSHomeDynamicTypeTests {
         #expect(IOSHomeContent.rowTextMaximumSize < .accessibility5, "à accessibility5 le sous-titre est coupé au milieu d'un mot")
     }
 
-    @Test("ios-accueil-dynamic-type-casse/AC-4 : le crochet -home.row vise la rangée Reprendre de la fixture")
+    @Test("ios-accueil-dynamic-type-casse/AC-4, accueil-en-cours-melange-pause-et-compte/AC-2 : le crochet -home.row vise la rangée Reprendre de la fixture, sous « À reprendre »")
     func rowHookTargetsTheResumeRow() {
         #expect(IOSHomeRecipe.row(["-home.row", "2"]) == 2)
         #expect(IOSHomeRecipe.row(["-home.row", "1", "-home.row", "3"]) == 3)
@@ -59,8 +59,11 @@ struct IOSHomeDynamicTypeTests {
             Issue.record("la recette .dashboard ne rend pas de tableau de bord")
             return
         }
-        let rows = dashboard.running + dashboard.delivered
-        #expect(rows.count == 4)
+        // Les rangées dans l'ordre de l'écran : 2 « En cours », 1 « À reprendre »,
+        // 1 « Pas commencées », 2 « Livrées récemment ».
+        let rows = IOSHomeContent.rows(dashboard)
+        #expect(rows.map(\.id) == (dashboard.running + dashboard.paused + dashboard.notStarted + dashboard.delivered).map(\.id))
+        #expect(rows.count == 6)
         let resumable = rows.filter { KanbanActionPresentation.resumable($0) && $0.action != nil }
         #expect(resumable.count == 1)
         guard let resume = resumable.first, let index = rows.firstIndex(where: { $0.id == resume.id }) else {
@@ -68,8 +71,10 @@ struct IOSHomeDynamicTypeTests {
             return
         }
         #expect(IOSHomeContent.recipeRowID(dashboard, index: index) == resume.id)
-        #expect(index == 0, "KanbanBoard.build range les lots avant les runs : la rangée Reprendre est la première")
-        #expect(IOSHomeContent.recipeRowID(dashboard, index: 4) == nil)
+        #expect(index == 2, "la rangée Reprendre suit les deux « En cours »")
+        #expect(dashboard.paused.map(\.id) == [resume.id])
+        #expect(IOSHomeContent.recipeRowID(dashboard, index: 3) == dashboard.notStarted.first?.id)
+        #expect(IOSHomeContent.recipeRowID(dashboard, index: 6) == nil)
         #expect(IOSHomeContent.recipeRowID(dashboard, index: -1) == nil)
     }
 }

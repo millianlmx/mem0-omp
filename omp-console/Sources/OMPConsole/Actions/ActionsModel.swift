@@ -174,6 +174,36 @@ final class ActionsModel: ObservableObject {
         return id
     }
 
+    /// Le geste « Reprendre » d'une feature en ÉCHEC ou BLOQUÉE (S-3 de
+    /// accueil-en-cours-melange-pause-et-compte) : émet `{kind:"relaunch"}`, que
+    /// le service accepte sur une feature `failed`/`blocked` et qui la remet
+    /// `running` (session reprise, compteurs remis à zéro).
+    ///
+    /// Rend l'identifiant de la commande, qui est aussi celui de son entrée de
+    /// journal (même usage que `resume`), ou `nil` sans rien journaliser quand la
+    /// carte n'est pas une feature de lot en échec ou bloquée.
+    @discardableResult
+    func relaunch(_ action: KanbanCardAction) -> String? {
+        guard let slug = action.slug, let repoRoot = action.repoRoot,
+              action.featureState == .failed || action.featureState == .blocked
+        else { return nil }
+        let sentAt = clock.nowMs()
+        let salt = salt()
+        let command = OutgoingCommand.relaunch(
+            id: PipelineId.console(sentAt: sentAt, salt: salt),
+            repo: realpathOr(repoRoot),
+            slug: slug
+        )
+        emitCommand(
+            kindLabel: ActionsText.resumeLabel,
+            target: slug,
+            repoRoot: repoRoot,
+            command: command,
+            sentAt: sentAt
+        )
+        return command.id
+    }
+
     // --- émissions : livraisons (S-1, S-2) -----------------------------------
 
     /// Dépose la réponse à une question en vol (libellé d'option).

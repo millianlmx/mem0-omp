@@ -4,13 +4,18 @@
 // Son CONTENU est figé par ses EFFETS attendus, pas par ses octets : depuis
 // `HomeParity.snapshot`, `KanbanBoard.build` puis `HomePresentation.dashboard`
 // produisent exactement —
-//   • 3 faits d'attention : une question en vol portée par un run `pendingAsk`
-//     (question + deux options), un jalon specs, un jalon revue ;
-//   • 2 lignes « En cours » : un run vivant, plus un lot au pilote mort et
-//     `resumable` (lot dont `owner.pid` est mort) ;
+//   • 5 attentions : une question en vol portée par un run `pendingAsk`
+//     (question + deux options), un jalon specs, un jalon revue, une feature
+//     `cache-sessions` en échec et une feature `export-csv` bloquée (toutes deux
+//     relançables : lot vivant, slug et dépôt connus) ;
+//   • 2 « En cours » : les runs vivants `aaaaaaaaaaaaaaa2` et `aaaaaaaaaaaaaaa3` ;
+//   • 1 « À reprendre » : la feature `reprise` du lot au pilote mort (lot dont
+//     `owner.pid` est mort, donc `resumable`) ;
+//   • 1 « Pas commencées » : la feature `theme-sombre`, jamais lancée ;
 //   • 2 livraisons récentes : une feature de projet à `prUrl` non nulle, et une
 //     pipeline close portant une PR ;
-//   • `showsRepo == true` (au moins deux dépôts) et `attentionCount == 3`.
+//   • `showsRepo == true` (au moins deux dépôts), `attentionCount == 5` et
+//     `counts == (5, 2)`.
 //
 // Il porte aussi une entrée d'historique terminée : `HomePresentation` ignore
 // `.termineeSansPr` (comportement inchangé), elle est donc présente sans compter.
@@ -27,6 +32,40 @@
 import Foundation
 
 public enum HomeParity {
+    /// L'ardoise de la fixture, horloge fixe et `stateDir` vide (le cas de l'app
+    /// iOS, qui ne connaît aucun répertoire d'état local). Elle nourrit les
+    /// crochets de recette `-home.recipe` des deux coques.
+    public static let board: KanbanBoardState = KanbanBoardState.derive(
+        snapshot: snapshot,
+        nowMs: 1_700_000_000_000,
+        stateDir: "",
+        isAlive: .transported(snapshot),
+        prFacts: [:]
+    )
+
+    /// L'ardoise réduite à UNE attente, aux deux « En cours », à la pause et à la
+    /// feature pas commencée : comptes (1, 2) de l'item de barre de menus.
+    public static var menuBarBoard: KanbanBoardState {
+        reduced { dashboard in
+            Array(dashboard.attention.prefix(1).map(\.card)) + dashboard.running + dashboard.paused
+                + dashboard.notStarted
+        }
+    }
+
+    /// L'ardoise réduite à la pause et à la feature pas commencée : comptes
+    /// (0, 0), aucun chiffre sur l'item de barre de menus.
+    public static var pausedOnlyBoard: KanbanBoardState {
+        reduced { dashboard in dashboard.paused + dashboard.notStarted }
+    }
+
+    /// `board` dont on ne garde que les cartes choisies, dans l'ordre de l'ardoise.
+    private static func reduced(_ keep: (HomeDashboard) -> [KanbanCard]) -> KanbanBoardState {
+        guard case .board(var reduced) = board else { return board }
+        let kept = Set(keep(HomePresentation.dashboard(reduced)).map(\.id))
+        reduced.cards = reduced.cards.filter { kept.contains($0.id) }
+        return .board(reduced)
+    }
+
     /// L'instantané de référence, décodé du littéral JSON ci-dessous
     /// (`StoreSnapshot` est `Codable`).
     public static let snapshot: StoreSnapshot = {
@@ -101,6 +140,17 @@ public enum HomeParity {
             "updatedAt": 1700000000000,
             "ownerPid": 1,
             "isStale": false
+          },
+          {
+            "id": "aaaaaaaaaaaaaaa3",
+            "cwd": "/tmp/omp-parity/beta-indexation",
+            "label": "beta/indexation",
+            "phase": "specs",
+            "state": "running",
+            "phaseStartedAt": 1700000000000,
+            "updatedAt": 1700000000000,
+            "ownerPid": 1,
+            "isStale": false
           }
         ]
       },
@@ -163,6 +213,63 @@ public enum HomeParity {
                 "state": "waiting",
                 "phase": "review",
                 "waitKind": "review",
+                "pendingTexts": [],
+                "fixes": 0,
+                "reviewRuns": 0,
+                "unreadableRuns": 0,
+                "lastBlockers": 0,
+                "addedAt": 1700000000000,
+                "sinceAt": 1700000000000,
+                "updatedAt": 1700000000000
+              },
+              {
+                "slug": "cache-sessions",
+                "name": "Cache des sessions",
+                "branch": "feat/cache-sessions",
+                "worktree": "",
+                "deps": [],
+                "origin": "session",
+                "state": "failed",
+                "phase": "impl",
+                "waitKind": null,
+                "pendingTexts": [],
+                "fixes": 0,
+                "reviewRuns": 0,
+                "unreadableRuns": 0,
+                "lastBlockers": 0,
+                "addedAt": 1700000000000,
+                "sinceAt": 1700000000000,
+                "updatedAt": 1700000000000
+              },
+              {
+                "slug": "export-csv",
+                "name": "Export CSV",
+                "branch": "feat/export-csv",
+                "worktree": "",
+                "deps": [],
+                "origin": "session",
+                "state": "blocked",
+                "phase": "specs",
+                "waitKind": null,
+                "pendingTexts": [],
+                "fixes": 0,
+                "reviewRuns": 0,
+                "unreadableRuns": 0,
+                "lastBlockers": 0,
+                "addedAt": 1700000000000,
+                "sinceAt": 1700000000000,
+                "updatedAt": 1700000000000
+              },
+              {
+                "slug": "theme-sombre",
+                "name": "Thème sombre",
+                "branch": "feat/theme-sombre",
+                "worktree": "",
+                "deps": [],
+                "origin": "session",
+                "state": "pending",
+                "phase": "req",
+                "waitKind": null,
                 "pendingTexts": [],
                 "fixes": 0,
                 "reviewRuns": 0,
