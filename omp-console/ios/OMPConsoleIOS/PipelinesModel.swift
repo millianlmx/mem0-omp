@@ -1,5 +1,6 @@
 import ConsoleClient
 import ConsoleCore
+import Foundation
 
 /// L'état de l'écran Pipelines (S-4), dans l'ordre de priorité : chargement,
 /// déconnecté sans instantané, puis l'ardoise (absente, vide ou peuplée). Une
@@ -140,5 +141,15 @@ enum PipelinesModel {
         } catch {
             return .failed(IOSMacErrorText.message(for: error) ?? ConnectionText.revoked)
         }
+    }
+
+    /// La date et l'heure (à la minute) d'une carte, « 9 oct. 2026 à 14:32 » : la
+    /// fin quand la carte est close, sinon le début. `nil` quand l'instant n'est
+    /// pas une vraie date (0, négatif, NaN, ∞) : aucune date n'est inventée, et un
+    /// `endMs` invalide ne se replie pas sur `startMs`.
+    static func cardDate(_ card: KanbanCard, timeZone: TimeZone = .current) -> String? {
+        let instant = card.endMs ?? card.startMs
+        guard instant.isFinite, instant > 0 else { return nil }
+        return ConsoleFormat.dateTime(ms: instant, timeZone: timeZone)
     }
 }

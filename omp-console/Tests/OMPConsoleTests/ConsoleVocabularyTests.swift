@@ -97,6 +97,20 @@ func pathIsShortenedForDisplay() {
     #expect(ConsoleFormat.path("/tmp/x") == "/tmp/x")
 }
 
+@Test("ios-pipelines-cartes-homonymes : la date d'une carte se lit à la minute")
+func dateTimeShowsTheMinute() throws {
+    let paris = try #require(TimeZone(identifier: "Europe/Paris"))
+    let base = 1_791_549_120_000.0  // 2026-10-09 14:32 Europe/Paris
+    let first = ConsoleFormat.dateTime(ms: base, timeZone: paris)
+    #expect(first.contains("14:32"))
+    #expect(first.contains("2026"))
+    let next = ConsoleFormat.dateTime(ms: base + 60_000, timeZone: paris)
+    #expect(next.contains("14:33"))
+    #expect(next != first)
+    // Pas de secondes : vingt secondes de plus restent dans la même minute.
+    #expect(ConsoleFormat.dateTime(ms: base + 20_000, timeZone: paris) == first)
+}
+
 @Test("omp-console-redesign/S-14 : l'avancement d'une carte suit son étape et son issue")
 func progressFollowsTheStepAndTheOutcome() {
     func states(_ card: KanbanCard) -> [PipelineStepState] {
