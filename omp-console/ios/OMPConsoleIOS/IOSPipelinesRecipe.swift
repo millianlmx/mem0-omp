@@ -50,7 +50,7 @@ enum IOSPipelinesRecipe: String, Equatable {
     var title: String {
         switch self {
         case .vide: return ""
-        case .choisi, .rempli: return PipelinesText.recipeTitle
+        case .choisi, .rempli: return PipelinesText.recipeFeatureTitle
         }
     }
 

@@ -30,6 +30,16 @@ enum IOSHomeRecipe: String, Equatable {
     case answer
     /// Le tableau de bord avec la feuille Contrat ouverte (capture S-14).
     case contract
+    /// Le tableau de bord avec la feuille Contrat ouverte sur un nom de feature
+    /// LONG et un contrat LONG (`IOSHomeRecipeText`, preuves de
+    /// contrat-ios-markdown-brut, S-4).
+    case contractLong
+    /// Le tableau de bord dont chaque rangée « En cours » et « Livrées récemment »
+    /// porte un titre long (captures des rangées en largeur compacte).
+    case longTitles
+    /// Le tableau de bord dont l'envoi des gestes de carte n'aboutit jamais : un Mac
+    /// qui tarde, pour les captures de l'état « Envoi en cours ».
+    case slowMac
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSHomeRecipe? {
@@ -82,8 +92,10 @@ enum IOSHomeRecipe: String, Equatable {
         let omp = OmpStatus.available(URL(fileURLWithPath: ""))
         let connected = ClientState.connected(endpoint: .manual(host: "", port: 0))
         switch self {
-        case .dashboard, .answer, .contract:
+        case .dashboard, .answer, .contract, .contractLong, .slowMac:
             return (connected, omp, Self.board)
+        case .longTitles:
+            return (connected, omp, Self.longTitlesBoard)
         case .loading:
             return (connected, omp, .loading)
         case .firstRun:
@@ -103,19 +115,42 @@ enum IOSHomeRecipe: String, Equatable {
             return attention.first { IOSHomeContent.attentionButton($0) == .answer }?.card
         case .contract:
             return attention.first { ContractDocument.moment(for: $0.card) != nil }?.card
+        case .contractLong:
+            // La carte de `contract`, dont seul le DERNIER segment de l'identifiant
+            // (le nom de la feature, `IOSHomeContent.contractSlug`) est remplacé.
+            guard var card = Self.contract.sheetCard else { return nil }
+            if let colon = card.id.lastIndex(of: ":") {
+                card.id = String(card.id[...colon]) + IOSHomeRecipeText.longSlug
+            } else {
+                card.id = IOSHomeRecipeText.longSlug
+            }
+            return card
         default:
             return nil
         }
     }
 
+    /// L'envoi des gestes de carte qui remplace celui du client, ou aucun : sous
+    /// `slowMac`, une attente qui ne rend jamais (le Mac tarde à répondre).
+    var gestureSend: IOSHomeGestureModel.Send? {
+        guard self == .slowMac else { return nil }
+        return { _ in try await Task.sleep(for: .seconds(3600)) }
+    }
+
     /// La charge utile de contrat de recette : le markdown de la fixture partagée,
-    /// pour que la feuille montre de vraies sections sans réseau.
+    /// pour que la feuille montre de vraies sections sans réseau. `contractLong`
+    /// sert le contrat long de `IOSHomeRecipeText`.
     var contractPayload: RemoteContractPayload? {
-        guard self == .contract else { return nil }
+        let content: String
+        switch self {
+        case .contract: content = HomeParity.contractMarkdown
+        case .contractLong: content = IOSHomeRecipeText.longContract
+        default: return nil
+        }
         return RemoteContractPayload(document: RemoteDocument(
             name: IOSHomeText.contractName,
             state: IOSHomeText.documentText,
-            content: HomeParity.contractMarkdown,
+            content: content,
             reason: nil
         ))
     }
@@ -125,8 +160,22 @@ enum IOSHomeRecipe: String, Equatable {
         snapshot: HomeParity.snapshot,
         nowMs: 1_700_000_000_000,
         stateDir: "",
-        isAlive: .transported(HomeParity.snapshot)
+        isAlive: .transported(HomeParity.snapshot),
+        prFacts: [:]
     )
+
+    /// L'ardoise de la fixture où les cartes des rangées « En cours » et « Livrées
+    /// récemment » prennent `IOSHomeText.recipeLongTitle` ; les cartes « À vous »
+    /// gardent leur titre.
+    private static var longTitlesBoard: KanbanBoardState {
+        guard case .board(var board) = Self.board else { return Self.board }
+        let dashboard = HomePresentation.dashboard(board)
+        let rowIDs = Set((dashboard.running + dashboard.delivered).map(\.id))
+        for index in board.cards.indices where rowIDs.contains(board.cards[index].id) {
+            board.cards[index].title = IOSHomeText.recipeLongTitle
+        }
+        return .board(board)
+    }
 
     /// Les faits d'attention de la fixture.
     private static var attention: [HomeAttention] {

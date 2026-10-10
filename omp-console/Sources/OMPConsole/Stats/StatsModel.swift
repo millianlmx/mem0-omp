@@ -115,7 +115,7 @@ final class StatsModel: ObservableObject {
         if snapshot.root == .absent {
             state = .storeAbsent(dir: stateDir)
         } else if let board {
-            state = board.project.features.isEmpty ? .empty : .board(board)
+            state = board.project.features.isEmpty ? .empty(board) : .board(board)
         } else {
             state = .noProject(dir: stateDir)
         }

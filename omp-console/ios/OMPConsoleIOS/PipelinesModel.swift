@@ -43,6 +43,13 @@ struct PipelinesLaneRow: Identifiable, Equatable {
     var visibleCards: [KanbanCard] { folded ? [] : content.cards }
 }
 
+/// Les deux lignes de modèle de la fiche (S-4) : « req+specs <nom|sélecteur> »
+/// et « impl+review … ».
+struct PipelinesModelLines: Equatable {
+    let reqSpecs: String
+    let implReview: String
+}
+
 /// La logique PURE de l'écran Pipelines (S-3, S-4) : aucune donnée n'est
 /// inventée, aucune n'est mise en cache. L'écran dérive tout de l'instantané du
 /// client (`ConsoleClientModel.snapshot`), alimenté par la trame `store`.
@@ -50,15 +57,25 @@ struct PipelinesLaneRow: Identifiable, Equatable {
 enum PipelinesModel {
     /// L'état publié de l'ardoise depuis l'instantané du client, ou `nil` tant
     /// qu'aucun instantané n'est arrivé. La vivacité est TRANSPORTÉE par
-    /// l'instantané : l'app ne sonde jamais un pid du Mac.
+    /// l'instantané : l'app ne sonde jamais un pid du Mac. Les faits de PR sont
+    /// ceux servis par le Mac (trame `pull-request-states`) ; sans eux, une carte
+    /// à PR reste « PR créée ».
     static func boardState(of client: ConsoleClientModel, nowMs: Double) -> KanbanBoardState? {
         guard let snapshot = client.snapshot else { return nil }
         return KanbanBoardState.derive(
             snapshot: snapshot,
             nowMs: nowMs,
             stateDir: "",
-            isAlive: .transported(snapshot)
+            isAlive: .transported(snapshot),
+            prFacts: client.pullRequestFacts
         )
+    }
+
+    /// Le bouton « Rafraîchir » (S-7) n'est actif que connecté au Mac et hors
+    /// d'une relecture déjà en cours.
+    static func canRefresh(connection: ClientState, refreshing: Bool) -> Bool {
+        guard case .connected = connection else { return false }
+        return !refreshing
     }
 
     /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée si
@@ -108,6 +125,58 @@ enum PipelinesModel {
     /// L'axe de l'en-tête d'une voie (symbole, titre, compte) : la règle des
     /// rangées de l'Accueil, empilé aux tailles d'accessibilité.
     static func headerAxis(_ size: DynamicTypeSize) -> IOSHomeRowAxis {
-        IOSHomeContent.rowAxis(size)
+        IOSHomeContent.rowAxis(size, width: .regular)
+    }
+
+    /// Le nom lisible d'un sélecteur d'après le catalogue servi par le Mac
+    /// (correspondance EXACTE) ; le sélecteur tel quel quand le catalogue est
+    /// absent, ne le connaît pas ou donne un nom blanc — jamais un nom inventé.
+    static func modelName(_ selector: String, names: [String: String]?) -> String {
+        guard let name = names?[selector],
+              !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return selector }
+        return name
+    }
+
+    /// Les deux lignes de modèle d'une carte, `nil` quand elle n'en porte pas.
+    /// Un groupe vide reste « défaut OMP » (mots partagés, `KanbanCardPresentation`).
+    static func modelLines(_ card: KanbanCard, names: [String: String]?) -> PipelinesModelLines? {
+        guard let models = card.models else { return nil }
+        return PipelinesModelLines(
+            reqSpecs: KanbanCardPresentation.modelLine(
+                KanbanText.modelReqSpecs,
+                models.reqSpecs.map { modelName($0, names: names) }
+            ),
+            implReview: KanbanCardPresentation.modelLine(
+                KanbanText.modelImplReview,
+                models.implReview.map { modelName($0, names: names) }
+            )
+        )
+    }
+
+    /// Le catalogue des modèles de la feuille « Nouvelle feature » : le MÊME chemin
+    /// pour le premier chargement et pour Réessayer. Un échec rend le message du
+    /// traducteur partagé ; sur 401 (`nil`), l'état de connexion « jeton révoqué »
+    /// prend la place du message — le parcours de révocation parle seul.
+    static func catalog(_ load: @MainActor () async throws -> RemoteModelsPayload) async -> ModelCatalogState {
+        do {
+            let payload = try await load()
+            if let failure = payload.failure {
+                return .failed(KanbanText.modelCatalogUnavailable(failure))
+            }
+            return .loaded(payload.selectors)
+        } catch {
+            return .failed(IOSMacErrorText.message(for: error) ?? ConnectionText.revoked)
+        }
+    }
+
+    /// La date et l'heure (à la minute) d'une carte, « 9 oct. 2026 à 14:32 » : la
+    /// fin quand la carte est close, sinon le début. `nil` quand l'instant n'est
+    /// pas une vraie date (0, négatif, NaN, ∞) : aucune date n'est inventée, et un
+    /// `endMs` invalide ne se replie pas sur `startMs`.
+    static func cardDate(_ card: KanbanCard, timeZone: TimeZone = .current) -> String? {
+        let instant = card.endMs ?? card.startMs
+        guard instant.isFinite, instant > 0 else { return nil }
+        return ConsoleFormat.dateTime(ms: instant, timeZone: timeZone)
     }
 }

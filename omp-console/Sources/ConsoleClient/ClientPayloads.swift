@@ -121,15 +121,30 @@ public struct RemoteStatsFeature: Codable, Equatable, Sendable {
     public var slug: String
     public var input: Int
     public var output: Int
+    /// Absents d'un relevé d'un Mac ANCIEN : comptés 0 par `totals(elapsedMs:)`.
+    public var cacheRead: Int?
+    public var cacheWrite: Int?
     public var turns: Int
     public var durationMs: Double
     public var liveRuns: Int
     public var model: String?
 
-    public init(slug: String, input: Int, output: Int, turns: Int, durationMs: Double, liveRuns: Int, model: String?) {
+    public init(
+        slug: String,
+        input: Int,
+        output: Int,
+        cacheRead: Int? = nil,
+        cacheWrite: Int? = nil,
+        turns: Int,
+        durationMs: Double,
+        liveRuns: Int,
+        model: String?
+    ) {
         self.slug = slug
         self.input = input
         self.output = output
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
         self.turns = turns
         self.durationMs = durationMs
         self.liveRuns = liveRuns
@@ -167,17 +182,32 @@ public struct RemoteStatsPayload: Codable, Equatable, Sendable {
 public struct RemoteStatsTotals: Equatable, Sendable {
     public var input: Int
     public var output: Int
+    public var cacheRead: Int
+    public var cacheWrite: Int
     public var turns: Int
     public var durationMs: Double
 
     public static let zero = RemoteStatsTotals(input: 0, output: 0, turns: 0, durationMs: 0)
 
-    public init(input: Int, output: Int, turns: Int, durationMs: Double) {
+    public init(
+        input: Int,
+        output: Int,
+        cacheRead: Int = 0,
+        cacheWrite: Int = 0,
+        turns: Int,
+        durationMs: Double
+    ) {
         self.input = input
         self.output = output
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
         self.turns = turns
         self.durationMs = durationMs
     }
+
+    /// « Tokens envoyés » côté iOS : TOUT ce qui part vers le modèle, soit
+    /// l'entrée hors cache + le cache lu + le cache écrit (trois termes disjoints).
+    public var sent: Int { input + cacheRead + cacheWrite }
 }
 
 public extension RemoteStatsFeature {
@@ -190,6 +220,8 @@ public extension RemoteStatsFeature {
         return RemoteStatsTotals(
             input: input,
             output: output,
+            cacheRead: cacheRead ?? 0,
+            cacheWrite: cacheWrite ?? 0,
             turns: turns,
             durationMs: durationMs + Double(liveRuns) * elapsed
         )
@@ -203,6 +235,8 @@ public extension RemoteStatsPayload {
             let computed = feature.totals(elapsedMs: elapsedMs)
             totals.input += computed.input
             totals.output += computed.output
+            totals.cacheRead += computed.cacheRead
+            totals.cacheWrite += computed.cacheWrite
             totals.turns += computed.turns
             totals.durationMs += computed.durationMs
         }
@@ -276,20 +310,22 @@ public struct RemoteMemoryRow: Codable, Equatable, Sendable {
     }
 }
 
-/// Le sommaire d'une portée (miroir de `remote.RemoteMemoryPagePayload`, S-1) :
-/// `scope` vaut `nil` quand aucun projet n'est ouvert ; `truncated` dit qu'une
-/// ligne a été retirée par la borne de nombre ou d'octets.
+/// Une page du sommaire d'une portée (miroir de `remote.RemoteMemoryPagePayload`,
+/// S-1) : `scope` vaut `nil` quand aucun projet n'est ouvert ; `nextOffset` est
+/// le rang de la page suivante, absent quand la portée est épuisée.
 public struct RemoteMemoryPagePayload: Codable, Equatable, Sendable {
     public var scope: String?
     public var total: Int
+    public var offset: Int
     public var rows: [RemoteMemoryRow]
-    public var truncated: Bool
+    public var nextOffset: Int?
 
-    public init(scope: String?, total: Int, rows: [RemoteMemoryRow], truncated: Bool) {
+    public init(scope: String?, total: Int, offset: Int, rows: [RemoteMemoryRow], nextOffset: Int?) {
         self.scope = scope
         self.total = total
+        self.offset = offset
         self.rows = rows
-        self.truncated = truncated
+        self.nextOffset = nextOffset
     }
 }
 
@@ -340,12 +376,15 @@ public struct RemoteMemoryGraphLink: Codable, Equatable, Sendable {
 }
 
 public struct RemoteMemoryGraphPayload: Codable, Equatable, Sendable {
+    /// La portée résolue par la coque ; `nil` quand aucun projet n'est ouvert.
+    public var scope: String?
     public var nodes: [RemoteMemoryGraphNode]
     public var links: [RemoteMemoryGraphLink]
     public var total: Int
     public var truncated: Bool
 
-    public init(nodes: [RemoteMemoryGraphNode], links: [RemoteMemoryGraphLink], total: Int, truncated: Bool = false) {
+    public init(scope: String?, nodes: [RemoteMemoryGraphNode], links: [RemoteMemoryGraphLink], total: Int, truncated: Bool = false) {
+        self.scope = scope
         self.nodes = nodes
         self.links = links
         self.total = total
@@ -358,6 +397,7 @@ extension RemoteMemoryGraphPayload {
     /// l'émet pas, et la charge reste lisible (absent ⇒ faux).
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        scope = try container.decodeIfPresent(String.self, forKey: .scope)
         nodes = try container.decode([RemoteMemoryGraphNode].self, forKey: .nodes)
         links = try container.decode([RemoteMemoryGraphLink].self, forKey: .links)
         total = try container.decode(Int.self, forKey: .total)
@@ -517,14 +557,17 @@ public struct ProjectPRRow: Codable, Equatable, Sendable {
 
 /// Le catalogue des modèles servi par `GET /v1/models` (S-14) : les sélecteurs
 /// triés, dédoublonnés, non blancs, et un motif quand le chargement a échoué
-/// (la liste est alors vide). Miroir EXACT de la charge utile du serveur.
+/// (la liste est alors vide). Miroir EXACT de la charge utile du serveur ;
+/// `names` (sélecteur → nom lisible) est absent d'un Mac antérieur.
 public struct RemoteModelsPayload: Codable, Equatable, Sendable {
     public var selectors: [String]
     public var failure: String?
+    public var names: [String: String]?
 
-    public init(selectors: [String], failure: String?) {
+    public init(selectors: [String], failure: String?, names: [String: String]? = nil) {
         self.selectors = selectors
         self.failure = failure
+        self.names = names
     }
 }
 
@@ -532,6 +575,18 @@ public struct RemotePullRequestsPayload: Codable, Equatable, Sendable {
     public var rows: [ProjectPRRow]
     public var failure: String?
     public var stale: Bool
+}
+
+/// Miroir de la trame `pull-request-states` : les faits de PR lus par le Mac,
+/// triés par URL, et son état de relecture.
+public struct RemotePullRequestStatesPayload: Codable, Equatable, Sendable {
+    public var facts: [PullRequestFact]
+    public var refreshing: Bool
+
+    public init(facts: [PullRequestFact], refreshing: Bool) {
+        self.facts = facts
+        self.refreshing = refreshing
+    }
 }
 
 public struct RemoteMergedPayload: Codable, Equatable, Sendable {

@@ -387,12 +387,22 @@ async function cmdMemory(pairing: Pairing | null): Promise<void> {
     printMemoryRows(asArray(data["rows"]));
     return;
   }
-  const params = new URLSearchParams();
-  if (scope) params.set("scope", scope);
-  const queryString = params.toString();
-  const data = asRecord(await callJson("GET", `/v1/memory${queryString ? `?${queryString}` : ""}`, { pairing }));
-  console.log(`mémoire : ${data["total"] ?? "?"} souvenir(s)`);
-  printMemoryRows(asArray(data["rows"]));
+  // La liste se lit par pages : on suit `nextOffset` jusqu'à son absence.
+  let offset: number | undefined = 0;
+  let total: unknown;
+  const rows: unknown[] = [];
+  while (offset !== undefined) {
+    const params = new URLSearchParams();
+    if (scope) params.set("scope", scope);
+    params.set("offset", String(offset));
+    const data = asRecord(await callJson("GET", `/v1/memory/page?${params.toString()}`, { pairing }));
+    total = data["total"];
+    rows.push(...asArray(data["rows"]));
+    const next = data["nextOffset"];
+    offset = typeof next === "number" && next > offset ? next : undefined;
+  }
+  console.log(`mémoire : ${total ?? "?"} souvenir(s)`);
+  printMemoryRows(rows);
 }
 
 function printStreamEvent(name: string, data: unknown): void {

@@ -35,12 +35,16 @@ private enum SessionLines {
     }
 
     /// Une réponse assistant ; `usage` n'est écrit QUE quand il porte une valeur.
+    /// `withCacheKeys: false` écrit un `usage` SANS `cacheRead`/`cacheWrite`.
     static func assistant(
         id: String,
         stamp: String,
         model: String? = nil,
         input: Int? = nil,
         output: Int? = nil,
+        cacheRead: Int = 0,
+        cacheWrite: Int = 0,
+        withCacheKeys: Bool = true,
         stopReason: String? = "toolUse"
     ) -> String {
         var message: [String: Any] = [
@@ -50,7 +54,12 @@ private enum SessionLines {
         if let model { message["model"] = model }
         if let stopReason { message["stopReason"] = stopReason }
         if let input, let output {
-            message["usage"] = ["input": input, "output": output, "cacheRead": 0, "cacheWrite": 0, "totalTokens": input + output]
+            var usage: [String: Any] = ["input": input, "output": output, "totalTokens": input + output]
+            if withCacheKeys {
+                usage["cacheRead"] = cacheRead
+                usage["cacheWrite"] = cacheWrite
+            }
+            message["usage"] = usage
         }
         return entry("message", id: id, timestamp: stamp, ["parentId": NSNull(), "message": message])
     }
@@ -86,6 +95,42 @@ func metricsEqualWhatTheSessionCarries() throws {
     #expect(metrics.lastMs == 1_790_755_290_000)
     // Durée d'un run clos : de la première à la dernière entrée horodatée.
     #expect(durationMs(metrics, isLive: false, nowMs: 0) == 90_000)
+}
+
+@Test("ios-stats-tokens-envoyes-incoherent/AC-1, AC-3 : le cache lu et écrit se somme à part, une clé absente vaut 0")
+func metricsSumTheCacheApart() throws {
+    let fixture = try ViewerSessionFixture()
+    defer { fixture.remove() }
+    try fixture.write([
+        SessionLines.header(),
+        SessionLines.user("premier prompt", id: "u1", stamp: "2026-09-30T08:00:00.000Z"),
+        SessionLines.assistant(
+            id: "a1", stamp: "2026-09-30T08:00:10.000Z", input: 2, output: 233, cacheRead: 13_206, cacheWrite: 14_936
+        ),
+        SessionLines.assistant(
+            id: "a2", stamp: "2026-09-30T08:00:20.000Z", input: 74, output: 40_000, cacheRead: 20_000, cacheWrite: 1_000
+        ),
+    ])
+    let metrics = readMetrics(fixture)
+    // `input` reste l'entrée HORS cache : le cache ne s'y mélange jamais.
+    #expect(metrics.input == 76)
+    #expect(metrics.output == 40_233)
+    #expect(metrics.cacheRead == 33_206)
+    #expect(metrics.cacheWrite == 15_936)
+
+    let bare = try ViewerSessionFixture()
+    defer { bare.remove() }
+    try bare.write([
+        SessionLines.header(),
+        SessionLines.user("prompt", id: "u1", stamp: "2026-09-30T08:00:00.000Z"),
+        SessionLines.assistant(id: "a1", stamp: "2026-09-30T08:00:10.000Z", input: 10, output: 3, withCacheKeys: false),
+        SessionLines.assistant(id: "a2", stamp: "2026-09-30T08:00:20.000Z", input: 5, output: 1, withCacheKeys: false),
+    ])
+    let noCache = readMetrics(bare)
+    #expect(noCache.cacheRead == 0)
+    #expect(noCache.cacheWrite == 0)
+    #expect(noCache.input == 15)
+    #expect(noCache.output == 4)
 }
 
 @Test("statistiques/AC-1 : un run `-p` réel porte UN tour, jamais compté sur la réponse finale")

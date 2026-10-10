@@ -9,13 +9,17 @@ struct PipelinesScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
-    /// Le crochet de recette `-pipelines.recipe` : la feuille « Nouvelle feature »
-    /// s'ouvre d'elle-même dans l'état forcé.
+    /// Le crochet de recette `-pipelines.recipe <vide|choisi|rempli>` : la feuille
+    /// « Nouvelle feature » s'ouvre d'elle-même dans l'état forcé.
     let newFeatureRecipe: IOSPipelinesRecipe?
+    /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` : la fiche de
+    /// la carte de fixture s'ouvre UNE fois, sans instantané du Mac.
+    var cardRecipe: PipelinesCardRecipe?
     /// Le crochet de recette `-pipelines.board` : l'ardoise de la fixture
     /// `KanbanBoardParity` à la place de celle du client, sans bandeau de connexion.
     let boardRecipe: IOSPipelinesBoardRecipe?
     @State private var sheet: PipelinesSheet?
+    @State private var recipeOpened = false
     /// Les voies terminales dépliées pendant CETTE visite (S-3) : remis à vide
     /// à la sortie de l'écran, jamais écrit nulle part.
     @State private var unfoldedLanes: Set<KanbanLane> = []
@@ -46,6 +50,9 @@ struct PipelinesScreen: View {
         .navigationTitle(ConsoleSection.kanban.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                refreshButton
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { sheet = .newFeature } label: {
                     Label(NewFeatureText.command, systemImage: "plus")
                 }
@@ -55,12 +62,17 @@ struct PipelinesScreen: View {
         .sheet(item: $sheet) { target in
             switch target {
             case .card(let cardId):
-                PipelinesCardSheet(client: client, cardId: cardId)
+                PipelinesCardSheet(client: client, cardId: cardId, recipe: cardRecipe)
             case .newFeature:
                 NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
             }
         }
         .onDisappear { unfoldedLanes = [] }
+        .onAppear {
+            guard !recipeOpened, let card = cardRecipe?.card else { return }
+            recipeOpened = true
+            sheet = .card(card.id)
+        }
         .accessibilityIdentifier(PipelinesAccessibility.screen)
         .task {
             if newFeatureRecipe != nil { sheet = .newFeature }
@@ -81,6 +93,30 @@ struct PipelinesScreen: View {
             connection: client.state,
             board: PipelinesModel.boardState(of: client, nowMs: Self.nowMs)
         )
+    }
+
+    // MARK: - Rafraîchir (S-7)
+
+    /// Vrai pendant une relecture des PR par le Mac (trame `pull-request-states`).
+    private var refreshing: Bool { client.pullRequestStates?.refreshing == true }
+
+    /// Demande au Mac de relire l'état des PR. Aucun message : un échec (Mac
+    /// ancien, réseau) laisse le bouton tel quel, le retour visible est le
+    /// libellé des cartes.
+    private var refreshButton: some View {
+        Button {
+            Task { _ = try? await client.refreshPullRequestStates() }
+        } label: {
+            if refreshing {
+                ProgressView()
+            } else {
+                Label(KanbanText.refresh, systemImage: "arrow.clockwise")
+            }
+        }
+        .keyboardShortcut(KeyEquivalent(PipelinesText.refreshKey), modifiers: .command)
+        .disabled(!PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing))
+        .accessibilityLabel(KanbanText.refresh)
+        .accessibilityIdentifier(PipelinesAccessibility.refresh)
     }
 
     // MARK: - Contenu
@@ -290,6 +326,12 @@ struct PipelinesScreen: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+            }
+            if let date = PipelinesModel.cardDate(card) {
+                Text(date)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
             if let preview = KanbanCardPresentation.preview(card) {
                 Text(preview)

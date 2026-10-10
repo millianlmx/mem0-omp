@@ -38,11 +38,12 @@ struct RemoteMemoryRouteTests {
 
         // (1) La page relayée, telle que le service la rend. La portée est
         // EXPLICITE : sans elle, la route ne lirait rien (S-2, « aucun projet »).
-        let pageReply = try await stack.call("GET", "/v1/memory?scope=projet", token: token)
+        let pageReply = try await stack.call("GET", "/v1/memory/page?scope=projet", token: token)
         #expect(pageReply.status == 200)
         let page = try pageReply.json(RemoteMemoryPagePayload.self)
         #expect(page.scope == "projet")
-        #expect(page.truncated == false)
+        #expect(page.offset == 0)
+        #expect(page.nextOffset == nil)
         #expect(page.total == 4)
         #expect(page.rows.map(\.id) == ["m1", "m2", "m3", "m4"])
         #expect(page.rows.first { $0.id == "m3" }?.score == 0.92)
@@ -66,9 +67,10 @@ struct RemoteMemoryRouteTests {
         #expect(search.scored == 3)
 
         // (3) Le graphe : nœuds souvenirs ET étiquettes, liens sémantiques et d'étiquette.
-        let graphReply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        let graphReply = try await stack.call("GET", "/v1/memory/graph?scope=projet", token: token)
         #expect(graphReply.status == 200)
         let graph = try graphReply.json(RemoteMemoryGraphPayload.self)
+        #expect(graph.scope == "projet")
         let nodeIds = Set(graph.nodes.map(\.id))
         #expect(nodeIds.contains("memory:m1"))
         #expect(nodeIds.contains("memory:m4"))
@@ -123,12 +125,12 @@ struct RemoteMemoryRouteTests {
         let expected = await MemoryScope.currentProject(environment: [:])
         #expect(expected == "projet-courant")
 
-        let pageReply = try await stack.call("GET", "/v1/memory", token: token)
+        let pageReply = try await stack.call("GET", "/v1/memory/page", token: token)
         #expect(pageReply.status == 200)
         #expect(service.allScopes == [expected])
 
         // Une portée DEMANDÉE est relayée telle quelle, sans passer par la coque.
-        let explicitReply = try await stack.call("GET", "/v1/memory?scope=autre-projet", token: token)
+        let explicitReply = try await stack.call("GET", "/v1/memory/page?scope=autre-projet", token: token)
         #expect(explicitReply.status == 200)
         #expect(service.allScopes.last == "autre-projet")
         #expect(service.allScopes.count == 2)
@@ -143,7 +145,7 @@ struct RemoteMemoryRouteTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        for path in ["/v1/memory?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
+        for path in ["/v1/memory/page?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
             let reply = try await stack.call("GET", path, token: token)
             #expect(reply.status == 503)
             #expect(reply.errorCode == "unavailable")
@@ -173,9 +175,10 @@ struct RemoteMemoryRouteTests {
         let url = stack.supportRoot.appendingPathComponent(MemoryLinkStore.fileName)
         #expect(MemoryLinkStore.save([MemoryLink(a: "m1", b: "m2")], to: url))
 
-        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/graph?scope=projet", token: token)
         #expect(reply.status == 200)
         let graph = try reply.json(RemoteMemoryGraphPayload.self)
+        #expect(graph.scope == "projet")
         let manual = graph.links.filter { $0.kind == "manual" }
         #expect(manual.count == 1)
         #expect(manual.first?.a == "memory:m1")
@@ -183,52 +186,24 @@ struct RemoteMemoryRouteTests {
         #expect(manual.first?.score == nil)
     }
 
-    /// AC-1/AC-3 : sans `scope`, la route graphe lit TOUTES les portées — jamais un
-    /// repli sur le projet courant (qui ferait diverger le graphe iOS dès qu'un
-    /// projet est ouvert).
-    @Test func testGraphServesEveryScopeWithoutAProject() async throws {
-        let defaults = UserDefaults.standard
-        let previous = defaults.string(forKey: ProjectRoot.defaultsKey)
-        defaults.set("/inexistant-omp-console-\(UUID().uuidString)", forKey: ProjectRoot.defaultsKey)
-        defer {
-            if let previous {
-                defaults.set(previous, forKey: ProjectRoot.defaultsKey)
-            } else {
-                defaults.removeObject(forKey: ProjectRoot.defaultsKey)
-            }
-        }
-
-        let service = ScriptedMemoryService(page: .success(MemoryPage(total: 2, rows: MemoryGraphParity.rows)))
-        let stack = try await RemoteStack.make(memory: service)
-        defer { stack.stop() }
-        let token = try await stack.pair()
-
-        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
-        #expect(reply.status == 200)
-        let graph = try reply.json(RemoteMemoryGraphPayload.self)
-        #expect(!graph.nodes.isEmpty)
-        // La portée demandée au service est nulle : TOUTES les portées.
-        #expect(service.allScopes == [nil])
-        // Une portée EXPLICITE est, elle, passée telle quelle.
-        _ = try await stack.call("GET", "/v1/memory/graph?scope=alpha", token: token)
-        #expect(service.allScopes == [nil, "alpha"])
-    }
-
-    /// AC-1 : au-delà de la borne, le graphe est tronqué honnêtement et reste
-    /// COHÉRENT (aucun lien orphelin, `total` = nœuds servis).
-    @Test func testGraphTruncationIsAnnouncedAndCoherent() async throws {
+    /// AC-1 : au-delà de la borne d'octets, le graphe est tronqué honnêtement et
+    /// reste COHÉRENT (aucun lien orphelin, `total` = nœuds servis). La borne de
+    /// la route (16 Mio) est passée ici à 2 Mio pour garder une fixture légère.
+    @Test func testGraphTruncationIsAnnouncedAndCoherent() throws {
         let text = String(repeating: "a", count: 2000)
         let rows = (0..<1200).map { index in
             memoryRow(id: "m\(index)", text: text, scope: "projet")
         }
-        let service = ScriptedMemoryService(page: .success(MemoryPage(total: rows.count, rows: rows)))
-        let stack = try await RemoteStack.make(memory: service)
-        defer { stack.stop() }
-        let token = try await stack.pair()
+        let edges = [MemoryGraphEdge(source: "m0", target: "m1199", score: 0.9)]
 
-        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
-        #expect(reply.status == 200)
-        let graph = try reply.json(RemoteMemoryGraphPayload.self)
+        let graph = RemoteReads.memoryGraph(
+            scope: "projet",
+            rows: rows,
+            edges: edges,
+            manual: [],
+            bodyLimit: 2 * 1024 * 1024
+        )
+        #expect(graph.scope == "projet")
         #expect(graph.truncated == true)
         #expect(graph.nodes.count < rows.count)
         #expect(graph.total == graph.nodes.count)
@@ -242,7 +217,7 @@ struct RemoteMemoryRouteTests {
         let token = try await stack.pair()
 
         for limit in ["0", "201", "abc"] {
-            let reply = try await stack.call("GET", "/v1/memory?limit=\(limit)", token: token)
+            let reply = try await stack.call("GET", "/v1/memory/page?limit=\(limit)", token: token)
             #expect(reply.status == 400)
             #expect(reply.errorCode == "bad_request")
         }

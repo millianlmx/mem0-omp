@@ -13,6 +13,9 @@ public enum SetupText {
         "OMP Console installe ses composants — OMP, le moteur de conteneurs et la pile mémoire — puis les démarre. Cette étape n'a lieu qu'une fois."
     /// Le bouton de reprise après échec (proéminent, seul geste principal).
     public static let retry = "Réessayer"
+    /// Le geste explicite de reprise de l'ancienne pile (S-6) : la SEULE voie qui
+    /// arrête des conteneurs legacy, et seulement sur ordre de l'utilisateur.
+    public static let takeover = "Arrêter l'ancienne pile et reprendre"
     /// « Fermer » est toujours disponible : fermer n'interrompt rien.
     public static let close = "Fermer"
     /// Le bouton du bandeau de l'Accueil quand la préparation a été ignorée.

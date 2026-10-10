@@ -9,7 +9,7 @@ import Testing
 @testable import OMPConsole
 import ConsoleCore
 
-// MARK: - AC-1 : les onze colonnes
+// MARK: - AC-1 : les treize colonnes
 
 @Test("kanban-des-pipelines/AC-1 : chaque état du magasin a sa colonne, et aucune carte n'en manque")
 func everyStateHasItsColumn() {
@@ -24,6 +24,8 @@ func everyStateHasItsColumn() {
         lotFeatureObject(slug: "review", state: "waiting", phase: "review", waitKind: "review"),
         lotFeatureObject(slug: "bloquee", state: "blocked", phase: "impl"),
         lotFeatureObject(slug: "livree", state: "done", phase: "release", prUrl: "https://exemple/pull/1"),
+        lotFeatureObject(slug: "pr-creee", state: "done", phase: "release", prUrl: "https://exemple/pull/2"),
+        lotFeatureObject(slug: "pr-fermee", state: "done", phase: "release", prUrl: "https://exemple/pull/3"),
         lotFeatureObject(slug: "livree-sans-pr", state: "done", phase: "release"),
         lotFeatureObject(slug: "echouee", state: "failed", phase: "impl"),
         lotFeatureObject(slug: "annulee", state: "cancelled", phase: "req"),
@@ -44,8 +46,14 @@ func everyStateHasItsColumn() {
         )
     )
 
-    let board = kanbanBoard(fixture)
-    #expect(board.cards.count == 11)
+    // L'état GitHub des PR : ouverte pour #1, fermée pour #3 ; #2 n'a aucun fait
+    // (état inconnu ⇒ « PR créée »).
+    let facts = PullRequestFacts.index([
+        PullRequestFact(url: "https://exemple/pull/1", state: .open, closedAtMs: nil),
+        PullRequestFact(url: "https://exemple/pull/3", state: .closed, closedAtMs: nil),
+    ])
+    let board = kanbanBoard(fixture, prFacts: facts)
+    #expect(board.cards.count == 13)
     let expected: [KanbanColumn: String] = [
         .enAttente: "a-venir",
         .enCours: "en-cours",
@@ -54,6 +62,8 @@ func everyStateHasItsColumn() {
         .jalonReview: "review",
         .bloquee: "bloquee",
         .prOuverte: "livree",
+        .prCreee: "pr-creee",
+        .prFermee: "pr-fermee",
         .termineeSansPr: "livree-sans-pr",
         .echec: "echouee",
         .annuleeRetiree: "annulee",
@@ -244,7 +254,9 @@ func prURLIsWrittenOrAbsent() throws {
     let delivered = try #require(board.cards.first { $0.id.hasPrefix("feature:") })
     let closed = try #require(board.cards.first { $0.id.hasPrefix("history:") })
     #expect(delivered.prUrl == "https://exemple/pull/7")
-    #expect(delivered.column == .prOuverte)
+    // Sans fait GitHub, l'état de la PR est inconnu : « PR créée », jamais
+    // « PR ouverte » par défaut.
+    #expect(delivered.column == .prCreee)
     #expect(closed.prUrl == nil)
 }
 

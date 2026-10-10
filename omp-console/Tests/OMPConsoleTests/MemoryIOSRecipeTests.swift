@@ -100,7 +100,7 @@ struct MemoryIOSRecipeTests {
 
         // (1) Le sommaire : les id, textes et l'ORDRE du service, identiques à ceux
         // que la coque macOS montre sur le MÊME service.
-        let page = try await client.memory(scope: scope, limit: nil)
+        let page = try await client.memoryPage(scope: scope, offset: 0, limit: nil)
         let model = memoryModel(service: service, scope: scope)
         await model.refresh()
         guard case let .summary(_, total, shellRows) = model.state else {
@@ -109,7 +109,8 @@ struct MemoryIOSRecipeTests {
         }
         #expect(page.scope == scope)
         #expect(page.total == total)
-        #expect(page.truncated == false)
+        #expect(page.offset == 0)
+        #expect(page.nextOffset == nil)
         #expect(page.rows.map(\.id) == shellRows.map(\.id))
         #expect(page.rows.map(\.id) == ["r1", "r2", "r3", "r4"])
         #expect(page.rows.map(\.text) == shellRows.map(\.text))
@@ -133,7 +134,7 @@ struct MemoryIOSRecipeTests {
         let downClient = try await memoryRecipeClient(on: downStack)
         defer { downClient.stop() }
         do {
-            _ = try await downClient.memory(scope: scope, limit: nil)
+            _ = try await downClient.memoryPage(scope: scope, offset: 0, limit: nil)
             Issue.record("une panne mémoire doit lever, jamais rendre un 200 vide")
         } catch let error as ClientError {
             guard case .api(let api) = error else {
@@ -158,11 +159,11 @@ struct MemoryIOSRecipeTests {
             }
         }
         let readsBefore = service.allScopes.count
-        let empty = try await client.memory(scope: nil, limit: nil)
+        let empty = try await client.memoryPage(scope: nil, offset: 0, limit: nil)
         #expect(empty.scope == nil)
         #expect(empty.total == 0)
         #expect(empty.rows.isEmpty)
-        #expect(empty.truncated == false)
+        #expect(empty.nextOffset == nil)
         #expect(service.allScopes.count == readsBefore)
     }
 }

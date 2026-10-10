@@ -8,9 +8,10 @@ import SwiftUI
 /// Mémoire (`IOSMemoryScreen`), Statistiques (`IOSStatsScreen`) et Sessions
 /// (`IOSSessionsScreen`), toutes nourries par le client partagé.
 ///
-/// Ordre du rendu (sections à contenu) : panneau → titre → pastille → carte de
-/// l'état vide → bandeau. Aucune phrase n'est composée ici : les mots viennent du
-/// noyau partagé, le message provisoire du bandeau vient de `IOSText`.
+/// Ordre du rendu (sections à contenu) : panneau → pastille → carte de l'état
+/// vide → bandeau ; le titre est celui de la barre de navigation. Aucune phrase
+/// n'est composée ici : les mots viennent du noyau partagé, le message provisoire
+/// du bandeau vient de `IOSText`.
 struct IOSSectionView: View {
     let section: ConsoleSection
     let state: IOSScreenState
@@ -19,8 +20,14 @@ struct IOSSectionView: View {
     let recipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
     let memoryRecipe: IOSMemoryGraphRecipe?
-    /// Le crochet de recette `-pipelines.recipe` de l'écran Pipelines.
+    /// Le crochet de recette `-pipelines.recipe <vide|choisi|rempli>` de l'écran
+    /// Pipelines (feuille « Nouvelle feature »).
     let pipelinesRecipe: IOSPipelinesRecipe?
+    /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` de l'écran
+    /// Pipelines (fiche d'une carte).
+    let cardRecipe: PipelinesCardRecipe?
+    /// Le crochet de recette `-stats.recipe` de la section Statistiques.
+    let statsRecipe: IOSStatsRecipe?
     /// Le crochet de recette `-pipelines.board` de l'écran Pipelines.
     let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
 
@@ -31,7 +38,7 @@ struct IOSSectionView: View {
     var body: some View {
         if section == .kanban {
             PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe,
-                            boardRecipe: pipelinesBoardRecipe)
+                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe)
         } else if section == .sessions {
@@ -45,12 +52,10 @@ struct IOSSectionView: View {
 
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(section.title)
-                .font(.title2)
             if section == .project {
                 IOSProjectScreen(client: client)
             } else if section == .stats {
-                IOSStatsScreen(client: client)
+                IOSStatsScreen(client: client, recipe: statsRecipe)
             } else {
                 if let status = content?.status {
                     IOSStatusChip(status: status)
@@ -66,7 +71,9 @@ struct IOSSectionView: View {
             }
         }
         .iosPanel()
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(section.title)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + section.rawValue)
     }
 

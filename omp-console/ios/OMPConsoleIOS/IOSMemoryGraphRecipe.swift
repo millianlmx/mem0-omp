@@ -66,7 +66,10 @@ enum IOSMemoryGraphRecipe: Equatable {
                 score: score(link.kind)
             )
         }
-        return RemoteMemoryGraphPayload(nodes: nodes, links: links, total: nodes.count)
+        // La portée de la charge : celle du premier nœud-souvenir qui en porte une,
+        // comme la coque la résout pour la route.
+        let scope = facts.nodes.first { $0.id.memoryId != nil && $0.scope != nil }?.scope
+        return RemoteMemoryGraphPayload(scope: scope, nodes: nodes, links: links, total: nodes.count)
     }
 
     /// L'état forcé : le graphe affiché sur la charge utile de la fixture, puis —

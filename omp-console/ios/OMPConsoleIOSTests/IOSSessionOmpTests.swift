@@ -25,6 +25,8 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     private(set) var promptCount = 0
     private(set) var lastPrompt: String?
     private(set) var answers: [(id: String, kind: String, value: String?, confirmed: Bool?)] = []
+    /// Le nombre de lectures du fil : une par `start()` effectif (AC-3).
+    private(set) var reads = 0
 
     var promptFailure: Error?
     /// La charge que `read(file:)` rend : le fil monté par `syncThread()` (AC-8).
@@ -90,6 +92,7 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     // MARK: - IOSSessionSource (le fil n'est pas éprouvé ici)
 
     func read(file: String) async throws -> RemoteSessionPayload {
+        reads += 1
         if let payload { return payload }
         return try decode(#"{"entries":[],"skipped":[],"truncated":false}"#)
     }
@@ -278,6 +281,36 @@ struct IOSSessionOmpTests {
         #expect(thread.state == .ready)
         #expect(thread.rows == reference.rows)
         #expect(thread.rows.count == 10)
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-3 : le fil hébergé se lit et s'abonne dès sa synchronisation, et reprend à sa réapparition")
+    func hostedThreadStartsWhenSynced() async throws {
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", sessionFile: "parity-session-1.jsonl")
+        )
+        client.payload = try decode(SessionParity.payloadJSON)
+        let model = IOSSessionOmpModel(client: client)
+
+        // L'écran monte le fil : aucune lecture explicite, `syncThread()` la lance.
+        model.syncThread()
+        let thread = try #require(model.thread)
+        for _ in 0..<200 where thread.isLoading { await Task.yield() }
+        #expect(!thread.isLoading)
+        #expect(thread.rows.count == 10)
+        #expect(client.reads == 1)
+
+        // Les synchronisations répétées (`onChange(of: client.hosted)`) ne relisent pas.
+        model.syncThread()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(client.reads == 1)
+
+        // L'écran disparaît puis réapparaît : le MÊME fil est relancé, une lecture de plus.
+        model.disappeared()
+        model.syncThread()
+        for _ in 0..<200 where client.reads < 2 { await Task.yield() }
+        #expect(client.reads == 2)
+        #expect(model.thread === thread)
     }
 
     @Test("ios-session-omp/AC-9 : un choix simple répond `kind:value` avec l'option choisie, en un seul appel")

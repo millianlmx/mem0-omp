@@ -22,7 +22,8 @@ struct IOSHomeTests {
         snapshot: HomeParity.snapshot,
         nowMs: 1_700_000_000_000,
         stateDir: "",
-        isAlive: .transported(HomeParity.snapshot)
+        isAlive: .transported(HomeParity.snapshot),
+        prFacts: [:]
     )
 
     private static var dashboard: HomeDashboard {
@@ -227,6 +228,34 @@ struct IOSHomeTests {
             sources: []
         )
         #expect(IOSHomeContent.deliveredLink(withoutPR) == nil)
+    }
+
+    @Test("pipelines-livrees-statut-pr-faux-et-doub/AC-1 : « Livrées récemment » porte l'état réel de la PR, la même dérivation que macOS")
+    func deliveredReadsThePullRequestState() {
+        let nowMs: Double = 1_700_000_000_000
+        let dayMs: Double = 86_400_000
+        func delivered(_ facts: [PullRequestFact]) -> [KanbanCard] {
+            let state = KanbanBoardState.derive(
+                snapshot: HomeParity.snapshot,
+                nowMs: nowMs,
+                stateDir: "",
+                isAlive: .transported(HomeParity.snapshot),
+                prFacts: PullRequestFacts.index(facts)
+            )
+            return state.kanbanBoard.map { HomePresentation.dashboard($0).delivered } ?? []
+        }
+        let urls = PullRequestFacts.urls(in: HomeParity.snapshot)
+        #expect(urls.count == 2)
+        // AC-4 : aucun fait reçu ⇒ « PR créée », jamais « PR ouverte ».
+        #expect(delivered([]).map { ConsoleStatus.of(card: $0).text } == ["PR créée", "PR créée"])
+        // AC-1 / AC-3 : fusionnée hier et ouverte.
+        let merged = PullRequestFact(url: urls[0], state: .merged, closedAtMs: nowMs - dayMs)
+        let open = PullRequestFact(url: urls[1], state: .open, closedAtMs: nil)
+        let fresh = delivered([merged, open])
+        #expect(Set(fresh.map { ConsoleStatus.of(card: $0).text }) == ["PR fusionnée", "PR ouverte"])
+        // AC-8 : fusionnée il y a 8 jours ⇒ hors de « Livrées récemment ».
+        let old = PullRequestFact(url: urls[0], state: .merged, closedAtMs: nowMs - 8 * dayMs)
+        #expect(delivered([old, open]).map(\.prUrl) == [urls[1]])
     }
 
     // MARK: - AC-14 : le lien « Tout afficher »
