@@ -36,6 +36,12 @@ final class KanbanModel: ObservableObject {
     @Published var technicalExpanded = false
     @Published var diagnosticTechnicalExpanded = false
 
+    /// Le registre des faits de PR (S-5) : l'ardoise est dérivée avec ses faits,
+    /// le flux distant les sert à iOS.
+    let prStates: PullRequestStateBook
+    /// Relais de `prStates.refreshing` : vrai pendant une relecture des PR.
+    @Published private(set) var prRefreshing = false
+
     /// La demande de feuille Contrat posée depuis la feuille de DÉTAIL (S-6) : la
     /// fenêtre ne présente jamais deux feuilles à la fois, donc le détail se ferme
     /// d'abord et la feuille Contrat n'est ouverte qu'à sa fermeture effective
@@ -49,10 +55,62 @@ final class KanbanModel: ObservableObject {
     private var hub: StoreHub
     private var task: Task<Void, Never>?
     private var hubStopped = false
+    /// Le dernier instantané lu : re-dérivé quand les faits de PR changent.
+    private var lastSnapshot: StoreSnapshot?
+    private var cancellables: Set<AnyCancellable> = []
 
-    init(hub: StoreHub = StoreHub()) {
+    /// `prStates` nil : le registre de production, lecteur `gh` résolu dans
+    /// `environment` (`OMP_CONSOLE_GH_BINARY` compris) ; `gh` introuvable donne un
+    /// registre SANS lecteur — aucun fait, toutes les PR restent « PR créée ».
+    init(
+        hub: StoreHub = StoreHub(),
+        prStates: PullRequestStateBook? = nil,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
         self.hub = hub
         self.makeHub = { StoreHub(stateDir: hub.stateDir, nowMs: hub.nowMs) }
+        self.prStates = prStates ?? Self.ghBook(environment: environment)
+        // `@Published` émet AVANT l'affectation : la valeur neuve vient du
+        // paramètre, jamais d'une relecture de la propriété.
+        self.prStates.$facts
+            .dropFirst()
+            .sink { [weak self] facts in self?.rederive(facts: facts) }
+            .store(in: &cancellables)
+        self.prStates.$refreshing
+            .sink { [weak self] refreshing in self?.prRefreshing = refreshing }
+            .store(in: &cancellables)
+    }
+
+    /// Le registre de production (aussi celui du banc de recette BR-4).
+    static func ghBook(environment: [String: String]) -> PullRequestStateBook {
+        switch GhBinary.resolve(environment: environment) {
+        case let .success(binary):
+            return PullRequestStateBook(reader: GhPullRequestStateReader(cli: GhCLI(binary: binary, timeout: 20)))
+        case .failure:
+            return PullRequestStateBook(reader: nil)
+        }
+    }
+
+    /// Rafraîchissement manuel (⌘R, route distante) : relance la lecture des PR
+    /// sans l'attendre ; sans effet pendant une relecture.
+    func refreshPullRequestStates() {
+        prStates.refresh()
+    }
+
+    /// La charge servie à iOS : les faits triés par URL et l'état de relecture.
+    func pullRequestStatesPayload() -> RemotePullRequestStatesPayload {
+        RemotePullRequestStatesPayload(
+            facts: prStates.facts.values.sorted { $0.url < $1.url },
+            refreshing: prStates.refreshing
+        )
+    }
+
+    /// « Les faits de PR ont changé » pour le flux distant : chaque fait publié ET
+    /// chaque bascule de relecture, jamais la valeur initiale.
+    func pullRequestStatesChanges() -> AnyPublisher<Void, Never> {
+        prStates.$facts.dropFirst().voidChanges()
+            .merge(with: prStates.$refreshing.dropFirst().voidChanges())
+            .eraseToAnyPublisher()
     }
 
     /// S'abonne au flux global en UNE tâche de longue durée. Idempotent.
@@ -63,11 +121,10 @@ final class KanbanModel: ObservableObject {
             hubStopped = false
         }
         let hub = self.hub
-        let stateDir = hub.stateDir
         task = Task { [weak self] in
             for await snapshot in hub.snapshots() {
                 guard let self else { return }
-                self.apply(snapshot, stateDir: stateDir)
+                self.apply(snapshot)
             }
         }
     }
@@ -143,13 +200,29 @@ final class KanbanModel: ObservableObject {
 
     /// Reconstruit l'ardoise pour un instantané neuf, et purge une sélection dont
     /// la carte a disparu du magasin (pas de détail fantôme : la feuille se ferme,
-    /// une confirmation d'arrêt en suspens aussi).
-    private func apply(_ snapshot: StoreSnapshot, stateDir: String) {
+    /// une confirmation d'arrêt en suspens aussi). Les URLs de PR du magasin sont
+    /// passées au registre : une URL jamais tentée est lue (S-5).
+    private func apply(_ snapshot: StoreSnapshot) {
+        lastSnapshot = snapshot
+        prStates.observe(urls: PullRequestFacts.urls(in: snapshot))
+        derive(snapshot, facts: prStates.facts)
+    }
+
+    private func rederive(facts: [String: PullRequestFact]) {
+        guard let snapshot = lastSnapshot else { return }
+        derive(snapshot, facts: facts)
+    }
+
+    private func derive(_ snapshot: StoreSnapshot, facts: [String: PullRequestFact]) {
+        // L'horloge du HUB, pas l'horloge murale : la borne des livraisons closes
+        // (`KanbanBoard.deliveredWindowMs`) se mesure dans le temps du magasin lu,
+        // celui qu'un test fixe.
         let next = KanbanBoardState.derive(
             snapshot: snapshot,
-            nowMs: StoreClock.live.nowMs(),
-            stateDir: stateDir,
-            isAlive: .processLocal
+            nowMs: hub.nowMs(),
+            stateDir: hub.stateDir,
+            isAlive: .processLocal,
+            prFacts: facts
         )
         state = next
         if let selected = selectedCardID, next.card(selected) == nil {

@@ -40,6 +40,7 @@ enum IOSHomeAccessibility {
     static let contractBody = "ios.home.contract.body"
     static let contractClose = "ios.home.contract.close"
     static let contractLoading = "ios.home.contract.loading"
+    static let contractFeature = "ios.home.contract.feature"
 
     static let welcomeSheet = "ios.home.welcome.sheet"
     static let welcomeContinue = "ios.home.welcome.continue"
@@ -63,11 +64,12 @@ enum IOSHomeContent {
         HomePresentation.attentionCount(omp: omp, board: board)
     }
 
-    /// Le badge VISIBLE d'une ligne de la liste racine : le compte d'attentes
-    /// seulement sur « Accueil » quand elle est la section affichée, sinon 0
-    /// (`.badge(0)` ne montre rien). Alimente le badge ET le libellé de la ligne.
-    static func rowBadge(for section: ConsoleSection, selection: ConsoleSection?, attentionCount: Int) -> Int {
-        section == .home && selection == .home && attentionCount > 0 ? attentionCount : 0
+    /// Le badge d'UNE ligne de la liste racine / barre latérale : le compte sur la
+    /// ligne « Accueil » seulement, 0 (pas de badge) ailleurs. Indépendant de la
+    /// section affichée : elle ne reçoit pas la sélection. Alimente le badge ET le
+    /// libellé d'accessibilité de la ligne.
+    static func rowBadge(for section: ConsoleSection, attentionCount: Int) -> Int {
+        section == .home && attentionCount > 0 ? attentionCount : 0
     }
 
     /// La bienvenue est due à la première ouverture de l'Accueil (S-15).
@@ -133,6 +135,27 @@ enum IOSHomeContent {
         card.id.split(separator: ":").last.map(String.init) ?? card.title
     }
 
+    /// Les blocs Markdown du CORPS d'une section : la première ligne du texte (la
+    /// ligne « ## <titre> », que `ContractDocument.section` inclut) est retirée.
+    /// nil ⇔ section absente (`section.text == nil`).
+    static func contractBlocks(_ section: ContractSection) -> [MarkdownBlock]? {
+        guard let text = section.text else { return nil }
+        // La fin de la première ligne : `isNewline` couvre aussi « \r\n », qui
+        // forme UN seul caractère Swift.
+        let rest = text.firstIndex(where: \.isNewline).map { String(text[text.index(after: $0)...]) } ?? ""
+        if rest.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return [] }
+        return MarkdownDocument.blocks(rest)
+    }
+
+    /// Un message court rendu en Markdown EN LIGNE : le code en ligne passe en
+    /// chasse fixe, sans accents graves ; les espaces et retours restent tels quels.
+    static func inlineMarkdown(_ text: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(text)
+    }
+
     /// Le message EXACT d'un échec de geste (S-9) : le message de l'API, jamais
     /// recomposé. Les causes locales ont un mot iOS.
     static func failure(_ error: Error) -> String {
@@ -143,6 +166,7 @@ enum IOSHomeContent {
         case .decoding(let reason): return reason
         case .notConnected: return IOSHomeText.notConnected
         case .incompatibleProtocol: return IOSHomeText.incompatibleProtocol
+        case .unexpectedStatus(let status): return IOSMacErrorText.message(for: IOSMacFailure.of(status: status))
         }
     }
 }

@@ -159,7 +159,7 @@ private func makeStack(
     )
     await registry.load()
     let stats = StatsModel(stateDir: root)
-    let kanban = KanbanModel(hub: hub)
+    let kanban = KanbanModel(hub: hub, prStates: PullRequestStateBook(reader: nil))
     let actions = ActionsModel()
     let session = SessionConsoleModel()
     let memory = ScriptedMemoryService()

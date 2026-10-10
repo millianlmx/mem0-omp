@@ -100,11 +100,11 @@ struct HomeView: View {
         .onAppear { presentRecipeSheet() }
     }
 
-    /// Le crochet `-home.recipe answer|contract` ouvre sa feuille sur la carte de
+    /// Le crochet `-home.recipe answer|contract|contractLong` ouvre sa feuille sur la carte de
     /// la fixture partagée : une capture montre alors un chemin de code réel.
     private func presentRecipeSheet() {
         guard let recipe, let card = recipe.sheetCard else { return }
-        if recipe == .contract {
+        if recipe == .contract || recipe == .contractLong {
             contractCard = SelectedCard(card: card)
         } else {
             answerCard = SelectedCard(card: card)
@@ -221,8 +221,14 @@ struct HomeView: View {
             HStack(alignment: .firstTextBaseline) {
                 Text(HomeText.attentionHeader).font(.title2.bold())
                 Spacer()
-                Button(HomeText.allPipelines) { onSelectSection(IOSHomeContent.allPipelinesSection) }
-                    .accessibilityIdentifier(IOSHomeAccessibility.allPipelines)
+                Button {
+                    onSelectSection(IOSHomeContent.allPipelinesSection)
+                } label: {
+                    Text(HomeText.allPipelines)
+                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityIdentifier(IOSHomeAccessibility.allPipelines)
             }
             if dashboard.attention.isEmpty {
                 emptyLine(HomeText.attentionEmpty)
@@ -290,15 +296,21 @@ struct HomeView: View {
                     }
                 }
             }
-            Text(card.title).font(.headline)
+            Text(IOSHomeText.featureName(card.title)).font(.headline).accessibilityLabel(card.title)
             if showsRepo {
                 Text(card.repo).font(.callout).foregroundStyle(.secondary)
             }
             Text(attention.prompt).font(.body)
             HStack(spacing: 8) {
                 if ContractDocument.moment(for: card) != nil {
-                    Button(ContractText.open) { contractCard = SelectedCard(card: card) }
-                        .accessibilityIdentifier(IOSHomeAccessibility.attentionContract(card.id))
+                    Button {
+                        contractCard = SelectedCard(card: card)
+                    } label: {
+                        Text(ContractText.open)
+                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .accessibilityIdentifier(IOSHomeAccessibility.attentionContract(card.id))
                 }
                 attentionButton(attention, prominent: prominent)
             }
@@ -385,8 +397,9 @@ struct HomeView: View {
     private func runningRowLine(_ card: KanbanCard, showsRepo: Bool) -> some View {
         rowLayout {
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.title)
+                Text(IOSHomeText.featureName(card.title))
                     .font(.body.weight(.medium))
+                    .accessibilityLabel(card.title)
                     .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
                 if let subtitle = HomeText.cardSubtitle(
                     card,
@@ -445,7 +458,8 @@ struct HomeView: View {
         let link = IOSHomeContent.deliveredLink(card)
         return rowLayout {
             VStack(alignment: .leading, spacing: 2) {
-                Text(card.title)
+                Text(IOSHomeText.featureName(card.title))
+                    .accessibilityLabel(card.title)
                     .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
                 if showsRepo {
                     Text(card.repo).foregroundStyle(.secondary)

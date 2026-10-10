@@ -99,11 +99,15 @@ final class RemoteStreamHub {
     private let components: @MainActor () -> RemoteComponentsPayload
     /// Le journal des gestes (S-5), fourni par le modèle d'actions.
     private let journal: @MainActor () -> [ActionJournalEntry]
+    /// Les faits de PR de l'ardoise (S-6 de pipelines-livrees), fournis par
+    /// `KanbanModel`.
+    private let pullRequestStates: @MainActor () -> RemotePullRequestStatesPayload
     /// Les changements réels — un seul abonnement par évènement, comme les autres
     /// sources : l'instantané initial part à l'activation, ces flux ne poussent
     /// que sur mutation.
     private let componentsChanges: AnyPublisher<Void, Never>
     private let journalChanges: AnyPublisher<Void, Never>
+    private let pullRequestStatesChanges: AnyPublisher<Void, Never>
 
     private var subscribers: [UUID: Subscriber] = [:]
     private var tasks: [Task<Void, Never>] = []
@@ -122,7 +126,11 @@ final class RemoteStreamHub {
         },
         journal: @escaping @MainActor () -> [ActionJournalEntry] = { [] },
         componentsChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
-        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
+        journalChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher(),
+        pullRequestStates: @escaping @MainActor () -> RemotePullRequestStatesPayload = {
+            RemotePullRequestStatesPayload(facts: [], refreshing: false)
+        },
+        pullRequestStatesChanges: AnyPublisher<Void, Never> = Empty<Void, Never>(completeImmediately: false).eraseToAnyPublisher()
     ) {
         self.storeHub = storeHub
         self.registry = registry
@@ -133,6 +141,8 @@ final class RemoteStreamHub {
         self.journal = journal
         self.componentsChanges = componentsChanges
         self.journalChanges = journalChanges
+        self.pullRequestStates = pullRequestStates
+        self.pullRequestStatesChanges = pullRequestStatesChanges
     }
 
     // MARK: - Abonnements
@@ -157,9 +167,11 @@ final class RemoteStreamHub {
         deliver(subscriber, SSE.frame("conduite", RemoteActions.conduitePayload(project)))
         registry.markConnected(subscriber.deviceId, true)
         // APRÈS `devices` (publié par `markConnected` via `changeHandler`) : l'ordre
-        // d'ouverture est `hello`, `store`, `devices`, `components`, `journal` (S-4).
+        // d'ouverture est `hello`, `store`, `conduite`, `devices`, `components`,
+        // `journal`, `pull-request-states` (S-4, S-6).
         deliver(subscriber, SSE.frame("components", components()))
         deliver(subscriber, SSE.frame("journal", RemoteJournalPayload(entries: journal())))
+        deliver(subscriber, SSE.frame("pull-request-states", pullRequestStates()))
         refreshWatchedRuns()
     }
 
@@ -241,6 +253,15 @@ final class RemoteStreamHub {
             for await _ in journal.values {
                 guard let self else { return }
                 self.broadcast(SSE.frame("journal", RemoteJournalPayload(entries: self.journal())))
+            }
+        })
+        // Faits de PR (S-6 de pipelines-livrees) : la charge complète à chaque
+        // fait publié et à chaque bascule de relecture.
+        let pullRequestStates = pullRequestStatesChanges
+        tasks.append(Task { @MainActor [weak self] in
+            for await _ in pullRequestStates.values {
+                guard let self else { return }
+                self.broadcast(SSE.frame("pull-request-states", self.pullRequestStates()))
             }
         })
 

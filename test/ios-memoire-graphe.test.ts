@@ -155,10 +155,8 @@ function sharedKernelFaults(root: string): string[] {
   }
   if (declares(shell, "MemoryGraph")) faults.push("OMPConsole déclare encore MemoryGraph");
   const reads = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift"));
-  if (!reads.includes("func memoryGraph(scope: String?)")) faults.push("RemoteReads.memoryGraph(scope:) absent");
-  if (!reads.includes("let scope = (scope?.isEmpty == false) ? scope : nil")) {
-    faults.push("memoryGraph ne sert pas toutes les portées sans scope");
-  }
+  const head = "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = await resolvedScope(scope)";
+  if (!reads.includes(head)) faults.push("memoryGraph ne lit pas la seule portée résolue");
   if (!reads.includes("MemoryGraph.nodes(rows:")) faults.push("memoryGraph ne dérive pas par le noyau partagé");
   if (!reads.includes("MemoryGraphWire.id(")) faults.push("memoryGraph n'émet pas par le vocabulaire du fil");
   const router = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteRouter.swift"));
@@ -171,11 +169,11 @@ test("ios-memoire-graphe/AC-1 : le Mac sert le graphe complet d'une base par le 
   const copy = copyRepo();
   const target = path.join(copy, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteReads.swift");
   const text = fs.readFileSync(target, "utf8").replace(
-    "let scope = (scope?.isEmpty == false) ? scope : nil",
-    "let scope = await resolvedScope(scope)"
+    "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = await resolvedScope(scope)",
+    "    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {\n        let scope = (scope?.isEmpty == false) ? scope : nil"
   );
   fs.writeFileSync(target, text);
-  assert.ok(sharedKernelFaults(copy).length > 0, "un repli sur le projet courant doit faire rougir la garde");
+  assert.ok(sharedKernelFaults(copy).length > 0, "servir toutes les portées doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------
@@ -339,7 +337,7 @@ function captureFaults(root: string): string[] {
   const faults: string[] = [];
   const scriptPath = path.join(root, "scripts", "ios-shots.sh");
   const script = fs.existsSync(scriptPath) ? fs.readFileSync(scriptPath, "utf8") : "";
-  for (const token of ["memoire_recipes=(graphe zoom fiche)", "-memoire.recipe", "memoire-graphe$suffix", '"100"']) {
+  for (const token of ["memoire_recipes=(graphe zoom fiche)", "-memoire.recipe", "memoire-graphe$suffix", '"112"']) {
     if (!script.includes(token)) faults.push(`ios-shots.sh ne porte pas ${token}`);
   }
   const guardPath = path.join(root, "test", "design-ios.test.ts");

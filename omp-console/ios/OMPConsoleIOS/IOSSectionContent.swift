@@ -12,7 +12,7 @@ struct IOSSectionContent: Equatable {
     let section: ConsoleSection
     /// Toujours `section.title` (ConsoleCore).
     let title: String
-    /// Toujours `section.systemImage` (ConsoleCore).
+    /// Le symbole iOS de la section (`IOSSection.systemImage(of:)`).
     let systemImage: String
     /// Le mot de l'état vide, mot pour mot celui de la coque macOS.
     let message: String
@@ -36,7 +36,7 @@ struct IOSSectionContent: Equatable {
             IOSSectionContent(
                 section: section,
                 title: section.title,
-                systemImage: section.systemImage,
+                systemImage: IOSSection.systemImage(of: section),
                 message: message,
                 detail: detail,
                 status: status,

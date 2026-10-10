@@ -293,14 +293,14 @@ func normalPairingIsNotADuplicate() throws {
 func boardStateDistinguishesAbsentEmptyAndBoard() async {
     // (a) RACINE ABSENTE : aucun répertoire n'est créé.
     let absent = StoreFixture(stores: [])
-    let absentModel = KanbanModel(hub: StoreHub(stateDir: absent.root, nowMs: { fixtureT0 }))
+    let absentModel = KanbanModel(hub: StoreHub(stateDir: absent.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { absentModel.stop() }
     absentModel.start()
     #expect(await awaitMainTrue { absentModel.state == .storeAbsent(dir: absent.root) })
 
     // (b) MAGASIN VIDE : la racine et ses six répertoires existent, aucun fichier.
     let empty = StoreFixture()
-    let emptyModel = KanbanModel(hub: StoreHub(stateDir: empty.root, nowMs: { fixtureT0 }))
+    let emptyModel = KanbanModel(hub: StoreHub(stateDir: empty.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { emptyModel.stop() }
     emptyModel.start()
     #expect(await awaitMainTrue { emptyModel.state == .storeEmpty(dir: empty.root) })
@@ -309,7 +309,7 @@ func boardStateDistinguishesAbsentEmptyAndBoard() async {
     // les anomalies ne sont jamais tues.
     let illisible = StoreFixture()
     illisible.put(.running, "\(fixtureId(0xe7)).json", text: "{\"version\":1,")
-    let illisibleModel = KanbanModel(hub: StoreHub(stateDir: illisible.root, nowMs: { fixtureT0 }))
+    let illisibleModel = KanbanModel(hub: StoreHub(stateDir: illisible.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { illisibleModel.stop() }
     illisibleModel.start()
     #expect(await awaitMainTrue { illisibleModel.state.kanbanBoard != nil })
@@ -321,7 +321,7 @@ func boardStateDistinguishesAbsentEmptyAndBoard() async {
 @Test("kanban-des-pipelines/AC-14 : une racine créée pendant la session cesse d'être « absente »")
 func rootAppearingDuringTheSessionIsSeen() async {
     let fixture = StoreFixture(stores: [])
-    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }))
+    let model = KanbanModel(hub: StoreHub(stateDir: fixture.root, nowMs: { fixtureT0 }), prStates: PullRequestStateBook(reader: nil))
     defer { model.stop() }
     model.start()
     #expect(await awaitMainTrue { model.state == .storeAbsent(dir: fixture.root) })

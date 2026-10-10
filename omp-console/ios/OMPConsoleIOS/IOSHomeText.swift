@@ -41,7 +41,15 @@ enum IOSHomeText {
 
     // --- feuille Contrat (S-14) -----------------------------------------------
 
+    static let contractNavigationTitle = "Contrat"
     static let contractLoading = "Chargement du contrat…"
+    static let contractSectionEmpty = "Cette section est vide."
+
+    /// Une section requise absente du contrat : le titre entre guillemets
+    /// français, sans la syntaxe Markdown du texte partagé de macOS.
+    static func contractSectionMissing(title: String) -> String {
+        "La section « \(title) » est absente du contrat."
+    }
 
     // --- échecs des gestes (S-9, S-13, S-14) ----------------------------------
 
@@ -98,5 +106,18 @@ enum IOSHomeText {
         case .milestoneSpecs: "doc.text.magnifyingglass"
         case .milestoneReview: "checkmark.seal.fill"
         }
+    }
+
+    // --- nom de feature (ios-finitions-titres-icones, S-7) --------------------
+
+    /// Le nom d'une feature, prêt à se replier sur plusieurs lignes SANS jamais finir
+    /// une ligne par un tiret. UAX #14 : la coupure est permise APRÈS U+002D (le
+    /// trait d'union n'accepte pas de coupure avant lui), jamais après U+2011
+    /// (classe GL, LB12), et toujours après U+200B (classe ZW, LB8). Chaque `-`
+    /// devient donc `U+200B U+2011` : l'unique occasion de coupure tombe AVANT le
+    /// tiret. Le glyphe de U+2011 est celui du tiret ordinaire ; VoiceOver lit le
+    /// nom d'origine par `.accessibilityLabel`.
+    static func featureName(_ name: String) -> String {
+        name.replacingOccurrences(of: "-", with: "\u{200B}\u{2011}")
     }
 }
