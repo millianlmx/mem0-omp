@@ -66,6 +66,9 @@ struct ConsoleRootView: View {
     let sessionModel: SessionConsoleModel
     let terminalModel: TerminalConsoleModel
     let statsModel: StatsModel
+    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
+    /// (S-2 de mac-etats-vides-sans-issue), à l'échelle de l'app.
+    let projectChooser: ProjectChooserModel
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -159,7 +162,8 @@ struct ConsoleRootView: View {
                 setup: setup,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
-                statsModel: statsModel
+                statsModel: statsModel,
+                projectChooser: projectChooser
             )
             // Le titre de la fenêtre EST la section courante (HIG Toolbars : ne
             // pas titrer une fenêtre du nom de l'app). Aucune vue de section ne

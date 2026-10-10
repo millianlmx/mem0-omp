@@ -216,24 +216,13 @@ final class RemoteActions {
     /// dédupliqués par chemin puis triés. La clé est celle du pilote
     /// (`KanbanRepoKey`, seule implémentation), jamais recalculée.
     func knownRepos() -> [RemoteRepoRow] {
-        let snapshot = hub.current()
-        var roots = Set<String>()
-        for lot in snapshot.lots.lots where !lot.repoRoot.isEmpty {
-            roots.insert(realpathOr(lot.repoRoot))
+        KnownProjects.roots(in: hub.current()).map { path in
+            RemoteRepoRow(
+                repoKey: KanbanRepoKey.key(forRoot: path),
+                repoRoot: path,
+                name: (path as NSString).lastPathComponent
+            )
         }
-        for project in snapshot.projects.projects where !project.repoRoot.isEmpty {
-            roots.insert(realpathOr(project.repoRoot))
-        }
-        return roots
-            .filter { LaunchRepo.isGitRoot(path: $0) }
-            .sorted()
-            .map { path in
-                RemoteRepoRow(
-                    repoKey: KanbanRepoKey.key(forRoot: path),
-                    repoRoot: path,
-                    name: (path as NSString).lastPathComponent
-                )
-            }
     }
 
     /// L'état réduit de la conduite (S-11, S-9) : même source que l'en-tête macOS,

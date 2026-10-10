@@ -55,6 +55,10 @@ struct OMPConsoleApp: App {
     /// il possède le registre des appareils, l'interrupteur persistant et la
     /// feuille d'appairage.
     @StateObject private var remoteModel: RemoteServiceModel
+    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
+    /// (S-2 de mac-etats-vides-sans-issue) : à l'échelle de l'app, il écrit par
+    /// la session et lit les projets connus dans le magasin du service d'API.
+    @StateObject private var projectChooser: ProjectChooserModel
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     /// Un `ActionsModel` pour l'app : il poste au service les gestes des cartes
@@ -67,6 +71,14 @@ struct OMPConsoleApp: App {
         _kanbanModel = StateObject(wrappedValue: kanban)
         let session = SessionConsoleModel()
         _sessionModel = StateObject(wrappedValue: session)
+        // UN magasin pour la liste des projets connus : celui que le service
+        // d'API sert par `GET /v1/repos`, donc le sélecteur des états vides
+        // montre exactement la même liste, sans seconde veille.
+        let storeHub = StoreHub()
+        _projectChooser = StateObject(wrappedValue: ProjectChooserModel(
+            session: session,
+            knownRoots: { KnownProjects.roots(in: storeHub.current()) }
+        ))
         let project = ProjectConsoleModel()
         _projectModel = StateObject(wrappedValue: project)
         let stats = StatsModel()
@@ -84,7 +96,7 @@ struct OMPConsoleApp: App {
         // sert à distance est l'état que la fenêtre montre. Il démarre à
         // l'apparition de la racine ET sur `onReady` (S-14).
         let remote = RemoteServiceModel(
-            storeHub: StoreHub(),
+            storeHub: storeHub,
             kanban: kanban,
             actions: actions,
             session: session,
@@ -141,7 +153,8 @@ struct OMPConsoleApp: App {
                 remote: remoteModel,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
-                statsModel: statsModel
+                statsModel: statsModel,
+                projectChooser: projectChooser
             )
         }
         .commands {

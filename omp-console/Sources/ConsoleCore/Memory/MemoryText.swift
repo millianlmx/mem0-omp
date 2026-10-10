@@ -16,7 +16,7 @@ public enum MemoryText {
 
     // États
     public static let noProjectTitle = "Aucun projet ouvert"
-    public static let noProjectDescription = "Choisissez un projet dans la section « Session OMP » (⌘4)."
+    public static let noProjectDescription = "Choisissez le projet dont vous voulez consulter la mémoire."
     public static let unavailableTitle = "Mémoire indisponible"
     public static let unavailableDescription = "Le service de mémoire ne répond pas. Vérifiez qu'il est démarré, puis réessayez."
     public static let retry = "Réessayer"
