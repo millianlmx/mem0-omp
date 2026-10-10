@@ -76,6 +76,14 @@ enum PipelinesText {
     static let recipeShortNeed = "Exporter les souvenirs du projet au format CSV."
     /// Douze lignes « Ligne <n> du besoin. » : plus que les huit que la zone montre.
     static let recipeLongNeed = (1...12).map { "Ligne \($0) du besoin." }.joined(separator: "\n")
+
+    // MARK: - Recette `-pipelines.board` (crochet de mesure, pas une fonctionnalité)
+
+    /// Le drapeau de l'ardoise forcée (`IOSPipelinesBoardRecipe`).
+    static let boardRecipeFlag = "-pipelines.board"
+    /// Le signal de prêt écrit sur la sortie d'erreur au premier affichage de
+    /// l'ardoise forcée.
+    static let boardRecipeReady = "pipelines-board-ready"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées

@@ -34,6 +34,10 @@ marqueur `[test: <fonction>]` (une fonction de
 - Trois surfaces seulement, et rien d'autre : `iosPanel()` pour le panneau d'un
   écran, `iosCard()` pour la carte d'un état vide, `iosBanner(tone:)` pour un
   bandeau. `[garde: design-ios/AC-1]`
+- La carte de l'écran Pipelines est la même surface en relief,
+  `iosCard(raised: true)` : fond `tertiarySystemGroupedBackground`, identique au
+  panneau en clair et plus clair que lui en sombre.
+  `[test: raisedCardStandsOutOnlyInDark]` `[capture: ipad-kanban-dark]`
 - Chaque écran des sept sections pose son contenu sur `iosPanel()`. `[capture: iphone-*-light]`
 - Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
   régulier), fixe — c'est la marge de l'écran, le rembourrage intérieur seul suit
@@ -167,8 +171,14 @@ marqueur `[test: <fonction>]` (une fonction de
   visite : leur en-tête, un bouton de 44 pt (`pipelines.lane.<voie>.header`,
   valeur d'accessibilité « replié »/« déplié »), les déplie et les replie ;
   l'état n'est pas mémorisé d'une visite à l'autre. `[test: compactFoldsTerminalLanes]`
-- En largeur RÉGULIÈRE (iPad), l'ardoise est inchangée : voies permanentes même
-  vides, voies terminales dépliées. `[test: regularKeepsLanesUnchanged]`
+- En largeur RÉGULIÈRE (iPad), voies permanentes même vides et voies terminales
+  dépliées ; chaque voie a la même largeur, `IOSMetrics.laneWidth` (280 pt) mise à
+  l'échelle par Dynamic Type et plafonnée à la largeur visible moins la marge de
+  fin ; voies alignées en haut ; le défilement horizontal finit sur une marge
+  `IOSMetrics.margin`. `[test: laneWidthNeverExceedsTheViewport]` `[test: regularKeepsLanesUnchanged]`
+- L'en-tête d'une voie (symbole, titre, compteur) s'empile aux tailles
+  d'accessibilité, sur iPad comme sur iPhone, et son titre n'est jamais tronqué.
+  `[test: laneHeaderStacksAtAccessibilitySizes]`
 - L'écran ne fabrique aucune donnée : Mac injoignable sans instantané, il affiche
   un état déconnecté explicite (`PipelinesText.noSnapshot`) ; un magasin vide
   affiche le mot partagé `KanbanText.noPipeline`. `[test: noSnapshotWordIsNotTheStoreWord]`
@@ -180,6 +190,12 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+- Une carte n'a de ligne d'action que si elle porte une adresse de PR ouvrable :
+  un filet espacé sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
+  d'au moins 44 pt, sa taille de texte bornée à `.accessibility3` ; une carte
+  sans PR n'a ni filet ni espace réservé. Une carte est rigide en hauteur : dans
+  la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
+  ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
 - Dans la feuille « Nouvelle feature », le sélecteur de dépôt montre le NOM du
   dossier (jamais un chemin absolu), complété par les derniers segments du
   parent pour les seuls homonymes ; la valeur lancée reste la racine complète.

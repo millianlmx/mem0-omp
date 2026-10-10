@@ -23,6 +23,12 @@ enum IOSMetrics {
     /// cadre de mise en page est plus large). Mise à l'échelle par
     /// `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
     static let phaseIconWidth: CGFloat = 28
+    /// La largeur d'une voie de l'écran Pipelines en largeur régulière (iPad), à
+    /// la taille de référence `.body` : la même pour toutes les voies, vides ou
+    /// pleines, jamais tirée de leur contenu. Mise à l'échelle par
+    /// `@ScaledMetric`, elle grandit avec Dynamic Type ; `PipelinesModel.laneWidth`
+    /// la plafonne à la largeur visible.
+    static let laneWidth: CGFloat = 280
     /// La hauteur d'un champ de saisie vertical (le besoin d'une feature), en
     /// LIGNES : 3 à vide, il grandit avec le texte jusqu'à 8, puis défile dans le
     /// champ. Aucun point : la hauteur suit la taille de police (Dynamic Type).
