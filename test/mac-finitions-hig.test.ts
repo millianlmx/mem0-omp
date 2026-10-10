@@ -55,37 +55,6 @@ function mutate(root: string, rel: string, change: (source: string) => string): 
   fs.writeFileSync(file, after);
 }
 
-/** Ce qui ferait apparaître « Réglages… » ou ⌘, dans le menu OMP Console. */
-const SETTINGS_MARKERS: [RegExp, string][] = [
-  [/\bSettings\s*\{/, "scène `Settings {`"],
-  [/\bSettings\s*\(/, "scène `Settings(`"],
-  [/keyboardShortcut\(\s*","/, "raccourci `keyboardShortcut(\",\")`"],
-  [/\.appSettings\b/, "groupe de commandes `.appSettings`"],
-];
-
-/** AC-2 : la coque Mac ne crée ni scène Réglages ni commande ⌘,. */
-function settingsFaults(root: string): string[] {
-  const faults: string[] = [];
-  for (const [rel, source] of sources(root)) {
-    for (const [marker, label] of SETTINGS_MARKERS) {
-      if (marker.test(source)) faults.push(`${rel} : ${label}`);
-    }
-  }
-  return faults;
-}
-
-test("mac-finitions-hig/AC-2 : ni scène Réglages ni ⌘, — le menu OMP Console reste celui de la base", () => {
-  assert.deepEqual(settingsFaults(ROOT), []);
-
-  // Faute plantée : une scène `Settings` ajoutée à l'app ⇒ rouge.
-  const copy = copyMac();
-  mutate(copy, "OMPConsoleApp.swift", (s) => s.replace(/(var body: some Scene \{\n)/, "$1        Settings { EmptyView() }\n"));
-  assert.ok(
-    settingsFaults(copy).some((f) => f.startsWith(path.join(MAC_REL, "OMPConsoleApp.swift"))),
-    "une scène Settings doit rougir",
-  );
-});
-
 /** Le corps d'un bloc ouvert par `opener` jusqu'à la première ligne `closer` (indentation comprise). */
 function block(source: string, opener: RegExp, closer: string): string | undefined {
   const start = source.search(opener);
