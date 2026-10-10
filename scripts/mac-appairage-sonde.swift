@@ -1,27 +1,40 @@
-// Sonde AX de la recette de la feuille d'appairage (S-10, lot BR-4 de
-// mac-feuille-appairage-debordante), pilotée par scripts/mac-appairage-recette.sh.
+// Sonde AX de la recette des Réglages › Appareils (S-6, lot BR-4 de
+// reglages-mac-appareils), pilotée par scripts/mac-appairage-recette.sh.
 //
-// Elle lit et presse la feuille « Appairage » d'une instance de recette lancée en
-// arrière-plan, SANS jamais l'activer : aucun CGEvent, aucun redimensionnement,
-// aucun interrupteur. Tout passe par l'API d'accessibilité (`AXUIElement…`).
+// Elle lit et presse le panneau Réglages (onglet « Appareils ») d'une instance de
+// recette lancée en arrière-plan, SANS jamais l'activer : aucun CGEvent, aucun
+// redimensionnement, aucun interrupteur. Tout passe par l'API d'accessibilité
+// (`AXUIElement…`), les fenêtres se comptent par CoreGraphics.
+//
+// Le « conteneur » est la fenêtre qui contient `settings.devices` ; à défaut
+// (bundle de la base, captures « avant »), l'`AXSheet` qui contient
+// `pairing.sheet`.
 //
 // Compilée une fois par `swiftc` (Command Line Tools seuls) dans le dossier
 // jetable de la recette ; chaque sous-commande écrit son résultat sur la sortie
-// standard (JSON pour `mesurer`) et rend 0 si elle a abouti, 1 sinon.
+// standard et rend 0 si elle a abouti, 1 sinon, 2 si l'arbre AX de l'app n'a
+// aucune fenêtre (Space plein écran, session verrouillée), 4 si la pression d'un
+// menu a mis l'instance de recette au premier plan (focus volé).
 //
 //   confiance                         « true » si l'Accessibilité est accordée (sinon 3)
-//   ouvrir <pid>                      « OMP Console › Appairage… », attend `pairing.sheet` ≤ 5 s
-//   mesurer <pid>                     cadres, lignes, textes de la feuille (JSON)
+//   plein-ecran                       0 (et le nom de l'app) si une fenêtre plein écran occupe l'écran, 1 sinon
+//   ouvrir <pid>                      « OMP Console › Appairage… », attend le conteneur ≤ 5 s (JSON)
+//   reglages <pid>                    « OMP Console › Réglages… », attend `settings.devices` ≤ 5 s (JSON)
+//   compter <pid> <titre>             nombre de fenêtres CG de calque 0 du pid titrées <titre>
+//   fermer <pid>                      bouton de fermeture de la fenêtre des Réglages, attend leur absence ≤ 2 s
+//   onglets <pid>                     titres des boutons de la barre d'outils des Réglages (JSON)
+//   mesurer <pid>                     cadres, lignes, textes du conteneur (JSON)
 //   defiler <pid> <0…1>               barre verticale de `pairing.devices.list`
 //   presser <pid> <identifiant>       AXPress de l'élément d'identifiant donné
-//   lire <pid> <identifiant>          AXValue (texte) de l'élément, 1 s'il est absent
+//   lire <pid> <identifiant>          AXValue (texte ou nombre) de l'élément, 1 s'il est absent
 //   attendre <pid> <id> present|absent <secondes>
 //   confirmer <pid>                   « Révoquer » de la confirmation de révocation
-//   fenetre <pid>                     CGWindowID de la feuille (pour screencapture -l)
+//   fenetre <pid>                     CGWindowID du conteneur (pour screencapture -l)
 //
-// Pièges mesurés (Doc-7 du contrat) : `AXWindows` peut être vide pour une app en
-// arrière-plan, d'où la lecture de `AXMainWindow` en plus ; un cadre hors écran
-// peut être infini, refusé par `JSONSerialization` : il est écarté.
+// Pièges mesurés : `AXWindows` peut être vide pour une app en arrière-plan, d'où
+// la lecture de `AXMainWindow` et des enfants de l'app en plus ; un cadre hors
+// écran peut être infini, refusé par `JSONSerialization` : il est écarté ; sur un
+// Space plein écran d'une autre app, l'instance de recette n'expose AUCUNE fenêtre.
 
 import AppKit
 import ApplicationServices
@@ -50,6 +63,13 @@ func children(_ element: AXUIElement) -> [AXUIElement] {
 
 func role(_ element: AXUIElement) -> String { string(element, kAXRoleAttribute) ?? "" }
 func identifier(_ element: AXUIElement) -> String { string(element, kAXIdentifierAttribute) ?? "" }
+
+/// Le libellé d'un contrôle : son titre, sinon sa description (les boutons d'une
+/// alerte et d'une barre d'outils n'ont souvent que la seconde).
+func label(_ element: AXUIElement) -> String {
+    if let title = string(element, kAXTitleAttribute), !title.isEmpty { return title }
+    return string(element, kAXDescriptionAttribute) ?? ""
+}
 
 func frame(_ element: AXUIElement) -> CGRect? {
     guard let position = attribute(element, kAXPositionAttribute),
@@ -101,7 +121,7 @@ func application(_ pid: pid_t) -> AXUIElement {
 /// Les fenêtres de l'app : `AXMainWindow`, `AXFocusedWindow`, `AXWindows` et les
 /// enfants `AXWindow`/`AXSheet` de l'app, sans doublon (en arrière-plan,
 /// `AXWindows` est souvent vide). `AXMainWindow` peut rendre l'app elle-même
-/// (MESURÉ, session verrouillée) : écartée.
+/// (MESURÉ, session verrouillée ou Space plein écran) : écartée.
 func windows(_ app: AXUIElement) -> [AXUIElement] {
     var found: [AXUIElement] = []
     func add(_ candidate: AXUIElement?) {
@@ -116,10 +136,9 @@ func windows(_ app: AXUIElement) -> [AXUIElement] {
     return found
 }
 
-/// Un élément absent à la première lecture est relu pendant `grace` secondes.
-/// À la revue, sur un Mac chargé, la feuille a été introuvable après l'échéance
-/// du code puis retrouvée plus tard, alors que l'app observée seule la garde
-/// affichée (« Code expiré ») : un « absent » isolé n'est pas une preuve.
+/// Un élément absent à la première lecture est relu pendant `grace` secondes :
+/// sur un Mac chargé, un élément affiché a déjà été introuvable un instant
+/// (MESURÉ) ; un « absent » isolé n'est pas une preuve.
 func steady(_ app: AXUIElement, id wanted: String, grace: Double = 5) -> AXUIElement? {
     var match: AXUIElement?
     _ = poll(seconds: grace) {
@@ -141,24 +160,53 @@ func find(_ app: AXUIElement, id wanted: String) -> AXUIElement? {
     return match
 }
 
-/// La feuille : l'`AXSheet` qui contient `pairing.sheet` (sinon l'élément lui-même).
-func sheet(_ app: AXUIElement) -> (container: AXUIElement, content: AXUIElement)? {
+/// Le conteneur des contrôles d'appairage : la fenêtre des Réglages qui contient
+/// `settings.devices` (« fenetre »), sinon l'`AXSheet` qui contient
+/// `pairing.sheet` (« feuille », bundle de la base).
+struct Panel {
+    let container: AXUIElement
+    let content: AXUIElement
+    let kind: String
+}
+
+func panel(_ app: AXUIElement) -> Panel? {
+    for window in windows(app) where role(window) == "AXWindow" {
+        var content: AXUIElement?
+        walk(window) { node in
+            if content != nil { return false }
+            if identifier(node) == "settings.devices" { content = node; return false }
+            return true
+        }
+        if let content { return Panel(container: window, content: content, kind: "fenetre") }
+    }
     for window in windows(app) {
-        var result: (AXUIElement, AXUIElement)?
+        var result: Panel?
         var sheets: [AXUIElement] = []
         walk(window) { node in
             if result != nil { return false }
             if role(node) == "AXSheet" { sheets.append(node) }
             if identifier(node) == "pairing.sheet" {
                 // Le dernier `AXSheet` ouvert sur le chemin est le conteneur.
-                result = (sheets.last ?? node, node)
+                result = Panel(container: sheets.last ?? node, content: node, kind: "feuille")
                 return false
             }
             return true
         }
-        if let result { return (result.0, result.1) }
+        if let result { return result }
     }
     return nil
+}
+
+/// Le nombre d'`AXSheet` attachées aux fenêtres de l'app (AC-10, AC-11 : aucune).
+func sheetCount(_ app: AXUIElement) -> Int {
+    var seen: [AXUIElement] = []
+    for window in windows(app) {
+        walk(window) { node in
+            if role(node) == "AXSheet", !seen.contains(where: { CFEqual($0, node) }) { seen.append(node) }
+            return true
+        }
+    }
+    return seen.count
 }
 
 func press(_ element: AXUIElement) -> Bool {
@@ -174,16 +222,34 @@ func poll(seconds: Double, _ condition: () -> Bool) -> Bool {
     return condition()
 }
 
-// MARK: - Écran (Doc-7 : AX en haut à gauche, NSScreen en bas à gauche)
+// MARK: - Premier plan
 
-func screenFrame(containing rect: CGRect?) -> CGRect? {
+/// Le pid de l'app au premier plan, lu en direct par l'élément système (le cache
+/// de `NSWorkspace.frontmostApplication` n'est pas rafraîchi sans boucle
+/// d'exécution).
+func frontmostPID() -> pid_t? {
+    let system = AXUIElementCreateSystemWide()
+    if let app = element(attribute(system, kAXFocusedApplicationAttribute)) {
+        var pid: pid_t = 0
+        if AXUIElementGetPid(app, &pid) == .success { return pid }
+    }
+    return NSWorkspace.shared.frontmostApplication?.processIdentifier
+}
+
+// MARK: - Écran (AX en haut à gauche, NSScreen en bas à gauche)
+
+func screenFrames() -> [CGRect] {
     let screens = NSScreen.screens
-    guard let primary = screens.first else { return nil }
+    guard let primary = screens.first else { return [] }
     let primaryHeight = primary.frame.height
-    let converted = screens.map { screen -> CGRect in
+    return screens.map { screen -> CGRect in
         let f = screen.frame
         return CGRect(x: f.origin.x, y: primaryHeight - (f.origin.y + f.height), width: f.width, height: f.height)
     }
+}
+
+func screenFrame(containing rect: CGRect?) -> CGRect? {
+    let converted = screenFrames()
     if let rect {
         let center = CGPoint(x: rect.midX, y: rect.midY)
         if let hit = converted.first(where: { $0.contains(center) }) { return hit }
@@ -191,11 +257,27 @@ func screenFrame(containing rect: CGRect?) -> CGRect? {
     return converted.first
 }
 
+// MARK: - CoreGraphics
+
+func cgWindows(of pid: pid_t, options: CGWindowListOption = [.optionAll]) -> [[String: Any]] {
+    let list = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
+    return list.filter {
+        ($0[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) == pid
+            && ($0[kCGWindowLayer as String] as? Int) == 0
+    }
+}
+
+func bounds(_ info: [String: Any]) -> CGRect {
+    guard let dict = info[kCGWindowBounds as String] as? NSDictionary,
+          let rect = CGRect(dictionaryRepresentation: dict) else { return .zero }
+    return rect
+}
+
 // MARK: - Sous-commandes
 
-func fail(_ message: String) -> Never {
+func fail(_ message: String, code: Int32 = 1) -> Never {
     FileHandle.standardError.write(Data((message + "\n").utf8))
-    exit(1)
+    exit(code)
 }
 
 func emit(_ object: Any) {
@@ -211,8 +293,49 @@ func pid(_ arguments: [String], _ index: Int) -> pid_t {
     return value
 }
 
-func open(_ app: AXUIElement) {
-    if sheet(app) != nil { emit(["ouverte": true, "deja": true]); exit(0) }
+/// Un Space plein écran : une fenêtre de calque 0 à l'écran, de toute la largeur
+/// d'un écran et jusqu'à son bas, haute d'au moins l'écran moins l'encoche, et
+/// seule app à avoir des fenêtres de calque 0 à l'écran (MESURÉ, cmux plein
+/// écran sur un écran 1728 × 1117 : fenêtre (0, 33, 1728 × 1084), sous la seule
+/// barre de menus). L'instance de recette n'aurait alors aucune fenêtre accessible.
+func fullScreen() {
+    let frames = screenFrames()
+    let onScreen = ((CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+        as? [[String: Any]]) ?? []).filter { ($0[kCGWindowLayer as String] as? Int) == 0 }
+    let owners = Set(onScreen.compactMap { $0[kCGWindowOwnerPID as String] as? Int })
+    guard owners.count == 1 else { exit(1) }
+    for info in onScreen {
+        let rect = bounds(info)
+        let covers = frames.contains { screen in
+            rect.minX == screen.minX && rect.width == screen.width
+                && rect.maxY == screen.maxY && rect.height >= screen.height - 60
+        }
+        if covers {
+            print(info[kCGWindowOwnerName as String] as? String ?? "?")
+            exit(0)
+        }
+    }
+    exit(1)
+}
+
+/// Le rapport d'une ouverture : conteneur trouvé, feuilles attachées, titre.
+func report(_ app: AXUIElement, _ found: Panel, already: Bool, front: (pid_t?, pid_t?)) {
+    // Une feuille éventuelle s'attache avec l'ouverture : on lui laisse le temps.
+    Thread.sleep(forTimeInterval: 0.5)
+    emit([
+        "ouverte": true,
+        "deja": already,
+        "conteneur": found.kind,
+        "feuilles": sheetCount(app),
+        "titre": found.kind == "fenetre" ? (string(found.container, kAXTitleAttribute) ?? "") : "",
+        "premierPlanAvant": front.0.map { Int($0) } ?? NSNull(),
+        "premierPlanApres": front.1.map { Int($0) } ?? NSNull(),
+    ])
+}
+
+/// Presse l'item `title` du menu de l'app, puis attend `ready` ≤ 5 s. Le premier
+/// plan est relevé avant et après : l'instance de recette au premier plan ⇒ 4.
+func pressAppMenu(_ pid: pid_t, _ app: AXUIElement, title: String, until ready: () -> Panel?) -> (Panel, (pid_t?, pid_t?)) {
     guard let bar = element(attribute(app, kAXMenuBarAttribute)) else { fail("barre de menus illisible") }
     let menus = children(bar)
     guard let appMenu = menus.first(where: { string($0, kAXTitleAttribute) == "OMP Console" }) else {
@@ -222,31 +345,85 @@ func open(_ app: AXUIElement) {
     var item: AXUIElement?
     walk(appMenu) { node in
         if item != nil { return false }
-        if role(node) == "AXMenuItem", string(node, kAXTitleAttribute) == "Appairage…" { item = node; return false }
+        if role(node) == "AXMenuItem", string(node, kAXTitleAttribute) == title { item = node; return false }
         return true
     }
-    guard let item else { fail("élément de menu « Appairage… » introuvable") }
-    guard press(item) else { fail("« Appairage… » n'a pas pu être pressé") }
-    guard poll(seconds: 5, { sheet(app) != nil }) else { fail("pairing.sheet absent 5 s après le menu") }
-    emit(["ouverte": true, "deja": false])
+    guard let item else { fail("élément de menu « \(title) » introuvable") }
+    let before = frontmostPID()
+    guard press(item) else { fail("« \(title) » n'a pas pu être pressé") }
+    var found: Panel?
+    let appeared = poll(seconds: 5) { found = ready(); return found != nil }
+    let after = frontmostPID()
+    if after == pid {
+        fail("focus volé : « \(title) » a mis l'instance de recette (pid \(pid)) au premier plan "
+             + "(avant : \(before.map(String.init) ?? "?"))", code: 4)
+    }
+    guard appeared, let found else {
+        if windows(app).isEmpty {
+            fail("arbre AX sans fenêtre après « \(title) » (Space plein écran ou session verrouillée ?)", code: 2)
+        }
+        fail("conteneur d'appairage absent 5 s après « \(title) »")
+    }
+    return (found, (before, after))
 }
 
-func measure(_ app: AXUIElement) {
-    var found: (container: AXUIElement, content: AXUIElement)?
-    _ = poll(seconds: 5) { found = sheet(app); return found != nil }
-    guard let (container, content) = found else { fail("feuille d'appairage absente") }
-    let sheetFrame = frame(container) ?? frame(content)
-    var allTexts: [String] = []
-    var titleFrame: CGRect?
-    walk(container) { node in
-        let found = texts(of: node)
-        allTexts.append(contentsOf: found)
-        if titleFrame == nil, role(node) == "AXStaticText", string(node, kAXValueAttribute) == "Appairage" {
-            titleFrame = frame(node)
+func open(_ pid: pid_t, _ app: AXUIElement) {
+    if let found = panel(app) { report(app, found, already: true, front: (nil, nil)); exit(0) }
+    let (found, front) = pressAppMenu(pid, app, title: "Appairage…") { panel(app) }
+    report(app, found, already: false, front: front)
+}
+
+func settings(_ pid: pid_t, _ app: AXUIElement) {
+    let already = panel(app)?.kind == "fenetre"
+    let (found, front) = pressAppMenu(pid, app, title: "Réglages…") {
+        guard let found = panel(app), found.kind == "fenetre" else { return nil }
+        return found
+    }
+    report(app, found, already: already, front: front)
+}
+
+func count(_ pid: pid_t, title: String) {
+    print(cgWindows(of: pid).filter { ($0[kCGWindowName as String] as? String) == title }.count)
+}
+
+func close(_ app: AXUIElement) {
+    guard let found = panel(app), found.kind == "fenetre" else { fail("fenêtre des Réglages absente") }
+    guard let button = element(attribute(found.container, kAXCloseButtonAttribute)) else {
+        fail("bouton de fermeture de la fenêtre des Réglages introuvable")
+    }
+    guard press(button) else { fail("le bouton de fermeture n'a pas pu être pressé") }
+    guard poll(seconds: 2, { find(app, id: "settings.devices") == nil }) else {
+        fail("settings.devices toujours présent 2 s après la fermeture")
+    }
+    emit(["fermee": true])
+}
+
+func tabs(_ app: AXUIElement) {
+    guard let found = panel(app), found.kind == "fenetre" else { fail("fenêtre des Réglages absente") }
+    guard let toolbar = children(found.container).first(where: { role($0) == "AXToolbar" }) else {
+        fail("barre d'outils de la fenêtre des Réglages introuvable")
+    }
+    var titles: [String] = []
+    walk(toolbar) { node in
+        if ["AXButton", "AXRadioButton", "AXCheckBox"].contains(role(node)) {
+            titles.append(label(node))
+            return false
         }
         return true
     }
-    let close = find(app, id: "pairing.close")
+    emit(titles)
+}
+
+func measure(_ app: AXUIElement) {
+    var found: Panel?
+    _ = poll(seconds: 5) { found = panel(app); return found != nil }
+    guard let found else { fail("conteneur d'appairage absent") }
+    let containerFrame = frame(found.container) ?? frame(found.content)
+    var allTexts: [String] = []
+    walk(found.container) { node in
+        allTexts.append(contentsOf: texts(of: node))
+        return true
+    }
     let address = find(app, id: "pairing.address").flatMap { string($0, kAXValueAttribute) }
     let expiry = find(app, id: "pairing.codeExpiry").flatMap { string($0, kAXValueAttribute) }
     let code = find(app, id: "pairing.code").flatMap { string($0, kAXValueAttribute) }
@@ -299,10 +476,11 @@ func measure(_ app: AXUIElement) {
     }
     let addressCount = address.map { value in allTexts.filter { $0.contains(value) }.count } ?? 0
     emit([
-        "feuille": json(sheetFrame),
-        "ecran": json(screenFrame(containing: sheetFrame)),
-        "titre": json(titleFrame),
-        "fermer": json(close.flatMap(frame)),
+        "conteneur": found.kind,
+        "fenetre": json(containerFrame),
+        "ecran": json(screenFrame(containing: containerFrame)),
+        "interrupteur": json(find(app, id: "pairing.toggle").flatMap(frame)),
+        "generer": json(find(app, id: "pairing.generate").flatMap(frame)),
         "liste": json(list.flatMap(frame)),
         "lignes": rows,
         "textes": allTexts,
@@ -345,8 +523,7 @@ func confirm(_ app: AXUIElement) {
                 // L'alerte de confirmation est un `AXSheet` imbriqué dont les
                 // boutons n'ont PAS d'`AXTitle` : leur texte est dans
                 // `AXDescription` (MESURÉ : `action-button-1`, « Révoquer »).
-                if role(node) == "AXButton",
-                   string(node, kAXTitleAttribute) == "Révoquer" || string(node, kAXDescriptionAttribute) == "Révoquer",
+                if role(node) == "AXButton", label(node) == "Révoquer",
                    !identifier(node).hasPrefix("pairing.devices.revoke.") {
                     button = node
                     return false
@@ -368,25 +545,21 @@ func confirm(_ app: AXUIElement) {
 }
 
 func windowNumber(_ pid: pid_t, _ app: AXUIElement) {
-    let target = sheet(app).flatMap { frame($0.container) }
-    let list = (CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]]) ?? []
-    let mine = list.filter {
-        ($0[kCGWindowOwnerPID as String] as? Int).map(pid_t.init) == pid
-            && ($0[kCGWindowLayer as String] as? Int) == 0
-    }
-    func bounds(_ info: [String: Any]) -> CGRect {
-        guard let dict = info[kCGWindowBounds as String] as? NSDictionary,
-              let rect = CGRect(dictionaryRepresentation: dict) else { return .zero }
-        return rect
-    }
+    let target = panel(app).flatMap { frame($0.container) }
+    // Une feuille fermée garde une fenêtre CG hors écran, que `screencapture -l`
+    // refuse (MESURÉ : feuille de préparation fermée avant celle d'appairage) :
+    // les fenêtres à l'écran passent d'abord.
+    let all = cgWindows(of: pid)
+    let visible = all.filter { ($0[kCGWindowIsOnscreen as String] as? Bool) == true }
+    let mine = visible.isEmpty ? all : visible
     let best: [String: Any]?
     if let target {
-        best = mine.min {
-            let a = bounds($0), b = bounds($1)
-            let da = abs(a.minX - target.minX) + abs(a.minY - target.minY) + abs(a.width - target.width) + abs(a.height - target.height)
-            let db = abs(b.minX - target.minX) + abs(b.minY - target.minY) + abs(b.width - target.width) + abs(b.height - target.height)
-            return da < db
+        func distance(_ info: [String: Any]) -> CGFloat {
+            let a = bounds(info)
+            return abs(a.minX - target.minX) + abs(a.minY - target.minY)
+                + abs(a.width - target.width) + abs(a.height - target.height)
         }
+        best = mine.min { distance($0) < distance($1) }
     } else {
         best = mine.max { bounds($0).width * bounds($0).height < bounds($1).width * bounds($1).height }
     }
@@ -401,8 +574,21 @@ case "confiance":
     let trusted = AXIsProcessTrusted()
     print(trusted ? "true" : "false")
     exit(trusted ? 0 : 3)
+case "plein-ecran":
+    fullScreen()
 case "ouvrir":
-    open(application(pid(arguments, 2)))
+    let target = pid(arguments, 2)
+    open(target, application(target))
+case "reglages":
+    let target = pid(arguments, 2)
+    settings(target, application(target))
+case "compter":
+    guard arguments.count > 3 else { fail("titre attendu") }
+    count(pid(arguments, 2), title: arguments[3])
+case "fermer":
+    close(application(pid(arguments, 2)))
+case "onglets":
+    tabs(application(pid(arguments, 2)))
 case "mesurer":
     measure(application(pid(arguments, 2)))
 case "defiler":
@@ -417,7 +603,12 @@ case "lire":
     guard arguments.count > 3 else { fail("identifiant attendu") }
     let app = application(pid(arguments, 2))
     guard let target = steady(app, id: arguments[3]) else { fail("\(arguments[3]) absent") }
-    print(string(target, kAXValueAttribute) ?? "")
+    // Un texte rend sa chaîne ; un interrupteur rend son état (0 ou 1).
+    switch attribute(target, kAXValueAttribute) {
+    case let text as String: print(text)
+    case let number as NSNumber: print(number.intValue)
+    default: print("")
+    }
 case "attendre":
     guard arguments.count > 5, let seconds = Double(arguments[5]) else { fail("attendre <pid> <id> present|absent <s>") }
     let app = application(pid(arguments, 2))

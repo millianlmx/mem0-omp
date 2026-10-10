@@ -209,7 +209,7 @@ private final class RouterScene {
         MainSheetPolicy.sheet(
             omp: home.omp, setup: .ready, setupDismissed: false, board: kanban.state,
             welcomeSeen: true, welcomeRequested: false, launchFormShown: false,
-            answerCardID: home.answerCardID, contract: contract.sheet, pairing: false
+            answerCardID: home.answerCardID, contract: contract.sheet
         )
     }
 

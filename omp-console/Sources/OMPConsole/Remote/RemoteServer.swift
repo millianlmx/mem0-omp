@@ -17,7 +17,7 @@ import Darwin
 import Foundation
 import Network
 
-/// Le contrat du service vu par la coque : la feuille d'appairage n'observe que
+/// Le contrat du service vu par la coque : l'onglet « Appareils » n'observe que
 /// ceci (et les tests substituent une doublure).
 @MainActor
 protocol RemoteListening: AnyObject {

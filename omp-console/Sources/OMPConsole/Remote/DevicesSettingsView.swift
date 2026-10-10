@@ -1,7 +1,7 @@
-// La feuille d'appairage (BR-9) : l'interrupteur du service d'API distante (S-14),
-// le code d'appairage (S-5) et la liste des appareils appairés (S-6).
+// L'onglet « Appareils » du panneau Réglages (⌘,) : l'interrupteur du service
+// d'API distante, le code d'appairage et la liste des appareils appairés.
 //
-// TOUS les mots de la feuille vivent dans `PairingText` : la vue ne compose aucune
+// TOUS les mots de l'onglet vivent dans `PairingText` : la vue ne compose aucune
 // phrase. Les états sont des VALEURS pures (`PairingCodeZone`, `PairingDevicesZone`,
 // `PairingRevokeControl`) — la vue ne fait que les rendre, et les tests les
 // éprouvent sans rendre de SwiftUI (convention du dépôt, cf. `StatsViewTests`).
@@ -9,16 +9,19 @@
 // Aucun attribut macro SwiftUI `@State` (`@StateObject` suffit, comme partout dans
 // la coque) : la confirmation de révocation vit dans un petit `ObservableObject`.
 //
-// Identifiants d'accessibilité : chaînes pointées préfixées `pairing.`, réunies
-// dans `PairingSheet.Identifiers` pour que les tests les éprouvent sans rendu.
+// Identifiants d'accessibilité : chaînes pointées préfixées `pairing.` (la racine :
+// `settings.devices`), réunies dans `PairingAccessibility` pour que les tests les
+// éprouvent sans rendu.
 
 import AppKit
 import ConsoleCore
 import SwiftUI
 
-/// Les mots de la feuille — seul endroit où ils sont écrits (S-5, S-6, S-14).
+/// Les mots de l'onglet — seul endroit où ils sont écrits (S-5, S-6, S-14).
 enum PairingText {
-    static let title = "Appairage"
+    /// L'onglet unique des Réglages, et le titre de leur fenêtre.
+    static let devicesTab = "Appareils"
+    static let devicesTabSymbol = "ipad.and.iphone"
     static let menuItem = "Appairage…"
     static let toggle = "Accès depuis l'iPhone et l'iPad"
 
@@ -54,8 +57,6 @@ enum PairingText {
     static func revokingAccessibility(name: String) -> String { "Révocation de \(name)…" }
     static func revokeConfirmTitle(name: String) -> String { "Révoquer \(name) ?" }
     static let cancel = "Annuler"
-
-    static let close = "Fermer"
 }
 
 /// L'état de la zone code (S-5) : aucun / actif / expiré / service coupé / service
@@ -69,7 +70,14 @@ enum PairingCodeZone: Equatable {
     case serviceOff
     case serviceUnavailable(String)
 
-    /// « Générer un code » n'a de sens que service utilisable (S-5).
+    /// « Générer un code » est-il RENDU ? Jamais service coupé : la zone ne dit
+    /// que « Le service est coupé. ».
+    var offersGenerate: Bool {
+        if case .serviceOff = self { return false }
+        return true
+    }
+
+    /// « Générer un code » n'est actif que service utilisable (S-5).
     var isGeneratable: Bool {
         switch self {
         case .none, .active, .expired: true
@@ -94,9 +102,10 @@ struct PairingRevokeControl: Equatable {
     var disabled: Bool
 }
 
-/// Les identifiants d'accessibilité de la feuille (chaînes pointées du dépôt).
+/// Les identifiants d'accessibilité de l'onglet (chaînes pointées du dépôt).
 enum PairingAccessibility {
-    static let sheet = "pairing.sheet"
+    /// La racine de l'onglet « Appareils ».
+    static let panel = "settings.devices"
     static let toggle = "pairing.toggle"
     static let generate = "pairing.generate"
     static let code = "pairing.code"
@@ -108,27 +117,40 @@ enum PairingAccessibility {
     static let retry = "pairing.retry"
     static let openLocalNetworkSettings = "pairing.openLocalNetworkSettings"
     static let generateError = "pairing.generate.error"
-    static let close = "pairing.close"
 
     static func revoke(_ id: UUID) -> String { "pairing.devices.revoke.\(id.uuidString.lowercased())" }
 }
 
-/// Les mesures de la feuille : la liste des appareils épouse son contenu et
-/// plafonne ici, pour que la feuille tienne dans l'écran quel que soit le nombre
-/// d'appareils (titre et « Fermer » toujours visibles).
+/// Le cadre FIXE de l'onglet : quel que soit le nombre d'appareils, l'en-tête et
+/// la zone code gardent leur place, et seule la liste défile, sur toute la hauteur
+/// restante.
 enum PairingLayout {
-    static let devicesMaxHeight: CGFloat = 320
+    static let width: CGFloat = 560
+    static let height: CGFloat = 560
 }
 
 /// La confirmation de révocation ouverte (`@State` interdit sous les Command Line
 /// Tools : l'état vit dans un petit `ObservableObject`, patron `KanbanStopPrompt`).
+/// Une seule à la fois : `pending` est l'appareil dont le dialogue est ouvert.
 final class PairingRevokePrompt: ObservableObject {
-    @Published var pending: UUID?
+    @Published private(set) var pending: UUID?
+
+    /// « Révoquer » d'une ligne : ouvre le dialogue de CET appareil.
+    func request(_ id: UUID) { pending = id }
+
+    /// « Annuler » (ou Échap) : ferme le dialogue sans rien écrire.
+    func cancel() { pending = nil }
+
+    /// « Révoquer » du dialogue : rend l'appareil à révoquer et ferme le dialogue.
+    func confirm() -> UUID? {
+        defer { pending = nil }
+        return pending
+    }
 }
 
-/// La feuille d'appairage : en-tête (interrupteur + état du service), zone code,
-/// liste des appareils — seule partie qui défile —, pied « Fermer ».
-struct PairingSheet: View {
+/// L'onglet « Appareils » : en-tête (interrupteur + état du service) et zone code,
+/// qui ne défilent jamais, puis la liste des appareils — seule partie qui défile.
+struct DevicesSettingsView: View {
     @ObservedObject var remote: RemoteServiceModel
     @ObservedObject var pairing: PairingModel
     @ObservedObject var registry: DeviceRegistry
@@ -146,16 +168,16 @@ struct PairingSheet: View {
             header
             codeSection
             devicesSection
-            footer
         }
         .padding(20)
-        .frame(minWidth: 480, idealWidth: 560)
+        // Cadre fixe : la fenêtre des Réglages ne se redimensionne pas, et seule
+        // la liste absorbe le nombre d'appareils.
+        .frame(width: PairingLayout.width, height: PairingLayout.height, alignment: .topLeading)
         // Conteneur : chaque contrôle garde son propre identifiant.
         .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(PairingAccessibility.sheet)
-        // Échap ferme la feuille, comme « Fermer » (convention des feuilles).
-        .onExitCommand { remote.sheetShown = false }
-        // Le focus INITIAL est sur « Générer un code » (S-5).
+        .accessibilityIdentifier(PairingAccessibility.panel)
+        // Le focus INITIAL est sur « Générer un code » (S-5). Pas d'Échap : il ne
+        // ferme pas une fenêtre de réglages (⌘W et le bouton rouge le font).
         .onAppear { generateFocused = true }
     }
 
@@ -233,8 +255,6 @@ struct PairingSheet: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(PairingText.title)
-                .font(.title2.bold())
             Toggle(PairingText.toggle, isOn: Binding(
                 get: { remote.enabled },
                 set: { on in Task { await remote.setEnabled(on) } }
@@ -270,24 +290,27 @@ struct PairingSheet: View {
             expired: pairing.expired
         )
         return VStack(alignment: .leading, spacing: 8) {
-            Button(PairingText.generate) { pairing.generate() }
-                .consoleButtonProminence(true)
-                .disabled(!zone.isGeneratable)
-                .focusable()
-                .focused($generateFocused)
-                // Le focus initial est ici : c'est LUI que ↩ active — « Fermer »
-                // n'est plus l'action par défaut de la feuille (S-5).
-                .keyboardShortcut(.defaultAction)
-                .accessibilityIdentifier(PairingAccessibility.generate)
+            // Service coupé : ni bouton, ni code, ni adresse, ni erreur — la zone
+            // ne dit que « Le service est coupé. ».
+            if zone.offersGenerate {
+                Button(PairingText.generate) { pairing.generate() }
+                    .consoleButtonProminence(true)
+                    .disabled(!zone.isGeneratable)
+                    .focusable()
+                    .focused($generateFocused)
+                    // Le focus initial est ici : c'est LUI que ↩ active (S-5).
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier(PairingAccessibility.generate)
+            }
             codeZoneBody(zone)
-            if let address = remote.address {
+            if zone.offersGenerate, let address = remote.address {
                 Text(address)
                     .font(.callout.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .accessibilityIdentifier(PairingAccessibility.address)
             }
-            if let error = pairing.error {
+            if zone.offersGenerate, let error = pairing.error {
                 Text(error)
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -331,6 +354,8 @@ struct PairingSheet: View {
     // MARK: - Appareils
 
     private var devicesSection: some View {
+        // Ne dépend PAS de l'interrupteur : service coupé, la liste reste visible
+        // et révocable. Elle occupe toute la hauteur restante du cadre.
         VStack(alignment: .leading, spacing: 8) {
             Text(PairingText.devicesTitle)
                 .font(.headline)
@@ -340,7 +365,7 @@ struct PairingSheet: View {
                 devices: registry.devices
             ))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(PairingAccessibility.devices)
     }
@@ -362,9 +387,7 @@ struct PairingSheet: View {
             Text(PairingText.devicesEmpty)
                 .foregroundStyle(.secondary)
         case .devices(let devices):
-            // Seule la liste défile : elle épouse son contenu et plafonne à
-            // `PairingLayout.devicesMaxHeight` (une `VStack`, pas une `LazyVStack`,
-            // dont la hauteur idéale serait sous-estimée).
+            // Seule la liste défile, sur toute la hauteur restante du cadre fixe.
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(devices) { device in
@@ -372,8 +395,7 @@ struct PairingSheet: View {
                     }
                 }
             }
-            .frame(maxHeight: PairingLayout.devicesMaxHeight)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .accessibilityIdentifier(PairingAccessibility.devicesList)
         }
     }
@@ -391,7 +413,7 @@ struct PairingSheet: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             Spacer(minLength: 8)
-            Button(control.label) { prompt.pending = device.id }
+            Button(control.label) { prompt.request(device.id) }
                 .consoleButtonProminence(false)
                 .disabled(control.disabled)
                 .accessibilityLabel(control.accessibilityLabel)
@@ -400,30 +422,19 @@ struct PairingSheet: View {
                     PairingText.revokeConfirmTitle(name: device.name),
                     isPresented: Binding(
                         get: { prompt.pending == device.id },
-                        set: { if !$0 { prompt.pending = nil } }
+                        set: { if !$0 { prompt.cancel() } }
                     ),
                     titleVisibility: .visible
                 ) {
                     // Le rôle « destructif » et « Annuler » en `cancelAction` : la
                     // confirmation prend le focus sur « Annuler » (S-6).
                     Button(PairingText.revoke, role: .destructive) {
-                        prompt.pending = nil
-                        Task { await pairing.revoke(device.id) }
+                        if let id = prompt.confirm() { Task { await pairing.revoke(id) } }
                     }
-                    Button(PairingText.cancel, role: .cancel) {}
+                    Button(PairingText.cancel, role: .cancel) { prompt.cancel() }
                 }
         }
         .padding(10)
         .consoleCard(selected: false)
-    }
-
-    // MARK: - Pied
-
-    private var footer: some View {
-        HStack {
-            Spacer()
-            Button(PairingText.close) { remote.sheetShown = false }
-                .accessibilityIdentifier(PairingAccessibility.close)
-        }
     }
 }
