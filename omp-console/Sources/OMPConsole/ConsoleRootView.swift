@@ -95,15 +95,15 @@ struct ConsoleRootView: View {
     }
 
     /// Le système n'écrit que `nil` (Échap, fermeture) : l'état qui a fait
-    /// apparaître la feuille courante est remis à zéro. « OMP est requis » ne se
-    /// ferme jamais ainsi.
+    /// apparaître la feuille courante est remis à zéro. La préparation, OMP
+    /// absent, ne se ferme jamais ainsi : la feuille est bloquante.
     private var mainSheet: Binding<MainSheet?> {
         Binding(
             get: { currentSheet },
             set: { newValue in
                 guard newValue == nil else { return }
                 switch currentSheet {
-                case .setup: setup.dismiss()
+                case .setup: if home.canLaunch { setup.dismiss() }
                 case .welcome: home.closeWelcome()
                 case .newFeature: actions.launchFormShown = false
                 case .answer: home.dismissAnswer(actions: actions)
@@ -113,6 +113,13 @@ struct ConsoleRootView: View {
                 }
             }
         )
+    }
+
+    /// Le geste du badge des composants (S-3) : rouvrir la feuille de
+    /// préparation quand un composant manque ; aucun quand tout est installé.
+    private var reopenSetup: (@MainActor () -> Void)? {
+        if components.presence.allInstalled { return nil }
+        return { setup.reopen() }
     }
 
     var body: some View {
@@ -139,9 +146,10 @@ struct ConsoleRootView: View {
             // et aligné sur son bord gauche (S-2) : la `List` est rentrée de sa
             // hauteur et garde ses dernières lignes lisibles. Replier la barre
             // latérale masque le badge avec elle — c'est le coin gauche de la
-            // fenêtre, comportement assumé.
+            // fenêtre, comportement assumé. Un composant manque : le badge est
+            // un bouton qui rouvre la feuille de préparation (S-3).
             .safeAreaInset(edge: .bottom, alignment: .leading) {
-                ComponentBadge(status: components.presence.status)
+                ComponentBadge(status: components.presence.status, open: reopenSetup)
             }
         } detail: {
             SectionDetail(
@@ -197,7 +205,11 @@ struct ConsoleRootView: View {
         }) { sheet in
             switch sheet {
             case .setup:
-                SetupView(setup: setup)
+                // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋
+                // (Doc-1), « Quitter » ferme d'abord la feuille par programme,
+                // puis `onDismiss` termine l'app (Doc-2).
+                SetupView(setup: setup, omp: home.omp, quit: { home.requestQuit() })
+                    .interactiveDismissDisabled(!home.canLaunch)
             case .welcome:
                 WelcomeSheet(home: home)
             case .newFeature:

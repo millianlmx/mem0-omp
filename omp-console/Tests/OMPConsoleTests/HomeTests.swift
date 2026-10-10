@@ -93,7 +93,7 @@ func attentionsAreHighlightedWithTheirQuestion() {
 }
 
 @MainActor
-@Test("all-in-one-app/AC-1 : OMP introuvable donne le fond « prépare ses composants », quel que soit le tableau")
+@Test("all-in-one-app/AC-1 : OMP introuvable donne le fond « OMP n'est pas installé », quel que soit le tableau")
 func missingOmpGivesPreparationBackground() {
     let home = HomeModel(
         resolve: { _ in .failure(.binaryNotFound(searched: ["/a/omp"], override: nil)) },
@@ -169,6 +169,49 @@ func setupImposesItsSheetFirst() {
     home.recheck()
     #expect(home.canLaunch)
     #expect(home.omp == .available(URL(fileURLWithPath: "/usr/local/bin/omp")))
+}
+
+@Test("mac-omp-manquant-non-bloquant/AC-1 : OMP absent impose la feuille de préparation, même ignorée, avant toute autre")
+func missingOmpSheetIgnoresEveryOtherInput() {
+    // AC-7 est le même cas vu du lancement : OMP supprimé pendant une session
+    // précédente, le `HomeModel` neuf le lit absent et la politique rend `.setup`.
+    let setups: [SetupState] = [
+        .idle, .preparing(.omp(downloaded: 0, total: 0)), .preparing(.machine), .ready,
+        .failed(.components(.unsupportedMac)),
+    ]
+    let boards: [KanbanBoardState] = [
+        .loading, .storeAbsent(dir: "/s"), .storeEmpty(dir: "/s"),
+        .board(KanbanBoard(cards: [card("ask", column: .questionEnVol)], anomalies: [])),
+    ]
+    let contracts: [ContractSheet?] = [
+        nil, ContractSheet(slug: "contrat", moment: .besoins, path: "/w/contract.md", content: .missing),
+    ]
+    var cases = 0
+    for setup in setups {
+        for dismissed in [false, true] {
+            for board in boards {
+                for contract in contracts {
+                    for flag in 0..<16 {
+                        let sheet = MainSheetPolicy.sheet(
+                            omp: .missing, setup: setup, setupDismissed: dismissed, board: board,
+                            welcomeSeen: flag & 1 != 0, welcomeRequested: flag & 2 != 0,
+                            launchFormShown: flag & 4 != 0, answerCardID: "ask",
+                            contract: contract, pairing: flag & 8 != 0
+                        )
+                        #expect(sheet == .setup, "setup=\(setup) dismissed=\(dismissed) flags=\(flag)")
+                        cases += 1
+                    }
+                }
+            }
+        }
+    }
+    #expect(cases == 5 * 2 * 4 * 2 * 16)
+    // OMP présent, la feuille ignorée cède la place (elle est fermable).
+    #expect(MainSheetPolicy.sheet(
+        omp: available, setup: .preparing(.podman(downloaded: 0, total: 20)), setupDismissed: true,
+        board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
+        launchFormShown: false, answerCardID: nil, contract: nil, pairing: false
+    ) == nil)
 }
 
 @MainActor
