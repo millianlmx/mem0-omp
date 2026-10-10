@@ -483,6 +483,40 @@ final class TerminalHost {
     }
 }
 
+// MARK: - Commande au premier plan (mac-quitter-sans-confirmation, S-2)
+
+/// La commande que le shell a mise au premier plan du terminal : `processGroup` est
+/// son groupe de process, `name` le nom court de son chef (`nil` si illisible).
+struct TerminalForegroundCommand: Equatable, Sendable {
+    let processGroup: Int32
+    let name: String?
+}
+
+extension TerminalHost {
+    /// La commande au premier plan, ou `nil` quand le shell est au repos sur son
+    /// invite, ne vit pas, ou que le PTY est déjà fermé (Doc-10) : `tcgetpgrp` sur le
+    /// maître rend le groupe qui tient le terminal, celui du shell (chef de session,
+    /// `pgid == pid`) quand aucune commande ne tourne. Une tâche de fond ne prend
+    /// pas le terminal, et `exec <commande>` (qui remplace le shell) n'est pas vu.
+    /// Un seul appel système, sans effet sur le shell.
+    func foregroundCommand() -> TerminalForegroundCommand? {
+        guard childPID != nil, let pty, let shellGroup = groupPID else { return nil }
+        let foreground = pty.foregroundProcessGroup()
+        guard foreground > 0, foreground != shellGroup else { return nil }
+        return TerminalForegroundCommand(processGroup: foreground, name: Self.processName(foreground))
+    }
+
+    /// `proc_name` (libproc, Doc-8) dans un tampon de 256 octets ; `nil` en échec
+    /// ou pour un nom vide.
+    private static func processName(_ pid: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 256)
+        let length = proc_name(pid, &buffer, UInt32(buffer.count))
+        guard length > 0 else { return nil }
+        let name = String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        return name.isEmpty ? nil : name
+    }
+}
+
 // MARK: - Types partagés avec les fils de lecture
 
 /// Le maître du PTY, fermé UNE SEULE fois, par qui l'obtient le premier. Le lecteur
@@ -502,6 +536,15 @@ private final class PTYMaster: @unchecked Sendable {
         guard !closed else { return }
         closed = true
         _ = Darwin.close(fd)
+    }
+
+    /// Le groupe au premier plan du terminal (`tcgetpgrp`, Doc-7), lu SOUS le verrou
+    /// pour ne jamais interroger un descripteur fermé (ou recyclé) : 0 une fois fermé.
+    func foregroundProcessGroup() -> Int32 {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !closed else { return 0 }
+        return tcgetpgrp(fd)
     }
 }
 

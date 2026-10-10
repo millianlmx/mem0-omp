@@ -318,6 +318,33 @@ func closingTheWindowKillsTheWholeGroup() async throws {
     #expect(model.canStart)
 }
 
+@MainActor
+@Test("mac-quitter-sans-confirmation/AC-12 : fermer la fenêtre (⌘W) avec une commande au premier plan tue le shell comme avant, sans demande")
+func closingTheWindowWithARunningCommandStillKillsWithoutAsking() async throws {
+    let directory = try makeScratchDirectory()
+    // Un VRAI shell interactif (Doc-10), pour qu'une commande prenne le terminal.
+    let shell = try makeScript("exec /bin/zsh -f -i", in: directory, named: "zsh-shell")
+    let host = TerminalHost()
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
+
+    model.start(target: makeTarget(directory, label: "socle"))
+    guard case let .running(pid) = model.state else {
+        Issue.record("le shell doit être vivant, état : \(model.state)")
+        return
+    }
+    model.send(keys: Array("sleep 600\r".utf8))
+    // C'est bien une activité qui ferait poser l'alerte au Quitter…
+    #expect(await awaitMainTrue(timeout: 8) { model.quitActivity == .terminalCommand(name: "sleep") })
+
+    // … mais la fermeture de la fenêtre n'a pas de demande : elle est synchrone et
+    // tue le shell, comme avant la feature (S-7).
+    model.windowWillClose()
+    #expect(await awaitMainTrue(timeout: 8) { model.state == .idle })
+    #expect(!host.isRunning)
+    #expect(processGroupIsGone(pid))
+    #expect(model.quitActivity == nil)
+}
+
 // MARK: - AC-9
 
 @MainActor
