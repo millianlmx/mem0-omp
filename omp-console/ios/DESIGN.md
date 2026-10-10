@@ -415,3 +415,32 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucune taille de police en points, aucun `lineLimit` numérique, aucun
   `onTapGesture` : les mêmes gardes typographiques que les autres sections.
   `[garde: design-ios/AC-7]`
+
+## La feuille Connexion (feature `connexion-ios-feuille-intrusive-et-sans`)
+
+- La feuille ne s'ouvre d'elle-même que sans jeton ou quand le Mac refuse le
+  jeton (`ConnectionSheetMode.autoPresents`) : jamais pendant la lecture du
+  trousseau, jamais pour un appareil appairé, même si le Mac est injoignable —
+  l'Accueil reste alors dans son état dégradé « Mac injoignable — … ».
+  `[test: pairedConnectedNeverAutoPresents]` `[test: pairedUnreachableStaysClosed]`
+- Le mode de la feuille vient du statut d'appairage, pas de l'état de connexion :
+  lecture, non appairé (refusé ou non), connecté, déconnecté.
+  `[test: noTokenAutoPresentsUnpaired]` `[test: pairedNotConnectedIsDisconnected]`
+- Jeton refusé : message « Le Mac ne reconnaît plus cet appareil… », champ du
+  code et adresse connue préremplie. `[test: refusedAutoPresentsWithPrefill]`
+- Seul le mode non appairé focalise le champ du code ; sur un appareil appairé,
+  aucun champ n'a le focus et le clavier ne se lève pas. `[test: pairedModesNeverFocus]`
+- L'adresse du Mac ne s'affiche qu'UNE fois : le libellé d'état de la feuille
+  (`ConnectionText.sheetState`) n'en porte aucune. `[test: connectedStateWithoutAddress]`
+- Déconnecté : « Réessayer » et la modification de l'adresse dans un groupe
+  `DisclosureGroup` replié à chaque ouverture ; l'identifiant
+  `connection.addressEdit` est posé sur l'étiquette, jamais sur le groupe (il
+  écraserait ceux du contenu). `[test: retrySuccessTurnsConnected]`
+- « Oublier ce Mac » passe par une confirmation posée SUR le bouton (bulle sur
+  iPad), puis la feuille reste ouverte en mode non appairé.
+  `[test: forgetConfirmationWords]` `[test: forgottenIsUnpaired]`
+- La ligne d'aide nomme le chemin réel du code sur le Mac, et le message de format
+  nomme l'alphabet Crockford. `[test: codeHelpNamesTheMacPath]` `[test: malformedCodeNamesTheRealAlphabet]`
+- « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
+  a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
+  que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`

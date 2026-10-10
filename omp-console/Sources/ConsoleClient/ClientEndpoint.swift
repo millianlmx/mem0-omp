@@ -45,6 +45,13 @@ public enum ClientEndpoint: Equatable, Sendable, Hashable {
         }
     }
 
+    /// L'adresse seule, `hôte:port`, sans le nom de l'instance Bonjour : la forme
+    /// qui préremplit le champ d'adresse quand le Mac a refusé le jeton. Comme
+    /// `display`, elle ne montre jamais de zone d'interface.
+    public var address: String {
+        "\(Self.shownHost(host)):\(port)"
+    }
+
     /// L'hôte sans sa zone d'interface : du PREMIER `%` jusqu'à la fin, ou jusqu'au
     /// `]` exclu pour un hôte déjà entre crochets (`[fe80::1%en0]` → `[fe80::1]`).
     /// Network.framework rend la zone EN IPv4 comme en IPv6 (`192.168.1.175%en0`,
