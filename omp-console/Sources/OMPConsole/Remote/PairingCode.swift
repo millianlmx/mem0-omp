@@ -94,6 +94,10 @@ struct PairingState: Equatable, Sendable {
     mutating func pruneExpired(at nowMs: Double) {
         if let code = active, code.isExpired(at: nowMs) { active = nil }
     }
+
+    /// Couper le service annule le code actif : il ne peut plus être échangé,
+    /// même après rallumage.
+    mutating func cancel() { active = nil }
 }
 
 /// Les chaînes de présentation du code (pures).

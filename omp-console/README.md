@@ -2038,7 +2038,7 @@ un flux temps réel.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
   `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":1}`
   et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
-  routes). Le code est généré depuis la feuille « Appairage » (menu « OMP Console ›
+  routes). Le code est généré dans **Réglages… › Appareils** (⌘, ou menu « OMP Console ›
   Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
   valable **120 secondes** et à **usage unique** ; au-delà de 5 échecs, le code se
   verrouille et seul un code neuf le déverrouille. Le code est accepté **avec ou sans
@@ -2052,26 +2052,34 @@ un flux temps réel.
   deux appareils distincts du même modèle gardent chacun leur ligne. Les anciennes
   lignes sans `deviceKey` (les « iPhone » d'avant) ne sont ni fusionnées ni
   supprimées : on les révoque à la main.
-- **Feuille « Appairage »** : son interrupteur « Accès depuis l'iPhone et l'iPad »,
-  en tête, est **actif par défaut** et mémorisé (`remote.enabled`) ; le couper arrête
-  le serveur et son annonce Bonjour. La feuille tient dans l'écran : seule la liste
-  des appareils défile, le titre et « Fermer » restent visibles. Le code affiche
-  « Expire dans mm:ss », puis « Code expiré » à l'échéance ; l'adresse du service
-  n'apparaît qu'une fois, et c'est d'abord une adresse privée du réseau local
-  (192.168/16, 10/8, 172.16/12), avant une adresse Tailscale (100.64/10) puis
-  lien-local : l'app iOS/iPadOS n'atteint en HTTP que le réseau local (ATS), et une
-  adresse Tailscale tapée à la main y échoue ; chaque ligne porte la date complète
-  (« Appairé le 10 oct. 2026 à 21:54 ») et un bouton « Révoquer » que VoiceOver
-  annonce « Révoquer <nom> ».
+- **Réglages › Appareils** : le panneau Réglages (scène SwiftUI `Settings`, ⌘, ou
+  « OMP Console › Réglages… ») n'a qu'un onglet, « Appareils » ; « OMP Console ›
+  Appairage… » (⌥⌘A) ouvre ce même panneau, ou le ramène devant s'il est ouvert —
+  une seule fenêtre « Appareils », aucune feuille. L'interrupteur « Accès depuis
+  l'iPhone et l'iPad », en tête, est **actif par défaut** et mémorisé
+  (`remote.enabled`, relu au lancement) ; le couper arrête le serveur et son annonce
+  Bonjour et **annule le code en cours** (rallumé, aucun code actif). Le code ne se
+  propose que service actif : coupé, la zone dit seulement « Le service est
+  coupé. ». La liste « Appareils appairés » reste **visible et révocable service
+  coupé**. Le panneau a une taille fixe (560 × 560 pt de contenu) : interrupteur et
+  zone du code ne bougent pas, **seule la liste défile**, jusqu'au dernier appareil.
+  Le code affiche « Expire dans mm:ss », puis « Code expiré » à l'échéance ;
+  l'adresse du service n'apparaît qu'une fois, et c'est d'abord une adresse privée
+  du réseau local (192.168/16, 10/8, 172.16/12), avant une adresse Tailscale
+  (100.64/10) puis lien-local : l'app iOS/iPadOS n'atteint en HTTP que le réseau
+  local (ATS), et une adresse Tailscale tapée à la main y échoue ; chaque ligne
+  porte la date complète (« Appairé le 10 oct. 2026 à 21:54 ») et un bouton
+  « Révoquer » que VoiceOver annonce « Révoquer <nom> », confirmé par « Révoquer
+  <nom> ? » (« Révoquer » / « Annuler »).
 - **Oubli par l'appareil** : `DELETE /v1/devices/self` (authentifiée, sans corps)
   révoque l'appareil **porteur du jeton**, et lui seul, exactement comme « Révoquer »
-  dans la feuille « Appairage » : jeton, ligne de `devices.json`, article du
+  dans Réglages › Appareils : jeton, ligne de `devices.json`, article du
   trousseau, flux SSE coupés, liste « Appareils appairés » mise à jour. Réponse
   `200 {"accepted":true}` ; `401 unauthorized` pour un jeton absent, inconnu ou déjà
   révoqué (un second appel rend donc `401`). C'est l'appel de « Oublier ce Mac » de
   l'app iOS, tenté au mieux : l'app oublie son jeton même si le Mac ne répond pas.
 - **Permission macOS** : la première opération Bonjour d'un bundle lancé depuis le
-  Finder déclenche l'alerte « Réseau local » (TN3179) ; la feuille explique le refus
+  Finder déclenche l'alerte « Réseau local » (TN3179) ; l'onglet Appareils explique le refus
   et ouvre les Réglages Système. Un outil lancé depuis le Terminal (`swift test`,
   `bun`) en est exempté — c'est ce qui rend la recette de découverte reproductible.
 - **Documents de projet** : `GET /v1/projects/{repoKey}/documents` sert `PROJECT.md`
@@ -2130,12 +2138,12 @@ swift test --filter AC-1                          # annonce Bonjour + source loc
 `AC-1` ne demande que `dns-sd` ; `AC-20` demande `omp` et `bun` — sans eux, la
 recette est **sautée**, jamais verte à tort.
 
-#### Recette de la feuille « Appairage »
+#### Recette des Réglages › Appareils
 
 ```bash
 bash scripts/swift-app.sh --no-tests              # le bundle à éprouver
-bash scripts/mac-appairage-recette.sh             # Mac seul : AC-1, 2, 6, 7, 8, 9, 10, 12
-bash scripts/mac-appairage-recette.sh --ios       # + iOS/iPadOS : AC-3, 4, 5, 6, 11
+bash scripts/mac-appairage-recette.sh             # Mac seul
+bash scripts/mac-appairage-recette.sh --ios       # + iOS/iPadOS
 bash scripts/mac-appairage-recette.sh --captures-only --bundle <app de la base>   # captures « avant »
 ```
 
@@ -2154,19 +2162,51 @@ configuration podman (`config`) est **copiée** : la préparation réécrit
 `config/containers/containers.conf`, qui ne doit jamais viser le dossier jetable de
 la recette. `caffeinate -d` empêche la veille d'écran (et le verrouillage qui la
 suit) pendant la passe.
+
+Chaque ligne du rapport est qualifiée par sa feature. Mac seul :
+`reglages-mac-appareils/AC-1` (« Réglages… » ouvre la fenêtre « Appareils », barre
+d'onglets `["Appareils"]`), `AC-2` (un 2e « Réglages… » : une seule fenêtre CG
+« Appareils »), `AC-6` (12 appareils : interrupteur et « Générer un code » dans la
+fenêtre, la liste défile jusqu'à la dernière ligne, révoquée puis confirmée ⇒ 11),
+`AC-3` (service actif : interrupteur à 1, code `XXXX-XXXX`, liste présente),
+`AC-10` et `AC-11` (Réglages fermés puis « Appairage… » : la fenêtre « Appareils »,
+aucune `AXSheet`) ; `mac-feuille-appairage-debordante/AC-6` à `AC-10` (révocation,
+libellés « Révoquer <nom> », date complète, adresse unique, décompte puis
+échéance). `--ios` ajoute `mac-feuille-appairage-debordante/AC-3`, `AC-4`, `AC-5`,
+`AC-6` et `AC-11`. La recette ne touche **jamais** l'interrupteur : AC-4, AC-5 et
+AC-9 de reglages-mac-appareils sont prouvés par les tests Swift. Quand la
+préparation de l'instance de recette échoue (`sheet.setup.failure` lisible, par
+exemple le port 8321 de la pile mémoire déjà tenu par celle de l'utilisateur), le
+service distant ne démarre pas : les contrôles qui l'exigent (`reglages-mac-appareils/AC-3`,
+l'adresse unique, la phase `--ios`) sortent en `– … — non évalué (<cause>)`, ni
+verts ni rouges, et le bilan les compte. En `--captures-only` sur le bundle de la
+base, la feuille de préparation de l'instance est fermée (« Fermer ») si elle
+masque la feuille « Appairage ».
+
 La sonde AX `scripts/mac-appairage-sonde.swift` (compilée par `swiftc`) presse et
-lit la feuille sans activer l'app ni la redimensionner : l'instance de
-l'utilisateur et le focus ne sont jamais touchés. `--ios` construit une app signée
+lit le panneau sans activer l'app ni la redimensionner : l'instance de
+l'utilisateur n'est jamais touchée. Son conteneur est la fenêtre qui contient
+`settings.devices` (à défaut, pour le bundle de la base, la feuille
+`pairing.sheet`). Sous-commandes : `ouvrir` (« Appairage… »), `reglages`
+(« Réglages… »), `compter <pid> <titre>` (fenêtres CoreGraphics du pid portant ce
+titre), `fermer` (bouton de fermeture des Réglages), `onglets` (titres de la barre
+d'onglets), `mesurer`, `defiler`, `presser`, `lire`, `attendre`, `confirmer`,
+`fenetre`, `plein-ecran`. Chaque pression de menu relève l'app au premier plan
+avant et après : si l'instance de recette y passe, la ligne échoue « focus volé »
+et la recette s'arrête (`1`). `--ios` construit une app signée
 ad hoc (`omp-console/.build-ios-recette`) et appaire trois simulateurs dédiés
 (`appairage-tab-a`, `appairage-tab-b`, `appairage-tel`, conservés d'un passage à
 l'autre, jamais désinstallés) en saisissant le code sous ses trois formes.
 Sorties (`--out`, défaut `/tmp/mac-appairage-recette-<horodatage>`) : `rapport.txt`
-(une ligne `✔`/`✗` par critère), mesures JSON et captures PNG. En fin de passe,
-les appareils appairés par la recette sont révoqués par la feuille (leurs jetons
+(une ligne `✔`/`✗` par contrôle), mesures JSON et captures PNG
+(`apres-reglages-haut.png`, `apres-reglages-bas.png` ; `feuille-haut.png`,
+`feuille-bas.png` pour les captures « avant » de la base). En fin de passe, les
+appareils appairés par la recette sont révoqués par l'onglet (leurs jetons
 quittent le trousseau du Mac) et l'instance reçoit `kill -TERM`. Codes de sortie :
-`0` tout vert, `1` au moins un critère rouge, `2` non exécuté (hors macOS, session
-verrouillée, bundle absent, manifeste du bundle différent du support réel,
-Accessibilité refusée au terminal).
+`0` vert sur tous les contrôles évalués, `1` au moins un critère rouge, focus volé
+ou capture « avant » manquante, `2` non exécuté (hors macOS, session verrouillée,
+Space plein écran d'une autre app, bundle absent, manifeste du bundle différent du
+support réel, Accessibilité refusée au terminal).
 
 ## Structure du paquet
 
@@ -2374,7 +2414,9 @@ omp-console/
 │   │   ├── RemoteRouter.swift     la table des routes, un seul point de réponse
 │   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
 │   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service
-│   │   └── PairingSheet.swift     la feuille d'appairage, ses états et ses textes
+│   │   └── DevicesSettingsView.swift l'onglet Appareils des Réglages, ses états et ses textes
+│   ├── Settings/                  le panneau Réglages (⌘,)
+│   │   └── ConsoleSettingsView.swift la scène à un seul onglet « Appareils »
 │   └── MenuBar/                   l'item de barre de menus et ses comptes
 │       ├── AlertsStatus.swift     l'état publié : comptes « À vous » / « En cours » de l'Accueil
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
@@ -2710,14 +2752,14 @@ Deux scénarios révoquent un jeton sur le Mac et exigent un appairage frais : i
 rejouent **à la main**. Côté code, AC-4 est prouvé par `PairingStatusTests` et
 `ConnectionSheetModeTests`, AC-10 par `ForgetTests` et `DeviceForgetTests` :
 
-- **AC-4 — jeton révoqué** : sur le Mac, « Appairage… » puis « Révoquer »
+- **AC-4 — jeton révoqué** : sur le Mac, Réglages › Appareils puis « Révoquer »
   l'appareil ; relancer l'app. Attendu : la feuille s'ouvre avec « Le Mac ne
   reconnaît plus cet appareil. Saisissez un nouveau code d'appairage. », le champ
   du code et l'adresse du Mac préremplie. Relancer sans saisir de code : la
   feuille est en « Non appairé », sans ce message.
 - **AC-10 — oublier un Mac joignable** : appareil connecté, « Oublier ce Mac » puis
   confirmer. Attendu : la feuille passe en « Non appairé », et l'appareil disparaît
-  de la liste « Appareils appairés » de la feuille « Appairage… » du Mac.
+  de la liste « Appareils appairés » de Réglages › Appareils du Mac.
 
 ### Les feuilles
 

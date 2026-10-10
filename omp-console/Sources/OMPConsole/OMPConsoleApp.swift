@@ -52,8 +52,8 @@ struct OMPConsoleApp: App {
     /// badge se recalcule sans redémarrage. Le service d'API le sert aussi (S-4).
     @StateObject private var componentsModel: ComponentPresenceModel
     /// Le service d'API distante (BR-9) : à l'échelle de l'app, comme les autres —
-    /// il possède le registre des appareils, l'interrupteur persistant et la
-    /// feuille d'appairage.
+    /// il possède le registre des appareils et l'interrupteur persistant, que
+    /// montre l'onglet « Appareils » des Réglages.
     @StateObject private var remoteModel: RemoteServiceModel
     /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
     /// (S-2 de mac-etats-vides-sans-issue) : à l'échelle de l'app, il écrit par
@@ -155,12 +155,12 @@ struct OMPConsoleApp: App {
     }
 
     var body: some Scene {
-        // UNE seule scène : la fenêtre principale. Session OMP, Terminal, Projet,
-        // Statistiques et la visionneuse sont des sections (ou une vue poussée)
-        // de cette fenêtre — en plein écran, une fenêtre annexe partait dans son
-        // propre espace (demande du 2026-10-02). Sans titre de scène : la fenêtre
-        // porte celui de la section courante (`ConsoleRootView`), jamais le nom
-        // de l'app. L'identifiant sert à `MainWindow.reveal()` pour la retrouver.
+        // La fenêtre principale : Session OMP, Terminal, Projet, Statistiques et
+        // la visionneuse sont des sections (ou une vue poussée) de cette fenêtre
+        // — en plein écran, une fenêtre annexe partait dans son propre espace
+        // (demande du 2026-10-02). Sans titre de scène : la fenêtre porte celui
+        // de la section courante (`ConsoleRootView`), jamais le nom de l'app.
+        // L'identifiant sert à `MainWindow.reveal()` pour la retrouver.
         WindowGroup(id: MainWindow.sceneID) {
             ConsoleRootView(
                 model: model,
@@ -191,8 +191,14 @@ struct OMPConsoleApp: App {
             // personnalisable.
             ToolbarCommands()
             WelcomeCommands(home: homeModel)
-            RemoteCommands(remote: remoteModel)
+            RemoteCommands()
             QuitCommands(quit: appDelegate.quit)
+        }
+        // Le panneau Réglages (⌘, ou « Réglages… » du menu de l'app, créés par
+        // SwiftUI) : un seul onglet, « Appareils ». SwiftUI garantit une seule
+        // fenêtre : une nouvelle demande la ramène au premier plan.
+        Settings {
+            ConsoleSettingsView(remote: remoteModel)
         }
     }
 }
@@ -271,16 +277,14 @@ struct WelcomeCommands: Commands {
     }
 }
 
-/// Menu de l'application ▸ « Appairage… » (⌥⌘A, S-5) : ramène la fenêtre
-/// principale, puis demande la feuille d'appairage au service d'API distante.
+/// Menu de l'application ▸ « Appairage… » (⌥⌘A) : ouvre le panneau Réglages sur
+/// l'onglet « Appareils » (ou le ramène devant s'il est déjà ouvert). Aucune
+/// feuille, et la fenêtre principale n'est ni ramenée ni modifiée.
 struct RemoteCommands: Commands {
-    @ObservedObject var remote: RemoteServiceModel
-
     var body: some Commands {
         CommandGroup(after: .appInfo) {
-            Button(PairingText.menuItem) {
-                MainWindow.reveal()
-                remote.requestPairingSheet()
+            SettingsLink {
+                Text(PairingText.menuItem)
             }
             .keyboardShortcut("a", modifiers: [.command, .option])
         }
