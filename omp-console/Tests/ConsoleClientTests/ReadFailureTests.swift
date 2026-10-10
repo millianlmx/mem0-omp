@@ -78,7 +78,8 @@ private func connectedHarness(answering reply: MacReply) async -> ClientHarness 
         tokens: ["d": "tok"],
         preferences: [ClientPreferenceKey.deviceId: "d"]
     )
-    // Les lectures de fond de l'Accueil répondent 200 : seule la lecture visée échoue.
+    // Les lectures de fond de l'Accueil répondent 200 (et la relecture des PR,
+    // demandée à chaque ouverture du flux, 202) : seule la lecture visée échoue.
     harness.transport.respond { request in
         if request.path == "/v1/components" {
             return .success(ClientHTTPResponse(
@@ -88,6 +89,11 @@ private func connectedHarness(answering reply: MacReply) async -> ClientHarness 
         if request.path == "/v1/journal" {
             return .success(ClientHTTPResponse(
                 status: 200, protocolVersion: 1, body: Data(#"{"entries":[]}"#.utf8)
+            ))
+        }
+        if request.path == "/v1/pull-request-states/refresh" {
+            return .success(ClientHTTPResponse(
+                status: 202, protocolVersion: 1, body: Data(#"{"accepted":true}"#.utf8)
             ))
         }
         switch reply {
