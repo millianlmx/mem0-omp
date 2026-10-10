@@ -18,6 +18,8 @@ struct StatsAdvanceTests {
         slug: String,
         input: Int = 0,
         output: Int = 0,
+        cacheRead: Int? = nil,
+        cacheWrite: Int? = nil,
         turns: Int = 0,
         durationMs: Double,
         liveRuns: Int,
@@ -27,6 +29,8 @@ struct StatsAdvanceTests {
             slug: slug,
             input: input,
             output: output,
+            cacheRead: cacheRead,
+            cacheWrite: cacheWrite,
             turns: turns,
             durationMs: durationMs,
             liveRuns: liveRuns,
@@ -105,6 +109,11 @@ struct StatsAdvanceTests {
         #expect(payload.features.count == 1)
         #expect(payload.features[0].model == "opencode-go/deepseek-v4.1-flash")
         #expect(payload.features[0].liveRuns == 1)
+        // Un Mac ANCIEN n'émet pas les clés de cache : ni erreur, ni valeur inventée.
+        for decoded in payload.features {
+            #expect(decoded.cacheRead == nil)
+            #expect(decoded.cacheWrite == nil)
+        }
         #expect(payload.hiddenPlanFeatures == 0)
         // Le modèle absent est un `nil`, jamais une chaîne vide.
         let withoutModel = try JSONDecoder().decode(
@@ -112,5 +121,31 @@ struct StatsAdvanceTests {
             from: Data(#"{"slug":"f","input":0,"output":0,"turns":0,"durationMs":0,"liveRuns":0}"#.utf8)
         )
         #expect(withoutModel.model == nil)
+    }
+
+    @Test("ios-stats-tokens-envoyes-incoherent/AC-1, AC-2, AC-3 : « tokens envoyés » = entrée + cache lu + cache écrit")
+    func sentCountsTheCache() {
+        let cached = feature(
+            slug: "f", input: 76, output: 40_233, cacheRead: 33_206, cacheWrite: 15_936, durationMs: 0, liveRuns: 0
+        )
+        #expect(cached.totals(elapsedMs: 0).sent == 49_218)
+
+        // Le total du projet somme des entiers, jamais des chaînes compactes.
+        let bare = feature(slug: "g", input: 5, durationMs: 0, liveRuns: 0)
+        let payload = RemoteStatsPayload(
+            projectKey: "k",
+            project: "projet",
+            projects: [],
+            features: [cached, bare],
+            hiddenPlanFeatures: 0
+        )
+        let total = payload.totals(elapsedMs: 0)
+        #expect(total.sent == 49_223)
+        #expect(total.sent == payload.features.reduce(0) { $0 + $1.totals(elapsedMs: 0).sent })
+        #expect(total.sent == payload.totals(elapsedMs: 9_000).sent)
+
+        // Mac ancien : cache absent ⇒ « envoyés » = entrée, jamais vide.
+        #expect(bare.totals(elapsedMs: 0).sent == bare.input)
+        #expect(RemoteStatsTotals.zero.sent == 0)
     }
 }

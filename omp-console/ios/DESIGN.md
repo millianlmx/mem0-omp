@@ -303,6 +303,7 @@ marqueur `[test: <fonction>]` (une fonction de
 
 - Une carte par feature LISTÉE, dans l'ordre du plan : le slug, puis une ligne par
   grandeur (modèle, temps passé, tours, tokens envoyés, tokens reçus). `[test: statsCardsSumTheListedFeatures]`
+- « Tokens envoyés » compte TOUT ce qui part vers le modèle : entrée hors cache + cache lu + cache écrit, sur chaque carte et sur la ligne « Total du projet » ; « Tokens reçus » reste la sortie. La fenêtre macOS, elle, garde l'entrée hors cache. `[test: statsSentTokensCountTheCache]`
 - La ligne « Total du projet » somme les features LISTÉES — ni les features
   masquées, ni un autre projet — et rien d'autre n'y entre. `[test: statsTotalSumsOnlyListedFeatures]`
 - Le sélecteur de projet, la ligne de total et la mention des features masquées

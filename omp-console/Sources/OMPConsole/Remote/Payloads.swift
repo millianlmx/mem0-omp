@@ -174,6 +174,8 @@ struct RemoteStatsFeature: Codable, Equatable, Sendable {
     var slug: String
     var input: Int
     var output: Int
+    var cacheRead: Int
+    var cacheWrite: Int
     var turns: Int
     var durationMs: Double
     var liveRuns: Int

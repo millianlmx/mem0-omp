@@ -121,15 +121,30 @@ public struct RemoteStatsFeature: Codable, Equatable, Sendable {
     public var slug: String
     public var input: Int
     public var output: Int
+    /// Absents d'un relevé d'un Mac ANCIEN : comptés 0 par `totals(elapsedMs:)`.
+    public var cacheRead: Int?
+    public var cacheWrite: Int?
     public var turns: Int
     public var durationMs: Double
     public var liveRuns: Int
     public var model: String?
 
-    public init(slug: String, input: Int, output: Int, turns: Int, durationMs: Double, liveRuns: Int, model: String?) {
+    public init(
+        slug: String,
+        input: Int,
+        output: Int,
+        cacheRead: Int? = nil,
+        cacheWrite: Int? = nil,
+        turns: Int,
+        durationMs: Double,
+        liveRuns: Int,
+        model: String?
+    ) {
         self.slug = slug
         self.input = input
         self.output = output
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
         self.turns = turns
         self.durationMs = durationMs
         self.liveRuns = liveRuns
@@ -167,17 +182,32 @@ public struct RemoteStatsPayload: Codable, Equatable, Sendable {
 public struct RemoteStatsTotals: Equatable, Sendable {
     public var input: Int
     public var output: Int
+    public var cacheRead: Int
+    public var cacheWrite: Int
     public var turns: Int
     public var durationMs: Double
 
     public static let zero = RemoteStatsTotals(input: 0, output: 0, turns: 0, durationMs: 0)
 
-    public init(input: Int, output: Int, turns: Int, durationMs: Double) {
+    public init(
+        input: Int,
+        output: Int,
+        cacheRead: Int = 0,
+        cacheWrite: Int = 0,
+        turns: Int,
+        durationMs: Double
+    ) {
         self.input = input
         self.output = output
+        self.cacheRead = cacheRead
+        self.cacheWrite = cacheWrite
         self.turns = turns
         self.durationMs = durationMs
     }
+
+    /// « Tokens envoyés » côté iOS : TOUT ce qui part vers le modèle, soit
+    /// l'entrée hors cache + le cache lu + le cache écrit (trois termes disjoints).
+    public var sent: Int { input + cacheRead + cacheWrite }
 }
 
 public extension RemoteStatsFeature {
@@ -190,6 +220,8 @@ public extension RemoteStatsFeature {
         return RemoteStatsTotals(
             input: input,
             output: output,
+            cacheRead: cacheRead ?? 0,
+            cacheWrite: cacheWrite ?? 0,
             turns: turns,
             durationMs: durationMs + Double(liveRuns) * elapsed
         )
@@ -203,6 +235,8 @@ public extension RemoteStatsPayload {
             let computed = feature.totals(elapsedMs: elapsedMs)
             totals.input += computed.input
             totals.output += computed.output
+            totals.cacheRead += computed.cacheRead
+            totals.cacheWrite += computed.cacheWrite
             totals.turns += computed.turns
             totals.durationMs += computed.durationMs
         }
