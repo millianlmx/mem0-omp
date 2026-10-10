@@ -286,31 +286,50 @@ func failureSplitsSummaryFromDetail() {
         (.components(.install(component: "Podman", detail: "pkgutil absent")),
          "L'installation de « Podman » a échoué.", "pkgutil absent"),
         (.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")),
-         "L'ancienne pile mémoire n'a pas pu être arrêtée.", "mem0-qdrant : socket fermé"),
+         SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé"))),
+         "mem0-qdrant : socket fermé"),
         (.migration(.copyFailed(detail: "disque plein")),
          "La copie de la base mémoire existante a échoué.", "disque plein"),
         (.stack(.machineFailed(detail: "libkrun absent")),
-         "La machine de conteneurs n'a pas démarré.", "libkrun absent"),
+         SetupText.failureMessage(.stack(.machineFailed(detail: "libkrun absent"))), "libkrun absent"),
         (.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711))),
-         "Le port 6333 est déjà tenu par un autre programme (python3, pid 4711) : la pile mémoire ne peut pas démarrer.",
+         SetupText.failureMessage(.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711)))),
          "Geste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
         (.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))),
-         "Le port 8321 est déjà tenu par l'ancienne pile mémoire (conteneur mem0-http) : la pile mémoire ne peut pas démarrer.",
+         SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http")))),
          "Geste : podman stop mem0-qdrant mem0-http"),
         (.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")),
-         "Un conteneur de la pile mémoire n'a pas démarré.", "omp-console-qdrant : image absente"),
+         SetupText.failureMessage(.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente"))),
+         "omp-console-qdrant : image absente"),
         (.stack(.healthTimeout(seconds: 180)),
          "La mémoire n'a pas répondu dans le délai imparti (180 s).", nil),
         (.stack(.installationFailed(detail: "disque plein")),
          "L'identité d'installation de la pile n'a pas pu être écrite.", "disque plein"),
         (.stack(.podmanFailed(command: "machine start", detail: "boom")),
-         "Podman a échoué.", "machine start : boom"),
+         SetupText.failureMessage(.stack(.podmanFailed(command: "machine start", detail: "boom"))), "machine start : boom"),
     ]
     for (failure, summary, detail) in table {
         #expect(SetupText.failureSummary(failure) == summary)
         #expect(SetupText.failureDetail(failure) == detail)
         // La phrase claire ne porte jamais le détail technique.
         if let detail { #expect(!SetupText.failureSummary(failure).contains(detail)) }
+    }
+
+    // Les échecs Podman (S-5 de jargon-technique-expose-mac-et-ios) : la phrase de
+    // la feuille est la conséquence suivie du geste, sans commande, port ni pid.
+    for failure: SetupFailure in [
+        .legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")),
+        .stack(.machineFailed(detail: "libkrun absent")),
+        .stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711))),
+        .stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))),
+        .stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")),
+        .stack(.podmanFailed(command: "machine start", detail: "boom")),
+    ] {
+        let summary = SetupText.failureSummary(failure)
+        #expect(summary.hasPrefix(SetupText.failureConsequence(failure)))
+        for token in ["Podman", "podman", "machine start", "6333", "8321", "4711", "mem0-", "lsof"] {
+            #expect(!summary.contains(token))
+        }
     }
 
     // Un détail vide ou fait de blancs n'ouvre aucun « Afficher le détail ».
