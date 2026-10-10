@@ -318,6 +318,33 @@ func closingTheWindowKillsTheWholeGroup() async throws {
     #expect(model.canStart)
 }
 
+@MainActor
+@Test("mac-quitter-sans-confirmation/AC-12 : fermer la fenêtre (⌘W) avec une commande au premier plan tue le shell comme avant, sans demande")
+func closingTheWindowWithARunningCommandStillKillsWithoutAsking() async throws {
+    let directory = try makeScratchDirectory()
+    // Un VRAI shell interactif (Doc-10), pour qu'une commande prenne le terminal.
+    let shell = try makeScript("exec /bin/zsh -f -i", in: directory, named: "zsh-shell")
+    let host = TerminalHost()
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: host)
+
+    model.start(target: makeTarget(directory, label: "socle"))
+    guard case let .running(pid) = model.state else {
+        Issue.record("le shell doit être vivant, état : \(model.state)")
+        return
+    }
+    model.send(keys: Array("sleep 600\r".utf8))
+    // C'est bien une activité qui ferait poser l'alerte au Quitter…
+    #expect(await awaitMainTrue(timeout: 8) { model.quitActivity == .terminalCommand(name: "sleep") })
+
+    // … mais la fermeture de la fenêtre n'a pas de demande : elle est synchrone et
+    // tue le shell, comme avant la feature (S-7).
+    model.windowWillClose()
+    #expect(await awaitMainTrue(timeout: 8) { model.state == .idle })
+    #expect(!host.isRunning)
+    #expect(processGroupIsGone(pid))
+    #expect(model.quitActivity == nil)
+}
+
 // MARK: - AC-9
 
 @MainActor
@@ -450,4 +477,70 @@ func everyStateHasItsText() async throws {
     #expect(await awaitMainTrue(timeout: 8) { model.state == .idle })
     #expect(await awaitMainTrue(timeout: 8) { model.statusText == TerminalViewText.chooseHint })
     #expect(model.emulator == nil)
+}
+
+// MARK: - jargon-technique-expose-mac-et-ios (S-7, S-10)
+
+/// Un hôte dont `forkpty` échoue toujours, avec le code donné : la seule façon de
+/// provoquer `ptyUnavailable` sans épuiser les PTY du poste.
+@MainActor
+private final class PTYRefusingHost: TerminalHost {
+    let code: Int32
+    init(code: Int32) {
+        self.code = code
+        super.init()
+    }
+    override func start(executable: URL, arguments: [String] = [], cwd: URL, columns: Int, rows: Int) throws {
+        throw TerminalHostError.ptyUnavailable(code)
+    }
+}
+
+@Test("jargon-technique-expose-mac-et-ios/AC-6 : « PTY indisponible » s'affiche en phrase, sans PTY, code ni process")
+func ptyUnavailablePhraseHasNoJargon() {
+    let message = TerminalHostError.ptyUnavailable(24).userMessage
+    #expect(message == TerminalViewText.ptyUnavailable)
+    #expect(message == "Le terminal n'a pas pu s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres de terminal inutiles, puis relancez.")
+    #expect(!message.contains("PTY"))
+    #expect(!message.contains("24"))
+    #expect(!message.contains("process"))
+    // Les autres cas gardent leur texte : phrase et diagnostic coïncident.
+    #expect(TerminalHostError.cwdMissing("/tmp/x").userMessage == TerminalHostError.cwdMissing("/tmp/x").diagnostic)
+    #expect(TerminalHostError.writeFailed(5).userMessage == TerminalViewText.writeFailed(5))
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-7 : l'échec PTY garde son code dans le diagnostic publié par le modèle")
+func ptyUnavailableDiagnosticKeepsTheCode() async throws {
+    #expect(TerminalHostError.ptyUnavailable(24).diagnostic.contains("PTY indisponible (24)"))
+    #expect(TerminalViewText.ptyUnavailableDiagnostic(code: 24) == "PTY indisponible (24) : aucun process lancé.")
+
+    let directory = try makeScratchDirectory()
+    let shell = try makeScript("exec /bin/cat", in: directory, named: "fake-shell")
+    let model = makeTerminalModel(shell: shell, projectRoot: directory, host: PTYRefusingHost(code: 24))
+    #expect(model.failureDiagnostic == nil)
+
+    model.start(target: makeTarget(directory, label: "pty"))
+    #expect(model.state == .failed(TerminalViewText.ptyUnavailable))
+    #expect(model.statusText == TerminalViewText.ptyUnavailable)
+    #expect(model.failureDiagnostic?.contains("PTY indisponible (24)") == true)
+
+    // Le lancement suivant remet le diagnostic à zéro avant tout nouvel échec.
+    let gone = (directory as NSString).appendingPathComponent("absent")
+    model.start(target: makeTarget(gone, label: "absent"))
+    #expect(model.failureDiagnostic == nil)
+}
+
+@Test("jargon-technique-expose-mac-et-ios/AC-8 : les libellés du Terminal disent OMP et « dossier de feature », jamais worktree")
+func terminalLabelsAreReadable() {
+    #expect(TerminalViewText.launchOmp == "Lancer OMP")
+    #expect(TerminalViewText.ompKind == "OMP")
+    #expect(TerminalViewText.subtitle(kind: TerminalViewText.ompKind, state: TerminalViewText.stateRunning) == "OMP · Actif")
+    #expect(TerminalViewText.listing == "Recherche des dossiers de features…")
+    #expect(TerminalViewText.loadingTargets == "Recherche des dossiers de features…")
+    #expect(TerminalViewText.emptyTargets == "Aucun dossier de feature dans ce projet.")
+    for text in [TerminalViewText.launchOmp, TerminalViewText.ompKind, TerminalViewText.listing, TerminalViewText.emptyTargets] {
+        #expect(!text.lowercased().contains("worktree"), "\(text)")
+        #expect(!text.lowercased().contains("cible"), "\(text)")
+        #expect(text.range(of: #"\bomp\b"#, options: .regularExpression) == nil, "\(text)")
+    }
 }

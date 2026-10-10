@@ -82,9 +82,13 @@ PROTEGES_CIBLE_44 = {
     "libellé:Tout afficher",
     "libellé:Lire le contrat",
     "libellé:Piloter un projet…",
+    "id:ios.connexion.connect",
+    "id:ios.memoire.retry",
+    "id:ios.memoire.graphe.etiquette",
 }
 PROTEGE_CONTRAT = re.compile(r"^id:ios\.home\.attention\..+\.contract$")
-PROTEGE_ID_DUPLIQUE = "id:pipelines.card.sheet.title"
+PROTEGE_OUVRIR_PR = re.compile(r"^id:ios\.home\.delivered\.open\..+$")
+PROTEGES_ID_DUPLIQUE = {"id:pipelines.card.sheet.title", "id:ios.memoire.screen"}
 PROTEGES_BORD_CAPTURE = {"kanban", "sessions", "memory", "*"}
 
 LIBELLE_NON_APPAIRE = "Non appairé"
@@ -177,10 +181,13 @@ def _marqueur_propre(surface, arbre):
     if surface == "kanban":
         return not fiche and any(i.startswith("pipelines.") for i in ids)
     if surface == "project":
+        # Non appairé, l'écran Projet n'expose que « Non appairé » et sa barre de
+        # navigation, dont l'identifiant est le titre (MESURÉ iOS 27, iPhone).
         return (
             "ios.screen.project" in ids
             or any(i.startswith("ios.projet") for i in ids)
             or "Projet" in titres
+            or "Projet" in ids
         )
     if surface == "session":
         return any(i.startswith("ios.sessionomp") for i in ids)
@@ -199,12 +206,26 @@ def _marqueur_propre(surface, arbre):
     raise Echec("surface inconnue : " + surface)
 
 
+# Les écrans pleins de l'état de connexion partagé (IOSConnectionStateView, #118) :
+# conteneurs « non connecté » et « connexion en cours », plus leurs feuilles propres
+# à la forme plein écran (la cause, l'indicateur d'attente), car idb ne rend pas
+# toujours les conteneurs. Les bandeaux, posés au-dessus de données conservées,
+# n'excluent rien.
+ECRANS_NON_CONNECTES = (
+    "ios.connexion.horsLigne.ecran",
+    "ios.connexion.enCours.ecran",
+    "ios.connexion.cause",
+    "ios.connexion.attente",
+)
+
+
 def marqueur(surface, arbre):
-    """Vrai si l'arbre montre la surface annoncée (et ni la racine ni l'Accueil déconnecté)."""
+    """Vrai si l'arbre montre la surface annoncée (ni la racine, ni un écran plein
+    « non connecté » ou « connexion en cours »)."""
     ids = _ids(arbre)
     if any(i.startswith("ios.section.") for i in ids):
         return False
-    if "ios.home.disconnected" in ids:
+    if any(i in ids for i in ECRANS_NON_CONNECTES):
         return False
     return _marqueur_propre(surface, arbre)
 
@@ -271,9 +292,13 @@ def _valider_entree(n, e):
 
 def _protegee(e):
     if e["regle"] == "cible-44":
-        return e["element"] in PROTEGES_CIBLE_44 or bool(PROTEGE_CONTRAT.match(e["element"]))
+        return (
+            e["element"] in PROTEGES_CIBLE_44
+            or bool(PROTEGE_CONTRAT.match(e["element"]))
+            or bool(PROTEGE_OUVRIR_PR.match(e["element"]))
+        )
     if e["regle"] == "id-duplique":
-        return e["element"] == PROTEGE_ID_DUPLIQUE
+        return e["element"] in PROTEGES_ID_DUPLIQUE
     if e["regle"] == "bord":
         return e["source"] == "capture" and e["surface"] in PROTEGES_BORD_CAPTURE
     return False
@@ -363,11 +388,11 @@ def _paeth(a, b, c):
     return b if pb <= pc else c
 
 
-def lire_colonnes_png(chemin):
-    """(largeur px, hauteur px, colonne gauche, colonne droite) d'un PNG 8 bits non
-    entrelacé (gris, RGB, gris+alpha ou RGBA), chaque colonne en triplets RGB.
-    Décodage stdlib (zlib) : les captures de simctl, comme les PNG de test, en sont.
-    Tout autre format lève ValueError."""
+def lire_png(chemin):
+    """(largeur px, hauteur px, pixel) d'un PNG 8 bits non entrelacé (gris, RGB,
+    gris+alpha ou RGBA) ; `pixel(x, y)` rend le triplet RGB du pixel. Décodage
+    stdlib (zlib) : les captures de simctl, comme les PNG de test, en sont. Tout
+    autre format lève ValueError."""
     with open(chemin, "rb") as f:
         donnees = f.read()
     if not donnees.startswith(_PNG_SIGNATURE):
@@ -396,7 +421,7 @@ def lire_colonnes_png(chemin):
     if len(brut) < (pas + 1) * px_h:
         raise ValueError("PNG tronqué")
     precedente = bytearray(pas)
-    gauche, droite = [], []
+    lignes = []
     for y in range(px_h):
         debut = y * (pas + 1)
         filtre = brut[debut]
@@ -418,13 +443,28 @@ def lire_colonnes_png(chemin):
                 ligne[i] = (ligne[i] + _paeth(a, precedente[i], c)) & 0xFF
         elif filtre != 0:
             raise ValueError("filtre PNG inconnu : %d" % filtre)
-        for colonne, x in ((gauche, 0), (droite, (px_l - 1) * bpp)):
-            if bpp >= 3:
-                colonne.append((ligne[x], ligne[x + 1], ligne[x + 2]))
-            else:
-                colonne.append((ligne[x], ligne[x], ligne[x]))
+        lignes.append(ligne)
         precedente = ligne
-    return px_l, px_h, gauche, droite
+
+    def pixel(x, y):
+        ligne, i = lignes[y], x * bpp
+        if bpp >= 3:
+            return (ligne[i], ligne[i + 1], ligne[i + 2])
+        return (ligne[i], ligne[i], ligne[i])
+
+    return px_l, px_h, pixel
+
+
+def lire_colonnes_png(chemin):
+    """(largeur px, hauteur px, colonne gauche, colonne droite) d'un PNG décodé par
+    `lire_png`, chaque colonne en triplets RGB."""
+    px_l, px_h, pixel = lire_png(chemin)
+    return (
+        px_l,
+        px_h,
+        [pixel(0, y) for y in range(px_h)],
+        [pixel(px_l - 1, y) for y in range(px_h)],
+    )
 
 
 def regle_bord_capture(arbre, largeur, chemin_png):

@@ -91,8 +91,10 @@ struct HomeContractSheet: View {
                 }
             case .missing:
                 Text(IOSHomeContent.inlineMarkdown(ContractText.missingFile)).font(.body)
-            case .unreadable(let reason):
-                Text(ContractText.unreadable(reason: reason)).font(.body)
+            case .unreadable:
+                // La raison brute n'est jamais affichée (S-9 de
+                // jargon-technique-expose-mac-et-ios) ; iOS n'a pas de copie.
+                Text(ContractText.unreadable).font(.body)
             }
         }
         .accessibilityElement(children: .contain)

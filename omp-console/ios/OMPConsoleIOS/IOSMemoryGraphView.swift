@@ -133,8 +133,9 @@ struct IOSMemoryGraphView: View {
             }
         } label: {
             Label(MemoryText.tagMenu, systemImage: "tag")
+                .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                .contentShape(Rectangle())
         }
-        .frame(minHeight: IOSMetrics.minimumTarget)
         .accessibilityIdentifier(IOSMemoryAccessibility.graphTagMenu)
     }
 
@@ -292,7 +293,7 @@ struct IOSMemoryGraphView: View {
     private var retry: some View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
-                .frame(minHeight: IOSMetrics.minimumTarget)
+                .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                 .contentShape(Rectangle())
         }
         .disabled(!connection.gesturesEnabled)

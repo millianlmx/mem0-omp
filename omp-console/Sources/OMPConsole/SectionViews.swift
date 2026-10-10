@@ -46,7 +46,8 @@ struct SessionConsoleSectionView: ConsoleSectionView {
 struct TerminalSectionView: ConsoleSectionView {
     static let section = ConsoleSection.terminal
     @ObservedObject var model: TerminalConsoleModel
-    var body: some View { TerminalConsoleView(model: model) }
+    let chooser: ProjectChooserModel
+    var body: some View { TerminalConsoleView(model: model, chooser: chooser) }
 }
 
 struct StatsSectionView: ConsoleSectionView {
@@ -89,6 +90,10 @@ struct SectionDetail: View {
     let sessionModel: SessionConsoleModel
     let terminalModel: TerminalConsoleModel
     let statsModel: StatsModel
+    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
+    /// (S-2 de mac-etats-vides-sans-issue) : il écrit le projet choisi de l'app
+    /// sans jamais toucher à `section`.
+    let projectChooser: ProjectChooserModel
 
     var body: some View {
         // Ancrée en HAUT : une section dont le contenu ne remplit pas la hauteur
@@ -104,11 +109,11 @@ struct SectionDetail: View {
         case .kanban: KanbanView(model: kanban, actions: actions, contract: contract)
         case .sessions: SessionsView(console: console)
         case .session: SessionConsoleSectionView(model: sessionModel)
-        case .terminal: TerminalSectionView(model: terminalModel)
+        case .terminal: TerminalSectionView(model: terminalModel, chooser: projectChooser)
         case .stats: StatsSectionView(model: statsModel)
-        case .files: FilesView(model: filesModel)
+        case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .project: ProjectView(model: projectModel)
-        case .memory: MemoryView(model: memoryModel, graph: memoryGraph)
+        case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser)
         }
     }
 }

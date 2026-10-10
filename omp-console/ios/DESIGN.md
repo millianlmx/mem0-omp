@@ -87,6 +87,28 @@ marqueur `[test: <fonction>]` (une fonction de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
 
+## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
+
+- Un symbole décoratif, toujours doublé d'un texte visible qui porte le sens
+  (icône de nature d'une carte d'attention, promesse de la Bienvenue, icône de
+  voie), est masqué à VoiceOver par `.accessibilityHidden(true)` sur l'`Image` :
+  aucun élément `Image` lu sous un nom de symbole (« Search Document »). Un
+  symbole porteur de sens sans texte visible porte un libellé français :
+  « Rafraîchir » (`KanbanText.refresh`), « Nouvelle feature… »
+  (`NewFeatureText.command`). `[capture: iphone-home-light]`
+- L'app est française seulement : `developmentRegion = fr` et
+  `knownRegions = (fr, Base)` dans le projet, aucun `.lproj`, `.xcstrings` ni
+  `CFBundleLocalizations`. Les libellés fournis par iOS (« Masquer la barre
+  latérale », « Coller », bouton retour) restent en français sur un appareil
+  réglé en anglais. `[test: appIsFrenchOnly]`
+- L'icône est légendée « OMP Console » (`INFOPLIST_KEY_CFBundleDisplayName`, Debug
+  et Release de la cible app) ; `PRODUCT_NAME` et le bundle restent inchangés,
+  pour ne pas perdre l'appairage. `[test: homeScreenNameIsOMPConsole]`
+- La liste racine porte le titre de navigation « OMP Console »
+  (`IOSHomeText.rootTitle`), et chaque rangée est un `NavigationLink(value:)` : le
+  système dessine un chevron en pile (iPhone) et aucun en barre latérale (iPad) ;
+  aucun chevron n'est dessiné à la main. `[capture: ipad-home-light]`
+
 ## Les six tons
 
 - `neutral` gris, `info` bleu, `attention` orange, `success` vert, `danger`
@@ -252,6 +274,12 @@ marqueur `[test: <fonction>]` (une fonction de
   sans PR n'a ni filet ni espace réservé. Une carte est rigide en hauteur : dans
   la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
   ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
+- Une carte ne montre jamais de marque brute (« Marques : mort ») : ses marques
+  se lisent par la phrase partagée `KanbanText.marksSentence` (« Elle s'est
+  arrêtée de façon inattendue. »…), en `.caption` secondaire, sur autant de
+  lignes qu'il faut ; une carte saine n'a aucune ligne. L'ardoise qui porte une
+  carte au pilote arrêté se capture par `-pipelines.board marques`, sans
+  appairage. `[test: boardRecipeMarquesShowsSentences]`
 - Le bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au clavier de l'iPad), placé
   avant « Nouvelle feature », demande au Mac de relire l'état des PR sur GitHub ;
   il n'est actif que connecté et hors relecture, et montre un indicateur
@@ -300,6 +328,22 @@ marqueur `[test: <fonction>]` (une fonction de
 - Les faits du tableau de bord viennent de la MÊME dérivation que macOS, depuis
   la fixture partagée `HomeParity` : mêmes cartes, mêmes natures, mêmes
   libellés. `[test: parityFacts]`
+- Le tableau de bord range chaque carte dans UNE section, dans cet ordre :
+  « À vous », « En cours » (seules les pipelines réellement en marche, avec leur
+  durée, sans puce), « À reprendre » (les pipelines en pause, puce « En pause » et
+  « Reprendre »), « Pas commencées » (titre et sous-titre seuls), « Livrées
+  récemment » ; « À reprendre » et « Pas commencées » disparaissent quand elles
+  sont vides. Mêmes listes et mêmes identifiants que le Mac, préfixés `ios.`
+  (`ios.home.paused.<id>`, `ios.home.notStarted.<id>`). `[test: sectionsMatchTheMac]`
+- Une pipeline en échec ou bloquée (feature de lot relançable seulement) est une
+  carte « À vous » « En échec » (`xmark.octagon.fill`) ou « Bloquée »
+  (`exclamationmark.triangle.fill`), qui nomme l'étape où elle s'est arrêtée,
+  sans texte d'erreur brut, et porte « Reprendre » ; elle n'est dans aucune autre
+  section. `[test: failedAndBlockedAreAttentionOnly]`
+- Ce « Reprendre » emprunte la route de reprise de la carte, que le Mac traduit en
+  relance : envoi en cours, puis refus du Mac sur la carte (« La pipeline n'a pas
+  repris. » et sa cause) ; relancée, la carte passe sous « En cours ».
+  `[test: relaunchCardSendsResumeOfItsCard]`
 - La ligne « Accueil » porte le badge du nombre d'attentes (la fonction partagée
   `HomePresentation.attentionCount`), et rien quand il vaut zéro. `[test: badgeCounts]`
 - Chaque ligne de la liste racine est UN bouton d'accessibilité (`ios.section.<section>`)
@@ -345,7 +389,8 @@ marqueur `[test: <fonction>]` (une fonction de
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
-- Les rangées « En cours » et « Livrées récemment » suivent la largeur : en
+- Les rangées « En cours », « À reprendre », « Pas commencées » et « Livrées
+  récemment » suivent la largeur : en
   largeur régulière (iPad), titre, puce et bouton sur une ligne ; en largeur
   compacte (iPhone, iPad en Split View étroit), le titre sur toute la largeur,
   puis la puce et le bouton côte à côte sur une deuxième ligne, sans troncature.

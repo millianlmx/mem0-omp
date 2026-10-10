@@ -102,32 +102,22 @@ func gridNeverGoesBelowTheMinimum() {
 }
 
 @MainActor
-@Test("terminal-integre/AC-9 : la garde de applicationShouldTerminate couvre les trois accroches")
+@Test("terminal-integre/AC-9 : la sortie de l'app passe par l'accroche du terminal, puis aboutit")
 func terminationGuardCoversTheThreeHooks() async {
+    let saved = SavedQuitStatics()
+    defer { saved.restore() }
     let delegate = AppDelegate()
-    let savedSession = AppDelegate.terminateSession
-    let savedProject = AppDelegate.terminateProject
-    let savedTerminal = AppDelegate.terminateTerminal
-    defer {
-        AppDelegate.terminateSession = savedSession
-        AppDelegate.terminateProject = savedProject
-        AppDelegate.terminateTerminal = savedTerminal
-    }
-
-    AppDelegate.terminateSession = nil
-    AppDelegate.terminateProject = nil
-    AppDelegate.terminateTerminal = nil
-    // Sans accroche, l'app quitte immédiatement (comportement inchangé).
-    #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateNow)
     // Fermer la dernière fenêtre ne quitte jamais l'app (AC-8).
     #expect(delegate.applicationShouldTerminateAfterLastWindowClosed(NSApplication.shared) == false)
 
-    // L'accroche du TERMINAL seule suffit à faire ATTENDRE l'app (S-8) : la
-    // première demande est annulée, l'accroche tourne, puis la terminaison est
-    // redemandée et passe (une feuille ouverte ne la bloque plus).
+    // L'accroche du TERMINAL seule, session et projet absents (S-8) : la première
+    // demande est renvoyée, l'accroche tourne, puis la terminaison redemandée
+    // passe (une feuille ouverte ne la bloque plus).
     var called = false
     var requested = false
-    delegate.requestTermination = { requested = true }
+    delegate.quit.activities = { [] }
+    delegate.quit.closeAttachedSheets = {}
+    delegate.quit.requestTermination = { requested = true }
     AppDelegate.terminateTerminal = { called = true }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateCancel)
     #expect(await awaitMainTrue { called && requested })
@@ -135,26 +125,21 @@ func terminationGuardCoversTheThreeHooks() async {
 }
 
 @MainActor
-@Test("terminal-integre/AC-10 : la garde du terminal ne dépend ni de la session ni du projet")
+@Test("terminal-integre/AC-10 : l'accroche du terminal ne dépend ni de la session ni du projet")
 func terminalHookIsIndependentFromTheOthers() async {
+    let saved = SavedQuitStatics()
+    defer { saved.restore() }
     let delegate = AppDelegate()
-    let savedSession = AppDelegate.terminateSession
-    let savedProject = AppDelegate.terminateProject
-    let savedTerminal = AppDelegate.terminateTerminal
-    defer {
-        AppDelegate.terminateSession = savedSession
-        AppDelegate.terminateProject = savedProject
-        AppDelegate.terminateTerminal = savedTerminal
-    }
 
     var sessionCalled = false
     var terminalCalled = false
     AppDelegate.terminateSession = { sessionCalled = true }
-    AppDelegate.terminateProject = nil
     AppDelegate.terminateTerminal = { terminalCalled = true }
 
     var requested = false
-    delegate.requestTermination = { requested = true }
+    delegate.quit.activities = { [] }
+    delegate.quit.closeAttachedSheets = {}
+    delegate.quit.requestTermination = { requested = true }
     #expect(delegate.applicationShouldTerminate(NSApplication.shared) == .terminateCancel)
     #expect(await awaitMainTrue { sessionCalled && terminalCalled && requested })
 }

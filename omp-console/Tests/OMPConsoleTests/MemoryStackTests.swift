@@ -621,11 +621,12 @@ func busyPortIsNamedByTheProbe() async throws {
         try await stack.ensureRunning { _ in }
     }
 
-    // Le message utilisateur nomme le propriétaire et le geste (S-2).
+    // Le diagnostic copiable nomme le propriétaire et le geste (S-2) ; la feuille,
+    // elle, n'affiche que la conséquence (jargon-technique-expose-mac-et-ios S-5).
     let failure = SetupFailure.stack(.portConflict(port: 6334, owner: .foreign(process: "python3", pid: 4711)))
-    let message = SetupText.failureMessage(failure)
-    #expect(message.contains("Le port 6334 est déjà tenu par un autre programme (python3, pid 4711)"))
-    #expect(message.contains("Geste : arrêtez le programme qui tient le port"))
+    let diagnostic = SetupText.failureDiagnostic(failure)
+    #expect(diagnostic.contains("Le port 6334 est déjà tenu par un autre programme (python3, pid 4711)"))
+    #expect(diagnostic.contains("Geste : arrêtez le programme qui tient le port"))
 }
 
 @MainActor
@@ -758,11 +759,11 @@ func legacyContainerBlocksReadiness() async throws {
         try await stack.ensureRunning { _ in }
     }
 
-    let message = SetupText.failureMessage(
+    let diagnostic = SetupText.failureDiagnostic(
         .stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http")))
     )
-    #expect(message.contains("l'ancienne pile mémoire (conteneur mem0-http)"))
-    #expect(message.contains("Geste : podman stop mem0-qdrant mem0-http"))
+    #expect(diagnostic.contains("l'ancienne pile mémoire (conteneur mem0-http)"))
+    #expect(diagnostic.contains("Geste : podman stop mem0-qdrant mem0-http"))
 }
 
 @MainActor

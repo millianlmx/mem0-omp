@@ -8,7 +8,7 @@ import Foundation
 
 enum FilesText {
     // Barre d'outils
-    static let targetPicker = "Cible"
+    static let targetPicker = "Dossier"
     static let openMenu = "Ouvrir"
     static let openHelp = "Ouvrir le contrat ou PROJECT.md"
     static let contractButton = "Contrat"
@@ -25,16 +25,16 @@ enum FilesText {
 
     // États
     static let noProjectTitle = "Aucun projet ouvert"
-    static let noProjectDescription = "Choisissez-le dans la section « Session OMP » (⌘4)."
+    static let noProjectDescription = "Choisissez le projet dont vous voulez parcourir les fichiers."
     static let errorTitle = "Lecture impossible"
-    static let noFiles = "Aucun fichier dans cette cible."
+    static let noFiles = "Aucun fichier dans ce dossier."
     static let nothingSelected = "Choisissez un fichier dans l'arborescence."
     static let missingFile = "Ce fichier a été supprimé du disque."
     static let emptyFile = "Fichier vide."
     static let emptyNewFile = "Nouveau fichier vide."
     static let noDifference = "Aucune modification dans ce fichier."
-    static let noContract = "Aucun contrat .omp/pipeline/contract.md dans cette cible."
-    static let noProjectDocument = "Aucun PROJECT.md dans cette cible."
+    static let noContract = "Aucun contrat dans ce dossier."
+    static let noProjectDocument = "Aucun PROJECT.md dans ce dossier."
 
     // Vues du document (S-18 R5)
     static let modePicker = "Affichage"
@@ -47,17 +47,19 @@ enum FilesText {
         "Lecture de \(path)…"
     }
 
-    static func baseUnavailable(reason: String) -> String {
-        "Comparaison indisponible pour cette cible (\(reason))."
-    }
+    static let baseUnavailable = "Les différences ne peuvent pas être calculées pour ce dossier : sa version de départ est introuvable."
+    static let binary = "Ce fichier n'est pas du texte : il ne peut pas être affiché."
+    static let unreadable = "Ce fichier ne peut pas être lu : il a disparu ou son accès est refusé. Rafraîchissez pour réessayer."
 
-    static func binary(bytes: Int) -> String {
-        "Fichier binaire (\(bytes) octets) — affichage indisponible."
-    }
-
-    static func unreadable(reason: String) -> String {
-        "Lecture impossible : \(reason)."
-    }
+    // Échecs de lecture (S-8) : la phrase affichée ; le brut est `FilesError.diagnostic`.
+    static let gitNotFound = "Les outils de développement d'Apple sont introuvables : les fichiers ne peuvent pas être lus. Installez-les, puis rafraîchissez."
+    static let notARepository = "Ce dossier n'est pas un projet suivi : ses fichiers ne peuvent pas être comparés. Choisissez un autre dossier dans la section « Session OMP »."
+    static let commandFailed = "La lecture du projet a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l'échec revient, copiez le diagnostic."
+    static let commandTimedOut = "La lecture du projet a pris trop de temps et a été abandonnée. Rafraîchissez pour réessayer."
+    static let gitCommandRefused = "Une lecture non autorisée a été bloquée : rien n'a été modifié. Copiez le diagnostic pour le signaler."
+    static let targetGone = "Ce dossier n'existe plus : choisissez-en un autre dans le menu « Dossier »."
+    static let watchFailed = "Le suivi des modifications s'est arrêté : l'affichage ne se met plus à jour tout seul. Rafraîchissez pour le relancer."
+    static let readFailed = "La lecture a échoué : les fichiers ne peuvent pas être affichés. Rafraîchissez ; si l'échec revient, copiez le diagnostic."
 
     /// Le badge d'une entrée, ou `nil` pour un fichier suivi : seul ce qui diffère
     /// du dépôt mérite d'être signalé.
@@ -104,12 +106,12 @@ extension FilesContent {
         switch self {
         case let .text(text):
             text.isEmpty ? FilesText.emptyFile : nil
-        case let .binary(bytes):
-            FilesText.binary(bytes: bytes)
+        case .binary:
+            FilesText.binary
         case .missing:
             dedicated.map { FilesText.missingDedicatedDocument($0) } ?? FilesText.missingFile
-        case let .unreadable(reason):
-            FilesText.unreadable(reason: reason)
+        case .unreadable:
+            FilesText.unreadable
         }
     }
 }

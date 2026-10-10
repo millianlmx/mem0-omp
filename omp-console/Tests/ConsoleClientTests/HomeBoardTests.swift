@@ -39,7 +39,7 @@ struct HomeBoardTests {
         return harness
     }
 
-    @Test("ios-accueil/AC-1 : board porte les faits du fixture partagé après une trame store")
+    @Test("ios-accueil/AC-1, accueil-en-cours-melange-pause-et-compte/AC-2 : board porte les cinq listes du fixture partagé, identiques à celles du Mac, après une trame store")
     func boardDerivesFromFixture() async {
         let harness = await connectedHarness()
         #expect(harness.model.board == .loading, "aucun instantané ⇒ .loading")
@@ -48,16 +48,27 @@ struct HomeBoardTests {
 
         let board = harness.model.board
         #expect(
-            HomePresentation.attentionCount(omp: harness.model.omp, board: board) == 3,
-            "3 faits d'attention (question en vol, jalon specs, jalon revue)"
+            HomePresentation.attentionCount(omp: harness.model.omp, board: board) == 5,
+            "5 attentions (question en vol, jalon specs, jalon revue, échec, blocage)"
         )
-        guard case .dashboard(let dashboard) = HomePresentation.state(omp: harness.model.omp, board: board) else {
+        guard case .dashboard(let dashboard) = HomePresentation.state(omp: harness.model.omp, board: board),
+              case .board(let macBoard) = HomeParity.board else {
             Issue.record("l'ardoise du fixture donne un tableau de bord")
             return
         }
-        #expect(dashboard.attention.count == 3)
+        #expect(dashboard.attention.count == 5)
         #expect(dashboard.running.count == 2)
+        #expect(dashboard.paused.count == 1)
+        #expect(dashboard.notStarted.count == 1)
         #expect(dashboard.delivered.count == 2)
+        // AC-2 : les cinq listes du client sont celles que le Mac dérive du même
+        // instantané (identifiants, dans l'ordre).
+        let mac = HomePresentation.dashboard(macBoard)
+        #expect(dashboard.attention.map(\.id) == mac.attention.map(\.id))
+        #expect(dashboard.running.map(\.id) == mac.running.map(\.id))
+        #expect(dashboard.paused.map(\.id) == mac.paused.map(\.id))
+        #expect(dashboard.notStarted.map(\.id) == mac.notStarted.map(\.id))
+        #expect(dashboard.delivered.map(\.id) == mac.delivered.map(\.id))
         harness.stop()
     }
 
@@ -76,7 +87,7 @@ struct HomeBoardTests {
         }
         _ = try await harness.model.store()
         #expect(harness.model.snapshot == HomeParity.snapshot)
-        #expect(HomePresentation.attentionCount(omp: harness.model.omp, board: harness.model.board) == 3)
+        #expect(HomePresentation.attentionCount(omp: harness.model.omp, board: harness.model.board) == 5)
         harness.stop()
     }
 

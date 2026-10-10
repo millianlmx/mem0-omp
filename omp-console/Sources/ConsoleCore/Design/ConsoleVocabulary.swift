@@ -65,7 +65,13 @@ extension ConsoleStatus {
         if KanbanActionPresentation.resumable(card) {
             return ConsoleStatus(text: "En pause", tone: .paused)
         }
-        switch card.column {
+        return of(column: card.column)
+    }
+
+    /// L'état d'une colonne de l'ardoise, sans la règle « En pause » : le libellé que
+    /// les notifications macOS reprennent tel quel (un échec y reste « Échec »).
+    public static func of(column: KanbanColumn) -> ConsoleStatus {
+        switch column {
         case .enAttente: return ConsoleStatus(text: "Pas commencée", tone: .neutral)
         case .enCours: return ConsoleStatus(text: "En cours", tone: .info)
         case .questionEnVol: return ConsoleStatus(text: "À vous", tone: .attention)

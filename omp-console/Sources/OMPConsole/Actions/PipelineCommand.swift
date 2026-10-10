@@ -33,13 +33,15 @@ enum MilestoneVerdict: String, Sendable, Equatable {
     case review = "y"
 }
 
-/// Une commande du canal. L'app n'émet QUE ces cinq formes : launch, verdict,
-/// reply, stop, models — ni `add`, ni `remove`, ni `answer` (une question en vol
+/// Une commande du canal. L'app n'émet QUE ces six formes : launch, verdict,
+/// reply, stop, models, relaunch — ni `add`, ni `remove`, ni `answer` (une question en vol
 /// passe par une livraison dans la boîte du run). `reply` répond à une question en
 /// TEXTE d'un maillon terminé (feature `waiting` + `waitKind: "answer"`, S-9/S-10
 /// de omp-console-redesign). `models` remplace les deux modèles d'une feature
 /// (S-5) : les deux clés sont TOUJOURS présentes, `null` pour un groupe laissé sur
-/// le défaut OMP.
+/// le défaut OMP. `relaunch` relance une feature `failed`/`blocked`/`cancelled`
+/// (`commands.ts`, action `relaunch` de `lotController.ts`) : l'app ne l'envoie
+/// que pour `failed` et `blocked` (S-3 de accueil-en-cours-melange-pause-et-compte).
 enum OutgoingCommand: Sendable, Equatable {
     case launch(
         id: String, repo: String, title: String, description: String,
@@ -49,6 +51,7 @@ enum OutgoingCommand: Sendable, Equatable {
     case reply(id: String, repo: String, slug: String, text: String)
     case stop(id: String, repo: String)
     case models(id: String, repo: String, slug: String, modelReqSpecs: String?, modelImplReview: String?)
+    case relaunch(id: String, repo: String, slug: String)
 }
 
 /// L'état d'un accusé : `taken` (l'effet suit) ou `refused` (le motif est dans
@@ -141,6 +144,7 @@ extension OutgoingCommand {
         case .reply(let id, _, _, _): id
         case .stop(let id, _): id
         case .models(let id, _, _, _, _): id
+        case .relaunch(let id, _, _): id
         }
     }
 
@@ -177,6 +181,11 @@ extension OutgoingCommand {
                 "kind": "models", "slug": slug,
                 "modelReqSpecs": modelReqSpecs ?? NSNull(),
                 "modelImplReview": modelImplReview ?? NSNull(),
+            ]
+        case .relaunch(let id, let repo, let slug):
+            return [
+                "version": 1, "id": id, "sentAt": at, "repo": repo,
+                "kind": "relaunch", "slug": slug,
             ]
         }
     }

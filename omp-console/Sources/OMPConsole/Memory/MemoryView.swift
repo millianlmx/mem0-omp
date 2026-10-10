@@ -22,12 +22,15 @@ struct MemoryView: ConsoleSectionView {
     /// la liste, pour que la position, la sélection et les filtres survivent au
     /// passage d'une section à l'autre.
     @ObservedObject var graph: MemoryGraphModel
+    /// Le sélecteur de projet de l'état « Aucun projet ouvert » (S-1 de
+    /// mac-etats-vides-sans-issue), à l'échelle de l'app.
+    let chooser: ProjectChooserModel
 
     var body: some View {
         VStack(spacing: 0) {
             // Le prérequis système manquant est NOMMÉ au-dessus du contenu (S-6,
-            // AC-6) : lecture seule, aucun geste — oMLX n'est ni installé ni
-            // configuré par l'app.
+            // AC-6) : la conséquence, le geste « Rafraîchir » et le diagnostic
+            // copiable — oMLX n'est ni installé ni configuré par l'app.
             if let banner = model.omlxBanner {
                 omlxBannerView(banner)
             }
@@ -70,12 +73,21 @@ struct MemoryView: ConsoleSectionView {
 
     /// Le bandeau d'un prérequis système manquant : la phrase porte le sens, la
     /// teinte orange ne fait que le souligner (jamais rouge — ce n'est pas une
-    /// erreur de l'app). Aucun bouton : l'app ne répare pas oMLX.
-    private func omlxBannerView(_ text: String) -> some View {
+    /// erreur de l'app). « Rafraîchir » refait la sonde oMLX après que
+    /// l'utilisateur l'a démarré ou a corrigé sa clé ; l'URL, le code et la
+    /// variable ne vivent que dans le diagnostic copiable
+    /// (jargon-technique-expose-mac-et-ios S-6).
+    private func omlxBannerView(_ banner: ReadableFailure) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
-            Text(verbatim: text)
+            Text(verbatim: banner.message)
+                .fixedSize(horizontal: false, vertical: true)
             Spacer()
+            Button(MemoryText.refresh) { Task { await model.refresh() } }
+                .controlSize(.small)
+                .disabled(!model.canRefresh)
+                .accessibilityIdentifier("memory.omlxBanner.refresh")
+            DiagnosticCopyButton(diagnostic: banner.diagnostic, identifier: "memory.omlxBanner.diagnostic")
         }
         .font(.callout)
         .foregroundStyle(.secondary)
@@ -83,6 +95,7 @@ struct MemoryView: ConsoleSectionView {
         .consoleBanner(tint: .orange)
         .padding(.horizontal, 8)
         .padding(.top, 8)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("memory.omlxBanner")
     }
 
@@ -171,15 +184,16 @@ struct MemoryView: ConsoleSectionView {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
 
         case .noProject:
-            ContentUnavailableView(
-                MemoryText.noProjectTitle,
-                systemImage: "folder.badge.questionmark",
-                description: Text(MemoryText.noProjectDescription)
-            )
+            // Le projet se choisit sur place : la section ne change pas, la
+            // liste se recalcule pour le projet choisi (S-3).
+            NoProjectView(state: .memory, chooser: chooser) {
+                Task { await model.refresh() }
+            }
 
         case let .unavailable(address, detail):
             // L'indisponibilité dit d'abord quoi faire ; l'adresse du service et la
-            // dernière erreur (S-6.3) ne sont qu'un détail secondaire.
+            // dernière erreur (S-6.3) ne s'affichent pas : elles se copient
+            // (jargon-technique-expose-mac-et-ios S-6).
             ContentUnavailableView {
                 Label(MemoryText.unavailableTitle, systemImage: "exclamationmark.triangle")
             } description: {
@@ -187,36 +201,33 @@ struct MemoryView: ConsoleSectionView {
             } actions: {
                 Button(MemoryText.retry) { Task { await model.refresh() } }
                     .disabled(!model.canRefresh)
-                Text(verbatim: MemoryText.unavailableDetail(address: address, error: detail))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("memoire.unavailable.detail")
+                DiagnosticCopyButton(
+                    diagnostic: MemoryText.unavailableDetail(address: address, error: detail),
+                    identifier: "memoire.unavailable.diagnostic"
+                )
             }
 
         case let .foreignOwned(foreign):
-            // Quelqu'un répond sans notre jeton (S-4) : la section NOMME le
-            // propriétaire et le geste, et n'offre la reprise QUE si c'est
-            // l'ancienne pile (S-6, BR-9). Le bouton porte un libellé explicite
-            // (jamais une icône seule) ; il est atteignable au clavier, après le
-            // détail, et désactivé pendant l'action (`canRefresh`).
+            // Quelqu'un répond sans notre jeton (S-4) : la section le dit, et
+            // n'offre la reprise QUE si c'est l'ancienne pile (S-6, BR-9). Le
+            // bouton porte un libellé explicite (jamais une icône seule) et il
+            // est désactivé pendant l'action (`canRefresh`). L'adresse, le
+            // propriétaire et le geste shell se copient, après la reprise dans
+            // l'ordre de tabulation (jargon-technique-expose-mac-et-ios S-6).
             ContentUnavailableView {
                 Label(MemoryText.foreignTitle, systemImage: "exclamationmark.triangle")
             } description: {
                 Text(MemoryText.foreignDescription)
             } actions: {
-                Text(verbatim: MemoryText.foreignOwnershipDetail(foreign))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("memoire.foreignOwned.detail")
                 if foreign.isLegacy {
                     Button(MemoryText.takeover) { Task { await model.takeOverLegacyStack() } }
                         .disabled(!model.canRefresh)
                         .accessibilityIdentifier("memoire.foreignOwned.takeover")
                 }
+                DiagnosticCopyButton(
+                    diagnostic: MemoryText.foreignOwnershipDetail(foreign),
+                    identifier: "memoire.foreignOwned.diagnostic"
+                )
             }
 
         case let .summaryEmpty(scope):

@@ -191,14 +191,23 @@ final class MemoryModel: ObservableObject {
     /// Il n'apparaît QUE si le service mem0 est disponible (quand il est
     /// indisponible, son propre message suffit — S-6) ET qu'oMLX est en défaut :
     /// injoignable, ou jeton refusé. Joignable ou encore `unknown` ⇒ aucun bandeau.
-    /// C'est une LECTURE seule : aucun geste, aucune écriture.
-    var omlxBanner: String? {
+    /// C'est une LECTURE seule : la phrase dit la conséquence et le geste ; l'URL
+    /// sondée, le code et la variable restent dans le diagnostic copiable (S-6 de
+    /// jargon-technique-expose-mac-et-ios).
+    var omlxBanner: ReadableFailure? {
         guard serviceAvailable else { return nil }
+        let url = omlxProbeURL.absoluteString
         switch omlx {
         case .unreachable:
-            return MemoryText.omlxUnreachable(url: omlxProbeURL.absoluteString)
+            return ReadableFailure(
+                message: MemoryText.omlxUnreachable,
+                diagnostic: MemoryText.omlxUnreachableDiagnostic(url: url)
+            )
         case .unauthorized:
-            return MemoryText.omlxUnauthorized
+            return ReadableFailure(
+                message: MemoryText.omlxUnauthorized,
+                diagnostic: MemoryText.omlxUnauthorizedDiagnostic(url: url)
+            )
         case .unknown, .reachable:
             return nil
         }

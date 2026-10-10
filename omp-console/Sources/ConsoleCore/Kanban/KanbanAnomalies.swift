@@ -243,8 +243,9 @@ public enum KanbanAnomalies {
             entries.map { entry in
                 KanbanAnomaly(
                     kind: .illisible,
-                    text: "Une entrée de pipeline est illisible.",
-                    detail: "entrée illisible — \(entry.file) : \(reasonText(entry.reason))"
+                    text: KanbanText.anomalyUnreadable,
+                    detail: "entrée illisible — \(entry.file) : \(reasonText(entry.reason))",
+                    gesture: .instruction(KanbanText.anomalyUnreadableGesture)
                 )
             }
         }
@@ -272,17 +273,23 @@ public enum KanbanAnomalies {
     /// Le BATTEMENT périmé (`isStale`, 10 000 ms) n'est PAS une anomalie : un run
     /// vivant au repos garde un `updatedAt` figé (`publishRunning` ne le réécrit
     /// pas), et le compter comme mort enterrerait des pipelines vivantes.
+    ///
+    /// `cards` est l'ardoise FINALE : le geste d'un lot mort est « Reprendre » sur
+    /// sa première carte reprenable (`resumeCardId`), sinon une consigne. Un run
+    /// n'a jamais de reprise (la reprise conduit un dépôt, pas un run).
     public static func mortLines(
         running: [RunningEntry],
         lots: [Lot],
-        isAlive: PipelineLiveness
+        isAlive: PipelineLiveness,
+        cards: [KanbanCard]
     ) -> [KanbanAnomaly] {
         var lines: [KanbanAnomaly] = []
         for entry in running.sorted(by: { $0.id < $1.id }) where !isAlive.isAlive(entry.ownerPid) {
             lines.append(KanbanAnomaly(
                 kind: .mort,
-                text: "\(entry.label) s'est arrêtée de façon inattendue.",
-                detail: mortText(target: "running/\(entry.id).json", pid: entry.ownerPid)
+                text: KanbanText.anomalyDeadRun(label: entry.label),
+                detail: mortText(target: "running/\(entry.id).json", pid: entry.ownerPid),
+                gesture: .instruction(KanbanText.anomalyDeadRunGesture)
             ))
         }
         let deadLots = lots
@@ -290,13 +297,26 @@ public enum KanbanAnomalies {
             .sorted { KanbanRepoKey.key(forRoot: $0.repoRoot) < KanbanRepoKey.key(forRoot: $1.repoRoot) }
         for lot in deadLots {
             let repo = (realpathOr(lot.repoRoot) as NSString).lastPathComponent
+            let key = KanbanRepoKey.key(forRoot: lot.repoRoot)
             lines.append(KanbanAnomaly(
                 kind: .mort,
-                text: "Le pilote de \(repo) s'est arrêté de façon inattendue.",
-                detail: mortText(target: "lots/\(KanbanRepoKey.key(forRoot: lot.repoRoot)).json", pid: lot.owner.pid)
+                text: KanbanText.anomalyDeadLot(repo: repo),
+                detail: mortText(target: "lots/\(key).json", pid: lot.owner.pid),
+                gesture: resumeCardId(repoKey: key, cards: cards).map { .resume(cardId: $0) }
+                    ?? .instruction(KanbanText.anomalyDeadLotNothingToResume)
             ))
         }
         return lines
+    }
+
+    /// La carte que « Reprendre » vise pour le dépôt de clé `repoKey` : parmi les
+    /// cartes de ce dépôt qui offrent la zone `.resume`, la PREMIÈRE par `id`
+    /// croissant — un choix déterministe. `nil` quand aucune ne l'offre.
+    public static func resumeCardId(repoKey: String, cards: [KanbanCard]) -> String? {
+        cards
+            .filter { $0.action?.repoKey == repoKey && KanbanActionPresentation.resumable($0) }
+            .map(\.id)
+            .min()
     }
 
     /// Le détail technique d'une ligne `mort` : le fichier et le pid.
@@ -311,9 +331,9 @@ public enum KanbanAnomalies {
     public static func doublonLine(a: String, b: String, identity: String, name: String?) -> KanbanAnomaly {
         KanbanAnomaly(
             kind: .doublon,
-            text: name.map { "Deux sources décrivent la même pipeline : \($0)." }
-                ?? "Deux sources décrivent la même pipeline.",
-            detail: "doublon — \(a) et \(b) : \(identity)"
+            text: KanbanText.anomalyDuplicate(name: name),
+            detail: "doublon — \(a) et \(b) : \(identity)",
+            gesture: .instruction(KanbanText.anomalyDuplicateGesture)
         )
     }
 }

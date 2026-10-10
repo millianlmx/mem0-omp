@@ -33,7 +33,7 @@ struct IOSHomeBadgeTests {
     @Test("ios-badge-attente-invisible-racine : la recette nourrit le badge comme l'Accueil")
     func recipeFeedsSidebarBadge() {
         let expected: [(IOSHomeRecipe, Int)] = [
-            (.dashboard, 3), (.answer, 3), (.contract, 3), (.degraded, 3),
+            (.dashboard, 5), (.answer, 5), (.contract, 5), (.degraded, 5),
             (.loading, 0), (.firstRun, 0), (.ompMissing, 0),
         ]
         for (recipe, badge) in expected {
@@ -43,7 +43,7 @@ struct IOSHomeBadgeTests {
             case .dashboard, .unavailable: carriesFixture = true
             default: carriesFixture = false
             }
-            #expect((recipe.badge == 3) == carriesFixture, "recette \(recipe.rawValue)")
+            #expect((recipe.badge == 5) == carriesFixture, "recette \(recipe.rawValue)")
         }
     }
 }
