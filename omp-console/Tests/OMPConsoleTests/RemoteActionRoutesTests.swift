@@ -130,7 +130,9 @@ private func makeActionFixture(
     pendingAsk: [String: Any]? = nil,
     withInbox: Bool = true,
     withPilot: Bool = true,
-    fileOps: PipelineFileOps = .live
+    fileOps: PipelineFileOps = .live,
+    featureState: String = "waiting",
+    ownerPid: Double = Double(getpid())
 ) async throws -> ActionFixture {
     let store = StoreFixture()
     let repoRoot = store.root + "/depot"
@@ -145,7 +147,7 @@ private func makeActionFixture(
 
     var feature = lotFeatureObject(
         slug: "alpha",
-        state: "waiting",
+        state: featureState,
         worktree: worktree,
         waitKind: waitKind
     )
@@ -155,7 +157,8 @@ private func makeActionFixture(
     let idle = lotFeatureObject(slug: "beta", state: "pending", worktree: "")
     store.publish(.lots, "\(fixtureId(0xA3)).json", object: lotObject(
         repoRoot: repoRoot,
-        features: [feature, idle]
+        features: [feature, idle],
+        ownerPid: ownerPid
     ))
     store.publish(.running, "\(runId).json", object: runningObject(
         id: runId,
@@ -163,7 +166,7 @@ private func makeActionFixture(
         label: "depot/alpha",
         phaseStartedAt: fixtureT0 - 5_000,
         updatedAt: fixtureT0 - 1_000,
-        ownerPid: Double(getpid()),
+        ownerPid: ownerPid,
         sessionFile: store.root + "/session.jsonl",
         inbox: withInbox ? inbox : nil,
         pendingAsk: pendingAsk
@@ -520,6 +523,98 @@ func conductorFailureIsUnavailable() async throws {
     #expect(reply.status == 503)
     #expect(reply.errorCode == "unavailable")
     #expect(reply.errorMessage == ServiceSessionError.notRunning.userMessage)
+}
+
+// MARK: - accueil-en-cours-melange-pause-et-compte, AC-4
+
+@MainActor
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : resume sur une feature en échec ou bloquée poste relaunch, jamais pilot")
+func resumeOnARelaunchableCardPostsRelaunch() async throws {
+    for state in ["failed", "blocked"] {
+        let fixture = try await makeActionFixture(featureState: state)
+        defer { fixture.stack.stop() }
+        let card = try #require(fixture.card(fixture.featureCardId))
+        #expect(KanbanActionPresentation.relaunchable(card), "la carte \(state) doit être relançable")
+
+        let reply = try await fixture.stack.call(
+            "POST", "/v1/cards/\(fixture.featureCardId)/resume",
+            token: fixture.token
+        )
+        #expect(reply.status == 202, "\(state) : 202 attendu, obtenu \(reply.status) \(reply.text)")
+        #expect(fixture.pilot.roots.isEmpty, "\(state) : la relance ne sollicite pas le pilote")
+        let post = try #require(fixture.commands.posts.last)
+        #expect(fixture.commands.posts.count == 1)
+        #expect(post.repo == realpathOr(fixture.repoRoot))
+        #expect(Set(post.body.keys) == ["version", "id", "sentAt", "repo", "kind", "slug"])
+        #expect(post.body["kind"] as? String == "relaunch")
+        #expect(post.body["slug"] as? String == fixture.slug)
+        #expect(post.body["repo"] as? String == realpathOr(fixture.repoRoot))
+        let entry = try #require(fixture.stack.actions.journal.first)
+        #expect(entry.id == post.body["id"] as? String)
+        #expect(entry.kindLabel == ActionsText.resumeLabel)
+        #expect(entry.targetLabel == fixture.slug)
+        #expect(entry.state == .taken)
+    }
+}
+
+@MainActor
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : resume sur une carte en pause garde le chemin pilote, sans commande")
+func resumeOnAPausedCardStillPilots() async throws {
+    let fixture = try await makeActionFixture(featureState: "running", ownerPid: Double(deadPid()))
+    defer { fixture.stack.stop() }
+    let card = try #require(fixture.card(fixture.featureCardId))
+    #expect(KanbanActionPresentation.resumable(card), "la carte doit être en pause")
+    #expect(!KanbanActionPresentation.relaunchable(card))
+
+    let reply = try await fixture.stack.call(
+        "POST", "/v1/cards/\(fixture.featureCardId)/resume",
+        token: fixture.token
+    )
+    #expect(reply.status == 202, "202 attendu, obtenu \(reply.status) \(reply.text)")
+    #expect(fixture.pilot.roots == [realpathOr(fixture.repoRoot)])
+    #expect(fixture.commands.posts.isEmpty, "une reprise de pilote ne poste aucune commande")
+}
+
+@MainActor
+@Test("accueil-en-cours-melange-pause-et-compte/AC-4 : une relance refusée est un 409 au motif du service, une panne d'envoi un 503")
+func relaunchRefusalIsConflictAndFailureIsUnavailable() async throws {
+    let fixture = try await makeActionFixture(featureState: "failed")
+    defer { fixture.stack.stop() }
+    let motif = "relance possible sur une feature bloquée, échouée ou annulée"
+    fixture.commands.ack = ServiceCommandAck(
+        id: "x", repo: "", kind: "relaunch", state: .refused, reason: motif, at: 0
+    )
+
+    let refused = try await fixture.stack.call(
+        "POST", "/v1/cards/\(fixture.featureCardId)/resume",
+        token: fixture.token
+    )
+    #expect(refused.status == 409, "409 attendu, obtenu \(refused.status) \(refused.text)")
+    #expect(refused.errorCode == "conflict")
+    #expect(refused.errorMessage == motif)
+    #expect(fixture.stack.actions.journal.first?.state == .refused(reason: motif))
+
+    // Un refus sans motif garde un message lisible.
+    fixture.commands.ack = ServiceCommandAck(
+        id: "x", repo: "", kind: "relaunch", state: .refused, reason: nil, at: 0
+    )
+    let bare = try await fixture.stack.call(
+        "POST", "/v1/cards/\(fixture.featureCardId)/resume",
+        token: fixture.token
+    )
+    #expect(bare.status == 409)
+    #expect(bare.errorMessage == "relance refusée")
+
+    // Service injoignable : l'envoi échoue, la route rend 503 au motif journalisé.
+    fixture.commands.failure = ServiceSessionError.notRunning
+    let unavailable = try await fixture.stack.call(
+        "POST", "/v1/cards/\(fixture.featureCardId)/resume",
+        token: fixture.token
+    )
+    #expect(unavailable.status == 503, "503 attendu, obtenu \(unavailable.status) \(unavailable.text)")
+    #expect(unavailable.errorCode == "unavailable")
+    #expect(unavailable.errorMessage == ServiceSessionError.notRunning.userMessage)
+    #expect(fixture.pilot.roots.isEmpty)
 }
 
 /// Le journal est PARTAGÉ par tous les gestes et borné à 20 entrées : pendant qu'un

@@ -1,19 +1,21 @@
 // L'écran Accueil de l'app iOS (S-10, S-11) : cinq états — déconnecté, « OMP
 // absent sur le Mac », chargement, premiers pas, tableau de bord — et, dans le
-// tableau de bord, les deux bandeaux, la section « À vous », « En cours » et
-// « Livrées récemment ».
+// tableau de bord, les deux bandeaux, la section « À vous », « En cours »,
+// « À reprendre », « Pas commencées » et « Livrées récemment » ; les deux du
+// milieu sont masquées quand elles sont vides. Chaque carte est dans une seule
+// section (`HomePresentation.dashboard`, la MÊME règle que le Mac).
 //
 // Aucune phrase n'est composée ici : les mots viennent du noyau partagé
 // (`HomeText`, `ActionsText`, `ContractText`) et de `IOSHomeText` ; la vue rend
-// les décisions pures de `IOSHomeState` et `IOSHomeContent`. Les rangées « En
-// cours » et « Livrées récemment » suivent `IOSHomeContent.rowAxis` : une ligne en
-// largeur régulière, deux lignes (titre, puis puce + bouton) en largeur compacte,
-// empilées aux tailles d'accessibilité.
+// les décisions pures de `IOSHomeState` et `IOSHomeContent`. Les rangées suivent
+// `IOSHomeContent.rowAxis` : une ligne en largeur régulière, deux lignes (titre,
+// puis puce + bouton) en largeur compacte, empilées aux tailles d'accessibilité.
 //
-// Les gestes de carte (« Valider les specs », « Accepter la revue », « Reprendre »)
-// passent par `IOSHomeGestureModel`, possédé par la racine : bouton désactivé avec
-// « Envoi en cours » jusqu'à la réponse du Mac, confirmation pour les specs
-// seulement, échec affiché sur la carte, aucun message de succès.
+// Les gestes de carte (« Valider les specs », « Accepter la revue », « Reprendre »
+// d'une rangée en pause ou d'une carte en échec ou bloquée) passent par
+// `IOSHomeGestureModel`, possédé par la racine : bouton désactivé avec « Envoi en
+// cours » jusqu'à la réponse du Mac, confirmation pour les specs seulement, échec
+// affiché sur la carte, aucun message de succès.
 //
 // Surfaces : `iosPanel()`/`iosCard()`/`iosBanner(tone:)`/`IOSStatusChip`, les
 // composants système, jamais un contrôle maison (`onTapGesture` interdit ; les
@@ -190,6 +192,8 @@ struct HomeView: View {
                     launchBanner
                     attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
                     runningSection(dashboard, showsRepo: showsRepo)
+                    pausedSection(dashboard, showsRepo: showsRepo)
+                    notStartedSection(dashboard, showsRepo: showsRepo)
                     deliveredSection(dashboard, showsRepo: showsRepo)
                 }
                 .padding(IOSMetrics.margin(sizeClass))
@@ -208,8 +212,9 @@ struct HomeView: View {
         }
     }
 
-    /// Le crochet `-home.row <n>` : la rangée d'index `n` (« En cours » puis
-    /// « Livrées récemment ») en haut de la zone de défilement. Un index absent ou
+    /// Le crochet `-home.row <n>` : la rangée d'index `n` (`IOSHomeContent.rows` :
+    /// « En cours », « À reprendre », « Pas commencées », puis « Livrées
+    /// récemment ») en haut de la zone de défilement. Un index absent ou
     /// hors bornes ne défile pas. Le défilement manuel reste libre ensuite.
     private func scrollToRecipeRow(_ dashboard: HomeDashboard, proxy: ScrollViewProxy) {
         guard let recipeRow, let id = IOSHomeContent.recipeRowID(dashboard, index: recipeRow) else { return }
@@ -246,13 +251,29 @@ struct HomeView: View {
             if dashboard.running.isEmpty {
                 emptyLine(HomeText.runningEmpty)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(dashboard.running.enumerated()), id: \.element.id) { index, card in
-                        if index > 0 { Divider() }
-                        runningRow(card, showsRepo: showsRepo).id(card.id)
-                    }
-                }
-                .iosCard()
+                rowCard(dashboard.running) { runningRow($0, showsRepo: showsRepo) }
+            }
+        }
+    }
+
+    /// « À reprendre » : les pipelines en pause. Masquée quand elle est vide.
+    @ViewBuilder
+    private func pausedSection(_ dashboard: HomeDashboard, showsRepo: Bool) -> some View {
+        if !dashboard.paused.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(HomeText.pausedHeader).font(.title3.bold())
+                rowCard(dashboard.paused) { pausedRow($0, showsRepo: showsRepo) }
+            }
+        }
+    }
+
+    /// « Pas commencées » : les features jamais lancées. Masquée quand elle est vide.
+    @ViewBuilder
+    private func notStartedSection(_ dashboard: HomeDashboard, showsRepo: Bool) -> some View {
+        if !dashboard.notStarted.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(HomeText.notStartedHeader).font(.title3.bold())
+                rowCard(dashboard.notStarted) { notStartedRow($0, showsRepo: showsRepo) }
             }
         }
     }
@@ -263,15 +284,21 @@ struct HomeView: View {
             if dashboard.delivered.isEmpty {
                 emptyLine(HomeText.deliveredEmpty)
             } else {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(dashboard.delivered.enumerated()), id: \.element.id) { index, card in
-                        if index > 0 { Divider() }
-                        deliveredRow(card, showsRepo: showsRepo).id(card.id)
-                    }
-                }
-                .iosCard()
+                rowCard(dashboard.delivered) { deliveredRow($0, showsRepo: showsRepo) }
             }
         }
+    }
+
+    /// Un groupe de rangées sur une carte, séparées par un trait. Chaque rangée
+    /// porte l'id de sa carte, cible du crochet `-home.row`.
+    private func rowCard<Row: View>(_ cards: [KanbanCard], @ViewBuilder row: @escaping (KanbanCard) -> Row) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
+                if index > 0 { Divider() }
+                row(card).id(card.id)
+            }
+        }
+        .iosCard()
     }
 
     private func emptyLine(_ text: String) -> some View {
@@ -314,7 +341,7 @@ struct HomeView: View {
                 }
                 attentionButton(attention, prominent: prominent)
             }
-            failureBanner(attentionGestureKey(attention))
+            failureBanner(IOSHomeContent.attentionGestureKey(attention))
         }
         .iosCard()
         .accessibilityElement(children: .contain)
@@ -347,17 +374,12 @@ struct HomeView: View {
             gestureButton(KanbanText.validateSpecs, key: IOSHomeGestureKey(cardId: card.id, gesture: .validateSpecs))
         case .accept:
             gestureButton(KanbanText.acceptReview, key: IOSHomeGestureKey(cardId: card.id, gesture: .acceptReview))
+        case .relaunch:
+            // Une pipeline en échec ou bloquée : la route de reprise de la carte,
+            // que le Mac traduit en relance de son maillon.
+            gestureButton(KanbanText.resume, key: IOSHomeGestureKey(cardId: card.id, gesture: .resume))
         case .open:
             Button(HomeText.openInPipelines) { onSelectSection(IOSHomeContent.allPipelinesSection) }
-        }
-    }
-
-    /// La clé du geste d'une carte « À vous », quand son bouton en envoie un.
-    private func attentionGestureKey(_ attention: HomeAttention) -> IOSHomeGestureKey? {
-        switch IOSHomeContent.attentionButton(attention) {
-        case .validate: IOSHomeGestureKey(cardId: attention.card.id, gesture: .validateSpecs)
-        case .accept: IOSHomeGestureKey(cardId: attention.card.id, gesture: .acceptReview)
-        case .answer, .open: nil
         }
     }
 
@@ -382,10 +404,17 @@ struct HomeView: View {
 
     // MARK: - Lignes
 
+    /// « En cours » : une pipeline réellement en marche, avec sa durée.
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            runningRowLine(card, showsRepo: showsRepo)
-            failureBanner(IOSHomeGestureKey(cardId: card.id, gesture: .resume))
+        rowLayout {
+            rowTitle(card, showsRepo: showsRepo)
+            if rowAxis == .horizontal { Spacer() }
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
+                    .font(.callout)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
         }
         .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
@@ -393,39 +422,57 @@ struct HomeView: View {
         .accessibilityIdentifier(IOSHomeAccessibility.running(card.id))
     }
 
-    /// La ligne « titre | puce | contrôle » d'une rangée « En cours ».
-    private func runningRowLine(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        rowLayout {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(IOSHomeText.featureName(card.title))
-                    .font(.body.weight(.medium))
-                    .accessibilityLabel(card.title)
-                    .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
-                if let subtitle = HomeText.cardSubtitle(
-                    card,
-                    noPhase: ConsoleStatus.of(card: card).text,
-                    showsRepo: showsRepo
-                ) {
-                    Text(subtitle).font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            if rowAxis == .horizontal { Spacer() }
-            controlsLayout {
-                IOSStatusChip(status: ConsoleStatus.of(card: card))
-                if rowAxis == .twoLine { Spacer() }
-                if KanbanActionPresentation.resumable(card), card.action != nil {
-                    gestureButton(KanbanText.resume, key: IOSHomeGestureKey(cardId: card.id, gesture: .resume))
-                        .buttonStyle(.bordered)
-                        .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                        .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
-                } else {
-                    TimelineView(.periodic(from: .now, by: 1)) { context in
-                        Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
-                            .font(.callout)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
+    /// « À reprendre » : une pipeline en pause, sa puce « En pause » et
+    /// « Reprendre » ; l'échec du geste s'affiche sous la ligne.
+    private func pausedRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        let key = IOSHomeGestureKey(cardId: card.id, gesture: .resume)
+        return VStack(alignment: .leading, spacing: 8) {
+            rowLayout {
+                rowTitle(card, showsRepo: showsRepo)
+                if rowAxis == .horizontal { Spacer() }
+                controlsLayout {
+                    IOSStatusChip(status: ConsoleStatus.of(card: card))
+                    if card.action != nil {
+                        if rowAxis == .twoLine { Spacer() }
+                        gestureButton(KanbanText.resume, key: key)
+                            .buttonStyle(.bordered)
+                            .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
+                            .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
                     }
                 }
+            }
+            failureBanner(key)
+        }
+        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
+        .padding(.vertical, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(IOSHomeAccessibility.paused(card.id))
+    }
+
+    /// « Pas commencées » : une feature jamais lancée, titre et sous-titre seuls.
+    private func notStartedRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        rowTitle(card, showsRepo: showsRepo)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
+            .padding(.vertical, 8)
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier(IOSHomeAccessibility.notStarted(card.id))
+    }
+
+    /// Le titre et le sous-titre d'une rangée « En cours », « À reprendre » ou
+    /// « Pas commencées ».
+    private func rowTitle(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(IOSHomeText.featureName(card.title))
+                .font(.body.weight(.medium))
+                .accessibilityLabel(card.title)
+                .accessibilityIdentifier(IOSHomeAccessibility.rowTitle(card.id))
+            if let subtitle = HomeText.cardSubtitle(
+                card,
+                noPhase: ConsoleStatus.of(card: card).text,
+                showsRepo: showsRepo
+            ) {
+                Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }
         }
     }

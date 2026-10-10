@@ -91,7 +91,7 @@ func pendingAnswerNotifiesOnce() async {
 
     // Un second instantané (un run de plus) ne renotifie pas la question en vol.
     publishBusyRun(fixture, id: fixtureId(0x22))
-    #expect(await awaitMainTrue { model.status.counters?.busy == 1 })
+    #expect(await awaitMainTrue { model.status.counts?.running == 1 })
     #expect(deliverer.messages.count == 1)
 }
 
@@ -129,7 +129,7 @@ func modelReportsUnavailableDeliverer() async {
 
     #expect(await awaitMainTrue { model.authorization == .unavailable })
     // Le livreur indisponible ne fait rien : aucune exception, aucun appel système.
-    #expect(await awaitMainTrue { model.status.counters != nil })
+    #expect(await awaitMainTrue { model.status.counts != nil })
 }
 
 // MARK: - AC-5 : `ingest(_:)` est la décision extraite d'`apply(_:stateDir:)`

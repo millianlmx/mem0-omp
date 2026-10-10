@@ -79,20 +79,30 @@ Tout se fait depuis l'app, sans terminal :
    les sessions par l'API et poste les commandes. Un dépôt sans pilote vivant se
    réveille par `POST /v1/repos/{repo}/pilot` : le service crée ou adopte son
    conducteur, un seul par dépôt, et il vit tant que le service vit.
-5. **À vous** — les questions de l'agent et les jalons arrivent en tête de
-   l'Accueil, en cartes (badge sur « Accueil ») : « Répondre… » ouvre la feuille
+5. **À vous** — les questions de l'agent, les jalons et les pipelines en échec ou
+   bloquées arrivent en tête de l'Accueil, en cartes (badge sur « Accueil ») :
+   « Répondre… » ouvre la feuille
    « Répondre » — une question `ask` en vol se répond par ses options ou un texte
    libre, une question en **texte** d'un maillon terminé par un texte (commande
    `reply`) ; « Valider les specs » et « Accepter la revue » agissent depuis la
    carte, et « Lire le contrat » (secondaire) ouvre la feuille **Contrat** pour un
-   besoin ou des specs à valider. La PR livrée apparaît sous « Livrées récemment »
+   besoin ou des specs à valider. Sous « À vous », l'Accueil range ensuite, chaque
+   pipeline dans UNE seule section : « En cours » (réellement en marche, avec sa
+   durée), « À reprendre » (en pause) et « Pas commencées » (jamais lancées), ces
+   deux dernières masquées quand elles sont vides. La PR livrée apparaît sous « Livrées récemment »
    avec « Ouvrir la PR » et l'état réel de la PR (« PR ouverte », « PR fusionnée »,
    « PR fermée », ou « PR créée » tant que GitHub n'a pas répondu) ; une PR
    fusionnée ou fermée depuis plus de 7 jours en sort.
 6. **Reprendre** — une pipeline dont le pilote est mort (service arrêté, session
-   fermée) est « En pause » sous « En cours » avec « Reprendre », qui poste
+   fermée) est « En pause » sous « À reprendre » avec « Reprendre », qui poste
    `POST /v1/repos/{repo}/pilot` ; le service réveille un conducteur qui adopte le
-   lot.
+   lot. Une feature de lot en échec ou bloquée est une carte « En échec » /
+   « Bloquée » de « À vous », qui nomme l'étape arrêtée (« L'étape
+   « Implémentation » s'est arrêtée en échec. ») sans aucun texte d'erreur brut ;
+   son « Reprendre » poste la commande `relaunch`, le service reprend le maillon
+   arrêté et la carte passe sous « En cours » à l'instantané suivant. Les runs
+   d'historique et les échecs de projet sans feature de lot restent dans
+   Pipelines › Arrêtées.
 
 **La pile mémoire survit à ⌘Q** : l'app ne possède aucun site d'arrêt — les
 processus de la machine (`krunkit`, `gvproxy`) sont lancés par des invocations
@@ -152,8 +162,8 @@ prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
 `home.notificationsBanner` (`home.notifications.openSettings`,
 `home.notifications.ignore`), `home.launchBanner`, `home.attention.<carte>`
 (boutons `home.attention.<carte>.action` et `home.attention.<carte>.contract`),
-`home.running.<carte>`,
-`home.resume.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
+`home.running.<carte>`, `home.paused.<carte>` (bouton `home.resume.<carte>`),
+`home.notStarted.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
 feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.retry`,
 `sheet.setup.close`) ; feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
 feuille « Répondre » `answer.sheet` (`answer.question`,
@@ -182,6 +192,21 @@ cd <dépôt> && MEM0_PIPELINE_STATE_DIR=/tmp/demo/state \
 ```
 
 (`-home.welcomeSeen NO` remontre la bienvenue sur un magasin vide.)
+
+Le crochet de recette `-home.recipe <dashboard|menuBar|pausedOnly>` pose l'ardoise
+de la fixture partagée `HomeParity` dans l'Accueil ET dans l'item de barre de
+menus, sans abonnement au magasin ni notification : `dashboard` = 5 « À vous »,
+2 « En cours », 1 « À reprendre », 1 « Pas commencées », 2 livraisons ;
+`menuBar` = 1 « À vous » et 2 « En cours » ; `pausedOnly` = une pause et une
+feature pas commencée seulement. Il n'agit que si `OMP_CONSOLE_SUPPORT_ROOT` est
+posée et non vide, jamais sur la racine réelle :
+
+```bash
+open -g -n "<chemin>/omp-console/build/OMP Console.app" \
+  --env OMP_CONSOLE_SUPPORT_ROOT=/tmp/recette/support \
+  --env MEM0_PIPELINE_STATE_DIR=/tmp/recette/state \
+  --args -home.recipe dashboard -home.welcomeSeen YES
+```
 
 ## Cibles
 
@@ -499,7 +524,8 @@ récente** en bas de la section (une ligne par geste : symbole d'état, libellé
 heure) : l'accusé affiché est celui de la **réponse** du service — `state:"taken"`
 (prise en charge) ou `state:"refused"` avec son motif, affiché verbatim. Aucun
 fichier d'accusé, aucune relecture périodique. « Reprendre » poste
-`POST /v1/repos/{repo}/pilot`.
+`POST /v1/repos/{repo}/pilot` sur une pipeline en pause, et la commande `relaunch`
+sur une carte « En échec » / « Bloquée » de l'Accueil.
 
 | Geste | Où | Écrit |
 |---|---|---|
@@ -509,7 +535,8 @@ fichier d'accusé, aucune relecture périodique. « Reprendre » poste
 | Lire le contrat (besoin ou specs à valider) | carte « À vous » de l'Accueil (secondaire), zone d'action de la feuille de détail, menu contextuel de la carte | rien : la console lit `<worktree>/.omp/pipeline/contract.md` et ouvre la feuille Contrat |
 | Accepter la revue | feuille de détail, menu contextuel ou carte « À vous » (feature en attente revue) | `POST /v1/repos/{repo}/commands` — `{kind:"verdict", verdict:"y"}` |
 | Répondre à une question en texte d'un maillon terminé | feuille de détail ou feuille « Répondre » (feature en attente de réponse, sans question en vol) | `POST /v1/repos/{repo}/commands` — `{kind:"reply", slug, text}` |
-| Reprendre | feuille de détail, menu contextuel ou ligne « En cours » de l'Accueil (carte marquée `mort`, feature vivante) | rien de plus : `POST /v1/repos/{repo}/pilot` réveille le conducteur du service |
+| Reprendre | feuille de détail, menu contextuel ou ligne « À reprendre » de l'Accueil (carte marquée `mort`, feature vivante) | rien de plus : `POST /v1/repos/{repo}/pilot` réveille le conducteur du service |
+| Reprendre une pipeline en échec ou bloquée | carte « En échec » / « Bloquée » de « À vous » (feature de lot `failed` ou `blocked`) | `POST /v1/repos/{repo}/commands` — `{kind:"relaunch", slug}` |
 | Arrêter… | feuille de détail ou menu contextuel (carte portant un lot), après confirmation | `POST /v1/repos/{repo}/commands` — `{kind:"stop", repo}` |
 | Lancer une feature | feuille « Nouvelle feature » (barre d'outils, ⌘N) | `POST /v1/repos/{repo}/commands` — `{kind:"launch", title, description, repo}` |
 
@@ -1482,9 +1509,11 @@ intégré) »).
 
 L'app est une **app de barre de menus** : fermer la fenêtre ne la quitte pas (seul
 **⌘Q** quitte), l'item de barre reste présent, et un clic sur cet item ramène la
-fenêtre visible et au premier plan. Le titre de l'item suit les compteurs —
-`<occupés>·<en attente>` (point médian U+00B7) dès que l'un des deux est non nul,
-l'icône seule sinon (`square.grid.2x2`) ; un menu déroulant n'est **pas** posé, un
+fenêtre visible et au premier plan. Le titre de l'item est **un seul chiffre**, le
+nombre de lignes « À vous » de l'Accueil, et l'icône seule (`square.grid.2x2`)
+quand ce nombre est nul. Son info-bulle et sa description VoiceOver disent toutes
+deux **« N à vous · M en cours »** (point médian U+00B7, zéros écrits ; « 0 à vous ·
+0 en cours » tant que rien n'est connu). Un menu déroulant n'est **pas** posé, un
 menu demanderait deux clics là où un seul doit ramener la fenêtre.
 
 ### Les notifications
@@ -1519,10 +1548,12 @@ Notifications) et « Ignorer », qui le masque pour de bon (préférence
 `home.notificationsBannerDismissed`). La fenêtre n'affiche plus de compteurs : ils
 vivent dans l'item de la barre des menus.
 
-Dans l'item de barre, « occupés » compte les cartes de la colonne **En cours** ; « en attente » les cartes
-« À vous », « Specs à valider » et « Revues à accepter » — deux catégories
-**exclusives**, calculées sur l'ardoise que la fenêtre affiche. La colonne « Pas
-commencées » de Pipelines (features `pending`, non lancées) n'est **pas** ce compteur.
+Dans l'item de barre, N et M sont les tailles des listes « À vous » et « En cours »
+de l'Accueil (`HomePresentation.counts`, mêmes règles que `HomePresentation.dashboard`) :
+les pipelines en pause (« À reprendre ») et les features jamais lancées (« Pas
+commencées ») ne comptent **jamais**, et une pipeline en échec ou bloquée relançable
+compte dans « À vous ». Le chiffre, l'info-bulle et la description changent au même
+instantané que les sections de l'Accueil.
 
 ### Le registre persisté
 
@@ -1553,7 +1584,8 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
   nohup "omp-console/build/OMP Console.app/Contents/MacOS/OMPConsole" >/tmp/omp-console.log 2>&1 &
 ```
 
-1. Accorder le dialogue d'autorisation ; vérifier l'item de barre à l'icône seule.
+1. Accorder le dialogue d'autorisation ; vérifier l'item de barre à l'icône seule
+   (sonde AX : `AXTitle` vide, `AXDescription` = `AXHelp` = « 0 à vous · 0 en cours »).
 2. Mettre une autre app au premier plan, puis produire un **vrai** évènement par une
    **session servie réelle** (une session du service sur le magasin jetable, avec
    un prompt demandant une question à choix multiples) : une bannière apparaît, nomme le run,
@@ -1580,8 +1612,10 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
    **aucun** appel UserNotifications ne vit ailleurs que dans `AlertDelivery.swift`.
 2. **`NSStatusBar` interdit dans la suite.** `NSStatusBar.system.statusItem(withLength:)`
    tue un processus de test (signal 6, pile `-[NSStatusBar _statusItemWithLength:withPriority:]`).
-   `StatusItemController` n'y est donc jamais construit : sa logique de titre est une
-   fonction pure (`StatusItemTitle`), et son câblage AppKit est prouvé par la recette.
+   `StatusItemController` n'y est donc jamais construit : son titre et son résumé
+   sont des fonctions pures (`StatusItemTitle.text`, `.summary`) qu'il se borne à
+   recopier dans `title`, `toolTip` (`AXHelp`) et `setAccessibilityLabel`
+   (`AXDescription`) ; ce câblage AppKit est prouvé par la recette.
 3. **`activate()` coopératif est refusé.** Sans intention utilisateur,
    `NSApplication.activate()` rend la fenêtre visible mais pas clé ni principale ;
    seule `activate(ignoringOtherApps: true)` (dépréciée avec le SDK du poste, assumé)
@@ -1912,6 +1946,7 @@ omp-console/
 │   │   ├── HomePresentation.swift état de l'écran, listes, geste d'une carte (purs)
 │   │   ├── HomeText.swift         tous les textes de l'Accueil
 │   │   ├── HomeView.swift         les quatre états, dont le fond « prépare ses composants »
+│   │   ├── HomeRecipe.swift       crochet de recette `-home.recipe` (ardoises de `HomeParity`)
 │   │   ├── MainSheet.swift        la feuille due, une seule à la fois (politique pure)
 │   │   ├── WelcomeSheet.swift     la feuille « Bienvenue »
 │   │   └── AnswerSheet.swift      la feuille « Répondre »
@@ -2088,8 +2123,8 @@ omp-console/
 │   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
 │   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service
 │   │   └── PairingSheet.swift     la feuille d'appairage, ses états et ses textes
-│   └── MenuBar/                   l'item de barre de menus et ses compteurs
-│       ├── RunCounters.swift      occupés / en attente et l'état publié
+│   └── MenuBar/                   l'item de barre de menus et ses comptes
+│       ├── AlertsStatus.swift     l'état publié : comptes « À vous » / « En cours » de l'Accueil
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
 ├── Tests/OMPConsoleTests/         la suite Swift Testing (Service/ : ServiceClientTests,
 │                                  ServiceSessionModelTests, ServiceActionsTests ;
@@ -2135,13 +2170,22 @@ inatteignable) et veut des simulateurs dédiés, que les autres runs
 L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
 aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
 premiers pas, et tableau de bord. Le tableau de bord montre le bandeau de
-préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Répondre… »,
-« Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
-(« Reprendre » ou la durée) et « Livrées récemment » (bouton « Ouvrir la PR » ;
-PR ouvertes, créées, fusionnées ou fermées, closes depuis 7 jours au plus) —
-les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. En
-largeur compacte (iPhone), chaque rangée « En cours » ou « Livrées récemment »
-tient sur deux lignes : le nom sur toute la largeur, puis la puce et le bouton ;
+préparation, l'accusé de commande, puis cinq sections où chaque carte n'apparaît
+qu'une fois : « À vous » (cartes d'attente avec « Répondre… », « Valider les
+specs », « Accepter la revue », « Lire le contrat », et les pipelines « En échec »
+ou « Bloquée » avec l'étape où elles se sont arrêtées et « Reprendre »), « En
+cours » (pipelines réellement en marche, avec leur durée), « À reprendre »
+(pipelines en pause, puce « En pause » et « Reprendre »), « Pas commencées »
+(features jamais lancées) — ces deux-là masquées quand elles sont vides — et
+« Livrées récemment » (bouton « Ouvrir la PR » ; PR ouvertes, créées, fusionnées
+ou fermées, closes depuis 7 jours au plus) — les MÊMES listes que l'Accueil macOS,
+dérivées du noyau partagé `ConsoleCore` (`HomePresentation.dashboard`). Le
+« Reprendre » d'une carte en échec ou bloquée part par la même route que celui
+d'une pause (`POST v1/cards/:id/resume`) ; le Mac y reconnaît une pipeline
+relançable et poste la commande `relaunch`, et un refus s'affiche sur la carte
+(« La pipeline n'a pas repris. » et sa cause). En largeur compacte (iPhone),
+chaque rangée tient sur deux lignes : le nom sur toute la largeur, puis la puce
+et le bouton ;
 en largeur régulière (iPad), une seule ligne ; aux tailles d'accessibilité, titre,
 puce et bouton s'empilent. Les gestes de carte suivent l'envoi : « Valider les
 specs » demande une confirmation (elle lance l'implémentation sur le Mac),
@@ -2158,10 +2202,11 @@ libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (prem
 installation neuve, avant la feuille de connexion). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong|longTitles|slowMac>`
 force un état depuis la fixture partagée `HomeParity` pour les captures
-(`longTitles` : le tableau de bord dont les rangées « En cours » et « Livrées
-récemment » portent un titre de 40 caractères ; `slowMac` : le tableau de bord
-dont l'envoi des gestes de carte ne répond jamais, pour capturer « Envoi en
-cours ») ; il nourrit aussi le badge de la ligne Accueil (3 pour
+(`longTitles` : le tableau de bord dont les rangées « En cours », « À reprendre »,
+« Pas commencées » et « Livrées récemment » portent un titre de 40 caractères ;
+`slowMac` : le tableau de bord dont l'envoi des gestes de carte ne répond jamais,
+pour capturer « Envoi en cours ») ; il nourrit aussi le badge de la ligne Accueil
+(5 pour
 dashboard/answer/contract/contractLong/degraded/longTitles/slowMac, 0 pour
 loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
 d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
@@ -2601,7 +2646,8 @@ TROISIÈME groupe capture le **mode graphe de la Mémoire** (feature
 pan/zoom et une fiche ouverte — 3 états × {iPhone, iPad} × {clair, sombre} =
 **12 PNG**. Un QUATRIÈME groupe capture les **rangées de l'Accueil en Dynamic
 Type** (feature `ios-accueil-dynamic-type-casse`) via `-home.row <n>`, qui amène la
-rangée d'index `n` (« En cours » puis « Livrées récemment ») en haut du tableau de
+rangée d'index `n` (« En cours », « À reprendre », « Pas commencées », puis
+« Livrées récemment ») en haut du tableau de
 bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
 `accessibility-extra-extra-extra-large`), iPhone clair seulement = **12 PNG**
 (`iphone-home-row<n>-<taille>.png`). Un CINQUIÈME groupe capture la feuille
@@ -2927,6 +2973,19 @@ affiché sur la carte et l'état « Envoi en cours » (`-home.recipe slowMac`). 
 et dépose ses captures dans `omp-console/build/accueil-rangees/`. Codes de sortie
 : `0` tout est ✓, `1` au moins un ✗, `2` outillage manquant. Les simulateurs
 créés sont supprimés à la sortie.
+
+### Recette des sections de l'Accueil et de l'item de barre de menus
+
+`bash scripts/accueil-sections-recette.sh [--avant]` : `--avant` capture l'Accueil
+iOS de la base `8079e6e` (worktree détaché temporaire) et lit en AX l'item de
+l'instance OMP Console de l'utilisateur, sans l'activer ; sans option, il capture
+l'Accueil iOS (iPhone, iPad) et Mac (2e instance `-home.recipe dashboard`, racine
+jetable, port 8797), lit l'item sous `dashboard`, `menuBar` et `pausedOnly`, et écrit
+une ligne `AC-n ✓|✗` pour AC-1, AC-2, AC-3, AC-5, AC-6, AC-8 et AC-9 ; captures et
+arbres AX dans `omp-console/build/accueil-sections/{avant,apres}/`. Codes de sortie
+: `0`, `1` au moins un ✗, `2` outillage, autorisation d'accessibilité manquante ou
+simulateur appairé refusé. Une capture d'item noire (Space plein écran) est une
+limite consignée, la preuve restant la lecture AX.
 
 ### Installer sur un appareil réel
 
