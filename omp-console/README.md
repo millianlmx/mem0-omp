@@ -1680,6 +1680,13 @@ un flux temps réel.
   caractères Crockford base32 groupés `XXXX-XXXX`, valable **120 secondes** et à
   **usage unique** ; au-delà de 5 échecs, le code se verrouille et seul un code neuf
   le déverrouille. Un code expiré disparaît de la feuille.
+- **Oubli par l'appareil** : `DELETE /v1/devices/self` (authentifiée, sans corps)
+  révoque l'appareil **porteur du jeton**, et lui seul, exactement comme « Révoquer »
+  dans la feuille « Appairage… » : jeton, ligne de `devices.json`, article du
+  trousseau, flux SSE coupés, liste « Appareils appairés » mise à jour. Réponse
+  `200 {"accepted":true}` ; `401 unauthorized` pour un jeton absent, inconnu ou déjà
+  révoqué (un second appel rend donc `401`). C'est l'appel de « Oublier ce Mac » de
+  l'app iOS, tenté au mieux : l'app oublie son jeton même si le Mac ne répond pas.
 - **Interrupteur** : « Service d'API distante », en tête de la feuille, est **actif
   par défaut** et mémorisé (`remote.enabled`) ; le couper arrête le serveur et son
   annonce Bonjour.
@@ -1957,7 +1964,19 @@ sont hors périmètre), une seule navigation adaptative — barre latérale à d
 groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
 état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
-trousseau et feuille de connexion.
+trousseau et feuille de connexion. Le Mac découvert est joint par son adresse
+IPv4 ou IPv6, lien-local zoné compris ; une adresse s'affiche toujours sans sa
+zone d'interface (`192.168.1.175:8787`, `[fe80::1]:8787`).
+Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
+connecté ou non : sur iPhone, dans la barre de la liste des sections et dans celle
+de chaque écran poussé ; sur iPad, une seule fois, dans la barre du détail. La
+recette `scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
+--ipad <UDID>` le prouve au simulateur avec `idb` (captures sous
+`omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
+(`scripts/ios-build.sh` compile sans signature, et le trousseau du simulateur
+refuse alors d'écrire le jeton d'appairage : l'état connecté serait
+inatteignable) et veut des simulateurs dédiés, que les autres runs
+(`ios-shots.sh`) ne pilotent pas.
 
 L'**Accueil** est un écran à cinq états : déconnecté (état dégradé explicite,
 aucun geste), « OMP absent sur le Mac » (distinct de la déconnexion), chargement,
@@ -1966,19 +1985,68 @@ préparation, l'accusé de commande, « À vous » (cartes d'attente avec « Ré
 « Valider les specs », « Accepter la revue », « Lire le contrat »), « En cours »
 (« Reprendre » ou la durée) et « Livrées récemment » (tap = ouverture de la PR) —
 les MÊMES faits que l'Accueil macOS, dérivés du noyau partagé `ConsoleCore`. La
-ligne « Accueil » de la barre latérale porte le badge du nombre d'attentes, et
+ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
+le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
+ligne n'en porte, et rien à zéro), et
 trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
-libre), Contrat (sections verbatim) et Bienvenue (première ouverture d'une
+libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
-`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract>`
-force un état depuis la fixture partagée `HomeParity` pour les captures ; le
-crochet `-home.row <n>` amène la rangée d'index `n` du tableau de bord en haut de
-l'écran (captures des rangées en Dynamic Type).
+`-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong>`
+force un état depuis la fixture partagée `HomeParity` pour les captures ; il
+nourrit aussi le badge de la ligne Accueil (3 pour dashboard/answer/contract/contractLong/degraded,
+0 pour loading/firstRun/ompMissing). Le crochet `-home.row <n>` amène la rangée
+d'index `n` du tableau de bord en haut de l'écran (captures des rangées en
+Dynamic Type).
+
+La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas de
+jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
+trousseau au lancement, jamais pour un appareil appairé : un Mac injoignable
+(veille, autre réseau) laisse l'Accueil dans son état « Mac injoignable — … ».
+Elle a quatre modes, décidés par le statut d'appairage du client :
+
+- **lecture de l'appairage** : « Lecture de l'appairage… » et un indicateur ;
+- **non appairé** : état, Macs découverts, adresse manuelle, code d'appairage
+  (focalisé, clavier levé) et une ligne d'aide qui indique où trouver le code sur
+  le Mac (« menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code » »).
+  Quand le Mac a refusé le jeton, le message « Le Mac ne reconnaît plus cet
+  appareil. Saisissez un nouveau code d'appairage. » s'y ajoute et l'adresse
+  connue est préremplie ;
+- **connecté** : « Connecté », l'adresse du Mac une seule fois, « Oublier ce Mac » ;
+- **déconnecté** : l'état (« Mac injoignable », « Hors réseau »…), l'adresse une
+  fois, « Réessayer », la modification de l'adresse dans le groupe replié
+  « Modifier l'adresse » (une nouvelle adresse où le Mac répond reconnecte avec
+  le jeton existant, sans code), et « Oublier ce Mac ».
+
+Sur un appareil appairé, aucun champ n'a le focus à l'ouverture. « Oublier ce
+Mac » demande confirmation, tente au mieux `DELETE /v1/devices/self` quand le Mac
+est joint, puis efface le jeton local dans tous les cas ; la feuille passe alors
+en mode non appairé.
 
 Sa recette de design — surfaces, échelle typographique, marges, tons, politique
 du verre, états vide et erreur, Dynamic Type — vit dans
 `omp-console/ios/DESIGN.md`. Chaque règle y porte un marqueur `[test: …]`,
 `[capture: …]` ou `[garde: design-ios/AC-<n>]` : aucune prose non jugeable.
+
+### Erreurs du Mac
+
+Toute erreur rendue par le Mac — Mémoire (liste, recherche, graphe), Sessions,
+Statistiques, Pipelines — passe par UN seul traducteur, `IOSMacErrorText`
+(`omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift`). Il range l'échec en sept
+causes distinguables et affiche la cause puis un remède propre à elle, sans URL,
+sans adresse, sans JSON brut et sans code HTTP : « app Mac trop ancienne » (404
+`route inconnue`, ou 404/405 hors contrat), « Mac injoignable » (connexion refusée,
+délai dépassé, Mac non connecté), « service indisponible sur le Mac » (503),
+« action refusée par le Mac » (403), « refus du Mac » avec son motif (400, 409 ou
+404 métier, tant que le motif est présentable), la version de protocole
+incompatible, et le message générique « le Mac a rencontré une erreur » (500,
+corps illisible, code inattendu). Le mode Graphe de la Mémoire ajoute une huitième
+formulation, « service mémoire trop ancien » (`outdated_service`), que la liste et
+la recherche n'ont pas. Un **401** n'affiche aucun message de section : le parcours
+de jeton révoqué est inchangé (secret effacé du trousseau, retour à l'appairage).
+Seul le message exact « route inconnue » vaut « app Mac trop ancienne » ; tout
+autre 404 est un refus métier. Chaque échec de chargement propose « Réessayer »
+(44 pt) ; un geste d'écriture n'en propose pas. La table cause → message est dans
+`omp-console/ios/DESIGN.md` (« Erreurs du Mac »).
 
 ### Section Pipelines
 
@@ -1991,10 +2059,20 @@ valider un jalon (specs ou revue), lancer une feature jamais en route, l'arrête
 fusionner (avec confirmation, après lecture fraîche du `headOid`). La feuille
 « Nouvelle feature… » propose un dépôt (parmi les dépôts réels de l'ardoise),
 deux modèles (req+specs, impl+review), un titre et un besoin, et crée la feature
-sans aucune action sur le Mac.
+sans aucune action sur le Mac. Le sélecteur de dépôt affiche le NOM du dossier
+(jamais un chemin absolu ; pour les seuls homonymes, il y ajoute les derniers
+segments du dossier parent, p. ex. « mem0-omp (Projets) »), ou l'invite « Choisir
+un dépôt » tant qu'aucun n'est choisi — « Lancer » reste alors inactif ; la
+valeur lancée est toujours le chemin complet. Les champs titre et besoin portent
+les libellés VoiceOver « Titre » et « Besoin » ; le besoin est une zone
+multiligne de 3 lignes à vide, qui grandit jusqu'à 8 lignes puis défile dans le
+champ.
+
+Sur iPhone (largeur compacte), les voies sans carte sont masquées et « Livrées » et « Arrêtées » s'ouvrent repliées — seul leur en-tête et leur compte sont visibles ; un toucher sur l'en-tête les déplie, et l'écran les replie à chaque nouvelle visite. Sur iPad, l'ardoise est inchangée.
 
 Deux routes étendent la surface distante pour cette section : `GET /v1/models`
-(le catalogue de `omp models --json`, qu'aucune route n'exposait) et le champ
+(le catalogue de `omp models --json`, qu'aucune route n'exposait ; il rend aussi
+`names`, sélecteur → nom lisible, absent d'un Mac antérieur) et le champ
 additif `headOid` de la ligne de PR (sans lui, la fusion est impossible). La
 recette de bout en bout (dépôt jetable, iPad, Mac en service) est un test gated
 par `MEM0_PIPELINES_RECIPE` ; le scénario iPad reste manuel et vit dans le
@@ -2019,7 +2097,11 @@ colorés et libellés par `SessionDiffText`, question `ask` mise en évidence et
 dépliée d'emblée — sans aucun moyen de répondre ni d'écrire dans la session. Un
 run vivant s'ajoute en direct (une seule lecture, puis le flux de cette session),
 en préservant la position et l'état replié/déplié, et le fil reste collé au bas
-tant que l'utilisateur n'a pas remonté. Les composants du fil (modèle, vue, ligne,
+tant que l'utilisateur n'a pas remonté. Le fil s'ouvre sur sa fin (pile `VStack`
+non paresseuse et ancre initiale
+`defaultScrollAnchor(.bottom, for: .initialOffset)`), précédé de « Chargement de
+la session… » tant que la lecture n'est pas finie ; le fil de Session OMP se lit
+et s'abonne dès que l'écran le monte. Les composants du fil (modèle, vue, ligne,
 feuille) sont réutilisables par la section Session OMP : leur seul contrat
 d'entrée est une référence de session et une source.
 
@@ -2042,7 +2124,7 @@ partagée `SessionParity`, sans écran fabriqué ; la DERNIÈRE paire reconnue g
 et une valeur inconnue est ignorée :
 
 ```
--sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases>
+-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|chargement|fil-vide|suivi>
 ```
 
 - `liste` — la liste peuplée de la session de la fixture ;
@@ -2051,7 +2133,15 @@ et une valeur inconnue est ignorée :
 - `illisible` — le cas d'une session illisible ;
 - `en-direct` — le fil d'un run vivant ;
 - `phases` — une session terminée par étape de pipeline (mêmes titre, dépôt et
-  heure) : les icônes d'étape diffèrent, les titres doivent rester alignés.
+  heure) : les icônes d'étape diffèrent, les titres doivent rester alignés ;
+- `chargement` — la feuille ouverte sur une lecture qui ne se termine jamais :
+  « Chargement de la session… » reste affiché sous l'en-tête ;
+- `fil-vide` — la feuille ouverte sur la fixture sans aucune entrée : l'état vide
+  « Session vide » ;
+- `suivi` — la feuille d'un run vivant, puis trois messages « Message de suivi
+  n° 1…3 » ajoutés par le flux à +8 s, +12 s et +16 s après l'ouverture : au bas,
+  ils s'affichent sans geste ; remonté, la position ne bouge pas et « Revenir au
+  direct » apparaît.
 
 Les preuves Swift de la section vivent dans
 `omp-console/ios/OMPConsoleIOSTests/IOSSessionTests.swift` (motif de parité
@@ -2059,6 +2149,86 @@ compris), `omp-console/ios/OMPConsoleIOSTests/IOSRowAccessibilityTests.swift`
 (rangées lues par VoiceOver) et `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
 côté macOS ; la garde textuelle est `test/ios-sessions.test.ts`. La recette de
 design iOS fait autorité et vit dans `omp-console/ios/DESIGN.md`.
+
+### Recette : la feuille Connexion
+
+`scripts/ios-connexion-feuille-recette.sh` rejoue les contrôles de la feuille
+Connexion sur un iPhone et un iPad **privés**, créés par le script (noms
+`omp-connexion-tel-<moment>` / `omp-connexion-tab-<moment>`, sans « iPhone » ni
+« iPad ») puis supprimés à la sortie. Il construit l'app **signée** hors dépôt
+(DerivedData sous `/tmp`), ne touche à aucun autre simulateur, ni à l'app Mac, ni
+au focus du Mac :
+
+```bash
+# Relevé « avant » sur la base, puis « après » sur l'arbre de travail.
+bash scripts/ios-connexion-feuille-recette.sh --avant <ref> --source <udid appairé>
+bash scripts/ios-connexion-feuille-recette.sh --source <udid appairé>
+```
+
+- `--avant <ref>` construit depuis `git archive <ref> omp-console` ; sans lui,
+  depuis l'arbre de travail. Les valeurs attendues sont toujours lues dans
+  `ConnectionText.swift` de l'arbre de travail : la base est jugée contre la
+  spécification corrigée.
+- `--source <udid>` désigne un simulateur déjà appairé au Mac : son trousseau
+  (copie `sqlite3 .backup` de `keychain-2-debug.db`) et sa préférence
+  `client.deviceId` sont greffés sur les appareils privés. Il n'est que lu. Sans
+  `--source`, ou si la coque ne sert pas `127.0.0.1:8787`, les contrôles 5 à 9
+  sont « sauté ».
+- Sorties dans `omp-console/build/connexion-ios-feuille-intrusive-et-sans/<avant|apres>/` :
+  une capture PNG et un relevé `idb ui describe-all` (JSON) par contrôle et par
+  appareil, `rapport.txt` (une ligne `ok|échec|sauté <AC> <appareil> <détail>`
+  par contrôle), `build.log`. Codes de sortie : 0 tous les contrôles exécutés
+  sont « ok », 1 au moins un « échec », 2 non exécuté (hors macOS, Xcode
+  inutilisable, idb absent, aucun runtime iOS ≥ 26, app non signée).
+
+Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
+
+1. **Premier lancement** (AC-3, AC-12) — sans jeton : la feuille s'ouvre d'elle-même
+   en « Non appairé », avec le champ du code, et la ligne d'aide sous le code dit
+   « Sur le Mac : menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code ». ».
+2. **Adresse vide** (AC-14) — « Utiliser cette adresse » est inactif ; après la
+   saisie de `1`, il devient actif.
+3. **« Effacer »** (AC-15) — lancé avec `-client.manualAddress 127.0.0.1:9` : la
+   cible de « Effacer » fait au moins 44 × 44 pt.
+4. **Code mal formé** (AC-13) — `IIIIIIII` puis « Appairer » : « Le code fait 8
+   caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U. », jamais
+   « A–Z, 0–9 ».
+5. **Mac injoignable** (AC-2, AC-5, AC-7) — appairé, adresse `127.0.0.1:9` : aucune
+   feuille, l'Accueil dit « Mac injoignable — 127.0.0.1:9 ». « Se connecter » ouvre
+   la feuille : « Mac injoignable », l'adresse une fois, « Réessayer », « Modifier
+   l'adresse » (replié), « Oublier ce Mac », aucun champ du code, aucun champ
+   focalisé, pas de clavier.
+6. **Nouvelle adresse, puis « Réessayer »** (AC-7, AC-8) — déplier « Modifier
+   l'adresse », saisir `127.0.0.1:8787` et valider : « Connecté » sans code. Puis,
+   vers un port libre injoignable, ouvrir la feuille, démarrer un relais vers 8787
+   et toucher « Réessayer » : « Connecté ».
+7. **Mac joignable** (AC-1, AC-5, AC-6) — adresse `127.0.0.1:8787` : aucune feuille
+   pendant 15 s, l'Accueil s'affiche. La feuille ouverte à la demande montre
+   « Connecté », l'adresse une fois et « Oublier ce Mac », sans code, champ
+   d'adresse, découverte ni focus. Elle s'ouvre par le bouton antenne quand il est
+   affiché ; sinon (base sans la PR #89), depuis l'Accueil « Mac injoignable »,
+   puis un relais rend le Mac joignable et la feuille passe d'elle-même en mode
+   connecté.
+8. **Oublier, puis annuler** (AC-9) — « Oublier ce Mac » ouvre la confirmation ;
+   l'annuler (toucher hors de la bulle : iOS 27 n'y montre pas « Annuler ») laisse
+   « Connecté ». Rien n'est émis vers le Mac.
+9. **Oublier hors ligne** (AC-11) — adresse `127.0.0.1:9`, « Oublier ce Mac » puis
+   confirmer : la feuille passe en non appairé ; un relancement rouvre la feuille
+   non appairée, sans « Oublier ce Mac ». L'adresse est injoignable : le jeton du
+   simulateur source n'est pas révoqué.
+
+Deux scénarios révoquent un jeton sur le Mac et exigent un appairage frais : ils se
+rejouent **à la main**. Côté code, AC-4 est prouvé par `PairingStatusTests` et
+`ConnectionSheetModeTests`, AC-10 par `ForgetTests` et `DeviceForgetTests` :
+
+- **AC-4 — jeton révoqué** : sur le Mac, « Appairage… » puis « Révoquer »
+  l'appareil ; relancer l'app. Attendu : la feuille s'ouvre avec « Le Mac ne
+  reconnaît plus cet appareil. Saisissez un nouveau code d'appairage. », le champ
+  du code et l'adresse du Mac préremplie. Relancer sans saisir de code : la
+  feuille est en « Non appairé », sans ce message.
+- **AC-10 — oublier un Mac joignable** : appareil connecté, « Oublier ce Mac » puis
+  confirmer. Attendu : la feuille passe en « Non appairé », et l'appareil disparaît
+  de la liste « Appareils appairés » de la feuille « Appairage… » du Mac.
 
 ### Section Session OMP
 
@@ -2173,9 +2343,32 @@ Type** (feature `ios-accueil-dynamic-type-casse`) via `-home.row <n>`, qui amèn
 rangée d'index `n` (« En cours » puis « Livrées récemment ») en haut du tableau de
 bord — 4 rangées × 3 tailles (`large`, `accessibility-extra-large`,
 `accessibility-extra-extra-extra-large`), iPhone clair seulement = **12 PNG**
-(`iphone-home-row<n>-<taille>.png`). Le total attendu est **112** (56 + 32 + 12 +
-12). Chaque capture est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) :
-toutes PORTRAIT — une capture inattendue ferait échouer le script.
+(`iphone-home-row<n>-<taille>.png`). Un CINQUIÈME groupe capture la feuille
+**« Nouvelle feature »** (feature `ios-nouvelle-feature-formulaire`) via
+`-pipelines.recipe <vide|choisi|rempli>` — aucun dépôt choisi, un dépôt et un
+besoin court, un besoin de douze lignes — 3 recettes × {iPhone, iPad} × {clair,
+sombre} = **12 PNG**, sans appairage. Un SIXIÈME groupe capture la **fiche d'une
+carte Pipelines** (feature `ios-fiche-carte-pipelines`) via `-pipelines.recipe
+<fiche|actions|arret>` : la vraie feuille ouverte sur une carte de fixture dérivée
+de `HomeParity`, sans réseau — iPhone clair × {taille par défaut, AX-XL, maximum}
+× {`fiche`, `actions`}, la confirmation d'arrêt (`arret`) à la taille par défaut,
+et la fiche sur iPad = **8 PNG** `*-pipelines-fiche*.png`. Le script contrôle 124
+captures avant ce groupe (56 + 32 + 12 + 12 + 12), refuse un groupe de fiche qui
+n'en compte pas 8 et annonce le total réellement produit (**132**). Chaque capture
+est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAIT —
+une capture inattendue ferait échouer le script.
+
+La feuille Contrat a sa propre recette idb, pour les preuves avant/après de la
+feature `contrat-ios-markdown-brut` : `bash scripts/ios-contrat-recette.sh
+<avant|apres>` ouvre la feuille sur un contrat long (`-home.recipe contractLong`)
+dans deux simulateurs PRIVÉS, `omp-contrat-telephone` et `omp-contrat-tablette`
+(créés au besoin sur le runtime iOS ≥ 26 le plus récent, jamais désinstallés ni
+effacés), la fait défiler page par page et écrit captures, relevés
+d'accessibilité et `rapport.txt` dans
+`omp-console/build/contrat-ios-markdown-brut/<avant|apres>/` (ignoré par git).
+Codes de sortie : 0 relevé écrit (en mode `apres`, toutes les lignes `ok`), 1
+app absente, appareil en échec ou, en mode `apres`, un critère en `échec`, 2 non
+exécuté (idb ou runtime absent). Elle n'entre pas dans le compte des 112 captures.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,
@@ -2193,6 +2386,14 @@ ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
 `memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
 sept écrans, `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
 section Mémoire sur la fixture partagée `MemoryGraphParity`, et
+`-pipelines.recipe` accepte deux familles de valeurs. `<vide|choisi|rempli>` ouvre
+l'écran Pipelines sur la feuille « Nouvelle feature » avec des dépôts, un titre et
+un besoin forcés (le reste est le chemin réel de la feuille) ; `<fiche|actions|arret>`
+ouvre, avec `-section kanban`, la fiche de la carte de fixture (`actions` la défile
+jusqu'aux gestes, `arret` y ouvre la confirmation d'arrêt) et l'app écrit
+`pipelines-recipe-ready` sur la sortie d'erreur une fois l'état atteint — des
+crochets de recette, pas des fonctionnalités.
+
 `-stats.recipe <vide|chargement|bascule>` ouvre la section Statistiques sur son
 modèle et son écran réels, nourris par une lecture en mémoire (projets
 `recette-vide` et `recette-pleine`) et un client forcé connecté, sans appairage :
@@ -2215,6 +2416,94 @@ La capture de l'état d'erreur (artefact de PR, hors des 56) :
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section session -ios.state error
 xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-session.png
 ```
+
+### Recette idb de la fiche d'une carte
+
+```bash
+IOS_RECETTE_IPHONE=<UDID> IOS_RECETTE_IPAD=<UDID> bash scripts/ios-fiche-carte-recette.sh
+```
+
+Le script compile l'app, l'installe sur un iPhone et un iPad du simulateur, lance
+`-pipelines.recipe` et lit l'arbre d'accessibilité (`idb ui describe-all`) : titre
+unique, identifiants distincts, lignes de modèle, hauteurs ≥ 44 pt de « Reprendre »,
+« Arrêter… » et « Fermer » (aux trois tailles de Dynamic Type), confirmation d'arrêt
+puis annulation, fermeture de la fiche, fiche iPad. Une ligne `AC-<n> ✓ …` par
+constat, `AC-<n> ✗ … (<valeur observée>)` sinon. `IOS_RECETTE_IPHONE` et
+`IOS_RECETTE_IPAD` désignent les simulateurs à employer ; sans eux, le script prend
+le premier iPhone et le premier iPad du runtime iOS ≥ 26 le plus récent — des
+appareils PARTAGÉS avec les autres lancements, donc à éviter pendant un constat.
+`content_size` est remis à `large` à la sortie. Codes de sortie : `0` tout passe,
+`1` un constat (ou le build) échoue, `2` « non exécuté » (macOS, Xcode, idb ou
+runtime iOS ≥ 26 absents). Sur iOS 27, la confirmation d'arrêt est une bulle
+ancrée qui n'a pas de bouton « Annuler » : le script la referme en touchant à côté.
+
+### Recette : cibles tactiles de 44 pt
+
+Les trois boutons texte relevés à 20 pt par l'audit idb du 2026-10-09 — « Tout afficher »
+et « Lire le contrat » de l'Accueil, « Piloter un projet… » de l'écran Projet — doivent
+offrir une cible d'au moins 44 × 44 pt (`IOSMetrics.minimumTarget`) SANS changer
+d'apparence. La recette rejoue la preuve sur de vrais simulateurs, par la lecture
+d'accessibilité d'idb :
+
+```bash
+bash scripts/ios-cibles-tactiles-recette.sh --iphone <UDID> --ipad <UDID> [--avant]
+```
+
+Préconditions, jamais satisfaites par le script (il n'appaire pas) : `idb`, Xcode 27,
+`python3` avec Pillow ; les DEUX simulateurs iOS 27 démarrés ; l'app déjà APPAIRÉE au Mac
+sur chacun (jeton au trousseau du simulateur — l'écran Projet n'offre « Piloter un
+projet… » qu'une fois connecté) ; l'app Mac OMP Console en service sur `127.0.0.1:8787`.
+Le script compile lui-même une app SIGNÉE dans
+`omp-console/build/ios-cibles-tactiles-derived` (`scripts/ios-build.sh` compile sans
+signature : le trousseau du simulateur refuserait le jeton) et l'installe sur les deux
+appareils.
+
+Simulateurs PRIVÉS, nommés SANS « iPhone » ni « iPad » (par exemple `cible44-tel` et
+`cible44-tab`) : `ios-shots.sh` et `ios-build.sh` des autres worktrees s'emparent des
+appareils dont le nom contient ces mots, y réinstallent l'app et changent la taille de
+texte en plein relevé. Un simulateur appairé se clone — `xcrun simctl shutdown <src> &&
+xcrun simctl clone <src> <nom> && xcrun simctl boot <src>`, puis `boot` du clone — et le
+jeton suit le clone ; à supprimer ensuite (`simctl shutdown` puis `simctl delete`, après
+avoir vérifié que `pgrep -fl <UDID>` ne rend rien).
+
+Deux passes, dans cet ordre :
+
+1. `--avant`, AVANT toute correction Swift : relevé de référence dans
+   `omp-console/build/ios-cibles-tactiles-sous-44pt/avant/` (ignoré par git, vidé au
+   début de la passe ; l'autre dossier n'est jamais touché). Aucune vérification ;
+   sortie 0 quand toutes les captures et lectures existent.
+2. Sans option, sur l'app corrigée : relevé dans `.../apres/` puis les vérifications,
+   une ligne par contrôle — `AC-<n> <appareil> <écran> <taille> <identifiant> — ok` ou
+   `— ÉCHEC (<détail>)` —, `bilan : <n> ok, <m> échec`, et la liste des PNG à LIRE
+   (libellés entiers, sans « … », sans chevauchement aux grandes tailles de texte et sur
+   iPad). Le rapport est aussi écrit dans `apres/rapport.txt`.
+
+La matrice : iPhone = Accueil (`-home.recipe dashboard`) et Projet × les trois tailles
+(`large`, `accessibility-extra-large`, `accessibility-extra-extra-extra-large`) ; iPad =
+Accueil × `large` seulement (l'écran Projet n'offre « Piloter un projet… » qu'appairé au Mac,
+et le code d'appairage exige un Mac déverrouillé : tant qu'aucun iPad simulateur n'est
+appairé, « Piloter un projet… » n'est prouvé que sur iPhone). Chaque case produit `<appareil>-<écran>-<taille>.json` (la
+lecture brute de `idb ui describe-all`) et `.png` ; un contrôle hors de l'écran (taille
+maximum) est amené par `idb ui swipe` (au plus 8), chaque défilement qui en découvre un de
+plus ajoutant `-defil<k>.json` et `-defil<k>.png`. Les vérifications : AC-1 cadres ≥ 44 ×
+44 pt (iPhone, `large`) ; AC-2 identifiant propre, non vide et distinct par contrôle
+(`ios.home.allPipelines`, `ios.home.attention.<id>.contract`, `ios.projet.start` — et plus
+`ios.screen.project`) ; AC-3 tap à `(x + w/2, y + 3)` du cadre, l'app relancée avant
+chaque tap ; AC-4 apparence inchangée à `large` (la bande de texte de chaque contrôle est
+comparée pixel à pixel à `avant/`, à ±6 px de décalage vertical, et les lignes situées à
+2 pt des bords du cadre doivent rester unies : aucune bordure, capsule ni fond ajouté) ;
+AC-5 la même chose aux deux grandes tailles de texte ; AC-6 la même chose sur iPad. Sans
+capture homologue dans `avant/`, la ligne de comparaison vaut `— sans objet` et ne compte
+ni comme ok ni comme échec.
+
+Codes de sortie : **0** aucune ligne ÉCHEC ; **1** au moins un ÉCHEC ; **2** non lancé ou
+interrompu (argument manquant, outil absent, simulateur non démarré, build ou installation
+en échec, app non connectée au Mac, capture absente ou uniforme, relevé instable).
+
+Limite connue : le tap d'AC-3 ne distingue PAS l'avant de l'après. Le « touch slop »
+d'UIKit déclenche déjà un bouton de 20 pt jusqu'à environ 19 à 25 pt au-dessus du centre
+du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La garde
+textuelle de la correction est `test/ios-cibles-tactiles-sous-44pt.test.ts`.
 
 ### Installer sur un appareil réel
 
@@ -2243,9 +2532,9 @@ jamais de clé de dépôt et n'écrit rien sur l'appareil : tout vient du flux.
 Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
-   « Connecté à … ». La section Projet affiche alors « Aucun projet piloté. » et
+   « Connecté ». La section Projet affiche alors « Aucun projet piloté. » et
    le bouton « Piloter un projet… ». *(hors appairage, la section affiche le
-   bandeau d'attente « Non appairé » / « Mac absent — … » et aucun geste actif)*
+   bandeau d'attente « Non appairé » / « Mac injoignable — … » et aucun geste actif)*
 2. **Piloter un projet** — toucher « Piloter un projet… » : la feuille liste les
    dépôts connus de la coque (« Dépôt », chacun avec son nom et son chemin),
    y compris un dépôt jamais cadré. Choisir un dépôt (il porte la marque ✓), le
@@ -2282,9 +2571,10 @@ MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
 
 La section **Mémoire** de l'app affiche le sommaire du projet OUVERT côté Mac — les
 mêmes souvenirs que la section Mémoire macOS, dans l'ordre du service —, permet
-d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire sans masquer sa
-cause. Un SECOND mode, le **graphe**, s'ajoute derrière la bascule « Graphe ⇄
-Liste » de la barre d'outils : la LISTE reste le mode d'OUVERTURE. Le graphe est
+d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire par une cause
+distinguable et son remède (voir « Erreurs du Mac »). Un SECOND mode, le
+**graphe**, s'ajoute derrière la bascule « Graphe ⇄ Liste » de la barre d'outils :
+la LISTE reste le mode d'OUVERTURE. Le graphe est
 calculé CÔTÉ MAC par le MÊME noyau que la fenêtre macOS (nœuds-souvenirs,
 nœuds-étiquettes, arêtes de proximité et liens manuels), manipulable au doigt
 (pincer, glisser, toucher) sur iPhone comme sur iPad ; toucher un souvenir met
@@ -2313,13 +2603,17 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 4. **Revenir au sommaire** — vider le champ (croix système) ou toucher « Sommaire » :
    le sommaire DÉJÀ lu revient, sans aucune requête.
 5. **La mémoire tombe** — arrêter le conteneur (`podman stop omp-console-mem0-http`)
-   puis toucher « Rafraîchir » : le bandeau rouge « Mémoire indisponible » nomme
-   l'adresse sondée et le dernier message d'erreur ; « Réessayer » repasse au
-   sommaire dès que la pile répond de nouveau.
+   puis toucher « Rafraîchir » : le bandeau rouge dit « Service indisponible sur le
+   Mac. » et son remède, sans adresse, sans JSON et sans code HTTP (le détail reste
+   sur le Mac, dans la fenêtre Mémoire) ; « Réessayer » repasse au sommaire dès que
+   la pile répond de nouveau. La liste et la recherche ne disent jamais « serveur
+   mémoire trop ancien » : cette cause n'existe que dans le graphe.
 6. **Aucun projet ouvert** — fermer le projet côté Mac puis « Rafraîchir » : la carte
    dit « Aucun projet ouvert », sans lire la mémoire.
 7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau de connexion
-   s'affiche, et aucune cause mémoire n'est inventée.
+   s'affiche ; une lecture qui échoue faute de réseau dit « Mac injoignable. » et
+   son remède, sur un bandeau orange avec « Réessayer ». Aucune cause mémoire n'est
+   inventée.
 8. **Le graphe** — toucher « Graphe » : le canevas montre les nœuds-souvenirs, les
    nœuds-étiquettes, les arêtes de proximité (trait plein gris) et les liens
    manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
@@ -2352,7 +2646,7 @@ MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
 
 La section **Statistiques** de l'app est en **lecture seule** : elle affiche la
 consommation des runs du projet choisi, par feature — slug, modèle, durée, tours,
-tokens envoyés et tokens reçus — puis la ligne « Total du projet », somme des
+tokens envoyés (entrée hors cache + cache lu + cache écrit) et tokens reçus — puis la ligne « Total du projet », somme des
 features LISTÉES. Aucun montant, aucun geste de pilotage d'un run. Les mots
 affichés (« Tokens envoyés », « Temps passé », « Tours », « Total du projet ») sont
 ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
@@ -2360,10 +2654,10 @@ ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
 Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact) :
 
 1. **Appairer** l'app au Mac (feuille de connexion) : la zone d'état affiche
-   « Connecté à … », et la section Statistiques montre un bref « Chargement des
+   « Connecté », et la section Statistiques montre un bref « Chargement des
    statistiques… » puis son tableau. *(hors appairage, la section affiche le
-   bandeau d'attente « Non appairé » / « Mac absent — … » et n'émet aucun relevé)*
-2. **Choisir un projet** — le sélecteur en tête de la section propose les projets
+   bandeau d'attente « Non appairé » / « Mac injoignable — … » et n'émet aucun relevé)*
+2. **Choisir un projet** — le sélecteur en haut de la section propose les projets
    connus du Mac, dans l'ordre de la coque (le libellé du dépôt, jamais une clé) ;
    il nomme le projet choisi, au-dessus du tableau comme au-dessus de l'état
    « Aucune donnée pour ce projet ». Choisir un autre projet : le sélecteur le
@@ -2371,9 +2665,10 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
    (ou l'état vide) de ce projet s'affiche. Un projet sans données ne retient donc
    jamais l'écran : on en choisit un autre depuis l'état vide.
 3. **Comparer avec le Mac** — ouvrir la fenêtre **Statistiques** macOS sur le même
-   projet : chaque feature de l'app porte les MÊMES tokens d'entrée et de sortie,
-   le même modèle, la même durée et le même nombre de tours ; la ligne « Total du
-   projet » égale la somme des tuiles macOS.
+   projet : chaque feature de l'app porte les MÊMES tokens reçus, le même modèle,
+   la même durée et le même nombre de tours ; ses tokens envoyés, eux, ajoutent le
+   cache lu et le cache écrit à l'entrée que la tuile macOS affiche seule. La ligne
+   « Total du projet » somme les features listées.
 4. **Vérifier le masquage** — une feature du plan sans run lisible n'apparaît pas
    comme une ligne à zéro : elle est comptée en pied, « N feature(s) du plan sans
    données », exactement comme sur macOS.
@@ -2388,7 +2683,9 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
 7. **État dégradé** — couper le Mac (ou l'interrupteur du service d'API) : la
    section passe au bandeau `attention` portant l'état de la connexion et son
    affichage cesse d'avancer ; un échec de relevé affiche un bandeau `danger`
-   portant le message servi et un bouton « Réessayer ».
+   portant le message TRADUIT de la cause (« Service indisponible sur le Mac. » puis
+   son remède — voir « Erreurs du Mac »), sans URL, sans JSON et sans code HTTP, et
+   un bouton « Réessayer » qui relance le relevé.
 
 Recette OUTILLÉE : le test Swift gated `iosStatistiquesRecipe`
 (`omp-console/Tests/OMPConsoleTests/IOSStatistiquesRecipeTests.swift`) exerce

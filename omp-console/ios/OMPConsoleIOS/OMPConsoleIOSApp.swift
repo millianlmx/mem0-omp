@@ -20,6 +20,12 @@ import SwiftUI
 ///   la section Sessions forcé depuis la fixture partagée `SessionParity` (S-1,
 ///   S-4, S-9), pour capturer l'écran réel — un crochet de recette, pas une
 ///   fonctionnalité ;
+/// - `-pipelines.recipe <vide|choisi|rempli>` : la feuille « Nouvelle feature »
+///   ouverte d'elle-même sur l'écran Pipelines, dans un état forcé (dépôts, dépôt
+///   choisi, titre, besoin), pour capturer la feuille sans appairage ;
+///   `-pipelines.recipe <fiche|actions|arret>` : la fiche d'une carte de fixture
+///   ouverte sur l'écran Pipelines (ios-fiche-carte-pipelines), sans réseau — des
+///   crochets de recette, pas des fonctionnalités.
 /// - `-stats.recipe <vide|chargement|bascule>` : la section Statistiques ouverte
 ///   sur son modèle et son écran RÉELS, nourris par une lecture en mémoire et un
 ///   client forcé connecté (S-6 de statistiques-etat-vide-et-non-defilables), pour
@@ -39,6 +45,8 @@ struct OMPConsoleIOSApp: App {
     private let recipeRow: Int?
     private let sessionRecipe: IOSSessionsRecipe?
     private let memoryRecipe: IOSMemoryGraphRecipe?
+    private let pipelinesRecipe: IOSPipelinesRecipe?
+    private let cardRecipe: PipelinesCardRecipe?
     private let statsRecipe: IOSStatsRecipe?
     private let requestedSection: Bool
 
@@ -50,6 +58,8 @@ struct OMPConsoleIOSApp: App {
         recipeRow = IOSHomeRecipe.row(arguments)
         sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
+        pipelinesRecipe = IOSPipelinesRecipe.resolve(arguments)
+        cardRecipe = PipelinesCardRecipe.resolve(arguments)
         statsRecipe = IOSStatsRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
@@ -63,6 +73,8 @@ struct OMPConsoleIOSApp: App {
                 recipeRow: recipeRow,
                 sessionRecipe: sessionRecipe,
                 memoryRecipe: memoryRecipe,
+                pipelinesRecipe: pipelinesRecipe,
+                cardRecipe: cardRecipe,
                 statsRecipe: statsRecipe,
                 autoPresentConnection: !requestedSection
             )

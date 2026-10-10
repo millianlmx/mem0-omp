@@ -78,6 +78,7 @@ final class RemoteRouter {
         .of("GET", "v1/repos", "repos"),
         .of("GET", "v1/conduite", "conduite.get"),
         .of("POST", "v1/pair", "pair"),
+        .of("DELETE", "v1/devices/self", "devices.forget"),
         .of("POST", "v1/cards/:id/answer", "card.answer"),
         .of("POST", "v1/cards/:id/reply", "card.reply"),
         .of("POST", "v1/cards/:id/text", "card.text"),
@@ -209,6 +210,15 @@ final class RemoteRouter {
         // --- appairage --------------------------------------------------------
         case "pair":
             return try await pair(request)
+
+        // --- oubli de l'appareil porteur du jeton ---------------------------
+        // Route authentifiée : le garde a déjà refusé (401) un jeton absent,
+        // inconnu ou révoqué. Seul l'appareil du jeton est révoqué, par la
+        // révocation EXISTANTE du registre (jeton, fichier, trousseau, flux).
+        case "devices.forget":
+            guard let device else { return respond(.unauthorized) }
+            await registry.revoke(id: device.id)
+            return try json(RemoteAcceptedPayload(accepted: true))
 
         // --- gestes de carte --------------------------------------------------
         case "card.answer":

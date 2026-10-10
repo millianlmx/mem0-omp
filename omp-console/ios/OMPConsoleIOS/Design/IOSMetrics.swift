@@ -23,6 +23,10 @@ enum IOSMetrics {
     /// cadre de mise en page est plus large). Mise à l'échelle par
     /// `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
     static let phaseIconWidth: CGFloat = 28
+    /// La hauteur d'un champ de saisie vertical (le besoin d'une feature), en
+    /// LIGNES : 3 à vide, il grandit avec le texte jusqu'à 8, puis défile dans le
+    /// champ. Aucun point : la hauteur suit la taille de police (Dynamic Type).
+    static let needLines: ClosedRange<Int> = 3...8
 
     /// La marge horizontale d'un écran, selon la largeur disponible.
     static func margin(_ sizeClass: UserInterfaceSizeClass?) -> CGFloat {

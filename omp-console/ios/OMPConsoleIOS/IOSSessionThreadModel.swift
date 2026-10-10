@@ -146,8 +146,10 @@ final class IOSSessionThreadModel: ObservableObject {
     /// Le motif d'un échec de LECTURE (transport, décodage) : la session n'est pas
     /// illisible, on ne l'a pas lue. `nil` quand tout va bien.
     @Published private(set) var errorBanner: String?
-    /// La lecture initiale est-elle encore en cours ? (la vue montre un
-    /// `ProgressView`).
+    /// Le fil est-il en cours de lecture ? Vrai de la création jusqu'à la fin de
+    /// la première lecture (réussie ou non), et de nouveau pendant une
+    /// reconstruction, jusqu'à la fin de la relecture qu'elle lance. Une lecture
+    /// annulée ne le touche pas. La vue montre alors « Chargement de la session… ».
     @Published private(set) var isLoading = true
 
     private let source: any IOSSessionSource
@@ -222,7 +224,8 @@ final class IOSSessionThreadModel: ObservableObject {
     // MARK: - Lecture (S-3, S-4)
 
     /// UNE lecture complète. Ne lève jamais : un fichier absent est un état
-    /// (`waiting`), un échec de lecture un bandeau.
+    /// (`waiting`), un échec de lecture un bandeau traduit par le traducteur
+    /// partagé (nil sur un 401 : le parcours de jeton révoqué parle seul).
     func read() async {
         do {
             let payload = try await source.read(file: file)
@@ -231,13 +234,24 @@ final class IOSSessionThreadModel: ObservableObject {
         } catch {
             if Task.isCancelled { return }
             isLoading = false
-            if let clientError = error as? ClientError, case .api(.notFound) = clientError {
+            if let clientError = error as? ClientError,
+               case .api(.notFound(let motive)) = clientError,
+               motive != IOSMacFailure.unknownRoute {
                 // Fichier absent : exactement l'état que macOS montre (S-4).
                 state = .waiting
             } else {
-                errorBanner = ConversationText.readError
+                errorBanner = IOSMacErrorText.message(for: error)
             }
         }
+    }
+
+    /// Réessayer après un échec de lecture : efface le bandeau, remontre le
+    /// chargement et relit la session.
+    func retry() {
+        readTask?.cancel()
+        errorBanner = nil
+        isLoading = true
+        readTask = Task { [weak self] in await self?.read() }
     }
 
     /// Une lecture complète : l'état, les lignes (dérivation partagée), les plis
@@ -284,6 +298,7 @@ final class IOSSessionThreadModel: ObservableObject {
         truncatedNotice = false
         reconstructions += 1
         state = .ready
+        isLoading = true
         readTask?.cancel()
         readTask = Task { [weak self] in await self?.read() }
     }

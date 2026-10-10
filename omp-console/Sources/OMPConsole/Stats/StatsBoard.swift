@@ -139,6 +139,8 @@ func featureTotals(_ feature: FeatureStats, nowMs: Double) -> StatsTotals {
         guard case .measured(let metrics) = run.metrics else { continue }
         totals.input += metrics.input
         totals.output += metrics.output
+        totals.cacheRead += metrics.cacheRead
+        totals.cacheWrite += metrics.cacheWrite
         totals.turns += metrics.turns
         totals.durationMs += durationMs(metrics, isLive: run.isLive, nowMs: nowMs) ?? 0
     }
@@ -153,6 +155,8 @@ func projectTotals(_ project: ProjectStats, nowMs: Double) -> StatsTotals {
         let feature = featureTotals(feature, nowMs: nowMs)
         totals.input += feature.input
         totals.output += feature.output
+        totals.cacheRead += feature.cacheRead
+        totals.cacheWrite += feature.cacheWrite
         totals.turns += feature.turns
         totals.durationMs += feature.durationMs
     }

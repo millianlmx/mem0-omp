@@ -27,8 +27,8 @@ struct RemoteStatsRouteTests {
     }
 
     /// Une réponse assistant PORTANT un usage : deux d'entre elles font 200 d'entrée,
-    /// 40 de sortie, sur deux tours (deux `user`).
-    private static func usageAssistant(_ id: String) -> String {
+    /// 40 de sortie, sur deux tours (deux `user`), plus le cache demandé.
+    private static func usageAssistant(_ id: String, cacheRead: Int = 0, cacheWrite: Int = 0) -> String {
         ViewerLines.json([
             "type": "message",
             "id": id,
@@ -38,20 +38,21 @@ struct RemoteStatsRouteTests {
                 "role": "assistant",
                 "model": "opencode-go/deepseek-v4.1-flash",
                 "usage": [
-                    "input": 100, "output": 20, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 120,
+                    "input": 100, "output": 20, "cacheRead": cacheRead, "cacheWrite": cacheWrite,
+                    "totalTokens": 120 + cacheRead + cacheWrite,
                 ],
                 "content": [["type": "text", "text": "réponse"]],
             ],
         ])
     }
 
-    private static func sessionLines() -> [String] {
+    private static func sessionLines(cacheRead: Int = 0, cacheWrite: Int = 0) -> [String] {
         [
             ViewerLines.header(id: "session-1"),
             ViewerLines.user("premier prompt", id: "u1"),
-            usageAssistant("a1"),
+            usageAssistant("a1", cacheRead: cacheRead, cacheWrite: cacheWrite),
             ViewerLines.user("second prompt", id: "u2"),
-            usageAssistant("a2"),
+            usageAssistant("a2", cacheRead: cacheRead, cacheWrite: cacheWrite),
         ]
     }
 
@@ -293,6 +294,62 @@ struct RemoteStatsRouteTests {
             #expect(feature.liveRuns == featureLiveRuns(expected))
             #expect(feature.model == featureModel(expected))
         }
+    }
+
+    // MARK: - ios-stats-tokens-envoyes-incoherent
+
+    @Test("ios-stats-tokens-envoyes-incoherent/AC-1 : chaque feature servie porte son cache lu et écrit")
+    func servedFeaturesCarryTheCache() async throws {
+        let fixture = StoreFixture()
+        let repoRoot = try Self.makeRepo(fixture, "depot")
+        let sessionPath = joinPath(fixture.root, "session.jsonl")
+        // Deux réponses à 1 000 de cache lu et 300 de cache écrit chacune.
+        try Self.writeSession(sessionPath, lines: Self.sessionLines(cacheRead: 1_000, cacheWrite: 300))
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        stack.stats.start()
+        let board = try #require(await Self.board(stack.stats))
+        let nowMs = stack.clock.nowMs
+
+        let reply = try await stack.call("GET", "/v1/stats", token: token)
+        let payload = try reply.json(RemoteStatsPayload.self)
+        #expect(payload.features.count == 1)
+        for feature in payload.features {
+            let listed = try #require(board.project.features.first { $0.slug == feature.slug })
+            let totals = featureTotals(listed, nowMs: nowMs)
+            #expect(feature.cacheRead == totals.cacheRead)
+            #expect(feature.cacheWrite == totals.cacheWrite)
+            #expect(feature.input == totals.input)
+            // Sommes attendues écrites en dur (2 réponses).
+            #expect(feature.cacheRead == 2_000)
+            #expect(feature.cacheWrite == 600)
+            #expect(feature.input == 200)
+        }
+    }
+
+    @Test("ios-stats-tokens-envoyes-incoherent/AC-4 : la tuile macOS garde l'entrée hors cache")
+    func macWindowKeepsTheInputAlone() async throws {
+        let fixture = StoreFixture()
+        let repoRoot = try Self.makeRepo(fixture, "depot")
+        let sessionPath = joinPath(fixture.root, "session.jsonl")
+        try Self.writeSession(sessionPath, lines: Self.sessionLines(cacheRead: 1_000, cacheWrite: 300))
+        Self.publishFeature(fixture, seed: 10, repoRoot: repoRoot, worktree: repoRoot, sessionFile: sessionPath)
+
+        let stack = try await RemoteStack.make(stateDir: fixture.root)
+        defer { stack.stop() }
+
+        stack.stats.start()
+        let board = try #require(await Self.board(stack.stats))
+        let totals = projectTotals(board.project, nowMs: stack.clock.nowMs)
+        // La tuile « Tokens envoyés » de la fenêtre macOS lit `totals.input` seul.
+        #expect(totals.input == 200)
+        #expect(totals.input != 200 + totals.cacheRead + totals.cacheWrite)
+        #expect(totals.cacheRead == 2_000)
+        #expect(totals.cacheWrite == 600)
     }
 
     // MARK: - Sélection de projet et repli
