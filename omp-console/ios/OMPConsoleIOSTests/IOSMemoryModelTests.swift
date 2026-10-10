@@ -1,5 +1,5 @@
 // Les preuves Swift du modèle de l'écran Mémoire de l'app iOS (BR-2) : les états
-// dérivés des huit `ClientState`, la classification des erreurs, les trois « rien
+// dérivés du statut de connexion et de la lecture, la classification des erreurs, les trois « rien
 // trouvé » distincts, le retour au sommaire sans requête, et le geste de
 // rafraîchissement qui suit la panne.
 //
@@ -84,36 +84,40 @@ struct IOSMemoryModelTests {
     @Test("ios-memoire/AC-7 : une portée nulle est « aucun projet », une portée servie est le sommaire")
     func memoryFollowsTheClientTheScopeAndTheLoad() {
         let empty = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: nil, total: 0, offset: 0, rows: [], nextOffset: nil))
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(empty), mode: .summary) == .noProject)
+        #expect(Self.connectedScreen(.page(empty), .summary) == .noProject)
         // Même en mode recherche : la portée nulle reste « aucun projet ».
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(empty), mode: .search("x")) == .noProject)
+        #expect(Self.connectedScreen(.page(empty), .search("x")) == .noProject)
 
         let rows = [row("m1", text: "un"), row("m2", text: "deux")]
         let page = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 2, offset: 0, rows: rows, nextOffset: nil))
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(page), mode: .summary)
+        #expect(Self.connectedScreen(.page(page), .summary)
             == .summary(scope: "projet", total: 2, rows: rows, more: .complete))
 
         // Une première page d'une portée plus longue : le pied annonce la suite.
         let head = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 900, offset: 0, rows: rows, nextOffset: 2))
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(head), mode: .summary)
+        #expect(Self.connectedScreen(.page(head), .summary)
             == .summary(scope: "projet", total: 900, rows: rows, more: .available))
 
         let none = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 0, offset: 0, rows: [], nextOffset: nil))
-        #expect(IOSMemoryModel.screen(client: connected, load: .page(none), mode: .summary)
+        #expect(Self.connectedScreen(.page(none), .summary)
             == .summaryEmpty(scope: "projet"))
+    }
+
+    /// La surface pure, Mac connecté, sans sommaire déjà servi.
+    private static func connectedScreen(_ load: IOSMemoryLoad, _ mode: IOSMemoryMode) -> IOSMemoryScreenState {
+        IOSMemoryModel.screen(connection: .connected, load: load, mode: mode, summary: nil)
     }
 
     // MARK: - AC-8
 
-    @Test("ios-memoire/AC-8 : l'état du client parle quand rien n'est lu, jamais une cause mémoire inventée")
-    func theClientStateExplainsWhateverIsNotLoaded() {
+    @Test("ios-memoire/AC-8 : seul .connected lit, et une panne de transport n'invente jamais de cause mémoire")
+    func transportFailuresNeverInventAMemoryCause() {
         for state in allStates where state != connected {
-            #expect(IOSMemoryModel.screen(client: state, load: .idle, mode: .summary) == .clientState(state))
             #expect(!IOSMemoryModel.gesturesEnabled(state))
         }
         #expect(IOSMemoryModel.gesturesEnabled(connected))
         // Connecté, rien de lu : un chargement, jamais un vide muet.
-        #expect(IOSMemoryModel.screen(client: connected, load: .idle, mode: .summary) == .loading)
+        #expect(Self.connectedScreen(.idle, .summary) == .loading)
 
         // Les erreurs de TRANSPORT ⇒ « Mac injoignable » (cause du traducteur partagé),
         // jamais une panne mémoire.
@@ -124,15 +128,51 @@ struct IOSMemoryModelTests {
         ]
         for failure in transportFailures {
             #expect(IOSMemoryModel.load(from: failure) == .failed(.macUnreachable))
-            #expect(IOSMemoryModel.screen(client: connected, load: .failed(.macUnreachable), mode: .summary)
+            #expect(Self.connectedScreen(.failed(.macUnreachable), .summary)
                 == .failed(.macUnreachable))
         }
+    }
 
-        // Une donnée DÉJÀ chargée n'est jamais effacée par une bascule du client.
+    // MARK: - etats-non-connecte-heterogenes-ios
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : non connectée et rien de chargé → le composant d'état de connexion")
+    func offlineWithoutDataIsTheConnectionComponent() {
+        let statuses: [IOSConnectionStatus] = [.connecting, .disconnected(.unreachable), .disconnected(.unpaired), .disconnected(.refused)]
+        for status in statuses {
+            // Rien lu, une lecture en vol, une panne : aucune donnée, aucun sommaire.
+            for load: IOSMemoryLoad in [.idle, .loading, .failed(.macUnreachable), .failed(.serviceUnavailable)] {
+                #expect(IOSMemoryModel.screen(connection: status, load: load, mode: .summary, summary: nil) == .offline(status))
+            }
+        }
+        // Le graphe : rien de reçu ⇒ plein écran ; reçu (même vide) ⇒ gardé.
+        for state: IOSMemoryGraphModel.State in [.idle, .loading, .noProject, .serviceOutdated, .macOutdated, .failed(.macUnreachable), .failed(.macTimedOut)] {
+            #expect(!IOSMemoryGraphModel.hasData(state))
+        }
+        #expect(IOSMemoryGraphModel.hasData(.empty))
+        #expect(IOSMemoryGraphModel.hasData(.graph(nodes: [], links: [], positions: [:], truncated: false)))
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : hors connexion, la lecture reçue ou le sommaire déjà servi restent affichés")
+    func offlineKeepsTheLastData() {
         let rows = [row("m1", text: "un")]
         let page = IOSMemorySummary(firstPage: RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil))
-        #expect(IOSMemoryModel.screen(client: .unpaired, load: .page(page), mode: .summary)
-            == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        let summary = IOSMemoryScreenState.summary(scope: "projet", total: 1, rows: rows, more: .complete)
+        let found = [row("m2", text: "deux", score: 0.9)]
+        let search = RemoteMemorySearchPayload(rows: found, candidates: 3, scored: 3)
+        for status: IOSConnectionStatus in [.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            // La page reçue reste affichée.
+            #expect(IOSMemoryModel.screen(connection: status, load: .page(page), mode: .summary, summary: page) == summary)
+            // La recherche reçue reste affichée.
+            #expect(IOSMemoryModel.screen(connection: status, load: .search(search), mode: .search("deux"), summary: page)
+                == .search(query: "deux", rows: found))
+            // Une recherche coupée en vol (ou en panne) rend le sommaire déjà servi.
+            for load: IOSMemoryLoad in [.idle, .loading, .failed(.macUnreachable), .failed(.serviceUnavailable)] {
+                #expect(IOSMemoryModel.screen(connection: status, load: load, mode: .search("deux"), summary: page) == summary)
+            }
+        }
+        // Connecté, la panne d'une lecture reste dite, même avec un sommaire servi.
+        #expect(IOSMemoryModel.screen(connection: .connected, load: .failed(.macUnreachable), mode: .summary, summary: page)
+            == .failed(.macUnreachable))
     }
 
     // MARK: - AC-6
@@ -143,9 +183,9 @@ struct IOSMemoryModelTests {
         // le traducteur partagé n'en garde que la cause.
         let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "connexion refusée")
         #expect(IOSMemoryModel.load(from: ClientError.api(.unavailable(detail))) == .failed(.serviceUnavailable))
-        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.serviceUnavailable), mode: .summary)
+        #expect(Self.connectedScreen(.failed(.serviceUnavailable), .summary)
             == .failed(.serviceUnavailable))
-        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.serviceUnavailable), mode: .search("x"))
+        #expect(Self.connectedScreen(.failed(.serviceUnavailable), .search("x"))
             == .failed(.serviceUnavailable))
         let text = IOSMacErrorText.message(for: .serviceUnavailable)
         #expect(!text.contains("127.0.0.1"))
@@ -158,10 +198,9 @@ struct IOSMemoryModelTests {
     func searchEmptiesAreThreeDistinctWords() {
         let mode = IOSMemoryMode.search("terme")
         func screen(candidates: Int, scored: Int, rows: [RemoteMemoryRow]) -> IOSMemoryScreenState {
-            IOSMemoryModel.screen(
-                client: connected,
-                load: .search(RemoteMemorySearchPayload(rows: rows, candidates: candidates, scored: scored)),
-                mode: mode
+            Self.connectedScreen(
+                .search(RemoteMemorySearchPayload(rows: rows, candidates: candidates, scored: scored)),
+                mode
             )
         }
         // (1) Aucun candidat au-dessus du pool du service.
@@ -189,7 +228,7 @@ struct IOSMemoryModelTests {
 
         await model.refresh()
         #expect(reader.pageReads == 1)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         model.updateQuery("mémoire du projet")
         await model.submitQuery()
@@ -200,7 +239,7 @@ struct IOSMemoryModelTests {
         model.updateQuery("   ")
         #expect(!model.isSearching)
         #expect(model.summary == IOSMemorySummary(firstPage: page))
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
         // AUCUNE lecture ajoutée, ni sommaire ni recherche.
         #expect(reader.pageReads == 1)
         #expect(reader.searchReads == 1)
@@ -211,7 +250,7 @@ struct IOSMemoryModelTests {
         #expect(reader.searchReads == 2)
         model.showSummary()
         #expect(!model.isSearching)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
         #expect(reader.pageReads == 1)
         #expect(reader.searchReads == 2)
 
@@ -249,21 +288,21 @@ struct IOSMemoryModelTests {
 
         await model.refresh()
         #expect(reader.pageReads == 1)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // La pile mémoire tombe ensuite : le geste relaie la panne avec sa cause.
         let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "connexion refusée")
         reader.page = .failure(ClientError.api(.unavailable(detail)))
         await model.refresh()
         #expect(reader.pageReads == 2)
-        #expect(model.state == .failed(.serviceUnavailable))
+        #expect(model.state(connection: .connected) == .failed(.serviceUnavailable))
         #expect(!model.isLoading)
 
         // La mémoire revient : le MÊME geste repasse au sommaire.
         reader.page = .success(page)
         await model.refresh()
         #expect(reader.pageReads == 3)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // Un client qui ne joint plus le Mac n'émet AUCUNE lecture.
         reader.state = .unpaired
@@ -278,7 +317,7 @@ struct IOSMemoryModelTests {
         let reader = CountingMemoryReader(page: .failure(MacMemoryDouble.relayed503))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
-        #expect(model.state == .failed(.serviceUnavailable))
+        #expect(model.state(connection: .connected) == .failed(.serviceUnavailable))
         let text = IOSMacErrorText.message(for: .serviceUnavailable)
         #expect(text.contains("Service indisponible sur le Mac"))
         #expect(MacMemoryDouble.isReadable(text))
@@ -287,7 +326,7 @@ struct IOSMemoryModelTests {
         // Un échec de transport : « Mac injoignable », sans « Mémoire indisponible » ni adresse.
         reader.page = .failure(ClientError.transport(.unreachable("Could not connect to the server. (127.0.0.1:8787)")))
         await model.refresh()
-        #expect(model.state == .failed(.macUnreachable))
+        #expect(model.state(connection: .connected) == .failed(.macUnreachable))
         let unreachable = IOSMacErrorText.message(for: .macUnreachable)
         #expect(unreachable.contains("Mac injoignable"))
         #expect(!unreachable.contains(MemoryText.unavailableTitle))
@@ -296,7 +335,7 @@ struct IOSMemoryModelTests {
         // 500 et corps illisible : le message générique, sans code.
         reader.page = .failure(MacMemoryDouble.error(status: 500, body: Data("oops".utf8)))
         await model.refresh()
-        #expect(model.state == .failed(.generic))
+        #expect(model.state(connection: .connected) == .failed(.generic))
     }
 
     @Test("ios-erreurs-serveur-lisibles/AC-10 : memoryNeverClaimsOutdated — la liste et la recherche en 503 ne disent jamais « trop ancien »")
@@ -311,13 +350,13 @@ struct IOSMemoryModelTests {
             let model = IOSMemoryModel(client: reader)
 
             await model.refresh()
-            #expect(model.state == .failed(.serviceUnavailable))
+            #expect(model.state(connection: .connected) == .failed(.serviceUnavailable))
 
             model.updateQuery("mémoire")
             await model.submitQuery()
             #expect(reader.searchReads == 1)
-            #expect(model.state == .failed(.serviceUnavailable))
-            #expect(model.state != .failed(.serviceOutdated))
+            #expect(model.state(connection: .connected) == .failed(.serviceUnavailable))
+            #expect(model.state(connection: .connected) != .failed(.serviceOutdated))
         }
         let text = IOSMacErrorText.message(for: .serviceUnavailable)
         #expect(text.contains("Service indisponible sur le Mac"))
@@ -331,36 +370,37 @@ struct IOSMemoryModelTests {
         let reader = CountingMemoryReader(page: .failure(MacMemoryDouble.relayed503))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
-        #expect(model.state == .failed(.serviceUnavailable))
+        #expect(model.state(connection: .connected) == .failed(.serviceUnavailable))
 
         reader.page = .success(page)
         await model.refresh()
         #expect(reader.pageReads == 2)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // Réessayer relance aussi la RECHERCHE quand le mode courant en est une.
         let hit = RemoteMemorySearchPayload(rows: rows, candidates: 1, scored: 1)
         reader.search = .failure(MacMemoryDouble.relayed503)
         model.updateQuery("un")
         await model.submitQuery()
-        #expect(model.state == .failed(.serviceUnavailable))
+        #expect(model.state(connection: .connected) == .failed(.serviceUnavailable))
         reader.search = .success(hit)
         await model.refresh()
         #expect(reader.searchReads == 2)
-        #expect(model.state == .search(query: "un", rows: rows))
+        #expect(model.state(connection: .connected) == .search(query: "un", rows: rows))
     }
 
     @Test("ios-erreurs-serveur-lisibles/AC-5 : memoryUnauthorizedFallsBackToClientState — un 401 ne montre aucun message de section")
     func memoryUnauthorizedFallsBackToClientState() async {
         #expect(IOSMemoryModel.load(from: ClientError.api(.unauthorized)) == .idle)
-        #expect(IOSMemoryModel.screen(client: .revoked, load: .idle, mode: .summary) == .clientState(.revoked))
+        #expect(IOSMemoryModel.screen(connection: .disconnected(.refused), load: .idle, mode: .summary, summary: nil)
+            == .offline(.disconnected(.refused)))
 
         let reader = CountingMemoryReader(page: .failure(ClientError.api(.unauthorized)))
         let model = IOSMemoryModel(client: reader)
         reader.state = .revoked
         await model.refresh()
         #expect(reader.pageReads == 0)
-        #expect(model.state == .clientState(.revoked))
+        #expect(model.state(connection: .disconnected(.refused)) == .offline(.disconnected(.refused)))
 
         // Le 401 lu pendant la connexion : le client bascule en `.revoked`, la section suit.
         reader.state = .connected(endpoint: endpoint)
@@ -368,7 +408,7 @@ struct IOSMemoryModelTests {
         let revokingModel = IOSMemoryModel(client: revoking)
         await revokingModel.refresh()
         #expect(revokingModel.load == .idle)
-        #expect(revokingModel.state == .clientState(.revoked))
+        #expect(revokingModel.state(connection: .disconnected(.refused)) == .offline(.disconnected(.refused)))
     }
 }
 

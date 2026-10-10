@@ -18,9 +18,6 @@ import ConsoleCore
 enum IOSSessionText {
     // MARK: - L'écran de la liste (S-1)
 
-    /// L'app n'est pas connectée au Mac et n'a jamais reçu d'instantané : on ne
-    /// peut PAS affirmer que le magasin est vide.
-    static let noConnection = "Pas de connexion au Mac"
     /// Connectée, l'instantané du magasin n'est pas encore arrivé.
     static let loading = "Chargement des sessions…"
     /// Le choix « aucun projet » du filtre (S-2).
@@ -150,7 +147,6 @@ enum IOSSessionsAccessibility {
     static let list = "ios.sessions.list"
     static let loading = "ios.sessions.loading"
     static let empty = "ios.sessions.empty"
-    static let noConnection = "ios.sessions.noConnection"
 
     static func day(_ id: String) -> String { "ios.sessions.day.\(id)" }
     static func row(_ id: String) -> String { "ios.sessions.row.\(id)" }

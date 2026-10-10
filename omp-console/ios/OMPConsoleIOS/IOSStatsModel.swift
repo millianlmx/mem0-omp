@@ -12,11 +12,12 @@ import Combine
 import ConsoleClient
 import Foundation
 
-/// La surface que la section doit montrer (S-4), décidée par l'état du client, le
-/// dernier relevé et l'échec éventuel.
+/// La surface que la section doit montrer (S-4), décidée par le statut de
+/// connexion présenté, le dernier relevé et l'échec éventuel.
 enum IOSStatsSurface: Equatable {
-    /// Client hors `.connected` : bandeau `attention`, aucun relevé émis.
-    case degraded(String)
+    /// Mac non connecté et aucun relevé reçu : le composant d'état de connexion
+    /// partagé, seul, à la place de la section (etats-non-connecte-heterogenes-ios, S-4).
+    case unavailable(IOSConnectionStatus)
     /// Aucun relevé encore reçu.
     case loading
     /// Relevé échoué : bandeau `danger` + « Réessayer ».
@@ -39,7 +40,7 @@ enum IOSStatsSurface: Equatable {
     var showsProjectHeader: Bool {
         switch self {
         case .switching, .empty, .board: return true
-        case .degraded, .loading, .error, .noProject: return false
+        case .unavailable, .loading, .error, .noProject: return false
         }
     }
 }
@@ -98,19 +99,28 @@ final class IOSStatsModel: ObservableObject {
 
     // MARK: - Décisions PURES (testables sans render)
 
-    /// La surface choisie pour un état de client, un relevé, un échec et le projet
-    /// choisi (S-1). L'ordre de priorité est celui de la lecture : hors
-    /// `.connected` d'abord (aucun relevé n'a été émis), puis l'échec, puis
+    /// La surface choisie pour un statut de connexion, un relevé, un échec et le
+    /// projet choisi (S-4). Hors connexion, un relevé déjà reçu reste affiché et
+    /// l'échec conservé est tu : le bandeau de connexion est le seul bandeau d'état
+    /// (etats-non-connecte-heterogenes-ios, S-4). Connecté : l'échec, puis
     /// l'absence de relevé, puis un projet choisi que le relevé ne sert pas encore.
     static func surface(
-        state: ClientState,
+        connection: IOSConnectionStatus,
         payload: RemoteStatsPayload?,
         failure: String?,
         selectedKey: String?
     ) -> IOSStatsSurface {
-        guard case .connected = state else { return .degraded(ConnectionText.state(state)) }
+        if connection != .connected {
+            guard let payload else { return .unavailable(connection) }
+            return loaded(payload, selectedKey: selectedKey)
+        }
         if let failure { return .error(failure) }
         guard let payload else { return .loading }
+        return loaded(payload, selectedKey: selectedKey)
+    }
+
+    /// La surface d'un relevé reçu : aucun projet, bascule, projet sans feature, tableau.
+    private static func loaded(_ payload: RemoteStatsPayload, selectedKey: String?) -> IOSStatsSurface {
         guard payload.projectKey != nil else { return .noProject }
         guard selectedKey == payload.projectKey else { return .switching }
         return payload.features.isEmpty ? .empty : .board
@@ -126,8 +136,9 @@ final class IOSStatsModel: ObservableObject {
 
     // MARK: - Faits dérivés du relevé
 
-    var surface: IOSStatsSurface {
-        Self.surface(state: state(), payload: payload, failure: failure, selectedKey: selectedKey)
+    /// La surface pour le statut de connexion présenté par l'écran.
+    func surface(connection: IOSConnectionStatus) -> IOSStatsSurface {
+        Self.surface(connection: connection, payload: payload, failure: failure, selectedKey: selectedKey)
     }
 
     /// Les options du sélecteur : EXACTEMENT les projets servis par le Mac (S-3).

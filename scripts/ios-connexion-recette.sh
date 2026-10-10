@@ -505,7 +505,7 @@ precondition() {
 }
 
 # L'état d'appairage se lit AUSSI sans le bouton à prouver : l'Accueil non appairé
-# porte « Se connecter » (`ios.home.connect`), l'Accueil connecté non. Sort 2 quand
+# porte « Se connecter » (`ios.connexion.connect`), l'Accueil connecté non. Sort 2 quand
 # l'état n'est pas celui que l'argument annonce — un appareil non appairé passé en
 # `--connected` n'est jamais un ÉCHEC d'AC-1, c'est une recette « non exécutée ».
 # La connexion d'un appairé met jusqu'à ~30 s à s'établir quand le Mac est chargé
@@ -513,11 +513,11 @@ precondition() {
 #   $1 udid  $2 appareil  $3 connected|unpaired
 home_state() {
   if [ "$3" = connected ]; then
-    if ! ax wait "$1" ios.home.connect absent 60; then
+    if ! ax wait "$1" ios.connexion.connect absent 60; then
       echo "  · non exécuté : $2 est passé en --connected mais son Accueil propose « Se connecter » — l'app n'est pas appairée au Mac (voir l'en-tête : build signé, simulateur dédié)" >&2
       exit 2
     fi
-  elif ! ax wait "$1" ios.home.connect present 15; then
+  elif ! ax wait "$1" ios.connexion.connect present 15; then
     echo "  · non exécuté : $2 est passé en --unpaired mais son Accueil n'offre pas « Se connecter » — l'appareil est appairé" >&2
     exit 2
   fi

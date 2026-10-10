@@ -79,7 +79,11 @@ struct OMPConsoleApp: App {
         _homeModel = StateObject(wrappedValue: home)
         // La préparation et la présence des composants sont construites AVANT le
         // service d'API : il les sert (`GET /v1/components`, évènement `components`).
-        let setup = SetupModel.standard()
+        // OMP absent au lancement : rien ne se télécharge d'office, la feuille
+        // bloquante attend « Installer ». Le crochet de recette `-setup.recipe`
+        // (racine jetable seulement) remplace l'installateur par un script.
+        let setup = SetupRecipe.current()?.model(autoPrepare: home.canLaunch)
+            ?? SetupModel.standard(autoPrepare: home.canLaunch)
         let presence = ComponentPresenceModel()
         _componentsModel = StateObject(wrappedValue: presence)
         // Le service d'API distante partage les modèles de l'app : ce que l'API
@@ -112,6 +116,10 @@ struct OMPConsoleApp: App {
         // S-14 : le service ne démarre jamais tant que la préparation des composants
         // n'est pas terminée — `onReady` en fait le démarrage différé.
         remote.isSetupReady = { [weak setup] in setup?.state == .ready }
+        setup.refreshOmp = {
+            home.recheck()
+            return home.canLaunch
+        }
         setup.onReady = {
             home.recheck()
             Task { await remote.startIfEnabled() }

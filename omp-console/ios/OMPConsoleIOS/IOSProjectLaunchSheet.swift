@@ -45,6 +45,19 @@ struct IOSProjectLaunchSheet: View {
         self.onLaunch = onLaunch
     }
 
+    /// Les gestes vers le Mac : actifs connecté ; sous le crochet de recette, la
+    /// fixture tient lieu de Mac (etats-non-connecte-heterogenes-ios, S-5).
+    private var gesturesEnabled: Bool {
+        recipe != nil || IOSConnectionStatus.of(client).gesturesEnabled
+    }
+
+    /// La garde de `commit()`, que la touche Retour du champ nom atteint même quand
+    /// « Valider » est grisé : hors connexion, ni requête ni fermeture (S-5, AC-9).
+    static func mayCommit(gesturesEnabled: Bool, selected: String?, name: String, submitting: Bool) -> Bool {
+        gesturesEnabled && selected != nil && !submitting
+            && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -75,7 +88,7 @@ struct IOSProjectLaunchSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     IOSSheetIconButton(role: .confirm, label: ProjectViewText.launchCommit, action: commit)
-                        .disabled(!canCommit || submitting)
+                        .disabled(!gesturesEnabled || !canCommit || submitting)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier(ProjectAccessibility.launchCommit)
                 }
@@ -130,7 +143,10 @@ struct IOSProjectLaunchSheet: View {
     }
 
     private func commit() {
-        guard let repoKey = selected, canCommit, !submitting else { return }
+        guard let repoKey = selected,
+              Self.mayCommit(gesturesEnabled: gesturesEnabled,
+                             selected: selected, name: name, submitting: submitting)
+        else { return }
         submitting = true
         Task {
             let message = await onLaunch(repoKey, name)

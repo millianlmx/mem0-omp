@@ -13,8 +13,9 @@ import Testing
 @testable import OMPConsole
 import ConsoleCore
 
-/// Une racine de support jetable sous `NSTemporaryDirectory()`.
-private final class ComponentsRoot {
+/// Une racine de support jetable sous `NSTemporaryDirectory()`. Interne : la
+/// recette de la préparation (`SetupRecipeTests`) la réutilise.
+final class ComponentsRoot {
     let paths: AppPaths
     let manifest = ComponentManifest.current
     private let fileManager = FileManager.default

@@ -40,7 +40,7 @@ struct IOSHomeBadgeTests {
             #expect(recipe.badge == badge, "recette \(recipe.rawValue)")
             let carriesFixture: Bool
             switch recipe.homeState {
-            case .dashboard, .disconnected: carriesFixture = true
+            case .dashboard, .unavailable: carriesFixture = true
             default: carriesFixture = false
             }
             #expect((recipe.badge == 5) == carriesFixture, "recette \(recipe.rawValue)")

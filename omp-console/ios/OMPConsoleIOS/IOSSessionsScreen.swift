@@ -20,6 +20,8 @@ struct IOSSessionsScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-sessions.recipe`, quand il est donné.
     let recipe: IOSSessionsRecipe?
+    /// La feuille Connexion de la racine, ouverte par « Se connecter ».
+    @Binding var showConnection: Bool
 
     @State private var open: SessionOpen?
     @State private var project: String?
@@ -46,11 +48,18 @@ struct IOSSessionsScreen: View {
     }
 
     var body: some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 12) {
-                content
-            }
-            .iosPanel()
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            let list = self.list
+            let projects = SessionFilter.projects(of: list?.choices ?? [])
+            let resolved = IOSSessionsModel.resolvedProject(project, projects: projects)
+            let state = IOSSessionsModel.screen(
+                connection: connection,
+                list: list,
+                project: resolved,
+                nowMs: context.date.timeIntervalSince1970 * 1000,
+                calendar: .current
+            )
+            screenBody(projects: projects, state: state)
         }
         .navigationTitle(ConsoleSection.sessions.title)
         .sheet(item: $open) { target in
@@ -74,48 +83,61 @@ struct IOSSessionsScreen: View {
         return IOSSessionsModel.list(of: client)
     }
 
-    private var content: some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let list = self.list
-            let projects = SessionFilter.projects(of: list?.choices ?? [])
-            let resolved = IOSSessionsModel.resolvedProject(project, projects: projects)
-            let state = IOSSessionsModel.screen(
-                connection: client.state,
-                list: list,
-                project: resolved,
-                nowMs: context.date.timeIntervalSince1970 * 1000,
-                calendar: .current
-            )
-            screenBody(projects: projects, state: state)
-        }
+    /// Le statut présenté. Sous le crochet `-sessions.recipe`, la fixture tient
+    /// lieu de Mac : l'écran est connecté (etats-non-connecte-heterogenes-ios, S-4).
+    private var connection: IOSConnectionStatus {
+        if recipe != nil { return .connected }
+        return IOSConnectionStatus.of(client)
     }
 
     @ViewBuilder
     private func screenBody(projects: [String], state: IOSSessionsScreenState) -> some View {
         switch state {
-        case .noConnection:
-            card(IOSSessionText.noConnection, detail: nil, id: IOSSessionsAccessibility.noConnection)
+        case .unavailable(let status):
+            // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
+            // du défilement et du panneau (S-4).
+            IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
         case .loading:
-            HStack(spacing: 8) {
-                ProgressView()
-                Text(IOSSessionText.loading)
-                    .font(.callout)
+            panel {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(IOSSessionText.loading)
+                        .font(.callout)
+                }
+                .accessibilityIdentifier(IOSSessionsAccessibility.loading)
             }
-            .accessibilityIdentifier(IOSSessionsAccessibility.loading)
         case .storeAbsent:
-            card(
-                SessionSelectorText.emptyTitle,
-                detail: SessionSelectorText.storeAbsent,
-                id: IOSSessionsAccessibility.empty
-            )
+            panel {
+                card(
+                    SessionSelectorText.emptyTitle,
+                    detail: SessionSelectorText.storeAbsent,
+                    id: IOSSessionsAccessibility.empty
+                )
+            }
         case .empty:
-            card(
-                SessionSelectorText.emptyTitle,
-                detail: SessionSelectorText.noRun,
-                id: IOSSessionsAccessibility.empty
-            )
+            panel {
+                card(
+                    SessionSelectorText.emptyTitle,
+                    detail: SessionSelectorText.noRun,
+                    id: IOSSessionsAccessibility.empty
+                )
+            }
         case .list(let days):
-            listBody(days: days, projects: projects)
+            panel { listBody(days: days, projects: projects) }
+        }
+    }
+
+    /// Le panneau, contenu du seul défilement vertical de l'écran : le bandeau de
+    /// connexion en tête quand la liste conservée est affichée hors connexion.
+    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                if connection != .connected {
+                    IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+                }
+                content()
+            }
+            .iosPanel()
         }
     }
 
@@ -142,6 +164,9 @@ struct IOSSessionsScreen: View {
                                 row(choice)
                             }
                             .buttonStyle(.plain)
+                            // La visionneuse se lit sur le Mac : rangée grisée hors
+                            // connexion (etats-non-connecte-heterogenes-ios, S-5).
+                            .disabled(!connection.gesturesEnabled)
                             .accessibilityIdentifier(IOSSessionsAccessibility.row(choice.id))
                             .accessibilityLabel(IOSSessionText.rowLabel(choice))
                         }

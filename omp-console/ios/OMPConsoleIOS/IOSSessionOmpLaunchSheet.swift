@@ -39,6 +39,12 @@ struct IOSSessionOmpLaunchSheet: View {
         self.onLaunch = onLaunch
     }
 
+    /// Les gestes vers le Mac : actifs connecté ; sous le crochet de recette, la
+    /// fixture tient lieu de Mac (etats-non-connecte-heterogenes-ios, S-5).
+    private var gesturesEnabled: Bool {
+        recipe != nil || IOSConnectionStatus.of(client).gesturesEnabled
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -63,7 +69,7 @@ struct IOSSessionOmpLaunchSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     IOSSheetIconButton(role: .confirm, label: SessionConsoleText.launch, action: commit)
-                        .disabled(selected == nil || submitting)
+                        .disabled(!gesturesEnabled || selected == nil || submitting)
                         .keyboardShortcut(.defaultAction)
                         .accessibilityIdentifier(SessionOmpAccessibility.launchCommit)
                 }
@@ -116,7 +122,7 @@ struct IOSSessionOmpLaunchSheet: View {
     }
 
     private func commit() {
-        guard let repoKey = selected, !submitting else { return }
+        guard let repoKey = selected, gesturesEnabled, !submitting else { return }
         submitting = true
         Task {
             let message = await onLaunch(repoKey)

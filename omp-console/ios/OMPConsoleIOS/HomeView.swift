@@ -1,9 +1,12 @@
-// L'écran Accueil de l'app iOS (S-10, S-11) : cinq états — déconnecté, « OMP
-// absent sur le Mac », chargement, premiers pas, tableau de bord — et, dans le
-// tableau de bord, les deux bandeaux, la section « À vous », « En cours »,
-// « À reprendre », « Pas commencées » et « Livrées récemment » ; les deux du
-// milieu sont masquées quand elles sont vides. Chaque carte est dans une seule
-// section (`HomePresentation.dashboard`, la MÊME règle que le Mac).
+// L'écran Accueil de l'app iOS (S-10, S-11) : cinq états — indisponible (le
+// composant partagé d'état de connexion en plein écran), « OMP absent sur le
+// Mac », chargement, premiers pas, tableau de bord — et, dans le tableau de bord,
+// les deux bandeaux, la section « À vous », « En cours », « À reprendre »,
+// « Pas commencées » et « Livrées récemment » ; les deux du milieu sont masquées
+// quand elles sont vides. Chaque carte est dans une seule section
+// (`HomePresentation.dashboard`, la MÊME règle que le Mac). Hors connexion, une
+// ardoise déjà reçue reste affichée sous le bandeau du composant partagé
+// (feature etats-non-connecte-heterogenes-ios, S-4).
 //
 // Aucune phrase n'est composée ici : les mots viennent du noyau partagé
 // (`HomeText`, `ActionsText`, `ContractText`) et de `IOSHomeText` ; la vue rend
@@ -40,7 +43,7 @@ struct HomeView: View {
     /// Le crochet de recette `-home.row`, quand il est donné : la rangée à amener en
     /// haut du tableau de bord (captures des rangées en Dynamic Type).
     let recipeRow: Int?
-    /// La feuille de connexion de la racine, ouverte par l'état déconnecté.
+    /// La feuille de connexion de la racine, ouverte par « Se connecter ».
     @Binding var showConnection: Bool
     /// Sélection d'une section depuis l'Accueil (« Tout afficher », « Voir dans Pipelines »).
     let onSelectSection: (ConsoleSection) -> Void
@@ -69,18 +72,24 @@ struct HomeView: View {
         self.onSelectSection = onSelectSection
     }
 
+    /// Le statut de connexion présenté : celui du crochet de recette, sinon celui
+    /// du client.
+    private var connection: IOSConnectionStatus {
+        recipe?.connection ?? IOSConnectionStatus.of(client)
+    }
+
     /// L'état de l'Accueil : le crochet de recette prime, sinon la machine à
     /// états partagée.
     private var state: IOSHomeState {
         if let recipe { return recipe.homeState }
-        return IOSHomeState.resolve(state: client.state, board: client.board, omp: client.omp)
+        return IOSHomeState.resolve(connection: connection, board: client.board, omp: client.omp)
     }
 
     var body: some View {
         Group {
             switch state {
-            case .disconnected(let clientState):
-                disconnectedView(clientState)
+            case .unavailable(let status):
+                IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             case .macMissingOMP:
                 macMissingView
             case .loading:
@@ -94,7 +103,7 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(ConsoleSection.home.title)
         .sheet(item: $answerCard) { selected in
-            HomeAnswerSheet(card: selected.card, client: client)
+            HomeAnswerSheet(card: selected.card, client: client, connection: connection)
         }
         .sheet(item: $contractCard) { selected in
             HomeContractSheet(card: selected.card, client: client, recipePayload: recipe?.contractPayload)
@@ -115,30 +124,9 @@ struct HomeView: View {
 
     // MARK: - États
 
-    private func disconnectedView(_ clientState: ClientState) -> some View {
-        VStack(spacing: 16) {
-            setupBanner
-            ContentUnavailableView {
-                Label(IOSHomeText.disconnectedTitle, systemImage: "wifi.slash")
-            } description: {
-                VStack(spacing: 6) {
-                    Text(ConnectionText.state(clientState))
-                    Text(IOSHomeText.disconnectedBody)
-                }
-            } actions: {
-                Button(IOSHomeText.connect) { showConnection = true }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier(IOSHomeAccessibility.connect)
-            }
-        }
-        .padding(IOSMetrics.margin(sizeClass))
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(IOSHomeAccessibility.disconnected)
-    }
-
     private var macMissingView: some View {
         VStack(spacing: 16) {
+            connectionBanner
             setupBanner
             ContentUnavailableView(
                 IOSHomeText.macMissingTitle,
@@ -167,6 +155,7 @@ struct HomeView: View {
 
     private var firstRunView: some View {
         VStack(spacing: 16) {
+            connectionBanner
             setupBanner
             ContentUnavailableView {
                 Label(HomeText.firstRunTitle, systemImage: "sparkles")
@@ -188,6 +177,7 @@ struct HomeView: View {
         return ScrollViewReader { proxy in
             ScrollView(.vertical) {
                 VStack(alignment: .leading, spacing: 28) {
+                    connectionBanner
                     setupBanner
                     launchBanner
                     attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
@@ -338,6 +328,7 @@ struct HomeView: View {
                             .contentShape(Rectangle())
                     }
                     .accessibilityIdentifier(IOSHomeAccessibility.attentionContract(card.id))
+                    .disabled(!connection.gesturesEnabled)
                 }
                 attentionButton(attention, prominent: prominent)
             }
@@ -352,13 +343,18 @@ struct HomeView: View {
     private func attentionButton(_ attention: HomeAttention, prominent: Bool) -> some View {
         let card = attention.card
         styledButton(attentionButtonLabel(attention, card: card), prominent: prominent)
+            .disabled(IOSHomeContent.attentionNeedsMac(IOSHomeContent.attentionButton(attention)) && !connection.gesturesEnabled)
             .accessibilityIdentifier(IOSHomeAccessibility.attentionAction(card.id))
             .confirmationDialog(
                 IOSHomeText.specsConfirmTitle(card.title),
                 isPresented: specsConfirmationShown(card.id),
                 titleVisibility: .visible
             ) {
-                Button(IOSHomeText.specsConfirm) { gestures.confirmSpecs(cardId: card.id, send: send) }
+                // Ouverte avant une coupure, la confirmation n'envoie rien hors connexion.
+                Button(IOSHomeText.specsConfirm) {
+                    guard connection.gesturesEnabled else { return }
+                    gestures.confirmSpecs(cardId: card.id, send: send)
+                }
                 Button(KanbanText.cancel, role: .cancel) {}
             } message: {
                 Text(IOSHomeText.specsConfirmMessage)
@@ -437,6 +433,7 @@ struct HomeView: View {
                         gestureButton(KanbanText.resume, key: key)
                             .buttonStyle(.bordered)
                             .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
+                            .disabled(!connection.gesturesEnabled)
                             .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
                     }
                 }
@@ -531,6 +528,15 @@ struct HomeView: View {
     }
 
     // MARK: - Bandeaux
+
+    /// Hors connexion, le bandeau du composant partagé au-dessus des données
+    /// conservées (S-4) ; il disparaît dès la connexion.
+    @ViewBuilder
+    private var connectionBanner: some View {
+        if connection != .connected {
+            IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+        }
+    }
 
     @ViewBuilder
     private var setupBanner: some View {

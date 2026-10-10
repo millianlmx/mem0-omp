@@ -196,35 +196,23 @@ struct IOSStatsModelTests {
     @Test("ios-statistiques/AC-1 : chaque état de la section a sa surface, dans l'ordre de priorité")
     func statsSurfacesCoverEveryState() {
         let board = payload(features: [feature(slug: "a", durationMs: 0)])
-        // Hors `.connected` : dégradé, portant le mot de ConnectionText.
-        for state in [
-            ClientState.unpaired,
-            .searching,
-            .connecting(endpoint: endpoint),
-            .noNetwork,
-            .macAbsent(endpoint: endpoint),
-            .revoked,
-            .incompatibleProtocol(local: 3, remote: 2),
-        ] {
-            #expect(IOSStatsModel.surface(state: state, payload: board, failure: nil, selectedKey: "k") == .degraded(ConnectionText.state(state)))
-        }
         // Connecté : chargement, erreur, aucun projet, bascule, vide, tableau.
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: nil, selectedKey: nil) == .loading)
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: "relevé refusé", selectedKey: "k") == .error("relevé refusé"))
+        #expect(IOSStatsModel.surface(connection: .connected, payload: nil, failure: nil, selectedKey: nil) == .loading)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: nil, failure: "relevé refusé", selectedKey: "k") == .error("relevé refusé"))
         // L'échec l'emporte sur une bascule en cours (écran d'erreur inchangé).
-        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: "relevé refusé", selectedKey: "k2") == .error("relevé refusé"))
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil, selectedKey: nil) == .noProject)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: board, failure: "relevé refusé", selectedKey: "k2") == .error("relevé refusé"))
+        #expect(IOSStatsModel.surface(connection: .connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil, selectedKey: nil) == .noProject)
         // Un projet choisi que le relevé ne sert pas encore : la bascule, avant
         // l'état vide comme avant le tableau.
-        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil, selectedKey: "k2") == .switching)
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil, selectedKey: "k2") == .switching)
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil, selectedKey: "k") == .empty)
-        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil, selectedKey: "k") == .board)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: board, failure: nil, selectedKey: "k2") == .switching)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: payload(features: []), failure: nil, selectedKey: "k2") == .switching)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: payload(features: []), failure: nil, selectedKey: "k") == .empty)
+        #expect(IOSStatsModel.surface(connection: .connected, payload: board, failure: nil, selectedKey: "k") == .board)
 
         // L'en-tête de projet : en tête de la bascule, de l'état vide et du
         // tableau, jamais ailleurs.
         let headers: [(IOSStatsSurface, Bool)] = [
-            (.degraded(ConnectionText.state(.revoked)), false),
+            (.unavailable(.disconnected(.refused)), false),
             (.loading, false),
             (.error("relevé refusé"), false),
             (.noProject, false),
@@ -234,6 +222,28 @@ struct IOSStatsModelTests {
         ]
         for (surface, shows) in headers {
             #expect(surface.showsProjectHeader == shows)
+        }
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : pas connecté et aucun relevé reçu → le composant d'état de connexion")
+    func statsUnavailableWithoutPayload() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired),
+                       .disconnected(.refused), .disconnected(.updateApp), .disconnected(.updateMac)] {
+            #expect(IOSStatsModel.surface(connection: status, payload: nil, failure: nil, selectedKey: "k") == .unavailable(status))
+            // Un échec conservé sans relevé ne remplace pas le composant.
+            #expect(IOSStatsModel.surface(connection: status, payload: nil, failure: "relevé refusé", selectedKey: "k") == .unavailable(status))
+        }
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : le dernier relevé reste affiché hors connexion, sans état d'erreur")
+    func statsKeepsBoardOffline() {
+        let board = payload(features: [feature(slug: "a", durationMs: 0)])
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            #expect(IOSStatsModel.surface(connection: status, payload: board, failure: nil, selectedKey: "k") == .board)
+            // L'échec conservé est tu : le bandeau de connexion est le seul bandeau d'état.
+            #expect(IOSStatsModel.surface(connection: status, payload: board, failure: "relevé refusé", selectedKey: "k") == .board)
+            #expect(IOSStatsModel.surface(connection: status, payload: payload(features: []), failure: "relevé refusé", selectedKey: "k") == .empty)
+            #expect(IOSStatsModel.surface(connection: status, payload: payload(projectKey: nil, features: [], projects: []), failure: nil, selectedKey: "k") == .noProject)
         }
     }
 
@@ -276,7 +286,7 @@ struct IOSStatsModelTests {
         let failing = makeModel(state: { self.connected }, load: { _ in throw ClientError.notConnected })
         failing.reload(trigger: .appeared)
         #expect(await eventually { failing.failure != nil })
-        #expect(failing.surface == .error(IOSMacErrorText.message(for: .macUnreachable)))
+        #expect(failing.surface(connection: .connected) == .error(IOSMacErrorText.message(for: .macUnreachable)))
     }
 
     // MARK: - Erreurs du Mac (ios-erreurs-serveur-lisibles)
@@ -308,7 +318,7 @@ struct IOSStatsModelTests {
         model.reload(trigger: .appeared)
         #expect(await eventually { model.failure != nil })
         let expected = IOSMacErrorText.message(for: .serviceUnavailable)
-        #expect(model.surface == .error(expected))
+        #expect(model.surface(connection: .connected) == .error(expected))
         #expect(isReadable(expected))
         #expect(expected.contains("Service indisponible sur le Mac"))
     }
@@ -323,14 +333,14 @@ struct IOSStatsModelTests {
         })
         model.reload(trigger: .appeared)
         #expect(await eventually { model.failure != nil })
-        #expect(model.surface == .error(IOSMacErrorText.message(for: .serviceUnavailable)))
+        #expect(model.surface(connection: .connected) == .error(IOSMacErrorText.message(for: .serviceUnavailable)))
 
         // Réessayer relance le même relevé (`reload(trigger: .appeared)`).
         succeed = true
         model.reload(trigger: .appeared)
         #expect(await eventually { model.payload != nil })
         #expect(model.failure == nil)
-        #expect(model.surface == .board)
+        #expect(model.surface(connection: .connected) == .board)
     }
 
     @Test("ios-erreurs-serveur-lisibles/AC-5 : statsUnauthorizedShowsNoError — un 401 ne pose aucun message ; la surface suit l'état du client")
@@ -341,12 +351,13 @@ struct IOSStatsModelTests {
         // Le relevé a échoué, puis `reload` a laissé `failure` à nil.
         try? await Task.sleep(for: .milliseconds(50))
         #expect(model.failure == nil)
-        #expect(model.surface == .loading)
+        #expect(model.surface(connection: .connected) == .loading)
 
-        // Le client révoqué : la surface passe par l'état de connexion, jamais par `.error`.
+        // Le client révoqué : la surface passe par le composant d'état de connexion,
+        // jamais par `.error`.
         current = .revoked
         #expect(model.failure == nil)
-        #expect(model.surface == .degraded(ConnectionText.state(.revoked)))
+        #expect(model.surface(connection: .disconnected(.refused)) == .unavailable(.disconnected(.refused)))
     }
 
     // MARK: - En-tête de projet (statistiques-etat-vide-et-non-defilables)
@@ -370,8 +381,8 @@ struct IOSStatsModelTests {
     func statsEmptyProjectNamesItsProject() async {
         let model = makeModel(state: { self.connected }, load: { self.twoProjects($0) })
         model.reload(trigger: .appeared)
-        #expect(await eventually { model.surface == .empty })
-        #expect(model.surface.showsProjectHeader)
+        #expect(await eventually { model.surface(connection: .connected) == .empty })
+        #expect(model.surface(connection: .connected).showsProjectHeader)
         #expect(model.selectedKey == "k1")
         #expect(shownLabel(model) == "vide")
         // Le sélecteur offre les deux projets servis.
@@ -386,15 +397,15 @@ struct IOSStatsModelTests {
             return self.twoProjects(key)
         })
         model.reload(trigger: .appeared)
-        #expect(await eventually { model.surface == .empty })
+        #expect(await eventually { model.surface(connection: .connected) == .empty })
 
         model.select(project: "k2")
-        #expect(await eventually { model.surface == .board })
+        #expect(await eventually { model.surface(connection: .connected) == .board })
         #expect(keys == [nil, "k2"])
         #expect(model.payload?.projectKey == "k2")
         #expect(model.selectedKey == "k2")
         #expect(shownLabel(model) == "pleine")
-        #expect(model.surface.showsProjectHeader)
+        #expect(model.surface(connection: .connected).showsProjectHeader)
     }
 
     @Test("statistiques-etat-vide-et-non-defilables/AC-3 : pendant la lecture du projet choisi, le sélecteur le nomme au-dessus du chargement")
@@ -415,15 +426,15 @@ struct IOSStatsModelTests {
         model.select(project: "k2")
         #expect(await eventually { keys == [nil, "k2"] })
         // La lecture de « k2 » est en vol : bascule, en-tête, projet CHOISI nommé.
-        #expect(model.surface == .switching)
-        #expect(model.surface.showsProjectHeader)
+        #expect(model.surface(connection: .connected) == .switching)
+        #expect(model.surface(connection: .connected).showsProjectHeader)
         #expect(model.selectedKey == "k2")
         #expect(shownLabel(model) == "pleine")
         // L'ancien relevé reste celui de « k1 » tant que la porte est fermée.
         #expect(model.payload?.projectKey == "k1")
 
         open.yield(())
-        #expect(await eventually { model.surface == .board })
+        #expect(await eventually { model.surface(connection: .connected) == .board })
         #expect(model.payload?.projectKey == "k2")
         #expect(shownLabel(model) == "pleine")
     }

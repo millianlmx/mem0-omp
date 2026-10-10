@@ -10,6 +10,8 @@ struct NewFeatureSheetView: View {
     /// Les dépôts forcés par la recette `-pipelines.recipe` ; `nil` hors recette
     /// (les dépôts viennent alors de l'ardoise).
     private let recipeRepos: [String]?
+    /// Sous la recette, la fixture tient lieu de Mac : la feuille est connectée (S-4).
+    private let underRecipe: Bool
 
     @Environment(\.dismiss) private var dismiss
     @State private var repo = ""
@@ -24,6 +26,7 @@ struct NewFeatureSheetView: View {
     init(client: ConsoleClientModel, recipe: IOSPipelinesRecipe? = nil) {
         self.client = client
         recipeRepos = recipe?.repos
+        underRecipe = recipe != nil
         _repo = State(initialValue: recipe?.repo ?? "")
         _title = State(initialValue: recipe?.title ?? "")
         _need = State(initialValue: recipe?.need ?? "")
@@ -43,6 +46,13 @@ struct NewFeatureSheetView: View {
 
     private var ready: Bool {
         repos.contains(repo) && !title.isBlank && !need.isBlank
+    }
+
+    /// Le statut présenté (etats-non-connecte-heterogenes-ios, S-5) : « Lancer » et
+    /// « Réessayer » exigent le Mac, actifs seulement à `.connected`.
+    private var connection: IOSConnectionStatus {
+        if underRecipe { return .connected }
+        return IOSConnectionStatus.of(client)
     }
 
     var body: some View {
@@ -69,7 +79,7 @@ struct NewFeatureSheetView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     IOSSheetIconButton(role: .confirm, label: NewFeatureText.launch) { submit() }
-                        .disabled(!ready || busy)
+                        .disabled(!ready || busy || !connection.gesturesEnabled)
                         .accessibilityIdentifier(PipelinesAccessibility.launchButton)
                 }
             }
@@ -164,6 +174,7 @@ struct NewFeatureSheetView: View {
                         .frame(minHeight: IOSMetrics.minimumTarget)
                         .contentShape(Rectangle())
                 }
+                .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(PipelinesAccessibility.modelRetry)
             }
         }

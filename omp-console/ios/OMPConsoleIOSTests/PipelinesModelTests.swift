@@ -13,34 +13,27 @@ import Testing
 struct PipelinesModelTests {
     private let endpoint = ClientEndpoint.manual(host: "127.0.0.1", port: 8787)
 
-    @Test("ios-pipelines/AC-3 : pas connectée et jamais reçue → état déconnecté explicite")
-    func disconnectedWithoutSnapshot() {
-        #expect(PipelinesModel.screen(connection: .unpaired, board: nil) == .noSnapshot)
-        #expect(PipelinesModel.screen(connection: .macAbsent(endpoint: endpoint), board: nil) == .noSnapshot)
-        #expect(PipelinesModel.screen(connection: .revoked, board: nil) == .noSnapshot)
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : pas connectée et jamais reçue → le composant d'état de connexion")
+    func unavailableWithoutSnapshot() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired), .disconnected(.refused)] {
+            #expect(PipelinesModel.screen(connection: status, board: nil) == .unavailable(status))
+        }
     }
 
     @Test("ios-pipelines/AC-2 : connectée sans instantané → chargement")
     func connectedWithoutSnapshotLoads() {
-        #expect(PipelinesModel.screen(connection: .connected(endpoint: endpoint), board: nil) == .loading)
+        #expect(PipelinesModel.screen(connection: .connected, board: nil) == .loading)
     }
 
-    @Test("ios-pipelines/AC-3 : un instantané connu prime — l'ardoise reste affichée connexion perdue")
-    func snapshotWinsOverConnection() {
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : l'ardoise reçue reste affichée hors connexion")
+    func snapshotKeptOffline() {
         let board = KanbanBoard(cards: [], anomalies: [])
-        #expect(PipelinesModel.screen(connection: .macAbsent(endpoint: endpoint), board: .board(board)) == .board(.board(board)))
-        #expect(PipelinesModel.screen(connection: .connected(endpoint: endpoint), board: .storeEmpty(dir: "")) == .board(.storeEmpty(dir: "")))
-    }
-
-    @Test("ios-pipelines/AC-3 : seul un état NON connecté porte un bandeau")
-    func onlyDisconnectedHasBanner() {
-        #expect(PipelinesModel.connectionBanner(connection: .connected(endpoint: endpoint)) == nil)
-        #expect(PipelinesModel.connectionBanner(connection: .macAbsent(endpoint: endpoint))?.tone == .attention)
-    }
-
-    @Test("ios-pipelines/AC-3 : le mot de l'état vide déconnecté n'est pas celui du magasin vide")
-    func noSnapshotWordIsNotTheStoreWord() {
-        #expect(PipelinesText.noSnapshot != KanbanText.noPipeline)
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            #expect(PipelinesModel.screen(connection: status, board: .board(board)) == .board(.board(board)))
+            // Un magasin reçu VIDE est « chargé » : il reste sous le bandeau.
+            #expect(PipelinesModel.screen(connection: status, board: .storeEmpty(dir: "")) == .board(.storeEmpty(dir: "")))
+        }
+        #expect(PipelinesModel.screen(connection: .connected, board: .storeEmpty(dir: "")) == .board(.storeEmpty(dir: "")))
     }
 
     @Test("ios-pipelines/AC-1 : les identifiants de cartes et de voies sont distincts")

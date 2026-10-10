@@ -74,8 +74,8 @@ struct StreamModelTests {
         harness.stop()
     }
 
-    @Test("ios-projet/AC-6 : une trame conduite s'applique, la file est remplacée en entier, `conduite` repasse à nil hors `.connected`")
-    func conduiteFrameReplacesQueueAndResets() async {
+    @Test("ios-projet/AC-6 : une trame conduite s'applique, la file est remplacée en entier")
+    func conduiteFrameReplacesQueue() async {
         let harness = ClientHarness(
             tokens: ["d": "tok"],
             preferences: [ClientPreferenceKey.deviceId: "d"]
@@ -98,11 +98,6 @@ struct StreamModelTests {
         #expect(await eventually { harness.model.conduite?.dialogs.count == 1 })
         harness.transport.push(ClientFixtures.frame("conduite", #"{"state":"live"}"#))
         #expect(await eventually { harness.model.conduite?.dialogs.isEmpty == true })
-
-        // Hors `.connected`, la conduite poussée n'est plus affichable : `nil`.
-        harness.discovery.emit([])
-        #expect(await eventually { harness.model.state == .searching })
-        #expect(harness.model.conduite == nil)
         harness.stop()
     }
 

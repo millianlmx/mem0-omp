@@ -250,7 +250,7 @@ struct IOSSessionTests {
             Self.choice(id: "beta-ancien", repo: "beta", startedAtMs: Self.nowMs - Self.dayMs, state: .ended(.done)),
         ]
         let list = SessionList(choices: choices, storeAbsent: false, discarded: 0)
-        let connected = ClientState.connected(endpoint: Self.endpoint)
+        let connected = IOSConnectionStatus.connected
 
         guard case .list(let days) = IOSSessionsModel.screen(
             connection: connected, list: list, project: nil, nowMs: Self.nowMs, calendar: Self.calendar
@@ -265,11 +265,8 @@ struct IOSSessionTests {
         #expect(days.last?.choices.map(\.featureTitle) == ["beta-ancien"])
         #expect(days.allSatisfy { !$0.choices.isEmpty })
 
-        // Les états d'écran, dans l'ordre de priorité de S-1.
-        #expect(
-            IOSSessionsModel.screen(connection: .unpaired, list: nil, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
-                == .noConnection
-        )
+        // Les états d'écran, dans l'ordre de priorité de S-1 (le cas « non
+        // connecté » est prouvé par `unavailableWithoutList`).
         #expect(
             IOSSessionsModel.screen(connection: connected, list: nil, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
                 == .loading
@@ -292,11 +289,6 @@ struct IOSSessionTests {
                 calendar: Self.calendar
             ) == .empty
         )
-        // Un instantané arrivé APRÈS un état déconnecté passe à la liste sans geste.
-        #expect(
-            IOSSessionsModel.screen(connection: .unpaired, list: list, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
-                != .noConnection
-        )
 
         // La recette force les mêmes états, depuis la fixture partagée.
         #expect(IOSSessionsRecipe.resolve(["-sessions.recipe", IOSSessionText.recipeListe]) == .liste)
@@ -308,13 +300,40 @@ struct IOSSessionTests {
         #expect(IOSSessionsRecipe.vide.list.choices.isEmpty)
         #expect(
             IOSSessionsModel.screen(
-                connection: .unpaired,
+                connection: .disconnected(.unpaired),
                 list: IOSSessionsRecipe.vide.list,
                 project: nil,
                 nowMs: Self.nowMs,
                 calendar: Self.calendar
             ) == .empty
         )
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : non connectée et jamais reçue → le composant d'état de connexion")
+    func unavailableWithoutList() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired)] {
+            #expect(
+                IOSSessionsModel.screen(connection: status, list: nil, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
+                    == .unavailable(status)
+            )
+        }
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : la liste reçue reste affichée hors connexion")
+    func listKeptOffline() {
+        let choices = [
+            Self.choice(id: "alpha-recent", repo: "alpha", startedAtMs: Self.nowMs - 1_000, state: .live(.running)),
+        ]
+        let list = SessionList(choices: choices, storeAbsent: false, discarded: 0)
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            guard case .list(let days) = IOSSessionsModel.screen(
+                connection: status, list: list, project: nil, nowMs: Self.nowMs, calendar: Self.calendar
+            ) else {
+                Issue.record("une liste reçue doit rester affichée hors connexion")
+                return
+            }
+            #expect(days.flatMap(\.choices).map(\.featureTitle) == ["alpha-recent"])
+        }
     }
 
     // MARK: - AC-2 : le filtre par projet
@@ -346,7 +365,7 @@ struct IOSSessionTests {
             projects: SessionFilter.projects(of: choices)
         )
         guard case .list(let days) = IOSSessionsModel.screen(
-            connection: .connected(endpoint: Self.endpoint),
+            connection: .connected,
             list: list,
             project: fallback,
             nowMs: Self.nowMs,

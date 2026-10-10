@@ -23,8 +23,6 @@ enum IOSHomeAccessibility {
     static let loading = "ios.home.loading"
     static let firstRun = "ios.home.firstRun"
     static let macMissingOMP = "ios.home.macMissingOMP"
-    static let disconnected = "ios.home.disconnected"
-    static let connect = "ios.home.connect"
     static let setupBanner = "ios.home.setupBanner"
     static let launchBanner = "ios.home.launchBanner"
     static let launchBannerDismiss = "ios.home.launchBanner.dismiss"
@@ -99,6 +97,15 @@ enum IOSHomeContent {
         case .answer, .open: return nil
         }
         return IOSHomeGestureKey(cardId: attention.card.id, gesture: gesture)
+    }
+
+    /// Le geste d'attente exige-t-il le Mac ? Seul « Voir dans Pipelines » reste
+    /// local et tapable hors connexion (etats-non-connecte-heterogenes-ios, S-5).
+    static func attentionNeedsMac(_ action: HomeCardAction) -> Bool {
+        switch action {
+        case .answer, .validate, .accept, .relaunch: true
+        case .open: false
+        }
     }
 
     /// La zone à laquelle la feuille « Répondre » répond (S-13), ou aucune.

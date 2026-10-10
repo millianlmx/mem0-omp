@@ -2,15 +2,16 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// L'état de l'écran Pipelines (S-4), dans l'ordre de priorité : chargement,
-/// déconnecté sans instantané, puis l'ardoise (absente, vide ou peuplée). Une
-/// fonction pure de `(instantané, état de connexion)` — l'écran ne tient AUCUN
-/// cache propre (S-3).
+/// L'état de l'écran Pipelines (S-4), dans l'ordre de priorité : l'ardoise
+/// reçue (absente, vide ou peuplée), le chargement, puis le composant d'état de
+/// connexion. Une fonction pure de `(instantané, statut de connexion)` — l'écran
+/// ne tient AUCUN cache propre (S-3).
 enum PipelinesScreenState: Equatable {
     /// L'app est connectée, l'instantané n'est pas encore arrivé.
     case loading
-    /// L'app n'est pas connectée et n'a jamais reçu d'instantané.
-    case noSnapshot
+    /// L'app n'est pas connectée et n'a jamais reçu d'instantané : le composant
+    /// d'état de connexion en plein écran (etats-non-connecte-heterogenes-ios, S-4).
+    case unavailable(IOSConnectionStatus)
     /// Un instantané connu : absent, vide, ou l'ardoise.
     case board(KanbanBoardState)
 }
@@ -78,19 +79,14 @@ enum PipelinesModel {
         return !refreshing
     }
 
-    /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée si
-    /// la connexion est ensuite perdue) ; connectée sans instantané = chargement ;
-    /// pas connectée sans instantané = déconnecté explicite.
-    static func screen(connection: ClientState, board: KanbanBoardState?) -> PipelinesScreenState {
+    /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée,
+    /// sous le bandeau de connexion, si la connexion est ensuite perdue) ;
+    /// connectée sans instantané = chargement ; pas connectée sans instantané =
+    /// le composant d'état de connexion.
+    static func screen(connection: IOSConnectionStatus, board: KanbanBoardState?) -> PipelinesScreenState {
         if let board { return .board(board) }
-        if case .connected = connection { return .loading }
-        return .noSnapshot
-    }
-
-    /// Le bandeau de l'état de connexion, `nil` quand l'app est connectée.
-    static func connectionBanner(connection: ClientState) -> ConsoleStatus? {
-        if case .connected = connection { return nil }
-        return ConsoleStatus(text: ConnectionText.state(connection), tone: .attention)
+        if connection == .connected { return .loading }
+        return .unavailable(connection)
     }
 
     /// Les voies que l'en-tête peut replier : les deux voies terminales.

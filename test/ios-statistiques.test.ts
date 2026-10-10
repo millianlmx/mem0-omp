@@ -166,20 +166,21 @@ function screenFaults(root: string): string[] {
   const screen = appFile(root, "IOSStatsScreen.swift");
   const text = appFile(root, "IOSStatsText.swift");
   const content = appFile(root, "IOSStatsContent.swift");
+  const view = appFile(root, "IOSSectionView.swift");
   if (screen === "") return ["IOSStatsScreen.swift absent"];
   if (text === "") return ["IOSStatsText.swift absent"];
   if (content === "") return ["IOSStatsContent.swift absent"];
 
-  // Les SIX états de S-4 existent, chacun identifié.
+  // Les états de S-4 existent, chacun identifié. L'état « non connecté » est le
+  // composant partagé (etats-non-connecte-heterogenes-ios, S-4) : plus de
+  // bandeau propre à la section.
   for (const token of [
-    "case .degraded(let message):",
     "case .loading:",
     "case .error(let message):",
     "case .noProject:",
     "case .empty:",
     "case .board:",
     "StatsAccessibility.loading",
-    "StatsAccessibility.banner",
     "StatsAccessibility.error",
     "StatsAccessibility.noProject",
     "StatsAccessibility.empty",
@@ -252,6 +253,10 @@ function screenFaults(root: string): string[] {
     }
   }
 
+  // Le dispatch : la section `.stats` route vers l'écran réel, sur le patron des autres.
+  if (!/section == \.stats \{\s*\n\s*IOSStatsScreen\(client: client\b/.test(view)) {
+    faults.push("IOSSectionView ne route pas .stats vers IOSStatsScreen");
+  }
   return faults;
 }
 
@@ -389,6 +394,11 @@ test("ios-statistiques/AC-1 : la route sert une entrée par feature, et les deux
     mirrorFaults(copy).some((f) => f.includes("RemoteStatsFeature")),
     "un miroir qui diverge doit faire rougir la garde",
   );
+
+  const replant = copyRepo();
+  const view = path.join(replant, "omp-console", "ios", "OMPConsoleIOS", "IOSSectionView.swift");
+  fs.writeFileSync(view, code(view).replace(/IOSStatsScreen\(client: client[^)]*\)/, "EmptyView()"));
+  assert.ok(screenFaults(replant).some((f) => f.includes("route pas .stats")), "une section non routée doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------
