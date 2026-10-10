@@ -225,7 +225,8 @@ func blockingFooterHasNoClose() {
         let footer = SetupPresentation.footer(state: state, blocking: true)
         #expect(!(footer.leading + footer.trailing).contains(.close))
     }
-    #expect(SetupAction.allCases.map(SetupPresentation.label) == ["Installer", "Réessayer", "Quitter", "Fermer"])
+    #expect(SetupAction.allCases.map(SetupPresentation.label)
+        == ["Installer", "Réessayer", "Quitter", "Fermer", "Arrêter l'ancienne pile et reprendre"])
 }
 
 @Test("mac-omp-manquant-non-bloquant/AC-4 : OMP présent, le pied propose « Fermer » — seul et proéminent, ou après « Réessayer » sur l'échec")
@@ -284,18 +285,24 @@ func failureSplitsSummaryFromDetail() {
          "« Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", nil),
         (.components(.install(component: "Podman", detail: "pkgutil absent")),
          "L'installation de « Podman » a échoué.", "pkgutil absent"),
-        (.migration(.legacyStopFailed(container: "mem0-qdrant", detail: "socket fermé")),
+        (.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")),
          "L'ancienne pile mémoire n'a pas pu être arrêtée.", "mem0-qdrant : socket fermé"),
         (.migration(.copyFailed(detail: "disque plein")),
          "La copie de la base mémoire existante a échoué.", "disque plein"),
         (.stack(.machineFailed(detail: "libkrun absent")),
          "La machine de conteneurs n'a pas démarré.", "libkrun absent"),
-        (.stack(.portBusy(port: 6333)),
-         "Le port 6333 est déjà utilisé par un autre programme : la pile mémoire ne peut pas démarrer.", nil),
+        (.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711))),
+         "Le port 6333 est déjà tenu par un autre programme (python3, pid 4711) : la pile mémoire ne peut pas démarrer.",
+         "Geste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
+        (.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))),
+         "Le port 8321 est déjà tenu par l'ancienne pile mémoire (conteneur mem0-http) : la pile mémoire ne peut pas démarrer.",
+         "Geste : podman stop mem0-qdrant mem0-http"),
         (.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")),
          "Un conteneur de la pile mémoire n'a pas démarré.", "omp-console-qdrant : image absente"),
         (.stack(.healthTimeout(seconds: 180)),
          "La mémoire n'a pas répondu dans le délai imparti (180 s).", nil),
+        (.stack(.installationFailed(detail: "disque plein")),
+         "L'identité d'installation de la pile n'a pas pu être écrite.", "disque plein"),
         (.stack(.podmanFailed(command: "machine start", detail: "boom")),
          "Podman a échoué.", "machine start : boom"),
     ]
@@ -311,7 +318,8 @@ func failureSplitsSummaryFromDetail() {
         #expect(SetupText.failureDetail(.components(.install(component: "OMP", detail: blank))) == nil)
         #expect(SetupText.failureDetail(.components(.network(component: "OMP", detail: blank))) == nil)
         #expect(SetupText.failureDetail(.migration(.copyFailed(detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.migration(.legacyStopFailed(container: "mem0-qdrant", detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.legacy(.stopFailed(container: "mem0-qdrant", detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.stack(.installationFailed(detail: blank))) == nil)
         #expect(SetupText.failureDetail(.stack(.machineFailed(detail: blank))) == nil)
         #expect(SetupText.failureDetail(.stack(.containerFailed(name: "omp-console-qdrant", detail: blank))) == nil)
         #expect(SetupText.failureDetail(.stack(.podmanFailed(command: "machine start", detail: blank))) == nil)
@@ -560,18 +568,20 @@ func takeoverShownOnlyForLegacyConflict() {
     #expect(!SetupPresentation.showsTakeover(.ready))
     #expect(!SetupPresentation.showsTakeover(.idle))
 
-    // « Réessayer » reste visible sur le conflit legacy, mais « Fermer » n'est plus
-    // proéminent : c'est la reprise qui porte ↩.
-    #expect(SetupPresentation.showsRetry(legacy))
-    #expect(!SetupPresentation.closeIsProminent(legacy))
+    // Sur le conflit legacy, la reprise passe devant et porte ↩ ; « Réessayer »
+    // reste visible et « Fermer » n'est plus proéminent.
+    #expect(SetupPresentation.footer(state: legacy, blocking: false)
+        == SetupFooter(leading: [], trailing: [.takeover, .retry, .close], prominent: .takeover, disabled: []))
+    // Un conflit tenu par un autre programme garde le pied d'échec ordinaire.
+    #expect(SetupPresentation.footer(state: foreign, blocking: false)
+        == SetupFooter(leading: [], trailing: [.retry, .close], prominent: .retry, disabled: []))
 
-    // Pendant l'action, les DEUX boutons restent affichés et DÉSACTIVÉS.
+    // Pendant l'action, les DEUX boutons restent affichés et DÉSACTIVÉS ; « Fermer »
+    // garde ⎋ et reste la seule issue.
     #expect(SetupPresentation.showsTakeover(.preparing(.legacyStop)))
-    #expect(SetupPresentation.showsRetry(.preparing(.legacyStop)))
-    #expect(SetupPresentation.isActing(.preparing(.legacyStop)))
-    #expect(!SetupPresentation.isActing(legacy))
-    // Aucun raccourci ↩ n'est perdu : « Fermer » garde ⎋ dans tous les états.
-    #expect(!SetupPresentation.closeIsProminent(.preparing(.legacyStop)))
+    #expect(SetupPresentation.footer(state: .preparing(.legacyStop), blocking: false)
+        == SetupFooter(leading: [], trailing: [.takeover, .retry, .close], prominent: .takeover, disabled: [.takeover, .retry]))
+    #expect(SetupPresentation.label(.takeover) == "Arrêter l'ancienne pile et reprendre")
 }
 
 @MainActor
@@ -587,12 +597,12 @@ func keyboardPrefersTakeoverAndEscapeCloses() async {
     Task { await model.prepare() }
     await waitFor { model.state == .failed(legacyConflictFailure) }
 
-    let window = shortcutWindow(SetupView(setup: model))
+    let window = shortcutWindow(SetupView(setup: model, omp: ompAvailable, quit: {}))
     // ↩ déclenche la reprise : « Réessayer » n'a plus de raccourci dans ce cas.
     #expect(pressReturn(on: window))
     await waitFor { calls.count == 1 }
     await waitFor { model.state == .preparing(.legacyStop) }
-    #expect(SetupPresentation.isActing(model.state))
+    #expect(SetupPresentation.footer(state: model.state, blocking: false).disabled == [.takeover, .retry])
 
     // Un second ↩ n'atteint pas un bouton désactivé : le compteur ne bouge pas.
     _ = pressReturn(on: window)

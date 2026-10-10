@@ -69,7 +69,9 @@ Tout se fait depuis l'app, sans terminal :
      différente », « Ce Mac n'est pas pris en charge (arm64 requis) », …) ; le
      détail technique, s'il existe, est replié derrière « Afficher le détail » et,
      déplié, tient dans une zone de hauteur fixe qui défile. « Réessayer » relance
-     la chaîne.
+     la chaîne. Sur un port tenu par l'ancienne pile mémoire, « Arrêter l'ancienne
+     pile et reprendre » (`↩`) passe devant « Réessayer » ; pendant l'arrêt, les
+     deux restent affichés mais éteints, et « Fermer » (Échap) reste disponible.
 
    À la fin de toute la préparation, la feuille se ferme d'elle-même. Rien ne
    dépend d'un `omp` système.

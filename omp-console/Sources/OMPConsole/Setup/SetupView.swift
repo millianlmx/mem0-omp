@@ -12,7 +12,10 @@
 //   (proéminent, ↩) à droite ; aucun « Fermer », rien ne consomme ⎋, et la
 //   racine pose `.interactiveDismissDisabled`. ⌘Q passe par « Quitter » (Doc-3).
 // - FERMABLE (OMP présent) : « Fermer » (⎋) proéminent, ou « Réessayer »
-//   proéminent puis « Fermer » sur l'échec ; fermer n'interrompt rien.
+//   proéminent puis « Fermer » sur l'échec ; fermer n'interrompt rien. Sur un
+//   conflit de port tenu par l'ancienne pile (S-6, BR-9), « Arrêter l'ancienne
+//   pile et reprendre » passe devant et porte ↩ ; pendant l'action qu'il a
+//   déclenchée, lui et « Réessayer » restent affichés mais éteints.
 
 import ConsoleCore
 import SwiftUI
@@ -91,7 +94,7 @@ extension SetupFailure {
 
 /// Un geste du pied de la feuille.
 enum SetupAction: String, CaseIterable {
-    case install, retry, quit, close
+    case install, retry, quit, close, takeover
 }
 
 /// Le pied de la feuille : les gestes à gauche et à droite, le proéminent (↩)
@@ -173,6 +176,17 @@ enum SetupPresentation {
             return SetupFooter(leading: [.quit], trailing: [.retry, .install], prominent: nil, disabled: [.retry, .install])
         case (true, _):
             return SetupFooter(leading: [.quit], trailing: [.retry, .install], prominent: .install, disabled: [])
+        case (false, _) where showsTakeover(state):
+            // La reprise de l'ancienne pile porte ↩ ; « Réessayer » reste visible
+            // sans raccourci. Pendant l'arrêt, les deux sont éteints et « Fermer »
+            // (⎋) reste la seule issue (BR-9).
+            let acting = state == .preparing(.legacyStop)
+            return SetupFooter(
+                leading: [],
+                trailing: [.takeover, .retry, .close],
+                prominent: .takeover,
+                disabled: acting ? [.takeover, .retry] : []
+            )
         case (false, .failed):
             return SetupFooter(leading: [], trailing: [.retry, .close], prominent: .retry, disabled: [])
         case (false, _):
@@ -204,6 +218,7 @@ enum SetupPresentation {
         case .retry: SetupText.retry
         case .quit: SetupText.quit
         case .close: SetupText.close
+        case .takeover: SetupText.takeover
         }
     }
 
@@ -277,7 +292,7 @@ struct SetupView: View {
             // même bouton, le premier gagne et le second reste muet). « Fermer »
             // garde donc ⎋, et ce jumeau invisible — hors arbre d'accessibilité,
             // sans identifiant — porte ↩. Les autres proéminents (« Installer »,
-            // « Réessayer ») portent ↩ eux-mêmes. `.background` : aucun effet sur
+            // « Réessayer », la reprise) portent ↩ eux-mêmes. `.background` : aucun effet sur
             // la mise en page.
             .background {
                 if footer.prominent == .close {
@@ -312,7 +327,7 @@ struct SetupView: View {
             return .cancelAction
         case .quit:
             return KeyboardShortcut("q", modifiers: .command)
-        case .install, .retry:
+        case .install, .retry, .takeover:
             guard action == footer.prominent, !footer.disabled.contains(action) else { return nil }
             return .defaultAction
         }
@@ -324,6 +339,7 @@ struct SetupView: View {
         case .retry: setup.retry()
         case .quit: quit()
         case .close: setup.dismiss()
+        case .takeover: Task { await setup.takeOverLegacyStack() }
         }
     }
 }

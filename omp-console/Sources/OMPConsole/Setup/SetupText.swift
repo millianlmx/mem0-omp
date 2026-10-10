@@ -106,36 +106,41 @@ extension SetupText {
             return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
         case .components(.install(let component, _)):
             return "L'installation de « \(component) » a échoué."
-        case .migration(.legacyStopFailed):
+        case .legacy(.stopFailed):
             return "L'ancienne pile mémoire n'a pas pu être arrêtée."
         case .migration(.copyFailed):
             return "La copie de la base mémoire existante a échoué."
         case .stack(.machineFailed):
             return "La machine de conteneurs n'a pas démarré."
-        case .stack(.portBusy(let port)):
-            return "Le port \(port) est déjà utilisé par un autre programme : la pile mémoire ne peut pas démarrer."
+        case .stack(.portConflict(let port, let owner)):
+            return "Le port \(port) est déjà tenu par \(owner.userDescription) : la pile mémoire ne peut pas démarrer."
         case .stack(.containerFailed):
             return "Un conteneur de la pile mémoire n'a pas démarré."
         case .stack(.healthTimeout(let seconds)):
             return "La mémoire n'a pas répondu dans le délai imparti (\(seconds) s)."
+        case .stack(.installationFailed):
+            return "L'identité d'installation de la pile n'a pas pu être écrite."
         case .stack(.podmanFailed):
             return "Podman a échoué."
         }
     }
 
     /// Le détail technique d'un échec, replié par défaut sous la phrase claire
-    /// (S-6) ; `nil` quand il n'y en a pas, ou qu'il n'est fait que de blancs.
+    /// (S-6) ; `nil` quand il n'y en a pas, ou qu'il n'est fait que de blancs. Le
+    /// geste d'un conflit de port (une commande) s'y range aussi.
     static func failureDetail(_ failure: SetupFailure) -> String? {
         let subject: String?
         let raw: String
         switch failure {
-        case .components(.unsupportedMac), .components(.checksum),
-             .stack(.portBusy), .stack(.healthTimeout):
+        case .components(.unsupportedMac), .components(.checksum), .stack(.healthTimeout):
             return nil
+        case .stack(.portConflict(_, let owner)):
+            return "Geste : \(owner.gesture)"
         case .components(.network(_, let detail)), .components(.install(_, let detail)),
-             .migration(.copyFailed(let detail)), .stack(.machineFailed(let detail)):
+             .migration(.copyFailed(let detail)), .stack(.machineFailed(let detail)),
+             .stack(.installationFailed(let detail)):
             (subject, raw) = (nil, detail)
-        case .migration(.legacyStopFailed(let name, let detail)), .stack(.containerFailed(let name, let detail)):
+        case .legacy(.stopFailed(let name, let detail)), .stack(.containerFailed(let name, let detail)):
             (subject, raw) = (name, detail)
         case .stack(.podmanFailed(let command, let detail)):
             (subject, raw) = (command, detail)
