@@ -85,8 +85,10 @@ func pendingAnswerNotifiesOnce() async {
     model.start()
 
     #expect(await awaitMainTrue { deliverer.messages.count == 1 })
-    #expect(deliverer.messages.first?.title == "depot/question attend une réponse")
-    #expect(deliverer.messages.first?.body == "Une question attend votre réponse.")
+    // Titre = libellé de l'Accueil, corps = nom affiché par l'Accueil (le label du run).
+    #expect(deliverer.messages.first?.title == "Question")
+    #expect(deliverer.messages.first?.body == "depot/question")
+    #expect(deliverer.messages.first?.opening == AlertOpening(kind: .pendingAnswer, cardID: "run:\(id)"))
     #expect(deliverer.keys == ["answer:\(id):call-1"])
 
     // Un second instantané (un run de plus) ne renotifie pas la question en vol.
@@ -151,6 +153,9 @@ func ingestRegistersBeforeDelivering() async {
     await model.ingest(event)
     #expect(deliverer.keys == [event.key])
     #expect(AlertLedger(path: ledgerPath).contains(event.key))
+    // Une perte d'ownership ne concerne aucune carte : aucun lien profond, le clic
+    // mène à l'Accueil (notifications-mac-lien-profond).
+    #expect(deliverer.messages.first?.opening == nil)
 
     // La clé est déjà au registre : aucune seconde livraison (sémantique d'`apply`).
     await model.ingest(event)

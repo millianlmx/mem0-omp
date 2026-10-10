@@ -259,9 +259,7 @@ struct HomeView: ConsoleSectionView {
             switch HomePresentation.cardAction(attention) {
             case .answer:
                 Button(HomeText.answerEllipsis) {
-                    actions.clearAnswer()
-                    actions.replyText = ""
-                    home.answerCardID = card.id
+                    home.openAnswer(card.id, actions: actions)
                 }
             case .validate:
                 Button(KanbanText.validateSpecs) {

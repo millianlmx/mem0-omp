@@ -29,7 +29,7 @@ import SwiftUI
 
 @main
 struct OMPConsoleApp: App {
-    @StateObject private var model = ConsoleModel()
+    @StateObject private var model: ConsoleModel
     @StateObject private var terminalModel = TerminalConsoleModel()
     @StateObject private var filesModel = FilesModel()
     @StateObject private var sessionModel: SessionConsoleModel
@@ -42,7 +42,7 @@ struct OMPConsoleApp: App {
     /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
     /// sélection, ni les filtres.
     @StateObject private var memoryGraphModel = MemoryGraphModel()
-    @StateObject private var contractModel = ContractModel()
+    @StateObject private var contractModel: ContractModel
     @StateObject private var homeModel: HomeModel
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
     /// de sa feuille, et son `onReady` revérifie OMP.
@@ -65,6 +65,10 @@ struct OMPConsoleApp: App {
     /// (S-9), sans lancer aucun process. Les accroches de terminaison des modèles
     /// sont posées dès leur construction.
     init() {
+        let console = ConsoleModel()
+        _model = StateObject(wrappedValue: console)
+        let contract = ContractModel()
+        _contractModel = StateObject(wrappedValue: contract)
         let actions = ActionsModel()
         _actionsModel = StateObject(wrappedValue: actions)
         // Le crochet de recette `-home.recipe` (`HomeRecipe`) : nil hors recette,
@@ -138,6 +142,11 @@ struct OMPConsoleApp: App {
             Task { await remote.startIfEnabled() }
         }
         _setupModel = StateObject(wrappedValue: setup)
+        // Le clic d'une notification (notifications-mac-lien-profond S-3/S-4) : le
+        // routeur agit sur les modèles de la fenêtre et vit tant que cette accroche
+        // le retient.
+        let router = AlertRouter(console: console, home: home, kanban: kanban, contract: contract, actions: actions)
+        AppDelegate.openAlert = { router.open($0) }
         // La section Mémoire reprend l'ancienne pile par LA MÊME action que la
         // feuille de préparation (S-6) : une seule implémentation.
         let memory = MemoryModel()
@@ -310,6 +319,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Posée par `OMPConsoleApp.init` : arrête le service d'API distante et son
     /// annonce Bonjour (S-14).
     static var terminateRemoteService: (() async -> Void)?
+    /// Posée par `OMPConsoleApp.init` : remet le clic d'une notification au
+    /// routeur de la fenêtre (`nil` : payload absent ou illisible → Accueil).
+    static var openAlert: (@MainActor (AlertOpening?) -> Void)?
 
     /// L'inventaire du Quitter (mac-quitter-sans-confirmation, S-1) : chaque modèle
     /// pose, dans son init, la lecture de SON activité, prise d'un trait à la
@@ -355,8 +367,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
-        // son titre suivra l'état publié, et l'autorisation sera demandée.
+        // son titre suivra l'état publié, et l'autorisation sera demandée. Le clic
+        // est branché AVANT `start()`, qui pose le délégué du centre.
         statusItemController = StatusItemController(model: alerts)
+        alerts.onOpen = { AppDelegate.openAlert?($0) }
         alerts.start()
         // Le Quitter du Dock, `osascript … quit` et la fermeture de session macOS
         // arrivent en Apple Event : ce gestionnaire les reçoit même quand une

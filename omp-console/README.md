@@ -1664,19 +1664,56 @@ besoins et leurs six familles :
 
 | Évènement | Source | Titre · corps |
 |---|---|---|
-| attend une réponse | `running/<id>.json`, `pendingAsk` en vol et propriétaire vivant | `<label> attend une réponse` · « Une question attend votre réponse. » |
-| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | `<name> attend une validation` · « Jalon specs : validez le contrat pour continuer. » |
-| attend une validation (revue) | idem avec `waitKind = review` | `<name> attend une validation` · « Jalon revue : validez la livraison pour continuer. » |
-| échoué (feature de lot) | feature de lot `failed` | `<name> a échoué` · « La feature `<slug>` a échoué. » |
-| échoué (run clos) | `history/<id>.json`, `finalState = failed` | `<label> a échoué` · « Le run a échoué. » |
-| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | `PR fusionnée : <slug>` · « La PR de `<slug>` est fusionnée. » |
+| attend une réponse | `running/<id>.json`, `pendingAsk` en vol et propriétaire vivant | « Question » · nom affiché de la carte (repli : `<label>`) |
+| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | « Specs à valider » · nom affiché de la carte (repli : `<slug>`) |
+| attend une validation (revue) | idem avec `waitKind = review` | « Revue à accepter » · nom affiché de la carte (repli : `<slug>`) |
+| échoué (feature de lot) | feature de lot `failed` | « Échec » · nom affiché de la carte (repli : `<slug>`) |
+| échoué (run clos) | `history/<id>.json`, `finalState = failed` | « Échec » · nom affiché de la carte (repli : `<label>`) |
+| PR fusionnée | feature de projet `status = merged` dans `projects/<clé>.json` | « PR fusionnée » · nom affiché de la carte (repli : `<slug>`) |
 
-`<name>` est le `name` de la feature s'il n'est pas blanc, sinon son `slug` ; le
-`label` est celui que le dépôt écrit lui-même. Une PR absente de `projects/` n'émet
+Le titre est le libellé d'état que l'Accueil affiche pour la carte, tiré des mêmes
+fonctions (`HomeText.natureText`, `ConsoleStatus.of(column:)`) ; un échec reste
+« Échec » même quand l'Accueil le montre « En pause ». Le corps est le nom affiché
+par l'Accueil (`KanbanCard.title` : le slug d'une feature, le `label` d'un run, que
+le dépôt écrit lui-même) — une question posée par le run d'une feature porte le slug
+de la feature. Le repli ne sert que si la carte n'est pas sur l'ardoise du même
+instantané. Une PR absente de `projects/` n'émet
 rien (une PR non suivie), et une feature de **lot** `done` avec `prUrl` (colonne
 « PR ouverte », « PR créée » ou « PR fusionnée » du Kanban selon l'état GitHub)
 n'est pas une fusion. Les sources sont bornées comme le
 magasin : 200 entrées `running`, 20 rangs `history`, un lot et un projet par dépôt.
+
+### Cliquer une notification
+
+Chaque notification porte, dans son `userInfo`, sa famille et l'identifiant de sa
+carte (`["kind": …, "cardID": …]`, chaînes seulement). Un clic sur la bannière ou
+sur son entrée du Centre de notifications ramène **toujours** la fenêtre principale
+au premier plan, puis ouvre :
+
+| Famille | Destination |
+|---|---|
+| Question | feuille **Répondre** de la carte |
+| Specs à valider | feuille **Contrat** de la carte |
+| Revue à accepter | **fiche** de la carte (elle porte « Accepter la revue ») |
+| Échec (lot ou run) | **fiche** de la carte |
+| PR fusionnée | **fiche** de la carte |
+
+- **Notification périmée** (question déjà répondue, jalon déjà validé, carte sortie
+  de l'état notifié) : la **fiche** de la carte si elle existe encore, l'**Accueil**
+  si elle a disparu — sans feuille ni message d'erreur. Une notification sans
+  `userInfo` (livrée par une version antérieure, ou perte d'un port par la pile de
+  l'app, qui ne concerne aucune carte) ou illisible mène à l'Accueil.
+- **Fenêtre fermée**, l'app vivante dans la barre des menus : la fenêtre se rouvre,
+  puis la destination s'applique. Si l'ardoise n'est pas encore chargée, l'ouverture
+  attend sa première publication (seule la plus récente est gardée). Le lancement à
+  froid d'une app quittée n'est pas couvert.
+- **Feuille déjà ouverte** dans la fenêtre (Répondre avec une saisie en cours, Contrat,
+  fiche, dialogue…) : elle n'est **jamais** remplacée ni fermée ; seule la fenêtre
+  revient au premier plan.
+
+La destination est une fonction pure (`AlertRoute.destination`, Alerts/AlertRouter.swift)
+appliquée par `AlertRouter` ; le clic lui parvient par `AlertOpenReceiver` (délégué du
+centre, retenu par le livreur système) → `AlertsModel.onOpen` → `AppDelegate.openAlert`.
 
 ### Notifications refusées
 
@@ -1741,6 +1778,12 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 6. Fermer la fenêtre (bouton rouge) ⇒ l'app reste vivante, l'item de barre est là,
    ⌘Q quitte ; presser l'item (sonde AX `AXPress`) ⇒ la fenêtre redevient visible et
    au premier plan.
+7. Cliquer chaque bannière (ou son entrée du Centre de notifications), fenêtre
+   ouverte puis fermée, et constater la destination de « Cliquer une notification » :
+   Répondre, Contrat, fiche, ou Accueil pour une carte disparue ; puis cliquer avec
+   une feuille Répondre ouverte et du texte saisi ⇒ la feuille et son texte restent.
+   Cette étape reste **manuelle** : un clic sur une notification active l'app et
+   vole le focus, ce qu'aucune recette automatisée ne doit faire.
 
 ### Trois pièges mesurés
 
@@ -1748,7 +1791,9 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
    dans un binaire nu (ou un processus de `swift test`) tue le process sur une
    exception Objective-C non rattrapable (`bundleProxyForCurrentProcess is nil`). La
    garde d'instanciation est donc `Bundle.main.bundleURL.pathExtension == "app"`, et
-   **aucun** appel UserNotifications ne vit ailleurs que dans `AlertDelivery.swift`.
+   **aucun** appel UserNotifications ne vit ailleurs que dans `AlertDelivery.swift` —
+   le récepteur de clics (`AlertOpenReceiver`, posé en `delegate` du centre) compris :
+   les tests passent par l'enregistreur (`RecorderAlertDeliverer.simulateOpen`).
 2. **`NSStatusBar` interdit dans la suite.** `NSStatusBar.system.statusItem(withLength:)`
    tue un processus de test (signal 6, pile `-[NSStatusBar _statusItemWithLength:withPriority:]`).
    `StatusItemController` n'y est donc jamais construit : son titre et son résumé
@@ -2300,9 +2345,10 @@ omp-console/
 │   │   └── ScrollBottomObserver.swift la géométrie du défilement et ses gestes
 │   ├── Alerts/                    les notifications macOS
 │   │   ├── AlertEvents.swift      dérivation des six familles, clés et textes purs
-│   │   ├── AlertDelivery.swift    livreur réel/no-op, autorisation (SEUL import UserNotifications)
+│   │   ├── AlertDelivery.swift    livreur réel/no-op, autorisation, récepteur de clics (SEUL import UserNotifications)
 │   │   ├── AlertLedger.swift      registre persisté des clés, lecture tolérante
-│   │   └── AlertsModel.swift      abonnement, décision, compteurs, autorisation
+│   │   ├── AlertsModel.swift      abonnement, décision, compteurs, autorisation, clic
+│   │   └── AlertRouter.swift      clic d'une notification : payload, destination pure, routeur
 │   ├── Stats/                     la section « Statistiques » (lecture seule)
 │   │   ├── StatsMetrics.swift     les métriques d'une session (fonctions pures)
 │   │   ├── StatsModels.swift      types du tableau et textes exacts de la vue

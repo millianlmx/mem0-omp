@@ -38,20 +38,33 @@ enum MainWindow {
     /// L'identifiant de la scène `WindowGroup` de la fenêtre principale.
     static let sceneID = "main"
 
-    /// La fenêtre principale redevient visible et au premier plan. Elle se
-    /// reconnaît à son identifiant AppKit, que SwiftUI dérive de celui de la scène
+    /// La fenêtre principale, visible ou fermée. Elle se reconnaît à son
+    /// identifiant AppKit, que SwiftUI dérive de celui de la scène
     /// (`main-AppWindow-1`, mesuré) — pas à son titre, qui suit la section courante,
     /// ni à son index dans `NSApp.windows`, qui contient aussi les fenêtres de l'item
     /// de barre (mesuré, Doc-5). Une fenêtre fermée reste dans `NSApp.windows`
-    /// (invisible) : `makeKeyAndOrderFront` la ramène.
+    /// (invisible).
+    @MainActor
+    static func window() -> NSWindow? {
+        let prefix = "\(sceneID)-"
+        return NSApp.windows.first {
+            $0.canBecomeMain && ($0.identifier?.rawValue.hasPrefix(prefix) ?? false)
+        }
+    }
+
+    /// Une feuille est attachée à la fenêtre principale : feuille racine, fiche,
+    /// feuille de section ou dialogue de confirmation (un popover n'en est pas une).
+    /// Elle le reste après la fermeture de la fenêtre (mesuré, mem0 6124fe7e).
+    @MainActor
+    static func hasAttachedSheet() -> Bool {
+        window()?.attachedSheet != nil
+    }
+
+    /// La fenêtre principale redevient visible et au premier plan :
+    /// `makeKeyAndOrderFront` ramène aussi une fenêtre fermée.
     @MainActor
     static func reveal() {
-        let prefix = "\(sceneID)-"
-        if let window = NSApp.windows.first(where: {
-            $0.canBecomeMain && ($0.identifier?.rawValue.hasPrefix(prefix) ?? false)
-        }) {
-            window.makeKeyAndOrderFront(nil)
-        }
+        window()?.makeKeyAndOrderFront(nil)
         // `activate(ignoringOtherApps:)` est DÉPRÉCIÉE avec le SDK du poste (Doc-7),
         // mais c'est la seule des deux formes dont l'effet est MESURÉ (fenêtre clé et
         // principale, app active) : `activate()` coopératif est refusé sans intention
