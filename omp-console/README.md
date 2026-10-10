@@ -272,6 +272,87 @@ Trois pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
   délai sur 212 tests en parallèle, 212/212 en série. `--no-parallel` est donc la
   règle du dépôt, dans la commande locale comme dans `scripts/swift-app.sh`.
 
+### Recette : interface Mac automatisée
+
+`bash scripts/mac-recette-ui.sh` (sans argument) ouvre une à une les **24
+surfaces** de l'app — les 9 sections de la barre latérale, puis 15 feuilles
+(bienvenue, préparation, appairage, nouvelle pipeline, réponse, contrat, fiche de
+carte, modèles, lancement et question de projet, question de session, ouverture
+du Terminal, création, édition et lien d'un souvenir) — **à la taille minimale de
+la fenêtre**, capture chacune et sonde son arbre AX. Le catalogue est
+`scripts/mac-recette-ui/catalogue.ts` ; alertes, menus, popovers, inspecteurs et
+item de barre de menus sont hors périmètre. Le script n'est appelé ni par
+`scripts/check.sh` ni par la CI : il lui faut une session graphique.
+
+Prérequis, vérifiés **avant tout lancement** par `sonde etat-ecran` (rien n'est
+lancé ni activé, aucune invite système) :
+
+- session déverrouillée ;
+- écran sur le **Bureau** : sur un Space plein écran d'une autre app, l'instance
+  de recette ouvrirait ses fenêtres sur le Space Bureau, illisibles et non
+  capturables ; le script refuse alors (« Revenez sur le Bureau ») ;
+- le terminal qui lance la recette autorisé en **Accessibilité** et en
+  **Enregistrement de l'écran** (Réglages Système ▸ Confidentialité et sécurité).
+
+Pendant le passage (**8 à 12 min**, construction comprise), ne changez pas d'app
+au premier plan : le constat d'isolation la compare avant/après.
+
+Codes de sortie, la dernière ligne de stdout portant le verdict :
+
+| code | issue | dernière ligne |
+|---|---|---|
+| 0 | vert | `✓ recette Mac : vert — 24 surfaces couvertes, <e> signalement(s) excepté(s). Rapport : …` |
+| 1 | défauts trouvés | `✗ recette Mac : défauts trouvés — <s> signalement(s) non excepté(s), <n> surface(s) non couverte(s), <i> exception(s) invalide(s)[, isolation rompue]. Rapport : …` |
+| 2 | non exécutable | `· recette Mac non exécutable : <raison>` (macOS absent, sonde non compilée, écran refusé, recette déjà en cours, app non construite, jeu fictif non démarré, interruption) |
+
+Sorties dans `omp-console/build/mac-recette-ui/sortie/` (vidé à chaque passage) :
+`captures/<id>.png`, `releves/<id>.json` (arbre AX : rôle, identifiant, libellés,
+cadre, actions), `parcours.json`, `rapport.json` (déterministe : deux passages sur
+le même code le rendent identique octet pour octet) et `rapport.md` (lisible, avec
+les cadres, les tailles de fenêtre et la section Isolation). La sonde compilée
+(`scripts/mac-recette-ui/sonde.swift`) est mise en cache sous
+`omp-console/build/mac-recette-ui/` et ne se recompile que si sa source change.
+
+Règles (seuil HIG macOS) : un élément **hors de la zone visible** de la surface
+(hors zone défilante, plus d'1 pt de débord), un **identifiant d'accessibilité
+dupliqué**, une **cible cliquable de moins de 20 × 20 pt** (20 × 20 exact passe).
+Une surface qui ne s'ouvre pas est **non couverte**, avec sa raison, et le verdict
+n'est jamais vert.
+
+**Isolation.** Chaque surface tourne dans une instance NEUVE d'une copie du bundle
+rebaptisée `com.omp.console.recette` (`/tmp/omp-console-recette-ui`), lancée par
+`open -g -n -F` avec le crochet `-surface.recipe <id>` (`SurfaceRecipe.swift`,
+inerte sans `OMP_CONSOLE_SUPPORT_ROOT`), un magasin, un support, un dossier
+d'alertes et des préférences jetables, et un jeu de données fictif fixe servi sur
+`127.0.0.1` (service OMP, mem0-http, oMLX ; `gh` coupé). Votre instance
+`com.omp.console` n'est jamais relancée, activée ni visée ; ses pids, l'app au
+premier plan et l'empreinte de `defaults export com.omp.console` sont relevés
+avant et après, et toute activation d'OMP Console pendant le passage est
+consignée : une isolation rompue rend le verdict « défauts trouvés ». Le
+nettoyage (toujours, y compris sur ⌃C) retire la racine, le domaine
+`com.omp.console.recette` et son inscription LaunchServices.
+
+**Exceptions.** `scripts/mac-recette-ui/exceptions.json` :
+
+```json
+{"version":1,"exceptions":[{"surface":"<id du catalogue>|*","regle":"hors-ecran|identifiant-duplique|cible-trop-petite","element":"<clé du rapport>","justification":"faux positif : … | défaut connu, à corriger hors de cette feature : …"}]}
+```
+
+Une entrée sans justification, de surface ou de règle inconnue, ou en doublon est
+**invalide** (le verdict n'est pas vert) ; une entrée qui n'excepte plus rien est
+listée « sans objet » sans changer le verdict. `"surface": "*"` n'est admis que
+si la même règle et la même clé sont signalées sur toutes les sections. Une
+surface non couverte ne s'excepte pas.
+
+**Limite (2026-10-10).** Le premier passage réel n'a pas encore été joué : le
+poste de référence était sur un Space plein écran, et l'on ne bascule pas l'écran
+de l'utilisateur. Seul le refus a été éprouvé en réel (sortie 2, « Revenez sur le
+Bureau »). Le fichier d'exceptions est livré **vide** : après le premier passage
+sur le Bureau, lancer `bash scripts/mac-recette-ui.sh`, inspecter dans
+`rapport.md` chaque signalement avec sa capture et son relevé, et y ajouter son
+entrée justifiée, jusqu'au verdict vert (sortie 0) sur deux passages consécutifs
+dont les `rapport.json` sont identiques (`cmp`).
+
 ## Lire le magasin d'état
 
 `Sources/OMPConsole/Store/` est la **couche de lecture** du magasin d'état partagé
