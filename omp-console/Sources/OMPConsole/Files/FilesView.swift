@@ -17,6 +17,9 @@ struct FilesView: ConsoleSectionView {
     static let section = ConsoleSection.files
 
     @ObservedObject var model: FilesModel
+    /// Le sélecteur de projet de l'état « Aucun projet ouvert » (S-1 de
+    /// mac-etats-vides-sans-issue), à l'échelle de l'app.
+    let chooser: ProjectChooserModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -123,11 +126,11 @@ struct FilesView: ConsoleSectionView {
 
     @ViewBuilder private var content: some View {
         if model.projectRoot == nil, model.errorMessage == nil {
-            ContentUnavailableView(
-                FilesText.noProjectTitle,
-                systemImage: "folder.badge.questionmark",
-                description: Text(FilesText.noProjectDescription)
-            )
+            // Le projet se choisit sur place : la section ne change pas, la
+            // cible et l'arbre du projet choisi se chargent (S-3).
+            NoProjectView(state: .files, chooser: chooser) {
+                Task { await model.refresh() }
+            }
         } else if let error = model.errorMessage {
             ContentUnavailableView {
                 Label(FilesText.errorTitle, systemImage: "exclamationmark.triangle")

@@ -76,6 +76,12 @@ final class TerminalConsoleModel: ObservableObject {
     /// à nil au lancement suivant.
     @Published private(set) var failureDiagnostic: String?
 
+    /// Le projet choisi de l'app, tel que la section le montre (S-4 de
+    /// mac-etats-vides-sans-issue) : `nil` ⇒ l'état vide « Aucun projet ouvert ».
+    /// Relu par `followProjectRoot()` (construction, apparition, ouverture de la
+    /// feuille) : la préférence n'émet aucune notification.
+    @Published private(set) var projectRoot: URL?
+
     // MARK: - Dépendances
 
     private let host: TerminalHost
@@ -155,6 +161,7 @@ final class TerminalConsoleModel: ObservableObject {
         AppDelegate.terminateTerminal = { [weak self] in
             await self?.shutdown()
         }
+        followProjectRoot()
     }
 
     // Les observations posées ici visent un objet qui vit à l'échelle de l'app :
@@ -185,9 +192,19 @@ final class TerminalConsoleModel: ObservableObject {
     }
 
     /// Le projet ouvert, celui dont on liste les worktrees (S-2) : la MÊME
-    /// résolution que la fenêtre « Session OMP » et la visionneuse de fichiers.
+    /// résolution que la fenêtre « Session OMP » et la visionneuse de fichiers,
+    /// relue par `followProjectRoot()`.
     var projectPath: String? {
-        ProjectRoot.resolve(defaults: defaults, fileManager: fileManager)?.path
+        projectRoot?.path
+    }
+
+    /// Le projet peut avoir changé ailleurs (Session OMP, sélecteur d'un état
+    /// vide) : la préférence partagée est relue, et publiée seulement si le
+    /// chemin diffère — patron `FilesModel.followProjectRoot`.
+    func followProjectRoot() {
+        let resolved = ProjectRoot.resolve(defaults: defaults, fileManager: fileManager)
+        guard resolved?.path != projectRoot?.path else { return }
+        projectRoot = resolved
     }
 
     var isRunning: Bool {
@@ -379,6 +396,7 @@ final class TerminalConsoleModel: ObservableObject {
     // MARK: - Feuille « Choisir un répertoire » (S-2)
 
     func openPicker() {
+        followProjectRoot()
         sheetError = nil
         isPickerPresented = true
         Task { await loadTargets() }

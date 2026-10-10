@@ -12,8 +12,9 @@ struct PipelinesScreen: View {
     /// Le crochet de recette `-pipelines.recipe <vide|choisi|rempli>` : la feuille
     /// « Nouvelle feature » s'ouvre d'elle-même dans l'état forcé.
     let newFeatureRecipe: IOSPipelinesRecipe?
-    /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret>` : la fiche de
-    /// la carte de fixture s'ouvre UNE fois, sans instantané du Mac.
+    /// Le crochet de recette `-pipelines.recipe <fiche|actions|arret|ardoise>` : la fiche
+    /// de la carte de fixture s'ouvre UNE fois, ou l'ardoise de fixture remplace
+    /// l'instantané du Mac (`ardoise`), sans instantané du Mac.
     var cardRecipe: PipelinesCardRecipe?
     /// Le crochet de recette `-pipelines.board` : une ardoise de fixture à la place
     /// de celle du client, sans bandeau de connexion.
@@ -74,10 +75,17 @@ struct PipelinesScreen: View {
         }
         .onDisappear { unfoldedLanes = [] }
         .onAppear {
-            guard !recipeOpened, let card = cardRecipe?.card else { return }
+            guard !recipeOpened, let cardRecipe else { return }
+            if cardRecipe.forcedBoard != nil {
+                recipeOpened = true
+                cardRecipe.announce()
+                return
+            }
+            guard let card = cardRecipe.card else { return }
             recipeOpened = true
             sheet = .card(card.id)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(PipelinesAccessibility.screen)
         .task {
             if newFeatureRecipe != nil { sheet = .newFeature }
@@ -103,7 +111,7 @@ struct PipelinesScreen: View {
         if let boardRecipe { return boardRecipe.screenState }
         return PipelinesModel.screen(
             connection: connection,
-            board: PipelinesModel.boardState(of: client, nowMs: Self.nowMs)
+            board: cardRecipe?.forcedBoard ?? PipelinesModel.boardState(of: client, nowMs: Self.nowMs)
         )
     }
 
@@ -283,6 +291,7 @@ struct PipelinesScreen: View {
     private func laneTitle(_ row: PipelinesLaneRow) -> some View {
         Image(systemName: row.lane.symbol)
             .foregroundStyle(row.lane.tone.tint)
+            .accessibilityHidden(true)
         Text(row.lane.title)
             .font(.headline)
             .fixedSize(horizontal: false, vertical: true)

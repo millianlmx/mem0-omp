@@ -87,6 +87,28 @@ marqueur `[test: <fonction>]` (une fonction de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
 
+## Accessibilité et langue (feature `accessibilite-et-localisation-ios-residu`)
+
+- Un symbole décoratif, toujours doublé d'un texte visible qui porte le sens
+  (icône de nature d'une carte d'attention, promesse de la Bienvenue, icône de
+  voie), est masqué à VoiceOver par `.accessibilityHidden(true)` sur l'`Image` :
+  aucun élément `Image` lu sous un nom de symbole (« Search Document »). Un
+  symbole porteur de sens sans texte visible porte un libellé français :
+  « Rafraîchir » (`KanbanText.refresh`), « Nouvelle feature… »
+  (`NewFeatureText.command`). `[capture: iphone-home-light]`
+- L'app est française seulement : `developmentRegion = fr` et
+  `knownRegions = (fr, Base)` dans le projet, aucun `.lproj`, `.xcstrings` ni
+  `CFBundleLocalizations`. Les libellés fournis par iOS (« Masquer la barre
+  latérale », « Coller », bouton retour) restent en français sur un appareil
+  réglé en anglais. `[test: appIsFrenchOnly]`
+- L'icône est légendée « OMP Console » (`INFOPLIST_KEY_CFBundleDisplayName`, Debug
+  et Release de la cible app) ; `PRODUCT_NAME` et le bundle restent inchangés,
+  pour ne pas perdre l'appairage. `[test: homeScreenNameIsOMPConsole]`
+- La liste racine porte le titre de navigation « OMP Console »
+  (`IOSHomeText.rootTitle`), et chaque rangée est un `NavigationLink(value:)` : le
+  système dessine un chevron en pile (iPhone) et aucun en barre latérale (iPad) ;
+  aucun chevron n'est dessiné à la main. `[capture: ipad-home-light]`
+
 ## Les six tons
 
 - `neutral` gris, `info` bleu, `attention` orange, `success` vert, `danger`

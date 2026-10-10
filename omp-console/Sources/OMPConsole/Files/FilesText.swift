@@ -25,7 +25,7 @@ enum FilesText {
 
     // États
     static let noProjectTitle = "Aucun projet ouvert"
-    static let noProjectDescription = "Choisissez-le dans la section « Session OMP » (⌘4)."
+    static let noProjectDescription = "Choisissez le projet dont vous voulez parcourir les fichiers."
     static let errorTitle = "Lecture impossible"
     static let noFiles = "Aucun fichier dans ce dossier."
     static let nothingSelected = "Choisissez un fichier dans l'arborescence."

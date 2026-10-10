@@ -425,12 +425,17 @@ test("jargon-technique-expose-mac-et-ios/AC-6 : la Mémoire n'affiche pas son d�
 
 const TERMINAL_COPY_ID = '"terminal.diagnostic.copy"';
 const CONTAIN = ".accessibilityElement(children: .contain)";
+const PLACEHOLDER_DECL = "private var placeholder: some View";
+const PLACEHOLDER_USE = /\n\s*placeholder\n/;
 
 /**
  * Sur macOS, l'identifiant d'un conteneur qui n'est pas lui-même un élément AX
  * écrase celui de ses descendants. Le premier `.accessibilityIdentifier(` qui
  * suit le bouton de copie est celui de son conteneur (`terminal.status` ou
  * `terminal.view`) : il doit être précédé de `.accessibilityElement(children: .contain)`.
+ * Un bouton déclaré dans `placeholder` (zone sans émulateur, S-4 de
+ * mac-etats-vides-sans-issue) a son conteneur au point d'usage de `placeholder`,
+ * déclaré AVANT lui dans le fichier : la recherche part alors de cet usage.
  */
 function terminalCopyFaults(root: string): string[] {
   const file = FILES.terminalView;
@@ -439,8 +444,10 @@ function terminalCopyFaults(root: string): string[] {
   const faults: string[] = [];
   let from = code.indexOf(TERMINAL_COPY_ID);
   if (from < 0) return [`${file} : aucun ${TERMINAL_COPY_ID}`];
+  const declared = code.indexOf(PLACEHOLDER_DECL);
   while (from >= 0) {
-    const at = code.indexOf(".accessibilityIdentifier(", from);
+    const start = declared >= 0 && from > declared ? (PLACEHOLDER_USE.exec(code)?.index ?? -1) : from;
+    const at = start < 0 ? -1 : code.indexOf(".accessibilityIdentifier(", start);
     if (at < 0) {
       faults.push(`${file} : ${TERMINAL_COPY_ID} sans conteneur identifié`);
       break;

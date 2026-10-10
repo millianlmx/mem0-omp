@@ -40,9 +40,10 @@ enum PipelinesText {
 
     // MARK: - Recette `-pipelines.recipe` (crochet de capture, pas une fonctionnalité)
 
-    /// Le drapeau partagé par les deux recettes de l'écran : la feuille « Nouvelle
-    /// feature » (`vide`, `choisi`, `rempli`) et la fiche d'une carte (`fiche`,
-    /// `actions`, `arret`). Chaque recette ignore les valeurs de l'autre.
+    /// Le drapeau partagé par les recettes de l'écran : la feuille « Nouvelle
+    /// feature » (`vide`, `choisi`, `rempli`), la fiche d'une carte (`fiche`,
+    /// `actions`, `arret`) et l'ardoise de fixture (`ardoise`). Chaque recette
+    /// ignore les valeurs de l'autre.
     static let recipeFlag = "-pipelines.recipe"
 
     // La feuille « Nouvelle feature » (ios-nouvelle-feature-formulaire).
@@ -65,6 +66,10 @@ enum PipelinesText {
     static let recipeFiche = "fiche"
     static let recipeActions = "actions"
     static let recipeArret = "arret"
+
+    // L'ardoise de fixture sur l'écran (accessibilite-et-localisation-ios-residu).
+
+    static let recipeArdoise = "ardoise"
 
     /// Le signal de PRÊT, écrit sur la sortie d'erreur quand l'état forcé est atteint.
     /// `scripts/ios-shots.sh` et `scripts/ios-fiche-carte-recette.sh` le lisent (miroir

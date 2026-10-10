@@ -95,8 +95,8 @@
     "taille": "defaut",
     "regle": "cible-44",
     "source": "ax",
-    "element": "id:ios.home.delivered.open.feature:ade5316c34182862:terminee",
-    "justification": "HomeView.swift, deliveredRow : Button(HomeText.openPR) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+    "element": "id:ios.home.delivered.project:ddddddddddddddd1:livree-avec-pr",
+    "justification": "HomeView.swift, deliveredRow : Button(.plain) autour de deliveredLabel, dont la hauteur vient de .padding(.vertical, 8) sans .frame(minHeight: IOSMetrics.minimumTarget) ; même rangée « livrée » que la carte terminee, 42,7 pt déjà sur la base 032a0df. Hors du périmètre de accessibilite-et-localisation-ios-residu (non-objectifs communs)."
   },
   {
     "surface": "home",
@@ -104,26 +104,8 @@
     "taille": "defaut",
     "regle": "cible-44",
     "source": "ax",
-    "element": "id:ios.home.delivered.open.feature:ade5316c34182862:terminee",
-    "justification": "HomeView.swift, deliveredRow : Button(HomeText.openPR) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
-  },
-  {
-    "surface": "home",
-    "apparence": "clair",
-    "taille": "defaut",
-    "regle": "cible-44",
-    "source": "ax",
-    "element": "id:ios.home.delivered.open.project:ddddddddddddddd1:livree-avec-pr",
-    "justification": "HomeView.swift, deliveredRow : Button(HomeText.openPR) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
-  },
-  {
-    "surface": "home",
-    "apparence": "sombre",
-    "taille": "defaut",
-    "regle": "cible-44",
-    "source": "ax",
-    "element": "id:ios.home.delivered.open.project:ddddddddddddddd1:livree-avec-pr",
-    "justification": "HomeView.swift, deliveredRow : Button(HomeText.openPR) en .bordered sans .frame(minHeight: IOSMetrics.minimumTarget). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
+    "element": "id:ios.home.delivered.project:ddddddddddddddd1:livree-avec-pr",
+    "justification": "HomeView.swift, deliveredRow : Button(.plain) autour de deliveredLabel, dont la hauteur vient de .padding(.vertical, 8) sans .frame(minHeight: IOSMetrics.minimumTarget) ; même rangée « livrée » que la carte terminee, 42,7 pt déjà sur la base 032a0df. Hors du périmètre de accessibilite-et-localisation-ios-residu (non-objectifs communs)."
   },
   {
     "surface": "home",
@@ -144,22 +126,49 @@
     "justification": "PipelinesScreen.swift : .navigationTitle(ConsoleSection.kanban.title) ; la barre de navigation système de la NavigationStack est pleine largeur par construction, et son identifiant est le titre."
   },
   {
+    "surface": "home",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Accueil",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.home.title) : pleine largeur par construction, et son identifiant est le titre. Relevée identique sur la base 032a0df (recette accessibilite-et-localisation-ios-residu --avant)."
+  },
+  {
+    "surface": "project",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Projet",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.project.title) : pleine largeur par construction, et son identifiant est le titre. Relevée identique sur la base 032a0df (recette accessibilite-et-localisation-ios-residu --avant)."
+  },
+  {
     "surface": "session",
     "apparence": "*",
     "taille": "*",
     "regle": "bord",
     "source": "ax",
-    "element": "id:ios.sessionomp",
-    "justification": "IOSSessionOmpScreen.swift, body : le VStack n'a ni .iosPanel() ni marge, donc le bandeau .iosBanner (« Non appairé ») occupe toute la largeur de l'écran ; corrigé par feat/ios-session-omp-et-accueil-sans-titre (27e6160 ajoute .iosPanel()), hors intégration d'AC-6."
+    "element": "id:Session OMP",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.session.title) : pleine largeur par construction, et son identifiant est le titre."
   },
   {
-    "surface": "session",
-    "apparence": "clair",
-    "taille": "ax-xl",
+    "surface": "sessions",
+    "apparence": "*",
+    "taille": "*",
     "regle": "bord",
-    "source": "capture",
-    "element": "type:capture",
-    "justification": "IOSSessionOmpScreen.swift, body : le VStack n'a ni .iosPanel() ni marge, donc le bandeau .iosBanner (« Non appairé ») occupe toute la largeur de l'écran ; corrigé par feat/ios-session-omp-et-accueil-sans-titre (27e6160 ajoute .iosPanel()), hors intégration d'AC-6."
+    "source": "ax",
+    "element": "id:Sessions",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.sessions.title) : pleine largeur par construction, et son identifiant est le titre."
+  },
+  {
+    "surface": "stats",
+    "apparence": "*",
+    "taille": "*",
+    "regle": "bord",
+    "source": "ax",
+    "element": "id:Statistiques",
+    "justification": "Barre de navigation système de la NavigationStack (titre ConsoleSection.stats.title) : pleine largeur par construction, et son identifiant est le titre."
   },
   {
     "surface": "sessions",
@@ -178,33 +187,6 @@
     "source": "ax",
     "element": "id:ios.sessions.filter",
     "justification": "IOSSessionsScreen.swift, listBody : Picker(.menu) du filtre de projet sans .frame(minHeight: IOSMetrics.minimumTarget) ; hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
-  },
-  {
-    "surface": "memory",
-    "apparence": "clair",
-    "taille": "defaut",
-    "regle": "cible-44",
-    "source": "ax",
-    "element": "id:ios.memoire.screen",
-    "justification": "IOSMemoryGraphView.swift, tagMenu : le Menu d'étiquettes du graphe expose un élément AX de 99,3 × 22 pt malgré .frame(minHeight: IOSMetrics.minimumTarget) ; l'identifiant lu est celui du conteneur (voir l'entrée id-duplique de ios.memoire.screen). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
-  },
-  {
-    "surface": "memory",
-    "apparence": "sombre",
-    "taille": "defaut",
-    "regle": "cible-44",
-    "source": "ax",
-    "element": "id:ios.memoire.screen",
-    "justification": "IOSMemoryGraphView.swift, tagMenu : le Menu d'étiquettes du graphe expose un élément AX de 99,3 × 22 pt malgré .frame(minHeight: IOSMetrics.minimumTarget) ; l'identifiant lu est celui du conteneur (voir l'entrée id-duplique de ios.memoire.screen). Hors du périmètre de feat/ios-cibles-tactiles-sous-44pt."
-  },
-  {
-    "surface": "memory",
-    "apparence": "*",
-    "taille": "*",
-    "regle": "id-duplique",
-    "source": "ax",
-    "element": "id:ios.memoire.screen",
-    "justification": "IOSMemoryScreen.swift, body : .accessibilityIdentifier(IOSMemoryAccessibility.screen) est posé sur le conteneur sans .accessibilityElement(children: .contain), donc ses éléments enfants (compteur, menu d'étiquettes, commandes de zoom, graphe) portent le même identifiant. Hors du périmètre des trois branches intégrées."
   },
   {
     "surface": "memory",
