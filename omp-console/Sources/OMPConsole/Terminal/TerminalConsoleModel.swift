@@ -161,6 +161,11 @@ final class TerminalConsoleModel: ObservableObject {
         AppDelegate.terminateTerminal = { [weak self] in
             await self?.shutdown()
         }
+        // Inventaire du Quitter (mac-quitter-sans-confirmation, S-1) : lu à la
+        // demande de sortie, jamais suivi en continu.
+        AppDelegate.terminalQuitActivity = { [weak self] in
+            self?.quitActivity
+        }
         followProjectRoot()
     }
 
@@ -210,6 +215,13 @@ final class TerminalConsoleModel: ObservableObject {
     var isRunning: Bool {
         if case .running = state { return true }
         return false
+    }
+
+    /// Une commande tourne au premier plan du shell vivant (S-2) : c'est elle, et
+    /// non le shell au repos sur son invite, que le Quitter arrêtera.
+    var quitActivity: QuitActivity? {
+        guard isRunning, let command = host.foregroundCommand() else { return nil }
+        return .terminalCommand(named: command.name)
     }
 
     /// « Lancer omp » n'a de sens que si un shell vit pour lire la commande. Le
