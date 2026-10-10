@@ -172,7 +172,7 @@ struct IOSMemoryPagingTests {
 
         reader.failures = [ClientError.transport(.timedOut("The request timed out."))]
         await model.loadMore()
-        #expect(more(model) == .failed(message: IOSMemoryText.macTimedOut))
+        #expect(more(model) == .failed(message: IOSMacErrorText.message(for: .macTimedOut)))
         #expect(ids(model).count == 100)
 
         // Réessayer (le bouton du pied) relit la même page.

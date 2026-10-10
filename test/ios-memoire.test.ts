@@ -388,7 +388,8 @@ function clientStateFaults(root: string): string[] {
   if (branch.includes("MemoryText.noProjectTitle")) faults.push("l'état du client dit « Aucun projet ouvert »");
   if (/MemoryText\.(unavailableTitle|noMatch|belowThreshold)/.test(branch)) faults.push("une cause mémoire est inventée côté client");
   const model = appFile(root, "IOSMemoryModel.swift");
-  if (!model.includes("IOSMacFailure.of(")) faults.push("le modèle ne classe pas l'erreur par le traducteur partagé");
+  // L'entrée Mémoire du traducteur partagé (`ofMemoryRead`, délai dépassé distinct) compte.
+  if (!/IOSMacFailure\.(of|ofMemoryRead)\(/.test(model)) faults.push("le modèle ne classe pas l'erreur par le traducteur partagé");
   if (model.includes("api.message")) faults.push("le modèle relaie le détail brut du Mac");
   faults.push(...contractFaults("AC-8"));
   return faults;

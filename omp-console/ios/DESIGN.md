@@ -284,14 +284,15 @@ marqueur `[test: <fonction>]` (une fonction de
   souvenir, chaque souvenir une seule fois. Plus de troncature ni de ligne de
   troncature. L'échec d'une page suivante s'affiche dans le pied, avec « Réessayer »,
   et garde les lignes déjà lues. `[test: scrollingToTheEndLoadsEveryRowOnce]`
-- Un délai dépassé n'est PAS un Mac injoignable : dans la Mémoire seulement, « Délai
-  dépassé : le Mac a mis trop de temps à répondre. Réessaie dans un instant. » et
-  « Mac injoignable : vérifie que l'app Mac est ouverte et sur le même réseau. » sont
-  deux bandeaux distincts, chacun avec « Réessayer ». Les autres sections gardent
-  leurs mots. `[test: listTimeoutSaysDelayExceeded]`
+- Un délai dépassé n'est PAS un Mac injoignable : dans la Mémoire seulement (entrée
+  `IOSMacFailure.ofMemoryRead` du traducteur partagé), « Délai dépassé : le Mac a mis
+  trop de temps à répondre. » puis « Réessaie dans un instant. » et « Mac injoignable. »
+  et son remède sont deux bandeaux distincts, chacun avec « Réessayer ». Les autres
+  sections gardent « Mac injoignable. ». `[test: listTimeoutSaysDelayExceeded]`
 - Face à une app Mac antérieure (qui ignore la route de page), la liste dit
-  « Mémoire indisponible : app Mac trop ancienne, mets-la à jour. », sans code HTTP ni
-  JSON ; aucun code de compatibilité. `[test: listOnOlderMacSaysMacOutdated]`
+  « Fonction indisponible : app Mac trop ancienne. » puis « Mets à jour OMP Console sur
+  le Mac, puis réessaie. », sans code HTTP ni JSON ; aucun code de compatibilité.
+  `[test: listOnOlderMacSaysMacOutdated]`
 - Le détail d'un souvenir ouvre une feuille : la ligne de contexte (date relative,
   étiquettes), le texte intégral tel qu'il est stocké, identifiant et portée sous
   « Détails techniques » — jamais de bouton d'écriture. `[test: detailRendersTheFiveFacts]`
@@ -325,7 +326,7 @@ marqueur `[test: <fonction>]` (une fonction de
   16 Mio est retirée et annoncée « Graphe partiel »). Sans projet ouvert, il dit
   « Aucun projet ouvert » et ne dessine aucun canevas. `[test: graphWithoutProjectSaysNoProject]`
 - Un graphe qui dépasse son délai dit « Délai dépassé : le Mac a mis trop de temps à
-  répondre. Réessaie dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
+  répondre. » puis « Réessaie dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
   le panneau commence en haut, sous la barre de navigation, dans tous les états.
   `[test: graphTimeoutSaysDelayExceeded]`
 
@@ -487,10 +488,13 @@ marqueur `[test: <fonction>]` (une fonction de
 - 404 « route inconnue » et 404/405 hors contrat : « Fonction indisponible : app Mac
   trop ancienne. » — mets à jour OMP Console sur le Mac. Seul le message EXACT
   « route inconnue » vaut cette cause. `[test: macOutdatedOn404And405]`
-- Connexion refusée, délai dépassé, Mac non connecté : « Mac injoignable. » — le
-  client ne distingue pas ces échecs, la cause les couvre tous, et la raison
-  système (qui peut nommer l'hôte) n'est jamais affichée.
-  `[test: refusedConnectionIsMacUnreachable]`
+- Connexion refusée, délai dépassé, Mac non connecté : « Mac injoignable. » — la
+  cause les couvre tous, et la raison système (qui peut nommer l'hôte) n'est jamais
+  affichée. Seule la Mémoire (liste, recherche, graphe) passe par
+  `IOSMacFailure.ofMemoryRead`, qui distingue le délai dépassé (« Délai dépassé : le
+  Mac a mis trop de temps à répondre. ») et range tout 404 de ses routes en « app Mac
+  trop ancienne ». `[test: refusedConnectionIsMacUnreachable]`
+  `[test: otherSectionsKeepTheirTransportWording]`
 - 503 : « Service indisponible sur le Mac. » — le texte amont relayé (adresse,
   JSON du service) est écarté. `[test: unavailableHidesRelayDetail]`
 - 403 : « Action refusée par le Mac. », distincte du 401 et du 404/405.

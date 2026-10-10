@@ -200,12 +200,12 @@ struct IOSMemoryScreen: View {
             banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
             card(IOSMemoryText.noData)
             retryButton
-        case .macTimedOut:
-            banner(IOSMemoryText.macTimedOut, tone: .attention)
+        case .failed(.macTimedOut):
+            banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
             card(IOSMemoryText.noData)
             retryButton
-        case .macOutdated:
-            banner(IOSMemoryText.macOutdated, tone: .attention)
+        case .failed(.macOutdated):
+            banner(IOSMacErrorText.message(for: .macOutdated), tone: .attention)
             retryButton
         case .noProject:
             card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)

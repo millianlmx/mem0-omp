@@ -224,7 +224,7 @@ struct IOSMemoryModelTests {
 
     @Test("ios-finitions-titres-icones/AC-6 : « Sommaire » est disponible après une recherche terminée, et dit pourquoi sinon")
     func summaryIsAvailableAfterACompletedSearch() async {
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: [row("m1", text: "un")], truncated: false)
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: [row("m1", text: "un")], nextOffset: nil)
         let model = IOSMemoryModel(client: CountingMemoryReader(page: .success(page)))
 
         await model.refresh()
@@ -327,7 +327,7 @@ struct IOSMemoryModelTests {
     @Test("ios-erreurs-serveur-lisibles/AC-7 : memoryRetryShowsData — Réessayer relance la lecture et les lignes s'affichent")
     func memoryRetryShowsData() async {
         let rows = [row("m1", text: "un")]
-        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil)
         let reader = CountingMemoryReader(page: .failure(MacMemoryDouble.relayed503))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
@@ -336,7 +336,7 @@ struct IOSMemoryModelTests {
         reader.page = .success(page)
         await model.refresh()
         #expect(reader.pageReads == 2)
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
 
         // Réessayer relance aussi la RECHERCHE quand le mode courant en est une.
         let hit = RemoteMemorySearchPayload(rows: rows, candidates: 1, scored: 1)
@@ -384,7 +384,7 @@ private final class RevokingReader: IOSMemoryReading {
         self.state = inner.state
     }
 
-    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+    func memoryPage(scope: String?, offset: Int, limit: Int?) async throws -> RemoteMemoryPagePayload {
         state = .revoked
         throw ClientError.api(.unauthorized)
     }
