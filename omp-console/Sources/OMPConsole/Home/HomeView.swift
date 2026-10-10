@@ -193,6 +193,7 @@ struct HomeView: ConsoleSectionView {
                         Image(systemName: style.symbol).foregroundStyle(style.tint)
                     }
                     .frame(width: 32, height: 32)
+                    .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(HomeText.natureText(attention.nature))
                             .font(.caption.weight(.semibold))
@@ -284,6 +285,7 @@ struct HomeView: ConsoleSectionView {
                     Image(systemName: PhaseText.symbol(card.phase))
                         .foregroundStyle(Color.accentColor)
                         .frame(width: 22)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
                         Text(card.title)
                             .font(.body.weight(.medium))
@@ -327,6 +329,7 @@ struct HomeView: ConsoleSectionView {
             Image(systemName: "arrow.triangle.pull")
                 .foregroundStyle(.green)
                 .frame(width: 22)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 Text(card.title)
                 if showsRepo {
@@ -374,6 +377,7 @@ struct HomeView: ConsoleSectionView {
                 HStack(spacing: 10) {
                     Image(systemName: "bell.slash")
                         .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
                     Text(HomeText.notificationsDenied)
                         .frame(maxWidth: .infinity, alignment: .leading)
                     Button(HomeText.openSettings) {

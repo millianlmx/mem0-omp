@@ -163,6 +163,11 @@ final class TerminalRenderView: NSView {
     var onResize: ((Int, Int) -> Void)?
     /// Chaque `keyDown` de S-5, déjà traduit en octets.
     var onKey: (([UInt8]) -> Void)?
+    /// L'apparence effective de la vue, à chaque changement (bascule système,
+    /// app active ou non) et à chaque installation dans une fenêtre. Rappelé au
+    /// tour suivant de la boucle principale : rien n'est publié pendant une mise à
+    /// jour SwiftUI.
+    var onAppearanceChange: ((NSAppearance) -> Void)?
 
     private let fontSize: CGFloat = 13
     private lazy var baseFont = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
@@ -177,6 +182,26 @@ final class TerminalRenderView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
+
+    // MARK: - Apparence
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        reportAppearance()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil else { return }
+        reportAppearance()
+    }
+
+    private func reportAppearance() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.onAppearanceChange?(self.effectiveAppearance)
+        }
+    }
 
     // MARK: - Mesure
 
@@ -331,11 +356,13 @@ struct TerminalViewRepresentable: NSViewRepresentable {
     let palette: TerminalPalette
     let onResize: (Int, Int) -> Void
     let onKey: ([UInt8]) -> Void
+    let onAppearanceChange: (NSAppearance) -> Void
 
     func makeNSView(context: Context) -> TerminalRenderView {
         let view = TerminalRenderView()
         view.onResize = onResize
         view.onKey = onKey
+        view.onAppearanceChange = onAppearanceChange
         view.emulator = emulator
         view.palette = palette
         // Le focus clavier va à la zone de rendu dès que la vue est installée :
@@ -348,6 +375,7 @@ struct TerminalViewRepresentable: NSViewRepresentable {
     func updateNSView(_ view: TerminalRenderView, context: Context) {
         view.onResize = onResize
         view.onKey = onKey
+        view.onAppearanceChange = onAppearanceChange
         view.emulator = emulator
         view.palette = palette
         if let screen = emulator?.screen, !screen.changedRows.isEmpty {

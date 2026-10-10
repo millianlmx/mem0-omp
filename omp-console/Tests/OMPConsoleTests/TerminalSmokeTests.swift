@@ -63,7 +63,7 @@ private final class RealTerminal {
     private(set) var lastByteAt = Date()
 
     init(columns: Int = 80, rows: Int = 24) {
-        emulator = TerminalEmulator(columns: columns, rows: rows, palette: TerminalPalette.live())
+        emulator = TerminalEmulator(columns: columns, rows: rows, palette: TerminalPalette.live(for: NSAppearance.currentDrawing()))
         host.onOutput = { [weak self] bytes in
             guard let self else { return }
             self.totalBytes += bytes.count

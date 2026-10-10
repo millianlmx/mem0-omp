@@ -7,6 +7,9 @@ groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Session OMP*
 **Statistiques**), raccourcis ⌘1…⌘9 — et un panneau de détail. Rien n'ouvre de
 fenêtre annexe : l'app est utilisable entièrement en plein écran (une session
 ouverte depuis **Sessions** est poussée dans la section, avec un bouton retour).
+Les fenêtres ne se regroupent pas en onglets : Présentation et Fenêtre n'ont
+aucune entrée d'onglet, et aucun menu ne montre de séparateur en tête, en fin ou
+en double.
 L'app s'ouvre sur l'**Accueil** (voir « Premiers pas ») ; **Pipelines** affiche
 le tableau des pipelines (voir « Section Kanban ») avec sa zone d'action (voir
 « Agir depuis Pipelines »), **Projet** le pilotage de projet (voir « Section
@@ -140,6 +143,7 @@ sessions et les conducteurs ; la commande part à l'API par
 |---|---|
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer omp » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
+| Projet | la pilule d'état de la session (`projet.sessionStatus`), « Arrêter le pilotage » (`projet.close`, inactif hors démarrage et pilotage actif), « Détails techniques » (`projet.details`), seulement pendant un pilotage |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
@@ -166,6 +170,13 @@ modèle `models.reqSpecs` / `models.implReview` (`models.loading`,
 (`models.cancel`, `models.apply`). Une seule feuille à la
 fois, dans l'ordre : Préparation d'OMP Console, Contrat, Bienvenue, Nouvelle feature,
 répondre (`MainSheetPolicy`).
+
+Les symboles purement décoratifs de l'Accueil et de la feuille Bienvenue (pastille
+de nature d'une carte d'attente, symbole d'étape d'une ligne « En cours », flèche
+d'une ligne livrée, cloche du bandeau des notifications, symboles des promesses)
+sont muets pour VoiceOver (`.accessibilityHidden(true)`) : les sous-arbres
+`home.dashboard`, `home.firstRun`, `home.ompMissing.background` et `welcome.sheet`
+n'exposent aucun `AXImage`, et le texte voisin reste annoncé.
 
 Le badge d'état des composants embarqués, au pied de la barre latérale, est
 `components.badge` (mot + point teinté, aucune interaction) ; son état ne dépend
@@ -627,7 +638,11 @@ pied de liste (`viewer.selector.footer`).
   défaut ; un appel `ask` entre déplié). Son en-tête le nomme par un verbe
   (« Lecture », « Modification », « Commande »… ; un outil inconnu garde son nom)
   suivi de sa cible, et un statut : sablier (en attente), coche verte (terminé),
-  croix rouge (erreur). Déplié, il montre arguments, résultat et diff dans un bloc
+  croix rouge (erreur). Un appel d'outil resté sans résultat dans une session finie
+  affiche « Interrompu » (icône fixe) au lieu de l'indicateur d'activité
+  (`ToolCallStatus.of(_:sessionEnded:)` du noyau, dans tous les fils : visionneuse,
+  Session OMP et Projet sur Mac, feuille Sessions et Session OMP sur iOS).
+  Déplié, il montre arguments, résultat et diff dans un bloc
   opaque ; les longues lignes défilent en largeur, le fil seulement en hauteur.
 - **Diffs colorés par contenu** : tout diff unifié reçu d'un outil est détecté dans
   le texte du résultat, et le diff d'un appel d'édition d'OMP (`details.diff`) est
@@ -984,7 +999,7 @@ une session morte garde sa conversation sous un bandeau « La session s'est
 arrêtée. Relancez-la pour reprendre la conversation. » (**Relancer** ouvre une
 nouvelle session sur le même `.jsonl`). Les détails techniques vivent dans
 l'inspecteur « Détails techniques » (`session.details`), en formulaire groupé :
-**Session** (projet, état, pid du service, identifiant de session, statut détaillé)
+**Session** (projet, état, pid du service, identifiant de session, statut détaillé (`session.statusNotice`))
 et **Journal** (les messages absorbés par l'app : ouverture de session, coupures,
 erreurs). Aucune trame de protocole brute n'est affichée. Un prompt n'est jamais
 relancé tout seul après une mort : la relance est un clic.
@@ -1048,6 +1063,12 @@ explicite en cas d'échec (« Exécutable introuvable : … », « Répertoire
 introuvable : … », « PTY indisponible (<errno>) : aucun process lancé. »). Aucun
 état n'est un
 rectangle vide.
+
+Le fond, le texte par défaut et le curseur suivent l'apparence claire ou sombre du
+système dès qu'elle change, sans relancer le shell ; la réponse OSC 11 suit. Les
+16 couleurs ANSI et les couleurs RVB envoyées par un programme restent les mêmes
+dans les deux apparences, comme dans Terminal.app. Un programme déjà lancé qui a
+sondé le fond (OSC 11), comme le TUI `omp`, n'est pas prévenu de la bascule.
 
 **Limites assumées** (hors périmètre) : pas de défilement arrière (aucun
 scrollback : la ligne qui sort de l'écran est perdue), pas de sélection ni de copie,
@@ -1808,7 +1829,7 @@ omp-console/
 │   │   ├── PRService.swift        lecture et fusion d'une PR (protocole + service `gh`)
 │   │   ├── URLOpening.swift       ouvreur d'URL (NSWorkspace)
 │   │   ├── ProjectPRPane.swift    le volet « PR et CI » et ses lignes
-│   │   ├── ProjectConsoleView.swift la fenêtre (en-tête, PR, plan, document, conversation, feuille, inspecteur)
+│   │   ├── ProjectConsoleView.swift la fenêtre (en-tête d'informations, barre d'outils, PR, plan, document, conversation, feuille, inspecteur)
 │   │   ├── ProjectView.swift      la section « Projet » (même surface)
 │   │   └── ProjectLaunchSheet.swift la feuille « Piloter un projet… »
 │   ├── Store/                     la couche de lecture du magasin d'état
@@ -1907,7 +1928,8 @@ omp-console/
 │   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
 │   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service
 │   │   └── PairingSheet.swift     la feuille d'appairage, ses états et ses textes
-│   └── MenuBar/                   l'item de barre de menus et ses compteurs
+│   └── MenuBar/                   l'item de barre de menus, ses compteurs, les séparateurs des menus
+│       ├── MainMenuSeparators.swift masque les séparateurs de tête, de fin et doubles de la barre des menus
 │       ├── RunCounters.swift      occupés / en attente et l'état publié
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
 ├── Tests/OMPConsoleTests/         la suite Swift Testing (Service/ : ServiceClientTests,
@@ -2032,6 +2054,11 @@ et une valeur inconnue est ignorée :
 - `en-direct` — le fil d'un run vivant ;
 - `phases` — une session terminée par étape de pipeline (mêmes titre, dépôt et
   heure) : les icônes d'étape diffèrent, les titres doivent rester alignés.
+
+Un appel d'outil resté sans résultat dans une session finie affiche « Interrompu »
+(icône fixe) au lieu de l'indicateur d'activité : la recette `visionneuse` le
+montre sur l'appel `ask` et l'appel de mémorisation de la fixture, la recette
+`en-direct` garde leur indicateur « en cours ».
 
 Les preuves Swift de la section vivent dans
 `omp-console/ios/OMPConsoleIOSTests/IOSSessionTests.swift` (motif de parité

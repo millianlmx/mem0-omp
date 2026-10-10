@@ -58,7 +58,7 @@ struct SessionConsoleView: View {
                         .padding(.horizontal, 20)
                         .padding(.top, 10)
                 }
-                ConversationThread(model: conversation)
+                ConversationThread(model: conversation, sessionEnded: host.state.isOver)
                     .id(conversation.target.sessionFile)
             }
         } else if model.projectRoot == nil {
@@ -276,7 +276,7 @@ struct SessionConsoleView: View {
                         .font(.callout)
                         .foregroundStyle(.red)
                         .textSelection(.enabled)
-                        .accessibilityIdentifier("session.status")
+                        .accessibilityIdentifier("session.statusNotice")
                 }
                 if let note = model.relaunchNote {
                     Text(note)

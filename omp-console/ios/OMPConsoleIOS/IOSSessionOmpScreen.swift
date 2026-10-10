@@ -57,7 +57,7 @@ struct IOSSessionOmpScreen: View {
                 header
                 startingState(ProjectViewText.sessionClosing, id: SessionOmpAccessibility.stopping)
             case .live:
-                sessionBody
+                sessionBody(ended: model.surface.isOver)
                 actions
             case .stopped:
                 header
@@ -65,7 +65,7 @@ struct IOSSessionOmpScreen: View {
                     .font(.callout)
                     .iosBanner(tone: .neutral)
                     .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                sessionBody
+                sessionBody(ended: model.surface.isOver)
                 actions
             case .dead:
                 header
@@ -73,7 +73,7 @@ struct IOSSessionOmpScreen: View {
                     .font(.callout)
                     .iosBanner(tone: .attention)
                     .accessibilityIdentifier(SessionOmpAccessibility.banner)
-                sessionBody
+                sessionBody(ended: model.surface.isOver)
                 actions
             case .failed(let message):
                 header
@@ -164,9 +164,11 @@ struct IOSSessionOmpScreen: View {
         .accessibilityIdentifier(id)
     }
 
-    @ViewBuilder private var sessionBody: some View {
+    /// `ended` : la session hébergée est finie, ses appels restés sans résultat se
+    /// lisent « Interrompu » (S-7 de mac-finitions-hig).
+    @ViewBuilder private func sessionBody(ended: Bool) -> some View {
         if let thread = model.thread {
-            IOSSessionThreadView(model: thread)
+            IOSSessionThreadView(model: thread, sessionEnded: ended)
                 .accessibilityIdentifier(SessionOmpAccessibility.thread)
         }
         composer

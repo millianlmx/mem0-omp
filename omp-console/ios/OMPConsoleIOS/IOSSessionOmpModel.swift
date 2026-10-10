@@ -57,6 +57,18 @@ enum SessionOmpSurface: Equatable {
     case failed(String)
 }
 
+extension SessionOmpSurface {
+    /// La session hébergée est finie et son fil reste affiché (`.stopped`,
+    /// `.dead`) : ses appels restés sans résultat se lisent « Interrompu » (S-7 de
+    /// mac-finitions-hig). Les autres surfaces vivent encore ou ne montrent aucun fil.
+    var isOver: Bool {
+        switch self {
+        case .stopped, .dead: return true
+        case .degraded, .loading, .empty, .launching, .stopping, .live, .failed: return false
+        }
+    }
+}
+
 @MainActor
 final class IOSSessionOmpModel: ObservableObject {
     let client: any IOSSessionOmpClient

@@ -271,12 +271,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var alerts = AlertsModel()
 
     private var statusItemController: StatusItemController?
+    /// Les jetons des observateurs de `MainMenuSeparators.observe()` (S-1).
+    private var menuObservers: [NSObjectProtocol] = []
+
+    /// S-1 : aucune fenêtre ne se regroupe en onglets, donc ni Présentation ni
+    /// Fenêtre n'ont d'entrée d'onglet. Posé AVANT la première fenêtre (D-1).
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = false
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // L'item de barre de menus, créé UNE fois (S-2), puis le modèle démarré :
         // son titre suivra l'état publié, et l'autorisation sera demandée.
         statusItemController = StatusItemController(model: alerts)
         alerts.start()
+        // S-1 : plus de séparateur en tête, en fin ni en double dans la barre des
+        // menus, au lancement puis à chaque mise à jour d'un menu.
+        menuObservers = MainMenuSeparators.observe()
+        if let mainMenu = NSApp.mainMenu { MainMenuSeparators.tidy(mainMenu) }
     }
 
     /// B-7/AC-9 : fermer la fenêtre ne quitte PAS l'app (le comportement par défaut
