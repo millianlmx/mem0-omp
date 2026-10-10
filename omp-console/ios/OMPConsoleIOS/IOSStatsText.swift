@@ -27,6 +27,24 @@ enum IOSStatsText {
         }
         return ConnectionText.state(state)
     }
+
+    // MARK: - La recette `-stats.recipe`
+
+    /// Le drapeau du crochet de recette de la section (S-6) et ses trois valeurs.
+    static let recipeFlag = "-stats.recipe"
+    static let recipeEmpty = "vide"
+    static let recipeLoading = "chargement"
+    static let recipeSwitch = "bascule"
+
+    /// Les deux projets de la fixture : la clé servie par le « Mac » de la recette
+    /// est aussi le libellé du sélecteur.
+    static let recipeEmptyProject = "recette-vide"
+    static let recipeFullProject = "recette-pleine"
+
+    /// Les deux features de `recette-pleine` (la seconde a un run vivant) et le
+    /// modèle qu'elles annoncent.
+    static let recipeFeatures = ["recette-specs", "recette-impl"]
+    static let recipeModel = "opencode-go/deepseek-v4.1-flash"
 }
 
 /// Les identifiants d'accessibilité de la section (chaînes pointées `ios.stats.`) :

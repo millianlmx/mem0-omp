@@ -19,6 +19,8 @@ struct IOSSectionView: View {
     let recipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
     let memoryRecipe: IOSMemoryGraphRecipe?
+    /// Le crochet de recette `-stats.recipe` de la section Statistiques.
+    let statsRecipe: IOSStatsRecipe?
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -45,7 +47,7 @@ struct IOSSectionView: View {
             if section == .project {
                 IOSProjectScreen(client: client)
             } else if section == .stats {
-                IOSStatsScreen(client: client)
+                IOSStatsScreen(client: client, recipe: statsRecipe)
             } else {
                 if let status = content?.status {
                     IOSStatusChip(status: status)

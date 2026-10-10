@@ -19,7 +19,12 @@ import SwiftUI
 /// - `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>` : l'état de
 ///   la section Sessions forcé depuis la fixture partagée `SessionParity` (S-1,
 ///   S-4, S-9), pour capturer l'écran réel — un crochet de recette, pas une
-///   fonctionnalité.
+///   fonctionnalité ;
+/// - `-stats.recipe <vide|chargement|bascule>` : la section Statistiques ouverte
+///   sur son modèle et son écran RÉELS, nourris par une lecture en mémoire et un
+///   client forcé connecté (S-6 de statistiques-etat-vide-et-non-defilables), pour
+///   capturer l'état vide, le chargement et la bascule de projet — un crochet de
+///   recette, pas une fonctionnalité. À lancer avec `-section stats`.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
@@ -34,6 +39,7 @@ struct OMPConsoleIOSApp: App {
     private let recipeRow: Int?
     private let sessionRecipe: IOSSessionsRecipe?
     private let memoryRecipe: IOSMemoryGraphRecipe?
+    private let statsRecipe: IOSStatsRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -44,6 +50,7 @@ struct OMPConsoleIOSApp: App {
         recipeRow = IOSHomeRecipe.row(arguments)
         sessionRecipe = IOSSessionsRecipe.resolve(arguments)
         memoryRecipe = IOSMemoryGraphRecipe.resolve(arguments)
+        statsRecipe = IOSStatsRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -56,6 +63,7 @@ struct OMPConsoleIOSApp: App {
                 recipeRow: recipeRow,
                 sessionRecipe: sessionRecipe,
                 memoryRecipe: memoryRecipe,
+                statsRecipe: statsRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

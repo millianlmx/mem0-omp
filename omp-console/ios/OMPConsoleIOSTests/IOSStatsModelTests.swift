@@ -177,14 +177,35 @@ struct IOSStatsModelTests {
             .revoked,
             .incompatibleProtocol(local: 3, remote: 2),
         ] {
-            #expect(IOSStatsModel.surface(state: state, payload: board, failure: nil) == .degraded(ConnectionText.state(state)))
+            #expect(IOSStatsModel.surface(state: state, payload: board, failure: nil, selectedKey: "k") == .degraded(ConnectionText.state(state)))
         }
-        // Connecté : chargement, erreur, aucun projet, vide, tableau.
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: nil) == .loading)
-        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: "relevé refusé") == .error("relevé refusé"))
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil) == .noProject)
-        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil) == .empty)
-        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil) == .board)
+        // Connecté : chargement, erreur, aucun projet, bascule, vide, tableau.
+        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: nil, selectedKey: nil) == .loading)
+        #expect(IOSStatsModel.surface(state: connected, payload: nil, failure: "relevé refusé", selectedKey: "k") == .error("relevé refusé"))
+        // L'échec l'emporte sur une bascule en cours (écran d'erreur inchangé).
+        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: "relevé refusé", selectedKey: "k2") == .error("relevé refusé"))
+        #expect(IOSStatsModel.surface(state: connected, payload: payload(projectKey: nil, features: [], projects: []), failure: nil, selectedKey: nil) == .noProject)
+        // Un projet choisi que le relevé ne sert pas encore : la bascule, avant
+        // l'état vide comme avant le tableau.
+        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil, selectedKey: "k2") == .switching)
+        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil, selectedKey: "k2") == .switching)
+        #expect(IOSStatsModel.surface(state: connected, payload: payload(features: []), failure: nil, selectedKey: "k") == .empty)
+        #expect(IOSStatsModel.surface(state: connected, payload: board, failure: nil, selectedKey: "k") == .board)
+
+        // L'en-tête de projet : en tête de la bascule, de l'état vide et du
+        // tableau, jamais ailleurs.
+        let headers: [(IOSStatsSurface, Bool)] = [
+            (.degraded(ConnectionText.state(.revoked)), false),
+            (.loading, false),
+            (.error("relevé refusé"), false),
+            (.noProject, false),
+            (.switching, true),
+            (.empty, true),
+            (.board, true),
+        ]
+        for (surface, shows) in headers {
+            #expect(surface.showsProjectHeader == shows)
+        }
     }
 
     @Test("ios-statistiques/AC-6 : les quatre déclencheurs relancent un relevé, jamais hors `.connected`")
@@ -227,5 +248,84 @@ struct IOSStatsModelTests {
         failing.reload(trigger: .appeared)
         #expect(await eventually { failing.failure != nil })
         #expect(failing.surface == .error(ConnectionText.state(connected)))
+    }
+
+    // MARK: - En-tête de projet (statistiques-etat-vide-et-non-defilables)
+
+    /// Deux projets servis : `k1` sans feature listée, `k2` avec une feature. La
+    /// lecture rend le projet demandé (`nil` : le premier).
+    private func twoProjects(_ key: String?) -> RemoteStatsPayload {
+        let projects = [RemoteStatsProject(key: "k1", label: "vide"), RemoteStatsProject(key: "k2", label: "pleine")]
+        if key == "k2" {
+            return payload(projectKey: "k2", features: [feature(slug: "a", durationMs: 0)], projects: projects)
+        }
+        return payload(projectKey: "k1", features: [], projects: projects, hiddenPlanFeatures: 1)
+    }
+
+    /// Le libellé que le sélecteur affiche : celui du projet CHOISI.
+    private func shownLabel(_ model: IOSStatsModel) -> String? {
+        model.projects.first { $0.key == model.selectedKey }?.label
+    }
+
+    @Test("statistiques-etat-vide-et-non-defilables/AC-1 : un projet sans données montre son nom et le sélecteur au-dessus de l'état vide")
+    func statsEmptyProjectNamesItsProject() async {
+        let model = makeModel(state: { self.connected }, load: { self.twoProjects($0) })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.surface == .empty })
+        #expect(model.surface.showsProjectHeader)
+        #expect(model.selectedKey == "k1")
+        #expect(shownLabel(model) == "vide")
+        // Le sélecteur offre les deux projets servis.
+        #expect(model.projects.map(\.key) == ["k1", "k2"])
+    }
+
+    @Test("statistiques-etat-vide-et-non-defilables/AC-2 : depuis l'état vide, choisir un projet qui a des données affiche son tableau sous son nom")
+    func statsEmptyProjectOffersTheSwitch() async {
+        var keys: [String?] = []
+        let model = makeModel(state: { self.connected }, load: { key in
+            keys.append(key)
+            return self.twoProjects(key)
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.surface == .empty })
+
+        model.select(project: "k2")
+        #expect(await eventually { model.surface == .board })
+        #expect(keys == [nil, "k2"])
+        #expect(model.payload?.projectKey == "k2")
+        #expect(model.selectedKey == "k2")
+        #expect(shownLabel(model) == "pleine")
+        #expect(model.surface.showsProjectHeader)
+    }
+
+    @Test("statistiques-etat-vide-et-non-defilables/AC-3 : pendant la lecture du projet choisi, le sélecteur le nomme au-dessus du chargement")
+    func statsProjectSwitchKeepsHeaderAboveLoading() async {
+        // La porte du test : la lecture de « k2 » attend que le test l'ouvre.
+        let (gate, open) = AsyncStream<Void>.makeStream()
+        var keys: [String?] = []
+        let model = makeModel(state: { self.connected }, load: { key in
+            keys.append(key)
+            if key == "k2" {
+                for await _ in gate { break }
+            }
+            return self.twoProjects(key == "k2" ? "k2" : "k1")
+        })
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.payload?.projectKey == "k1" })
+
+        model.select(project: "k2")
+        #expect(await eventually { keys == [nil, "k2"] })
+        // La lecture de « k2 » est en vol : bascule, en-tête, projet CHOISI nommé.
+        #expect(model.surface == .switching)
+        #expect(model.surface.showsProjectHeader)
+        #expect(model.selectedKey == "k2")
+        #expect(shownLabel(model) == "pleine")
+        // L'ancien relevé reste celui de « k1 » tant que la porte est fermée.
+        #expect(model.payload?.projectKey == "k1")
+
+        open.yield(())
+        #expect(await eventually { model.surface == .board })
+        #expect(model.payload?.projectKey == "k2")
+        #expect(shownLabel(model) == "pleine")
     }
 }
