@@ -8,11 +8,11 @@ import Testing
 @Suite("Catalogue des routes")
 @MainActor
 struct RouteCatalogTests {
-    @Test("le catalogue porte 38 routes uniques")
+    @Test("le catalogue porte 39 routes uniques")
     func catalogSize() {
-        #expect(ClientRoute.all.count == 38)
+        #expect(ClientRoute.all.count == 39)
         let keys = ClientRoute.all.map { "\($0.method) \($0.normalized.path)" }
-        #expect(Set(keys).count == 38, "deux routes identiques dans le catalogue")
+        #expect(Set(keys).count == 39, "deux routes identiques dans le catalogue")
     }
 
     @Test("chaque méthode typée a sa route dans le catalogue")
@@ -31,6 +31,7 @@ struct RouteCatalogTests {
             "GET /v1/session", "POST /v1/session/prompt", "POST /v1/session/launch",
             "POST /v1/session/relaunch", "POST /v1/session/stop", "POST /v1/session/dialogs/{id}",
             "GET /v1/projects/{repoKey}/pull-requests", "POST /v1/projects/{repoKey}/pull-requests/{slug}/merge",
+            "POST /v1/pull-request-states/refresh",
         ]
         let actual = Set(ClientRoute.all.map { "\($0.method) \($0.path)" })
         #expect(actual == expected)

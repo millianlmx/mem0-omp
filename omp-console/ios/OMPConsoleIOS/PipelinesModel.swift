@@ -57,15 +57,25 @@ struct PipelinesModelLines: Equatable {
 enum PipelinesModel {
     /// L'état publié de l'ardoise depuis l'instantané du client, ou `nil` tant
     /// qu'aucun instantané n'est arrivé. La vivacité est TRANSPORTÉE par
-    /// l'instantané : l'app ne sonde jamais un pid du Mac.
+    /// l'instantané : l'app ne sonde jamais un pid du Mac. Les faits de PR sont
+    /// ceux servis par le Mac (trame `pull-request-states`) ; sans eux, une carte
+    /// à PR reste « PR créée ».
     static func boardState(of client: ConsoleClientModel, nowMs: Double) -> KanbanBoardState? {
         guard let snapshot = client.snapshot else { return nil }
         return KanbanBoardState.derive(
             snapshot: snapshot,
             nowMs: nowMs,
             stateDir: "",
-            isAlive: .transported(snapshot)
+            isAlive: .transported(snapshot),
+            prFacts: client.pullRequestFacts
         )
+    }
+
+    /// Le bouton « Rafraîchir » (S-7) n'est actif que connecté au Mac et hors
+    /// d'une relecture déjà en cours.
+    static func canRefresh(connection: ClientState, refreshing: Bool) -> Bool {
+        guard case .connected = connection else { return false }
+        return !refreshing
     }
 
     /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée si

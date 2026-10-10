@@ -149,11 +149,11 @@ function mirrorFaults(root: string): string[] {
   if (/stats:\s*StatsModel/.test(reads)) faults.push("RemoteReads dépend encore de StatsModel");
   if (!/func statistics\(project: String\?\)/.test(reads)) faults.push("RemoteReads.statistics n'a pas le paramètre project");
   if (!/SessionMetricsCache/.test(reads)) faults.push("RemoteReads n'emploie pas SessionMetricsCache");
-  // La route est INCHANGÉE : 38 entrées (les routes de la session hébergée et `devices.forget` s'y sont ajoutées), et le paramètre est lu de la requête.
+  // La route est INCHANGÉE : 39 entrées (les routes de la session hébergée, `devices.forget` puis le rafraîchissement des faits de PR s'y sont ajoutés), et le paramètre est lu de la requête.
   const router = repoCode(root, path.join("omp-console", "Sources", "OMPConsole", "Remote", "RemoteRouter.swift"));
   const routes = router.split("static let routes: [Route] = [")[1]?.split("]")[0] ?? "";
   const count = (routes.match(/\.of\(/g) ?? []).length;
-  if (count !== 38) faults.push(`${count} routes servies (38 attendues)`);
+  if (count !== 39) faults.push(`${count} routes servies (39 attendues)`);
   if (!/case "stats":\s*\n\s*return try json\(reads\.statistics\(project: request\.query\["project"\]\)\)/.test(router)) {
     faults.push("le case « stats » ne lit pas le paramètre project de la requête");
   }
@@ -276,10 +276,10 @@ function advanceFaults(root: string): string[] {
   const model = repoCode(root, path.join("omp-console", "Sources", "ConsoleClient", "ConsoleClientModel.swift"));
   if (!/func statistics\(project: String\? = nil\)/.test(model)) faults.push("statistics n'a pas de paramètre project");
   if (!/"\/v1\/stats\?project=" \+ encode\(/.test(model)) faults.push("statistics n'encode pas la clé du projet");
-  // Le catalogue de routes est INCHANGÉ.
+  // Le catalogue de routes reste l'image des routes servies (39 depuis `devices.forget` et le rafraîchissement des faits de PR).
   const catalog = repoCode(root, path.join("omp-console", "Sources", "ConsoleClient", "ClientRoute.swift"));
   const entries = (catalog.match(/Route\(/g) ?? []).length;
-  if (entries !== 38) faults.push(`ClientRoute porte ${entries} constructions (38 attendues)`);
+  if (entries !== 39) faults.push(`ClientRoute porte ${entries} constructions (39 attendues)`);
   // Aucune scrutation : l'écran n'arme aucune minuterie, il suit le client.
   const screen = appFile(root, "IOSStatsScreen.swift");
   for (const token of [

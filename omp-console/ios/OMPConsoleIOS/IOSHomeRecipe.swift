@@ -145,7 +145,8 @@ enum IOSHomeRecipe: String, Equatable {
         snapshot: HomeParity.snapshot,
         nowMs: 1_700_000_000_000,
         stateDir: "",
-        isAlive: .transported(HomeParity.snapshot)
+        isAlive: .transported(HomeParity.snapshot),
+        prFacts: [:]
     )
 
     /// Les faits d'attention de la fixture.

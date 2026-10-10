@@ -18,13 +18,16 @@ private let bonjourMac = DiscoveredMac(
     endpoint: .bonjour(name: "OMP Console", host: "192.168.1.12", port: 8787)
 )
 
-/// Rend 200 aux lectures de fond de l'Accueil, 401 à tout le reste.
+/// Rend 200 aux lectures de fond de l'Accueil (202 à la relecture des PR demandée
+/// à chaque ouverture du flux), 401 à tout le reste.
 private func homeFactsOr401(_ request: ClientHTTPRequest) -> Result<ClientHTTPResponse, Error> {
     switch request.path {
     case "/v1/components":
         return .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: Data(#"{"ompInstalled":true}"#.utf8)))
     case "/v1/journal":
         return .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: Data(#"{"entries":[]}"#.utf8)))
+    case "/v1/pull-request-states/refresh":
+        return .success(ClientHTTPResponse(status: 202, protocolVersion: 1, body: Data(#"{"accepted":true}"#.utf8)))
     case "/v1/pair":
         return .success(ClientHTTPResponse(
             status: 200,

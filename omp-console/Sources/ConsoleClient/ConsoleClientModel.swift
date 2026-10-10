@@ -54,6 +54,17 @@ public final class ConsoleClientModel: ObservableObject {
     /// Le journal des gestes (S-8), posé par la trame `journal` et par la lecture
     /// `journal()`.
     @Published public private(set) var journal: [ActionJournalEntry] = []
+    /// Les faits de PR servis par le Mac et son état de relecture (S-6), posés
+    /// par la trame `pull-request-states`. `nil` tant qu'aucune trame n'est
+    /// arrivée (cartes à PR « PR créée ») ; le dernier reçu est CONSERVÉ à la
+    /// déconnexion, comme l'instantané.
+    @Published public private(set) var pullRequestStates: RemotePullRequestStatesPayload?
+
+    /// Les faits de PR indexés par URL : l'entrée `prFacts` de toute dérivation
+    /// de l'ardoise côté client (S-6).
+    public var pullRequestFacts: [String: PullRequestFact] {
+        PullRequestFacts.index(pullRequestStates?.facts ?? [])
+    }
     /// La préférence de bienvenue (S-8), lue au `start()`.
     @Published public private(set) var welcomeSeen = false
 
@@ -447,6 +458,16 @@ public final class ConsoleClientModel: ObservableObject {
 
     public func journal() async throws -> RemoteJournalPayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/journal"), as: RemoteJournalPayload.self)
+    }
+
+    /// Demande au Mac de relire l'état des PR sur GitHub (S-6, S-7). Le Mac
+    /// répond 202 sans attendre la relecture : les faits arrivent par la trame
+    /// `pull-request-states`.
+    public func refreshPullRequestStates() async throws -> RemoteAcceptedPayload {
+        try await perform(
+            ClientHTTPRequest(method: "POST", path: "/v1/pull-request-states/refresh"),
+            as: RemoteAcceptedPayload.self
+        )
     }
 
     public func contract(cardId: String) async throws -> RemoteContractPayload {
@@ -939,6 +960,7 @@ public final class ConsoleClientModel: ObservableObject {
         attempt = 0
         publishState()
         refreshHomeFacts()
+        requestPullRequestStates()
         for try await chunk in stream {
             if Task.isCancelled { throw CancellationError() }
             for event in parser.consume(chunk) {
@@ -976,6 +998,10 @@ public final class ConsoleClientModel: ObservableObject {
             components = payload
         case .journal(let payload):
             journal = payload.entries
+        case .pullRequestStates(let payload):
+            guard payload != pullRequestStates else { return }
+            pullRequestStates = payload
+            if let snapshot { deriveBoard(snapshot) }
         case .unknown:
             break
         }
@@ -1027,11 +1053,18 @@ public final class ConsoleClientModel: ObservableObject {
     private func applyStore(_ snapshot: StoreSnapshot) {
         guard snapshot != self.snapshot else { return }
         self.snapshot = snapshot
+        deriveBoard(snapshot)
+    }
+
+    /// Recalcule l'ardoise depuis l'instantané et les faits de PR connus (S-6) :
+    /// sans fait, une carte à PR reste « PR créée ».
+    private func deriveBoard(_ snapshot: StoreSnapshot) {
         board = KanbanBoardState.derive(
             snapshot: snapshot,
             nowMs: nowMs(),
             stateDir: "",
-            isAlive: .transported(snapshot)
+            isAlive: .transported(snapshot),
+            prFacts: pullRequestFacts
         )
     }
 
@@ -1044,6 +1077,16 @@ public final class ConsoleClientModel: ObservableObject {
         Task { [weak self] in
             guard let self else { return }
             await self.loadHomeFacts()
+        }
+    }
+
+    /// Demande une relecture des PR à chaque ouverture du flux (lancement et
+    /// reconnexion, S-6). TOLÉRANTE : un Mac plus ancien rend 404 et les cartes
+    /// restent « PR créée » ; aucune erreur n'est propagée.
+    private func requestPullRequestStates() {
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.refreshPullRequestStates()
         }
     }
 

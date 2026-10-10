@@ -1,4 +1,4 @@
-// Preuves de la SURFACE de la section Kanban (BR-4) : les onze colonnes et leurs
+// Preuves de la SURFACE de la section Kanban (BR-4) : les treize colonnes et leurs
 // identifiants (AC-1), la déclaration de section de la vue et le badge d'état
 // d'une carte.
 //
@@ -13,7 +13,7 @@ import Testing
 // `@MainActor` : `KanbanView` est une vue SwiftUI, donc isolée au fil principal
 // (Swift 6) — lire sa `section` statique depuis un test non isolé avertirait.
 @MainActor
-@Test("kanban-des-pipelines/AC-1 : les onze colonnes sont ordonnées et identifiées")
+@Test("kanban-des-pipelines/AC-1 : les treize colonnes sont ordonnées et identifiées")
 func columnsAreOrdered() {
     // L'ordre des colonnes ordonne les cartes DANS une voie : le changer
     // changerait l'ordre lu à l'écran et par le clavier.
@@ -22,7 +22,9 @@ func columnsAreOrdered() {
         "en-cours",
         "question-en-vol",
         "pr-ouverte",
+        "pr-creee",
         "fusionne",
+        "pr-fermee",
         "echec",
         "jalon-specs",
         "jalon-review",
@@ -69,7 +71,8 @@ func everyColumnHasItsLane() {
     let expected: [KanbanColumn: KanbanLane] = [
         .enAttente: .pasCommencees, .enCours: .enCours,
         .questionEnVol: .aVous, .jalonSpecs: .aVous, .jalonReview: .aVous,
-        .prOuverte: .livrees, .fusionne: .livrees, .termineeSansPr: .livrees,
+        .prOuverte: .livrees, .prCreee: .livrees, .fusionne: .livrees, .prFermee: .livrees,
+        .termineeSansPr: .livrees,
         .echec: .arretees, .bloquee: .arretees, .annuleeRetiree: .arretees,
     ]
     for column in KanbanColumn.allCases {

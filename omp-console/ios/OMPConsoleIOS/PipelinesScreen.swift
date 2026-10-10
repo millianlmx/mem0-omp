@@ -38,6 +38,9 @@ struct PipelinesScreen: View {
         .navigationTitle(ConsoleSection.kanban.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
+                refreshButton
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { sheet = .newFeature } label: {
                     Label(NewFeatureText.command, systemImage: "plus")
                 }
@@ -73,6 +76,30 @@ struct PipelinesScreen: View {
             connection: client.state,
             board: PipelinesModel.boardState(of: client, nowMs: Self.nowMs)
         )
+    }
+
+    // MARK: - Rafraîchir (S-7)
+
+    /// Vrai pendant une relecture des PR par le Mac (trame `pull-request-states`).
+    private var refreshing: Bool { client.pullRequestStates?.refreshing == true }
+
+    /// Demande au Mac de relire l'état des PR. Aucun message : un échec (Mac
+    /// ancien, réseau) laisse le bouton tel quel, le retour visible est le
+    /// libellé des cartes.
+    private var refreshButton: some View {
+        Button {
+            Task { _ = try? await client.refreshPullRequestStates() }
+        } label: {
+            if refreshing {
+                ProgressView()
+            } else {
+                Label(KanbanText.refresh, systemImage: "arrow.clockwise")
+            }
+        }
+        .keyboardShortcut(KeyEquivalent(PipelinesText.refreshKey), modifiers: .command)
+        .disabled(!PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing))
+        .accessibilityLabel(KanbanText.refresh)
+        .accessibilityIdentifier(PipelinesAccessibility.refresh)
     }
 
     // MARK: - Contenu

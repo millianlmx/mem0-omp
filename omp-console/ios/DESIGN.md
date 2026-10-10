@@ -187,6 +187,14 @@ marqueur `[test: <fonction>]` (une fonction de
   `[garde: design-ios/AC-8]`
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
+- Le bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au clavier de l'iPad), placé
+  avant « Nouvelle feature », demande au Mac de relire l'état des PR sur GitHub ;
+  il n'est actif que connecté et hors relecture, et montre un indicateur
+  d'activité pendant la relecture. Aucun message : le retour visible est le
+  libellé des cartes. `[test: refreshAvailability]`
+- Sur l'ardoise iOS, les clôtures d'étape d'une feature de lot ne font aucune
+  carte à part, et une feature réduite à ses clôtures fait une seule carte
+  « Terminée ». `[test: historyClosuresJoinTheirFeatureOnIOS]`
 - Dans la feuille « Nouvelle feature », le sélecteur de dépôt montre le NOM du
   dossier (jamais un chemin absolu), complété par les derniers segments du
   parent pour les seuls homonymes ; la valeur lancée reste la racine complète.
@@ -249,6 +257,11 @@ marqueur `[test: <fonction>]` (une fonction de
   `[test: longRecipeNamesTheWholeFeature]`
 - Une livraison récente ouvre sa PR par `openURL` seulement quand l'URL est
   exploitable. `[test: deliveredLinks]`
+- « Livrées récemment » et la voie « Livrées » portent l'état réel de la PR
+  (« PR ouverte », « PR fusionnée », « PR fermée », « PR créée » tant qu'il est
+  inconnu), les mêmes libellés que le Mac (`ConsoleStatus.of(card:)`) ; une
+  livraison close depuis plus de 7 jours en sort, et les clôtures d'étape d'une
+  feature ne font jamais de carte à part. `[test: deliveredReadsThePullRequestState]`
 - Le lien « Tout afficher » sélectionne la section Pipelines. `[test: allPipelinesSection]`
 - Le bandeau de préparation vient du Mac (`components.setupBanner`), jamais
   inventé ; l'Accueil ne porte AUCUN bouton dessus. `[test: setupBanner]`

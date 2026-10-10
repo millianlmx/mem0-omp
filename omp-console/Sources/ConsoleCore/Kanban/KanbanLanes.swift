@@ -74,7 +74,7 @@ public enum KanbanLane: String, CaseIterable, Identifiable, Sendable {
         case .enAttente: return .pasCommencees
         case .enCours: return .enCours
         case .questionEnVol, .jalonSpecs, .jalonReview: return .aVous
-        case .prOuverte, .fusionne, .termineeSansPr: return .livrees
+        case .prOuverte, .prCreee, .fusionne, .prFermee, .termineeSansPr: return .livrees
         case .echec, .bloquee, .annuleeRetiree: return .arretees
         }
     }
