@@ -68,7 +68,7 @@ extension SessionOmpSurface {
     var isOver: Bool {
         switch self {
         case .stopped, .dead: return true
-        case .degraded, .loading, .empty, .launching, .stopping, .live, .failed: return false
+        case .unavailable, .loading, .empty, .launching, .stopping, .live, .failed: return false
         }
     }
 }

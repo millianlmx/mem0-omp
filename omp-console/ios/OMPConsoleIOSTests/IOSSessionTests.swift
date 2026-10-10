@@ -844,7 +844,7 @@ struct IOSSessionTests {
     func runningToolCallInLiveSession() {
         #expect(!SessionOmpSurface.live.isOver)
         // Aucune autre surface vivante ou sans fil ne déclare la session finie.
-        for surface: SessionOmpSurface in [.degraded("x"), .loading, .empty, .launching, .stopping, .failed("x")] {
+        for surface: SessionOmpSurface in [.unavailable(.disconnected(.unpaired)), .loading, .empty, .launching, .stopping, .failed("x")] {
             #expect(!surface.isOver, "\(surface)")
         }
         #expect(ToolCallStatus.of(nil, sessionEnded: SessionOmpSurface.live.isOver) == .running)

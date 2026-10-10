@@ -215,8 +215,9 @@ fois, dans l'ordre : Préparation d'OMP Console, Contrat, Bienvenue, Nouvelle fe
 répondre (`MainSheetPolicy`).
 
 Les symboles purement décoratifs de l'Accueil et de la feuille Bienvenue (pastille
-de nature d'une carte d'attente, symbole d'étape d'une ligne « En cours », flèche
-d'une ligne livrée, cloche du bandeau des notifications, symboles des promesses)
+de nature d'une carte d'attente, symbole d'étape d'une ligne « En cours », « À
+reprendre » ou « Pas commencées », flèche d'une ligne livrée, cloche du bandeau des
+notifications, symboles des promesses)
 sont muets pour VoiceOver (`.accessibilityHidden(true)`) : les sous-arbres
 `home.dashboard`, `home.firstRun`, `home.ompMissing.background` et `welcome.sheet`
 n'exposent aucun `AXImage`, et le texte voisin reste annoncé.
