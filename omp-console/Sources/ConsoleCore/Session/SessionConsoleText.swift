@@ -78,7 +78,12 @@ public enum SessionConsoleText {
     public static let rawFrames = "Trames brutes"
     public static let fieldProject = "Projet"
     public static let fieldState = "État"
-    public static let fieldPid = "pid"
+    /// L'état lisible de la ligne « État » des inspecteurs Session OMP et Projet
+    /// du Mac (S-3 de jargon-technique-expose-mac-et-ios) : le pid n'y figure
+    /// plus, il ne vit que dans « Copier le diagnostic ».
+    public static let stateRunning = "En marche"
+    public static let stateWaiting = "En attente"
+    public static let stateStopped = "Arrêtée"
     public static let fieldSessionId = "Identifiant de session"
     public static let fieldMode = "Mode"
     public static let none = "—"

@@ -393,16 +393,20 @@ extension KanbanBoard {
             drafts[index].card.marks = marks
         }
 
-        // Le bandeau : les entrées illisibles (S-8), puis les propriétaires morts
-        // (S-9), puis les doublons (S-10) — déjà triés par identité croissante.
-        var anomalies = KanbanAnomalies.illisibleLines(snapshot: snapshot)
-        anomalies += KanbanAnomalies.mortLines(running: dedup.running, lots: dedup.lots, isAlive: isAlive)
-        anomalies += dedup.anomalies
-
         // La borne des livraisons CLOSES : une carte « Livrées » fusionnée, fermée
         // ou sans PR, close depuis plus de `deliveredWindowMs`, quitte l'ardoise.
         // « PR ouverte » et « PR créée » restent quel que soit leur âge.
         let cards = drafts.filter { !isExpiredDelivery($0, nowMs: nowMs) }.map(\.card)
+
+        // Le bandeau : les entrées illisibles (S-8), puis les propriétaires morts
+        // (S-9), puis les doublons (S-10) — déjà triés par identité croissante. Le
+        // geste d'un lot mort se résout sur l'ardoise FINALE : « Reprendre » ne
+        // vise jamais une carte que le tableau ne montre pas.
+        var anomalies = KanbanAnomalies.illisibleLines(snapshot: snapshot)
+        anomalies += KanbanAnomalies.mortLines(
+            running: dedup.running, lots: dedup.lots, isAlive: isAlive, cards: cards
+        )
+        anomalies += dedup.anomalies
         return KanbanBoard(cards: cards, anomalies: anomalies)
     }
 

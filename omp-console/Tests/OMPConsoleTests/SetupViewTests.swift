@@ -145,7 +145,7 @@ func rowsFollowState() {
     // Prêt : tout est terminé, et la ligne Prérequis porte le mot oMLX.
     let ready = SetupPresentation.rows(state: .ready, omlx: .unauthorized)
     #expect(ready.map(\.status) == [.done, .done, .done, .done])
-    #expect(ready[3].detail == "Jeton refusé (401)")
+    #expect(ready[3].detail == "Clé refusée")
     #expect(SetupPresentation.rows(state: .ready, omlx: .reachable)[3].detail == "Disponible")
 
     // Échec de la migration : Composants terminé, Migration échouée, le reste à venir.

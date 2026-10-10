@@ -21,12 +21,19 @@ enum TerminalHostError: Error, Equatable, Sendable {
     /// Aucun enfant vivant : rien à écrire.
     case notRunning
 
+    /// La phrase affichée : seul `.ptyUnavailable` diffère du diagnostic (S-7).
     var userMessage: String {
+        if case .ptyUnavailable = self { return TerminalViewText.ptyUnavailable }
+        return diagnostic
+    }
+
+    /// Le brut copié par « Copier le diagnostic » (S-7).
+    var diagnostic: String {
         switch self {
         case .executableNotFound(let path):
             return TerminalViewText.executableMissing(path)
         case .ptyUnavailable(let code):
-            return TerminalViewText.ptyUnavailable(code)
+            return TerminalViewText.ptyUnavailableDiagnostic(code: code)
         case .cwdMissing(let path):
             return TerminalViewText.cwdMissing(path)
         case .writeFailed(let code):

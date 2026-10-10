@@ -1,4 +1,4 @@
-// Ce que la coque garde des textes de la préparation : les cinq fonctions qui
+// Ce que la coque garde des textes de la préparation : les fonctions qui
 // nomment un type de la coque (`ComponentID`, `SetupStep`, `OMLXStatus`,
 // `SetupFailure`, `SetupState`). Toutes les constantes et `percent(_:_:)` vivent
 // dans `ConsoleCore/Setup/SetupText.swift`.
@@ -61,8 +61,10 @@ extension SetupText {
         }
     }
 
-    /// Le message d'un échec de préparation (S-5, textes exacts).
-    static func failureMessage(_ failure: SetupFailure) -> String {
+    /// Le détail BRUT d'un échec de préparation (S-5) : l'ancien texte de la
+    /// feuille, mot pour mot — commande, stderr, port, propriétaire et geste shell.
+    /// Seul « Copier le diagnostic » l'emporte.
+    static func failureDiagnostic(_ failure: SetupFailure) -> String {
         switch failure {
         case .components(.unsupportedMac):
             return "Ce Mac n'est pas pris en charge (arm64 requis)."
@@ -91,6 +93,47 @@ extension SetupText {
         }
     }
 
+    /// La conséquence d'un échec (S-5) : ce que l'utilisateur perd, sans commande,
+    /// stderr ni port. Les cas sans détail Podman gardent leur texte actuel.
+    static func failureConsequence(_ failure: SetupFailure) -> String {
+        switch failure {
+        case .stack(.machineFailed):
+            return failureMachine
+        case .stack(.containerFailed):
+            return failureContainer
+        case .stack(.podmanFailed):
+            return failurePodman
+        case .legacy(.stopFailed):
+            return failureLegacyStop
+        case .stack(.portConflict(_, .legacyStack)):
+            return failurePortLegacy
+        case .stack(.portConflict(_, .foreign)):
+            return failurePortForeign
+        case .stack(.portConflict):
+            return failurePortOther
+        default:
+            return failureDiagnostic(failure)
+        }
+    }
+
+    /// La phrase de la ligne en échec (S-5) : la conséquence, puis le geste. Le
+    /// geste nomme le bouton qui règle le cas (« Réessayer », ou la reprise de
+    /// l'ancienne pile) ; hors des cas Podman, le texte actuel est inchangé.
+    static func failureMessage(_ failure: SetupFailure) -> String {
+        let consequence = failureConsequence(failure)
+        switch failure {
+        case .stack(.portConflict(_, .legacyStack)):
+            return "\(consequence) \(failurePortLegacyGesture)"
+        case .stack(.portConflict(_, .foreign)):
+            return "\(consequence) \(failurePortForeignGesture)"
+        case .stack(.machineFailed), .stack(.containerFailed), .stack(.podmanFailed),
+             .stack(.portConflict), .legacy(.stopFailed):
+            return "\(consequence) \(failureRetryGesture)"
+        default:
+            return consequence
+        }
+    }
+
     /// Le bandeau de l'Accueil quand la feuille a été fermée : `nil` tant qu'elle
     /// est visible (l'état vit dans la feuille), et `nil` une fois prêt.
     static func banner(state: SetupState, dismissed: Bool) -> String? {
@@ -99,7 +142,7 @@ extension SetupText {
         case .preparing(let step):
             return "Préparation en cours — \(stepDetail(step))"
         case .failed(let failure):
-            return "Préparation incomplète. \(failureMessage(failure))"
+            return "Préparation incomplète. \(failureConsequence(failure))"
         case .idle, .ready:
             return nil
         }

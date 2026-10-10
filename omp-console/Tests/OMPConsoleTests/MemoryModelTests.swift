@@ -340,8 +340,9 @@ func ac6OMLXConnectionRefusedIsNamed() async {
         Issue.record("une connexion refusée doit rendre `.unreachable`, pas \(model.omlx)")
         return
     }
+    #expect(model.omlxBanner?.message == MemoryText.omlxUnreachable)
     #expect(
-        model.omlxBanner
+        model.omlxBanner?.diagnostic
             == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses embeddings pour chercher."
     )
     // Le prérequis manquant n'efface JAMAIS la mémoire : la liste reste servie.
@@ -358,7 +359,49 @@ func ac6OMLXUnauthorizedIsNamed() async {
     await model.refresh()
 
     #expect(model.omlx == .unauthorized)
-    #expect(model.omlxBanner == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.")
+    #expect(model.omlxBanner?.message == MemoryText.omlxUnauthorized)
+    #expect(model.omlxBanner?.diagnostic
+        == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/models")
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-6 : le bandeau oMLX (injoignable ou clé refusée) dit la conséquence et le geste, sans URL, OMLX_API_TOKEN ni code")
+func omlxBannerIsReadable() async {
+    for reply in [StubURLProtocol.Reply(error: URLError(.cannotConnectToHost)), .init(status: 401)] {
+        StubURLProtocol.reset()
+        StubURLProtocol.reply("/models", reply)
+        let model = memoryModel(service: ScriptedMemoryService())
+        await model.refresh()
+
+        guard let banner = model.omlxBanner else {
+            Issue.record("oMLX en défaut sans bandeau : \(model.omlx)")
+            continue
+        }
+        #expect(forbiddenTokens(in: banner.message).isEmpty, "bandeau : \(banner.message)")
+        #expect(!banner.message.contains("127.0.0.1"))
+        #expect(!banner.message.contains("401"))
+        // Le geste : « rafraîchissez » nomme le bouton « Rafraîchir » du bandeau.
+        #expect(banner.message.contains("rafraîchissez"))
+    }
+}
+
+@MainActor
+@Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic du bandeau oMLX porte l'URL sondée, et OMLX_API_TOKEN avec le code pour une clé refusée")
+func omlxBannerDiagnosticKeepsTheRawDetail() async {
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(error: URLError(.cannotConnectToHost)))
+    let unreachable = memoryModel(service: ScriptedMemoryService())
+    await unreachable.refresh()
+    #expect(unreachable.omlxBanner?.diagnostic.contains("http://127.0.0.1:8000/models") == true)
+
+    StubURLProtocol.reset()
+    StubURLProtocol.reply("/models", .init(status: 401))
+    let refused = memoryModel(service: ScriptedMemoryService())
+    await refused.refresh()
+    let diagnostic = refused.omlxBanner?.diagnostic ?? ""
+    #expect(diagnostic.contains("http://127.0.0.1:8000/models"))
+    #expect(diagnostic.contains("OMLX_API_TOKEN"))
+    #expect(diagnostic.contains("401"))
 }
 
 @MainActor

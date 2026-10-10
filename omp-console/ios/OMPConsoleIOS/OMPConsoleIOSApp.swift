@@ -35,6 +35,9 @@ import SwiftUI
 ///   partagée `KanbanBoardParity` (une voie vide, une voie « Livrées » de 100
 ///   cartes, des noms longs) à la place de celle du Mac, pour mesurer les voies et
 ///   les cartes sans appairage — un crochet de recette, pas une fonctionnalité.
+/// - `-pipelines.board marques` : l'écran Pipelines rend l'ardoise dérivée de
+///   `HomeParity` (celle de `-pipelines.recipe`), qui porte une carte au pilote
+///   arrêté, pour voir la phrase de ses marques sans appairage.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
 /// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,

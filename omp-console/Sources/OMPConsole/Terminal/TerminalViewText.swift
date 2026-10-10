@@ -21,7 +21,7 @@ enum TerminalViewText {
     static let pickerTitle = "Choisir un répertoire"
     static let chooseTarget = "Choisir un dossier…"
     static let relaunch = "Relancer"
-    static let launchOmp = "Lancer omp"
+    static let launchOmp = "Lancer OMP"
     static let open = "Ouvrir"
     static let cancel = "Annuler"
     static let retry = "Réessayer"
@@ -29,7 +29,7 @@ enum TerminalViewText {
     /// Le programme au premier plan, en tête du sous-titre : le shell, ou `omp`
     /// une fois lancé depuis la barre d'outils.
     static let shellKind = "Shell"
-    static let ompKind = "omp"
+    static let ompKind = "OMP"
 
     // MARK: - États de la fenêtre (S-10)
 
@@ -37,7 +37,7 @@ enum TerminalViewText {
     /// choisi. Le second libellé est celui de l'état `listing` de S-10 : la feuille
     /// est ouverte et le catalogue se charge, la fenêtre le dit.
     static let chooseHint = "Choisissez un répertoire…"
-    static let listing = "Lecture des worktrees…"
+    static let listing = "Recherche des dossiers de features…"
     static let starting = "Lancement du shell…"
     static let running = "Le shell est actif."
 
@@ -68,7 +68,11 @@ enum TerminalViewText {
         "Exécutable introuvable : \(path)."
     }
 
-    static func ptyUnavailable(_ code: Int32) -> String {
+    /// La phrase affichée (S-7) : la cause en mots, puis le geste.
+    static let ptyUnavailable = "Le terminal n'a pas pu s'ouvrir : le Mac refuse d'en créer un de plus pour l'instant. Fermez des fenêtres de terminal inutiles, puis relancez."
+
+    /// Le brut copié par « Copier le diagnostic » (S-7).
+    static func ptyUnavailableDiagnostic(code: Int32) -> String {
         "PTY indisponible (\(code)) : aucun process lancé."
     }
 
@@ -81,7 +85,7 @@ enum TerminalViewText {
     // MARK: - Feuille de choix (S-2, BR-4)
 
     static let noProject = "Aucun projet ouvert : choisissez d'abord un dossier dans la section « Session OMP »."
-    static let loadingTargets = "Lecture des worktrees…"
-    static let emptyTargets = "Aucun worktree de feature dans ce dépôt."
+    static let loadingTargets = "Recherche des dossiers de features…"
+    static let emptyTargets = "Aucun dossier de feature dans ce projet."
     static let targetPath = "Répertoire"
 }

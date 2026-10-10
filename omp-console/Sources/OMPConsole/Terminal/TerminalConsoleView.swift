@@ -78,11 +78,18 @@ struct TerminalConsoleView: View {
             // affichée (S-1), sous un bandeau qui dit la fin du shell.
             VStack(spacing: 0) {
                 if showsEndBanner {
-                    Text(model.statusText)
+                    HStack(spacing: 8) {
+                        Text(model.statusText)
+                        if let diagnostic = model.failureDiagnostic {
+                            DiagnosticCopyButton(diagnostic: diagnostic, identifier: "terminal.diagnostic.copy")
+                        }
+                    }
                         .consoleBanner(tint: isFailure ? .red : .orange)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
+                        // Conteneur : « Copier le diagnostic » garde son identifiant.
+                        .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("terminal.status")
                 }
                 TerminalViewRepresentable(
@@ -94,8 +101,16 @@ struct TerminalConsoleView: View {
                 .accessibilityIdentifier("terminal.view")
             }
         } else {
-            ContentUnavailableView(model.statusText, systemImage: placeholderImage)
+            ContentUnavailableView {
+                Label(model.statusText, systemImage: placeholderImage)
+            } actions: {
+                if let diagnostic = model.failureDiagnostic {
+                    DiagnosticCopyButton(diagnostic: diagnostic, identifier: "terminal.diagnostic.copy")
+                }
+            }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Conteneur : « Copier le diagnostic » garde son identifiant.
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("terminal.view")
         }
     }

@@ -49,8 +49,10 @@ private let terminalReadChunk = 64 * 1024
 private let terminalPendingCeiling = 1 << 20
 private let terminalWriteGrace: Duration = .milliseconds(500)
 
+// Non `final` pour une seule raison : une doublure de test sous-classe `start` afin
+// de rendre un échec `forkpty` (jargon-technique-expose-mac-et-ios, S-7 AC-7).
 @MainActor
-final class TerminalHost {
+class TerminalHost {
     // MARK: - Interface
 
     var onOutput: (([UInt8]) -> Void)?

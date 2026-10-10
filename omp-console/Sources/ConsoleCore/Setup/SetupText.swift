@@ -42,8 +42,24 @@ public enum SetupText {
     // --- états d'oMLX (ligne Prérequis) --------------------------------------
     public static let omlxUnknown = "Non vérifié"
     public static let omlxReachable = "Disponible"
-    public static let omlxUnauthorized = "Jeton refusé (401)"
+    public static let omlxUnauthorized = "Clé refusée"
     public static let omlxUnreachable = "Injoignable"
+
+    // --- échecs Podman de la préparation (S-5 de jargon-technique-expose-mac-et-ios)
+    // La feuille et le bandeau disent la CONSÉQUENCE, puis le geste ; la commande,
+    // le stderr et les gestes shell restent dans le diagnostic copiable.
+    public static let failureMachine = "Le moteur de la mémoire n'a pas démarré : les souvenirs sont indisponibles."
+    public static let failureContainer = "Un composant de la mémoire n'a pas démarré : les souvenirs sont indisponibles."
+    public static let failurePodman = "La préparation de la mémoire a échoué : les souvenirs sont indisponibles."
+    public static let failureLegacyStop = "L'ancienne mémoire n'a pas pu être arrêtée : la nouvelle ne peut pas démarrer."
+    public static let failurePortLegacy = "L'ancienne mémoire occupe encore la place de la nouvelle : celle-ci ne peut pas démarrer."
+    public static let failurePortForeign = "Une autre app occupe la place réservée à la mémoire : celle-ci ne peut pas démarrer."
+    public static let failurePortOther = "La place réservée à la mémoire est occupée : celle-ci ne peut pas démarrer."
+    /// Le geste commun : « Réessayer » règle le cas ; sinon, le diagnostic sert au
+    /// signalement.
+    public static let failureRetryGesture = "Réessayez ; si l'échec revient, copiez le diagnostic pour le signaler."
+    public static let failurePortLegacyGesture = "Arrêtez l'ancienne mémoire pour reprendre."
+    public static let failurePortForeignGesture = "Quittez cette app, puis réessayez ; copiez le diagnostic pour savoir laquelle."
 
     /// Le pourcentage d'un téléchargement, borné 0…100.
     public static func percent(_ downloaded: Int64, _ total: Int64) -> Int {

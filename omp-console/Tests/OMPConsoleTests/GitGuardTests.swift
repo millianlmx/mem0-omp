@@ -101,11 +101,11 @@ func readFormsOfAdmittedSubcommandsPass() {
 @Test("runner-de-process-swift-duplique/AC-5 : le refus a son texte exact")
 func refusedCommandMessageIsExact() {
     #expect(
-        FilesError.gitCommandRefused(command: "push").userMessage
+        FilesError.gitCommandRefused(command: "push").diagnostic
             == "git push n'est pas une commande de lecture autorisée — aucun process n'a été lancé."
     )
     #expect(
-        FilesError.gitCommandRefused(command: "worktree add").userMessage
+        FilesError.gitCommandRefused(command: "worktree add").diagnostic
             == "git worktree add n'est pas une commande de lecture autorisée — aucun process n'a été lancé."
     )
 }

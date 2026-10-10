@@ -221,19 +221,31 @@ public struct KanbanCard: Sendable, Equatable, Identifiable {
     }
 }
 
+/// Le geste qui accompagne une anomalie dans la bulle des problèmes : un bouton
+/// « Reprendre » quand une carte de l'ardoise offre déjà la reprise, sinon une
+/// consigne écrite. Aucune action nouvelle n'est créée pour une anomalie.
+public enum KanbanAnomalyGesture: Equatable, Sendable {
+    /// Reprendre la carte d'id `cardId` (zone `.resume` de `KanbanActionPresentation`).
+    case resume(cardId: String)
+    /// Une consigne écrite, quand aucune action de l'app ne règle le cas.
+    case instruction(String)
+}
+
 /// Une anomalie du magasin, telle que la bulle des problèmes la nomme : sa nature
-/// (la marque correspondante), une phrase pour l'utilisateur qui nomme la
-/// pipeline, et le détail technique (fichier, pid, identité) qui ne s'affiche que
-/// sous « Détails techniques ».
+/// (la marque correspondante), une phrase de conséquence pour l'utilisateur, son
+/// geste, et le détail technique (fichier, pid, identité) qui n'est jamais
+/// affiché : il ne sort que par « Copier le diagnostic ».
 public struct KanbanAnomaly: Sendable, Equatable {
     public var kind: KanbanMark
     public var text: String
     public var detail: String
+    public let gesture: KanbanAnomalyGesture
 
-    public init(kind: KanbanMark, text: String, detail: String) {
+    public init(kind: KanbanMark, text: String, detail: String, gesture: KanbanAnomalyGesture) {
         self.kind = kind
         self.text = text
         self.detail = detail
+        self.gesture = gesture
     }
 }
 
