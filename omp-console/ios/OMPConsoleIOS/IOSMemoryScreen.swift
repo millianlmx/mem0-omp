@@ -380,11 +380,11 @@ struct IOSMemoryScreen: View {
 
     /// La ligne de contexte : une bande jointe par « · » aux tailles ordinaires,
     /// un segment par ligne aux tailles d'accessibilité (règle de l'Accueil,
-    /// `IOSHomeContent.rowAxis`, lue sur la taille système).
+    /// `IOSHomeContent.rowAxis`, lue sur la SEULE taille système, largeur `nil`).
     @ViewBuilder
     private func rowContext(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
-        switch IOSHomeContent.rowAxis(dynamicTypeSize) {
-        case .horizontal:
+        switch IOSHomeContent.rowAxis(dynamicTypeSize, width: nil) {
+        case .horizontal, .twoLine:
             let subtitle = IOSMemoryDetailView.subtitle(row, nowMs: nowMs)
             if !subtitle.isEmpty {
                 Text(verbatim: subtitle)

@@ -228,13 +228,15 @@ struct IOSSessionsScreen: View {
     }
 
     /// L'axe des rangées, règle de l'Accueil (`IOSHomeContent.rowAxis`) lue sur
-    /// la taille système : le plafond `rowTextMaximumSize` ne le change pas.
-    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize) }
+    /// la SEULE taille système (largeur `nil`) : les rangées de Sessions restent sur
+    /// une ligne aux tailles standard, la mise sur deux lignes en largeur compacte
+    /// est propre à l'Accueil. Le plafond `rowTextMaximumSize` ne change pas l'axe.
+    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize, width: nil) }
 
     /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
     private var rowLayout: AnyLayout {
         switch rowAxis {
-        case .horizontal: AnyLayout(HStackLayout(spacing: 10))
+        case .horizontal, .twoLine: AnyLayout(HStackLayout(spacing: 10))
         case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
         }
     }
