@@ -308,13 +308,14 @@ Trois pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
 
 ### Recette : interface Mac automatisée
 
-`bash scripts/mac-recette-ui.sh` (sans argument) ouvre une à une les **24
-surfaces** de l'app — les 9 sections de la barre latérale, puis 15 feuilles
-(bienvenue, préparation, appairage, nouvelle pipeline, réponse, contrat, fiche de
+`bash scripts/mac-recette-ui.sh` (sans argument) ouvre une à une les **23
+surfaces** de l'app — les 9 sections de la barre latérale, puis 14 feuilles
+(bienvenue, préparation, nouvelle pipeline, réponse, contrat, fiche de
 carte, modèles, lancement et question de projet, question de session, ouverture
 du Terminal, création, édition et lien d'un souvenir) — **à la taille minimale de
 la fenêtre**, capture chacune et sonde son arbre AX. Le catalogue est
-`scripts/mac-recette-ui/catalogue.ts` ; alertes, menus, popovers, inspecteurs et
+`scripts/mac-recette-ui/catalogue.ts` ; fenêtres (dont Réglages › Appareils),
+alertes, menus, popovers, inspecteurs et
 item de barre de menus sont hors périmètre. Le script n'est appelé ni par
 `scripts/check.sh` ni par la CI : il lui faut une session graphique.
 
@@ -335,7 +336,7 @@ Codes de sortie, la dernière ligne de stdout portant le verdict :
 
 | code | issue | dernière ligne |
 |---|---|---|
-| 0 | vert | `✓ recette Mac : vert — 24 surfaces couvertes, <e> signalement(s) excepté(s). Rapport : …` |
+| 0 | vert | `✓ recette Mac : vert — 23 surfaces couvertes, <e> signalement(s) excepté(s). Rapport : …` |
 | 1 | défauts trouvés | `✗ recette Mac : défauts trouvés — <s> signalement(s) non excepté(s), <n> surface(s) non couverte(s), <i> exception(s) invalide(s)[, isolation rompue]. Rapport : …` |
 | 2 | non exécutable | `· recette Mac non exécutable : <raison>` (macOS absent, sonde non compilée, écran refusé, recette déjà en cours, app non construite, jeu fictif non démarré, interruption) |
 

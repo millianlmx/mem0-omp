@@ -30,7 +30,6 @@ enum SurfaceRecipe: String, CaseIterable {
     case bienvenue
     /// La feuille vient de `-setup.recipe indeterminee` : rien à attendre.
     case preparation
-    case appairage
     case nouvellePipeline = "nouvelle-pipeline"
     case reponse
     case contrat
@@ -66,7 +65,7 @@ enum SurfaceRecipe: String, CaseIterable {
     /// La section que la recette sélectionne avant son geste.
     var section: ConsoleSection {
         switch self {
-        case .accueil, .bienvenue, .preparation, .appairage, .nouvellePipeline, .reponse: .home
+        case .accueil, .bienvenue, .preparation, .nouvellePipeline, .reponse: .home
         case .pipelines, .contrat, .ficheCarte, .modeles: .kanban
         case .projet, .projetLancement, .projetDialogue: .project
         case .sessionOmp, .sessionOmpDialogue: .session
@@ -96,7 +95,6 @@ enum SurfaceRecipe: String, CaseIterable {
         setup: SetupModel,
         home: HomeModel,
         actions: ActionsModel,
-        remote: RemoteServiceModel,
         kanban: KanbanModel,
         contract: ContractModel,
         project: ProjectConsoleModel,
@@ -118,8 +116,6 @@ enum SurfaceRecipe: String, CaseIterable {
             break
         case .bienvenue:
             home.requestWelcome()
-        case .appairage:
-            remote.requestPairingSheet()
         case .nouvellePipeline:
             actions.launchFormShown = true
         case .reponse:

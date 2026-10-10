@@ -1,6 +1,6 @@
 // Preuves du crochet de recette `-surface.recipe` (S-5 de recette-ui-mac-automatisee) :
-// la garde par racine jetable, et le décodage des 24 identifiants du catalogue des
-// surfaces (9 sections, 15 feuilles). L'ouverture réelle de chaque surface est
+// la garde par racine jetable, et le décodage des 23 identifiants du catalogue des
+// surfaces (9 sections, 14 feuilles). L'ouverture réelle de chaque surface est
 // prouvée par le passage de la recette sur l'app, consigné en revue (AC-3).
 
 import Foundation
@@ -19,7 +19,7 @@ private func recipeDefaults(_ value: String?) -> UserDefaults {
 /// Les identifiants du catalogue des surfaces (S-6), dans son ordre.
 private let catalogueIDs = [
     "accueil", "pipelines", "projet", "session-omp", "terminal", "sessions", "fichiers", "memoire",
-    "statistiques", "bienvenue", "preparation", "appairage", "nouvelle-pipeline", "reponse", "contrat",
+    "statistiques", "bienvenue", "preparation", "nouvelle-pipeline", "reponse", "contrat",
     "fiche-carte", "modeles", "projet-lancement", "projet-dialogue", "session-omp-dialogue",
     "terminal-lancement", "memoire-creation", "memoire-edition", "memoire-lien",
 ]
@@ -41,11 +41,11 @@ func surfaceRecipeRequiresDisposableRoot() {
     #expect(SurfaceRecipe.current(defaults: recipeDefaults("sessionOmp"), environment: root) == nil)
 }
 
-@Test("recette-ui-mac-automatisee/AC-3 : les 24 identifiants du catalogue des surfaces sont décodés")
+@Test("recette-ui-mac-automatisee/AC-3 : les 23 identifiants du catalogue des surfaces sont décodés")
 func surfaceRecipeDecodesCatalogue() {
     let root = [AppPaths.supportRootEnvironmentKey: "/tmp/omp-console-recette-ui/support"]
 
-    #expect(SurfaceRecipe.allCases.count == 24)
+    #expect(SurfaceRecipe.allCases.count == 23)
     #expect(SurfaceRecipe.allCases.map(\.rawValue) == catalogueIDs)
     for id in catalogueIDs {
         let recipe = SurfaceRecipe.current(defaults: recipeDefaults(id), environment: root)

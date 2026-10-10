@@ -242,7 +242,6 @@ struct ConsoleRootView: View {
                         setup: setup,
                         home: home,
                         actions: actions,
-                        remote: remote,
                         kanban: kanban,
                         contract: contract,
                         project: projectModel,

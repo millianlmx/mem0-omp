@@ -1,6 +1,6 @@
 // Catalogue des surfaces de la recette UI Mac (S-6 de recette-ui-mac-automatisee) :
-// la SOURCE UNIQUE des 24 surfaces — 9 sections de la barre latérale, puis
-// 15 feuilles. L'ordre du tableau est l'ordre du parcours, du rapport et du tri
+// la SOURCE UNIQUE des 23 surfaces — 9 sections de la barre latérale, puis
+// 14 feuilles. L'ordre du tableau est l'ordre du parcours, du rapport et du tri
 // des signalements.
 //
 // Les ids sont exactement les rawValues de `SurfaceRecipe`
@@ -30,7 +30,6 @@ export const CATALOGUE: readonly Surface[] = [
   { id: "statistiques", type: "section", titre: "Statistiques", marqueur: "stats.board" },
   { id: "bienvenue", type: "feuille", titre: "Bienvenue", marqueur: "welcome.sheet" },
   { id: "preparation", type: "feuille", titre: "Préparation", marqueur: "sheet.setup" },
-  { id: "appairage", type: "feuille", titre: "Appairage", marqueur: "pairing.sheet" },
   { id: "nouvelle-pipeline", type: "feuille", titre: "Nouvelle pipeline", marqueur: "launch.sheet" },
   { id: "reponse", type: "feuille", titre: "Réponse à une carte", marqueur: "answer.sheet" },
   { id: "contrat", type: "feuille", titre: "Contrat", marqueur: "contract.sheet" },
