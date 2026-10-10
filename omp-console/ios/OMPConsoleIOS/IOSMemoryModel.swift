@@ -36,10 +36,8 @@ enum IOSMemoryLoad: Equatable {
     case page(RemoteMemoryPagePayload)
     /// Une recherche, telle que le Mac l'a sélectionnée.
     case search(RemoteMemorySearchPayload)
-    /// La mémoire est injoignable côté Mac : le message relayé porte sa cause.
-    case memoryUnavailable(String)
-    /// Le Mac n'a pas répondu : l'état du CLIENT, jamais une cause mémoire.
-    case macUnreachable
+    /// La lecture a échoué : la cause distinguable rendue par le traducteur partagé.
+    case failed(IOSMacFailure)
 }
 
 /// Ce que la section affiche : le sommaire du projet, ou les résultats d'une
@@ -55,8 +53,7 @@ enum IOSMemoryScreenState: Equatable {
     case clientState(ClientState)
     case loading
     case noProject
-    case unavailable(detail: String)
-    case macUnreachable
+    case failed(IOSMacFailure)
     case summaryEmpty(scope: String)
     case summary(scope: String, total: Int, rows: [RemoteMemoryRow], truncated: Bool)
     case searchEmptyNoMatch
@@ -100,17 +97,12 @@ final class IOSMemoryModel: ObservableObject {
         return false
     }
 
-    /// La classification d'une erreur de lecture (S-4) : une panne de TRANSPORT
-    /// n'est jamais présentée comme une panne mémoire, et une erreur du contrat
-    /// d'API l'est toujours.
+    /// La classification d'une erreur de lecture : la cause vient du traducteur
+    /// partagé `IOSMacFailure.of`. `nil` ⇔ 401 : le parcours de jeton révoqué parle
+    /// seul, la section retombe sur l'état du client.
     static func load(from error: Error) -> IOSMemoryLoad {
-        guard let failure = error as? ClientError else { return .macUnreachable }
-        switch failure {
-        case .notConnected, .transport, .incompatibleProtocol, .decoding:
-            return .macUnreachable
-        case .api(let api):
-            return .memoryUnavailable(api.message ?? "")
-        }
+        guard let cause = IOSMacFailure.of(error) else { return .idle }
+        return .failed(cause)
     }
 
     /// L'état d'écran, dérivé de l'état du client, de la dernière lecture et du
@@ -123,10 +115,8 @@ final class IOSMemoryModel: ObservableObject {
             return gesturesEnabled(client) ? .loading : .clientState(client)
         case .loading:
             return .loading
-        case .macUnreachable:
-            return .macUnreachable
-        case .memoryUnavailable(let message):
-            return .unavailable(detail: message.isEmpty ? IOSMemoryText.noData : message)
+        case .failed(let cause):
+            return .failed(cause)
         case .page(let payload):
             guard let scope = payload.scope else { return .noProject }
             if case .search = mode { return .loading }

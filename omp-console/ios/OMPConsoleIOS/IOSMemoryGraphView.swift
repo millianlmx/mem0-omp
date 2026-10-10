@@ -38,18 +38,18 @@ struct IOSMemoryGraphView: View {
             switch model.state {
             case .idle, .loading:
                 loading
-            case .macUnreachable:
-                banner(IOSMemoryText.macUnreachable, tone: .attention)
-                card(IOSMemoryText.noData)
-                retry
             case .serviceOutdated:
                 banner(IOSMemoryText.graphServiceOutdated, tone: .attention)
                 retry
             case .macOutdated:
                 banner(IOSMemoryText.graphMacOutdated, tone: .attention)
                 retry
-            case let .unavailable(detail):
-                banner(IOSMemoryText.unavailable(detail: detail), tone: .danger)
+            case .failed(.macUnreachable):
+                banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
+                card(IOSMemoryText.noData)
+                retry
+            case let .failed(cause):
+                banner(IOSMacErrorText.message(for: cause), tone: .danger)
                 retry
             case .empty:
                 ContentUnavailableView(
@@ -270,6 +270,8 @@ struct IOSMemoryGraphView: View {
     private var retry: some View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                .frame(minHeight: IOSMetrics.minimumTarget)
+                .contentShape(Rectangle())
         }
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
     }

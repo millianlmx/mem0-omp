@@ -196,14 +196,14 @@ struct IOSMemoryScreen: View {
             Text(verbatim: MemoryText.loading)
                 .font(.callout)
                 .foregroundStyle(.secondary)
-        case .macUnreachable:
-            banner(IOSMemoryText.macUnreachable, tone: .attention)
+        case .failed(.macUnreachable):
+            banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
             card(IOSMemoryText.noData)
             retryButton
         case .noProject:
             card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
-        case .unavailable(let detail):
-            banner(IOSMemoryText.unavailable(detail: detail), tone: .danger)
+        case .failed(let cause):
+            banner(IOSMacErrorText.message(for: cause), tone: .danger)
             retryButton
         case .summaryEmpty(let scope):
             card(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))
@@ -263,6 +263,8 @@ struct IOSMemoryScreen: View {
     private var retryButton: some View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                .frame(minHeight: IOSMetrics.minimumTarget)
+                .contentShape(Rectangle())
         }
         .disabled(!model.canRefresh)
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)

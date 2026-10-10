@@ -164,6 +164,7 @@ enum IOSHomeContent {
         case .decoding(let reason): return reason
         case .notConnected: return IOSHomeText.notConnected
         case .incompatibleProtocol: return IOSHomeText.incompatibleProtocol
+        case .unexpectedStatus(let status): return IOSMacErrorText.message(for: IOSMacFailure.of(status: status))
         }
     }
 }

@@ -8,6 +8,7 @@
 
 import ConsoleClient
 import ConsoleCore
+import Foundation
 import Testing
 
 @testable import OMPConsoleIOS
@@ -113,16 +114,17 @@ struct IOSMemoryModelTests {
         // Connecté, rien de lu : un chargement, jamais un vide muet.
         #expect(IOSMemoryModel.screen(client: connected, load: .idle, mode: .summary) == .loading)
 
-        // Les quatre erreurs de TRANSPORT ⇒ macUnreachable, jamais unavailable.
+        // Les erreurs de TRANSPORT ⇒ « Mac injoignable » (cause du traducteur partagé),
+        // jamais une panne mémoire.
         let transportFailures: [ClientError] = [
             .notConnected,
             .transport(.unreachable("connexion refusée")),
-            .incompatibleProtocol(local: 3, remote: 2),
-            .decoding("corps illisible"),
+            .transport(.closed("coupé")),
         ]
         for failure in transportFailures {
-            #expect(IOSMemoryModel.load(from: failure) == .macUnreachable)
-            #expect(IOSMemoryModel.screen(client: connected, load: .macUnreachable, mode: .summary) == .macUnreachable)
+            #expect(IOSMemoryModel.load(from: failure) == .failed(.macUnreachable))
+            #expect(IOSMemoryModel.screen(client: connected, load: .failed(.macUnreachable), mode: .summary)
+                == .failed(.macUnreachable))
         }
 
         // Une donnée DÉJÀ chargée n'est jamais effacée par une bascule du client.
@@ -134,22 +136,19 @@ struct IOSMemoryModelTests {
 
     // MARK: - AC-6
 
-    @Test("ios-memoire/AC-6 : la mémoire injoignable porte l'adresse sondée et le dernier message")
-    func memoryUnavailableCarriesTheRelayedDetail() {
-        // L'adresse relayée par le Mac est reprise TELLE QUELLE : la coque la compose
-        // par `MemoryText.unavailableDetail` (le test CLT éprouve la valeur réelle).
+    @Test("ios-memoire/AC-6 : la mémoire injoignable est « service indisponible », sans l'adresse ni le détail amont")
+    func memoryUnavailableIsTranslated() {
+        // Le détail relayé par le Mac (adresse sondée, dernier message) ne s'affiche plus :
+        // le traducteur partagé n'en garde que la cause.
         let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "connexion refusée")
-        #expect(IOSMemoryModel.load(from: ClientError.api(.unavailable(detail))) == .memoryUnavailable(detail))
-        #expect(IOSMemoryModel.screen(client: connected, load: .memoryUnavailable(detail), mode: .summary)
-            == .unavailable(detail: detail))
-        #expect(IOSMemoryModel.screen(client: connected, load: .memoryUnavailable(detail), mode: .search("x"))
-            == .unavailable(detail: detail))
-        // Un 401 sans message ⇒ le mot de repli, jamais une phrase vide.
-        #expect(IOSMemoryModel.screen(client: connected, load: .memoryUnavailable(""), mode: .summary)
-            == .unavailable(detail: IOSMemoryText.noData))
-        // Le bandeau porte le titre partagé PUIS le détail relayé.
-        #expect(IOSMemoryText.unavailable(detail: detail) == MemoryText.unavailableTitle + "\n" + detail)
-        #expect(MemoryText.unavailableTitle == "Mémoire indisponible")
+        #expect(IOSMemoryModel.load(from: ClientError.api(.unavailable(detail))) == .failed(.serviceUnavailable))
+        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.serviceUnavailable), mode: .summary)
+            == .failed(.serviceUnavailable))
+        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.serviceUnavailable), mode: .search("x"))
+            == .failed(.serviceUnavailable))
+        let text = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(!text.contains("127.0.0.1"))
+        #expect(!text.contains(detail))
     }
 
     // MARK: - AC-5
@@ -252,11 +251,11 @@ struct IOSMemoryModelTests {
         #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
 
         // La pile mémoire tombe ensuite : le geste relaie la panne avec sa cause.
-        let detail = MemoryText.unavailableDetail(address: "http://127.0.0.1:8321", error: "connexion refusée")
+        let detail = MemoryText.unavailableDetail(address: "127.0.0.1:8321", error: "connexion refusée")
         reader.page = .failure(ClientError.api(.unavailable(detail)))
         await model.refresh()
         #expect(reader.pageReads == 2)
-        #expect(model.state == .unavailable(detail: detail))
+        #expect(model.state == .failed(.serviceUnavailable))
         #expect(!model.isLoading)
 
         // La mémoire revient : le MÊME geste repasse au sommaire.
@@ -269,5 +268,165 @@ struct IOSMemoryModelTests {
         reader.state = .unpaired
         await model.refresh()
         #expect(reader.pageReads == 3)
+    }
+
+    // MARK: - ios-erreurs-serveur-lisibles (S-3)
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : memoryShowsTranslatedFailure — la liste affiche le message du traducteur partagé")
+    func memoryShowsTranslatedFailure() async {
+        let reader = CountingMemoryReader(page: .failure(MacMemoryDouble.relayed503))
+        let model = IOSMemoryModel(client: reader)
+        await model.refresh()
+        #expect(model.state == .failed(.serviceUnavailable))
+        let text = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(text.contains("Service indisponible sur le Mac"))
+        #expect(MacMemoryDouble.isReadable(text))
+        #expect(!model.isLoading)
+
+        // Un échec de transport : « Mac injoignable », sans « Mémoire indisponible » ni adresse.
+        reader.page = .failure(ClientError.transport(.unreachable("Could not connect to the server. (127.0.0.1:8787)")))
+        await model.refresh()
+        #expect(model.state == .failed(.macUnreachable))
+        let unreachable = IOSMacErrorText.message(for: .macUnreachable)
+        #expect(unreachable.contains("Mac injoignable"))
+        #expect(!unreachable.contains(MemoryText.unavailableTitle))
+        #expect(MacMemoryDouble.isReadable(unreachable))
+
+        // 500 et corps illisible : le message générique, sans code.
+        reader.page = .failure(MacMemoryDouble.error(status: 500, body: Data("oops".utf8)))
+        await model.refresh()
+        #expect(model.state == .failed(.generic))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-10 : memoryNeverClaimsOutdated — la liste et la recherche en 503 ne disent jamais « trop ancien »")
+    func memoryNeverClaimsOutdated() async {
+        for upstream in ["réponse 404 du service", "réponse 405 du service"] {
+            let failure = MacMemoryDouble.error(
+                status: 503,
+                code: "unavailable",
+                message: MemoryText.unavailableDetail(address: "localhost:8321", error: upstream)
+            )
+            let reader = CountingMemoryReader(page: .failure(failure), search: .failure(failure))
+            let model = IOSMemoryModel(client: reader)
+
+            await model.refresh()
+            #expect(model.state == .failed(.serviceUnavailable))
+
+            model.updateQuery("mémoire")
+            await model.submitQuery()
+            #expect(reader.searchReads == 1)
+            #expect(model.state == .failed(.serviceUnavailable))
+            #expect(model.state != .failed(.serviceOutdated))
+        }
+        let text = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(text.contains("Service indisponible sur le Mac"))
+        #expect(!text.contains("trop ancien"))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : memoryRetryShowsData — Réessayer relance la lecture et les lignes s'affichent")
+    func memoryRetryShowsData() async {
+        let rows = [row("m1", text: "un")]
+        let page = RemoteMemoryPagePayload(scope: "projet", total: 1, rows: rows, truncated: false)
+        let reader = CountingMemoryReader(page: .failure(MacMemoryDouble.relayed503))
+        let model = IOSMemoryModel(client: reader)
+        await model.refresh()
+        #expect(model.state == .failed(.serviceUnavailable))
+
+        reader.page = .success(page)
+        await model.refresh()
+        #expect(reader.pageReads == 2)
+        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, truncated: false))
+
+        // Réessayer relance aussi la RECHERCHE quand le mode courant en est une.
+        let hit = RemoteMemorySearchPayload(rows: rows, candidates: 1, scored: 1)
+        reader.search = .failure(MacMemoryDouble.relayed503)
+        model.updateQuery("un")
+        await model.submitQuery()
+        #expect(model.state == .failed(.serviceUnavailable))
+        reader.search = .success(hit)
+        await model.refresh()
+        #expect(reader.searchReads == 2)
+        #expect(model.state == .search(query: "un", rows: rows))
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : memoryUnauthorizedFallsBackToClientState — un 401 ne montre aucun message de section")
+    func memoryUnauthorizedFallsBackToClientState() async {
+        #expect(IOSMemoryModel.load(from: ClientError.api(.unauthorized)) == .idle)
+        #expect(IOSMemoryModel.screen(client: .revoked, load: .idle, mode: .summary) == .clientState(.revoked))
+
+        let reader = CountingMemoryReader(page: .failure(ClientError.api(.unauthorized)))
+        let model = IOSMemoryModel(client: reader)
+        reader.state = .revoked
+        await model.refresh()
+        #expect(reader.pageReads == 0)
+        #expect(model.state == .clientState(.revoked))
+
+        // Le 401 lu pendant la connexion : le client bascule en `.revoked`, la section suit.
+        reader.state = .connected(endpoint: endpoint)
+        let revoking = RevokingReader(reader)
+        let revokingModel = IOSMemoryModel(client: revoking)
+        await revokingModel.refresh()
+        #expect(revokingModel.load == .idle)
+        #expect(revokingModel.state == .clientState(.revoked))
+    }
+}
+
+/// Le lecteur dont la lecture reçoit un 401 : comme `ConsoleClientModel.absorb`, il passe le
+/// client en `.revoked` avant de lever l'erreur.
+@MainActor
+private final class RevokingReader: IOSMemoryReading {
+    var state: ClientState
+    private let inner: CountingMemoryReader
+
+    init(_ inner: CountingMemoryReader) {
+        self.inner = inner
+        self.state = inner.state
+    }
+
+    func memory(scope: String?, limit: Int?) async throws -> RemoteMemoryPagePayload {
+        state = .revoked
+        throw ClientError.api(.unauthorized)
+    }
+
+    func memorySearch(query: String, scope: String?, limit: Int?) async throws -> RemoteMemorySearchPayload {
+        state = .revoked
+        throw ClientError.api(.unauthorized)
+    }
+
+    func memoryGraph(scope: String?) async throws -> RemoteMemoryGraphPayload {
+        state = .revoked
+        throw ClientError.api(.unauthorized)
+    }
+}
+
+/// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
+private enum MacMemoryDouble {
+    static func error(status: Int, body: Data) -> ClientError {
+        ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+    }
+
+    static func error(status: Int, code: String, message: String) -> ClientError {
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]])) ?? Data()
+        return error(status: status, body: body)
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http est injoignable : l'adresse et le JSON amont
+    /// sont dans le message.
+    static var relayed503: ClientError {
+        error(
+            status: 503,
+            code: "unavailable",
+            message: MemoryText.unavailableDetail(
+                address: "localhost:8321",
+                error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+            )
+        )
+    }
+
+    /// Ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    static func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
     }
 }

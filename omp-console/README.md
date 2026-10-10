@@ -2007,6 +2007,27 @@ du verre, états vide et erreur, Dynamic Type — vit dans
 `omp-console/ios/DESIGN.md`. Chaque règle y porte un marqueur `[test: …]`,
 `[capture: …]` ou `[garde: design-ios/AC-<n>]` : aucune prose non jugeable.
 
+### Erreurs du Mac
+
+Toute erreur rendue par le Mac — Mémoire (liste, recherche, graphe), Sessions,
+Statistiques, Pipelines — passe par UN seul traducteur, `IOSMacErrorText`
+(`omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift`). Il range l'échec en sept
+causes distinguables et affiche la cause puis un remède propre à elle, sans URL,
+sans adresse, sans JSON brut et sans code HTTP : « app Mac trop ancienne » (404
+`route inconnue`, ou 404/405 hors contrat), « Mac injoignable » (connexion refusée,
+délai dépassé, Mac non connecté), « service indisponible sur le Mac » (503),
+« action refusée par le Mac » (403), « refus du Mac » avec son motif (400, 409 ou
+404 métier, tant que le motif est présentable), la version de protocole
+incompatible, et le message générique « le Mac a rencontré une erreur » (500,
+corps illisible, code inattendu). Le mode Graphe de la Mémoire ajoute une huitième
+formulation, « service mémoire trop ancien » (`outdated_service`), que la liste et
+la recherche n'ont pas. Un **401** n'affiche aucun message de section : le parcours
+de jeton révoqué est inchangé (secret effacé du trousseau, retour à l'appairage).
+Seul le message exact « route inconnue » vaut « app Mac trop ancienne » ; tout
+autre 404 est un refus métier. Chaque échec de chargement propose « Réessayer »
+(44 pt) ; un geste d'écriture n'en propose pas. La table cause → message est dans
+`omp-console/ios/DESIGN.md` (« Erreurs du Mac »).
+
 ### Section Pipelines
 
 La section Pipelines affiche l'ardoise des features et des runs de tous les
@@ -2520,9 +2541,10 @@ MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
 
 La section **Mémoire** de l'app affiche le sommaire du projet OUVERT côté Mac — les
 mêmes souvenirs que la section Mémoire macOS, dans l'ordre du service —, permet
-d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire sans masquer sa
-cause. Un SECOND mode, le **graphe**, s'ajoute derrière la bascule « Graphe ⇄
-Liste » de la barre d'outils : la LISTE reste le mode d'OUVERTURE. Le graphe est
+d'ouvrir un souvenir et de chercher, et dit l'état de la mémoire par une cause
+distinguable et son remède (voir « Erreurs du Mac »). Un SECOND mode, le
+**graphe**, s'ajoute derrière la bascule « Graphe ⇄ Liste » de la barre d'outils :
+la LISTE reste le mode d'OUVERTURE. Le graphe est
 calculé CÔTÉ MAC par le MÊME noyau que la fenêtre macOS (nœuds-souvenirs,
 nœuds-étiquettes, arêtes de proximité et liens manuels), manipulable au doigt
 (pincer, glisser, toucher) sur iPhone comme sur iPad ; toucher un souvenir met
@@ -2551,13 +2573,17 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 4. **Revenir au sommaire** — vider le champ (croix système) ou toucher « Sommaire » :
    le sommaire DÉJÀ lu revient, sans aucune requête.
 5. **La mémoire tombe** — arrêter le conteneur (`podman stop omp-console-mem0-http`)
-   puis toucher « Rafraîchir » : le bandeau rouge « Mémoire indisponible » nomme
-   l'adresse sondée et le dernier message d'erreur ; « Réessayer » repasse au
-   sommaire dès que la pile répond de nouveau.
+   puis toucher « Rafraîchir » : le bandeau rouge dit « Service indisponible sur le
+   Mac. » et son remède, sans adresse, sans JSON et sans code HTTP (le détail reste
+   sur le Mac, dans la fenêtre Mémoire) ; « Réessayer » repasse au sommaire dès que
+   la pile répond de nouveau. La liste et la recherche ne disent jamais « serveur
+   mémoire trop ancien » : cette cause n'existe que dans le graphe.
 6. **Aucun projet ouvert** — fermer le projet côté Mac puis « Rafraîchir » : la carte
    dit « Aucun projet ouvert », sans lire la mémoire.
 7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau de connexion
-   s'affiche, et aucune cause mémoire n'est inventée.
+   s'affiche ; une lecture qui échoue faute de réseau dit « Mac injoignable. » et
+   son remède, sur un bandeau orange avec « Réessayer ». Aucune cause mémoire n'est
+   inventée.
 8. **Le graphe** — toucher « Graphe » : le canevas montre les nœuds-souvenirs, les
    nœuds-étiquettes, les arêtes de proximité (trait plein gris) et les liens
    manuels (trait discontinu accentué) ; pincer pour zoomer, glisser pour déplacer,
@@ -2624,7 +2650,9 @@ Recette PAS À PAS (chacun des gestes donne l'attendu observable et le mot exact
 7. **État dégradé** — couper le Mac (ou l'interrupteur du service d'API) : la
    section passe au bandeau `attention` portant l'état de la connexion et son
    affichage cesse d'avancer ; un échec de relevé affiche un bandeau `danger`
-   portant le message servi et un bouton « Réessayer ».
+   portant le message TRADUIT de la cause (« Service indisponible sur le Mac. » puis
+   son remède — voir « Erreurs du Mac »), sans URL, sans JSON et sans code HTTP, et
+   un bouton « Réessayer » qui relance le relevé.
 
 Recette OUTILLÉE : le test Swift gated `iosStatistiquesRecipe`
 (`omp-console/Tests/OMPConsoleTests/IOSStatistiquesRecipeTests.swift`) exerce

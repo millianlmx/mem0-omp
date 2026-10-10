@@ -24,15 +24,6 @@ enum IOSMemoryText {
     /// l'app s'écarte du noyau.
     static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
-    /// Le Mac n'a pas répondu : c'est l'état du CLIENT, jamais une cause mémoire.
-    static let macUnreachable = "Le Mac n'a pas répondu."
-
-    /// Le bandeau de l'indisponibilité mémoire : le titre partagé, puis le détail
-    /// relayé par le Mac (adresse sondée et dernier message d'erreur).
-    static func unavailable(detail: String) -> String {
-        MemoryText.unavailableTitle + "\n" + detail
-    }
-
     /// La ligne de troncature du sommaire : ce qui est montré, puis le total servi.
     static func truncated(shown: Int, total: Int) -> String {
         "\(ConsoleFormat.count(shown, "souvenir", "souvenirs")) sur "
