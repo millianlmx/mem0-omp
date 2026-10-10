@@ -72,6 +72,12 @@ public enum StatsPresentation {
     /// L'état vide d'un projet affiché sans aucune feature listée (S-4).
     public static let empty = "Aucune donnée pour ce projet"
 
+    /// Le chargement de l'écran Statistiques, tant que les données ne sont pas
+    /// arrivées (B-2 de statistiques-etat-vide-et-non-defilables) : les deux coques
+    /// le montrent mot pour mot. Celui de l'Accueil et des Pipelines reste
+    /// `KanbanBoardState.loadingText`.
+    public static let loading = "Chargement des statistiques…"
+
     /// Les grandeurs d'une ligne de statistiques : les mots que les DEUX coques
     /// affichent (l'app iOS en fait les libellés de ses cartes, macOS ses tuiles
     /// et ses colonnes). Une seule déclaration par mot, comme `noProject` : la

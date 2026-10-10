@@ -15,12 +15,13 @@ struct LaunchDraft: Equatable {
     let name: String
 }
 
-/// La surface que l'écran doit montrer, décidée par l'état du client et l'état de
-/// la conduite (S-7, S-11).
+/// La surface que l'écran doit montrer, décidée par le statut de connexion
+/// présenté et l'état de la conduite (S-7, S-11 ; etats-non-connecte-heterogenes-ios, S-4).
 enum ProjectSurface: Equatable {
-    /// Client hors `.connected` : bandeau `attention`, gestes inactifs.
-    case degraded(String)
-    /// Client connecté, aucune conduite vive.
+    /// Mac non connecté et aucune conduite reçue : le composant d'état de
+    /// connexion partagé, seul, à la place de l'écran.
+    case unavailable(IOSConnectionStatus)
+    /// Aucune conduite vive (connecté, ou conduite reçue conservée hors connexion).
     case empty
     /// Conduite en démarrage ou en arrêt.
     case starting
@@ -67,9 +68,11 @@ final class IOSProjectModel: ObservableObject {
         return false
     }
 
-    /// La surface choisie pour un état de client et un état de conduite (S-7, S-11).
-    static func surface(state: ClientState, conduiteState: String?) -> ProjectSurface {
-        guard gesturesEnabled(state) else { return .degraded(ConnectionText.state(state)) }
+    /// La surface choisie pour un statut de connexion et un état de conduite (S-7,
+    /// S-11). Une conduite reçue (`conduiteState != nil`) est conservée hors
+    /// connexion : sa surface reste calculée sur elle, sous le bandeau (S-4).
+    static func surface(connection: IOSConnectionStatus, conduiteState: String?) -> ProjectSurface {
+        if connection != .connected && conduiteState == nil { return .unavailable(connection) }
         switch ProjectConduiteState(rawValue: conduiteState ?? "") {
         case .starting, .closing: return .starting
         case .live: return .live
@@ -90,6 +93,12 @@ final class IOSProjectModel: ObservableObject {
         }
     }
 
+    /// Une erreur conservée (geste, relevé des PR) n'est montrée qu'à `.connected` :
+    /// hors connexion, le bandeau de connexion est le seul bandeau d'état (S-4).
+    static func shownFailure(_ failure: String?, connection: IOSConnectionStatus) -> String? {
+        connection == .connected ? failure : nil
+    }
+
     // MARK: - Faits dérivés du client
 
     var repoKey: String? { client.conduite?.repoKey }
@@ -97,7 +106,9 @@ final class IOSProjectModel: ObservableObject {
     var planSections: [ProjectPlanSection] { project.map(projectPlanSections(of:)) ?? [] }
     var pendingDialog: RpcDialogRequest? { client.conduite?.dialogs.first }
     var waitingCount: Int { client.conduite?.dialogs.count ?? 0 }
-    var surface: ProjectSurface { Self.surface(state: client.state, conduiteState: client.conduite?.state) }
+    /// Le statut de connexion présenté par l'écran (S-1).
+    var connection: IOSConnectionStatus { IOSConnectionStatus.of(client) }
+    var surface: ProjectSurface { Self.surface(connection: connection, conduiteState: client.conduite?.state) }
     var isConduiteLive: Bool {
         (ProjectConduiteState(rawValue: client.conduite?.state ?? "") ?? .none).isLive
     }

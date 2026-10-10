@@ -22,7 +22,8 @@ struct IOSHomeTests {
         snapshot: HomeParity.snapshot,
         nowMs: 1_700_000_000_000,
         stateDir: "",
-        isAlive: .transported(HomeParity.snapshot)
+        isAlive: .transported(HomeParity.snapshot),
+        prFacts: [:]
     )
 
     private static var dashboard: HomeDashboard {
@@ -56,32 +57,46 @@ struct IOSHomeTests {
 
     private static let omps: [OmpStatus] = [.missing, ompAvailable]
 
-    // MARK: - AC-9 : priorité de la machine à états
+    // MARK: - Priorité de la machine à états
 
-    @Test("ios-accueil/AC-9 : hors .connected, l'Accueil est dégradé quelle que soit l'ardoise")
+    /// Les sept statuts présentés : connecté, en cours et les cinq causes.
+    private static let connections: [IOSConnectionStatus] = [
+        .connected, .connecting,
+        .disconnected(.unpaired), .disconnected(.refused), .disconnected(.unreachable),
+        .disconnected(.updateApp), .disconnected(.updateMac),
+    ]
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : hors .connected et sans ardoise, l'Accueil est indisponible ; avec ardoise, il garde ses données")
     func resolvePriority() {
         var reached: Set<String> = []
+        // Chaque état du client se présente par l'un de ces sept statuts.
         for state in Self.clientStates {
+            for failed in [false, true] {
+                #expect(Self.connections.contains(IOSConnectionStatus.resolve(state, attemptFollowsFailure: failed)))
+            }
+        }
+        for connection in Self.connections {
             for board in Self.boards {
                 for omp in Self.omps {
-                    let resolved = IOSHomeState.resolve(state: state, board: board, omp: omp)
-                    if case .connected = state {
-                        // EXACTEMENT HomePresentation.state(omp:board:), mappé.
-                        switch HomePresentation.state(omp: omp, board: board) {
-                        case .ompMissing: #expect(resolved == .macMissingOMP)
-                        case .loading: #expect(resolved == .loading)
-                        case .firstRun: #expect(resolved == .firstRun)
-                        case .dashboard(let dashboard): #expect(resolved == .dashboard(dashboard))
-                        }
-                        reached.insert(String(describing: resolved))
-                    } else {
-                        #expect(resolved == .disconnected(state), "\(state) / \(board)")
-                        #expect(resolved != .dashboard(Self.dashboard), "aucun tableau de bord hors connexion")
+                    let resolved = IOSHomeState.resolve(connection: connection, board: board, omp: omp)
+                    if connection != .connected, board == .loading {
+                        #expect(resolved == .unavailable(connection), "\(connection) / \(board)")
+                        continue
                     }
+                    // EXACTEMENT HomePresentation.state(omp:board:), mappé — y compris
+                    // hors connexion, sur l'ardoise conservée.
+                    switch HomePresentation.state(omp: omp, board: board) {
+                    case .ompMissing: #expect(resolved == .macMissingOMP)
+                    case .loading: #expect(resolved == .loading)
+                    case .firstRun: #expect(resolved == .firstRun)
+                    case .dashboard(let dashboard): #expect(resolved == .dashboard(dashboard))
+                    }
+                    if connection == .connected { reached.insert(String(describing: resolved)) }
+                    if connection != .connected { #expect(resolved != .loading, "jamais « Chargement » hors connexion") }
                 }
             }
         }
-        // Les cinq états de S-10 sont atteints par la table.
+        // Les quatre états connectés de S-10 sont atteints par la table.
         #expect(reached.count == 4, "OMP absent, chargement, premiers pas, tableau de bord")
     }
 
@@ -229,7 +244,43 @@ struct IOSHomeTests {
         #expect(IOSHomeContent.deliveredLink(withoutPR) == nil)
     }
 
+    @Test("pipelines-livrees-statut-pr-faux-et-doub/AC-1 : « Livrées récemment » porte l'état réel de la PR, la même dérivation que macOS")
+    func deliveredReadsThePullRequestState() {
+        let nowMs: Double = 1_700_000_000_000
+        let dayMs: Double = 86_400_000
+        func delivered(_ facts: [PullRequestFact]) -> [KanbanCard] {
+            let state = KanbanBoardState.derive(
+                snapshot: HomeParity.snapshot,
+                nowMs: nowMs,
+                stateDir: "",
+                isAlive: .transported(HomeParity.snapshot),
+                prFacts: PullRequestFacts.index(facts)
+            )
+            return state.kanbanBoard.map { HomePresentation.dashboard($0).delivered } ?? []
+        }
+        let urls = PullRequestFacts.urls(in: HomeParity.snapshot)
+        #expect(urls.count == 2)
+        // AC-4 : aucun fait reçu ⇒ « PR créée », jamais « PR ouverte ».
+        #expect(delivered([]).map { ConsoleStatus.of(card: $0).text } == ["PR créée", "PR créée"])
+        // AC-1 / AC-3 : fusionnée hier et ouverte.
+        let merged = PullRequestFact(url: urls[0], state: .merged, closedAtMs: nowMs - dayMs)
+        let open = PullRequestFact(url: urls[1], state: .open, closedAtMs: nil)
+        let fresh = delivered([merged, open])
+        #expect(Set(fresh.map { ConsoleStatus.of(card: $0).text }) == ["PR fusionnée", "PR ouverte"])
+        // AC-8 : fusionnée il y a 8 jours ⇒ hors de « Livrées récemment ».
+        let old = PullRequestFact(url: urls[0], state: .merged, closedAtMs: nowMs - 8 * dayMs)
+        #expect(delivered([old, open]).map(\.prUrl) == [urls[1]])
+    }
+
     // MARK: - AC-14 : le lien « Tout afficher »
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-9 : seul « Voir dans Pipelines » reste tapable hors connexion à l'Accueil")
+    func attentionNeedsMacExceptOpenInPipelines() {
+        #expect(IOSHomeContent.attentionNeedsMac(.answer))
+        #expect(IOSHomeContent.attentionNeedsMac(.validate))
+        #expect(IOSHomeContent.attentionNeedsMac(.accept))
+        #expect(!IOSHomeContent.attentionNeedsMac(.open))
+    }
 
     @Test("ios-accueil/AC-14 : le lien Tout afficher sélectionne la section Pipelines")
     func allPipelinesSection() {
@@ -250,17 +301,17 @@ struct IOSHomeTests {
     @Test("ios-accueil/AC-16 : OMP absent n'est conclu que sur réponse du Mac")
     func macMissingRequiresComponents() {
         #expect(
-            IOSHomeState.resolve(state: .connected(endpoint: Self.endpoint), board: Self.board, omp: .missing)
+            IOSHomeState.resolve(connection: .connected, board: Self.board, omp: .missing)
                 == .macMissingOMP
         )
         // La priorité de `.ompMissing` sur `.loading` (parité HomePresentation).
         #expect(
-            IOSHomeState.resolve(state: .connected(endpoint: Self.endpoint), board: .loading, omp: .missing)
+            IOSHomeState.resolve(connection: .connected, board: .loading, omp: .missing)
                 == .macMissingOMP
         )
         // OMP disponible + magasin vide ⇒ premiers pas, jamais « OMP absent ».
         #expect(
-            IOSHomeState.resolve(state: .connected(endpoint: Self.endpoint), board: .storeEmpty(dir: "/tmp"), omp: Self.ompAvailable)
+            IOSHomeState.resolve(connection: .connected, board: .storeEmpty(dir: "/tmp"), omp: Self.ompAvailable)
                 == .firstRun
         )
     }
@@ -270,7 +321,7 @@ struct IOSHomeTests {
     @Test("ios-accueil/AC-17 : avant le premier instantané, l'Accueil est en chargement")
     func loadingBeforeFirstSnapshot() {
         #expect(
-            IOSHomeState.resolve(state: .connected(endpoint: Self.endpoint), board: .loading, omp: Self.ompAvailable)
+            IOSHomeState.resolve(connection: .connected, board: .loading, omp: Self.ompAvailable)
                 == .loading
         )
         // Le crochet de recette force un état depuis la fixture partagée.
@@ -283,6 +334,12 @@ struct IOSHomeTests {
         #expect(IOSHomeRecipe.firstRun.homeState == .firstRun)
         #expect(IOSHomeRecipe.ompMissing.homeState == .macMissingOMP)
         #expect(IOSHomeRecipe.resolve(["-home.recipe", "degraded"]) == .degraded)
+        // La recette dégradée garde l'ardoise de la fixture sous le bandeau « non appairé ».
+        if case .dashboard = IOSHomeRecipe.degraded.homeState {} else {
+            Issue.record("la recette .degraded ne garde pas le tableau de bord")
+        }
+        #expect(IOSHomeRecipe.degraded.connection == .disconnected(.unpaired))
+        #expect(IOSHomeRecipe.dashboard.connection == .connected)
         #expect(IOSHomeRecipe.resolve(["-section", "home"]) == nil)
     }
 
@@ -290,9 +347,8 @@ struct IOSHomeTests {
 
     @Test("ios-accueil/AC-2 : l'état suit l'ardoise publiée sans geste de l'utilisateur")
     func liveUpdates() {
-        let connected = ClientState.connected(endpoint: Self.endpoint)
-        #expect(IOSHomeState.resolve(state: connected, board: .loading, omp: Self.ompAvailable) == .loading)
-        let arrived = IOSHomeState.resolve(state: connected, board: Self.board, omp: Self.ompAvailable)
+        #expect(IOSHomeState.resolve(connection: .connected, board: .loading, omp: Self.ompAvailable) == .loading)
+        let arrived = IOSHomeState.resolve(connection: .connected, board: Self.board, omp: Self.ompAvailable)
         #expect(arrived != .loading)
         if case .dashboard(let dashboard) = arrived {
             #expect(dashboard.attention.count == 3)

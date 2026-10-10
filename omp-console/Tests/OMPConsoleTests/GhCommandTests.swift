@@ -11,13 +11,14 @@ import Testing
 /// Tous les `argv` que la fonctionnalité sait produire : c'est la liste COMPLÈTE.
 private let allGhCommands: [[String]] = [
     GhCommand.prView(url: "https://github.com/proprietaire/depot/pull/45"),
+    GhCommand.prState(url: "https://github.com/proprietaire/depot/pull/45"),
     GhCommand.prChecks(url: "https://github.com/proprietaire/depot/pull/45"),
     GhCommand.prMerge(
         url: "https://github.com/proprietaire/depot/pull/45", title: "t", body: "b", headOid: "abc"
     ),
 ]
 
-/// L'invariant de `--` (S-2), vérifié sur les trois commandes : l'URL est le
+/// L'invariant de `--` (S-2), vérifié sur chaque commande : l'URL est le
 /// DERNIER argument, immédiatement précédé du seul `--`, et aucune option ne suit
 /// le terminateur.
 private func expectOptionTerminator(_ argv: [String], url: String) {
@@ -32,6 +33,12 @@ private func expectOptionTerminator(_ argv: [String], url: String) {
 func viewCommandIsExact() {
     let url = "https://github.com/proprietaire/depot/pull/45"
     #expect(GhCommand.prView(url: url) == ["pr", "view", "--json", "title,headRefOid,body", "--", url])
+}
+
+@Test("pipelines-livrees-statut-pr-faux-et-doub/AC-1 : l'état d'une PR est lu par `gh pr view --json state,mergedAt,closedAt -- <url>`")
+func stateCommandIsExact() {
+    let url = "https://github.com/proprietaire/depot/pull/45"
+    #expect(GhCommand.prState(url: url) == ["pr", "view", "--json", "state,mergedAt,closedAt", "--", url])
 }
 
 @Test("suivi-pr-ci/AC-1 : les statuts sont lus par `gh pr checks --json … -- <url>`")
@@ -59,10 +66,11 @@ func mergeCommandIsExact() {
     }
 }
 
-@Test("chemins-du-magasin-non-confines/AC-3 : les trois argv placent l'URL en positionnel APRÈS `--`")
+@Test("chemins-du-magasin-non-confines/AC-3 : chaque argv place l'URL en positionnel APRÈS `--`")
 func optionTerminatorPrecedesURL() {
     let url = "https://github.com/proprietaire/depot/pull/45"
     expectOptionTerminator(GhCommand.prView(url: url), url: url)
+    expectOptionTerminator(GhCommand.prState(url: url), url: url)
     expectOptionTerminator(GhCommand.prChecks(url: url), url: url)
     expectOptionTerminator(
         GhCommand.prMerge(url: url, title: "t", body: "b", headOid: "abc"), url: url

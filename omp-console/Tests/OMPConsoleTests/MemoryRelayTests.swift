@@ -3,7 +3,7 @@
 // relayée avec sa cause, et l'absence de projet ne lit RIEN.
 //
 // Le même `ScriptedMemoryService` pilote les deux côtés (le modèle de la coque et
-// la route) : c'est ce qui rend comparable ce qui sort par `GET /v1/memory`.
+// la route) : c'est ce qui rend comparable ce qui sort par `GET /v1/memory/page`.
 
 import ConsoleCore
 import Foundation
@@ -46,14 +46,15 @@ struct MemoryRelayTests {
         }
 
         // (2) La route, portée explicite (aucune résolution locale).
-        let reply = try await stack.call("GET", "/v1/memory?scope=projet", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/page?scope=projet", token: token)
         #expect(reply.status == 200)
         let page = try reply.json(RemoteMemoryPagePayload.self)
 
         #expect(page.scope == scope)
         #expect(page.total == total)
         #expect(page.total == 4)
-        #expect(page.truncated == false)
+        #expect(page.offset == 0)
+        #expect(page.nextOffset == nil)
         // Mêmes identifiants, MÊME ORDRE, mêmes textes.
         #expect(page.rows.map(\.id) == shellRows.map(\.id))
         #expect(page.rows.map(\.id) == ["m1", "m2", "m3", "m4"])
@@ -73,9 +74,10 @@ struct MemoryRelayTests {
 
     @Test("ios-memoire/AC-1 : une charge au-delà de la borne est tronquée honnêtement, la TÊTE conservée")
     func testOversizedSummaryIsTruncatedKeepingTheHead() async throws {
-        // 1200 lignes de 2000 octets : ≈ 2,4 Mio, au-delà de la borne de corps.
-        let text = String(repeating: "a", count: 2000)
-        let rows = (0..<1200).map { index in
+        // 200 lignes de 30 000 octets : la tranche par défaut (100 lignes) pèse
+        // ≈ 3 Mio, au-delà de la borne de corps de 2 Mio.
+        let text = String(repeating: "a", count: 30_000)
+        let rows = (0..<200).map { index in
             memoryRow(id: "m\(index)", text: text, scope: "projet")
         }
         let service = ScriptedMemoryService(page: .success(MemoryPage(total: rows.count, rows: rows)))
@@ -83,12 +85,14 @@ struct MemoryRelayTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        let reply = try await stack.call("GET", "/v1/memory?scope=projet", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/page?scope=projet", token: token)
         #expect(reply.status == 200)
         let page = try reply.json(RemoteMemoryPagePayload.self)
-        #expect(page.truncated == true)
+        #expect(page.offset == 0)
+        #expect(page.rows.count < RemoteLimits.memoryPageSize)
         #expect(page.rows.count < page.total)
-        #expect(page.rows.count < rows.count)
+        // La suite est annoncée juste après la dernière ligne servie.
+        #expect(page.nextOffset == page.rows.count)
         // La tête (les plus récents, l'ordre du service) est conservée.
         #expect(page.rows.first?.id == "m0")
         #expect(page.rows.last?.id != rows.last?.id)
@@ -140,7 +144,7 @@ struct MemoryRelayTests {
             defer { stack.stop() }
             let token = try await stack.pair()
 
-            for path in ["/v1/memory?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
+            for path in ["/v1/memory/page?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
                 let reply = try await stack.call("GET", path, token: token)
                 #expect(reply.status == 503)
                 #expect(reply.errorCode == "unavailable")
@@ -174,13 +178,14 @@ struct MemoryRelayTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        let reply = try await stack.call("GET", "/v1/memory", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/page", token: token)
         #expect(reply.status == 200)
         let page = try reply.json(RemoteMemoryPagePayload.self)
         #expect(page.scope == nil)
         #expect(page.total == 0)
         #expect(page.rows.isEmpty)
-        #expect(page.truncated == false)
+        #expect(page.offset == 0)
+        #expect(page.nextOffset == nil)
         // AUCUN appel au service : ni `all`, ni `search`, ni `health`.
         #expect(service.allScopes.isEmpty)
         #expect(service.searches.isEmpty)
@@ -211,7 +216,7 @@ struct MemoryRelayTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        let reply = try await stack.call("GET", "/v1/memory?scope=autre-projet", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/page?scope=autre-projet", token: token)
         #expect(reply.status == 200)
         let page = try reply.json(RemoteMemoryPagePayload.self)
         #expect(page.scope == "autre-projet")
@@ -229,13 +234,14 @@ struct MemoryRelayTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        let limited = try await stack.call("GET", "/v1/memory?scope=projet&limit=2", token: token)
+        let limited = try await stack.call("GET", "/v1/memory/page?scope=projet&limit=2", token: token)
         #expect(limited.status == 200)
         let page = try limited.json(RemoteMemoryPagePayload.self)
         #expect(page.total == 5)
         #expect(page.rows.map(\.id) == ["m0", "m1"])
-        #expect(page.truncated == true)
-        #expect(RemoteLimits.memoryRows == 2000)
+        #expect(page.rows.count == 2)
+        #expect(page.nextOffset == 2)
+        #expect(RemoteLimits.memoryPageSize == 100)
     }
 
     @Test("ios-memoire/AC-3 : une requête blanche est refusée sans aucune lecture")
@@ -262,7 +268,7 @@ struct MemoryRelayTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/graph?scope=projet", token: token)
         #expect(reply.status == 503)
         #expect(reply.errorCode == "outdated_service")
         #expect(reply.errorMessage == MemoryText.unavailableDetail(
@@ -278,7 +284,7 @@ struct MemoryRelayTests {
         defer { stack.stop() }
         let token = try await stack.pair()
 
-        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        let reply = try await stack.call("GET", "/v1/memory/graph?scope=projet", token: token)
         #expect(reply.status == 503)
         #expect(reply.errorCode == "outdated_service")
         #expect(reply.errorMessage == MemoryText.unavailableDetail(
@@ -300,7 +306,7 @@ struct MemoryRelayTests {
             defer { stack.stop() }
             let token = try await stack.pair()
 
-            let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+            let reply = try await stack.call("GET", "/v1/memory/graph?scope=projet", token: token)
             #expect(reply.status == 503)
             #expect(reply.errorCode == "unavailable")
             #expect(reply.errorMessage == MemoryText.unavailableDetail(
@@ -316,7 +322,7 @@ struct MemoryRelayTests {
             defer { stack.stop() }
             let token = try await stack.pair()
 
-            let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+            let reply = try await stack.call("GET", "/v1/memory/graph?scope=projet", token: token)
             #expect(reply.status == 503)
             #expect(reply.errorCode == "unavailable")
         }
@@ -332,7 +338,7 @@ struct MemoryRelayTests {
             defer { stack.stop() }
             let token = try await stack.pair()
 
-            for path in ["/v1/memory?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
+            for path in ["/v1/memory/page?scope=projet", "/v1/memory/search?scope=projet&q=souvenir"] {
                 let reply = try await stack.call("GET", path, token: token)
                 #expect(reply.status == 503)
                 #expect(reply.errorCode == "unavailable")

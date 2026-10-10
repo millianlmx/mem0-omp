@@ -27,7 +27,7 @@ mem0-omp/                              racine = marketplace OMP
 │       panelHost.ts                   le panneau /pipelines et la vue de session
 ├── omp-console/                       la coque macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
-├── mem0-stack/                        mem0 + Qdrant, en local
+├── mem0-stack/                        mem0 + Qdrant, la voie MANUELLE (intacte)
 │   └── mem0-http/                     l'API HTTP et sa config mem0
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
@@ -51,9 +51,15 @@ bundle `.app` et ouvrir l'app — il documente aussi l'app iOS, dont le projet X
 vit sous `omp-console/ios/`. C'est l'app unique : elle installe et démarre
 elle-même ses composants (son `omp` 18.6.0, son podman 6.1.3, sa machine podman
 `omp-console` et les conteneurs `omp-console-qdrant` / `omp-console-mem0-http`),
-migre une seule fois la base mémoire existante — l'ancienne pile est arrêtée avant
-de prendre ses ports — et sa pile survit à la fermeture de l'app. `mem0-stack/`
-(ci-dessus) reste la voie MANUELLE, que l'app ne modifie pas.
+qui sont les seuls propriétaires de `127.0.0.1:8321` et `127.0.0.1:6333`. Elle
+migre une seule fois la base mémoire existante : elle en découvre la source, la
+copie quand elle est quiescente et importe son `.env` — l'arrêt des conteneurs de
+l'ancienne pile (`mem0-qdrant` / `mem0-http`) n'a lieu que sur action explicite de
+l'utilisateur, jamais automatiquement. Sa pile survit à la fermeture de l'app.
+`GET /health` garde la même adresse et le plugin mémoire garde son contrat
+(`health.ok`) : la pile de l'app y ajoute seulement un champ **additif**
+`installation` (le jeton de l'installation). `mem0-stack/` (ci-dessus) reste la
+voie MANUELLE, intacte, que l'app ne modifie pas.
 
 ## Ce que ça fait
 
@@ -1075,6 +1081,10 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `OMLX_EMBED_MODEL` | `bge-m3` | modèle d'embedding (dans `.env`) |
 
 Le port est bindé sur `127.0.0.1` : accessible depuis le Mac, pas depuis le réseau.
+Quand c'est la pile de l'app qui sert cette adresse, `GET /health` porte en plus un
+champ **additif** `installation` (le jeton d'installation) : le protocole et les
+autres champs sont inchangés, le contrat du plugin mémoire (`health.ok` seul) ne
+change pas, et la voie manuelle `mem0-stack/` garde son `/health` identique.
 
 ## CI et release
 

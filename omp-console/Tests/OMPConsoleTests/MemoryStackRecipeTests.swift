@@ -77,4 +77,29 @@ func recetteReelleDeLaPile() async throws {
     let healthy = await stack.health()
     print("[recette] /health   : \(healthy ? "ok" : "indisponible")")
     #expect(healthy, "GET http://127.0.0.1:8321/health ne rend pas {\"ok\":true}")
+
+    // S-1 (AC-3), sur le VRAI processus : la ligne de commande de `gvproxy` doit
+    // porter `<supportRoot>/tmp/podman/gvproxy.pid` — plus aucun artefact dans le
+    // `$TMPDIR` système partagé avec la machine podman système.
+    //
+    // Prérequis MANUEL : la machine doit avoir été démarrée par CETTE version de
+    // l'app (un `gvproxy` lancé avant le correctif porte encore l'ancien chemin).
+    // Pour cela : `machine stop omp-console` puis relancer la recette.
+    let ps = try await runner(
+        URL(fileURLWithPath: "/bin/ps"),
+        ["-eo", "pid,command"],
+        environment,
+        30
+    )
+    let gvproxyLines = ps.stdout
+        .split(separator: "\n")
+        .map(String.init)
+        .filter { $0.contains("gvproxy") && $0.contains("-pid-file") }
+    if let line = gvproxyLines.first {
+        print("[recette] gvproxy  : \(line)")
+        #expect(line.contains("\(paths.tmpDir.path)/podman/gvproxy.pid"))
+        #expect(line.contains(paths.tmpDir.path))
+    } else {
+        Issue.record("gvproxy de l'app introuvable dans `ps -eo pid,command`")
+    }
 }

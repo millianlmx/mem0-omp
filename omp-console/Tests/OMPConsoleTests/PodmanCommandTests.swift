@@ -90,7 +90,7 @@ func qdrantRunIsExact() {
     )
 }
 
-@Test("all-in-one-app/AC-1 : le `run` de mem0-http porte les dix variables de `StackConfig` et son hôte Qdrant")
+@Test("bug-embedded-podman-machine/AC-4 : le `run` de mem0-http porte les dix variables de `StackConfig`, son jeton juste après, et son hôte Qdrant")
 func mem0RunIsExact() {
     let config = StackConfig(
         qdrantApiKey: "key",
@@ -106,7 +106,8 @@ func mem0RunIsExact() {
         image: "omp-console-mem0-http:1",
         network: "omp-console-stack",
         qdrantHost: "omp-console-qdrant",
-        config: config
+        config: config,
+        installationToken: "jeton-d-installation"
     )
     #expect(
         arguments == [
@@ -124,6 +125,7 @@ func mem0RunIsExact() {
             "-e", "OMLX_EMBED_MODEL=bge-m3",
             "-e", "EMBEDDING_DIMS=1024",
             "-e", "MEM0_HTTP_TOKEN=mem0-token",
+            "-e", "OMP_INSTALLATION_TOKEN=jeton-d-installation",
             "-e", "PYTHONUNBUFFERED=1",
             "omp-console-mem0-http:1",
         ]
@@ -144,7 +146,8 @@ func everyPublishedPortBindsLoopback() {
         image: "omp-console-mem0-http:1",
         network: "omp-console-stack",
         qdrantHost: "omp-console-qdrant",
-        config: .defaults
+        config: .defaults,
+        installationToken: "jeton"
     )
     for arguments in [qdrant, mem0] {
         var index = 0
@@ -172,15 +175,49 @@ func stackNamesAreTheOnesOfS2() {
 
 // MARK: - Isolation et configuration
 
-@Test("all-in-one-app/AC-1 : chaque invocation podman reçoit les XDG app-privés, sous la racine de support")
+@Test("bug-embedded-podman-machine/AC-3 : chaque invocation podman reçoit les XDG app-privés ET le TMPDIR privé, sous la racine de support")
 func environmentCarriesPrivateXDG() {
     let environment = PodmanCommand.environment(
-        base: ["PATH": "/usr/bin", "XDG_CONFIG_HOME": "/home/other/.config"],
+        base: ["PATH": "/usr/bin", "XDG_CONFIG_HOME": "/home/other/.config", "TMPDIR": "/var/folders/autre/T"],
         paths: paths
     )
     #expect(environment["PATH"] == "/usr/bin")
     #expect(environment["XDG_CONFIG_HOME"] == "/tmp/omp-br2-test/config")
     #expect(environment["XDG_DATA_HOME"] == "/tmp/omp-br2-test/data")
+    // Le TMPDIR du process est ÉCRASÉ : c'est lui qui déplace gvproxy.pid,
+    // gvproxy.log et les sockets hors du dossier partagé `$TMPDIR/podman/`.
+    #expect(environment["TMPDIR"] == "/tmp/omp-br2-test/tmp")
+}
+
+@Test("bug-embedded-podman-machine/AC-2 : `info` est la sonde d'API et la réparation est `machine stop` puis `machine start`")
+func machineApiCommandsAreExact() {
+    #expect(PodmanCommand.info() == ["info"])
+    #expect(PodmanCommand.machineStop("omp-console") == ["machine", "stop", "omp-console"])
+    #expect(PodmanCommand.machineStart("omp-console") == ["machine", "start", "omp-console"])
+}
+
+@Test("bug-embedded-podman-machine/AC-9 : le conteneur LECTEUR de l'union est temporaire, monté sur le staging, publié sur son propre port")
+func readerRunIsExact() {
+    let arguments = PodmanCommand.readerRun(
+        name: "omp-console-union",
+        image: "docker.io/qdrant/qdrant:v1.19.0",
+        network: "omp-console-stack",
+        storage: URL(fileURLWithPath: "/tmp/omp-br2-test/stack/union-staging/uuid/qdrant_storage", isDirectory: true),
+        hostPort: 6335,
+        apiKey: "key"
+    )
+    #expect(
+        arguments == [
+            "run", "-d",
+            "--rm",
+            "--name", "omp-console-union",
+            "--network", "omp-console-stack",
+            "-p", "127.0.0.1:6335:6333",
+            "-v", "/tmp/omp-br2-test/stack/union-staging/uuid/qdrant_storage:/qdrant/storage",
+            "-e", "QDRANT__SERVICE__API_KEY=key",
+            "docker.io/qdrant/qdrant:v1.19.0",
+        ]
+    )
 }
 
 @Test("all-in-one-app/AC-1 : le `containers.conf` app-privé porte `[engine] helper_binaries_dir`")

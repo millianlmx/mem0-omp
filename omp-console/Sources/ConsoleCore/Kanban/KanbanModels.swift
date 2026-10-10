@@ -1,4 +1,4 @@
-// Modèles de valeur du tableau Kanban (S-1 … S-5, S-11) : les onze colonnes, une
+// Modèles de valeur du tableau Kanban (S-1 … S-5, S-11) : les treize colonnes, une
 // carte, ses sources citables, ses marques, les anomalies du magasin et l'état
 // publié par le modèle.
 //
@@ -16,7 +16,7 @@ import Foundation
 
 // --- colonnes (S-1) ----------------------------------------------------------
 
-/// Les onze colonnes de l'ardoise, dans l'ordre de S-1 (parité avec
+/// Les treize colonnes de l'ardoise, dans l'ordre de S-1 (parité avec
 /// `/pipelines`). L'écran ne les montre plus une à une : il les regroupe en
 /// voies (`KanbanLane`), et l'ordre de déclaration ordonne les cartes DANS une
 /// voie.
@@ -28,7 +28,11 @@ public enum KanbanColumn: String, CaseIterable, Sendable {
     case enCours = "en-cours"
     case questionEnVol = "question-en-vol"
     case prOuverte = "pr-ouverte"
+    /// Une PR dont l'état GitHub est INCONNU (aucun fait lu) : jamais « ouverte »
+    /// par défaut.
+    case prCreee = "pr-creee"
     case fusionne = "fusionne"
+    case prFermee = "pr-fermee"
     case echec = "echec"
     case jalonSpecs = "jalon-specs"
     case jalonReview = "jalon-review"

@@ -71,13 +71,14 @@ final class RemoteRouter {
         .of("GET", "v1/components", "components"),
         .of("GET", "v1/journal", "journal"),
         .of("GET", "v1/cards/:id/contract", "card.contract"),
-        .of("GET", "v1/memory", "memory"),
+        .of("GET", "v1/memory/page", "memory.page"),
         .of("GET", "v1/memory/search", "memory.search"),
         .of("GET", "v1/memory/graph", "memory.graph"),
         .of("GET", "v1/stream", "stream"),
         .of("GET", "v1/repos", "repos"),
         .of("GET", "v1/conduite", "conduite.get"),
         .of("POST", "v1/pair", "pair"),
+        .of("DELETE", "v1/devices/self", "devices.forget"),
         .of("POST", "v1/cards/:id/answer", "card.answer"),
         .of("POST", "v1/cards/:id/reply", "card.reply"),
         .of("POST", "v1/cards/:id/text", "card.text"),
@@ -96,6 +97,7 @@ final class RemoteRouter {
         .of("POST", "v1/session/dialogs/:id", "hosted.dialog"),
         .of("GET", "v1/projects/:repoKey/pull-requests", "prs"),
         .of("POST", "v1/projects/:repoKey/pull-requests/:slug/merge", "prs.merge"),
+        .of("POST", "v1/pull-request-states/refresh", "prStates.refresh"),
     ]
 
     // MARK: - Entrée
@@ -187,8 +189,12 @@ final class RemoteRouter {
             return try json(reads.journal())
         case "card.contract":
             return try json(try reads.cardContract(cardId: parameters["id"] ?? ""))
-        case "memory":
-            return try json(await reads.memory(scope: request.query["scope"], limit: request.query["limit"]))
+        case "memory.page":
+            return try json(await reads.memoryPage(
+                scope: request.query["scope"],
+                offset: request.query["offset"],
+                limit: request.query["limit"]
+            ))
         case "memory.search":
             return try json(await reads.memorySearch(
                 query: request.query["q"],
@@ -209,6 +215,15 @@ final class RemoteRouter {
         // --- appairage --------------------------------------------------------
         case "pair":
             return try await pair(request)
+
+        // --- oubli de l'appareil porteur du jeton ---------------------------
+        // Route authentifiée : le garde a déjà refusé (401) un jeton absent,
+        // inconnu ou révoqué. Seul l'appareil du jeton est révoqué, par la
+        // révocation EXISTANTE du registre (jeton, fichier, trousseau, flux).
+        case "devices.forget":
+            guard let device else { return respond(.unauthorized) }
+            await registry.revoke(id: device.id)
+            return try json(RemoteAcceptedPayload(accepted: true))
 
         // --- gestes de carte --------------------------------------------------
         case "card.answer":
@@ -253,6 +268,8 @@ final class RemoteRouter {
                 slug: parameters["slug"] ?? "",
                 body: request.body
             ))
+        case "prStates.refresh":
+            return try json(actions.refreshPullRequestStates(), code: 202)
         default:
             return respond(.notFound("route inconnue"))
         }

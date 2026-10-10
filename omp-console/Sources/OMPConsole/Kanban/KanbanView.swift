@@ -1,7 +1,8 @@
 // La section Pipelines : les VOIES du tableau (`KanbanLane` — pas commencées, en
 // cours, à vous, livrées, arrêtées) sur toute la largeur, la feuille de détail
-// de la carte sélectionnée, et deux boutons de barre d'outils : « Activité »
-// (journal des gestes) et « n problèmes » (anomalies du magasin), chacun dans
+// de la carte sélectionnée, et trois boutons de barre d'outils : « Rafraîchir »
+// (relit l'état des PR sur GitHub, ⌘R), « Activité » (journal des gestes) et
+// « n problèmes » (anomalies du magasin), ces deux derniers chacun dans
 // une bulle. Le lancement d'une feature passe par la feuille « Nouvelle
 // feature » (barre d'outils, ⌘N) ; l'abonnement au magasin est tenu par la
 // racine de la fenêtre, que l'Accueil lit aussi.
@@ -65,6 +66,20 @@ struct KanbanView: ConsoleSectionView {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        // « Rafraîchir » (S-7) relit l'état des PR sur GitHub ; aucun message,
+        // le retour visible est le libellé des cartes. Désactivé pendant une
+        // relecture ; sans `gh`, l'action ne fait rien de visible.
+        ToolbarItem(placement: .primaryAction) {
+            Button {
+                model.refreshPullRequestStates()
+            } label: {
+                Label(KanbanText.refresh, systemImage: "arrow.clockwise")
+            }
+            .help(KanbanText.refreshHelp)
+            .keyboardShortcut("r", modifiers: .command)
+            .disabled(model.prRefreshing)
+            .accessibilityIdentifier("kanban.refresh")
+        }
         ToolbarItem(placement: .primaryAction) {
             Button {
                 actions.journalExpanded.toggle()

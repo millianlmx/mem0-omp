@@ -38,7 +38,9 @@ func statusIsAWordDoubledByATone() {
         .enCours: ConsoleStatus(text: "En cours", tone: .info),
         .questionEnVol: ConsoleStatus(text: "À vous", tone: .attention),
         .prOuverte: ConsoleStatus(text: "PR ouverte", tone: .success),
-        .fusionne: ConsoleStatus(text: "Fusionnée", tone: .success),
+        .prCreee: ConsoleStatus(text: "PR créée", tone: .neutral),
+        .fusionne: ConsoleStatus(text: "PR fusionnée", tone: .success),
+        .prFermee: ConsoleStatus(text: "PR fermée", tone: .neutral),
         .echec: ConsoleStatus(text: "Échec", tone: .danger),
         .jalonSpecs: ConsoleStatus(text: "Specs à valider", tone: .attention),
         .jalonReview: ConsoleStatus(text: "Revue à accepter", tone: .attention),
@@ -107,6 +109,35 @@ func dateTimeShowsTheWholeDate() throws {
     #expect(ConsoleFormat.dateTime(ms: 1_798_133_400_000, timeZone: paris) == "24 déc. 2026 à 18:30")
 }
 
+@Test("feuilles-ios-presentation-et-depots/AC-7 : un chemin sous le dossier personnel donné s'abrège en « ~ », jamais un préfixe homonyme")
+func pathAbbreviatesGivenHome() {
+    #expect(ConsoleFormat.path("/Users/x/a", home: "/Users/x") == "~/a")
+    #expect(ConsoleFormat.path("/Users/x/a", home: "/Users/x/") == "~/a")
+    #expect(ConsoleFormat.path("/Users/x", home: "/Users/x") == "~")
+    #expect(ConsoleFormat.path("/Users/xy/a", home: "/Users/x") == "/Users/xy/a")
+    #expect(ConsoleFormat.path("/Users/x/a", home: nil) == "/Users/x/a")
+    #expect(ConsoleFormat.path("/Users/x/a", home: "") == "/Users/x/a")
+    // La racine du projet reste prioritaire sur le dossier personnel.
+    #expect(ConsoleFormat.path("/Users/x/p/f", relativeTo: "/Users/x/p", home: "/Users/x") == "f")
+    // Sur macOS, le dossier local est celui de l'utilisateur, et la forme historique en dépend.
+    #expect(ConsoleFormat.localHome == NSHomeDirectory())
+    #expect(ConsoleFormat.path(NSHomeDirectory() + "/a") == ConsoleFormat.path(NSHomeDirectory() + "/a", home: NSHomeDirectory()))
+}
+
+@Test("ios-pipelines-cartes-homonymes : la date d'une carte se lit à la minute")
+func dateTimeShowsTheMinute() throws {
+    let paris = try #require(TimeZone(identifier: "Europe/Paris"))
+    let base = 1_791_549_120_000.0  // 2026-10-09 14:32 Europe/Paris
+    let first = ConsoleFormat.dateTime(ms: base, timeZone: paris)
+    #expect(first.contains("14:32"))
+    #expect(first.contains("2026"))
+    let next = ConsoleFormat.dateTime(ms: base + 60_000, timeZone: paris)
+    #expect(next.contains("14:33"))
+    #expect(next != first)
+    // Pas de secondes : vingt secondes de plus restent dans la même minute.
+    #expect(ConsoleFormat.dateTime(ms: base + 20_000, timeZone: paris) == first)
+}
+
 @Test("omp-console-redesign/S-14 : l'avancement d'une carte suit son étape et son issue")
 func progressFollowsTheStepAndTheOutcome() {
     func states(_ card: KanbanCard) -> [PipelineStepState] {
@@ -116,7 +147,9 @@ func progressFollowsTheStepAndTheOutcome() {
     #expect(states(vocabularyCard(.jalonSpecs, phase: .specs)) == [.done, .current, .upcoming, .upcoming, .upcoming])
     #expect(states(vocabularyCard(.jalonReview, phase: .review)) == [.done, .done, .done, .current, .upcoming])
     #expect(states(vocabularyCard(.prOuverte, phase: .release)) == [.done, .done, .done, .done, .current])
+    #expect(states(vocabularyCard(.prCreee, phase: .release)) == [.done, .done, .done, .done, .current])
     #expect(states(vocabularyCard(.fusionne, phase: .release)) == [.done, .done, .done, .done, .done])
+    #expect(states(vocabularyCard(.prFermee, phase: .release)) == [.done, .done, .done, .done, .upcoming])
     #expect(states(vocabularyCard(.echec, phase: .impl)) == [.done, .done, .failed, .upcoming, .upcoming])
     // Le pilote est mort, la feature vit : l'étape reste en cours, « Reprendre » la relance.
     let resumable = vocabularyCard(.echec, phase: .impl, action: KanbanCardAction(

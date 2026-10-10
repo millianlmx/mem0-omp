@@ -1,10 +1,13 @@
 // La feuille Contrat de l'Accueil iOS (S-14) : elle lit le contrat de la carte à
-// l'ouverture (aucun cache) et affiche chaque section requise VERBATIM, ou le
-// message d'une section absente, d'un fichier absent ou illisible.
+// l'ouverture (aucun cache) et rend chaque section requise en Markdown, bloc par
+// bloc, ou le message d'une section absente ou vide, d'un fichier absent ou
+// illisible.
 //
 // Le découpage vient de `IOSHomeContent.contract(...)` (fonctions partagées de
-// `ConsoleCore`) : mêmes sections, mêmes bornes que macOS. Aucune ligne
-// « Chemin », aucun rendu Markdown par blocs (périmètre borné de S-14).
+// `ConsoleCore`) : mêmes sections, mêmes bornes que macOS. Le corps d'une section
+// perd sa ligne « ## Titre » (`IOSHomeContent.contractBlocks`) : l'en-tête de la
+// feuille suffit. La barre dit « Contrat » en ligne ; le nom complet de la
+// feature est en tête du panneau, jamais tronqué. Aucune ligne « Chemin ».
 
 import ConsoleClient
 import ConsoleCore
@@ -21,6 +24,9 @@ struct HomeContractSheet: View {
 
     @State private var content: IOSContractContent?
     @State private var failure: String?
+    /// Les blocs du corps de chaque section PRÉSENTE, par titre : calculés une
+    /// fois, quand le contenu arrive. Un titre absent ⇔ section absente.
+    @State private var blocks: [String: [MarkdownBlock]] = [:]
 
     private var moment: ContractMoment? {
         ContractDocument.moment(for: card)
@@ -30,6 +36,11 @@ struct HomeContractSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    Text(verbatim: IOSHomeContent.contractSlug(card))
+                        .font(.title2.weight(.semibold))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityAddTraits(.isHeader)
+                        .accessibilityIdentifier(IOSHomeAccessibility.contractFeature)
                     if let moment {
                         Text(ContractText.subtitle(moment))
                             .font(.callout)
@@ -51,7 +62,8 @@ struct HomeContractSheet: View {
                 }
                 .iosPanel()
             }
-            .navigationTitle(ContractText.title(slug: IOSHomeContent.contractSlug(card)))
+            .navigationTitle(IOSHomeText.contractNavigationTitle)
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(ContractText.close) { dismiss() }
@@ -60,6 +72,7 @@ struct HomeContractSheet: View {
             }
             .accessibilityIdentifier(IOSHomeAccessibility.contractSheet)
         }
+        .iosPageSheet()
         .task { await load() }
     }
 
@@ -69,37 +82,68 @@ struct HomeContractSheet: View {
             switch content {
             case .sections(let sections):
                 ForEach(sections, id: \.title) { section in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(section.title).font(.headline)
-                        if let text = section.text {
-                            Text(verbatim: text).font(.body)
-                        } else {
-                            Text(ContractText.sectionMissing(title: section.title))
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                        }
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(section.title)
+                            .font(.title3.weight(.semibold))
+                            .accessibilityAddTraits(.isHeader)
+                        sectionBody(section)
                     }
                 }
             case .missing:
-                Text(ContractText.missingFile).font(.body)
+                Text(IOSHomeContent.inlineMarkdown(ContractText.missingFile)).font(.body)
             case .unreadable(let reason):
                 Text(ContractText.unreadable(reason: reason)).font(.body)
             }
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.contractBody)
+    }
+
+    /// Le corps d'une section : ses blocs Markdown, ou le message d'une section
+    /// vide ou absente.
+    @ViewBuilder
+    private func sectionBody(_ section: ContractSection) -> some View {
+        if let sectionBlocks = blocks[section.title] {
+            if sectionBlocks.isEmpty {
+                Text(IOSHomeText.contractSectionEmpty)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            } else {
+                IOSMarkdownView(blocks: sectionBlocks)
+            }
+        } else {
+            Text(IOSHomeText.contractSectionMissing(title: section.title))
+                .font(.body)
+                .foregroundStyle(.secondary)
+        }
     }
 
     private func load() async {
         guard let moment else { return }
         if let recipePayload {
-            content = IOSHomeContent.contract(with: recipePayload, moment: moment)
+            show(IOSHomeContent.contract(with: recipePayload, moment: moment))
             return
         }
         do {
             let payload = try await client.contract(cardId: card.id)
-            content = IOSHomeContent.contract(with: payload, moment: moment)
+            show(IOSHomeContent.contract(with: payload, moment: moment))
         } catch {
             failure = IOSHomeContent.failure(error)
         }
+    }
+
+    /// Pose le contenu ET ses blocs, découpés une seule fois par chargement.
+    private func show(_ loaded: IOSContractContent) {
+        if case .sections(let sections) = loaded {
+            blocks = Dictionary(
+                sections.compactMap { section in
+                    IOSHomeContent.contractBlocks(section).map { (section.title, $0) }
+                },
+                uniquingKeysWith: { _, last in last }
+            )
+        } else {
+            blocks = [:]
+        }
+        content = loaded
     }
 }

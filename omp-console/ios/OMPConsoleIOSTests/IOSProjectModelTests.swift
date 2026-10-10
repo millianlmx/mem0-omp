@@ -33,19 +33,52 @@ struct IOSProjectModelTests {
         }
     }
 
-    @Test("ios-projet/AC-11 : la surface suit l'état du client et l'état de la conduite")
+    @Test("ios-projet/AC-11 : la surface suit le statut de connexion et l'état de la conduite")
     func surfaceFollowsClientAndConduite() {
-        // Hors .connected : dégradé, portant le mot de ConnectionText.
-        for state in allStates where state != .connected(endpoint: endpoint) {
-            #expect(IOSProjectModel.surface(state: state, conduiteState: "live") == .degraded(ConnectionText.state(state)))
+        // Connecté : la surface suit l'état de la conduite.
+        #expect(IOSProjectModel.surface(connection: .connected, conduiteState: "live") == .live)
+        #expect(IOSProjectModel.surface(connection: .connected, conduiteState: "starting") == .starting)
+        #expect(IOSProjectModel.surface(connection: .connected, conduiteState: "closing") == .starting)
+        #expect(IOSProjectModel.surface(connection: .connected, conduiteState: "none") == .empty)
+        #expect(IOSProjectModel.surface(connection: .connected, conduiteState: "closed") == .empty)
+        #expect(IOSProjectModel.surface(connection: .connected, conduiteState: nil) == .empty)
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : pas connecté et aucune conduite reçue → le composant d'état de connexion")
+    func projectUnavailableWithoutConduite() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired),
+                       .disconnected(.refused), .disconnected(.updateApp), .disconnected(.updateMac)] {
+            #expect(IOSProjectModel.surface(connection: status, conduiteState: nil) == .unavailable(status))
         }
-        let connected = ClientState.connected(endpoint: endpoint)
-        #expect(IOSProjectModel.surface(state: connected, conduiteState: "live") == .live)
-        #expect(IOSProjectModel.surface(state: connected, conduiteState: "starting") == .starting)
-        #expect(IOSProjectModel.surface(state: connected, conduiteState: "closing") == .starting)
-        #expect(IOSProjectModel.surface(state: connected, conduiteState: "none") == .empty)
-        #expect(IOSProjectModel.surface(state: connected, conduiteState: "closed") == .empty)
-        #expect(IOSProjectModel.surface(state: connected, conduiteState: nil) == .empty)
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : la conduite reçue reste affichée hors connexion")
+    func projectKeepsConduiteOffline() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            #expect(IOSProjectModel.surface(connection: status, conduiteState: "live") == .live)
+            #expect(IOSProjectModel.surface(connection: status, conduiteState: "starting") == .starting)
+            #expect(IOSProjectModel.surface(connection: status, conduiteState: "none") == .empty)
+        }
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : hors connexion, aucune erreur conservée (geste, relevé des PR) sous le bandeau de connexion")
+    func projectHidesKeptFailuresOffline() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused),
+                       .disconnected(.unpaired), .disconnected(.updateApp), .disconnected(.updateMac)] {
+            #expect(IOSProjectModel.shownFailure("relevé des PR impossible", connection: status) == nil)
+        }
+        #expect(IOSProjectModel.shownFailure("relevé des PR impossible", connection: .connected) == "relevé des PR impossible")
+        #expect(IOSProjectModel.shownFailure(nil, connection: .connected) == nil)
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-9 : hors connexion, Retour dans le champ nom ne lance rien")
+    func launchCommitNeedsConnection() {
+        #expect(IOSProjectLaunchSheet.mayCommit(gesturesEnabled: true, selected: "repo", name: "demo", submitting: false))
+        #expect(!IOSProjectLaunchSheet.mayCommit(gesturesEnabled: false, selected: "repo", name: "demo", submitting: false))
+        // Conditions antérieures conservées.
+        #expect(!IOSProjectLaunchSheet.mayCommit(gesturesEnabled: true, selected: nil, name: "demo", submitting: false))
+        #expect(!IOSProjectLaunchSheet.mayCommit(gesturesEnabled: true, selected: "repo", name: "  ", submitting: false))
+        #expect(!IOSProjectLaunchSheet.mayCommit(gesturesEnabled: true, selected: "repo", name: "demo", submitting: true))
     }
 
     @Test("ios-projet/AC-2 : l'état du document suit la forme servie par la coque")

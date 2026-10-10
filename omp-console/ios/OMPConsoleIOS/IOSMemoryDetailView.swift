@@ -3,8 +3,8 @@
 // relative puis étiquettes), et les données techniques repliées sous « Détails
 // techniques ».
 //
-// Lecture seule : aucun bouton d'écriture, aucune copie. La fermeture est le geste
-// système de la feuille, qui n'a pas besoin d'un bouton.
+// Lecture seule : aucun bouton d'écriture, aucune copie. La fermeture : le bouton
+// « Fermer » de la barre, ou le geste système de la feuille.
 //
 // Les faits affichés sont des fonctions PURES (testables sans rendre la vue) : le
 // texte, la ligne de contexte, la portée et la pertinence.
@@ -36,27 +36,48 @@ struct IOSMemoryDetailView: View {
     }
 
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                Divider()
-                Text(verbatim: Self.text(row))
-                    .font(.body)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .foregroundStyle(isBlank ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                if !links.isEmpty {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    header
                     Divider()
-                    linksBlock
+                    Text(verbatim: Self.text(row))
+                        .font(.body)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .foregroundStyle(isBlank ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
+                    if !links.isEmpty {
+                        Divider()
+                        linksBlock
+                    }
+                    technicalDetails
                 }
-                technicalDetails
+                .padding(IOSMetrics.margin(sizeClass))
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(IOSMetrics.margin(sizeClass))
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier(IOSMemoryAccessibility.detail)
+            .navigationTitle(IOSMemoryText.detailTitle)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    // Forme 44 pt mesurée (D-4) : le bouton de barre par défaut n'a que 36 pt.
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text(ConnectionText.close)
+                            .padding(.horizontal, 8)
+                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier(IOSMemoryAccessibility.close)
+                }
+            }
         }
-        .accessibilityIdentifier(IOSMemoryAccessibility.detail)
+        .iosPageSheet()
     }
 
     // MARK: - Les liens (mode graphe, S-5)
@@ -107,6 +128,20 @@ struct IOSMemoryDetailView: View {
     /// La ligne de contexte : date relative puis étiquettes, segments absents omis.
     static func subtitle(_ row: RemoteMemoryRow, nowMs: Double) -> String {
         MemoryText.subtitle(updatedAt: row.updatedAt, tags: row.tags, nowMs: nowMs)
+    }
+
+    /// Les segments de la ligne de contexte, un par ligne aux tailles
+    /// d'accessibilité : date relative puis étiquettes, segments absents omis.
+    /// Joints par `MemoryText.separator`, ils redonnent `subtitle(_:nowMs:)`.
+    static func subtitleSegments(_ row: RemoteMemoryRow, nowMs: Double) -> [String] {
+        var segments: [String] = []
+        if let ms = MemoryText.updatedAtMs(row.updatedAt) {
+            segments.append(ConsoleFormat.relative(ms: ms, nowMs: nowMs))
+        }
+        if !row.tags.isEmpty {
+            segments.append(MemoryText.tagList(row.tags))
+        }
+        return segments
     }
 
     /// La portée : celle de la ligne, sinon celle du sommaire, sinon « Sans projet ».

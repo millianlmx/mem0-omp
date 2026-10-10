@@ -14,10 +14,11 @@ import ConsoleClient
 import ConsoleCore
 import Foundation
 
-/// L'état de l'écran, dans l'ordre de priorité de S-1 : déconnecté sans
-/// instantané, chargement, magasin absent, aucun run, puis la liste groupée.
+/// L'état de l'écran, dans l'ordre de priorité de S-1 : non connecté sans
+/// instantané (composant d'état de connexion), chargement, magasin absent, aucun
+/// run, puis la liste groupée.
 enum IOSSessionsScreenState: Equatable {
-    case noConnection
+    case unavailable(IOSConnectionStatus)
     case loading
     case storeAbsent
     case empty
@@ -40,6 +41,12 @@ enum IOSSessionsModel {
         return repo
     }
 
+    /// La valeur affichée ET annoncée par le filtre (rangees-sessions-memoire-
+    /// serrees, S-3) : le projet retenu, ou « Tous les projets ».
+    static func filterTitle(_ project: String?, projects: [String]) -> String {
+        resolvedProject(project, projects: projects) ?? IOSSessionText.allProjects
+    }
+
     /// Les jours affichés : le filtre s'applique AVANT le groupement, donc les
     /// en-têtes de jour se recalculent (S-2).
     static func days(of list: SessionList, project: String?, nowMs: Double, calendar: Calendar) -> [SessionDay] {
@@ -50,18 +57,19 @@ enum IOSSessionsModel {
         )
     }
 
-    /// L'état de l'écran, dans l'ordre de priorité de S-1.
+    /// L'état de l'écran, dans l'ordre de priorité de S-1. Une liste reçue PRIME
+    /// sur le statut de connexion : hors connexion, elle reste affichée sous le
+    /// bandeau (etats-non-connecte-heterogenes-ios, S-4).
     static func screen(
-        connection: ClientState,
+        connection: IOSConnectionStatus,
         list: SessionList?,
         project: String?,
         nowMs: Double,
         calendar: Calendar
     ) -> IOSSessionsScreenState {
         guard let list else {
-            // (1) déconnectée sans instantané, (2) connectée sans instantané.
-            if case .connected = connection { return .loading }
-            return .noConnection
+            // (1) non connectée sans instantané, (2) connectée sans instantané.
+            return connection == .connected ? .loading : .unavailable(connection)
         }
         // (3) magasin absent, (4) aucun run, (5) la liste.
         if list.storeAbsent { return .storeAbsent }

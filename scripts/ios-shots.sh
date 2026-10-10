@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Produit les CINQUANTE-SIX captures de la coque iOS (S-6, BR-4) : sept écrans en
+# Produit les captures de la coque iOS (S-6, BR-4) : d'abord CINQUANTE-SIX, sept écrans en
 # portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
-# défaut puis en Dynamic Type maximum.
+# défaut puis en Dynamic Type maximum ; puis les groupes de recette (Accueil, graphe
+# Mémoire, fiche d'une carte Pipelines).
 #
 # Les images sont des ARTEFACTS DE PR : elles vivent sous `omp-console/build/`
 # (ignoré par git) et ne sont jamais committées. Le script est reproductible : le
@@ -377,13 +378,109 @@ shoot_rows() {
 
 shoot_rows iphone "$iphone"
 
-# Le quatrième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 56
+# Le cinquième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 56
 # écrans, les 32 de l'Accueil et les 12 du graphe est 112.
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
 if [ "$count" != "112" ]; then
   echo "  ✗ $count captures produites (112 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées)" >&2
   exit 1
 fi
+
+# Passage 6 — la feuille « NOUVELLE FEATURE » (ios-nouvelle-feature-formulaire) : ses trois
+# états de recette (`-pipelines.recipe`), sur les deux appareils et les deux apparences,
+# à taille de texte par défaut. Le lancement ouvre l'écran Pipelines et présente la feuille
+# d'elle-même, dans l'état forcé (dépôts, dépôt choisi, titre, besoin) : tout le reste est le
+# chemin RÉEL de la feuille. Aucun appairage n'est requis.
+nouvelle_feature_recipes=(vide choisi rempli)
+
+shoot_nouvelle_feature() {
+  local label="$1"
+  local udid="$2"
+  local appearance="$3"
+  xcrun simctl ui "$udid" content_size "$TEXT_DEFAULT" >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" appearance "$appearance" >/dev/null 2>&1 || true
+  for recipe in "${nouvelle_feature_recipes[@]}"; do
+    xcrun simctl launch --terminate-running-process "$udid" "$BUNDLE_ID" \
+      -section kanban -home.welcomeSeen YES -pipelines.recipe "$recipe" >/dev/null 2>&1
+    sleep 2
+    shot="$SHOTS/$label-nouvelle-feature-$recipe-$appearance.png"
+    if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+      echo "  ✗ capture impossible ($shot)" >&2
+      exit 1
+    fi
+    echo "$shot"
+  done
+}
+
+for appearance in light dark; do
+  shoot_nouvelle_feature iphone "$iphone" "$appearance"
+  shoot_nouvelle_feature ipad "$ipad" "$appearance"
+done
+
+# Le sixième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
+# le total avec les 56 écrans, les 32 de l'Accueil, les 12 du graphe et les 12 rangées
+# est 124.
+count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$count" != "124" ]; then
+  echo "  ✗ $count captures produites (124 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées + 12 nouvelle feature)" >&2
+  exit 1
+fi
+
+# Passage 7 — la FICHE d'une carte Pipelines (ios-fiche-carte-pipelines) : le crochet
+# `-pipelines.recipe` ouvre la vraie feuille sur une carte de fixture dérivée de
+# `HomeParity`, sans réseau, en clair, à trois tailles de Dynamic Type sur iPhone
+# (défaut, AX-XL, maximum). Le signal de PRÊT (miroir de PipelinesText.recipeReady)
+# n'est écrit qu'une fois l'état demandé : sans lui, la capture est refusée.
+#   $1 libellé (iphone | ipad)   $2 UDID   $3 recette (fiche | actions | arret)
+#   $4 taille de texte
+shoot_pipelines_fiche() {
+  local label="$1"
+  local udid="$2"
+  local recipe="$3"
+  local size="$4"
+  xcrun simctl ui "$udid" content_size "$size" >/dev/null 2>&1 || true
+  xcrun simctl ui "$udid" appearance light >/dev/null 2>&1 || true
+  log="$RECIPE_LOGS/$label-pipelines-$recipe-$size.log"
+  rm -f "$log"
+  xcrun simctl launch --terminate-running-process --stderr="$log" "$udid" "$BUNDLE_ID" \
+    -section kanban -home.welcomeSeen YES -pipelines.recipe "$recipe" >/dev/null 2>&1
+  reached=""
+  for _ in $(seq 1 40); do
+    if grep -q "pipelines-recipe-ready" "$log" 2>/dev/null; then reached=1; break; fi
+    sleep 0.5
+  done
+  if [ -z "$reached" ]; then
+    echo "  ✗ état de la fiche non atteint, capture refusée ($label $recipe $size)" >&2
+    exit 1
+  fi
+  # Une seconde de réglage : l'animation de la feuille et du dialogue se termine après le signal.
+  sleep 1
+  suffix=""
+  [ "$recipe" = "fiche" ] || suffix="-$recipe"
+  shot="$SHOTS/$label-pipelines-fiche$suffix-$size.png"
+  if ! xcrun simctl io "$udid" screenshot "$shot" >/dev/null 2>&1; then
+    echo "  ✗ capture impossible ($shot)" >&2
+    exit 1
+  fi
+  echo "$shot"
+}
+
+for size in "$TEXT_DEFAULT" accessibility-extra-large "$TEXT_AX"; do
+  shoot_pipelines_fiche iphone "$iphone" fiche "$size"
+  shoot_pipelines_fiche iphone "$iphone" actions "$size"
+done
+shoot_pipelines_fiche iphone "$iphone" arret "$TEXT_DEFAULT"
+shoot_pipelines_fiche ipad "$ipad" fiche "$TEXT_DEFAULT"
+reset_simulators
+
+# Le septième groupe fait 8 captures : 3 tailles × {fiche, actions} + l'arrêt sur iPhone,
+# plus la fiche sur iPad.
+fiche_count="$(ls "$SHOTS"/*-pipelines-fiche*.png 2>/dev/null | wc -l | tr -d ' ')"
+if [ "$fiche_count" != "8" ]; then
+  echo "  ✗ $fiche_count captures de la fiche produites (8 attendues)" >&2
+  exit 1
+fi
+total="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
 
 # Chaque capture est sondée : toutes sont PORTRAIT (aucune ligne paysage — voir
 # la limite d'outillage en tête de ce script et dans `omp-console/ios/DESIGN.md`).
@@ -401,5 +498,5 @@ for shot in "$SHOTS"/*.png; do
   fi
 done
 
-echo "  ✓ 112 captures dans $SHOTS (dimensions vérifiées)"
+echo "  ✓ $total captures dans $SHOTS (dimensions vérifiées)"
 exit 0

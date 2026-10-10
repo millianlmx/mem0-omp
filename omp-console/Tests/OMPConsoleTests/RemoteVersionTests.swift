@@ -25,7 +25,7 @@ struct RemoteVersionTests {
             "/v1/projects",
             "/v1/stats",
             "/v1/devices",
-            "/v1/memory",
+            "/v1/memory/page",
         ]
         for path in readRoutes {
             let reply = try await stack.call("GET", path, token: token)

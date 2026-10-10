@@ -1,6 +1,8 @@
 // Les preuves Swift des rangées de l'Accueil en Dynamic Type (feature
 // ios-accueil-dynamic-type-casse, BR-1 et BR-2) : la règle d'axe PURE, sans rendre
-// de vue, et le crochet de recette `-home.row` des captures.
+// de vue, et le crochet de recette `-home.row` des captures. La règle est éprouvée
+// en largeur régulière, celle de ces critères (la largeur compacte est couverte
+// par `IOSHomeRowsTests`).
 //
 // AC-1 : première taille d'accessibilité → empilée. AC-2 : taille maximale →
 // empilée, boutons bornés. AC-3 : tailles standard → une seule ligne. AC-4 : le
@@ -22,21 +24,21 @@ struct IOSHomeDynamicTypeTests {
     @Test("ios-accueil-dynamic-type-casse/AC-3 : sous les tailles d'accessibilité, la rangée reste horizontale")
     func rowsStayHorizontalBelowAccessibilitySizes() {
         for size in Self.standardSizes {
-            #expect(IOSHomeContent.rowAxis(size) == .horizontal, "\(size)")
+            #expect(IOSHomeContent.rowAxis(size, width: .regular) == .horizontal, "\(size)")
         }
         #expect(IOSHomeContent.rowButtonMaximumSize > .xxxLarge)
     }
 
     @Test("ios-accueil-dynamic-type-casse/AC-1 : dès la première taille d'accessibilité, la rangée s'empile")
     func rowsStackFromTheFirstAccessibilitySize() {
-        #expect(IOSHomeContent.rowAxis(.accessibility1) == .stacked)
-        #expect(IOSHomeContent.rowAxis(.accessibility3) == .stacked)
-        #expect(IOSHomeContent.rowAxis(.xxxLarge) == .horizontal)
+        #expect(IOSHomeContent.rowAxis(.accessibility1, width: .regular) == .stacked)
+        #expect(IOSHomeContent.rowAxis(.accessibility3, width: .regular) == .stacked)
+        #expect(IOSHomeContent.rowAxis(.xxxLarge, width: .regular) == .horizontal)
     }
 
     @Test("ios-accueil-dynamic-type-casse/AC-2 : à la taille maximale, la rangée s'empile et ses boutons sont bornés")
     func rowsStackAtTheLargestSize() {
-        #expect(IOSHomeContent.rowAxis(.accessibility5) == .stacked)
+        #expect(IOSHomeContent.rowAxis(.accessibility5, width: .regular) == .stacked)
         #expect(IOSHomeContent.rowButtonMaximumSize <= .accessibility3)
         #expect(IOSHomeContent.rowButtonMaximumSize.isAccessibilitySize)
         #expect(IOSHomeContent.rowTextMaximumSize.isAccessibilitySize)
