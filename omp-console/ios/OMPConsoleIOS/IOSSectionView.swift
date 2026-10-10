@@ -3,10 +3,13 @@ import ConsoleCore
 import SwiftUI
 
 /// L'écran UNIQUE des sept sections (S-2, BR-3) : il rend le contenu pur de
-/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les cinq sections
+/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les six sections
 /// à écran réel : Pipelines (`PipelinesScreen`), Projet (`IOSProjectScreen`),
-/// Mémoire (`IOSMemoryScreen`), Statistiques (`IOSStatsScreen`) et Sessions
-/// (`IOSSessionsScreen`), toutes nourries par le client partagé.
+/// Mémoire (`IOSMemoryScreen`), Statistiques (`IOSStatsScreen`), Sessions
+/// (`IOSSessionsScreen`) et Session OMP (`IOSSessionOmpScreen`), toutes nourries
+/// par le client partagé et routées directement : chacune porte son propre cadre,
+/// pour que le composant d'état de connexion plein écran soit rendu hors de tout
+/// panneau (etats-non-connecte-heterogenes-ios, S-4).
 ///
 /// Ordre du rendu (sections à contenu) : panneau → pastille → carte de l'état
 /// vide → bandeau ; le titre est celui de la barre de navigation. Aucune phrase
@@ -34,6 +37,9 @@ struct IOSSectionView: View {
     let projectRecipe: IOSProjectRecipe?
     /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
     let sessionOmpRecipe: IOSSessionOmpRecipe?
+    /// La feuille Connexion de la racine, ouverte par « Se connecter » du
+    /// composant d'état de connexion des sections.
+    @Binding var showConnection: Bool
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -42,13 +48,17 @@ struct IOSSectionView: View {
     var body: some View {
         if section == .kanban {
             PipelinesScreen(client: client, recipe: state, newFeatureRecipe: pipelinesRecipe,
-                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe)
+                            cardRecipe: cardRecipe, boardRecipe: pipelinesBoardRecipe, showConnection: $showConnection)
         } else if section == .memory {
-            IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe)
+            IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe, showConnection: $showConnection)
         } else if section == .sessions {
-            IOSSessionsScreen(client: client, recipe: recipe)
+            IOSSessionsScreen(client: client, recipe: recipe, showConnection: $showConnection)
         } else if section == .session {
-            IOSSessionOmpScreen(client: client, recipe: sessionOmpRecipe)
+            IOSSessionOmpScreen(client: client, recipe: sessionOmpRecipe, showConnection: $showConnection)
+        } else if section == .project {
+            IOSProjectScreen(client: client, recipe: projectRecipe, showConnection: $showConnection)
+        } else if section == .stats {
+            IOSStatsScreen(client: client, recipe: statsRecipe, showConnection: $showConnection)
         } else {
             genericBody
         }
@@ -56,22 +66,16 @@ struct IOSSectionView: View {
 
     private var genericBody: some View {
         VStack(alignment: .leading, spacing: 12) {
-            if section == .project {
-                IOSProjectScreen(client: client, recipe: projectRecipe)
-            } else if section == .stats {
-                IOSStatsScreen(client: client, recipe: statsRecipe)
-            } else {
-                if let status = content?.status {
-                    IOSStatusChip(status: status)
-                }
-                if let content {
-                    card(content)
-                }
-                if let banner = content?.banner, let message = content?.bannerMessage {
-                    Text(message)
-                        .font(.callout)
-                        .iosBanner(tone: banner.tone)
-                }
+            if let status = content?.status {
+                IOSStatusChip(status: status)
+            }
+            if let content {
+                card(content)
+            }
+            if let banner = content?.banner, let message = content?.bannerMessage {
+                Text(message)
+                    .font(.callout)
+                    .iosBanner(tone: banner.tone)
             }
         }
         .iosPanel()

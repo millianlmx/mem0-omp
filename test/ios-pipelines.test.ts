@@ -105,18 +105,6 @@ function liveFaults(root: string): string[] {
   return faults;
 }
 
-/** AC-3 : le Mac injoignable n'invente jamais de carte vivante. */
-function honestEmptyFaults(root: string): string[] {
-  const faults: string[] = [];
-  const text = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesText.swift"));
-  if (!/noSnapshot\s*=\s*"/.test(text)) faults.push("PipelinesText.noSnapshot absent");
-  const model = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesModel.swift"));
-  if (!model.includes("case noSnapshot")) faults.push("PipelinesModel n'a pas d'état déconnecté");
-  const view = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift"));
-  if (!view.includes("PipelinesText.noSnapshot")) faults.push("l'écran n'emploie pas le mot déconnecté");
-  return faults;
-}
-
 /** AC-4 : les deux formes (compacte/é régulière) atteignent toutes les voies. */
 function formFaults(root: string): string[] {
   const view = code(path.join(root, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift"));
@@ -264,15 +252,6 @@ test("ios-pipelines/AC-2 : l'écran suit le magasin sans bouton ni minuterie de 
   const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesModel.swift");
   fs.writeFileSync(target, `${fs.readFileSync(target, "utf8")}\nlet sonde = Timer()\n`);
   assert.ok(liveFaults(copy).some((f) => f.includes("minuterie")), "une minuterie de sondage doit faire rougir la garde");
-});
-
-test("ios-pipelines/AC-3 : le Mac injoignable n'invente aucune carte, l'état déconnecté est explicite", () => {
-  assert.deepEqual(honestEmptyFaults(ROOT), [], "l'arbre réel doit être sain");
-
-  const copy = copyRepo();
-  const target = path.join(copy, "omp-console/ios/OMPConsoleIOS/PipelinesScreen.swift");
-  fs.writeFileSync(target, fs.readFileSync(target, "utf8").replace("PipelinesText.noSnapshot", "KanbanText.noPipeline"));
-  assert.ok(honestEmptyFaults(copy).some((f) => f.includes("déconnecté")), "un mot de magasin vide à la place du mot déconnecté doit faire rougir la garde");
 });
 
 test("ios-pipelines/AC-4 : les deux formes atteignent toutes les voies (compacte empilée, régulière en ligne)", () => {

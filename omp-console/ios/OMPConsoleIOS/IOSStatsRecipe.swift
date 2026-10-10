@@ -80,7 +80,7 @@ enum IOSStatsRecipe: Equatable {
     /// bascule choisit `recette-vide` dès que le tableau de `recette-pleine` est
     /// affiché, une seule fois (l'écran passe alors en bascule).
     @MainActor func advance(_ model: IOSStatsModel) {
-        guard self == .bascule, model.surface == .board else { return }
+        guard self == .bascule, model.surface(connection: .connected) == .board else { return }
         model.select(project: IOSStatsText.recipeEmptyProject)
     }
 

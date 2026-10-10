@@ -100,15 +100,6 @@ function structBlock(text: string, name: string): string {
   return end === -1 ? text.slice(start) : text.slice(start, end);
 }
 
-/** Le corps d'une branche `switch` : de son libellé au `case ` suivant. */
-function branchBlock(text: string, marker: string): string {
-  const start = text.indexOf(marker);
-  if (start === -1) return "";
-  const rest = text.slice(start + marker.length);
-  const next = rest.search(/\n\s*case \./);
-  return next === -1 ? rest : rest.slice(0, next);
-}
-
 /** Le contrat de CETTE feature, ou "" : gitignoré, et jamais celui d'une autre. */
 function contractText(): string {
   if (!fs.existsSync(CONTRACT)) return "";
@@ -144,8 +135,8 @@ function relayFaults(root: string): string[] {
   if (!screen.includes("MemoryText.summaryCount(")) faults.push("l'écran n'emploie pas MemoryText.summaryCount");
   if (!screen.includes("IOSMemoryText.loadingMore")) faults.push("l'écran ne dit pas le chargement de la page suivante");
   const model = appFile(root, "IOSMemoryModel.swift");
-  if (!model.includes("static func screen(client: ClientState, load: IOSMemoryLoad, mode: IOSMemoryMode)")) {
-    faults.push("IOSMemoryModel.screen(client:load:mode:) absent");
+  if (!/static func screen\(\s*connection: IOSConnectionStatus,\s*load: IOSMemoryLoad,\s*mode: IOSMemoryMode,\s*summary: IOSMemorySummary\?\s*\)/.test(model)) {
+    faults.push("IOSMemoryModel.screen(connection:load:mode:summary:) absent");
   }
   // Parité macOS : les trois « rien trouvé » portent les mêmes noms des deux côtés.
   const shellModel = shellCode(root, "Memory", "MemoryModel.swift");
@@ -375,18 +366,13 @@ test("ios-memoire/AC-7 : sans projet, la page est vide et le service n'est pas a
 });
 
 // ---------------------------------------------------------------------------
-// AC-8 : quand le Mac ne répond plus, c'est l'état du CLIENT.
+// AC-8 : quand le Mac ne répond plus, une panne de TRANSPORT n'est jamais une
+// cause mémoire. L'écran « non connecté » lui-même est le composant partagé
+// (feature etats-non-connecte-heterogenes-ios, IOSConnectionStatusTests).
 
-/** Les manques de la branche client (AC-8). */
+/** Les manques de la classification des pannes du client (AC-8). */
 function clientStateFaults(root: string): string[] {
   const faults: string[] = [];
-  const screen = appFile(root, "IOSMemoryScreen.swift");
-  const branch = branchBlock(screen, "case .clientState(let state):");
-  if (branch === "") faults.push("l'écran n'a pas de branche .clientState");
-  if (!branch.includes("ConnectionText.state(")) faults.push("l'état du client n'est pas nommé par ConnectionText.state");
-  if (!branch.includes("IOSMemoryText.noData")) faults.push("la carte « aucune donnée reçue » manque");
-  if (branch.includes("MemoryText.noProjectTitle")) faults.push("l'état du client dit « Aucun projet ouvert »");
-  if (/MemoryText\.(unavailableTitle|noMatch|belowThreshold)/.test(branch)) faults.push("une cause mémoire est inventée côté client");
   const model = appFile(root, "IOSMemoryModel.swift");
   // L'entrée Mémoire du traducteur partagé (`ofMemoryRead`, délai dépassé distinct) compte.
   if (!/IOSMacFailure\.(of|ofMemoryRead)\(/.test(model)) faults.push("le modèle ne classe pas l'erreur par le traducteur partagé");
@@ -399,9 +385,9 @@ test("ios-memoire/AC-8 : quand le Mac ne répond plus, c'est l'état du client",
   assert.deepEqual(clientStateFaults(ROOT), []);
 
   const copy = copyRepo();
-  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryScreen.swift");
-  fs.writeFileSync(target, code(target).replace("ConnectionText.state(state)", "MemoryText.loading"));
-  assert.ok(clientStateFaults(copy).length > 0, "un état de client muet doit faire rougir la garde");
+  const target = path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "IOSMemoryModel.swift");
+  fs.writeFileSync(target, code(target).replaceAll("IOSMacFailure.ofMemoryRead(", "classifyLocally("));
+  assert.ok(clientStateFaults(copy).length > 0, "une panne classée hors du traducteur partagé doit faire rougir la garde");
 });
 
 // ---------------------------------------------------------------------------

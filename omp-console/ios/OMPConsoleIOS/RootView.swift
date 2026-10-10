@@ -137,7 +137,8 @@ struct RootView: View {
                         statsRecipe: statsRecipe,
                         pipelinesBoardRecipe: pipelinesBoardRecipe,
                         projectRecipe: projectRecipe,
-                        sessionOmpRecipe: sessionOmpRecipe
+                        sessionOmpRecipe: sessionOmpRecipe,
+                        showConnection: $showConnection
                     )
                 }
             }

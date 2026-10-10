@@ -280,7 +280,7 @@ function recipeFaults(root: string, ac: string): string[] {
     "connection.close",
     "xcodebuild build",
     "codesign -dv",
-    "ios.home.connect",
+    "ios.connexion.connect",
     "-home.welcomeSeen YES",
     "omp-console/build/ios-connexion",
     "merge-base",

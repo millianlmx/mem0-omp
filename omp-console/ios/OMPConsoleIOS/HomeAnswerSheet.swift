@@ -14,6 +14,10 @@ import SwiftUI
 struct HomeAnswerSheet: View {
     let card: KanbanCard
     @ObservedObject var client: ConsoleClientModel
+    /// Le statut présenté par l'Accueil (`HomeView.connection`, recette comprise) :
+    /// hors `.connected`, options, champ et « Répondre » sont grisés
+    /// (etats-non-connecte-heterogenes-ios, S-5).
+    let connection: IOSConnectionStatus
 
     @Environment(\.dismiss) private var dismiss
 
@@ -67,7 +71,7 @@ struct HomeAnswerSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     IOSSheetIconButton(role: .confirm, label: ActionsText.answer) { submit() }
-                        .disabled(!canSubmit)
+                        .disabled(!connection.gesturesEnabled || !canSubmit)
                         .accessibilityIdentifier(IOSHomeAccessibility.answerSubmit)
                 }
             }
@@ -89,6 +93,7 @@ struct HomeAnswerSheet: View {
                     } label: {
                         optionRow(option)
                     }
+                    .disabled(!connection.gesturesEnabled)
                     .accessibilityIdentifier(IOSHomeAccessibility.answerOption(index))
                 }
             }
@@ -106,6 +111,7 @@ struct HomeAnswerSheet: View {
     private var textSection: some View {
         Section {
             TextField(hasOptions ? HomeText.answerOtherPlaceholder : HomeText.answerPlaceholder, text: $text)
+                .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(IOSHomeAccessibility.answerText)
         }
     }

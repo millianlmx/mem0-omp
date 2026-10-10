@@ -75,7 +75,7 @@ struct IOSMemoryDelayTests {
     func listTimeoutSaysDelayExceeded() async {
         let timedOut = ClientError.transport(.timedOut("The request timed out."))
         #expect(IOSMemoryModel.load(from: timedOut) == .failed(.macTimedOut))
-        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.macTimedOut), mode: .summary) == .failed(.macTimedOut))
+        #expect(IOSMemoryModel.screen(connection: .connected, load: .failed(.macTimedOut), mode: .summary, summary: nil) == .failed(.macTimedOut))
         let text = IOSMacErrorText.message(for: .macTimedOut)
         #expect(IOSMemoryModel.failureMessage(.failed(.macTimedOut)) == text)
         #expect(text.contains("Délai dépassé"))
@@ -87,12 +87,12 @@ struct IOSMemoryDelayTests {
         let reader = FailingMemoryReader(page: .failure(timedOut))
         let model = IOSMemoryModel(client: reader)
         await model.refresh()
-        #expect(model.state == .failed(.macTimedOut))
+        #expect(model.state(connection: .connected) == .failed(.macTimedOut))
         #expect(model.canRefresh)
         let rows = [RemoteMemoryRow(id: "m1", text: "un", updatedAt: nil, score: nil, tags: [], agentId: "projet")]
         reader.page = .success(RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: rows, nextOffset: nil))
         await model.refresh()
-        #expect(model.state == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
+        #expect(model.state(connection: .connected) == .summary(scope: "projet", total: 1, rows: rows, more: .complete))
     }
 
     @Test("memoire-ios-expire-a-10-secondes/AC-6 : unreachableNeverSaysDelay — un Mac injoignable dit « Mac injoignable », jamais « Délai »")
@@ -106,7 +106,7 @@ struct IOSMemoryDelayTests {
             #expect(IOSMemoryModel.load(from: failure) == .failed(.macUnreachable))
             #expect(IOSMemoryGraphModel.failure(from: failure) == .failed(.macUnreachable))
         }
-        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.macUnreachable), mode: .summary) == .failed(.macUnreachable))
+        #expect(IOSMemoryModel.screen(connection: .connected, load: .failed(.macUnreachable), mode: .summary, summary: nil) == .failed(.macUnreachable))
         let text = IOSMacErrorText.message(for: .macUnreachable)
         #expect(IOSMemoryModel.failureMessage(.failed(.macUnreachable)) == text)
         #expect(text.contains("Mac injoignable"))
@@ -114,20 +114,20 @@ struct IOSMemoryDelayTests {
 
         let model = IOSMemoryModel(client: FailingMemoryReader(page: .failure(failures[0])))
         await model.refresh()
-        #expect(model.state == .failed(.macUnreachable))
+        #expect(model.state(connection: .connected) == .failed(.macUnreachable))
     }
 
     @Test("memoire-ios-expire-a-10-secondes/AC-9 : listOnOlderMacSaysMacOutdated — une app Mac sans route de page dit « app Mac trop ancienne », sans erreur brute")
     func listOnOlderMacSaysMacOutdated() async {
         let notFound = ClientError.api(.notFound("route inconnue"))
         #expect(IOSMemoryModel.load(from: notFound) == .failed(.macOutdated))
-        #expect(IOSMemoryModel.screen(client: connected, load: .failed(.macOutdated), mode: .summary) == .failed(.macOutdated))
+        #expect(IOSMemoryModel.screen(connection: .connected, load: .failed(.macOutdated), mode: .summary, summary: nil) == .failed(.macOutdated))
         let text = IOSMacErrorText.message(for: .macOutdated)
         #expect(IOSMemoryModel.failureMessage(.failed(.macOutdated)) == text)
 
         let model = IOSMemoryModel(client: FailingMemoryReader(page: .failure(notFound)))
         await model.refresh()
-        #expect(model.state == .failed(.macOutdated))
+        #expect(model.state(connection: .connected) == .failed(.macOutdated))
 
         #expect(text.contains("app Mac trop ancienne"))
         for raw in ["://", "{", "404", "route inconnue"] {
