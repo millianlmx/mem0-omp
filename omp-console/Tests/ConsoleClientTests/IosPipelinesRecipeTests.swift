@@ -31,7 +31,8 @@ private func board(from payload: RemoteStorePayload) -> KanbanBoardState {
         snapshot: payload.snapshot,
         nowMs: nowMs(),
         stateDir: "",
-        isAlive: .transported(payload.snapshot)
+        isAlive: .transported(payload.snapshot),
+        prFacts: [:]
     )
 }
 

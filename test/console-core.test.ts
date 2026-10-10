@@ -280,6 +280,8 @@ const MOVED: string[] = [
   "HomeAttentionNature",
   "HomeAttention",
   "HomeCardAction",
+  // accueil-en-cours-melange-pause-et-compte / BR-2 : comptes de la barre de menus (S-6).
+  "HomeCounts",
   "HomePresentation",
   "OmpStatus",
   "MainSheetPolicy",

@@ -2,7 +2,10 @@
 // compose aucune phrase, et chaque message se vérifie sans rendre de vue.
 //
 // Les libellés exacts sont figés par les specs : « Lire le contrat », « Fermer »,
-// « Contrat — <slug> », et les quatre messages d'absence ou d'illisibilité.
+// « Contrat — <slug> », et les messages d'absence ou d'illisibilité. Ces messages
+// disent la conséquence et le geste, jamais le chemin, la taille ni l'erreur du
+// système : ce brut part dans `diagnostic(path:unreadable:)`, que seul « Copier le
+// diagnostic » emporte (S-9 de jargon-technique-expose-mac-et-ios).
 
 import Foundation
 
@@ -21,11 +24,9 @@ public enum ContractText {
         "À valider : \(ContractDocument.titles(for: moment).joined(separator: " et "))."
     }
 
-    /// Fichier absent : le chemin relatif vient de `ContractText.relativePath`,
-    /// jamais d'un second littéral.
-    public static var missingFile: String {
-        "Aucun contrat pour cette feature : le fichier `\(relativePath)` n'existe pas encore."
-    }
+    /// Fichier absent : la phrase ne cite pas le chemin, qui reste au diagnostic.
+    public static let missingFile =
+        "Cette feature n'a pas encore de contrat : il apparaîtra quand ses besoins seront validés."
 
     // --- le geste et la feuille (S-6, S-7) ------------------------------------
 
@@ -40,19 +41,23 @@ public enum ContractText {
     /// Le bouton de fermeture (action par défaut, Échap et ↩).
     public static let close = "Fermer"
 
-    /// L'intitulé du chemin réellement lu (détail technique, toujours montré).
-    public static let pathLabel = "Chemin"
-
     // --- les états d'absence et d'illisibilité (S-5) --------------------------
 
-    /// Fichier non textuel (NUL ou UTF-8 invalide).
-    public static func notText(bytes: Int) -> String {
-        "Contrat illisible : le fichier n'est pas du texte UTF-8 (\(bytes) octets)."
-    }
+    /// Fichier non textuel ou erreur système : une seule phrase, le brut reste au
+    /// diagnostic.
+    public static let unreadable = "Le contrat ne peut pas être affiché pour l'instant. Fermez-le, puis rouvrez-le."
 
-    /// Erreur système : le message du système est conservé tel quel.
-    public static func unreadable(reason: String) -> String {
-        "Contrat illisible : \(reason)"
+    /// Le détail brut d'un contrat absent ou illisible : le chemin lu, puis la
+    /// taille ou la raison du système.
+    public static func diagnostic(path: String, unreadable: ContractUnreadable?) -> String {
+        switch unreadable {
+        case nil:
+            return "\(path) : absent"
+        case .notText(let bytes):
+            return "\(path) : pas du texte UTF-8 (\(bytes) octets)"
+        case .error(let reason):
+            return "\(path) : \(reason)"
+        }
     }
 
     /// Une section requise absente d'un fichier présent : le message prend sa

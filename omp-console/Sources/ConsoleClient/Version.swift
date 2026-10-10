@@ -6,9 +6,16 @@ import ConsoleCore
 import Foundation
 
 /// La borne de corps servie, miroir de `RemoteLimits.responseBody` : un corps plus
-/// gros est refusé en `decoding`, jamais tronqué silencieusement.
+/// gros est refusé en `decoding`, jamais tronqué silencieusement. Le profil
+/// `.memory` a ses propres délais et sa propre borne (page de liste, graphe).
 public enum ClientLimits {
     public static let responseBody = 2 * 1024 * 1024
+    /// Inactivité tolérée d'une lecture Mémoire avant `URLError.timedOut`.
+    public static let memoryRequestTimeout: TimeInterval = 60
+    /// Durée totale tolérée d'une lecture Mémoire.
+    public static let memoryResourceTimeout: TimeInterval = 180
+    /// La borne de corps du profil `.memory`, miroir de `RemoteLimits.memoryGraphBody`.
+    public static let memoryResponseBody = 16 * 1024 * 1024
 }
 
 /// La table unique de traduction d'une réponse en erreur du client.
@@ -34,7 +41,7 @@ public enum ClientErrorMapping {
             return .incompatibleProtocol(local: localVersion, remote: protocolVersion)
         }
         guard let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: body) else {
-            return .decoding("corps d'erreur illisible (statut \(status))")
+            return .unexpectedStatus(status)
         }
         let code = envelope.error.code
         let message = envelope.error.message ?? ""
@@ -56,7 +63,7 @@ public enum ClientErrorMapping {
             case 404: return .api(.notFound(message))
             case 409: return .api(.conflict(message))
             case 503: return .api(.unavailable(message))
-            default: return .api(.server(message.isEmpty ? "statut \(status)" : message))
+            default: return .unexpectedStatus(status)
             }
         }
     }

@@ -48,7 +48,7 @@ enum GhBinary {
     }
 }
 
-/// Les trois `argv` de la fonctionnalité, et RIEN d'autre : la sous-commande est
+/// Les quatre `argv` de la fonctionnalité, et RIEN d'autre : la sous-commande est
 /// TOUJOURS `pr`, ses seconds mots sont exactement `view`, `checks`, `merge`.
 ///
 /// L'URL est un argument POSITIONNEL, donc TOUJOURS précédée de `--` (fin des
@@ -59,6 +59,12 @@ enum GhBinary {
 enum GhCommand {
     static func prView(url: String) -> [String] {
         ["pr", "view", "--json", "title,headRefOid,body", "--", url]
+    }
+
+    /// L'état GitHub d'une PR pour l'ardoise (S-1 de pipelines-livrees) : une
+    /// lecture `view` de trois champs seulement, jamais les statuts de CI.
+    static func prState(url: String) -> [String] {
+        ["pr", "view", "--json", "state,mergedAt,closedAt", "--", url]
     }
 
     static func prChecks(url: String) -> [String] {

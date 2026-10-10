@@ -5,14 +5,14 @@ import ConsoleCore
 ///
 /// Chaque chaîne est une constante PUBLIQUE de `ConsoleCore` — l'app iOS ne
 /// réinvente aucun libellé durable (B-3). Un `detail` vaut `nil` quand la
-/// constante partagée n'existe pas ou quand elle nomme un raccourci macOS (⌘N,
-/// ⌘4) : ces raccourcis n'existent pas sur iPhone/iPad, et on ne réécrit pas la
-/// constante du noyau pour autant.
+/// constante partagée n'existe pas, quand elle nomme un raccourci macOS (⌘N) ou
+/// quand elle appelle un geste que seule la coque macOS offre : on ne réécrit
+/// pas la constante du noyau pour autant.
 struct IOSSectionContent: Equatable {
     let section: ConsoleSection
     /// Toujours `section.title` (ConsoleCore).
     let title: String
-    /// Toujours `section.systemImage` (ConsoleCore).
+    /// Le symbole iOS de la section (`IOSSection.systemImage(of:)`).
     let systemImage: String
     /// Le mot de l'état vide, mot pour mot celui de la coque macOS.
     let message: String
@@ -36,7 +36,7 @@ struct IOSSectionContent: Equatable {
             IOSSectionContent(
                 section: section,
                 title: section.title,
-                systemImage: section.systemImage,
+                systemImage: IOSSection.systemImage(of: section),
                 message: message,
                 detail: detail,
                 status: status,
@@ -62,7 +62,9 @@ struct IOSSectionContent: Equatable {
         case .sessions:
             return content(message: SessionSelectorText.emptyTitle, detail: SessionSelectorText.noRun)
         case .memory:
-            // `MemoryText.noProjectDescription` nomme ⌘4 : même raison.
+            // `MemoryText.noProjectDescription` accompagne le bouton « Choisir un
+            // projet… » de la coque macOS, que l'iPhone n'a pas : aucun détail ici
+            // (l'écran Mémoire a sa propre phrase, `IOSMemoryText.noProjectDetail`).
             return content(message: MemoryText.noProjectTitle, detail: nil)
         case .stats:
             return content(message: StatsPresentation.noProjectTitle, detail: StatsPresentation.noProject)

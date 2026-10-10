@@ -1,9 +1,10 @@
-// Ce que la coque garde des textes de la préparation : les cinq fonctions qui
-// nomment un type de la coque (`ComponentID`, `SetupStep`, `OMLXStatus`,
-// `SetupFailure`, `SetupState`). Toutes les constantes et `percent(_:_:)` vivent
-// dans `ConsoleCore/Setup/SetupText.swift`.
+// Ce que la coque garde des textes de la préparation : les fonctions qui nomment
+// un type de la coque (`ComponentID`, `SetupStep`, `OMLXStatus`, `SetupFailure`,
+// `SetupState`). Toutes les constantes et `percent(_:_:)` vivent dans
+// `ConsoleCore/Setup/SetupText.swift`.
 
 import ConsoleCore
+import Foundation
 
 extension SetupText {
     /// Le mot du badge pour les composants manquants (S-1, AC-1/AC-2) : les noms
@@ -44,6 +45,8 @@ extension SetupText {
             return "Démarrage de la pile mémoire…"
         case .health:
             return "Attente de la mémoire…"
+        case .union:
+            return "Rattrapage des souvenirs manquants…"
         case .prerequisites:
             return "Vérification des prérequis…"
         }
@@ -59,8 +62,10 @@ extension SetupText {
         }
     }
 
-    /// Le message d'un échec de préparation (S-5, textes exacts).
-    static func failureMessage(_ failure: SetupFailure) -> String {
+    /// Le détail BRUT d'un échec de préparation (S-5) : l'ancien texte de la
+    /// feuille, mot pour mot — commande, stderr, port, propriétaire et geste shell.
+    /// Seul « Copier le diagnostic » l'emporte.
+    static func failureDiagnostic(_ failure: SetupFailure) -> String {
         switch failure {
         case .components(.unsupportedMac):
             return "Ce Mac n'est pas pris en charge (arm64 requis)."
@@ -70,21 +75,113 @@ extension SetupText {
             return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
         case .components(.install(let component, let detail)):
             return "L'installation de « \(component) » a échoué : \(detail)"
-        case .migration(.legacyStopFailed(let name, let detail)):
-            return "L'ancienne pile mémoire n'a pas pu être arrêtée (\(name)) : \(detail)"
         case .migration(.copyFailed(let detail)):
             return "La copie de la base mémoire existante a échoué : \(detail)"
+        case .legacy(.stopFailed(let name, let detail)):
+            return "L'ancienne pile mémoire n'a pas pu être arrêtée (\(name)) : \(detail)"
         case .stack(.machineFailed(let detail)):
             return "La machine de conteneurs n'a pas démarré : \(detail)"
-        case .stack(.portBusy(let port)):
-            return "Le port \(port) est déjà utilisé par un autre programme : la pile mémoire ne peut pas démarrer."
+        case .stack(.portConflict(let port, let owner)):
+            return "Le port \(port) est déjà tenu par \(owner.userDescription) : la pile mémoire ne peut pas démarrer.\nGeste : \(owner.gesture)"
         case .stack(.containerFailed(let name, let detail)):
             return "Le conteneur \(name) n'a pas démarré : \(detail)"
         case .stack(.healthTimeout(let seconds)):
             return "La mémoire n'a pas répondu dans le délai imparti (\(seconds) s)."
+        case .stack(.installationFailed(let detail)):
+            return "L'identité d'installation de la pile n'a pas pu être écrite : \(detail)"
         case .stack(.podmanFailed(let command, let detail)):
             return "Podman a échoué (\(command)) : \(detail)"
         }
+    }
+
+    /// La conséquence d'un échec (S-5) : ce que l'utilisateur perd, sans commande,
+    /// stderr ni port. Les cas sans détail Podman gardent leur texte actuel.
+    static func failureConsequence(_ failure: SetupFailure) -> String {
+        switch failure {
+        case .stack(.machineFailed):
+            return failureMachine
+        case .stack(.containerFailed):
+            return failureContainer
+        case .stack(.podmanFailed):
+            return failurePodman
+        case .legacy(.stopFailed):
+            return failureLegacyStop
+        case .stack(.portConflict(_, .legacyStack)):
+            return failurePortLegacy
+        case .stack(.portConflict(_, .foreign)):
+            return failurePortForeign
+        case .stack(.portConflict):
+            return failurePortOther
+        default:
+            return failureDiagnostic(failure)
+        }
+    }
+
+    /// La phrase de la ligne en échec (S-5) : la conséquence, puis le geste. Le
+    /// geste nomme le bouton qui règle le cas (« Réessayer », ou la reprise de
+    /// l'ancienne pile) ; hors des cas Podman, le texte actuel est inchangé.
+    static func failureMessage(_ failure: SetupFailure) -> String {
+        let consequence = failureConsequence(failure)
+        switch failure {
+        case .stack(.portConflict(_, .legacyStack)):
+            return "\(consequence) \(failurePortLegacyGesture)"
+        case .stack(.portConflict(_, .foreign)):
+            return "\(consequence) \(failurePortForeignGesture)"
+        case .stack(.machineFailed), .stack(.containerFailed), .stack(.podmanFailed),
+             .stack(.portConflict), .legacy(.stopFailed):
+            return "\(consequence) \(failureRetryGesture)"
+        default:
+            return consequence
+        }
+    }
+
+    /// La phrase claire d'un échec, telle que la feuille la montre : jamais le
+    /// détail technique, qui se replie derrière « Afficher le détail » (S-6).
+    /// Les échecs Podman reprennent `failureMessage` (conséquence et geste, S-5).
+    static func failureSummary(_ failure: SetupFailure) -> String {
+        switch failure {
+        case .components(.unsupportedMac):
+            return "Ce Mac n'est pas pris en charge (arm64 requis)."
+        case .components(.network(let component, _)):
+            return "Pas de réseau : « \(component) » n'a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez."
+        case .components(.checksum(let component)):
+            return "« \(component) » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue."
+        case .components(.install(let component, _)):
+            return "L'installation de « \(component) » a échoué."
+        case .legacy(.stopFailed), .stack(.machineFailed), .stack(.containerFailed),
+             .stack(.podmanFailed), .stack(.portConflict):
+            return failureMessage(failure)
+        case .migration(.copyFailed):
+            return "La copie de la base mémoire existante a échoué."
+        case .stack(.healthTimeout(let seconds)):
+            return "La mémoire n'a pas répondu dans le délai imparti (\(seconds) s)."
+        case .stack(.installationFailed):
+            return "L'identité d'installation de la pile n'a pas pu être écrite."
+        }
+    }
+
+    /// Le détail technique d'un échec, replié par défaut sous la phrase claire
+    /// (S-6) ; `nil` quand il n'y en a pas, ou qu'il n'est fait que de blancs. Le
+    /// geste d'un conflit de port (une commande) s'y range aussi.
+    static func failureDetail(_ failure: SetupFailure) -> String? {
+        let subject: String?
+        let raw: String
+        switch failure {
+        case .components(.unsupportedMac), .components(.checksum), .stack(.healthTimeout):
+            return nil
+        case .stack(.portConflict(_, let owner)):
+            return "Geste : \(owner.gesture)"
+        case .components(.network(_, let detail)), .components(.install(_, let detail)),
+             .migration(.copyFailed(let detail)), .stack(.machineFailed(let detail)),
+             .stack(.installationFailed(let detail)):
+            (subject, raw) = (nil, detail)
+        case .legacy(.stopFailed(let name, let detail)), .stack(.containerFailed(let name, let detail)):
+            (subject, raw) = (name, detail)
+        case .stack(.podmanFailed(let command, let detail)):
+            (subject, raw) = (command, detail)
+        }
+        guard !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return subject.map { "\($0) : \(raw)" } ?? raw
     }
 
     /// Le bandeau de l'Accueil quand la feuille a été fermée : `nil` tant qu'elle
@@ -95,7 +192,7 @@ extension SetupText {
         case .preparing(let step):
             return "Préparation en cours — \(stepDetail(step))"
         case .failed(let failure):
-            return "Préparation incomplète. \(failureMessage(failure))"
+            return "Préparation incomplète. \(failureConsequence(failure))"
         case .idle, .ready:
             return nil
         }

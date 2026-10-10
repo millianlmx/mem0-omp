@@ -6,7 +6,8 @@
 // La préparation (`.setup`) passe AVANT tout le reste : l'app installe ses
 // composants, migre la base mémoire et monte sa pile (S-1, S-3, S-2) ; les gestes
 // qui en dépendent n'ont pas de sens avant. Fermer la feuille ne l'interrompt pas
-// (l'Accueil reprend le fil avec son bandeau, règle 2 comprise).
+// (l'Accueil reprend le fil avec son bandeau). OMP absent, elle ne se ferme pas :
+// la règle 2 ignore `setupDismissed`, l'app n'est jamais utilisable sans OMP.
 
 import ConsoleCore
 import Foundation
@@ -17,7 +18,6 @@ enum MainSheet: Identifiable, Equatable {
     case newFeature
     case answer(cardID: String)
     case contract(ContractSheet)
-    case pairing
 
     var id: String {
         switch self {
@@ -26,19 +26,19 @@ enum MainSheet: Identifiable, Equatable {
         case .newFeature: "newFeature"
         case .answer(let cardID): "answer.\(cardID)"
         case .contract(let sheet): "contract.\(sheet.id)"
-        case .pairing: "pairing"
         }
     }
 }
 
 extension MainSheetPolicy {
     /// La feuille due, dans l'ordre FIGÉ : (1) préparation en cours (ou en échec),
-    /// feuille non ignorée → `.setup` ; (2) composant OMP manquant, feuille non
-    /// ignorée → `.setup` ; (3) la feuille Contrat demandée (S-6) ; (4) la feuille
-    /// d'appairage demandée (BR-9) ; (5) la bienvenue redemandée → `.welcome` ;
-    /// (6) la bienvenue jamais vue sur un magasin absent ou vide → `.welcome` ;
-    /// (7) « Nouvelle feature » → `.newFeature` ; (8) « Répondre » tant que la carte
-    /// existe et attend une réponse ; (9) aucune.
+    /// feuille non ignorée → `.setup` ; (2) composant OMP manquant → `.setup`,
+    /// ignorée ou non (feuille bloquante) ; (3) la feuille Contrat demandée (S-6) ;
+    /// (4) la bienvenue redemandée → `.welcome` ; (5) la bienvenue jamais vue sur
+    /// un magasin absent ou vide → `.welcome` ; (6) « Nouvelle feature » →
+    /// `.newFeature` ; (7) « Répondre » tant que la carte existe et attend une
+    /// réponse ; (8) aucune. L'appairage n'est pas une feuille : il vit dans
+    /// Réglages › Appareils.
     static func sheet(
         omp: OmpStatus,
         setup: SetupState,
@@ -48,8 +48,7 @@ extension MainSheetPolicy {
         welcomeRequested: Bool,
         launchFormShown: Bool,
         answerCardID: String?,
-        contract: ContractSheet?,
-        pairing: Bool
+        contract: ContractSheet?
     ) -> MainSheet? {
         switch setup {
         case .idle, .preparing, .failed:
@@ -57,9 +56,8 @@ extension MainSheetPolicy {
         case .ready:
             break
         }
-        if case .missing = omp, !setupDismissed { return .setup }
+        if case .missing = omp { return .setup }
         if let contract { return .contract(contract) }
-        if pairing { return .pairing }
         if welcomeRequested { return .welcome }
         if !welcomeSeen {
             switch board {

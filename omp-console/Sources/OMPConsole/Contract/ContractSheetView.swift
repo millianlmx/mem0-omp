@@ -1,6 +1,8 @@
-// La feuille Contrat (S-7) : l'en-tête (titre, sous-titre, chemin lu), le corps
-// défilant — un `MarkdownBlocksView` par section requise, dans l'ordre de
-// `titles(for:)` — puis « Fermer » (action par défaut, Échap et ↩).
+// La feuille Contrat (S-7) : l'en-tête (titre, sous-titre), le corps défilant —
+// un `MarkdownBlocksView` par section requise, dans l'ordre de `titles(for:)` —
+// puis « Fermer » (action par défaut, Échap et ↩). Un contrat absent ou illisible
+// montre sa phrase et « Copier le diagnostic » (chemin et raison, S-9 de
+// jargon-technique-expose-mac-et-ios) : le chemin ne s'affiche jamais.
 //
 // Aucun état de chargement (la lecture précède la présentation, `ContractModel`)
 // et aucun état vide possible : chaque état a son message (S-5). La feuille
@@ -43,14 +45,6 @@ struct ContractSheetView: View {
             Text(ContractText.subtitle(sheet.moment))
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            // Le chemin réellement lu : toujours montré, en détail technique.
-            HStack(spacing: 6) {
-                Text(ContractText.pathLabel)
-                Text(ConsoleFormat.path(sheet.path))
-                    .textSelection(.enabled)
-            }
-            .font(.caption)
-            .foregroundStyle(.tertiary)
         }
     }
 
@@ -65,11 +59,9 @@ struct ContractSheetView: View {
         case .sections(let sections):
             sectionsScroll(sections)
         case .missing:
-            messageBody(ContractText.missingFile)
-        case .unreadable(.notText(let bytes)):
-            messageBody(ContractText.notText(bytes: bytes))
-        case .unreadable(.error(let reason)):
-            messageBody(ContractText.unreadable(reason: reason))
+            messageBody(ContractText.missingFile, unreadable: nil)
+        case .unreadable(let unreadable):
+            messageBody(ContractText.unreadable, unreadable: unreadable)
         }
     }
 
@@ -101,14 +93,20 @@ struct ContractSheetView: View {
         }
     }
 
-    /// Le corps d'un état sans sections : le message, sous le même identifiant
-    /// que le corps défilant — jamais de feuille sans `contract.sheet.body`.
-    private func messageBody(_ text: String) -> some View {
-        VStack(alignment: .leading) {
+    /// Le corps d'un état sans sections : le message puis la copie du diagnostic,
+    /// sous le même identifiant que le corps défilant — jamais de feuille sans
+    /// `contract.sheet.body`.
+    private func messageBody(_ text: String, unreadable: ContractUnreadable?) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             message(text)
+            DiagnosticCopyButton(
+                diagnostic: ContractText.diagnostic(path: sheet.path, unreadable: unreadable),
+                identifier: "contract.sheet.diagnostic"
+            )
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("contract.sheet.body")
     }
 

@@ -43,6 +43,9 @@ struct TerminalLaunchSheet: View {
                 if case .failed = model.targetsState {
                     Button(TerminalViewText.retry) { model.retryTargets() }
                         .accessibilityIdentifier("terminal.launch.retry")
+                    if let diagnostic = model.targetsDiagnostic {
+                        DiagnosticCopyButton(diagnostic: diagnostic, identifier: "terminal.launch.diagnostic")
+                    }
                 }
                 Spacer(minLength: 0)
                 Button(TerminalViewText.cancel) { model.dismissPicker() }

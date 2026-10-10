@@ -79,8 +79,9 @@ final class MemoryGraphModel: ObservableObject {
     /// Incrémenté après CHAQUE écriture réussie : `MemoryView` l'observe et recharge
     /// alors la liste, pour qu'elle reflète le changement (AC-10, AC-11, AC-12).
     @Published private(set) var mutations = 0
-    /// La dernière erreur d'écriture, affichée dans la fiche (jamais un silence).
-    @Published private(set) var errorLine: String?
+    /// La dernière erreur d'écriture, affichée dans la fiche (jamais un silence) :
+    /// la phrase à l'écran, la réponse brute du service dans le diagnostic.
+    @Published private(set) var errorLine: ReadableFailure?
 
     /// La feuille ouverte, et ses champs. Les feuilles posent leur état ICI, la vue
     /// le présente.
@@ -90,7 +91,7 @@ final class MemoryGraphModel: ObservableObject {
     @Published var draftScope = ""
     @Published var linkFilter = ""
     @Published private(set) var linkSelection: String?
-    @Published private(set) var sheetError: String?
+    @Published private(set) var sheetError: ReadableFailure?
     @Published private(set) var sheetBusy = false
     /// La confirmation de suppression en attente (le substitut de `@State`).
     @Published private(set) var pendingDelete: String?
@@ -125,7 +126,7 @@ final class MemoryGraphModel: ObservableObject {
         layoutSeed: UInt64 = MemoryGraphLayout.defaultSeed,
         layoutIterations: Int = MemoryGraphLayout.defaultIterations
     ) {
-        let config = MemoryServiceConfig.fromEnvironment(environment)
+        let config = MemoryServiceConfig.resolved(environment: environment, paths: paths)
         self.service = service ?? HTTPMemoryService(config: config)
         self.address = config.baseURL.absoluteString
         self.paths = paths
@@ -433,14 +434,14 @@ final class MemoryGraphModel: ObservableObject {
             do {
                 try await service.add(text: draftText, scope: draftScope, tags: MemoryTags.list(draftTags))
             } catch {
-                sheetError = MemoryServiceError.message(for: error)
+                sheetError = Self.writeFailure(error)
                 return
             }
         case let .edit(id):
             do {
                 try await service.update(id: id, text: draftText, tags: MemoryTags.list(draftTags))
             } catch {
-                sheetError = MemoryServiceError.message(for: error)
+                sheetError = Self.writeFailure(error)
                 return
             }
         case .link, nil:
@@ -467,11 +468,24 @@ final class MemoryGraphModel: ObservableObject {
         do {
             try await service.delete(id: id)
         } catch {
-            errorLine = MemoryServiceError.message(for: error)
+            errorLine = Self.writeFailure(error)
             return
         }
         if selection == id { selection = nil }
         await afterMutation()
+    }
+
+    /// L'échec d'une écriture vu par l'utilisateur (jargon-technique-expose-mac-et-ios
+    /// S-6) : une phrase sans code ni corps de réponse ; le message brut du
+    /// service reste copiable.
+    private static func writeFailure(_ error: any Error) -> ReadableFailure {
+        ReadableFailure(message: MemoryText.saveFailed, diagnostic: MemoryServiceError.message(for: error))
+    }
+
+    /// Le lien manuel n'a pas pu être écrit : la phrase dit déjà tout, elle est
+    /// aussi le diagnostic.
+    private static var linkFailure: ReadableFailure {
+        ReadableFailure(message: MemoryText.linkNotSaved, diagnostic: MemoryText.linkNotSaved)
     }
 
     // MARK: - Écriture : les liens manuels (S-11)
@@ -510,7 +524,7 @@ final class MemoryGraphModel: ObservableObject {
         links.insert(link)
         manualLinks = links
         if !MemoryLinkStore.save(links, to: paths.memoryLinks) {
-            errorLine = MemoryText.linkNotSaved
+            errorLine = Self.linkFailure
         }
         closeSheet()
         mutations += 1
@@ -521,7 +535,7 @@ final class MemoryGraphModel: ObservableObject {
         links.remove(link)
         manualLinks = links
         if !MemoryLinkStore.save(links, to: paths.memoryLinks) {
-            errorLine = MemoryText.linkNotSaved
+            errorLine = Self.linkFailure
         }
         mutations += 1
     }

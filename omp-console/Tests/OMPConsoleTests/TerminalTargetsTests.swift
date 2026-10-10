@@ -158,8 +158,9 @@ func withoutGitTheSheetFails() async throws {
 
     await model.loadTargets()
 
-    let expected = FilesError.gitNotFound(searched: [missingGit], override: missingGit, path: fixture.root).userMessage
-    #expect(model.targetsState == .failed(expected))
+    let expected = FilesError.gitNotFound(searched: [missingGit], override: missingGit, path: fixture.root)
+    #expect(model.targetsState == .failed(expected.userMessage))
+    #expect(model.targetsDiagnostic == expected.diagnostic)
     #expect(model.targets.isEmpty)
     #expect(!model.canOpenSelected)
 }

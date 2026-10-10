@@ -80,6 +80,8 @@ struct IOSProjectPlanView: View {
                 Link(destination: link) {
                     Text(ProjectViewText.prOpen)
                         .font(.callout)
+                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
                 }
             }
             if let reason = row.removedReason, !reason.isEmpty {

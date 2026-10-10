@@ -16,7 +16,7 @@ public enum MemoryText {
 
     // États
     public static let noProjectTitle = "Aucun projet ouvert"
-    public static let noProjectDescription = "Choisissez un projet dans la section « Session OMP » (⌘4)."
+    public static let noProjectDescription = "Choisissez le projet dont vous voulez consulter la mémoire."
     public static let unavailableTitle = "Mémoire indisponible"
     public static let unavailableDescription = "Le service de mémoire ne répond pas. Vérifiez qu'il est démarré, puis réessayez."
     public static let retry = "Réessayer"
@@ -34,21 +34,40 @@ public enum MemoryText {
     public static let tokenRefused = "jeton refusé (401)"
     public static let unreadableResponse = "réponse illisible"
 
+    // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)
+
+    // Quelqu'un répond à l'adresse du service SANS porter le jeton d'installation
+    // de l'app : la section Mémoire le NOMME au lieu de rendre un état disponible.
+    public static let foreignTitle = "Ce n'est pas la pile d'OMP Console"
+    public static let foreignDescription = "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port."
+    /// Le libellé du bouton de reprise (S-6), partagé avec la feuille de
+    /// préparation (`SetupText.takeover`) : une seule action, un seul mot.
+    public static let takeover = "Arrêter l'ancienne pile et reprendre"
+    /// Le message d'erreur du client quand `/health` répond sans notre jeton (S-4) :
+    /// il alimente le détail de l'état « indisponible ».
+    public static let foreignService = "Ce service n'est pas la pile d'OMP Console : son jeton d'installation est absent ou différent."
+
     // MARK: - Prérequis système (S-6, all-in-one-app/AC-6)
 
     // oMLX est un prérequis SYSTÈME (embeddings de la recherche) : l'app ne
     // l'installe ni ne le configure, elle le NOMME quand il manque. Une phrase, un
     // état — le bandeau de la section n'en compose aucune.
 
-    /// oMLX ne répond pas à la sonde : l'URL est celle RÉELLEMENT sondée
-    /// (`StackConfig.omlxProbeURL`), pour que le diagnostic soit exploitable.
-    public static func omlxUnreachable(url: String) -> String {
-        "oMLX est injoignable (\(url)) — la mémoire a besoin de ses embeddings pour chercher."
-    }
+    /// oMLX ne répond pas à la sonde (S-6 de jargon-technique-expose-mac-et-ios) :
+    /// la conséquence, puis le geste. L'URL sondée vit dans le diagnostic copiable
+    /// (`omlxUnreachableDiagnostic(url:)`, coque).
+    public static let omlxUnreachable =
+        "oMLX ne répond pas : la recherche de souvenirs est indisponible. Démarrez oMLX, puis rafraîchissez."
 
-    /// oMLX répond 401/403 : le jeton configuré est refusé, la recherche ne peut pas
-    /// obtenir ses embeddings (S-6).
-    public static let omlxUnauthorized = "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN."
+    /// oMLX répond 401/403 : la clé configurée est refusée, la recherche ne peut
+    /// pas obtenir ses embeddings. Ni code, ni nom de variable à l'écran.
+    public static let omlxUnauthorized =
+        "oMLX refuse la clé d'accès configurée : la recherche de souvenirs est indisponible. Corrigez la clé d'accès d'oMLX dans la configuration de la mémoire, puis rafraîchissez."
+
+    /// Une écriture du graphe (création, modification, suppression) a échoué : la
+    /// réponse brute du service reste dans le diagnostic copiable.
+    public static let saveFailed =
+        "La modification n'a pas été enregistrée : la mémoire n'a pas répondu comme prévu. Réessayez ; si l'échec revient, copiez le diagnostic."
 
     /// L'adresse du service et la DERNIÈRE erreur (S-6.3), en détail secondaire de
     /// « Mémoire indisponible » : une ligne chacune, pour qu'aucune ne disparaisse.

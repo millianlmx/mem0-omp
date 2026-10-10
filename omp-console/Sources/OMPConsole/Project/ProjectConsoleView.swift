@@ -261,11 +261,7 @@ struct ProjectConsoleView: View {
                         .textSelection(.enabled)
                         .truncationMode(.middle)
                 }
-                LabeledContent(SessionConsoleText.fieldState, value: model.sessionStatus.text)
-                LabeledContent(
-                    SessionConsoleText.fieldPid,
-                    value: host.pid.map { String($0) } ?? SessionConsoleText.none
-                )
+                LabeledContent(SessionConsoleText.fieldState, value: SessionConsoleText.inspectorState(host.state))
                 LabeledContent(SessionConsoleText.fieldSessionId) {
                     Text(host.sessionId ?? SessionConsoleText.none)
                         .font(.system(.callout, design: .monospaced))
@@ -275,6 +271,16 @@ struct ProjectConsoleView: View {
                 Text(model.sessionStatusText)
                     .font(.callout)
                     .textSelection(.enabled)
+                DiagnosticCopyButton(
+                    diagnostic: SessionConsoleText.diagnostic(
+                        pid: host.pid,
+                        state: host.state,
+                        sessionId: host.sessionId,
+                        projectPath: model.identity?.repoRoot.path,
+                        sessionFile: host.sessionFile
+                    ),
+                    identifier: "projet.diagnostic.copy"
+                )
             }
 
             Section(SessionConsoleText.sectionJournal) {

@@ -85,13 +85,15 @@ func pendingAnswerNotifiesOnce() async {
     model.start()
 
     #expect(await awaitMainTrue { deliverer.messages.count == 1 })
-    #expect(deliverer.messages.first?.title == "depot/question attend une réponse")
-    #expect(deliverer.messages.first?.body == "Une question attend votre réponse.")
+    // Titre = libellé de l'Accueil, corps = nom affiché par l'Accueil (le label du run).
+    #expect(deliverer.messages.first?.title == "Question")
+    #expect(deliverer.messages.first?.body == "depot/question")
+    #expect(deliverer.messages.first?.opening == AlertOpening(kind: .pendingAnswer, cardID: "run:\(id)"))
     #expect(deliverer.keys == ["answer:\(id):call-1"])
 
     // Un second instantané (un run de plus) ne renotifie pas la question en vol.
     publishBusyRun(fixture, id: fixtureId(0x22))
-    #expect(await awaitMainTrue { model.status.counters?.busy == 1 })
+    #expect(await awaitMainTrue { model.status.counts?.running == 1 })
     #expect(deliverer.messages.count == 1)
 }
 
@@ -129,5 +131,52 @@ func modelReportsUnavailableDeliverer() async {
 
     #expect(await awaitMainTrue { model.authorization == .unavailable })
     // Le livreur indisponible ne fait rien : aucune exception, aucun appel système.
-    #expect(await awaitMainTrue { model.status.counters != nil })
+    #expect(await awaitMainTrue { model.status.counts != nil })
+}
+
+// MARK: - AC-5 : `ingest(_:)` est la décision extraite d'`apply(_:stateDir:)`
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-5 : `ingest` enregistre la clé AVANT de livrer, et ne renotifie pas")
+func ingestRegistersBeforeDelivering() async {
+    let fixture = StoreFixture()
+    let ledgerPath = fixtureLedgerPath(fixture)
+    let deliverer = RecorderAlertDeliverer()
+    let model = fixtureAlertsModel(fixture, deliverer: deliverer, frontmost: false, ledgerPath: ledgerPath)
+    let event = AlertEvent(
+        key: "stack-ownership-lost:8321:process:4711",
+        kind: .stackOwnershipLost,
+        title: "La pile mémoire d'OMP Console a perdu le port 8321",
+        body: "un autre programme l'occupe désormais."
+    )
+
+    await model.ingest(event)
+    #expect(deliverer.keys == [event.key])
+    #expect(AlertLedger(path: ledgerPath).contains(event.key))
+    // Une perte d'ownership ne concerne aucune carte : aucun lien profond, le clic
+    // mène à l'Accueil (notifications-mac-lien-profond).
+    #expect(deliverer.messages.first?.opening == nil)
+
+    // La clé est déjà au registre : aucune seconde livraison (sémantique d'`apply`).
+    await model.ingest(event)
+    #expect(deliverer.keys == [event.key])
+}
+
+@MainActor
+@Test("bug-embedded-podman-machine/AC-5 : `ingest` enregistre même fenêtre au premier plan, sans livrer")
+func ingestAtFrontmostRecordsWithoutDelivering() async {
+    let fixture = StoreFixture()
+    let ledgerPath = fixtureLedgerPath(fixture)
+    let deliverer = RecorderAlertDeliverer()
+    let model = fixtureAlertsModel(fixture, deliverer: deliverer, frontmost: true, ledgerPath: ledgerPath)
+    let event = AlertEvent(
+        key: "stack-ownership-lost:6333:unknown",
+        kind: .stackOwnershipLost,
+        title: "t",
+        body: "b"
+    )
+
+    await model.ingest(event)
+    #expect(deliverer.messages.isEmpty)
+    #expect(AlertLedger(path: ledgerPath).contains(event.key))
 }

@@ -6,6 +6,7 @@
 // les preuves substituent un transport HTTP scripté (`ScriptedServiceTransport`) —
 // aucun process `omp` n'est lancé.
 
+import AppKit
 import Foundation
 import Testing
 @testable import OMPConsole
@@ -284,4 +285,63 @@ func sessionStateIsSaidInWords() {
         #expect(SessionConsoleText.stateTitle(state, hasProject: true) == withProject)
         #expect(SessionConsoleText.stateTitle(state, hasProject: false) == withoutProject)
     }
+}
+
+// MARK: - jargon-technique-expose-mac-et-ios, S-3 (BR-3)
+
+@Test("jargon-technique-expose-mac-et-ios/AC-3 : la ligne « État » des inspecteurs dit En marche, En attente ou Arrêtée, sans pid ni motif brut")
+func inspectorStateIsReadable() {
+    let expected: [(ServiceSessionModel.State, String)] = [
+        (.idle, "En attente"),
+        (.launching, "En attente"),
+        (.running, "En marche"),
+        (.stopping, "En attente"),
+        (.stopped, "Arrêtée"),
+        (.dead, "Arrêtée"),
+        (.failed(message: "pid 4242 : omp introuvable"), "Arrêtée"),
+    ]
+    for (state, word) in expected {
+        let shown = SessionConsoleText.inspectorState(state)
+        #expect(shown == word)
+        #expect(!shown.localizedCaseInsensitiveContains("pid"))
+        #expect(!shown.contains("4242"))
+    }
+}
+
+@Test("jargon-technique-expose-mac-et-ios/AC-4 : « Copier le diagnostic » des inspecteurs met le PID de la session au presse-papiers")
+@MainActor
+func inspectorDiagnosticCarriesThePid() {
+    let running = SessionConsoleText.diagnostic(
+        pid: 4242,
+        state: .running,
+        sessionId: "sess-1",
+        projectPath: "/tmp/projet",
+        sessionFile: "/tmp/projet/session.jsonl"
+    )
+    #expect(running == """
+    pid : 4242
+    état : running
+    identifiant de session : sess-1
+    projet : /tmp/projet
+    fichier de session : /tmp/projet/session.jsonl
+    """)
+
+    let pasteboard = NSPasteboard.withUniqueName()
+    defer { pasteboard.releaseGlobally() }
+    DiagnosticPasteboard.copy(running, to: pasteboard)
+    #expect(pasteboard.string(forType: .string)?.contains("pid : 4242") == true)
+
+    // Service non joint : le pid est absent, le diagnostic reste copiable.
+    let unreached = SessionConsoleText.diagnostic(
+        pid: nil, state: .idle, sessionId: nil, projectPath: nil, sessionFile: nil
+    )
+    #expect(unreached.split(separator: "\n").count == 5)
+    #expect(unreached.hasPrefix("pid : absent\n"))
+    #expect(!unreached.isEmpty)
+
+    // Échec : le motif brut vit dans le diagnostic, pas sur la ligne « État ».
+    let failed = SessionConsoleText.diagnostic(
+        pid: 4242, state: .failed(message: "omp introuvable"), sessionId: nil, projectPath: nil, sessionFile: nil
+    )
+    #expect(failed.contains("omp introuvable"))
 }

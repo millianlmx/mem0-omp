@@ -39,7 +39,7 @@ enum IOSStatsContent {
                 IOSStatsLine(label: StatsPresentation.columnModel, value: feature.model ?? noModel),
                 IOSStatsLine(label: StatsPresentation.timeSpent, value: ConsoleFormat.duration(ms: totals.durationMs)),
                 IOSStatsLine(label: StatsPresentation.turns, value: count(totals.turns)),
-                IOSStatsLine(label: StatsPresentation.sentTokens, value: ConsoleFormat.tokens(totals.input)),
+                IOSStatsLine(label: StatsPresentation.sentTokens, value: ConsoleFormat.tokens(totals.sent)),
                 IOSStatsLine(label: StatsPresentation.receivedTokens, value: ConsoleFormat.tokens(totals.output)),
             ]
         )
@@ -54,7 +54,7 @@ enum IOSStatsContent {
             lines: [
                 IOSStatsLine(label: StatsPresentation.timeSpent, value: ConsoleFormat.duration(ms: totals.durationMs)),
                 IOSStatsLine(label: StatsPresentation.turns, value: count(totals.turns)),
-                IOSStatsLine(label: StatsPresentation.sentTokens, value: ConsoleFormat.tokens(totals.input)),
+                IOSStatsLine(label: StatsPresentation.sentTokens, value: ConsoleFormat.tokens(totals.sent)),
                 IOSStatsLine(label: StatsPresentation.receivedTokens, value: ConsoleFormat.tokens(totals.output)),
             ]
         )
