@@ -41,6 +41,17 @@ enum TerminalViewText {
     static let starting = "Lancement du shell…"
     static let running = "Le shell est actif."
 
+    /// La zone sans shell ni projet choisi (S-1 de mac-etats-vides-sans-issue) :
+    /// elle porte l'action « Choisir un projet… ». Aucun raccourci nommé.
+    static let noProjectTitle = "Aucun projet ouvert"
+    static let noProjectDescription = "Choisissez le projet dans lequel ouvrir un terminal."
+
+    /// La zone sans shell, projet choisi (S-4) : le projet dont la feuille
+    /// listera les répertoires.
+    static func projectNamed(_ name: String) -> String {
+        "Projet « \(name) »"
+    }
+
     /// L'état en un mot, pour le sous-titre de la fenêtre.
     static let stateStarting = "Démarrage…"
     static let stateRunning = "Actif"

@@ -98,6 +98,7 @@ struct IOSMemoryScreen: View {
             }
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
+            .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
     }
 
@@ -365,7 +366,7 @@ struct IOSMemoryScreen: View {
     private var retryButton: some View {
         Button { Task { await model.refresh() } } label: {
             Label(MemoryText.retry, systemImage: "arrow.clockwise")
-                .frame(minHeight: IOSMetrics.minimumTarget)
+                .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
                 .contentShape(Rectangle())
         }
         .disabled(!connection.gesturesEnabled || !model.canRefresh)
@@ -425,8 +426,9 @@ struct IOSMemoryScreen: View {
                     .iosBanner(tone: .attention)
                 Button { Task { await model.loadMore() } } label: {
                     Label(MemoryText.retry, systemImage: "arrow.clockwise")
+                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
                 }
-                .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                 .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(IOSMemoryAccessibility.moreRetry)
             }

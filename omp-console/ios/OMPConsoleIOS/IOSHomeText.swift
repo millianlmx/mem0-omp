@@ -15,6 +15,13 @@
 import ConsoleCore
 
 enum IOSHomeText {
+    // --- liste racine ---------------------------------------------------------
+
+    /// Le titre de navigation de la liste racine : grand titre sur iPhone, en
+    /// ligne en haut de la barre latérale sur iPad, et libellé du bouton retour
+    /// d'un écran poussé sur iPhone.
+    static let rootTitle = "OMP Console"
+
     // --- rangée de la liste racine (lue par VoiceOver) -------------------------
 
     /// Le mot qui suit le nombre d'un badge visible dans le libellé d'une rangée.

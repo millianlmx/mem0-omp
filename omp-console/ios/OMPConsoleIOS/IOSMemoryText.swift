@@ -20,8 +20,9 @@ enum IOSMemoryText {
     static let noData = "Aucune donnée reçue du Mac pour l'instant."
 
     /// Aucun projet ouvert : le libellé partagé `MemoryText.noProjectDescription`
-    /// nomme ⌘4, qui n'existe pas sur iPhone — re-formulé côté app, seul mot où
-    /// l'app s'écarte du noyau.
+    /// accompagne le bouton « Choisir un projet… » de la coque macOS, absent sur
+    /// iPhone — l'app garde sa propre phrase, sans bouton, seul mot où elle
+    /// s'écarte du noyau.
     static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
     /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
