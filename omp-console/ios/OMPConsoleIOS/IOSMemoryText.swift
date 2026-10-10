@@ -88,6 +88,15 @@ enum IOSMemoryText {
     /// est atteint. `scripts/ios-shots.sh` le lit (miroir littéral dans le script) au lieu
     /// d'attendre un délai fixe.
     static let graphRecipeReady = "memoire-recipe-ready"
+
+    /// La recette `liste` (ipad-clavier-et-largeur-de-lecture, S-8) : la Mémoire en
+    /// mode liste sur la fixture partagée, sans réseau.
+    static let listRecipe = "liste"
+
+    /// Le signal de LECTURE de la recette `liste`, écrit sur la sortie d'erreur à
+    /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
+    /// littéral dans `scripts/ios-clavier-largeur-recette.sh`).
+    static let listRecipeRead = "memoire-recipe-read"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées

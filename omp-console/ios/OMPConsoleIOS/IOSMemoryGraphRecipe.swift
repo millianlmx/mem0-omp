@@ -1,7 +1,9 @@
-// Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche>` (BR-7) : il force le
-// mode graphe de la section Mémoire sur la fixture PARTAGÉE `MemoryGraphParity`
+// Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche|liste>` (BR-7) : il force
+// le mode graphe de la section Mémoire sur la fixture PARTAGÉE `MemoryGraphParity`
 // (ConsoleCore), sans réseau et sans écran fabriqué — les API réelles du modèle
-// (`apply`, `magnify`, `drag`, `select`) sont employées telles quelles.
+// (`apply`, `magnify`, `drag`, `select`) sont employées telles quelles. La recette
+// `liste` (ipad-clavier-et-largeur-de-lecture, S-8) garde, elle, le mode liste et
+// branche le modèle sur `IOSMemoryRecipeReader`, lecteur de la même fixture.
 //
 // Sans l'argument : aucun effet. Comme `IOSSection.resolve` et `IOSHomeRecipe`, la
 // DERNIÈRE paire reconnue gagne ; une valeur inconnue est ignorée.
@@ -19,6 +21,8 @@ enum IOSMemoryGraphRecipe: Equatable {
     case graphe
     case zoom
     case fiche
+    /// Le mode liste sur la fixture, lu par `IOSMemoryRecipeReader` (S-8).
+    case liste
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSMemoryGraphRecipe? {
@@ -41,6 +45,7 @@ enum IOSMemoryGraphRecipe: Equatable {
         case IOSMemoryText.graphRecipePlate: return .graphe
         case IOSMemoryText.graphRecipeZoom: return .zoom
         case IOSMemoryText.graphRecipeSheet: return .fiche
+        case IOSMemoryText.listRecipe: return .liste
         default: return nil
         }
     }
@@ -78,7 +83,7 @@ enum IOSMemoryGraphRecipe: Equatable {
         let center = CGPoint(x: 195, y: 350)
         let size = CGSize(width: 390, height: 700)
         switch self {
-        case .graphe:
+        case .graphe, .liste:
             break
         case .zoom:
             model.magnify(by: 2, at: center, size: size)
@@ -98,7 +103,7 @@ enum IOSMemoryGraphRecipe: Equatable {
     @MainActor private func announce(_ model: IOSMemoryGraphModel) {
         guard model.shown, case .graph = model.state else { return }
         switch self {
-        case .graphe:
+        case .graphe, .liste:
             break
         case .zoom:
             guard model.zoom != 1 else { return }

@@ -14,6 +14,13 @@ enum IOSSection {
         group.sections.filter { all.contains($0) }
     }
 
+    /// Les sept sections dans l'ordre AFFICHÉ par la barre latérale : groupe par
+    /// groupe, comme la `List` de `RootView`. Les raccourcis ⌘1…⌘7 suivent cet
+    /// ordre ; si la barre latérale change, ils la suivent.
+    static var sidebarOrder: [ConsoleSection] {
+        ConsoleSectionGroup.allCases.flatMap(sections(of:))
+    }
+
     /// La section désignée par l'argument de lancement `-section <rawValue>`.
     ///
     /// La DERNIÈRE paire reconnue gagne. Rien à lire, un drapeau sans valeur ou une

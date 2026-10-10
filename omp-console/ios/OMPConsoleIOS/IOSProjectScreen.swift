@@ -90,6 +90,13 @@ struct IOSProjectScreen: View {
         } message: {
             Text(ProjectViewText.closeConfirmMessage)
         }
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .project,
+            isEnabled: IOSProjectModel.gesturesEnabled(client.state)
+        ) {
+            model.reloadDocument()
+            model.reloadPRs()
+        })
         .accessibilityIdentifier(ProjectAccessibility.screen)
     }
 

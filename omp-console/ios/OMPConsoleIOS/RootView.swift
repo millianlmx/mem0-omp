@@ -26,6 +26,9 @@ struct RootView: View {
     @StateObject private var client = ConsoleClientModel.live()
     @State private var showConnection: Bool
     @State private var showWelcome = false
+    /// La demande d'ouvrir « Nouvelle feature » (⌘N), consommée par Pipelines : la
+    /// feuille y reste un état privé, la racine ne fait que la demander.
+    @State private var newFeatureRequested = false
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     private let recipe: IOSHomeRecipe?
@@ -92,10 +95,16 @@ struct RootView: View {
                     state: state,
                     client: client,
                     recipe: sessionRecipe,
-                    memoryRecipe: memoryRecipe
+                    memoryRecipe: memoryRecipe,
+                    newFeatureRequested: $newFeatureRequested
                 )
             }
         }
+        .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: selection) { selection = $0 })
+        .focusedSceneValue(\.iosNewFeature, IOSCommandAction(owner: .kanban, isEnabled: true) {
+            selection = .kanban
+            newFeatureRequested = true
+        })
         .sheet(isPresented: $showWelcome, onDismiss: presentConnectionIfNeeded) {
             HomeWelcomeSheet(client: client)
         }

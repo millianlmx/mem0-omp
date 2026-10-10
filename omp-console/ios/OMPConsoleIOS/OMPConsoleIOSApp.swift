@@ -59,5 +59,6 @@ struct OMPConsoleIOSApp: App {
                 autoPresentConnection: !requestedSection
             )
         }
+        .commands { IOSKeyboardCommands() }
     }
 }

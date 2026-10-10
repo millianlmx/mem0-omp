@@ -39,6 +39,11 @@ struct IOSStatsScreen: View {
         // à jour de session relancent le relevé, sans geste de l'utilisateur (S-5).
         .onChange(of: client.board) { model.reload(trigger: .boardChanged) }
         .onChange(of: client.sessionUpdates) { model.reload(trigger: .sessionsChanged) }
+        // ⌘R : le même relevé que le bouton Réessayer, actif client connecté.
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .stats,
+            isEnabled: IOSStatsModel.reloads(.appeared, state: client.state)
+        ) { model.reload(trigger: .appeared) })
         .accessibilityIdentifier(StatsAccessibility.screen)
     }
 

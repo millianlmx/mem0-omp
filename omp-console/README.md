@@ -1960,6 +1960,16 @@ du verre, états vide et erreur, Dynamic Type — vit dans
 `omp-console/ios/DESIGN.md`. Chaque règle y porte un marqueur `[test: …]`,
 `[capture: …]` ou `[garde: design-ios/AC-<n>]` : aucune prose non jugeable.
 
+**Largeur de lecture sur iPad.** Quand la fenêtre est large (iPad barre latérale
+masquée, iPhone Pro Max en paysage), Accueil, Sessions, Mémoire en mode Liste,
+Projet, Statistiques et Session OMP posent leur contenu dans une colonne centrée
+de 720 pt marges comprises (`IOSMetrics.readableWidth`, soit une surface de
+672 pt), mise à l'échelle par Dynamic Type (`iosReadableWidth()`) ; le reste de la
+fenêtre forme deux marges égales. Le défilement garde toute la largeur : un
+glissement dans une marge fait défiler l'écran. Sous ce plafond (iPhone en
+portrait, iPad barre latérale visible en portrait), rien ne change. Le tableau
+Pipelines et le mode Graphe de la Mémoire restent pleine largeur.
+
 ### Section Pipelines
 
 La section Pipelines affiche l'ardoise des features et des runs de tous les
@@ -2173,7 +2183,11 @@ ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
 `memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
 sept écrans, et `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
 section Mémoire sur la fixture partagée `MemoryGraphParity` — un crochet de
-recette, pas une fonctionnalité.
+recette, pas une fonctionnalité. `-memoire.recipe liste` garde, lui, le mode
+Liste et branche l'écran sur un lecteur de cette même fixture
+(`IOSMemoryRecipeReader`, client `.connected` sans réseau) : le sommaire montre
+ses huit souvenirs, la recherche les filtre, et chaque lecture du sommaire écrit
+`memoire-recipe-read` sur la sortie d'erreur du lancement (`--stderr`).
 
 Pour ouvrir une section précise sur un simulateur déjà démarré :
 
@@ -2369,3 +2383,52 @@ gardé par la variable `MEM0_REMOTE_RECIPE` et se lance par :
 ```bash
 MEM0_REMOTE_RECIPE=1 swift test --filter iosStatistiquesRecipe
 ```
+
+### Clavier de l'iPad
+
+Avec un clavier matériel, l'app pose dix commandes dans la **barre des menus de
+l'iPad** (Globe-M, ou glissement depuis le haut ; depuis iPadOS 26 elle remplace
+la superposition qu'on obtenait en maintenant ⌘). Chaque commande y affiche son
+libellé français et son raccourci :
+
+| Raccourci | Commande | Menu | Effet |
+|---|---|---|---|
+| ⌘1 … ⌘7 | Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire, Statistiques | Présentation | ouvre la section, dans l'ordre affiché par la barre latérale |
+| ⌘R | Rafraîchir | Présentation | relit les données de l'écran courant, sans changer de section |
+| ⌘F | Rechercher | Présentation | met le focus dans le champ de recherche (Mémoire en mode Liste) ; inactive ailleurs |
+| ⌘N | Nouvelle feature… | Fichier | bascule sur Pipelines et ouvre la feuille « Nouvelle feature » |
+
+⌘R est inactif hors connexion et pendant une lecture en cours. ⌘N remplace
+« Nouvelle fenêtre » : l'app garde une seule fenêtre. Sous une feuille, une
+alerte ou un `confirmationDialog`, les dix commandes sont sans effet ; ⎋ et ↩
+des feuilles (Annuler, valider) restent inchangés, aucune commande ne les prend.
+
+### Recette : clavier et largeur de lecture
+
+`scripts/ios-clavier-largeur-recette.sh` prouve la colonne de lecture et le
+clavier de l'iPad par captures et par touches `idb`, sur deux simulateurs DÉDIÉS
+dont le nom ne contient ni « iPhone » ni « iPad » (un iPad Pro 13-inch et un
+iPhone) :
+
+```bash
+IOS_RECETTE_IPAD=<UDID iPad> IOS_RECETTE_IPHONE=<UDID iPhone> \
+  bash scripts/ios-clavier-largeur-recette.sh --phase avant|apres [--source fixture|reel]
+```
+
+- `--phase avant`, sur l'arbre d'avant la feature, capture et mesure les sept
+  écrans iPad et les six écrans iPhone (`mesures.json`) ; `--phase apres` vérifie
+  la largeur (≤ 700 pt et marges égales sur iPad, Pipelines pleine largeur,
+  iPhone identique à l'avant) puis ⌘1…⌘7, ⌘R (un signal `memoire-recipe-read`
+  de plus), ⌘N et la garde sous la feuille, ⌘F (champ `IsEditing`, frappe
+  reçue) et ⌘F sans effet sur Sessions et sur le mode Graphe.
+- `--source reel` ajoute `IOS_RECETTE_IPAD_APPAIRE` (un iPad appairé au Mac) :
+  ⌘R sur les sept écrans connectés et ⎋ sur la feuille « Lancer une session
+  OMP ».
+- Sortie : `omp-console/build/ipad-clavier-et-largeur-de-lecture/<phase>/<source>/`
+  (PNG, arbre AX JSON de chaque capture, `rapport.txt` à une ligne
+  `ok|échec|sauté AC-n …` par contrôle). Codes : 0 tout est ok, 1 au moins un
+  échec, 2 non exécutée (outil, simulateur ou mesure avant manquants).
+- La recette compile une app signée, ne désinstalle rien et ne prend jamais le
+  focus du Mac. Les boutons de barre et le champ de recherche se lisent par
+  `idb ui describe-point` : `describe-all` ne rend pas le contenu des barres de
+  navigation.

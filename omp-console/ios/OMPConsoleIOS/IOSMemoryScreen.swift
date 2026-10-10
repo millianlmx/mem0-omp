@@ -17,16 +17,21 @@ struct IOSMemoryScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
-    /// Le crochet de recette `-memoire.recipe` du mode graphe.
+    /// Le crochet de recette `-memoire.recipe` : mode graphe, ou liste sur fixture.
     let graphRecipe: IOSMemoryGraphRecipe?
     @StateObject private var model: IOSMemoryModel
     @StateObject private var graph: IOSMemoryGraphModel
+    /// La recherche présentée (⌘F la présente ; la bascule Graphe/Liste la retire).
+    @State private var searchPresented = false
+    /// Le focus du champ de recherche, posé par ⌘F.
+    @FocusState private var searchFocused: Bool
 
     init(client: ConsoleClientModel, recipe: IOSScreenState, graphRecipe: IOSMemoryGraphRecipe? = nil) {
         self.client = client
         self.recipe = recipe
         self.graphRecipe = graphRecipe
-        _model = StateObject(wrappedValue: IOSMemoryModel(client: client))
+        let reader: any IOSMemoryReading = graphRecipe == .liste ? IOSMemoryRecipeReader() : client
+        _model = StateObject(wrappedValue: IOSMemoryModel(client: reader))
         _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: client))
     }
 
@@ -34,16 +39,10 @@ struct IOSMemoryScreen: View {
         panel
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        if graph.shown {
-                            Task { await graph.refresh() }
-                        } else {
-                            Task { await model.refresh() }
-                        }
-                    } label: {
+                    Button { refreshShown() } label: {
                         Label(MemoryText.refresh, systemImage: "arrow.clockwise")
                     }
-                    .disabled(graph.shown ? graph.state == .loading : !model.canRefresh)
+                    .disabled(!canRefreshShown)
                     .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
                 }
                 if !graph.shown {
@@ -57,6 +56,7 @@ struct IOSMemoryScreen: View {
                 }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
+                        searchPresented = false
                         if graph.shown {
                             graph.hide()
                         } else {
@@ -78,13 +78,38 @@ struct IOSMemoryScreen: View {
             .task { await model.refresh() }
             .onAppear { applyGraphRecipe() }
             .onDisappear { graph.suspend() }
+            .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+                owner: .memory,
+                isEnabled: IOSMemoryModel.gesturesEnabled(model.client.state) && canRefreshShown
+            ) { refreshShown() })
+            .focusedSceneValue(\.iosSearch, IOSCommandAction(owner: .memory, isEnabled: offersSearch) {
+                searchPresented = true
+                searchFocused = true
+            })
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
     }
 
+    /// Le rafraîchissement de la vue affichée : le bouton Rafraîchir de la barre
+    /// d'outils et ⌘R passent tous deux par ici.
+    private func refreshShown() {
+        if graph.shown {
+            Task { await graph.refresh() }
+        } else {
+            Task { await model.refresh() }
+        }
+    }
+
+    /// Le contraire du `.disabled` du bouton Rafraîchir : aucune relecture pendant
+    /// une lecture en cours.
+    private var canRefreshShown: Bool {
+        graph.shown ? graph.state != .loading : model.canRefresh
+    }
+
     /// Le crochet de recette force le mode graphe sur la fixture partagée, sans
-    /// réseau : le chemin de rendu est celui de production.
+    /// réseau : le chemin de rendu est celui de production. La recette `liste`
+    /// garde la liste : seul son lecteur de fixture change (`init`).
     private func applyGraphRecipe() {
-        guard let graphRecipe else { return }
+        guard let graphRecipe, graphRecipe != .liste else { return }
         Task { await graphRecipe.activate(graph) }
     }
 
@@ -102,9 +127,11 @@ struct IOSMemoryScreen: View {
             content
                 .searchable(
                     text: queryBinding,
+                    isPresented: $searchPresented,
                     placement: .automatic,
                     prompt: Text(verbatim: MemoryText.searchPrompt)
                 )
+                .searchFocused($searchFocused)
                 .onSubmit(of: .search) { Task { await model.submitQuery() } }
         } else {
             content
@@ -128,7 +155,7 @@ struct IOSMemoryScreen: View {
             stack.iosPanel()
         } else {
             ScrollView(.vertical) {
-                stack.iosPanel()
+                stack.iosPanel().iosReadableWidth()
             }
         }
     }

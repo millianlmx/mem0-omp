@@ -86,6 +86,7 @@ struct IOSSessionOmpScreen: View {
         }
         .iosPanel()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .navigationTitle(ConsoleSection.session.title)
         .onAppear { model.appeared() }
         .onChange(of: client.state) {
@@ -114,6 +115,10 @@ struct IOSSessionOmpScreen: View {
         } message: {
             Text(IOSSessionOmpText.stopConfirmMessage)
         }
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(
+            owner: .session,
+            isEnabled: IOSSessionOmpModel.gesturesEnabled(client.state)
+        ) { model.refresh() })
         .accessibilityIdentifier(SessionOmpAccessibility.screen)
     }
 

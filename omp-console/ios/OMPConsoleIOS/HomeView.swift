@@ -89,6 +89,7 @@ struct HomeView: View {
             HomeContractSheet(card: selected.card, client: client, recipePayload: recipe?.contractPayload)
         }
         .onAppear { presentRecipeSheet() }
+        .focusedSceneValue(\.iosRefresh, IOSKeyboard.storeRefresh(client: client, owner: .home))
     }
 
     /// Le crochet `-home.recipe answer|contract` ouvre sa feuille sur la carte de
@@ -122,6 +123,7 @@ struct HomeView: View {
         }
         .padding(IOSMetrics.margin(sizeClass))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.disconnected)
     }
@@ -137,6 +139,7 @@ struct HomeView: View {
         }
         .padding(IOSMetrics.margin(sizeClass))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.macMissingOMP)
     }
@@ -150,6 +153,7 @@ struct HomeView: View {
         }
         .padding(IOSMetrics.margin(sizeClass))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.loading)
     }
@@ -165,6 +169,7 @@ struct HomeView: View {
         }
         .padding(IOSMetrics.margin(sizeClass))
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.firstRun)
     }
@@ -190,6 +195,7 @@ struct HomeView: View {
                 }
                 .padding(IOSMetrics.margin(sizeClass))
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .iosReadableWidth()
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSHomeAccessibility.dashboard)

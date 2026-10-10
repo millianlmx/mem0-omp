@@ -9,6 +9,9 @@ struct PipelinesScreen: View {
     @ObservedObject var client: ConsoleClientModel
     /// Le crochet de recette `-ios.state error` (bandeau danger par-dessus).
     let recipe: IOSScreenState
+    /// La demande d'ouvrir « Nouvelle feature » posée par ⌘N depuis la racine :
+    /// consommée à l'apparition ou à son changement, elle ouvre UNE feuille.
+    @Binding var newFeatureRequested: Bool
     @State private var sheet: PipelinesSheet?
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.openURL) private var openURL
@@ -42,7 +45,18 @@ struct PipelinesScreen: View {
                 NewFeatureSheetView(client: client)
             }
         }
+        .focusedSceneValue(\.iosRefresh, IOSKeyboard.storeRefresh(client: client, owner: .kanban))
+        .onAppear { consumeNewFeatureRequest() }
+        .onChange(of: newFeatureRequested) { consumeNewFeatureRequest() }
         .accessibilityIdentifier(PipelinesAccessibility.screen)
+    }
+
+    /// ⌘N : la même feuille que le bouton « + », ouverte une seule fois — la
+    /// demande est un booléen remis à faux avant l'ouverture.
+    private func consumeNewFeatureRequest() {
+        guard newFeatureRequested else { return }
+        newFeatureRequested = false
+        sheet = .newFeature
     }
 
     // MARK: - Dérivation

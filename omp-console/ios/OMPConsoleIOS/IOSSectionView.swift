@@ -19,6 +19,8 @@ struct IOSSectionView: View {
     let recipe: IOSSessionsRecipe?
     /// Le crochet de recette `-memoire.recipe` de la section Mémoire.
     let memoryRecipe: IOSMemoryGraphRecipe?
+    /// La demande d'ouvrir « Nouvelle feature » (⌘N), transmise à Pipelines.
+    @Binding var newFeatureRequested: Bool
 
     private var content: IOSSectionContent? {
         IOSSectionContent.of(section, state: state)
@@ -26,7 +28,7 @@ struct IOSSectionView: View {
 
     var body: some View {
         if section == .kanban {
-            PipelinesScreen(client: client, recipe: state)
+            PipelinesScreen(client: client, recipe: state, newFeatureRequested: $newFeatureRequested)
         } else if section == .memory {
             IOSMemoryScreen(client: client, recipe: state, graphRecipe: memoryRecipe)
         } else if section == .sessions {
@@ -61,6 +63,7 @@ struct IOSSectionView: View {
             }
         }
         .iosPanel()
+        .iosReadableWidth()
         .navigationTitle(section.title)
         .accessibilityIdentifier("ios.screen." + section.rawValue)
     }
