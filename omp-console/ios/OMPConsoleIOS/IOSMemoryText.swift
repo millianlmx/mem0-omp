@@ -20,24 +20,16 @@ enum IOSMemoryText {
     static let noData = "Aucune donnée reçue du Mac pour l'instant."
 
     /// Aucun projet ouvert : le libellé partagé `MemoryText.noProjectDescription`
-    /// nomme ⌘4, qui n'existe pas sur iPhone — re-formulé côté app, seul mot où
-    /// l'app s'écarte du noyau.
+    /// accompagne le bouton « Choisir un projet… » de la coque macOS, absent sur
+    /// iPhone — l'app garde sa propre phrase, sans bouton, seul mot où elle
+    /// s'écarte du noyau.
     static let noProjectDetail = "Choisissez un projet dans la section « Session OMP »."
 
-    /// Le Mac n'a pas répondu : c'est l'état du CLIENT, jamais une cause mémoire.
-    static let macUnreachable = "Le Mac n'a pas répondu."
+    /// Le pied de liste pendant la lecture de la page suivante (défilement continu).
+    static let loadingMore = "Chargement des souvenirs suivants…"
 
-    /// Le bandeau de l'indisponibilité mémoire : le titre partagé, puis le détail
-    /// relayé par le Mac (adresse sondée et dernier message d'erreur).
-    static func unavailable(detail: String) -> String {
-        MemoryText.unavailableTitle + "\n" + detail
-    }
-
-    /// La ligne de troncature du sommaire : ce qui est montré, puis le total servi.
-    static func truncated(shown: Int, total: Int) -> String {
-        "\(ConsoleFormat.count(shown, "souvenir", "souvenirs")) sur "
-            + "\(ConsoleFormat.count(total, "souvenir", "souvenirs")) — liste tronquée."
-    }
+    /// Le titre de la barre de la fiche d'un souvenir (feuilles-ios-presentation-et-depots, S-6).
+    static let detailTitle = "Souvenir"
 
     // MARK: - Le mode graphe (BR-4, BR-5, BR-6)
 
@@ -80,8 +72,11 @@ enum IOSMemoryText {
     static let graphRecipePlate = "graphe"
     static let graphRecipeZoom = "zoom"
     static let graphRecipeSheet = "fiche"
+    /// La recette `liste` : la fiche du souvenir de la fixture ouverte depuis la LISTE
+    /// (feuilles-ios-presentation-et-depots), le graphe restant masqué.
+    static let graphRecipeList = "liste"
 
-    /// Le souvenir de la fixture dont la recette `fiche` ouvre la feuille.
+    /// Le souvenir de la fixture dont les recettes `fiche` et `liste` ouvrent la feuille.
     static let graphRecipeMemory = "m1"
 
     /// Le signal de PRÊT, écrit sur la sortie d'erreur quand l'état forcé de la recette
@@ -89,14 +84,29 @@ enum IOSMemoryText {
     /// d'attendre un délai fixe.
     static let graphRecipeReady = "memoire-recipe-ready"
 
-    /// La recette `liste` (ipad-clavier-et-largeur-de-lecture, S-8) : la Mémoire en
-    /// mode liste sur la fixture partagée, sans réseau.
-    static let listRecipe = "liste"
+    /// La recette `clavier` (ipad-clavier-et-largeur-de-lecture, S-8) : la Mémoire en
+    /// mode liste sur la fixture partagée, sans réseau ni fiche ouverte.
+    static let keyboardRecipe = "clavier"
 
-    /// Le signal de LECTURE de la recette `liste`, écrit sur la sortie d'erreur à
+    /// Le signal de LECTURE de la recette `clavier`, écrit sur la sortie d'erreur à
     /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
     /// littéral dans `scripts/ios-clavier-largeur-recette.sh`).
-    static let listRecipeRead = "memoire-recipe-read"
+    static let keyboardRecipeRead = "memoire-recipe-read"
+
+    // MARK: - « Sommaire » : icône propre, raison d'indisponibilité
+
+    /// Les symboles de la barre d'outils : « Sommaire » et « Liste » ne partagent
+    /// plus la même icône. « Graphe » garde son symbole dans la vue.
+    static let summarySymbol = "rectangle.stack"
+    static let listSymbol = "list.bullet"
+
+    /// Les raisons pour lesquelles « Sommaire » est grisé (montrées au toucher).
+    static let summaryReasonShown = "Le sommaire est déjà affiché."
+    static let summaryReasonSearching = "Une recherche est en cours : le sommaire reviendra quand elle sera finie."
+    static let summaryReasonGraph = "Le sommaire s'affiche en mode Liste : touchez d'abord « Liste »."
+
+    /// La valeur VoiceOver d'un « Sommaire » indisponible.
+    static let summaryUnavailable = "Indisponible"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
@@ -109,8 +119,12 @@ enum IOSMemoryAccessibility {
     static let summary = "ios.memoire.summary"
     static let count = "ios.memoire.count"
     static let results = "ios.memoire.results"
-    static let truncated = "ios.memoire.truncated"
+    /// Le pied de liste : chargement de la page suivante, ou son échec.
+    static let more = "ios.memoire.more"
+    static let moreRetry = "ios.memoire.more.retry"
     static let detail = "ios.memoire.detail"
+    static let close = "ios.memoire.close"
+    static let summaryReason = "ios.memoire.summary.reason"
 
     static func row(_ id: String) -> String { "ios.memoire.row.\(id)" }
 

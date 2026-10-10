@@ -55,10 +55,13 @@ struct MemoryGraphRelayTests {
         #expect(MemoryLinkStore.save(MemoryGraphParity.manual, to: url))
         let token = try await stack.pair()
 
-        // AUCUN scope demandé : toutes les portées.
-        let reply = try await stack.call("GET", "/v1/memory/graph", token: token)
+        // Une portée EXPLICITE : la route lit cette seule portée. La doublure rend
+        // ses lignes sans filtrer (la fixture couvre plusieurs portées) : la
+        // parité porte sur la dérivation, pas sur le filtrage de mem0-http.
+        let reply = try await stack.call("GET", "/v1/memory/graph?scope=parite", token: token)
         #expect(reply.status == 200)
         let payload = try reply.json(RemoteMemoryGraphPayload.self)
+        #expect(payload.scope == "parite")
 
         let facts = MemoryGraphParity.facts
         // Mêmes ids, mêmes libellés, mêmes portées.
@@ -87,7 +90,7 @@ struct MemoryGraphRelayTests {
         #expect(payload.links.contains { $0.kind == "manual" })
         #expect(payload.total == payload.nodes.count)
         #expect(payload.truncated == false)
-        #expect(service.allScopes == [nil])
+        #expect(service.allScopes == ["parite"])
     }
 
     // MARK: - 3. tagFamily == visibility(tag:)

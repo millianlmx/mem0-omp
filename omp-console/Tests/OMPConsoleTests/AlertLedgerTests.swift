@@ -29,8 +29,8 @@ func ledgerPreventsReNotificationAcrossRelaunch() async {
     let second = RecorderAlertDeliverer()
     let model2 = fixtureAlertsModel(fixture, deliverer: second, frontmost: false, ledgerPath: ledgerPath)
     model2.start()
-    // Laisser le modèle traiter au moins un instantané : le compteur est publié.
-    #expect(await awaitMainTrue { model2.status.counters != nil })
+    // Laisser le modèle traiter au moins un instantané : les comptes sont publiés.
+    #expect(await awaitMainTrue { model2.status.counts != nil })
     try? await Task.sleep(for: .milliseconds(150))
     model2.stop()
     #expect(second.messages.isEmpty)

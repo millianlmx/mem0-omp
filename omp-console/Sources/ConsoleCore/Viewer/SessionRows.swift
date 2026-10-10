@@ -147,11 +147,16 @@ private let primaryArgumentMax = 120
 /// exploitable rend `""`, un chemin passe par `ConsoleFormat.path` (relatif à
 /// `projectRoot` quand il est connu), un outil mémoire rend le texte du souvenir
 /// et une portée se dit en français.
-public func primaryArgument(name: String, arguments: JSONValue?, projectRoot: String? = nil) -> String {
+public func primaryArgument(
+    name: String,
+    arguments: JSONValue?,
+    projectRoot: String? = nil,
+    home: String? = ConsoleFormat.localHome
+) -> String {
     guard let arguments, case .object(let object) = arguments else { return "" }
 
     func value(_ key: String) -> String? {
-        if pathArgumentKeys.contains(key) { return pathText(object[key], projectRoot: projectRoot) }
+        if pathArgumentKeys.contains(key) { return pathText(object[key], projectRoot: projectRoot, home: home) }
         if key == "scope", let scope = scalarText(object[key]) { return memoryScopeTitles[scope] ?? scope }
         return scalarText(object[key])
     }
@@ -184,17 +189,18 @@ public func primaryArgument(name: String, arguments: JSONValue?, projectRoot: St
     return oneLine(renderJSON(arguments))
 }
 
-/// Un ou plusieurs chemins, chacun rendu par `ConsoleFormat.path`.
-private func pathText(_ value: JSONValue?, projectRoot: String?) -> String? {
+/// Un ou plusieurs chemins, chacun rendu par `ConsoleFormat.path` : relatif à la
+/// racine du projet, sinon sous « ~ » relativement à `home`.
+private func pathText(_ value: JSONValue?, projectRoot: String?, home: String?) -> String? {
     switch value {
     case .string(let path)?:
-        return path.isEmpty ? nil : ConsoleFormat.path(path, relativeTo: projectRoot)
+        return path.isEmpty ? nil : ConsoleFormat.path(path, relativeTo: projectRoot, home: home)
     case .array(let items)?:
         guard !items.isEmpty else { return nil }
         var parts: [String] = []
         for item in items {
             guard case .string(let path) = item else { return nil }
-            parts.append(ConsoleFormat.path(path, relativeTo: projectRoot))
+            parts.append(ConsoleFormat.path(path, relativeTo: projectRoot, home: home))
         }
         let joined = parts.joined(separator: ", ")
         return joined.isEmpty ? nil : joined
@@ -350,6 +356,10 @@ public struct SessionRowBuilder: Sendable {
     /// des appels d'outil s'affichent relatifs à elle. Posée avant `append` ; une
     /// ligne déjà bâtie n'est pas réécrite.
     public var projectRoot: String?
+    /// Le dossier personnel de la machine qui a écrit la session : les chemins
+    /// hors du projet s'affichent sous « ~ ». Le Mac par défaut sur macOS ; sur
+    /// iOS, le dossier publié par le Mac (`components`), jamais le bac à sable.
+    public var home: String? = ConsoleFormat.localHome
 
     public init() {}
 
@@ -454,7 +464,7 @@ public struct SessionRowBuilder: Sendable {
         ToolCallRow(
             callId: call.id,
             name: call.name,
-            target: primaryArgument(name: call.name, arguments: call.arguments, projectRoot: projectRoot),
+            target: primaryArgument(name: call.name, arguments: call.arguments, projectRoot: projectRoot, home: home),
             // Le rendu des arguments est celui du dépôt (`renderJSON` : clés
             // triées, compact) : jamais une seconde mise en forme.
             argumentsJSON: renderJSON(call.arguments ?? .null),

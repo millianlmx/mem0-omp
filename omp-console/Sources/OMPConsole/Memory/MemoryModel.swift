@@ -30,6 +30,9 @@ final class MemoryModel: ObservableObject {
         case loading
         case noProject
         case unavailable(address: String, detail: String)
+        /// Quelqu'un répond à l'adresse SANS porter le jeton d'installation (S-2,
+        /// S-4) : jamais un état « disponible ».
+        case foreignOwned(ForeignOwnership)
         case summaryEmpty(scope: String)
         case summary(scope: String, total: Int, rows: [MemoryRow])
         case searchEmptyNoMatch
@@ -58,9 +61,20 @@ final class MemoryModel: ObservableObject {
     /// jamais dans ce cas, et le bandeau non plus.
     @Published private(set) var omlx: OMLXStatus = .unknown
     @Published private(set) var isLoading = false
+    /// Le propriétaire de l'adresse quand elle répond sans notre jeton (S-2) :
+    /// non nil ⇒ l'état d'écran est `foreignOwned`.
+    @Published private(set) var foreign: ForeignOwnership?
+    /// Vrai pendant l'action de reprise (S-6) : le bouton et le rafraîchissement
+    /// sont désactivés tant qu'elle tourne.
+    @Published private(set) var recovering = false
     /// Faux tant que la première sonde n'a pas rendu : la vue n'affiche pas
     /// « Aucun projet ouvert » avant de savoir (S-4, S-6).
     @Published private(set) var prepared = false
+
+    /// L'action de reprise de l'ancienne pile (S-6), posée par `OMPConsoleApp` sur
+    /// `SetupModel.takeOverLegacyStack` : UNE seule implémentation pour les deux
+    /// surfaces (feuille de préparation et section Mémoire).
+    var recoverOwnership: (@MainActor () async -> Void)?
 
     /// L'adresse affichée en en-tête, celle de `MEM0_HTTP_URL` EFFECTIF (S-7).
     let address: String
@@ -74,6 +88,9 @@ final class MemoryModel: ObservableObject {
     /// La session de la sonde oMLX : injectée pour que les tests la stubent sans
     /// ouvrir de socket (les doublures `URLProtocol` du dépôt).
     private let omlxSession: URLSession
+    /// La sonde de propriété de l'adresse (S-2) : injectée pour que les tests la
+    /// doublent sans lancer `lsof`/`ps`.
+    private let portOwner: @Sendable (String) async -> ForeignOwnership?
 
     /// L'URL RÉELLEMENT sondée pour oMLX — c'est elle que le bandeau nomme.
     let omlxProbeURL: URL
@@ -86,11 +103,23 @@ final class MemoryModel: ObservableObject {
         fileManager: FileManager = .default,
         paths: AppPaths = .standard(),
         stackConfig: StackConfig? = nil,
-        omlxSession: URLSession = .shared
+        omlxSession: URLSession = .shared,
+        portOwner: (@Sendable (String) async -> ForeignOwnership?)? = nil
     ) {
-        let config = MemoryServiceConfig.fromEnvironment(environment)
+        // Le jeton d'INSTALLATION est lu sur le disque (S-4) : c'est lui qui rend la
+        // sonde identitaire. `MemoryServiceConfig.resolved` réunit environnement et
+        // jeton.
+        let config = MemoryServiceConfig.resolved(environment: environment, paths: paths)
         self.service = service ?? HTTPMemoryService(config: config)
         self.address = config.baseURL.absoluteString
+        self.portOwner = portOwner ?? { address in
+            await StackOwnership.foreignOwnership(
+                address: address,
+                paths: paths,
+                environment: environment,
+                run: .live
+            )
+        }
         // `stack/env` absent (ou illisible) ⇒ les défauts de la pile : l'URL de
         // sonde est alors `http://127.0.0.1:8000/models` (S-6, cas limite).
         let stack = stackConfig ?? StackEnvStore.load(at: paths.stackEnv, fileManager: fileManager) ?? .defaults
@@ -116,6 +145,9 @@ final class MemoryModel: ObservableObject {
     /// chargement, projet, service, puis la liste.
     var state: State {
         if !prepared { return .loading }
+        // L'identité de l'adresse passe AVANT la portée : un service étranger n'est
+        // jamais « disponible », même sans projet ouvert (S-4, S-5).
+        if let foreign { return .foreignOwned(foreign) }
         guard let scope else { return .noProject }
         guard serviceAvailable else { return .unavailable(address: address, detail: serviceError ?? "") }
         switch mode {
@@ -149,7 +181,7 @@ final class MemoryModel: ObservableObject {
     }
 
     var canRefresh: Bool {
-        !isLoading
+        !isLoading && !recovering
     }
 
     // MARK: - Prérequis oMLX (S-6, AC-6)
@@ -159,14 +191,23 @@ final class MemoryModel: ObservableObject {
     /// Il n'apparaît QUE si le service mem0 est disponible (quand il est
     /// indisponible, son propre message suffit — S-6) ET qu'oMLX est en défaut :
     /// injoignable, ou jeton refusé. Joignable ou encore `unknown` ⇒ aucun bandeau.
-    /// C'est une LECTURE seule : aucun geste, aucune écriture.
-    var omlxBanner: String? {
+    /// C'est une LECTURE seule : la phrase dit la conséquence et le geste ; l'URL
+    /// sondée, le code et la variable restent dans le diagnostic copiable (S-6 de
+    /// jargon-technique-expose-mac-et-ios).
+    var omlxBanner: ReadableFailure? {
         guard serviceAvailable else { return nil }
+        let url = omlxProbeURL.absoluteString
         switch omlx {
         case .unreachable:
-            return MemoryText.omlxUnreachable(url: omlxProbeURL.absoluteString)
+            return ReadableFailure(
+                message: MemoryText.omlxUnreachable,
+                diagnostic: MemoryText.omlxUnreachableDiagnostic(url: url)
+            )
         case .unauthorized:
-            return MemoryText.omlxUnauthorized
+            return ReadableFailure(
+                message: MemoryText.omlxUnauthorized,
+                diagnostic: MemoryText.omlxUnauthorizedDiagnostic(url: url)
+            )
         case .unknown, .reachable:
             return nil
         }
@@ -220,6 +261,18 @@ final class MemoryModel: ObservableObject {
         await perform { await self.loadSummaryIfPossible() }
     }
 
+    /// Le bouton de reprise de l'état « pas la pile d'OMP Console » (S-6) : appelle
+    /// l'action posée par l'app (`SetupModel.takeOverLegacyStack`) PUIS recharge la
+    /// section — aucun état intermédiaire inventé, la vérité vient de la sonde
+    /// suivante.
+    func takeOverLegacyStack() async {
+        guard !recovering else { return }
+        recovering = true
+        defer { recovering = false }
+        await recoverOwnership?()
+        await refresh()
+    }
+
     // MARK: - Geste : ouvrir un souvenir
 
     func select(_ row: MemoryRow) {
@@ -250,7 +303,7 @@ final class MemoryModel: ObservableObject {
 
     private func probeAndReload() async {
         let health = await service.health()
-        apply(health)
+        await apply(health)
         // La portée est résolue MÊME si le service est muet : elle ne coûte aucun
         // appel réseau, et sans elle l'état afficherait « Aucun projet ouvert » au
         // lieu de l'indisponibilité (S-4, S-6.3).
@@ -270,7 +323,7 @@ final class MemoryModel: ObservableObject {
 
     private func probeAndSearch(_ requested: String) async {
         let health = await service.health()
-        apply(health)
+        await apply(health)
         prepared = true
         guard let scope = await resolveScope(), serviceAvailable else { return }
         await loadSearch(query: requested, scope: scope)
@@ -337,10 +390,13 @@ final class MemoryModel: ObservableObject {
     }
 
     /// Un succès efface le dernier message ; un échec le remplace et marque le
-    /// service indisponible (S-6.3, S-6.4).
-    private func apply(_ health: MemoryHealth) {
+    /// service indisponible (S-6.3, S-6.4). Quand la réponse est « étrangère »
+    /// (S-4), la sonde de propriété NOMME le titulaire de l'adresse (S-2) — sans
+    /// elle, l'état resterait une indisponibilité muette.
+    private func apply(_ health: MemoryHealth) async {
         serviceAvailable = health.isAvailable
         serviceError = health.isAvailable ? nil : (health.errorMessage ?? MemoryText.unreadableResponse)
+        foreign = health.isForeign ? await portOwner(address) : nil
     }
 
     private func fail(_ error: Error) {

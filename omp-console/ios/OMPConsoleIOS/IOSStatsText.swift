@@ -10,23 +10,36 @@
 // « Tours »…) viennent de `StatsPresentation` : une seule déclaration par mot,
 // partagée avec la fenêtre macOS (BR-1).
 
-import ConsoleClient
-
 /// Les mots propres à la section Statistiques (S-4) — le reste vient de
 /// `ConsoleCore`.
 enum IOSStatsText {
     /// Le libellé de la ligne de total du projet (S-4).
     static let total = "Total du projet"
 
-    /// Le message d'un échec de relevé : le message servi par l'API quand il
-    /// existe, sinon le mot de `ConnectionText` pour l'état courant (patron
-    /// `ProjectText.failure`, S-4).
-    static func failure(_ error: Error, state: ClientState) -> String {
-        if let clientError = error as? ClientError, case .api(let api) = clientError, let message = api.message {
-            return message
-        }
-        return ConnectionText.state(state)
+    /// Le message d'un échec de relevé : celui du traducteur PARTAGÉ des erreurs du
+    /// Mac (cause + remède, aucun détail technique). `nil` sur un 401 : le parcours
+    /// de jeton révoqué parle seul (ios-erreurs-serveur-lisibles, S-5).
+    static func failure(_ error: Error) -> String? {
+        IOSMacErrorText.message(for: error)
     }
+
+    // MARK: - La recette `-stats.recipe`
+
+    /// Le drapeau du crochet de recette de la section (S-6) et ses trois valeurs.
+    static let recipeFlag = "-stats.recipe"
+    static let recipeEmpty = "vide"
+    static let recipeLoading = "chargement"
+    static let recipeSwitch = "bascule"
+
+    /// Les deux projets de la fixture : la clé servie par le « Mac » de la recette
+    /// est aussi le libellé du sélecteur.
+    static let recipeEmptyProject = "recette-vide"
+    static let recipeFullProject = "recette-pleine"
+
+    /// Les deux features de `recette-pleine` (la seconde a un run vivant) et le
+    /// modèle qu'elles annoncent.
+    static let recipeFeatures = ["recette-specs", "recette-impl"]
+    static let recipeModel = "opencode-go/deepseek-v4.1-flash"
 }
 
 /// Les identifiants d'accessibilité de la section (chaînes pointées `ios.stats.`) :
@@ -36,7 +49,6 @@ enum StatsAccessibility {
     static let screen = "ios.stats"
     static let project = "ios.stats.project"
     static let loading = "ios.stats.loading"
-    static let banner = "ios.stats.banner"
     static let error = "ios.stats.error"
     static let retry = "ios.stats.retry"
     static let noProject = "ios.stats.noProject"

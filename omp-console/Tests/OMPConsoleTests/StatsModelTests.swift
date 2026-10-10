@@ -234,3 +234,57 @@ func liveAggregateAdvancesWithTime() async throws {
     let after = projectTotals(board.project, nowMs: first + 2_000).durationMs
     #expect(after - before == 1_000)
 }
+
+// MARK: - statistiques-etat-vide-et-non-defilables
+
+@Test("statistiques-etat-vide-et-non-defilables/AC-4 : un projet sans données garde son sélecteur, d'où l'on passe à un projet qui en a")
+@MainActor
+func emptyProjectKeepsItsPicker() async throws {
+    let fixture = StoreFixture()
+    let emptyRepo = makeDirectory(fixture, "repo-a")
+    let fullRepo = makeDirectory(fixture, "repo-b")
+    let fullTree = makeDirectory(fixture, "wt-b")
+    let session = try sessionFixture("2026-09-30T08-00-00-000Z_empty001.jsonl")
+    defer { session.remove() }
+    // Le projet A : une feature au plan, aucun lot, donc aucune exécution lisible.
+    let emptyKey = KanbanRepoKey.key(forRoot: emptyRepo)
+    fixture.publish(
+        .projects,
+        "\(fixtureId(0x260)).json",
+        object: projectObject(
+            repoKey: emptyKey,
+            repoRoot: emptyRepo,
+            segments: [[
+                "name": "Segment",
+                "features": [projectFeatureObject(slug: "feature-vide", status: "launched")],
+            ]],
+            current: 0
+        )
+    )
+    publishShop(fixture, seed: 0x270, suffix: "pleine", repoRoot: fullRepo, worktree: fullTree, sessionFile: session.path, live: false)
+    let fullKey = KanbanRepoKey.key(forRoot: fullRepo)
+
+    let model = StatsModel(stateDir: fixture.root)
+    defer { model.stop() }
+    model.start()
+    #expect(await awaitViewer { model.projects.count == 2 })
+
+    model.selectProject(emptyKey)
+    guard case .empty = model.state else {
+        Issue.record("le projet sans exécution lisible doit être l'état vide, pas \(model.state)")
+        return
+    }
+    // La barre d'outils dessine le sélecteur sur `shownBoard` : il nomme A et
+    // propose A et B.
+    #expect(model.state.shownBoard?.project.repoKey == emptyKey)
+    #expect(model.projects.map(\.id) == [emptyKey, fullKey])
+
+    // Le changement est synchrone : de l'état vide de A au tableau de B, aucun
+    // état intermédiaire sans sélecteur.
+    model.selectProject(fullKey)
+    guard case .board = model.state else {
+        Issue.record("le projet avec données doit afficher son tableau, pas \(model.state)")
+        return
+    }
+    #expect(model.state.shownBoard?.project.repoKey == fullKey)
+}

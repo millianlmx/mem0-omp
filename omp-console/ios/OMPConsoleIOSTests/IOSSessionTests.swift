@@ -45,6 +45,8 @@ private final class SessionStubSource: IOSSessionSource {
     func feed(forFile file: String) -> AsyncStream<RemoteSessionFeedItem> { stream }
 
     func run(forFile file: String) -> RunChoice? { run }
+
+    var macHomeDirectory: String? { nil }
 }
 
 @MainActor
@@ -248,7 +250,7 @@ struct IOSSessionTests {
             Self.choice(id: "beta-ancien", repo: "beta", startedAtMs: Self.nowMs - Self.dayMs, state: .ended(.done)),
         ]
         let list = SessionList(choices: choices, storeAbsent: false, discarded: 0)
-        let connected = ClientState.connected(endpoint: Self.endpoint)
+        let connected = IOSConnectionStatus.connected
 
         guard case .list(let days) = IOSSessionsModel.screen(
             connection: connected, list: list, project: nil, nowMs: Self.nowMs, calendar: Self.calendar
@@ -263,11 +265,8 @@ struct IOSSessionTests {
         #expect(days.last?.choices.map(\.featureTitle) == ["beta-ancien"])
         #expect(days.allSatisfy { !$0.choices.isEmpty })
 
-        // Les états d'écran, dans l'ordre de priorité de S-1.
-        #expect(
-            IOSSessionsModel.screen(connection: .unpaired, list: nil, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
-                == .noConnection
-        )
+        // Les états d'écran, dans l'ordre de priorité de S-1 (le cas « non
+        // connecté » est prouvé par `unavailableWithoutList`).
         #expect(
             IOSSessionsModel.screen(connection: connected, list: nil, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
                 == .loading
@@ -290,11 +289,6 @@ struct IOSSessionTests {
                 calendar: Self.calendar
             ) == .empty
         )
-        // Un instantané arrivé APRÈS un état déconnecté passe à la liste sans geste.
-        #expect(
-            IOSSessionsModel.screen(connection: .unpaired, list: list, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
-                != .noConnection
-        )
 
         // La recette force les mêmes états, depuis la fixture partagée.
         #expect(IOSSessionsRecipe.resolve(["-sessions.recipe", IOSSessionText.recipeListe]) == .liste)
@@ -306,13 +300,40 @@ struct IOSSessionTests {
         #expect(IOSSessionsRecipe.vide.list.choices.isEmpty)
         #expect(
             IOSSessionsModel.screen(
-                connection: .unpaired,
+                connection: .disconnected(.unpaired),
                 list: IOSSessionsRecipe.vide.list,
                 project: nil,
                 nowMs: Self.nowMs,
                 calendar: Self.calendar
             ) == .empty
         )
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : non connectée et jamais reçue → le composant d'état de connexion")
+    func unavailableWithoutList() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired)] {
+            #expect(
+                IOSSessionsModel.screen(connection: status, list: nil, project: nil, nowMs: Self.nowMs, calendar: Self.calendar)
+                    == .unavailable(status)
+            )
+        }
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : la liste reçue reste affichée hors connexion")
+    func listKeptOffline() {
+        let choices = [
+            Self.choice(id: "alpha-recent", repo: "alpha", startedAtMs: Self.nowMs - 1_000, state: .live(.running)),
+        ]
+        let list = SessionList(choices: choices, storeAbsent: false, discarded: 0)
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            guard case .list(let days) = IOSSessionsModel.screen(
+                connection: status, list: list, project: nil, nowMs: Self.nowMs, calendar: Self.calendar
+            ) else {
+                Issue.record("une liste reçue doit rester affichée hors connexion")
+                return
+            }
+            #expect(days.flatMap(\.choices).map(\.featureTitle) == ["alpha-recent"])
+        }
     }
 
     // MARK: - AC-2 : le filtre par projet
@@ -344,7 +365,7 @@ struct IOSSessionTests {
             projects: SessionFilter.projects(of: choices)
         )
         guard case .list(let days) = IOSSessionsModel.screen(
-            connection: .connected(endpoint: Self.endpoint),
+            connection: .connected,
             list: list,
             project: fallback,
             nowMs: Self.nowMs,
@@ -367,7 +388,7 @@ struct IOSSessionTests {
     @Test("ios-sessions/AC-3 : la charge utile de la fixture rend les mêmes lignes que macOS")
     func parityRows() throws {
         let payload = try Self.payload()
-        let rows = IOSSessionThreadFacts.rows(of: payload)
+        let rows = IOSSessionThreadFacts.rows(of: payload, home: nil)
 
         // Les mêmes lignes, une par une — les faits pinnés du contrat.
         #expect(rows == Self.pinnedRows)
@@ -432,7 +453,7 @@ struct IOSSessionTests {
         brokenSource.failure = ClientError.transport(.unreachable("hôte muet"))
         let failing = IOSSessionThreadModel(source: brokenSource, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
         await failing.read()
-        #expect(failing.errorBanner == ConversationText.readError)
+        #expect(failing.errorBanner == IOSMacErrorText.message(for: .macUnreachable))
         #expect(failing.isLoading == false)
 
         // La recette `.illisible` porte le même motif, et rien n'est fabriqué.
@@ -447,6 +468,73 @@ struct IOSSessionTests {
         )
         await recipeModel.read()
         #expect(recipeModel.state == .unreadable(IOSSessionText.unreadableReason))
+    }
+
+    // MARK: - Erreurs du Mac (ios-erreurs-serveur-lisibles)
+
+    private static func failingModel(_ failure: Error?) throws -> (IOSSessionThreadModel, SessionStubSource) {
+        let source = SessionStubSource(payload: try Self.payload())
+        source.failure = failure
+        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
+        return (model, source)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : viewerShowsTranslatedFailure — la visionneuse porte le message traduit, sans URL ni JSON")
+    func viewerShowsTranslatedFailure() async throws {
+        let (model, _) = try Self.failingModel(MacSessionDouble.relayed503)
+        await model.read()
+        let expected = IOSMacErrorText.message(for: .serviceUnavailable)
+        #expect(model.errorBanner == expected)
+        #expect(MacSessionDouble.isReadable(expected))
+        #expect(expected.contains("Service indisponible sur le Mac"))
+        #expect(model.isLoading == false)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-7 : viewerRetryReadsAgain — Réessayer relit la session et les lignes apparaissent")
+    func viewerRetryReadsAgain() async throws {
+        let (model, source) = try Self.failingModel(MacSessionDouble.relayed503)
+        await model.read()
+        #expect(model.errorBanner != nil)
+        #expect(source.readCount == 1)
+
+        source.failure = nil
+        model.retry()
+        #expect(model.errorBanner == nil)
+        #expect(model.isLoading)
+        for _ in 0..<200 where model.isLoading { await Task.yield() }
+
+        #expect(source.readCount == 2)
+        #expect(model.state == .ready)
+        #expect(model.errorBanner == nil)
+        #expect(model.isLoading == false)
+        #expect(model.rows.count == Self.pinnedRows.count)
+        #expect(IOSSessionsAccessibility.retry == "ios.session.retry")
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-5 : viewerUnauthorizedShowsNoBanner — un 401 n'affiche aucun bandeau de section")
+    func viewerUnauthorizedShowsNoBanner() async throws {
+        let (model, _) = try Self.failingModel(ClientError.api(.unauthorized))
+        await model.read()
+        #expect(model.errorBanner == nil)
+        #expect(model.isLoading == false)
+    }
+
+    @Test("ios-erreurs-serveur-lisibles/AC-8 : viewerUnknownRouteIsMacOutdated — « route inconnue » dit app Mac trop ancienne, un 404 métier reste l'attente")
+    func viewerUnknownRouteIsMacOutdated() async throws {
+        let (model, _) = try Self.failingModel(
+            MacSessionDouble.error(status: 404, code: "not_found", message: IOSMacFailure.unknownRoute)
+        )
+        await model.read()
+        #expect(model.errorBanner == IOSMacErrorText.message(for: .macOutdated))
+        #expect(model.isLoading == false)
+        #expect(model.errorBanner?.contains("app Mac trop ancienne") == true)
+
+        let (missing, _) = try Self.failingModel(
+            MacSessionDouble.error(status: 404, code: "not_found", message: "session introuvable")
+        )
+        await missing.read()
+        #expect(missing.state == .waiting)
+        #expect(missing.errorBanner == nil)
     }
 
     // MARK: - AC-6 : plis indépendants et diffs colorés
@@ -726,7 +814,7 @@ struct IOSSessionTests {
         )
         await model.read()
         #expect(source.readCount == 1)
-        #expect(model.rows == IOSSessionThreadFacts.rows(of: payload))
+        #expect(model.rows == IOSSessionThreadFacts.rows(of: payload, home: nil))
         #expect(model.notes == [ConversationText.ignored(2)])
 
         // Le rendu se monte sur le modèle SEUL : aucune référence de client, aucune
@@ -734,5 +822,158 @@ struct IOSSessionTests {
         // ces fichiers).
         _ = IOSSessionThreadView(model: model)
         _ = IOSSessionRowView(row: model.rows[0], isOpen: false, isThinkingOpen: false, onToggle: { _ in })
+    }
+
+    // MARK: - visionneuse-session-vide-a-l-ouverture : chargement, vide, suivi
+
+    /// Attend qu'une condition devienne vraie (motif de `IOSStatsModelTests`) :
+    /// les recettes `chargement` et `suivi` vivent dans le temps, pas dans un seul tour.
+    private static func eventually(_ condition: @MainActor () -> Bool) async -> Bool {
+        for _ in 0..<400 {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return condition()
+    }
+
+    /// Un fil monté sur une recette, sans run suivi : la feuille et le modèle ne
+    /// voient qu'une `IOSSessionSource`.
+    private static func recipeModel(_ thread: IOSSessionsRecipeThread) -> IOSSessionThreadModel {
+        IOSSessionThreadModel(
+            source: IOSSessionsRecipeSource(thread: thread),
+            file: thread.file,
+            title: thread.title,
+            subtitle: thread.subtitle,
+            tracksRun: false
+        )
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-4 : le chargement couvre l'attente de la lecture et la reconstruction")
+    func threadShowsLoadingUntilRead() async throws {
+        // (i) Une lecture qui ne se termine pas : le fil reste en chargement, sans
+        // ligne et sans état vide — jamais une zone muette.
+        #expect(IOSSessionsRecipe.resolve([IOSSessionText.recipeFlag, IOSSessionText.recipeChargement]) == .chargement)
+        let pending = try #require(IOSSessionsRecipe.chargement.thread)
+        #expect(pending.readNeverEnds)
+        #expect(pending.run == nil)
+        let waiting = Self.recipeModel(pending)
+        waiting.start()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(waiting.isLoading)
+        #expect(waiting.rows.isEmpty)
+        #expect(waiting.state == .waiting)
+        #expect(waiting.errorBanner == nil)
+        // Fermer la feuille annule l'attente ; une lecture annulée ne touche pas à l'état.
+        waiting.finish()
+        for _ in 0..<50 { await Task.yield() }
+        #expect(waiting.isLoading)
+        #expect(waiting.errorBanner == nil)
+
+        // (ii) Une réécriture repasse par le chargement jusqu'à la fin de la relecture.
+        let source = SessionStubSource(payload: try Self.payload())
+        let model = IOSSessionThreadModel(source: source, file: "s.jsonl", title: "t", subtitle: nil, tracksRun: false)
+        await model.read()
+        #expect(!model.isLoading)
+        #expect(model.rows.count == 10)
+        model.apply(.rewrote)
+        #expect(model.isLoading, "la reconstruction s'annonce aussitôt, jamais « Session vide »")
+        #expect(model.rows.isEmpty)
+        #expect(await Self.eventually { source.readCount == 2 && !model.isLoading })
+        #expect(model.rows.count == 10)
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-5 : une session sans message rend l'état vide, jamais un chargement sans fin")
+    func emptySessionIsExplicit() async throws {
+        #expect(IOSSessionsRecipe.resolve([IOSSessionText.recipeFlag, IOSSessionText.recipeFilVide]) == .filVide)
+        let empty = try #require(IOSSessionsRecipe.filVide.thread)
+        #expect(empty.payload.entries.isEmpty)
+        #expect(empty.payload.skipped.isEmpty)
+        #expect(empty.payload.header != nil, "l'en-tête de la fixture est conservé")
+        #expect(IOSSessionsRecipe.filVide.list.choices.count == 1, "la feuille s'ouvre sur la session de la fixture")
+        let model = Self.recipeModel(empty)
+        await model.read()
+        #expect(!model.isLoading)
+        #expect(model.state == .ready)
+        #expect(model.rows.isEmpty)
+        #expect(model.errorBanner == nil)
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-6 : la recette suivi ajoute trois messages et le suivi garde sa règle")
+    func followRecipeKeepsFollowPolicy() async throws {
+        #expect(IOSSessionsRecipe.resolve([IOSSessionText.recipeFlag, IOSSessionText.recipeSuivi]) == .suivi)
+        let follow = try #require(IOSSessionsRecipe.suivi.thread)
+        #expect(follow.run?.state == .live(.running))
+        #expect(follow.additions.map(\.text) == (1...3).map { IOSSessionText.recipeFollowMessage($0) })
+        let fixtureOffsets = follow.payload.entries.map { $0.offset ?? $0.index }
+        let addedOffsets = follow.additions.compactMap(\.offset)
+        #expect(addedOffsets.count == 3)
+        #expect(Set(addedOffsets).count == 3)
+        #expect(addedOffsets.allSatisfy { offset in fixtureOffsets.allSatisfy { offset > $0 } })
+        #expect(follow.additionTimes == [.seconds(8), .seconds(12), .seconds(16)])
+
+        func timed(_ times: [Duration]) -> IOSSessionsRecipeThread {
+            IOSSessionsRecipeThread(
+                payload: follow.payload,
+                run: follow.run,
+                file: follow.file,
+                title: follow.title,
+                subtitle: follow.subtitle,
+                additions: follow.additions,
+                additionTimes: times,
+                readNeverEnds: follow.readNeverEnds
+            )
+        }
+
+        // (a) Au bas : chaque ajout s'affiche et redemande un défilement, sans geste.
+        let atBottom = Self.recipeModel(timed([.milliseconds(1), .milliseconds(2), .milliseconds(3)]))
+        atBottom.start()
+        #expect(await Self.eventually { atBottom.rows.count == 13 })
+        #expect(atBottom.rows.suffix(3).map(\.id) == follow.additions.compactMap(\.offset).map { "r\($0)" })
+        #expect(atBottom.following)
+        // Une demande à la lecture (la valeur après chargement), puis une par ajout.
+        #expect(atBottom.scrollRequest == 4, "collé au bas, chaque ajout demande un défilement")
+        atBottom.finish()
+
+        // (b) Remonté par un geste avant les ajouts : la position n'est plus forcée.
+        let scrolledUp = Self.recipeModel(timed([.milliseconds(300), .milliseconds(310), .milliseconds(320)]))
+        scrolledUp.start()
+        #expect(await Self.eventually { !scrolledUp.isLoading })
+        #expect(scrolledUp.rows.count == 10, "aucun ajout avant le geste")
+        scrolledUp.reportBottomGap(ViewerScrollGeometry(gap: 400, origin: 120))
+        scrolledUp.reportUserScroll(deltaY: 1)
+        #expect(!scrolledUp.following)
+        let suspended = scrolledUp.scrollRequest
+        #expect(await Self.eventually { scrolledUp.rows.count == 13 })
+        #expect(scrolledUp.scrollRequest == suspended, "remonté, les ajouts ne déplacent pas le fil")
+        #expect(!scrolledUp.following)
+        scrolledUp.finish()
+    }
+}
+
+/// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
+private enum MacSessionDouble {
+    static func error(status: Int, code: String, message: String) -> ClientError {
+        let body = (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]])) ?? Data()
+        return ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+    }
+
+    /// Le 503 que rend le Mac quand mem0-http est injoignable : l'adresse et le JSON amont
+    /// sont dans le message.
+    static var relayed503: ClientError {
+        error(
+            status: 503,
+            code: "unavailable",
+            message: MemoryText.unavailableDetail(
+                address: "localhost:8321",
+                error: "réponse 405 du service ({\"detail\":\"Method Not Allowed\"})"
+            )
+        )
+    }
+
+    /// Ni adresse, ni JSON, ni code HTTP à trois chiffres.
+    static func isReadable(_ text: String) -> Bool {
+        let forbidden = ["localhost", "://", "{", "\"detail\""]
+        guard !forbidden.contains(where: text.contains) else { return false }
+        return text.range(of: #"\b\d{3}\b"#, options: .regularExpression) == nil
     }
 }

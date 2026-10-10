@@ -8,7 +8,8 @@
 // ignorée.
 //
 // `-home.row <n>` (feature ios-accueil-dynamic-type-casse) amène le HAUT de la
-// rangée d'index `n` — « En cours » puis « Livrées récemment » — en haut de la
+// rangée d'index `n` — `IOSHomeContent.rows` : « En cours », « À reprendre »,
+// « Pas commencées », puis « Livrées récemment » — en haut de la
 // zone de défilement du tableau de bord, pour les captures de rangées. Même
 // règle : la DERNIÈRE paire reconnue gagne ; `n` doit être un entier ≥ 0, sinon la
 // paire est ignorée. Ce n'est pas une fonctionnalité, comme `-home.recipe`.
@@ -30,6 +31,17 @@ enum IOSHomeRecipe: String, Equatable {
     case answer
     /// Le tableau de bord avec la feuille Contrat ouverte (capture S-14).
     case contract
+    /// Le tableau de bord avec la feuille Contrat ouverte sur un nom de feature
+    /// LONG et un contrat LONG (`IOSHomeRecipeText`, preuves de
+    /// contrat-ios-markdown-brut, S-4).
+    case contractLong
+    /// Le tableau de bord dont chaque rangée (« En cours », « À reprendre », « Pas
+    /// commencées », « Livrées récemment ») porte un titre long (captures des
+    /// rangées en largeur compacte).
+    case longTitles
+    /// Le tableau de bord dont l'envoi des gestes de carte n'aboutit jamais : un Mac
+    /// qui tarde, pour les captures de l'état « Envoi en cours ».
+    case slowMac
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSHomeRecipe? {
@@ -65,20 +77,45 @@ enum IOSHomeRecipe: String, Equatable {
 
     /// L'état de l'Accueil forcé, dérivé de la fixture partagée.
     var homeState: IOSHomeState {
+        let inputs = self.inputs
+        return IOSHomeState.resolve(connection: inputs.connection, board: inputs.board, omp: inputs.omp)
+    }
+
+    /// Le statut de connexion présenté de la recette : la fixture tient lieu de
+    /// Mac (`attemptFollowsFailure: false`) ; seule `degraded` déclare un appareil
+    /// non appairé, qui garde l'ardoise de la fixture sous le bandeau.
+    var connection: IOSConnectionStatus {
+        inputs.connection
+    }
+
+    /// Le badge de la ligne « Accueil » : le compte d'attentes du MÊME couple
+    /// (omp, board) que l'Accueil forcé, comme en direct (il ignore la connexion).
+    var badge: Int {
+        let inputs = self.inputs
+        return IOSHomeContent.badge(omp: inputs.omp, board: inputs.board)
+    }
+
+    /// La SEULE source du couple (omp, board) — et de l'état de connexion — de
+    /// chaque cas : `homeState`, `connection` et `badge` ne peuvent pas diverger.
+    private var inputs: (connection: IOSConnectionStatus, omp: OmpStatus, board: KanbanBoardState) {
         let omp = OmpStatus.available(URL(fileURLWithPath: ""))
         let connected = ClientState.connected(endpoint: .manual(host: "", port: 0))
+        let (state, ompStatus, board): (ClientState, OmpStatus, KanbanBoardState)
         switch self {
-        case .dashboard, .answer, .contract:
-            return IOSHomeState.resolve(state: connected, board: Self.board, omp: omp)
+        case .dashboard, .answer, .contract, .contractLong, .slowMac:
+            (state, ompStatus, board) = (connected, omp, Self.board)
+        case .longTitles:
+            (state, ompStatus, board) = (connected, omp, Self.longTitlesBoard)
         case .loading:
-            return IOSHomeState.resolve(state: connected, board: .loading, omp: omp)
+            (state, ompStatus, board) = (connected, omp, .loading)
         case .firstRun:
-            return IOSHomeState.resolve(state: connected, board: .storeEmpty(dir: ""), omp: omp)
+            (state, ompStatus, board) = (connected, omp, .storeEmpty(dir: ""))
         case .ompMissing:
-            return IOSHomeState.resolve(state: connected, board: Self.board, omp: .missing)
+            (state, ompStatus, board) = (connected, .missing, Self.board)
         case .degraded:
-            return IOSHomeState.resolve(state: .unpaired, board: Self.board, omp: omp)
+            (state, ompStatus, board) = (.unpaired, omp, Self.board)
         }
+        return (IOSConnectionStatus.resolve(state, attemptFollowsFailure: false), ompStatus, board)
     }
 
     /// La carte dont une feuille est ouverte par la recette, ou aucune.
@@ -89,30 +126,60 @@ enum IOSHomeRecipe: String, Equatable {
             return attention.first { IOSHomeContent.attentionButton($0) == .answer }?.card
         case .contract:
             return attention.first { ContractDocument.moment(for: $0.card) != nil }?.card
+        case .contractLong:
+            // La carte de `contract`, dont seul le DERNIER segment de l'identifiant
+            // (le nom de la feature, `IOSHomeContent.contractSlug`) est remplacé.
+            guard var card = Self.contract.sheetCard else { return nil }
+            if let colon = card.id.lastIndex(of: ":") {
+                card.id = String(card.id[...colon]) + IOSHomeRecipeText.longSlug
+            } else {
+                card.id = IOSHomeRecipeText.longSlug
+            }
+            return card
         default:
             return nil
         }
     }
 
+    /// L'envoi des gestes de carte qui remplace celui du client, ou aucun : sous
+    /// `slowMac`, une attente qui ne rend jamais (le Mac tarde à répondre).
+    var gestureSend: IOSHomeGestureModel.Send? {
+        guard self == .slowMac else { return nil }
+        return { _ in try await Task.sleep(for: .seconds(3600)) }
+    }
+
     /// La charge utile de contrat de recette : le markdown de la fixture partagée,
-    /// pour que la feuille montre de vraies sections sans réseau.
+    /// pour que la feuille montre de vraies sections sans réseau. `contractLong`
+    /// sert le contrat long de `IOSHomeRecipeText`.
     var contractPayload: RemoteContractPayload? {
-        guard self == .contract else { return nil }
+        let content: String
+        switch self {
+        case .contract: content = HomeParity.contractMarkdown
+        case .contractLong: content = IOSHomeRecipeText.longContract
+        default: return nil
+        }
         return RemoteContractPayload(document: RemoteDocument(
             name: IOSHomeText.contractName,
             state: IOSHomeText.documentText,
-            content: HomeParity.contractMarkdown,
+            content: content,
             reason: nil
         ))
     }
 
-    /// L'ardoise de la fixture, horloge fixe.
-    private static let board: KanbanBoardState = KanbanBoardState.derive(
-        snapshot: HomeParity.snapshot,
-        nowMs: 1_700_000_000_000,
-        stateDir: "",
-        isAlive: .transported(HomeParity.snapshot)
-    )
+    /// L'ardoise de la fixture partagée, horloge fixe : celle du Mac.
+    private static var board: KanbanBoardState { HomeParity.board }
+
+    /// L'ardoise de la fixture où les cartes des rangées (`IOSHomeContent.rows`)
+    /// prennent `IOSHomeText.recipeLongTitle` ; les cartes « À vous » gardent leur
+    /// titre.
+    private static var longTitlesBoard: KanbanBoardState {
+        guard case .board(var board) = Self.board else { return Self.board }
+        let rowIDs = Set(IOSHomeContent.rows(HomePresentation.dashboard(board)).map(\.id))
+        for index in board.cards.indices where rowIDs.contains(board.cards[index].id) {
+            board.cards[index].title = IOSHomeText.recipeLongTitle
+        }
+        return .board(board)
+    }
 
     /// Les faits d'attention de la fixture.
     private static var attention: [HomeAttention] {

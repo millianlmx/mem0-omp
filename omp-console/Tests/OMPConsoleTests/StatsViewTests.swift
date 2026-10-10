@@ -84,6 +84,19 @@ func accessibilityIdentifiersAreStable() {
 }
 
 @MainActor
+@Test("statistiques-etat-vide-et-non-defilables/AC-5 : avant le premier instantané, la fenêtre dit « Chargement des statistiques… », pas celui des pipelines")
+func statsLoadingNamesStatistics() {
+    // Avant `start()`, aucun instantané : c'est l'état où la vue montre
+    // `StatsText.loading`. Le magasin n'est jamais ouvert.
+    let model = StatsModel(stateDir: "/tmp/etat")
+    defer { model.stop() }
+    #expect(model.state == .loading)
+    #expect(model.state.shownBoard == nil)
+    #expect(StatsText.loading == "Chargement des statistiques\u{2026}")
+    #expect(StatsText.loading != KanbanBoardState.loadingText)
+}
+
+@MainActor
 @Test("statistiques/AC-2 : aucune chaîne rendue ne porte de signe monétaire ni de coût")
 func noCurrencyAnywhere() {
     let project = dashboardProject()

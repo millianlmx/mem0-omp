@@ -17,6 +17,9 @@ struct FilesView: ConsoleSectionView {
     static let section = ConsoleSection.files
 
     @ObservedObject var model: FilesModel
+    /// Le sélecteur de projet de l'état « Aucun projet ouvert » (S-1 de
+    /// mac-etats-vides-sans-issue), à l'échelle de l'app.
+    let chooser: ProjectChooserModel
 
     var body: some View {
         VStack(spacing: 0) {
@@ -93,11 +96,12 @@ struct FilesView: ConsoleSectionView {
         .accessibilityIdentifier("files.target")
     }
 
-    private func noticeBar(_ text: String) -> some View {
+    private func noticeBar(_ failure: ReadableFailure) -> some View {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
-            Text(verbatim: text)
+            Text(verbatim: failure.message)
             Spacer()
+            DiagnosticCopyButton(diagnostic: failure.diagnostic, identifier: "files.notice.diagnostic")
         }
         .font(.callout)
         .foregroundStyle(.secondary)
@@ -122,17 +126,22 @@ struct FilesView: ConsoleSectionView {
 
     @ViewBuilder private var content: some View {
         if model.projectRoot == nil, model.errorMessage == nil {
-            ContentUnavailableView(
-                FilesText.noProjectTitle,
-                systemImage: "folder.badge.questionmark",
-                description: Text(FilesText.noProjectDescription)
-            )
+            // Le projet se choisit sur place : la section ne change pas, la
+            // cible et l'arbre du projet choisi se chargent (S-3).
+            NoProjectView(state: .files, chooser: chooser) {
+                Task { await model.refresh() }
+            }
         } else if let error = model.errorMessage {
-            ContentUnavailableView(
-                FilesText.errorTitle,
-                systemImage: "exclamationmark.triangle",
-                description: Text(verbatim: error)
-            )
+            ContentUnavailableView {
+                Label(FilesText.errorTitle, systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(verbatim: error.message)
+            } actions: {
+                // Le même geste que `files.refresh` (⌘R) ; la copie vient après.
+                Button(FilesText.refresh) { Task { await model.refresh() } }
+                    .accessibilityIdentifier("files.error.refresh")
+                DiagnosticCopyButton(diagnostic: error.diagnostic, identifier: "files.error.diagnostic")
+            }
         } else if model.isLoading, model.tree == nil {
             VStack(spacing: 10) {
                 ProgressView()
@@ -296,9 +305,9 @@ struct FilesView: ConsoleSectionView {
 
     @ViewBuilder private var diffSection: some View {
         if let failure = model.diffFailure {
-            message(failure)
+            message(failure.message, diagnostic: failure.diagnostic)
         } else if case let .unavailable(reason)? = model.diffBase {
-            message(FilesText.baseUnavailable(reason: reason))
+            message(FilesText.baseUnavailable, diagnostic: reason)
         } else if let diff = model.diff {
             if diff.isEmpty {
                 message(FilesText.noDifference)
@@ -330,7 +339,11 @@ struct FilesView: ConsoleSectionView {
     @ViewBuilder private func contentSection(dedicated: String?) -> some View {
         if let content = model.content {
             if let message = content.message(dedicated: dedicated) {
-                self.message(message)
+                if case let .unreadable(reason) = content {
+                    self.message(message, diagnostic: reason)
+                } else {
+                    self.message(message)
+                }
             } else if case let .text(text) = content {
                 if language == .markdown, mode == .content {
                     MarkdownDocumentView(blocks: FilesRenderMemo.blocks(text))
@@ -345,6 +358,16 @@ struct FilesView: ConsoleSectionView {
         Text(verbatim: text)
             .foregroundStyle(.secondary)
             .padding(8)
+    }
+
+    /// Un message du document avec son brut (S-8) : la phrase, puis la copie.
+    private func message(_ text: String, diagnostic: String) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(verbatim: text)
+                .foregroundStyle(.secondary)
+            DiagnosticCopyButton(diagnostic: diagnostic, identifier: "files.document.diagnostic")
+        }
+        .padding(8)
     }
 
     /// Le rouge d'un retrait, le vert d'un ajout, et rien d'autre : la distinction

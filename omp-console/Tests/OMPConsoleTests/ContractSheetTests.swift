@@ -187,16 +187,31 @@ func eachOpeningRereadsTheFile() throws {
 
 // MARK: - AC-4 : absence et illisibilité, dites en toutes lettres
 
-@Test("contract-display-omp-console/AC-4 : les quatre messages d'absence et d'illisibilité, mot pour mot")
+@Test("jargon-technique-expose-mac-et-ios/AC-6 : contrat absent ou illisible — une phrase et un geste, sans chemin, taille ni UTF-8")
 func absenceMessagesAreExact() {
     #expect(ContractText.missingFile
-        == "Aucun contrat pour cette feature : le fichier `.omp/pipeline/contract.md` n'existe pas encore.")
-    #expect(ContractText.notText(bytes: 12)
-        == "Contrat illisible : le fichier n'est pas du texte UTF-8 (12 octets).")
-    #expect(ContractText.unreadable(reason: "Permission denied")
-        == "Contrat illisible : Permission denied")
+        == "Cette feature n'a pas encore de contrat : il apparaîtra quand ses besoins seront validés.")
+    #expect(ContractText.unreadable
+        == "Le contrat ne peut pas être affiché pour l'instant. Fermez-le, puis rouvrez-le.")
+    for text in [ContractText.missingFile, ContractText.unreadable] {
+        #expect(forbiddenTokens(in: text).isEmpty, "\(text)")
+        for token in ["/", ".md", "octets", "UTF-8"] {
+            #expect(!text.contains(token), "« \(token) » dans : \(text)")
+        }
+    }
+    // Non-objectif de S-9 : le message d'une section absente est inchangé.
     #expect(ContractText.sectionMissing(title: "Lots")
         == "La section `## Lots` est absente du contrat.")
+}
+
+@Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic du contrat garde le chemin, puis la taille ou la raison du système")
+func contractDiagnosticKeepsTheRawDetail() {
+    let path = "/w/feature/.omp/pipeline/contract.md"
+    #expect(ContractText.diagnostic(path: path, unreadable: nil) == "\(path) : absent")
+    #expect(ContractText.diagnostic(path: path, unreadable: .notText(bytes: 12))
+        == "\(path) : pas du texte UTF-8 (12 octets)")
+    #expect(ContractText.diagnostic(path: path, unreadable: .error("Permission denied"))
+        == "\(path) : Permission denied")
 }
 
 @MainActor
@@ -249,7 +264,7 @@ func policyPresentsAndClosesTheContract() {
     func policy(omp: OmpStatus, contract: ContractSheet?) -> MainSheet? {
         MainSheetPolicy.sheet(
             omp: omp, setup: .ready, setupDismissed: false, board: .loading, welcomeSeen: true,
-            welcomeRequested: true, launchFormShown: true, answerCardID: "carte", contract: contract, pairing: false
+            welcomeRequested: true, launchFormShown: true, answerCardID: "carte", contract: contract
         )
     }
     // Le contrat rend `.contract(<valeur>)` — et passe avant bienvenue, nouvelle

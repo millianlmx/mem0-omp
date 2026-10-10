@@ -140,7 +140,8 @@ func accueilRecipe() async throws {
     if let dashboard {
         print(
             "recette Accueil : \(dashboard.attention.count) fait(s) d'attention, "
-                + "\(dashboard.running.count) en cours, \(dashboard.delivered.count) livrée(s)"
+                + "\(dashboard.running.count) en cours, \(dashboard.paused.count) à reprendre, "
+                + "\(dashboard.notStarted.count) pas commencée(s), \(dashboard.delivered.count) livrée(s)"
         )
     } else {
         print("recette Accueil : ardoise = \(client.board)")
@@ -224,8 +225,8 @@ func accueilRecipe() async throws {
         }
     }
 
-    // Reprendre un lot au pilote mort.
-    if let resumable = dashboard.running.first(where: { KanbanActionPresentation.resumable($0) }) {
+    // Reprendre un lot au pilote mort (section « À reprendre »).
+    if let resumable = dashboard.paused.first(where: { KanbanActionPresentation.resumable($0) }) {
         do {
             let accepted = try await client.resume(cardId: resumable.id)
             print("recette Accueil : reprise de \(resumable.id) — accepted=\(accepted.accepted)")

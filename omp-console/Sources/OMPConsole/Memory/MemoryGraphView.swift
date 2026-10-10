@@ -126,12 +126,10 @@ struct MemoryGraphView: View {
                 Text(MemoryText.unavailableDescription)
             } actions: {
                 Button(MemoryText.retry) { Task { await model.refresh() } }
-                Text(verbatim: MemoryText.unavailableDetail(address: address, error: detail))
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-                    .textSelection(.enabled)
-                    .accessibilityIdentifier("memoire.graph.unavailable.detail")
+                DiagnosticCopyButton(
+                    diagnostic: MemoryText.unavailableDetail(address: address, error: detail),
+                    identifier: "memoire.graph.unavailable.diagnostic"
+                )
             }
 
         case .empty:
@@ -344,6 +342,7 @@ struct MemoryGraphView: View {
             }
         }
         .frame(minWidth: 320)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("memoire.graph.detail")
     }
 
@@ -360,11 +359,12 @@ struct MemoryGraphView: View {
             }
             manualLinksBlock(row)
             if let error = model.errorLine {
-                Text(verbatim: error)
+                Text(verbatim: error.message)
                     .font(.footnote)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("memoire.graph.error")
+                DiagnosticCopyButton(diagnostic: error.diagnostic, identifier: "memoire.graph.error.diagnostic")
             }
         }
         .font(.callout)
@@ -512,11 +512,12 @@ private struct MemoryMemoryFormSheet: View {
             }
 
             if let error = model.sheetError {
-                Text(verbatim: error)
+                Text(verbatim: error.message)
                     .font(.callout)
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("\(identifier).error")
+                DiagnosticCopyButton(diagnostic: error.diagnostic, identifier: "\(identifier).error.diagnostic")
             }
 
             HStack(spacing: 8) {
@@ -574,10 +575,11 @@ private struct MemoryLinkSheet: View {
             }
 
             if let error = model.sheetError {
-                Text(verbatim: error)
+                Text(verbatim: error.message)
                     .font(.callout)
                     .foregroundStyle(.red)
                     .accessibilityIdentifier("memoire.link.error")
+                DiagnosticCopyButton(diagnostic: error.diagnostic, identifier: "memoire.link.error.diagnostic")
             }
 
             HStack(spacing: 8) {

@@ -18,6 +18,13 @@ enum IOSSurface {
     static let panelRadius: CGFloat = 12
     static let cardRadius: CGFloat = 12
     static let bannerRadius: CGFloat = 12
+
+    /// Le fond d'une carte. `raised` (cartes de l'écran Pipelines) :
+    /// `tertiarySystemGroupedBackground`, égal au panneau en clair et plus clair
+    /// que lui en sombre ; sinon le fond du panneau, `secondarySystemBackground`.
+    static func cardFill(raised: Bool) -> UIColor {
+        raised ? .tertiarySystemGroupedBackground : .secondarySystemBackground
+    }
 }
 
 extension View {
@@ -30,8 +37,11 @@ extension View {
     }
 
     /// La carte d'un état vide : fond opaque, rayon 12, filet, ombre légère.
-    func iosCard() -> some View {
-        modifier(IOSCardSurface())
+    /// `raised` (cartes de l'écran Pipelines) ne change que le fond, à
+    /// `tertiarySystemGroupedBackground` : identique au panneau en clair, plus
+    /// clair que lui en sombre — le contour de la carte se distingue du panneau.
+    func iosCard(raised: Bool = false) -> some View {
+        modifier(IOSCardSurface(raised: raised))
     }
 
     /// Le bandeau d'un état : teinte du ton à 12 % d'opacité, rayon 12. Le mot
@@ -64,6 +74,7 @@ private struct IOSPanelSurface: ViewModifier {
 }
 
 private struct IOSCardSurface: ViewModifier {
+    let raised: Bool
     @ScaledMetric(relativeTo: .body) private var padding: CGFloat = 12
 
     func body(content: Content) -> some View {
@@ -71,7 +82,7 @@ private struct IOSCardSurface: ViewModifier {
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                Color(uiColor: .secondarySystemBackground),
+                Color(uiColor: IOSSurface.cardFill(raised: raised)),
                 in: .rect(cornerRadius: IOSSurface.cardRadius)
             )
             .overlay {

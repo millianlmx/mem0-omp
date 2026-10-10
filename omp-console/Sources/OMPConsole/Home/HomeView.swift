@@ -10,9 +10,10 @@
 //
 // Surfaces (HIG Materials : pas de verre dans la couche de contenu) : cartes
 // d'attente `.consoleCard(selected: false)` opaques, bandeau `.consoleBanner`,
-// boutons standard ; les listes « En cours » et « Livrées récemment » sont des
-// `GroupBox` système. Aucun `@State` : l'état vit dans `HomeModel` et
-// `ActionsModel`.
+// boutons standard ; les listes « En cours », « À reprendre », « Pas commencées »
+// et « Livrées récemment » sont des `GroupBox` système, les deux du milieu
+// masquées quand elles sont vides. Aucun `@State` : l'état vit dans `HomeModel`
+// et `ActionsModel`.
 //
 // Audit HIG (2026-10-01) : UN seul bouton proéminent à l'écran (la première
 // carte d'attente qui offre un geste, `prominentAttentionID`) ; le dépôt ne se
@@ -148,6 +149,24 @@ struct HomeView: ConsoleSectionView {
                     }
                 }
 
+                if !dashboard.paused.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(HomeText.pausedHeader).font(.title3.bold())
+                        GroupBox {
+                            rows(dashboard.paused) { card in pausedRow(card, showsRepo: showsRepo) }
+                        }
+                    }
+                }
+
+                if !dashboard.notStarted.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(HomeText.notStartedHeader).font(.title3.bold())
+                        GroupBox {
+                            rows(dashboard.notStarted) { card in notStartedRow(card, showsRepo: showsRepo) }
+                        }
+                    }
+                }
+
                 VStack(alignment: .leading, spacing: 12) {
                     Text(HomeText.deliveredTitle).font(.title3.bold())
                     if dashboard.delivered.isEmpty {
@@ -240,9 +259,7 @@ struct HomeView: ConsoleSectionView {
             switch HomePresentation.cardAction(attention) {
             case .answer:
                 Button(HomeText.answerEllipsis) {
-                    actions.clearAnswer()
-                    actions.replyText = ""
-                    home.answerCardID = card.id
+                    home.openAnswer(card.id, actions: actions)
                 }
             case .validate:
                 Button(KanbanText.validateSpecs) {
@@ -251,6 +268,12 @@ struct HomeView: ConsoleSectionView {
             case .accept:
                 Button(KanbanText.acceptReview) {
                     if let action = card.action { actions.accept(action) }
+                }
+            case .relaunch:
+                // Une pipeline en échec ou bloquée : la commande de service
+                // `relaunch` reprend son maillon.
+                Button(KanbanText.resume) {
+                    if let action = card.action { actions.relaunch(action) }
                 }
             case .open:
                 Button(HomeText.openInPipelines) {
@@ -269,57 +292,79 @@ struct HomeView: ConsoleSectionView {
         case .question: ("questionmark.bubble.fill", .blue)
         case .milestoneSpecs: ("doc.text.magnifyingglass", .purple)
         case .milestoneReview: ("checkmark.seal.fill", .green)
+        case .failed: ("xmark.octagon.fill", .red)
+        case .blocked: ("exclamationmark.triangle.fill", .orange)
         }
     }
 
     // MARK: - Lignes
 
+    /// La partie gauche d'une ligne : un bouton qui ouvre la carte dans
+    /// Pipelines (symbole d'étape, titre, sous-titre).
+    private func cardRowButton(_ card: KanbanCard, showsRepo: Bool, identifier: String) -> some View {
+        Button {
+            kanban.select(card.id)
+            console.select(.kanban)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: PhaseText.symbol(card.phase))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(card.title)
+                        .font(.body.weight(.medium))
+                    if let subtitle = HomeText.cardSubtitle(
+                        card,
+                        noPhase: ConsoleStatus.of(card: card).text,
+                        showsRepo: showsRepo
+                    ) {
+                        Text(subtitle)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
+    }
+
+    /// « En cours » : une pipeline réellement en marche, avec sa durée.
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         HStack(spacing: 12) {
-            Button {
-                kanban.select(card.id)
-                console.select(.kanban)
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: PhaseText.symbol(card.phase))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(card.title)
-                            .font(.body.weight(.medium))
-                        if let subtitle = HomeText.cardSubtitle(
-                            card,
-                            noPhase: ConsoleStatus.of(card: card).text,
-                            showsRepo: showsRepo
-                        ) {
-                            Text(subtitle)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("home.running.\(card.id)")
-            // « Reprendre » vit HORS du bouton de ligne : deux gestes distincts.
-            if KanbanActionPresentation.resumable(card), let action = card.action {
-                StatusBadge(status: ConsoleStatus.of(card: card))
-                Button(KanbanText.resume) { actions.resume(action) }
-                    .buttonStyle(.bordered)
-                    .accessibilityIdentifier("home.resume.\(card.id)")
-            } else {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    let nowMs = context.date.timeIntervalSince1970 * 1000
-                    Text(ConsoleFormat.duration(ms: (card.endMs ?? nowMs) - card.startMs))
-                        .font(.callout)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
+            cardRowButton(card, showsRepo: showsRepo, identifier: "home.running.\(card.id)")
+            TimelineView(.periodic(from: .now, by: 1)) { context in
+                let nowMs = context.date.timeIntervalSince1970 * 1000
+                Text(ConsoleFormat.duration(ms: (card.endMs ?? nowMs) - card.startMs))
+                    .font(.callout)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 8)
+    }
+
+    /// « À reprendre » : une pipeline en pause, son statut et « Reprendre », qui
+    /// vit HORS du bouton de ligne (deux gestes distincts).
+    private func pausedRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        HStack(spacing: 12) {
+            cardRowButton(card, showsRepo: showsRepo, identifier: "home.paused.\(card.id)")
+            StatusBadge(status: ConsoleStatus.of(card: card))
+            if let action = card.action {
+                Button(KanbanText.resume) { actions.resume(action) }
+                    .buttonStyle(.bordered)
+                    .accessibilityIdentifier("home.resume.\(card.id)")
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    /// « Pas commencées » : une feature jamais lancée, sans badge ni durée.
+    private func notStartedRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
+        cardRowButton(card, showsRepo: showsRepo, identifier: "home.notStarted.\(card.id)")
+            .padding(.vertical, 8)
     }
 
     private func deliveredRow(_ card: KanbanCard, showsRepo: Bool) -> some View {

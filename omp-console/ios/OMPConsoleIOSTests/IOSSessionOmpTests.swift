@@ -16,6 +16,7 @@ import Testing
 @MainActor
 private final class SessionOmpStub: IOSSessionOmpClient {
     var state: ClientState
+    var attemptFollowsFailure = false
     var hosted: RemoteHostedEvent?
 
     private(set) var hostedSessionCalls = 0
@@ -25,6 +26,8 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     private(set) var promptCount = 0
     private(set) var lastPrompt: String?
     private(set) var answers: [(id: String, kind: String, value: String?, confirmed: Bool?)] = []
+    /// Le nombre de lectures du fil : une par `start()` effectif (AC-3).
+    private(set) var reads = 0
 
     var promptFailure: Error?
     /// La charge que `read(file:)` rend : le fil monté par `syncThread()` (AC-8).
@@ -90,6 +93,7 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     // MARK: - IOSSessionSource (le fil n'est pas éprouvé ici)
 
     func read(file: String) async throws -> RemoteSessionPayload {
+        reads += 1
         if let payload { return payload }
         return try decode(#"{"entries":[],"skipped":[],"truncated":false}"#)
     }
@@ -99,6 +103,8 @@ private final class SessionOmpStub: IOSSessionOmpClient {
     }
 
     func run(forFile file: String) -> RunChoice? { nil }
+
+    var macHomeDirectory: String? { nil }
 }
 
 private func decode<T: Decodable>(_ json: String) throws -> T {
@@ -174,34 +180,67 @@ private func eventually(timeout: Double = 5, _ condition: @MainActor () -> Bool)
 struct IOSSessionOmpTests {
     // MARK: - Décisions pures
 
-    @Test("ios-session-omp/AC-2 : la surface suit l'état du client et l'état servi")
+    @Test("ios-session-omp/AC-2 : la surface suit le statut de connexion et l'état servi")
     func surfaceFollowsClientAndHosted() throws {
-        for state in [
-            ClientState.unpaired,
-            .searching,
-            .connecting(endpoint: endpoint),
-            .noNetwork,
-            .macAbsent(endpoint: endpoint),
-            .revoked,
-            .incompatibleProtocol(local: 3, remote: 2),
-        ] {
-            #expect(IOSSessionOmpModel.surface(state: state, hosted: nil) == .degraded(ConnectionText.state(state)))
-        }
         // Connecté, sans état servi : le premier GET est en vol.
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: nil) == .loading)
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "idle")) == .empty)
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "launching")) == .launching)
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "running")) == .live)
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "stopping")) == .stopping)
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "stopped")) == .stopped)
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "dead")) == .dead)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: nil) == .loading)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "idle")) == .empty)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "launching")) == .launching)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "running")) == .live)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "stopping")) == .stopping)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "stopped")) == .stopped)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "dead")) == .dead)
         // Un état INCONNU du client vaut `idle`.
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: try makeHostedEvent(state: "zzz")) == .empty)
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: try makeHostedEvent(state: "zzz")) == .empty)
         // `failed` porte le message servi.
         let failed = try makeHostedEvent(state: "failed")
         var labelled = failed
         labelled.stateLabel = "Le dossier du projet n'existe plus : /x."
-        #expect(IOSSessionOmpModel.surface(state: connected, hosted: labelled) == .failed("Le dossier du projet n'existe plus : /x."))
+        #expect(IOSSessionOmpModel.surface(connection: .connected, hosted: labelled) == .failed("Le dossier du projet n'existe plus : /x."))
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-1 : pas connecté et aucun état servi reçu → le composant d'état de connexion")
+    func sessionOmpUnavailableWithoutHosted() {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.unpaired),
+                       .disconnected(.refused), .disconnected(.updateApp), .disconnected(.updateMac)] {
+            #expect(IOSSessionOmpModel.surface(connection: status, hosted: nil) == .unavailable(status))
+        }
+        // Le modèle lit le statut présenté du client : une relance après échec
+        // reste « non connecté » (S-1).
+        let retrying = SessionOmpStub(state: .connecting(endpoint: endpoint))
+        retrying.attemptFollowsFailure = true
+        #expect(IOSSessionOmpModel(client: retrying).surface == .unavailable(.disconnected(.unreachable)))
+        let fresh = SessionOmpStub(state: .connecting(endpoint: endpoint))
+        #expect(IOSSessionOmpModel(client: fresh).surface == .unavailable(.connecting))
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-4 : le dernier état servi reste affiché hors connexion")
+    func sessionOmpKeepsHostedOffline() throws {
+        for status in [IOSConnectionStatus.connecting, .disconnected(.unreachable), .disconnected(.refused)] {
+            #expect(IOSSessionOmpModel.surface(connection: status, hosted: try makeHostedEvent(state: "running")) == .live)
+            #expect(IOSSessionOmpModel.surface(connection: status, hosted: try makeHostedEvent(state: "idle")) == .empty)
+            #expect(IOSSessionOmpModel.surface(connection: status, hosted: try makeHostedEvent(state: "dead")) == .dead)
+        }
+        // Par le client : la session conservée, sous le statut présenté.
+        let offline = SessionOmpStub(state: .macAbsent(endpoint: endpoint), hosted: try makeHostedEvent(state: "running"))
+        let model = IOSSessionOmpModel(client: offline)
+        #expect(model.connection == .disconnected(.unreachable))
+        #expect(model.surface == .live)
+    }
+
+    @Test("etats-non-connecte-heterogenes-ios/AC-10 : les gestes grisés hors connexion se rouvrent dès la connexion, sur le même écran")
+    func gesturesReopenOnConnection() throws {
+        let client = SessionOmpStub(state: .connecting(endpoint: endpoint), hosted: try makeHostedEvent(state: "running"))
+        let model = IOSSessionOmpModel(client: client)
+        // Connexion en cours, puis échec avec relance : gestes grisés (AC-8, AC-9).
+        #expect(!model.connection.gesturesEnabled)
+        client.state = .macAbsent(endpoint: endpoint)
+        client.attemptFollowsFailure = true
+        #expect(!model.connection.gesturesEnabled)
+        // La connexion aboutit : le même modèle rouvre ses gestes, sans relancement.
+        client.state = connected
+        client.attemptFollowsFailure = false
+        #expect(model.connection.gesturesEnabled)
     }
 
     @Test("ios-session-omp/AC-3 : le lancement n'est offert que hors d'une session en marche")
@@ -278,6 +317,36 @@ struct IOSSessionOmpTests {
         #expect(thread.state == .ready)
         #expect(thread.rows == reference.rows)
         #expect(thread.rows.count == 10)
+    }
+
+    @Test("visionneuse-session-vide-a-l-ouverture/AC-3 : le fil hébergé se lit et s'abonne dès sa synchronisation, et reprend à sa réapparition")
+    func hostedThreadStartsWhenSynced() async throws {
+        let client = SessionOmpStub(
+            state: connected,
+            hosted: try makeHostedEvent(state: "running", sessionFile: "parity-session-1.jsonl")
+        )
+        client.payload = try decode(SessionParity.payloadJSON)
+        let model = IOSSessionOmpModel(client: client)
+
+        // L'écran monte le fil : aucune lecture explicite, `syncThread()` la lance.
+        model.syncThread()
+        let thread = try #require(model.thread)
+        for _ in 0..<200 where thread.isLoading { await Task.yield() }
+        #expect(!thread.isLoading)
+        #expect(thread.rows.count == 10)
+        #expect(client.reads == 1)
+
+        // Les synchronisations répétées (`onChange(of: client.hosted)`) ne relisent pas.
+        model.syncThread()
+        for _ in 0..<20 { await Task.yield() }
+        #expect(client.reads == 1)
+
+        // L'écran disparaît puis réapparaît : le MÊME fil est relancé, une lecture de plus.
+        model.disappeared()
+        model.syncThread()
+        for _ in 0..<200 where client.reads < 2 { await Task.yield() }
+        #expect(client.reads == 2)
+        #expect(model.thread === thread)
     }
 
     @Test("ios-session-omp/AC-9 : un choix simple répond `kind:value` avec l'option choisie, en un seul appel")

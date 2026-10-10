@@ -151,7 +151,7 @@ func missingContractIsReported() async throws {
     #expect(await waitUntilFiles { scene.model.content == .missing })
     #expect(scene.model.pane == .contract)
     #expect(FilesText.missingDedicatedDocument(FilesModel.contractRelativePath) == FilesText.noContract)
-    #expect(FilesText.noContract == "Aucun contrat .omp/pipeline/contract.md dans cette cible.")
+    #expect(FilesText.noContract == "Aucun contrat dans ce dossier.")
     // Le texte affiché est bien celui de l'ABSENCE, pas celui d'un fichier disparu.
     #expect(scene.model.content?.message(dedicated: FilesModel.contractRelativePath) == FilesText.noContract)
 }
@@ -247,11 +247,12 @@ func missingGitIsReportedInTheModel() async throws {
         fileManager: .default,
         environment: ["PATH": "/nowhere", "OMP_CONSOLE_GIT_BINARY": "/nowhere/git"]
     )
-    #expect(model.errorMessage?.contains("git est introuvable") == true)
-    #expect(model.errorMessage?.contains("la visionneuse ne peut pas lire") == true)
+    #expect(model.errorMessage?.message == FilesText.gitNotFound)
+    #expect(model.errorMessage?.diagnostic.contains("git est introuvable") == true)
+    #expect(model.errorMessage?.diagnostic.contains("la visionneuse ne peut pas lire") == true)
 
     await model.refresh()
-    #expect(model.errorMessage?.contains("git est introuvable") == true)
+    #expect(model.errorMessage?.diagnostic.contains("git est introuvable") == true)
     #expect(model.targets.isEmpty)
 }
 
@@ -299,7 +300,7 @@ func nonRepositoryIsReported() async throws {
         environment: ["PATH": "/usr/bin:/bin"]
     )
     await model.refresh()
-    #expect(model.errorMessage == FilesError.notARepository(path: plain).userMessage)
+    #expect(model.errorMessage == FilesError.notARepository(path: plain).failure)
     #expect(model.target == nil)
 }
 
@@ -321,7 +322,8 @@ func goneTargetKeepsTheCatalog() async throws {
     try FileManager.default.removeItem(atPath: scene.worktree)
     await scene.model.refresh()
 
-    #expect(scene.model.notice?.contains("n'existe plus") == true)
+    #expect(scene.model.notice?.message == FilesText.targetGone)
+    #expect(scene.model.notice?.diagnostic.contains("n'existe plus") == true)
     #expect(scene.model.targets.count == 1)
     #expect(scene.model.target?.isPrimary == true)
     #expect(scene.model.tree != nil)

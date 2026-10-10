@@ -23,4 +23,34 @@ extension SessionConsoleText {
         case .failed: return "Échec"
         }
     }
+
+    /// L'état lisible de la ligne « État » des inspecteurs Session OMP et Projet
+    /// (S-3 de jargon-technique-expose-mac-et-ios) : trois mots seulement. Le
+    /// motif d'un échec n'y figure pas : il vit dans `diagnostic`.
+    static func inspectorState(_ state: SessionRunStatus) -> String {
+        switch state {
+        case .running: return SessionConsoleText.stateRunning
+        case .idle, .launching, .stopping: return SessionConsoleText.stateWaiting
+        case .stopped, .dead, .failed: return SessionConsoleText.stateStopped
+        }
+    }
+
+    /// Le brut de « Copier le diagnostic » des inspecteurs : exactement cinq
+    /// lignes, dans cet ordre ; une valeur inconnue se dit « absent ».
+    static func diagnostic(
+        pid: Int32?,
+        state: SessionRunStatus,
+        sessionId: String?,
+        projectPath: String?,
+        sessionFile: String?
+    ) -> String {
+        let absent = "absent"
+        return [
+            "pid : \(pid.map { String($0) } ?? absent)",
+            "état : \(String(describing: state))",
+            "identifiant de session : \(sessionId ?? absent)",
+            "projet : \(projectPath ?? absent)",
+            "fichier de session : \(sessionFile ?? absent)",
+        ].joined(separator: "\n")
+    }
 }

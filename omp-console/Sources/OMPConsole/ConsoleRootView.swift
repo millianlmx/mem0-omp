@@ -33,6 +33,9 @@ struct ConsoleRootView: View {
     /// notifications. Il vit à l'échelle de l'app (porté par le délégué), comme les
     /// autres.
     @ObservedObject var alerts: AlertsModel
+    /// Le déroulé de la sortie (porté par le délégué) : le bouton « Quitter » de
+    /// la feuille de préparation bloquante y passe, comme ⌘Q.
+    let quit: QuitFlow
     /// Le modèle d'action : l'état des gestes et de la feuille de lancement survit
     /// au passage d'une section à l'autre.
     @ObservedObject var actions: ActionsModel
@@ -57,15 +60,18 @@ struct ConsoleRootView: View {
     /// L'état des composants embarqués (S-1/S-2) : le badge du pied de la barre
     /// latérale le montre et se recalcule sans redémarrage.
     @ObservedObject var components: ComponentPresenceModel
-    /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition et
-    /// présente sa feuille d'appairage.
-    @ObservedObject var remote: RemoteServiceModel
+    /// Le service d'API distante (BR-9) : la racine le démarre à l'apparition.
+    /// Son interrupteur, le code et les appareils vivent dans Réglages › Appareils.
+    let remote: RemoteServiceModel
 
     /// Les modèles des sections Session OMP, Terminal et Statistiques : à
     /// l'échelle de l'app (`OMPConsoleApp`), comme les autres.
     let sessionModel: SessionConsoleModel
     let terminalModel: TerminalConsoleModel
     let statsModel: StatsModel
+    /// Le sélecteur de projet des états vides de Mémoire, Fichiers et Terminal
+    /// (S-2 de mac-etats-vides-sans-issue), à l'échelle de l'app.
+    let projectChooser: ProjectChooserModel
 
     /// La `List` exige une `Binding<ConsoleSection?>` ; le modèle n'a pas de
     /// `nil`, donc une valeur nulle est simplement ignorée à l'écriture.
@@ -76,11 +82,9 @@ struct ConsoleRootView: View {
         )
     }
 
-    /// La feuille due, selon l'ordre des règles de `MainSheetPolicy` — aucune une
-    /// fois « Quitter » demandé (la feuille doit se fermer pour que l'app quitte).
+    /// La feuille due, selon l'ordre des règles de `MainSheetPolicy`.
     private var currentSheet: MainSheet? {
-        if home.quitRequested { return nil }
-        return MainSheetPolicy.sheet(
+        MainSheetPolicy.sheet(
             omp: home.omp,
             setup: setup.state,
             setupDismissed: setup.dismissed,
@@ -89,30 +93,35 @@ struct ConsoleRootView: View {
             welcomeRequested: home.welcomeRequested,
             launchFormShown: actions.launchFormShown,
             answerCardID: home.answerCardID,
-            contract: contract.sheet,
-            pairing: remote.sheetShown
+            contract: contract.sheet
         )
     }
 
     /// Le système n'écrit que `nil` (Échap, fermeture) : l'état qui a fait
-    /// apparaître la feuille courante est remis à zéro. « OMP est requis » ne se
-    /// ferme jamais ainsi.
+    /// apparaître la feuille courante est remis à zéro. La préparation, OMP
+    /// absent, ne se ferme jamais ainsi : la feuille est bloquante.
     private var mainSheet: Binding<MainSheet?> {
         Binding(
             get: { currentSheet },
             set: { newValue in
                 guard newValue == nil else { return }
                 switch currentSheet {
-                case .setup: setup.dismiss()
+                case .setup: if home.canLaunch { setup.dismiss() }
                 case .welcome: home.closeWelcome()
                 case .newFeature: actions.launchFormShown = false
                 case .answer: home.dismissAnswer(actions: actions)
                 case .contract: contract.close()
-                case .pairing: remote.sheetShown = false
                 case nil: break
                 }
             }
         )
+    }
+
+    /// Le geste du badge des composants (S-3) : rouvrir la feuille de
+    /// préparation quand un composant manque ; aucun quand tout est installé.
+    private var reopenSetup: (@MainActor () -> Void)? {
+        if components.presence.allInstalled { return nil }
+        return { setup.reopen() }
     }
 
     var body: some View {
@@ -139,9 +148,10 @@ struct ConsoleRootView: View {
             // et aligné sur son bord gauche (S-2) : la `List` est rentrée de sa
             // hauteur et garde ses dernières lignes lisibles. Replier la barre
             // latérale masque le badge avec elle — c'est le coin gauche de la
-            // fenêtre, comportement assumé.
+            // fenêtre, comportement assumé. Un composant manque : le badge est
+            // un bouton qui rouvre la feuille de préparation (S-3).
             .safeAreaInset(edge: .bottom, alignment: .leading) {
-                ComponentBadge(status: components.presence.status)
+                ComponentBadge(status: components.presence.status, open: reopenSetup)
             }
         } detail: {
             SectionDetail(
@@ -159,7 +169,8 @@ struct ConsoleRootView: View {
                 setup: setup,
                 sessionModel: sessionModel,
                 terminalModel: terminalModel,
-                statsModel: statsModel
+                statsModel: statsModel,
+                projectChooser: projectChooser
             )
             // Le titre de la fenêtre EST la section courante (HIG Toolbars : ne
             // pas titrer une fenêtre du nom de l'app). Aucune vue de section ne
@@ -192,12 +203,14 @@ struct ConsoleRootView: View {
             // L'action principale se déplace, mais ne se retire pas.
             .customizationBehavior(.reorderable)
         }
-        .sheet(item: mainSheet, onDismiss: {
-            if home.quitRequested { NSApp.terminate(nil) }
-        }) { sheet in
+        .sheet(item: mainSheet) { sheet in
             switch sheet {
             case .setup:
-                SetupView(setup: setup)
+                // OMP absent : la feuille est bloquante — ni « Fermer » ni ⎋
+                // (Doc-1) ; « Quitter » passe par le déroulé de la sortie, qui
+                // ferme lui-même les feuilles attachées.
+                SetupView(setup: setup, omp: home.omp, quit: { quit.request() })
+                    .interactiveDismissDisabled(!home.canLaunch)
             case .welcome:
                 WelcomeSheet(home: home)
             case .newFeature:
@@ -208,8 +221,6 @@ struct ConsoleRootView: View {
                 }
             case .contract(let sheet):
                 ContractSheetView(sheet: sheet)
-            case .pairing:
-                PairingSheet(remote: remote, pairing: remote.pairing, registry: remote.registry)
             }
         }
         // L'Accueil et Pipelines lisent le même tableau : l'abonnement est ouvert

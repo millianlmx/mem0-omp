@@ -52,6 +52,23 @@ struct RemoteHomeRouteTests {
         #expect(payload.setupBanner == nil)
     }
 
+    @Test("feuilles-ios-presentation-et-depots/AC-7 : la route des composants publie le dossier personnel du Mac")
+    func componentsCarryHomeDirectory() async throws {
+        // La charge est bâtie SANS nommer le dossier, comme le fournisseur de la coque :
+        // le champ suit toute construction.
+        let stack = try await RemoteStack.make(components: {
+            RemoteComponentsPayload(ompInstalled: true, ompPath: "/tmp/omp/bin/omp", setupBanner: nil)
+        })
+        defer { stack.stop() }
+        let token = try await stack.pair()
+
+        let reply = try await stack.call("GET", "/v1/components", token: token)
+        #expect(reply.status == 200)
+        let payload = try reply.json(RemoteComponentsPayload.self)
+        #expect(payload.homeDirectory == NSHomeDirectory())
+        #expect(reply.text.contains("\"homeDirectory\""))
+    }
+
     @Test("la garde des trois lectures neuves est celle des 26 autres")
     func newReadsShareTheGuard() async throws {
         let stack = try await RemoteStack.make()
