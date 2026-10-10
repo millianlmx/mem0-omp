@@ -29,6 +29,9 @@ import SwiftUI
 
 struct StatsView: View {
     @ObservedObject var model: StatsModel
+    /// Les noms lisibles du catalogue : la colonne « Modèle » nomme chaque modèle,
+    /// l'id en repli.
+    let modelNames: [String: String]
 
     /// Identifiants d'accessibilité : ce que la sonde AX relève.
     static let projectIdentifier = "stats.project"
@@ -124,7 +127,7 @@ struct StatsView: View {
         let nowMs = Date().timeIntervalSince1970 * 1000
         let totals = projectTotals(board.project, nowMs: nowMs)
         let bars = StatsPresentation.bars(board.project, nowMs: nowMs)
-        let rows = StatsPresentation.rows(board.project, nowMs: nowMs)
+        let rows = StatsPresentation.rows(board.project, nowMs: nowMs, names: modelNames)
         let features = board.project.features.map(\.slug)
         let liveStarts = statsLiveStarts(board.project)
         return ScrollView(.vertical) {

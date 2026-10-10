@@ -30,13 +30,13 @@ struct PipelinesLanesTests {
         )
     }
 
-    private func row(_ rows: [PipelinesLaneRow], _ lane: KanbanLane) -> PipelinesLaneRow? {
+    private func row(_ rows: [KanbanLaneRow], _ lane: KanbanLane) -> KanbanLaneRow? {
         rows.first { $0.lane == lane }
     }
 
     @Test("ios-pipelines-lanes-interminables/AC-1 : sur iPhone, Livrées et Arrêtées sont repliées et gardent leur compte")
     func compactFoldsTerminalLanes() throws {
-        let rows = PipelinesModel.laneRows(auditBoard().lanes, compact: true, unfolded: [])
+        let rows = KanbanLaneRows.rows(auditBoard().lanes, layout: .condensed, unfolded: [])
         let livrees = try #require(row(rows, .livrees))
         let arretees = try #require(row(rows, .arretees))
         for terminal in [livrees, arretees] {
@@ -51,7 +51,7 @@ struct PipelinesLanesTests {
     @Test("ios-pipelines-lanes-interminables/AC-2 : l'en-tête ne déplie que sa voie, et replier la remet en état")
     func headerTogglesOnlyItsLane() throws {
         let lanes = auditBoard().lanes
-        let open = PipelinesModel.laneRows(lanes, compact: true, unfolded: [.livrees])
+        let open = KanbanLaneRows.rows(lanes, layout: .condensed, unfolded: [.livrees])
         let livrees = try #require(row(open, .livrees))
         let arretees = try #require(row(open, .arretees))
         #expect(!livrees.folded)
@@ -59,7 +59,7 @@ struct PipelinesLanesTests {
         #expect(arretees.folded)
         #expect(arretees.visibleCards.isEmpty)
 
-        let closed = PipelinesModel.laneRows(lanes, compact: true, unfolded: [])
+        let closed = KanbanLaneRows.rows(lanes, layout: .condensed, unfolded: [])
         #expect(try #require(row(closed, .livrees)).folded)
     }
 
@@ -68,7 +68,7 @@ struct PipelinesLanesTests {
         let extra = [card("p", .enAttente), card("c", .enCours), card("q", .questionEnVol)]
         let lanes = auditBoard(extra: extra).lanes
         for unfolded: Set<KanbanLane> in [[], [.livrees, .arretees]] {
-            let rows = PipelinesModel.laneRows(lanes, compact: true, unfolded: unfolded)
+            let rows = KanbanLaneRows.rows(lanes, layout: .condensed, unfolded: unfolded)
             for lane in [KanbanLane.pasCommencees, .enCours, .aVous] {
                 let active = try #require(row(rows, lane))
                 #expect(!active.foldable)
@@ -81,11 +81,11 @@ struct PipelinesLanesTests {
 
     @Test("ios-pipelines-lanes-interminables/AC-6 : sur iPhone, « Pas commencées » n'apparaît que si elle a une carte")
     func compactHidesEmptyNotStartedLane() throws {
-        let without = PipelinesModel.laneRows(auditBoard().lanes, compact: true, unfolded: [])
+        let without = KanbanLaneRows.rows(auditBoard().lanes, layout: .condensed, unfolded: [])
         #expect(row(without, .pasCommencees) == nil)
 
         let pending = card("p", .enAttente)
-        let with = PipelinesModel.laneRows(auditBoard(extra: [pending]).lanes, compact: true, unfolded: [])
+        let with = KanbanLaneRows.rows(auditBoard(extra: [pending]).lanes, layout: .condensed, unfolded: [])
         #expect(try #require(row(with, .pasCommencees)).visibleCards == [pending])
     }
 
@@ -99,7 +99,7 @@ struct PipelinesLanesTests {
             let others = KanbanLane.allCases.filter { $0 != empty }.compactMap { columnOf[$0] }
             let board = KanbanBoard(cards: others.enumerated().map { card("c\($0.offset)", $0.element) }, anomalies: [])
             for unfolded: Set<KanbanLane> in [[], Set(KanbanLane.allCases)] {
-                let rows = PipelinesModel.laneRows(board.lanes, compact: true, unfolded: unfolded)
+                let rows = KanbanLaneRows.rows(board.lanes, layout: .condensed, unfolded: unfolded)
                 #expect(rows.allSatisfy { $0.lane != empty })
                 #expect(rows.count == KanbanLane.allCases.count - 1)
             }
@@ -109,8 +109,8 @@ struct PipelinesLanesTests {
     @Test("ios-pipelines-lanes-interminables/AC-8 : sur iPhone, une ardoise sans carte ne rend aucune voie")
     func compactWithoutCardsHasNoLane() {
         let lanes = KanbanBoard(cards: [], anomalies: []).lanes
-        #expect(PipelinesModel.laneRows(lanes, compact: true, unfolded: []).isEmpty)
-        #expect(PipelinesModel.laneRows(lanes, compact: true, unfolded: [.livrees]).isEmpty)
+        #expect(KanbanLaneRows.rows(lanes, layout: .condensed, unfolded: []).isEmpty)
+        #expect(KanbanLaneRows.rows(lanes, layout: .condensed, unfolded: [.livrees]).isEmpty)
     }
 
     @Test("ios-pipelines-lanes-interminables/AC-9 : sur iPad, les voies sont rendues comme avant")
@@ -118,7 +118,7 @@ struct PipelinesLanesTests {
         let board = auditBoard()
         #expect(board.lanes.contains { $0.lane == .pasCommencees && $0.cards.isEmpty })
         for unfolded: Set<KanbanLane> in [[], [.livrees]] {
-            let rows = PipelinesModel.laneRows(board.lanes, compact: false, unfolded: unfolded)
+            let rows = KanbanLaneRows.rows(board.lanes, layout: .full, unfolded: unfolded)
             #expect(rows.map(\.content) == board.lanes)
             #expect(rows.allSatisfy { !$0.foldable && !$0.folded && $0.visibleCards == $0.content.cards })
         }
@@ -131,6 +131,6 @@ struct PipelinesLanesTests {
         #expect(livrees != arretees)
         #expect(livrees != PipelinesAccessibility.lane(KanbanLane.livrees.rawValue))
         #expect(arretees != PipelinesAccessibility.lane(KanbanLane.arretees.rawValue))
-        #expect(PipelinesText.laneFolded != PipelinesText.laneUnfolded)
+        #expect(KanbanText.laneFolded != KanbanText.laneUnfolded)
     }
 }

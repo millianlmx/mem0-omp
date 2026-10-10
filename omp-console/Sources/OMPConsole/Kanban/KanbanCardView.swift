@@ -17,6 +17,8 @@ struct KanbanCardView: View {
     let selected: Bool
     /// Le dépôt n'est écrit que si l'ardoise en mêle plusieurs.
     let showsRepo: Bool
+    /// Les noms lisibles du catalogue : un sélecteur sans nom s'affiche tel quel.
+    let modelNames: [String: String]
     let onTap: () -> Void
     let onOpen: () -> Void
 
@@ -39,15 +41,13 @@ struct KanbanCardView: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            if let reqSpecs = KanbanCardPresentation.reqSpecsLine(card) {
-                Text(reqSpecs)
+            if let lines = KanbanCardPresentation.modelLines(card, names: modelNames) {
+                Text(lines.reqSpecs)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-            }
-            if let implReview = KanbanCardPresentation.implReviewLine(card) {
-                Text(implReview)
+                Text(lines.implReview)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

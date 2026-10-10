@@ -79,12 +79,6 @@ enum ModelCatalogLoader {
     /// Le délai de garde du lancement (S-5).
     static let timeout: Double = 15
 
-    /// Le chargeur réel. Un binaire absent, un code non nul ou une sortie
-    /// illisible rendent le motif de l'échec.
-    static func loadDefault() async -> Result<[String], ModelCatalogError> {
-        await loadListing().map(\.selectors)
-    }
-
     /// Le chargement complet : sélecteurs ET noms lus de la MÊME sortie d'un
     /// seul lancement de `omp models --json`.
     static func loadListing() async -> Result<ModelCatalogListing, ModelCatalogError> {

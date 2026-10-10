@@ -61,7 +61,7 @@ func unreadableRunLineCarriesItsReason() throws {
         hiddenPlanFeatures: 0
     )
 
-    let rows = StatsPresentation.rows(project, nowMs: 0)
+    let rows = StatsPresentation.rows(project, nowMs: 0, names: nil)
     try #require(rows.count == 3)
     let missing = rows[1]
     let denied = rows[2]
@@ -129,7 +129,7 @@ func noCurrencyAnywhere() {
         "\(totals.turns)",
     ]
     rendered += StatsPresentation.bars(project, nowMs: nowMs).map(\.kind)
-    for row in StatsPresentation.rows(project, nowMs: nowMs) {
+    for row in StatsPresentation.rows(project, nowMs: nowMs, names: nil) {
         rendered += [row.feature, row.phaseTitle, row.model, row.durationText, row.tokensText, row.status.text]
         rendered += [row.unreadableReason].compactMap { $0 }
     }
@@ -153,7 +153,7 @@ func dashboardSumsReadableRunsInOrder() throws {
         StatsBar(id: "f2.reçus", feature: "f2", kind: "reçus", tokens: 1),
     ])
 
-    let rows = StatsPresentation.rows(project, nowMs: liveStart)
+    let rows = StatsPresentation.rows(project, nowMs: liveStart, names: nil)
     #expect(rows.map(\.id) == [closedSession, missingSession, liveSession])
     #expect(rows.map(\.feature) == ["f1", "f1", "f2"])
     try #require(rows.count == 3)
@@ -162,6 +162,6 @@ func dashboardSumsReadableRunsInOrder() throws {
     #expect(rows[2].status == ConsoleStatus(text: "En cours", tone: .info))
 
     // La durée d'un run vivant court jusqu'à l'instant de rendu.
-    let later = StatsPresentation.rows(project, nowMs: liveStart + 2_000)
+    let later = StatsPresentation.rows(project, nowMs: liveStart + 2_000, names: nil)
     #expect(later[2].durationMs == rows[2].durationMs + 2_000)
 }

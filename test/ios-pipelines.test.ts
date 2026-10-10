@@ -182,8 +182,8 @@ function newFeatureFaults(root: string): string[] {
   if (view === "") return ["NewFeatureSheetView.swift absent"];
   if (!view.includes("KanbanLaunchRepos.options(")) faults.push("la feuille ne tire pas ses dépôts de l'ardoise");
   if (!view.includes("ModelCatalog.choices(")) faults.push("la feuille n'emploie pas les choix de modèles");
-  if (!view.includes("KanbanText.modelReqSpecsField")) faults.push("la feuille n'a pas le champ req+specs");
-  if (!view.includes("KanbanText.modelImplReviewField")) faults.push("la feuille n'a pas le champ impl+review");
+  if (!view.includes("KanbanText.modelReqSpecs")) faults.push("la feuille n'a pas le champ « Modèle /req et /specs »");
+  if (!view.includes("KanbanText.modelImplReview")) faults.push("la feuille n'a pas le champ « Modèle /impl et /review »");
   if (!view.includes("NewFeatureText.titlePlaceholder")) faults.push("la feuille n'a pas le champ titre");
   if (!view.includes("NewFeatureText.needPlaceholder")) faults.push("la feuille n'a pas le champ besoin");
   if (!view.includes("NewFeatureText.noKnownRepo")) faults.push("la feuille n'annonce pas l'absence de dépôt");

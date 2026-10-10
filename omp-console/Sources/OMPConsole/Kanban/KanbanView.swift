@@ -48,18 +48,33 @@ struct KanbanView: ConsoleSectionView {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .accessibilityIdentifier("kanban.loading")
             case .storeAbsent, .storeEmpty:
-                ContentUnavailableView(
-                    KanbanBoardState.noPipelineText,
-                    systemImage: "square.grid.3x2",
-                    description: Text(KanbanText.emptyHint)
-                )
-                .accessibilityIdentifier("kanban.empty")
+                emptyView
             case .board(let board):
-                boardView(board)
+                // Une ardoise sans aucune voie rendue (anomalies seules) se lit
+                // comme un magasin vide ; la bulle des problèmes reste dans la
+                // barre d'outils.
+                let rows = model.laneRows
+                if rows.isEmpty {
+                    emptyView
+                } else {
+                    boardView(board, rows: rows)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .toolbar { toolbarContent }
+        // Quitter la section replie de nouveau Livrées et Arrêtées (S-2) ; une
+        // feuille ouverte par-dessus n'est pas un départ.
+        .onDisappear { model.resetLaneFolding() }
+    }
+
+    private var emptyView: some View {
+        ContentUnavailableView(
+            KanbanBoardState.noPipelineText,
+            systemImage: "square.grid.3x2",
+            description: Text(KanbanText.emptyHint)
+        )
+        .accessibilityIdentifier("kanban.empty")
     }
 
     // MARK: - Barre d'outils
@@ -128,19 +143,18 @@ struct KanbanView: ConsoleSectionView {
 
     // MARK: - Tableau
 
-    /// Les voies, sur toute la largeur. Les voies permanentes sont TOUJOURS là,
-    /// même vides — un tableau muet ne dit pas quel état manque.
-    private func boardView(_ board: KanbanBoard) -> some View {
+    /// Les voies, sur toute la largeur, selon la règle condensée (S-1) : une voie
+    /// sans carte n'est pas rendue, Livrées et Arrêtées s'ouvrent repliées.
+    private func boardView(_ board: KanbanBoard, rows: [KanbanLaneRow]) -> some View {
         // Le dépôt n'est écrit sur les cartes que si l'ardoise en mêle plusieurs.
         let showsRepo = Set(board.cards.map(\.repo)).count > 1
-        let lanes = board.lanes
         return GeometryReader { geometry in
             // Des voies de MÊME largeur, qui se partagent la fenêtre ; sous la
             // largeur minimale, le tableau défile horizontalement. Une largeur
             // calculée, pas `maxWidth: .infinity` : dans un défilement horizontal,
             // une voie prendrait la largeur idéale de sa plus longue carte.
             let padding: CGFloat = 16
-            let count = CGFloat(max(lanes.count, 1))
+            let count = CGFloat(max(rows.count, 1))
             let available = geometry.size.width - padding * 2 - Self.laneSpacing * (count - 1)
             let laneWidth = max(Self.laneMinWidth, (available / count).rounded(.down))
             // La poignée clavier et `kanban.board` vivent sur la zone des VOIES
@@ -148,16 +162,19 @@ struct KanbanView: ConsoleSectionView {
             // sélection.
             ScrollView(.horizontal) {
                 HStack(alignment: .top, spacing: Self.laneSpacing) {
-                    ForEach(lanes) { content in
+                    ForEach(rows) { row in
                         KanbanLaneView(
-                            content: content,
+                            row: row,
                             showsRepo: showsRepo,
+                            onToggle: { model.toggleLane(row.lane) },
                             model: model,
                             actions: actions,
                             contract: contract
                         )
                         .frame(width: laneWidth)
-                        .frame(maxHeight: .infinity)
+                        // Une voie repliée garde la hauteur de son en-tête,
+                        // alignée en haut ; seules les voies dépliées s'étirent.
+                        .frame(maxHeight: row.folded ? nil : .infinity, alignment: .top)
                     }
                 }
                 .padding(padding)
@@ -220,46 +237,63 @@ struct KanbanView: ConsoleSectionView {
     }
 }
 
-/// Une voie : son en-tête (symbole teinté, titre, compte) puis ses cartes, sur
-/// un fond discret qui la délimite. Défilement vertical propre — une voie ne
-/// pousse pas ses voisines.
+/// Une voie : son en-tête (symbole teinté, titre, compte) puis ses cartes
+/// visibles, sur un fond discret qui la délimite. Défilement vertical propre —
+/// une voie ne pousse pas ses voisines. L'en-tête d'une voie repliable est un
+/// bouton qui la replie ou la déplie (clic, Espace, ↩) ; repliée, la voie se
+/// réduit à son en-tête.
 private struct KanbanLaneView: View {
-    let content: KanbanLaneContent
+    let row: KanbanLaneRow
     let showsRepo: Bool
+    let onToggle: () -> Void
     @ObservedObject var model: KanbanModel
     @ObservedObject var actions: ActionsModel
     @ObservedObject var contract: ContractModel
 
     var body: some View {
-        let lane = content.lane
+        let lane = row.lane
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: lane.symbol)
-                    .foregroundStyle(lane.tone.tint)
-                Text(lane.title)
-                    .font(.headline)
-                Text("\(content.cards.count)")
-                    .font(.subheadline.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            }
-            .padding(.horizontal, 4)
-            .accessibilityElement(children: .combine)
-            if content.cards.isEmpty {
-                Text(lane.emptyText)
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 24)
-                Spacer(minLength: 0)
+            if row.foldable {
+                Button(action: onToggle) {
+                    HStack(spacing: 6) {
+                        headerTitle
+                        Spacer(minLength: 0)
+                        Image(systemName: row.folded ? "chevron.right" : "chevron.down")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                    }
+                    .padding(.horizontal, 4)
+                    .contentShape(Rectangle())
+                    .accessibilityElement(children: .combine)
+                }
+                .buttonStyle(.plain)
+                // Espace est le geste natif du bouton ; ↩ le rejoint quand
+                // l'en-tête a le focus, sans ouvrir le détail de la carte
+                // sélectionnée (la poignée du tableau ne reçoit plus la frappe).
+                .onKeyPress(.return) { onToggle(); return .handled }
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityValue(row.folded ? KanbanText.laneFolded : KanbanText.laneUnfolded)
+                .accessibilityIdentifier("kanban.lane.\(lane.rawValue).header")
             } else {
+                HStack(spacing: 6) {
+                    headerTitle
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 4)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier("kanban.lane.\(lane.rawValue).header")
+            }
+            if !row.visibleCards.isEmpty {
                 ScrollView(.vertical) {
                     LazyVStack(alignment: .leading, spacing: 8) {
-                        ForEach(content.cards) { card in
+                        ForEach(row.visibleCards) { card in
                             KanbanCardView(
                                 card: card,
                                 selected: model.selectedCardID == card.id,
                                 showsRepo: showsRepo,
+                                modelNames: actions.modelNames,
                                 onTap: { model.select(card.id) },
                                 onOpen: { model.openDetail(card.id) }
                             )
@@ -274,10 +308,23 @@ private struct KanbanLaneView: View {
             }
         }
         .padding(10)
-        .frame(maxHeight: .infinity, alignment: .top)
+        .frame(maxHeight: row.folded ? nil : .infinity, alignment: .top)
         .background(.quinary, in: .rect(cornerRadius: 12))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("kanban.lane.\(lane.rawValue)")
+    }
+
+    /// Le symbole teinté, le titre et le compte de TOUTES les cartes de la voie,
+    /// repliée ou non.
+    @ViewBuilder
+    private var headerTitle: some View {
+        Image(systemName: row.lane.symbol)
+            .foregroundStyle(row.lane.tone.tint)
+        Text(row.lane.title)
+            .font(.headline)
+        Text("\(row.content.cards.count)")
+            .font(.subheadline.monospacedDigit())
+            .foregroundStyle(.secondary)
     }
 }
 

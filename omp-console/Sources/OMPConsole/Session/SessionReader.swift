@@ -348,7 +348,8 @@ private enum LineClassifier {
             // `model_usage` (Doc-2).
             model: message["model"] as? String,
             usage: usage(message["usage"]),
-            toolCalls: toolCalls
+            toolCalls: toolCalls,
+            provider: message["provider"] as? String
         )
     }
 
