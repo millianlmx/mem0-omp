@@ -2215,7 +2215,8 @@ Dynamic Type).
 La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas de
 jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
 trousseau au lancement, jamais pour un appareil appairé : un Mac injoignable
-(veille, autre réseau) laisse l'Accueil dans son état « Mac injoignable — … ».
+(veille, autre réseau) laisse l'Accueil sur le composant « non connecté », cause
+« Mac injoignable ».
 Elle a quatre modes, décidés par le statut d'appairage du client :
 
 - **lecture de l'appairage** : « Lecture de l'appairage… » et un indicateur ;
@@ -2385,7 +2386,8 @@ bash scripts/ios-connexion-feuille-recette.sh --source <udid appairé>
 
 - `--avant <ref>` construit depuis `git archive <ref> omp-console` ; sans lui,
   depuis l'arbre de travail. Les valeurs attendues sont toujours lues dans
-  `ConnectionText.swift` de l'arbre de travail : la base est jugée contre la
+  `ConnectionText.swift` et `IOSConnectionStateText.swift` (cause « Mac
+  injoignable » de l'Accueil) de l'arbre de travail : la base est jugée contre la
   spécification corrigée.
 - `--source <udid>` désigne un simulateur déjà appairé au Mac : son trousseau
   (copie `sqlite3 .backup` de `keychain-2-debug.db`) et sa préférence
@@ -2412,7 +2414,8 @@ Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
    caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U. », jamais
    « A–Z, 0–9 ».
 5. **Mac injoignable** (AC-2, AC-5, AC-7) — appairé, adresse `127.0.0.1:9` : aucune
-   feuille, l'Accueil dit « Mac injoignable — 127.0.0.1:9 ». « Se connecter » ouvre
+   feuille, l'Accueil montre « Pas de connexion au Mac » et la cause « Mac
+   injoignable » (`ios.connexion.cause`, sans adresse). « Se connecter » ouvre
    la feuille : « Mac injoignable », l'adresse une fois, « Réessayer », « Modifier
    l'adresse » (replié), « Oublier ce Mac », aucun champ du code, aucun champ
    focalisé, pas de clavier.
@@ -2424,9 +2427,9 @@ Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
    pendant 15 s, l'Accueil s'affiche. La feuille ouverte à la demande montre
    « Connecté », l'adresse une fois et « Oublier ce Mac », sans code, champ
    d'adresse, découverte ni focus. Elle s'ouvre par le bouton antenne quand il est
-   affiché ; sinon (base sans la PR #89), depuis l'Accueil « Mac injoignable »,
-   puis un relais rend le Mac joignable et la feuille passe d'elle-même en mode
-   connecté.
+   affiché ; sinon (base sans la PR #89), depuis l'Accueil « non connecté » de cause
+   « Mac injoignable », puis un relais rend le Mac joignable et la feuille passe
+   d'elle-même en mode connecté.
 8. **Oublier, puis annuler** (AC-9) — « Oublier ce Mac » ouvre la confirmation ;
    l'annuler (toucher hors de la bulle : iOS 27 n'y montre pas « Annuler ») laisse
    « Connecté ». Rien n'est émis vers le Mac.

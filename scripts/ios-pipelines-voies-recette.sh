@@ -230,7 +230,12 @@ LANES = [
     ("arretees", "Arrêtées", "stop.circle", "Aucune feature arrêtée."),
 ]
 ACTION = ".Ouvrir la PR"
-BANNER = "pipelines.banner"
+# L'état de connexion partagé (IOSConnectionStateView, #118) : bandeau ou écran plein
+# « non connecté », bandeau ou écran « connexion en cours ». Les conteneurs et leurs
+# feuilles, idb ne rendant pas toujours les conteneurs.
+NOT_CONNECTED = ("ios.connexion.message", "ios.connexion.cause", "ios.connexion.attente",
+                 "ios.connexion.horsLigne.bandeau", "ios.connexion.horsLigne.ecran",
+                 "ios.connexion.enCours.bandeau", "ios.connexion.enCours.ecran")
 UNFOLDED = "déplié"
 DEVICES = [("ipad13", False), ("ipad11", False), ("iphone", True)]
 SIZES = ["large", "ax-xl", "ax-xxxl"]
@@ -756,9 +761,9 @@ def report(out, phase, source, before):
 command = sys.argv[1]
 if command == "ready":
     elements = describe(sys.argv[2])
-    banner = find(elements, BANNER)
+    banner = next((e for e in (find(elements, i) for i in NOT_CONNECTED) if e is not None), None)
     if banner is not None:
-        print(banner.get("AXLabel") or "")
+        print(banner.get("AXLabel") or ident(banner))
         sys.exit(1)
     sys.exit(0 if anchors(elements) else 1)
 if command == "end":

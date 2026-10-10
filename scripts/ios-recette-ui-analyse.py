@@ -199,12 +199,26 @@ def _marqueur_propre(surface, arbre):
     raise Echec("surface inconnue : " + surface)
 
 
+# Les écrans pleins de l'état de connexion partagé (IOSConnectionStateView, #118) :
+# conteneurs « non connecté » et « connexion en cours », plus leurs feuilles propres
+# à la forme plein écran (la cause, l'indicateur d'attente), car idb ne rend pas
+# toujours les conteneurs. Les bandeaux, posés au-dessus de données conservées,
+# n'excluent rien.
+ECRANS_NON_CONNECTES = (
+    "ios.connexion.horsLigne.ecran",
+    "ios.connexion.enCours.ecran",
+    "ios.connexion.cause",
+    "ios.connexion.attente",
+)
+
+
 def marqueur(surface, arbre):
-    """Vrai si l'arbre montre la surface annoncée (et ni la racine ni l'Accueil déconnecté)."""
+    """Vrai si l'arbre montre la surface annoncée (ni la racine, ni un écran plein
+    « non connecté » ou « connexion en cours »)."""
     ids = _ids(arbre)
     if any(i.startswith("ios.section.") for i in ids):
         return False
-    if "ios.home.disconnected" in ids:
+    if any(i in ids for i in ECRANS_NON_CONNECTES):
         return False
     return _marqueur_propre(surface, arbre)
 
