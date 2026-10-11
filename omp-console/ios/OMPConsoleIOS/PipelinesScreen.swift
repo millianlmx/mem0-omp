@@ -36,8 +36,8 @@ struct PipelinesScreen: View {
     /// La largeur d'une voie iPad, `IOSMetrics.laneWidth` mise à l'échelle par
     /// Dynamic Type (S-1) : la même pour toutes les voies.
     @ScaledMetric(relativeTo: .body) private var laneWidth: CGFloat = IOSMetrics.laneWidth
-    /// L'espacement entre le corps d'une carte, son filet et sa ligne d'action
-    /// (8 pt mis à l'échelle) : le filet ne touche ni la puce ni le libellé.
+    /// L'espacement entre le corps d'une carte et sa ligne « Ouvrir la PR »
+    /// (8 pt mis à l'échelle) : aucun filet, l'espace seul les sépare.
     @ScaledMetric(relativeTo: .body) private var cardSpacing: CGFloat = 8
     @Environment(\.openURL) private var openURL
 
@@ -46,12 +46,12 @@ struct PipelinesScreen: View {
             switch screenState {
             case .unavailable(let status):
                 // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
-                // du défilement et du panneau (S-4).
+                // de la liste (S-4).
                 IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             case .loading:
-                panel { emptyCard(KanbanBoardState.loadingText) }
+                list { emptyRow(KanbanBoardState.loadingText) }
             case .board(let boardState):
-                panel { boardBody(boardState) }
+                boardBody(boardState)
             }
         }
         .navigationTitle(ConsoleSection.kanban.title)
@@ -167,136 +167,179 @@ struct PipelinesScreen: View {
 
     // MARK: - Contenu
 
-    /// Le panneau, contenu du seul défilement vertical de l'écran : le bandeau de
-    /// connexion en tête quand l'ardoise conservée est affichée hors connexion,
-    /// puis le bandeau du crochet `-ios.state`, puis le contenu.
-    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 12) {
-                if connection != .connected {
-                    IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
-                }
-                if let banner = recipe.banner, let message = recipe.bannerMessage {
-                    Text(message)
-                        .font(.callout)
-                        .iosBanner(tone: banner.tone)
-                }
-                content()
+    /// La liste groupée de l'écran, son seul défilement (ios-listes-groupees-natives,
+    /// S-5) : le bandeau de connexion en première rangée nue quand l'ardoise
+    /// conservée est affichée hors connexion, puis le bandeau du crochet
+    /// `-ios.state`, puis le contenu.
+    private func list<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        List {
+            if connection != .connected {
+                connectionBanner
+                    .iosBareListRow()
             }
-            .iosPanel()
+            if let banner = recipe.banner, let message = recipe.bannerMessage {
+                recipeBanner(message, tone: banner.tone)
+                    .iosBareListRow()
+            }
+            content()
         }
+        .iosGroupedList()
+    }
+
+    /// Le bandeau de connexion, quand l'ardoise conservée est affichée hors connexion.
+    private var connectionBanner: some View {
+        IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+    }
+
+    /// Le bandeau du crochet de recette `-ios.state`.
+    private func recipeBanner(_ message: String, tone: ConsoleTone) -> some View {
+        Text(message)
+            .font(.callout)
+            .iosBanner(tone: tone)
     }
 
     @ViewBuilder
     private func boardBody(_ boardState: KanbanBoardState) -> some View {
         switch boardState {
         case .loading:
-            emptyCard(KanbanBoardState.loadingText)
+            list { emptyRow(KanbanBoardState.loadingText) }
         case .storeAbsent, .storeEmpty:
-            emptyCard(KanbanText.noPipeline)
+            list { emptyRow(KanbanText.noPipeline) }
         case .board(let board):
             boardContent(board)
         }
     }
 
-    /// L'ardoise : en largeur COMPACTE (iPhone portrait) les voies s'empilent
-    /// verticalement dans le défilement de l'écran, sans défilement propre ; en
-    /// largeur RÉGULIÈRE (iPad) elles sont côte à côte dans un défilement
-    /// horizontal, l'axe orthogonal : aucun défilement vertical n'est imbriqué.
-    /// Ce défilement finit sur la marge de l'écran, après la dernière voie : une
-    /// voie défilée jusqu'au bout n'est jamais coupée au bord droit.
+    /// L'ardoise : en largeur COMPACTE (iPhone portrait) une section de la liste
+    /// groupée par voie ; en largeur RÉGULIÈRE (iPad) le kanban, voies côte à côte
+    /// et cartes élevées (`regularBoard`).
     @ViewBuilder
     private func boardContent(_ board: KanbanBoard) -> some View {
         let showsRepo = Set(board.cards.map(\.repo)).count > 1
         let rows = KanbanLaneRows.rows(
             board.lanes, layout: sizeClass == .compact ? .condensed : .full, unfolded: unfoldedLanes)
         if rows.isEmpty {
-            emptyCard(KanbanText.noPipeline)
+            list { emptyRow(KanbanText.noPipeline) }
         } else if sizeClass == .compact {
-            VStack(alignment: .leading, spacing: 16) {
-                lanes(rows, showsRepo: showsRepo)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            list { lanes(rows, showsRepo: showsRepo) }
         } else {
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: 12) {
-                    lanes(rows, showsRepo: showsRepo)
-                }
-            }
-            .contentMargins(.trailing, IOSMetrics.margin(sizeClass), for: .scrollContent)
+            regularBoard(rows, showsRepo: showsRepo)
         }
     }
 
+    /// Les voies en sections de la liste (largeur compacte) : l'en-tête de voie
+    /// est l'en-tête natif de la section, chaque carte une rangée système. Une
+    /// voie repliée n'a aucune rangée ; une voie vide, la rangée de son texte vide.
     @ViewBuilder
     private func lanes(_ rows: [KanbanLaneRow], showsRepo: Bool) -> some View {
         ForEach(rows) { row in
-            laneView(row, showsRepo: showsRepo)
-        }
-    }
-
-    /// Une voie. En largeur RÉGULIÈRE (iPad), sa largeur est fixe, la même pour
-    /// toutes (`PipelinesModel.laneWidth`), alignée en haut ; en largeur COMPACTE
-    /// (iPhone), elle prend la largeur de l'écran, sans règle propre.
-    /// Ses cartes sont rigides en hauteur (`cardButton`) : la voie la plus haute
-    /// reçoit tout juste sa hauteur idéale et ne comprime aucun titre.
-    @ViewBuilder
-    private func laneView(_ row: KanbanLaneRow, showsRepo: Bool) -> some View {
-        Group {
-            if sizeClass == .compact {
-                laneBody(row, showsRepo: showsRepo)
-            } else {
-                let scaled = laneWidth
-                let endMargin = IOSMetrics.margin(sizeClass)
-                laneBody(row, showsRepo: showsRepo)
-                    .containerRelativeFrame(.horizontal, alignment: .topLeading) { length, _ in
-                        PipelinesModel.laneWidth(scaled: scaled, container: length, endMargin: endMargin)
-                    }
-            }
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(PipelinesAccessibility.lane(row.lane.rawValue))
-    }
-
-    @ViewBuilder
-    private func laneBody(_ row: KanbanLaneRow, showsRepo: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if row.foldable {
-                Button {
-                    unfoldedLanes.formSymmetricDifference([row.lane])
-                } label: {
-                    HStack(alignment: .top, spacing: 6) {
-                        headerLayout { laneTitle(row) }
-                        Spacer(minLength: 0)
-                        Image(systemName: IOSSessionText.chevron(!row.folded))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityHidden(true)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityAddTraits(.isHeader)
-                .accessibilityValue(row.folded ? KanbanText.laneFolded : KanbanText.laneUnfolded)
-                .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
-            } else {
-                headerLayout { laneTitle(row) }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                    .accessibilityElement(children: .combine)
-                    .accessibilityAddTraits(.isHeader)
-                    .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
-            }
-            if !row.visibleCards.isEmpty {
+            Section {
                 ForEach(row.visibleCards) { card in
-                    cardButton(card, showsRepo: showsRepo)
+                    // Deux gestes dans la rangée : sans style explicite, la List
+                    // étendrait chacun à toute la rangée (D-4).
+                    cardContent(card, showsRepo: showsRepo)
+                        .buttonStyle(.borderless)
                 }
-            } else if !row.folded && row.content.cards.isEmpty {
-                Text(row.lane.emptyText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                if laneShowsEmptyText(row) {
+                    laneEmptyText(row)
+                }
+            } header: {
+                laneHeader(row)
+                    .textCase(nil)
             }
         }
+    }
+
+    /// Le kanban de l'iPad (largeur régulière) : les bandeaux puis les voies côte
+    /// à côte dans un défilement horizontal, le tout dans le défilement vertical
+    /// de l'écran, sur le fond groupé. Chaque voie a une largeur fixe, la même
+    /// pour toutes (`PipelinesModel.laneWidth`), alignée en haut ; ses cartes
+    /// sont élevées et rigides en hauteur : la voie la plus haute reçoit tout
+    /// juste sa hauteur idéale et ne comprime aucun titre. Le défilement
+    /// horizontal finit sur la marge de l'écran, après la dernière voie : une
+    /// voie défilée jusqu'au bout n'est jamais coupée au bord droit.
+    private func regularBoard(_ rows: [KanbanLaneRow], showsRepo: Bool) -> some View {
+        let scaled = laneWidth
+        let endMargin = IOSMetrics.margin(sizeClass)
+        return ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 12) {
+                if connection != .connected {
+                    connectionBanner
+                }
+                if let banner = recipe.banner, let message = recipe.bannerMessage {
+                    recipeBanner(message, tone: banner.tone)
+                }
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(rows) { row in
+                            VStack(alignment: .leading, spacing: 8) {
+                                laneHeader(row)
+                                ForEach(row.visibleCards) { card in
+                                    cardContent(card, showsRepo: showsRepo)
+                                        .iosCard(raised: true)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if laneShowsEmptyText(row) {
+                                    laneEmptyText(row)
+                                }
+                            }
+                            .containerRelativeFrame(.horizontal, alignment: .topLeading) { length, _ in
+                                PipelinesModel.laneWidth(scaled: scaled, container: length, endMargin: endMargin)
+                            }
+                            .accessibilityElement(children: .contain)
+                            .accessibilityIdentifier(PipelinesAccessibility.lane(row.lane.rawValue))
+                        }
+                    }
+                }
+                .contentMargins(.trailing, endMargin, for: .scrollContent)
+            }
+            .padding(endMargin)
+        }
+        .background(Color(uiColor: .systemGroupedBackground))
+    }
+
+    /// L'en-tête d'une voie : bouton repliable de 44 pt pour une voie terminale,
+    /// en-tête simple sinon — annoncé comme en-tête dans les deux cas.
+    @ViewBuilder
+    private func laneHeader(_ row: KanbanLaneRow) -> some View {
+        if row.foldable {
+            Button {
+                unfoldedLanes.formSymmetricDifference([row.lane])
+            } label: {
+                HStack(alignment: .top, spacing: 6) {
+                    headerLayout { laneTitle(row) }
+                    Spacer(minLength: 0)
+                    Image(systemName: IOSSessionText.chevron(!row.folded))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(.isHeader)
+            .accessibilityValue(row.folded ? KanbanText.laneFolded : KanbanText.laneUnfolded)
+            .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
+        } else {
+            headerLayout { laneTitle(row) }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isHeader)
+                .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
+        }
+    }
+
+    /// Une voie dépliée sans aucune carte montre son texte vide.
+    private func laneShowsEmptyText(_ row: KanbanLaneRow) -> Bool {
+        row.visibleCards.isEmpty && !row.folded && row.content.cards.isEmpty
+    }
+
+    private func laneEmptyText(_ row: KanbanLaneRow) -> some View {
+        Text(row.lane.emptyText)
+            .font(.callout)
+            .foregroundStyle(.secondary)
     }
 
     /// La disposition de l'en-tête d'une voie (règle pure :
@@ -326,19 +369,16 @@ struct PipelinesScreen: View {
             .foregroundStyle(.secondary)
     }
 
-    /// La carte : le corps ouvre la feuille ; quand le magasin porte une adresse
-    /// de PR ouvrable (`prUrl`), la même surface offre, sous un filet espacé du
-    /// corps, la ligne « Ouvrir la PR » — l'app n'écrit aucune adresse, elle
-    /// valide celle du magasin par `httpURL`. Sans adresse ouvrable : ni filet,
-    /// ni ligne d'action, ni espace réservé. La hauteur de la ligne d'action ne
-    /// dépend que de son libellé et de la taille de texte (bornée comme
-    /// l'Accueil), jamais du titre de la carte. La carte est rigide en hauteur
-    /// (`fixedSize` vertical) : dans la voie la plus haute de l'iPad, la pile
-    /// reçoit tout juste la somme des hauteurs idéales et la répartit à parts
-    /// égales — sans cette rigidité, les premières cartes à titre long y
-    /// perdaient des lignes et leur titre finissait par « … ».
+    /// Le contenu d'une carte, le même en rangée de la liste (iPhone) et en carte
+    /// élevée du kanban (iPad) : le corps ouvre la feuille ; quand le magasin
+    /// porte une adresse de PR ouvrable (`prUrl`), la ligne « Ouvrir la PR » suit
+    /// le corps, séparée par un espace — l'app n'écrit aucune adresse, elle
+    /// valide celle du magasin par `httpURL`. Sans adresse ouvrable : ni ligne
+    /// d'action, ni espace réservé. La hauteur de la ligne d'action ne dépend que
+    /// de son libellé et de la taille de texte (bornée comme l'Accueil), jamais
+    /// du titre de la carte.
     @ViewBuilder
-    private func cardButton(_ card: KanbanCard, showsRepo: Bool) -> some View {
+    private func cardContent(_ card: KanbanCard, showsRepo: Bool) -> some View {
         let prURL = card.prUrl.flatMap(httpURL)
         VStack(alignment: .leading, spacing: cardSpacing) {
             Button { sheet = .card(card.id) } label: {
@@ -347,7 +387,6 @@ struct PipelinesScreen: View {
             .buttonStyle(.plain)
             .accessibilityIdentifier(PipelinesAccessibility.card(card.id))
             if let prURL {
-                Divider()
                 Button { openURL(prURL) } label: {
                     Text(HomeText.openPR)
                         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
@@ -358,8 +397,6 @@ struct PipelinesScreen: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard(raised: true)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
@@ -413,13 +450,13 @@ struct PipelinesScreen: View {
         .contentShape(Rectangle())
     }
 
-    @ViewBuilder
-    private func emptyCard(_ message: String) -> some View {
+    /// La rangée d'un état sans ardoise (chargement, aucune pipeline) : une
+    /// rangée système, sans carte.
+    private func emptyRow(_ message: String) -> some View {
         Text(message)
             .font(.headline)
             .multilineTextAlignment(.leading)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .iosCard(raised: true)
             .accessibilityIdentifier(PipelinesAccessibility.emptyCard)
     }
 }

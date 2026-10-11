@@ -3,6 +3,11 @@
 // relative puis étiquettes), et les données techniques repliées sous « Détails
 // techniques ».
 //
+// Rendu en formulaire groupé natif (ios-listes-groupees-natives, S-7) : une
+// section pour la ligne de contexte et le texte, une section de liens (mode
+// graphe seulement), une section pour les détails techniques — séparateurs et
+// en-têtes du système, aucun filet tracé à la main.
+//
 // Lecture seule : aucun bouton d'écriture, aucune copie. La fermeture : le bouton
 // « Fermer » de la barre, ou le geste système de la feuille.
 //
@@ -35,29 +40,29 @@ struct IOSMemoryDetailView: View {
         self.labels = labels
     }
 
-    @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    header
-                    Divider()
+            Form {
+                Section {
+                    if hasSubtitle {
+                        header
+                    }
                     Text(verbatim: Self.text(row))
                         .font(.body)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .foregroundStyle(isBlank ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-                    if !links.isEmpty {
-                        Divider()
-                        linksBlock
-                    }
+                }
+                if !links.isEmpty {
+                    linksSection
+                }
+                Section {
                     technicalDetails
                 }
-                .padding(IOSMetrics.margin(sizeClass))
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .formStyle(.grouped)
             .accessibilityIdentifier(IOSMemoryAccessibility.detail)
             .navigationTitle(IOSMemoryText.detailTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -99,17 +104,17 @@ struct IOSMemoryDetailView: View {
         }
     }
 
-    private var linksBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(verbatim: IOSMemoryText.links)
-                .font(.headline)
-                .foregroundStyle(.secondary)
+    /// Une rangée par lien, sous l'en-tête natif « Liens ».
+    private var linksSection: some View {
+        Section {
             ForEach(Self.linkLines(links, from: row.id, labels: labels), id: \.self) { line in
                 Text(verbatim: line)
                     .multilineTextAlignment(.leading)
             }
+        } header: {
+            Text(verbatim: IOSMemoryText.links)
+                .textCase(nil)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // MARK: - Faits PURS (les cinq faits de S-5)
@@ -156,39 +161,37 @@ struct IOSMemoryDetailView: View {
 
     // MARK: - Rendu
 
+    /// Vrai quand la ligne de contexte a au moins un segment : sans date ni
+    /// étiquette, la section n'a pas de rangée vide.
+    private var hasSubtitle: Bool {
+        !Self.subtitle(row, nowMs: Date().timeIntervalSince1970 * 1000).isEmpty
+    }
+
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TimelineView(.periodic(from: .now, by: 60)) { context in
-                let subtitle = Self.subtitle(row, nowMs: context.date.timeIntervalSince1970 * 1000)
-                if !subtitle.isEmpty {
-                    Text(verbatim: subtitle)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .multilineTextAlignment(.leading)
-                }
-            }
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            Text(verbatim: Self.subtitle(row, nowMs: context.date.timeIntervalSince1970 * 1000))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
         }
     }
 
+    /// Repliées par défaut : chaque fait technique est une rangée du groupe.
     private var technicalDetails: some View {
         DisclosureGroup(MemoryText.technicalDetails) {
-            VStack(alignment: .leading, spacing: 6) {
-                LabeledContent(MemoryText.identifierLabel) {
-                    Text(verbatim: row.id)
-                        .font(.callout.monospaced())
-                }
-                LabeledContent(MemoryText.scopeLabel) {
-                    Text(verbatim: Self.scopeText(row, scope: scope))
-                }
-                if let score = Self.scoreText(row) {
-                    LabeledContent(MemoryText.scoreLabel) {
-                        Text(verbatim: score)
-                            .monospacedDigit()
-                    }
+            LabeledContent(MemoryText.identifierLabel) {
+                Text(verbatim: row.id)
+                    .font(.callout.monospaced())
+            }
+            LabeledContent(MemoryText.scopeLabel) {
+                Text(verbatim: Self.scopeText(row, scope: scope))
+            }
+            if let score = Self.scoreText(row) {
+                LabeledContent(MemoryText.scoreLabel) {
+                    Text(verbatim: score)
+                        .monospacedDigit()
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 6)
         }
         .font(.callout)
         .foregroundStyle(.secondary)

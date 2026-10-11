@@ -20,9 +20,13 @@
 // cours » jusqu'à la réponse du Mac, confirmation pour les specs seulement, échec
 // affiché sur la carte, aucun message de succès.
 //
-// Surfaces : `iosPanel()`/`iosCard()`/`iosBanner(tone:)`/`IOSStatusChip`, les
-// composants système, jamais un contrôle maison (`onTapGesture` interdit ; les
-// seules cibles sont des `Button`, le texte d'une rangée n'en est pas une).
+// Surfaces : le tableau de bord est une liste groupée native
+// (ios-listes-groupees-natives, S-4) — bandeaux en rangées nues, une section par
+// groupe, en-têtes et séparateurs du système ; seules les cartes « À vous » sont
+// des cartes élevées (`iosCard(raised: true)`), distinctes du fond groupé dans les
+// deux apparences. `iosBanner(tone:)`/`IOSStatusChip`, les composants système,
+// jamais un contrôle maison (`onTapGesture` interdit ; les seules cibles sont des
+// `Button`, le texte d'une rangée n'en est pas une).
 
 import ConsoleClient
 import ConsoleCore
@@ -178,23 +182,19 @@ struct HomeView: View {
         let showsRepo = HomePresentation.showsRepo(dashboard)
         let prominentID = HomePresentation.prominentAttentionID(dashboard)
         return ScrollViewReader { proxy in
-            ScrollView(.vertical) {
-                VStack(alignment: .leading, spacing: 28) {
-                    connectionBanner
-                    setupBanner
-                    launchBanner
-                    attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
-                    runningSection(dashboard, showsRepo: showsRepo)
-                    pausedSection(dashboard, showsRepo: showsRepo)
-                    notStartedSection(dashboard, showsRepo: showsRepo)
-                    deliveredSection(dashboard, showsRepo: showsRepo)
-                }
-                .padding(IOSMetrics.margin(sizeClass))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .iosReadableWidth()
+            List {
+                connectionBanner
+                setupBanner
+                launchBanner
+                attentionSection(dashboard, showsRepo: showsRepo, prominentID: prominentID)
+                runningSection(dashboard, showsRepo: showsRepo)
+                pausedSection(dashboard, showsRepo: showsRepo)
+                notStartedSection(dashboard, showsRepo: showsRepo)
+                deliveredSection(dashboard, showsRepo: showsRepo)
             }
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSHomeAccessibility.dashboard)
+            .iosGroupedList()
             .onAppear { scrollToRecipeRow(dashboard, proxy: proxy) }
             .onChange(of: IOSHomeContent.offeredGestures(dashboard), initial: true) { _, offered in
                 gestures.retain(offered)
@@ -215,10 +215,21 @@ struct HomeView: View {
         proxy.scrollTo(id, anchor: .top)
     }
 
+    /// « À vous » : l'en-tête natif porte « Tout afficher » ; chaque élément est
+    /// une carte élevée dans une rangée nue.
     private func attentionSection(_ dashboard: HomeDashboard, showsRepo: Bool, prominentID: String?) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Section {
+            if dashboard.attention.isEmpty {
+                emptyLine(HomeText.attentionEmpty)
+            } else {
+                ForEach(dashboard.attention) { attention in
+                    attentionCard(attention, showsRepo: showsRepo, prominent: attention.id == prominentID)
+                        .iosBareListRow()
+                }
+            }
+        } header: {
             HStack(alignment: .firstTextBaseline) {
-                Text(HomeText.attentionHeader).font(.title2.bold())
+                Text(HomeText.attentionHeader)
                 Spacer()
                 Button {
                     onSelectSection(IOSHomeContent.allPipelinesSection)
@@ -229,24 +240,19 @@ struct HomeView: View {
                 }
                 .accessibilityIdentifier(IOSHomeAccessibility.allPipelines)
             }
-            if dashboard.attention.isEmpty {
-                emptyLine(HomeText.attentionEmpty)
-            } else {
-                ForEach(dashboard.attention) { attention in
-                    attentionCard(attention, showsRepo: showsRepo, prominent: attention.id == prominentID)
-                }
-            }
+            .textCase(nil)
         }
     }
 
     private func runningSection(_ dashboard: HomeDashboard, showsRepo: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(HomeText.runningHeader).font(.title3.bold())
+        Section {
             if dashboard.running.isEmpty {
                 emptyLine(HomeText.runningEmpty)
             } else {
-                rowCard(dashboard.running) { runningRow($0, showsRepo: showsRepo) }
+                rows(dashboard.running) { runningRow($0, showsRepo: showsRepo) }
             }
+        } header: {
+            sectionHeader(HomeText.runningHeader)
         }
     }
 
@@ -254,9 +260,10 @@ struct HomeView: View {
     @ViewBuilder
     private func pausedSection(_ dashboard: HomeDashboard, showsRepo: Bool) -> some View {
         if !dashboard.paused.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(HomeText.pausedHeader).font(.title3.bold())
-                rowCard(dashboard.paused) { pausedRow($0, showsRepo: showsRepo) }
+            Section {
+                rows(dashboard.paused) { pausedRow($0, showsRepo: showsRepo) }
+            } header: {
+                sectionHeader(HomeText.pausedHeader)
             }
         }
     }
@@ -265,34 +272,37 @@ struct HomeView: View {
     @ViewBuilder
     private func notStartedSection(_ dashboard: HomeDashboard, showsRepo: Bool) -> some View {
         if !dashboard.notStarted.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(HomeText.notStartedHeader).font(.title3.bold())
-                rowCard(dashboard.notStarted) { notStartedRow($0, showsRepo: showsRepo) }
+            Section {
+                rows(dashboard.notStarted) { notStartedRow($0, showsRepo: showsRepo) }
+            } header: {
+                sectionHeader(HomeText.notStartedHeader)
             }
         }
     }
 
     private func deliveredSection(_ dashboard: HomeDashboard, showsRepo: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(HomeText.deliveredTitle).font(.title3.bold())
+        Section {
             if dashboard.delivered.isEmpty {
                 emptyLine(HomeText.deliveredEmpty)
             } else {
-                rowCard(dashboard.delivered) { deliveredRow($0, showsRepo: showsRepo) }
+                rows(dashboard.delivered) { deliveredRow($0, showsRepo: showsRepo) }
             }
+        } header: {
+            sectionHeader(HomeText.deliveredTitle)
         }
     }
 
-    /// Un groupe de rangées sur une carte, séparées par un trait. Chaque rangée
-    /// porte l'id de sa carte, cible du crochet `-home.row`.
-    private func rowCard<Row: View>(_ cards: [KanbanCard], @ViewBuilder row: @escaping (KanbanCard) -> Row) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(cards.enumerated()), id: \.element.id) { index, card in
-                if index > 0 { Divider() }
-                row(card).id(card.id)
-            }
+    /// L'en-tête natif d'une section, dans la casse exacte de son libellé (D-3).
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title).textCase(nil)
+    }
+
+    /// Les rangées d'une section, séparées par le système. Chaque rangée porte
+    /// l'id de sa carte, cible du crochet `-home.row`.
+    private func rows<Row: View>(_ cards: [KanbanCard], @ViewBuilder row: @escaping (KanbanCard) -> Row) -> some View {
+        ForEach(cards, id: \.id) { card in
+            row(card).id(card.id)
         }
-        .iosCard()
     }
 
     private func emptyLine(_ text: String) -> some View {
@@ -339,7 +349,9 @@ struct HomeView: View {
             }
             failureBanner(IOSHomeContent.attentionGestureKey(attention))
         }
-        .iosCard()
+        .iosCard(raised: true)
+        // Plusieurs gestes sur la carte : chacun borné à son libellé (D-4, T-5).
+        .buttonStyle(.borderless)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.attention(card.id))
     }
@@ -544,6 +556,7 @@ struct HomeView: View {
     private var connectionBanner: some View {
         if connection != .connected {
             IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+                .iosBareListRow()
         }
     }
 
@@ -554,6 +567,7 @@ struct HomeView: View {
                 .font(.callout)
                 .iosBanner(tone: .attention)
                 .accessibilityIdentifier(IOSHomeAccessibility.setupBanner)
+                .iosBareListRow()
         }
     }
 
@@ -569,6 +583,7 @@ struct HomeView: View {
             .iosBanner(tone: IOSHomeContent.launchTone(entry.state))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSHomeAccessibility.launchBanner)
+            .iosBareListRow()
         }
     }
 

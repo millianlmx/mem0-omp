@@ -26,11 +26,12 @@ import SwiftUI
 ///   `-pipelines.recipe <fiche|actions|arret>` : la fiche d'une carte de fixture
 ///   ouverte sur l'écran Pipelines (ios-fiche-carte-pipelines), sans réseau — des
 ///   crochets de recette, pas des fonctionnalités.
-/// - `-stats.recipe <vide|chargement|bascule>` : la section Statistiques ouverte
-///   sur son modèle et son écran RÉELS, nourris par une lecture en mémoire et un
-///   client forcé connecté (S-6 de statistiques-etat-vide-et-non-defilables), pour
-///   capturer l'état vide, le chargement et la bascule de projet — un crochet de
-///   recette, pas une fonctionnalité. À lancer avec `-section stats`.
+/// - `-stats.recipe <vide|chargement|bascule|pleine>` : la section Statistiques
+///   ouverte sur son modèle et son écran RÉELS, nourris par une lecture en mémoire
+///   et un client forcé connecté (S-6 de statistiques-etat-vide-et-non-defilables),
+///   pour capturer l'état vide, le chargement, la bascule de projet et, avec
+///   `pleine`, le tableau dès le lancement — un crochet de recette, pas une
+///   fonctionnalité. À lancer avec `-section stats`.
 /// - `-pipelines.board pleine` : l'écran Pipelines rend l'ardoise de la fixture
 ///   partagée `KanbanBoardParity` (une voie vide, une voie « Livrées » de 100
 ///   cartes, des noms longs) à la place de celle du Mac, pour mesurer les voies et
@@ -38,7 +39,9 @@ import SwiftUI
 /// - `-projet.recipe <lancement|dialogue>` et `-sessionomp.recipe lancement` : la
 ///   feuille « Piloter un projet… », « OMP vous demande » ou « Lancer une session
 ///   OMP » ouverte d'elle-même sur une fixture (feuilles-ios-presentation-et-depots),
-///   sans réseau — des crochets de recette, pas des fonctionnalités.
+///   sans réseau ; `-projet.recipe plan` : l'écran Projet vif sur un plan de six
+///   étapes plus haut qu'un écran (ios-listes-groupees-natives), sans réseau — des
+///   crochets de recette, pas des fonctionnalités.
 /// - `-pipelines.board marques` : l'écran Pipelines rend l'ardoise dérivée de
 ///   `HomeParity` (celle de `-pipelines.recipe`), qui porte une carte au pilote
 ///   arrêté, pour voir la phrase de ses marques sans appairage.

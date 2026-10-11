@@ -5,6 +5,11 @@ import SwiftUI
 /// La feuille d'une carte (S-5 … S-12) : ce que la carte montre et les gestes
 /// qu'elle offre. La carte est RELUE par son identifiant à chaque rendu — la
 /// trame `store` met la feuille à jour sans la refermer.
+///
+/// Rendu en formulaire groupé natif (ios-listes-groupees-natives, S-7) : une
+/// section d'erreur, une section d'information, une section par question en
+/// attente (en-tête natif « Question »), puis une section de gestes — une rangée
+/// par geste, aucun panneau ni carte imbriqués.
 struct PipelinesCardSheet: View {
     @ObservedObject var client: ConsoleClientModel
     let cardId: String
@@ -70,12 +75,13 @@ struct PipelinesCardSheet: View {
     var body: some View {
         NavigationStack {
             ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if let error {
+                Form {
+                    if let error {
+                        Section {
                             Text(error)
                                 .font(.callout)
                                 .iosBanner(tone: .danger)
+                                .iosBareListRow()
                                 .accessibilityIdentifier(PipelinesAccessibility.error)
                             if mergeFailed, let card {
                                 Button {
@@ -89,23 +95,23 @@ struct PipelinesCardSheet: View {
                                 .accessibilityIdentifier(PipelinesAccessibility.retry)
                             }
                         }
-                        if let card {
+                    }
+                    if let card {
+                        Section {
                             information(card)
-                            Divider()
-                            gestureList(card)
-                                .id(PipelinesText.recipeActionsAnchor)
-                        } else {
+                        }
+                        gestureSections(card)
+                    } else {
+                        Section {
                             Text(PipelinesText.sheetNoCard)
                                 .font(.headline)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .iosCard()
                                 .accessibilityIdentifier(PipelinesAccessibility.sheetEmpty)
                         }
                     }
-                    .padding()
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier(PipelinesAccessibility.sheet)
                 }
+                .formStyle(.grouped)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier(PipelinesAccessibility.sheet)
                 .navigationTitle(ConsoleSection.kanban.title)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar {
@@ -128,6 +134,21 @@ struct PipelinesCardSheet: View {
             }
         }
         .confirmationDialog(
+            KanbanText.stopConfirmTitle(repo: card?.repo ?? ""),
+            isPresented: $stopShown,
+            titleVisibility: .visible,
+            presenting: card
+        ) { card in
+            Button(KanbanText.stopConfirm, role: .destructive) {
+                // Confirmation ouverte avant la coupure : rien ne part hors connexion (S-5).
+                guard connection.gesturesEnabled else { return }
+                perform { _ = try await client.stop(cardId: card.id) }
+            }
+            Button(KanbanText.cancel, role: .cancel) {}
+        } message: { _ in
+            Text(KanbanText.stopConfirmMessage)
+        }
+        .confirmationDialog(
             ProjectViewText.prMergeConfirmTitle(number: mergeRow?.number),
             isPresented: $mergeShown,
             titleVisibility: .visible,
@@ -142,6 +163,8 @@ struct PipelinesCardSheet: View {
 
     // MARK: - Information
 
+    /// Une rangée : le titre complet (une seule fois), le dépôt, l'état, la durée,
+    /// les modèles et la PR.
     @ViewBuilder
     private func information(_ card: KanbanCard) -> some View {
         let lines = KanbanCardPresentation.modelLines(card, names: modelNames)
@@ -191,52 +214,60 @@ struct PipelinesCardSheet: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(PipelinesAccessibility.sheetInfo)
     }
 
     // MARK: - Gestes
 
+    private static func isQuestion(_ gesture: PipelinesGesture) -> Bool {
+        switch gesture {
+        case .answerQuestion: return true
+        default: return false
+        }
+    }
+
+    /// Les questions en attente (une section chacune, en-tête natif), puis la
+    /// section des autres gestes, une rangée par geste. La première rangée rendue
+    /// porte l'ancre `PipelinesText.recipeActionsAnchor`, vers laquelle la recette
+    /// fait défiler (`applyRecipe`).
     @ViewBuilder
-    private func gestureList(_ card: KanbanCard) -> some View {
-        let gestures = PipelinesGesture.gestures(of: card)
-        VStack(alignment: .leading, spacing: 10) {
-            if let motif = PipelinesGesture.motif(of: card) {
+    private func gestureSections(_ card: KanbanCard) -> some View {
+        let gestures = Array(PipelinesGesture.gestures(of: card).enumerated())
+        let questions = gestures.filter { Self.isQuestion($0.element) }
+        let actions = gestures.filter { !Self.isQuestion($0.element) }
+        let anchor = (questions.first ?? actions.first)?.offset
+        if let motif = PipelinesGesture.motif(of: card) {
+            Section {
                 Text(motif)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(PipelinesAccessibility.sheetMotif)
-            } else {
-                ForEach(Array(gestures.enumerated()), id: \.offset) { item in
-                    gestureButton(item.element, card: card)
+                    .id(PipelinesText.recipeActionsAnchor)
+            }
+        } else {
+            ForEach(questions, id: \.offset) { item in
+                if case let .answerQuestion(toolCallId, question, options) = item.element {
+                    questionSection(card, toolCallId: toolCallId, question: question, options: options, anchored: item.offset == anchor)
                 }
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .confirmationDialog(
-            KanbanText.stopConfirmTitle(repo: card.repo),
-            isPresented: $stopShown,
-            titleVisibility: .visible
-        ) {
-            Button(KanbanText.stopConfirm, role: .destructive) {
-                // Confirmation ouverte avant la coupure : rien ne part hors connexion (S-5).
-                guard connection.gesturesEnabled else { return }
-                perform { _ = try await client.stop(cardId: card.id) }
+            if !actions.isEmpty {
+                Section {
+                    ForEach(actions, id: \.offset) { item in
+                        gestureRows(item.element, card: card, anchored: item.offset == anchor)
+                    }
+                }
             }
-            Button(KanbanText.cancel, role: .cancel) {}
-        } message: {
-            Text(KanbanText.stopConfirmMessage)
         }
     }
 
     @ViewBuilder
-    private func gestureButton(_ gesture: PipelinesGesture, card: KanbanCard) -> some View {
+    private func gestureRows(_ gesture: PipelinesGesture, card: KanbanCard, anchored: Bool) -> some View {
         switch gesture {
-        case .answerQuestion(let toolCallId, let question, let options):
-            questionZone(card, toolCallId: toolCallId, question: question, options: options)
+        case .answerQuestion:
+            EmptyView()
         case .answerText(let prompt):
-            textZone(card, prompt: prompt, placeholder: KanbanText.replyPlaceholder, customKind: false)
+            textRows(card, prompt: prompt, placeholder: KanbanText.replyPlaceholder, customKind: false, anchored: anchored)
         case .validateMilestone(let kind):
             actionButton(
                 label: kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview,
@@ -246,27 +277,27 @@ struct PipelinesCardSheet: View {
                 let verdict = kind.verdict ?? PipelinesVerdict.specs.rawValue
                 _ = try await client.verdict(cardId: card.id, verdict: verdict)
             }
+            .recipeAnchor(anchored)
         case .resume:
-            actionButton(label: KanbanText.resume, id: KanbanText.resume, card: card, prominent: true) {
+            actionButton(label: KanbanText.resume, id: KanbanText.resume, card: card) {
                 _ = try await client.resume(cardId: card.id)
             }
+            .recipeAnchor(anchored)
         case .stop:
             Button(role: .destructive) {
                 stopShown = true
             } label: {
                 Text(KanbanText.stop)
-                    .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget)
+                    .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
             }
-            .buttonStyle(.bordered)
-            .buttonBorderShape(.capsule)
-            .tint(ConsoleTone.danger.tint)
-            .overlay(Capsule().strokeBorder(ConsoleTone.danger.tint, lineWidth: 1))
             .disabled(!connection.gesturesEnabled || busy)
             .accessibilityIdentifier(PipelinesAccessibility.gesture(KanbanText.stop, card.id))
+            .recipeAnchor(anchored)
         case .launch:
             actionButton(label: KanbanText.launch, id: KanbanText.launch, card: card) {
                 _ = try await client.resume(cardId: card.id)
             }
+            .recipeAnchor(anchored)
         case .openPR:
             Button {
                 if let url = httpURL(card.prUrl ?? "") { openURL(url) }
@@ -276,29 +307,32 @@ struct PipelinesCardSheet: View {
                     .contentShape(Rectangle())
             }
             .accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))
+            .recipeAnchor(anchored)
         case .merge:
             Button(ProjectViewText.prMerge) { loadMerge(card) }
                 .frame(minHeight: IOSMetrics.minimumTarget)
                 .disabled(!connection.gesturesEnabled || busy)
                 .accessibilityIdentifier(PipelinesAccessibility.gesture(ProjectViewText.prMerge, card.id))
+                .recipeAnchor(anchored)
         }
     }
 
+    /// La question en attente : en-tête natif « Question », la question, une rangée
+    /// par option, puis le champ libre et « Envoyer ».
     @ViewBuilder
-    private func questionZone(
+    private func questionSection(
         _ card: KanbanCard,
         toolCallId: String,
         question: String,
-        options: [PanelAskOption]
+        options: [PanelAskOption],
+        anchored: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(KanbanText.questionTitle)
-                .font(.headline)
-                .accessibilityIdentifier(PipelinesAccessibility.sheetQuestionTitle)
+        Section {
             Text(question)
                 .font(.callout)
                 .multilineTextAlignment(.leading)
                 .accessibilityIdentifier(PipelinesAccessibility.sheetQuestion)
+                .recipeAnchor(anchored)
             ForEach(Array(options.enumerated()), id: \.offset) { item in
                 Button {
                     let label = item.element.label
@@ -323,91 +357,82 @@ struct PipelinesCardSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                 }
-                .buttonStyle(.plain)
-                .iosCard()
                 .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(PipelinesAccessibility.option(item.offset))
             }
-            textZone(card, prompt: nil, placeholder: KanbanText.answerPlaceholder, customKind: true, toolCallId: toolCallId)
+            textRows(card, prompt: nil, placeholder: KanbanText.answerPlaceholder, customKind: true, toolCallId: toolCallId, anchored: false)
+        } header: {
+            Text(KanbanText.questionTitle)
+                .textCase(nil)
+                .accessibilityIdentifier(PipelinesAccessibility.sheetQuestionTitle)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Le texte libre : l'invite éventuelle, le champ, puis « Envoyer » — une rangée chacun.
     @ViewBuilder
-    private func textZone(
+    private func textRows(
         _ card: KanbanCard,
         prompt: String?,
         placeholder: String,
         customKind: Bool,
-        toolCallId: String? = nil
+        toolCallId: String? = nil,
+        anchored: Bool
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let prompt, !prompt.isEmpty {
-                Text(prompt)
-                    .font(.callout)
-                    .multilineTextAlignment(.leading)
-                    .accessibilityIdentifier(PipelinesAccessibility.sheetPrompt)
-            }
-            TextField(placeholder, text: $freeText, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .disabled(!connection.gesturesEnabled)
-                .accessibilityIdentifier(PipelinesAccessibility.answerField)
-            Button(KanbanText.send) {
-                let text = freeText
-                freeText = ""
-                perform {
-                    if customKind {
-                        _ = try await client.answer(
-                            cardId: card.id,
-                            kind: PipelinesAnswerKind.custom.rawValue,
-                            label: nil,
-                            text: text,
-                            toolCallId: toolCallId
-                        )
-                    } else {
-                        _ = try await client.reply(cardId: card.id, text: text)
-                    }
+        let prompted = prompt.map { !$0.isEmpty } ?? false
+        if let prompt, prompted {
+            Text(prompt)
+                .font(.callout)
+                .multilineTextAlignment(.leading)
+                .accessibilityIdentifier(PipelinesAccessibility.sheetPrompt)
+                .recipeAnchor(anchored)
+        }
+        TextField(placeholder, text: $freeText, axis: .vertical)
+            .disabled(!connection.gesturesEnabled)
+            .accessibilityIdentifier(PipelinesAccessibility.answerField)
+            .recipeAnchor(anchored && !prompted)
+        Button(KanbanText.send) {
+            let text = freeText
+            freeText = ""
+            perform {
+                if customKind {
+                    _ = try await client.answer(
+                        cardId: card.id,
+                        kind: PipelinesAnswerKind.custom.rawValue,
+                        label: nil,
+                        text: text,
+                        toolCallId: toolCallId
+                    )
+                } else {
+                    _ = try await client.reply(cardId: card.id, text: text)
                 }
             }
-            .frame(minHeight: IOSMetrics.minimumTarget)
-            .disabled(!connection.gesturesEnabled || busy || isBlank(freeText))
-            .accessibilityIdentifier(PipelinesAccessibility.answerSend)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: IOSMetrics.minimumTarget)
+        .disabled(!connection.gesturesEnabled || busy || isBlank(freeText))
+        .accessibilityIdentifier(PipelinesAccessibility.answerSend)
     }
 
-    @ViewBuilder
+    /// Une rangée de bouton système ; pendant l'envoi, l'indicateur d'activité.
     private func actionButton(
         label: String,
         id: String,
         card: KanbanCard,
-        prominent: Bool = false,
         action: @escaping () async throws -> Void
     ) -> some View {
-        let button = Button {
+        Button {
             perform(action)
         } label: {
             if busy {
                 ProgressView()
-                    .frame(maxWidth: prominent ? .infinity : nil, minHeight: IOSMetrics.minimumTarget)
+                    .frame(minHeight: IOSMetrics.minimumTarget)
             } else {
                 Text(label)
-                    .frame(maxWidth: .infinity, alignment: prominent ? .center : .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: IOSMetrics.minimumTarget)
             }
         }
-        if prominent {
-            button
-                .buttonStyle(.borderedProminent)
-                .disabled(!connection.gesturesEnabled || busy)
-                .accessibilityIdentifier(PipelinesAccessibility.gesture(id, card.id))
-        } else {
-            button
-                .buttonStyle(.plain)
-                .iosCard()
-                .disabled(!connection.gesturesEnabled || busy)
-                .accessibilityIdentifier(PipelinesAccessibility.gesture(id, card.id))
-        }
+        .disabled(!connection.gesturesEnabled || busy)
+        .accessibilityIdentifier(PipelinesAccessibility.gesture(id, card.id))
     }
 
     // MARK: - Effets
@@ -464,6 +489,18 @@ struct PipelinesCardSheet: View {
         }
         perform {
             _ = try await client.merge(repoKey: repoKey, slug: slug, headOid: headOid)
+        }
+    }
+}
+
+private extension View {
+    /// L'ancre de défilement de la recette, posée sur la seule première rangée de geste.
+    @ViewBuilder
+    func recipeAnchor(_ anchored: Bool) -> some View {
+        if anchored {
+            id(PipelinesText.recipeActionsAnchor)
+        } else {
+            self
         }
     }
 }

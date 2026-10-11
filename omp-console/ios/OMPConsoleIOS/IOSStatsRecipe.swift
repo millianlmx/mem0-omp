@@ -1,4 +1,4 @@
-// Le crochet de RECETTE `-stats.recipe <vide|chargement|bascule>` (S-6 de
+// Le crochet de RECETTE `-stats.recipe <vide|chargement|bascule|pleine>` (S-6 de
 // statistiques-etat-vide-et-non-defilables) : il ouvre la section Statistiques sur
 // le VRAI `IOSStatsModel` et le VRAI écran, nourris par une lecture en mémoire et
 // un client forcé `.connected` — sans réseau et sans appairage. Un crochet de
@@ -24,6 +24,9 @@ enum IOSStatsRecipe: Equatable {
     /// `recette-pleine` servi, puis la bascule vers `recette-vide`, dont la lecture
     /// reste en cours : l'écran reste en bascule.
     case bascule
+    /// `recette-pleine` servi pour toute clé, dès la première lecture : l'écran
+    /// s'ouvre sur le tableau (ios-listes-groupees-natives, S-3).
+    case pleine
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSStatsRecipe? {
@@ -46,6 +49,7 @@ enum IOSStatsRecipe: Equatable {
         case IOSStatsText.recipeEmpty: return .vide
         case IOSStatsText.recipeLoading: return .chargement
         case IOSStatsText.recipeSwitch: return .bascule
+        case IOSStatsText.recipeFull: return .pleine
         default: return nil
         }
     }
@@ -71,6 +75,8 @@ enum IOSStatsRecipe: Equatable {
                 return try await gate.hold()
             case .bascule:
                 if key == IOSStatsText.recipeEmptyProject { return try await gate.hold() }
+                return Self.full
+            case .pleine:
                 return Self.full
             }
         }

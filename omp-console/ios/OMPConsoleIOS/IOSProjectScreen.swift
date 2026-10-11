@@ -3,12 +3,17 @@
 // « PR et CI » en lecture seule, document PROJECT.md rendu, et les gestes
 // « Piloter un projet… » / « Arrêter le pilotage ».
 //
+// Une liste groupée native, seul défilement de l'écran (ios-listes-groupees-natives,
+// S-6) : les bandeaux en rangées nues, puis l'en-tête, le sélecteur, une section
+// par segment du plan (ou le document), la section « PR et CI » et une rangée par
+// geste. Un plan plus haut que l'écran se lit jusqu'à sa dernière étape.
+//
 // Chaque état (non connecté, vide, démarrage, erreur, succès) est couvert ; aucun
 // `onTapGesture`, uniquement des contrôles système atteignables au clavier.
 //
 // Hors connexion (etats-non-connecte-heterogenes-ios, S-4) : sans conduite reçue,
-// le composant d'état de connexion partagé SEUL, hors du panneau ; avec une
-// conduite conservée, le panneau garde son contenu sous le bandeau du composant.
+// le composant d'état de connexion partagé SEUL, hors de la liste ; avec une
+// conduite conservée, la liste garde son contenu sous le bandeau du composant.
 
 import ConsoleClient
 import ConsoleCore
@@ -28,7 +33,7 @@ struct IOSProjectScreen: View {
     /// Le dialogue de la recette `-projet.recipe dialogue`, tant qu'il est ouvert.
     @State private var recipeDialog: RpcDialogRequest?
 
-    /// Le crochet de recette `-projet.recipe <lancement|dialogue>`, quand il est donné.
+    /// Le crochet de recette `-projet.recipe <lancement|dialogue|plan>`, quand il est donné.
     private let recipe: IOSProjectRecipe?
 
     private enum Pane: Hashable {
@@ -40,7 +45,10 @@ struct IOSProjectScreen: View {
         self.client = client
         self.recipe = recipe
         _showConnection = showConnection
-        _model = StateObject(wrappedValue: IOSProjectModel(client: client))
+        _model = StateObject(wrappedValue: IOSProjectModel(
+            client: client,
+            fixture: recipe == .plan ? IOSProjectPlanRecipe.fixture : nil
+        ))
     }
 
     var body: some View {
@@ -48,20 +56,20 @@ struct IOSProjectScreen: View {
             switch model.surface {
             case .unavailable(let status):
                 // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
-                // du panneau (S-4).
+                // de la liste (S-4).
                 IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             case .empty:
-                panel {
+                list {
                     emptyState
-                    actions
+                    Section { actions }
                 }
             case .starting:
-                panel {
+                list {
                     startingState
-                    actions
+                    Section { actions }
                 }
             case .live:
-                panel { liveState }
+                list { liveState }
             }
         }
         .navigationTitle(ConsoleSection.project.title)
@@ -70,7 +78,7 @@ struct IOSProjectScreen: View {
             model.reloadDocumentIfNeeded()
             model.reloadPRsIfNeeded()
         }
-        .onChange(of: client.conduite) {
+        .onChange(of: model.conduite) {
             model.appeared()
             model.reloadDocumentIfNeeded()
             model.reloadPRsIfNeeded()
@@ -125,30 +133,21 @@ struct IOSProjectScreen: View {
         })
     }
 
-    // MARK: - Panneau
+    // MARK: - Liste
 
-    /// Le cadre de la section : le panneau, puis le contenu de l'écran ; le titre
-    /// est celui de la barre de navigation.
-    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            screenContent(content)
-        }
-        .iosPanel()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .iosReadableWidth()
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ios.screen." + ConsoleSection.project.rawValue)
-    }
-
-    /// Le contenu de l'écran : le bandeau de connexion en tête quand la conduite
-    /// conservée est affichée hors connexion (S-4), puis l'état.
-    private func screenContent<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    /// La liste groupée de l'écran, son seul défilement (S-6) : le bandeau de
+    /// connexion en première rangée nue quand la conduite conservée est affichée
+    /// hors connexion (S-4), puis l'état. Le titre est celui de la barre de
+    /// navigation.
+    private func list<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        List {
             if model.connection != .connected {
                 IOSConnectionStateView(status: model.connection, layout: .banner, onConnect: { showConnection = true })
+                    .iosBareListRow()
             }
             content()
         }
+        .iosGroupedList()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(ProjectAccessibility.screen)
     }
@@ -164,7 +163,6 @@ struct IOSProjectScreen: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
         .accessibilityIdentifier(ProjectAccessibility.emptyCard)
     }
 
@@ -176,41 +174,41 @@ struct IOSProjectScreen: View {
         }
     }
 
-    private var liveState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            header
-            waitingBanner
-            if let banner = IOSProjectModel.shownFailure(model.banner, connection: model.connection) {
-                Text(banner)
-                    .font(.callout)
-                    .iosBanner(tone: .danger)
-                    .accessibilityIdentifier(ProjectAccessibility.banner)
-            }
-            picker
-            paneContent
-            prPane
-            actions
+    @ViewBuilder private var liveState: some View {
+        waitingBanner
+        if let banner = IOSProjectModel.shownFailure(model.banner, connection: model.connection) {
+            Text(banner)
+                .font(.callout)
+                .iosBanner(tone: .danger)
+                .accessibilityIdentifier(ProjectAccessibility.banner)
+                .iosBareListRow()
         }
+        Section { header }
+        Section { picker }
+        paneContent
+        prPane
+        Section { actions }
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(headerName)
-                    .font(.headline)
+                if let headerName {
+                    Text(headerName)
+                        .font(.headline)
+                }
                 Spacer(minLength: 8)
-                if let status = client.conduite?.status {
+                if let status = model.conduite?.status {
                     IOSStatusChip(status: status)
                 }
             }
-            if let root = client.conduite?.repoRoot {
+            if let root = model.conduite?.repoRoot {
                 Text(ConsoleFormat.path(root, home: client.macHomeDirectory))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
         .accessibilityIdentifier(ProjectAccessibility.header)
     }
 
@@ -219,10 +217,12 @@ struct IOSProjectScreen: View {
             Text(ProjectViewText.waitingCount(model.waitingCount))
                 .font(.callout)
                 .iosBanner(tone: .attention)
+                .iosBareListRow()
         } else if model.waitingCount == 1 {
             Text(ProjectViewText.waitingBanner)
                 .font(.callout)
                 .iosBanner(tone: .attention)
+                .iosBareListRow()
         }
     }
 
@@ -237,6 +237,8 @@ struct IOSProjectScreen: View {
         .accessibilityIdentifier(ProjectAccessibility.picker)
     }
 
+    /// Le volet choisi : une section par segment du plan, ou une section pour le
+    /// document ; un message tient dans une rangée.
     @ViewBuilder private var paneContent: some View {
         switch pane {
         case .plan:
@@ -250,7 +252,6 @@ struct IOSProjectScreen: View {
                     expanded: model.expanded,
                     onToggle: model.toggle
                 )
-                .accessibilityIdentifier(ProjectAccessibility.plan)
             }
         case .document:
             documentPane
@@ -262,14 +263,18 @@ struct IOSProjectScreen: View {
         case .idle:
             EmptyView()
         case .loading:
-            HStack(spacing: 8) {
-                ProgressView()
-                Text(ProjectViewText.docLoading)
-                    .font(.callout)
+            Section {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(ProjectViewText.docLoading)
+                        .font(.callout)
+                }
             }
         case .blocks(let blocks):
-            IOSMarkdownView(blocks: blocks)
-                .accessibilityIdentifier(ProjectAccessibility.document)
+            Section {
+                IOSMarkdownView(blocks: blocks)
+                    .accessibilityIdentifier(ProjectAccessibility.document)
+            }
         case .message(let text):
             message(text)
         }
@@ -286,8 +291,11 @@ struct IOSProjectScreen: View {
         )
     }
 
+    /// Les gestes, une rangée chacun (un seul geste par rangée, T-5) :
+    /// « Piloter un projet… », puis « Arrêter le pilotage » quand la conduite
+    /// est vive.
     private var actions: some View {
-        HStack(spacing: 12) {
+        Group {
             Button(action: startTapped) {
                 Text(ProjectViewText.startConduite)
                     .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
@@ -304,23 +312,27 @@ struct IOSProjectScreen: View {
         }
     }
 
+    /// Un message du volet, seul dans sa section.
     private func message(_ text: String) -> some View {
-        Text(text)
-            .font(.callout)
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .iosCard()
+        Section {
+            Text(text)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: - Faits dérivés
 
-    private var headerName: String {
-        client.conduite?.name ?? model.draft?.name ?? ProjectViewText.windowTitle
+    /// Le nom de la conduite, ou celui du brouillon soumis ; sans nom, aucune ligne
+    /// (le titre de l'écran est celui de la barre de navigation).
+    private var headerName: String? {
+        model.conduite?.name ?? model.draft?.name
     }
 
     private var refusalMessage: String {
-        let name = client.conduite?.name ?? model.draft?.name ?? ""
-        let root = ConsoleFormat.path(client.conduite?.repoRoot ?? "", home: client.macHomeDirectory)
+        let name = model.conduite?.name ?? model.draft?.name ?? ""
+        let root = ConsoleFormat.path(model.conduite?.repoRoot ?? "", home: client.macHomeDirectory)
         return ProjectViewText.refusal(name: name, path: root)
     }
 
@@ -335,7 +347,7 @@ struct IOSProjectScreen: View {
         switch recipe {
         case .lancement: showingLaunch = true
         case .dialogue: recipeDialog = IOSLaunchRecipe.dialog
-        case nil: break
+        case .plan, nil: break
         }
     }
 

@@ -4,6 +4,8 @@
 //
 //   -projet.recipe lancement     : « Piloter un projet… » sur les dépôts de la fixture ;
 //   -projet.recipe dialogue      : « OMP vous demande » sur le dialogue de la fixture ;
+//   -projet.recipe plan          : l'écran Projet vif sur le plan de six étapes de
+//                                  `IOSProjectPlanRecipe` (ios-listes-groupees-natives) ;
 //   -sessionomp.recipe lancement : « Lancer une session OMP » sur les mêmes dépôts.
 //
 // Sans l'argument : aucun effet. Comme `IOSMemoryGraphRecipe` et `PipelinesCardRecipe`,
@@ -20,6 +22,7 @@ import Foundation
 enum IOSProjectRecipe: Equatable {
     case lancement
     case dialogue
+    case plan
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSProjectRecipe? {
@@ -27,6 +30,7 @@ enum IOSProjectRecipe: Equatable {
             switch value {
             case IOSLaunchRecipeText.launch: return .lancement
             case IOSLaunchRecipeText.dialog: return .dialogue
+            case IOSLaunchRecipeText.projectPlan: return .plan
             default: return nil
             }
         }

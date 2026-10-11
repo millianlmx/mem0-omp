@@ -55,23 +55,40 @@ marqueur `[test: <fonction>]` (une fonction de
 
 ## Surfaces (S-1)
 
-- Trois surfaces seulement, et rien d'autre : `iosPanel()` pour le panneau d'un
-  écran, `iosCard()` pour la carte d'un état vide, `iosBanner(tone:)` pour un
-  bandeau. `[garde: design-ios/AC-1]`
-- La carte de l'écran Pipelines est la même surface en relief,
-  `iosCard(raised: true)` : fond `tertiarySystemGroupedBackground`, identique au
-  panneau en clair et plus clair que lui en sombre.
-  `[test: raisedCardStandsOutOnlyInDark]` `[capture: ipad-kanban-dark]`
-- Chaque écran des sept sections pose son contenu sur `iosPanel()`. `[capture: iphone-*-light]`
+- Les surfaces de contenu sont celles de `Design/IOSSurface.swift`, et rien
+  d'autre : `iosGroupedList()` pour la liste d'un écran, `iosBareListRow()` pour
+  la rangée qui porte sa propre surface, `iosCard()` pour une carte,
+  `iosBanner(tone:)` pour un bandeau, `iosPanel()` pour le panneau d'une surface
+  hors liste. `[garde: design-ios/AC-1]`
+- Un écran en liste — Accueil, Pipelines en largeur compacte, Sessions, Mémoire
+  (mode Liste), Projet, Statistiques — est une `List` de style `.insetGrouped`,
+  posée par `iosGroupedList()` : fond `systemGroupedBackground` jusqu'aux bords
+  de l'écran, rangées en `secondarySystemGroupedBackground`, en-têtes de section
+  et séparateurs du système, aucun `Divider()` tracé à la main, aucun panneau
+  autour des groupes. `[capture: iphone-*-dark]`
+- Une feuille ouverte depuis ces écrans est un `Form` groupé
+  (`.formStyle(.grouped)`) : sections et en-têtes natifs, sans panneau ni carte
+  imbriqués. `[capture: iphone-pipelines-fiche-*]`
+- Une carte n'existe que là où le contenu est une carte : le bloc « À vous » de
+  l'Accueil et les voies du kanban iPad. C'est la carte élevée,
+  `iosCard(raised: true)` : fond `secondarySystemGroupedBackground`, distinct du
+  fond groupé de l'écran (`systemGroupedBackground`) en clair comme en sombre.
+  `[test: raisedCardStandsOutOfTheGroupedBackground]` `[capture: ipad-kanban-dark]`
+- Dans une liste, une carte élevée, un bandeau ou l'état de connexion en bandeau
+  occupent une rangée nue, `iosBareListRow()` : sans fond ni séparateur du
+  système, sans marge latérale, 8 pt entre deux rangées nues consécutives.
+  `[capture: iphone-home-dark]`
+- `iosPanel()` est réservé aux surfaces hors liste : Session OMP, mode Graphe de
+  la Mémoire, feuilles Contrat et Bienvenue, écran générique.
+  `[capture: iphone-session-light]`
 - Le panneau porte sa MARGE EXTÉRIEURE : `IOSMetrics.margin` (16 pt compact, 24 pt
   régulier), fixe — c'est la marge de l'écran, le rembourrage intérieur seul suit
   Dynamic Type. Aucun panneau ne touche un bord de l'écran, et aucun appelant
   n'ajoute la sienne. `[capture: iphone-*-light]`
-- Un seul défilement VERTICAL par écran : Pipelines, Sessions et Mémoire (Liste)
-  posent leur panneau dans un `ScrollView(.vertical)` et n'emploient aucune
-  `List` ; le panneau prend la hauteur de son contenu. Le mode Graphe de la
-  Mémoire fait exception : son canevas garde ses gestes, hors de tout
-  défilement. `[capture: iphone-kanban-light]`
+- Un seul défilement par écran : la `List` de l'écran (Pipelines compact,
+  Sessions, Mémoire Liste, Projet, Statistiques, Accueil) ; le kanban iPad garde
+  son défilement vertical et horizontal ; le mode Graphe de la Mémoire, hors de
+  tout défilement, garde les gestes de son canevas. `[capture: iphone-kanban-light]`
 - Un bandeau est une surface de CONTENU : teinte du ton à 12 % d'opacité, rayon
   12, jamais un fond rouge plein écran. `[test: errorStateBannersAllSeven]`
 - La pastille porte l'identifiant d'accessibilité `ios.status` et combine ses
@@ -226,15 +243,16 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   indicateur d'attente sans bouton (plein écran, ou bandeau `info`). « Se
   connecter » ouvre la feuille Connexion de la racine. `[test: resolvePriority]`
 - Pipelines, Sessions et Mémoire (liste et graphe) suivent la même règle : rien
-  de reçu hors connexion ⇒ le composant seul, hors du défilement et du panneau ;
-  données reçues ⇒ elles restent, sous le bandeau, et la Mémoire relit au retour
-  du Mac. `[test: unavailableWithoutList]` `[test: listKeptOffline]`
+  de reçu hors connexion ⇒ le composant seul, hors de la liste (et du panneau du
+  graphe) ; données reçues ⇒ elles restent, sous le bandeau, et la Mémoire relit
+  au retour du Mac. `[test: unavailableWithoutList]` `[test: listKeptOffline]`
   `[test: offlineWithoutDataIsTheConnectionComponent]` `[test: offlineKeepsTheLastData]`
-- Projet, Statistiques et Session OMP suivent la même règle et portent leur propre
-  panneau (titre de section, puis contenu) : rien de reçu hors connexion ⇒ le
-  composant seul, hors du panneau ; une conduite, un relevé ou un état de session
-  reçu ⇒ il reste, sous le bandeau, et l'erreur conservée est tue ; les
-  Statistiques relisent au retour du Mac. `[test: projectUnavailableWithoutConduite]`
+- Projet, Statistiques et Session OMP suivent la même règle, le titre de section
+  étant celui de la barre : rien de reçu hors connexion ⇒ le composant seul, hors
+  de la liste de Projet et de Statistiques ou du panneau de Session OMP ; une
+  conduite, un relevé ou un état de session reçu ⇒ il reste, sous le bandeau, et
+  l'erreur conservée est tue ; les Statistiques relisent au retour du Mac.
+  `[test: projectUnavailableWithoutConduite]`
   `[test: projectKeepsConduiteOffline]` `[test: statsUnavailableWithoutPayload]`
   `[test: statsKeepsBoardOffline]` `[test: sessionOmpUnavailableWithoutHosted]`
   `[test: sessionOmpKeepsHostedOffline]`
@@ -304,10 +322,11 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   même dérivation que macOS : les cinq voies de `KanbanLane`, leurs cartes et
   leurs états viennent du magasin, jamais d'un calcul propre à l'app.
   `[garde: design-ios/AC-3]`
-- En largeur COMPACTE (iPhone portrait), les voies s'empilent verticalement dans
-  le défilement de l'écran ; en largeur RÉGULIÈRE (iPad), elles sont côte à côte
-  dans un défilement horizontal posé dans ce défilement vertical — toutes les
-  voies montrées et toutes leurs cartes restent atteignables.
+- En largeur COMPACTE (iPhone portrait), chaque voie est une section de la liste
+  groupée de l'écran — son en-tête, puis une rangée par carte ; en largeur
+  RÉGULIÈRE (iPad), les voies sont côte à côte, leurs cartes élevées sur le fond
+  groupé, dans un défilement horizontal posé dans le défilement vertical du
+  kanban — toutes les voies montrées et toutes leurs cartes restent atteignables.
   `[capture: iphone-kanban-light]`
 - En largeur COMPACTE, une voie sans carte n'est pas montrée — « Pas commencées »
   comprise — et sans aucune voie à montrer l'écran affiche le mot partagé
@@ -338,9 +357,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - La cible tactile minimale des cartes, des options de question et des boutons de
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
 - Une carte n'a de ligne d'action que si elle porte une adresse de PR ouvrable :
-  un filet espacé sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
+  un espace sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
   d'au moins 44 pt, sa taille de texte bornée à `.accessibility3` ; une carte
-  sans PR n'a ni filet ni espace réservé. Une carte est rigide en hauteur : dans
+  sans PR n'a ni ligne ni espace réservé. Une carte est rigide en hauteur : dans
   la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
   ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
 - Une carte ne montre jamais de marque brute (« Marques : mort ») : ses marques
@@ -565,9 +584,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 
 ## La section Statistiques (feature `ios-statistiques`)
 
-- Une carte par feature LISTÉE, dans l'ordre du plan : le slug, puis une ligne par
+- Une section par feature LISTÉE, dans l'ordre du plan : le slug en en-tête, puis une ligne par
   grandeur (modèle, temps passé, tours, tokens envoyés, tokens reçus). `[test: statsCardsSumTheListedFeatures]`
-- « Tokens envoyés » compte TOUT ce qui part vers le modèle : entrée hors cache + cache lu + cache écrit, sur chaque carte et sur la ligne « Total du projet » ; « Tokens reçus » reste la sortie. La fenêtre macOS, elle, garde l'entrée hors cache. `[test: statsSentTokensCountTheCache]`
+- « Tokens envoyés » compte TOUT ce qui part vers le modèle : entrée hors cache + cache lu + cache écrit, sur chaque section et sur la ligne « Total du projet » ; « Tokens reçus » reste la sortie. La fenêtre macOS, elle, garde l'entrée hors cache. `[test: statsSentTokensCountTheCache]`
 - La ligne « Total du projet » somme les features LISTÉES — ni les features
   masquées, ni un autre projet — et rien d'autre n'y entre. `[test: statsTotalSumsOnlyListedFeatures]`
 - Le sélecteur de projet, la ligne de total et la mention des features masquées
@@ -587,7 +606,7 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   au-dessus du chargement ; le premier chargement, le non connecté, l'erreur et
   « Aucun projet » n'en ont pas. `[test: statsProjectSwitchKeepsHeaderAboveLoading]`
 - Depuis l'état « Aucune donnée pour ce projet », on change de projet : le
-  sélecteur est au-dessus de la carte vide, et choisir un projet qui a des données
+  sélecteur est au-dessus de la rangée vide, et choisir un projet qui a des données
   affiche son tableau. `[test: statsEmptyProjectOffersTheSwitch]`
 - Un relevé est relancé par quatre déclencheurs seulement — apparition, changement
   de projet, nouvel état du magasin, mise à jour de session — et JAMAIS tant que le
@@ -599,7 +618,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 
 - La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et
   son groupement par jour (`SessionDays`) : mêmes runs, mêmes en-têtes que macOS,
-  y compris une session lancée hors coque. `[test: listGroupsByDay]`
+  rendus en en-têtes de section natifs de la liste groupée, y compris pour une
+  session lancée hors coque. `[test: listGroupsByDay]`
 - Un menu de projet restreint la liste AVANT le groupement, donc les
   en-têtes de jour se recalculent ; « Tous les projets » la restitue entière.
   `[test: projectFilter]`
@@ -772,6 +792,13 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   dossier personnel que le Mac publie (`components.homeDirectory`), jamais deviné
   sur l'appareil ; un chemin hors de ce dossier reste absolu, un Mac antérieur
   laisse les chemins absolus. `[test: threadRowsAbbreviateMacHome]`
+- La feuille Souvenir, la fiche d'une carte et le dialogue d'OMP sont des `Form`
+  groupés (`.formStyle(.grouped)`), une section par bloc, sans panneau, carte,
+  filet ni défilement maison ; la feuille de session pose son seul en-tête en
+  section groupée, à la hauteur mesurée de son contenu, au-dessus du fil partagé
+  inchangé (`IOSSessionThreadView`). « Piloter un projet » et « Nouvelle
+  feature » restent les `Form` qu'ils étaient. `[capture: iphone-pipelines-fiche-*]`
+  `[capture: iphone-nouvelle-feature-*]`
 
 ## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
 

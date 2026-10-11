@@ -1,7 +1,11 @@
-// La feuille d'escalade de projet, les QUATRE formes (S-4, S-5, BR-5) : l'en-tête
-// « OMP vous demande », le compteur « Question n sur m », la question, le corps
-// Markdown de la revue du plan, puis la forme de réponse (`select`, `confirm`,
-// `input`, `editor` prérempli).
+// La feuille d'escalade de projet, les QUATRE formes (S-4, S-5, BR-5) : le
+// compteur « Question n sur m », la question, le corps Markdown de la revue du
+// plan, puis la forme de réponse (`select`, `confirm`, `input`, `editor`
+// prérempli). Le titre « OMP vous demande » n'est QUE celui de la barre.
+//
+// Rendu en formulaire groupé natif (ios-listes-groupees-natives, S-7) : le
+// compteur est l'en-tête natif de la section de la question, chaque option et
+// chaque bouton est une rangée (un geste par rangée).
 //
 // L'app ne retire jamais l'escalade de sa file : la file est celle que la coque
 // pousse (`sheet(item:)` remplace la feuille quand l'item change — Doc-1).
@@ -35,39 +39,34 @@ struct IOSProjectDialogSheet: View {
         let parts = ProjectDialogText.split(dialog.title)
         let step = ProjectDialogText.step(parts.heading)
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(SessionConsoleText.dialogTitle)
-                            .font(.title3.bold())
-                        if let counter = step.counter {
-                            Text(counter)
-                                .font(.callout)
-                                .foregroundStyle(.secondary)
-                                .accessibilityIdentifier(ProjectAccessibility.dialogCounter)
-                        }
+            Form {
+                if let counter = step.counter {
+                    Section {
+                        questionRows(step.question, body: parts.body)
+                    } header: {
+                        Text(counter)
+                            .textCase(nil)
+                            .accessibilityIdentifier(ProjectAccessibility.dialogCounter)
                     }
-                    Text(step.question)
-                        .font(.headline)
-                        .accessibilityIdentifier(ProjectAccessibility.dialogQuestion)
-                    if let body = parts.body {
-                        IOSMarkdownView(blocks: MarkdownDocument.blocks(body))
-                            .padding(10)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
-                            .accessibilityIdentifier(ProjectAccessibility.dialogBody)
+                } else {
+                    Section {
+                        questionRows(step.question, body: parts.body)
                     }
+                }
+                Section {
                     form
-                    if let error {
+                }
+                if let error {
+                    Section {
                         Text(error)
                             .font(.callout)
                             .iosBanner(tone: .danger)
+                            .iosBareListRow()
                             .accessibilityIdentifier(ProjectAccessibility.dialogError)
                     }
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .formStyle(.grouped)
             .navigationTitle(SessionConsoleText.dialogTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -91,6 +90,18 @@ struct IOSProjectDialogSheet: View {
         }
     }
 
+    /// La question, puis le corps Markdown de la revue du plan quand il y en a un.
+    @ViewBuilder private func questionRows(_ question: String, body: String?) -> some View {
+        Text(question)
+            .font(.headline)
+            .accessibilityIdentifier(ProjectAccessibility.dialogQuestion)
+        if let body {
+            IOSMarkdownView(blocks: MarkdownDocument.blocks(body))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier(ProjectAccessibility.dialogBody)
+        }
+    }
+
     @ViewBuilder private var form: some View {
         switch dialog.method {
         case .select:
@@ -99,7 +110,6 @@ struct IOSProjectDialogSheet: View {
             confirmForm
         case .input:
             TextField(dialog.placeholder ?? "", text: $text)
-                .textFieldStyle(.roundedBorder)
                 .accessibilityIdentifier(ProjectAccessibility.dialogInput)
         case .editor:
             TextEditor(text: $text)
@@ -108,45 +118,47 @@ struct IOSProjectDialogSheet: View {
         }
     }
 
-    private var selectForm: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if dialog.options.isEmpty {
-                Text(SessionConsoleText.noOption)
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(Array(dialog.options.enumerated()), id: \.offset) { index, option in
-                    Button { selectedIndex = index } label: {
-                        HStack(alignment: .top, spacing: 8) {
+    /// Une rangée par option : son libellé, sa description, et la coche de l'option choisie.
+    @ViewBuilder private var selectForm: some View {
+        if dialog.options.isEmpty {
+            Text(SessionConsoleText.noOption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(Array(dialog.options.enumerated()), id: \.offset) { index, option in
+                Button { selectedIndex = index } label: {
+                    HStack(alignment: .top, spacing: 8) {
+                        VStack(alignment: .leading, spacing: 2) {
                             Text(SessionConsoleText.optionLabel(option))
+                                .foregroundStyle(.primary)
                                 .multilineTextAlignment(.leading)
-                            Spacer(minLength: 8)
-                            if selectedIndex == index {
-                                Text(ProjectText.selectedMark)
+                            if dialog.optionDescriptions.indices.contains(index),
+                               let description = dialog.optionDescriptions[index], !description.isEmpty {
+                                Text(description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .multilineTextAlignment(.leading)
                             }
                         }
-                    }
-                    .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
-                    .accessibilityIdentifier(ProjectAccessibility.option(index))
-                    if dialog.optionDescriptions.indices.contains(index),
-                       let description = dialog.optionDescriptions[index], !description.isEmpty {
-                        Text(description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        if selectedIndex == index {
+                            Text(ProjectText.selectedMark)
+                        }
                     }
                 }
+                .accessibilityAddTraits(selectedIndex == index ? .isSelected : [])
+                .accessibilityIdentifier(ProjectAccessibility.option(index))
             }
         }
     }
 
-    private var confirmForm: some View {
-        HStack(spacing: 12) {
-            Button(SessionConsoleText.decline) { confirm(false) }
-                .disabled(submitting)
-                .accessibilityIdentifier(ProjectAccessibility.dialogDecline)
-            Button(SessionConsoleText.confirm) { confirm(true) }
-                .disabled(submitting)
-                .accessibilityIdentifier(ProjectAccessibility.dialogConfirm)
-        }
+    /// Deux rangées : « Refuser » puis « Confirmer ».
+    @ViewBuilder private var confirmForm: some View {
+        Button(SessionConsoleText.decline) { confirm(false) }
+            .disabled(submitting)
+            .accessibilityIdentifier(ProjectAccessibility.dialogDecline)
+        Button(SessionConsoleText.confirm) { confirm(true) }
+            .disabled(submitting)
+            .accessibilityIdentifier(ProjectAccessibility.dialogConfirm)
     }
 
     private func answerSent() {

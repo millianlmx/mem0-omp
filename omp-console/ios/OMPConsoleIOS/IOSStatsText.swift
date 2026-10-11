@@ -25,11 +25,12 @@ enum IOSStatsText {
 
     // MARK: - La recette `-stats.recipe`
 
-    /// Le drapeau du crochet de recette de la section (S-6) et ses trois valeurs.
+    /// Le drapeau du crochet de recette de la section (S-6) et ses quatre valeurs.
     static let recipeFlag = "-stats.recipe"
     static let recipeEmpty = "vide"
     static let recipeLoading = "chargement"
     static let recipeSwitch = "bascule"
+    static let recipeFull = "pleine"
 
     /// Les deux projets de la fixture : la clé servie par le « Mac » de la recette
     /// est aussi le libellé du sélecteur.
@@ -46,7 +47,6 @@ enum IOSStatsText {
 /// un second enum, comme `ProjectAccessibility` — les tests les éprouvent sans
 /// rendre de SwiftUI.
 enum StatsAccessibility {
-    static let screen = "ios.stats"
     static let project = "ios.stats.project"
     static let loading = "ios.stats.loading"
     static let error = "ios.stats.error"

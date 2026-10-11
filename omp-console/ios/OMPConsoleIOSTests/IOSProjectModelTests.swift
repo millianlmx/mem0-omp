@@ -102,4 +102,29 @@ struct IOSProjectModelTests {
         // Motif absent : repli sur le mot partagé.
         #expect(IOSProjectModel.documentState(state: "binary", content: nil, reason: nil) == .message(ProjectViewText.docMissing))
     }
+
+    @Test("ios-listes-groupees-natives/AC-6 : -projet.recipe plan rend une conduite vive sur un plan de six étapes, plus haut qu'un écran")
+    func projectPlanRecipeIsLiveAndTallerThanOneScreen() {
+        let flag = IOSLaunchRecipeText.projectFlag
+        #expect(IOSProjectRecipe.resolve([flag, "plan"]) == .plan)
+        #expect(IOSProjectRecipe.resolve([flag, "plan", flag, "dialogue"]) == .dialogue)
+        #expect(IOSProjectRecipe.resolve([flag, "lancement", flag, "plan"]) == .plan)
+
+        let fixture = IOSProjectPlanRecipe.fixture
+        let sections = projectPlanSections(of: fixture.project)
+        #expect(sections.count == 6)
+        #expect(sections.map(\.state) == [.merged, .merged, .current, .upcoming, .upcoming, .upcoming])
+        #expect(sections[2].features.count == 4)
+        #expect(sections[5].state == .upcoming)
+        #expect(sections.allSatisfy { $0.removed.isEmpty })
+        // La conduite est celle du projet de la fixture, sans dialogue en attente.
+        #expect(fixture.conduite.repoKey == fixture.project.repoKey)
+        #expect(fixture.conduite.dialogs.isEmpty)
+        #expect(fixture.conduite.name == IOSLaunchRecipeText.planName)
+        // Le simulateur privé n'est pas appairé : la conduite reçue garde l'écran vif.
+        for status in [IOSConnectionStatus.connected, .connecting, .disconnected(.unreachable), .disconnected(.unpaired),
+                       .disconnected(.refused), .disconnected(.updateApp), .disconnected(.updateMac)] {
+            #expect(IOSProjectModel.surface(connection: status, conduiteState: fixture.conduite.state) == .live)
+        }
+    }
 }

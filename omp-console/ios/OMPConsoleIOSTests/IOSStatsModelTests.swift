@@ -438,4 +438,25 @@ struct IOSStatsModelTests {
         #expect(model.payload?.projectKey == "k2")
         #expect(shownLabel(model) == "pleine")
     }
+
+    // MARK: - Recette pleine (ios-listes-groupees-natives)
+
+    @Test("ios-listes-groupees-natives/AC-5 : -stats.recipe pleine ouvre directement le tableau de deux features")
+    func statsFullRecipeShowsTheBoardAtLaunch() async {
+        let flag = IOSStatsText.recipeFlag
+        #expect(IOSStatsRecipe.resolve([flag, "pleine"]) == .pleine)
+        #expect(IOSStatsRecipe.resolve([flag, "vide", flag, "pleine"]) == .pleine)
+
+        let recipe = IOSStatsRecipe.pleine
+        let model = recipe.model()
+        // La première lecture part sans clé : le « Mac » de la recette choisit.
+        model.reload(trigger: .appeared)
+        #expect(await eventually { model.payload != nil })
+        #expect(model.payload?.features.map(\.slug) == IOSStatsText.recipeFeatures)
+        #expect(model.surface(connection: .connected) == .board)
+        // Aucun pas suivant : le tableau reste affiché.
+        recipe.advance(model)
+        #expect(model.selectedKey == IOSStatsText.recipeFullProject)
+        #expect(model.surface(connection: .connected) == .board)
+    }
 }

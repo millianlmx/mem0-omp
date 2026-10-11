@@ -1,7 +1,9 @@
-// Le plan d'un projet conduit, rendu dans la section Projet de l'app (S-1, BR-4) :
-// les segments dans l'ordre du plan, chacun avec son état en mots, ses features
-// vivantes (slug, libellé d'état, modèles, intention, lien de PR ouvrable) et, à
-// part, ses features retirées avec leur motif.
+// Le plan d'un projet conduit, rendu dans la liste groupée de la section Projet
+// (S-1, BR-4 ; ios-listes-groupees-natives, S-6) : une section par segment, dans
+// l'ordre du plan, dont la rangée dépliable porte le titre et l'état en mots ;
+// dépliée, ses features vivantes (slug, libellé d'état, modèles, intention, lien
+// de PR ouvrable) puis, à part, ses features retirées avec leur motif. Les
+// séparateurs sont ceux du système.
 //
 // Aucune règle du plan n'est recalculée : `IOSProjectModel` projette par
 // `projectPlanSections(of:)` (ConsoleCore), et cette vue ne fait que rendre.
@@ -15,24 +17,25 @@ struct IOSProjectPlanView: View {
     let onToggle: (Int) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ForEach(sections, id: \.index) { section in
+        ForEach(sections, id: \.index) { section in
+            Section {
                 DisclosureGroup(isExpanded: expansion(section.index)) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(section.features, id: \.slug) { row in
+                    ForEach(section.features, id: \.slug) { row in
+                        feature(row)
+                    }
+                    if !section.removed.isEmpty {
+                        Text(ProjectViewText.removedTitle)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        ForEach(section.removed, id: \.slug) { row in
                             feature(row)
                         }
-                        if !section.removed.isEmpty {
-                            Text(ProjectViewText.removedTitle)
-                                .font(.callout.weight(.semibold))
-                                .foregroundStyle(.secondary)
-                            ForEach(section.removed, id: \.slug) { row in
-                                feature(row)
-                            }
-                        }
                     }
-                    .padding(.top, 8)
                 } label: {
+                    // L'identifiant du segment est sur son libellé, combiné en un
+                    // seul élément : posé sur le `DisclosureGroup`, il remplacerait
+                    // celui de chaque rangée dépliée ; posé sur la pile seule, le
+                    // bouton du système le recevait deux fois (MESURÉ).
                     HStack(spacing: 8) {
                         Text(ProjectViewText.segmentTitle(
                             index: section.index + 1,
@@ -43,9 +46,9 @@ struct IOSProjectPlanView: View {
                         Spacer(minLength: 8)
                         IOSStatusChip(status: status(section.state))
                     }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityIdentifier(ProjectAccessibility.segment(section.index))
                 }
-                .accessibilityIdentifier(ProjectAccessibility.segment(section.index))
-                Divider()
             }
         }
     }
@@ -57,6 +60,8 @@ struct IOSProjectPlanView: View {
         )
     }
 
+    /// Une rangée de feature. Le lien de PR n'est qu'une des cibles possibles de
+    /// la rangée : le style `.borderless` borne chaque cible à son libellé (D-4).
     private func feature(_ row: ProjectPlanRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
@@ -91,7 +96,7 @@ struct IOSProjectPlanView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
+        .buttonStyle(.borderless)
         .accessibilityIdentifier(
             row.removedReason == nil
                 ? ProjectAccessibility.feature(row.slug)

@@ -2,7 +2,8 @@
 // déclenche les lectures de S-2 (document) et S-3 (PR), et compose le plan par
 // `projectPlanSections(of:)` du noyau. Aucune règle n'est recalculée, aucun état
 // de la file d'escalades n'est reconstitué : la file est EXCLUSIVEMENT celle que
-// la coque pousse (`client.conduite?.dialogs`, S-6).
+// la coque pousse (`client.conduite?.dialogs`, S-6), ou celle de la fixture du
+// crochet `-projet.recipe plan` (ios-listes-groupees-natives, S-6).
 
 import Combine
 import ConsoleClient
@@ -41,6 +42,9 @@ enum ProjectDocState: Equatable {
 @MainActor
 final class IOSProjectModel: ObservableObject {
     let client: ConsoleClientModel
+    /// La fixture de `-projet.recipe plan` : elle remplace la conduite et le projet
+    /// du Mac ; la connexion reste celle du client. `nil` hors recette.
+    let fixture: IOSProjectPlanRecipe.Fixture?
 
     @Published var expanded: Set<Int> = []
     @Published var docState: ProjectDocState = .idle
@@ -56,8 +60,9 @@ final class IOSProjectModel: ObservableObject {
     private var lastDocTrigger: DocTrigger?
     private var lastPRTrigger: [String]?
 
-    init(client: ConsoleClientModel) {
+    init(client: ConsoleClientModel, fixture: IOSProjectPlanRecipe.Fixture? = nil) {
         self.client = client
+        self.fixture = fixture
     }
 
     // MARK: - Décisions PURES (testables sans render)
@@ -101,16 +106,22 @@ final class IOSProjectModel: ObservableObject {
 
     // MARK: - Faits dérivés du client
 
-    var repoKey: String? { client.conduite?.repoKey }
-    var project: Project? { repoKey.flatMap { client.project(repoKey: $0) } }
+    /// La conduite lue par l'écran : celle de la fixture sous la recette, sinon
+    /// celle que la coque pousse.
+    var conduite: RemoteConduiteStatePayload? { fixture?.conduite ?? client.conduite }
+    var repoKey: String? { conduite?.repoKey }
+    var project: Project? {
+        if let project = fixture?.project { return project }
+        return repoKey.flatMap { client.project(repoKey: $0) }
+    }
     var planSections: [ProjectPlanSection] { project.map(projectPlanSections(of:)) ?? [] }
-    var pendingDialog: RpcDialogRequest? { client.conduite?.dialogs.first }
-    var waitingCount: Int { client.conduite?.dialogs.count ?? 0 }
+    var pendingDialog: RpcDialogRequest? { conduite?.dialogs.first }
+    var waitingCount: Int { conduite?.dialogs.count ?? 0 }
     /// Le statut de connexion présenté par l'écran (S-1).
     var connection: IOSConnectionStatus { IOSConnectionStatus.of(client) }
-    var surface: ProjectSurface { Self.surface(connection: connection, conduiteState: client.conduite?.state) }
+    var surface: ProjectSurface { Self.surface(connection: connection, conduiteState: conduite?.state) }
     var isConduiteLive: Bool {
-        (ProjectConduiteState(rawValue: client.conduite?.state ?? "") ?? .none).isLive
+        (ProjectConduiteState(rawValue: conduite?.state ?? "") ?? .none).isLive
     }
     var canStop: Bool { Self.gesturesEnabled(client.state) && repoKey != nil }
     var canStart: Bool { Self.gesturesEnabled(client.state) && !isConduiteLive }

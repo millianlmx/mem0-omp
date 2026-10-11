@@ -1,6 +1,6 @@
 // L'écran Statistiques de l'app iOS (S-3 … S-6) : le contenu réel de la section —
-// sélecteur de projet, une carte par feature (slug, modèle, durée, tours, tokens
-// envoyés et reçus), la ligne « Total du projet » et la mention des features
+// sélecteur de projet, une section par feature (slug, modèle, durée, tours, tokens
+// envoyés et reçus), la section « Total du projet » et la mention des features
 // masquées. LECTURE SEULE : aucun geste de pilotage d'un run, aucun montant.
 //
 // Le sélecteur est l'en-tête de projet : il nomme le projet CHOISI et se tient en
@@ -10,8 +10,9 @@
 // donc jamais l'utilisateur.
 //
 // La durée et les totaux se recalculent à l'instant de RENDU (`TimelineView`,
-// Doc-1), donc un run vivant fait avancer son temps sans un octet de trafic — le
-// relevé n'est relancé que sur ses quatre déclencheurs (S-5).
+// Doc-1) : seules les VALEURS sont réévaluées à chaque tic, jamais la liste, et un
+// run vivant fait avancer son temps sans un octet de trafic — le relevé n'est
+// relancé que sur ses quatre déclencheurs (S-5).
 //
 // Chaque état est un état à part entière ; aucun `onTapGesture`, uniquement des
 // contrôles système atteignables au clavier.
@@ -49,7 +50,7 @@ struct IOSStatsScreen: View {
                 // du panneau (S-4).
                 IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
             default:
-                panel
+                list
             }
         }
         .navigationTitle(ConsoleSection.stats.title)
@@ -79,56 +80,48 @@ struct IOSStatsScreen: View {
 
     private var surface: IOSStatsSurface { model.surface(connection: connection) }
 
-    /// Le cadre de la section : le panneau, le bandeau de connexion quand un
-    /// relevé conservé est affiché hors connexion (S-4), puis la liste ; le titre
+    /// La liste groupée de la section, son seul défilement
+    /// (ios-listes-groupees-natives, S-3) : le bandeau de connexion en rangée nue
+    /// quand un relevé conservé est affiché hors connexion (S-4), le sélecteur de
+    /// projet dans une section sans en-tête, puis les rangées de l'état ; le titre
     /// est celui de la barre de navigation.
-    private var panel: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private var list: some View {
+        List {
             if connection != .connected {
                 IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+                    .iosBareListRow()
             }
-            // La liste défile verticalement quand elle dépasse la hauteur (S-4) ;
-            // l'horloge de rendu reste À L'INTÉRIEUR pour que la position de
-            // défilement ne soit jamais reconstruite par un tic (Doc-1).
-            ScrollView(.vertical) {
-                TimelineView(.periodic(from: .now, by: 1)) { context in
-                    content(nowMs: context.date.timeIntervalSince1970 * 1000)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            if surface.showsProjectHeader {
+                Section {
+                    projectPicker
                 }
             }
-            .accessibilityIdentifier(StatsAccessibility.screen)
+            content
         }
-        .iosPanel()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .iosReadableWidth()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ios.screen." + ConsoleSection.stats.rawValue)
+        .iosGroupedList()
     }
 
     @ViewBuilder
-    private func content(nowMs: Double) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if surface.showsProjectHeader {
-                projectPicker
-            }
-            switch surface {
-            case .unavailable:
-                // Rendu par `body`, hors du panneau.
-                EmptyView()
-            case .loading:
-                loadingRow
-            case .error(let message):
-                errorState(message)
-            case .noProject:
-                noProjectState
-            case .switching:
-                // L'en-tête nomme déjà le projet choisi ; sa lecture est en cours.
-                loadingRow
-            case .empty:
-                emptyState
-            case .board:
-                boardState(nowMs: nowMs)
-            }
+    private var content: some View {
+        switch surface {
+        case .unavailable:
+            // Rendu par `body`, hors de la liste.
+            EmptyView()
+        case .loading:
+            loadingRow
+        case .error(let message):
+            errorState(message)
+        case .noProject:
+            noProjectState
+        case .switching:
+            // L'en-tête nomme déjà le projet choisi ; sa lecture est en cours.
+            loadingRow
+        case .empty:
+            emptyState
+        case .board:
+            boardState
         }
     }
 
@@ -145,20 +138,20 @@ struct IOSStatsScreen: View {
         .accessibilityIdentifier(StatsAccessibility.loading)
     }
 
+    /// L'échec : le bandeau en rangée nue, puis Réessayer dans sa rangée.
+    @ViewBuilder
     private func errorState(_ message: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(message)
-                .font(.callout)
-                .iosBanner(tone: .danger)
-            Button(ConnectionText.retry, systemImage: "arrow.clockwise") {
-                model.reload(trigger: .appeared)
-            }
-            .frame(minHeight: IOSMetrics.minimumTarget)
-            .disabled(!connection.gesturesEnabled)
-            .accessibilityIdentifier(StatsAccessibility.retry)
+        Text(message)
+            .font(.callout)
+            .iosBanner(tone: .danger)
+            .accessibilityIdentifier(StatsAccessibility.error)
+            .iosBareListRow()
+        Button(ConnectionText.retry, systemImage: "arrow.clockwise") {
+            model.reload(trigger: .appeared)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .accessibilityIdentifier(StatsAccessibility.error)
+        .frame(minHeight: IOSMetrics.minimumTarget)
+        .disabled(!connection.gesturesEnabled)
+        .accessibilityIdentifier(StatsAccessibility.retry)
     }
 
     private var noProjectState: some View {
@@ -170,7 +163,6 @@ struct IOSStatsScreen: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
         .accessibilityIdentifier(StatsAccessibility.noProject)
     }
 
@@ -183,24 +175,24 @@ struct IOSStatsScreen: View {
             hiddenMention
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
         .accessibilityIdentifier(StatsAccessibility.empty)
     }
 
-    private func boardState(nowMs: Double) -> some View {
-        let elapsed = model.elapsedMs(at: nowMs)
-        return VStack(alignment: .leading, spacing: 12) {
-            if let payload = model.payload {
-                ForEach(IOSStatsContent.cards(payload, elapsedMs: elapsed), id: \.title) { card in
-                    cardView(card, identifier: StatsAccessibility.feature(card.title))
+    /// Le tableau : une section par feature listée, la section du total, puis la
+    /// mention des features masquées.
+    @ViewBuilder
+    private var boardState: some View {
+        if let payload = model.payload {
+            ForEach(payload.features, id: \.slug) { feature in
+                cardSection(identifier: StatsAccessibility.feature(feature.slug)) { elapsed in
+                    IOSStatsContent.featureCard(feature, elapsedMs: elapsed)
                 }
-                cardView(
-                    IOSStatsContent.totalCard(payload, elapsedMs: elapsed),
-                    identifier: StatsAccessibility.total
-                )
             }
-            hiddenMention
+            cardSection(identifier: StatsAccessibility.total) { elapsed in
+                IOSStatsContent.totalCard(payload, elapsedMs: elapsed)
+            }
         }
+        hiddenMention
     }
 
     // MARK: - Contenu
@@ -231,28 +223,29 @@ struct IOSStatsScreen: View {
         }
     }
 
-    /// Une carte de statistiques : le titre, puis une ligne par grandeur. VoiceOver
-    /// annonce la carte en une phrase combinée (S-4).
-    private func cardView(_ card: IOSStatsCard, identifier: String) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(card.title)
-                .font(.headline)
-            Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 4) {
-                ForEach(card.lines, id: \.label) { line in
-                    GridRow {
-                        Text(line.label)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Text(line.value)
-                            .font(.callout)
+    /// Une section de statistiques : le titre en en-tête natif, puis une rangée
+    /// libellé/valeur par grandeur. Seule la valeur est réévaluée à chaque tic
+    /// (`TimelineView`, Doc-1) : `card` rend la carte `elapsedMs` après la
+    /// réception du relevé, ses titres et libellés ne dépendent pas de l'heure.
+    private func cardSection(identifier: String, card: @escaping (Double) -> IOSStatsCard) -> some View {
+        let shown = card(model.elapsedMs(at: Date.now.timeIntervalSince1970 * 1000))
+        return Section {
+            ForEach(Array(shown.lines.enumerated()), id: \.element.label) { index, line in
+                LabeledContent {
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(card(model.elapsedMs(at: context.date.timeIntervalSince1970 * 1000)).lines[index].value)
                     }
+                } label: {
+                    Text(line.label)
                 }
             }
+        } header: {
+            // L'identifiant est sur l'en-tête : posé sur la `Section`, il
+            // remplacerait celui de chaque rangée (MESURÉ).
+            Text(shown.title)
+                .textCase(nil)
+                .accessibilityIdentifier(identifier)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
-        .accessibilityElement(children: .combine)
-        .accessibilityIdentifier(identifier)
     }
 
     /// La mention des features du plan sans run lisible : dessinée dès qu'il y en a,
