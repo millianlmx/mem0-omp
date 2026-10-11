@@ -92,6 +92,7 @@ struct IOSSessionRowView: View, Equatable {
                     Image(systemName: IOSSessionText.chevron(isThinkingOpen))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                     Text(ConversationText.thinking)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -101,7 +102,10 @@ struct IOSSessionRowView: View, Equatable {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // Le chevron est caché : l'état de pli passe par la valeur (S-9).
+            .accessibilityValue(isThinkingOpen ? KanbanText.laneUnfolded : KanbanText.laneFolded)
             .accessibilityIdentifier(IOSSessionsAccessibility.thinking(row.id))
+            .iosHoverEffect()
             if isThinkingOpen {
                 Text(ConversationText.attributed(thinking))
                     .font(.callout)
@@ -125,7 +129,9 @@ struct IOSSessionRowView: View, Equatable {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityValue(isOpen ? KanbanText.laneUnfolded : KanbanText.laneFolded)
             .accessibilityIdentifier(IOSSessionsAccessibility.toolCall(row.id))
+            .iosHoverEffect()
 
             if isOpen {
                 VStack(alignment: .leading, spacing: 8) {
@@ -163,7 +169,9 @@ struct IOSSessionRowView: View, Equatable {
                 )
             }
             .buttonStyle(.plain)
+            .accessibilityValue(isOpen ? KanbanText.laneUnfolded : KanbanText.laneFolded)
             .accessibilityIdentifier(IOSSessionsAccessibility.toolResult(row.id))
+            .iosHoverEffect()
             if isOpen, hasResult(content) {
                 section(IOSSessionText.result) { resultBody(content) }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -180,8 +188,10 @@ struct IOSSessionRowView: View, Equatable {
             Image(systemName: IOSSessionText.chevron(isOpen))
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
+                .accessibilityHidden(true)
             Image(systemName: symbol)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(title)
                 .font(.callout)
                 .foregroundStyle(.secondary)
@@ -342,6 +352,7 @@ struct IOSSessionRowView: View, Equatable {
                     Image(systemName: IOSSessionText.chevron(isOpen))
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
                     Text(markerTitle(content))
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -351,7 +362,9 @@ struct IOSSessionRowView: View, Equatable {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityValue(isOpen ? KanbanText.laneUnfolded : KanbanText.laneFolded)
             .accessibilityIdentifier(IOSSessionsAccessibility.marker(row.id))
+            .iosHoverEffect()
             if isOpen {
                 Text(ConversationText.attributed(markerSummary(content)))
                     .font(.caption)

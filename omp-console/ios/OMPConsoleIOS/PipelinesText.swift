@@ -93,7 +93,6 @@ enum PipelinesText {
 enum PipelinesAccessibility {
     static let screen = "pipelines.screen"
     static let newFeature = "pipelines.newFeature"
-    static let refresh = "pipelines.refresh"
     static let emptyCard = "pipelines.empty"
 
     static func lane(_ id: String) -> String { "pipelines.lane.\(id)" }

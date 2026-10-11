@@ -157,8 +157,16 @@ struct IOSSessionsScreen: View {
                     // La visionneuse se lit sur le Mac : rangée grisée hors
                     // connexion (etats-non-connecte-heterogenes-ios, S-5).
                     .disabled(!connection.gesturesEnabled)
+                    // « Copier » reste offert hors connexion : le menu est posé
+                    // APRÈS `.disabled`, hors de sa portée (ios-gestes-et-retours-natifs, S-4).
+                    .contextMenu {
+                        IOSContextMenuItems(actions: IOSContextMenu.session(choice)) { action in
+                            if case .copy(let copied) = action { IOSPasteboard.copy(copied) }
+                        }
+                    }
                     .accessibilityIdentifier(IOSSessionsAccessibility.row(choice.id))
                     .accessibilityLabel(IOSSessionText.rowLabel(choice))
+                    .iosHoverEffect()
                 }
             } header: {
                 // L'identifiant du jour est sur son en-tête : posé sur la

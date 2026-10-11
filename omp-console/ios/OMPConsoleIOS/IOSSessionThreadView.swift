@@ -88,6 +88,7 @@ struct IOSSessionThreadView: View {
             Image(systemName: model.state == .waiting ? IOSSessionText.waitingSymbol : IOSSessionText.emptySymbol)
                 .font(.title3)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(model.state == .waiting ? ConversationText.waitingTitle : ConversationText.emptyTitle)
                 .font(.headline)
                 .multilineTextAlignment(.leading)

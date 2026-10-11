@@ -15,9 +15,10 @@ import UIKit
 @testable import OMPConsoleIOS
 
 /// La doublure de lecture du graphe : l'état du client, la charge utile ou la
-/// panne, et le compte des lectures.
+/// panne, et le compte des lectures. Interne à la cible de test : les preuves
+/// d'ios-gestes-et-retours-natifs (IOSGestesNatifsTests) la réutilisent.
 @MainActor
-private final class GraphReader: IOSMemoryReading {
+final class GraphReader: IOSMemoryReading {
     var state: ClientState = .connected(endpoint: ClientEndpoint.manual(host: "127.0.0.1", port: 8787))
     var graph: Result<RemoteMemoryGraphPayload, Error>
     private(set) var graphReads = 0
@@ -114,20 +115,26 @@ struct IOSMemoryGraphTests {
         model.hide()
         #expect(model.shown == false)
         #expect(model.state != .idle)
-        // Un nouveau passage en graphe ne relit PAS.
+        // Un nouveau passage en graphe RELIT (ios-gestes-et-retours-natifs, S-2 :
+        // le mode Graphe n'a aucun tirage pour actualiser).
         await model.activate()
-        #expect(reader.graphReads == 1)
-        // « Rafraîchir » est le SEUL qui relit.
-        await model.refresh()
         #expect(reader.graphReads == 2)
+        // ⌘R « Actualiser » relit aussi.
+        await model.refresh()
+        #expect(reader.graphReads == 3)
         // Aucune autre lecture : jamais le sommaire ni la recherche.
         #expect(reader.pageReads == 0)
         #expect(reader.searchReads == 0)
 
-        // Hors `.connected`, aucune lecture.
+        // Hors `.connected`, aucune lecture, ni par ⌘R ni par un passage en graphe ;
+        // le graphe déjà lu reste affiché.
         reader.state = .unpaired
         await model.refresh()
-        #expect(reader.graphReads == 2)
+        model.hide()
+        await model.activate()
+        #expect(reader.graphReads == 3)
+        #expect(model.shown == true)
+        #expect(model.visible.nodes == MemoryGraphParity.facts.nodes)
     }
 
     @Test("ios-memoire-graphe/AC-3 : suspendCancelsTheInFlightGraphRead — quitter la section annule la lecture en vol, et le retour relit")

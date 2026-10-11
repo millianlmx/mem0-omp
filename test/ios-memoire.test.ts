@@ -397,7 +397,9 @@ test("ios-memoire/AC-8 : quand le Mac ne répond plus, c'est l'état du client",
 function refreshFaults(root: string): string[] {
   const faults: string[] = [];
   const memory = memoryAppCode(root);
-  for (const token of ["Timer", "Task.sleep", "DispatchQueue", ".refreshable"]) {
+  // Le geste de relecture est le tirage système `.refreshable` (ios-gestes-et-retours-natifs,
+  // S-2) : seule une scrutation reste interdite.
+  for (const token of ["Timer", "Task.sleep", "DispatchQueue"]) {
     if (memory.includes(token)) faults.push(`la section Mémoire porte ${token}`);
   }
   const stream = source(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteStream.swift"));
@@ -405,7 +407,7 @@ function refreshFaults(root: string): string[] {
   const parser = clientCode(root, "ClientStreamParser.swift");
   if (/memoi|memory/i.test(parser)) faults.push("le parseur de flux porte un évènement mémoire");
   const screen = appFile(root, "IOSMemoryScreen.swift");
-  if (!screen.includes("IOSMemoryAccessibility.refresh")) faults.push("le bouton de rafraîchissement manuel manque");
+  if (!screen.includes(".refreshable { await model.refresh() }")) faults.push("le tirage pour actualiser de la liste manque");
   if (!screen.includes(".task {")) faults.push("l'apparition de l'écran ne charge pas");
   const model = appFile(root, "IOSMemoryModel.swift");
   if (!model.includes("inFlight?.cancel()")) faults.push("un chargement en vol n'est pas annulé avant le suivant");

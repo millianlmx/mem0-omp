@@ -2,7 +2,7 @@
 // déclenche les lectures (les pages du sommaire du projet, une recherche), et
 // dérive l'état d'écran par une fonction PURE, testable sans rendre de vue.
 //
-// Aucune scrutation : l'apparition de l'écran, le geste « Rafraîchir »/
+// Aucune scrutation : l'apparition de l'écran, le tirage pour actualiser/
 // « Réessayer » et le retour du Mac (`onMacReconnected`, posé par l'écran)
 // relisent la PREMIÈRE page ; l'arrivée du pied de liste à l'écran lit la page
 // SUIVANTE (défilement continu, memoire-ios-expire-a-10-secondes S-4). Une donnée
@@ -235,23 +235,20 @@ final class IOSMemoryModel: ObservableObject {
     var canRefresh: Bool { !isLoading }
     var canShowSummary: Bool { isSearching && !isLoading }
 
-    /// Pourquoi « Sommaire » est indisponible, ou `nil` s'il l'est. La première
-    /// règle qui s'applique gagne : le graphe, puis le sommaire déjà courant, puis
-    /// une recherche en vol. `nil` ⇔ `canShowSummary` hors graphe.
-    static func summaryUnavailableReason(graphShown: Bool, isSearching: Bool, isLoading: Bool) -> String? {
-        if graphShown { return IOSMemoryText.summaryReasonGraph }
-        if !isSearching { return IOSMemoryText.summaryReasonShown }
-        if isLoading { return IOSMemoryText.summaryReasonSearching }
-        return nil
+    /// « Sommaire » n'est disponible qu'en mode Liste, après une recherche finie :
+    /// le graphe, le sommaire déjà courant et une recherche en vol le désactivent.
+    /// Hors graphe, c'est exactement `canShowSummary`.
+    static func summaryAvailable(graphShown: Bool, isSearching: Bool, isLoading: Bool) -> Bool {
+        !graphShown && isSearching && !isLoading
     }
 
-    func summaryUnavailableReason(graphShown: Bool) -> String? {
-        Self.summaryUnavailableReason(graphShown: graphShown, isSearching: isSearching, isLoading: isLoading)
+    func summaryAvailable(graphShown: Bool) -> Bool {
+        Self.summaryAvailable(graphShown: graphShown, isSearching: isSearching, isLoading: isLoading)
     }
 
     // MARK: - Gestes : les seuls déclencheurs réseau (S-9)
 
-    /// L'apparition de l'écran ET le geste « Rafraîchir »/« Réessayer » : la MÊME
+    /// L'apparition de l'écran ET le tirage pour actualiser/« Réessayer » : la MÊME
     /// entrée, qui relance le chargement courant — en sommaire, la PREMIÈRE page,
     /// qui remplace tout le sommaire accumulé. Une lecture en vol, page suivante
     /// comprise, est annulée avant la suivante (patron `MemoryModel.perform`).

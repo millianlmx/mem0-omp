@@ -134,20 +134,12 @@ enum IOSMemoryText {
     /// Le détail porté par l'erreur simulée : jamais affiché, le traducteur le tait.
     static let failureRecipeDetail = "recette"
 
-    // MARK: - « Sommaire » : icône propre, raison d'indisponibilité
+    // MARK: - « Sommaire » et « Liste » : deux icônes distinctes
 
     /// Les symboles de la barre d'outils : « Sommaire » et « Liste » ne partagent
     /// plus la même icône. « Graphe » garde son symbole dans la vue.
     static let summarySymbol = "rectangle.stack"
     static let listSymbol = "list.bullet"
-
-    /// Les raisons pour lesquelles « Sommaire » est grisé (montrées au toucher).
-    static let summaryReasonShown = "Le sommaire est déjà affiché."
-    static let summaryReasonSearching = "Une recherche est en cours : le sommaire reviendra quand elle sera finie."
-    static let summaryReasonGraph = "Le sommaire s’affiche en mode Liste : touchez d’abord « Liste »."
-
-    /// La valeur VoiceOver d'un « Sommaire » indisponible.
-    static let summaryUnavailable = "Indisponible"
 }
 
 /// Les identifiants d'accessibilité de l'écran, chaînes pointées préfixées
@@ -155,7 +147,6 @@ enum IOSMemoryText {
 enum IOSMemoryAccessibility {
     static let screen = "ios.memoire.screen"
     static let banner = "ios.memoire.banner"
-    static let refresh = "ios.memoire.refresh"
     static let retry = "ios.memoire.retry"
     static let summary = "ios.memoire.summary"
     static let count = "ios.memoire.count"
@@ -165,7 +156,6 @@ enum IOSMemoryAccessibility {
     static let moreRetry = "ios.memoire.more.retry"
     static let detail = "ios.memoire.detail"
     static let close = "ios.memoire.close"
-    static let summaryReason = "ios.memoire.summary.reason"
 
     static func row(_ id: String) -> String { "ios.memoire.row.\(id)" }
 

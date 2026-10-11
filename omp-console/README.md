@@ -511,8 +511,9 @@ d'outils (`kanban.refresh`, ⌘R), désactivé pendant une relecture ; aucun mes
 d'erreur ni de confirmation, le retour visible est le libellé des cartes. L'app
 iOS reçoit les mêmes faits par la trame `pull-request-states` et dérive la même
 ardoise ; elle demande une relecture à chaque ouverture du flux (lancement,
-reconnexion) et par son propre bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au
-clavier de l'iPad, actif seulement connecté et hors relecture).
+reconnexion) et quand on tire l'écran Pipelines vers le bas (« tirer pour
+actualiser », qui relit aussi l'ardoise) ou tape ⌘R « Actualiser » au clavier de
+l'iPad (actif seulement connecté) ; la barre de l'écran ne porte aucun bouton ↻.
 
 « Livrées » est bornée à **7 jours** pour les seules livraisons closes (PR
 fusionnée, PR fermée, livraison sans PR) : une carte close depuis plus de 7 jours
@@ -3501,6 +3502,41 @@ versionné) et `preuve.md` (tableau avant/après des 10 captures, et relecture
 visuelle reprise de `relecture.md`, écrit à la main à côté pour survivre à une
 nouvelle exécution). Jamais lancée par check.sh ni par la CI.
 
+### Recette des gestes et retours natifs
+
+```bash
+bash scripts/ios-gestes-retours-recette.sh --avant <ref>
+bash scripts/ios-gestes-retours-recette.sh
+```
+
+La recette de la feature `ios-gestes-et-retours-natifs` capture, avant
+(`--avant <ref>`, compilé depuis un worktree détaché retiré à la sortie ; la
+base mesurée est `f08bd37`) et après (le worktree courant) : les barres de
+Pipelines (`-pipelines.board marques`) et de la Mémoire en Liste et en Graphe,
+sur iPhone et iPad ; en après, le tirage pris à mi-geste et le compteur de
+relecture `memoire-recipe-read` incrémenté par le tirage et, sur iPad, par ⌘R
+« Actualiser » ; le toucher de « Sommaire » en mode Graphe (plus aucune bulle) ;
+un menu contextuel ouvert par appui long sur une carte Pipelines, une carte
+« À vous », une rangée Sessions et une rangée Mémoire ; la sélection de texte
+de la visionneuse, du contrat et de la fiche d'un souvenir ; les vidages
+d'accessibilité de l'Accueil, de la visionneuse, du fil vide et de
+« Répondre ». Chaque capture a son relevé `idb ui describe-all`. Elle compile
+l'app SIGNÉE ad hoc (`CODE_SIGN_IDENTITY=-`, contrôle `codesign -dv`), crée ses
+simulateurs privés `zz-gestes-tel` (iPhone 18 Pro) et `zz-gestes-tab` (iPad
+Pro 13-inch M5) sur iOS 27.0, pilote l'app par `simctl launch` et `idb`
+seulement, et supprime les deux simulateurs en fin de course ; elle ne touche
+à aucun autre simulateur, n'ouvre pas `Simulator.app`, ne lance ni n'arrête
+l'app Mac et n'appaire rien. En mode après, `rapport.txt` porte une ligne
+`AC-<n> ✓|✗ <tel|tab> <détail>` par contrôle (AC-2, AC-3, AC-4, AC-5, AC-9,
+AC-12, AC-13) ; en mode avant, les constats de l'audit sortent en
+`CONSTAT-<n>`. Sorties dans `omp-console/build/ios-gestes-et-retours-natifs/{avant,apres}/`
+(non versionné) : captures PNG, relevés JSON, `rapport.txt`, `commit.txt`,
+`logs/` et, en mode après, `preuve.md`. Le retour haptique (que le simulateur
+ne joue pas) et le survol d'iPad (qu'`idb` ne simule pas) se prouvent par les
+tests Swift et la garde `test/ios-gestes-et-retours-natifs.test.ts`. Codes : 0
+(aucun ✗), 1 (au moins un ✗), 2 (non conclu, par exemple un simulateur non
+supprimé ou une erreur d'outil). Jamais lancée par check.sh ni par la CI.
+
 ### Recette idb de la fiche d'une carte
 
 ```bash
@@ -3947,16 +3983,16 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 4. **Revenir au sommaire** — vider le champ (croix système) ou toucher « Sommaire » :
    le sommaire DÉJÀ lu revient, sans aucune requête.
 5. **La mémoire tombe** — arrêter le conteneur (`podman stop omp-console-mem0-http`)
-   puis toucher « Rafraîchir » : le bandeau rouge dit « Service indisponible sur le
+   puis tirer la liste vers le bas : le bandeau rouge dit « Service indisponible sur le
    Mac. » et son remède, sans adresse, sans JSON et sans code HTTP (le détail reste
    sur le Mac, dans la fenêtre Mémoire) ; « Réessayer » repasse au sommaire dès que
    la pile répond de nouveau. La liste et la recherche ne disent jamais « serveur
    mémoire trop ancien » : cette cause n'existe que dans le graphe.
-6. **Aucun projet ouvert** — fermer le projet côté Mac puis « Rafraîchir » : la carte
+6. **Aucun projet ouvert** — fermer le projet côté Mac puis tirer la liste : la carte
    dit « Aucun projet ouvert », sans lire la mémoire.
 7. **Mac injoignable** — couper le Mac (ou l'appairage) : le bandeau « Pas de
    connexion au Mac » et sa cause s'affichent au-dessus des souvenirs déjà lus,
-   « Rafraîchir » est grisé, et aucune cause mémoire n'est inventée — jamais
+   le tirage de la liste ne relit rien, et aucune cause mémoire n'est inventée — jamais
    « Délai dépassé » ; rien de lu, la section n'affiche que le composant
    « non connecté ». Connecté, une lecture qui échoue faute de réseau dit « Mac
    injoignable. » et son remède, sur un bandeau orange avec « Réessayer ».
@@ -4092,7 +4128,7 @@ libellé français et son raccourci :
 | Raccourci | Commande | Menu | Effet |
 |---|---|---|---|
 | ⌘1 … ⌘7 | Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire, Statistiques | Présentation | ouvre la section, dans l'ordre affiché par la barre latérale |
-| ⌘R | Rafraîchir | Présentation | relit les données de l'écran courant, sans changer de section (sur Pipelines : le même geste que « Rafraîchir », relecture de l'état des PR) |
+| ⌘R | Actualiser | Présentation | relit les données de l'écran courant, sans changer de section (sur Pipelines : la même relecture que le tirage de la liste, l'ardoise puis l'état des PR ; sur la Mémoire : la liste ou le graphe affiché) |
 | ⌘F | Rechercher | Présentation | met le focus dans le champ de recherche (Mémoire en mode Liste) ; inactive ailleurs |
 | ⌘N | Nouvelle feature… | Fichier | bascule sur Pipelines et ouvre la feuille « Nouvelle feature » (comme le bouton « + », rien ne s'ouvre hors connexion) |
 

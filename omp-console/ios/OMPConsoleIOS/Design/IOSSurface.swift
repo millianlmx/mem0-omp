@@ -66,6 +66,15 @@ extension View {
     func iosBanner(tone: ConsoleTone) -> some View {
         modifier(IOSBannerSurface(tone: tone))
     }
+
+    /// Le survol natif d'iPad (ios-gestes-et-retours-natifs, S-7) d'une carte ou
+    /// d'une rangée touchable : plateau `.highlight` derrière l'élément, à la
+    /// forme d'une carte. Posé en dernier modificateur de l'élément ; sans effet
+    /// sur iPhone, et le système ne le montre pas sur un élément désactivé.
+    func iosHoverEffect() -> some View {
+        contentShape(.hoverEffect, .rect(cornerRadius: IOSSurface.cardRadius))
+            .hoverEffect(.highlight)
+    }
 }
 
 private struct IOSGroupedListSurface: ViewModifier {

@@ -94,6 +94,8 @@ struct HomeAnswerSheet: View {
                         optionRow(option)
                     }
                     .disabled(!connection.gesturesEnabled)
+                    // La coche est cachée : l'option choisie s'annonce par le trait (S-9).
+                    .accessibilityAddTraits(selectedOption == option.label ? .isSelected : [])
                     .accessibilityIdentifier(IOSHomeAccessibility.answerOption(index))
                 }
             }
@@ -132,6 +134,7 @@ struct HomeAnswerSheet: View {
             if selectedOption == option.label {
                 Image(systemName: IOSHomeText.selectedSymbol)
                     .foregroundStyle(Color.accentColor)
+                    .accessibilityHidden(true)
             }
         }
     }

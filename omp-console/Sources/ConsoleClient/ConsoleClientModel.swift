@@ -74,6 +74,11 @@ public final class ConsoleClientModel: ObservableObject {
     }
     /// La préférence de bienvenue (S-8), lue au `start()`.
     @Published public private(set) var welcomeSeen = false
+    /// L'issue de la dernière commande envoyée au Mac (S-5 de
+    /// ios-gestes-et-retours-natifs) : `nil` avant toute commande, puis publiée
+    /// à la réponse du Mac (succès ou échec), jamais à l'envoi. Les lectures, la
+    /// relecture des PR, l'appairage et l'oubli n'en publient aucune.
+    @Published public private(set) var commandOutcome: ClientCommandOutcome?
 
     /// La borne des mises à jour de session conservées.
     public static let sessionUpdateLimit = 100
@@ -120,6 +125,9 @@ public final class ConsoleClientModel: ObservableObject {
     /// Les abonnés du flux d'une session vivante (S-8), par fichier. Un dictionnaire
     /// de continuateurs, pas un `@Published` : chacun ne voit QUE son fichier.
     private var sessionFeeds: [String: [UUID: AsyncStream<RemoteSessionFeedItem>.Continuation]] = [:]
+    /// Le rang de la dernière issue de commande publiée (S-5) : 0 avant toute
+    /// commande, +1 avant chaque publication de `commandOutcome`.
+    private var commandSequence = 0
 
     // MARK: - Cycle de vie
 
@@ -651,7 +659,7 @@ public final class ConsoleClientModel: ObservableObject {
         confirmed: Bool?
     ) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteDialogAnswerRequest(kind: kind, value: value, confirmed: confirmed))
-        return try await perform(
+        return try await performCommand(
             ClientHTTPRequest(method: "POST", path: "/v1/conduite/dialogs/" + encode(id), body: body),
             as: RemoteAcceptedPayload.self
         )
@@ -676,7 +684,7 @@ public final class ConsoleClientModel: ObservableObject {
     /// calcule jamais la clé, il la reçoit de `GET /v1/repos`.
     public func launchHostedSession(repoKey: String) async throws -> RemoteHostedSessionPayload {
         let body = try encode(RemoteHostedLaunchRequest(repoKey: repoKey))
-        let payload = try await perform(
+        let payload = try await performCommand(
             ClientHTTPRequest(method: "POST", path: "/v1/session/launch", body: body),
             as: RemoteHostedSessionPayload.self
         )
@@ -686,7 +694,7 @@ public final class ConsoleClientModel: ObservableObject {
 
     /// Relance une session `dead` (S-1) : la règle `canRelaunch` est celle du Mac.
     public func relaunchHostedSession() async throws -> RemoteHostedSessionPayload {
-        let payload = try await perform(
+        let payload = try await performCommand(
             ClientHTTPRequest(method: "POST", path: "/v1/session/relaunch"),
             as: RemoteHostedSessionPayload.self
         )
@@ -696,7 +704,7 @@ public final class ConsoleClientModel: ObservableObject {
 
     /// Arrête la session hébergée (S-7) : idempotent côté coque.
     public func stopHostedSession() async throws -> RemoteHostedSessionPayload {
-        let payload = try await perform(
+        let payload = try await performCommand(
             ClientHTTPRequest(method: "POST", path: "/v1/session/stop"),
             as: RemoteHostedSessionPayload.self
         )
@@ -713,7 +721,7 @@ public final class ConsoleClientModel: ObservableObject {
         confirmed: Bool?
     ) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteDialogAnswerRequest(kind: kind, value: value, confirmed: confirmed))
-        return try await perform(
+        return try await performCommand(
             ClientHTTPRequest(method: "POST", path: "/v1/session/dialogs/" + encode(id), body: body),
             as: RemoteAcceptedPayload.self
         )
@@ -775,11 +783,35 @@ public final class ConsoleClientModel: ObservableObject {
         return value
     }
 
-    /// Un geste : exécute la route puis rafraîchit les faits de l'Accueil (S-8).
-    /// Le rafraîchissement n'est PAS attendu : le geste rend son résultat typé dès
-    /// que la route réussit, et l'accusé arrive par le flux ou par ces lectures.
+    /// Une commande envoyée au Mac : exécute la route puis publie son issue dans
+    /// `commandOutcome` — succès après la réponse décodée, échec quand la route
+    /// lève (l'erreur est relancée telle quelle). Une tâche annulée ne publie
+    /// rien : ce n'est pas une réponse du Mac.
+    private func performCommand<T: Decodable>(_ request: ClientHTTPRequest, as type: T.Type) async throws -> T {
+        let value: T
+        do {
+            value = try await perform(request, as: type)
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch {
+            publishCommandOutcome(succeeded: false)
+            throw error
+        }
+        publishCommandOutcome(succeeded: true)
+        return value
+    }
+
+    private func publishCommandOutcome(succeeded: Bool) {
+        commandSequence += 1
+        commandOutcome = ClientCommandOutcome(sequence: commandSequence, succeeded: succeeded)
+    }
+
+    /// Un geste : une commande (`performCommand`) puis le rafraîchissement des
+    /// faits de l'Accueil (S-8). Le rafraîchissement n'est PAS attendu : le geste
+    /// rend son résultat typé dès que la route réussit, et l'accusé arrive par le
+    /// flux ou par ces lectures.
     private func performGesture<T: Decodable>(_ request: ClientHTTPRequest, as type: T.Type) async throws -> T {
-        let value = try await perform(request, as: type)
+        let value = try await performCommand(request, as: type)
         refreshHomeFacts()
         return value
     }

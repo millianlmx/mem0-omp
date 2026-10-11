@@ -160,6 +160,12 @@ struct RootView: View {
             select(.kanban)
             newFeatureRequested = true
         })
+        // Le retour haptique de chaque commande envoyée au Mac, joué à sa réponse
+        // (ios-gestes-et-retours-natifs, S-5) : la racine vit sous toutes les
+        // feuilles, un seul point de pose suffit.
+        .sensoryFeedback(trigger: client.commandOutcome) { _, outcome in
+            IOSCommandFeedback.feedback(for: outcome)
+        }
         .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
             HomeWelcomeSheet(client: client) { showWelcome = false }
         }

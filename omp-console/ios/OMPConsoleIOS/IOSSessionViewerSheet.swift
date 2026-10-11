@@ -78,6 +78,9 @@ struct IOSSessionViewerSheet: View {
                 IOSSessionThreadView(model: model, sessionEnded: model.runEnded)
                     .padding(.horizontal, IOSMetrics.margin(sizeClass))
             }
+            // Le texte du fil et de l'en-tête se sélectionne (S-6, D-7) ; les
+            // libellés de bouton (bascules du fil) restent hors sélection.
+            .textSelection(.enabled)
             .background(Color(uiColor: .systemGroupedBackground))
             .navigationTitle(IOSSessionText.viewerNavigationTitle)
             .navigationBarTitleDisplayMode(.inline)
