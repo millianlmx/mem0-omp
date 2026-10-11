@@ -10,6 +10,7 @@ import ConsoleCore
 import CoreGraphics
 import Foundation
 import Testing
+import UIKit
 
 @testable import OMPConsoleIOS
 
@@ -456,5 +457,293 @@ struct IOSMemoryGraphTests {
         model.setTagFilter(MemoryGraphParity.tag)
         model.click(at: screenPoint(model, tag), size: size)
         #expect(model.tagFilter == MemoryGraphParity.tag)
+    }
+
+    // MARK: - ios-statistiques-et-graphe-accessibles AC-5..AC-7 : le graphe parcouru par VoiceOver
+
+    /// Les nœuds dont le point écran tombe dans le canevas (bords compris), au zoom
+    /// et au déplacement courants.
+    private func nodesInFrame(_ model: IOSMemoryGraphModel) -> [MemoryGraphNodeID] {
+        model.visible.nodes.map(\.id).filter { id in
+            guard model.positions[id] != nil else { return false }
+            let point = screenPoint(model, id)
+            return point.x >= 0 && point.y >= 0 && point.x <= size.width && point.y <= size.height
+        }
+    }
+
+    private func target(of id: MemoryGraphNodeID) -> IOSMemoryGraphElement.Target {
+        switch id {
+        case let .memory(memory): return .memory(memory)
+        case let .tag(tag): return .tag(tag)
+        }
+    }
+
+    private func elementID(of id: MemoryGraphNodeID) -> String {
+        switch id {
+        case let .memory(memory): return IOSMemoryAccessibility.graphMemory(memory)
+        case let .tag(tag): return IOSMemoryAccessibility.graphTagOption(tag)
+        }
+    }
+
+    @Test("ios-statistiques-et-graphe-accessibles/AC-5 : voiceOverExposesOneElementPerShownNode — un élément par souvenir et par nœud-étiquette affichés, liens annoncés, titres liés à la demande")
+    func voiceOverExposesOneElementPerShownNode() async {
+        let model = IOSMemoryGraphModel(client: GraphReader())
+        #expect(model.accessibilityElements(size: size).isEmpty)
+        await model.activate()
+        #expect(model.zoom == 1)
+
+        let elements = model.accessibilityElements(size: size)
+        let memories = elements.filter { if case .memory = $0.target { return true } else { return false } }
+        let tags = elements.filter { if case .tag = $0.target { return true } else { return false } }
+        #expect(memories.count == 9)
+        #expect(tags.count == 2)
+        #expect(!elements.contains { $0.target == .showAll })
+        #expect(Set(elements.map(\.id)).count == elements.count)
+
+        // m4 : « titre quatre, 2 liens » (m3 sémantique, m5 manuel), et m5 nommé dans le détail.
+        let m4 = elements.first { $0.target == .memory("m4") }
+        let count = model.links(of: "m4").count
+        #expect(count == 2)
+        #expect(m4?.label == IOSMemoryText.graphMemoryLabel(title: "titre quatre", links: count))
+        #expect(m4?.label.hasSuffix(ConsoleFormat.count(count, "lien", "liens")) == true)
+        #expect(m4?.linked.contains("titre cinq") == true)
+        #expect(m4?.linked == ["titre trois", "titre cinq"])
+        #expect(m4?.hint == IOSMemoryText.graphMemoryHint)
+        #expect(m4?.id == IOSMemoryAccessibility.graphMemory("m4"))
+
+        // m1 : ses étiquettes affichées sont nommées `#étiquette` ; m6 sans texte a un titre de repli.
+        let m1 = elements.first { $0.target == .memory("m1") }
+        #expect(m1?.linked.contains(MemoryText.tagLabel("commun")) == true)
+        #expect(m1?.linked.contains("titre deux") == true)
+        let m6 = elements.first { $0.target == .memory("m6") }
+        #expect(m6?.label == IOSMemoryText.untitledMemory + ", aucun lien")
+        #expect(m6?.linked == [])
+
+        // Le nœud-étiquette « commun » compte ses souvenirs distincts (m1, m2, m3, m7).
+        let commun = elements.first { $0.target == .tag("commun") }
+        #expect(commun?.label == "#commun, étiquette, 4 souvenirs")
+        #expect(commun?.hint == IOSMemoryText.graphTagHint)
+        #expect(commun?.id == IOSMemoryAccessibility.graphTagOption("commun"))
+        #expect(commun?.linked == [])
+
+        // Chaque cadre de focus fait 44 pt et se centre sur son nœud ; l'ordre est celui de la lecture.
+        for element in elements {
+            #expect(element.frame.width == IOSMetrics.minimumTarget)
+            #expect(element.frame.height == IOSMetrics.minimumTarget)
+        }
+        let m4Point = screenPoint(model, .memory("m4"))
+        #expect(abs((m4?.frame.midX ?? .infinity) - m4Point.x) < 0.001)
+        #expect(abs((m4?.frame.midY ?? .infinity) - m4Point.y) < 0.001)
+        let rows = elements.map { $0.frame.midY.rounded() }
+        #expect(rows == rows.sorted())
+
+        // La sélection se lit sur son élément, et seulement sur lui.
+        model.select("m2")
+        let selected = model.accessibilityElements(size: size).filter(\.isSelected)
+        #expect(selected.map(\.target) == [.memory("m2")])
+    }
+
+    @Test("ios-statistiques-et-graphe-accessibles/AC-5 : voiceOverElementsFollowZoomAndPan — un nœud sorti du cadre perd son élément et le retrouve en revenant")
+    func voiceOverElementsFollowZoomAndPan() async {
+        let model = IOSMemoryGraphModel(client: GraphReader())
+        await model.activate()
+
+        model.setZoom(MemoryGraphStyle.maxZoom)
+        let zoomed = model.accessibilityElements(size: size)
+        #expect(zoomed.count == nodesInFrame(model).count)
+        guard let leaving = nodesInFrame(model).first else {
+            Issue.record("aucun nœud dans le cadre au zoom maximal")
+            return
+        }
+
+        // Glisser juste assez pour sortir ce nœud par la droite du canevas.
+        let point = screenPoint(model, leaving)
+        model.drag(by: CGSize(width: size.width - point.x + 10, height: 0))
+        model.endDrag()
+        let moved = model.accessibilityElements(size: size)
+        #expect(!moved.contains { $0.target == target(of: leaving) })
+        #expect(moved.count == nodesInFrame(model).count)
+        #expect(Set(moved.map(\.id)) == Set(nodesInFrame(model).map(elementID(of:))))
+        #expect(moved.count < model.visible.nodes.count)
+
+        // Recentré, le graphe entier revient dans le cadre, et ses éléments avec lui.
+        model.recenter()
+        #expect(model.accessibilityElements(size: size).count == 11)
+    }
+
+    @Test("ios-statistiques-et-graphe-accessibles/AC-6 : voiceOverActivatingAMemoryOpensItsSheet — activer un souvenir ouvre sa fiche comme au toucher")
+    func voiceOverActivatingAMemoryOpensItsSheet() async {
+        let model = IOSMemoryGraphModel(client: GraphReader())
+        await model.activate()
+        guard let element = model.accessibilityElements(size: size).first(where: { $0.target == .memory("m1") }) else {
+            Issue.record("aucun élément pour m1")
+            return
+        }
+
+        model.activate(element.target)
+        #expect(model.selection == "m1")
+        // La feuille se monte sur la ligne du souvenir sélectionné (`detailBinding`).
+        #expect(model.row("m1") != nil)
+        #expect(model.row("m1")?.text == "titre un")
+        #expect(model.accessibilityElements(size: size).first { $0.target == .memory("m1") }?.isSelected == true)
+
+        // Le toucher emprunte la même voie : même état final.
+        let touched = IOSMemoryGraphModel(client: GraphReader())
+        await touched.activate()
+        touched.click(at: screenPoint(touched, .memory("m1")), size: size)
+        #expect(touched.selection == model.selection)
+    }
+
+    @Test("ios-statistiques-et-graphe-accessibles/AC-7 : voiceOverActivatingATagFiltersAndOffersTheWholeGraph — activer une étiquette filtre, réduit les éléments à la famille et offre le retour")
+    func voiceOverActivatingATagFiltersAndOffersTheWholeGraph() async {
+        let model = IOSMemoryGraphModel(client: GraphReader())
+        await model.activate()
+
+        model.activate(.tag("commun"))
+        #expect(model.tagFilter == "commun")
+
+        let family = MemoryGraph.tagFamily(
+            nodes: MemoryGraphParity.facts.nodes,
+            links: MemoryGraphParity.facts.links,
+            tag: "commun"
+        )
+        let filtered = model.accessibilityElements(size: size)
+        #expect(filtered.first?.target == .showAll)
+        #expect(filtered.first?.label == MemoryText.allTags)
+        #expect(filtered.first?.hint == IOSMemoryText.graphShowAllHint)
+        #expect(filtered.first?.id == IOSMemoryAccessibility.graphShowAll)
+        #expect(filtered.first?.frame == CGRect(origin: .zero, size: size))
+        #expect(filtered.filter { $0.target == .showAll }.count == 1)
+        let nodeTargets = filtered.dropFirst().map(\.target)
+        #expect(nodeTargets.count == family.nodes.count)
+        #expect(Set(filtered.dropFirst().map(\.id)) == Set(family.nodes.map { elementID(of: $0.id) }))
+        #expect(filtered.first { $0.target == .tag("commun") }?.isSelected == true)
+
+        // Le toucher du même nœud donne le même filtre.
+        let touched = IOSMemoryGraphModel(client: GraphReader())
+        await touched.activate()
+        touched.click(at: screenPoint(touched, .tag("commun")), size: size)
+        #expect(touched.tagFilter == model.tagFilter)
+
+        // « Toutes les étiquettes » revient au graphe entier : 9 souvenirs et 2 étiquettes.
+        model.activate(.showAll)
+        #expect(model.tagFilter == nil)
+        let whole = model.accessibilityElements(size: size)
+        #expect(!whole.contains { $0.target == .showAll })
+        #expect(whole.filter { if case .memory = $0.target { return true } else { return false } }.count == 9)
+        #expect(whole.filter { if case .tag = $0.target { return true } else { return false } }.count == 2)
+    }
+
+    // MARK: - ios-statistiques-et-graphe-accessibles AC-9 : étiquettes sans chevauchement
+
+    /// Un graphe à peindre : ses nœuds, ses liens et leurs positions normalisées.
+    private typealias Drawn = (nodes: [MemoryGraphNode], links: [MemoryGraphLink], positions: [MemoryGraphNodeID: CGPoint])
+
+    /// La fixture PARTAGÉE, telle que le modèle la publie après sa lecture.
+    private func parityGraph() async -> Drawn {
+        let model = IOSMemoryGraphModel(client: GraphReader())
+        await model.activate()
+        return (model.visible.nodes, model.visible.links, model.positions)
+    }
+
+    /// La fixture DENSE : 60 souvenirs répartis sur 5 portées et 8 étiquettes portées
+    /// chacune par 7 ou 8 souvenirs de toutes les portées — les nœuds-étiquettes
+    /// se tassent donc au centre — posés par la mise en page partagée.
+    private static func denseGraph() -> Drawn {
+        let rows = (0..<60).map { index in
+            MemoryRow(
+                id: "d\(index)",
+                text: "souvenir dense numéro \(index)",
+                tags: ["etiquette-\(index % 8)"],
+                agentId: "projet-\(index % 5)"
+            )
+        }
+        let nodes = MemoryGraph.nodes(rows: rows)
+        let links = MemoryGraph.links(rows: rows, edges: [], manual: [])
+        let points = MemoryGraphLayout.points(nodes: nodes, links: links)
+        var positions: [MemoryGraphNodeID: CGPoint] = [:]
+        for (index, node) in nodes.enumerated() where index < points.count {
+            positions[node.id] = points[index]
+        }
+        return (nodes, links, positions)
+    }
+
+    /// La scène construite COMME LA VUE (`IOSMemoryGraphView.draw`), puis décollée à
+    /// la taille de texte par défaut.
+    private func decluttered(_ graph: Drawn, canvas: CGSize, zoom: CGFloat) -> (scene: MemoryGraphScene, result: IOSMemoryGraphDecluttered) {
+        let scene = MemoryGraphScene.build(
+            nodes: graph.nodes,
+            links: graph.links,
+            positions: graph.positions,
+            viewport: MemoryGraphViewport(size: canvas, zoom: zoom, pan: .zero),
+            selection: nil,
+            hovered: nil
+        )
+        let result = IOSMemoryGraphLabels.declutter(scene, canvas: canvas) { text, font in
+            IOSMemoryGraphLabels.measure(text, font: font, category: .large)
+        }
+        return (scene, result)
+    }
+
+    @Test("ios-statistiques-et-graphe-accessibles/AC-9 : graphLabelsNeverOverlapAtOpeningScale — aucun texte gardé n'en recouvre un autre, iPhone et iPad, zoom 1 et zoom max")
+    func graphLabelsNeverOverlapAtOpeningScale() async {
+        let graphs: [(name: String, graph: Drawn)] = [("parité", await parityGraph()), ("dense", Self.denseGraph())]
+        let canvases = [CGSize(width: 390, height: 700), CGSize(width: 1024, height: 1100)]
+        for (name, graph) in graphs {
+            for canvas in canvases {
+                for zoom in [1, MemoryGraphStyle.maxZoom] {
+                    let frames = decluttered(graph, canvas: canvas, zoom: zoom).result.textFrames
+                    #expect(!frames.isEmpty, "\(name) \(canvas) ×\(zoom) : aucun texte gardé")
+                    for first in frames.indices {
+                        for second in frames.indices where second > first {
+                            #expect(
+                                !frames[first].intersects(frames[second]),
+                                "\(name) \(canvas) ×\(zoom) : \(frames[first]) recouvre \(frames[second])"
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("ios-statistiques-et-graphe-accessibles/AC-9 : graphLabelsHideUntilZoom — à l'ouverture, des textes se masquent et chaque étiquette reste une capsule ou une pastille")
+    func graphLabelsHideUntilZoom() {
+        let graph = Self.denseGraph()
+        let canvas = CGSize(width: 390, height: 700)
+        let (scene, result) = decluttered(graph, canvas: canvas, zoom: 1)
+
+        // Au moins un texte est masqué : un libellé retiré ou une capsule réduite.
+        func texts(_ shapes: [MemoryGraphShape]) -> Int {
+            shapes.filter {
+                switch $0 {
+                case .label, .capsule: return true
+                case .line, .disc: return false
+                }
+            }.count
+        }
+        #expect(texts(result.shapes) < texts(scene.shapes))
+
+        // Les liens et les disques ne sont jamais retirés.
+        #expect(result.shapes.count - texts(result.shapes) == scene.shapes.count - texts(scene.shapes))
+
+        // Chaque nœud-étiquette est SOIT une capsule gardée, SOIT une pastille, à son
+        // point écran.
+        let viewport = MemoryGraphViewport(size: canvas, zoom: 1, pan: .zero)
+        let tagPoints = graph.nodes.compactMap { node -> CGPoint? in
+            guard node.id.tagName != nil, let position = graph.positions[node.id] else { return nil }
+            return viewport.screen(position)
+        }
+        let capsules = result.shapes.compactMap { shape -> CGPoint? in
+            if case let .capsule(center, _, _) = shape { return center }
+            return nil
+        }
+        #expect(tagPoints.count == 8)
+        #expect(capsules.count + result.markers.count == tagPoints.count)
+        for point in tagPoints {
+            let asCapsule = capsules.contains(point)
+            let asMarker = result.markers.contains(point)
+            #expect(asCapsule != asMarker, "l'étiquette en \(point) doit être capsule OU pastille")
+        }
     }
 }

@@ -114,7 +114,7 @@ enum StatsText {
     static let turns = StatsPresentation.turns
 
     /// Le graphique : un panneau par série, chacun à sa propre échelle.
-    static let chartTitle = "Tokens par feature"
+    static let chartTitle = StatsPresentation.tokensChartTitle
     static let sentKind = "envoyés"
     static let receivedKind = "reçus"
 

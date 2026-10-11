@@ -87,6 +87,12 @@ public enum StatsPresentation {
     public static let timeSpent = "Temps passé"
     public static let turns = "Tours"
 
+    /// Les titres des graphiques de Statistiques (ios-statistiques-et-graphe-accessibles,
+    /// S-2) : l'app iOS en fait l'en-tête de section et le titre du descripteur
+    /// d'accessibilité ; la fenêtre macOS lit le second par `StatsText.chartTitle`.
+    public static let durationChartTitle = "Durée par feature"
+    public static let tokensChartTitle = "Tokens par feature"
+
     /// Les colonnes du tableau de runs de la coque macOS.
     public static let columnFeature = "Feature"
     public static let columnModel = "Modèle"

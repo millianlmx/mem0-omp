@@ -3471,6 +3471,36 @@ Sorties dans `omp-console/build/ios-listes-groupees-natives/{avant,apres}/`
 captures, lignes AC). Codes : 0 (aucun ✗), 1 (au moins un ✗), 2 (non conclu,
 par exemple un simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
 
+### Recette des Statistiques et du graphe accessibles
+
+```bash
+bash scripts/ios-statistiques-graphe-recette.sh --avant <ref>
+bash scripts/ios-statistiques-graphe-recette.sh
+```
+
+La recette de la feature `ios-statistiques-et-graphe-accessibles` capture, avant
+(`--avant <ref>`, compilé depuis un worktree détaché retiré à la sortie) et après
+(le worktree courant), les Statistiques (`-stats.recipe pleine` et `vide`) et le
+graphe de la Mémoire (`-memoire.recipe graphe` et `zoom`) : sur iPhone en clair,
+en sombre et en clair avec le contraste accru (`simctl ui increase_contrast`,
+remis à `disabled` après chaque capture), sur iPad en clair, soit 10 captures par
+moment, plus les relevés `idb ui describe-all` des Statistiques pleines, vides et
+du graphe (celui des Statistiques complété par balayages jusqu'à « Total du
+projet », celui du graphe par `idb ui describe-point` sur le cadre du canevas :
+`describe-all` ne rend pas les enfants `.accessibilityChildren`). Elle compile
+l'app SIGNÉE ad hoc (`CODE_SIGN_IDENTITY=-`, contrôle `codesign -dv`), crée ses
+simulateurs privés `zz-statgraphe-tel` (iPhone 18 Pro)
+et `zz-statgraphe-tab` (iPad Pro 13-inch (M5)) et les supprime en fin de course ;
+elle ne touche à aucun autre simulateur, n'ouvre pas `Simulator.app` et ne lance
+ni n'arrête l'app Mac. `rapport.txt` porte une ligne `ok|échec AC-<n> : …` par
+contrôle (titres des deux graphiques et valeurs dessous, aucun graphique sans
+donnée, 9 souvenirs et 2 étiquettes exposés à VoiceOver, présence des captures) :
+bloquants en mode après, seulement consignés en mode avant. Sorties dans
+`omp-console/build/ios-statistiques-et-graphe-accessibles/{avant,apres}/` (non
+versionné) et `preuve.md` (tableau avant/après des 10 captures, et relecture
+visuelle reprise de `relecture.md`, écrit à la main à côté pour survivre à une
+nouvelle exécution). Jamais lancée par check.sh ni par la CI.
+
 ### Recette idb de la fiche d'une carte
 
 ```bash
@@ -3882,7 +3912,12 @@ nœuds-étiquettes, arêtes de proximité et liens manuels), manipulable au doig
 (pincer, glisser, toucher) sur iPhone comme sur iPad ; toucher un souvenir met
 son voisinage en évidence et ouvre sa fiche en lecture seule, toucher un
 nœud-étiquette APPLIQUE son filtre (le menu « Étiquette » revient à la vue
-entière). L'app ne lit que ce que le Mac sert : elle ne calcule aucune portée et
+entière). VoiceOver parcourt le graphe nœud par nœud : chaque souvenir affiché
+annonce son titre et son nombre de liens (les titres liés en « Liés à », rotor
+« Plus de contenu »), chaque nœud-étiquette son nombre de souvenirs, et activer
+un élément agit comme le toucher. À l'ouverture, aucune étiquette n'en recouvre
+une autre : un texte sans place attend le zoom, une capsule devient une pastille.
+L'app ne lit que ce que le Mac sert : elle ne calcule aucune portée et
 n'émet AUCUNE écriture — le graphe est une lecture (`GET /v1/memory/graph`), et
 rien ne se rafraîchit en continu.
 
@@ -3992,7 +4027,10 @@ MEM0_MEMOIRE_DELAI_SERVE=1 MEM0_MEMOIRE_DELAI_ROOT=/chemin/du/depot \
 La section **Statistiques** de l'app est en **lecture seule** : elle affiche la
 consommation des runs du projet choisi, par feature — slug, modèle, durée, tours,
 tokens envoyés (entrée hors cache + cache lu + cache écrit) et tokens reçus — puis la ligne « Total du projet », somme des
-features LISTÉES. Aucun montant, aucun geste de pilotage d'un run. Les mots
+features LISTÉES. En tête, deux graphiques en barres, « Durée par feature » et
+« Tokens par feature » (envoyés et reçus empilés), reprennent ces nombres et se
+lisent à VoiceOver ; sans donnée, aucun graphique n'est affiché. Aucun montant,
+aucun geste de pilotage d'un run. Les mots
 affichés (« Tokens envoyés », « Temps passé », « Tours », « Total du projet ») sont
 ceux de la fenêtre macOS : ils viennent du noyau partagé `ConsoleCore`.
 

@@ -71,6 +71,33 @@ enum IOSMemoryText {
         return name + " · " + other
     }
 
+    // MARK: - Le graphe parcouru par VoiceOver (ios-statistiques-et-graphe-accessibles, S-5)
+
+    /// Le titre d'un souvenir dont le texte est vide.
+    static let untitledMemory = "Souvenir sans titre"
+
+    /// L'élément d'un souvenir : son titre, puis son nombre de liens affichés.
+    static func graphMemoryLabel(title: String, links: Int) -> String {
+        guard links > 0 else { return title + ", aucun lien" }
+        return title + ", " + ConsoleFormat.count(links, "lien", "liens")
+    }
+
+    /// L'élément d'un nœud-étiquette : `#étiquette`, sa nature, puis le nombre de
+    /// souvenirs affichés qui la portent.
+    static func graphTagLabel(tag: String, memories: Int) -> String {
+        MemoryText.tagLabel(tag) + ", étiquette, " + ConsoleFormat.count(memories, "souvenir", "souvenirs")
+    }
+
+    /// « Affiche », jamais « Ouvre » : en tête de phrase, la garde anti-tutoiement
+    /// lit « Ouvre » comme un impératif tutoyé (décision du 2026-10-11).
+    static let graphMemoryHint = "Affiche la fiche du souvenir."
+    static let graphTagHint = "Affiche seulement les souvenirs de cette étiquette."
+    static let graphShowAllHint = "Revient au graphe entier."
+
+    /// Le libellé du contenu donné à la demande (rotor « Plus de contenu ») : les
+    /// titres des extrémités liées à un souvenir.
+    static let graphLinkedTitles = "Liés à"
+
     // MARK: - La recette `-memoire.recipe` (BR-7)
 
     /// Le drapeau du crochet de recette du mode graphe.
@@ -155,4 +182,11 @@ enum IOSMemoryAccessibility {
     static let graphDetail = "ios.memoire.graphe.fiche"
 
     static func graphTagOption(_ tag: String) -> String { "ios.memoire.graphe.etiquette.\(tag)" }
+
+    // MARK: - Les éléments VoiceOver du canevas (ios-statistiques-et-graphe-accessibles, S-5)
+
+    /// Le retour à la vue entière, premier élément quand un filtre est posé.
+    static let graphShowAll = "ios.memoire.graphe.tout"
+
+    static func graphMemory(_ id: String) -> String { "ios.memoire.graphe.souvenir.\(id)" }
 }

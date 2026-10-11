@@ -314,6 +314,7 @@ const EXCEPTIONS: readonly Exception[] = [
   { file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift", literal: String.raw`\"detail\"`, reason: "clé JSON cherchée dans un motif du Mac" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSSessionOmpText.swift", literal: "ios.sessionomp.launch.commit", reason: "identifiant d’accessibilité" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSSessionText.swift", literal: String.raw`ios.session.diff.\(rowId).\(index)`, reason: "identifiant d’accessibilité" },
+  { file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift", literal: "ios.stats.chart.tokens", reason: "identifiant d’accessibilité" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift", literal: "recette-specs", reason: "slug de feature de la recette" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSStatsText.swift", literal: "recette-impl", reason: "slug de feature de la recette" },
   { file: "omp-console/ios/OMPConsoleIOS/ProjectText.swift", literal: "ios.projet.launch.commit", reason: "identifiant d’accessibilité" },
