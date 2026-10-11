@@ -20,6 +20,12 @@ struct IOSMemoryGraphView: View {
     let connection: IOSConnectionStatus
     /// La feuille Connexion de la racine, ouverte par « Se connecter ».
     @Binding var showConnection: Bool
+    /// La catégorie Dynamic Type courante : les textes du canevas sont mesurés à
+    /// cette taille avant d'être décollés (S-6).
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// Les tailles mesurées des textes du canevas, mémoïsées d'une peinture à
+    /// l'autre.
+    @State private var labelSizes = IOSMemoryGraphLabelSizes()
 
     /// Le panneau du graphe occupe toute la hauteur restante et aligne son contenu en
     /// haut à gauche, dans chaque état (S-7) : sans ce cadre, le panneau hors
@@ -188,11 +194,47 @@ struct IOSMemoryGraphView: View {
             )
             .accessibilityIdentifier(IOSMemoryAccessibility.graphCanvas)
             .accessibilityLabel(model.countBanner)
+            // Un élément VoiceOver par nœud affiché (S-5) : ces vues ne sont jamais
+            // dessinées, le canevas devient leur conteneur et garde son libellé.
+            .accessibilityChildren {
+                ZStack(alignment: .topLeading) {
+                    ForEach(model.accessibilityElements(size: proxy.size)) { element in
+                        graphElement(element)
+                    }
+                }
+            }
+        }
+    }
+
+    /// L'élément synthétique d'un nœud : un rectangle transparent posé sur le nœud,
+    /// activé par le double-toucher de VoiceOver via la voie du toucher. Les titres
+    /// liés se lisent à la demande (rotor « Plus de contenu »).
+    @ViewBuilder
+    private func graphElement(_ element: IOSMemoryGraphElement) -> some View {
+        let base = Color.clear
+            .frame(width: element.frame.width, height: element.frame.height)
+            .position(x: element.frame.midX, y: element.frame.midY)
+            .accessibilityElement()
+            .accessibilityLabel(element.label)
+            .accessibilityHint(element.hint)
+            .accessibilityAddTraits(element.isSelected ? [.isButton, .isSelected] : .isButton)
+            .accessibilityIdentifier(element.id)
+            .accessibilityAction { model.activate(element.target) }
+        if element.linked.isEmpty {
+            base
+        } else {
+            base.accessibilityCustomContent(
+                Text(IOSMemoryText.graphLinkedTitles),
+                Text(verbatim: element.linked.joined(separator: ", ")),
+                importance: .default
+            )
         }
     }
 
     /// Le canevas ne fait que PEINDRE la scène pure : l'ordre du dessin (liens,
-    /// grappes, nœuds, libellés) est celui de `MemoryGraphScene`.
+    /// grappes, nœuds, libellés) est celui de `MemoryGraphScene`, sans les textes
+    /// qui en chevaucheraient un autre (`IOSMemoryGraphLabels.declutter`, S-6) ; une
+    /// capsule d'étiquette sans place devient une pastille.
     private func draw(context: inout GraphicsContext, size: CGSize) {
         let viewport = MemoryGraphViewport(size: size, zoom: model.zoom, pan: model.pan)
         let visible = model.visible
@@ -204,7 +246,12 @@ struct IOSMemoryGraphView: View {
             selection: model.selection,
             hovered: nil
         )
-        for shape in scene.shapes {
+        let category = UIContentSizeCategory(dynamicTypeSize)
+        let sizes = labelSizes
+        let decluttered = IOSMemoryGraphLabels.declutter(scene, canvas: size) { text, font in
+            sizes.size(text, font: font, category: category)
+        }
+        for shape in decluttered.shapes {
             switch shape {
             case let .line(from, to, kind, highlighted):
                 var path = Path()
@@ -232,7 +279,7 @@ struct IOSMemoryGraphView: View {
                 }
             case let .disc(center, radius, hue, selected, hovered):
                 let box = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
-                context.fill(Path(ellipseIn: box), with: .color(Color(hue: hue, saturation: 0.65, brightness: 0.85)))
+                context.fill(Path(ellipseIn: box), with: .color(Color(uiColor: IOSDataPalette.scope(hue: hue))))
                 if hovered {
                     let ring = box.insetBy(dx: -2, dy: -2)
                     context.stroke(Path(ellipseIn: ring), with: .color(Color.primary.opacity(0.5)), lineWidth: 1.5)
@@ -258,10 +305,21 @@ struct IOSMemoryGraphView: View {
                     anchor: .center
                 )
             case let .label(center, text, hue):
-                let style = hue.map { Color(hue: $0, saturation: 0.8, brightness: 0.7) } ?? Color.primary
+                let style = hue.map { Color(uiColor: IOSDataPalette.scope(hue: $0)) } ?? Color.primary
                 let font: Font = hue == nil ? .caption2 : .caption.bold()
                 context.draw(Text(text).font(font).foregroundStyle(style), at: center, anchor: .center)
             }
+        }
+        let markerRadius = MemoryGraphStyle.nodeRadius * model.zoom
+        for marker in decluttered.markers {
+            let box = CGRect(
+                x: marker.x - markerRadius,
+                y: marker.y - markerRadius,
+                width: markerRadius * 2,
+                height: markerRadius * 2
+            )
+            context.fill(Path(ellipseIn: box), with: .color(Color.secondary.opacity(0.18)))
+            context.stroke(Path(ellipseIn: box), with: .color(Color.secondary.opacity(0.6)), lineWidth: 1)
         }
     }
 

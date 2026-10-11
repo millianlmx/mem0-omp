@@ -251,15 +251,32 @@ final class IOSMemoryGraphModel: ObservableObject {
 
     /// Le clic sur le canevas : un nœud de souvenir ouvre sa fiche, un nœud-étiquette
     /// APPLIQUE le filtre de cette étiquette (même chemin que macOS), le vide
-    /// désélectionne.
+    /// désélectionne. Les nœuds touchés passent par `activate(_:)`, la voie que
+    /// VoiceOver emprunte aussi.
     func click(at point: CGPoint, size: CGSize) {
         switch MemoryGraphHitTest.node(at: point, positions: positions, zoom: zoom, pan: pan, size: size) {
         case let .memory(id)?:
-            selection = id
+            activate(.memory(id))
         case let .tag(name)?:
-            tagFilter = name
+            activate(.tag(name))
         case nil:
             selection = nil
+        }
+    }
+
+    /// L'activation d'un nœud, au toucher comme par VoiceOver (S-5) : un souvenir
+    /// ouvre sa fiche (la sélection monte la feuille), un nœud-étiquette applique
+    /// son filtre, « Toutes les étiquettes » revient au graphe entier. Elle vit ici,
+    /// et non dans `IOSMemoryGraphAccessibility.swift`, parce que `selection` et
+    /// `tagFilter` ne s'écrivent que dans ce fichier (`private(set)`).
+    func activate(_ target: IOSMemoryGraphElement.Target) {
+        switch target {
+        case let .memory(id):
+            selection = id
+        case let .tag(name):
+            tagFilter = name
+        case .showAll:
+            setTagFilter(nil)
         }
     }
 

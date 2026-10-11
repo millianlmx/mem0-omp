@@ -1,7 +1,9 @@
 // L'écran Statistiques de l'app iOS (S-3 … S-6) : le contenu réel de la section —
-// sélecteur de projet, une section par feature (slug, modèle, durée, tours, tokens
-// envoyés et reçus), la section « Total du projet » et la mention des features
-// masquées. LECTURE SEULE : aucun geste de pilotage d'un run, aucun montant.
+// sélecteur de projet, les graphiques « Durée par feature » et « Tokens par
+// feature » (`IOSStatsChartSections`, ios-statistiques-et-graphe-accessibles), une
+// section par feature (slug, modèle, durée, tours, tokens envoyés et reçus), la
+// section « Total du projet » et la mention des features masquées. LECTURE SEULE :
+// aucun geste de pilotage d'un run, aucun montant.
 //
 // Le sélecteur est l'en-tête de projet : il nomme le projet CHOISI et se tient en
 // tête du tableau, de l'état vide et de la bascule vers un autre projet
@@ -178,11 +180,14 @@ struct IOSStatsScreen: View {
         .accessibilityIdentifier(StatsAccessibility.empty)
     }
 
-    /// Le tableau : une section par feature listée, la section du total, puis la
-    /// mention des features masquées.
+    /// Le tableau : les graphiques de durée et de tokens quand leurs valeurs ne
+    /// sont pas toutes nulles (ios-statistiques-et-graphe-accessibles, S-2), une
+    /// section par feature listée, la section du total, puis la mention des
+    /// features masquées.
     @ViewBuilder
     private var boardState: some View {
         if let payload = model.payload {
+            IOSStatsChartSections(payload: payload, elapsedMs: model.elapsedMs(at:))
             ForEach(payload.features, id: \.slug) { feature in
                 cardSection(identifier: StatsAccessibility.feature(feature.slug)) { elapsed in
                     IOSStatsContent.featureCard(feature, elapsedMs: elapsed)

@@ -569,10 +569,12 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Une ligne de lien de la fiche dit sa nature en clair : une proximité s'écrit
   « Très proche » (score ≥ 0,90), « Proche » (≥ 0,80) ou « Assez proche », jamais un
   nombre ; « Étiquette » et « Manuel » restent. `[test: proximityReadsAsPlainWords]`
-- Le canevas fait EXCEPTION à « aucune couleur hors `ConsoleTone` » : sa palette est
-  celle du noyau PARTAGÉ (`MemoryGraphStyle.hue(for:)`, `Color.accentColor`,
-  `.secondary`, `.primary`), exactement comme la coque macOS — une seule peinture,
-  deux coques. `[capture: iphone-memoire-graphe-light.png]`
+- Le canevas fait EXCEPTION à « aucune couleur hors `ConsoleTone` » : il peint les
+  portées avec `IOSDataPalette` — des couleurs système adaptatives, chacune avec ses
+  variantes clair, sombre et contraste accru, choisie par `IOSDataPalette.scope(hue:)`
+  depuis la teinte du noyau partagé — plus `Color.accentColor`, `.secondary` et
+  `.primary` ; aucune teinte HSB fixe. La coque macOS garde `MemoryGraphStyle.hue(for:)`
+  en HSB. `[test: paletteAdaptsToAppearanceAndContrast]`
 - Le graphe ne montre que la portée du PROJET OUVERT — la même que la liste, résolue
   par le Mac —, tous ses souvenirs, sans borne en nombre (seule une charge au-delà de
   16 Mio est retirée et annoncée « Graphe partiel »). Sans projet ouvert, il dit
@@ -581,9 +583,35 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   répondre. » puis « Réessayez dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
   le panneau commence en haut, sous la barre de navigation, dans tous les états.
   `[test: graphTimeoutSaysDelayExceeded]`
+- VoiceOver parcourt le graphe : un élément par souvenir affiché (« <titre>, N liens »,
+  les titres liés en contenu « Liés à ») et un par nœud-étiquette affiché
+  (« #<étiquette>, étiquette, N souvenirs »), jamais dessinés ; les éléments suivent le
+  filtre, le zoom et le déplacement. `[test: voiceOverExposesOneElementPerShownNode]`
+- Activer l'élément d'un souvenir l'ouvre comme au toucher : même voie d'action, fiche
+  en lecture seule. `[test: voiceOverActivatingAMemoryOpensItsSheet]`
+- Activer l'élément d'une étiquette applique son filtre comme au toucher ; les éléments
+  se réduisent à la famille, et « Toutes les étiquettes » revient au graphe entier.
+  `[test: voiceOverActivatingATagFiltersAndOffersTheWholeGraph]`
+- Aucune étiquette visible n'en recouvre une autre à l'échelle d'ouverture, sur iPhone
+  comme sur iPad : les noms de grappe passent d'abord, puis les capsules d'étiquette,
+  puis les titres de souvenir ; un texte sans place est masqué jusqu'au zoom, et une
+  capsule sans place devient une pastille. `[test: graphLabelsNeverOverlapAtOpeningScale]`
 
 ## La section Statistiques (feature `ios-statistiques`)
 
+- En tête du tableau, deux graphiques Swift Charts en barres horizontales : « Durée
+  par feature » et « Tokens par feature » (envoyés et reçus empilés, avec légende), une
+  barre par feature LISTÉE, dans l'ordre et avec les nombres des sections dessous,
+  qui restent inchangées. `[test: statsChartsFollowTheListedFeatures]`
+- Chaque graphique porte un descripteur d'accessibilité (`AXChartDescriptor`) : titre
+  en français, axes nommés, un point exact par feature — une série pour la durée, deux
+  pour les tokens. `[test: statsChartsDescribeStackedTokens]`
+- Aucun graphique vide : sans feature listée ou aux valeurs toutes nulles, le
+  graphique n'est pas monté ; chargement, bascule et erreur n'en montrent aucun.
+  `[test: statsChartsHideWithoutData]`
+- La hauteur des barres suit Dynamic Type (`@ScaledMetric`), et les graphiques vivent
+  dans `IOSStatsCharts.swift`, montés avant les sections des features.
+  `[garde: ios-statistiques-et-graphe-accessibles/AC-2]`
 - Une section par feature LISTÉE, dans l'ordre du plan : le slug en en-tête, puis une ligne par
   grandeur (modèle, temps passé, tours, tokens envoyés, tokens reçus). `[test: statsCardsSumTheListedFeatures]`
 - « Tokens envoyés » compte TOUT ce qui part vers le modèle : entrée hors cache + cache lu + cache écrit, sur chaque section et sur la ligne « Total du projet » ; « Tokens reçus » reste la sortie. La fenêtre macOS, elle, garde l'entrée hors cache. `[test: statsSentTokensCountTheCache]`
@@ -614,6 +642,7 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   `[test: statsReloadsOnlyWhenConnected]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-stats-dark-ax]`
+
 ## Sessions (S-1…S-11)
 
 - La section Sessions rend la liste PARTAGÉE de `ConsoleCore` (`SessionList`) et

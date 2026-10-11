@@ -55,6 +55,9 @@ enum StatsAccessibility {
     static let empty = "ios.stats.empty"
     static let total = "ios.stats.total"
     static let hidden = "ios.stats.hidden"
+    /// Les en-têtes des deux graphiques (ios-statistiques-et-graphe-accessibles, S-2).
+    static let durationChart = "ios.stats.chart.duration"
+    static let tokensChart = "ios.stats.chart.tokens"
 
     static func feature(_ slug: String) -> String { "ios.stats.feature.\(slug)" }
 }
