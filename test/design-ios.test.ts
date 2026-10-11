@@ -433,7 +433,12 @@ function recipeFaults(root: string): string[] {
   const funcs = swiftFiles(path.join(root, "omp-console", "ios", "OMPConsoleIOSTests"))
     .map((file) => fs.readFileSync(file, "utf8"))
     .join("\n");
-  const guardFile = fs.readFileSync(path.join(root, "test", "design-ios.test.ts"), "utf8");
+  const testDir = path.join(root, "test");
+  const guardFile = fs
+    .readdirSync(testDir)
+    .filter((name) => name.endsWith(".test.ts"))
+    .map((name) => fs.readFileSync(path.join(testDir, name), "utf8"))
+    .join("\n");
 
   // Une PUCE est un bloc : sa première ligne commence par « - », ses
   // continuations sont indentées ; sa dernière ligne doit porter un marqueur.

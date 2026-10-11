@@ -186,7 +186,7 @@ public enum HomeParity {
             "features": [
               {
                 "slug": "specs-a-valider",
-                "name": "Specs à valider",
+                "name": "Export CSV des statistiques",
                 "branch": "feat/specs-a-valider",
                 "worktree": "/tmp/omp-parity/alpha/specs-a-valider",
                 "deps": [],

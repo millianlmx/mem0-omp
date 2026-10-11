@@ -93,9 +93,6 @@ struct NewFeatureSheet: View {
                 TextField(NewFeatureText.titlePlaceholder, text: $actions.launchTitle)
                     .textFieldStyle(.roundedBorder)
                     .accessibilityIdentifier("launch.title")
-                Text(NewFeatureText.titleHelp)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
 
             VStack(alignment: .leading, spacing: 6) {

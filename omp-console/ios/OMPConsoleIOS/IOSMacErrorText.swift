@@ -129,23 +129,23 @@ enum IOSMacErrorText {
     static func remedy(_ failure: IOSMacFailure) -> String {
         switch failure {
         case .macOutdated:
-            return "Mets à jour OMP Console sur le Mac, puis réessaie."
+            return "Mettez à jour OMP Console sur le Mac, puis réessayez."
         case .macUnreachable:
-            return "Vérifie que le Mac est allumé, sur le même réseau que cet appareil, et qu’OMP Console y est ouvert, puis réessaie."
+            return "Vérifiez que le Mac est allumé, sur le même réseau que cet appareil, et qu’OMP Console y est ouverte, puis réessayez."
         case .macTimedOut:
-            return "Réessaie dans un instant."
+            return "Réessayez dans un instant."
         case .serviceUnavailable:
-            return "Ouvre OMP Console sur le Mac et vérifie que ses services sont démarrés (redéploie le service mémoire s’il le faut), puis réessaie."
+            return "Ouvrez OMP Console sur le Mac et vérifiez que ses services sont démarrés, puis réessayez."
         case .refused:
-            return "Vérifie dans OMP Console sur le Mac que cet appareil est toujours appairé, puis réessaie."
+            return "Vérifiez dans OMP Console sur le Mac que cet appareil est toujours appairé, puis réessayez."
         case .serviceOutdated:
             return ""
         case .rejected:
-            return "Vérifie la demande ou actualise l’écran, puis réessaie."
+            return "Vérifiez la demande ou actualisez l’écran, puis réessayez."
         case .incompatibleProtocol:
-            return "Mets à jour l’app de cet appareil et OMP Console sur le Mac pour qu’elles parlent la même version."
+            return "Mettez à jour l’app sur cet appareil et OMP Console sur le Mac pour qu’elles utilisent la même version."
         case .generic:
-            return "Réessaie dans un instant ; si l’erreur revient, redémarre OMP Console sur le Mac."
+            return "Réessayez dans un instant. Si l’erreur persiste, redémarrez OMP Console sur le Mac."
         }
     }
 

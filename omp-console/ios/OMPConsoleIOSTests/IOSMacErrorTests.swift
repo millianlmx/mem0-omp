@@ -149,7 +149,7 @@ struct IOSMacErrorTests {
         let refusal = ClientError.api(.notFound("carte inconnue"))
         #expect(IOSMacFailure.of(refusal) == .rejected("carte inconnue"))
         #expect(IOSMacErrorText.message(for: refusal)
-            == "Le Mac n’a pas pu traiter la demande : carte inconnue.\nVérifie la demande ou actualise l’écran, puis réessaie.")
+            == "Le Mac n’a pas pu traiter la demande : carte inconnue.\nVérifiez la demande ou actualisez l’écran, puis réessayez.")
         // Point final : pas de double point.
         #expect(IOSMacErrorText.cause(.rejected("carte inconnue.")) == "Le Mac n’a pas pu traiter la demande : carte inconnue.")
         // La comparaison de « route inconnue » est EXACTE.

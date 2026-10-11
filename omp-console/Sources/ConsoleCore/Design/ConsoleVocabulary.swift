@@ -80,7 +80,7 @@ extension ConsoleStatus {
         case .fusionne: return ConsoleStatus(text: "PR fusionnée", tone: .success)
         case .prFermee: return ConsoleStatus(text: "PR fermée", tone: .neutral)
         case .echec: return ConsoleStatus(text: "Échec", tone: .danger)
-        case .jalonSpecs: return ConsoleStatus(text: "Specs à valider", tone: .attention)
+        case .jalonSpecs: return ConsoleStatus(text: "Spécifications à valider", tone: .attention)
         case .jalonReview: return ConsoleStatus(text: "Revue à accepter", tone: .attention)
         case .bloquee: return ConsoleStatus(text: "Bloquée", tone: .danger)
         case .termineeSansPr: return ConsoleStatus(text: "Terminée", tone: .neutral)

@@ -101,8 +101,7 @@ Tout se fait depuis l'app, sans terminal :
    (`Modèle /req et /specs` / `Modèle /impl et /review`, chaque liste menée par
    `défaut OMP (aucun modèle)` puis les modèles de `omp models --json` par leur
    **nom lisible** — « nom (fournisseur) », sinon « nom (id) », quand deux modèles
-   portent le même nom ; l'identifiant brut à défaut de nom), le titre (il devient
-   la branche `feat/<titre>`) et le besoin.
+   portent le même nom ; l'identifiant brut à défaut de nom), le titre et le besoin.
    « Lancer » (↩, bouton par défaut) poste une commande `launch` au service, ferme
    la feuille et mène à **Pipelines**, comme sur iOS — depuis toute section, jamais
    à l'Accueil.
@@ -532,7 +531,7 @@ dépôt (seulement quand l'ardoise mêle plusieurs dépôts), ses deux **modèle
 (`Modèle /req et /specs : <A>` puis `Modèle /impl et /review : <B>`, le nom lisible
 du catalogue, l'identifiant brut à défaut, ou `défaut OMP`, une ligne par
 groupe, coupées au milieu), un badge quand la voie ne
-dit pas déjà son état (« Question », « Specs à valider », « En pause », « PR
+dit pas déjà son état (« Question », « Spécifications à valider », « En pause », « PR
 ouverte »…), la question de l'agent en aperçu, puis — pour une feature en cours ou
 qui vous attend — sa barre d'avancement en cinq segments, son étape et sa durée à
 la minute. Les cartes sont des surfaces opaques (`consoleCard`), jamais du verre.
@@ -1807,7 +1806,7 @@ besoins et leurs six familles :
 | Évènement | Source | Titre · corps |
 |---|---|---|
 | attend une réponse | `running/<id>.json`, `pendingAsk` en vol et propriétaire vivant | « Question » · nom affiché de la carte (repli : `<label>`) |
-| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | « Specs à valider » · nom affiché de la carte (repli : `<slug>`) |
+| attend une validation (specs) | feature de lot `waiting` avec `waitKind = specs` | « Spécifications à valider » · nom affiché de la carte (repli : `<slug>`) |
 | attend une validation (revue) | idem avec `waitKind = review` | « Revue à accepter » · nom affiché de la carte (repli : `<slug>`) |
 | échoué (feature de lot) | feature de lot `failed` | « Échec » · nom affiché de la carte (repli : `<slug>`) |
 | échoué (run clos) | `history/<id>.json`, `finalState = failed` | « Échec » · nom affiché de la carte (repli : `<label>`) |
@@ -1835,7 +1834,7 @@ au premier plan, puis ouvre :
 | Famille | Destination |
 |---|---|
 | Question | feuille **Répondre** de la carte |
-| Specs à valider | feuille **Contrat** de la carte |
+| Spécifications à valider | feuille **Contrat** de la carte |
 | Revue à accepter | **fiche** de la carte (elle porte « Accepter la revue ») |
 | Échec (lot ou run) | **fiche** de la carte |
 | PR fusionnée | **fiche** de la carte |
@@ -3182,7 +3181,12 @@ même fixture mais reste en mode LISTE et y ouvre la fiche d'un souvenir ;
 `clavier` garde, lui, le mode Liste sans fiche et branche l'écran sur un lecteur
 de cette même fixture, `IOSMemoryRecipeReader`, client `.connected` sans réseau :
 le sommaire montre ses huit souvenirs, la recherche les filtre, et chaque lecture
-du sommaire écrit `memoire-recipe-read` sur la sortie d'erreur du lancement), et
+du sommaire écrit `memoire-recipe-read` sur la sortie d'erreur du lancement ;
+`injoignable` et `service-ancien` branchent la liste et le graphe sur un lecteur
+qui échoue toujours, `IOSMemoryFailureReader` : `injoignable` reste en mode Liste
+sur le bandeau « Mac injoignable. », `service-ancien` ouvre le graphe sur le
+bandeau « Graphe indisponible : serveur mémoire trop ancien sur le Mac. », et
+chacun écrit `memoire-recipe-ready` une fois l'échec affiché), et
 `-pipelines.recipe` accepte deux familles de valeurs. `<vide|choisi|rempli>` ouvre
 l'écran Pipelines sur la feuille « Nouvelle feature » avec des dépôts, un titre et
 un besoin forcés (le reste est le chemin réel de la feuille) ; `<fiche|actions|arret>`
@@ -3709,13 +3713,13 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
    injoignable. » et son remède, sur un bandeau orange avec « Réessayer ».
 8. **Délai dépassé** — si le Mac, joint, met trop longtemps à servir une page ou le
    graphe (mémoire très chargée), la section dit « Délai dépassé : le Mac a mis trop
-   de temps à répondre. » puis « Réessaie dans un instant. », avec « Réessayer ». Les
+   de temps à répondre. » puis « Réessayez dans un instant. », avec « Réessayer ». Les
    lectures Mémoire (pages et graphe) ont un délai propre, plus long que celui des
    autres lectures ; les autres sections gardent « Mac injoignable. » (le traducteur
    partagé ne distingue le délai dépassé que pour la Mémoire).
 9. **App Mac trop ancienne** — face à une app Mac qui précède la lecture par pages
    (route `GET /v1/memory/page` inconnue), la liste dit « Fonction indisponible : app
-   Mac trop ancienne. » puis « Mets à jour OMP Console sur le Mac, puis réessaie. »,
+   Mac trop ancienne. » puis « Mettez à jour OMP Console sur le Mac, puis réessayez. »,
    sans code HTTP ni JSON. Les deux apps se mettent à jour ensemble : aucun mode de
    compatibilité.
 10. **Le graphe** — toucher « Graphe » : le panneau commence en haut, sous la barre de
@@ -3731,11 +3735,11 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
 11. **Graphe et pile trop ancienne** — avec une pile mem0-http sans la route
    `/memory/graph` (voir « Pile de l'app » dans « Consulter et corriger la mémoire du
    projet »), toucher « Graphe » : le bandeau dit « Graphe indisponible : serveur
-   mémoire trop ancien. » puis « Mets à jour mem0-http sur le Mac (redéploie le
-   service), puis réessaie. », sans URL, sans JSON et sans code HTTP. Si c'est l'app
-   Mac elle-même qui ne connaît pas la route, il dit « Graphe indisponible : app Mac
-   trop ancienne, mets-la à jour. » Après le redéploiement, « Réessayer » affiche le
-   graphe sans relancer l'app.
+   mémoire trop ancien sur le Mac. » puis « Mettez à jour OMP Console sur le Mac, puis
+   réessayez. », sans nom de service, sans URL, sans JSON et sans code HTTP. Si
+   c'est l'app Mac elle-même qui ne connaît pas la route, il dit « Graphe
+   indisponible : app Mac trop ancienne. » puis le même remède. Après la mise à jour,
+   « Réessayer » affiche le graphe sans relancer l'app.
 
 Recette OUTILLÉE : le test Swift gated `iosMemoireRecipe`
 (`omp-console/Tests/OMPConsoleTests/MemoryIOSRecipeTests.swift`, titre

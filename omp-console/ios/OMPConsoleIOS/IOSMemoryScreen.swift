@@ -50,9 +50,16 @@ struct IOSMemoryScreen: View {
         self.recipe = recipe
         self.graphRecipe = graphRecipe
         _showConnection = showConnection
-        let reader: any IOSMemoryReading = graphRecipe == .clavier ? IOSMemoryRecipeReader() : client
-        _model = StateObject(wrappedValue: IOSMemoryModel(client: reader))
-        _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: client))
+        if graphRecipe?.fails == true {
+            // Les recettes de panne : la liste et le graphe lisent le MÊME lecteur qui échoue.
+            let failing = IOSMemoryFailureReader()
+            _model = StateObject(wrappedValue: IOSMemoryModel(client: failing))
+            _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: failing))
+        } else {
+            let reader: any IOSMemoryReading = graphRecipe == .clavier ? IOSMemoryRecipeReader() : client
+            _model = StateObject(wrappedValue: IOSMemoryModel(client: reader))
+            _graph = StateObject(wrappedValue: IOSMemoryGraphModel(client: client))
+        }
     }
 
     var body: some View {
@@ -87,7 +94,10 @@ struct IOSMemoryScreen: View {
             .sheet(item: $model.selection) { target in
                 IOSMemoryDetailView(row: target.row, scope: model.scope)
             }
-            .task { await model.refresh() }
+            .task {
+                await model.refresh()
+                graphRecipe?.announce(list: model)
+            }
             .onMacReconnected(client) {
                 // Retour du Mac (S-4) : la liste relit, et le graphe s'il est affiché.
                 Task {
@@ -157,7 +167,9 @@ struct IOSMemoryScreen: View {
     /// réseau : le chemin de rendu est celui de production. La recette `liste` garde
     /// la LISTE et ouvre la fiche de son souvenir par le présentateur de la liste ;
     /// la recette `clavier` garde la liste sans fiche : seul son lecteur de fixture
-    /// change (`init`).
+    /// change (`init`). Les recettes de panne passent par `activate` : `injoignable`
+    /// n'y active rien (son signal suit la lecture de la liste, `.task`),
+    /// `serviceAncien` y montre le graphe qui échoue.
     private func applyGraphRecipe() {
         guard let graphRecipe, graphRecipe != .clavier else { return }
         Task {

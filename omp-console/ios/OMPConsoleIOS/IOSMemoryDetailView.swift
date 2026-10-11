@@ -82,8 +82,8 @@ struct IOSMemoryDetailView: View {
 
     // MARK: - Les liens (mode graphe, S-5)
 
-    /// Les lignes de liens : la nature, l'autre extrémité (son libellé de nœud, ou
-    /// son identifiant à défaut) et, pour une proximité, son score.
+    /// Les lignes de liens : la nature en clair (une proximité par son libellé, sans
+    /// score) et l'autre extrémité (son libellé de nœud, ou son identifiant à défaut).
     static func linkLines(_ links: [MemoryGraphLink], from id: String, labels: [MemoryGraphNodeID: String]) -> [String] {
         links.compactMap { link in
             let other: MemoryGraphNodeID? = link.a.memoryId == id ? link.b : (link.b.memoryId == id ? link.a : nil)

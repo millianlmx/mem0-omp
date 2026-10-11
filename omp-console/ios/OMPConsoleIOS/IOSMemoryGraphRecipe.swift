@@ -1,12 +1,15 @@
-// Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche|liste|clavier>` (BR-7) : il
-// force le mode graphe de la section Mémoire sur la fixture PARTAGÉE `MemoryGraphParity`
-// (ConsoleCore), sans réseau et sans écran fabriqué — les API réelles du modèle
-// (`apply`, `magnify`, `drag`, `select`) sont employées telles quelles. La recette
+// Le crochet de RECETTE `-memoire.recipe <graphe|zoom|fiche|liste|clavier|injoignable|service-ancien>`
+// (BR-7) : il force le mode graphe de la section Mémoire sur la fixture PARTAGÉE
+// `MemoryGraphParity` (ConsoleCore), sans réseau et sans écran fabriqué — les API réelles
+// du modèle (`apply`, `magnify`, `drag`, `select`) sont employées telles quelles. La recette
 // `liste` (feuilles-ios-presentation-et-depots) charge la même fixture SANS montrer le
 // graphe : l'écran reste en mode LISTE et ouvre la fiche d'un souvenir par le
 // présentateur de la liste (`listSelection`). La recette `clavier`
 // (ipad-clavier-et-largeur-de-lecture, S-8) garde, elle, le mode liste SANS fiche et
 // branche le modèle de la liste sur `IOSMemoryRecipeReader`, lecteur de la même fixture.
+// Les recettes de PANNE (ios-redaction-vouvoiement, S-2) branchent la liste ET le graphe
+// sur `IOSMemoryFailureReader` : `injoignable` garde la liste face à un Mac injoignable,
+// `serviceAncien` montre le graphe face à un service mémoire trop ancien.
 //
 // Sans l'argument : aucun effet. Comme `IOSSection.resolve` et `IOSHomeRecipe`, la
 // DERNIÈRE paire reconnue gagne ; une valeur inconnue est ignorée.
@@ -27,6 +30,15 @@ enum IOSMemoryGraphRecipe: Equatable {
     case liste
     /// Le mode liste sur la fixture, lu par `IOSMemoryRecipeReader` (S-8).
     case clavier
+    /// Le mode liste face à un Mac injoignable, lu par `IOSMemoryFailureReader`.
+    case injoignable
+    /// Le mode graphe face à un service mémoire trop ancien, même lecteur.
+    case serviceAncien
+
+    /// Les recettes de PANNE : la liste et le graphe lisent `IOSMemoryFailureReader`.
+    var fails: Bool {
+        self == .injoignable || self == .serviceAncien
+    }
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSMemoryGraphRecipe? {
@@ -51,6 +63,8 @@ enum IOSMemoryGraphRecipe: Equatable {
         case IOSMemoryText.graphRecipeSheet: return .fiche
         case IOSMemoryText.graphRecipeList: return .liste
         case IOSMemoryText.keyboardRecipe: return .clavier
+        case IOSMemoryText.failureRecipeUnreachable: return .injoignable
+        case IOSMemoryText.failureRecipeOutdated: return .serviceAncien
         default: return nil
         }
     }
@@ -84,15 +98,27 @@ enum IOSMemoryGraphRecipe: Equatable {
 
     /// L'état forcé : le graphe affiché sur la charge utile de la fixture, puis —
     /// selon la recette — un pincement et un glissement RÉELS, ou la sélection d'un
-    /// souvenir. `liste` publie la fixture sans activer le graphe.
+    /// souvenir. `liste` publie la fixture sans activer le graphe. Les recettes de
+    /// panne ne publient rien : `injoignable` laisse le graphe masqué, `serviceAncien`
+    /// l'affiche et laisse son lecteur échouer.
     @MainActor func activate(_ model: IOSMemoryGraphModel) async {
+        switch self {
+        case .injoignable:
+            return
+        case .serviceAncien:
+            await model.activate()
+            announce(model)
+            return
+        case .graphe, .zoom, .fiche, .liste, .clavier:
+            break
+        }
         await model.apply(payload)
         guard self != .liste else { return }
         await model.activate()
         let center = CGPoint(x: 195, y: 350)
         let size = CGSize(width: 390, height: 700)
         switch self {
-        case .graphe, .liste, .clavier:
+        case .graphe, .liste, .clavier, .injoignable, .serviceAncien:
             break
         case .zoom:
             model.magnify(by: 2, at: center, size: size)
@@ -105,6 +131,13 @@ enum IOSMemoryGraphRecipe: Equatable {
         announce(model)
     }
 
+    /// Le signal de PRÊT de la recette `injoignable`, après la lecture de la liste
+    /// lancée par l'apparition de l'écran : émis seulement si la panne est publiée.
+    @MainActor func announce(list model: IOSMemoryModel) {
+        guard self == .injoignable, case .failed = model.load else { return }
+        FileHandle.standardError.write(Data(IOSMemoryText.graphRecipeReady.utf8))
+    }
+
     /// La fiche que la recette `liste` ouvre depuis la LISTE : le souvenir de la
     /// fixture, lu dans le graphe publié par `activate`. `nil` pour les autres recettes,
     /// ou si la fixture ne porte pas ce souvenir.
@@ -115,17 +148,21 @@ enum IOSMemoryGraphRecipe: Equatable {
 
     /// Le signal de PRÊT sur la sortie d'erreur du lancement (`--stderr`), lu par
     /// `scripts/ios-shots.sh` : il n'est émis que si l'état forcé est réellement affiché (graphe
-    /// monté, zoom appliqué, fiche ouverte sur le souvenir de la recette). Un état non
-    /// atteint n'émet rien, et le script refuse la capture.
+    /// monté, zoom appliqué, fiche ouverte sur le souvenir de la recette, panne du service
+    /// publiée). Un état non atteint n'émet rien, et le script refuse la capture.
     @MainActor private func announce(_ model: IOSMemoryGraphModel) {
-        guard model.shown, case .graph = model.state else { return }
+        guard model.shown else { return }
         switch self {
+        case .injoignable:
+            return
+        case .serviceAncien:
+            guard model.state == .serviceOutdated else { return }
         case .graphe, .liste, .clavier:
-            break
+            guard case .graph = model.state else { return }
         case .zoom:
-            guard model.zoom != 1 else { return }
+            guard case .graph = model.state, model.zoom != 1 else { return }
         case .fiche:
-            guard model.selection == IOSMemoryText.graphRecipeMemory else { return }
+            guard case .graph = model.state, model.selection == IOSMemoryText.graphRecipeMemory else { return }
         }
         FileHandle.standardError.write(Data(IOSMemoryText.graphRecipeReady.utf8))
     }
