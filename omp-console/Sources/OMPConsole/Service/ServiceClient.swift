@@ -20,12 +20,13 @@ struct ServiceHTTPResponse: Sendable {
 /// double scripté rend des réponses décidées, sans réseau.
 protocol ServiceTransport: Sendable {
     func send(_ request: URLRequest) async throws -> ServiceHTTPResponse
-    /// Ouvre un flux de lignes (SSE). La fin du flux (ou sa levée) déclenche la
-    /// reconnexion côté client.
+    /// Ouvre un flux de lignes (SSE), LIGNES VIDES COMPRISES : la ligne vide clôt
+    /// une trame (`ServiceEvents.frames`). La fin du flux (ou sa levée) déclenche
+    /// la reconnexion côté client.
     func lines(_ request: URLRequest) async throws -> AsyncThrowingStream<String, Error>
 }
 
-/// Le transport réel : `URLSession.data(for:)` et `URLSession.bytes(for:).lines`
+/// Le transport réel : `URLSession.data(for:)` et `URLSession.bytes(for:)`
 /// (Doc-4 §1).
 struct URLSessionTransport: ServiceTransport {
     let session: URLSession
@@ -65,9 +66,22 @@ struct URLSessionTransport: ServiceTransport {
         return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    for try await line in bytes.lines {
-                        continuation.yield(line)
+                    // Découpage octet par octet : `bytes.lines` (AsyncLineSequence)
+                    // ne rend JAMAIS les lignes vides, et sur un flux qui reste
+                    // ouvert la dernière trame attendait la fermeture — dialogues,
+                    // avis et états du service n'arrivaient pas (mesuré le
+                    // 2026-10-11).
+                    var line: [UInt8] = []
+                    for try await byte in bytes {
+                        guard byte == UInt8(ascii: "\n") else {
+                            line.append(byte)
+                            continue
+                        }
+                        if line.last == UInt8(ascii: "\r") { line.removeLast() }
+                        continuation.yield(String(decoding: line, as: UTF8.self))
+                        line.removeAll(keepingCapacity: true)
                     }
+                    if !line.isEmpty { continuation.yield(String(decoding: line, as: UTF8.self)) }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: Self.transportError(error))
