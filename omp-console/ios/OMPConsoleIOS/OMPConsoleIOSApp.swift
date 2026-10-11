@@ -16,9 +16,11 @@ import SwiftUI
 ///   récemment ») amenée en haut de l'écran, pour capturer les rangées en Dynamic
 ///   Type (feature ios-accueil-dynamic-type-casse) — un crochet de recette, pas
 ///   une fonctionnalité ;
-/// - `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct>` : l'état de
-///   la section Sessions forcé depuis la fixture partagée `SessionParity` (S-1,
-///   S-4, S-9), pour capturer l'écran réel — un crochet de recette, pas une
+/// - `-sessions.recipe <liste|vide|visionneuse|illisible|erreur|en-direct|phases|chargement|fil-vide|suivi|longue>` :
+///   l'état de la section Sessions forcé depuis la fixture partagée `SessionParity`
+///   (S-1, S-4, S-9), pour capturer l'écran réel ; `erreur` ouvre la visionneuse
+///   d'un run vivant dont la lecture échoue (statut 500), pour capturer son bandeau
+///   d'erreur (ios-dynamic-type-ax-residuel) — un crochet de recette, pas une
 ///   fonctionnalité ;
 /// - `-pipelines.recipe <vide|choisi|rempli>` : la feuille « Nouvelle feature »
 ///   ouverte d'elle-même sur l'écran Pipelines, dans un état forcé (dépôts, dépôt

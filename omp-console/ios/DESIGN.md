@@ -360,10 +360,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   geste est celle du HIG (44 pt). `[test: minimumTargetIsFortyFour]`
 - Une carte n'a de ligne d'action que si elle porte une adresse de PR ouvrable :
   un espace sous le corps, puis « Ouvrir la PR » sur toute la largeur, haut
-  d'au moins 44 pt, sa taille de texte bornée à `.accessibility3` ; une carte
-  sans PR n'a ni ligne ni espace réservé. Une carte est rigide en hauteur : dans
-  la voie la plus haute de l'iPad (« Livrées »), son titre passe à la ligne comme
-  ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
+  d'au moins 44 pt ; une carte sans PR n'a ni ligne ni espace réservé. Une carte
+  est rigide en hauteur : dans la voie la plus haute de l'iPad (« Livrées »), son
+  titre passe à la ligne comme ailleurs, sans « … ». `[test: minimumTargetIsFortyFour]`
 - Une carte ne montre jamais de marque brute (« Marques : mort ») : ses marques
   se lisent par la phrase partagée `KanbanText.marksSentence` (« Elle s'est
   arrêtée de façon inattendue. »…), en `.caption` secondaire, sur autant de
@@ -498,16 +497,13 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   `-home.recipe`, sans écran fabriqué. `[capture: iphone-home-light]`
 - L'Accueil reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-home-dark-ax]`
-- Les rangées « En cours », « À reprendre », « Pas commencées » et « Livrées
-  récemment » suivent la largeur : en
-  largeur régulière (iPad), titre, puce et bouton sur une ligne ; en largeur
-  compacte (iPhone, iPad en Split View étroit), le titre sur toute la largeur,
-  puis la puce et le bouton côte à côte sur une deuxième ligne, sans troncature.
-  `[test: compactWidthSplitsRowsInTwoLines]`
-- Aux tailles d'accessibilité, quelle que soit la largeur, ces rangées
-  s'empilent (titre, puce, bouton) ; leurs boutons sont bornés à `accessibility3`
-  et leur texte à `accessibility4` (au-delà, un mot comme « Implémentation » est
-  coupé en deux). `[test: rowsStackFromTheFirstAccessibilitySize]`
+- Une rangée « titre | puce | bouton » tient sur une ligne quand tout y tient ;
+  sinon le titre passe sur sa ligne et la puce et le bouton sur la suivante ;
+  s'ils ne tiennent pas ensemble, chacun a sa ligne — quelle que soit la taille
+  de texte, sur iPhone comme sur iPad. `[test: longTitleSplitsAboveItsControls]`
+- Aucune taille de texte n'est plafonnée : rangées, puces et boutons suivent la
+  taille système jusqu'à `accessibility-extra-extra-extra-large` ; seul un mot
+  plus large que la ligne peut être coupé. `[garde: ios-dynamic-type-ax-residuel/AC-2]`
 - Un geste de carte montre son envoi en cours et n'envoie rien de plus jusqu'à la
   réponse du Mac : bouton désactivé, indicateur devant le libellé, valeur
   d'accessibilité « Envoi en cours ». `[test: resumeIgnoresSecondTapWhileInFlight]`
@@ -552,8 +548,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   feuille montre le texte intégral. `[test: memoryRowLinesFollowTheWidth]`
 - Chaque rangée a la même marge verticale que les Sessions ; la date et les
   étiquettes tiennent sur une ligne, jointes par « · », aux tailles standard et
-  s'empilent (date, puis étiquettes) aux tailles d'accessibilité, texte borné à
-  `accessibility4`. `[test: memoryRowContextSplitsIntoSegments]`
+  s'empilent (date, puis étiquettes) aux tailles d'accessibilité.
+  `[test: memoryRowContextSplitsIntoSegments]`
 - « Sommaire » reste toujours visible ; indisponible (mode Graphe, sommaire déjà
   affiché, recherche en cours), c'est un bouton désactivé du système, sans teinte
   ni bulle. `[test: summaryAvailability]` `[garde: ios-gestes-et-retours-natifs/AC-13]`
@@ -663,6 +659,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Une session illisible ou tronquée affiche son motif (bandeau `danger`
   au-dessus du fil) ou la note de réécriture — jamais un écran vide muet.
   `[test: unreadableAndTruncated]`
+- Les bannières de la visionneuse (erreur, session illisible) montrent leur
+  texte entier à toute taille ; le fil prend la place restante.
+  `[test: errorRecipeShowsTheErrorBanner]`
 - L'écran de section est capturé tel quel, sans écran fabriqué.
   `[capture: iphone-sessions-light]`
 - Les plis d'une ligne (réflexion, appel) sont INDÉPENDANTS, et une ligne de diff
@@ -706,9 +705,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   mise à l'échelle par `@ScaledMetric`) : les titres des lignes partagent la même
   abscisse à toute taille de texte. `[test: phasesRecipeShowsEveryPhase]`
 - Chaque rangée a une marge verticale `IOSMetrics.rowVerticalPadding` mise à
-  l'échelle (`@ScaledMetric`), reste sur une ligne aux tailles standard et
-  s'empile (icône, textes, puce) aux tailles d'accessibilité, texte borné à
-  `accessibility4`. `[test: rowsStackFromTheFirstAccessibilitySize]`
+  l'échelle (`@ScaledMetric`) et s'empile (icône et textes, puis puce) quand
+  elle ne tient pas sur une ligne. `[test: longTitleSplitsAboveItsControls]`
 - Le filtre de projet est un menu dont le libellé visible est la valeur choisie,
   entière à toute taille de texte (repliée, jamais tronquée) ; VoiceOver annonce
   « Projet, <valeur> ». `[test: sessionFilterSaysProjectThenItsValue]`

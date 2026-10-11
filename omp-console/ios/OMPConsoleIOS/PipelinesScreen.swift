@@ -387,8 +387,7 @@ struct PipelinesScreen: View {
     /// le corps, séparée par un espace — l'app n'écrit aucune adresse, elle
     /// valide celle du magasin par `httpURL`. Sans adresse ouvrable : ni ligne
     /// d'action, ni espace réservé. La hauteur de la ligne d'action ne dépend que
-    /// de son libellé et de la taille de texte (bornée comme l'Accueil), jamais
-    /// du titre de la carte.
+    /// de son libellé et de la taille de texte, jamais du titre de la carte.
     @ViewBuilder
     private func cardContent(_ card: KanbanCard, showsRepo: Bool) -> some View {
         let prURL = card.prUrl.flatMap(httpURL)
@@ -405,7 +404,6 @@ struct PipelinesScreen: View {
                         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                         .contentShape(Rectangle())
                 }
-                .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
                 .accessibilityIdentifier(PipelinesAccessibility.gesture(HomeText.openPR, card.id))
             }
         }
@@ -480,7 +478,7 @@ struct PipelinesScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            HStack(spacing: 8) {
+            IOSAdaptiveRow(spacing: 8, pinsControlsTrailing: false) {
                 IOSStatusChip(status: ConsoleStatus.of(card: card))
                 if let phase = card.phase {
                     Text(PhaseText.title(phase))

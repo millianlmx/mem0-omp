@@ -91,10 +91,10 @@ enum PipelinesModel {
         return visible > 0 ? min(scaled, visible) : scaled
     }
 
-    /// L'axe de l'en-tête d'une voie (symbole, titre, compte) : la règle des
-    /// rangées de l'Accueil, empilé aux tailles d'accessibilité.
+    /// L'axe de l'en-tête d'une voie (symbole, titre, compte) : sur une ligne aux
+    /// tailles standard, empilé aux tailles d'accessibilité.
     static func headerAxis(_ size: DynamicTypeSize) -> IOSHomeRowAxis {
-        IOSHomeContent.rowAxis(size, width: .regular)
+        size.isAccessibilitySize ? .stacked : .horizontal
     }
 
     /// Le catalogue des modèles de la feuille « Nouvelle feature » : le MÊME chemin

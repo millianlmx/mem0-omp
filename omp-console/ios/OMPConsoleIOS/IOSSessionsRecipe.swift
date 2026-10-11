@@ -1,7 +1,8 @@
-// Le crochet de RECETTE `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|chargement|fil-vide|suivi|longue>`
+// Le crochet de RECETTE `-sessions.recipe <liste|vide|visionneuse|illisible|erreur|en-direct|phases|chargement|fil-vide|suivi|longue>`
 // (BR-7) : il force l'écran Sessions dans un état RÉEL, dérivé de la fixture
 // partagée `SessionParity` — jamais un écran fabriqué. `chargement` laisse la
-// lecture en attente, `fil-vide` sert la fixture sans entrée, `suivi` fait
+// lecture en attente, `erreur` la fait échouer (statut 500, à chaque relecture),
+// `fil-vide` sert la fixture sans entrée, `suivi` fait
 // arriver trois messages après l'ouverture (S-6 de visionneuse-session-vide-a-l-ouverture),
 // `longue` montre vingt-quatre sessions terminées, assez pour faire défiler la
 // liste d'un iPhone (S-6 de ios-navigation-onglets-adaptables).
@@ -24,6 +25,7 @@ enum IOSSessionsRecipe: Equatable {
     case vide
     case visionneuse
     case illisible
+    case erreur
     case enDirect
     case phases
     case chargement
@@ -53,6 +55,7 @@ enum IOSSessionsRecipe: Equatable {
         case IOSSessionText.recipeVide: return .vide
         case IOSSessionText.recipeVisionneuse: return .visionneuse
         case IOSSessionText.recipeIllisible: return .illisible
+        case IOSSessionText.recipeErreur: return .erreur
         case IOSSessionText.recipeEnDirect: return .enDirect
         case IOSSessionText.recipePhases: return .phases
         case IOSSessionText.recipeChargement: return .chargement
@@ -93,9 +96,11 @@ enum IOSSessionsRecipe: Equatable {
     }
 
     /// La session du fil : la charge utile EXACTE de la fixture, et le run que la
-    /// feuille doit montrer (vivant pour `.enDirect` et `.suivi`, absent sinon).
-    /// `.chargement` ne finit jamais sa lecture, `.filVide` vide les entrées en
-    /// gardant l'en-tête, `.suivi` ajoute trois messages à +8, +12 et +16 s.
+    /// feuille doit montrer (vivant pour `.enDirect`, `.erreur` et `.suivi`, absent
+    /// sinon). `.chargement` ne finit jamais sa lecture, `.erreur` échoue à chaque
+    /// lecture sur un statut 500 (le bandeau d'erreur de la visionneuse, puis
+    /// « Réessayer » qui y retombe), `.filVide` vide les entrées en gardant
+    /// l'en-tête, `.suivi` ajoute trois messages à +8, +12 et +16 s.
     var thread: IOSSessionsRecipeThread? {
         guard let payload = Self.fixturePayload else { return nil }
         switch self {
@@ -109,6 +114,12 @@ enum IOSSessionsRecipe: Equatable {
             return Self.thread(payload: broken, run: nil)
         case .enDirect:
             return Self.thread(payload: payload, run: Self.fixtureChoice(state: .live(.running)))
+        case .erreur:
+            return Self.thread(
+                payload: payload,
+                run: Self.fixtureChoice(state: .live(.running)),
+                readFailure: ClientError.unexpectedStatus(500)
+            )
         case .chargement:
             return Self.thread(payload: payload, run: nil, readNeverEnds: true)
         case .filVide:
@@ -188,7 +199,8 @@ enum IOSSessionsRecipe: Equatable {
         run: RunChoice?,
         additions: [RemoteConversationEntry] = [],
         additionTimes: [Duration] = [],
-        readNeverEnds: Bool = false
+        readNeverEnds: Bool = false,
+        readFailure: ClientError? = nil
     ) -> IOSSessionsRecipeThread {
         let header = payload.header
         let cwd = header?.cwd ?? ""
@@ -201,7 +213,8 @@ enum IOSSessionsRecipe: Equatable {
             subtitle: run?.target.subtitle,
             additions: additions,
             additionTimes: additionTimes,
-            readNeverEnds: readNeverEnds
+            readNeverEnds: readNeverEnds,
+            readFailure: readFailure
         )
     }
 
@@ -236,7 +249,8 @@ enum IOSSessionsRecipe: Equatable {
 /// La session ouverte par une recette : sa charge utile, le run à montrer, son
 /// identité (nom de fichier, titre, sous-titre), et ce que la source simule
 /// après l'ouverture : les ajouts du flux et leurs instants (relatifs à
-/// l'abonnement), ou une lecture qui ne se termine jamais.
+/// l'abonnement), une lecture qui ne se termine jamais, ou une lecture qui
+/// échoue toujours sur `readFailure`.
 struct IOSSessionsRecipeThread {
     let payload: RemoteSessionPayload
     let run: RunChoice?
@@ -246,6 +260,7 @@ struct IOSSessionsRecipeThread {
     let additions: [RemoteConversationEntry]
     let additionTimes: [Duration]
     let readNeverEnds: Bool
+    let readFailure: ClientError?
 }
 
 /// La source de recette : elle ne lit QUE la fixture, pousse les seuls ajouts
@@ -259,6 +274,7 @@ final class IOSSessionsRecipeSource: IOSSessionSource {
     private let additions: [RemoteConversationEntry]
     private let additionTimes: [Duration]
     private let readNeverEnds: Bool
+    private let readFailure: ClientError?
 
     init(thread: IOSSessionsRecipeThread) {
         self.payload = thread.payload
@@ -266,12 +282,15 @@ final class IOSSessionsRecipeSource: IOSSessionSource {
         self.additions = thread.additions
         self.additionTimes = thread.additionTimes
         self.readNeverEnds = thread.readNeverEnds
+        self.readFailure = thread.readFailure
     }
 
     /// La charge utile ; pour `chargement`, une attente de 24 h, annulée par
-    /// `finish()` du modèle (la lecture annulée ne touche plus à l'état).
+    /// `finish()` du modèle (la lecture annulée ne touche plus à l'état) ; pour
+    /// `erreur`, l'échec de la recette, à chaque lecture.
     func read(file: String) async throws -> RemoteSessionPayload {
         if readNeverEnds { try await Task.sleep(for: .seconds(86_400)) }
+        if let readFailure { throw readFailure }
         return payload
     }
 

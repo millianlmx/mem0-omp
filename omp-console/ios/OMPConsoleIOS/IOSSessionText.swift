@@ -122,6 +122,7 @@ enum IOSSessionText {
     static let recipeVide = "vide"
     static let recipeVisionneuse = "visionneuse"
     static let recipeIllisible = "illisible"
+    static let recipeErreur = "erreur"
     static let recipeEnDirect = "en-direct"
     static let recipePhases = "phases"
     static let recipeChargement = "chargement"

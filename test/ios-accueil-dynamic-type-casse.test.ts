@@ -2,14 +2,13 @@
 // `ios-accueil-dynamic-type-casse/AC-4` a son test ici, et c'est le SEUL fichier
 // `test/*.test.ts` qui porte ce slug (invariant `criteria/AC-13`).
 //
-// Les preuves Swift des autres critères vivent dans
-// `omp-console/ios/OMPConsoleIOSTests/IOSHomeDynamicTypeTests.swift`, que ce fichier
-// NOMME sans les remplacer :
-//  - AC-1 `rowsStackFromTheFirstAccessibilitySize` (dès accessibility1, la rangée s'empile) ;
-//  - AC-2 `rowsStackAtTheLargestSize` (accessibility5 : empilée, boutons bornés) ;
-//  - AC-3 `rowsStayHorizontalBelowAccessibilitySizes` (xSmall…xxxLarge : une ligne) ;
+// La preuve Swift restante de cette feature vit dans
+// `omp-console/ios/OMPConsoleIOSTests/IOSHomeDynamicTypeTests.swift` :
 //  - AC-4 `rowHookTargetsTheResumeRow` (le crochet `-home.row` vise la rangée Reprendre)
 //    + ce fichier (le script produit les douze captures des rangées).
+// Les règles de ses AC-1..AC-3 (empilement aux tailles d'accessibilité, boutons
+// bornés) ont été remplacées par la règle de contenu de ios-dynamic-type-ax-residuel
+// (`IOSDynamicTypeAXTests`), sans plafond de taille de texte.
 //
 // Règle : tout ce qui doit ÉCHOUER est planté dans une COPIE JETABLE du dépôt (jamais
 // l'arbre réel, qui doit rester publiable).

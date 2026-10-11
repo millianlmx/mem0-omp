@@ -2689,11 +2689,12 @@ dérivées du noyau partagé `ConsoleCore` (`HomePresentation.dashboard`). Le
 « Reprendre » d'une carte en échec ou bloquée part par la même route que celui
 d'une pause (`POST v1/cards/:id/resume`) ; le Mac y reconnaît une pipeline
 relançable et poste la commande `relaunch`, et un refus s'affiche sur la carte
-(« La pipeline n'a pas repris. » et sa cause). En largeur compacte (iPhone),
-chaque rangée tient sur deux lignes : le nom sur toute la largeur, puis la puce
-et le bouton ;
-en largeur régulière (iPad), une seule ligne ; aux tailles d'accessibilité, titre,
-puce et bouton s'empilent. Les gestes de carte suivent l'envoi : « Valider les
+(« La pipeline n'a pas repris. » et sa cause). Une rangée tient sur une ligne
+quand le nom, la puce et le bouton y tiennent ; sinon le nom passe sur sa ligne,
+puis la puce et le bouton côte à côte sur la suivante ; s'ils ne tiennent pas
+ensemble, chacun a sa ligne. La règle ne regarde que la place mesurée, quelle que
+soit la taille de texte, sur iPhone comme sur iPad, et aucune taille de texte n'est
+plafonnée. Les gestes de carte suivent l'envoi : « Valider les
 specs » demande une confirmation (elle lance l'implémentation sur le Mac),
 « Reprendre » et « Accepter la revue » partent aussitôt ; pendant l'envoi, le
 bouton est désactivé et montre « Envoi en cours » jusqu'à la réponse du Mac, sans
@@ -2881,13 +2882,16 @@ partagée `SessionParity`, sans écran fabriqué ; la DERNIÈRE paire reconnue g
 et une valeur inconnue est ignorée :
 
 ```
--sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|longue|chargement|fil-vide|suivi>
+-sessions.recipe <liste|vide|visionneuse|illisible|erreur|en-direct|phases|longue|chargement|fil-vide|suivi>
 ```
 
 - `liste` — la liste peuplée de la session de la fixture ;
 - `vide` — l'état vide réel de l'écran ;
 - `visionneuse` — la feuille du fil ouverte sur la session ;
 - `illisible` — le cas d'une session illisible ;
+- `erreur` — la feuille d'un run vivant dont la lecture échoue (statut 500) : la
+  bannière d'erreur de la visionneuse et « Réessayer », qui relit et retombe dans
+  la même erreur ;
 - `en-direct` — le fil d'un run vivant ;
 - `phases` — une session terminée par étape de pipeline (mêmes titre, dépôt et
   heure) : les icônes d'étape diffèrent, les titres doivent rester alignés ;
@@ -3576,6 +3580,49 @@ plusieurs minutes). Sorties dans
 en mode après, `preuve.md` (tableau avant/après des 20 captures, contrôles).
 Codes : 0 (aucun ✗), 1 (au moins un ✗), 2 (non conclu, par exemple un
 simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
+
+### Recette Dynamic Type sans plafond
+
+```bash
+bash scripts/ios-dynamic-type-recette.sh --avant <ref>
+bash scripts/ios-dynamic-type-recette.sh
+```
+
+La recette de la feature `ios-dynamic-type-ax-residuel` capture, avant
+(`--avant <ref>`, compilé depuis un worktree détaché retiré à la sortie) et
+après (le worktree courant), 27 cibles — Accueil (tableau de bord, titres
+longs, réponse, contrat court et long, rangée « Reprendre »), Sessions, la
+visionneuse (fil, en direct, illisible, `-sessions.recipe erreur`), Mémoire
+(liste, graphe, fiche, souvenir, injoignable), Pipelines (tableau, ardoise,
+fiche, nouvelle feature), Projet (plan, lancement, dialogue), Statistiques et
+Session OMP — sur iPhone en `large`, `accessibility-extra-large` et
+`accessibility-extra-extra-extra-large`, et sur iPad en `large` et
+`accessibility-extra-large`, avec trois captures défilées par cible longue sur
+iPhone aux deux tailles d'accessibilité. Chaque capture est prise au signal de
+sa recette (`memoire-recipe-ready`, `memoire-recipe-read` pour `clavier`,
+`pipelines-board-ready`, `pipelines-recipe-ready`) ou, à défaut, 7 s après le
+lancement, avec son relevé
+`idb ui describe-all`. Elle compile l'app SIGNÉE ad hoc
+(`CODE_SIGN_IDENTITY=-`, contrôle `codesign -dv`), crée ses simulateurs privés
+`zz-dtax-tel` et `zz-dtax-tab` sur iOS 27.0 et les supprime en fin de course
+(companion `idb` tué, aucun processus restant) ; elle ne touche à aucun autre
+simulateur, n'ouvre pas `Simulator.app`, ne lance ni n'arrête l'app Mac et
+n'appaire rien. Sur iPad, la barre latérale est masquée avant chaque capture.
+`rapport.txt` porte une ligne `AC-<n> ✓|✗|– tel <détail>` par contrôle : AC-3
+(bouton « Reprendre » et titre de sa rangée plus hauts en AX-XXXL qu'en
+AX-XL), AC-4 (« Valider les specs » plus large que haut, dans l'écran, seul sur
+sa ligne), AC-6 (pastille du fil sans chevauchement avec « Mémorisation »),
+AC-10 (bannière `ios.session.error` présente) et AC-11 (filtre
+`ios.sessions.filter` dans la largeur de l'écran) ; en mode avant ces lignes
+sont informatives et la recette `erreur`, inconnue de la base, est marquée
+« sans objet ». Sorties dans
+`omp-console/build/ios-dynamic-type/{avant,apres}/` (non versionné) : `png/`,
+`logs/`, `rapport.txt` et, en mode après, `preuve.md` (table des constats de
+l'audit, contrôles, et une ligne de relecture par paire avant/après, dont les
+colonnes déjà remplies sont reprises quand la passe après est relancée).
+Codes : 0 (aucun ✗ en mode après), 1 (au moins un ✗ en mode après), 2 (non
+conclu, par exemple un simulateur non supprimé). Jamais lancée par check.sh ni
+par la CI.
 
 ### Recette idb de la fiche d'une carte
 

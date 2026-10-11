@@ -184,4 +184,34 @@ struct IOSContractMarkdownTests {
         let original = IOSHomeRecipe.contract.sheetCard
         #expect(original.map(IOSHomeContent.contractSlug) == "specs-a-valider")
     }
+
+    // MARK: - ios-dynamic-type-ax-residuel, AC-9
+
+    /// Le constat C-4 de l'audit HIG (contrat en Markdown brut) re-mesuré : les deux
+    /// cartes capturées par `scripts/ios-dynamic-type-recette.sh` (`accueil-contrat`,
+    /// `accueil-contrat-long`) servent « ## Spécifications », des puces « - » et du
+    /// code entre accents graves, et la feuille n'en montre aucune trace. Le
+    /// découpage en blocs ne dépend pas de la taille de texte ; le rendu à AX-XL et
+    /// AX-XXXL est relu sur les captures (`preuve.md`).
+    @Test("ios-dynamic-type-ax-residuel/AC-9 : « ## Spécifications », puces « - » et code entre accents graves se lisent mis en forme")
+    func specificationsCardShowsNoRawMarkdown() {
+        for recipe in [IOSHomeRecipe.contract, .contractLong] {
+            let sections = Self.sections(of: recipe)
+            let source = sections.first { $0.title == "Spécifications" }?.text ?? ""
+            #expect(source.hasPrefix("## Spécifications"), "\(recipe) : la section source porte « ## Spécifications »")
+            #expect(source.contains("\n- "), "\(recipe) : la section source porte des puces « - »")
+            #expect(source.contains("`"), "\(recipe) : la section source porte du code entre accents graves")
+
+            let blocks = sections.flatMap { IOSHomeContent.contractBlocks($0) ?? [] }
+            for block in blocks {
+                let text = Self.visibleText(block)
+                #expect(!text.contains("##"), "\(recipe) : un bloc affiche « ## » : \(text)")
+                #expect(!text.contains("`"), "\(recipe) : un bloc affiche un accent grave : \(text)")
+                #expect(!text.hasPrefix("- ") && !text.contains("\n- "), "\(recipe) : un bloc affiche une puce brute : \(text)")
+            }
+            let specs = Self.body("Spécifications", in: sections) ?? []
+            #expect(specs.contains(where: Self.isList), "\(recipe) : les puces deviennent une liste")
+            #expect(specs.flatMap(Self.inlineTexts).contains(where: Self.hasInlineCode), "\(recipe) : le code devient un run en chasse fixe")
+        }
+    }
 }
