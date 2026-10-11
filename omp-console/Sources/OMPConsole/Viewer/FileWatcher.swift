@@ -156,9 +156,27 @@ final class FileWatcher: @unchecked Sendable {
     /// source vnode ne peut être armée dessus, et la source armée sur son RÉPERTOIRE
     /// ne délivre RIEN pour le fichier lui-même. On veille alors le RÉPERTOIRE par
     /// FSEvents ; le ré-armement rend le vnode dès que le fichier redevient ouvrable.
+    ///
+    /// ARMER PUIS REVÉRIFIER : des dossiers intermédiaires puis la cible créés en
+    /// rafale peuvent apparaître ENTRE le choix de l'ancêtre et l'armement de sa
+    /// source, qui ne délivrerait alors plus jamais rien (mesuré le 2026-10-11 :
+    /// environ une pose sur dix laissait le badge des composants sur « manquants »).
+    /// La cible est donc recalculée après chaque armement, jusqu'à ce qu'elle ne
+    /// bouge plus ; la profondeur du chemin borne la descente.
     private func arm() {
         guard !stopped else { return }
-        let target = watchTarget()
+        var target = watchTarget()
+        for _ in 0...path.split(separator: "/").count {
+            arm(on: target)
+            let current = watchTarget()
+            if current == target { return }
+            target = current
+        }
+    }
+
+    /// Arme UNE cible : source vnode, ou repli FSEvents sur son répertoire quand elle
+    /// n'est pas ouvrable.
+    private func arm(on target: String) {
         guard let descriptor = openTarget(target) else {
             disarmVnode()
             armDirectoryWatch(directory: (target as NSString).deletingLastPathComponent)
