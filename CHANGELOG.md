@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.25.1 — 2026-10-11
+
+- fix(req,test): le service libère l'état des sessions qu'il ferme — fuite mémoire de ~45 Mo par maillon (#144) (4939755)
+
 ## omp-mem0-req 0.25.0 — 2026-10-09
 
 - feat(req,service,panel,relay,test,docs): repli de modèle et quota, brief/journal/arbitre déportés, contexte par run sous 120k (#84) (2e2ad5a)
