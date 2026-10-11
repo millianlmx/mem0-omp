@@ -310,6 +310,7 @@ const EXCEPTIONS: readonly Exception[] = [
   { file: "omp-console/ios/OMPConsoleIOS/IOSHomeText.swift", literal: "review", reason: "valeur de fil `verdict` de l’API (`verdictReview`)" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSHomeRecipeText.swift", constant: "longContract", reason: "contenu factice d’un contract.md de recette (Markdown et code)" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift", constant: "dialogJSON", reason: "JSON du fil de la recette" },
+  { file: "omp-console/ios/OMPConsoleIOS/IOSLaunchRecipeText.swift", constant: "editorDialogJSON", reason: "JSON du fil de la recette" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift", literal: "://", reason: "fragment d’URL cherché dans un motif du Mac" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSMacErrorText.swift", literal: String.raw`\"detail\"`, reason: "clé JSON cherchée dans un motif du Mac" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSSessionOmpText.swift", literal: "ios.sessionomp.launch.commit", reason: "identifiant d’accessibilité" },

@@ -112,8 +112,8 @@ struct IOSProjectDialogSheet: View {
             TextField(dialog.placeholder ?? "", text: $text)
                 .accessibilityIdentifier(ProjectAccessibility.dialogInput)
         case .editor:
-            TextEditor(text: $text)
-                .frame(minHeight: 240)
+            TextField(dialog.placeholder ?? "", text: $text, axis: .vertical)
+                .lineLimit(IOSMetrics.dialogAnswerLines)
                 .accessibilityIdentifier(ProjectAccessibility.dialogInput)
         }
     }
@@ -141,7 +141,10 @@ struct IOSProjectDialogSheet: View {
                         }
                         Spacer(minLength: 8)
                         if selectedIndex == index {
-                            Text(ProjectText.selectedMark)
+                            Image(systemName: IOSHomeText.selectedSymbol)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(Color.accentColor)
+                                .accessibilityHidden(true)
                         }
                     }
                 }

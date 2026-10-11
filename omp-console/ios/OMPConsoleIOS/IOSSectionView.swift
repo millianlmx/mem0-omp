@@ -33,7 +33,7 @@ struct IOSSectionView: View {
     let statsRecipe: IOSStatsRecipe?
     /// Le crochet de recette `-pipelines.board` de l'écran Pipelines.
     let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
-    /// Le crochet de recette `-projet.recipe <lancement|dialogue|plan>` de l'écran Projet.
+    /// Le crochet de recette `-projet.recipe <lancement|dialogue|saisie|plan>` de l'écran Projet.
     let projectRecipe: IOSProjectRecipe?
     /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
     let sessionOmpRecipe: IOSSessionOmpRecipe?

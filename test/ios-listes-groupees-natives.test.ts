@@ -210,7 +210,9 @@ function titleFaults(name: string, source: string): string[] {
 /**
  * AC-4 : les rangées grandissent avec le texte — aucune hauteur fixe ni plafond,
  * aucun libellé plafonné en lignes, sauf l'extrait de souvenir borné par
- * `IOSMetrics.memoryRowLines` (T-3).
+ * `IOSMetrics.memoryRowLines` (T-3) et le champ de réponse vertical du dialogue,
+ * borné par `IOSMetrics.dialogAnswerLines` (ios-finitions-composants, S-5) : il
+ * grandit avec le texte puis défile, rien n'y est tronqué.
  */
 function dynamicTypeFaults(name: string, source: string): string[] {
   const code = stripComments(source);
@@ -222,7 +224,12 @@ function dynamicTypeFaults(name: string, source: string): string[] {
     if (n > 0) faults.push(`${name} : ${token} ×${n}, la rangée doit suivre le texte`);
   }
   const limits = count(code, "lineLimit(");
-  const allowed = name === "IOSMemoryScreen.swift" ? count(code, "lineLimit(IOSMetrics.memoryRowLines(") : 0;
+  const allowed =
+    name === "IOSMemoryScreen.swift"
+      ? count(code, "lineLimit(IOSMetrics.memoryRowLines(")
+      : name === "IOSProjectDialogSheet.swift"
+        ? count(code, "lineLimit(IOSMetrics.dialogAnswerLines)")
+        : 0;
   if (limits !== allowed) faults.push(`${name} : lineLimit( ×${limits - allowed} hors de l'extrait de souvenir`);
   return faults;
 }

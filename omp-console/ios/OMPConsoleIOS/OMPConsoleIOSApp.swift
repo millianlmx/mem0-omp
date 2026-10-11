@@ -36,12 +36,13 @@ import SwiftUI
 ///   partagée `KanbanBoardParity` (une voie vide, une voie « Livrées » de 100
 ///   cartes, des noms longs) à la place de celle du Mac, pour mesurer les voies et
 ///   les cartes sans appairage — un crochet de recette, pas une fonctionnalité.
-/// - `-projet.recipe <lancement|dialogue>` et `-sessionomp.recipe lancement` : la
-///   feuille « Piloter un projet… », « OMP vous demande » ou « Lancer une session
-///   OMP » ouverte d'elle-même sur une fixture (feuilles-ios-presentation-et-depots),
-///   sans réseau ; `-projet.recipe plan` : l'écran Projet vif sur un plan de six
-///   étapes plus haut qu'un écran (ios-listes-groupees-natives), sans réseau — des
-///   crochets de recette, pas des fonctionnalités.
+/// - `-projet.recipe <lancement|dialogue|saisie>` et `-sessionomp.recipe lancement` : la
+///   feuille « Piloter un projet… », « OMP vous demande » (choix, ou saisie libre pour
+///   `saisie`) ou « Lancer une session OMP » ouverte d'elle-même sur une fixture
+///   (feuilles-ios-presentation-et-depots, ios-finitions-composants), sans réseau ;
+///   `-projet.recipe plan` : l'écran Projet vif sur un plan de six étapes plus haut
+///   qu'un écran (ios-listes-groupees-natives), sans réseau — des crochets de
+///   recette, pas des fonctionnalités.
 /// - `-pipelines.board marques` : l'écran Pipelines rend l'ardoise dérivée de
 ///   `HomeParity` (celle de `-pipelines.recipe`), qui porte une carte au pilote
 ///   arrêté, pour voir la phrase de ses marques sans appairage.

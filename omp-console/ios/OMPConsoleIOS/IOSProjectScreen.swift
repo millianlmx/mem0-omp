@@ -30,10 +30,10 @@ struct IOSProjectScreen: View {
     @State private var showingLaunch = false
     @State private var showingRefusal = false
     @State private var showingStop = false
-    /// Le dialogue de la recette `-projet.recipe dialogue`, tant qu'il est ouvert.
+    /// Le dialogue de la recette `-projet.recipe <dialogue|saisie>`, tant qu'il est ouvert.
     @State private var recipeDialog: RpcDialogRequest?
 
-    /// Le crochet de recette `-projet.recipe <lancement|dialogue|plan>`, quand il est donné.
+    /// Le crochet de recette `-projet.recipe <lancement|dialogue|saisie|plan>`, quand il est donné.
     private let recipe: IOSProjectRecipe?
 
     private enum Pane: Hashable {
@@ -347,6 +347,7 @@ struct IOSProjectScreen: View {
         switch recipe {
         case .lancement: showingLaunch = true
         case .dialogue: recipeDialog = IOSLaunchRecipe.dialog
+        case .saisie: recipeDialog = IOSLaunchRecipe.editorDialog
         case .plan, nil: break
         }
     }

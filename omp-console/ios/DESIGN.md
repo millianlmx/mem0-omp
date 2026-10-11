@@ -110,6 +110,9 @@ marqueur `[test: <fonction>]` (une fonction de
   feuille), et la PLAGE de hauteur d'un champ de saisie vertical
   (`IOSMetrics.needLines`, 3…8 lignes du champ « Besoin ») — rien n'y est
   tronqué, le champ défile. `[garde: design-ios/AC-7]`
+- Toute durée (`ConsoleFormat.duration`) s'affiche en chiffres à chasse fixe
+  (`.monospacedDigit()`) : Accueil « En cours », carte et fiche Pipelines,
+  valeurs des Statistiques. `[garde: ios-finitions-composants/AC-6]`
 
 ## Marges et cibles tactiles
 
@@ -381,9 +384,10 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   dossier (jamais un chemin absolu), complété par les derniers segments du
   parent pour les seuls homonymes ; la valeur lancée reste la racine complète.
   `[test: repoChoicesUseFolderNames]`
-- Le mot « Dépôt » n'apparaît qu'une fois ; sans dépôt choisi, le sélecteur
-  affiche l'invite « Choisir un dépôt » et « Lancer » est inactif.
-  `[capture: iphone-nouvelle-feature-vide-light]`
+- Le dépôt se choisit dans un `Picker` natif, rangée « Dépôt » (le mot n'apparaît
+  qu'une fois) ; sans dépôt choisi, il affiche l'invite « Choisir un dépôt »,
+  inactive dans le menu, et « Lancer » est inactif.
+  `[capture: iphone-nouvelle-feature-vide-light]` `[garde: ios-finitions-composants/AC-8]`
 - Les champs titre et besoin portent les libellés VoiceOver « Titre » et
   « Besoin », sans libellé visible ajouté.
   `[capture: iphone-nouvelle-feature-choisi-light]`
@@ -399,9 +403,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - La fiche d'une carte affiche son titre complet une seule fois, dans le corps, sur
   autant de lignes qu'il faut ; la barre porte « Pipelines » et « Fermer » (44 pt).
   `[capture: iphone-pipelines-fiche-*]`
-- « Reprendre » est l'action principale (bouton plein, accent) ; « Arrêter… » est
-  secondaire, rouge à contour, et passe par sa confirmation.
-  `[capture: iphone-pipelines-fiche-actions-*]`
+- « Reprendre » et « Arrêter… » sont des rangées de bouton système ; « Arrêter… »
+  porte le rôle destructif (texte rouge, sans capsule ni contour) et passe par sa
+  confirmation. `[capture: iphone-pipelines-fiche-actions-*]`
 - Le modèle s'affiche par son nom lisible du catalogue servi par le Mac, l'identifiant
   brut sinon. `[test: modelNameFromCatalog]`
 - Chaque élément de la fiche porte son propre identifiant `pipelines.card.sheet.*`.
@@ -829,6 +833,13 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   inchangé (`IOSSessionThreadView`). « Piloter un projet » et « Nouvelle
   feature » restent les `Form` qu'ils étaient. `[capture: iphone-pipelines-fiche-*]`
   `[capture: iphone-nouvelle-feature-*]`
+- Dans « OMP vous demande », l'option choisie porte la coche SF Symbol `checkmark`
+  (accent, masquée à VoiceOver, trait « sélectionné »), jamais le caractère « ✓ ».
+  `[garde: ios-finitions-composants/AC-2]`
+- La réponse libre d'« OMP vous demande » (forme éditeur) est un champ vertical :
+  3 lignes à vide, il grandit jusqu'à 8 lignes puis défile dans le champ
+  (`IOSMetrics.dialogAnswerLines`), sans hauteur en points.
+  `[garde: ios-finitions-composants/AC-5]`
 
 ## Gestes et retours natifs (feature `ios-gestes-et-retours-natifs`)
 

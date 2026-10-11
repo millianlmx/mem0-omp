@@ -77,26 +77,29 @@ function submitBody(view: string): string {
 
 // ---------------------------------------------------------------------------
 
-/** AC-1 : le mot « Dépôt » n'est écrit qu'une fois, et le sélecteur le porte pour VoiceOver. */
+/**
+ * AC-1 : le mot « Dépôt » n'est écrit qu'une fois — le libellé du `Picker` natif, qui
+ * sert aussi de libellé VoiceOver (ios-finitions-composants, S-8) ; aucun en-tête de
+ * section ni libellé d'accessibilité ne le redit.
+ */
 function repoWordFaults(root: string): string[] {
   const view = code(root, SHEET);
   if (view === "") return ["NewFeatureSheetView.swift absent"];
   const faults: string[] = [];
-  if (/Picker\(\s*NewFeatureText\.repo\b/.test(view)) faults.push("le Picker redit « Dépôt » en libellé");
   const uses = view.match(/NewFeatureText\.repo\b/g)?.length ?? 0;
-  if (uses !== 2) faults.push(`NewFeatureText.repo employé ${uses} fois (2 attendues : en-tête et libellé d'accessibilité)`);
-  if (!view.includes("Section(NewFeatureText.repo)")) faults.push("l'en-tête de section n'est plus « Dépôt »");
-  if (!view.includes(".accessibilityLabel(NewFeatureText.repo)")) faults.push("le sélecteur ne porte plus le libellé d'accessibilité « Dépôt »");
+  if (uses !== 1) faults.push(`NewFeatureText.repo employé ${uses} fois (1 attendue : le libellé du Picker)`);
+  if (!view.includes("Picker(NewFeatureText.repo, selection: $repo)")) faults.push("le sélecteur n'est pas le Picker libellé « Dépôt »");
+  if (view.includes("Section(NewFeatureText.repo)")) faults.push("un en-tête de section redit « Dépôt »");
+  if (view.includes(".accessibilityLabel(NewFeatureText.repo)")) faults.push("un libellé d'accessibilité redit « Dépôt »");
   return faults;
 }
 
-/** AC-2 : le sélecteur montre le dépôt choisi, par son libellé d'affichage. */
+/** AC-2 : le sélecteur montre le dépôt choisi, par son libellé d'affichage (le tag est la racine). */
 function shownRepoFaults(root: string): string[] {
   const view = code(root, SHEET);
   const faults: string[] = [];
   if (!view.includes("KanbanLaunchRepos.choices(")) faults.push("la feuille ne calcule pas les libellés par KanbanLaunchRepos.choices");
-  if (!view.includes(".accessibilityValue(")) faults.push("le sélecteur n'expose pas sa valeur à l'accessibilité");
-  if (!/current\?\.label/.test(view)) faults.push("le libellé visible n'est pas celui du choix courant");
+  if (!view.includes(".tag(choice.root)")) faults.push("les entrées du Picker ne sont pas étiquetées par leur racine : la valeur choisie ne s'affiche pas");
   return faults;
 }
 
@@ -123,12 +126,12 @@ function menuNamesFaults(root: string): string[] {
   return faults;
 }
 
-/** AC-6 : la valeur lancée est la racine complète, jamais le libellé d'affichage. */
+/** AC-6 : la valeur lancée est la racine complète (le tag du Picker), jamais le libellé d'affichage. */
 function launchedRootFaults(root: string): string[] {
   const view = code(root, SHEET);
   const faults: string[] = [];
-  if (!view.includes("repo = choice.root")) faults.push("toucher une entrée ne pose pas la racine complète");
-  if (view.includes("repo = choice.label")) faults.push("toucher une entrée pose le libellé au lieu de la racine");
+  if (!view.includes(".tag(choice.root)")) faults.push("choisir une entrée ne pose pas la racine complète");
+  if (view.includes(".tag(choice.label)")) faults.push("choisir une entrée pose le libellé au lieu de la racine");
   const body = submitBody(view);
   if (body === "") faults.push("submit() introuvable");
   if (body.includes(".label")) faults.push("submit() emploie un libellé d'affichage");
@@ -205,18 +208,19 @@ function shotsFaults(root: string): string[] {
 test("ios-nouvelle-feature-formulaire/AC-1 : le mot « Dépôt » n'est écrit qu'une fois, le sélecteur le porte en libellé d'accessibilité", () => {
   assert.deepEqual(repoWordFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = copyRepo();
-  plant(copy, SHEET, (t) => t.replace(".accessibilityLabel(NewFeatureText.repo)", ""));
-  assert.ok(repoWordFaults(copy).some((f) => f.includes("« Dépôt »")), "un sélecteur sans libellé doit faire rougir la garde");
-  const copy2 = copyRepo();
-  plant(copy2, SHEET, (t) => t.replace("Menu {", "Picker(NewFeatureText.repo, selection: $repo) {"));
-  assert.ok(repoWordFaults(copy2).some((f) => f.includes("Picker")), "un Picker libellé « Dépôt » doit faire rougir la garde");
+  plant(copy, SHEET, (t) =>
+    t.replace("Section {\n            if repos.isEmpty", "Section(NewFeatureText.repo) {\n            if repos.isEmpty"),
+  );
+  const faults = repoWordFaults(copy);
+  assert.ok(faults.some((f) => f.includes("en-tête")), "un en-tête « Dépôt » réinséré doit faire rougir la garde");
+  assert.ok(faults.some((f) => f.includes("2 fois")), "« Dépôt » écrit deux fois doit faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-2 : le sélecteur affiche en clair le nom du dépôt choisi", () => {
   assert.deepEqual(shownRepoFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = copyRepo();
-  plant(copy, SHEET, (t) => t.replace(".accessibilityValue(shown)", ""));
-  assert.ok(shownRepoFaults(copy).some((f) => f.includes("accessibilité")), "un sélecteur sans valeur doit faire rougir la garde");
+  plant(copy, SHEET, (t) => t.replace(".tag(choice.root)", ""));
+  assert.ok(shownRepoFaults(copy).some((f) => f.includes("racine")), "des entrées sans tag doivent faire rougir la garde");
 });
 
 test("ios-nouvelle-feature-formulaire/AC-3 : sans dépôt choisi, l'invite « Choisir un dépôt » s'affiche et « Lancer » est inactif", () => {
@@ -236,7 +240,7 @@ test("ios-nouvelle-feature-formulaire/AC-5 : le menu de dépôts ne montre que d
 test("ios-nouvelle-feature-formulaire/AC-6 : la feature est lancée avec le chemin complet du dépôt choisi", () => {
   assert.deepEqual(launchedRootFaults(ROOT), [], "l'arbre réel doit être sain");
   const copy = copyRepo();
-  plant(copy, SHEET, (t) => t.replace("repo = choice.root", "repo = choice.label"));
+  plant(copy, SHEET, (t) => t.replace(".tag(choice.root)", ".tag(choice.label)"));
   assert.ok(launchedRootFaults(copy).some((f) => f.includes("libellé")), "un libellé posé comme dépôt doit faire rougir la garde");
 });
 

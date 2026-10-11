@@ -3356,6 +3356,8 @@ jusqu'aux gestes, `arret` y ouvre la confirmation d'arrêt) et l'app écrit
 (deux homonymes `mem0-omp`, un `site-vitrine`) avec `mem0-omp (Projets)`
 présélectionné ; `-projet.recipe dialogue` présente « OMP vous demande » sur un
 choix simple, qu'une réponse ou une annulation ferme sans réseau ;
+`-projet.recipe saisie` présente la même feuille en forme éditeur (réponse libre,
+sans texte prérempli), fermée de même sans réseau ;
 `-projet.recipe plan` rend l'écran Projet vif sur la fixture `IOSProjectPlanRecipe`
 (conduite `plan-recette`, six étapes dont la troisième courante, plus haut qu'un
 écran en AX-XL), la connexion restant celle du client — gestes désactivés, aucun
@@ -3536,6 +3538,44 @@ ne joue pas) et le survol d'iPad (qu'`idb` ne simule pas) se prouvent par les
 tests Swift et la garde `test/ios-gestes-et-retours-natifs.test.ts`. Codes : 0
 (aucun ✗), 1 (au moins un ✗), 2 (non conclu, par exemple un simulateur non
 supprimé ou une erreur d'outil). Jamais lancée par check.sh ni par la CI.
+
+### Recette des finitions de composants
+
+```bash
+bash scripts/ios-finitions-composants-recette.sh --avant df08c50
+bash scripts/ios-finitions-composants-recette.sh
+```
+
+La recette de la feature `ios-finitions-composants` capture, avant (`--avant
+<ref>`) et après (le worktree courant), dix cibles sur iPhone et sur iPad en
+clair : `coche-dialogue` (« OMP vous demande », option choisie),
+`saisie-vide`, `saisie-grandi` et `saisie-max` (réponse libre, `-projet.recipe
+saisie`), `duree-carte`, `duree-fiche` et `duree-stats` (durées), puis
+`depot-vide`, `depot-menu` et `depot-choisi` (dépôt de « Nouvelle feature ») :
+20 captures par moment, chacune avec son relevé `idb ui describe-all`. L'avant
+est compilé depuis un worktree détaché sur `<ref>`, retiré à la sortie, sur
+lequel sont greffés les trois fichiers du crochet `-projet.recipe saisie`
+(`IOSLaunchRecipe.swift`, `IOSLaunchRecipeText.swift`, `IOSProjectScreen.swift`,
+aucun fichier de rendu) : sans eux, la base n'ouvre pas la forme éditeur. L'app
+est compilée SIGNÉE ad hoc (`CODE_SIGN_IDENTITY=-`, contrôle `codesign -dv`) ;
+les simulateurs privés `zz-finitions-tel` et `zz-finitions-tab` (iOS 27.0) sont
+créés par le script et supprimés en fin de course, avec leur `idb_companion` ;
+aucun autre simulateur n'est touché, `Simulator.app` n'est pas ouvert, l'app
+Mac n'est ni lancée ni arrêtée, rien n'est appairé. La saisie passe par codes
+HID (`idb ui key-sequence`, clavier AZERTY) par lots de 10 « qqqq␠ », et la
+hauteur de `ios.projet.dialog.input` est relevée après chaque lot.
+En mode après, `rapport.txt` porte une ligne `AC-<n> ✓|✗ <tel|tab> <détail>`
+par contrôle : AC-2 (option choisie, aucun « ✓ » dans les libellés), AC-5 (H0 ≤
+120 pt, hauteurs croissantes, plateau sur 2 lots), AC-6 (repères des trois
+durées atteints, durée de la fiche lue), AC-8 (le menu propose les trois dépôts
+et l'invite, la rangée montre le dépôt choisi) ; en mode avant, les mêmes
+mesures sortent en `CONSTAT-<n>`. Compter une vingtaine de minutes par moment
+sur un poste chargé (le premier relevé idb d'un simulateur neuf peut attendre
+plusieurs minutes). Sorties dans
+`omp-console/build/ios-finitions-composants/{avant,apres}/` (non versionné) et,
+en mode après, `preuve.md` (tableau avant/après des 20 captures, contrôles).
+Codes : 0 (aucun ✗), 1 (au moins un ✗), 2 (non conclu, par exemple un
+simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
 
 ### Recette idb de la fiche d'une carte
 

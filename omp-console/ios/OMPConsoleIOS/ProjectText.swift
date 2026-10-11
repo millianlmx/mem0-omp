@@ -17,8 +17,6 @@ enum ProjectText {
     /// Le contrôle explicite de relecture des statuts de PR (S-3), symbole SF
     /// `arrow.clockwise`.
     static let refresh = "Relire les statuts"
-    /// La marque du choix courant dans le dialogue « OMP vous demande ».
-    static let selectedMark = "✓"
 
     /// Le message d'un échec de route : le message servi par l'API quand il existe,
     /// sinon le mot de `ConnectionText` pour l'état courant (S-7).

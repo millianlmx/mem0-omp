@@ -26,9 +26,6 @@ enum PipelinesText {
     static func cardSheetId(_ cardId: String) -> String { "pipelines.card.sheet.\(cardId)" }
     static let newFeatureSheetId = "pipelines.newFeature.sheet"
 
-    /// Le chevron du sélecteur de dépôt (un menu : il se déroule, il ne navigue pas).
-    static let repoMenuSymbol = "chevron.up.chevron.down"
-
     // MARK: - Recette `-pipelines.recipe` (crochet de capture, pas une fonctionnalité)
 
     /// Le drapeau partagé par les recettes de l'écran : la feuille « Nouvelle

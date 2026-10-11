@@ -61,6 +61,8 @@ struct IOSFeuillesTests {
         #expect(IOSProjectRecipe.resolve([project, "lancement"]) == .lancement)
         #expect(IOSProjectRecipe.resolve([project, "lancement", project, "dialogue"]) == .dialogue)
         #expect(IOSProjectRecipe.resolve([project, "dialogue", project, "inconnue"]) == .dialogue)
+        #expect(IOSProjectRecipe.resolve([project, "saisie"]) == .saisie)
+        #expect(IOSProjectRecipe.resolve([project, "dialogue", project, "saisie"]) == .saisie)
         #expect(IOSProjectRecipe.resolve([project]) == nil)
         #expect(IOSProjectRecipe.resolve([session, "lancement"]) == nil)
         #expect(IOSSessionOmpRecipe.resolve([session, "lancement"]) == .lancement)
@@ -75,6 +77,11 @@ struct IOSFeuillesTests {
         #expect(dialog.method == .select)
         #expect(dialog.title == "Quelle base pour la feature ?")
         #expect(dialog.options == ["main", "feat/memoire-ios"])
+
+        let editor = try #require(IOSLaunchRecipe.editorDialog)
+        #expect(editor.method == .editor)
+        #expect(editor.prefill == nil)
+        #expect(IOSDialogGating.initialText(dialog: editor) == "")
 
         let fixture = IOSLaunchRecipe.fixture
         #expect(fixture.repos.map(\.repoRoot) == PipelinesText.recipeRepos)
