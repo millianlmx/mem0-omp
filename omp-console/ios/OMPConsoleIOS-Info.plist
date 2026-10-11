@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>OMP Console se connecte à la coque macOS sur votre réseau local pour piloter vos pipelines.</string>
+	<string>OMP Console se connecte à votre Mac sur le réseau local pour afficher et piloter vos pipelines.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_ompconsole._tcp</string>

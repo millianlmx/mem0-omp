@@ -123,6 +123,41 @@ marqueur `[test: <fonction>]` (une fonction de
   système dessine un chevron en pile (iPhone) et aucun en barre latérale (iPad) ;
   aucun chevron n'est dessiné à la main. `[capture: ipad-home-light]`
 
+## Identité de l'app (feature ios-identite-app)
+
+Le nom sous l'icône et la région `fr` sont décrits dans la section précédente ;
+cette section porte ce que l'utilisateur voit avant le premier écran.
+
+- L'icône d'OMP Console a un seul dessin, produit par `bash scripts/app-icon.sh`
+  (programme `scripts/app-icon/dessin.swift`) : un chevron « › » et un trait « _ »
+  sur un fond en dégradé vertical, carré plein cadre, sans texte ni alpha (le
+  système arrondit les coins). `Assets.xcassets/AppIcon.appiconset` en déclare
+  trois variantes de 1024 px : claire (`AppIcon.png`, motif blanc sur #3D9BFF →
+  #0058D6), sombre (`AppIcon-dark.png`, motif #6CB4FF sur #1B3354 → #070D18) et
+  teintée (`AppIcon-tinted.png`, niveaux de gris), compilées par
+  `ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`. Le Mac porte la même icône :
+  `omp-console/Bundle/AppIcon.icns`, construit depuis la variante claire et copié
+  dans le bundle par `scripts/swift-app.sh` (`CFBundleIconFile = AppIcon`).
+  `[test: appIconIsDeclared]`
+- L'accent est le bleu système, sans teinte de marque : `AccentColor.colorset`
+  déclare les quatre valeurs sRGB de `UIColor.systemBlue` (clair #0088FF, sombre
+  #0091FF, contraste élevé #1E6EF4 en clair et #5CB8FF en sombre), jamais la
+  référence `systemBlueColor`, qu'actool compile en une couleur fixe sans variante
+  sombre. Aucun écran ne change de teinte : ni `.tint(` global, ni
+  `Color("AccentColor")` dans les sources. `[test: accentColorIsSystemBlue]`
+- Le message de l'alerte « Réseau local » (`NSLocalNetworkUsageDescription` de
+  `OMPConsoleIOS-Info.plist`) est exactement « OMP Console se connecte à votre Mac
+  sur le réseau local pour afficher et piloter vos pipelines. » : il vouvoie et ne
+  dit ni « coque » ni « macOS ». Le simulateur n'affiche jamais cette alerte
+  (TN3179) : le texte se prouve dans l'app installée.
+  `[test: localNetworkMessageSpeaksToTheUser]`
+- L'écran de lancement est celui que génère Xcode
+  (`INFOPLIST_KEY_UILaunchScreen_Generation = YES`) : un `UILaunchScreen` vide,
+  sans couleur ni image, donc le fond système (#FFFFFF en clair, #000000 en
+  sombre), celui du premier écran — aucun éclair d'une autre couleur à
+  l'ouverture. Ni storyboard, ni `UIColorName`, ni `UIImageName`.
+  `[test: launchScreenUsesSystemBackground]`
+
 ## Les six tons
 
 - `neutral` gris, `info` bleu, `attention` orange, `success` vert, `danger`
