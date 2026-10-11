@@ -193,6 +193,13 @@ for cle in CFBundleIdentifier:"$BUNDLE_RECETTE" CFBundleName:"OMP Console Recett
     || /usr/libexec/PlistBuddy -c "Add :$nom string $valeur" "$plist" >/dev/null 2>&1 \
     || non_executable "l'app n'a pas été construite"
 done
+# App ACCESSOIRE (`LSUIElement`) : sans icône dans le Dock, le Dock ne la passe pas
+# au premier plan quand sa fenêtre paraît. Mesuré le 2026-10-11 : sans cela,
+# environ un lancement `open -g -n` sur douze était activé par le Dock ~0,8 s après
+# le lancement, volant le focus de l'utilisateur et rompant l'isolation.
+/usr/libexec/PlistBuddy -c "Delete :LSUIElement" "$plist" >/dev/null 2>&1
+/usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$plist" >/dev/null 2>&1 \
+  || non_executable "l'app n'a pas été construite"
 if ! codesign --force --sign - "$APP_RECETTE" >/dev/null 2>&1; then
   non_executable "l'app n'a pas été construite"
 fi

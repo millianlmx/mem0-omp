@@ -1,4 +1,323 @@
 {
   "version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "surface": "*",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[0]/AXCell[0]/AXGroup[0]/AXHeading[0]",
+      "justification": "faux positif : en-tête de section de la barre latérale système (« Pilotage », « Consultation ») ; sa hauteur de 14 pt et son action AXPress (replier la section) sont fixées par AppKit, pas par l'app"
+    },
+    {
+      "surface": "*",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[6]/AXCell[0]/AXGroup[0]/AXHeading[0]",
+      "justification": "faux positif : en-tête de section de la barre latérale système (« Pilotage », « Consultation ») ; sa hauteur de 14 pt et son action AXPress (replier la section) sont fixées par AppKit, pas par l'app"
+    },
+    {
+      "surface": "accueil",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "accueil",
+      "regle": "cible-trop-petite",
+      "element": "id:home.allPipelines",
+      "justification": "défaut connu, à corriger hors de cette feature : le lien « Tout afficher » de l'Accueil mesure 77 × 16 pt, sous le seuil de 20 pt"
+    },
+    {
+      "surface": "pipelines",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "pipelines",
+      "regle": "cible-trop-petite",
+      "element": "id:kanban.lane.livrees.header",
+      "justification": "défaut connu, à corriger hors de cette feature : l'en-tête repliable « Livrées » de l'ardoise mesure 220 × 16 pt, sous le seuil de 20 pt"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXSplitter[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "id:components.badge",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "id:main-AppWindow-1, SidebarNavigationSplitView",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "id:session.prompt",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "session-omp",
+      "regle": "hors-ecran",
+      "element": "id:session.send",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Session OMP mesure 920 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le composeur et « Envoyer » à droite)"
+    },
+    {
+      "surface": "sessions",
+      "regle": "identifiant-duplique",
+      "element": "id:ListColumn",
+      "justification": "faux positif : identifiant interne « ListColumn » que SwiftUI pose sur la colonne de chaque List ; la surface en affiche deux (barre latérale et liste de la section)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[0]/AXCell[0]/AXGroup[0]/AXHeading[0]",
+      "justification": "faux positif : en-tête de groupe (dossier) de l'arbre des fichiers, une ligne d'en-tête de NSOutlineView dont la hauteur de 16 pt est fixée par AppKit"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[6]/AXCell[0]/AXGroup[0]/AXHeading[0]",
+      "justification": "faux positif : en-tête de groupe (dossier) de l'arbre des fichiers, une ligne d'en-tête de NSOutlineView dont la hauteur de 16 pt est fixée par AppKit"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[0]/AXCell[0]/AXHeading[0]",
+      "justification": "faux positif : en-tête de groupe (dossier) de l'arbre des fichiers, une ligne d'en-tête de NSOutlineView dont la hauteur de 16 pt est fixée par AppKit"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[1]/AXCell[0]/AXHeading[0]",
+      "justification": "faux positif : en-tête de groupe (dossier) de l'arbre des fichiers, une ligne d'en-tête de NSOutlineView dont la hauteur de 16 pt est fixée par AppKit"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "cible-trop-petite",
+      "element": "id:NSOutlineViewDisclosureButtonKey#1",
+      "justification": "faux positif : triangle de divulgation système de NSOutlineView, à sa taille AppKit (15 × 26 pt)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "cible-trop-petite",
+      "element": "id:NSOutlineViewDisclosureButtonKey#2",
+      "justification": "faux positif : triangle de divulgation système de NSOutlineView, à sa taille AppKit (15 × 26 pt)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[1]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "id:components.badge",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "hors-ecran",
+      "element": "id:main-AppWindow-1, SidebarNavigationSplitView",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Fichiers mesure 981 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet du document à droite)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "identifiant-duplique",
+      "element": "id:ListColumn",
+      "justification": "faux positif : identifiant interne « ListColumn » que SwiftUI pose sur la colonne de chaque List ; la surface en affiche deux (barre latérale et liste de la section)"
+    },
+    {
+      "surface": "fichiers",
+      "regle": "identifiant-duplique",
+      "element": "id:NSOutlineViewDisclosureButtonKey",
+      "justification": "faux positif : identifiant interne qu'AppKit pose sur chaque triangle de divulgation de NSOutlineView"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[0]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[1]",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "id:components.badge",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "id:main-AppWindow-1, SidebarNavigationSplitView",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "id:memoire.detail",
+      "justification": "défaut connu, à corriger hors de cette feature : à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large ; la fenêtre centre la vue partagée et en rogne les deux bords (la barre latérale à gauche, le volet de lecture d'un souvenir à droite)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "identifiant-duplique",
+      "element": "id:ListColumn",
+      "justification": "faux positif : identifiant interne « ListColumn » que SwiftUI pose sur la colonne de chaque List ; la surface en affiche deux (barre latérale et liste de la section)"
+    },
+    {
+      "surface": "statistiques",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXScrollArea[0]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "statistiques",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "statistiques",
+      "regle": "identifiant-duplique",
+      "element": "id:stats.chart",
+      "justification": "défaut connu, à corriger hors de cette feature : l'identifiant `stats.chart` se propage aux deux graphiques ET à leurs titres (« Tokens envoyés », « Tokens reçus »), 4 occurrences"
+    },
+    {
+      "surface": "nouvelle-pipeline",
+      "regle": "identifiant-duplique",
+      "element": "id:models.implReview",
+      "justification": "défaut connu, à corriger hors de cette feature : l'identifiant `models.implReview` est porté à la fois par le sélecteur (AXPopUpButton) et par son libellé (AXStaticText)"
+    },
+    {
+      "surface": "nouvelle-pipeline",
+      "regle": "identifiant-duplique",
+      "element": "id:models.reqSpecs",
+      "justification": "défaut connu, à corriger hors de cette feature : l'identifiant `models.reqSpecs` est porté à la fois par le sélecteur (AXPopUpButton) et par son libellé (AXStaticText)"
+    },
+    {
+      "surface": "fiche-carte",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXGroup[0]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "fiche-carte",
+      "regle": "cible-trop-petite",
+      "element": "id:kanban.detail.technical",
+      "justification": "faux positif : DisclosureGroup système « Détails techniques », à la hauteur standard d'AppKit (16 pt)"
+    },
+    {
+      "surface": "modeles",
+      "regle": "identifiant-duplique",
+      "element": "id:models.implReview",
+      "justification": "défaut connu, à corriger hors de cette feature : l'identifiant `models.implReview` est porté à la fois par le sélecteur (AXPopUpButton) et par son libellé (AXStaticText)"
+    },
+    {
+      "surface": "modeles",
+      "regle": "identifiant-duplique",
+      "element": "id:models.reqSpecs",
+      "justification": "défaut connu, à corriger hors de cette feature : l'identifiant `models.reqSpecs` est porté à la fois par le sélecteur (AXPopUpButton) et par son libellé (AXStaticText)"
+    },
+    {
+      "surface": "memoire-lien",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXGroup[0]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    }
+  ]
 }
