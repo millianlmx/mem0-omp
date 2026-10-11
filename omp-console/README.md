@@ -2594,23 +2594,37 @@ absence en échec.
 
 `omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle :
 sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
-sont hors périmètre), une seule navigation adaptative — barre latérale à deux
-groupes sur iPad, pile sur iPhone — et, pour chaque section, son écran avec son
-état vide RÉEL. Elle n'a ni magasin local, ni écriture du magasin : son seul accès
+sont hors périmètre), une seule barre d'onglets native (`TabView`, style
+`.sidebarAdaptable`) — sur iPhone, cinq onglets en bas (Accueil, Pipelines,
+Sessions, Mémoire, « Plus »), « Plus » étant une liste titrée qui pousse Projet,
+Session OMP et Statistiques dans sa propre pile ; sur iPad, une barre latérale
+titrée « OMP Console », visible dès le lancement, à deux groupes (Pilotage :
+Accueil, Pipelines, Projet, Session OMP ; Consultation : Sessions, Mémoire,
+Statistiques), la barre d'onglets du haut n'apparaissant que lorsqu'on masque la
+barre latérale — et, pour chaque section, son écran avec son état vide RÉEL.
+Chaque onglet garde sa pile et sa position de défilement quand on en change ;
+passer en largeur compacte (iPad en Split View) range Projet, Session OMP et
+Statistiques sous « Plus », et inversement. Le routage onglet ↔ section est pur
+(`IOSTabs.swift`, testé par `IOSTabsTests`). Elle n'a ni magasin local, ni
+écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
 trousseau et feuille de connexion. Le Mac découvert est joint par son adresse
 IPv4 ou IPv6, lien-local zoné compris ; une adresse s'affiche toujours sans sa
 zone d'interface (`192.168.1.175:8787`, `[fe80::1]:8787`).
 Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
-connecté ou non : sur iPhone, dans la barre de la liste des sections et dans celle
-de chaque écran poussé ; sur iPad, une seule fois, dans la barre du détail. La
-recette `scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
---ipad <UDID>` le prouve au simulateur avec `idb` (captures sous
-`omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
+connecté ou non, une seule fois par écran : sur iPhone, dans la barre de chaque
+onglet, de la liste « Plus » et des écrans qu'elle pousse ; sur iPad, une fois,
+dans la barre de la section. La recette historique
+`scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
+--ipad <UDID>` l'a prouvé au simulateur avec `idb` sur l'ancienne coque (captures
+sous `omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
 (`scripts/ios-build.sh` compile sans signature, et le trousseau du simulateur
 refuse alors d'écrire le jeton d'appairage : l'état connecté serait
 inatteignable) et veut des simulateurs dédiés, que les autres runs
-(`ios-shots.sh`) ne pilotent pas.
+(`ios-shots.sh`) ne pilotent pas. Elle et `scripts/ios-accessibilite-localisation-recette.sh`
+naviguent par l'ancienne liste racine (`ios.section.*`) et ne s'appliquent plus à
+la coque à onglets : celle-ci se prouve par `scripts/ios-navigation-onglets-recette.sh`
+(voir plus bas).
 
 Hors connexion, les sept sections suivent la même règle, sur iPhone comme sur
 iPad. Rien encore chargé : la section n'affiche QUE le composant « non connecté »
@@ -2646,11 +2660,10 @@ specs » demande une confirmation (elle lance l'implémentation sur le Mac),
 bouton est désactivé et montre « Envoi en cours » jusqu'à la réponse du Mac, sans
 second envoi possible ; un échec s'affiche sur la carte concernée, en français et
 sans détail technique, et le succès n'a pas de message (la carte suit l'ardoise).
-La
-ligne « Accueil » de la liste racine (iPhone) et de la barre latérale (iPad) porte
-le badge du nombre d'attentes quelle que soit la section affichée (aucune autre
-ligne n'en porte, et rien à zéro), et
-trois feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
+L'onglet Accueil (iPhone) et l'entrée Accueil de la barre latérale (iPad) portent
+le badge du nombre d'attentes quel que soit l'onglet affiché (aucun autre onglet
+n'en porte, et rien à zéro) ; VoiceOver lit « Accueil, N en attente ». Trois
+feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve, avant la feuille de connexion). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong|longTitles|slowMac>`
@@ -2820,7 +2833,7 @@ partagée `SessionParity`, sans écran fabriqué ; la DERNIÈRE paire reconnue g
 et une valeur inconnue est ignorée :
 
 ```
--sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|chargement|fil-vide|suivi>
+-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|longue|chargement|fil-vide|suivi>
 ```
 
 - `liste` — la liste peuplée de la session de la fixture ;
@@ -2830,6 +2843,9 @@ et une valeur inconnue est ignorée :
 - `en-direct` — le fil d'un run vivant ;
 - `phases` — une session terminée par étape de pipeline (mêmes titre, dépôt et
   heure) : les icônes d'étape diffèrent, les titres doivent rester alignés ;
+- `longue` — une liste de 24 sessions terminées, d'identités distinctes, assez
+  longue pour défiler sur iPhone (preuve de la position de défilement conservée
+  au changement d'onglet) ;
 - `chargement` — la feuille ouverte sur une lecture qui ne se termine jamais :
   « Chargement de la session… » reste affiché sous l'en-tête ;
 - `fil-vide` — la feuille ouverte sur la fixture sans aucune entrée : l'état vide
@@ -3175,7 +3191,10 @@ sur le poste, la ligne pourra revenir avec ses quatorze captures.
 
 Un crochet de recette se pose en argument de lancement : `-section <rawValue>`
 ouvre une section précise (`home`, `kanban`, `project`, `session`, `sessions`,
-`memory`, `stats`), `-ios.state error` affiche le bandeau d'erreur sur les
+`memory`, `stats`) — sur iPad, l'entrée de la barre latérale ; sur iPhone,
+l'onglet de la section, et pour `project`, `session` et `stats` l'onglet « Plus »
+avec l'écran déjà poussé, le bouton retour ramenant à la liste « Plus » —,
+`-ios.state error` affiche le bandeau d'erreur sur les
 sept écrans, `-memoire.recipe <graphe|zoom|fiche>` force le mode graphe de la
 section Mémoire sur la fixture partagée `MemoryGraphParity` (`liste` charge la
 même fixture mais reste en mode LISTE et y ouvre la fiche d'un souvenir ;
@@ -3252,6 +3271,30 @@ La capture de l'état d'erreur (artefact de PR, hors des 56) :
 xcrun simctl launch --terminate-running-process <UDID> com.omp.console.ios -section session -ios.state error
 xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-session.png
 ```
+
+### Recette de la navigation à onglets
+
+```bash
+bash scripts/ios-navigation-onglets-recette.sh --avant [<ref>]
+bash scripts/ios-navigation-onglets-recette.sh
+```
+
+La recette de la feature `ios-navigation-onglets-adaptables` prouve la coque à
+onglets avant (`--avant`, par défaut `origin/main` après une mise à jour tentée
+par HTTPS — l'URL SSH de `origin` est réécrite, sans invite ; un échec est noté
+dans le rapport —, compilé depuis un worktree détaché) et après (le worktree
+courant).
+Elle crée ses propres simulateurs privés `zz-onglets-tel` (iPhone) et
+`zz-onglets-tab` (iPad) sur iOS 27.0, les démarre, y installe l'app compilée
+sans signature, puis les supprime en fin de course — elle ne touche à aucun
+autre simulateur, n'ouvre pas `Simulator.app`, ne lance ni n'arrête l'app Mac et
+n'appaire rien. Captures, relevés `idb` et rapports vont dans
+`omp-console/build/ios-navigation-onglets-adaptables/{avant,apres}/` (non
+versionné) ; `rapport.txt` porte une ligne `AC-<n> ✓|✗|– <tel|tab> <détail>` par
+contrôle (en mode avant, des lignes `CONSTAT-<x>` sur l'ancienne coque), et le
+mode après écrit `preuve.md` (commits mesurés, captures par section et appareil,
+verdicts). Elle sort en 0 (aucun ✗), 1 (au moins un ✗) ou 2 (non conclu, par
+exemple un simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
 
 ### Recette idb de la fiche d'une carte
 
@@ -3369,7 +3412,7 @@ dashboard`, `-sessions.recipe liste`, `-memoire.recipe graphe`, `-pipelines.reci
 fiche`) ; Projet, Session OMP, Statistiques et le tableau Pipelines sont relevés
 dans leur état non appairé. Un relevé n'est accepté que si deux lectures
 consécutives de l'arbre sont identiques **et** que la surface est reconnue par ses
-marqueurs d'accessibilité : jamais la liste racine, l'Accueil déconnecté ou une
+marqueurs d'accessibilité : jamais la liste « Plus », l'Accueil déconnecté ou une
 autre section. L'ordre des clés du JSON d'idb et celui de la liste `traits` d'un
 élément changent d'une lecture à l'autre ; la comparaison porte donc sur le JSON
 décodé, `traits` pris comme un ensemble.

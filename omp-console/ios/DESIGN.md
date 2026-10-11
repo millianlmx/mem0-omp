@@ -11,8 +11,8 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Héritage de la coque macOS (par renvoi)
 
 - Le verre (Liquid Glass) est réservé à la couche que le SYSTÈME dessine — barre
-  latérale, barre de navigation, feuilles ; les contenus restent opaques. Règle
-  posée par `omp-console/README.md` §intro et appliquée par
+  latérale, barre d'onglets, barre de navigation, feuilles ; les contenus restent
+  opaques. Règle posée par `omp-console/README.md` §intro et appliquée par
   `omp-console/Sources/OMPConsole/Design/ConsoleSurface.swift`, reprise telle
   quelle par `omp-console/ios/OMPConsoleIOS/Design/IOSSurface.swift` — aucun
   `glassEffect` dans le contenu. `[garde: design-ios/AC-1]`
@@ -28,6 +28,30 @@ marqueur `[test: <fonction>]` (une fonction de
 - Tout libellé durable affiché vient du vocabulaire partagé `ConsoleCore`, mot
   pour mot celui de macOS ; un seul message franchement provisoire vit dans
   `omp-console/ios/OMPConsoleIOS/IOSText.swift`. `[test: emptyStatesUseSharedWords]`
+
+## Navigation (feature `ios-navigation-onglets-adaptables`)
+
+- Sur iPhone, la racine est une barre d'onglets native (`TabView`, style
+  `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Sessions, Mémoire,
+  « Plus » — et chaque onglet ouvre son écran directement, sans bouton retour.
+  `[test: compactTabsAreFourSectionsThenPlus]`
+- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Session OMP
+  et Statistiques ; leur bouton retour ramène à la liste.
+  `[test: plusListsTheThreeOtherSections]`
+- Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
+  avec les groupes Pilotage (Accueil, Pipelines, Projet, Session OMP) puis
+  Consultation (Sessions, Mémoire, Statistiques) ; la barre d'onglets du haut
+  n'apparaît que lorsqu'on masque la barre latérale. `[test: groupedSections]`
+- Chaque onglet garde son état (écran poussé, position de défilement) quand on
+  change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
+  Projet, Session OMP et Statistiques sous « Plus », et inversement.
+  `[test: sizeClassChangeMovesBetweenPlusAndSidebar]`
+- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Session OMP et
+  Statistiques s'ouvrent déjà poussés dans « Plus ».
+  `[test: launchRoutesEachSectionOnIPhone]`
+- Le bouton Connexion (antenne, `connection.open`) figure une seule fois dans la
+  barre de chaque écran : les quatre onglets, la liste « Plus », les écrans
+  qu'elle pousse et les sept sections de l'iPad. `[capture: iphone-*-light]`
 
 ## Surfaces (S-1)
 
@@ -118,10 +142,6 @@ marqueur `[test: <fonction>]` (une fonction de
 - L'icône est légendée « OMP Console » (`INFOPLIST_KEY_CFBundleDisplayName`, Debug
   et Release de la cible app) ; `PRODUCT_NAME` et le bundle restent inchangés,
   pour ne pas perdre l'appairage. `[test: homeScreenNameIsOMPConsole]`
-- La liste racine porte le titre de navigation « OMP Console »
-  (`IOSHomeText.rootTitle`), et chaque rangée est un `NavigationLink(value:)` : le
-  système dessine un chevron en pile (iPhone) et aucun en barre latérale (iPad) ;
-  aucun chevron n'est dessiné à la main. `[capture: ipad-home-light]`
 
 ## Les six tons
 
@@ -332,8 +352,8 @@ marqueur `[test: <fonction>]` (une fonction de
 
 - L'écran porte le titre de navigation `ConsoleSection.home.title`, en grand titre
   par défaut comme les autres sections, dans ses cinq états : aucune bande vide
-  sous la barre, et le bouton retour reste dans la barre titrée quand le tableau
-  de bord défile. `[capture: iphone-home-light]`
+  sous la barre, et la barre titrée reste en place, bouton Connexion compris,
+  quand le tableau de bord défile. `[capture: iphone-home-light]`
 - L'Accueil iOS montre un seul de ses cinq états : indisponible (le composant
   d'état de connexion en plein écran, hors connexion et sans ardoise reçue),
   « OMP absent sur le Mac », chargement, premiers pas, tableau de bord — dans cet
@@ -358,15 +378,15 @@ marqueur `[test: <fonction>]` (une fonction de
   relance : envoi en cours, puis refus du Mac sur la carte (« La pipeline n'a pas
   repris. » et sa cause) ; relancée, la carte passe sous « En cours ».
   `[test: relaunchCardSendsResumeOfItsCard]`
-- La ligne « Accueil » porte le badge du nombre d'attentes (la fonction partagée
-  `HomePresentation.attentionCount`), et rien quand il vaut zéro. `[test: badgeCounts]`
-- Chaque ligne de la liste racine est UN bouton d'accessibilité (`ios.section.<section>`)
-  dont le libellé est le titre de la section, suivi de « , N en attente » quand le
-  badge est visible — la même valeur alimente le badge et le libellé.
+- L'onglet Accueil (iPhone) et l'entrée Accueil de la barre latérale (iPad)
+  portent le badge du nombre d'attentes (`HomePresentation.attentionCount`), et
+  rien quand il vaut zéro. `[test: badgeCounts]`
+- Chaque onglet de section est UN élément d'accessibilité (`ios.tab.<section>`)
+  dont le libellé est le titre, suivi de « , N en attente » quand le badge est
+  visible — la même valeur alimente le badge et le libellé.
   `[test: sectionRowLabelFollowsShownBadge]`
-- Le badge ne dépend pas de la section affichée : la liste racine de l'iPhone le
-  montre au retour de n'importe quel écran, la barre latérale de l'iPad aussi
-  quand une autre section est sélectionnée ; aucune autre ligne n'en porte.
+- Le badge ne dépend pas de l'onglet affiché : l'onglet Accueil le montre depuis
+  n'importe quel onglet, et aucun autre onglet n'en porte.
   `[test: homeRowCarriesPositiveCount]`
 - La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
   (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`

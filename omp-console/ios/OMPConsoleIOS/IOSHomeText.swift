@@ -15,21 +15,29 @@
 import ConsoleCore
 
 enum IOSHomeText {
-    // --- liste racine ---------------------------------------------------------
+    // --- coque : barre latérale et onglet « Plus » ------------------------------
 
-    /// Le titre de navigation de la liste racine : grand titre sur iPhone, en
-    /// ligne en haut de la barre latérale sur iPad, et libellé du bouton retour
-    /// d'un écran poussé sur iPhone.
+    /// Le titre « OMP Console » de la coque : en-tête de la barre latérale de l'iPad
+    /// (`tabViewSidebarHeader`), invisible sur iPhone, où la barre d'onglets n'a
+    /// pas de titre.
     static let rootTitle = "OMP Console"
 
-    // --- rangée de la liste racine (lue par VoiceOver) -------------------------
+    /// Le libellé du cinquième onglet de l'iPhone et le titre de navigation de sa
+    /// liste, qui pousse Projet, Session OMP et Statistiques. C'est aussi le
+    /// libellé du bouton retour des écrans qu'elle pousse.
+    static let plusTitle = "Plus"
+    /// Le symbole SF de l'onglet « Plus ».
+    static let plusSymbol = "ellipsis"
 
-    /// Le mot qui suit le nombre d'un badge visible dans le libellé d'une rangée.
+    // --- onglet de section (lu par VoiceOver) ----------------------------------
+
+    /// Le mot qui suit le nombre d'un badge visible dans le libellé d'un onglet.
     static let rowPending = "en attente"
 
-    /// Le libellé d'accessibilité d'une rangée de section : le titre, suivi du
-    /// badge QUAND il est visible (`badge > 0`). Même valeur que celle passée à
-    /// `.badge(_:)`, donc le libellé annonce un badge si et seulement s'il se voit.
+    /// Le libellé d'accessibilité d'un onglet de section (iPhone) ou d'une entrée
+    /// de la barre latérale (iPad) : le titre, suivi du badge QUAND il est visible
+    /// (`badge > 0`). Même valeur que celle passée à `.badge(_:)`, donc le libellé
+    /// annonce un badge si et seulement s'il se voit.
     static func sectionRowLabel(_ title: String, badge: Int) -> String {
         badge > 0 ? "\(title), \(badge) \(rowPending)" : title
     }
