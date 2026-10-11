@@ -1,8 +1,10 @@
-// Le crochet de RECETTE `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|chargement|fil-vide|suivi>`
+// Le crochet de RECETTE `-sessions.recipe <liste|vide|visionneuse|illisible|en-direct|phases|chargement|fil-vide|suivi|longue>`
 // (BR-7) : il force l'écran Sessions dans un état RÉEL, dérivé de la fixture
 // partagée `SessionParity` — jamais un écran fabriqué. `chargement` laisse la
 // lecture en attente, `fil-vide` sert la fixture sans entrée, `suivi` fait
-// arriver trois messages après l'ouverture (S-6 de visionneuse-session-vide-a-l-ouverture).
+// arriver trois messages après l'ouverture (S-6 de visionneuse-session-vide-a-l-ouverture),
+// `longue` montre vingt-quatre sessions terminées, assez pour faire défiler la
+// liste d'un iPhone (S-6 de ios-navigation-onglets-adaptables).
 //
 // Sans l'argument : aucun effet (l'écran résout son état normalement, depuis
 // l'instantané du client). Comme `IOSSection.resolve` et `IOSHomeRecipe.resolve`,
@@ -27,6 +29,7 @@ enum IOSSessionsRecipe: Equatable {
     case chargement
     case filVide
     case suivi
+    case longue
 
     /// La recette lue dans les arguments de lancement, ou aucune.
     static func resolve(_ arguments: [String]) -> IOSSessionsRecipe? {
@@ -55,6 +58,7 @@ enum IOSSessionsRecipe: Equatable {
         case IOSSessionText.recipeChargement: return .chargement
         case IOSSessionText.recipeFilVide: return .filVide
         case IOSSessionText.recipeSuivi: return .suivi
+        case IOSSessionText.recipeLongue: return .longue
         default: return nil
         }
     }
@@ -63,7 +67,8 @@ enum IOSSessionsRecipe: Equatable {
 
     /// La liste montrée : la session de la fixture, ou rien du tout (`.vide`, qui
     /// montre l'état vide RÉEL de l'écran). `.phases` montre cinq sessions
-    /// terminées, une par étape du pipeline, aux identités distinctes.
+    /// terminées, une par étape du pipeline, aux identités distinctes ; `.longue`
+    /// en montre `longCount`, aux identités distinctes, aux étapes en rotation.
     var list: SessionList {
         switch self {
         case .vide:
@@ -71,6 +76,12 @@ enum IOSSessionsRecipe: Equatable {
         case .phases:
             let choices = PipelinePhase.allCases.compactMap {
                 Self.fixtureChoice(state: .ended(.done), phase: $0, phaseSuffixed: true)
+            }
+            return SessionList(choices: choices, storeAbsent: false, discarded: 0)
+        case .longue:
+            let phases = PipelinePhase.allCases
+            let choices = (0..<Self.longCount).compactMap {
+                Self.fixtureChoice(state: .ended(.done), phase: phases[$0 % phases.count], longIndex: $0)
             }
             return SessionList(choices: choices, storeAbsent: false, discarded: 0)
         default:
@@ -88,7 +99,7 @@ enum IOSSessionsRecipe: Equatable {
     var thread: IOSSessionsRecipeThread? {
         guard let payload = Self.fixturePayload else { return nil }
         switch self {
-        case .liste, .vide, .phases:
+        case .liste, .vide, .phases, .longue:
             return nil
         case .visionneuse:
             return Self.thread(payload: payload, run: nil)
@@ -116,6 +127,10 @@ enum IOSSessionsRecipe: Equatable {
         }
     }
 
+    /// Le nombre de sessions de la recette `longue` : de quoi déborder l'écran
+    /// d'un iPhone, pour prouver qu'une position de défilement est conservée.
+    static let longCount = 24
+
     // MARK: - La fixture partagée
 
     /// La charge utile de référence, décodée du littéral partagé `SessionParity`.
@@ -127,15 +142,23 @@ enum IOSSessionsRecipe: Equatable {
     /// Le run de la session de la fixture : son identité vient de l'EN-TÊTE
     /// (`cwd` + `id`), son horodatage de sa première entrée. Seuls la phase et
     /// l'état sont choisis par la recette — c'est ce qui rend « En cours » et
-    /// « Terminé » exerçables par une capture.
+    /// « Terminé » exerçables par une capture. `longIndex` (recette `longue`)
+    /// suffixe l'identifiant par le rang de la session.
     private static func fixtureChoice(
-        state: RunChoiceState, phase: PipelinePhase = .impl, phaseSuffixed: Bool = false
+        state: RunChoiceState, phase: PipelinePhase = .impl, phaseSuffixed: Bool = false, longIndex: Int? = nil
     ) -> RunChoice? {
         guard let header = fixturePayload?.header else { return nil }
         let cwd = header.cwd
-        // La recette `phases` suffixe l'identifiant par l'étape : sans cela, les cinq
-        // lignes partageraient un `id` (le fichier de session) et SwiftUI les fusionnerait.
-        let fileID = phaseSuffixed ? IOSSessionText.phaseSessionID(header.id, phase) : header.id
+        // Les recettes `phases` et `longue` suffixent l'identifiant (étape ou rang) : sans
+        // cela, leurs lignes partageraient un `id` (le fichier de session) et SwiftUI les fusionnerait.
+        let fileID: String
+        if let longIndex {
+            fileID = IOSSessionText.longSessionID(header.id, longIndex)
+        } else if phaseSuffixed {
+            fileID = IOSSessionText.phaseSessionID(header.id, phase)
+        } else {
+            fileID = header.id
+        }
         let sessionFile = IOSSessionText.sessionFile(cwd, fileID)
         // Le label n'a PAS de `/` : `RunChoice.split` tire alors le dépôt du
         // dernier segment du `cwd`, calculé dans ConsoleCore — l'app iOS ne

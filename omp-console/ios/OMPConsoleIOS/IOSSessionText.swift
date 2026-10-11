@@ -127,6 +127,7 @@ enum IOSSessionText {
     static let recipeChargement = "chargement"
     static let recipeFilVide = "fil-vide"
     static let recipeSuivi = "suivi"
+    static let recipeLongue = "longue"
 
     /// Le texte du n-ième message ajouté par la recette `suivi` : chaque ajout
     /// se reconnaît à l'œil sur une capture.
@@ -135,6 +136,10 @@ enum IOSSessionText {
     /// L'identifiant d'une session de la recette `phases` : celui de l'en-tête de
     /// la fixture, suffixé par l'étape, pour que les cinq lignes soient distinctes.
     static func phaseSessionID(_ id: String, _ phase: PipelinePhase) -> String { "\(id)-\(phase.rawValue)" }
+
+    /// L'identifiant d'une session de la recette `longue` : celui de l'en-tête de
+    /// la fixture, suffixé par son rang, pour que les vingt-quatre lignes soient distinctes.
+    static func longSessionID(_ id: String, _ index: Int) -> String { "\(id)-\(index)" }
 
     /// Le motif « fichier illisible » de la recette : le même que celui que la
     /// suite macOS épingle sur un fichier aux droits retirés.

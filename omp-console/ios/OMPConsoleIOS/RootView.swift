@@ -2,12 +2,15 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// La racine UNIQUE de l'app iOS : un seul `NavigationSplitView` porte les deux
-/// tailles d'écran. En largeur régulière (iPad) il montre la barre latérale
-/// groupée et le détail côte à côte ; en largeur compacte (iPhone) il replie la
-/// barre latérale en pile racine et pousse le détail — un appui sur une ligne
-/// pousse l'écran de la section, et le bouton retour du système revient à la
-/// liste. Aucune barre d'onglets, aucun `NavigationStack` racine.
+/// La racine UNIQUE de l'app iOS : une barre d'onglets native (`TabView`, style
+/// `.sidebarAdaptable`) porte les deux tailles d'écran. En largeur compacte
+/// (iPhone) elle montre cinq onglets en bas — Accueil, Pipelines, Sessions,
+/// Mémoire, « Plus » — et « Plus » pousse Projet, Session OMP et Statistiques
+/// dans sa propre pile ; en largeur régulière (iPad) elle s'ouvre en barre
+/// latérale groupée (Pilotage, Consultation), la barre d'onglets du haut
+/// n'apparaissant que lorsque l'utilisateur masque la barre latérale. Chaque
+/// onglet a sa `NavigationStack` : changer d'onglet conserve écran poussé et
+/// défilement. Le routage onglet ↔ section est pur (`IOSTabs`).
 ///
 /// Elle porte le crochet de recette de l'état d'écran (S-3). La rotation, elle,
 /// n'est PAS pilotée par l'app : `simctl` n'a aucune sous-commande pour tourner
@@ -21,11 +24,12 @@ import SwiftUI
 /// l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune section n'a été
 /// demandée par `-section` ; un Mac injoignable laisse l'Accueil dans son état
 /// dégradé. Le bouton antenne `connectionToolbarItem` la rouvre à la demande :
-/// sur la liste des sections en largeur compacte, et sur la colonne détail
-/// toujours — exactement un bouton à l'écran. La ligne « Accueil » porte le badge
-/// du nombre d'attentes (S-12), quelle que soit la section affichée.
+/// posé une fois sur l'écran de section (`sectionScreen`, contenu de chaque
+/// onglet ET destination de « Plus ») et une fois sur la liste « Plus » —
+/// exactement un bouton par écran. L'onglet Accueil porte le badge du nombre
+/// d'attentes (S-12), quel que soit l'onglet affiché.
 struct RootView: View {
-    @State private var selection: ConsoleSection?
+    @State private var route: IOSTabRoute
     @State private var state: IOSScreenState
     @StateObject private var client = ConsoleClientModel.live()
     /// Les gestes de carte de l'Accueil : l'état en vol survit à une sortie puis un
@@ -77,7 +81,7 @@ struct RootView: View {
         sessionOmpRecipe: IOSSessionOmpRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
-        _selection = State(initialValue: selection)
+        _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
         _state = State(initialValue: state)
         self.recipe = recipe
         self.recipeRow = recipeRow
@@ -94,68 +98,43 @@ struct RootView: View {
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $selection) {
-                ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
-                    Section(group.title) {
-                        ForEach(IOSSection.sections(of: group)) { section in
-                            let badge = IOSHomeContent.rowBadge(
-                                for: section, attentionCount: attentionCount)
-                            // Le lien rend les chevrons du SYSTÈME : dessinés en
-                            // pile (iPhone), absents en barre latérale (iPad).
-                            NavigationLink(value: section) {
-                                Label(section.title, systemImage: IOSSection.systemImage(of: section))
-                                    .badge(badge)
-                            }
-                            .tag(section)
-                            .accessibilityElement(children: .ignore)
-                            .accessibilityLabel(IOSHomeText.sectionRowLabel(section.title, badge: badge))
-                            .accessibilityAddTraits(.isButton)
-                            .accessibilityIdentifier("ios.section." + section.rawValue)
+        TabView(selection: shownRoute.tab) {
+            ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
+                TabSection(group.title) {
+                    ForEach(IOSSection.sections(of: group)) { section in
+                        let badge = IOSHomeContent.rowBadge(
+                            for: section, attentionCount: attentionCount)
+                        Tab(section.title, systemImage: IOSSection.systemImage(of: section), value: IOSTab.section(section)) {
+                            NavigationStack { sectionScreen(section) }
                         }
+                        .badge(badge)
+                        .hidden(IOSTabs.isHidden(.section(section), compact: isCompact))
+                        .accessibilityLabel(IOSHomeText.sectionRowLabel(section.title, badge: badge))
+                        .accessibilityIdentifier("ios.tab." + section.rawValue)
                     }
                 }
             }
-            .navigationTitle(IOSHomeText.rootTitle)
-            .toolbar {
-                if sizeClass == .compact {
-                    connectionToolbarItem
+            Tab(IOSHomeText.plusTitle, systemImage: IOSHomeText.plusSymbol, value: IOSTab.plus) {
+                NavigationStack(path: shownRoute.plusPath) {
+                    plusList.navigationDestination(for: ConsoleSection.self) { sectionScreen($0) }
                 }
             }
-        } detail: {
-            Group {
-                if selection == .home {
-                    HomeView(
-                        client: client,
-                        gestures: homeGestures,
-                        recipe: recipe,
-                        recipeRow: recipeRow,
-                        showConnection: $showConnection,
-                        onSelectSection: { selection = $0 }
-                    )
-                } else {
-                    IOSSectionView(
-                        section: selection ?? .home,
-                        state: state,
-                        client: client,
-                        recipe: sessionRecipe,
-                        memoryRecipe: memoryRecipe,
-                        pipelinesRecipe: pipelinesRecipe,
-                        cardRecipe: cardRecipe,
-                        statsRecipe: statsRecipe,
-                        pipelinesBoardRecipe: pipelinesBoardRecipe,
-                        projectRecipe: projectRecipe,
-                        sessionOmpRecipe: sessionOmpRecipe,
-                        showConnection: $showConnection,
-                        newFeatureRequested: $newFeatureRequested
-                    )
-                }
-            }
-            .toolbar { connectionToolbarItem }
+            .hidden(IOSTabs.isHidden(.plus, compact: isCompact))
+            .accessibilityIdentifier("ios.tab.plus")
         }
-        .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: selection) { selection = $0 })
+        .tabViewStyle(.sidebarAdaptable)
+        .defaultAdaptableTabBarPlacement(.sidebar)
+        .tabViewSidebarHeader {
+            Text(IOSHomeText.rootTitle)
+                .font(.title.bold())
+                .accessibilityAddTraits(.isHeader)
+        }
+        .onChange(of: sizeClass, initial: true) { _, size in
+            route = IOSTabs.adapt(route, compact: size == .compact)
+        }
+        .focusedSceneValue(\.iosSelectSection, IOSSectionSelector(current: IOSTabs.shown(currentRoute)) { select($0) })
         .focusedSceneValue(\.iosNewFeature, IOSCommandAction(owner: .kanban, isEnabled: true) {
-            selection = .kanban
+            select(.kanban)
             newFeatureRequested = true
         })
         .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
@@ -175,9 +154,81 @@ struct RootView: View {
         }
     }
 
+    /// Vrai en largeur compacte (iPhone, iPad en Split View étroit) : la barre
+    /// d'onglets range alors Projet, Session OMP et Statistiques sous « Plus ».
+    private var isCompact: Bool { sizeClass == .compact }
+
+    /// La route ramenée à la classe de taille COURANTE. `route` peut la précéder
+    /// d'une passe : au lancement (`-section stats` sur iPhone) et à chaque
+    /// changement de largeur, `.onChange(of: sizeClass)` ne l'adapte qu'APRÈS le
+    /// rendu, alors que `.hidden(_:)` suit déjà la nouvelle taille — et UIKit
+    /// interrompt l'app si la sélection désigne un onglet masqué. Sélection et
+    /// masquage se lisent donc tous deux depuis `isCompact`, dans la même passe.
+    private var currentRoute: IOSTabRoute { IOSTabs.adapt(route, compact: isCompact) }
+
+    /// Les liaisons de la barre d'onglets et de la pile de « Plus » : elles lisent
+    /// `currentRoute` et écrivent dans `route`.
+    private var shownRoute: Binding<IOSTabRoute> {
+        Binding(get: { currentRoute }, set: { route = $0 })
+    }
+
+    /// L'écran d'une section, avec son bouton antenne. Fonction UNIQUE : elle sert
+    /// au contenu de chaque onglet de section ET à la destination de « Plus »,
+    /// donc chaque écran porte le bouton exactement une fois.
+    @ViewBuilder
+    private func sectionScreen(_ section: ConsoleSection) -> some View {
+        Group {
+            if section == .home {
+                HomeView(
+                    client: client,
+                    gestures: homeGestures,
+                    recipe: recipe,
+                    recipeRow: recipeRow,
+                    showConnection: $showConnection,
+                    onSelectSection: { select($0) }
+                )
+            } else {
+                IOSSectionView(
+                    section: section,
+                    state: state,
+                    client: client,
+                    recipe: sessionRecipe,
+                    memoryRecipe: memoryRecipe,
+                    pipelinesRecipe: pipelinesRecipe,
+                    cardRecipe: cardRecipe,
+                    statsRecipe: statsRecipe,
+                    pipelinesBoardRecipe: pipelinesBoardRecipe,
+                    projectRecipe: projectRecipe,
+                    sessionOmpRecipe: sessionOmpRecipe,
+                    showConnection: $showConnection,
+                    newFeatureRequested: $newFeatureRequested
+                )
+            }
+        }
+        .toolbar { connectionToolbarItem }
+    }
+
+    /// La liste de l'onglet « Plus » (iPhone) : des rangées système qui poussent
+    /// Projet, Session OMP et Statistiques dans la pile de l'onglet.
+    private var plusList: some View {
+        List(IOSTabs.plusSections) { section in
+            NavigationLink(value: section) {
+                Label(section.title, systemImage: IOSSection.systemImage(of: section))
+            }
+            .accessibilityIdentifier("ios.plus." + section.rawValue)
+        }
+        .navigationTitle(IOSHomeText.plusTitle)
+        .toolbar { connectionToolbarItem }
+    }
+
+    /// Affiche une section (⌘<n>, ⌘N, « Tout afficher ») par le routage pur.
+    private func select(_ section: ConsoleSection) {
+        route = IOSTabs.route(from: currentRoute, to: section, compact: isCompact)
+    }
+
     /// Le bouton antenne (« Connexion ») : rouvre la feuille de connexion, sans
-    /// condition. Il est posé sur CHAQUE colonne qui porte une barre — jamais sur
-    /// le `NavigationSplitView` lui-même, dont la barre n'est affichée nulle part.
+    /// condition. Il est posé sur l'écran de section et sur la liste « Plus » —
+    /// jamais sur le `TabView` lui-même.
     @ToolbarContentBuilder
     private var connectionToolbarItem: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
@@ -190,7 +241,7 @@ struct RootView: View {
         }
     }
 
-    /// Le compte d'attentes de la ligne « Accueil » : celui de la recette quand
+    /// Le compte d'attentes de l'onglet Accueil : celui de la recette quand
     /// `-home.recipe` est donné, sinon le compte en direct (S-12).
     private var attentionCount: Int {
         recipe?.badge ?? IOSHomeContent.badge(omp: client.omp, board: client.board)
@@ -213,7 +264,7 @@ struct RootView: View {
     }
 
     private var welcomeDue: Bool {
-        IOSHomeContent.welcomeDue(welcomeSeen: client.welcomeSeen, section: selection ?? .home)
+        IOSHomeContent.welcomeDue(welcomeSeen: client.welcomeSeen, section: IOSTabs.shown(currentRoute) ?? .home)
     }
 
     /// La feuille s'ouvre d'elle-même sans jeton ou sur un jeton refusé, jamais

@@ -66,10 +66,10 @@ enum IOSHomeContent {
         HomePresentation.attentionCount(omp: omp, board: board)
     }
 
-    /// Le badge d'UNE ligne de la liste racine / barre latérale : le compte sur la
-    /// ligne « Accueil » seulement, 0 (pas de badge) ailleurs. Indépendant de la
-    /// section affichée : elle ne reçoit pas la sélection. Alimente le badge ET le
-    /// libellé d'accessibilité de la ligne.
+    /// Le badge d'UN onglet (iPhone) ou d'une entrée de barre latérale (iPad) : le
+    /// compte sur l'Accueil seulement, 0 (pas de badge) ailleurs. Indépendant de
+    /// l'onglet affiché : il ne reçoit pas la sélection. Alimente le badge ET le
+    /// libellé d'accessibilité de l'onglet.
     static func rowBadge(for section: ConsoleSection, attentionCount: Int) -> Int {
         section == .home && attentionCount > 0 ? attentionCount : 0
     }
