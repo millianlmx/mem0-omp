@@ -111,6 +111,19 @@ export function runStateFor(key: string): ArmedRunState {
 
 
 /**
+ * Retire l'état d'une session qui se ferme et le rend. L'état du PROCESS (clé
+ * vide) survit à ses sessions : il n'est jamais retiré.
+ */
+export function forgetRunState(key: string): ArmedRunState | undefined {
+  if (key === "") return undefined;
+  const states = holder().states;
+  const known = states.get(key);
+  states.delete(key);
+  return known;
+}
+
+
+/**
  * L'état du PROCESS : celui d'un run enfant (une session, un process) et celui de
  * tout contexte sans session identifiable. Les tests et les handlers qui n'ont pas
  * de session à portée écrivent ici.

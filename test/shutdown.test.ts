@@ -6,9 +6,11 @@
 // de la pompe de boîte, arrêt des runs de lot) tombent sur des états posés par
 // `globalThis` que son parent, encore vivant, utilise.
 //
-// Les trois tests portent l'id du critère qu'ils prouvent (`shutdown/AC-<n>`) et
+// Les tests portent l'id du critère qu'ils prouvent (`shutdown/AC-<n>`) et
 // le fichier est DISCRIMINANT (AC-4) : neutraliser la seule ligne de garde de
 // `omp-mem0-req/extension.ts` rend rouges les tests 1 et 2, le 3 restant vert.
+// AC-5 tient la fuite mémoire du service : retirer l'appel à
+// `releaseSessionState` du handler rend AC-5 rouge.
 //
 // Tout est exercé sur des artefacts RÉELS (répertoires `mkdtempSync`, fichiers de
 // session JSONL, magasin et battement sur disque) et des doublures INJECTÉES
@@ -35,8 +37,9 @@ import reqExtension, {
 } from "../omp-mem0-req/extension.ts";
 // L'état ARMÉ est partagé par `globalThis` : il survit d'un test à l'autre dans ce
 // fichier, donc chaque test part d'un état neuf — comme un process qui démarre.
-import { resetRunStatesForTests } from "../omp-mem0-req/runState.ts";
+import { resetRunStatesForTests, runState } from "../omp-mem0-req/runState.ts";
 import { runStateOf } from "../omp-mem0-req/publish.ts";
+import { markServiceProcess } from "../omp-mem0-req/serviceState.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -345,4 +348,35 @@ test("shutdown/AC-3 : la session propriétaire désarme le relais et arrête la 
     "Error: aucune session /audit active dans ce process",
     "la garde ne sur-protège pas : la fin du propriétaire désarme bien le relais",
   );
+});
+
+// ---------------------------------------------------------------------------
+// AC-5 — le service oublie l'état d'une session hébergée qui se ferme
+// ---------------------------------------------------------------------------
+
+test("shutdown/AC-5 : dans le service, une session qui se ferme ne reste pas retenue par son état", async () => {
+  const { stateDir, auditFile, app, ctx } = await fixture();
+  const relayFile = auditRelayPath(stateDir, auditFile);
+  const before = runStateOf(ctx);
+  const pumpStop = before.pumpStop;
+  assert.equal(typeof pumpStop, "function", "le run armé `--panel-inbox` a bien une pompe");
+  let stops = 0;
+  before.pumpStop = () => {
+    stops += 1;
+    pumpStop?.();
+  };
+
+  // Le service héberge une session par maillon et par arbitrage, et en libère
+  // autant : une entrée jamais retirée retient la session libérée tout entière.
+  markServiceProcess(true);
+  try {
+    await app.hooks.get("session_shutdown")!({ type: "session_shutdown" } as never, ctx as never);
+  } finally {
+    markServiceProcess(false);
+  }
+
+  assert.notEqual(runStateOf(ctx), before, "l'état de la session fermée est oublié : une lecture repart d'un état neuf");
+  assert.equal(stops, 1, "la pompe de la session fermée est arrêtée");
+  assert.equal(runStateOf(undefined), runState, "l'état du PROCESS survit à ses sessions");
+  assert.ok(fs.existsSync(relayFile), "le service garde ses relais : seul l'état de la session est oublié");
 });
