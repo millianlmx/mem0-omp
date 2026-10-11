@@ -220,10 +220,10 @@ ECRANS_NON_CONNECTES = (
 
 
 def marqueur(surface, arbre):
-    """Vrai si l'arbre montre la surface annoncée (ni la racine, ni un écran plein
-    « non connecté » ou « connexion en cours »)."""
+    """Vrai si l'arbre montre la surface annoncée (ni la liste « Plus » de l'onglet
+    du même nom, ni un écran plein « non connecté » ou « connexion en cours »)."""
     ids = _ids(arbre)
-    if any(i.startswith("ios.section.") for i in ids):
+    if any(i.startswith("ios.plus.") for i in ids):
         return False
     if any(i in ids for i in ECRANS_NON_CONNECTES):
         return False

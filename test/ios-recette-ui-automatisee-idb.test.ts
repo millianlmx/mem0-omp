@@ -575,7 +575,7 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou u
   assert.equal(analyser(sansApp).stderr.trim(), "relevé invalide : home-clair-defaut.json");
 
   const racine = analyser(
-    releves({ marqueur: (s, a, t) => (s === "project" && a === "sombre" ? [{ type: "StaticText", AXUniqueId: "ios.section.project", frame: cadre(20, 100, 100, 44) }] : undefined) }),
+    releves({ marqueur: (s, a, t) => (s === "project" && a === "sombre" ? [{ type: "StaticText", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 100, 44) }] : undefined) }),
   );
   assert.equal(racine.status, 2);
   assert.equal(racine.stderr.trim(), "surface non vérifiée : project sombre defaut (marqueur absent)");
@@ -588,7 +588,7 @@ test("relevés : une paire manquante, un JSON illisible, un marqueur absent ou u
   assert.equal(appaire.rapport, "", "aucun rapport écrit quand la recette ne conclut pas");
 });
 
-test("marqueur : vrai sur la surface annoncée, faux sur la liste racine, un écran plein « non connecté » ou « connexion en cours », ou la feuille sur kanban", () => {
+test("marqueur : vrai sur la surface annoncée, faux sur la liste « Plus », un écran plein « non connecté » ou « connexion en cours », ou la feuille sur kanban", () => {
   const sonde = (surface: string, elements: Element[]) => {
     const f = path.join(frais("marqueur"), "releve.json");
     fs.writeFileSync(f, JSON.stringify([application(), ...elements]));
@@ -598,8 +598,8 @@ test("marqueur : vrai sur la surface annoncée, faux sur la liste racine, un éc
   };
   for (const s of SURFACES) assert.equal(sonde(s, marqueurPropre(s)), 0, s);
   for (const s of SURFACES) assert.equal(sonde(s, []), 1, `${s} vide`);
-  const racine: Element = { type: "Button", AXUniqueId: "ios.section.memory", frame: cadre(20, 100, 300, 60) };
-  assert.equal(sonde("home", [...marqueurPropre("home"), racine]), 1);
+  const plus: Element = { type: "Button", AXUniqueId: "ios.plus.project", frame: cadre(20, 100, 300, 60) };
+  assert.equal(sonde("home", [...marqueurPropre("home"), plus]), 1);
   for (const id of ["ios.connexion.horsLigne.ecran", "ios.connexion.enCours.ecran", "ios.connexion.cause", "ios.connexion.attente"]) {
     assert.equal(sonde("home", [...marqueurPropre("home"), { type: "StaticText", AXUniqueId: id, frame: cadre(20, 100, 300, 60) }]), 1, id);
   }

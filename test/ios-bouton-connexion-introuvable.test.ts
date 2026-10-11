@@ -17,6 +17,11 @@
 //  - AC-4 : `identifiersAreUniqueAndComplete` (ConnectionTextTests) pour l'identifiant
 //    `connection.open` ;
 //  - AC-6 : la recette contrôle le diff contre `merge-base`.
+// Depuis `ios-navigation-onglets-adaptables`, la racine est une barre d'onglets
+// (`TabView`) : le bouton est posé sur l'écran de section (`sectionScreen`) et sur
+// la liste « Plus » ; `scripts/ios-connexion-recette.sh` navigue encore par
+// l'ancienne liste racine, le rendu de la coque à onglets se prouve par
+// `scripts/ios-navigation-onglets-recette.sh` (ligne `AC-7`).
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -123,19 +128,19 @@ function occurrences(text: string, needle: string): number {
 
 const ITEM = "connectionToolbarItem";
 
-/** Les quatre segments de `RootView.swift` que les gardes lisent. */
+/** Les segments de `RootView.swift` que les gardes lisent. */
 function segments(root: string): {
   all: string;
-  sidebar: string | null;
-  detail: string | null;
+  screen: string | null;
+  plus: string | null;
   chain: string | null;
   item: string | null;
   beforeItem: string;
 } {
   const all = source(root, ROOT_VIEW);
-  const sidebar = between(all, "NavigationSplitView {", "} detail: {");
-  const detail = between(all, "} detail: {", ".sheet(isPresented: $showWelcome");
-  const chain = between(all, ".sheet(isPresented: $showWelcome", ".onAppear {");
+  const screen = between(all, "func sectionScreen(", "var plusList");
+  const plus = between(all, "var plusList", "func select(");
+  const chain = between(all, "TabView(selection:", ".sheet(isPresented: $showWelcome");
   let item: string | null = null;
   let beforeItem = "";
   const at = all.indexOf(`var ${ITEM}`);
@@ -145,52 +150,58 @@ function segments(root: string): {
     item = next === -1 ? rest : rest.slice(0, next + 1);
     beforeItem = all.slice(Math.max(0, at - 80), at);
   }
-  return { all, sidebar, detail, chain, item, beforeItem };
+  return { all, screen, plus, chain, item, beforeItem };
 }
 
 // ---------------------------------------------------------------------------
 // Fonctions de fautes : chacune rend `string[]`, vide = sain.
 
-/** La barre de la liste des sections porte le bouton, en largeur compacte seulement. */
-function sidebarFaults(root: string): string[] {
-  const { all, sidebar } = segments(root);
+/** Les fautes d'un segment qui doit poser le bouton une fois, sans condition de taille. */
+function placementFaults(name: string, segment: string): string[] {
   const faults: string[] = [];
-  if (sidebar === null) return ["RootView.swift : le segment de la barre latérale est introuvable"];
-  if (!sidebar.includes(".toolbar")) faults.push("la barre latérale ne pose aucun .toolbar");
-  const condition = sidebar.indexOf("if sizeClass == .compact");
-  if (condition === -1) faults.push("la barre latérale ne conditionne pas le bouton à `if sizeClass == .compact`");
-  const refs = occurrences(sidebar, ITEM);
-  if (refs !== 1) faults.push(`la barre latérale référence ${ITEM} ${refs} fois (attendu : 1)`);
-  else if (condition !== -1 && sidebar.indexOf(ITEM) < condition) {
-    faults.push(`${ITEM} précède \`if sizeClass == .compact\` dans la barre latérale`);
-  }
-  if (!/@Environment\(\\\.horizontalSizeClass\)\s+private var sizeClass\b/.test(all)) {
-    faults.push("RootView ne déclare pas `@Environment(\\.horizontalSizeClass) private var sizeClass`");
+  if (!segment.includes(".toolbar")) faults.push(`${name} ne pose aucun .toolbar`);
+  const refs = occurrences(segment, ITEM);
+  if (refs !== 1) faults.push(`${name} référence ${ITEM} ${refs} fois (attendu : 1)`);
+  for (const size of ["sizeClass", "isCompact"]) {
+    if (segment.includes(size)) faults.push(`${name} dépend de ${size} : le bouton doit y être inconditionnel`);
   }
   return faults;
 }
 
-/** La colonne détail porte le bouton, sans condition. */
-function detailFaults(root: string): string[] {
-  const { detail } = segments(root);
-  if (detail === null) return ["RootView.swift : le segment du détail est introuvable"];
-  const faults: string[] = [];
-  if (!detail.includes(".toolbar")) faults.push("le détail ne pose aucun .toolbar");
-  const refs = occurrences(detail, ITEM);
-  if (refs !== 1) faults.push(`le détail référence ${ITEM} ${refs} fois (attendu : 1)`);
-  if (detail.includes("sizeClass")) faults.push("le détail dépend de sizeClass : le bouton doit y être inconditionnel");
+/** La liste de l'onglet « Plus » porte le bouton, sans condition. */
+function plusFaults(root: string): string[] {
+  const { plus } = segments(root);
+  if (plus === null) return ["RootView.swift : le segment de la liste « Plus » (`var plusList`) est introuvable"];
+  return placementFaults("la liste « Plus »", plus);
+}
+
+/**
+ * L'écran de section porte le bouton, sans condition ; et cette fonction UNIQUE
+ * sert à la fois au contenu de chaque onglet de section et à la destination de « Plus ».
+ */
+function screenFaults(root: string): string[] {
+  const { screen, chain } = segments(root);
+  if (screen === null) return ["RootView.swift : le segment de l'écran de section (`func sectionScreen(`) est introuvable"];
+  const faults = placementFaults("l'écran de section", screen);
+  if (chain === null) return [...faults, "RootView.swift : la chaîne du `TabView(selection:` est introuvable"];
+  if (!/Tab\([^\n]*value: IOSTab\.section\(section\)\)\s*\{\s*NavigationStack\s*\{\s*sectionScreen\(section\)\s*\}/.test(chain)) {
+    faults.push("l'onglet de section ne rend pas `NavigationStack { sectionScreen(section) }`");
+  }
+  if (!/\.navigationDestination\(for: ConsoleSection\.self\)\s*\{\s*sectionScreen\(\$0\)\s*\}/.test(chain)) {
+    faults.push("la destination de « Plus » ne rend pas `sectionScreen($0)`");
+  }
   return faults;
 }
 
-/** Un seul bouton à l'écran : rien sur le `NavigationSplitView`, deux emplacements exactement. */
+/** Un seul bouton par écran : rien sur le `TabView`, deux emplacements exactement. */
 function uniqueFaults(root: string): string[] {
   const { all, chain } = segments(root);
   const faults: string[] = [];
-  if (chain === null) faults.push("RootView.swift : la chaîne de modificateurs du NavigationSplitView est introuvable");
-  else if (chain.includes(".toolbar")) faults.push("un .toolbar est posé sur le NavigationSplitView lui-même");
+  if (chain === null) faults.push("RootView.swift : la chaîne du `TabView(selection:` est introuvable");
+  else if (chain.includes(".toolbar")) faults.push("un .toolbar est posé sur le TabView lui-même");
   const refs = occurrences(all, ITEM) - occurrences(all, `var ${ITEM}`);
   if (refs !== 2) faults.push(`${ITEM} est référencé ${refs} fois hors déclaration (attendu : 2)`);
-  return [...faults, ...sidebarFaults(root), ...detailFaults(root)];
+  return [...faults, ...plusFaults(root), ...screenFaults(root)];
 }
 
 /** Le bouton ne dépend de rien : même action, mêmes éléments, quel que soit l'état. */
@@ -309,13 +320,25 @@ function plant(root: string, rel: string, from: string, to: string): void {
 
 // ---------------------------------------------------------------------------
 
-test("ios-bouton-connexion-introuvable/AC-1 : la liste racine porte le bouton antenne en largeur compacte", () => {
-  assert.deepEqual(sidebarFaults(ROOT), [], "l'arbre réel doit être sain");
+/** Remplace `from` par `to` dans le seul segment [`start`, `end`) de RootView.swift de la copie `root`. */
+function plantBetween(root: string, start: string, end: string, from: string, to: string): void {
+  const file = path.join(root, ROOT_VIEW);
+  const text = fs.readFileSync(file, "utf8");
+  const a = text.indexOf(start);
+  const b = text.indexOf(end, a + start.length);
+  assert.ok(a !== -1 && b > a, `segment « ${start} » … « ${end} » introuvable dans la copie`);
+  const segment = text.slice(a, b);
+  assert.ok(segment.includes(from), `la faute ne peut pas être plantée : « ${from} » est absent du segment « ${start} »`);
+  fs.writeFileSync(file, text.slice(0, a) + segment.replace(from, to) + text.slice(b));
+}
+
+test("ios-bouton-connexion-introuvable/AC-1 : la liste « Plus » porte le bouton antenne", () => {
+  assert.deepEqual(plusFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(actionFaults(ROOT), []);
   assert.deepEqual(recipeFaults(ROOT, "AC-1"), []);
   const copy = copyRepo();
-  plant(copy, ROOT_VIEW, "if sizeClass == .compact", "if sizeClass == .regular");
-  assert.ok(sidebarFaults(copy).length > 0, "un bouton limité à la largeur régulière doit faire rougir la garde");
+  plantBetween(copy, "var plusList", "func select(", `.toolbar { ${ITEM} }`, "");
+  assert.ok(plusFaults(copy).length > 0, "une liste « Plus » sans bouton doit faire rougir la garde");
   // Un build sans signature rend l'état connecté inatteignable au simulateur (-34018).
   const unsigned = copyRepo();
   plant(unsigned, RECIPE, "-destination \"generic/platform=iOS Simulator\" \\", "-destination \"generic/platform=iOS Simulator\" CODE_SIGNING_ALLOWED=NO \\");
@@ -323,18 +346,14 @@ test("ios-bouton-connexion-introuvable/AC-1 : la liste racine porte le bouton an
 });
 
 test("ios-bouton-connexion-introuvable/AC-2 : chaque écran de section porte le bouton antenne", () => {
-  assert.deepEqual(detailFaults(ROOT), [], "l'arbre réel doit être sain");
+  assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-2"), []);
-  const copy = copyRepo();
-  const rootView = fs.readFileSync(path.join(copy, ROOT_VIEW), "utf8");
-  const start = rootView.indexOf("} detail: {");
-  const end = rootView.indexOf(".sheet(isPresented: $showWelcome");
-  assert.ok(start !== -1 && end > start, "segment du détail introuvable dans la copie");
-  fs.writeFileSync(
-    path.join(copy, ROOT_VIEW),
-    rootView.slice(0, start) + rootView.slice(start, end).replaceAll(ITEM, "autreItem") + rootView.slice(end),
-  );
-  assert.ok(detailFaults(copy).length > 0, "un détail sans bouton doit faire rougir la garde");
+  const bare = copyRepo();
+  plantBetween(bare, "func sectionScreen(", "var plusList", `.toolbar { ${ITEM} }`, "");
+  assert.ok(screenFaults(bare).length > 0, "un écran de section sans bouton doit faire rougir la garde");
+  const bypass = copyRepo();
+  plant(bypass, ROOT_VIEW, "{ sectionScreen($0) }", "{ IOSSectionView(section: $0) }");
+  assert.ok(screenFaults(bypass).length > 0, "une destination de « Plus » qui contourne sectionScreen doit faire rougir la garde");
 });
 
 test("ios-bouton-connexion-introuvable/AC-3 : le bouton ne dépend pas de l'état de connexion", () => {
@@ -355,17 +374,17 @@ test("ios-bouton-connexion-introuvable/AC-4 : la feuille se rouvre à chaque tap
   assert.ok(actionFaults(copy).length > 0, "une réouverture limitée à un état doit faire rougir la garde");
 });
 
-test("ios-bouton-connexion-introuvable/AC-5 : un seul bouton antenne sur iPad", () => {
+test("ios-bouton-connexion-introuvable/AC-5 : un seul bouton antenne par écran", () => {
   assert.deepEqual(uniqueFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(recipeFaults(ROOT, "AC-5"), []);
 
   const doubled = copyRepo();
-  plant(doubled, ROOT_VIEW, ".onAppear {", `.toolbar { ${ITEM} }\n        .onAppear {`);
-  assert.ok(uniqueFaults(doubled).length > 0, "un .toolbar sur le NavigationSplitView doit faire rougir la garde");
+  plant(doubled, ROOT_VIEW, ".tabViewStyle(.sidebarAdaptable)", `.tabViewStyle(.sidebarAdaptable)\n        .toolbar { ${ITEM} }`);
+  assert.ok(uniqueFaults(doubled).length > 0, "un .toolbar sur le TabView doit faire rougir la garde");
 
-  const always = copyRepo();
-  plant(always, ROOT_VIEW, "if sizeClass == .compact", "if true");
-  assert.ok(uniqueFaults(always).length > 0, "un bouton latéral en largeur régulière (doublon) doit faire rougir la garde");
+  const sized = copyRepo();
+  plantBetween(sized, "func sectionScreen(", "var plusList", `.toolbar { ${ITEM} }`, `.toolbar { if sizeClass == .regular { ${ITEM} } }`);
+  assert.ok(uniqueFaults(sized).length > 0, "un bouton conditionné à la classe de taille doit faire rougir la garde");
 });
 
 test("ios-bouton-connexion-introuvable/AC-6 : le correctif reste confiné à la racine", () => {

@@ -503,85 +503,87 @@ test("accessibilite-et-localisation-ios-residu/AC-7 : l'icône est légendée «
   assert.ok(displayNameFaults(renamed).length > 0, "un autre nom affiché doit faire rougir la garde");
 });
 
-// ── AC-8 / AC-9 : liste racine titrée, chevrons du système (S-7) ───────────────
+// ── AC-8 / AC-9 : barre latérale titrée, rangées « Plus » aux chevrons du système (S-7) ──
+// Depuis `ios-navigation-onglets-adaptables`, la racine est une barre d'onglets
+// adaptable : le titre « OMP Console » vit dans l'en-tête de la barre latérale de
+// l'iPad, et les seules rangées poussées par la racine sont celles de « Plus ».
 
-/** Le segment barre latérale de `RootView` : du `NavigationSplitView {` au `} detail: {`. */
-function sidebarSegment(sources: Sources): string | null {
-  const root = get(sources, ROOT_VIEW);
-  const start = root.indexOf("NavigationSplitView {");
-  const end = root.indexOf("} detail: {");
-  return start === -1 || end === -1 || end < start ? null : root.slice(start, end);
+/** Le bloc `{ … }` qui suit `marker` dans `text` (accolades équilibrées), ou null. */
+function block(text: string, marker: string): string | null {
+  const at = text.indexOf(marker);
+  if (at === -1) return null;
+  const open = text.indexOf("{", at);
+  if (open === -1) return null;
+  let depth = 0;
+  for (let i = open; i < text.length; i++) {
+    if (text[i] === "{") depth++;
+    else if (text[i] === "}" && --depth === 0) return text.slice(open, i + 1);
+  }
+  return null;
 }
 
 const ROOT_TITLE = 'static let rootTitle = "OMP Console"';
-const NAVIGATION_TITLE = ".navigationTitle(IOSHomeText.rootTitle)";
+const SIDEBAR_HEADER = ".tabViewSidebarHeader {";
+const TITLE_TEXT = "Text(IOSHomeText.rootTitle)";
 
 function rootTitleFaults(sources: Sources): string[] {
   const faults: string[] = [];
   if (!get(sources, HOME_TEXT).includes(ROOT_TITLE)) faults.push(`IOSHomeText.swift ne déclare pas ${ROOT_TITLE}`);
-  const sidebar = sidebarSegment(sources);
-  if (sidebar === null) return [...faults, "RootView.swift : le segment barre latérale est introuvable"];
-  const titles = sidebar.split(NAVIGATION_TITLE).length - 1;
-  if (titles !== 1) faults.push(`la barre latérale pose ${NAVIGATION_TITLE} ${titles} fois (attendu : 1)`);
-  if (!/\n\s*\}\s*\.navigationTitle\(IOSHomeText\.rootTitle\)/.test(sidebar)) {
-    faults.push(`${NAVIGATION_TITLE} n'est pas posé sur la List, juste après sa fermeture`);
-  }
+  const root = get(sources, ROOT_VIEW);
+  const titles = root.split(TITLE_TEXT).length - 1;
+  if (titles !== 1) faults.push(`RootView.swift pose ${TITLE_TEXT} ${titles} fois (attendu : 1)`);
+  const header = block(root, SIDEBAR_HEADER);
+  if (header === null) return [...faults, `RootView.swift : l'en-tête de barre latérale ${SIDEBAR_HEADER} est introuvable`];
+  if (!header.includes(TITLE_TEXT)) faults.push(`${TITLE_TEXT} n'est pas dans l'en-tête ${SIDEBAR_HEADER}`);
   return faults;
 }
 
-/**
- * La rangée : le lien enveloppe le `Label` et son `.badge` ; `.tag` puis la chaîne AX
- * de #100, dans cet ordre, suivent le lien.
- */
+/** La rangée de « Plus » : un lien système qui enveloppe le `Label` de la section, identifié `ios.plus.<raw>`. */
 const ROW = new RegExp(
   [
     String.raw`NavigationLink\(value: section\) \{`,
     String.raw`Label\(section\.title, systemImage: IOSSection\.systemImage\(of: section\)\)`,
-    String.raw`\.badge\(badge\)`,
     String.raw`\}`,
-    String.raw`\.tag\(section\)`,
-    String.raw`\.accessibilityElement\(children: \.ignore\)`,
-    String.raw`\.accessibilityLabel\(IOSHomeText\.sectionRowLabel\(section\.title, badge: badge\)\)`,
-    String.raw`\.accessibilityAddTraits\(\.isButton\)`,
-    String.raw`\.accessibilityIdentifier\("ios\.section\." \+ section\.rawValue\)`,
+    String.raw`\.accessibilityIdentifier\("ios\.plus\." \+ section\.rawValue\)`,
   ].join(String.raw`\s*`),
 );
 
 function chevronFaults(sources: Sources): string[] {
   const faults: string[] = [];
-  const sidebar = sidebarSegment(sources);
-  if (sidebar === null) return ["RootView.swift : le segment barre latérale est introuvable"];
-  if (!sidebar.includes("NavigationLink(value: section)")) faults.push("la barre latérale n'enveloppe pas ses rangées dans NavigationLink(value: section)");
-  else if (!ROW.test(sidebar)) faults.push("la rangée n'a pas la forme NavigationLink { Label.badge } .tag + chaîne AX ios.section.<raw>");
-  if (/chevron/i.test(get(sources, ROOT_VIEW))) faults.push("RootView.swift dessine un chevron à la main : c'est le système qui les rend");
+  const root = get(sources, ROOT_VIEW);
+  const plus = block(root, "var plusList");
+  if (plus === null) return ["RootView.swift : la liste « Plus » (`var plusList`) est introuvable"];
+  if (!plus.includes("NavigationLink(value: section)")) faults.push("la liste « Plus » n'enveloppe pas ses rangées dans NavigationLink(value: section)");
+  else if (!ROW.test(plus)) faults.push("la rangée de « Plus » n'a pas la forme NavigationLink { Label } .accessibilityIdentifier(ios.plus.<raw>)");
+  if (/chevron/i.test(root)) faults.push("RootView.swift dessine un chevron à la main : c'est le système qui les rend");
   return faults;
 }
 
-test("accessibilite-et-localisation-ios-residu/AC-8 : la liste racine porte le titre de navigation « OMP Console » (IOSHomeText.rootTitle)", () => {
+test("accessibilite-et-localisation-ios-residu/AC-8 : la barre latérale de l'iPad porte le titre « OMP Console »", () => {
   const sources = repoSources();
   assert.deepEqual(rootTitleFaults(sources), []);
 
-  const removed = plant(sources, ROOT_VIEW, NAVIGATION_TITLE, "");
+  const removed = plant(sources, ROOT_VIEW, TITLE_TEXT, "Text(IOSHomeText.plusTitle)");
   assert.ok(rootTitleFaults(removed).some((f) => f.includes("fois")), "un titre retiré doit faire rougir la garde");
   const renamed = plant(sources, HOME_TEXT, ROOT_TITLE, 'static let rootTitle = "OMPConsoleIOS"');
   assert.ok(rootTitleFaults(renamed).some((f) => f.startsWith("IOSHomeText.swift")), "un autre titre doit faire rougir la garde");
-  const onDetail = plant(
-    plant(sources, ROOT_VIEW, NAVIGATION_TITLE, ""),
+  const elsewhere = plant(
+    plant(sources, ROOT_VIEW, /(\.tabViewSidebarHeader \{\s*)Text\(IOSHomeText\.rootTitle\)/, "$1Text(IOSHomeText.plusTitle)"),
     ROOT_VIEW,
-    "} detail: {",
-    `} detail: {\n            EmptyView()${NAVIGATION_TITLE}`,
+    ".navigationTitle(IOSHomeText.plusTitle)",
+    `.navigationTitle(IOSHomeText.plusTitle)\n        .overlay { ${TITLE_TEXT} }`,
   );
-  assert.ok(rootTitleFaults(onDetail).length > 0, "un titre posé sur le détail et non sur la barre latérale doit faire rougir la garde");
+  assert.ok(rootTitleFaults(elsewhere).some((f) => f.includes("en-tête")), "un titre posé hors de l'en-tête de la barre latérale doit faire rougir la garde");
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-9 : chaque rangée est un NavigationLink(value: section), chevrons rendus par le système et aucun dessiné à la main", () => {
+test("accessibilite-et-localisation-ios-residu/AC-9 : les rangées de « Plus » sont des NavigationLink sans chevron dessiné", () => {
   const sources = repoSources();
   assert.deepEqual(chevronFaults(sources), []);
 
-  const bare = plant(sources, ROOT_VIEW, /NavigationLink\(value: section\) \{\s*(Label\([^\n]*\))\s*(\.badge\(badge\))\s*\}/, "$1\n$2");
+  const bare = plant(sources, ROOT_VIEW, /NavigationLink\(value: section\) \{\s*(Label\([^\n]*\))\s*\}/, "$1");
   assert.ok(chevronFaults(bare).some((f) => f.includes("n'enveloppe pas")), "une rangée sans lien doit faire rougir la garde");
-  const tagInside = plant(sources, ROOT_VIEW, /(\.badge\(badge\))(\s*\})\s*\.tag\(section\)/, "$1\n.tag(section)$2");
-  assert.ok(chevronFaults(tagInside).some((f) => f.includes("forme")), "un .tag posé dans le lien doit faire rougir la garde");
-  const drawn = plant(sources, ROOT_VIEW, ".badge(badge)", '.badge(badge)\nImage(systemName: "chevron.right")');
+  const oldId = plant(sources, ROOT_VIEW, '"ios.plus." + section.rawValue', '"ios.section." + section.rawValue');
+  assert.ok(chevronFaults(oldId).some((f) => f.includes("forme")), "une rangée à l'identifiant de l'ancienne liste racine doit faire rougir la garde");
+  const drawn = plant(sources, ROOT_VIEW, /(Label\(section\.title, systemImage: IOSSection\.systemImage\(of: section\)\))/, '$1\nImage(systemName: "chevron.right")');
   assert.ok(chevronFaults(drawn).some((f) => f.includes("à la main")), "un chevron dessiné à la main doit faire rougir la garde");
 });

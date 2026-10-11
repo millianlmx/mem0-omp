@@ -29,7 +29,7 @@
 # relevés dans leur état non appairé. Un relevé n'est accepté que quand deux
 # lectures consécutives de l'arbre sont identiques ET que le marqueur de la
 # surface est vrai (scripts/ios-recette-ui-analyse.py marqueur) : jamais une
-# capture de la liste racine, de l'Accueil déconnecté ou d'une autre section.
+# capture de la liste « Plus », de l'Accueil déconnecté ou d'une autre section.
 #
 # L'analyse est celle de scripts/ios-recette-ui-analyse.py ; le code de sortie de
 # la recette est le sien.

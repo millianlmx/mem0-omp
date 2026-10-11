@@ -356,12 +356,27 @@ function sectionFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques de la navigation (S-3, AC-3). */
+/** Les tournures que la racine à onglets adaptable doit employer (S-3, AC-3 ; ios-navigation-onglets-adaptables S-7). */
+const TAB_SHELL = [
+  "TabView(selection:",
+  "TabSection(",
+  ".tabViewStyle(.sidebarAdaptable)",
+  ".defaultAdaptableTabBarPlacement(.sidebar)",
+  ".hidden(",
+];
+
+/** Les manques de la navigation (S-3, AC-3) : une barre d'onglets adaptable dans RootView, aucun NavigationSplitView. */
 function navigationFaults(root: string): string[] {
   const faults: string[] = [];
-  const all = appSources(root).map((s) => s.code).join("\n");
-  if (!all.includes("NavigationSplitView")) faults.push("NavigationSplitView absent");
-  if (all.includes("TabView")) faults.push("TabView présent (barre d'onglets interdite)");
+  const sources = appSources(root);
+  const rootView = sources.find((s) => path.basename(s.file) === "RootView.swift");
+  if (!rootView) return ["RootView.swift absent"];
+  for (const token of TAB_SHELL) {
+    if (!rootView.code.includes(token)) faults.push(`RootView.swift : ${token} absent`);
+  }
+  for (const s of sources) {
+    if (s.code.includes("NavigationSplitView")) faults.push(`${path.basename(s.file)} : NavigationSplitView présent`);
+  }
   return faults;
 }
 
@@ -512,12 +527,19 @@ test("coque-ios/AC-2 : les sources de l'app ne recopient ni liste, ni libellé, 
   assert.ok(faults.some((f) => f.includes("SecondeListe.swift")), `la garde doit nommer le fichier fautif : ${faults.join(" | ")}`);
 });
 
-test("coque-ios/AC-3 : une seule navigation adaptative, sans barre d'onglets", () => {
+test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView", () => {
   assert.deepEqual(navigationFaults(ROOT), [], "l'arbre réel doit être sain");
 
-  const copy = copyRepo();
-  fs.writeFileSync(path.join(copy, "omp-console", "ios", "OMPConsoleIOS", "Onglets.swift"), "struct Onglets: View { var body: some View { TabView { } } }\n");
-  assert.ok(navigationFaults(copy).some((f) => f.includes("TabView")), "un TabView doit faire rougir la garde");
+  const split = copyRepo();
+  fs.writeFileSync(path.join(split, "omp-console", "ios", "OMPConsoleIOS", "Partage.swift"), "struct Partage: View { var body: some View { NavigationSplitView { } detail: { } } }\n");
+  assert.ok(navigationFaults(split).some((f) => f.includes("NavigationSplitView")), "un NavigationSplitView doit faire rougir la garde");
+
+  const plain = copyRepo();
+  const rootFile = path.join(plain, "omp-console", "ios", "OMPConsoleIOS", "RootView.swift");
+  const rootCode = fs.readFileSync(rootFile, "utf8");
+  assert.ok(rootCode.includes(".tabViewStyle(.sidebarAdaptable)"), "la faute doit s'appliquer à la vraie RootView");
+  fs.writeFileSync(rootFile, rootCode.replace(".tabViewStyle(.sidebarAdaptable)", ".tabViewStyle(.automatic)"));
+  assert.ok(navigationFaults(plain).some((f) => f.includes(".sidebarAdaptable")), "une RootView sans .sidebarAdaptable doit faire rougir la garde");
 });
 
 test("coque-ios/AC-4 : les sept écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
