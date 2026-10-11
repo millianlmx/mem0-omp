@@ -154,6 +154,10 @@ const DROPPED_TESTS: Record<string, true> = {
   "fixpanel.test.ts": true,
   "fixruns.test.ts": true,
   "fixview.test.ts": true,
+  // Le scénario couplé relance `check.sh` au PREMIER niveau (runCheck ne pose pas
+  // MEM0_CHECK_DEPTH) : ce fichier y lirait l'arbre réel (test/check.test.ts,
+  // historique f3fbfe6) que la fixture n'a pas.
+  "ci-macos-jobs-paralleles.test.ts": true,
 };
 
 function copyRepo(dir: string): void {
