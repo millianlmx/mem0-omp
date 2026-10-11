@@ -372,9 +372,11 @@ Une surface qui ne s'ouvre pas est **non couverte**, avec sa raison, et le verdi
 n'est jamais vert.
 
 **Isolation.** Chaque surface tourne dans une instance NEUVE d'une copie du bundle
-rebaptisée `com.omp.console.recette` (`/tmp/omp-console-recette-ui`), lancée par
-`open -g -n -F` avec le crochet `-surface.recipe <id>` (`SurfaceRecipe.swift`,
-inerte sans `OMP_CONSOLE_SUPPORT_ROOT`), un magasin, un support, un dossier
+rebaptisée `com.omp.console.recette` (`/tmp/omp-console-recette-ui`), marquée app
+accessoire (`LSUIElement` : sans icône dans le Dock, le Dock ne la passe pas au
+premier plan quand sa fenêtre paraît), lancée par `open -g -n -F` avec le crochet
+`-surface.recipe <id>` (`SurfaceRecipe.swift`, inerte sans
+`OMP_CONSOLE_SUPPORT_ROOT`), un magasin, un support, un dossier
 d'alertes et des préférences jetables, et un jeu de données fictif fixe servi sur
 `127.0.0.1` (service OMP, mem0-http, oMLX ; `gh` coupé). Votre instance
 `com.omp.console` n'est jamais relancée, activée ni visée ; ses pids, l'app au
