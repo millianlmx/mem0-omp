@@ -98,6 +98,7 @@ struct IOSSectionView: View {
             Image(systemName: content.systemImage)
                 .font(.title3)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             Text(content.message)
                 .font(.headline)
                 .multilineTextAlignment(.leading)

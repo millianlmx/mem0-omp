@@ -44,7 +44,7 @@ enum IOSKeyboard {
     /// ⌘N : basculer sur Pipelines et ouvrir « Nouvelle feature ».
     static let newFeature = IOSShortcut(title: NewFeatureText.command, key: IOSKeyboardText.newFeatureKey)
 
-    /// Les dix raccourcis : les sections, puis Rafraîchir, Rechercher, Nouvelle feature.
+    /// Les dix raccourcis : les sections, puis Actualiser, Rechercher, Nouvelle feature.
     static var all: [IOSShortcut] {
         sections.map(\.shortcut) + [refresh, search, newFeature]
     }
@@ -108,7 +108,7 @@ enum IOSModalPresence {
     }
 }
 
-/// Les commandes de scène de l'app : menu Présentation (⌘1…⌘7, Rafraîchir ⌘R,
+/// Les commandes de scène de l'app : menu Présentation (⌘1…⌘7, Actualiser ⌘R,
 /// Rechercher ⌘F) et menu Fichier (Nouvelle feature… ⌘N, à la place de « Nouvelle
 /// fenêtre » : l'app garde une seule fenêtre et un seul client).
 struct IOSKeyboardCommands: Commands {

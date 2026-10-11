@@ -1,14 +1,14 @@
 // Les GARDES TEXTUELLES de la feature `ios-finitions-titres-icones` (BR-6) : chaque
 // critère `AC-1..AC-8` a sa garde ici, qui interdit le RETOUR du défaut que les lots
 // BR-1…BR-5 ont corrigé. Ce sont des gardes de non-retour du CODE, pas des preuves de
-// rendu.
+// rendu. Exception : AC-6 (« Sommaire » touchable + bulle) a été RENVERSÉ par
+// `ios-gestes-et-retours-natifs` (AC-13, vrai bouton désactivé) — sa garde a été retirée.
 //
 // Preuves hors de ce fichier :
-//  - tests Swift (`OMPConsoleIOSTests/IOSFinitionsTests.swift`, `IOSMemoryModelTests`,
-//    `IOSSectionContentTests`) : AC-4 (icônes), AC-5 (icônes Sommaire/Liste), AC-6
-//    (raisons d'indisponibilité), AC-8 (coupure de ligne CoreText) ;
+//  - tests Swift (`OMPConsoleIOSTests/IOSFinitionsTests.swift`, `IOSSectionContentTests`) :
+//    AC-4 (icônes), AC-5 (icônes Sommaire/Liste), AC-8 (coupure de ligne CoreText) ;
 //  - captures idb sur simulateur, consignées dans `## Revue` du contrat (BR-7) : AC-1,
-//    AC-2, AC-3 (cadre ≥ 44 pt et toucher), AC-4, AC-5, AC-6 (bulle), AC-7 (cadre et
+//    AC-2, AC-3 (cadre ≥ 44 pt et toucher), AC-4, AC-5, AC-7 (cadre et
 //    fermeture), AC-8 (trois tailles de texte), AC-9 (iPad).
 //
 // Deux règles structurent ce fichier, comme `test/ios-memoire.test.ts` :
@@ -181,20 +181,6 @@ function memoryIconFaults(root: string): string[] {
   return faults;
 }
 
-/** AC-6 : « Sommaire » toujours visible, jamais désactivé, raison dans une bulle. */
-function summaryFaults(root: string): string[] {
-  const screen = appFile(root, "IOSMemoryScreen.swift");
-  if (screen === "") return ["IOSMemoryScreen.swift absent"];
-  const faults: string[] = [];
-  forbidAll(faults, "IOSMemoryScreen.swift", screen, ["if !graph.shown {", ".disabled(!model.canShowSummary)"]);
-  requireAll(faults, "IOSMemoryScreen.swift", screen, [
-    "summaryUnavailableReason(graphShown: graph.shown)",
-    ".popover(",
-    ".presentationCompactAdaptation(.popover)",
-  ]);
-  return faults;
-}
-
 /** AC-7 : la fiche porte « Fermer » (44 pt) et la liste présente la même vue. */
 function detailCloseFaults(root: string): string[] {
   const detail = appFile(root, "IOSMemoryDetailView.swift");
@@ -302,17 +288,6 @@ test("ios-finitions-titres-icones/AC-5 : « Sommaire » et « Liste » portent d
     memoryIconFaults,
   );
   assert.ok(faults.some((f) => f.includes("summarySymbol")), `Sommaire sans son symbole doit faire rougir la garde : ${faults.join(" | ")}`);
-});
-
-test("ios-finitions-titres-icones/AC-6 : « Sommaire » reste visible et touchable, la raison s'affiche en bulle", () => {
-  assert.deepEqual(summaryFaults(ROOT), []);
-  const faults = plant(
-    copy(),
-    app("IOSMemoryScreen.swift"),
-    (text) => text.replace(".accessibilityIdentifier(IOSMemoryAccessibility.summary)", ".disabled(!model.canShowSummary)\n        .accessibilityIdentifier(IOSMemoryAccessibility.summary)"),
-    summaryFaults,
-  );
-  assert.ok(faults.some((f) => f.includes(".disabled(!model.canShowSummary)")), `un bouton redésactivé doit faire rougir la garde : ${faults.join(" | ")}`);
 });
 
 test("ios-finitions-titres-icones/AC-7 : la fiche d'un souvenir a son bouton « Fermer » de 44 pt", () => {

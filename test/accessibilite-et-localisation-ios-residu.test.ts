@@ -131,13 +131,6 @@ function decorativeFaults(sources: Sources): string[] {
 function meaningfulFaults(sources: Sources): string[] {
   const faults: string[] = [];
   const screen = get(sources, PIPELINES);
-  const start = screen.indexOf("private var refreshButton");
-  const end = start === -1 ? -1 : screen.indexOf(".accessibilityIdentifier(PipelinesAccessibility.refresh)", start);
-  if (start === -1 || end === -1) {
-    faults.push("PipelinesScreen.refreshButton ou son identifiant pipelines.refresh est introuvable");
-  } else if (!screen.slice(start, end).includes(".accessibilityLabel(KanbanText.refresh)")) {
-    faults.push("PipelinesScreen.refreshButton : .accessibilityLabel(KanbanText.refresh) manque sur le Button");
-  }
   // `.disabled(…)` : le « + » est grisé hors connexion (etats-non-connecte-heterogenes-ios, S-5).
   if (!/Label\(NewFeatureText\.command, systemImage: "plus"\)\s*\}\s*(?:\.disabled\([^()]*\)\s*)?\.accessibilityIdentifier\(PipelinesAccessibility\.newFeature\)/.test(screen)) {
     faults.push("PipelinesScreen : le bouton pipelines.newFeature n'a plus Label(NewFeatureText.command, systemImage: \"plus\") pour libellé");
@@ -323,11 +316,11 @@ test("accessibilite-et-localisation-ios-residu/AC-1 : les symboles décoratifs d
   assert.ok(decorativeFaults(lane).some((f) => f.includes("row.lane.symbol")), "un symbole de voie lu par VoiceOver doit faire rougir la garde");
 });
 
-test("accessibilite-et-localisation-ios-residu/AC-2 : Rafraîchir et Nouvelle feature… gardent leur libellé français, jamais le nom du symbole", () => {
+// Le bouton ↻ de Pipelines est retiré par ios-gestes-et-retours-natifs (S-2, tirer
+// pour actualiser) : seul « Nouvelle feature… » reste un symbole de barre à libeller.
+test("accessibilite-et-localisation-ios-residu/AC-2 : Nouvelle feature… garde son libellé français, jamais le nom du symbole", () => {
   const sources = repoSources();
   assert.deepEqual(meaningfulFaults(sources), []);
-  const planted = plant(sources, PIPELINES, ".accessibilityLabel(KanbanText.refresh)", "");
-  assert.ok(meaningfulFaults(planted).some((f) => f.includes("refreshButton")), "un Rafraîchir sans libellé doit faire rougir la garde");
   const icon = plant(sources, PIPELINES, 'Label(NewFeatureText.command, systemImage: "plus")', 'Image(systemName: "plus")');
   assert.ok(meaningfulFaults(icon).some((f) => f.includes("pipelines.newFeature")), "un symbole nu sur Nouvelle feature… doit faire rougir la garde");
 });

@@ -40,6 +40,13 @@ struct PipelinesScreen: View {
     /// (8 pt mis à l'échelle) : aucun filet, l'espace seul les sépare.
     @ScaledMetric(relativeTo: .body) private var cardSpacing: CGFloat = 8
     @Environment(\.openURL) private var openURL
+    /// Les cartes dont une commande lancée de leur menu contextuel attend la
+    /// réponse du Mac : leurs entrées de commande disparaissent jusque-là (S-4).
+    @State private var menuSending: Set<String> = []
+    /// La carte dont « Arrêter… » (menu contextuel) attend confirmation.
+    @State private var stopCard: KanbanCard?
+    /// L'échec d'une commande lancée d'un menu contextuel, montré en alerte.
+    @State private var menuFailure: IOSMenuFailure?
 
     var body: some View {
         Group {
@@ -57,9 +64,6 @@ struct PipelinesScreen: View {
         .navigationTitle(ConsoleSection.kanban.title)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                refreshButton
-            }
-            ToolbarItem(placement: .topBarTrailing) {
                 Button { sheet = .newFeature } label: {
                     Label(NewFeatureText.command, systemImage: "plus")
                 }
@@ -76,6 +80,32 @@ struct PipelinesScreen: View {
                 NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
             }
         }
+        // « Arrêter… » du menu contextuel : la confirmation de la fiche, mot pour mot.
+        .confirmationDialog(
+            KanbanText.stopConfirmTitle(repo: stopCard?.repo ?? ""),
+            isPresented: Binding(get: { stopCard != nil }, set: { if !$0 { stopCard = nil } }),
+            titleVisibility: .visible,
+            presenting: stopCard
+        ) { card in
+            Button(KanbanText.stopConfirm, role: .destructive) {
+                // Confirmation ouverte avant la coupure : rien ne part hors connexion.
+                guard connection.gesturesEnabled else { return }
+                sendFromMenu(card, failureTitle: IOSMenuText.stopFailed) { _ = try await client.stop(cardId: card.id) }
+            }
+            Button(KanbanText.cancel, role: .cancel) {}
+        } message: { _ in
+            Text(KanbanText.stopConfirmMessage)
+        }
+        // L'échec d'une commande du menu : ce qui n'a pas eu lieu, puis la cause et
+        // le remède ; « OK » du système seul.
+        .alert(
+            menuFailure?.title ?? "",
+            isPresented: Binding(get: { menuFailure != nil }, set: { if !$0 { menuFailure = nil } }),
+            presenting: menuFailure
+        ) { _ in
+        } message: { failure in
+            Text(failure.message)
+        }
         .onDisappear { unfoldedLanes = [] }
         .onAppear {
             guard !recipeOpened, let cardRecipe else { return }
@@ -88,9 +118,11 @@ struct PipelinesScreen: View {
             recipeOpened = true
             sheet = .card(card.id)
         }
-        // ⌘R (menu Présentation) : le même geste que « Rafraîchir », la relecture
-        // de l'état des PR par le Mac ; la commande de scène porte le raccourci.
-        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: .kanban, isEnabled: canRefresh) { refreshPullRequests() })
+        // ⌘R « Actualiser » (barre des menus iPad) : la même relecture que le
+        // tirage de la liste ; la commande de scène porte le raccourci.
+        .focusedSceneValue(\.iosRefresh, IOSCommandAction(owner: .kanban, isEnabled: canRefresh) {
+            Task { await PipelinesModel.refresh(client) }
+        })
         .onAppear { consumeNewFeatureRequest() }
         .onChange(of: newFeatureRequested) { consumeNewFeatureRequest() }
         .accessibilityElement(children: .contain)
@@ -134,35 +166,10 @@ struct PipelinesScreen: View {
         )
     }
 
-    // MARK: - Rafraîchir (S-7)
-
-    /// Vrai pendant une relecture des PR par le Mac (trame `pull-request-states`).
-    private var refreshing: Bool { client.pullRequestStates?.refreshing == true }
-
-    /// Demande au Mac de relire l'état des PR. Aucun message : un échec (Mac
-    /// ancien, réseau) laisse le bouton tel quel, le retour visible est le
-    /// libellé des cartes. ⌘R (`IOSKeyboardCommands`) passe aussi par ici.
-    private func refreshPullRequests() {
-        Task { _ = try? await client.refreshPullRequestStates() }
-    }
+    // MARK: - Actualiser (ios-gestes-et-retours-natifs, S-2)
 
     private var canRefresh: Bool {
-        PipelinesModel.canRefresh(connection: client.state, refreshing: refreshing)
-    }
-
-    private var refreshButton: some View {
-        Button {
-            refreshPullRequests()
-        } label: {
-            if refreshing {
-                ProgressView()
-            } else {
-                Label(KanbanText.refresh, systemImage: "arrow.clockwise")
-            }
-        }
-        .disabled(!canRefresh)
-        .accessibilityLabel(KanbanText.refresh)
-        .accessibilityIdentifier(PipelinesAccessibility.refresh)
+        PipelinesModel.canRefresh(connection: client.state)
     }
 
     // MARK: - Contenu
@@ -184,6 +191,9 @@ struct PipelinesScreen: View {
             content()
         }
         .iosGroupedList()
+        // Tirer pour actualiser : l'indicateur système reste jusqu'à la fin de
+        // la relecture (S-2).
+        .refreshable { await PipelinesModel.refresh(client) }
     }
 
     /// Le bandeau de connexion, quand l'ardoise conservée est affichée hors connexion.
@@ -296,6 +306,7 @@ struct PipelinesScreen: View {
             .padding(endMargin)
         }
         .background(Color(uiColor: .systemGroupedBackground))
+        .refreshable { await PipelinesModel.refresh(client) }
     }
 
     /// L'en-tête d'une voie : bouton repliable de 44 pt pour une voie terminale,
@@ -321,6 +332,7 @@ struct PipelinesScreen: View {
             .accessibilityAddTraits(.isHeader)
             .accessibilityValue(row.folded ? KanbanText.laneFolded : KanbanText.laneUnfolded)
             .accessibilityIdentifier(PipelinesAccessibility.laneHeader(row.lane.rawValue))
+            .iosHoverEffect()
         } else {
             headerLayout { laneTitle(row) }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -386,6 +398,7 @@ struct PipelinesScreen: View {
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier(PipelinesAccessibility.card(card.id))
+            .iosHoverEffect()
             if let prURL {
                 Button { openURL(prURL) } label: {
                     Text(HomeText.openPR)
@@ -397,6 +410,63 @@ struct PipelinesScreen: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contextMenu {
+            IOSContextMenuItems(actions: IOSContextMenu.pipelinesCard(
+                card,
+                gesturesEnabled: connection.gesturesEnabled,
+                sending: menuSending.contains(card.id)
+            )) { performMenu($0, card: card) }
+        }
+    }
+
+    // MARK: - Menu contextuel d'une carte (ios-gestes-et-retours-natifs, S-4)
+
+    /// Un choix du menu emprunte la route de la fiche : verdict, reprise (« Lancer »
+    /// compris, comme la fiche), PR, presse-papiers, confirmation d'arrêt.
+    private func performMenu(_ action: IOSMenuAction, card: KanbanCard) {
+        switch action {
+        case .validateSpecs:
+            sendFromMenu(card, failureTitle: IOSHomeText.specsFailed) {
+                _ = try await client.verdict(cardId: card.id, verdict: PipelinesVerdict.specs.rawValue)
+            }
+        case .acceptReview:
+            sendFromMenu(card, failureTitle: IOSHomeText.reviewFailed) {
+                _ = try await client.verdict(cardId: card.id, verdict: PipelinesVerdict.review.rawValue)
+            }
+        case .resume:
+            sendFromMenu(card, failureTitle: IOSHomeText.resumeFailed) { _ = try await client.resume(cardId: card.id) }
+        case .launch:
+            sendFromMenu(card, failureTitle: IOSMenuText.launchFailed) { _ = try await client.resume(cardId: card.id) }
+        case .openPR(let url):
+            openURL(url)
+        case .copy(let copied):
+            IOSPasteboard.copy(copied)
+        case .stop:
+            stopCard = card
+        case .answer, .showInPipelines, .readContract:
+            // Jamais offerts par une carte Pipelines (`IOSContextMenu.pipelinesCard`).
+            break
+        }
+    }
+
+    /// Une commande du menu : l'id de la carte passe en vol AVANT le `Task` (un
+    /// second choix dans le même tour ne part pas) et en sort à la réponse, succès
+    /// comme échec. Succès : aucun texte, l'ardoise suit le flux.
+    private func sendFromMenu(
+        _ card: KanbanCard,
+        failureTitle: String,
+        _ command: @escaping @MainActor () async throws -> Void
+    ) {
+        guard !menuSending.contains(card.id) else { return }
+        menuSending.insert(card.id)
+        Task { @MainActor in
+            do {
+                try await command()
+            } catch {
+                menuFailure = IOSMenuFailure(title: failureTitle, message: IOSHomeContent.failure(error))
+            }
+            menuSending.remove(card.id)
+        }
     }
 
     @ViewBuilder

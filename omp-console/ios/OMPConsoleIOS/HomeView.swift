@@ -55,6 +55,8 @@ struct HomeView: View {
     @Environment(\.openURL) private var openURL
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    /// « Réduire les animations » : le défilement vers un échec se fait d'un saut (S-8).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var answerCard: SelectedCard?
     @State private var contractCard: SelectedCard?
@@ -201,7 +203,9 @@ struct HomeView: View {
             }
             .onChange(of: gestures.failures) { old, new in
                 guard let key = new.keys.first(where: { old[$0] == nil }) else { return }
-                withAnimation { proxy.scrollTo(IOSHomeAccessibility.failure(key.cardId), anchor: nil) }
+                withAnimation(IOSMotion.scrollAnimation(reduceMotion: reduceMotion)) {
+                    proxy.scrollTo(IOSHomeAccessibility.failure(key.cardId), anchor: nil)
+                }
             }
         }
     }
@@ -354,6 +358,13 @@ struct HomeView: View {
         .buttonStyle(.borderless)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.attention(card.id))
+        .contextMenu {
+            IOSContextMenuItems(actions: IOSContextMenu.homeAttention(
+                attention,
+                gesturesEnabled: connection.gesturesEnabled,
+                sending: IOSHomeContent.attentionGestureKey(attention).map(gestures.inFlight.contains) ?? false
+            )) { performMenu($0, card: card) }
+        }
     }
 
     @ViewBuilder
@@ -433,6 +444,7 @@ struct HomeView: View {
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.running(card.id))
+        .contextMenu { rowMenu(card, kind: .running) }
     }
 
     /// « À reprendre » : une pipeline en pause, sa puce « En pause » et
@@ -461,6 +473,7 @@ struct HomeView: View {
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.paused(card.id))
+        .contextMenu { rowMenu(card, kind: .paused) }
     }
 
     /// « Pas commencées » : une feature jamais lancée, titre et sous-titre seuls.
@@ -471,6 +484,7 @@ struct HomeView: View {
             .padding(.vertical, 8)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSHomeAccessibility.notStarted(card.id))
+            .contextMenu { rowMenu(card, kind: .notStarted) }
     }
 
     /// Le titre et le sous-titre d'une rangée « En cours », « À reprendre » ou
@@ -546,6 +560,7 @@ struct HomeView: View {
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
+        .contextMenu { rowMenu(card, kind: .delivered) }
     }
 
     // MARK: - Bandeaux
@@ -613,6 +628,47 @@ struct HomeView: View {
         }
         .disabled(sending)
         .accessibilityValue(sending ? IOSHomeText.gestureInFlight : "")
+    }
+
+    // MARK: - Menus contextuels (ios-gestes-et-retours-natifs, S-4)
+
+    /// Le menu d'une rangée : « Reprendre » d'une pause disparaît tant que son
+    /// geste est en vol.
+    private func rowMenu(_ card: KanbanCard, kind: IOSHomeRowKind) -> some View {
+        IOSContextMenuItems(actions: IOSContextMenu.homeRow(
+            card,
+            kind: kind,
+            gesturesEnabled: connection.gesturesEnabled,
+            sending: gestures.inFlight.contains(IOSHomeGestureKey(cardId: card.id, gesture: .resume))
+        )) { performMenu($0, card: card) }
+    }
+
+    /// Un choix du menu emprunte le chemin du contrôle existant : la feuille
+    /// « Répondre », la même clé de geste que le bouton (« Valider les specs »
+    /// ouvre sa confirmation), la section Pipelines, la feuille du contrat, la PR.
+    /// Un échec s'affiche sur la carte, comme pour le bouton.
+    private func performMenu(_ action: IOSMenuAction, card: KanbanCard) {
+        switch action {
+        case .answer:
+            answerCard = SelectedCard(card: card)
+        case .validateSpecs:
+            gestures.tap(IOSHomeGestureKey(cardId: card.id, gesture: .validateSpecs), send: send)
+        case .acceptReview:
+            gestures.tap(IOSHomeGestureKey(cardId: card.id, gesture: .acceptReview), send: send)
+        case .resume:
+            gestures.tap(IOSHomeGestureKey(cardId: card.id, gesture: .resume), send: send)
+        case .showInPipelines:
+            onSelectSection(IOSHomeContent.allPipelinesSection)
+        case .readContract:
+            contractCard = SelectedCard(card: card)
+        case .openPR(let url):
+            openURL(url)
+        case .copy(let copied):
+            IOSPasteboard.copy(copied)
+        case .launch, .stop:
+            // Jamais offerts par l'Accueil (`IOSContextMenu.homeAttention`/`homeRow`).
+            break
+        }
     }
 
     /// L'échec du geste d'une carte, sur la carte : pleine largeur, ton `danger`.

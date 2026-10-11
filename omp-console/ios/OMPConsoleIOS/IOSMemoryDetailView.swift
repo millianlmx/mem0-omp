@@ -63,6 +63,8 @@ struct IOSMemoryDetailView: View {
                 }
             }
             .formStyle(.grouped)
+            // Le souvenir et ses détails techniques se sélectionnent (S-6, D-7).
+            .textSelection(.enabled)
             .accessibilityIdentifier(IOSMemoryAccessibility.detail)
             .navigationTitle(IOSMemoryText.detailTitle)
             .navigationBarTitleDisplayMode(.inline)

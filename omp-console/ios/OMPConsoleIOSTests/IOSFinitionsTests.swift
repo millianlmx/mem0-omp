@@ -33,31 +33,6 @@ struct IOSFinitionsTests {
         #expect(UIImage(systemName: IOSMemoryText.listSymbol) != nil)
     }
 
-    @Test("ios-finitions-titres-icones/AC-6 : chaque cas d'indisponibilité de « Sommaire » a sa phrase")
-    func summaryReasonNamesEachUnavailableCase() {
-        for graphShown in [true, false] {
-            for isSearching in [true, false] {
-                for isLoading in [true, false] {
-                    let reason = IOSMemoryModel.summaryUnavailableReason(
-                        graphShown: graphShown, isSearching: isSearching, isLoading: isLoading
-                    )
-                    let expected: String? =
-                        graphShown ? IOSMemoryText.summaryReasonGraph
-                        : !isSearching ? IOSMemoryText.summaryReasonShown
-                        : isLoading ? IOSMemoryText.summaryReasonSearching
-                        : nil
-                    #expect(reason == expected)
-                    if !graphShown { #expect((reason == nil) == (isSearching && !isLoading)) }
-                }
-            }
-        }
-        #expect(IOSMemoryText.summaryReasonShown == "Le sommaire est déjà affiché.")
-        #expect(IOSMemoryText.summaryReasonSearching
-            == "Une recherche est en cours : le sommaire reviendra quand elle sera finie.")
-        #expect(IOSMemoryText.summaryReasonGraph
-            == "Le sommaire s’affiche en mode Liste : touchez d’abord « Liste ».")
-    }
-
     // MARK: - Nom de feature (S-7)
 
     @Test("ios-finitions-titres-icones/AC-8 : featureName place chaque coupure avant le tiret et ne perd rien")

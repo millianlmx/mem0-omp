@@ -51,11 +51,23 @@ enum PipelinesModel {
         )
     }
 
-    /// Le bouton « Rafraîchir » (S-7) n'est actif que connecté au Mac et hors
-    /// d'une relecture déjà en cours.
-    static func canRefresh(connection: ClientState, refreshing: Bool) -> Bool {
+    /// ⌘R « Actualiser » n'est actif que connecté au Mac (ios-gestes-et-retours-natifs,
+    /// S-2) : le tirage et le raccourci passent tous deux par `refresh(_:)`.
+    static func canRefresh(connection: ClientState) -> Bool {
         guard case .connected = connection else { return false }
-        return !refreshing
+        return true
+    }
+
+    /// La relecture de l'écran (tirer pour actualiser et ⌘R, S-2) : relit
+    /// l'ardoise (GET /v1/store, republiée par le client), puis demande au Mac de
+    /// relire l'état des PR si aucune relecture n'est déjà en cours. Attendue
+    /// jusqu'au bout : l'indicateur système reste visible pendant ce temps. Un
+    /// échec est avalé, l'écran garde son contenu.
+    static func refresh(_ client: ConsoleClientModel) async {
+        _ = try? await client.store()
+        if client.pullRequestStates?.refreshing != true {
+            _ = try? await client.refreshPullRequestStates()
+        }
     }
 
     /// L'état de l'écran : un instantané connu PRIME (l'ardoise reste affichée,

@@ -261,20 +261,23 @@ struct IOSMemoryModelTests {
         #expect(!model.isSearching)
     }
 
-    @Test("ios-finitions-titres-icones/AC-6 : « Sommaire » est disponible après une recherche terminée, et dit pourquoi sinon")
+    @Test("ios-gestes-et-retours-natifs/AC-13 : « Sommaire » se désactive sur le sommaire et en graphe, s'active après une recherche finie")
     func summaryIsAvailableAfterACompletedSearch() async {
         let page = RemoteMemoryPagePayload(scope: "projet", total: 1, offset: 0, rows: [row("m1", text: "un")], nextOffset: nil)
         let model = IOSMemoryModel(client: CountingMemoryReader(page: .success(page)))
 
         await model.refresh()
-        #expect(model.summaryUnavailableReason(graphShown: false) == IOSMemoryText.summaryReasonShown)
+        #expect(!model.summaryAvailable(graphShown: false))
         #expect(!model.canShowSummary)
 
         model.updateQuery("mémoire du projet")
         await model.submitQuery()
-        #expect(model.summaryUnavailableReason(graphShown: false) == nil)
+        #expect(model.summaryAvailable(graphShown: false))
         #expect(model.canShowSummary)
-        #expect(model.summaryUnavailableReason(graphShown: true) == IOSMemoryText.summaryReasonGraph)
+        #expect(!model.summaryAvailable(graphShown: true))
+
+        model.showSummary()
+        #expect(!model.summaryAvailable(graphShown: false))
     }
 
     // MARK: - AC-9

@@ -11,11 +11,11 @@
 /// Les mots et les touches des commandes clavier de l'iPad.
 enum IOSKeyboardText {
     /// La commande qui relit les données de l'écran courant (⌘R).
-    static let refresh = "Rafraîchir"
+    static let refresh = "Actualiser"
     /// La commande qui active le champ de recherche de l'écran courant (⌘F).
     static let search = "Rechercher"
 
-    /// La touche de « Rafraîchir », avec ⌘.
+    /// La touche de « Actualiser », avec ⌘.
     static let refreshKey: Character = "r"
     /// La touche de « Rechercher », avec ⌘.
     static let searchKey: Character = "f"

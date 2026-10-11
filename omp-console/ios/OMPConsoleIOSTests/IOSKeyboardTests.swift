@@ -35,7 +35,7 @@ struct IOSKeyboardTests {
             (ConsoleSection.sessions.title, "5"),
             (ConsoleSection.memory.title, "6"),
             (ConsoleSection.stats.title, "7"),
-            ("Rafraîchir", "r"),
+            ("Actualiser", "r"),
             ("Rechercher", "f"),
             (NewFeatureText.command, "n"),
         ]

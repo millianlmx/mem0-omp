@@ -60,6 +60,8 @@ struct HomeContractSheet: View {
                         .accessibilityIdentifier(IOSHomeAccessibility.contractLoading)
                     }
                 }
+                // Le contrat se sélectionne et se copie (S-6, D-7).
+                .textSelection(.enabled)
                 .iosPanel()
             }
             .navigationTitle(IOSHomeText.contractNavigationTitle)

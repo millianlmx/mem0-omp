@@ -31,9 +31,6 @@ struct IOSMemoryScreen: View {
     /// La marge verticale d'une rangée, mise à l'échelle comme le corps de
     /// texte : aucun texte ne touche le filet voisin (rangees-sessions-memoire-serrees, S-4).
     @ScaledMetric(relativeTo: .body) private var rowPadding: CGFloat = IOSMetrics.rowVerticalPadding
-    /// La raison montrée dans la bulle de « Sommaire » : figée au toucher, tant que
-    /// la bulle est ouverte.
-    @State private var summaryReason: String?
     /// La présentation du champ de recherche, lue par `searchPresentedBinding`
     /// (⌘F la présente ; la bascule Graphe/Liste la retire).
     @State private var searchPresented = false
@@ -65,13 +62,6 @@ struct IOSMemoryScreen: View {
     var body: some View {
         panel
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { refreshShown() } label: {
-                        Label(MemoryText.refresh, systemImage: "arrow.clockwise")
-                    }
-                    .disabled(!connection.gesturesEnabled || !canRefreshShown)
-                    .accessibilityIdentifier(IOSMemoryAccessibility.refresh)
-                }
                 ToolbarItem(placement: .topBarTrailing) { summaryButton }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -119,36 +109,21 @@ struct IOSMemoryScreen: View {
             .accessibilityIdentifier(IOSMemoryAccessibility.screen)
     }
 
-    /// « Sommaire » est TOUJOURS là. Indisponible, il est grisé et un toucher en
-    /// dit la raison dans une bulle — il n'appelle pas `showSummary()`. Le grisé passe
-    /// par `.tint` : la barre d'outils ignore `.foregroundStyle` et `.opacity` (mesuré).
+    /// « Sommaire » est TOUJOURS là. Indisponible (mode Graphe, sommaire déjà
+    /// affiché, recherche en cours), c'est un bouton désactivé du système : ni
+    /// teinte maison ni bulle, comme sur le Mac.
     private var summaryButton: some View {
-        let reason = model.summaryUnavailableReason(graphShown: graph.shown)
-        return Button {
-            if let reason {
-                summaryReason = reason
-            } else {
-                model.showSummary()
-            }
+        Button {
+            model.showSummary()
         } label: {
             Label(MemoryText.summaryButton, systemImage: IOSMemoryText.summarySymbol)
         }
-        .tint(reason == nil ? nil : Color(uiColor: .tertiaryLabel))
-        .accessibilityValue(reason == nil ? "" : IOSMemoryText.summaryUnavailable)
-        .accessibilityHint(reason ?? "")
-        .popover(isPresented: Binding(get: { summaryReason != nil }, set: { if !$0 { summaryReason = nil } })) {
-            Text(summaryReason ?? "")
-                .font(.callout)
-                .fixedSize(horizontal: false, vertical: true)
-                .padding()
-                .presentationCompactAdaptation(.popover)
-                .accessibilityIdentifier(IOSMemoryAccessibility.summaryReason)
-        }
+        .disabled(!model.summaryAvailable(graphShown: graph.shown))
         .accessibilityIdentifier(IOSMemoryAccessibility.summary)
     }
 
-    /// Le rafraîchissement de la vue affichée : le bouton Rafraîchir de la barre
-    /// d'outils et ⌘R passent tous deux par ici.
+    /// Le rafraîchissement de la vue affichée par ⌘R « Actualiser » (la liste
+    /// a aussi son tirage, le graphe se relit à chaque passage).
     private func refreshShown() {
         if graph.shown {
             Task { await graph.refresh() }
@@ -157,7 +132,7 @@ struct IOSMemoryScreen: View {
         }
     }
 
-    /// Le contraire du `.disabled` du bouton Rafraîchir (hors connexion à part) :
+    /// La disponibilité de ⌘R (hors connexion à part) :
     /// aucune relecture pendant une lecture en cours.
     private var canRefreshShown: Bool {
         graph.shown ? graph.state != .loading : model.canRefresh
@@ -259,6 +234,9 @@ struct IOSMemoryScreen: View {
                 subject
             }
             .iosGroupedList()
+            // Tirer pour actualiser (ios-gestes-et-retours-natifs, S-2) : la
+            // relecture est attendue, l'indicateur système reste jusqu'à sa fin.
+            .refreshable { await model.refresh() }
         }
     }
 
@@ -439,6 +417,12 @@ struct IOSMemoryScreen: View {
                 .buttonStyle(.plain)
                 .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                 .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
+                .contextMenu {
+                    IOSContextMenuItems(actions: IOSContextMenu.memory(row)) { action in
+                        if case .copy(let copied) = action { IOSPasteboard.copy(copied) }
+                    }
+                }
+                .iosHoverEffect()
             }
             if let more {
                 moreFooter(more)
@@ -516,6 +500,8 @@ struct IOSMemoryScreen: View {
         .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, rowPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Toute la largeur de la rangée répond au toucher et au survol (S-7).
+        .contentShape(Rectangle())
     }
 
     /// La ligne de contexte : une bande jointe par « · » aux tailles ordinaires,

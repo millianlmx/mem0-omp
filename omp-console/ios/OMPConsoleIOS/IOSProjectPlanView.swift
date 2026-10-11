@@ -102,6 +102,7 @@ struct IOSProjectPlanView: View {
                 ? ProjectAccessibility.feature(row.slug)
                 : ProjectAccessibility.removedFeature(row.slug)
         )
+        .iosHoverEffect()
     }
 
     private func status(_ state: ProjectSegmentState) -> ConsoleStatus {

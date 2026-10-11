@@ -149,8 +149,7 @@ marqueur `[test: <fonction>]` (une fonction de
   voie), est masqué à VoiceOver par `.accessibilityHidden(true)` sur l'`Image` :
   aucun élément `Image` lu sous un nom de symbole (« Search Document »). Un
   symbole porteur de sens sans texte visible porte un libellé français :
-  « Rafraîchir » (`KanbanText.refresh`), « Nouvelle feature… »
-  (`NewFeatureText.command`). `[capture: iphone-home-light]`
+  « Nouvelle feature… » (`NewFeatureText.command`). `[capture: iphone-home-light]`
 - L'app est française seulement : `developmentRegion = fr` et
   `knownRegions = (fr, Base)` dans le projet, aucun `.lproj`, `.xcstrings` ni
   `CFBundleLocalizations`. Les libellés fournis par iOS (« Masquer la barre
@@ -368,11 +367,13 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   lignes qu'il faut ; une carte saine n'a aucune ligne. L'ardoise qui porte une
   carte au pilote arrêté se capture par `-pipelines.board marques`, sans
   appairage. `[test: boardRecipeMarquesShowsSentences]`
-- Le bouton « Rafraîchir » (`pipelines.refresh`, ⌘R au clavier de l'iPad), placé
-  avant « Nouvelle feature », demande au Mac de relire l'état des PR sur GitHub ;
-  il n'est actif que connecté et hors relecture, et montre un indicateur
-  d'activité pendant la relecture. Aucun message : le retour visible est le
+- Pipelines se relit quand on tire la liste (iPhone) ou le kanban (iPad) vers le
+  bas : l'ardoise, puis l'état des PR sur GitHub si aucune relecture n'est déjà
+  en cours ; un échec est silencieux. Au clavier de l'iPad, ⌘R « Actualiser »
+  fait la même relecture et n'est actif que connecté. La barre ne porte aucun
+  bouton ↻ ; aucun message : le retour visible est l'indicateur système puis le
   libellé des cartes. `[test: refreshAvailability]`
+  `[test: pipelinesRefreshRereadsTheBoardThenThePullRequests]`
 - Sur l'ardoise iOS, les clôtures d'étape d'une feature de lot ne font aucune
   carte à part, et une feature réduite à ses clôtures fait une seule carte
   « Terminée ». `[test: historyClosuresJoinTheirFeatureOnIOS]`
@@ -549,9 +550,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   étiquettes tiennent sur une ligne, jointes par « · », aux tailles standard et
   s'empilent (date, puis étiquettes) aux tailles d'accessibilité, texte borné à
   `accessibility4`. `[test: memoryRowContextSplitsIntoSegments]`
-- « Sommaire » reste toujours visible ; indisponible, il est grisé et un toucher
-  montre la raison dans une bulle — jamais un bouton masqué ni muet.
-  `[test: summaryReasonNamesEachUnavailableCase]`
+- « Sommaire » reste toujours visible ; indisponible (mode Graphe, sommaire déjà
+  affiché, recherche en cours), c'est un bouton désactivé du système, sans teinte
+  ni bulle. `[test: summaryAvailability]` `[garde: ios-gestes-et-retours-natifs/AC-13]`
 - L'écran reste lisible en Dynamic Type maximum, comme le reste de la coque.
   `[capture: iphone-memory-light.png]`
 
@@ -828,6 +829,54 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   inchangé (`IOSSessionThreadView`). « Piloter un projet » et « Nouvelle
   feature » restent les `Form` qu'ils étaient. `[capture: iphone-pipelines-fiche-*]`
   `[capture: iphone-nouvelle-feature-*]`
+
+## Gestes et retours natifs (feature `ios-gestes-et-retours-natifs`)
+
+- « Tirer pour actualiser » remplace tout bouton ↻ de barre : la liste de
+  Pipelines (iPhone, et ses états chargement, magasin absent, vide), son kanban
+  iPad et la Mémoire en mode Liste se relisent quand on tire le contenu vers le
+  bas (`.refreshable`) ; l'indicateur système reste jusqu'à la fin de la
+  relecture. Hors connexion, rien n'est lu. Accueil, Sessions, Projet, Session
+  OMP et Statistiques n'ont pas de tirage (⌘R y reste).
+  `[garde: ios-gestes-et-retours-natifs/AC-2]`
+- Le graphe de la Mémoire ne se tire pas (canevas pan/zoom) : il se relit à
+  chaque passage en mode Graphe ; le graphe, le vide ou l'erreur déjà affichés
+  restent jusqu'à la réponse, sans repasser par le chargement.
+  `[test: graphRereadsOnEveryPassWithoutLoading]`
+- Sur iPad avec clavier, ⌘R « Actualiser » relit l'écran courant ; il figure
+  dans la liste des raccourcis (⌘ maintenu) et reste sans effet sous une
+  feuille. `[test: refreshCommandIsListedAsActualiser]`
+- La barre de la Mémoire porte trois boutons au plus, dans les deux modes :
+  « Sommaire », la bascule Graphe/Liste et l'antenne Connexion ; le champ de
+  recherche système n'en est pas un. `[garde: ios-gestes-et-retours-natifs/AC-4]`
+- Un appui long sur une carte Pipelines, une carte ou rangée de l'Accueil, une
+  rangée Sessions ou une rangée Mémoire ouvre un menu contextuel natif qui ne
+  propose que les actions déjà offertes ailleurs pour cet élément dans son état
+  courant (hors connexion ou geste en vol, les commandes disparaissent), plus
+  « Copier » ; « Arrêter… » est destructif, en dernier, et passe par la même
+  confirmation que la fiche. Aucune action par balayage.
+  `[test: contextMenuOffersOnlyCurrentActions]` `[garde: ios-gestes-et-retours-natifs/AC-5]`
+- « Copier » met dans le presse-papiers le lien de la PR s'il existe (http ou
+  https), sinon le texte principal de l'élément ; aucune confirmation visible.
+  `[test: copyCopiesPullRequestLinkElseMainText]`
+- Chaque commande envoyée au Mac joue un retour haptique système à sa RÉPONSE,
+  jamais à l'envoi : succès → `.success`, échec (hors connexion compris) →
+  `.error`. Un seul point de pose (`RootView`) ; aucun réglage d'app, seul le
+  réglage Haptique d'iOS s'applique. `[test: commandOutcomeFollowsTheMacResponse]`
+  `[test: outcomeMapsToSystemFeedback]` `[garde: ios-gestes-et-retours-natifs/AC-8]`
+- Le texte de la visionneuse de session, du contrat et de la fiche d'un
+  souvenir est sélectionnable (sélection système et « Copier ») ; les libellés
+  de boutons ne le sont pas. `[garde: ios-gestes-et-retours-natifs/AC-9]`
+- Sur iPad avec pointeur, chaque carte ou rangée touchable montre l'effet de
+  survol système `.highlight`, à la forme d'une carte (`iosHoverEffect()`).
+  `[garde: ios-gestes-et-retours-natifs/AC-10]`
+- Quand « Réduire les animations » est actif, un défilement automatique se fait
+  d'un saut ; sinon il reste animé (`IOSMotion.scrollAnimation`).
+  `[test: scrollJumpsWhenReduceMotionIsOn]` `[garde: ios-gestes-et-retours-natifs/AC-11]`
+- Un symbole purement décoratif n'est jamais lu par VoiceOver ; l'état qu'il
+  portait passe par le contrôle : « replié »/« déplié » pour les bascules du
+  fil, trait sélectionné pour l'option choisie de « Répondre ».
+  `[garde: ios-gestes-et-retours-natifs/AC-12]`
 
 ## Erreurs du Mac (feature `ios-erreurs-serveur-lisibles`)
 

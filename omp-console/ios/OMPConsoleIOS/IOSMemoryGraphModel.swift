@@ -4,8 +4,8 @@
 // vue (pincer, glisser, toucher).
 //
 // Aucune écriture : la seule lecture est `client.memoryGraph(scope:)` — jamais une
-// route d'écriture mémoire. Aucune scrutation : la bascule et « Rafraîchir » sont
-// les deux seuls déclencheurs.
+// route d'écriture mémoire. Aucune scrutation : chaque passage en mode Graphe et
+// ⌘R « Actualiser » sont les seuls déclencheurs.
 //
 // L'état d'un souvenir vient du NŒUD du fil (`text`, `tags`, `scope`) : l'app ne
 // recalcule rien.
@@ -160,12 +160,15 @@ final class IOSMemoryGraphModel: ObservableObject {
 
     // MARK: - Cycle de vie
 
-    /// L'activation depuis la bascule : le mode devient le graphe, et il charge s'il
-    /// ne l'a jamais fait. Un retour sur la section ne relance RIEN.
+    /// L'activation depuis la bascule : le mode devient le graphe, et il est relu
+    /// à CHAQUE passage (ios-gestes-et-retours-natifs, S-2 : le mode Graphe n'a
+    /// aucun tirage). Le premier passage montre le chargement ; les suivants
+    /// laissent le graphe, le vide ou l'erreur affichés jusqu'à la réponse, qui
+    /// les remplace. Hors connexion, rien n'est lu.
     func activate() async {
         shown = true
-        guard state == .idle else { return }
-        await perform { await self.load() }
+        let showsLoading = state == .idle
+        await perform { await self.load(showsLoading: showsLoading) }
     }
 
     /// Le retour à la liste : le graphe garde son état (position, sélection,
@@ -182,10 +185,10 @@ final class IOSMemoryGraphModel: ObservableObject {
         if state == .loading { state = .idle }
     }
 
-    /// « Rafraîchir » : une lecture neuve du graphe.
+    /// ⌘R « Actualiser » et le retour du Mac : une lecture neuve du graphe.
     func refresh() async {
         guard Self.gesturesEnabled(client.state) else { return }
-        await perform { await self.load() }
+        await perform { await self.load(showsLoading: true) }
     }
 
     /// Publie une charge utile DÉJÀ lue (crochet de recette) : rien n'est appelé.
@@ -299,9 +302,10 @@ final class IOSMemoryGraphModel: ObservableObject {
     }
 
     /// La lecture : une seule route (`memoryGraph`), et rien hors `.connected`.
-    private func load() async {
+    /// `showsLoading` faux garde l'état affiché pendant la lecture (S-2).
+    private func load(showsLoading: Bool) async {
         guard Self.gesturesEnabled(client.state) else { return }
-        state = .loading
+        if showsLoading { state = .loading }
         do {
             let payload = try await client.memoryGraph(scope: nil)
             if Task.isCancelled { return }

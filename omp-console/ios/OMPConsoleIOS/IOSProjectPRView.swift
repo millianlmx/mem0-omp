@@ -83,6 +83,7 @@ struct IOSProjectPRView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .buttonStyle(.borderless)
         .accessibilityIdentifier(ProjectAccessibility.prRow(index))
+        .iosHoverEffect()
     }
 
     private func checkLine(_ row: ProjectPRRow, check: RequiredCheck) -> some View {

@@ -99,17 +99,12 @@ struct PipelinesModelTests {
         #expect(board.cards.map { ConsoleStatus.of(card: $0).text } == ["PR créée"])
     }
 
-    @Test("pipelines-livrees-statut-pr-faux-et-doub/AC-5 : « Rafraîchir » n'est actif que connecté et hors relecture")
+    @Test("pipelines-livrees-statut-pr-faux-et-doub/AC-5 : l'actualisation des Pipelines (⌘R « Actualiser ») n'est active que connecté")
     func refreshAvailability() {
-        let connected = ClientState.connected(endpoint: endpoint)
-        #expect(PipelinesModel.canRefresh(connection: connected, refreshing: false))
-        #expect(!PipelinesModel.canRefresh(connection: connected, refreshing: true))
+        #expect(PipelinesModel.canRefresh(connection: .connected(endpoint: endpoint)))
         for state in [ClientState.noNetwork, .unpaired, .searching, .connecting(endpoint: endpoint), .macAbsent(endpoint: endpoint), .revoked] {
-            #expect(!PipelinesModel.canRefresh(connection: state, refreshing: false))
-            #expect(!PipelinesModel.canRefresh(connection: state, refreshing: true))
+            #expect(!PipelinesModel.canRefresh(connection: state))
         }
-        #expect(PipelinesAccessibility.refresh.hasPrefix("pipelines."))
-        #expect(PipelinesAccessibility.refresh != PipelinesAccessibility.newFeature)
     }
 
     // MARK: - Fixture : un instantané minimal reçu comme une trame `store`
