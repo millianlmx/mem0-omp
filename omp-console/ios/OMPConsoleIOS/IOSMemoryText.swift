@@ -39,30 +39,36 @@ enum IOSMemoryText {
     /// La route graphe est absente côté mem0-http (code partagé `outdated_service`) :
     /// la cause et le remède, sans adresse, sans JSON ni code HTTP.
     static let graphServiceOutdated =
-        "Graphe indisponible : serveur mémoire trop ancien.\nMets à jour mem0-http sur le Mac (redéploie le service), puis réessaie."
+        "Graphe indisponible : serveur mémoire trop ancien sur le Mac.\nMettez à jour OMP Console sur le Mac, puis réessayez."
 
     /// L'app Mac elle-même ne connaît pas la route graphe (`not_found`).
-    static let graphMacOutdated = "Graphe indisponible : app Mac trop ancienne, mets-la à jour."
+    static let graphMacOutdated = "Graphe indisponible : app Mac trop ancienne.\nMettez à jour OMP Console sur le Mac, puis réessayez."
 
     /// Le titre du bloc de liens de la fiche.
     static let links = "Liens"
 
-    /// Les natures d'un lien, en mots de l'app (le noyau n'en nomme aucune).
-    static let linkSemantic = "Proximité"
+    /// Les natures d'un lien, en mots de l'app (le noyau n'en nomme aucune). Une
+    /// proximité se dit par `proximityLabel(_:)`, jamais par son score.
     static let linkTag = "Étiquette"
     static let linkManual = "Manuel"
 
-    /// Le libellé d'une ligne de lien : sa nature, l'autre extrémité, et le score
-    /// d'une proximité.
+    /// Une proximité sémantique en clair, sans chiffre : ≥ 0,90 « Très proche »,
+    /// ≥ 0,80 « Proche », sinon (dont un score absent, 0, ou NaN) « Assez proche ».
+    static func proximityLabel(_ score: Double) -> String {
+        if score >= 0.90 { return "Très proche" }
+        if score >= 0.80 { return "Proche" }
+        return "Assez proche"
+    }
+
+    /// Le libellé d'une ligne de lien : sa nature en clair, puis l'autre extrémité.
     static func linkLine(kind: MemoryGraphLinkKind, other: String, score: Double?) -> String {
         let name: String
         switch kind {
-        case .semantic: name = linkSemantic
+        case .semantic: name = proximityLabel(score ?? 0)
         case .tag: name = linkTag
         case .manual: name = linkManual
         }
-        guard let score else { return name + " · " + other }
-        return name + " " + MemoryText.decimal(score) + " · " + other
+        return name + " · " + other
     }
 
     // MARK: - La recette `-memoire.recipe` (BR-7)
@@ -92,6 +98,14 @@ enum IOSMemoryText {
     /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
     /// littéral dans `scripts/ios-clavier-largeur-recette.sh`).
     static let keyboardRecipeRead = "memoire-recipe-read"
+
+    /// Les recettes de PANNE (ios-redaction-vouvoiement, S-2) : `injoignable` montre la
+    /// liste face à un Mac injoignable, `service-ancien` le graphe face à un service
+    /// mémoire trop ancien. Les deux modèles lisent `IOSMemoryFailureReader`.
+    static let failureRecipeUnreachable = "injoignable"
+    static let failureRecipeOutdated = "service-ancien"
+    /// Le détail porté par l'erreur simulée : jamais affiché, le traducteur le tait.
+    static let failureRecipeDetail = "recette"
 
     // MARK: - « Sommaire » : icône propre, raison d'indisponibilité
 

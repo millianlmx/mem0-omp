@@ -5,8 +5,8 @@ par renvoi, en nommant leur source, puis énonce ce qui est particulier au
 tactile. Chaque règle est vérifiable : une puce se termine par au moins un
 marqueur `[test: <fonction>]` (une fonction de
 `omp-console/ios/OMPConsoleIOSTests/`), `[capture: <motif>]` (un nom produit par
-`scripts/ios-shots.sh`) ou `[garde: design-ios/AC-<n>]` (un test de
-`test/design-ios.test.ts`). Une puce sans marqueur fait échouer la garde.
+`scripts/ios-shots.sh`) ou `[garde: <slug>/AC-<n>]` (un test Node de
+`test/*.test.ts` portant ce titre). Une puce sans marqueur fait échouer la garde.
 
 ## Héritage de la coque macOS (par renvoi)
 
@@ -350,6 +350,10 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Le champ besoin montre 3 lignes à vide, grandit jusqu'à 8 lignes puis défile
   dans le champ, sans second défilement de feuille.
   `[capture: iphone-nouvelle-feature-rempli-light]`
+- Sous le champ titre, aucune ligne : la feuille ne cite ni branche ni « feat/ ».
+  `[garde: ios-redaction-vouvoiement/AC-3]`
+- Les deux sélecteurs de modèle s'appellent « Modèle /req et /specs » et « Modèle
+  /impl et /review ». `[garde: ios-redaction-vouvoiement/AC-7]`
 - La feuille se capture par le crochet de recette `-pipelines.recipe`
   (`vide`, `choisi`, `rempli`), sans appairage. `[test: pipelinesRecipeResolves]`
 - La fiche d'une carte affiche son titre complet une seule fois, dans le corps, sur
@@ -428,10 +432,14 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   inventé ; l'Accueil ne porte AUCUN bouton dessus. `[test: setupBanner]`
 - « OMP absent sur le Mac » n'est conclu que sur réponse du Mac, jamais quand la
   réponse manque. `[test: macMissingRequiresComponents]`
-- Avant le premier instantané, l'Accueil affiche un chargement explicite, jamais
-  un vide muet. `[test: loadingBeforeFirstSnapshot]`
+- Avant le premier instantané, l'Accueil affiche l'indicateur de chargement natif
+  seul, sans texte — jamais un vide muet. `[test: loadingBeforeFirstSnapshot]`
+  `[garde: ios-redaction-vouvoiement/AC-5]`
 - L'état de l'Accueil suit l'ardoise publiée sans geste de l'utilisateur.
   `[test: liveUpdates]`
+- Une feature dont les specs attendent une validation porte « Spécifications à
+  valider », en statut comme en attente ; seul le bouton dit « Valider les specs ».
+  `[test: specsAwaitingValidationReadTheSameEverywhere]`
 - Aucun bandeau de notifications, et l'app ne demande jamais l'autorisation
   d'en afficher. `[test: noNotificationsBanner]`
 - Les cinq états et les trois feuilles se capturent par le crochet de recette
@@ -473,12 +481,12 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   et garde les lignes déjà lues. `[test: scrollingToTheEndLoadsEveryRowOnce]`
 - Un délai dépassé n'est PAS un Mac injoignable : dans la Mémoire seulement (entrée
   `IOSMacFailure.ofMemoryRead` du traducteur partagé), « Délai dépassé : le Mac a mis
-  trop de temps à répondre. » puis « Réessaie dans un instant. » et « Mac injoignable. »
+  trop de temps à répondre. » puis « Réessayez dans un instant. » et « Mac injoignable. »
   et son remède sont deux bandeaux distincts, chacun avec « Réessayer ». Les autres
   sections gardent « Mac injoignable. ». `[test: listTimeoutSaysDelayExceeded]`
 - Face à une app Mac antérieure (qui ignore la route de page), la liste dit
-  « Fonction indisponible : app Mac trop ancienne. » puis « Mets à jour OMP Console sur
-  le Mac, puis réessaie. », sans code HTTP ni JSON ; aucun code de compatibilité.
+  « Fonction indisponible : app Mac trop ancienne. » puis « Mettez à jour OMP Console sur
+  le Mac, puis réessayez. », sans code HTTP ni JSON ; aucun code de compatibilité.
   `[test: listOnOlderMacSaysMacOutdated]`
 - Le détail d'un souvenir ouvre une feuille : la ligne de contexte (date relative,
   étiquettes), le texte intégral tel qu'il est stocké, identifiant et portée sous
@@ -511,6 +519,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   menu pour revenir à la vue entière ; toucher un souvenir met son voisinage en
   évidence et ouvre sa fiche en lecture seule.
   `[capture: ipad-memoire-graphe-fiche-*]`
+- Une ligne de lien de la fiche dit sa nature en clair : une proximité s'écrit
+  « Très proche » (score ≥ 0,90), « Proche » (≥ 0,80) ou « Assez proche », jamais un
+  nombre ; « Étiquette » et « Manuel » restent. `[test: proximityReadsAsPlainWords]`
 - Le canevas fait EXCEPTION à « aucune couleur hors `ConsoleTone` » : sa palette est
   celle du noyau PARTAGÉ (`MemoryGraphStyle.hue(for:)`, `Color.accentColor`,
   `.secondary`, `.primary`), exactement comme la coque macOS — une seule peinture,
@@ -520,7 +531,7 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   16 Mio est retirée et annoncée « Graphe partiel »). Sans projet ouvert, il dit
   « Aucun projet ouvert » et ne dessine aucun canevas. `[test: graphWithoutProjectSaysNoProject]`
 - Un graphe qui dépasse son délai dit « Délai dépassé : le Mac a mis trop de temps à
-  répondre. » puis « Réessaie dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
+  répondre. » puis « Réessayez dans un instant. » avec « Réessayer », jamais « Mac injoignable » ;
   le panneau commence en haut, sous la barre de navigation, dans tous les états.
   `[test: graphTimeoutSaysDelayExceeded]`
 
@@ -727,10 +738,12 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   range tout échec d'appel au Mac en une cause distinguable ; Mémoire (liste,
   recherche, graphe), Sessions, Statistiques et Pipelines l'appellent, aucune ne
   relit le détail brut. Un message = la cause, puis un remède propre à cette cause,
-  en tutoyant ; jamais d'URL, d'adresse, de JSON, de `"detail"` ni de code HTTP.
-  `[test: everyCauseHasItsOwnRemedy]`
+  au vouvoiement, en commençant par ce qui s'est passé puis ce qu'il faut faire ;
+  jamais de nom de service ni de commande, jamais d'URL, d'adresse, de JSON, de
+  `"detail"` ni de code HTTP. `[test: everyCauseHasItsOwnRemedy]`
+  `[test: macErrorsSayWhatHappenedThenWhatToDo]`
 - 404 « route inconnue » et 404/405 hors contrat : « Fonction indisponible : app Mac
-  trop ancienne. » — mets à jour OMP Console sur le Mac. Seul le message EXACT
+  trop ancienne. » — « Mettez à jour OMP Console sur le Mac, puis réessayez. » Seul le message EXACT
   « route inconnue » vaut cette cause. `[test: macOutdatedOn404And405]`
 - Connexion refusée, délai dépassé, Mac non connecté : « Mac injoignable. » — la
   cause les couvre tous, et la raison système (qui peut nommer l'hôte) n'est jamais
@@ -753,7 +766,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   effacé du trousseau, retour à l'appairage, « Jeton révoqué » à l'écran.
   `[test: unauthorizedHasNoMessage]`
 - Le graphe de la Mémoire garde sa distinction : `outdated_service` dit « serveur
-  mémoire trop ancien » (mem0-http), un 404 dit « app Mac trop ancienne ». La liste
+  mémoire trop ancien sur le Mac » puis « Mettez à jour OMP Console sur le Mac, puis
+  réessayez. », sans nom de service ; un 404 dit « app Mac trop ancienne ». La liste
   et la recherche ne l'ont pas : un 503 qui cite une réponse 404/405 de mem0-http
   reste « Service indisponible sur le Mac ». `[test: graphKeepsOutdatedDistinction]`
   `[test: memoryNeverClaimsOutdated]`
@@ -768,3 +782,9 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   du Mac. `[test: memoryShowsTranslatedFailure]` `[test: viewerShowsTranslatedFailure]`
   `[test: statsShowsTranslatedFailure]` `[test: catalogShowsTranslatedFailure]`
   `[test: graphShowsTranslatedFailure]`
+- Tous les textes visibles de l'app et de ConsoleCore vouvoient, y compris hors
+  `*Text.swift` ; seules les fixtures de conversation et de contrat simulés en sont
+  exemptées. `[garde: ios-redaction-vouvoiement/AC-8]`
+- Les deux écrans d'erreur de la Mémoire s'obtiennent sans Mac :
+  `-memoire.recipe injoignable` (liste) et `-memoire.recipe service-ancien` (graphe).
+  `[test: macErrorsSayWhatHappenedThenWhatToDo]`

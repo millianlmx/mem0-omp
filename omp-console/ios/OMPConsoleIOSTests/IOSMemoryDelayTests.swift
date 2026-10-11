@@ -191,8 +191,8 @@ struct IOSMemoryDelayTests {
         #expect(ConnectionText.pairingFailure(.transport(.timedOut("r")))
             == ConnectionText.pairingFailure(.transport(.unreachable("r"))))
 
-        // Les mots d'avant, inchangés.
-        #expect(IOSHomeText.transportFailure == "Le Mac n’a pas répondu.")
+        // L'échec d'un geste de l'Accueil passe par le même traducteur.
+        #expect(IOSHomeContent.failure(timedOut) == IOSMacErrorText.message(for: .macUnreachable))
 
         // Le bandeau du fil de session : le même dans les deux cas.
         var banners: [String?] = []

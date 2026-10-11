@@ -181,7 +181,7 @@ enum ConnectionText {
 
     // MARK: - Privilège réseau local
 
-    static let localNetworkDenied = "Accès au réseau local refusé à OMP Console."
+    static let localNetworkDenied = "Accès au réseau local refusé à OMP Console. Autorisez-le dans Réglages."
     static let openLocalNetworkSettings = "Ouvrir Réglages"
 }
 

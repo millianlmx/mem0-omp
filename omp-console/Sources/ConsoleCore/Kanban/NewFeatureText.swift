@@ -25,7 +25,6 @@ public enum NewFeatureText {
         "Ce dossier n’est pas un dépôt Git (aucun .git) : choisissez la racine d’un dépôt."
     public static let featureTitle = "Titre"
     public static let titlePlaceholder = "ex. export-csv"
-    public static let titleHelp = "Devient la branche feat/<titre>."
     public static let need = "Besoin"
     public static let needPlaceholder = "Décrivez ce que vous voulez obtenir…"
     public static let cancel = "Annuler"

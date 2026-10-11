@@ -58,13 +58,6 @@ enum IOSHomeText {
         "La section « \(title) » est absente du contrat."
     }
 
-    // --- échecs des gestes (S-9, S-13, S-14) ----------------------------------
-
-    static let notConnected = "L’app n’est pas connectée au Mac."
-    static let transportFailure = "Le Mac n’a pas répondu."
-    static let decodingFailure = "La réponse du Mac est illisible."
-    static let incompatibleProtocol = "La version du protocole du Mac n’est pas la même que celle de l’app."
-
     // --- gestes de l'Accueil : confirmation, envoi en cours, échec sur la carte
 
     /// Le titre de la confirmation de « Valider les specs » d'une carte.

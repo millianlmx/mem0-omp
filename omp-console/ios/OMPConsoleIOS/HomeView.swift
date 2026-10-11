@@ -147,8 +147,6 @@ struct HomeView: View {
         VStack(spacing: 8) {
             setupBanner
             ProgressView()
-            Text(KanbanBoardState.loadingText)
-                .foregroundStyle(.secondary)
         }
         .padding(IOSMetrics.margin(sizeClass))
         .frame(maxWidth: .infinity, maxHeight: .infinity)

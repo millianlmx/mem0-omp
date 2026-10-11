@@ -182,18 +182,11 @@ enum IOSHomeContent {
         )) ?? AttributedString(text)
     }
 
-    /// Le message EXACT d'un échec de geste (S-9) : le message de l'API, jamais
-    /// recomposé. Les causes locales ont un mot iOS.
+    /// Le message d'un échec de geste : celui du traducteur partagé (ce qui s'est
+    /// passé, puis ce qu'il faut faire), jamais le détail brut du Mac. Un 401 rend
+    /// « Jeton révoqué » (le parcours de jeton révoqué parle seul).
     static func failure(_ error: Error) -> String {
-        guard let error = error as? ClientError else { return IOSHomeText.decodingFailure }
-        switch error {
-        case .api(let api): return api.message ?? api.code
-        case .transport(let failure): return failure.reason
-        case .decoding(let reason): return reason
-        case .notConnected: return IOSHomeText.notConnected
-        case .incompatibleProtocol: return IOSHomeText.incompatibleProtocol
-        case .unexpectedStatus(let status): return IOSMacErrorText.message(for: IOSMacFailure.of(status: status))
-        }
+        IOSMacErrorText.message(for: error) ?? ConnectionText.revoked
     }
 }
 

@@ -42,7 +42,7 @@ func statusIsAWordDoubledByATone() {
         .fusionne: ConsoleStatus(text: "PR fusionnée", tone: .success),
         .prFermee: ConsoleStatus(text: "PR fermée", tone: .neutral),
         .echec: ConsoleStatus(text: "Échec", tone: .danger),
-        .jalonSpecs: ConsoleStatus(text: "Specs à valider", tone: .attention),
+        .jalonSpecs: ConsoleStatus(text: "Spécifications à valider", tone: .attention),
         .jalonReview: ConsoleStatus(text: "Revue à accepter", tone: .attention),
         .bloquee: ConsoleStatus(text: "Bloquée", tone: .danger),
         .termineeSansPr: ConsoleStatus(text: "Terminée", tone: .neutral),

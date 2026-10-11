@@ -11,11 +11,11 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `pipeline` | terme métier OMP | « Aucune pipeline pour l’instant. » |
 | `feature` | terme métier OMP | « Nouvelle feature » |
 | `PR` | terme métier OMP | « Ouvrir la PR » |
-| `/req` | terme métier OMP | « Modèle /req+/specs » |
-| `/specs` | terme métier OMP | « Modèle /req+/specs » |
+| `/req` | terme métier OMP | « Modèle /req et /specs » |
+| `/specs` | terme métier OMP | « Modèle /req et /specs » |
 | `specs` | terme métier OMP | « Valider les specs » |
-| `/impl` | terme métier OMP | « Modèle /impl+/review » |
-| `/review` | terme métier OMP | « Modèle /impl+/review » |
+| `/impl` | terme métier OMP | « Modèle /impl et /review » |
+| `/review` | terme métier OMP | « Modèle /impl et /review » |
 | `Given` | syntaxe des critères OMP | « Given un contrat long » |
 | `When` | syntaxe des critères OMP | « When la feuille s’ouvre » |
 | `Then` | syntaxe des critères OMP | « Then le nom se lit en entier dans la feuille. » |
@@ -23,7 +23,7 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `Web` | usage du français d’Apple | « Recherche Web » |
 | `OMP` | nom propre ou norme | « Lancer OMP » |
 | `OMP Console` | nom propre ou norme | « Bienvenue dans OMP Console » |
-| `mem0` | nom propre ou norme | « Mets à jour mem0-http sur le Mac (redéploie le service), puis réessaie. » |
+| `mem0` | nom propre ou norme | « Mémoire du projet servie par mem0 » |
 | `omp-mem0-req` | nom propre ou norme | « vérifiez que le module omp-mem0-req est installé » |
 | `oMLX` | nom propre ou norme | « Démarrez oMLX, puis rafraîchissez. » |
 | `OMLX_API_TOKEN` | nom propre ou norme | « vérifiez OMLX_API_TOKEN. » |

@@ -208,7 +208,8 @@ struct IOSMemoryGraphTests {
         #expect(await stateAfter(ClientError.api(.outdatedService(relayed))) == .serviceOutdated)
         let text = IOSMemoryText.graphServiceOutdated
         #expect(text.contains("serveur mémoire trop ancien"))
-        #expect(text.contains("mem0-http"))
+        #expect(!text.contains("mem0-http"))
+        #expect(text.contains("Mettez à jour OMP Console sur le Mac"))
         #expect(isReadable(text))
         #expect(!text.contains("mets-la à jour"))
     }
@@ -230,7 +231,7 @@ struct IOSMemoryGraphTests {
         #expect(await stateAfter(ClientError.api(.notFound("route inconnue"))) == .macOutdated)
         #expect(await stateAfter(ClientError.api(.notFound("autre"))) == .macOutdated)
         let text = IOSMemoryText.graphMacOutdated
-        #expect(text.contains("app Mac trop ancienne, mets-la à jour"))
+        #expect(text.contains("app Mac trop ancienne.\nMettez à jour OMP Console sur le Mac, puis réessayez."))
         #expect(!text.contains("serveur mémoire trop ancien"))
         #expect(isReadable(text))
     }
