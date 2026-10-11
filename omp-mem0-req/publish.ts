@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { armPhase, stateOfCwd, states } from "./state.ts";
-import { runStateFor } from "./runState.ts";
+import { forgetRunState, runStateFor } from "./runState.ts";
 import type { ArmedRunState } from "./runState.ts";
 import { PIPELINE_HEARTBEAT_MS, asRunningEntry, asStringOrNull, deleteRunningEntry, historyIdFor, pipelineLabel, pipelineRunningDir, pipelineStateDir, readJsonFile, runningIdFor, writeHistoryEntry, writeRunningEntry } from "./store.ts";
 import type { HistoryEntry, PanelAskOption, PipelineCtx, PipelineFinalState, PipelineRunState, RunningEntry } from "./store.ts";
@@ -341,6 +341,26 @@ export function ensureHeartbeat(ctx: PipelineCtx | undefined, deps: Omit<Publish
       /* minuterie déjà nettoyée par la session : rien à faire */
     }
   };
+}
+
+
+/**
+ * Oublie une session qui se ferme : son battement et sa pompe s'arrêtent, et ni
+ * `liveCtxs` ni l'état d'exécution partagé (`globalThis`) ne retiennent plus son
+ * contexte. Sans cela, un process qui enchaîne les sessions — le service en
+ * héberge une par maillon et par arbitrage — garde chaque session libérée
+ * (runner, outils, transcription) jusqu'à sa mort. La clé suit `stateKeyOf` : le
+ * fichier de session, sinon l'identifiant — les deux sont retirés, une entrée a
+ * pu naître sous l'identifiant avant que le fichier n'existe.
+ */
+export function releaseSessionState(ctx: PipelineCtx | undefined): void {
+  for (const key of [sessionFileOf(ctx), sessionIdOf(ctx)]) {
+    if (key === null || key === "") continue;
+    liveCtxs.delete(key);
+    const state = forgetRunState(key);
+    state?.heartbeatStop?.();
+    state?.pumpStop?.();
+  }
 }
 
 

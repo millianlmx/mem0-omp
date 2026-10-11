@@ -20,7 +20,7 @@ import { hostComponents } from "./panelHost.ts";
 import { diskProbe, joinEntry } from "./panelSession.ts";
 import type { SwitchCtx } from "./panelSession.ts";
 import type { PipelinesPanelDeps } from "./panelView.ts";
-import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publishCurrentCwd, reportStateWriteFailure, resetStateWriteWarning, runStateOf, sessionFileOf, sessionIdOf } from "./publish.ts";
+import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publishCurrentCwd, releaseSessionState, reportStateWriteFailure, resetStateWriteWarning, runStateOf, sessionFileOf, sessionIdOf } from "./publish.ts";
 import type { PublishDeps } from "./publish.ts";
 import { createServiceClient, createServiceLotActions } from "./serviceClient.ts";
 import { createServiceHost } from "./serviceHost.ts";
@@ -722,30 +722,39 @@ export default function reqExtension(pi: ExtensionAPI) {
   // se ferme VRAIMENT. Le fichier de session d'un sous-agent porte
   // `parentSession` : c'est ce qui le distingue, et rien de tout cela ne le
   // concerne — il n'a armé ni relais, ni pompe, ni contrôleur.
+  //
+  // Ce qui appartient à la SEULE session qui se ferme est, en revanche, toujours
+  // oublié — service et sous-agent compris : un état par session jamais retiré
+  // retient la session libérée tout entière, et le service en libère une par
+  // maillon et par arbitrage.
   pi.on("session_shutdown", async (_event, ctx) => {
-    if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
-    // Le process du SERVICE n'arrête pas ses contrôleurs ici : ils appartiennent à
-    // son pilotage (`servicePilot`), qui les arrête à son propre arrêt — les couper
-    // sur le `session_shutdown` de la session `-p` qui l'héberge laisserait des
-    // runs vivants sans pilote.
-    if (isServiceProcess()) return;
-    auditRelay.disarm();
-    projectRelay.disarm();
     try {
-      runStateOf(ctx as PipelineCtx).pumpStop?.();
-      runStateOf(ctx as PipelineCtx).pumpStop = null;
-    } catch {
-      /* une minuterie déjà nettoyée n'est pas une erreur */
-    }
-    for (const controller of lotControllers.values()) {
+      if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
+      // Le process du SERVICE n'arrête pas ses contrôleurs ici : ils appartiennent à
+      // son pilotage (`servicePilot`), qui les arrête à son propre arrêt — les couper
+      // sur le `session_shutdown` de la session `-p` qui l'héberge laisserait des
+      // runs vivants sans pilote.
+      if (isServiceProcess()) return;
+      auditRelay.disarm();
+      projectRelay.disarm();
       try {
-        controller.abortAll("session fermée");
-        // Le canal s'arrête avec le pilote (S-1) : minuterie du pompage éteinte,
-        // et les accusés d'un lot TERMINÉ sont purgés (AC-12).
-        controller.stop();
+        runStateOf(ctx as PipelineCtx).pumpStop?.();
+        runStateOf(ctx as PipelineCtx).pumpStop = null;
       } catch {
-        /* l'arrêt ne doit jamais jeter */
+        /* une minuterie déjà nettoyée n'est pas une erreur */
       }
+      for (const controller of lotControllers.values()) {
+        try {
+          controller.abortAll("session fermée");
+          // Le canal s'arrête avec le pilote (S-1) : minuterie du pompage éteinte,
+          // et les accusés d'un lot TERMINÉ sont purgés (AC-12).
+          controller.stop();
+        } catch {
+          /* l'arrêt ne doit jamais jeter */
+        }
+      }
+    } finally {
+      releaseSessionState(ctx as PipelineCtx);
     }
   });
 
