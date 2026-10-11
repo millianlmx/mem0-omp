@@ -398,14 +398,30 @@ listée « sans objet » sans changer le verdict. `"surface": "*"` n'est admis q
 si la même règle et la même clé sont signalées sur toutes les sections. Une
 surface non couverte ne s'excepte pas.
 
-**Limite (2026-10-10).** Le premier passage réel n'a pas encore été joué : le
-poste de référence était sur un Space plein écran, et l'on ne bascule pas l'écran
-de l'utilisateur. Seul le refus a été éprouvé en réel (sortie 2, « Revenez sur le
-Bureau »). Le fichier d'exceptions est livré **vide** : après le premier passage
-sur le Bureau, lancer `bash scripts/mac-recette-ui.sh`, inspecter dans
-`rapport.md` chaque signalement avec sa capture et son relevé, et y ajouter son
-entrée justifiée, jusqu'au verdict vert (sortie 0) sur deux passages consécutifs
-dont les `rapport.json` sont identiques (`cmp`).
+**Passage réel (2026-10-11).** Sur le Bureau du poste de référence, deux passages
+consécutifs sont verts (sortie 0, environ 3 min chacun, construction en cache)
+avec des `rapport.json` identiques (`cmp`) : 23 surfaces couvertes, 67
+signalements exceptés par les 53 entrées de `exceptions.json`. Les faux positifs
+sont des contrôles système à leur taille AppKit (en-têtes de section, triangles
+de divulgation, zones « page suivante » des barres de défilement) et des
+identifiants internes (`ListColumn`, `NSOutlineViewDisclosureButtonKey`).
+Restent, en défauts connus :
+
+- à la taille minimale, Session OMP (920 pt), Fichiers (981 pt) et Mémoire
+  (1021 pt) débordent la fenêtre de 760 pt et sont rognés des deux côtés
+  (`session.send` hors de la fenêtre) ;
+- deux cibles de 16 pt de haut : « Tout afficher » de l'Accueil et l'en-tête
+  « Livrées » de l'ardoise ;
+- des identifiants dupliqués : `models.reqSpecs` et `models.implReview` (sélecteur
+  et libellé), `stats.chart` (les deux graphiques et leurs titres).
+
+Le premier passage avait aussi trouvé trois défauts de l'app, corrigés depuis :
+plantage de « Projet » en pilotage dans une fenêtre basse, trames SSE du service
+jamais délivrées tant que le flux reste ouvert (question de Session OMP absente),
+badge des composants figé sur « manquants » après l'installation. Il avait aussi
+mis en évidence le vol de focus par le Dock au lancement, qui a disparu avec la
+copie accessoire. Pour un nouveau signalement : l'inspecter dans `rapport.md` avec
+sa capture et son relevé, puis le corriger ou ajouter son entrée justifiée.
 
 ## Lire le magasin d'état
 
