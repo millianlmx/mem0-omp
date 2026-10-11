@@ -39,6 +39,9 @@ const NESTED_ENV = {
   MEM0_CHECK_DEPTH: String(DEPTH + 1),
   MEM0_OMP_SKIP_SWIFT_APP: "1",
   MEM0_OMP_SKIP_IOS: "1",
+  // Le contrat boîte noire mem0-http démarre de vrais serveurs (Python, Qdrant) :
+  // aucune copie jetable ne le relance, la racine l'exécute.
+  MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
 };
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la

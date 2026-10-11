@@ -73,6 +73,7 @@ function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     MEM0_CHECK_DEPTH: String(DEPTH + 1),
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_IOS: "1",
+    MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
     ...extra,
   };
   delete env.NODE_TEST_CONTEXT;
@@ -457,7 +458,10 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
   assert.ok(stepsOf(aggregator).includes(`        run: bash scripts/ci-verdict.sh ${call}`), aggregator);
 });
 
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis MEM0_OMP_REQUIRE_IOS", (t) => {
+/** L'étape du contrat boîte noire mem0-http (S-9), ajoutée au job check après f3fbfe6. */
+const CONTRAT_STEP = ["      - name: Préparer le contrat boîte noire mem0-http", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
+
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis MEM0_OMP_REQUIRE_IOS et l'étape du contrat boîte noire", (t) => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
@@ -466,6 +470,14 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   assert.equal(jobKey(check, "name"), null);
   assert.ok(stepsOf(check).includes("        run: ./scripts/check.sh"), "check.sh sans option sur ubuntu");
   assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
+  // L'étape du contrat : une seule fois, ses deux lignes consécutives, juste
+  // après la préparation du venv du test d'API (dont elle tire l'interpréteur).
+  const steps = stepsOf(check);
+  const at = steps.indexOf(CONTRAT_STEP[0] ?? "");
+  assert.equal(steps.filter((line) => CONTRAT_STEP.includes(line)).length, 2, check);
+  assert.ok(at > 0, check);
+  assert.equal(steps[at - 1], "        run: bash scripts/mem0-http-test.sh --prepare", check);
+  assert.equal(steps[at + 1], CONTRAT_STEP[1], check);
 
   if (DEPTH > 0) {
     t.skip(NESTED);
@@ -475,7 +487,10 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   assert.equal(before.status, 0, `historique f3fbfe6 indisponible :\n${output(before)}`);
   const old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter((line) => !line.includes("MEM0_OMP_REQUIRE_IOS"));
   assert.ok(old.length > 0, "job check introuvable dans f3fbfe6");
-  assert.deepEqual(stepsOf(check), old);
+  assert.deepEqual(
+    steps.filter((line) => !CONTRAT_STEP.includes(line)),
+    old,
+  );
 });
 
 const WORKFLOW_CONCURRENCY = [

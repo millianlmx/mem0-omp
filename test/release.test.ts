@@ -512,6 +512,8 @@ const DROPPED_TESTS: Record<string, true> = {
   "fixpanel.test.ts": true,
   "fixruns.test.ts": true,
   "fixview.test.ts": true,
+  // lance de vrais serveurs (Python, Qdrant) : fichier lourd
+  "mem0-http-contrat-boite-noire.test.ts": true,
 };
 
 function copyRepo(dir: string): void {
@@ -771,6 +773,8 @@ function runEngine(
     // section « App iOS » de même.
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_IOS: "1",
+    // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici.
+    MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;
