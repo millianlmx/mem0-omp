@@ -1,11 +1,8 @@
-// Les preuves Swift des rangées de l'Accueil selon la largeur (feature
-// accueil-iphone-rangees-ecrasees-et-geste, BR-1) : la règle d'axe PURE
-// `IOSHomeContent.rowAxis(_:width:)`, sans rendre de vue, et la recette
-// `-home.recipe longTitles` des captures en largeur compacte.
-//
-// AC-1 : largeur compacte, taille standard → deux lignes (titre, puis puce +
-// bouton). AC-2 : largeur régulière ou inconnue → une ligne. AC-3 : taille
-// d'accessibilité → empilée, quelle que soit la largeur.
+// Les preuves Swift des rangées de l'Accueil (feature
+// accueil-iphone-rangees-ecrasees-et-geste, BR-1) : la recette `-home.recipe
+// longTitles` des captures en largeur compacte. La règle d'axe, qui suit le
+// contenu et non plus la classe de largeur, est éprouvée par
+// `IOSDynamicTypeAXTests` (ios-dynamic-type-ax-residuel, S-3).
 
 import ConsoleClient
 import ConsoleCore
@@ -16,38 +13,6 @@ import Testing
 
 @Suite("accueil-iphone-rangees-ecrasees-et-geste — rangées")
 struct IOSHomeRowsTests {
-    private static let standardSizes: [DynamicTypeSize] = [
-        .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
-    ]
-    private static let accessibilitySizes: [DynamicTypeSize] = [
-        .accessibility1, .accessibility2, .accessibility3, .accessibility4, .accessibility5,
-    ]
-
-    @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-1 : en largeur compacte, la rangée passe sur deux lignes dès la taille par défaut")
-    func compactWidthSplitsRowsInTwoLines() {
-        for size in Self.standardSizes {
-            #expect(IOSHomeContent.rowAxis(size, width: .compact) == .twoLine, "\(size)")
-        }
-    }
-
-    @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-2 : en largeur régulière ou inconnue, la rangée reste sur une ligne")
-    func regularWidthKeepsOneLine() {
-        for size in Self.standardSizes {
-            #expect(IOSHomeContent.rowAxis(size, width: .regular) == .horizontal, "\(size)")
-            #expect(IOSHomeContent.rowAxis(size, width: nil) == .horizontal, "\(size)")
-        }
-    }
-
-    @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-3 : aux tailles d'accessibilité, la rangée s'empile dans toutes les largeurs")
-    func accessibilitySizesStackInEveryWidth() {
-        let widths: [UserInterfaceSizeClass?] = [.compact, .regular, nil]
-        for size in Self.accessibilitySizes {
-            for width in widths {
-                #expect(IOSHomeContent.rowAxis(size, width: width) == .stacked, "\(size) \(String(describing: width))")
-            }
-        }
-    }
-
     @Test("accueil-iphone-rangees-ecrasees-et-geste/AC-1 (recette) : longTitles donne un titre long aux rangées, pas aux cartes « À vous »")
     func longTitlesRecipeRetitlesRows() {
         #expect(IOSHomeRecipe.resolve(["-home.recipe", "longTitles"]) == .longTitles)

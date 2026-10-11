@@ -1,12 +1,8 @@
-// Les preuves Swift des rangées de l'Accueil en Dynamic Type (feature
-// ios-accueil-dynamic-type-casse, BR-1 et BR-2) : la règle d'axe PURE, sans rendre
-// de vue, et le crochet de recette `-home.row` des captures. La règle est éprouvée
-// en largeur régulière, celle de ces critères (la largeur compacte est couverte
-// par `IOSHomeRowsTests`).
-//
-// AC-1 : première taille d'accessibilité → empilée. AC-2 : taille maximale →
-// empilée, boutons bornés. AC-3 : tailles standard → une seule ligne. AC-4 : le
-// crochet `-home.row` vise la rangée « Reprendre » de la fixture.
+// La preuve Swift du crochet de recette `-home.row` des captures des rangées de
+// l'Accueil (feature ios-accueil-dynamic-type-casse, BR-2) : AC-4, le crochet vise
+// la rangée « Reprendre » de la fixture. La règle d'axe des rangées, qui suit le
+// contenu et non plus la taille de texte, est éprouvée par `IOSDynamicTypeAXTests`
+// (ios-dynamic-type-ax-residuel, S-3).
 
 import ConsoleClient
 import ConsoleCore
@@ -17,35 +13,6 @@ import Testing
 
 @Suite("ios-accueil-dynamic-type-casse — rangées de l'Accueil en Dynamic Type")
 struct IOSHomeDynamicTypeTests {
-    private static let standardSizes: [DynamicTypeSize] = [
-        .xSmall, .small, .medium, .large, .xLarge, .xxLarge, .xxxLarge,
-    ]
-
-    @Test("ios-accueil-dynamic-type-casse/AC-3 : sous les tailles d'accessibilité, la rangée reste horizontale")
-    func rowsStayHorizontalBelowAccessibilitySizes() {
-        for size in Self.standardSizes {
-            #expect(IOSHomeContent.rowAxis(size, width: .regular) == .horizontal, "\(size)")
-        }
-        #expect(IOSHomeContent.rowButtonMaximumSize > .xxxLarge)
-    }
-
-    @Test("ios-accueil-dynamic-type-casse/AC-1 : dès la première taille d'accessibilité, la rangée s'empile")
-    func rowsStackFromTheFirstAccessibilitySize() {
-        #expect(IOSHomeContent.rowAxis(.accessibility1, width: .regular) == .stacked)
-        #expect(IOSHomeContent.rowAxis(.accessibility3, width: .regular) == .stacked)
-        #expect(IOSHomeContent.rowAxis(.xxxLarge, width: .regular) == .horizontal)
-    }
-
-    @Test("ios-accueil-dynamic-type-casse/AC-2 : à la taille maximale, la rangée s'empile et ses boutons sont bornés")
-    func rowsStackAtTheLargestSize() {
-        #expect(IOSHomeContent.rowAxis(.accessibility5, width: .regular) == .stacked)
-        #expect(IOSHomeContent.rowButtonMaximumSize <= .accessibility3)
-        #expect(IOSHomeContent.rowButtonMaximumSize.isAccessibilitySize)
-        #expect(IOSHomeContent.rowTextMaximumSize.isAccessibilitySize)
-        #expect(IOSHomeContent.rowTextMaximumSize >= IOSHomeContent.rowButtonMaximumSize)
-        #expect(IOSHomeContent.rowTextMaximumSize < .accessibility5, "à accessibility5 le sous-titre est coupé au milieu d'un mot")
-    }
-
     @Test("ios-accueil-dynamic-type-casse/AC-4, accueil-en-cours-melange-pause-et-compte/AC-2 : le crochet -home.row vise la rangée Reprendre de la fixture, sous « À reprendre »")
     func rowHookTargetsTheResumeRow() {
         #expect(IOSHomeRecipe.row(["-home.row", "2"]) == 2)

@@ -31,6 +31,7 @@ struct IOSSessionRowView: View, Equatable {
     /// La session qui porte le fil est finie : un appel sans résultat se lit
     /// « Interrompu » (S-7 de mac-finitions-hig).
     let sessionEnded: Bool
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// La clé de pli de la réflexion d'une ligne, distincte de celle de la ligne.
     static func thinkingKey(of rowId: String) -> String { IOSSessionText.thinkingKey(rowId) }
@@ -183,24 +184,40 @@ struct IOSSessionRowView: View, Equatable {
     }
 
     /// L'en-tête d'un appel : chevron, symbole, verbe (et cible), puis le statut.
+    /// Le statut passe sous le titre quand il ne tient pas à côté (S-5 de
+    /// ios-dynamic-type-ax-residuel). Aux tailles d'accessibilité, le titre passe
+    /// aussi sous ses deux symboles quand il n'y tient pas, au lieu de couper son
+    /// verbe contre eux (« Mémo-risation ») ; aux autres tailles, il se replie à
+    /// côté d'eux, comme avant : un long chemin ne laisse pas les symboles seuls
+    /// sur leur ligne.
     private func toolHeader(symbol: String, title: String, status: ToolCallStatus) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: IOSSessionText.chevron(isOpen))
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-                .accessibilityHidden(true)
-            Image(systemName: symbol)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Text(title)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.leading)
-            Spacer(minLength: 8)
+        IOSAdaptiveRow(spacing: 8) {
+            toolTitleLayout {
+                HStack(spacing: 8) {
+                    Image(systemName: IOSSessionText.chevron(isOpen))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                    Image(systemName: symbol)
+                        .foregroundStyle(.secondary)
+                        .accessibilityHidden(true)
+                }
+                Text(title)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.leading)
+            }
             toolStatus(status)
         }
         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    /// Le bloc titre d'un en-tête d'appel : symboles puis texte.
+    private var toolTitleLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(IOSAdaptiveRow(spacing: 8, pinsControlsTrailing: false))
+            : AnyLayout(HStackLayout(spacing: 8))
     }
 
     @ViewBuilder

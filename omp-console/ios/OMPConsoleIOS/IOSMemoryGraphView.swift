@@ -107,23 +107,29 @@ struct IOSMemoryGraphView: View {
 
     // MARK: - Rangée de commandes
 
+    /// Le compteur, puis le menu d'étiquettes et les trois commandes de zoom
+    /// (ios-dynamic-type-ax-residuel, S-6) : les commandes restent ensemble et
+    /// passent sous le menu quand elles ne tiennent pas à côté, au lieu de couper
+    /// « Étiquette » ; le compteur garde la hauteur de son texte replié.
     private var commands: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(verbatim: model.countBanner)
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier(IOSMemoryAccessibility.graphCount)
-            HStack(spacing: 8) {
+            IOSAdaptiveRow(spacing: 8) {
                 tagMenu
-                Spacer(minLength: 0)
-                command(MemoryText.zoomOut, systemImage: "minus.magnifyingglass", id: IOSMemoryAccessibility.graphZoomOut) {
-                    model.zoomOut()
-                }
-                command(MemoryText.zoomIn, systemImage: "plus.magnifyingglass", id: IOSMemoryAccessibility.graphZoomIn) {
-                    model.zoomIn()
-                }
-                command(MemoryText.recenter, systemImage: "arrow.up.left.and.arrow.down.right", id: IOSMemoryAccessibility.graphRecenter) {
-                    model.recenter()
+                HStack(spacing: 8) {
+                    command(MemoryText.zoomOut, systemImage: "minus.magnifyingglass", id: IOSMemoryAccessibility.graphZoomOut) {
+                        model.zoomOut()
+                    }
+                    command(MemoryText.zoomIn, systemImage: "plus.magnifyingglass", id: IOSMemoryAccessibility.graphZoomIn) {
+                        model.zoomIn()
+                    }
+                    command(MemoryText.recenter, systemImage: "arrow.up.left.and.arrow.down.right", id: IOSMemoryAccessibility.graphRecenter) {
+                        model.recenter()
+                    }
                 }
             }
         }

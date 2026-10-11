@@ -210,30 +210,28 @@ enum IOSHomeContent {
     }
 }
 
-/// La disposition d'une rangée « titre | puce | bouton » de l'Accueil : une ligne,
-/// deux lignes (titre, puis puce + bouton), ou empilée (chacun sur sa ligne).
+/// La disposition d'une rangée « titre | puce | bouton » : une ligne, deux lignes
+/// (titre, puis les contrôles côte à côte), ou empilée (chacun sur sa ligne).
 enum IOSHomeRowAxis: Equatable { case horizontal, twoLine, stacked }
 
 extension IOSHomeContent {
-    /// L'axe d'une rangée selon la taille de texte SYSTÈME et la classe de largeur,
-    /// la première règle vraie gagnant : taille d'accessibilité → `.stacked`, quelle
-    /// que soit la largeur ; largeur compacte (iPhone, iPad en Split View étroit) →
-    /// `.twoLine` ; largeur régulière ou inconnue → `.horizontal`.
-    static func rowAxis(_ size: DynamicTypeSize, width: UserInterfaceSizeClass?) -> IOSHomeRowAxis {
-        if size.isAccessibilitySize { return .stacked }
-        if width == .compact { return .twoLine }
-        return .horizontal
+    /// L'axe d'une rangée selon son CONTENU seul (ios-dynamic-type-ax-residuel,
+    /// S-3), jamais selon la taille de texte ni la classe de largeur : tout sur une
+    /// ligne si tout y tient ; sinon le titre sur sa ligne et les contrôles ensemble
+    /// sur la suivante s'ils y tiennent ; sinon chacun sur sa ligne.
+    ///
+    /// `title` : largeur IDÉALE (sur une ligne) du bloc titre ; `controls` : largeurs
+    /// idéales des contrôles (pastille, bouton…) dans l'ordre ; `available` : largeur
+    /// proposée (`nil` = idéale demandée) ; `spacing` : espacement horizontal. Une
+    /// égalité exacte tient.
+    static func rowAxis(title: CGFloat, controls: [CGFloat], available: CGFloat?, spacing: CGFloat) -> IOSHomeRowAxis {
+        guard let available else { return .horizontal }
+        guard available > 0 else { return .stacked }
+        let together = controls.isEmpty ? 0 : controls.reduce(0, +) + spacing * CGFloat(controls.count - 1)
+        if title + (controls.isEmpty ? 0 : spacing + together) <= available { return .horizontal }
+        if !controls.isEmpty, together <= available { return .twoLine }
+        return .stacked
     }
-
-    /// La plus grande taille de texte des boutons de rangée : au-delà, « Reprendre »
-    /// deviendrait un disque et « Ouvrir la PR » ne tiendrait plus.
-    static let rowButtonMaximumSize: DynamicTypeSize = .accessibility3
-
-    /// La plus grande taille de texte d'une rangée (titre, sous-titre, puce) : mesuré
-    /// en capture (feature ios-accueil-dynamic-type-casse), à `.accessibility5` le
-    /// sous-titre « Implémentation » ne tient plus sur la largeur d'un iPhone et le
-    /// système le coupe au milieu du mot.
-    static let rowTextMaximumSize: DynamicTypeSize = .accessibility4
 }
 
 extension IOSHomeContent {

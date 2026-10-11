@@ -497,7 +497,6 @@ struct IOSMemoryScreen: View {
                 rowContext(row, nowMs: context.date.timeIntervalSince1970 * 1000)
             }
         }
-        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, rowPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         // Toute la largeur de la rangée répond au toucher et au survol (S-7).
@@ -505,12 +504,10 @@ struct IOSMemoryScreen: View {
     }
 
     /// La ligne de contexte : une bande jointe par « · » aux tailles ordinaires,
-    /// un segment par ligne aux tailles d'accessibilité (règle de l'Accueil,
-    /// `IOSHomeContent.rowAxis`, lue sur la SEULE taille système, largeur `nil`).
+    /// un segment par ligne aux tailles d'accessibilité.
     @ViewBuilder
     private func rowContext(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
-        switch IOSHomeContent.rowAxis(dynamicTypeSize, width: nil) {
-        case .horizontal, .twoLine:
+        if !dynamicTypeSize.isAccessibilitySize {
             let subtitle = IOSMemoryDetailView.subtitle(row, nowMs: nowMs)
             if !subtitle.isEmpty {
                 Text(verbatim: subtitle)
@@ -518,7 +515,7 @@ struct IOSMemoryScreen: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.leading)
             }
-        case .stacked:
+        } else {
             let segments = IOSMemoryDetailView.subtitleSegments(row, nowMs: nowMs)
             if !segments.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {

@@ -38,46 +38,96 @@ struct IOSSessionThreadView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if let status = model.threadStatus {
-                IOSStatusChip(status: status)
-                    .accessibilityIdentifier(IOSSessionsAccessibility.threadStatus)
-            }
-            if let message = model.errorBanner {
-                Text(message)
-                    .font(.callout)
-                    .iosBanner(tone: .danger)
-                    .accessibilityIdentifier(IOSSessionsAccessibility.errorBanner)
-                Button { model.retry() } label: {
-                    Label(ConnectionText.retry, systemImage: "arrow.clockwise")
-                        .frame(minHeight: IOSMetrics.minimumTarget)
-                        .contentShape(Rectangle())
+            if model.isLoading || model.rows.isEmpty {
+                // Sans fil : l'état entier (pastille, bannières, attente ou état
+                // vide) reste posé quand il tient, et défile d'un bloc sinon.
+                fitting {
+                    banners
+                    if model.isLoading {
+                        loading
+                    } else {
+                        placeholder
+                    }
                 }
-                .accessibilityIdentifier(IOSSessionsAccessibility.retry)
-            }
-            if case .unreadable(let reason) = model.state {
-                // L'erreur de lecture s'affiche MÊME quand des faits sont déjà là :
-                // on n'efface jamais un fait lu (S-4).
-                Text(ConversationText.unreadable(reason))
-                    .font(.callout)
-                    .iosBanner(tone: .danger)
-                    .accessibilityIdentifier(IOSSessionsAccessibility.unreadable)
-            }
-            if model.isLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                    Text(IOSSessionText.threadLoading).font(.callout)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .accessibilityIdentifier(IOSSessionsAccessibility.threadLoading)
-            } else if model.rows.isEmpty {
-                placeholder
             } else {
+                if hasBanners {
+                    fitting { banners }
+                }
                 thread
             }
             notes
             backToLive
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    // MARK: - La pastille et les bannières
+
+    /// Une pastille ou une bannière est-elle affichée au-dessus du fil ?
+    private var hasBanners: Bool {
+        if model.threadStatus != nil || model.errorBanner != nil { return true }
+        if case .unreadable = model.state { return true }
+        return false
+    }
+
+    /// La pastille du fil, puis les bannières. Elles gardent la hauteur de leur
+    /// texte replié, à toute taille : jamais un message coupé en « … » (S-5 de
+    /// ios-dynamic-type-ax-residuel).
+    @ViewBuilder
+    private var banners: some View {
+        if let status = model.threadStatus {
+            IOSStatusChip(status: status)
+                .accessibilityIdentifier(IOSSessionsAccessibility.threadStatus)
+        }
+        if let message = model.errorBanner {
+            Text(message)
+                .font(.callout)
+                .iosBanner(tone: .danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(IOSSessionsAccessibility.errorBanner)
+            Button { model.retry() } label: {
+                Label(ConnectionText.retry, systemImage: "arrow.clockwise")
+                    .frame(minHeight: IOSMetrics.minimumTarget)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityIdentifier(IOSSessionsAccessibility.retry)
+        }
+        if case .unreadable(let reason) = model.state {
+            // L'erreur de lecture s'affiche MÊME quand des faits sont déjà là :
+            // on n'efface jamais un fait lu (S-4).
+            Text(ConversationText.unreadable(reason))
+                .font(.callout)
+                .iosBanner(tone: .danger)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier(IOSSessionsAccessibility.unreadable)
+        }
+    }
+
+    /// Une colonne posée telle quelle quand sa hauteur tient dans la place
+    /// offerte, sinon défilable : aux plus grandes tailles de texte, une bannière
+    /// entière peut dépasser l'écran, et la colonne ne doit alors ni déborder
+    /// sur l'en-tête de la feuille ni couper le message. Ce défilement n'existe
+    /// que hors du fil ou à côté de lui, jamais autour : le `ScrollView` du fil
+    /// reste le seul de sa hiérarchie.
+    private func fitting<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let column = VStack(alignment: .leading, spacing: 8) { content() }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        return ViewThatFits(in: .vertical) {
+            column
+            ScrollView(.vertical) { column }
+                .scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    // MARK: - Le chargement
+
+    private var loading: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text(IOSSessionText.threadLoading).font(.callout)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityIdentifier(IOSSessionsAccessibility.threadLoading)
     }
 
     // MARK: - Les états vides

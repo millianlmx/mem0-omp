@@ -968,7 +968,8 @@ struct IOSSessionTests {
                 subtitle: follow.subtitle,
                 additions: follow.additions,
                 additionTimes: times,
-                readNeverEnds: follow.readNeverEnds
+                readNeverEnds: follow.readNeverEnds,
+                readFailure: follow.readFailure
             )
         }
 

@@ -31,8 +31,6 @@ struct IOSSessionsScreen: View {
     /// La marge verticale d'une rangée, mise à l'échelle comme le corps de
     /// texte : aucun texte ne touche le filet voisin (rangees-sessions-memoire-serrees, S-1).
     @ScaledMetric(relativeTo: .body) private var rowPadding: CGFloat = IOSMetrics.rowVerticalPadding
-    /// La taille de texte système : elle décide de l'axe des rangées (S-2).
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// La cible de la feuille : un run de la liste, ou la session d'une recette.
     private enum SessionOpen: Identifiable {
@@ -218,50 +216,37 @@ struct IOSSessionsScreen: View {
     }
 
     /// Une ligne : le symbole de l'étape, la feature, sa situation (« étape ·
-    /// dépôt »), l'heure de début et la pastille d'état du run. Sur une bande
-    /// aux tailles standard, empilée aux tailles d'accessibilité, avec une
-    /// marge verticale mise à l'échelle (rangees-sessions-memoire-serrees, S-1, S-2).
+    /// dépôt »), l'heure de début et la pastille d'état du run. Sur une bande quand
+    /// tout y tient, sinon icône et textes puis la pastille ; les textes passent
+    /// eux-mêmes sous l'icône quand ils ne tiennent pas à côté, pour qu'aucun mot
+    /// ne soit coupé par la colonne de l'icône (`IOSAdaptiveRow`, selon le contenu,
+    /// jamais selon la taille de texte), avec une marge verticale mise à l'échelle
+    /// (rangees-sessions-memoire-serrees, S-1).
     private func row(_ choice: RunChoice) -> some View {
-        rowLayout {
-            Image(systemName: PhaseText.symbol(choice.phase))
-                .foregroundStyle(.secondary)
-                .frame(width: phaseIconWidth)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(choice.featureTitle)
-                    .font(.headline)
-                    .multilineTextAlignment(.leading)
-                if let subtitle = choice.target.subtitle {
-                    Text(subtitle)
+        IOSAdaptiveRow(spacing: 10) {
+            IOSAdaptiveRow(spacing: 10, pinsControlsTrailing: false) {
+                Image(systemName: PhaseText.symbol(choice.phase))
+                    .foregroundStyle(.secondary)
+                    .frame(width: phaseIconWidth)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(choice.featureTitle)
+                        .font(.headline)
+                        .multilineTextAlignment(.leading)
+                    if let subtitle = choice.target.subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(ConsoleFormat.time(ms: choice.startedAtMs))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Text(ConsoleFormat.time(ms: choice.startedAtMs))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            if rowAxis == .horizontal {
-                Spacer(minLength: 8)
             }
             IOSStatusChip(status: ConsoleStatus.of(run: choice))
         }
-        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, rowPadding)
         .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
         .contentShape(Rectangle())
-    }
-
-    /// L'axe des rangées, règle de l'Accueil (`IOSHomeContent.rowAxis`) lue sur
-    /// la SEULE taille système (largeur `nil`) : les rangées de Sessions restent sur
-    /// une ligne aux tailles standard, la mise sur deux lignes en largeur compacte
-    /// est propre à l'Accueil. Le plafond `rowTextMaximumSize` ne change pas l'axe.
-    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize, width: nil) }
-
-    /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
-    private var rowLayout: AnyLayout {
-        switch rowAxis {
-        case .horizontal, .twoLine: AnyLayout(HStackLayout(spacing: 10))
-        case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-        }
     }
 
     // MARK: - Les autres états

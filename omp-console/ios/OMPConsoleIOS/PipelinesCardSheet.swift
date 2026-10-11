@@ -179,7 +179,7 @@ struct PipelinesCardSheet: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(PipelinesAccessibility.sheetRepo)
-            HStack(spacing: 8) {
+            IOSAdaptiveRow(spacing: 8, pinsControlsTrailing: false) {
                 IOSStatusChip(status: ConsoleStatus.of(card: card))
                 if let phase = card.phase {
                     Text(PhaseText.title(phase))

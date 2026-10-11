@@ -11,8 +11,9 @@
 // Aucune phrase n'est composée ici : les mots viennent du noyau partagé
 // (`HomeText`, `ActionsText`, `ContractText`) et de `IOSHomeText` ; la vue rend
 // les décisions pures de `IOSHomeState` et `IOSHomeContent`. Les rangées suivent
-// `IOSHomeContent.rowAxis` : une ligne en largeur régulière, deux lignes (titre,
-// puis puce + bouton) en largeur compacte, empilées aux tailles d'accessibilité.
+// `IOSAdaptiveRow` : tout sur une ligne quand tout y tient, sinon le titre sur sa
+// ligne puis la puce et le bouton, sinon chacun sur sa ligne — selon le contenu,
+// jamais selon la taille de texte, qui n'est plafonnée nulle part.
 //
 // Les gestes de carte (« Valider les specs », « Accepter la revue », « Reprendre »
 // d'une rangée en pause ou d'une carte en échec ou bloquée) passent par
@@ -54,7 +55,6 @@ struct HomeView: View {
 
     @Environment(\.openURL) private var openURL
     @Environment(\.horizontalSizeClass) private var sizeClass
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// « Réduire les animations » : le défilement vers un échec se fait d'un saut (S-8).
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -232,9 +232,8 @@ struct HomeView: View {
                 }
             }
         } header: {
-            HStack(alignment: .firstTextBaseline) {
+            IOSAdaptiveRow(spacing: 8) {
                 Text(HomeText.attentionHeader)
-                Spacer()
                 Button {
                     onSelectSection(IOSHomeContent.allPipelinesSection)
                 } label: {
@@ -319,7 +318,7 @@ struct HomeView: View {
         let card = attention.card
         return VStack(alignment: .leading, spacing: 10) {
             TimelineView(.periodic(from: .now, by: 30)) { context in
-                HStack(spacing: 10) {
+                IOSAdaptiveRow(spacing: 8, pinsControlsTrailing: false) {
                     Image(systemName: IOSHomeText.natureSymbol(attention.nature))
                         .foregroundStyle(.tint)
                         .accessibilityHidden(true)
@@ -337,7 +336,7 @@ struct HomeView: View {
                 Text(card.repo).font(.callout).foregroundStyle(.secondary)
             }
             Text(attention.prompt).font(.body)
-            HStack(spacing: 8) {
+            IOSAdaptiveRow(spacing: 8, pinsControlsTrailing: false) {
                 if ContractDocument.moment(for: card) != nil {
                     Button {
                         contractCard = SelectedCard(card: card)
@@ -430,9 +429,8 @@ struct HomeView: View {
 
     /// « En cours » : une pipeline réellement en marche, avec sa durée.
     private func runningRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
-        rowLayout {
+        IOSAdaptiveRow(spacing: 12) {
             rowTitle(card, showsRepo: showsRepo)
-            if rowAxis == .horizontal { Spacer() }
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 Text(ConsoleFormat.duration(ms: card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)))
                     .font(.callout)
@@ -440,7 +438,6 @@ struct HomeView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.running(card.id))
@@ -452,24 +449,18 @@ struct HomeView: View {
     private func pausedRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         let key = IOSHomeGestureKey(cardId: card.id, gesture: .resume)
         return VStack(alignment: .leading, spacing: 8) {
-            rowLayout {
+            IOSAdaptiveRow(spacing: 12) {
                 rowTitle(card, showsRepo: showsRepo)
-                if rowAxis == .horizontal { Spacer() }
-                controlsLayout {
-                    IOSStatusChip(status: ConsoleStatus.of(card: card))
-                    if card.action != nil {
-                        if rowAxis == .twoLine { Spacer() }
-                        gestureButton(KanbanText.resume, key: key)
-                            .buttonStyle(.bordered)
-                            .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                            .disabled(!connection.gesturesEnabled)
-                            .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
-                    }
+                IOSStatusChip(status: ConsoleStatus.of(card: card))
+                if card.action != nil {
+                    gestureButton(KanbanText.resume, key: key)
+                        .buttonStyle(.bordered)
+                        .disabled(!connection.gesturesEnabled)
+                        .accessibilityIdentifier(IOSHomeAccessibility.resume(card.id))
                 }
             }
             failureBanner(key)
         }
-        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.paused(card.id))
@@ -480,7 +471,6 @@ struct HomeView: View {
     private func notStartedRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         rowTitle(card, showsRepo: showsRepo)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
             .padding(.vertical, 8)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSHomeAccessibility.notStarted(card.id))
@@ -505,33 +495,11 @@ struct HomeView: View {
         }
     }
 
-    /// L'axe des rangées « titre | puce | bouton » (règle pure : `IOSHomeContent.rowAxis`),
-    /// lu sur la taille de texte SYSTÈME et la classe de largeur.
-    private var rowAxis: IOSHomeRowAxis { IOSHomeContent.rowAxis(dynamicTypeSize, width: sizeClass) }
-
-    /// La disposition extérieure d'une rangée : bloc titre puis groupe puce + contrôle.
-    /// `AnyLayout` : la bascule d'axe à chaud conserve l'état des sous-vues.
-    private var rowLayout: AnyLayout {
-        switch rowAxis {
-        case .horizontal: AnyLayout(HStackLayout(spacing: 12))
-        case .twoLine, .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-        }
-    }
-
-    /// La disposition intérieure d'une rangée : la puce et son contrôle, côte à côte
-    /// sauf aux tailles d'accessibilité.
-    private var controlsLayout: AnyLayout {
-        switch rowAxis {
-        case .horizontal, .twoLine: AnyLayout(HStackLayout(spacing: 12))
-        case .stacked: AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
-        }
-    }
-
     /// Une livraison récente : seul « Ouvrir la PR » est une cible ; le titre, le
     /// dépôt et la puce ne réagissent pas au toucher.
     private func deliveredRow(_ card: KanbanCard, showsRepo: Bool) -> some View {
         let link = IOSHomeContent.deliveredLink(card)
-        return rowLayout {
+        return IOSAdaptiveRow(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(IOSHomeText.featureName(card.title))
                     .accessibilityLabel(card.title)
@@ -540,23 +508,17 @@ struct HomeView: View {
                     Text(card.repo).foregroundStyle(.secondary)
                 }
             }
-            if rowAxis == .horizontal { Spacer() }
-            controlsLayout {
-                IOSStatusChip(status: ConsoleStatus.of(card: card))
-                if let link {
-                    if rowAxis == .twoLine { Spacer() }
-                    Button { openURL(link) } label: {
-                        Text(HomeText.openPR)
-                            .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.bordered)
-                    .dynamicTypeSize(...IOSHomeContent.rowButtonMaximumSize)
-                    .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
+            IOSStatusChip(status: ConsoleStatus.of(card: card))
+            if let link {
+                Button { openURL(link) } label: {
+                    Text(HomeText.openPR)
+                        .frame(minWidth: IOSMetrics.minimumTarget, minHeight: IOSMetrics.minimumTarget)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier(IOSHomeAccessibility.deliveredOpen(card.id))
             }
         }
-        .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(IOSHomeAccessibility.delivered(card.id))
