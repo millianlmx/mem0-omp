@@ -66,4 +66,21 @@ struct AddressTests {
         #expect(ClientAddress.parse("10.0.0.5:70000") == .failure(.badPort))
         #expect(ClientAddress.parse("10.0.0 .5:9000") == .failure(.badHost))
     }
+
+    @Test("ios-onboarding-et-connexion/AC-6 : l'adresse manuelle s'affiche sans zone d'interface, la forme persistée la garde")
+    func manualAddressDisplayHasNoZone() {
+        let ipv4 = ClientAddress(host: "192.168.1.175%en0", port: 8787)
+        #expect(ipv4.display == "192.168.1.175:8787")
+        // La forme persistée est inchangée : `parse` la relit avec sa zone.
+        #expect(ipv4.text == "192.168.1.175%en0:8787")
+        #expect(ClientAddress.parse(ipv4.text) == .success(ipv4))
+
+        let ipv6 = ClientAddress(host: "fe80::1%en0", port: 8787)
+        #expect(ipv6.display == "[fe80::1]:8787")
+        #expect(ipv6.text == "fe80::1%en0:8787")
+
+        let name = ClientAddress(host: "mac.local", port: 9000)
+        #expect(name.display == "mac.local:9000")
+        #expect(name.display == name.text)
+    }
 }

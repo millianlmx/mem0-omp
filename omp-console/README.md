@@ -2218,9 +2218,11 @@ un flux temps réel.
   Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
   valable **120 secondes** et à **usage unique** ; au-delà de 5 échecs, le code se
   verrouille et seul un code neuf le déverrouille. Le code est accepté **avec ou sans
-  tiret, en majuscules comme en minuscules** (`ABCD-EFGH`, `ABCDEFGH`, `abcd-efgh`) :
-  l'app iOS/iPadOS, le client et le serveur le normalisent par le même
-  `PairingCodeFormat` (ConsoleCore).
+  tiret ni espaces, en majuscules comme en minuscules** (`ABCD-EFGH`, `ABCD EFGH`,
+  `abcd-efgh`), et les sosies de chiffres absents de l'alphabet sont lus comme au
+  décodage Crockford : **I et L valent 1, O vaut 0** (U reste refusé). L'app
+  iOS/iPadOS, le client et le serveur le normalisent par le même
+  `PairingCodeFormat` (ConsoleCore, `lookalikes`).
 - **Nom et identité de l'appareil** : l'app iOS/iPadOS transmet le **modèle précis**
   de l'appareil (« iPad Pro 13 pouces (M4) », « iPhone 17e »), jamais son nom
   personnel, et un identifiant d'installation (`deviceKey`, champ optionnel). Un
@@ -2644,7 +2646,9 @@ Statistiques sous « Plus », et inversement. Le routage onglet ↔ section est 
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
 trousseau et feuille de connexion. Le Mac découvert est joint par son adresse
 IPv4 ou IPv6, lien-local zoné compris ; une adresse s'affiche toujours sans sa
-zone d'interface (`192.168.1.175:8787`, `[fe80::1]:8787`).
+zone d'interface (`192.168.1.175:8787`, `[fe80::1]:8787`), adresse manuelle
+comprise (`ClientAddress.display` ; la forme enregistrée `ClientAddress.text`
+garde la zone).
 Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout moment,
 connecté ou non, une seule fois par écran : sur iPhone, dans la barre de chaque
 onglet, de la liste « Plus » et des écrans qu'elle pousse ; sur iPad, une fois,
@@ -2699,7 +2703,7 @@ le badge du nombre d'attentes quel que soit l'onglet affiché (aucun autre ongle
 n'en porte, et rien à zéro) ; VoiceOver lit « Accueil, N en attente ». Trois
 feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
-installation neuve, avant la feuille de connexion). Le crochet de recette
+installation neuve ; « Continuer » y pousse la Connexion dans la même feuille). Le crochet de recette
 `-home.recipe <dashboard|degraded|firstRun|loading|ompMissing|answer|contract|contractLong|longTitles|slowMac>`
 force un état depuis la fixture partagée `HomeParity` pour les captures
 (`longTitles` : le tableau de bord dont les rangées « En cours », « À reprendre »,
@@ -2716,16 +2720,25 @@ La **feuille Connexion** ne s'ouvre d'elle-même que lorsque l'appareil n'a pas 
 jeton d'appairage ou que le Mac refuse le sien — jamais pendant la lecture du
 trousseau au lancement, jamais pour un appareil appairé : un Mac injoignable
 (veille, autre réseau) laisse l'Accueil sur le composant « non connecté », cause
-« Mac injoignable ».
+« Mac injoignable ». Après la fermeture de la bienvenue (qui contient déjà la
+Connexion), elle ne s'ouvre plus d'elle-même sans jeton pendant le lancement ;
+un jeton refusé la rouvre toujours.
 Elle a quatre modes, décidés par le statut d'appairage du client :
 
 - **lecture de l'appairage** : « Lecture de l'appairage… » et un indicateur ;
 - **non appairé** : état, Macs découverts, adresse manuelle, code d'appairage
-  (focalisé, clavier levé) et une ligne d'aide qui indique où trouver le code sur
-  le Mac (« menu OMP Console › Appairage… (⌥⌘A), puis « Générer un code » »).
-  Quand le Mac a refusé le jeton, le message « Le Mac ne reconnaît plus cet
-  appareil. Saisissez un nouveau code d'appairage. » s'y ajoute et l'adresse
-  connue est préremplie ;
+  (focalisé, clavier levé ; tiret, espaces et casse ignorés, I et L lus 1, O lu 0 ;
+  champ déclaré code à usage unique, `.textContentType(.oneTimeCode)`, pour que
+  le clavier propose un code reçu) et une ligne d'aide qui indique où trouver le
+  code sur le Mac (« menu OMP Console › Appairage… (⌥⌘A), puis « Générer un
+  code » »). Un code mal formé affiche « Le code fait 8 caractères : chiffres 0–9
+  et lettres A–Z sauf U. ». Après « Appairer » (ou ↩ dans le champ), « Appairage
+  en cours… » et un indicateur s'affichent sous le bouton (`connection.code.progress`)
+  et « Appairer » reste désactivé jusqu'à la réponse du Mac : une seule requête
+  `POST /v1/pair` par appui ; un échec retire l'indicateur et affiche son message
+  sous le champ (`connection.code.error`). Quand le Mac a refusé le jeton, le
+  message « Le Mac ne reconnaît plus cet appareil. Saisissez un nouveau code
+  d'appairage. » s'y ajoute et l'adresse connue est préremplie ;
 - **connecté** : « Connecté », l'adresse du Mac une seule fois, « Oublier ce Mac » ;
 - **déconnecté** : l'état (« Mac injoignable », « Hors réseau »…), l'adresse une
   fois, « Réessayer », la modification de l'adresse dans le groupe replié
@@ -2942,9 +2955,9 @@ Chaque contrôle, sur iPhone et sur iPad, et son attendu observable :
    saisie de `1`, il devient actif.
 3. **« Effacer »** (AC-15) — lancé avec `-client.manualAddress 127.0.0.1:9` : la
    cible de « Effacer » fait au moins 44 × 44 pt.
-4. **Code mal formé** (AC-13) — `IIIIIIII` puis « Appairer » : « Le code fait 8
-   caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U. », jamais
-   « A–Z, 0–9 ».
+4. **Code mal formé** (AC-13) — `UUUUUUUU` puis « Appairer » : « Le code fait 8
+   caractères : chiffres 0–9 et lettres A–Z sauf U. », jamais « A–Z, 0–9 » (I, L
+   et O sont lus comme des chiffres, U est la seule lettre refusée).
 5. **Mac injoignable** (AC-2, AC-5, AC-7) — appairé, adresse `127.0.0.1:9` : aucune
    feuille, l'Accueil montre « Pas de connexion au Mac » et la cause « Mac
    injoignable » (`ios.connexion.cause`, sans adresse). « Se connecter » ouvre
@@ -2986,13 +2999,14 @@ rejouent **à la main**. Côté code, AC-4 est prouvé par `PairingStatusTests` 
 ### Les feuilles
 
 Les feuilles de l'app iOS ont toutes leur titre EN LIGNE dans la barre, lu en
-entier (jamais « … »), sur iPhone comme sur iPad. Sur iPhone, leur taille ne
+entier (jamais « … »), sur iPhone comme sur iPad — sauf la page de bienvenue, sans
+barre, dont le grand titre est dans le contenu. Sur iPhone, leur taille ne
 change pas (pleine hauteur, pleine largeur) ; sur iPad, elles suivent deux
 familles :
 
 | Feuille | Titre de barre | Boutons de barre | Taille iPad |
 |---|---|---|---|
-| Bienvenue | « Bienvenue dans OMP Console » | aucun (« Continuer » dans le contenu) | ajustée |
+| Bienvenue | aucune barre sur la page de bienvenue (grand titre centré dans le contenu) ; Connexion poussée : « Connexion » | page de bienvenue : aucun (« Continuer » ancré en bas) ; Connexion poussée : retour ‹ et « Plus tard » | par défaut |
 | Répondre | « Répondre » (le titre de la carte ouvre le contenu) | ✕ / ✓ | par défaut |
 | Contrat | « Contrat » | « Fermer » | page |
 | Connexion | « Connexion » | « Fermer » | par défaut |
@@ -3012,10 +3026,20 @@ familles :
   l'ancien bouton (« Annuler », « Piloter », « Lancer la session »…) ; le ✓ est
   gris quand il est inactif, de la couleur d'accent sinon. Les feuilles à un seul
   bouton gardent « Fermer » en texte.
-- La Bienvenue est enregistrée comme vue à TOUTE fermeture — « Continuer » ou
-  balayage vers le bas — et ne réapparaît pas au lancement suivant. Ses icônes
-  occupent une colonne de largeur fixe, à l'échelle du texte : titres et détails
-  des trois promesses commencent au même x.
+- La Bienvenue (style Apple : grand titre centré, trois promesses à grande icône
+  sans panneau, « Continuer » pleine largeur ancré en bas, au-dessus duquel le
+  contenu défile aux grandes tailles de texte) est une feuille unique :
+  « Continuer » l'enregistre comme vue puis pousse l'écran Connexion DANS la même
+  feuille (retour ‹ vers la bienvenue, « Plus tard » ou Échap pour fermer, aucun
+  « Fermer ») ; un appareil déjà appairé voit la feuille se fermer. Un appairage
+  réussi depuis cet écran ferme la feuille. Toute fermeture — « Plus tard »,
+  balayage vers le bas, appairage, « Continuer » d'un appareil appairé —
+  l'enregistre comme vue (elle ne réapparaît pas au lancement suivant) et reporte
+  l'ouverture automatique de la Connexion pour le lancement : l'Accueil montre
+  « Pas de connexion au Mac » et « Se connecter », qui ouvre la feuille Connexion
+  autonome ; seul un jeton refusé la rouvre d'elle-même. Ses icônes occupent une
+  colonne de largeur fixe, à l'échelle du texte : titres et détails des trois
+  promesses commencent au même x.
 - Dans « Piloter un projet » et « Lancer une session OMP », un dépôt est désigné
   par son nom de dossier, suivi du parent entre parenthèses s'il a un homonyme ;
   le dépôt choisi porte une coche, et VoiceOver annonce son nom et l'état
@@ -3027,9 +3051,9 @@ Les règles jugeables vivent dans `omp-console/ios/DESIGN.md` (« Les feuilles �
 
 ### Recette : les feuilles
 
-`scripts/ios-feuilles-recette.sh` capture les dix feuilles (Bienvenue, Répondre,
-Contrat, Connexion, Piloter un projet, OMP vous demande, Lancer une session OMP,
-Session, Nouvelle feature, Souvenir) sur un iPhone 17e et un iPad Pro 11" (M5)
+`scripts/ios-feuilles-recette.sh` capture les neuf feuilles (Répondre, Contrat,
+Connexion, Piloter un projet, OMP vous demande, Lancer une session OMP, Session,
+Nouvelle feature, Souvenir) sur un iPhone 17e et un iPad Pro 11" (M5)
 **privés** (`feuilles-recette-tel`, `feuilles-recette-tab`, iOS 27, apparence
 claire, taille de texte `large`), créés par le script et supprimés à la sortie.
 Il construit l'app **signée** depuis l'arbre de travail (DerivedData sous
@@ -3060,15 +3084,89 @@ bash scripts/ios-feuilles-recette.sh apres [--source <udid appairé>]
 - Contrôles : largeur « page » (AC-1), hauteur ajustée (AC-2), iPhone inchangé
   par rapport au relevé `avant` (AC-3), titre exposé et place suffisante entre les
   boutons de barre (AC-4), libellés des dépôts sans chemin ni bleu lien (AC-5),
-  rangée choisie `Selected` avec coche visible et non lue (AC-6), colonne
-  d'icônes de la Bienvenue (AC-8), Bienvenue absente après balayage puis
-  relance, et après « Continuer » puis relance (AC-9), barre et marges de la
-  fiche d'un souvenir (AC-10).
-- Codes de sortie : en `avant`, 0 dès que les 20 captures sont écrites (les
+  rangée choisie `Selected` avec coche visible et non lue (AC-6), barre et marges
+  de la fiche d'un souvenir (AC-10). La Bienvenue (ses anciens AC-8 et AC-9 :
+  colonne d'icônes, absence après balayage puis relance) est passée à la recette
+  suivante, qui juge sa nouvelle mise en page et son flux en une feuille.
+- Codes de sortie : en `avant`, 0 dès que les 18 captures sont écrites (les
   échecs y sont attendus et seulement consignés) ; en `apres`, 0 si tout est
   `ok`, 1 sur tout `échec` (ou build, appareil, feuille non ouverte en défaut),
   2 non exécuté (hors macOS, Xcode inutilisable, idb ou Python 3 + Pillow absents,
   aucun runtime iOS ≥ 26, app non signée).
+
+### Recette : bienvenue et Connexion en une feuille
+
+`scripts/ios-onboarding-recette.sh` prouve la feature ios-onboarding-et-connexion
+sur un iPhone 18 Pro et un iPad Pro 11" (M5) **privés** (`onb-tel`, `onb-tab`,
+iOS 27.0, apparence claire), créés à chaque passe, démarrés sans Simulator.app et
+supprimés à la sortie (un appareil de même nom laissé par une passe interrompue
+est supprimé d'abord ; `pgrep -fl <UDID>` est relevé avant `simctl delete`, et un
+simulateur non supprimé rend la sortie 2). L'app est construite **signée ad hoc**
+(sinon le trousseau du simulateur refuse le jeton d'appairage). Lancée à la main
+depuis la racine du dépôt, jamais par `check.sh` ni la CI :
+
+```bash
+# Base fixe 8659c30 (worktree détaché temporaire), puis arbre de travail.
+bash scripts/ios-onboarding-recette.sh --avant
+bash scripts/ios-onboarding-recette.sh [--sans-mac] [--bundle <OMP Console.app>]
+```
+
+Contrôles, une ligne `✔|✗|–  <AC>  <tel|tab>  <détail>` chacun dans
+`rapport.txt` :
+
+- **AC-1** (tel, tab ; taille `large`) — premier lancement sans argument de
+  bienvenue : titre `HomeText.welcomeTitle` centré sur l'écran (± 1 pt) et haut
+  d'au moins 34 pt, les 6 textes des promesses, les 3 titres au même x (± 1 pt),
+  « Continuer » centré, haut d'au moins 44 pt, sous les promesses, à ≤ 40 pt des
+  bords de l'écran (iPhone) ou de la feuille (iPad, bords lus dans les pixels de
+  la capture : `idb` n'expose pas le cadre de la feuille).
+- **AC-2** (tel, tab ; `accessibility-extra-large`) — captures haut et bas
+  (défilement) : « Continuer » entièrement dans l'écran sur les deux, titre et
+  6 textes vus en entier entre le haut de la feuille (arête lue dans la capture)
+  et la barre de « Continuer ».
+- **AC-3** (tel) — « Continuer » sous enregistrement vidéo (`simctl io
+  recordVideo`, 3 s ; images à 10/s extraites par un outil AVFoundation compilé
+  par `swiftc`, sans ffmpeg ; planche `tel-continuer-planche.png`) : en ≤ 4 s,
+  `connection.sheet` et `connection.later` présents, `connection.close` absent.
+  « Plus tard » est lu par `idb ui describe-point` au centre droit de la barre
+  (une barre de vue poussée n'est qu'un `Group` dans `describe-all`).
+- **AC-4** (tel) — « Plus tard » : feuille fermée en ≤ 3 s, Accueil « Pas de
+  connexion au Mac » dont « Se connecter » ouvre la Connexion (avec « Fermer ») ;
+  bienvenue absente 8 s après la relance. Même contrôle par le balayage vers le
+  bas de la page de bienvenue.
+- **AC-8** (tel) — écouteur TCP muet de la recette sur `127.0.0.1:18788`, lancement
+  `-home.welcomeSeen YES -client.manualAddress 127.0.0.1:18788`, saisie HID de
+  `ABCD-EFGH` (disposition AZERTY/QWERTY détectée), deux appuis à 1 s (↩ dans le
+  champ, le clavier couvrant « Appairer », puis un toucher) : « Appairage en
+  cours… » visible, « Appairer » inactif, une seule requête `/pair` reçue ; puis,
+  en ≤ 70 s, l'indicateur disparaît et le message d'erreur s'affiche.
+- **AC-5, AC-7** (tel) — instance Mac de RECETTE (`--bundle`, défaut
+  `omp-console/build/OMP Console.app` : `bash scripts/swift-app.sh --no-tests`),
+  lancée par `open -g -n` sur une racine jetable au port 18787 et pilotée par la
+  sonde AX de `scripts/mac-appairage-sonde.swift`, sans activation, avec les
+  pré-contrôles de `scripts/mac-appairage-recette.sh` (session verrouillée,
+  manifeste du bundle, port, Accessibilité, Space plein écran). Depuis la
+  bienvenue (`-client.manualAddress 127.0.0.1:18787`, « Continuer ») : un code
+  frais du Mac (retiré jusqu'à contenir 0 ou 1), saisi en minuscules avec une
+  espace, 0 → o et 1 → l ; AC-7 vert si une ligne d'appareil neuve apparaît sur
+  le Mac en ≤ 10 s, AC-5 vert si, en ≤ 30 s, la feuille est fermée et l'Accueil
+  connecté. Chaque appareil appairé par la passe est révoqué au nettoyage (le
+  jeton Mac va au trousseau réel). Un pré-contrôle manquant, ou la préparation de
+  l'instance en échec (par exemple « Une autre app occupe la place réservée à la
+  mémoire » quand OMP Console est ouverte), rend ces deux lignes « – » avec la
+  cause. `--sans-mac` ne lance aucune instance : « – » aussi, la preuve restant
+  `successfulPairingFinishesTheFlow` (AC-5) et les tests de format (AC-7).
+
+- Sorties dans `omp-console/build/ios-onboarding/<avant|apres>/` (`--out` pour
+  un autre dossier ; vidé au début) : `rapport.txt`, captures PNG et relevés
+  `describe-all` JSON de chaque contrôle, `xcodebuild.log`.
+- Codes de sortie : 0 tout vert (« – » admis sur AC-5/AC-7 seulement), 1 au moins
+  un ✗ (ou build, simulateur en défaut), 2 non exécuté (hors macOS, outil ou
+  Pillow absent, Xcode inutilisable, runtime iOS 27.0 absent, app non signée,
+  port 18788 tenu, simulateur ou worktree non retiré). En `--avant`, les rouges
+  sont attendus : 0 dès que les 11 captures existent.
+- Durée mesurée le 2026-10-11 (DerivedData déjà rempli) : 6 min 09 s en `--avant`,
+  6 min 27 s en `--sans-mac`.
 
 ### Section Session OMP
 

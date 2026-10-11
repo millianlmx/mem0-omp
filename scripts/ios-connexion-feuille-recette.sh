@@ -421,9 +421,9 @@ def focus_field(udid, ident, attempts=3):
 
 
 # Saisie par codes HID (`idb ui text` est faussé par l'AZERTY de l'hôte) : chiffres
-# et « . » avec Maj, « : » sans, « I » = touche 12 avec Maj.
+# et « . » avec Maj, « : » sans, « U » = touche 24 avec Maj.
 KEYS = {str(n): (30 + (n - 1 if n else 9), True) for n in range(10)}
-KEYS.update({".": (54, True), ":": (55, False), "I": (12, True)})
+KEYS.update({".": (54, True), ":": (55, False), "U": (24, True)})
 
 
 def type_text(udid, text):
@@ -690,7 +690,8 @@ def control_clear_and_code(device, udid):
         emit("échec", "AC-13", device, "champ connection.code introuvable")
         return
     focus_field(udid, "connection.code")
-    type_text(udid, "IIIIIIII")
+    # U : seule lettre ni dans l'alphabet Crockford ni lue comme un chiffre.
+    type_text(udid, "UUUUUUUU")
     # « Appairer » est sous le clavier sur iPhone, hors de la feuille sur iPad.
     elements, pair = reveal(udid, describe(udid), "connection.code.pair")
     if pair is None:

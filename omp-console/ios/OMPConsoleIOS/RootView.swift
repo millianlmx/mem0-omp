@@ -19,10 +19,14 @@ import SwiftUI
 ///
 /// La racine POSSÈDE aussi le modèle du client distant (`ConsoleClientModel.live()`,
 /// créé UNE fois) : elle démarre la découverte et la connexion, présente la
-/// feuille de bienvenue (S-15, avant la connexion), puis ouvre d'elle-même la
-/// feuille de connexion SEULEMENT quand l'appareil n'a pas de jeton ou que le Mac
-/// l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune section n'a été
-/// demandée par `-section` ; un Mac injoignable laisse l'Accueil dans son état
+/// feuille de bienvenue (S-15, avant la connexion) — dont « Continuer » pousse la
+/// Connexion dans la MÊME feuille (S-2 d'ios-onboarding-et-connexion) —, puis ouvre
+/// d'elle-même la feuille de connexion SEULEMENT quand l'appareil n'a pas de jeton
+/// ou que le Mac l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune
+/// section n'a été demandée par `-section`. Une fois la bienvenue fermée,
+/// l'ouverture automatique sans jeton est reportée pour le lancement
+/// (`connectionDeferred`) : seul un jeton refusé rouvre alors la Connexion. Un Mac
+/// injoignable laisse l'Accueil dans son état
 /// dégradé. Le bouton antenne `connectionToolbarItem` la rouvre à la demande :
 /// posé une fois sur l'écran de section (`sectionScreen`, contenu de chaque
 /// onglet ET destination de « Plus ») et une fois sur la liste « Plus » —
@@ -38,6 +42,10 @@ struct RootView: View {
     @State private var showConnection: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @State private var showWelcome = false
+    /// Vrai une fois la bienvenue fermée, pour le reste du lancement : la Connexion
+    /// ne s'ouvre plus d'elle-même sans jeton (« Plus tard » est respecté) ; un
+    /// jeton refusé la rouvre toujours. Jamais persisté.
+    @State private var connectionDeferred = false
     /// La demande d'ouvrir « Nouvelle feature » (⌘N), consommée par Pipelines : la
     /// feuille y reste un état privé, la racine ne fait que la demander.
     @State private var newFeatureRequested = false
@@ -153,7 +161,7 @@ struct RootView: View {
             newFeatureRequested = true
         })
         .sheet(isPresented: $showWelcome, onDismiss: welcomeDismissed) {
-            HomeWelcomeSheet(client: client)
+            HomeWelcomeSheet(client: client) { showWelcome = false }
         }
         .sheet(isPresented: $showConnection) {
             ConnectionSheet(model: client)
@@ -163,8 +171,9 @@ struct RootView: View {
             presentInitialSheets()
         }
         .onChange(of: client.pairing) { _, _ in
-            // Un statut qui VIENT d'être atteint ; pendant la bienvenue, c'est sa
-            // fermeture qui réévalue (`onDismiss`).
+            // Un statut qui VIENT d'être atteint ; pendant la bienvenue, rien : la
+            // Connexion y est déjà accessible par « Continuer », et sa fermeture
+            // reporte l'ouverture automatique sans jeton (`welcomeDismissed`).
             if !showWelcome { presentConnectionIfNeeded() }
         }
     }
@@ -271,21 +280,25 @@ struct RootView: View {
         }
     }
 
-    /// Toute fermeture de la bienvenue (bouton « Continuer » ou balayage) l'enregistre
-    /// comme vue (`closeWelcome()` est idempotent), puis la connexion suit si besoin.
+    /// Toute fermeture de la bienvenue (« Plus tard », balayage, appairage réussi,
+    /// « Continuer » d'un appareil appairé) l'enregistre comme vue (`closeWelcome()`
+    /// est idempotent) et reporte l'ouverture automatique de la Connexion pour ce
+    /// lancement : la feuille ne se rouvre pas d'elle-même par-dessus l'Accueil.
     private func welcomeDismissed() {
         client.closeWelcome()
-        presentConnectionIfNeeded()
+        connectionDeferred = true
     }
 
     private var welcomeDue: Bool {
         IOSHomeContent.welcomeDue(welcomeSeen: client.welcomeSeen, section: IOSTabs.shown(currentRoute) ?? .home)
     }
 
-    /// La feuille s'ouvre d'elle-même sans jeton ou sur un jeton refusé, jamais
-    /// pendant la lecture du trousseau ni pour un appareil appairé (S-2).
+    /// La feuille s'ouvre d'elle-même sans jeton (sauf après la bienvenue) ou sur
+    /// un jeton refusé, jamais pendant la lecture du trousseau ni pour un appareil
+    /// appairé (S-2).
     private func presentConnectionIfNeeded() {
-        if autoPresentConnection, ConnectionSheetMode.autoPresents(client.pairing) {
+        if autoPresentConnection,
+           ConnectionSheetMode.autoPresents(client.pairing, deferred: connectionDeferred) {
             showConnection = true
         }
     }

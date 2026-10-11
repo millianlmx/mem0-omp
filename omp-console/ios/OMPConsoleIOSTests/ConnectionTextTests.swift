@@ -2,9 +2,9 @@
 // couvrent tous les états, l'état version incompatible porte les DEUX numéros, les
 // quatre zones ont leurs libellés, et les identifiants d'accessibilité sont uniques.
 //
-// Aucun slug de critère qualifié ici : la preuve canonique d'AC-21 vit dans
-// `test/client-distant-ios.test.ts`, et l'invariant du dépôt veut qu'un slug de
-// feature ne vive que dans un seul fichier de test.
+// La preuve canonique d'AC-21 de client-distant-ios vit dans
+// `test/client-distant-ios.test.ts` ; seul AC-6 de ios-onboarding-et-connexion
+// (l'adresse du Mac sans zone, adresse manuelle comprise) porte son slug ici.
 
 import ConsoleClient
 import Testing
@@ -36,6 +36,24 @@ struct ConnectionTextTests {
             #expect(state.contains("192.168.1.175:8787"))
             #expect(!state.contains("%"))
         }
+    }
+
+    @Test("ios-onboarding-et-connexion/AC-6 : l'adresse du Mac s'affiche sans %en0, adresse manuelle et préremplissage compris")
+    func zonedMacAddressShownWithoutZone() {
+        let manual = ClientAddress(host: "192.168.1.175%en0", port: 8787)
+        // La rangée de l'adresse manuelle (à gauche d'« Effacer »).
+        #expect(manual.display == "192.168.1.175:8787")
+        // La rangée du Mac découvert par Bonjour.
+        let bonjour = ClientEndpoint.bonjour(name: "OMP Console", host: "192.168.1.175%en0", port: 8787)
+        #expect(bonjour.display == "OMP Console — 192.168.1.175:8787")
+        // Le préremplissage du champ d'adresse quand le Mac refuse le jeton.
+        let refused = ConnectionSheetMode.resolve(
+            pairing: .refused(endpoint: bonjour),
+            state: .revoked,
+            effectiveEndpoint: .manual(host: manual.host, port: manual.port),
+            manualAddress: manual
+        )
+        #expect(refused == .unpaired(refused: true, prefill: "192.168.1.175:8787"))
     }
 
     @Test("ConnectionText : l'état version incompatible porte les deux numéros")
@@ -79,7 +97,7 @@ struct ConnectionTextTests {
     @Test("ConnectionAccessibility : les identifiants sont uniques, préfixés et complets")
     func identifiersAreUniqueAndComplete() {
         let identifiers = ConnectionAccessibility.identifiers
-        #expect(identifiers.count == 20)
+        #expect(identifiers.count == 22)
         #expect(Set(identifiers).count == identifiers.count)
         #expect(identifiers.allSatisfy { $0.hasPrefix("connection.") })
         #expect(identifiers.contains(ConnectionAccessibility.sheet))

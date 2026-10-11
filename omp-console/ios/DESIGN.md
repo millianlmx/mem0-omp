@@ -427,8 +427,16 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - Le badge ne dépend pas de l'onglet affiché : l'onglet Accueil le montre depuis
   n'importe quel onglet, et aucun autre onglet n'en porte.
   `[test: homeRowCarriesPositiveCount]`
-- La feuille de bienvenue ne s'affiche qu'à la première ouverture de l'Accueil
-  (préférence `home.welcomeSeen`), avant la feuille de connexion. `[test: welcomeDue]`
+- La bienvenue ne s'affiche qu'à la première ouverture de l'Accueil (préférence
+  `home.welcomeSeen`) ; « Continuer » pousse la Connexion dans la même feuille
+  (« Plus tard » à la place de « Fermer ») sauf pour un appareil appairé.
+  `[test: welcomeDue]` `[test: welcomeContinueShowsConnectionUnlessPaired]`
+- Après la fermeture de la bienvenue, la Connexion ne s'ouvre plus d'elle-même
+  pendant le lancement, sauf jeton refusé. `[test: deferredUnpairedStaysClosed]`
+  `[test: deferredRefusedStillOpens]`
+- Bienvenue au style Apple : grand titre centré, promesses à grande icône,
+  « Continuer » pleine largeur ancré en bas, sans panneau.
+  `[test: welcomeContinueShowsConnectionUnlessPaired]`
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
   `textQuestion`) ; une option sélectionnée prime sur le champ libre. `[test: answerZones]`
 - La feuille Contrat découpe le markdown par les fonctions partagées
@@ -718,6 +726,10 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   aucun champ n'a le focus et le clavier ne se lève pas. `[test: pairedModesNeverFocus]`
 - L'adresse du Mac ne s'affiche qu'UNE fois : le libellé d'état de la feuille
   (`ConnectionText.sheetState`) n'en porte aucune. `[test: connectedStateWithoutAddress]`
+- Aucune adresse affichée ne porte de zone d'interface (`%en0`), adresse
+  manuelle comprise : la rangée « Effacer » et le préremplissage du mode refusé
+  passent par `ClientAddress.display`, qui délègue à `ClientEndpoint`.
+  `[test: zonedMacAddressShownWithoutZone]`
 - Déconnecté : « Réessayer » et la modification de l'adresse dans un groupe
   `DisclosureGroup` replié à chaque ouverture ; l'identifiant
   `connection.addressEdit` est posé sur l'étiquette, jamais sur le groupe (il
@@ -725,8 +737,16 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 - « Oublier ce Mac » passe par une confirmation posée SUR le bouton (bulle sur
   iPad), puis la feuille reste ouverte en mode non appairé.
   `[test: forgetConfirmationWords]` `[test: forgottenIsUnpaired]`
-- La ligne d'aide nomme le chemin réel du code sur le Mac, et le message de format
-  nomme l'alphabet Crockford. `[test: codeHelpNamesTheMacPath]` `[test: malformedCodeNamesTheRealAlphabet]`
+- La ligne d'aide nomme le chemin réel du code sur le Mac. `[test: codeHelpNamesTheMacPath]`
+- Le code se saisit comme on veut : tiret, espaces et casse ignorés, I et L lus 1,
+  O lu 0 (Crockford) ; le message de format nomme les seules lettres refusées
+  (U). `[test: lookalikeLettersArmPairing]` `[test: malformedCodeNamesTheRealAlphabet]`
+- Pendant l'appairage, « Appairage en cours… » s'affiche sous « Appairer », désactivé
+  jusqu'à la réponse ; le champ du code est déclaré code à usage unique
+  (`.textContentType(.oneTimeCode)`). `[test: pairingInFlightDisarmsPair]`
+- Un appairage réussi se lit dans `ConnectionPairingOutcome` : `.paired` ferme le
+  flux de bienvenue, un refus garde le message sous le champ.
+  `[test: successfulPairingFinishesTheFlow]` `[test: refusedPairingKeepsTheMessage]`
 - « Utiliser cette adresse » est inactif sur un champ vide ou blanc ; « Effacer »
   a une cible d'au moins 44 × 44 pt portée par son étiquette, sans bordure, pour
   que toucher l'adresse n'efface rien. `[test: saveAddressNeedsText]` `[test: minimumTargetIsFortyFour]`
@@ -735,9 +755,10 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 
 - Sur iPad, une feuille au contenu long (Contrat, feuille de session, fiche d'un
   souvenir) est une feuille « page » (`iosPageSheet()`), plus de 600 pt de contenu ;
-  la Bienvenue, « Piloter un projet » et « Lancer une session OMP » gardent la
+  « Piloter un projet » et « Lancer une session OMP » gardent la
   largeur du formulaire (580 pt) et une hauteur qui suit leur contenu
-  (`iosFittedSheet(contentHeight:)`), à 64 pt au plus sous le dernier élément. Sur
+  (`iosFittedSheet(contentHeight:)`), à 64 pt au plus sous le dernier élément ; la
+  Bienvenue prend, comme la Connexion, la taille par défaut du formulaire. Sur
   iPhone, rien ne change : feuille pleine hauteur, même haut, pleine largeur, et
   aucun `presentationDetents`. Avant la première mesure, la hauteur idéale est
   absente, jamais nulle : la feuille n'est pas écrasée. `[test: fittedSheetIdealHeight]`

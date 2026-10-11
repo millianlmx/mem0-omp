@@ -45,8 +45,8 @@ struct ConnectionSheetModeTests {
     func pairedConnectedNeverAutoPresents() {
         // Ni pendant la lecture du trousseau (le statut de tout lancement), ni une
         // fois l'appairage lu.
-        #expect(ConnectionSheetMode.autoPresents(.restoring) == false)
-        #expect(ConnectionSheetMode.autoPresents(.paired) == false)
+        #expect(ConnectionSheetMode.autoPresents(.restoring, deferred: false) == false)
+        #expect(ConnectionSheetMode.autoPresents(.paired, deferred: false) == false)
         #expect(resolve(.restoring, .unpaired) == .restoring)
         #expect(resolve(.paired, .connected(endpoint: manual)) == .connected(address: manual.display))
         #expect(resolve(.paired, .connected(endpoint: bonjour)) == .connected(address: bonjour.display))
@@ -54,7 +54,7 @@ struct ConnectionSheetModeTests {
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-2 : appairé et Mac injoignable, aucune ouverture ; le mode est déconnecté et l'Accueil dit « Mac injoignable »")
     func pairedUnreachableStaysClosed() {
-        #expect(ConnectionSheetMode.autoPresents(.paired) == false)
+        #expect(ConnectionSheetMode.autoPresents(.paired, deferred: false) == false)
         #expect(resolve(.paired, .macAbsent(endpoint: manual)) == .disconnected(address: manual.display))
         // Le libellé du bandeau d'Accueil déconnecté (HomeView) nomme l'endpoint.
         let banner = ConnectionText.state(.macAbsent(endpoint: manual))
@@ -64,7 +64,7 @@ struct ConnectionSheetModeTests {
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-3 : sans jeton, la feuille s'ouvre en mode non appairé avec le focus sur le code")
     func noTokenAutoPresentsUnpaired() {
-        #expect(ConnectionSheetMode.autoPresents(.unpaired))
+        #expect(ConnectionSheetMode.autoPresents(.unpaired, deferred: false))
         let mode = resolve(.unpaired, .unpaired, manualAddress: ClientAddress(host: "10.0.0.5", port: 9000))
         #expect(mode == .unpaired(refused: false, prefill: nil))
         #expect(mode.initialFocusOnCode)
@@ -72,8 +72,8 @@ struct ConnectionSheetModeTests {
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-4 : jeton refusé, la feuille s'ouvre en non appairé refusé, adresse préremplie")
     func refusedAutoPresentsWithPrefill() {
-        #expect(ConnectionSheetMode.autoPresents(.refused(endpoint: manual)))
-        #expect(ConnectionSheetMode.autoPresents(.refused(endpoint: nil)))
+        #expect(ConnectionSheetMode.autoPresents(.refused(endpoint: manual), deferred: false))
+        #expect(ConnectionSheetMode.autoPresents(.refused(endpoint: nil), deferred: false))
 
         // Sans adresse manuelle : l'adresse de l'endpoint refusé, sans nom Bonjour.
         let fromBonjour = resolve(.refused(endpoint: bonjour), .revoked)
@@ -156,7 +156,24 @@ struct ConnectionSheetModeTests {
         // ouverte, passe au mode non appairé sans message de refus.
         let manualAddress = ClientAddress(host: "127.0.0.1", port: 9)
         #expect(resolve(.unpaired, .unpaired, manualAddress: manualAddress) == .unpaired(refused: false, prefill: nil))
-        #expect(ConnectionSheetMode.autoPresents(.unpaired))
+        #expect(ConnectionSheetMode.autoPresents(.unpaired, deferred: false))
+    }
+
+    @Test("ios-onboarding-et-connexion/AC-4 : après la bienvenue, sans jeton, la Connexion ne s'ouvre plus d'elle-même pendant le lancement")
+    func deferredUnpairedStaysClosed() {
+        #expect(ConnectionSheetMode.autoPresents(.unpaired, deferred: true) == false)
+        // Le statut lu APRÈS la fermeture (lecture du trousseau puis sans jeton)
+        // n'ouvre rien non plus.
+        #expect(ConnectionSheetMode.autoPresents(.restoring, deferred: true) == false)
+        #expect(ConnectionSheetMode.autoPresents(.paired, deferred: true) == false)
+        // Au lancement suivant (report non persisté), la règle d'origine revient.
+        #expect(ConnectionSheetMode.autoPresents(.unpaired, deferred: false))
+    }
+
+    @Test("ios-onboarding-et-connexion/AC-4 : un jeton refusé rouvre la Connexion même après « Plus tard »")
+    func deferredRefusedStillOpens() {
+        #expect(ConnectionSheetMode.autoPresents(.refused(endpoint: manual), deferred: true))
+        #expect(ConnectionSheetMode.autoPresents(.refused(endpoint: nil), deferred: true))
     }
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-12 : la ligne d'aide nomme le menu, le raccourci et le bouton du Mac")
@@ -167,17 +184,22 @@ struct ConnectionSheetModeTests {
         #expect(ConnectionAccessibility.identifiers.contains(ConnectionAccessibility.help))
     }
 
-    @Test("connexion-ios-feuille-intrusive-et-sans/AC-13 : le message de format exclut exactement les lettres absentes de l'alphabet Crockford")
+    @Test("connexion-ios-feuille-intrusive-et-sans/AC-13 : le message de format exclut exactement les lettres refusées, ni dans l'alphabet Crockford ni lues comme chiffre")
     func malformedCodeNamesTheRealAlphabet() {
         let alphabet = Set(ConsoleAPI.Service.pairingCodeAlphabet)
-        let excluded = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".filter { !alphabet.contains($0) }.map(String.init)
-        #expect(excluded == ["I", "L", "O", "U"])
-        let tail = excluded.dropLast().joined(separator: ", ") + " et " + excluded.last!
-        #expect(ConnectionText.codeMalformed.contains("sauf \(tail)"))
+        let read = Set(PairingCodeFormat.lookalikes.keys)
+        let excluded = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".filter { !alphabet.contains($0) && !read.contains($0) }.map(String.init)
+        #expect(excluded == ["U"])
+        let named = excluded.count == 1
+            ? "sauf \(excluded[0])"
+            : "sauf " + excluded.dropLast().joined(separator: ", ") + " et " + excluded.last!
+        #expect(ConnectionText.codeMalformed.contains(named))
+        #expect(!ConnectionText.codeMalformed.contains("I, L, O"))
+        #expect(!ConnectionText.codeMalformed.contains("sans tiret"))
         #expect(ConnectionText.codeMalformed.contains("0–9"))
         #expect(!ConnectionText.codeMalformed.contains("A–Z, 0–9"))
         #expect(ConnectionText.pairingFailure(.malformedCode) == ConnectionText.codeMalformed)
-        #expect(!PairingCodeFormat.isWellFormed(PairingCodeFormat.normalize("IIIIIIII")))
+        #expect(!PairingCodeFormat.isWellFormed(PairingCodeFormat.normalize("UUUUUUUU")))
     }
 
     @Test("connexion-ios-feuille-intrusive-et-sans/AC-14 : « Utiliser cette adresse » est inactif sur un champ vide ou blanc")

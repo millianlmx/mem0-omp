@@ -217,6 +217,16 @@ struct IOSHomeTests {
         #expect(!IOSHomeContent.welcomeDue(welcomeSeen: false, section: .kanban))
     }
 
+    @Test("ios-onboarding-et-connexion/AC-3 : « Continuer » pousse la Connexion dans la même feuille, sauf pour un appareil appairé")
+    func welcomeContinueShowsConnectionUnlessPaired() {
+        let manual = ClientEndpoint.manual(host: "192.168.1.20", port: 8787)
+        #expect(IOSHomeContent.welcomeContinuation(pairing: .restoring) == .showConnection)
+        #expect(IOSHomeContent.welcomeContinuation(pairing: .unpaired) == .showConnection)
+        #expect(IOSHomeContent.welcomeContinuation(pairing: .refused(endpoint: manual)) == .showConnection)
+        #expect(IOSHomeContent.welcomeContinuation(pairing: .refused(endpoint: nil)) == .showConnection)
+        #expect(IOSHomeContent.welcomeContinuation(pairing: .paired) == .finish)
+    }
+
     // MARK: - AC-3 : les deux zones de la feuille Répondre
 
     @Test("ios-accueil/AC-3 : la feuille Répondre aiguille question en vol et question en texte")

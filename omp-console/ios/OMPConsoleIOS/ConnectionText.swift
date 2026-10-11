@@ -20,6 +20,8 @@ enum ConnectionText {
 
     static let title = "Connexion"
     static let close = "Fermer"
+    /// La sortie de la Connexion poussée dans la feuille de bienvenue.
+    static let later = "Plus tard"
 
     // MARK: - État (les huit cas de `ClientState`)
 
@@ -131,10 +133,14 @@ enum ConnectionText {
     static let codeTitle = "Code d’appairage"
     static let codeField = "8 caractères"
     static let codePair = "Appairer"
+    /// Sous « Appairer », tant que le Mac n'a pas répondu.
+    static let codePairing = "Appairage en cours…"
 
     /// Le code mal formé (aucune requête émise). Les lettres exclues sont celles
-    /// de A–Z absentes de `ConsoleAPI.Service.pairingCodeAlphabet` (Crockford).
-    static let codeMalformed = "Le code fait 8 caractères, sans tiret : chiffres 0–9 et lettres A–Z sauf I, L, O et U."
+    /// de A–Z absentes de `ConsoleAPI.Service.pairingCodeAlphabet` (Crockford) ET
+    /// des sosies `PairingCodeFormat.lookalikes` (I, L lus 1 ; O lu 0) : soit U.
+    /// Le tiret, accepté, n'est plus mentionné.
+    static let codeMalformed = "Le code fait 8 caractères : chiffres 0–9 et lettres A–Z sauf U."
 
     /// Où trouver le code sur le Mac : `PairingText.menuItem`, le raccourci de
     /// `RemoteCommands`, puis `PairingText.generate`, mot pour mot.
@@ -200,6 +206,7 @@ enum ConnectionAccessibility {
     static let code = "connection.code"
     static let codePair = "connection.code.pair"
     static let codeError = "connection.code.error"
+    static let codeProgress = "connection.code.progress"
     static let retry = "connection.retry"
     static let refused = "connection.refused"
     static let help = "connection.help"
@@ -207,6 +214,7 @@ enum ConnectionAccessibility {
     static let forgetConfirm = "connection.forget.confirm"
     static let addressEdit = "connection.addressEdit"
     static let close = "connection.close"
+    static let later = "connection.later"
     static let open = "connection.open"
 
     /// Tous les identifiants, dans l'ordre de S-11 — c'est la liste que le test
@@ -225,8 +233,10 @@ enum ConnectionAccessibility {
         code,
         codePair,
         codeError,
+        codeProgress,
         retry,
         close,
+        later,
         refused,
         help,
         forget,

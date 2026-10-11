@@ -94,11 +94,11 @@ test("ios-panneau-sans-marge-scroll-imbrique/AC-1 : le panneau porte une marge e
 test("ios-panneau-sans-marge-scroll-imbrique/AC-5 : aucun appelant n'ajoute de marge après .iosPanel()", () => {
   assert.deepEqual(doubleMarginFaults(ROOT), []);
 
-  // Faute plantée : remettre le padding après `.iosPanel()` dans HomeWelcomeSheet ⇒ rouge.
+  // Faute plantée : remettre le padding après `.iosPanel()` dans HomeContractSheet ⇒ rouge.
   const copy = copyIOS();
-  mutate(copy, "HomeWelcomeSheet.swift", (s) => s.replace(".iosPanel()\n", `.iosPanel()\n                ${OUTER}\n`));
+  mutate(copy, "HomeContractSheet.swift", (s) => s.replace(".iosPanel()\n", `.iosPanel()\n                ${OUTER}\n`));
   const faults = doubleMarginFaults(copy);
-  assert.ok(faults.some((f) => f.includes("HomeWelcomeSheet.swift")), "un double padding doit rougir");
+  assert.ok(faults.some((f) => f.includes("HomeContractSheet.swift")), "un double padding doit rougir");
 });
 
 const SCREENS = ["PipelinesScreen.swift", "IOSSessionsScreen.swift", "IOSMemoryScreen.swift"];
