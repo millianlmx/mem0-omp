@@ -143,17 +143,25 @@ struct ProjectConsoleView: View {
             } else {
                 // Les deux volets défilent chacun : rien n'est coupé au bas de la
                 // fenêtre, quelle que soit la hauteur du plan ou de la conversation.
+                // Minimums bas : avec l'en-tête et le composeur, ils doivent tenir
+                // dans la plus petite fenêtre (480 pt de contenu, `ConsoleRootView`).
                 VSplitView {
                     projectPanes
                         .padding(12)
-                        .frame(minHeight: 220, idealHeight: 300, maxHeight: .infinity)
+                        .frame(minHeight: 120, idealHeight: 300, maxHeight: .infinity)
                     conversationArea
-                        .frame(minHeight: 200, maxHeight: .infinity)
+                        .frame(minHeight: 100, maxHeight: .infinity)
                 }
             }
             Divider()
             composer
         }
+        // Le minimum du pilotage ne remonte pas à l'inspecteur : son en-tête est de
+        // hauteur variable (avis, erreur, bandeau), et un minimum plus haut que la
+        // fenêtre, reporté au partage de celle-ci, fait boucler la mise en page
+        // jusqu'à l'exception d'AppKit (« Update Constraints in Window »), donc au
+        // plantage de l'app.
+        .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
         // Un seul dialogue à la fois : le PREMIER de la file ; la feuille ne se
         // ferme que par une réponse ou une annulation, qui le retirent de la file.
         .sheet(item: pendingDialog) { dialog in
