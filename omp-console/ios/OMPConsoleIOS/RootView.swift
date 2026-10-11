@@ -97,20 +97,15 @@ struct RootView: View {
         _showConnection = State(initialValue: false)
     }
 
-    var body: some View {
+    // Le `TabView` et l'onglet d'une section vivent hors de `body` : d'un seul
+    // tenant, l'expression dépassait le temps de vérification de types de la CI
+    // (Xcode 26.6, « unable to type-check this expression in reasonable time »).
+    private var tabs: some View {
         TabView(selection: shownRoute.tab) {
             ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
                 TabSection(group.title) {
                     ForEach(IOSSection.sections(of: group)) { section in
-                        let badge = IOSHomeContent.rowBadge(
-                            for: section, attentionCount: attentionCount)
-                        Tab(section.title, systemImage: IOSSection.systemImage(of: section), value: IOSTab.section(section)) {
-                            NavigationStack { sectionScreen(section) }
-                        }
-                        .badge(badge)
-                        .hidden(IOSTabs.isHidden(.section(section), compact: isCompact))
-                        .accessibilityLabel(IOSHomeText.sectionRowLabel(section.title, badge: badge))
-                        .accessibilityIdentifier("ios.tab." + section.rawValue)
+                        sectionTab(section)
                     }
                 }
             }
@@ -129,6 +124,26 @@ struct RootView: View {
                 .font(.title.bold())
                 .accessibilityAddTraits(.isHeader)
         }
+    }
+
+    /// L'onglet d'une section : badge d'attente, masquage sous « Plus » en compact.
+    @TabContentBuilder<IOSTab>
+    private func sectionTab(_ section: ConsoleSection) -> some TabContent<IOSTab> {
+        let badge: Int = IOSHomeContent.rowBadge(for: section, attentionCount: attentionCount)
+        let label: String = IOSHomeText.sectionRowLabel(section.title, badge: badge)
+        let hidden: Bool = IOSTabs.isHidden(IOSTab.section(section), compact: isCompact)
+        let identifier: String = "ios.tab." + section.rawValue
+        Tab(section.title, systemImage: IOSSection.systemImage(of: section), value: IOSTab.section(section)) {
+            NavigationStack { sectionScreen(section) }
+        }
+        .badge(badge)
+        .hidden(hidden)
+        .accessibilityLabel(label)
+        .accessibilityIdentifier(identifier)
+    }
+
+    var body: some View {
+        tabs
         .onChange(of: sizeClass, initial: true) { _, size in
             route = IOSTabs.adapt(route, compact: size == .compact)
         }
