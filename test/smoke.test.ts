@@ -191,8 +191,10 @@ function requiredContexts(): string[] {
 
 /**
  * Les noms affichés des jobs qui produisent un statut requis : chaque OS de la
- * matrice de `check.yml` (`<id> (<os>)`), plus le job de simulation de release,
- * qui n'a PAS de matrice et expose donc exactement son identifiant.
+ * matrice du premier job de `check.yml` (`<id> (<os>)`), plus chaque job de
+ * `check.yml` dont le `name:` explicite commence par `check (` (l'agrégateur des
+ * jobs macOS, `check (macos-latest)`), plus le job de simulation de release, qui
+ * n'a PAS de matrice et expose donc exactement son identifiant.
  */
 function workflowContexts(): string[] {
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
@@ -203,12 +205,14 @@ function workflowContexts(): string[] {
   const contexts = (matrix[1] ?? "")
     .split(",")
     .map((system) => `${id[1]} (${system.trim()})`);
+  // `name:` au niveau d'un job (4 espaces) ; les noms d'étape sont `- name:`.
+  const named = [...jobs.matchAll(/^ {4}name:\s*(check \(.*\))\s*$/gm)].map((match) => match[1] as string);
 
   const simulationFile = path.join(ROOT, ".github/workflows/release-simulation.yml");
   const simulationJobs = fs.readFileSync(simulationFile, "utf8").split(/^jobs:\s*$/m)[1] ?? "";
   const simulationId = /^ {2}([A-Za-z0-9_-]+):$/m.exec(simulationJobs);
   assert.ok(simulationId, `job introuvable dans ${simulationFile} :\n${simulationJobs}`);
-  return [...contexts, simulationId[1] as string];
+  return [...contexts, ...named, simulationId[1] as string];
 }
 
 test("smoke/AC-1 : un plugin qui ne se charge pas ou ne répond pas fait échouer la CI, donc bloque le merge", async (t) => {

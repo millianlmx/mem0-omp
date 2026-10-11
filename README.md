@@ -32,6 +32,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
+├── scripts/test-files.sh              liste des fichiers de test, ou ceux qui dépendent de macOS (--scope=macos)
+├── scripts/ci-verdict.sh              verdict de l'agrégateur check (macos-latest) sur les jobs macOS
 ├── scripts/typecheck.sh               type-check des deux plugins et de test/ contre les types de l'hôte
 ├── scripts/plugin-smoke.ts            charge les plugins dans un vrai OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
@@ -1090,7 +1092,7 @@ change pas, et la voie manuelle `mem0-stack/` garde son `/health` identique.
 
 ## CI et release
 
-Chaque PR passe `./scripts/check.sh` sur macOS **et** Ubuntu. Le type-check y
+Chaque PR passe `./scripts/check.sh` sur Ubuntu **et** sur macOS. Le type-check y
 couvre les sources des **deux** plugins comme `test/` — deux programmes `tsc` :
 `tsconfig.json` pour les plugins (lib ES2023, donc une API ES2024 comme
 `Promise.withResolvers` y fait échouer le job) et `tsconfig.test.json` pour la
@@ -1102,6 +1104,31 @@ vérifie les commandes enregistrées, invoque `/mem0-status` puis l'outil
 service mem0 étant remplacé par un stub local, donc sans conteneur ni credential.
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
+
+Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses douze
+sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
+jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
+(`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
+`macos-tests (2/2)`, qui se partagent la suite node. Le statut `check (macos-latest)`
+est celui d'un job **agrégateur** qui les attend, tourne même quand l'un d'eux
+échoue ou est annulé (`if: always()`), et ne réussit que si les trois résultats
+valent `success` (`scripts/ci-verdict.sh`) — jamais « skipped », qui compterait
+comme passant. En pull_request, les jobs macOS ne lancent que les fichiers de test
+qui appellent swift ou xcodebuild (`scripts/test-files.sh --scope=macos` : nom en
+`ios-*`, ou mention de `swift`, `swiftc`, `xcodebuild`, `xcrun`, `swift-app.sh` ou
+`ios-build.sh`) — un fichier nouveau est classé sans liste à tenir ; la suite
+complète tourne déjà sur Ubuntu. Au push vers `main`, macOS relance la suite
+complète. Un nouveau commit sur une PR annule le run `check` en cours de cette PR ;
+un run déclenché par un push vers `main` n'est jamais annulé.
+
+Ces jobs pilotent `check.sh` par trois options, que l'on peut aussi passer en
+local — sans option, toutes les sections et toute la suite tournent :
+
+| Option | Effet |
+|---|---|
+| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `api-http`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
+| `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
+| `--tests-part=1/2` ou `2/2` | `1/2` : les tests `mem0-http-hors-ci/*` et `socle-app-swift/*` de `test/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,

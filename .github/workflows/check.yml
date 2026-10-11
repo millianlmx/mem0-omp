@@ -5,12 +5,27 @@ on:
     branches: [main]
   pull_request:
 
+# Un nouveau commit sur une PR annule le run en cours de cette PR : seul le sha le
+# plus récent décide, et le run annulé libère ses runners macOS (4 par run, sur
+# une limite de 5 par compte). Au push vers `main`, le groupe porte l'identifiant
+# du run, unique : il ne contient jamais qu'un run, donc rien n'y est annulé ni
+# remplacé en attente — un run de `main` va toujours au bout. Le préfixe `check-`
+# évite tout partage de groupe avec `release-simulation-<n>` : un groupe partagé
+# entre workflows annulerait aussi les runs de l'autre.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('check-pr-{0}', github.event.pull_request.number) || format('check-run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
+  # Job ubuntu complet : toutes les sections et toute la suite node, à chaque run.
+  # La matrice d'un seul OS est gardée pour le nom du statut requis,
+  # `check (ubuntu-latest)`. Il reste le PREMIER job du fichier (test/smoke.test.ts
+  # y lit la matrice) et ne dépend d'aucun job.
   check:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -21,10 +36,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # Une ÉTAPE du job `check` existant, jamais un job séparé : les deux seuls
-      # statuts requis de `main` sont les deux déclinaisons de ce job, donc un job
-      # nouveau ne bloquerait rien. Le bump appartient au job de release ; une PR
-      # qui monte une version à la main échoue ici.
+      # Une ÉTAPE des jobs `check` et `macos-tests`, jamais un job séparé : les
+      # statuts requis de `main` sont `check (ubuntu-latest)` et l'agrégateur
+      # `check (macos-latest)`, donc un job nouveau ne bloquerait rien. Le bump
+      # appartient au job de release ; une PR qui monte une version à la main
+      # échoue ici.
       - name: Refuser un bump de version manuel dans la PR
         if: github.event_name == 'pull_request'
         run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
@@ -63,8 +79,102 @@ jobs:
           # test d'API mem0-http ne doivent pouvoir disparaître en silence.
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_HTTP_API: "1"
-          # Sur macos-latest, Xcode est utilisable : un « non exécuté » de la
-          # section iOS y est un échec, jamais un skip silencieux. Ailleurs (Ubuntu),
-          # la variable est vide et la section annonce simplement son absence.
-          MEM0_OMP_REQUIRE_IOS: ${{ matrix.os == 'macos-latest' && '1' || '' }}
         run: ./scripts/check.sh
+
+  # Le contrôle macOS est éclaté en jobs PARALLÈLES sur des runners distincts : en
+  # un seul job, il durait ≈ 36 min, au-delà du `mergeTimeout` de 1200 s de
+  # scripts/release.ts. Aucun de ces jobs n'a de `needs` ni de `if:` — ils démarrent
+  # ensemble, et un job sauté rapporterait « Success » sans rien prouver. L'union de
+  # leurs `--sections` couvre les 12 sections de check.sh : rien de ce que le job
+  # macOS vérifiait ne disparaît.
+
+  # Compilation, tests et bundle de l'app Swift : swift seul, aucune préparation.
+  macos-app-swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: App Swift
+        run: ./scripts/check.sh --sections=app-swift
+
+  # Compilation et tests de l'app iOS : Xcode seul, aucune préparation.
+  macos-app-ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: App iOS
+        env:
+          # Xcode est utilisable sur macos-latest : un « non exécuté » de la
+          # section iOS y est un échec, jamais un skip silencieux.
+          MEM0_OMP_REQUIRE_IOS: "1"
+        run: ./scripts/check.sh --sections=app-ios
+
+  # Suite node sur macOS, en deux parts qui exécutent chaque test exactement une
+  # fois (motif unique TESTS_PART_PATTERN de check.sh) : 1/2 porte les tests lourds
+  # de test/check.test.ts et les sections légères, 2/2 tout le reste. En
+  # pull_request, `--tests-scope=macos` ne garde que les fichiers qui dépendent de
+  # macOS (scripts/test-files.sh) : la suite complète tourne déjà sur ubuntu. Au
+  # push vers `main`, la suite complète tourne aussi sur macOS.
+  macos-tests:
+    # Nom explicite : sans lui, le nom affiché listerait aussi `sections`, ajouté
+    # par `include` ; seul `part` distingue les deux jobs.
+    name: macos-tests (${{ matrix.part }})
+    strategy:
+      fail-fast: false
+      matrix:
+        part: ["1/2", "2/2"]
+        include:
+          - part: "1/2"
+            sections: catalogue,noms,plugins,versions,extension,types,api-http,smoke,tests,noyau
+          - part: "2/2"
+            sections: tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # La garde anti-bump manuel compare la base et la tête de la PR : sans
+          # l'historique complet, `git merge-base` ne trouve pas la base.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Refuser un bump de version manuel dans la PR
+        if: github.event_name == 'pull_request'
+        run: ./scripts/no-manual-bump.sh --base "${{ github.event.pull_request.base.sha }}"
+      - name: Installer l'hôte OMP (types et SDK)
+        run: |
+          # Même hôte que le job `check` (18.8.4) : voir la justification là-haut.
+          npm install --no-save --prefix "$RUNNER_TEMP/omp-host" @oh-my-pi/pi-coding-agent@18.8.4 @types/node@22
+          echo "MEM0_OMP_HOST_TYPES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
+          echo "MEM0_OMP_HOST_MODULES=$RUNNER_TEMP/omp-host/node_modules" >> "$GITHUB_ENV"
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.0"
+      # Python de l'image mem0-http, servi par le tool cache : voir le job `check`.
+      - id: image_python
+        run: echo "version=$(bash scripts/mem0-http-test.sh --python-version)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ steps.image_python.outputs.version }}
+      - name: Préparer l'environnement du test d'API mem0-http
+        run: bash scripts/mem0-http-test.sh --prepare
+      - name: Valider le catalogue, le manifeste et l'extension (${{ matrix.part }})
+        env:
+          # Prérequis manquant = échec, jamais un skip (voir le job `check`).
+          MEM0_OMP_REQUIRE_SMOKE: "1"
+          MEM0_OMP_REQUIRE_HTTP_API: "1"
+        run: ./scripts/check.sh --sections=${{ matrix.sections }} --tests-part=${{ matrix.part }} ${{ github.event_name == 'pull_request' && '--tests-scope=macos' || '' }}
+
+  # Agrégateur : son nom est le statut requis `check (macos-latest)` de la
+  # protection de `main` (PUBLISHING.md § Blocage du merge). `if: always()` le fait
+  # tourner même quand un job macOS échoue ou que le run est annulé : sans lui, il
+  # serait « skipped », et un statut requis sauté compte comme passant. Le verdict
+  # est rendu par scripts/ci-verdict.sh, qui n'accepte que trois `success`.
+  check-macos:
+    name: check (macos-latest)
+    runs-on: ubuntu-latest
+    needs: [macos-app-swift, macos-app-ios, macos-tests]
+    if: ${{ always() }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verdict des jobs macOS
+        run: bash scripts/ci-verdict.sh macos-app-swift=${{ needs.macos-app-swift.result }} macos-app-ios=${{ needs.macos-app-ios.result }} macos-tests=${{ needs.macos-tests.result }}

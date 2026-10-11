@@ -9,6 +9,84 @@ FAIL=0
 fail() { echo "  ✗ $1"; FAIL=1; }
 pass() { echo "  ✓ $1"; }
 
+# Options de sélection, utilisées par les jobs macOS de la CI (check.yml) pour se
+# partager le travail. Sans option, TOUT s'exécute, comme sur un poste ou depuis
+# scripts/release.ts. La sélection passe par argv et jamais par une variable
+# d'environnement : une variable serait héritée par les `bash scripts/check.sh`
+# que la suite node relance dans ses copies jetables, et fausserait leurs
+# verdicts. Rien de ce qui suit n'est exporté ni transmis aux processus enfants.
+#
+#   --sections=<id>[,<id>…]   n'exécute que ces sections (ordre du script) ;
+#   --tests-scope=macos       `── Tests` ne lance que les fichiers de
+#                             scripts/test-files.sh --scope=macos ;
+#   --tests-part=1/2|2/2      découpe les TESTS de `── Tests` par TESTS_PART_PATTERN :
+#                             1/2 = test/check.test.ts filtré par --test-name-pattern,
+#                             2/2 = tout l'ensemble filtré par --test-skip-pattern.
+#                             Les tests qui portent ce motif ne vivent que dans
+#                             test/check.test.ts (criteria/AC-13 : un slug, un
+#                             fichier), donc 1/2 ∪ 2/2 lance chaque test une fois.
+SECTION_IDS="catalogue noms plugins versions extension types api-http smoke tests noyau app-swift app-ios"
+TESTS_PART_PATTERN='^(mem0-http-hors-ci|socle-app-swift)/'
+sections=""
+sections_set=0
+tests_scope=""
+tests_scope_set=0
+tests_part=""
+tests_part_set=0
+usage_error() { echo "✗ $1" >&2; exit 1; }
+for arg in "$@"; do
+  case "$arg" in
+    --sections=*)
+      [ "$sections_set" -eq 1 ] && usage_error "option répétée : --sections"
+      sections_set=1
+      sections="${arg#--sections=}"
+      ;;
+    --tests-scope=*)
+      [ "$tests_scope_set" -eq 1 ] && usage_error "option répétée : --tests-scope"
+      tests_scope_set=1
+      tests_scope="${arg#--tests-scope=}"
+      ;;
+    --tests-part=*)
+      [ "$tests_part_set" -eq 1 ] && usage_error "option répétée : --tests-part"
+      tests_part_set=1
+      tests_part="${arg#--tests-part=}"
+      ;;
+    *)
+      usage_error "option inconnue : $arg (attendu : --sections=…, --tests-scope=macos, --tests-part=1/2|2/2)"
+      ;;
+  esac
+done
+if [ "$sections_set" -eq 1 ]; then
+  # Découpe à la main (et non par IFS) : une liste vide ou un élément vide
+  # (`a,,b`, `a,`) est une section inconnue, jamais ignoré.
+  rest="$sections,"
+  while [ -n "$rest" ]; do
+    id="${rest%%,*}"
+    rest="${rest#*,}"
+    case " $SECTION_IDS " in
+      *" $id "*) [ -n "$id" ] || usage_error "section inconnue : « » (attendu : ${SECTION_IDS// /, })" ;;
+      *) usage_error "section inconnue : « $id » (attendu : ${SECTION_IDS// /, })" ;;
+    esac
+  done
+fi
+if [ "$tests_scope_set" -eq 1 ] && [ "$tests_scope" != "macos" ]; then
+  usage_error "--tests-scope : valeur inconnue « $tests_scope » (attendu : macos)"
+fi
+if [ "$tests_part_set" -eq 1 ] && [ "$tests_part" != "1/2" ] && [ "$tests_part" != "2/2" ]; then
+  usage_error "--tests-part : valeur inconnue « $tests_part » (attendu : 1/2, 2/2)"
+fi
+
+# Vrai si la section <id> doit s'exécuter : toutes sans `--sections`.
+section_on() {
+  [ "$sections_set" -eq 0 ] && return 0
+  case ",$sections," in
+    *",$1,"*) return 0 ;;
+  esac
+  return 1
+}
+
+
+if section_on catalogue; then
 echo "── Catalogue marketplace"
 
 for f in .omp-plugin/marketplace.json .claude-plugin/marketplace.json; do
@@ -24,7 +102,9 @@ if diff -q .omp-plugin/marketplace.json .claude-plugin/marketplace.json >/dev/nu
 else
   fail "les catalogues .omp-plugin et .claude-plugin ont divergé"
 fi
+fi
 
+if section_on noms; then
 echo "── Noms"
 
 python3 - <<'PY'
@@ -53,7 +133,9 @@ else:
 sys.exit(0 if ok else 1)
 PY
 [ $? -ne 0 ] && FAIL=1
+fi
 
+if section_on plugins; then
 echo "── Plugins"
 
 python3 - <<'PY'
@@ -145,7 +227,9 @@ for p in cat["plugins"]:
 sys.exit(0 if ok else 1)
 PY
 [ $? -ne 0 ] && FAIL=1
+fi
 
+if section_on versions; then
 echo "── Versions"
 
 # Ce que le catalogue annonce doit être ce que le package.json porte : une entrée
@@ -188,7 +272,9 @@ else:
 sys.exit(0 if OK else 1)
 PY
 [ $? -ne 0 ] && FAIL=1
+fi
 
+if section_on extension; then
 echo "── Extension"
 
 # Liste écrite en dur (et non déduite du catalogue) : la transpilation couvre les
@@ -243,7 +329,9 @@ PY
 else
   echo "  · python3 absent, contrôle d'import non vérifié"
 fi
+fi
 
+if section_on types; then
 echo "── Types"
 
 # Le type-check vit dans scripts/typecheck.sh (créé par BR-7) : check.sh l'appelle
@@ -265,7 +353,9 @@ if [ -f scripts/typecheck.sh ]; then
 else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
 fi
+fi
 
+if section_on api-http; then
 echo "── API mem0-http"
 
 # mem0-stack/mem0-http/test_api.py prouve que le serveur est conforme à l'API de
@@ -303,7 +393,9 @@ if [ -f scripts/mem0-http-test.sh ]; then
 else
   echo "  · scripts/mem0-http-test.sh absent, test d'API mem0-http non vérifié"
 fi
+fi
 
+if section_on smoke; then
 echo "── Plugins réels (OMP)"
 
 # Le harnais (scripts/plugin-smoke.ts) charge chaque plugin du catalogue dans un
@@ -344,7 +436,9 @@ else
     fail "plugins réels — relance : bun scripts/plugin-smoke.ts"
   fi
 fi
+fi
 
+if section_on tests; then
 echo "── Tests"
 
 # La sortie de `node --test` est CONSERVÉE, jamais jetée : un job rouge doit
@@ -354,37 +448,92 @@ echo "── Tests"
 # processus tué (mémoire) n'écrit AUCUNE ligne TAP, donc le code de sortie est
 # la seule trace qui distingue « un test est tombé » de « le processus est mort ».
 if command -v node >/dev/null 2>&1; then
-  tests_log="$(mktemp)"
-  # `--test-reporter=tap` est ÉPINGLÉ : le rapport par défaut dépend de la version
-  # de Node (spec dès que la sortie n'est plus un terminal en v26, TAP en v22) et
-  # le diagnostic ci-dessous lit un format, pas deux.
-  node --test --test-reporter=tap --experimental-strip-types test/*.test.ts >"$tests_log" 2>&1
-  tests_status=$?
-  if [ "$tests_status" -eq 0 ]; then
-    pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+  # L'ensemble de fichiers vient de scripts/test-files.sh, seul porteur de la
+  # règle « dépend de macOS » ; un échec du script (python3 absent, ensemble
+  # vide) rougit la section en recopiant sa sortie, sans lancer node.
+  if [ -n "$tests_scope" ]; then
+    tests_list="$(bash scripts/test-files.sh "--scope=$tests_scope" 2>&1)"
   else
-    printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
-    # D'abord TOUS les noms, ensuite la preuve : le bloc de diagnostic est borné,
-    # donc un plafond unique finissait par couper des noms de tests (mesuré le
-    # 2026-09-24 : six échecs, deux preuves visibles).
-    grep -E '^not ok' "$tests_log" | head -n 40
-    # Puis les blocs de diagnostic TAP — le message d'assertion porte la preuve
-    # (sortie du moteur, code de check.sh, diff), bornés à 60 lignes. Le bloc
-    # s'arrête à la première ligne qui repart en colonne 0 (enregistrement suivant).
-    awk '/^not ok/ { show = 1 } /^[^ ]/ && $0 !~ /^not ok/ { show = 0 } show' "$tests_log" | head -n 60
-    if ! grep -qE '^not ok' "$tests_log"; then
-      # Aucun test nommé : le processus est mort avant d'écrire (mémoire). La fin
-      # du journal est alors la seule trace.
-      tail -n 30 "$tests_log"
-    fi
-    grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
-    fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
+    tests_list="$(bash scripts/test-files.sh 2>&1)"
   fi
-  rm -f "$tests_log"
+  tests_list_status=$?
+  test_files=()
+  if [ "$tests_list_status" -eq 0 ]; then
+    while IFS= read -r tests_file; do
+      [ -n "$tests_file" ] || continue
+      if [ "$tests_part" = "1/2" ] && [ "$tests_file" != "test/check.test.ts" ]; then
+        continue
+      fi
+      test_files+=("$tests_file")
+    done <<<"$tests_list"
+  else
+    [ -n "$tests_list" ] && printf '%s\n' "$tests_list" | sed 's/^/  /'
+  fi
+  tests_filter=()
+  case "$tests_part" in
+    1/2) tests_filter=("--test-name-pattern=$TESTS_PART_PATTERN") ;;
+    2/2) tests_filter=("--test-skip-pattern=$TESTS_PART_PATTERN") ;;
+  esac
+  if [ "${#test_files[@]}" -eq 0 ]; then
+    if [ "$tests_list_status" -eq 0 ] || printf '%s\n' "$tests_list" | grep -qF "aucun fichier de test retenu"; then
+      fail "tests unitaires — aucun fichier de test retenu (--tests-scope=${tests_scope:-aucun}, --tests-part=${tests_part:-aucune})"
+    else
+      fail "tests unitaires — scripts/test-files.sh a échoué (relance : bash scripts/test-files.sh${tests_scope:+ --scope=$tests_scope})"
+    fi
+  else
+    echo "  · ${#test_files[@]} fichier(s) de test : ${test_files[*]}"
+    [ "${#tests_filter[@]}" -gt 0 ] && echo "  · filtre de noms : ${tests_filter[0]}"
+    tests_log="$(mktemp)"
+    # `--test-reporter=tap` est ÉPINGLÉ : le rapport par défaut dépend de la version
+    # de Node (spec dès que la sortie n'est plus un terminal en v26, TAP en v22) et
+    # le diagnostic ci-dessous lit un format, pas deux. `${a[@]+"${a[@]}"}` : un
+    # tableau vide sous `set -u` est une erreur en bash 3.2 (celui des Mac).
+    node --test --test-reporter=tap --experimental-strip-types ${tests_filter[@]+"${tests_filter[@]}"} "${test_files[@]}" >"$tests_log" 2>&1
+    tests_status=$?
+    if [ "$tests_status" -eq 0 ]; then
+      # Un filtre de noms qui ne retient rien sort 0 SANS `# tests 0` : node
+      # rapporte alors chaque FICHIER comme un test (`ok 1 - test/check.test.ts`,
+      # mesuré sur node v26.7.0). Une part a lancé quelque chose seulement si une
+      # ligne de premier niveau porte un autre nom que l'un des fichiers lancés ;
+      # sinon c'est un échec, jamais un vert silencieux.
+      tests_ran=1
+      if [ -n "$tests_part" ]; then
+        tests_ran="$(printf '%s\n' "${test_files[@]}" | awk '
+          NR == FNR { launched[$0] = 1; next }
+          /^(not )?ok [0-9]+ - / { name = $0; sub(/^(not )?ok [0-9]+ - /, "", name); if (!(name in launched)) n++ }
+          END { print n + 0 }' - "$tests_log")"
+      fi
+      if [ "$tests_ran" -eq 0 ]; then
+        fail "tests unitaires — aucun test exécuté pour --tests-part=$tests_part"
+      else
+        pass "tests unitaires (dedupe, buildIndex, nudge, perception du rappel, req/seeds)"
+      fi
+    else
+      printf '  · node --test a rendu %s (137 = tué par SIGKILL, 143 = SIGTERM)\n' "$tests_status"
+      # D'abord TOUS les noms, ensuite la preuve : le bloc de diagnostic est borné,
+      # donc un plafond unique finissait par couper des noms de tests (mesuré le
+      # 2026-09-24 : six échecs, deux preuves visibles).
+      grep -E '^not ok' "$tests_log" | head -n 40
+      # Puis les blocs de diagnostic TAP — le message d'assertion porte la preuve
+      # (sortie du moteur, code de check.sh, diff), bornés à 60 lignes. Le bloc
+      # s'arrête à la première ligne qui repart en colonne 0 (enregistrement suivant).
+      awk '/^not ok/ { show = 1 } /^[^ ]/ && $0 !~ /^not ok/ { show = 0 } show' "$tests_log" | head -n 60
+      if ! grep -qE '^not ok' "$tests_log"; then
+        # Aucun test nommé : le processus est mort avant d'écrire (mémoire). La fin
+        # du journal est alors la seule trace.
+        tail -n 30 "$tests_log"
+      fi
+      grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
+      fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
+    fi
+    rm -f "$tests_log"
+  fi
 else
   echo "  · node absent, tests non exécutés"
 fi
+fi
 
+if section_on noyau; then
 echo "── Noyau partagé"
 
 # `ConsoleCore` et `ConsoleClient` sont les cibles PARTAGÉES macOS/iOS : elles se
@@ -468,7 +617,9 @@ for target, scanned in report:
     print(f"  ✓ la cible partagée {target} n'importe ni AppKit ni UIKit ({scanned} fichiers balayés)")
 PY
 [ $? -ne 0 ] && FAIL=1
+fi
 
+if section_on app-swift; then
 echo "── App Swift"
 
 # L'assemblage du bundle .app vit dans scripts/swift-app.sh : check.sh l'appelle
@@ -496,7 +647,9 @@ if [ -f scripts/swift-app.sh ]; then
 else
   fail "App Swift — scripts/swift-app.sh absent"
 fi
+fi
 
+if section_on app-ios; then
 echo "── App iOS"
 
 # La compilation et les tests de l'app iOS vivent dans scripts/ios-build.sh :
@@ -539,6 +692,7 @@ if [ -f scripts/ios-build.sh ]; then
   fi
 else
   fail "App iOS — scripts/ios-build.sh absent"
+fi
 fi
 
 echo
