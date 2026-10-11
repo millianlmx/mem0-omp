@@ -146,7 +146,17 @@ cp "$PLIST" "$BUNDLE/Contents/Info.plist"
 cp "$bin_dir/OMPConsole" "$BUNDLE/Contents/MacOS/OMPConsole"
 chmod +x "$BUNDLE/Contents/MacOS/OMPConsole"
 
-# 3 bis) le contexte de build de la pile mémoire est EMBARQUÉ dans le bundle (S-1,
+# 3 bis) l'icône de l'app (feature ios-identite-app, S-2) : `AppIcon.icns`, dessiné
+#    par `scripts/app-icon.sh` et versionné, nommé par `CFBundleIconFile` de la
+#    plist. Copié AVANT la signature ad hoc, qui scelle les ressources du bundle.
+ICON="$PKG/Bundle/AppIcon.icns"
+if [ ! -f "$ICON" ]; then
+  echo "✗ icône absente : omp-console/Bundle/AppIcon.icns (bash scripts/app-icon.sh)"
+  exit 1
+fi
+cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
+
+# 3 ter) le contexte de build de la pile mémoire est EMBARQUÉ dans le bundle (S-1,
 #    BR-1) : l'app construit son image mem0-http depuis ces quatre fichiers, donc
 #    ils voyagent avec elle, ainsi que l'empreinte `STACK_FINGERPRINT` (S-7, BR-6)
 #    qui porte l'étiquette de l'image. La source unique reste

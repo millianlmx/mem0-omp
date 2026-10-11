@@ -1094,9 +1094,26 @@ bash scripts/swift-app.sh
 ```
 
 Le script compile en release, lance la suite en release, écrit le bundle dans
-`omp-console/build/OMP Console.app`, le signe en ad hoc puis vérifie la
-signature (`codesign --verify --strict`). Sous une plateforme autre que macOS, il
-annonce « non exécuté » et sort en code 2 sans rien compiler.
+`omp-console/build/OMP Console.app`, y copie l'icône `omp-console/Bundle/AppIcon.icns`
+(`Contents/Resources/AppIcon.icns`, nommée par `CFBundleIconFile`), le signe en ad
+hoc puis vérifie la signature (`codesign --verify --strict`). Sous une plateforme
+autre que macOS, il annonce « non exécuté » et sort en code 2 sans rien compiler.
+Sans l'icns, il sort en code 1 avec `✗ icône absente :
+omp-console/Bundle/AppIcon.icns (bash scripts/app-icon.sh)`, sans bundle signé.
+
+L'icône est versionnée et ne se redessine qu'à la main, quand son dessin change :
+
+```bash
+bash scripts/app-icon.sh
+```
+
+Le script dessine l'icône d'OMP Console une seule fois
+(`scripts/app-icon/dessin.swift`) et réécrit ses quatre fichiers : l'icns du Mac,
+construit depuis la variante claire, et les trois variantes de l'app iOS (claire,
+sombre, teintée) dans `omp-console/ios/OMPConsoleIOS/Assets.xcassets/AppIcon.appiconset/`.
+Tout est écrit dans un dossier temporaire, puis déplacé ; aucun fichier n'est
+remplacé à moitié. Codes de sortie : 0 les quatre fichiers écrits, 1 échec, 2 non
+exécuté hors macOS.
 
 ## Ouvrir l'app
 
@@ -3128,6 +3145,12 @@ et lance la suite Swift Testing de la cible `OMPConsoleIOSTests`. `--no-tests`
 s'arrête après la compilation. Codes de sortie : `0` compilé (et testé), `1`
 échec, `2` « non exécuté ».
 
+L'icône de l'app iOS vient du catalogue `OMPConsoleIOS/Assets.xcassets`
+(`AppIcon`, variantes claire, sombre et teintée) ; elle est dessinée avec celle du
+Mac par `bash scripts/app-icon.sh` (voir « Assembler le bundle `.app` »), jamais
+à la main dans Xcode. Le même catalogue porte l'`AccentColor`, égale au bleu
+système. Les règles d'identité de l'app sont dans `omp-console/ios/DESIGN.md`.
+
 ### Captures des sept écrans
 
 ```bash
@@ -3893,3 +3916,71 @@ IOS_RECETTE_IPAD=<UDID iPad> IOS_RECETTE_IPHONE=<UDID iPhone> \
   focus du Mac. Les boutons de barre et le champ de recherche se lisent par
   `idb ui describe-point` : `describe-all` ne rend pas le contenu des barres de
   navigation.
+
+### Recette : identité de l'app
+
+`scripts/ios-identite-recette.sh` prouve au simulateur, avant et après, les
+critères de la feature `ios-identite-app` (icône claire et sombre sous « OMP
+Console », catalogue de l'AppIcon, accent égal au bleu système, nom et région,
+message « Réseau local », écran de lancement, icône du Mac) et relit les constats
+de l'audit sur l'app de la base :
+
+```bash
+bash scripts/ios-identite-recette.sh                 # arbre de travail
+bash scripts/ios-identite-recette.sh --avant f3fbfe6
+```
+
+- **Construction** signée ad hoc (`CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
+  CODE_SIGNING_REQUIRED=NO`), contrôlée par `codesign -dv`
+  (`Identifier=com.omp.console.ios`). Avec `--avant <ref>`, l'app de `<ref>` est
+  construite dans un worktree détaché temporaire, retiré à la sortie. Le volet Mac
+  assemble seulement `omp-console/build/OMP Console.app` par
+  `bash scripts/swift-app.sh --no-tests`, sans l'ouvrir. Le programme de mesure des
+  images, `scripts/ios-identite-recette/images.swift`, est compilé par `swiftc`
+  dans `omp-console/build/ios-identite-app/`. Prérequis : Xcode 27, `idb`, `python3`
+  avec PIL.
+- **Simulateurs privés** `identite-tel` (iPhone 18 Pro, sinon iPhone 17 Pro) et,
+  sans `--avant`, `identite-tab` (iPad Pro 13-inch (M5), sinon (M4)), qui ne sert
+  qu'à AC-8 ; sur iOS 27.0, sinon le runtime le plus récent ≥ 26. Ils sont
+  supprimés s'ils existent déjà, créés, puis
+  supprimés à la sortie quel que soit le code. La recette n'ouvre jamais
+  Simulator.app, n'emploie ni AppleScript ni `open -a`, ne vole pas le focus du Mac
+  et ne touche pas l'instance d'OMP Console de l'utilisateur.
+- **Déroulé** avec `--avant <ref>` : la section « constats » relit par PlistBuddy,
+  sur l'app de `<ref>`, une ligne par constat de l'audit (`CFBundleIcons`,
+  `CFBundleDisplayName`, `CFBundleDevelopmentRegion`, `NSAccentColorName`,
+  `NSLocalNetworkUsageDescription`, `UILaunchScreen`) ; puis l'écran d'accueil
+  d'iOS est capturé en clair et en sombre, ainsi que les six écrans de l'accent en
+  clair et en sombre (`-home.welcomeSeen YES` puis `-section home -home.recipe
+  dashboard`, `-section sessions -sessions.recipe liste`, `-section memory
+  -memoire.recipe graphe`, `-section kanban -pipelines.recipe actions`, `-section
+  stats -stats.recipe bascule`, `-section project -projet.recipe lancement`).
+- **Déroulé** sans option : AC-1 et AC-2, le bouton « OMP Console » de l'écran
+  d'accueil (HOME, puis jusqu'à 4 pages balayées) et la zone de l'icône mesurée
+  dans la capture, claire puis sombre — le style d'icônes de l'écran d'accueil est
+  réglé sur « Sombre », l'apparence sombre seule laissant les icônes claires ;
+  AC-3, le catalogue et la teintée en gris pur (R = G = B) ; AC-4, les douze
+  paires avant/après comparées par leur bleu le plus fréquent ; AC-5 et AC-6,
+  PlistBuddy sur l'app construite ; AC-7, le message lu dans l'app installée après
+  une installation neuve, avec la capture du premier lancement (l'alerte « Réseau
+  local » n'est pas affichée par le simulateur, TN3179) ; AC-8, la vidéo d'un
+  lancement à froid sur iPhone et iPad, en clair et en sombre, image par image
+  (bords rognés de 4 % pour écarter la barre d'état et le liseré de la fenêtre
+  iPad, puis réduction à 32 × 32) ;
+  AC-1 Mac, l'icns du bundle assemblé identique à `omp-console/Bundle/AppIcon.icns`
+  et `CFBundleIconFile = AppIcon`.
+- **Sortie** : `omp-console/build/ios-identite-app/<avant|apres>/`, avec
+  `rapport.txt` (une ligne `AC-n – <appareil> ✓|✗ <mesure>` par contrôle), `logs/`
+  et les PNG. Sans captures avant, chaque ligne AC-4 est en ✗ « captures avant
+  absentes (bash scripts/ios-identite-recette.sh --avant f3fbfe6) ».
+- **Codes de sortie** : 0 toutes les lignes sont ✓ ; 1 au moins un ✗, ou un
+  prérequis manque (`✗ PIL absent : python3 -m pip install pillow`) ; 2 un
+  simulateur ou le worktree temporaire n'a pas pu être retiré.
+
+Preuve (2026-10-11) : sur l'arbre de travail, 23 ✓, 0 ✗, sortie 0 (AC-7, AC-1,
+AC-2, AC-3, 12 × AC-4, AC-5, AC-6, 4 × AC-8, AC-1 Mac) ; sur f3fbfe6, sortie 0,
+14 captures et le style d'icônes « Sombre » sélectionné, et les constats
+`CFBundleIcons` absent, `NSAccentColorName` absent,
+`NSLocalNetworkUsageDescription` « … à la coque macOS … » confirmés,
+`CFBundleDisplayName = OMP Console`, `CFBundleDevelopmentRegion = fr` et
+`UILaunchScreen = {}` écartés.
