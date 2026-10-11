@@ -8,6 +8,12 @@
 // - déconnecté : état, adresse une fois, « Réessayer », adresse modifiable dans un
 //   groupe replié, « Oublier ce Mac ».
 //
+// Le contenu vit dans `ConnectionForm` (ios-onboarding-et-connexion, S-2/S-3/S-6),
+// monté deux fois : par la feuille autonome `ConnectionSheet` (sortie « Fermer »)
+// et, poussé dans la feuille de bienvenue, avec la sortie « Plus tard » fournie
+// par l'hôte. Pendant l'appairage, « Appairer » est désactivé et « Appairage en
+// cours… » s'affiche sous lui jusqu'à la réponse.
+//
 // Composants SYSTÈME uniquement (`NavigationStack`, `Form`, `Section`, `Text`,
 // `TextField`, `Button`, `ProgressView`, `DisclosureGroup`, `confirmationDialog`) :
 // aucun composant visuel maison n'entre dans les sources de l'app (garde
@@ -22,10 +28,65 @@ import ConsoleCore
 import SwiftUI
 import UIKit
 
+/// La sortie de la barre du formulaire : « Fermer » dans la feuille autonome,
+/// « Plus tard » dans le flux de bienvenue. « Plus tard » appelle la fermeture
+/// de l'hôte et JAMAIS `dismiss()` : poussé dans un `NavigationStack`, `dismiss()`
+/// dépilerait l'écran au lieu de fermer la feuille.
+enum ConnectionFormExit {
+    case close
+    case later(() -> Void)
+}
+
+/// L'issue d'un appairage tenté depuis le formulaire.
+enum ConnectionPairingOutcome: Equatable {
+    case paired
+    case failed(message: String)
+}
+
 /// La feuille unique de connexion : elle reçoit le modèle observable partagé et
-/// n'en fabrique aucun état.
+/// n'en fabrique aucun état. Elle ne se ferme pas d'elle-même après un appairage.
 struct ConnectionSheet: View {
     @ObservedObject var model: ConsoleClientModel
+
+    var body: some View {
+        NavigationStack {
+            ConnectionForm(model: model, exit: .close, onPaired: nil)
+        }
+    }
+
+    /// « Appairer » n'est actif qu'avec huit caractères significatifs une fois le
+    /// code normalisé (tiret, espaces et casse ignorés, I/L lus 1, O lu 0), un
+    /// endpoint connu, et aucune requête d'appairage en cours. L'alphabet n'est
+    /// PAS vérifié ici : un symbole hors alphabet laisse le bouton actif et
+    /// produit le message `codeMalformed` du modèle.
+    static func canPair(code: String, knownEndpoint: Bool, inFlight: Bool) -> Bool {
+        !inFlight && PairingCodeFormat.normalize(code).count == ConsoleAPI.Service.pairingCodeLength && knownEndpoint
+    }
+
+    /// La SEULE fonction d'appairage de la vue : une erreur levée (aucun endpoint,
+    /// verrou de version) ou un échec publié par le modèle donne son message ;
+    /// sinon l'appareil est appairé.
+    @MainActor
+    static func attemptPairing(_ model: ConsoleClientModel, code: String) async -> ConnectionPairingOutcome {
+        do {
+            try await model.pair(code: code)
+        } catch {
+            return .failed(message: ConnectionText.pairError(error))
+        }
+        if let failure = model.pairingFailure {
+            return .failed(message: ConnectionText.pairingFailure(failure))
+        }
+        return .paired
+    }
+}
+
+/// Le contenu de la Connexion, commun à la feuille autonome et à l'écran poussé
+/// du flux de bienvenue ; seule la sortie de la barre change.
+struct ConnectionForm: View {
+    @ObservedObject var model: ConsoleClientModel
+    let exit: ConnectionFormExit
+    /// Appelé quand un appairage réussit (flux de bienvenue : fermer la feuille).
+    let onPaired: (() -> Void)?
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -34,6 +95,8 @@ struct ConnectionSheet: View {
     @State private var addressRejected = false
     @State private var code = ""
     @State private var pairMessage: String?
+    /// Une requête d'appairage attend sa réponse : « Appairer » est désactivé.
+    @State private var pairingInFlight = false
     /// Le groupe « Modifier l'adresse » : REPLIÉ à chaque ouverture de la feuille.
     @State private var addressEditExpanded = false
     @State private var forgetAsked = false
@@ -47,27 +110,39 @@ struct ConnectionSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                content
+        Form {
+            content
+        }
+        .accessibilityIdentifier(ConnectionAccessibility.sheet)
+        .navigationTitle(ConnectionText.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            exitItem
+        }
+        .onAppear {
+            prefill(for: mode)
+            // Seul le mode non appairé focalise le code ; les autres modes ne
+            // touchent JAMAIS au focus, donc aucun clavier (D-3).
+            if mode.initialFocusOnCode { focus = .code }
+        }
+        .onChange(of: mode) { _, newMode in
+            prefill(for: newMode)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var exitItem: some ToolbarContent {
+        switch exit {
+        case .close:
+            ToolbarItem(placement: .confirmationAction) {
+                Button(ConnectionText.close) { dismiss() }
+                    .accessibilityIdentifier(ConnectionAccessibility.close)
             }
-            .accessibilityIdentifier(ConnectionAccessibility.sheet)
-            .navigationTitle(ConnectionText.title)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(ConnectionText.close) { dismiss() }
-                        .accessibilityIdentifier(ConnectionAccessibility.close)
-                }
-            }
-            .onAppear {
-                prefill(for: mode)
-                // Seul le mode non appairé focalise le code ; les autres modes ne
-                // touchent JAMAIS au focus, donc aucun clavier (D-3).
-                if mode.initialFocusOnCode { focus = .code }
-            }
-            .onChange(of: mode) { _, newMode in
-                prefill(for: newMode)
+        case .later(let action):
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(ConnectionText.later, action: action)
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier(ConnectionAccessibility.later)
             }
         }
     }
@@ -188,7 +263,7 @@ struct ConnectionSheet: View {
             .accessibilityIdentifier(ConnectionAccessibility.addressSave)
         if let manual = model.manualAddress {
             HStack {
-                Text(manual.text)
+                Text(manual.display)
                 Spacer()
                 // Sans style sans bordure, la rangée entière déclencherait le
                 // bouton : toucher l'adresse l'effacerait (D-5). La cible de 44 pt
@@ -227,6 +302,7 @@ struct ConnectionSheet: View {
     private var pairingSection: some View {
         Section {
             TextField(ConnectionText.codeField, text: $code)
+                .textContentType(.oneTimeCode)
                 .textInputAutocapitalization(.characters)
                 .autocorrectionDisabled()
                 .focused($focus, equals: .code)
@@ -239,9 +315,7 @@ struct ConnectionSheet: View {
                     }
                     pairMessage = nil
                 }
-                .onSubmit {
-                    if canPair { Task { await pair() } }
-                }
+                .onSubmit(startPairing)
                 .accessibilityIdentifier(ConnectionAccessibility.code)
                 .accessibilityLabel(ConnectionText.codeTitle)
             if let message = pairMessage {
@@ -249,11 +323,17 @@ struct ConnectionSheet: View {
                     .foregroundStyle(.red)
                     .accessibilityIdentifier(ConnectionAccessibility.codeError)
             }
-            Button(ConnectionText.codePair) {
-                Task { await pair() }
+            Button(ConnectionText.codePair, action: startPairing)
+                .disabled(!canPair)
+                .accessibilityIdentifier(ConnectionAccessibility.codePair)
+            if pairingInFlight {
+                HStack(spacing: 8) {
+                    ProgressView()
+                    Text(ConnectionText.codePairing)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier(ConnectionAccessibility.codeProgress)
             }
-            .disabled(!canPair)
-            .accessibilityIdentifier(ConnectionAccessibility.codePair)
             if canRetry {
                 Button(ConnectionText.retry) { model.retry() }
                     .accessibilityIdentifier(ConnectionAccessibility.retry)
@@ -312,16 +392,24 @@ struct ConnectionSheet: View {
         }
     }
 
-    private func pair() async {
+    /// « Appairer » ou ↩ dans le champ : l'état « en cours » est posé AVANT
+    /// l'envoi, de façon synchrone, pour qu'aucun second appui n'émette une
+    /// seconde requête ; il retombe dans les deux issues.
+    private func startPairing() {
+        guard canPair else { return }
         pairMessage = nil
-        do {
-            try await model.pair(code: code)
-        } catch {
-            pairMessage = ConnectionText.pairError(error)
-            return
-        }
-        if let failure = model.pairingFailure {
-            pairMessage = ConnectionText.pairingFailure(failure)
+        pairingInFlight = true
+        Task { await pair() }
+    }
+
+    private func pair() async {
+        let outcome = await ConnectionSheet.attemptPairing(model, code: code)
+        pairingInFlight = false
+        switch outcome {
+        case .paired:
+            onPaired?()
+        case .failed(let message):
+            pairMessage = message
         }
     }
 
@@ -359,18 +447,10 @@ struct ConnectionSheet: View {
         addressText = prefill
     }
 
-    /// « Appairer » n'est actif qu'avec huit caractères significatifs ET un
-    /// endpoint connu.
+    /// « Appairer » n'est actif qu'avec huit caractères significatifs, un
+    /// endpoint connu, et aucune requête d'appairage en cours.
     private var canPair: Bool {
-        Self.canPair(code: code, knownEndpoint: knownEndpoint)
-    }
-
-    /// Huit caractères une fois le code normalisé (tiret, espaces et casse
-    /// ignorés) : « ABCD-EFGH », « ABCDEFGH » et « abcd-efgh » le sont tous trois.
-    /// L'alphabet n'est PAS vérifié ici : un symbole hors alphabet laisse le
-    /// bouton actif et produit le message `codeMalformed` du modèle.
-    static func canPair(code: String, knownEndpoint: Bool) -> Bool {
-        PairingCodeFormat.normalize(code).count == ConsoleAPI.Service.pairingCodeLength && knownEndpoint
+        ConnectionSheet.canPair(code: code, knownEndpoint: knownEndpoint, inFlight: pairingInFlight)
     }
 
     /// Un endpoint est connu par l'état, la découverte, l'adresse manuelle ou

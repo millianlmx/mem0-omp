@@ -14,8 +14,14 @@ public struct ClientAddress: Equatable, Sendable {
         self.port = port
     }
 
-    /// La forme persistée et réaffichée.
+    /// La forme persistée, relue par `parse` : la zone d'interface (`%en0`) y est
+    /// GARDÉE. Jamais affichée telle quelle — voir `display`.
     public var text: String { "\(host):\(port)" }
+
+    /// La forme affichée : celle de `ClientEndpoint.manual`, donc sans zone
+    /// d'interface (`192.168.1.175%en0` → `192.168.1.175:8787`, `fe80::1%en0` →
+    /// `[fe80::1]:8787`). La règle vit dans `ClientEndpoint` seul.
+    public var display: String { ClientEndpoint.manual(host: host, port: port).address }
 
     /// Analyse une saisie. Un refus ne change RIEN : l'ancienne adresse reste en
     /// vigueur.

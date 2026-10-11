@@ -123,11 +123,12 @@ struct RemotePairingTests {
         defer { stack.stop() }
         _ = try stack.registry.generateCode()
 
-        // Trop court, puis un caractère hors alphabet (le « I » de Crockford).
+        // Trop court, puis un caractère hors alphabet (le « U » de Crockford ;
+        // I, L et O sont lus comme des chiffres).
         let short = try await stack.call("POST", "/v1/pair", json: ["code": "ABC", "name": "Téléphone"])
         #expect(short.status == 400)
         #expect(short.errorCode == "bad_request")
-        let stray = try await stack.call("POST", "/v1/pair", json: ["code": "IIIIIIII", "name": "Téléphone"])
+        let stray = try await stack.call("POST", "/v1/pair", json: ["code": "UUUUUUUU", "name": "Téléphone"])
         #expect(stray.status == 400)
         #expect(stray.errorCode == "bad_request")
 

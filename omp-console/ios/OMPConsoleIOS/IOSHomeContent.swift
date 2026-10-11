@@ -59,6 +59,13 @@ enum IOSHomeAccessibility {
     static func answerOption(_ index: Int) -> String { "ios.home.answer.option.\(index)" }
 }
 
+/// L'issue de « Continuer » sur la bienvenue : pousser la Connexion dans la même
+/// feuille, ou fermer la feuille.
+enum WelcomeContinuation: Equatable {
+    case showConnection
+    case finish
+}
+
 enum IOSHomeContent {
     /// Le badge de la ligne « Accueil » : le compte d'attentes, la MÊME fonction
     /// que macOS (S-12). 0 hors tableau de bord.
@@ -77,6 +84,19 @@ enum IOSHomeContent {
     /// La bienvenue est due à la première ouverture de l'Accueil (S-15).
     static func welcomeDue(welcomeSeen: Bool, section: ConsoleSection) -> Bool {
         !welcomeSeen && section == .home
+    }
+
+    /// Ce que fait « Continuer » de la bienvenue (S-2 d'ios-onboarding-et-connexion) :
+    /// un appareil appairé n'a rien à connecter, la feuille se ferme ; sinon
+    /// (lecture du trousseau, sans jeton, jeton refusé) la Connexion est poussée
+    /// dans la même feuille.
+    static func welcomeContinuation(pairing: ClientPairingStatus) -> WelcomeContinuation {
+        switch pairing {
+        case .paired:
+            return .finish
+        case .restoring, .unpaired, .refused:
+            return .showConnection
+        }
     }
 
     /// Le geste principal d'une carte d'attente (S-11).

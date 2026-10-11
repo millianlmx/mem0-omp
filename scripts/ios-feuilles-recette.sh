@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Recette idb des feuilles de l'app iOS (feature feuilles-ios-presentation-et-depots,
-# S-7) : captures avant/après des dix feuilles F1 à F10 sur un iPhone et un iPad
-# PRIVÉS, relevés d'accessibilité, et une ligne de rapport par contrôle.
+# S-7) : captures avant/après des neuf feuilles F2 à F10 sur un iPhone et un iPad
+# PRIVÉS, relevés d'accessibilité, et une ligne de rapport par contrôle. La
+# bienvenue (F1, ses AC-8 et AC-9) est couverte par scripts/ios-onboarding-recette.sh
+# depuis la feature ios-onboarding-et-connexion.
 #
 #   bash scripts/ios-feuilles-recette.sh <avant|apres> [--source <udid>]
 #
@@ -31,7 +33,7 @@
 # (`idb ui describe-all`), `rapport.txt` (une ligne `ok|échec|sauté <AC> <tel|tab>
 # <feuille> <détail>` par contrôle, plus la ligne `provenance ipad …`), `build.log`.
 #
-# Codes de sortie : en `avant`, 0 dès que les 20 captures sont écrites (les échecs de
+# Codes de sortie : en `avant`, 0 dès que les 18 captures sont écrites (les échecs de
 # contrôle y sont ATTENDUS et seulement consignés) ; en `apres`, 1 sur tout `échec` ;
 # 1 aussi pour un build, un appareil, un argument ou une feuille non ouverte en
 # défaut ; 2 « non exécuté » (hors macOS, Xcode inutilisable, idb ou Python 3 +
@@ -65,7 +67,6 @@ BUNDLE_ID="com.omp.console.ios"
 SLUG="feuilles-ios-presentation-et-depots"
 BASE="$ROOT/omp-console/build/$SLUG"
 OUT="$BASE/$MOMENT"
-HOME_TEXT="$ROOT/omp-console/Sources/ConsoleCore/Home/HomeText.swift"
 PHONE_NAME="feuilles-recette-tel"
 PAD_NAME="feuilles-recette-tab"
 # DerivedData STABLE par relevé : une seconde exécution recompile en incrémental.
@@ -111,11 +112,6 @@ showsdks="$(xcodebuild -showsdks 2>&1)"
 if [ "$?" -ne 0 ] || [ -z "$showsdks" ]; then
   echo "  · non exécuté : Xcode inutilisable ($(printf '%s\n' "$showsdks" | tail -n 1))"
   exit 2
-fi
-
-if [ ! -f "$HOME_TEXT" ]; then
-  echo "  ✗ $HOME_TEXT introuvable (promesses de la bienvenue)" >&2
-  exit 1
 fi
 
 # Le simulateur source : il doit exister et porter l'app (conteneur de données).
@@ -272,19 +268,17 @@ import json, os, re, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
 from PIL import Image
 
-base, moment, home_text, source_keychain, source_plist, work, phone, pad = sys.argv[1:9]
+base, moment, source_keychain, source_plist, work, phone, pad = sys.argv[1:8]
 out = os.path.join(base, moment)
 BUNDLE = "com.omp.console.ios"
 DEVICES = (("tel", phone), ("tab", pad))
 READY_LIMIT = 30
 
-# Les feuilles F1 à F10 (préambule des specs) : arguments de lancement, élément
+# Les feuilles F2 à F10 (préambule des specs) : arguments de lancement, élément
 # repère (identifiant exact, ou préfixe terminé par « . ») pris dans le CONTENU (les
 # boutons de barre d'une feuille à `Form` sont absents de `describe-all`), titre de
 # barre attendu APRÈS la feature (constante Swift citée).
 SHEETS = (
-    ("bienvenue", ["-section", "home"], "ios.home.welcome.continue",
-     "Bienvenue dans OMP Console"),  # HomeText.welcomeTitle
     ("repondre", ["-section", "home", "-home.recipe", "answer"], "ios.home.answer.question",
      "Répondre"),  # IOSHomeText.answerNavigationTitle
     ("contrat", ["-section", "home", "-home.recipe", "contractLong"], "ios.home.contract.close",
@@ -307,7 +301,6 @@ SHEETS = (
 
 # Largeurs intrinsèques des titres en 17 pt semibold (table D-4 du contrat).
 TITLE_WIDTH = {
-    "Bienvenue dans OMP Console": 236.6,
     "Lancer une session OMP": 194.9,
     "OMP vous demande": 158.6,
     "Nouvelle feature": 130.2,
@@ -327,17 +320,6 @@ SELECTED_LABEL = "mem0-omp (Projets)"
 # Le texte du souvenir `m1` de `MemoryGraphParity`, ouvert par `-memoire.recipe liste`.
 MEMORY_TEXT = "titre un"
 REPO_PREFIX = {"piloter": "ios.projet.launch.repo.", "lancer-session": "ios.sessionomp.launch.repo."}
-
-# Les promesses de la bienvenue, lues dans HomeText.swift.
-SOURCE = open(home_text, encoding="utf-8").read()
-# Le bloc du tableau littéral : de `welcomePromises … = [` jusqu'au `welcomeContinue` qui suit.
-PROMISE_BLOCK = SOURCE.split("welcomePromises", 1)[1].split("welcomeContinue", 1)[0]
-PROMISE_TEXTS = set()
-for title, detail in re.findall(r'title: "((?:[^"\\]|\\.)*)",\s*detail: "((?:[^"\\]|\\.)*)"', PROMISE_BLOCK):
-    PROMISE_TEXTS.update((title, detail))
-if len(PROMISE_TEXTS) != 6:
-    print(f"  ✗ promesses de la bienvenue illisibles dans {home_text}", file=sys.stderr)
-    sys.exit(1)
 
 lines = []
 failed = False
@@ -414,35 +396,10 @@ def tap(udid, x, y):
     time.sleep(1)
 
 
-def swipe(udid, x1, y1, x2, y2):
-    run("idb", "ui", "swipe", "--udid", udid, "--duration", "0.3",
-        str(int(x1)), str(int(y1)), str(int(x2)), str(int(y2)))
-    time.sleep(1)
-
-
-def launch(udid, args, welcome_seen=True, extra=()):
-    prefix = ["-home.welcomeSeen", "YES"] if welcome_seen else []
+def launch(udid, args, extra=()):
     code, _ = run("xcrun", "simctl", "launch", "--terminate-running-process", udid, BUNDLE,
-                  *prefix, *args, *extra)
+                  "-home.welcomeSeen", "YES", *args, *extra)
     return code == 0
-
-
-def terminate(udid):
-    run("xcrun", "simctl", "terminate", udid, BUNDLE)
-    time.sleep(1)
-
-
-def forget_welcome(udid):
-    """Oublie `home.welcomeSeen`. MESURÉ iOS 27 : `defaults delete <bundle>` ne retire
-    PAS une valeur écrite par l'app dans son conteneur ; seule la suppression par le
-    chemin du plist du conteneur la retire. Les deux sont faites (installation neuve :
-    le conteneur peut ne pas encore porter de plist)."""
-    terminate(udid)
-    run("xcrun", "simctl", "spawn", udid, "defaults", "delete", BUNDLE, "home.welcomeSeen")
-    container = run("xcrun", "simctl", "get_app_container", udid, BUNDLE, "data")[1].strip()
-    if container:
-        domain = os.path.join(container, "Library", "Preferences", BUNDLE)
-        run("xcrun", "simctl", "spawn", udid, "defaults", "delete", domain, "home.welcomeSeen")
 
 
 def signature(elements):
@@ -756,28 +713,6 @@ def control_selection(device, sheet, shot):
          " ; ".join(problems) or f"« {SELECTED_LABEL} » Selected, coche visible, aucune marque lue")
 
 
-def control_welcome_column(device, sheet, shot):
-    elements = shot.sheet_elements()
-    texts = [e for e in elements if e.get("type") == "StaticText" and label(e) in PROMISE_TEXTS]
-    images = [e for e in elements if e.get("type") == "Image"]
-    problems = []
-    if len(texts) != len(PROMISE_TEXTS):
-        problems.append(f"{len(texts)} textes de promesse sur {len(PROMISE_TEXTS)}")
-    xs = [box(e)[0] for e in texts]
-    if xs and max(xs) - min(xs) > 0.01:
-        problems.append(f"x des textes de {fmt(min(xs))} à {fmt(max(xs))} pt")
-    if len(images) != 3:
-        problems.append(f"{len(images)} éléments Image (3 attendus)")
-    centers = [center(e)[0] for e in images]
-    if centers and max(centers) - min(centers) > 0.5:
-        problems.append(f"centres x des icônes de {fmt(min(centers))} à {fmt(max(centers))} pt")
-    small = [fmt(box(e)[3]) for e in images if box(e)[3] < 18]
-    if small:
-        problems.append("icônes de " + ", ".join(small) + " pt de haut (minimum 18)")
-    emit("échec" if problems else "ok", "AC-8", device, sheet,
-         " ; ".join(problems) or f"textes à x = {fmt(xs[0])} pt ; icônes centrées à {fmt(centers[0])} pt, hauteur ≥ 18 pt")
-
-
 def control_memory(device, sheet, shot, udid):
     elements = shot.sheet_elements()
     close = one(shot.elements, "ios.memoire.close")
@@ -812,10 +747,7 @@ def control_memory(device, sheet, shot, udid):
 # ── Ouverture et capture ─────────────────────────────────────────────────────
 
 def open_sheet(device, udid, sheet, args, marker, extra):
-    if sheet == "bienvenue":
-        forget_welcome(udid)
-        launch(udid, args, welcome_seen=False, extra=extra)
-    elif sheet == "connexion":
+    if sheet == "connexion":
         launch(udid, args, extra=extra)
         deadline = time.time() + 10
         shown = False
@@ -842,11 +774,10 @@ def capture(udid, stem, elements):
 
 CONTROLS = {
     "AC-1": ("tab", ("contrat", "session", "souvenir")),
-    "AC-2": ("tab", ("bienvenue", "piloter", "lancer-session")),
-    "AC-3": ("tel", ("bienvenue", "piloter", "lancer-session", "contrat", "session", "souvenir")),
+    "AC-2": ("tab", ("piloter", "lancer-session")),
+    "AC-3": ("tel", ("piloter", "lancer-session", "contrat", "session", "souvenir")),
     "AC-5": (None, ("piloter", "lancer-session")),
     "AC-6": (None, ("piloter", "lancer-session")),
-    "AC-8": (None, ("bienvenue",)),
     "AC-10": (None, ("souvenir",)),
 }
 
@@ -878,46 +809,8 @@ def sheet_controls(device, udid, extra):
             control_repos(device, sheet, shot)
         if applies("AC-6", device, sheet):
             control_selection(device, sheet, shot)
-        if applies("AC-8", device, sheet):
-            control_welcome_column(device, sheet, shot)
         if applies("AC-10", device, sheet):
             control_memory(device, sheet, shot, udid)
-
-
-def welcome_dismissal(device, udid, extra, how):
-    """AC-9 : bienvenue fermée (balayage ou bouton), relance, absente après 8 s."""
-    forget_welcome(udid)
-    launch(udid, ["-section", "home"], welcome_seen=False, extra=extra)
-    elements, ok = ready(udid, "ios.home.welcome.continue")
-    if not ok:
-        emit("sauté", "AC-9", device, "bienvenue", f"{how} : feuille non ouverte")
-        return
-    if how == "balayage":
-        if device == "tel":
-            swipe(udid, 200, 250, 200, 800)
-        else:
-            stem = os.path.join(work, f"balayage-{device}.png")
-            run("xcrun", "simctl", "io", udid, "screenshot", stem, timeout=60)
-            shot = Shot(stem, elements)
-            x = shot.screen_w / 2
-            swipe(udid, x, shot.top + 30, x, shot.screen_h - 20)
-    else:
-        tap(udid, *center(one(elements, "ios.home.welcome.continue")))
-    time.sleep(1)
-    closed = one(describe(udid), "ios.home.welcome.continue") is None
-    # Le temps que la préférence soit écrite avant la terminaison.
-    time.sleep(2)
-    terminate(udid)
-    launch(udid, ["-section", "home"], welcome_seen=False, extra=extra)
-    time.sleep(8)
-    again = one(describe(udid), "ios.home.welcome.continue") is not None
-    problems = []
-    if not closed:
-        problems.append(f"le {how} ne ferme pas la feuille")
-    if again:
-        problems.append("la bienvenue réapparaît à la relance")
-    emit("échec" if problems else "ok", "AC-9", device, "bienvenue",
-         f"{how} : " + (" ; ".join(problems) or "fermée, absente 8 s après la relance"))
 
 
 # ── Greffe du trousseau (iPad) ───────────────────────────────────────────────
@@ -994,8 +887,6 @@ print(f"  provenance ipad {provenance}", flush=True)
 for device, udid in DEVICES:
     extra = pad_extra if device == "tab" else ()
     sheet_controls(device, udid, extra)
-    welcome_dismissal(device, udid, extra, "balayage")
-    welcome_dismissal(device, udid, extra, "bouton")
 
 with open(os.path.join(out, "rapport.txt"), "w", encoding="utf-8") as report:
     report.write("\n".join(lines) + "\n")
@@ -1008,7 +899,7 @@ if moment == "apres" and failed:
 sys.exit(0)
 PY
 
-python3 "$WORK/recette.py" "$BASE" "$MOMENT" "$HOME_TEXT" \
+python3 "$WORK/recette.py" "$BASE" "$MOMENT" \
   "${SOURCE_KEYCHAIN:-}" "${SOURCE_PLIST:-}" "$WORK" "$iphone" "$ipad"
 status=$?
 

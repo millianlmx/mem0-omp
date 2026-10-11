@@ -31,11 +31,17 @@ enum IOSMetrics {
     /// d'accessibilité, le plafond grandit avec le texte (aucune largeur figée).
     static let readableWidth: CGFloat = 720
     /// La largeur de la colonne de l'icône d'une promesse de la bienvenue, à la
-    /// taille de référence `.title2` : les trois symboles (largeurs propres
-    /// différentes) y sont centrés, et les textes commencent au même x
-    /// (feuilles-ios-presentation-et-depots, S-5). Mise à l'échelle par
-    /// `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
-    static let welcomeIconWidth: CGFloat = 36
+    /// taille de référence `.largeTitle` (la taille du symbole, S-1
+    /// d'ios-onboarding-et-connexion) : les trois symboles (largeurs propres
+    /// différentes) y sont centrés, et les textes commencent au même x. Mise à
+    /// l'échelle par `@ScaledMetric`, elle suit Dynamic Type avec le glyphe.
+    static let welcomeIconWidth: CGFloat = 50
+    /// La marge au-dessus du grand titre de la bienvenue, page sans barre.
+    static let welcomeTopPadding: CGFloat = 48
+    /// L'espace entre le grand titre de la bienvenue et ses promesses.
+    static let welcomeTitleSpacing: CGFloat = 40
+    /// L'espace entre deux promesses de la bienvenue.
+    static let welcomeRowSpacing: CGFloat = 28
     /// La largeur d'une voie de l'écran Pipelines en largeur régulière (iPad), à
     /// la taille de référence `.body` : la même pour toutes les voies, vides ou
     /// pleines, jamais tirée de leur contenu. Mise à l'échelle par

@@ -33,7 +33,7 @@ enum ConnectionSheetMode: Equatable {
         case .unpaired:
             return .unpaired(refused: false, prefill: nil)
         case .refused(let endpoint):
-            return .unpaired(refused: true, prefill: manualAddress?.text ?? endpoint?.address)
+            return .unpaired(refused: true, prefill: manualAddress?.display ?? endpoint?.address)
         case .paired:
             if case .connected(let endpoint) = state {
                 return .connected(address: endpoint.display)
@@ -42,13 +42,18 @@ enum ConnectionSheetMode: Equatable {
         }
     }
 
-    /// La feuille s'ouvre-t-elle d'elle-même pour ce statut (S-2) ? Seulement sans
-    /// jeton ou quand le Mac l'a refusé — jamais pendant la lecture du trousseau,
-    /// jamais pour un appareil appairé, quel que soit l'état de la connexion.
-    static func autoPresents(_ pairing: ClientPairingStatus) -> Bool {
+    /// La feuille s'ouvre-t-elle d'elle-même pour ce statut (S-2) ? Sur un jeton
+    /// refusé, toujours ; sans jeton, seulement tant que l'ouverture automatique
+    /// n'est pas reportée pour ce lancement (`deferred` : la bienvenue vient
+    /// d'être fermée, S-2 d'ios-onboarding-et-connexion) — jamais pendant la
+    /// lecture du trousseau, jamais pour un appareil appairé, quel que soit l'état
+    /// de la connexion.
+    static func autoPresents(_ pairing: ClientPairingStatus, deferred: Bool) -> Bool {
         switch pairing {
-        case .unpaired, .refused:
+        case .refused:
             return true
+        case .unpaired:
+            return !deferred
         case .restoring, .paired:
             return false
         }
