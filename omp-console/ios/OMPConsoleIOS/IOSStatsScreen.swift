@@ -239,6 +239,7 @@ struct IOSStatsScreen: View {
                 LabeledContent {
                     TimelineView(.periodic(from: .now, by: 1)) { context in
                         Text(card(model.elapsedMs(at: context.date.timeIntervalSince1970 * 1000)).lines[index].value)
+                            .monospacedDigit()
                     }
                 } label: {
                     Text(line.label)

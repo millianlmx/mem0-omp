@@ -1,6 +1,6 @@
 // Les mots des crochets de RECETTE de l'écran Projet et de ses feuilles
 // (feuilles-ios-presentation-et-depots, S-7 ; ios-listes-groupees-natives, S-6) :
-// `-projet.recipe <lancement|dialogue|plan>` sur l'écran Projet et
+// `-projet.recipe <lancement|dialogue|saisie|plan>` sur l'écran Projet et
 // `-sessionomp.recipe lancement` sur l'écran Session OMP. Des crochets de capture,
 // pas des fonctionnalités ; `scripts/ios-feuilles-recette.sh` les emploie.
 
@@ -16,6 +16,8 @@ enum IOSLaunchRecipeText {
     static let launch = "lancement"
     /// La feuille « OMP vous demande » ouverte sur le dialogue de la fixture.
     static let dialog = "dialogue"
+    /// La feuille « OMP vous demande » ouverte sur le dialogue de saisie libre de la fixture.
+    static let editorDialog = "saisie"
     /// L'écran Projet vif sur le plan de six étapes de la fixture, plus haut qu'un écran.
     static let projectPlan = "plan"
 
@@ -61,5 +63,13 @@ enum IOSLaunchRecipeText {
         {"id":"recette-dialogue","method":"select","title":"Quelle base pour la feature ?",\
         "message":"OMP prépare la feature export-csv.","options":["main","feat/memoire-ios"],\
         "optionDescriptions":[null,null],"placeholder":null,"prefill":null,"promptStyle":false}
+        """
+
+    /// Le dialogue de saisie libre de la fixture, dans la forme EXACTE du fil
+    /// (`RpcDialogRequest`) : un éditeur sans option, ni indication, ni texte prérempli.
+    static let editorDialogJSON = """
+        {"id":"recette-saisie","method":"editor","title":"Que doit dire la note de version ?",\
+        "message":"OMP prépare la feature export-csv.","options":[],"optionDescriptions":[],\
+        "placeholder":null,"prefill":null,"promptStyle":false}
         """
 }

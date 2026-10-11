@@ -511,6 +511,7 @@ struct PipelinesScreen: View {
                         card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)
                     ))
                     .font(.caption)
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                 }
             }

@@ -88,58 +88,26 @@ struct NewFeatureSheetView: View {
         .task { await loadCatalog() }
     }
 
+    /// La rangée « Dépôt » : un `Picker` natif (S-8 de ios-finitions-composants).
+    /// Sans en-tête de section, le libellé du Picker est le seul « Dépôt » écrit, et
+    /// il sert aussi de libellé VoiceOver. L'invite « Choisir un dépôt » est la
+    /// valeur affichée tant que rien n'est choisi, inactive dans le menu : aucune
+    /// présélection. Le tag porte la racine complète, la rangée montre le libellé.
     @ViewBuilder
     private var repoSection: some View {
-        Section(NewFeatureText.repo) {
+        Section {
             if repos.isEmpty {
                 Text(NewFeatureText.noKnownRepo)
                     .foregroundStyle(.secondary)
             } else {
-                repoMenu
-            }
-        }
-    }
-
-    /// Le sélecteur de dépôt : le nom choisi, ou l'invite. Le mot « Dépôt » n'est
-    /// que l'en-tête de section ; le contrôle le porte pour VoiceOver.
-    private var repoMenu: some View {
-        let options = KanbanLaunchRepos.choices(repos)
-        let current = options.first { $0.root == repo }
-        let shown = current?.label ?? NewFeatureText.repoPrompt
-        return Menu {
-            ForEach(options) { choice in
-                Button { repo = choice.root } label: {
-                    repoChoice(choice, isCurrent: choice.root == repo)
+                Picker(NewFeatureText.repo, selection: $repo) {
+                    Text(NewFeatureText.repoPrompt).tag("").selectionDisabled()
+                    ForEach(KanbanLaunchRepos.choices(repos)) { choice in
+                        Text(verbatim: choice.label).tag(choice.root)
+                    }
                 }
+                .accessibilityIdentifier(PipelinesAccessibility.repoField)
             }
-        } label: {
-            HStack {
-                Text(verbatim: shown)
-                    .foregroundStyle(current == nil ? .secondary : .primary)
-                    .multilineTextAlignment(.leading)
-                Spacer(minLength: 8)
-                Image(systemName: PipelinesText.repoMenuSymbol)
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-            }
-            .frame(maxWidth: .infinity, minHeight: IOSMetrics.minimumTarget, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .accessibilityIdentifier(PipelinesAccessibility.repoField)
-        .accessibilityLabel(NewFeatureText.repo)
-        .accessibilityValue(shown)
-    }
-
-    /// Une entrée du menu de dépôts : la marque du choix courant.
-    @ViewBuilder private func repoChoice(_ choice: KanbanLaunchRepoChoice, isCurrent: Bool) -> some View {
-        if isCurrent {
-            Label {
-                Text(verbatim: choice.label)
-            } icon: {
-                Image(systemName: IOSHomeText.selectedSymbol)
-            }
-        } else {
-            Text(verbatim: choice.label)
         }
     }
 

@@ -196,7 +196,7 @@ struct IOSStatsChartSections: View {
                 AxisGridLine()
                 AxisValueLabel {
                     if let ms = value.as(Double.self) {
-                        Text(ConsoleFormat.duration(ms: ms))
+                        Text(ConsoleFormat.duration(ms: ms)).monospacedDigit()
                     }
                 }
             }

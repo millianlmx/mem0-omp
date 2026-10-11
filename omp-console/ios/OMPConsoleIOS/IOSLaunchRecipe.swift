@@ -4,6 +4,8 @@
 //
 //   -projet.recipe lancement     : « Piloter un projet… » sur les dépôts de la fixture ;
 //   -projet.recipe dialogue      : « OMP vous demande » sur le dialogue de la fixture ;
+//   -projet.recipe saisie        : « OMP vous demande » sur le dialogue de saisie libre
+//                                  (forme éditeur, sans texte prérempli) ;
 //   -projet.recipe plan          : l'écran Projet vif sur le plan de six étapes de
 //                                  `IOSProjectPlanRecipe` (ios-listes-groupees-natives) ;
 //   -sessionomp.recipe lancement : « Lancer une session OMP » sur les mêmes dépôts.
@@ -22,6 +24,7 @@ import Foundation
 enum IOSProjectRecipe: Equatable {
     case lancement
     case dialogue
+    case saisie
     case plan
 
     /// La recette lue dans les arguments de lancement, ou aucune.
@@ -30,6 +33,7 @@ enum IOSProjectRecipe: Equatable {
             switch value {
             case IOSLaunchRecipeText.launch: return .lancement
             case IOSLaunchRecipeText.dialog: return .dialogue
+            case IOSLaunchRecipeText.editorDialog: return .saisie
             case IOSLaunchRecipeText.projectPlan: return .plan
             default: return nil
             }
@@ -77,6 +81,12 @@ enum IOSLaunchRecipe {
     /// le texte ne se décode pas (aucune feuille ne s'ouvre alors).
     static var dialog: RpcDialogRequest? {
         try? JSONDecoder().decode(RpcDialogRequest.self, from: Data(IOSLaunchRecipeText.dialogJSON.utf8))
+    }
+
+    /// Le dialogue de saisie libre de la fixture, décodé comme `dialog` ; `nil` si le
+    /// texte ne se décode pas (aucune feuille ne s'ouvre alors).
+    static var editorDialog: RpcDialogRequest? {
+        try? JSONDecoder().decode(RpcDialogRequest.self, from: Data(IOSLaunchRecipeText.editorDialogJSON.utf8))
     }
 
     /// La valeur de la DERNIÈRE paire `flag valeur` reconnue par `named`, ou aucune.

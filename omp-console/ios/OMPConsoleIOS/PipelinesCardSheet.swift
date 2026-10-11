@@ -193,6 +193,7 @@ struct PipelinesCardSheet: View {
                     card.elapsedMs(nowMs: context.date.timeIntervalSince1970 * 1000)
                 ))
                 .font(.caption)
+                .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier(PipelinesAccessibility.sheetDuration)
             }
