@@ -65,7 +65,6 @@ enum ProjectAccessibility {
     static let banner = "ios.projet.banner"
     static let emptyCard = "ios.projet.empty"
     static let picker = "ios.projet.picker"
-    static let plan = "ios.projet.plan"
     static let document = "ios.projet.document"
     static let prPane = "ios.projet.pr"
     static let refresh = "ios.projet.refresh"

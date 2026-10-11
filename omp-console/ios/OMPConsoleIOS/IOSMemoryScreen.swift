@@ -237,18 +237,15 @@ struct IOSMemoryScreen: View {
         }
     }
 
-    /// Le panneau : en mode LISTE il est le contenu du seul défilement vertical de
-    /// l'écran ; en mode GRAPHE il reste hors de tout `ScrollView`, pour que le
-    /// canevas garde son déplacement et son zoom (le geste ne défile pas la page).
+    /// La surface : en mode GRAPHE, le panneau hors de tout défilement, pour que
+    /// le canevas garde son déplacement et son zoom (le geste ne défile pas la
+    /// page) ; en mode LISTE, la liste groupée de l'écran, son seul défilement
+    /// (ios-listes-groupees-natives, S-3).
     @ViewBuilder
     private var surface: some View {
         let stack = VStack(alignment: .leading, spacing: 12) {
-            if let banner = recipe.banner, let message = recipe.bannerMessage {
-                Text(verbatim: message)
-                    .font(.callout)
-                    .iosBanner(tone: banner.tone)
-            }
-            displayed
+            recipeBanner
+            IOSMemoryGraphView(model: graph, connection: connection, showConnection: $showConnection)
         }
         if let status = fullScreenStatus {
             // Rien de chargé, Mac non connecté : le composant partagé SEUL, hors
@@ -257,9 +254,23 @@ struct IOSMemoryScreen: View {
         } else if graph.shown {
             stack.iosPanel()
         } else {
-            ScrollView(.vertical) {
-                stack.iosPanel().iosReadableWidth()
+            List {
+                recipeBanner
+                subject
             }
+            .iosGroupedList()
+        }
+    }
+
+    /// Le bandeau du crochet de recette `-ios.state error`, quand il est donné :
+    /// rangée nue dans la liste, sans effet dans le panneau du graphe.
+    @ViewBuilder
+    private var recipeBanner: some View {
+        if let banner = recipe.banner, let message = recipe.bannerMessage {
+            Text(verbatim: message)
+                .font(.callout)
+                .iosBanner(tone: banner.tone)
+                .iosBareListRow()
         }
     }
 
@@ -309,63 +320,61 @@ struct IOSMemoryScreen: View {
         }
     }
 
-    /// Le contenu de la section : le graphe quand la bascule l'a demandé, la LISTE
-    /// sinon (mode d'ouverture, B-4).
-    @ViewBuilder private var displayed: some View {
-        if graph.shown {
-            IOSMemoryGraphView(model: graph, connection: connection, showConnection: $showConnection)
-        } else {
-            subject
-        }
-    }
-
     // MARK: - Contenu, état par état
 
+    /// Les rangées de la liste, état par état : bandeaux en rangées nues, états
+    /// vides en rangées titre et détail, souvenirs dans une section dont
+    /// l'en-tête natif dit le compte ou la recherche.
     @ViewBuilder
     private var subject: some View {
         if connection != .connected {
             // Données conservées hors connexion : le bandeau en tête (S-4).
             IOSConnectionStateView(status: connection, layout: .banner, onConnect: openConnection)
+                .iosBareListRow()
         }
         switch listState {
         case .offline:
-            // Rendu en plein écran par `surface`, jamais dans le panneau.
+            // Rendu en plein écran par `surface`, jamais dans la liste.
             EmptyView()
         case .loading:
-            ProgressView()
-            Text(verbatim: MemoryText.loading)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                ProgressView()
+                Text(verbatim: MemoryText.loading)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         case .failed(.macUnreachable):
             banner(IOSMacErrorText.message(for: .macUnreachable), tone: .attention)
-            card(IOSMemoryText.noData)
+            stateRow(IOSMemoryText.noData)
             retryButton
         case .failed(.macTimedOut):
             banner(IOSMacErrorText.message(for: .macTimedOut), tone: .attention)
-            card(IOSMemoryText.noData)
+            stateRow(IOSMemoryText.noData)
             retryButton
         case .failed(.macOutdated):
             banner(IOSMacErrorText.message(for: .macOutdated), tone: .attention)
             retryButton
         case .noProject:
-            card(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
+            stateRow(MemoryText.noProjectTitle, detail: IOSMemoryText.noProjectDetail)
         case .failed(let cause):
             banner(IOSMacErrorText.message(for: cause), tone: .danger)
             retryButton
         case .summaryEmpty(let scope):
-            card(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))
+            stateRow(MemoryText.emptySummaryTitle, detail: MemoryText.emptySummary(scope))
         case .summary(_, let total, let rows, let more):
-            header(MemoryText.summaryCount(total), identifier: IOSMemoryAccessibility.count)
-            rowsList(rows, more: more)
+            rowsSection(rows, more: more) {
+                header(MemoryText.summaryCount(total), identifier: IOSMemoryAccessibility.count)
+            }
         case .search(let query, let rows):
-            header(MemoryText.searchResults(query), identifier: IOSMemoryAccessibility.results)
-            rowsList(rows, more: nil)
+            rowsSection(rows, more: nil) {
+                header(MemoryText.searchResults(query), identifier: IOSMemoryAccessibility.results)
+            }
         case .searchEmptyNoMatch:
-            card(MemoryText.noResultTitle, detail: MemoryText.noMatch)
+            stateRow(MemoryText.noResultTitle, detail: MemoryText.noMatch)
         case .searchEmptyNoScore:
-            card(MemoryText.searchUnsupportedTitle, detail: MemoryText.noSemanticScore)
+            stateRow(MemoryText.searchUnsupportedTitle, detail: MemoryText.noSemanticScore)
         case .searchEmptyBelowThreshold:
-            card(MemoryText.noResultTitle, detail: MemoryText.belowThreshold)
+            stateRow(MemoryText.noResultTitle, detail: MemoryText.belowThreshold)
         }
     }
 
@@ -376,17 +385,19 @@ struct IOSMemoryScreen: View {
             .font(.callout)
             .iosBanner(tone: tone)
             .accessibilityIdentifier(IOSMemoryAccessibility.banner)
+            .iosBareListRow()
     }
 
+    /// L'en-tête natif de la section des souvenirs, au libellé exact (D-3).
     private func header(_ title: String, identifier: String) -> some View {
         Text(verbatim: title)
-            .font(.headline)
-            .foregroundStyle(.secondary)
+            .textCase(nil)
             .multilineTextAlignment(.leading)
             .accessibilityIdentifier(identifier)
     }
 
-    private func card(_ message: String, detail: String? = nil) -> some View {
+    /// La rangée d'un état sans souvenir : le titre, puis le détail, sans carte.
+    private func stateRow(_ message: String, detail: String? = nil) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(verbatim: message)
                 .font(.headline)
@@ -398,7 +409,7 @@ struct IOSMemoryScreen: View {
                     .multilineTextAlignment(.leading)
             }
         }
-        .iosCard()
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var retryButton: some View {
@@ -411,33 +422,31 @@ struct IOSMemoryScreen: View {
         .accessibilityIdentifier(IOSMemoryAccessibility.retry)
     }
 
-    /// La liste des souvenirs, dans l'ORDRE reçu (aucun tri local) : la ligne de
-    /// contexte est rafraîchie à la minute par `TimelineView`, SANS relire la
-    /// mémoire. Le pied de la page suivante est le DERNIER élément du
-    /// `LazyVStack` : il n'est créé qu'à l'approche du bas, et change d'identité
+    /// La section des souvenirs, dans l'ORDRE reçu (aucun tri local), séparés par
+    /// le système. Le pied de la page suivante est la DERNIÈRE rangée : la List,
+    /// paresseuse, ne la crée qu'à l'approche du bas, et elle change d'identité
     /// à chaque page pour que son apparition relise la suivante.
-    private func rowsList(_ rows: [RemoteMemoryRow], more: IOSMemoryMore?) -> some View {
-        TimelineView(.periodic(from: .now, by: 60)) { context in
-            let nowMs = context.date.timeIntervalSince1970 * 1000
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                    if index > 0 {
-                        Divider()
-                    }
-                    Button { model.selection = IOSMemorySelection(row: row) } label: {
-                        rowLabel(row, nowMs: nowMs)
-                    }
-                    .buttonStyle(.plain)
-                    .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
-                    .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
+    private func rowsSection<Header: View>(
+        _ rows: [RemoteMemoryRow],
+        more: IOSMemoryMore?,
+        @ViewBuilder header: () -> Header
+    ) -> some View {
+        Section {
+            ForEach(rows, id: \.id) { row in
+                Button { model.selection = IOSMemorySelection(row: row) } label: {
+                    rowLabel(row)
                 }
-                if let more {
-                    moreFooter(more)
-                        .id(rows.count)
-                }
+                .buttonStyle(.plain)
+                .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
+                .accessibilityIdentifier(IOSMemoryAccessibility.row(row.id))
             }
+            if let more {
+                moreFooter(more)
+                    .id(rows.count)
+            }
+        } header: {
+            header()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     /// Le pied de liste selon l'état de la page suivante (S-4) : seule la vue
@@ -470,7 +479,6 @@ struct IOSMemoryScreen: View {
                 .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(IOSMemoryAccessibility.moreRetry)
             }
-            .padding(.top, 12)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier(IOSMemoryAccessibility.more)
         }
@@ -492,14 +500,18 @@ struct IOSMemoryScreen: View {
         .accessibilityIdentifier(IOSMemoryAccessibility.more)
     }
 
-    private func rowLabel(_ row: RemoteMemoryRow, nowMs: Double) -> some View {
+    /// Le texte du souvenir, puis sa ligne de contexte, seule rafraîchie à la
+    /// minute par `TimelineView`, SANS relire la mémoire ni reconstruire la liste.
+    private func rowLabel(_ row: RemoteMemoryRow) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(verbatim: IOSMemoryDetailView.text(row))
                 .font(.body)
                 .lineLimit(IOSMetrics.memoryRowLines(horizontalSizeClass))
                 .truncationMode(.tail)
                 .multilineTextAlignment(.leading)
-            rowContext(row, nowMs: nowMs)
+            TimelineView(.periodic(from: .now, by: 60)) { context in
+                rowContext(row, nowMs: context.date.timeIntervalSince1970 * 1000)
+            }
         }
         .dynamicTypeSize(...IOSHomeContent.rowTextMaximumSize)
         .padding(.vertical, rowPadding)

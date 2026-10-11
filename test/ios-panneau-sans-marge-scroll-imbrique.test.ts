@@ -113,35 +113,6 @@ function block(source: string, open: number): string {
   return source.slice(open);
 }
 
-/** Le nombre d'occurrences d'un motif littéral. */
-const count = (source: string, needle: string) => source.split(needle).length - 1;
-
-/** AC-2 : un seul défilement vertical par écran, aucune `List`, panneau DANS le défilement. */
-function scrollFaults(root: string): string[] {
-  const faults: string[] = [];
-  for (const name of SCREENS) {
-    const source = code(root, name);
-    if (source === "") {
-      faults.push(`${name} introuvable`);
-      continue;
-    }
-    if (/\bList\s*[({]/.test(source)) faults.push(`${name} : une List réintroduit un défilement imbriqué`);
-    const vertical = count(source, "ScrollView(.vertical)");
-    if (vertical !== 1) faults.push(`${name} : ScrollView(.vertical) ×${vertical}, attendu 1`);
-    const horizontal = count(source, "ScrollView(.horizontal)");
-    const wanted = name === "PipelinesScreen.swift" ? 1 : 0;
-    if (horizontal !== wanted) faults.push(`${name} : ScrollView(.horizontal) ×${horizontal}, attendu ${wanted}`);
-    if (count(source, "ScrollView(") !== vertical + horizontal) faults.push(`${name} : un ScrollView( d'un autre axe`);
-    // Le panneau est le contenu du défilement : `.iosPanel()` tombe DANS son bloc.
-    const at = source.indexOf("ScrollView(.vertical)");
-    const open = at < 0 ? -1 : source.indexOf("{", at);
-    if (open < 0 || !block(source, open).includes(".iosPanel()")) {
-      faults.push(`${name} : .iosPanel() n'est pas dans le bloc du ScrollView(.vertical)`);
-    }
-  }
-  return faults;
-}
-
 /** AC-3 : aucune hauteur imposée au panneau ni à ses listes — il suit son contenu. */
 function heightFaults(root: string): string[] {
   const faults: string[] = [];
@@ -170,32 +141,18 @@ function graphFaults(root: string): string[] {
   const rest = screen.slice(graphOpen + graphBlock.length);
   const elseAt = rest.search(/^\s*else\s*\{/);
   if (elseAt < 0) return [...faults, "la branche `else` de la surface est introuvable"];
-  if (!block(rest, rest.indexOf("{", elseAt)).includes("ScrollView(.vertical)")) {
-    faults.push("la branche liste n'est pas dans ScrollView(.vertical)");
+  if (!block(rest, rest.indexOf("{", elseAt)).includes(".iosGroupedList()")) {
+    faults.push("la branche liste n'est pas la liste groupée .iosGroupedList()");
   }
   return faults;
 }
 
-test("ios-panneau-sans-marge-scroll-imbrique/AC-2 : un seul défilement vertical, le panneau défile d'un bloc", () => {
-  assert.deepEqual(scrollFaults(ROOT), []);
-
-  // Faute plantée 1 : une `List` dans Sessions ⇒ rouge.
-  const sessions = copyIOS();
-  mutate(sessions, "IOSSessionsScreen.swift", (s) => s.replace("LazyVStack(", "List {} ; LazyVStack("));
-  assert.ok(scrollFaults(sessions).some((f) => f.includes("IOSSessionsScreen") && f.includes("List")), "une List doit rougir");
-
-  // Faute plantée 2 : `ScrollView(.vertical)` dans `boardContent` de Pipelines ⇒ rouge.
-  const pipelines = copyIOS();
-  mutate(pipelines, "PipelinesScreen.swift", (s) => s.replace("ScrollView(.horizontal)", "ScrollView(.vertical)"));
-  assert.ok(scrollFaults(pipelines).some((f) => f.includes("PipelinesScreen") && f.includes("×2")), "un second défilement vertical doit rougir");
-});
-
 test("ios-panneau-sans-marge-scroll-imbrique/AC-3 : le panneau n'a aucune hauteur imposée", () => {
   assert.deepEqual(heightFaults(ROOT), []);
 
-  // Faute plantée : `maxHeight: .infinity` dans `rowsList` ⇒ rouge.
+  // Faute plantée : `maxHeight: .infinity` sur la liste de la Mémoire ⇒ rouge.
   const copy = copyIOS();
-  mutate(copy, "IOSMemoryScreen.swift", (s) => s.replace(/(LazyVStack\(alignment: \.leading, spacing: 0\) \{[\s\S]*?\n\s*\}\n)/, "$1.frame(maxWidth: .infinity, maxHeight: .infinity)\n"));
+  mutate(copy, "IOSMemoryScreen.swift", (s) => s.replace(".iosGroupedList()", ".iosGroupedList().frame(maxHeight: .infinity)"));
   assert.ok(heightFaults(copy).some((f) => f.includes("IOSMemoryScreen")), "une hauteur imposée doit rougir");
 });
 

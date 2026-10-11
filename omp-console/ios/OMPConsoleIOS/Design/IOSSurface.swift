@@ -1,5 +1,5 @@
-// Les surfaces de la couche de CONTENU de la coque iOS (S-1, BR-2) : le panneau
-// d'un écran, la carte d'un état vide, le bandeau d'un état.
+// Les surfaces de la couche de CONTENU de la coque iOS (S-1, BR-2) : la liste
+// groupée d'un écran, la rangée nue, le panneau, la carte, le bandeau d'un état.
 //
 // Équivalents iOS de `omp-console/Sources/OMPConsole/Design/ConsoleSurface.swift`,
 // dont ils reprennent les rôles : aucun verre dans le contenu (HIG D-4/Layout :
@@ -19,27 +19,44 @@ enum IOSSurface {
     static let cardRadius: CGFloat = 12
     static let bannerRadius: CGFloat = 12
 
-    /// Le fond d'une carte. `raised` (cartes de l'écran Pipelines) :
-    /// `tertiarySystemGroupedBackground`, égal au panneau en clair et plus clair
-    /// que lui en sombre ; sinon le fond du panneau, `secondarySystemBackground`.
+    /// Le fond d'une carte. `raised` (cartes « À vous » et kanban iPad) :
+    /// `secondarySystemGroupedBackground`, distinct du fond groupé
+    /// (`systemGroupedBackground`) en clair comme en sombre ; sinon le fond du
+    /// panneau, `secondarySystemBackground`.
     static func cardFill(raised: Bool) -> UIColor {
-        raised ? .tertiarySystemGroupedBackground : .secondarySystemBackground
+        raised ? .secondarySystemGroupedBackground : .secondarySystemBackground
     }
 }
 
 extension View {
+    /// La liste d'un écran (ios-listes-groupees-natives, S-2), posée sur une
+    /// `List` : style `.insetGrouped` (fond groupé, rangées, séparateurs et
+    /// en-têtes du système), colonne de lecture centrée, et toute la largeur hors
+    /// colonne peinte du même fond groupé, sans couture avec celui de la List.
+    func iosGroupedList() -> some View {
+        modifier(IOSGroupedListSurface())
+    }
+
+    /// La rangée dont le contenu porte sa propre surface (bandeau, état de
+    /// connexion, carte élevée) : sans fond ni séparateur du système, sans marge
+    /// latérale, 8 pt entre deux rangées nues consécutives.
+    func iosBareListRow() -> some View {
+        modifier(IOSBareListRow())
+    }
+
     /// Le panneau d'un écran : fond opaque, filet du système, rembourrage
     /// intérieur qui suit Dynamic Type, et marge extérieure de la taille de
     /// classe (fixe) — aucun panneau ne touche un bord de l'écran, aucun appelant
-    /// n'ajoute la sienne. Chaque écran des sept sections y pose son contenu.
+    /// n'ajoute la sienne. Réservé aux surfaces hors liste : Session OMP, mode
+    /// Graphe de la Mémoire, feuilles Contrat et Bienvenue, écran générique.
     func iosPanel() -> some View {
         modifier(IOSPanelSurface())
     }
 
     /// La carte d'un état vide : fond opaque, rayon 12, filet, ombre légère.
-    /// `raised` (cartes de l'écran Pipelines) ne change que le fond, à
-    /// `tertiarySystemGroupedBackground` : identique au panneau en clair, plus
-    /// clair que lui en sombre — le contour de la carte se distingue du panneau.
+    /// `raised` (cartes « À vous » et kanban iPad) ne change que le fond, à
+    /// `secondarySystemGroupedBackground` : la carte se détache du fond groupé de
+    /// l'écran dans les deux apparences.
     func iosCard(raised: Bool = false) -> some View {
         modifier(IOSCardSurface(raised: raised))
     }
@@ -48,6 +65,24 @@ extension View {
     /// porté par le contenu dit le sens ; la teinte ne fait que le doubler.
     func iosBanner(tone: ConsoleTone) -> some View {
         modifier(IOSBannerSurface(tone: tone))
+    }
+}
+
+private struct IOSGroupedListSurface: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .listStyle(.insetGrouped)
+            .iosReadableWidth()
+            .background(Color(uiColor: .systemGroupedBackground))
+    }
+}
+
+private struct IOSBareListRow: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .listRowBackground(Color.clear)
+            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+            .listRowSeparator(.hidden)
     }
 }
 

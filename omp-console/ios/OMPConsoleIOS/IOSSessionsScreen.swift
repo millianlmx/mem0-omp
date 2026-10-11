@@ -96,10 +96,10 @@ struct IOSSessionsScreen: View {
         switch state {
         case .unavailable(let status):
             // Rien de reçu, Mac non connecté : le composant partagé SEUL, hors
-            // du défilement et du panneau (S-4).
+            // de la liste (S-4).
             IOSConnectionStateView(status: status, layout: .screen, onConnect: { showConnection = true })
         case .loading:
-            panel {
+            list {
                 HStack(spacing: 8) {
                     ProgressView()
                     Text(IOSSessionText.loading)
@@ -108,77 +108,65 @@ struct IOSSessionsScreen: View {
                 .accessibilityIdentifier(IOSSessionsAccessibility.loading)
             }
         case .storeAbsent:
-            panel {
-                card(
-                    SessionSelectorText.emptyTitle,
-                    detail: SessionSelectorText.storeAbsent,
-                    id: IOSSessionsAccessibility.empty
-                )
+            list {
+                emptyRow(SessionSelectorText.emptyTitle, detail: SessionSelectorText.storeAbsent)
             }
         case .empty:
-            panel {
-                card(
-                    SessionSelectorText.emptyTitle,
-                    detail: SessionSelectorText.noRun,
-                    id: IOSSessionsAccessibility.empty
-                )
+            list {
+                emptyRow(SessionSelectorText.emptyTitle, detail: SessionSelectorText.noRun)
             }
         case .list(let days):
-            panel { listBody(days: days, projects: projects) }
+            list { listBody(days: days, projects: projects) }
         }
     }
 
-    /// Le panneau, contenu du seul défilement vertical de l'écran : le bandeau de
-    /// connexion en tête quand la liste conservée est affichée hors connexion.
-    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 12) {
-                if connection != .connected {
-                    IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
-                }
-                content()
+    /// La liste groupée de l'écran, son seul défilement (ios-listes-groupees-natives,
+    /// S-3) : le bandeau de connexion en première rangée nue quand la liste
+    /// conservée est affichée hors connexion, puis le contenu de l'état.
+    private func list<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        List {
+            if connection != .connected {
+                IOSConnectionStateView(status: connection, layout: .banner, onConnect: { showConnection = true })
+                    .iosBareListRow()
             }
-            .iosPanel()
-            .iosReadableWidth()
+            content()
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(IOSSessionsAccessibility.list)
+        .iosGroupedList()
     }
 
     // MARK: - La liste (S-1, S-2)
 
+    /// Le filtre dans une section sans en-tête, puis une section par jour : son
+    /// titre est l'en-tête natif, ses runs les rangées, séparées par le système.
+    @ViewBuilder
     private func listBody(days: [SessionDay], projects: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        Section {
             projectFilter(projects)
-
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(days) { day in
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(day.title)
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                            .accessibilityAddTraits(.isHeader)
-                        ForEach(Array(day.choices.enumerated()), id: \.element.id) { index, choice in
-                            if index > 0 {
-                                Divider()
-                            }
-                            Button {
-                                open = .choice(choice)
-                            } label: {
-                                row(choice)
-                            }
-                            .buttonStyle(.plain)
-                            // La visionneuse se lit sur le Mac : rangée grisée hors
-                            // connexion (etats-non-connecte-heterogenes-ios, S-5).
-                            .disabled(!connection.gesturesEnabled)
-                            .accessibilityIdentifier(IOSSessionsAccessibility.row(choice.id))
-                            .accessibilityLabel(IOSSessionText.rowLabel(choice))
-                        }
+        }
+        ForEach(days) { day in
+            Section {
+                ForEach(day.choices, id: \.id) { choice in
+                    Button {
+                        open = .choice(choice)
+                    } label: {
+                        row(choice)
                     }
-                    .accessibilityElement(children: .contain)
-                    .accessibilityIdentifier(IOSSessionsAccessibility.day(day.id))
+                    .buttonStyle(.plain)
+                    // La visionneuse se lit sur le Mac : rangée grisée hors
+                    // connexion (etats-non-connecte-heterogenes-ios, S-5).
+                    .disabled(!connection.gesturesEnabled)
+                    .accessibilityIdentifier(IOSSessionsAccessibility.row(choice.id))
+                    .accessibilityLabel(IOSSessionText.rowLabel(choice))
                 }
+            } header: {
+                // L'identifiant du jour est sur son en-tête : posé sur la
+                // `Section`, il remplacerait celui de chaque rangée (MESURÉ).
+                Text(day.title)
+                    .textCase(nil)
+                    .accessibilityIdentifier(IOSSessionsAccessibility.day(day.id))
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityIdentifier(IOSSessionsAccessibility.list)
         }
     }
 
@@ -270,21 +258,19 @@ struct IOSSessionsScreen: View {
 
     // MARK: - Les autres états
 
-    private func card(_ message: String, detail: String?, id: String) -> some View {
+    /// La rangée d'un état vide : le titre, puis le détail, sans carte (S-3).
+    private func emptyRow(_ message: String, detail: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(message)
                 .font(.headline)
                 .multilineTextAlignment(.leading)
-            if let detail {
-                Text(detail)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.leading)
-            }
+            Text(detail)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.leading)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
-        .accessibilityIdentifier(id)
+        .accessibilityIdentifier(IOSSessionsAccessibility.empty)
     }
 
     // MARK: - La recette

@@ -188,7 +188,7 @@ function screenFaults(root: string): string[] {
     "StatsAccessibility.hidden",
     "StatsAccessibility.project",
     "ConnectionText.retry",
-    "ScrollView(.vertical)",
+    ".iosGroupedList()",
   ]) {
     if (!screen.includes(token)) faults.push(`IOSStatsScreen ne porte pas ${token}`);
   }

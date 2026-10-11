@@ -3355,15 +3355,19 @@ jusqu'aux gestes, `arret` y ouvre la confirmation d'arrêt) et l'app écrit
 (deux homonymes `mem0-omp`, un `site-vitrine`) avec `mem0-omp (Projets)`
 présélectionné ; `-projet.recipe dialogue` présente « OMP vous demande » sur un
 choix simple, qu'une réponse ou une annulation ferme sans réseau ;
-`-sessionomp.recipe lancement` ouvre « Lancer une session OMP » sur la même
-fixture. Ce sont des crochets de recette, pas des fonctionnalités.
+`-projet.recipe plan` rend l'écran Projet vif sur la fixture `IOSProjectPlanRecipe`
+(conduite `plan-recette`, six étapes dont la troisième courante, plus haut qu'un
+écran en AX-XL), la connexion restant celle du client — gestes désactivés, aucun
+appel réseau ; `-sessionomp.recipe lancement` ouvre « Lancer une session OMP » sur
+la même fixture de dépôts. Ce sont des crochets de recette, pas des fonctionnalités.
 
-`-stats.recipe <vide|chargement|bascule>` ouvre la section Statistiques sur son
+`-stats.recipe <vide|chargement|bascule|pleine>` ouvre la section Statistiques sur son
 modèle et son écran réels, nourris par une lecture en mémoire (projets
 `recette-vide` et `recette-pleine`) et un client forcé connecté, sans appairage :
 `vide` sert `recette-vide` (choisir `recette-pleine` dans le sélecteur sert son
 tableau), `chargement` garde le premier relevé en cours, `bascule` sert
-`recette-pleine` puis choisit `recette-vide`, dont le relevé reste en cours. La
+`recette-pleine` puis choisit `recette-vide`, dont le relevé reste en cours,
+`pleine` sert `recette-pleine` pour toute clé, donc le tableau dès le lancement. La
 DERNIÈRE paire reconnue gagne, une valeur inconnue est ignorée ; à lancer avec
 `-section stats -home.welcomeSeen YES`. Ce sont des crochets de recette, pas des
 fonctionnalités.
@@ -3438,6 +3442,34 @@ contrôle (en mode avant, des lignes `CONSTAT-<x>` sur l'ancienne coque), et le
 mode après écrit `preuve.md` (commits mesurés, captures par section et appareil,
 verdicts). Elle sort en 0 (aucun ✗), 1 (au moins un ✗) ou 2 (non conclu, par
 exemple un simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
+
+### Recette des listes groupées natives
+
+```bash
+bash scripts/ios-listes-groupees-recette.sh --avant <ref>
+bash scripts/ios-listes-groupees-recette.sh
+```
+
+La recette de la feature `ios-listes-groupees-natives` capture, avant (`--avant
+<ref>`, compilé depuis un worktree détaché retiré à la sortie) et après (le
+worktree courant), les six sections en liste groupée (`accueil`, `sessions`,
+`memoire`, `pipelines`, `projet`, `statistiques`) sur iPhone en clair, sombre et
+AX-XL et sur iPad en clair et sombre, et les six feuilles ouvertes depuis ces
+sections sur iPhone (clair, sombre, AX-XL) : 48 captures par moment, chacune
+avec son relevé `idb ui describe-all`. Elle compile l'app SIGNÉE ad hoc
+(`CODE_SIGN_IDENTITY=-`, contrôle `codesign -dv`), crée ses simulateurs privés
+`zz-listes-tel` et `zz-listes-tab` sur iOS 27.0 et les supprime en fin de
+course ; elle ne touche à aucun autre simulateur, n'ouvre pas `Simulator.app`,
+ne lance ni n'arrête l'app Mac et n'appaire rien. Sur iPad, la barre latérale
+est masquée avant chaque capture (elle assombrit le contenu en portrait).
+En mode après, `rapport.txt` porte une ligne `AC-<n> ✓|✗ <tel|tab> <détail>`
+par contrôle (en-têtes natifs, chevauchements en AX-XL, titre unique,
+défilement du plan jusqu'à sa dernière étape, cartes élevées distinctes du fond
+au pixel) ; en mode avant, les mêmes mesures sortent en `CONSTAT-<n>`.
+Sorties dans `omp-console/build/ios-listes-groupees-natives/{avant,apres}/`
+(non versionné) et, en mode après, `preuve.md` (tableau avant/après des 48
+captures, lignes AC). Codes : 0 (aucun ✗), 1 (au moins un ✗), 2 (non conclu,
+par exemple un simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
 
 ### Recette idb de la fiche d'une carte
 

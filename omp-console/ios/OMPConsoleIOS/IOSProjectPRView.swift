@@ -3,6 +3,10 @@
 // manque), un lien ouvrable, et l'état des TROIS contrôles requis dans l'ordre de
 // `RequiredCheck.allCases`, chacun en mots.
 //
+// Une section de la liste groupée de l'écran (ios-listes-groupees-natives, S-6) :
+// l'en-tête natif porte le titre et « Relire les statuts », chaque PR est une
+// rangée, séparée des autres par le système.
+//
 // AUCUN bouton de fusion : l'app n'appelle jamais `client.merge(...)` et ne cite
 // ni `prMerge`, ni `prMergeHelp`, ni `prMergeConfirm*`.
 
@@ -21,17 +25,7 @@ struct IOSProjectPRView: View {
     let onRefresh: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Text(ProjectViewText.prPaneTitle)
-                    .font(.headline)
-                Spacer(minLength: 8)
-                Button(action: onRefresh) {
-                    Label(ProjectText.refresh, systemImage: "arrow.clockwise")
-                }
-                .disabled(!gesturesEnabled || isLoading)
-                .accessibilityIdentifier(ProjectAccessibility.refresh)
-            }
+        Section {
             if isLoading {
                 ProgressView()
                     .accessibilityIdentifier(ProjectAccessibility.prPane)
@@ -39,6 +33,7 @@ struct IOSProjectPRView: View {
                 Text(ProjectViewText.prUnavailable(failure))
                     .font(.callout)
                     .iosBanner(tone: .danger)
+                    .iosBareListRow()
             } else if rows.isEmpty {
                 Text(ProjectViewText.prEmpty)
                     .font(.callout)
@@ -53,10 +48,22 @@ struct IOSProjectPRView: View {
                     pr(row, index: index)
                 }
             }
+        } header: {
+            HStack(spacing: 8) {
+                Text(ProjectViewText.prPaneTitle)
+                Spacer(minLength: 8)
+                Button(action: onRefresh) {
+                    Label(ProjectText.refresh, systemImage: "arrow.clockwise")
+                }
+                .disabled(!gesturesEnabled || isLoading)
+                .accessibilityIdentifier(ProjectAccessibility.refresh)
+            }
+            .textCase(nil)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// Une PR : son titre est un lien, chaque contrôle rouge en porte un autre ;
+    /// le style `.borderless` borne chaque cible à son libellé (D-4).
     private func pr(_ row: ProjectPRRow, index: Int) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             let headline = ProjectViewText.prHeadline(number: row.number, title: row.title, url: row.url)
@@ -74,7 +81,7 @@ struct IOSProjectPRView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .iosCard()
+        .buttonStyle(.borderless)
         .accessibilityIdentifier(ProjectAccessibility.prRow(index))
     }
 
