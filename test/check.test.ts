@@ -286,14 +286,23 @@ test("check/AC-16 : les deux extensions sont transpilées, omp-mem0-req comprise
 test("check/AC-17 : la CI exerce check.sh sur macOS et Ubuntu", () => {
   const workflow = fs.readFileSync(path.join(ROOT, ".github/workflows/check.yml"), "utf8");
 
+  // Job `check` : Ubuntu seul, toutes les sections (check.sh sans option).
   const matrix = /matrix:\s*\n\s*os:\s*\[([^\]]*)\]/.exec(workflow);
   assert.ok(matrix, `matrice \`os\` absente du workflow :\n${workflow}`);
   const systems = matrix[1].split(",").map((s) => s.trim());
-  assert.ok(systems.includes("macos-latest"), `macos-latest absent de la matrice : ${systems.join(", ")}`);
-  assert.ok(systems.includes("ubuntu-latest"), `ubuntu-latest absent de la matrice : ${systems.join(", ")}`);
-
+  assert.deepEqual(systems, ["ubuntu-latest"]);
   assert.match(workflow, /runs-on:\s*\$\{\{\s*matrix\.os\s*\}\}/);
-  assert.ok(workflow.includes("./scripts/check.sh"), workflow);
+  assert.match(workflow, /run: \.\/scripts\/check\.sh\s*$/m);
+
+  // macOS : jobs parallèles qui lancent check.sh par sections, et leur agrégateur.
+  assert.match(workflow, /^ {4}name: check \(macos-latest\)$/m);
+  const macosJobs = workflow
+    .split(/^ {2}(?=[A-Za-z0-9_-]+:$)/m)
+    .filter((job) => /^ {4}runs-on: macos-latest$/m.test(job));
+  assert.ok(
+    macosJobs.some((job) => job.includes("./scripts/check.sh --sections=")),
+    `aucun job macos-latest ne lance ./scripts/check.sh --sections= :\n${workflow}`,
+  );
 });
 
 test("check/AC-18 : le type-check de omp-mem0-req contre les types de l'hôte est sans erreur", (t) => {

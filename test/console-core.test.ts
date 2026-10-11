@@ -532,7 +532,10 @@ test("noyau-partage-console/AC-10 : aucune garde nouvelle n'exige macOS ni un to
   const check = fs.readFileSync(path.join(ROOT, "scripts", "check.sh"), "utf8");
   const [head, tail] = check.split("── Noyau partagé");
   assert.ok(tail !== undefined, "la section « Noyau partagé » a disparu de scripts/check.sh");
-  const section = tail.split("── App Swift")[0];
+  // La ligne `if section_on app-swift; then` qui ouvre la section suivante
+  // (options `--sections` de check.sh) précède son en-tête : elle n'appartient
+  // pas à la garde de portabilité.
+  const section = tail.split("── App Swift")[0].replace(/^if section_on [a-z-]+; then$/gm, "");
   assert.ok(!/\bswift\b/.test(stripComments(section)), "la garde de portabilité nomme swift");
   assert.ok(!/\buname\b/.test(stripComments(section)), "la garde de portabilité dépend de la plateforme");
   assert.ok(head !== undefined && section.includes("python3"), "la garde de portabilité doit tourner sans toolchain Swift");

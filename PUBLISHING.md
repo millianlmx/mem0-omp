@@ -291,11 +291,14 @@ gh api --method PUT -H "Accept: application/vnd.github+json" \
 JSON
 ```
 
-Les contextes sont les **noms affichés** des jobs : `check (ubuntu-latest)` et
-`check (macos-latest)` parce que le job `check` porte une matrice d'OS, et
-`release-simulation` parce qu'un job sans matrice et sans `name:` expose
-exactement l'identifiant de son job. Renommer un OS de la matrice ou le job de
-simulation sans rejouer cette commande débloquerait le merge en silence. Ce sont
+Les contextes sont les **noms affichés** des jobs : `check (ubuntu-latest)` parce
+que le job `check` porte une matrice d'un seul OS, `check (macos-latest)` parce que
+le job agrégateur des jobs macOS parallèles porte ce `name:` explicite (il tourne
+avec `if: always()` et échoue dès qu'un job macOS n'a pas réussi : un statut requis
+sauté compterait comme passant), et `release-simulation` parce qu'un job sans
+matrice et sans `name:` expose exactement l'identifiant de son job. Renommer l'OS
+de la matrice, l'agrégateur ou le job de simulation sans rejouer cette commande
+débloquerait le merge en silence. Ce sont
 ces trois statuts que la PR de release doit obtenir avant d'être fusionnée — d'où
 le jeton dédié de la section suivante, plutôt qu'un `GITHUB_TOKEN` qui ne
 déclencherait aucun run.
