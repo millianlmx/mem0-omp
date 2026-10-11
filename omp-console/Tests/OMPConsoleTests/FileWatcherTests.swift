@@ -81,6 +81,29 @@ func watcherEmitsWhenTheFileAppears() async throws {
     #expect(await awaitTrue(timeout: 2.0) { seen.count > afterRemoval })
 }
 
+@Test("un fichier posé en rafale avec ses dossiers intermédiaires délivre un réveil")
+func watcherFollowsABurstOfIntermediateDirectories() async throws {
+    // Mesuré le 2026-10-11 : environ une pose sur dix laissait la veille armée sur
+    // un ancêtre devenu muet, et le badge des composants restait « manquants »
+    // après l'installation. Trente poses : la course n'a plus le droit de gagner.
+    for attempt in 1...30 {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("omp-watch-burst-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let file = root.appendingPathComponent("composant/1.0/bin/binaire")
+        let watcher = FileWatcher(path: file.path)
+        let seen = Recorder<Void>()
+        let task = consume(watcher.changes, into: seen)
+        defer {
+            task.cancel()
+            watcher.stop()
+            try? FileManager.default.removeItem(at: root)
+        }
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: file)
+        #expect(await awaitTrue(timeout: 2.0) { seen.count >= 1 }, "pose n° \(attempt)")
+    }
+}
+
 @Test("visionneuse-de-session/AC-13 : la permission fait partie de l'instantané")
 func watcherSeesAPermissionChange() async throws {
     let fixture = try ViewerSessionFixture()
