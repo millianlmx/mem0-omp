@@ -28,7 +28,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 const NESTED = "copie jetable — l'arbre réel est éprouvé au premier niveau";
 
-/** Les 13 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
+/** Les 12 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
 const HEADERS = [
   "── Catalogue marketplace",
   "── Noms",
@@ -36,7 +36,6 @@ const HEADERS = [
   "── Versions",
   "── Extension",
   "── Types",
-  "── API mem0-http",
   "── Rust mem0-rs",
   "── Plugins réels (OMP)",
   "── Tests",
@@ -47,7 +46,7 @@ const HEADERS = [
 
 /** La règle de S-3, recopiée ici pour juger le script — pas pour le remplacer. */
 const MACOS_RULE = /\b(swift|swiftc|xcodebuild|xcrun)\b|swift-app\.sh|ios-build\.sh/;
-const PART_SLUGS = /^\s*test\(\s*["'`](mem0-http-hors-ci|socle-app-swift)\//m;
+const PART_SLUGS = /^\s*test\(\s*["'`]socle-app-swift\//m;
 
 const dirs: string[] = [];
 test.after(() => {
@@ -74,7 +73,6 @@ function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     MEM0_CHECK_DEPTH: String(DEPTH + 1),
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_IOS: "1",
-    MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
     MEM0_OMP_SKIP_RUST: "1",
     ...extra,
   };
@@ -103,11 +101,11 @@ const globTests = (cwd: string) =>
     .filter((name) => name.endsWith(".test.ts"))
     .sort()
     .map((name) => `test/${name}`);
-// Seuls les 13 en-têtes de section comptent : le harnais de `── Plugins réels`
+// Seuls les 12 en-têtes de section comptent : le harnais de `── Plugins réels`
 // imprime ses propres lignes `── <plugin>`.
 const headersOf = (text: string) => text.split("\n").filter((line) => HEADERS.includes(line));
 
-/** Les 13 identifiants de section de check.sh (S-1). */
+/** Les 12 identifiants de section de check.sh (S-1). */
 const SECTION_IDS = [
   "catalogue",
   "noms",
@@ -115,7 +113,6 @@ const SECTION_IDS = [
   "versions",
   "extension",
   "types",
-  "api-http",
   "rust",
   "smoke",
   "tests",
@@ -186,7 +183,7 @@ function lightCopy(tests: Record<string, string>): string {
   return dir;
 }
 
-test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 13 sections et toute la suite node", (t) => {
+test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sections et toute la suite node", (t) => {
   if (DEPTH > 0) {
     t.skip(NESTED);
     return;
@@ -219,14 +216,14 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 13 sect
   assert.deepEqual(lines(fs.readFileSync(marker, "utf8")).sort(), ["fixture/a", "fixture/b"]);
 });
 
-test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 13 sections", () => {
+test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 12 sections", () => {
   const only = runCheck(ROOT, ["--sections=noms,catalogue"]);
   assert.equal(only.status, 0, output(only));
   // Ordre du script, pas celui de la liste.
   assert.deepEqual(headersOf(output(only)), ["── Catalogue marketplace", "── Noms"], output(only));
   assert.ok(only.stdout.includes("Dépôt prêt à publier."), output(only));
 
-  const ids = "catalogue, noms, plugins, versions, extension, types, api-http, rust, smoke, tests, noyau, app-swift, app-ios";
+  const ids = "catalogue, noms, plugins, versions, extension, types, rust, smoke, tests, noyau, app-swift, app-ios";
   const cases: Array<[string[], string]> = [
     [["--sections=bogus"], `✗ section inconnue : « bogus » (attendu : ${ids})`],
     [["--sections="], `✗ section inconnue : «  » (attendu : ${ids})`],
@@ -243,7 +240,7 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     assert.equal(bad.stdout, "", `${args.join(" ")} : aucune section ne doit s'exécuter`);
   }
 
-  // Volet CI : l'union des --sections des jobs macOS couvre les 13 sections.
+  // Volet CI : l'union des --sections des jobs macOS couvre les 12 sections.
   const jobs = workflowJobs(readWorkflow());
   const covered: string[] = [];
   for (const id of MACOS_JOBS) {
@@ -298,7 +295,7 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
 
   // Ce que le job macOS lance : --tests-scope=macos, puis les deux parts.
   const dir = lightCopy({
-    "check.test.ts": fixture(["mem0-http-hors-ci/fixture-a", "check/fixture-b", "socle-app-swift/fixture-c"], "lance swift"),
+    "check.test.ts": fixture(["socle-app-swift/fixture-a", "check/fixture-b", "socle-app-swift/fixture-c"], "lance swift"),
     "ios-zz.test.ts": fixture(["ios-zz/fixture-d"]),
     "plain.test.ts": fixture(["plain/fixture-e"]),
   });
@@ -312,12 +309,12 @@ test("ci-macos-jobs-paralleles/AC-5 : la CI macOS ne lance que les fichiers de l
 
   const first = ran("1/2");
   assert.ok(first.out.includes("  · 1 fichier(s) de test : test/check.test.ts\n"), first.out);
-  assert.ok(first.out.includes("  · filtre de noms : --test-name-pattern=^(mem0-http-hors-ci|socle-app-swift)/\n"), first.out);
-  assert.deepEqual(first.names.sort(), ["mem0-http-hors-ci/fixture-a", "socle-app-swift/fixture-c"]);
+  assert.ok(first.out.includes("  · filtre de noms : --test-name-pattern=^socle-app-swift/\n"), first.out);
+  assert.deepEqual(first.names.sort(), ["socle-app-swift/fixture-a", "socle-app-swift/fixture-c"]);
 
   const second = ran("2/2");
   assert.ok(second.out.includes("  · 2 fichier(s) de test : test/check.test.ts test/ios-zz.test.ts\n"), second.out);
-  assert.ok(second.out.includes("  · filtre de noms : --test-skip-pattern=^(mem0-http-hors-ci|socle-app-swift)/\n"), second.out);
+  assert.ok(second.out.includes("  · filtre de noms : --test-skip-pattern=^socle-app-swift/\n"), second.out);
   assert.deepEqual(second.names.sort(), ["check/fixture-b", "ios-zz/fixture-d"]);
 
   // Une part qui ne lance aucun test est rouge, même quand node rend 0.
@@ -461,12 +458,19 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
   assert.ok(stepsOf(aggregator).includes(`        run: bash scripts/ci-verdict.sh ${call}`), aggregator);
 });
 
-/** L'étape du contrat boîte noire mem0-http (S-9), ajoutée au job check après f3fbfe6. */
-const CONTRAT_STEP = ["      - name: Préparer le contrat boîte noire mem0-http", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
-/** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle du contrat. */
+/** L'étape de la Qdrant source des tests d'import mem0-rs, ajoutée au job check après f3fbfe6. */
+const QDRANT_STEP = ["      - name: Préparer la Qdrant source des tests d'import mem0-rs", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
+/** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle de la Qdrant source. */
 const RUST_STEP = ["      - name: Préparer la toolchain Rust (clippy)", "        run: rustup component add clippy"];
 
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis MEM0_OMP_REQUIRE_IOS, l'étape du contrat boîte noire et celle de la toolchain Rust", (t) => {
+/** Retire d'une liste d'étapes les `count` lignes qui commencent à `first` (absente : erreur). */
+function withoutStep(steps: string[], first: string, count: number): string[] {
+  const at = steps.indexOf(first);
+  assert.ok(at !== -1, `étape « ${first.trim()} » introuvable dans f3fbfe6`);
+  return [...steps.slice(0, at), ...steps.slice(at + count)];
+}
+
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis le banc Python retiré, MEM0_OMP_REQUIRE_IOS, l'étape de la Qdrant source et celle de la toolchain Rust", (t) => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
@@ -475,16 +479,18 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   assert.equal(jobKey(check, "name"), null);
   assert.ok(stepsOf(check).includes("        run: ./scripts/check.sh"), "check.sh sans option sur ubuntu");
   assert.ok(!check.includes("MEM0_OMP_REQUIRE_IOS"), check);
-  // L'étape du contrat : une seule fois, ses deux lignes consécutives, juste
-  // après la préparation du venv du test d'API (dont elle tire l'interpréteur).
+  // (a) Plus aucune trace du banc Python de mem0-http.
   const steps = stepsOf(check);
-  const at = steps.indexOf(CONTRAT_STEP[0] ?? "");
-  assert.equal(steps.filter((line) => CONTRAT_STEP.includes(line)).length, 2, check);
+  for (const needle of ["mem0-http-test.sh", "setup-python", "image_python", "MEM0_OMP_REQUIRE_HTTP_API"]) {
+    assert.ok(!steps.some((line) => line.includes(needle)), `${needle} encore présent dans le job check :\n${check}`);
+  }
+  // (b) L'étape de la Qdrant source : une seule fois, ses deux lignes consécutives,
+  // immédiatement suivie de l'étape Rust ; la section Rust y est exigée
+  // (MEM0_OMP_REQUIRE_RUST), une seule fois.
+  const at = steps.indexOf(QDRANT_STEP[0] ?? "");
+  assert.equal(steps.filter((line) => QDRANT_STEP.includes(line)).length, 2, check);
   assert.ok(at > 0, check);
-  assert.equal(steps[at - 1], "        run: bash scripts/mem0-http-test.sh --prepare", check);
-  assert.equal(steps[at + 1], CONTRAT_STEP[1], check);
-  // L'étape Rust : une seule fois, juste après celle du contrat ; la section
-  // Rust y est exigée (MEM0_OMP_REQUIRE_RUST), une seule fois.
+  assert.equal(steps[at + 1], QDRANT_STEP[1], check);
   assert.equal(steps.filter((line) => RUST_STEP.includes(line)).length, 2, check);
   assert.equal(steps[at + 2], RUST_STEP[0], check);
   assert.equal(steps[at + 3], RUST_STEP[1], check);
@@ -496,11 +502,18 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   }
   const before = spawnSync("git", ["show", `f3fbfe6:${WORKFLOW_FILE}`], { cwd: ROOT, encoding: "utf8" });
   assert.equal(before.status, 0, `historique f3fbfe6 indisponible :\n${output(before)}`);
-  const old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter((line) => !line.includes("MEM0_OMP_REQUIRE_IOS"));
+  let old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter((line) => !line.includes("MEM0_OMP_REQUIRE_IOS"));
   assert.ok(old.length > 0, "job check introuvable dans f3fbfe6");
+  // (c) f3fbfe6 moins le banc Python retiré : l'étape `image_python` (2 lignes),
+  // `setup-python` (3 lignes), la préparation du test d'API (2 lignes) et
+  // `MEM0_OMP_REQUIRE_HTTP_API`.
+  old = withoutStep(old, "      - id: image_python", 2);
+  old = withoutStep(old, "      - uses: actions/setup-python@v7", 3);
+  old = withoutStep(old, "      - name: Préparer l'environnement du test d'API mem0-http", 2);
+  old = old.filter((line) => !line.includes("MEM0_OMP_REQUIRE_HTTP_API"));
   assert.deepEqual(
     steps.filter(
-      (line) => !CONTRAT_STEP.includes(line) && !RUST_STEP.includes(line) && !line.includes("MEM0_OMP_REQUIRE_RUST"),
+      (line) => !QDRANT_STEP.includes(line) && !RUST_STEP.includes(line) && !line.includes("MEM0_OMP_REQUIRE_RUST"),
     ),
     old,
   );

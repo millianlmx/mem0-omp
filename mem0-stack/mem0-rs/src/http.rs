@@ -25,7 +25,7 @@ use crate::openai::ClientChat;
 use crate::recherche::{self, Details, Refus};
 use crate::validation::{self, Rejet};
 
-/// Utilisateur fixe (memory_config.py:51).
+/// Utilisateur fixe (repris de l'ancien mem0-http Python).
 pub const USER: &str = "moi";
 
 /// État partagé par les routes.

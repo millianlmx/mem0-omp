@@ -25,7 +25,7 @@ private func recipeBuildContext(environment: [String: String]) -> URL {
         .appendingPathComponent("Contents/Resources/Stack/mem0-http", isDirectory: true)
     if FileManager.default.fileExists(atPath: bundled.path) { return bundled }
     return URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
-        .appendingPathComponent("../mem0-stack/mem0-http", isDirectory: true)
+        .appendingPathComponent("stack/mem0-http", isDirectory: true)
         .standardizedFileURL
 }
 

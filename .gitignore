@@ -2,6 +2,8 @@
 mem0-stack/qdrant_storage/
 mem0-stack/.env
 mem0-stack/mem0-rs/target/
+mem0-stack/mem0-rs-data/
+mem0-stack/migration/
 
 node_modules/
 # Racine de types temporaire de scripts/typecheck.sh (lien vers l'installation de l'hôte)

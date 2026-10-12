@@ -72,7 +72,7 @@ function runCheck(cwd: string) {
   return spawnSync("bash", ["scripts/check.sh"], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1", MEM0_OMP_SKIP_HTTP_CONTRAT: "1", MEM0_OMP_SKIP_RUST: "1" },
+    env: { ...process.env, MEM0_CHECK_DEPTH: String(DEPTH + 1), MEM0_OMP_SKIP_SWIFT_APP: "1", MEM0_OMP_SKIP_IOS: "1", MEM0_OMP_SKIP_RUST: "1" },
     timeout: 900_000,
   });
 }
@@ -114,7 +114,7 @@ const DROPPED_TESTS: Record<string, true> = {
   "fixpanel.test.ts": true,
   "fixruns.test.ts": true,
   "fixview.test.ts": true,
-  // lance de vrais serveurs (Python, Qdrant) : fichier lourd
+  // lance cargo et le contrat contre mem0-rs : fichier lourd
   "mem0-http-contrat-boite-noire.test.ts": true,
   // lance cargo et le contrat contre mem0-rs : fichier lourd
   "mem0-rs-noyau.test.ts": true,
@@ -122,6 +122,8 @@ const DROPPED_TESTS: Record<string, true> = {
   "mem0-rs-extraction-llm.test.ts": true,
   // lance cargo et le contrat contre mem0-rs : fichier lourd
   "mem0-rs-migration.test.ts": true,
+  // AC-7 lit test/mem0-rs-migration.test.ts, écarté ci-dessus : la copie ne l'a pas
+  "mem0-stack-bascule-rust.test.ts": true,
 };
 
 function copyRepo(prefix: string): string {

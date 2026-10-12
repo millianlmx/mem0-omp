@@ -58,32 +58,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.0"
-      # Le test d'API mem0-http tourne HORS du build d'image : la version de
-      # Python est celle du `FROM python:…` du Dockerfile, jamais un chiffre écrit
-      # ici, et `actions/setup-python` la sert depuis le tool cache du runner
-      # (3.11.16 sur ubuntu-latest, 3.11.9 sur macos-latest) — aucun téléchargement.
-      - id: image_python
-        run: echo "version=$(bash scripts/mem0-http-test.sh --python-version)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ steps.image_python.outputs.version }}
-      # Les exigences viennent de la déclaration du Dockerfile (celle-là même que
-      # l'image installe) : une montée de plage change ce qui est testé, sans
-      # seconde liste à maintenir. Le venv vit hors du dépôt.
-      - name: Préparer l'environnement du test d'API mem0-http
-        run: bash scripts/mem0-http-test.sh --prepare
-      - name: Préparer le contrat boîte noire mem0-http
+      # Qdrant natif téléchargé hors du dépôt : la source des tests de
+      # `mem0-rs import` (section `rust`).
+      - name: Préparer la Qdrant source des tests d'import mem0-rs
         run: bash scripts/mem0-http-contrat.sh --prepare
       - name: Préparer la toolchain Rust (clippy)
         run: rustup component add clippy
       - name: Valider le catalogue, le manifeste et l'extension
         env:
-          # En CI, un prérequis manquant (bun, hôte, environnement du test d'API,
-          # cargo ou clippy) est un échec, jamais un skip : ni le harnais « plugins
-          # réels », ni le test d'API mem0-http, ni la section Rust ne doivent
-          # pouvoir disparaître en silence.
+          # En CI, un prérequis manquant (bun, hôte, cargo ou clippy) est un échec,
+          # jamais un skip : ni le harnais « plugins réels », ni la section Rust ne
+          # doivent pouvoir disparaître en silence.
           MEM0_OMP_REQUIRE_SMOKE: "1"
-          MEM0_OMP_REQUIRE_HTTP_API: "1"
           MEM0_OMP_REQUIRE_RUST: "1"
         run: ./scripts/check.sh
 
@@ -91,7 +77,7 @@ jobs:
   # un seul job, il durait ≈ 36 min, au-delà du `mergeTimeout` de 1200 s de
   # scripts/release.ts. Aucun de ces jobs n'a de `needs` ni de `if:` — ils démarrent
   # ensemble, et un job sauté rapporterait « Success » sans rien prouver. L'union de
-  # leurs `--sections` couvre les 13 sections de check.sh : rien de ce que le job
+  # leurs `--sections` couvre les 12 sections de check.sh : rien de ce que le job
   # macOS vérifiait ne disparaît.
 
   # Compilation, tests et bundle de l'app Swift : swift seul, aucune préparation.
@@ -130,7 +116,7 @@ jobs:
         part: ["1/2", "2/2"]
         include:
           - part: "1/2"
-            sections: catalogue,noms,plugins,versions,extension,types,api-http,rust,smoke,tests,noyau
+            sections: catalogue,noms,plugins,versions,extension,types,rust,smoke,tests,noyau
           - part: "2/2"
             sections: tests
     runs-on: macos-latest
@@ -155,15 +141,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.0"
-      # Python de l'image mem0-http, servi par le tool cache : voir le job `check`.
-      - id: image_python
-        run: echo "version=$(bash scripts/mem0-http-test.sh --python-version)" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-python@v7
-        with:
-          python-version: ${{ steps.image_python.outputs.version }}
-      - name: Préparer l'environnement du test d'API mem0-http
-        run: bash scripts/mem0-http-test.sh --prepare
-      - name: Préparer le contrat boîte noire mem0-http
+      - name: Préparer la Qdrant source des tests d'import mem0-rs
         run: bash scripts/mem0-http-contrat.sh --prepare
       - name: Préparer la toolchain Rust (clippy)
         run: rustup component add clippy
@@ -171,7 +149,6 @@ jobs:
         env:
           # Prérequis manquant = échec, jamais un skip (voir le job `check`).
           MEM0_OMP_REQUIRE_SMOKE: "1"
-          MEM0_OMP_REQUIRE_HTTP_API: "1"
           MEM0_OMP_REQUIRE_RUST: "1"
         run: ./scripts/check.sh --sections=${{ matrix.sections }} --tests-part=${{ matrix.part }} ${{ github.event_name == 'pull_request' && '--tests-scope=macos' || '' }}
 

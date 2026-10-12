@@ -27,9 +27,9 @@ mem0-omp/                              racine = marketplace OMP
 │       panelHost.ts                   le panneau /pipelines et la vue de session
 ├── omp-console/                       la coque macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
-├── mem0-stack/                        mem0 + Qdrant, la voie MANUELLE (intacte)
-│   ├── mem0-http/                     l'API HTTP et sa config mem0
-│   └── mem0-rs/                       le serveur Rust mem0-rs (crate)
+├── mem0-stack/                        mem0-rs (binaire Rust + SQLite), la voie MANUELLE
+│   ├── mem0-rs/                       le serveur Rust mem0-rs (crate)
+│   └── README.md                      démarrer, migrer une pile mem0-http existante, retour arrière
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
@@ -43,8 +43,7 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
 ├── scripts/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
 ├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
-├── scripts/mem0-http-test.sh          test d'API mem0-http hors conteneur, dérivé du Dockerfile
-├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire des 9 routes (prépare, lance, démarre le Python jetable)
+├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire des 9 routes (prépare la Qdrant d'import, lance, démarre mem0-rs ou son conteneur)
 ├── scripts/mem0-http-contrat/         lanceur, cas, formes et faux serveur OpenAI du contrat
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR
@@ -86,12 +85,17 @@ voie MANUELLE, intacte, que l'app ne modifie pas.
 git clone https://github.com/millianlmx/mem0-omp
 cd mem0-omp/mem0-stack
 cp .env.example .env        # ajuste OMLX_BASE_URL selon podman/docker
+mkdir -p mem0-rs-data       # dossier de la base SQLite (MEM0_RS_DATA_DIR)
 podman compose up -d        # ou: docker compose up -d
 ./doctor.sh
 ```
 
-`doctor.sh` teste la chaîne complète — conteneurs, port, Qdrant, oMLX, puis un
-aller-retour écriture/relecture — et dit quoi faire à chaque échec.
+`doctor.sh` teste la chaîne complète — conteneur, port, oMLX, aller-retour
+écriture/relecture, ancienne mémoire — et dit quoi faire à chaque échec.
+
+Une pile mem0-http existante se migre AVANT de démarrer la nouvelle : import
+d'abord, arrêt de l'ancienne ensuite. La procédure et son retour arrière sont dans
+[mem0-stack/README.md](mem0-stack/README.md#migrer-une-pile-mem0-http-existante).
 
 **2. Les plugins**, depuis une session OMP :
 
@@ -203,40 +207,19 @@ refused » franc.
 
 ```bash
 cd mem0-stack && ./doctor.sh
-podman logs --tail 80 mem0-http
-podman compose up mem0-http        # sans -d : le traceback s'affiche
+podman logs --tail 80 mem0-rs
+podman compose up mem0-rs          # sans -d : l'erreur de démarrage s'affiche
 ```
 
-Deux vérifications marchent même quand le conteneur redémarre en boucle, parce
-qu'elles n'ont besoin que de l'image :
-
-```bash
-podman run --rm mem0-stack-mem0-http:latest python memory_config.py   # config résolue
-podman run --rm mem0-stack-mem0-http:latest python test_api.py        # conformité API mem0
-```
-
-Un `NameError` sur la première veut dire que le fichier embarqué diffère de
-celui sur disque : `podman compose build --no-cache mem0-http`, puis `up -d`.
-
-Ensuite, trois causes couvrent la quasi-totalité des cas :
+Ensuite, deux causes couvrent la quasi-totalité des cas :
 
 - **oMLX injoignable depuis le conteneur.** Il tourne en natif sur le Mac ;
   `localhost` dans un conteneur désigne le conteneur. Podman veut
   `host.containers.internal`, Docker Desktop `host.docker.internal`. Vérifie
   aussi qu'oMLX écoute sur `0.0.0.0` et pas seulement `127.0.0.1`.
-- **`EMBEDDING_DIMS` ne correspond pas au modèle.** La collection Qdrant est
-  créée avec cette dimension au premier appel ; la changer ensuite fait rejeter
-  toutes les écritures. Supprime `mem0-stack/qdrant_storage` pour repartir.
-- **Premier démarrage lent.** L'import de `mem0ai` prend du temps ; le
-  `start_period` du healthcheck est à 45 s pour cette raison.
-
-Note sur les versions de mem0 : la 2.x a cassé l'API de la 1.x sans renommer
-les méthodes. `from_config` est redevenu synchrone, `search`/`get_all` refusent
-`user_id`/`agent_id` au premier niveau (il faut passer par `filters`), et
-`limit` s'appelle `top_k`. Chacune de ces ruptures ne se manifeste qu'à
-l'exécution de la route concernée, avec un `500`. D'où la borne `mem0ai<3.0`
-dans le Dockerfile et `test_api.py`, exécuté **au build** : une rupture d'API
-fait désormais échouer la construction de l'image, pas la première requête.
+- **`EMBEDDING_DIMS` ne correspond pas au modèle.** La dimension est inscrite
+  dans la base au premier démarrage ; une base créée avec une autre dimension est
+  refusée au démarrage par mem0-rs, qui sort en erreur et redémarre en boucle.
 
 ## Commandes
 
@@ -1108,7 +1091,7 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
-Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses treize
+Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses 12
 sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
 jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
 (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
@@ -1129,9 +1112,9 @@ local — sans option, toutes les sections et toute la suite tournent :
 
 | Option | Effet |
 |---|---|
-| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `api-http`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
+| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
-| `--tests-part=1/2` ou `2/2` | `1/2` : les tests `mem0-http-hors-ci/*` et `socle-app-swift/*` de `test/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
+| `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
@@ -1140,63 +1123,80 @@ release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
 `release-simulation`, est requis : une PR dont la release simulée échouerait ne
 peut pas être fusionnée.
 
-La même PR exécute **hors du build d'image** le test d'API de mem0-http : la CI
-dérive du Dockerfile la version de Python (`actions/setup-python` la sert depuis
-le cache du runner) et la liste d'exigences installées, puis la section
-`── API mem0-http` les lance contre `test_api.py` — aucun conteneur, aucun
-credential, et la sortie du test est recopiée telle quelle, parce que c'est elle
-qui nomme la route fautive. Un serveur qui n'est plus conforme à l'API mem0
-installée fait donc échouer la PR, et pas seulement la construction de l'image.
-Sur un poste, l'environnement se prépare une fois :
-`bash scripts/mem0-http-test.sh --prepare`.
-
-La même section exécute ensuite le **contrat boîte noire** de mem0-http
-(`scripts/mem0-http-contrat.sh --run`) : il exerce par HTTP les 9 routes du
+La section `── Rust mem0-rs` joue le **contrat boîte noire** de l'API mémoire
+(`scripts/mem0-http-contrat.sh --run`) contre mem0-rs : il exerce par HTTP les 9 routes du
 serveur (`/health`, add, add_procedure, search, all, graph, PUT, DELETE, history)
 et vérifie pour chaque réponse le jeu de clés exact et le type des valeurs. Le
-serveur à tester est démarré jetable, sans conteneur : le Python de mem0-http
-(venv du test d'API), une Qdrant **native** v1.19.0 — la version épinglée par
-`mem0-stack/docker-compose.yml` — et un faux serveur OpenAI-compatible
+serveur à tester est démarré jetable, sans conteneur : le binaire mem0-rs
+(`--start-rs`) sur une base SQLite neuve, et un faux serveur OpenAI-compatible
 (embeddings déterministes de 1024 dimensions, réponses chat scriptées), donc ni
-oMLX ni la base réelle. Le binaire Qdrant et le modèle BM25 se préparent une fois,
-hors du dépôt, par `bash scripts/mem0-http-contrat.sh --prepare` ; sans eux, la
-section annonce le saut en nommant la pièce manquante, sans ✓. La CI prépare ces
-pièces et pose `MEM0_OMP_REQUIRE_HTTP_API=1` : une pièce manquante ou un cas en
-échec y rougit le job. Variables lues :
+oMLX ni la base réelle. Une Qdrant **native** v1.19.0 ne sert plus que de source
+aux tests de `mem0-rs import` : elle se prépare une fois, hors du dépôt, par
+`bash scripts/mem0-http-contrat.sh --prepare` ; sans elle, ces tests annoncent le
+saut en nommant la pièce manquante. La CI la prépare avant `check.sh` (étape
+« Préparer la Qdrant source des tests d'import mem0-rs ») et pose
+`MEM0_OMP_REQUIRE_RUST=1` : une pièce manquante ou un cas en échec y rougit le
+job. Variables lues :
 
 | Variable | Effet |
 |---|---|
 | `MEM0_CONTRAT_URL` | URL de base `http://<hôte>:<port>` du serveur à tester |
-| `MEM0_CONTRAT_START` | commande shell qui démarre le serveur à tester (défaut : le Python jetable) |
+| `MEM0_CONTRAT_START` | commande shell qui démarre le serveur à tester (défaut : `bash scripts/mem0-http-contrat.sh --start-rs`) |
 | `MEM0_CONTRAT_EXTERNE` | `1` accepte une URL sans commande de démarrage (instance externe, vide exigée) |
 | `MEM0_CONTRAT_TOKEN` | `X-Mem0-Token` envoyé à une instance externe |
 | `MEM0_CONTRAT_INFER` | `0` désactive le groupe infer=true (extraction LLM) |
 | `MEM0_CONTRAT_OPENAI_PORT` | port fixe du faux serveur OpenAI (libre par défaut) |
+| `MEM0_CONTRAT_OPENAI_HOTE` | adresse IPv4 d'écoute du faux serveur OpenAI (défaut `127.0.0.1`, sinon refus en code 3) |
+| `MEM0_CONTRAT_MOTEUR` | moteur de `--start-conteneur` (défaut : `podman` s'il est sur le PATH, sinon `docker`) |
 | `MEM0_CONTRAT_QDRANT` | binaire Qdrant à utiliser à la place de celui du cache |
-| `MEM0_CONTRAT_RANG_FIXTURE` | fixture de rang à utiliser à la place de `scripts/mem0-http-contrat/rang.json` (capture comme exécution) |
+| `MEM0_CONTRAT_RANG_FIXTURE` | fixture de rang à utiliser à la place de `scripts/mem0-http-contrat/rang.json` |
 | `MEM0_RS_BIN` | binaire démarré par `--start-rs` (défaut : `${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs`) |
-| `MEM0_OMP_SKIP_HTTP_CONTRAT` | non vide : contrat ignoré (posé par les copies jetables des tests) |
 
-`--start-python` écrit, dès que sa Qdrant jetable répond sur `/readyz`, le port
-HTTP de cette Qdrant dans `$MEM0_CONTRAT_WORKDIR/qdrant.port` (un entier puis un
-saut de ligne ; clé API fixe `contrat-qdrant-cle`). La preuve de migration
-`test/mem0-rs-migration.test.ts` y lit la source de `mem0-rs import` : la
-collection `omp_memory` et `$MEM0_CONTRAT_WORKDIR/mem0/history.db`.
+`--start-qdrant` lance une Qdrant native jetable sur `MEM0_CONTRAT_PORT` (HTTP)
+et `MEM0_CONTRAT_GRPC_PORT`, stockage dans `$MEM0_CONTRAT_WORKDIR/qdrant`, clé
+API fixe `contrat-qdrant-cle` ; l'appelant attend `/readyz`. La preuve de
+migration `test/mem0-rs-migration.test.ts` y sème la collection `omp_memory` et
+écrit à côté un `history.db`, puis les importe par `mem0-rs import`.
+
+`--start-conteneur` démarre le service mem0-rs de `mem0-stack/docker-compose.yml`
+(image `mem0-rs:local` déjà construite, sinon code 2) sous le projet
+`mem0-contrat-<port>`, avec un volume nommé que l'arrêt efface (`down -v`) :
+c'est la preuve locale du conteneur, jamais jouée en CI.
+
+Les **preuves conteneur** de la bascule vivent dans
+`test/mem0-stack-bascule-rust.test.ts`, sautées sans leur drapeau et jamais
+jouées en CI. Moteur : `MEM0_CONTRAT_MOTEUR`, sinon `podman`, sinon `docker` ;
+le test refuse un moteur qui porte des conteneurs `omp-console-*`. Elles
+construisent l'image par `compose build mem0-rs` et ne publient que des ports
+libres (jamais 8321 ni 6333) :
+
+- `MEM0_BASCULE_CONTENEUR=1` : un souvenir survit à `down`/`up` du conteneur, la
+  base apparaît dans le dossier de l'hôte (AC-2), puis le contrat boîte noire
+  passe contre `--start-conteneur` (AC-3) ;
+- `MEM0_BASCULE_REEL=1` avec `MEM0_BASCULE_HISTORY_DB=<copie de history.db>` :
+  répétition à blanc de la migration de `mem0-stack/README.md` sur une réplique
+  de la vraie Qdrant, puis comparaison du nombre de souvenirs et des têtes de
+  recherche avec la pile d'omp-console, qui n'est lue que par `inspect` et HTTP
+  (AC-11, AC-12). La copie se fait par
+  `"$HOME/Library/Application Support/com.omp.console/components/podman/6.1.3/bin/podman" --url "unix://$TMPDIR/podman/omp-console-api.sock" cp omp-console-mem0-http:/home/mem0/.mem0/history.db <copie>`.
+
+```bash
+export PATH=/opt/podman/bin:$PATH && podman machine start
+MEM0_BASCULE_CONTENEUR=1 node --test --experimental-strip-types test/mem0-stack-bascule-rust.test.ts
+MEM0_BASCULE_REEL=1 MEM0_BASCULE_HISTORY_DB=<copie> node --test --experimental-strip-types test/mem0-stack-bascule-rust.test.ts
+podman machine stop
+```
 
 Le contrat joue aussi une phase **`rang`**, sur une instance neuve (l'IDF du BM25
 ne voit que ce corpus) : la fixture commitée `scripts/mem0-http-contrat/rang.json`
-porte un petit corpus, des requêtes et, capturés sur le Python, l'ordre des ids
-rendus par chaque recherche (`attendu`) et les arêtes du graphe. Toute divergence
-d'ordre, un `semantic_score` qui n'est pas le cosinus brut du faux embedder, un
-souvenir lexical rendu malgré `threshold` ou une arête différente fait échouer le
-run. Contre le Python, c'est la vérification « à chaud » que la fixture reflète
-encore mem0 2.2.1 ; contre mem0-rs, la preuve de parité. La phase est sautée en
-mode externe ; une fixture illisible ou non capturée est un refus (code 3). La
-fixture se (re)capture depuis le Python jetable, jamais depuis une autre cible :
-`bash scripts/mem0-http-contrat.sh --capture-rang` réécrit `attendu` et `graphe`
-après avoir vérifié la couverture du corpus (tranches de mots des requêtes, BM25
-qui réordonne, `max_possible_score` 1 et 2, seuil avant fusion, aucun ex-aequo,
-nœud à 9 arêtes) ; une condition manquée est nommée et la fixture n'est pas écrite.
+porte un petit corpus, des requêtes et, capturés sur l'ancien mem0-http Python
+(mem0 2.2.1), l'ordre des ids rendus par chaque recherche (`attendu`) et les
+arêtes du graphe. Toute divergence d'ordre, un `semantic_score` qui n'est pas le
+cosinus brut du faux embedder, un souvenir lexical rendu malgré `threshold` ou
+une arête différente fait échouer le run : c'est la preuve de parité de mem0-rs.
+La phase est sautée en mode externe ; une fixture illisible ou non capturée est
+un refus (code 3). La fixture n'est plus recapturée : le Python qui servait de
+référence est retiré.
 
 Viser mem0-rs (binaire construit par `cargo build --manifest-path
 mem0-stack/mem0-rs/Cargo.toml --locked`), sans toucher à cas.ts :
@@ -1208,7 +1208,7 @@ MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs" bash scripts/m
 `--start-rs` démarre le binaire sur une base SQLite neuve du répertoire de travail
 de la phase ; binaire absent → `non exécuté : binaire mem0-rs absent (<chemin>)`, code 2.
 
-La section `── Rust mem0-rs` (id `rust`, juste après `api-http`) éprouve la crate
+La section `── Rust mem0-rs` (id `rust`, juste après `types`) éprouve la crate
 `mem0-stack/mem0-rs` : `cargo clippy --all-targets -- -D warnings` (aucun
 avertissement toléré), `cargo test`, `cargo build`, puis ce même contrat contre le
 binaire construit, groupe infer=true compris. Les trois étapes cargo tournent même si
@@ -1216,8 +1216,8 @@ l'une échoue, et leur sortie n'est imprimée qu'en cas d'échec ; la commande �
 relancer est donnée par chaque ✗. Sans `cargo` (ou sans clippy) dans le `PATH`, la
 section annonce le saut sans ✓ et ne fait rien échouer sur un poste ; la CI installe
 clippy (`rustup component add clippy`) et pose `MEM0_OMP_REQUIRE_RUST=1`, qui
-change ce saut en échec. `MEM0_OMP_SKIP_RUST` non vide ignore la section, comme
-`MEM0_OMP_SKIP_HTTP_CONTRAT` le contrat : les copies jetables des tests le posent.
+change ce saut en échec. `MEM0_OMP_SKIP_RUST` non vide ignore la section : les
+copies jetables des tests le posent.
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
 **jamais** directement sur `main` (la protection de branche refuse un commit neuf

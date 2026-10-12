@@ -166,10 +166,11 @@ function corpsBrut(texte: string): unknown {
 }
 
 /**
- * Démarre le faux serveur sur 127.0.0.1:<port> (0 = port libre). Un port
- * indisponible rejette avec `faux OpenAI : port <p> indisponible`.
+ * Démarre le faux serveur sur <hote>:<port> (hôte par défaut 127.0.0.1, port 0 =
+ * port libre) ; l'URL rendue vise toujours 127.0.0.1. Un port indisponible
+ * rejette avec `faux OpenAI : port <p> indisponible`.
  */
-export function demarrerFauxOpenAI(options: { port?: number } = {}): Promise<FauxOpenAI> {
+export function demarrerFauxOpenAI(options: { port?: number; hote?: string } = {}): Promise<FauxOpenAI> {
   const port = options.port ?? 0;
   const compteurs = { embeddings: 0, chat: 0 };
   const requetesChat: RequeteChat[] = [];
@@ -207,7 +208,7 @@ export function demarrerFauxOpenAI(options: { port?: number } = {}): Promise<Fau
   });
   const { promise, resolve, reject } = Promise.withResolvers<FauxOpenAI>();
   serveur.once("error", () => reject(new Error(`faux OpenAI : port ${port} indisponible`)));
-  serveur.listen(port, "127.0.0.1", () => {
+  serveur.listen(port, options.hote ?? "127.0.0.1", () => {
     const { port: effectif } = serveur.address() as AddressInfo; // écoute TCP : jamais un chemin de socket
     resolve({
       url: `http://127.0.0.1:${effectif}/v1`,

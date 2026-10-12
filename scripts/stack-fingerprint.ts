@@ -1,7 +1,7 @@
 // Empreinte des sources embarquées de la pile mem0-http (S-7, BR-6).
 //
 // Pourquoi : l'app construit l'image `omp-console-mem0-http` depuis les quatre
-// fichiers de `mem0-stack/mem0-http/` embarqués dans son bundle. Sans empreinte,
+// fichiers de `omp-console/stack/mem0-http/` embarqués dans son bundle. Sans empreinte,
 // une source modifiée passerait inaperçue et l'app réutiliserait silencieusement
 // une image périmée (le bogue du passé : étiqueter par le seul numéro de
 // version). L'empreinte est un fichier VERSIONNÉ, `STACK_FINGERPRINT`, dont ce
@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 export const STACK_SOURCES = ["Dockerfile", "http_server.py", "memory_config.py", "test_api.py"];
 export const FINGERPRINT_FILE = "STACK_FINGERPRINT";
 /** Dossier des sources, relatif à la racine du dépôt. */
-export const STACK_SOURCES_DIR = "mem0-stack/mem0-http";
+export const STACK_SOURCES_DIR = "omp-console/stack/mem0-http";
 /** La commande exacte à lancer pour régénérer le fichier (message d'échec). */
 export const REGENERATE_COMMAND = "bun scripts/stack-fingerprint.ts --write";
 

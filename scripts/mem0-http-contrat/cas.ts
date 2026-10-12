@@ -828,7 +828,7 @@ const SYSTEME_EXTRACTION = {
   octets: 33831,
 } as const;
 
-/** `CUSTOM_INSTRUCTIONS` de mem0-stack/mem0-http/memory_config.py:63-71, octet pour octet. */
+/** `CUSTOM_INSTRUCTIONS` de l'ancien mem0-http Python, octet pour octet. */
 const CONSIGNES_EXTRACTION =
   "Contexte : session de développement logiciel, pas conversation personnelle. " +
   "N'extrais QUE : stack et choix techniques, décisions d'architecture avec leur raison, " +
@@ -1362,7 +1362,7 @@ const JETON_OUVERT: Groupe = {
 };
 
 const JETON = "contrat-jeton";
-/** Corps exact du 401 du Python (HTTPException de http_server.py), que mem0-rs reproduit. */
+/** Corps exact du 401 de l'ancien mem0-http Python, que mem0-rs reproduit. */
 const CORPS_401 = { detail: "bad or missing X-Mem0-Token" };
 
 /** Les 8 requêtes /memory/* de la phase jeton, corps valides (le rejet vient du jeton, pas d'un 422). */

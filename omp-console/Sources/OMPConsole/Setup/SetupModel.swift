@@ -83,7 +83,7 @@ extension SetupStep {
 enum StackBuildContext {
     /// `<bundle>/Contents/Resources/Stack/mem0-http`, ou `nil` hors bundle (binaire
     /// nu, tests) : c'est là que `scripts/swift-app.sh` copie les quatre fichiers
-    /// de `mem0-stack/mem0-http/`.
+    /// de `omp-console/stack/mem0-http/`.
     static func resolve(bundle: Bundle = .main) -> URL? {
         let url = bundle.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)

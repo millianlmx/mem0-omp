@@ -1,5 +1,5 @@
-//! Graphe de proximité (S-7) : `graph_edges` de mem0-stack/mem0-http/http_server.py
-//! (l.202-251), sur les vecteurs denses de la base.
+//! Graphe de proximité (S-7) : `graph_edges` de l'ancien mem0-http Python,
+//! sur les vecteurs denses de la base.
 
 use std::collections::HashMap;
 

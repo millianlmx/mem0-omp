@@ -1,53 +1,28 @@
+# Pile mémoire manuelle : un seul service, mem0-rs, dont la base SQLite vit
+# dans un dossier de l'hôte. Tu viens de l'ancienne pile (Qdrant + mem0-http
+# Python) ? Migre AVANT de la remplacer : voir mem0-stack/README.md.
 services:
-  qdrant:
-    # Tag épinglé volontairement (jamais `latest`) : ./qdrant_storage est un
-    # bind-mount, et un pull vers une majeure incompatible peut rendre la base
-    # illisible. v1.19.0 est la version que la pile locale exécute déjà.
-    image: qdrant/qdrant:v1.19.0
-    container_name: mem0-qdrant
-    restart: unless-stopped
-    # Sans clé, Qdrant auto-hébergé n'a AUCUNE authentification : tout processus
-    # local lit/efface la base via l'API ou le dashboard. Les routes de santé
-    # (/readyz, /livez, /healthz) restent accessibles sans clé, donc le
-    # healthcheck ci-dessous et la sonde de doctor.sh §3 sont inchangés.
-    # Défaut non secret : c'est une valeur LOCALE, surchargeable dans .env.
-    environment:
-      QDRANT__SERVICE__API_KEY: ${QDRANT_API_KEY:-mem0-local-qdrant-key}
-    ports:
-      - "127.0.0.1:6333:6333"   # API + dashboard http://localhost:6333/dashboard
-      - "127.0.0.1:6334:6334"   # gRPC
-    volumes:
-      - ./qdrant_storage:/qdrant/storage
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/127.0.0.1/6333' 2>/dev/null || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  mem0-http:
-    build: ./mem0-http
-    container_name: mem0-http
+  mem0-rs:
+    build: ./mem0-rs
+    image: mem0-rs:local
+    container_name: ${MEM0_RS_CONTAINER:-mem0-rs}
     # En cas de crash au démarrage, `restart: unless-stopped` relance en boucle
     # et le port reste tenu par le proxy : le client obtient une connexion
     # acceptée puis fermée, pas un "connection refused". C'est trompeur.
     # Mets `no` le temps de diagnostiquer, tu verras l'erreur au lieu du symptôme.
     restart: unless-stopped
-    depends_on:
-      qdrant:
-        condition: service_healthy
     ports:
       # HTTP direct pour le plugin OMP natif (omp-mem0-memory).
       # Bindé en 127.0.0.1 : accessible depuis l'hôte, pas depuis le réseau.
-      - "127.0.0.1:8321:8321"
+      - "127.0.0.1:${MEM0_RS_PORT:-8321}:8321"
+    volumes:
+      # Bind-mount d'un dossier de l'hôte, jamais un volume nommé : un
+      # `compose down -v` ne peut donc pas effacer la mémoire. Crée le dossier
+      # (`mkdir -p`) avant `up` : tous les moteurs ne le créent pas.
+      # Il doit rester sur un disque local : le mode WAL de SQLite ne tient pas
+      # sur un système de fichiers réseau.
+      - ${MEM0_RS_DATA_DIR:-./mem0-rs-data}:/data
     environment:
-      QDRANT_HOST: qdrant
-      QDRANT_PORT: "6333"
-      # MÊME expression que le service qdrant ci-dessus : une seule variable
-      # alimente les deux côtés, donc les clés ne peuvent pas diverger.
-      # La changer dans .env impose `compose up -d --force-recreate` (les deux
-      # conteneurs gardent sinon l'ancienne valeur).
-      QDRANT_API_KEY: ${QDRANT_API_KEY:-mem0-local-qdrant-key}
       # oMLX tourne EN NATIF sur le Mac, pas dans un conteneur.
       #   Docker Desktop : http://host.docker.internal:8000/v1
       #   Podman         : http://host.containers.internal:8000/v1
@@ -55,25 +30,18 @@ services:
       # toutes les versions ni toutes les configs de machine — d'où la variable.
       OMLX_BASE_URL: ${OMLX_BASE_URL:-http://host.containers.internal:8000/v1}
       # Si ton oMLX exige une clé, mets-la dans .env : sans elle, tous les
-      # appels LLM et embedding repartent en 401 — et mem0 les remonte comme
-      # une erreur de connexion, pas comme un refus d'authentification.
+      # appels LLM et embedding repartent en 401.
       OMLX_API_TOKEN: ${OMLX_API_TOKEN:-}
       OMLX_LLM_MODEL: ${OMLX_LLM_MODEL:-qwen3-8b}
       OMLX_EMBED_MODEL: ${OMLX_EMBED_MODEL:-bge-m3}
       EMBEDDING_DIMS: ${EMBEDDING_DIMS:-1024}
       # Optionnel : si définie, le plugin doit l'envoyer dans X-Mem0-Token.
       MEM0_HTTP_TOKEN: ${MEM0_HTTP_TOKEN:-}
-      PYTHONUNBUFFERED: "1"   # sinon un traceback de crash reste dans le buffer
     healthcheck:
-      # python:3.11-slim ne contient PAS curl. Un healthcheck en curl échoue
-      # toujours, et le conteneur reste indéfiniment en "starting".
-      test:
-        - CMD
-        - python
-        - -c
-        - import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8321/health',timeout=3).status==200 else 1)
+      # curl est installé dans l'image pour ça : le binaire n'a pas de
+      # sous-commande santé.
+      test: ["CMD", "curl", "-fsS", "-m", "3", "http://127.0.0.1:8321/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      # Le premier import de mem0ai est lent : 10 s ne suffisent pas toujours.
-      start_period: 45s
+      start_period: 10s

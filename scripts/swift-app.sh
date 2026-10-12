@@ -160,10 +160,10 @@ cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
 #    BR-1) : l'app construit son image mem0-http depuis ces quatre fichiers, donc
 #    ils voyagent avec elle, ainsi que l'empreinte `STACK_FINGERPRINT` (S-7, BR-6)
 #    qui porte l'étiquette de l'image. La source unique reste
-#    `mem0-stack/mem0-http/` ; un fichier manquant rendrait le bundle
+#    `omp-console/stack/mem0-http/` ; un fichier manquant rendrait le bundle
 #    inutilisable, donc on échoue en le nommant.
 #    Package.swift ne porte AUCUNE ressource : la copie se fait ici, au bundle.
-STACK_SOURCE="$ROOT/mem0-stack/mem0-http"
+STACK_SOURCE="$ROOT/omp-console/stack/mem0-http"
 STACK_DEST="$BUNDLE/Contents/Resources/Stack/mem0-http"
 mkdir -p "$STACK_DEST"
 for stack_file in Dockerfile http_server.py memory_config.py test_api.py STACK_FINGERPRINT; do

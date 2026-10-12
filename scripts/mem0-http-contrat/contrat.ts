@@ -3,15 +3,14 @@
 // `bash scripts/mem0-http-contrat.sh --run` depuis la racine du dépôt.
 //
 // Exerce par HTTP les 9 routes du serveur à tester. Celui-ci est soit DÉMARRÉ
-// ici (commande MEM0_CONTRAT_START, défaut : le Python jetable de
-// `mem0-http-contrat.sh --start-python`), une instance neuve par phase, soit
+// ici (commande MEM0_CONTRAT_START, défaut : mem0-rs via
+// `mem0-http-contrat.sh --start-rs`), une instance neuve par phase, soit
 // EXTERNE (MEM0_CONTRAT_URL sans START), ce qui exige MEM0_CONTRAT_EXTERNE=1 et
 // une instance vide. Le faux OpenAI (faux-openai.ts) remplace oMLX ; les cas
 // vivent dans cas.ts, les formes dans formes.ts.
 //
-// `--capture-rang` (via `mem0-http-contrat.sh --capture-rang`) : au lieu du
-// contrat, réécrit `attendu` et `graphe` de la fixture de rang (rang.json, ou
-// MEM0_CONTRAT_RANG_FIXTURE) depuis une instance neuve du Python jetable.
+// MEM0_CONTRAT_OPENAI_HOTE : adresse IPv4 d'écoute du faux OpenAI (défaut
+// 127.0.0.1) ; l'URL passée au serveur à tester reste http://127.0.0.1:<port>/v1.
 //
 // Codes : 0 conforme, 1 échec (cas, serveur muet ou arrêté), 2 pièce manquante
 // (`non exécuté : <pièce>` en première ligne), 3 refus (`refus : …`).
@@ -19,14 +18,15 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as http from "node:http";
+import { isIPv4 } from "node:net";
 import type { AddressInfo } from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
-import { AJOUT, analyserFixtureRang, aretesParCles, corpsRechercheRang, EchecCas, GRAPHE, PHASES, RECHERCHE_EXPLIQUEE } from "./cas.ts";
-import type { Contexte, EntreeJournal, FixtureRang, Groupe, LigneExpliquee, Phase, Requete } from "./cas.ts";
+import { analyserFixtureRang, EchecCas, PHASES } from "./cas.ts";
+import type { Contexte, EntreeJournal, FixtureRang, Groupe, Phase, Requete } from "./cas.ts";
 import { demarrerFauxOpenAI, JETON_OPENAI, MODELE_CHAT, MODELE_EMBEDDINGS } from "./faux-openai.ts";
 import type { FauxOpenAI } from "./faux-openai.ts";
 import { verifierForme } from "./formes.ts";
@@ -41,16 +41,6 @@ const LIGNES_JOURNAL = 40;
 const RETRAIT = "      ";
 /** Fixture de rang par défaut (MEM0_CONTRAT_RANG_FIXTURE la remplace). */
 const FIXTURE_RANG_DEFAUT = path.join(path.dirname(fileURLToPath(import.meta.url)), "rang.json");
-/** Versions du Python jetable de la capture (mem0-http, venv et docker-compose.yml). */
-const SOURCE_RANG = { mem0ai: "2.2.1", fastembed: "0.8.1", qdrant: "1.19.0" } as const;
-/** Tranches de nombre de mots des requêtes (condition (b) de la capture), bornes incluses. */
-const TRANCHES_MOTS: readonly (readonly [number, number])[] = [
-  [1, 3],
-  [4, 6],
-  [7, 9],
-  [10, 15],
-  [16, Number.POSITIVE_INFINITY],
-];
 
 /** Fin de run anticipée : code de sortie et lignes à imprimer sur stdout. */
 class Arret extends Error {
@@ -72,6 +62,8 @@ type Config = {
   jetonExterne: string | null;
   infer: boolean;
   portOpenAI: number;
+  /** Adresse IPv4 d'écoute du faux OpenAI. */
+  hoteOpenAI: string;
   /** Chemin de la fixture de rang, tel qu'imprimé dans les messages. */
   fixtureRang: string;
 };
@@ -104,6 +96,11 @@ function lireConfig(env: NodeJS.ProcessEnv): Config {
   if (!/^\d{1,5}$/.test(portOpenAIBrut || "0") || portOpenAI > 65535) {
     throw new Arret(CODES_SORTIE.refus, [`refus : MEM0_CONTRAT_OPENAI_PORT invalide (${portOpenAIBrut})`]);
   }
+  const hoteOpenAIBrut = brut("MEM0_CONTRAT_OPENAI_HOTE");
+  const hoteOpenAI = hoteOpenAIBrut === "" ? "127.0.0.1" : hoteOpenAIBrut;
+  if (!isIPv4(hoteOpenAI)) {
+    throw new Arret(CODES_SORTIE.refus, [`refus : MEM0_CONTRAT_OPENAI_HOTE invalide (${hoteOpenAIBrut})`]);
+  }
   const jeton = brut("MEM0_CONTRAT_TOKEN");
   return {
     url,
@@ -114,6 +111,7 @@ function lireConfig(env: NodeJS.ProcessEnv): Config {
     jetonExterne: jeton === "" ? null : jeton,
     infer: infer !== "0",
     portOpenAI,
+    hoteOpenAI,
     fixtureRang: brut("MEM0_CONTRAT_RANG_FIXTURE") || path.relative(process.cwd(), FIXTURE_RANG_DEFAUT),
   };
 }
@@ -161,13 +159,6 @@ function lireFixtureRang(chemin: string): FixtureRang {
   } catch (e) {
     throw new Arret(CODES_SORTIE.refus, [`refus : fixture de rang illisible (${chemin}) : ${messageErreur(e)}`]);
   }
-}
-
-/** Capture refusée (code 1) : chaque condition manquée est nommée, la fixture n'est pas écrite. */
-function refuserCapture(manquees: readonly string[]): number {
-  console.log("capture du rang refusée, fixture non écrite :");
-  for (const m of manquees) console.log(`${RETRAIT}${m}`);
-  return CODES_SORTIE.echec;
 }
 
 /** Serveur démarré pour une phase : groupe de processus détaché + WORKDIR neuf. */
@@ -276,7 +267,7 @@ class Lanceur {
     const workdir = fs.mkdtempSync(path.join(os.tmpdir(), "mem0-contrat-workdir-"));
     const journal = path.join(this.tmp, `serveur-${phase.nom}.log`);
     const fd = fs.openSync(journal, "w");
-    const commande = this.config.start || "bash scripts/mem0-http-contrat.sh --start-python";
+    const commande = this.config.start || "bash scripts/mem0-http-contrat.sh --start-rs";
     const enfant = spawn("bash", ["-c", commande], {
       detached: true,
       stdio: ["ignore", fd, fd],
@@ -456,160 +447,6 @@ class Lanceur {
     ]);
   }
 
-  /**
-   * `--capture-rang` : rejoue la fixture sur une instance NEUVE du Python
-   * jetable, contrôle sa couverture (a)-(h) et réécrit `attendu` et `graphe`.
-   */
-  async capturer(): Promise<number> {
-    const { config } = this;
-    if (config.start !== "" || config.url !== null) {
-      throw new Arret(CODES_SORTIE.refus, [
-        "refus : la capture du rang vise le serveur Python jetable ; retire MEM0_CONTRAT_START et MEM0_CONTRAT_URL",
-      ]);
-    }
-    const chemin = config.fixtureRang;
-    const f = lireFixtureRang(chemin);
-
-    const manquees: string[] = [];
-    const clesCorpus = f.corpus.map((s) => s.cle);
-    const clesRequetes = f.requetes.map((q) => q.cle);
-    if (
-      f.corpus.length < 12 ||
-      f.requetes.length < 8 ||
-      new Set(clesCorpus).size !== clesCorpus.length ||
-      new Set(clesRequetes).size !== clesRequetes.length
-    ) {
-      manquees.push(
-        `(a) au moins 12 souvenirs, au moins 8 requêtes et des clés uniques (${f.corpus.length} souvenirs, ${f.requetes.length} requêtes)`,
-      );
-    }
-    const mots = f.requetes.map((q) => q.query.split(/\s+/u).filter(Boolean).length);
-    const tranchesVides = TRANCHES_MOTS.filter(([min, max]) => !mots.some((n) => n >= min && n <= max));
-    if (tranchesVides.length > 0) {
-      const noms = tranchesVides.map(([min, max]) => (max === Number.POSITIVE_INFINITY ? `≥ ${min}` : `${min}-${max}`));
-      manquees.push(`(b) au moins une requête dans chaque tranche de mots ; aucune en ${noms.join(", ")}`);
-    }
-    if (manquees.length > 0) return refuserCapture(manquees);
-
-    try {
-      this.faux = await demarrerFauxOpenAI({ port: config.portOpenAI });
-    } catch (e) {
-      throw new Arret(CODES_SORTIE.echec, [messageErreur(e)]);
-    }
-    const port = await portLibre();
-    const url = `http://127.0.0.1:${port}`;
-    await this.demarrer({ nom: "rang", jetonServeur: "", groupes: [] }, url, config.hote, port);
-    await this.exigerVacuite(url, null, (n) => `refus : l'instance démarrée n'est pas vide (${n} souvenir(s))`);
-
-    const ecarts: string[] = [];
-    const ctx = this.contexte("rang", url, null, ecarts);
-    const cles = new Map<string, string>();
-    const limitees = new Map<string, LigneExpliquee[]>();
-    const completes = new Map<string, LigneExpliquee[]>();
-    let graphe: { total: number; threshold: number; top_k: number; edges: { source: string; target: string; score: number }[] };
-    try {
-      for (const s of f.corpus) {
-        const r = (await ctx.appeler({
-          methode: "POST",
-          gabarit: "/memory/add",
-          corps: { text: s.texte, agent_id: f.agent_id, infer: false },
-          forme: AJOUT,
-        })) as { results: { id: string }[] };
-        const id = r.results[0]?.id;
-        if (id === undefined) throw new EchecCas([`POST /memory/add : aucun souvenir créé pour ${s.cle}`]);
-        cles.set(id, s.cle);
-      }
-      for (const q of f.requetes) {
-        for (const [lignes, complete] of [
-          [limitees, false],
-          [completes, true],
-        ] as const) {
-          const r = (await ctx.appeler({
-            methode: "POST",
-            gabarit: "/memory/search",
-            corps: corpsRechercheRang(f, q, complete),
-            forme: RECHERCHE_EXPLIQUEE,
-          })) as { results: LigneExpliquee[] };
-          lignes.set(q.cle, r.results);
-        }
-      }
-      graphe = (await ctx.appeler({ methode: "GET", gabarit: "/memory/graph", forme: GRAPHE })) as typeof graphe;
-    } catch (e) {
-      if (!(e instanceof EchecCas)) throw e;
-      throw new Arret(CODES_SORTIE.echec, ["capture du rang interrompue :", ...e.ecarts.map((x) => `${RETRAIT}${x}`)]);
-    }
-    const cleDe = (id: string): string => cles.get(id) ?? id;
-    const attendus = new Map(f.requetes.map((q) => [q.cle, (limitees.get(q.cle) ?? []).map((s) => cleDe(s.id))]));
-
-    const reordonnee = f.requetes.some((q) => {
-      const lignes = limitees.get(q.cle) ?? [];
-      const parCosinus = [...lignes].sort((x, y) => y.score_details.semantic_score - x.score_details.semantic_score);
-      return !isDeepStrictEqual(lignes.map((s) => s.id), parCosinus.map((s) => s.id));
-    });
-    if (!reordonnee) manquees.push("(c) au moins une requête dont attendu diffère de l'ordre par semantic_score décroissant");
-
-    const maxPossibles = new Set(f.requetes.map((q) => completes.get(q.cle)?.[0]?.score_details.max_possible_score));
-    if (!maxPossibles.has(1) || !maxPossibles.has(2)) {
-      manquees.push("(d) au moins une requête à max_possible_score 1 et au moins une à 2");
-    }
-
-    if (!f.requetes.some((q) => q.limit < (completes.get(q.cle) ?? []).length)) {
-      manquees.push("(e) au moins une requête dont limit est inférieur au nombre de lignes rendues sans limite");
-    }
-
-    const { requete, cle } = f.seuil_avant_fusion;
-    const idSeuil = [...cles].find(([, c]) => c === cle)?.[0];
-    const ligneSeuil = (completes.get(requete) ?? []).find((s) => s.id === idSeuil);
-    if (
-      idSeuil === undefined ||
-      !limitees.has(requete) ||
-      (limitees.get(requete) ?? []).some((s) => s.id === idSeuil) ||
-      ligneSeuil === undefined ||
-      ligneSeuil.score_details.bm25_score <= 0
-    ) {
-      manquees.push(
-        `(f) seuil_avant_fusion (${requete}, ${cle}) : la clé doit être absente au threshold de la requête et présente avec bm25_score > 0 à threshold 0`,
-      );
-    }
-
-    const exAequo = f.requetes.filter((q) => {
-      const lignes = completes.get(q.cle) ?? [];
-      return lignes.some((s, i) => i > 0 && Math.abs(lignes[i - 1].score - s.score) < 1e-6);
-    });
-    if (exAequo.length > 0) {
-      manquees.push(`(g) aucun ex-aequo (|Δscore| ≥ 1e-6) ; ex-aequo dans ${exAequo.map((q) => q.cle).join(", ")}`);
-    }
-
-    const degres = new Map<string, number>();
-    for (const e of graphe.edges) {
-      for (const id of [e.source, e.target]) degres.set(id, (degres.get(id) ?? 0) + 1);
-    }
-    if (graphe.edges.length === 0 || Math.max(0, ...degres.values()) < 9) {
-      manquees.push(`(h) au moins une arête et un nœud touché par au moins 9 arêtes (${graphe.edges.length} arête(s))`);
-    }
-    if (manquees.length > 0) return refuserCapture(manquees);
-
-    const aretes = aretesParCles(graphe.edges, cleDe);
-    const capturee: FixtureRang = {
-      format: 1,
-      source: { ...SOURCE_RANG, capture: new Date().toISOString() },
-      agent_id: f.agent_id,
-      corpus: f.corpus.map((s) => ({ cle: s.cle, texte: s.texte })),
-      requetes: f.requetes.map((q) => ({
-        cle: q.cle,
-        query: q.query,
-        limit: q.limit,
-        threshold: q.threshold,
-        attendu: attendus.get(q.cle) ?? [],
-      })),
-      seuil_avant_fusion: { requete, cle },
-      graphe: { total: graphe.total, threshold: graphe.threshold, top_k: graphe.top_k, aretes },
-    };
-    fs.writeFileSync(chemin, `${JSON.stringify(capturee, null, 2)}\n`);
-    console.log(`fixture de rang capturée : ${chemin} (${f.requetes.length} requêtes, ${aretes.length} arêtes)`);
-    return CODES_SORTIE.conforme;
-  }
-
   estExterne(): boolean {
     return this.config.url !== null && this.config.start === "";
   }
@@ -638,14 +475,14 @@ class Lanceur {
       const fixture = lireFixtureRang(config.fixtureRang);
       if (fixture.graphe === undefined || fixture.requetes.some((q) => q.attendu === undefined)) {
         throw new Arret(CODES_SORTIE.refus, [
-          `refus : fixture de rang non capturée (${config.fixtureRang}) — lance bash scripts/mem0-http-contrat.sh --capture-rang`,
+          `refus : fixture de rang absente ou non capturée (${config.fixtureRang}) — attendu et graphe manquants`,
         ]);
       }
       this.fixture = fixture;
     }
 
     try {
-      this.faux = await demarrerFauxOpenAI({ port: config.portOpenAI });
+      this.faux = await demarrerFauxOpenAI({ port: config.portOpenAI, hote: config.hoteOpenAI });
     } catch (e) {
       throw new Arret(CODES_SORTIE.echec, [messageErreur(e)]);
     }
@@ -711,7 +548,7 @@ async function main(): Promise<number> {
   process.once("SIGINT", surSignal);
   process.once("SIGTERM", surSignal);
   try {
-    return await (process.argv[2] === "--capture-rang" ? lanceur.capturer() : lanceur.executer());
+    return await lanceur.executer();
   } catch (e) {
     if (e instanceof Arret) {
       for (const ligne of e.lignes) console.log(ligne);

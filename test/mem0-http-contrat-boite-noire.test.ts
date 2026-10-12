@@ -1,25 +1,24 @@
-// Tests de preuve du contrat boîte noire mem0-http (`scripts/mem0-http-contrat.sh`).
+// Tests de preuve du contrat boîte noire mem0-http (`scripts/mem0-http-contrat.sh`),
+// cible mem0-rs.
 //
-// Le contrat lui-même prouve AC-1 et AC-5…AC-13 en s'exécutant (section api-http
-// de check.sh, et CI) ; ce fichier prouve ce que le contrat ne peut pas constater
+// Le contrat lui-même prouve AC-1 et AC-5…AC-13 en s'exécutant (section rust de
+// check.sh, et CI) ; ce fichier prouve ce que le contrat ne peut pas constater
 // de l'intérieur : le faux OpenAI déterministe (AC-3), le refus d'une cible non
-// jetable (AC-15), le câblage de check.sh (AC-16), le changement de cible sans
-// toucher aux cas (AC-2), la détection des écarts de forme (AC-4) et la
-// désactivation du groupe infer (AC-14).
+// jetable (AC-15), le changement de cible sans toucher aux cas (AC-2), la
+// détection des écarts de forme (AC-4) et la désactivation du groupe infer (AC-14).
 //
-// Les tests qui lancent check.sh ou de vrais serveurs (Python, Qdrant) ne tournent
-// qu'au premier niveau (`MEM0_CHECK_DEPTH` 0) : une copie jetable du dépôt ne les
-// rejoue pas. Les enfants sont ASYNCHRONES, car le proxy et l'enregistreur vivent
-// dans ce processus et doivent répondre pendant que l'enfant tourne.
+// Les tests qui compilent mem0-rs ou lancent de vrais serveurs (mem0-rs, Qdrant)
+// ne tournent qu'au premier niveau (`MEM0_CHECK_DEPTH` 0) : une copie jetable du
+// dépôt ne les rejoue pas. Une pièce manquante (cargo, binaire) est un saut
+// annoncé, ou un échec sous MEM0_OMP_REQUIRE_RUST=1. Les enfants sont ASYNCHRONES,
+// car le proxy et l'enregistreur vivent dans ce processus et doivent répondre
+// pendant que l'enfant tourne.
 import test from "node:test";
 import type { TestContext } from "node:test";
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import * as fs from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
 import * as http from "node:http";
 import type { AddressInfo } from "node:net";
-import * as os from "node:os";
-import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { CODES_SORTIE } from "../scripts/mem0-http-contrat/contrat.ts";
 import { DIMENSIONS, demarrerFauxOpenAI, plonger } from "../scripts/mem0-http-contrat/faux-openai.ts";
@@ -31,25 +30,6 @@ const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 
 /** Délai d'un test qui démarre de vrais serveurs. */
 const DELAI_LOURD = 600_000;
-
-const dirs: string[] = [];
-test.after(() => {
-  for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
-});
-
-function tmpdir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), prefix));
-  dirs.push(dir);
-  return dir;
-}
-
-/** Doublure d'interpréteur du test d'API : un script bash, jamais un vrai Python. */
-function stubInterpreter(body: string): string {
-  const file = path.join(tmpdir("mem0-contrat-doublure-"), "python");
-  fs.writeFileSync(file, `#!/usr/bin/env bash\n${body}`);
-  fs.chmodSync(file, 0o755);
-  return file;
-}
 
 /**
  * Environnement d'un enfant : celui du processus, sans les marqueurs de
@@ -173,61 +153,8 @@ test("mem0-http-contrat-boite-noire/AC-15 : une URL externe est refusée sans op
   }
 });
 
-/** Serveur à tester factice : /health sans la clé `mem0`, instance vide, 404 ailleurs. */
-const SUT_INCOMPLET = `import * as http from "node:http";
-const serveur = http.createServer((req, res) => {
-  const repondre = (statut, corps) => {
-    const texte = JSON.stringify(corps);
-    res.writeHead(statut, { "content-type": "application/json", "content-length": Buffer.byteLength(texte) });
-    res.end(texte);
-  };
-  const chemin = (req.url ?? "").split("?")[0];
-  if (req.method === "GET" && chemin === "/health") return repondre(200, { ok: true });
-  if (req.method === "GET" && chemin === "/memory/all") return repondre(200, { total: 0, results: [] });
-  repondre(404, { detail: "Not Found" });
-});
-serveur.listen(Number(process.env.MEM0_CONTRAT_PORT), process.env.MEM0_CONTRAT_HOST);
-for (const signal of ["SIGTERM", "SIGINT"]) process.on(signal, () => process.exit(0));
-`;
-
-test("mem0-http-contrat-boite-noire/AC-16 : check.sh annonce le saut quand une pièce manque, rougit sous REQUIRE et sur un cas en échec", { timeout: DELAI_LOURD }, async (t) => {
-  if (DEPTH !== 0) {
-    t.skip(`check.sh racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
-    return;
-  }
-  const base = {
-    MEM0_OMP_SKIP_HTTP_CONTRAT: "",
-    MEM0_HTTP_PYTHON: stubInterpreter("exit 0\n"),
-    MEM0_CONTRAT_URL: "",
-    MEM0_CONTRAT_START: "",
-  };
-  const check = (env: Record<string, string>): Promise<Resultat> =>
-    lancer(["scripts/check.sh", "--sections=api-http"], envEnfant({ ...base, ...env }));
-  const qdrantAbsent = path.join(tmpdir("mem0-contrat-qdrant-"), "absent", "qdrant");
-
-  const saut = await check({ MEM0_CONTRAT_QDRANT: qdrantAbsent, MEM0_OMP_REQUIRE_HTTP_API: "" });
-  assert.equal(saut.code, 0, saut.sortie);
-  assert.ok(saut.sortie.includes(`· non exécuté : binaire Qdrant absent (${qdrantAbsent})`), saut.sortie);
-  assert.ok(!saut.sortie.includes("✓ API mem0-http : contrat boîte noire"), saut.sortie);
-
-  const exige = await check({ MEM0_CONTRAT_QDRANT: qdrantAbsent, MEM0_OMP_REQUIRE_HTTP_API: "1" });
-  assert.notEqual(exige.code, 0, exige.sortie);
-  assert.ok(exige.sortie.includes("✗ API mem0-http — contrat boîte noire non exécuté : binaire Qdrant absent"), exige.sortie);
-
-  const sut = path.join(tmpdir("mem0-contrat-sut-"), "sut.mjs");
-  fs.writeFileSync(sut, SUT_INCOMPLET);
-  const echec = await check({
-    MEM0_CONTRAT_START: `"${process.execPath}" "${sut}"`,
-    MEM0_OMP_REQUIRE_HTTP_API: "",
-  });
-  assert.notEqual(echec.code, 0, echec.sortie);
-  assert.ok(echec.sortie.includes("FAIL  ouvert/santé"), echec.sortie);
-  assert.ok(echec.sortie.includes("GET /health : clé manquante « mem0 »"), echec.sortie);
-  assert.ok(echec.sortie.includes("✗ API mem0-http — contrat boîte noire en échec"), echec.sortie);
-});
-
 // ---------------------------------------------------------------------------
-// Tests lourds : le serveur Python jetable derrière un proxy de ce processus
+// Tests lourds : mem0-rs jetable derrière un proxy de ce processus
 // ---------------------------------------------------------------------------
 
 const ROUTES_FIXES: Record<string, true> = { add: true, add_procedure: true, search: true, all: true, graph: true };
@@ -302,7 +229,7 @@ async function runLourd(muter?: Mutation): Promise<RunLourd> {
   try {
     const resultat = await lancerContrat({
       MEM0_CONTRAT_URL: proxy.url,
-      MEM0_CONTRAT_START: `MEM0_CONTRAT_PORT=${portAmont} bash scripts/mem0-http-contrat.sh --start-python`,
+      MEM0_CONTRAT_START: `MEM0_CONTRAT_PORT=${portAmont} bash scripts/mem0-http-contrat.sh --start-rs`,
       MEM0_CONTRAT_INFER: "0",
     });
     return { ...resultat, requetes: proxy.requetes };
@@ -311,13 +238,38 @@ async function runLourd(muter?: Mutation): Promise<RunLourd> {
   }
 }
 
-/** Pièce manquante : échec sous REQUIRE (CI), saut annoncé sinon. `false` = sauté. */
+const exigeRust = (): boolean => process.env.MEM0_OMP_REQUIRE_RUST === "1";
+
+/** Pièce manquante : échec sous MEM0_OMP_REQUIRE_RUST (CI), saut annoncé sinon. */
+function manque(t: TestContext, raison: string): void {
+  if (exigeRust()) assert.fail(raison);
+  t.skip(raison);
+}
+
+/** Pièce manquante au run : `false` = sauté. */
 function piecesPresentes(t: TestContext, run: RunLourd): boolean {
   if (run.code !== CODES_SORTIE.nonExecute) return true;
-  const raison = run.sortie.split("\n")[0] ?? "";
-  if (process.env.MEM0_OMP_REQUIRE_HTTP_API === "1") assert.fail(raison);
-  t.skip(raison);
+  manque(t, run.sortie.split("\n")[0] ?? "");
   return false;
+}
+
+const cargoPresent = (): boolean => spawnSync("cargo", ["--version"], { encoding: "utf8" }).status === 0;
+
+/** UN seul `cargo build` pour les tests lourds : le binaire que vise --start-rs. */
+let construction: Promise<Resultat | "cargo absent"> | undefined;
+
+/** Binaire mem0-rs à jour ; `false` = sauté (cargo absent hors REQUIRE). */
+async function binairePret(t: TestContext): Promise<boolean> {
+  construction ??= cargoPresent()
+    ? lancer(["-c", "cargo build --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked"], envEnfant({}))
+    : Promise.resolve("cargo absent");
+  const build = await construction;
+  if (build === "cargo absent") {
+    manque(t, "cargo absent : contrat contre mem0-rs non exécuté");
+    return false;
+  }
+  assert.equal(build.code, 0, build.sortie);
+  return true;
 }
 
 /** Run sans mutation partagé par AC-2 et AC-14. */
@@ -341,6 +293,7 @@ test("mem0-http-contrat-boite-noire/AC-2 : MEM0_CONTRAT_URL et MEM0_CONTRAT_STAR
     t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
   }
+  if (!(await binairePret(t))) return;
   const run = await partage();
   if (!piecesPresentes(t, run)) return;
   assert.equal(run.code, CODES_SORTIE.conforme, run.sortie);
@@ -353,6 +306,7 @@ test("mem0-http-contrat-boite-noire/AC-14 : MEM0_CONTRAT_INFER=0 annonce le grou
     t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
   }
+  if (!(await binairePret(t))) return;
   const run = await partage();
   if (!piecesPresentes(t, run)) return;
   assert.ok(run.sortie.includes("SKIP  ouvert/infer · groupe infer=true désactivé (MEM0_CONTRAT_INFER=0)"), run.sortie);
@@ -386,6 +340,7 @@ test("mem0-http-contrat-boite-noire/AC-4 : une clé en trop, une clé manquante 
     t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
     return;
   }
+  if (!(await binairePret(t))) return;
   const run = await runLourd(FAUSSER);
   if (!piecesPresentes(t, run)) return;
   assert.equal(run.code, CODES_SORTIE.echec, run.sortie);

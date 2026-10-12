@@ -25,8 +25,8 @@ pass() { echo "  ✓ $1"; }
 #                             Les tests qui portent ce motif ne vivent que dans
 #                             test/check.test.ts (criteria/AC-13 : un slug, un
 #                             fichier), donc 1/2 ∪ 2/2 lance chaque test une fois.
-SECTION_IDS="catalogue noms plugins versions extension types api-http rust smoke tests noyau app-swift app-ios"
-TESTS_PART_PATTERN='^(mem0-http-hors-ci|socle-app-swift)/'
+SECTION_IDS="catalogue noms plugins versions extension types rust smoke tests noyau app-swift app-ios"
+TESTS_PART_PATTERN='^socle-app-swift/'
 sections=""
 sections_set=0
 tests_scope=""
@@ -352,77 +352,6 @@ if [ -f scripts/typecheck.sh ]; then
   fi
 else
   echo "  · scripts/typecheck.sh absent, type-check non vérifié"
-fi
-fi
-
-if section_on api-http; then
-echo "── API mem0-http"
-
-# mem0-stack/mem0-http/test_api.py prouve que le serveur est conforme à l'API de
-# la version de mem0 RÉELLEMENT installée. Le Dockerfile l'exécute au build de
-# l'image ; ce contrôle l'exécute HORS du build, pour que la même rupture d'API
-# (paramètre retiré ou renommé côté mem0) fasse échouer la CI sans conteneur, sans
-# credential et sans socket. Le script appelé dérive ses exigences et sa version
-# de Python du Dockerfile : aucune liste n'est recopiée ici.
-#
-# La sortie du test n'est JAMAIS résumée : c'est elle qui nomme la route fautive
-# (le critère exige que le job rouge la nomme). Prérequis absents (environnement
-# Python non préparé) ⇒ on l'annonce sans ✓ mensonger, comme pour le type-check —
-# SAUF si MEM0_OMP_REQUIRE_HTTP_API=1 (posée par la CI) : là, un prérequis manquant
-# est un échec, jamais un skip silencieux.
-if [ -f scripts/mem0-http-test.sh ]; then
-  http_out="$(bash scripts/mem0-http-test.sh --run 2>&1)"
-  http_status=$?
-  [ -n "$http_out" ] && printf '%s\n' "$http_out"
-  case "$http_status" in
-    0)
-      pass "API mem0-http : test_api.py conforme (dépendances déclarées par le Dockerfile)"
-      ;;
-    2)
-      http_reason="$(printf '%s\n' "$http_out" | head -n 1)"
-      if [ "${MEM0_OMP_REQUIRE_HTTP_API:-}" = "1" ]; then
-        fail "API mem0-http — ${http_reason} (relance : bash scripts/mem0-http-test.sh --prepare)"
-      else
-        echo "  · ${http_reason} (prépare : bash scripts/mem0-http-test.sh --prepare)"
-      fi
-      ;;
-    *)
-      fail "API mem0-http — test_api.py a échoué (relance : bash scripts/mem0-http-test.sh --run)"
-      ;;
-  esac
-else
-  echo "  · scripts/mem0-http-test.sh absent, test d'API mem0-http non vérifié"
-fi
-
-# Contrat boîte noire des 9 routes (scripts/mem0-http-contrat.sh) : il démarre un
-# serveur jetable (Python + Qdrant natif + faux OpenAI) et exerce l'API par HTTP.
-# Même règle que test_api.py : sortie recopiée telle quelle, pièce manquante (code
-# 2) annoncée sans ✓ — ou ✗ si MEM0_OMP_REQUIRE_HTTP_API=1 (CI). Les copies jetables
-# des harnais posent MEM0_OMP_SKIP_HTTP_CONTRAT=1 pour ne démarrer aucun serveur.
-if [ -n "${MEM0_OMP_SKIP_HTTP_CONTRAT:-}" ]; then
-  echo "  · contrat boîte noire ignoré (MEM0_OMP_SKIP_HTTP_CONTRAT=1)"
-elif [ -f scripts/mem0-http-contrat.sh ]; then
-  contrat_out="$(bash scripts/mem0-http-contrat.sh --run 2>&1)"
-  contrat_status=$?
-  [ -n "$contrat_out" ] && printf '%s\n' "$contrat_out"
-  case "$contrat_status" in
-    0)
-      pass "API mem0-http : contrat boîte noire conforme (9 routes)"
-      ;;
-    2)
-      contrat_reason="$(printf '%s\n' "$contrat_out" | head -n 1)"
-      if [ "${MEM0_OMP_REQUIRE_HTTP_API:-}" = "1" ]; then
-        fail "API mem0-http — contrat boîte noire ${contrat_reason} (relance : bash scripts/mem0-http-contrat.sh --prepare)"
-      else
-        echo "  · ${contrat_reason} (prépare : bash scripts/mem0-http-test.sh --prepare && bash scripts/mem0-http-contrat.sh --prepare)"
-      fi
-      ;;
-    *)
-      fail "API mem0-http — contrat boîte noire en échec (relance : bash scripts/mem0-http-contrat.sh --run)"
-      ;;
-  esac
-else
-  echo "  · scripts/mem0-http-contrat.sh absent, contrat boîte noire non vérifié"
 fi
 fi
 
