@@ -1177,6 +1177,12 @@ pièces et pose `MEM0_OMP_REQUIRE_HTTP_API=1` : une pièce manquante ou un cas e
 | `MEM0_RS_BIN` | binaire démarré par `--start-rs` (défaut : `${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs`) |
 | `MEM0_OMP_SKIP_HTTP_CONTRAT` | non vide : contrat ignoré (posé par les copies jetables des tests) |
 
+`--start-python` écrit, dès que sa Qdrant jetable répond sur `/readyz`, le port
+HTTP de cette Qdrant dans `$MEM0_CONTRAT_WORKDIR/qdrant.port` (un entier puis un
+saut de ligne ; clé API fixe `contrat-qdrant-cle`). La preuve de migration
+`test/mem0-rs-migration.test.ts` y lit la source de `mem0-rs import` : la
+collection `omp_memory` et `$MEM0_CONTRAT_WORKDIR/mem0/history.db`.
+
 Le contrat joue aussi une phase **`rang`**, sur une instance neuve (l'IDF du BM25
 ne voit que ce corpus) : la fixture commitée `scripts/mem0-http-contrat/rang.json`
 porte un petit corpus, des requêtes et, capturés sur le Python, l'ordre des ids

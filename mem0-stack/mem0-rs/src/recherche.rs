@@ -365,6 +365,7 @@ mod tests {
             run_id: None,
             role: Some("user".into()),
             attributed_to: None,
+            metadata: None,
         };
         let f = |paires: &[(&str, Option<&str>)]| {
             correspond(&s, &paires.iter().map(|(k, v)| (k.to_string(), v.map(str::to_owned))).collect::<Vec<_>>())

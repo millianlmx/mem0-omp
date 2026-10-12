@@ -20,12 +20,14 @@ mem0 1.x n'est pas reproduit.
 ```sh
 cargo build --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked
 mem0-stack/mem0-rs/target/debug/mem0-rs [--host <adresse>] [--port <port>]
+mem0-stack/mem0-rs/target/debug/mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]
 ```
 
 - Défauts : `--host 127.0.0.1`, `--port 8321`.
 - Argument inconnu, valeur manquante ou port hors 1-65535 : usage sur stderr, code 2.
 - Erreur de configuration, de base ou d'écoute : message sur stderr, code 1.
 - SIGTERM ou SIGINT : arrêt propre (les requêtes en cours finissent), code 0.
+- `import` (premier argument) : import depuis mem0-http, voir § Import depuis mem0-http.
 
 Vérifications : `cargo test --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked`
 et `cargo clippy --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked --all-targets -- -D warnings`.
@@ -47,19 +49,29 @@ bruts).
 | `MEM0_HTTP_TOKEN` | `""` | jeton exigé dans `X-Mem0-Token` ; vide = aucun contrôle ; jamais imprimé |
 | `OMP_INSTALLATION_TOKEN` | `""` | ajouté à `GET /health` (`installation`) s'il est non vide |
 
-Les variables `QDRANT_*` ne sont pas lues.
+Les variables `QDRANT_*` ne sont pas lues par le serveur. `mem0-rs import` lit
+`QDRANT_API_KEY` (en-tête `api-key`, envoyé seulement si non vide ; jamais en
+argument, qui serait visible dans `ps`), plus `MEM0_DB_PATH` et `EMBEDDING_DIMS` ;
+il n'utilise aucune variable `OMLX_*` et n'appelle jamais l'embedder.
 
 ## Stockage
 
 Un seul fichier SQLite, `MEM0_DB_PATH` (journal WAL : seuls `<db>-wal`, `<db>-shm`
-et `<db>-journal` peuvent apparaître à côté) :
+et `<db>-journal` peuvent apparaître à côté, plus le verrou `<db>.lock`) :
 
-- `meta` : `schema_version` (`2`) et `embedding_dims`. Relancer la base avec une
+- `meta` : `schema_version` (`3`) et `embedding_dims`. Relancer la base avec une
   autre `EMBEDDING_DIMS` est refusé (code 1), sans toucher au fichier. Une base v1
-  est refusée (`schema_version 1 inconnue (attendue 2)`, code 1), sans migration.
+  ou v2 est refusée (`schema_version 2 inconnue (attendue 3)`, code 1), sans
+  migration : supprimer le fichier et réimporter.
 - `memories` : les souvenirs (texte, hash md5, portée, rôle — NULL pour un souvenir
-  extrait —, `attributed_to` en JSON compact, étiquettes, dates) et leur vecteur
-  creux BM25 (`sparse`, JSON `[[indice,poids],…]`).
+  extrait —, `attributed_to` en JSON compact, `metadata`, étiquettes, dates) et leur
+  vecteur creux BM25 (`sparse`, JSON `[[indice,poids],…]`). `metadata` (objet JSON
+  compact, nullable) porte les clés de payload hors cœur d'un souvenir importé
+  (ex. `memory_type`) ; elle est rendue avec `tags` dans le `metadata` des lignes de
+  `/memory/all` et `/memory/search`, et aucune route ne l'écrit. `sparse` vaut NULL
+  pour un souvenir importé sans vecteur creux (point Qdrant en liste nue) : il est
+  alors hors de la partie BM25 et du N de l'IDF, comme dans Qdrant. Un PUT le
+  recalcule.
 - `memory_vec` (sqlite-vec, `vec0`) : le vecteur dense normalisé L2 en float32.
 - `memory_terms` (FTS5) : les indices creux du souvenir en jetons `t<indice>` ;
   `memory_terms_vocab` (`fts5vocab`) en donne les fréquences documentaires.
@@ -71,6 +83,75 @@ et `<db>-journal` peuvent apparaître à côté) :
 Chaque écriture calcule son embedding avant, puis écrit souvenir, vecteurs, termes et
 historique dans une seule transaction. Aucun autre fichier n'est créé (ni
 `~/.mem0/history.db`, ni journal sur disque). Retour arrière : supprimer le fichier.
+
+Exclusivité : au démarrage, après l'écoute et avant d'ouvrir la base, le serveur
+prend un verrou `flock` exclusif sur `<db>.lock` (créé si besoin, jamais supprimé)
+et le garde jusqu'à son arrêt. Un second serveur sur la même base sort en code 1 :
+`MEM0_DB_PATH=<db> est déjà servie par un autre processus mem0-rs (verrou <db>.lock)`.
+Le verrou tombe avec le processus : il n'est jamais périmé.
+
+## Import depuis mem0-http
+
+```sh
+QDRANT_API_KEY=<clé> MEM0_DB_PATH=<base> mem0-rs import --history-db <history.db> \
+  [--qdrant-url http://127.0.0.1:6333] [--collection omp_memory] [--dry-run] [--json]
+```
+
+Lit toute la collection Qdrant (`POST /collections/<nom>/points/scroll`, pages de
+256, payload et vecteurs ; seule requête émise) puis le `history.db` de mem0 (ouvert
+en lecture seule), et écrit la base en UNE transaction. La source n'est jamais
+modifiée. Les vecteurs denses de la source sont repris tels quels (aucun appel à
+l'embedder) ; le vecteur creux `bm25` source fait foi pour la partie BM25 (un point
+en liste nue n'en a pas : `sparse` NULL). Les clés de payload hors cœur vont dans
+`metadata`, l'historique et les messages (`messages`, contexte d'`add` infer=true)
+sont recopiés verbatim.
+
+- `--history-db` (obligatoire) : sur le poste, history.db vit dans le conteneur
+  mem0-http, pas sur l'hôte ; on en prend une copie sans l'écrire :
+  `"$HOME/Library/Application Support/com.omp.console/components/podman/6.1.3/bin/podman" --url "unix://$TMPDIR/podman/omp-console-api.sock" cp omp-console-mem0-http:/home/mem0/.mem0/history.db <copie>`.
+- `--qdrant-url` : défaut `http://127.0.0.1:6333` (barre finale retirée).
+- `--collection` : défaut `omp_memory`.
+- `--dry-run` : lit la source et la cible, produit le même rapport que l'import réel
+  qui suivrait, et n'écrit rien (aucun fichier créé, base existante ouverte en
+  `immutable=1`) ; ligne `simulation : rien n'a été écrit dans <base>` sur stderr.
+  Refusé si `<base>-wal` n'est pas vide : démarrer puis arrêter mem0-rs l'intègre.
+- `--json` : rapport en un objet JSON sur une ligne (forme figée, lue par l'app).
+
+La cible gagne : un souvenir dont l'id est déjà dans la base (`memories`, ou
+`history` pour un souvenir supprimé, qui n'est donc jamais ressuscité) est compté
+« déjà présent » et sauté avec son historique, même si son contenu diffère ; une
+portée de messages déjà présente est sautée. Relancer l'import est donc sans effet
+sur ce qui existe et n'ajoute que le nouveau.
+
+Données rejetées (listées avec id, raison et détail, code 3) : `vecteur_absent`,
+`dimension` (≠ `EMBEDDING_DIMS`), `texte_absent`, `champ_invalide` (valeur que la
+base ne sait pas représenter : `hash`/`user_id` absents, `actor_id`,
+`expiration_date`, date hors format, `bm25` mal formé…), `historique_orphelin`
+(ligne d'historique d'un id absent de Qdrant sans `DELETE` ; un id supprimé AVEC
+`DELETE` est importé normalement).
+
+Rapport texte, une ligne par agent_id (trié, `(sans agent_id)` en dernier), puis
+ses rejets et le total :
+
+```
+a1 : 3 importés, 0 déjà présents, 1 rejetés, 5 révisions, 2 messages
+  rejet souvenir <id> : dimension (768 dimensions, 1024 attendues)
+total : 3 importés, 0 déjà présents, 1 rejetés, 5 révisions, 2 messages
+```
+
+En `--json` : `{"agents":[{"agent_id":"a1","importes":3,"deja_presents":0,"rejetes":[{"element":"souvenir","id":"…","raison":"dimension","detail":"768 dimensions, 1024 attendues"}],"revisions":5,"messages":2}],"totaux":{"importes":3,"deja_presents":0,"rejetes":1,"revisions":5,"messages":2}}`.
+
+Codes : 0 succès sans rejet ; 1 erreur (Qdrant injoignable ou clé refusée,
+collection ou history.db introuvable, base servie par un mem0-rs en marche — son
+verrou `<base>.lock` est tenu —, base illisible, écriture impossible), rien n'est
+écrit et stdout reste vide ; 2 usage ; 3 import (ou simulation) mené à terme avec au
+moins un rejet. Le rapport ne sort sur stdout que pour 0 et 3.
+
+Tout ou rien : la source est lue et validée en entier avant que la cible ne soit
+ouverte ; une erreur ou un Ctrl-C pendant la lecture laisse le dossier de la cible
+identique, octet pour octet. L'écriture tient dans une transaction : une erreur ou un
+signal l'annule. Hors garantie : une cible INEXISTANTE interrompue entre sa création
+et la fin de la transaction peut rester créée avec un schéma vide (la supprimer).
 
 ## Recherche hybride
 
@@ -87,7 +168,8 @@ Qdrant 1.19 et fastembed 0.8.1 :
    `max(limit*4, 60)` premiers.
 4. Candidats BM25 : vecteur creux de la requête (même encodeur que les souvenirs),
    score `Σ q_i·idf_i·d_i` avec l'IDF de Qdrant `ln((N − n + 0.5)/(n + 0.5) + 1)` sur
-   toute la base, puis sigmoïde dont `(midpoint, steepness)` dépend du nombre de mots
+   toute la base (N : souvenirs qui portent un vecteur creux), puis sigmoïde dont
+   `(midpoint, steepness)` dépend du nombre de mots
    de la requête.
 5. Le seuil s'applique au cosinus brut AVANT la fusion ; puis
    `min((cosinus + bm25)/max_possible, 1)`, tri stable décroissant, troncature à

@@ -491,7 +491,7 @@ impl<'a> Ligne<'a> {
             id: &s.id,
             memory: &s.memory,
             hash: &s.hash,
-            metadata: s.tags.as_ref().map(|t| Metadata { tags: t.as_deref() }),
+            metadata: Metadata::de(s),
             score: None,
             created_at: &s.created_at,
             updated_at: &s.updated_at,
@@ -505,9 +505,33 @@ impl<'a> Ligne<'a> {
     }
 }
 
-#[derive(Serialize)]
+/// `metadata` d'une ligne (S-11, `MemoryItem.metadata`) : `tags` s'il est
+/// présent, puis les clés de payload hors cœur ; `None` (null) si aucune.
 struct Metadata<'a> {
-    tags: Option<&'a str>,
+    tags: Option<Option<&'a str>>,
+    autres: Option<&'a serde_json::Map<String, serde_json::Value>>,
+}
+
+impl<'a> Metadata<'a> {
+    fn de(s: &'a Souvenir) -> Option<Self> {
+        let tags = s.tags.as_ref().map(Option::as_deref);
+        let autres = s.metadata.as_ref();
+        (tags.is_some() || autres.is_some()).then_some(Metadata { tags, autres })
+    }
+}
+
+impl Serialize for Metadata<'_> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = serializer.serialize_map(None)?;
+        if let Some(tags) = self.tags {
+            map.serialize_entry("tags", &tags)?;
+        }
+        for (cle, valeur) in self.autres.into_iter().flatten() {
+            map.serialize_entry(cle, valeur)?;
+        }
+        map.end()
+    }
 }
 
 #[derive(Serialize)]
@@ -629,6 +653,7 @@ mod tests {
             run_id: None,
             role: Some("user".into()),
             attributed_to: None,
+            metadata: None,
         };
         // add infer=false : forme inchangée.
         let v = serde_json::to_value(Ligne::de(&classique)).unwrap();
@@ -657,5 +682,47 @@ mod tests {
         let nu = Souvenir { agent_id: None, run_id: None, role: None, attributed_to: None, ..classique };
         let v = serde_json::to_value(Ligne::de(&nu)).unwrap();
         assert_eq!(cles(&v), ["id", "memory", "hash", "metadata", "created_at", "updated_at", "user_id"]);
+    }
+
+    /// mem0-rs-migration S-11 (pré-requis de AC-1 et AC-2) : `metadata` des lignes
+    /// all et search fusionne `tags` et les clés de payload importées.
+    #[test]
+    fn ac1_ac2_metadata_fusionne_tags_et_cles_importees() {
+        let base = Souvenir {
+            id: "i".into(),
+            memory: "m".into(),
+            hash: "h".into(),
+            tags: None,
+            created_at: "c".into(),
+            updated_at: "u".into(),
+            user_id: USER.into(),
+            agent_id: None,
+            run_id: None,
+            role: Some("user".into()),
+            attributed_to: None,
+            metadata: None,
+        };
+        let importees = || json!({"memory_type": "procedural_memory", "n": {"a": [1]}}).as_object().cloned();
+        let cas = [
+            (base.clone(), json!(null)),
+            (Souvenir { tags: Some(Some("a,b".into())), ..base.clone() }, json!({"tags": "a,b"})),
+            (Souvenir { tags: Some(None), ..base.clone() }, json!({"tags": null})),
+            (Souvenir { metadata: importees(), ..base.clone() }, json!({"memory_type": "procedural_memory", "n": {"a": [1]}})),
+            (
+                Souvenir { tags: Some(Some("t".into())), metadata: importees(), ..base.clone() },
+                json!({"tags": "t", "memory_type": "procedural_memory", "n": {"a": [1]}}),
+            ),
+        ];
+        for (s, attendu) in &cas {
+            let all = serde_json::to_value(Ligne::de(s)).unwrap();
+            let recherche = serde_json::to_value(Ligne { score: Some(0.5), ..Ligne::de(s) }).unwrap();
+            for v in [&all, &recherche] {
+                assert_eq!(&v["metadata"], attendu);
+                if let Some(o) = attendu.as_object() {
+                    let ordre: Vec<&str> = o.keys().map(String::as_str).collect();
+                    assert_eq!(cles(&v["metadata"]), ordre, "tags d'abord, puis l'ordre du payload");
+                }
+            }
+        }
     }
 }
