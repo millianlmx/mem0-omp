@@ -4,7 +4,7 @@
 // l'invariant « un seul fichier de plus ».
 //
 // Le contrat inter-langages est le LITTÉRAL du protocole : les mêmes chaînes sont
-// écrites ici et dans `test/reponses.test.ts`.
+// écrites ici et dans `test/req/reponses.test.ts`.
 
 @testable import OMPConsole
 import ConsoleCore

@@ -5,7 +5,7 @@ par renvoi, en nommant leur source, puis énonce ce qui est particulier au
 tactile. Chaque règle est vérifiable : une puce se termine par au moins un
 marqueur `[test: <fonction>]` (une fonction de
 `omp-console/ios/OMPConsoleIOSTests/`), `[capture: <motif>]` (un nom produit par
-`scripts/ios-shots.sh`) ou `[garde: <slug>/AC-<n>]` (un test Node de
+`scripts/recette/ios-shots.sh`) ou `[garde: <slug>/AC-<n>]` (un test Node de
 `test/*.test.ts` portant ce titre). Une puce sans marqueur fait échouer la garde.
 
 ## Héritage de la coque macOS (par renvoi)

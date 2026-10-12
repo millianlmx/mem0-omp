@@ -4,7 +4,7 @@
 // `contractLong` nomme la feature en entier.
 //
 // Chaque test nomme l'id d'acceptation qu'il prouve. Le rendu visible (arbre
-// d'accessibilité, captures) est prouvé par `scripts/ios-contrat-recette.sh`.
+// d'accessibilité, captures) est prouvé par `scripts/recette/ios-contrat-recette.sh`.
 
 import ConsoleClient
 import ConsoleCore
@@ -188,7 +188,7 @@ struct IOSContractMarkdownTests {
     // MARK: - ios-dynamic-type-ax-residuel, AC-9
 
     /// Le constat C-4 de l'audit HIG (contrat en Markdown brut) re-mesuré : les deux
-    /// cartes capturées par `scripts/ios-dynamic-type-recette.sh` (`accueil-contrat`,
+    /// cartes capturées par `scripts/recette/ios-dynamic-type-recette.sh` (`accueil-contrat`,
     /// `accueil-contrat-long`) servent « ## Spécifications », des puces « - » et du
     /// code entre accents graves, et la feuille n'en montre aucune trace. Le
     /// découpage en blocs ne dépend pas de la taille de texte ; le rendu à AX-XL et

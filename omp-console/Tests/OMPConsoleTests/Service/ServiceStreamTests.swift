@@ -1,6 +1,6 @@
 // Preuve du flux SSE RÉEL du service (S-2) : une trame close par sa ligne vide
 // arrive alors que le flux reste OUVERT, comme celui du service. Mesuré le
-// 2026-10-11 (recette réelle `scripts/mac-recette-ui.sh`, surface
+// 2026-10-11 (recette réelle `scripts/recette/mac-recette-ui.sh`, surface
 // session-omp-dialogue) : `URLSession.AsyncBytes.lines` ne rend jamais les lignes
 // vides, et la dernière trame attendait la fermeture du flux.
 //

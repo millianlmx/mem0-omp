@@ -14,7 +14,7 @@ import ConsoleCore
 
 /// Une adresse CONFORME (`https://github.com/<owner>/<repo>/pull/n`, cf.
 /// `PRServiceTests`) mais FICTIVE : son nom de dépôt est neutre, jamais celui de
-/// CE dépôt. `test/docs.test.ts` exige que `PUBLISHING.md` cite exactement les
+/// CE dépôt. `test/outillage/docs.test.ts` exige que `PUBLISHING.md` cite exactement les
 /// fichiers porteurs de la marque d'URL du dépôt ; une fixture de test n'a rien à
 /// y faire, et le handle de PUBLISHING.md ne doit pas être substitué ici.
 private let prURL = "https://github.com/proprietaire/depot/pull/45"

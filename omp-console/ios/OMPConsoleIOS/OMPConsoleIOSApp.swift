@@ -50,7 +50,7 @@ import SwiftUI
 ///   arrêté, pour voir la phrase de ses marques sans appairage.
 ///
 /// La feuille de connexion ne s'ouvre D'ELLE-MÊME que si `-section` n'a pas été
-/// fourni : les captures de `scripts/ios-shots.sh` gardent ainsi leur écran,
+/// fourni : les captures de `scripts/recette/ios-shots.sh` gardent ainsi leur écran,
 /// sans feuille par-dessus.
 ///
 /// Aucun argument reconnu ⇒ l'Accueil et l'état `ready`.

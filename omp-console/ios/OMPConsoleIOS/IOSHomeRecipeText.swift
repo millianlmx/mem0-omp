@@ -9,7 +9,7 @@
 // utile. Le fichier est un `*Text.swift` : ses littéraux sont autorisés par la
 // garde de vocabulaire de l'app.
 //
-// `scripts/ios-contrat-recette.sh` sonde QUATRE chaînes de ce fichier, recopiées
+// `scripts/recette/ios-contrat-recette.sh` sonde QUATRE chaînes de ce fichier, recopiées
 // en dur dans le script : `longSlug`, le sous-titre « S-1 — Rendu des sections
 // par blocs », l'élément de liste « Chaque bloc du corps est un élément
 // d'accessibilité distinct. » et le paragraphe qui cite
@@ -115,7 +115,7 @@ enum IOSHomeRecipeText {
 
         - La recette `contractLong` ouvre la feuille Contrat sur la carte de la fixture, sans réseau.
         - Le nom de la feature est remplacé par un nom long, plus large que l'écran d'un iPhone.
-        - Le script `scripts/ios-contrat-recette.sh` crée ses propres simulateurs et n'en partage aucun.
+        - Le script `scripts/recette/ios-contrat-recette.sh` crée ses propres simulateurs et n'en partage aucun.
         - Chaque page de la feuille est capturée, avec l'arbre d'accessibilité qui l'accompagne.
         - Le rapport écrit une ligne par critère, pour chaque appareil, dans `rapport.txt`.
 

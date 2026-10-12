@@ -20,10 +20,10 @@ pass() { echo "  ✓ $1"; }
 #   --tests-scope=macos       `── Tests` ne lance que les fichiers de
 #                             scripts/test-files.sh --scope=macos ;
 #   --tests-part=1/2|2/2      découpe les TESTS de `── Tests` par TESTS_PART_PATTERN :
-#                             1/2 = test/check.test.ts filtré par --test-name-pattern,
+#                             1/2 = test/outillage/check.test.ts filtré par --test-name-pattern,
 #                             2/2 = tout l'ensemble filtré par --test-skip-pattern.
 #                             Les tests qui portent ce motif ne vivent que dans
-#                             test/check.test.ts (criteria/AC-13 : un slug, un
+#                             test/outillage/check.test.ts (criteria/AC-13 : un slug, un
 #                             fichier), donc 1/2 ∪ 2/2 lance chaque test une fois.
 SECTION_IDS="catalogue noms plugins versions extension types rust smoke tests noyau app-swift app-ios"
 TESTS_PART_PATTERN='^socle-app-swift/'
@@ -490,7 +490,7 @@ if command -v node >/dev/null 2>&1; then
   if [ "$tests_list_status" -eq 0 ]; then
     while IFS= read -r tests_file; do
       [ -n "$tests_file" ] || continue
-      if [ "$tests_part" = "1/2" ] && [ "$tests_file" != "test/check.test.ts" ]; then
+      if [ "$tests_part" = "1/2" ] && [ "$tests_file" != "test/outillage/check.test.ts" ]; then
         continue
       fi
       test_files+=("$tests_file")
@@ -521,7 +521,7 @@ if command -v node >/dev/null 2>&1; then
     tests_status=$?
     if [ "$tests_status" -eq 0 ]; then
       # Un filtre de noms qui ne retient rien sort 0 SANS `# tests 0` : node
-      # rapporte alors chaque FICHIER comme un test (`ok 1 - test/check.test.ts`,
+      # rapporte alors chaque FICHIER comme un test (`ok 1 - test/outillage/check.test.ts`,
       # mesuré sur node v26.7.0). Une part a lancé quelque chose seulement si une
       # ligne de premier niveau porte un autre nom que l'un des fichiers lancés ;
       # sinon c'est un échec, jamais un vert silencieux.
@@ -553,7 +553,7 @@ if command -v node >/dev/null 2>&1; then
         tail -n 30 "$tests_log"
       fi
       grep -E '^# (tests|pass|fail|cancelled|skipped)' "$tests_log"
-      fail "tests unitaires — relance : node --test --experimental-strip-types test/*.test.ts"
+      fail "tests unitaires — relance : node --test --experimental-strip-types 'test/**/*.test.ts'"
     fi
     rm -f "$tests_log"
   fi

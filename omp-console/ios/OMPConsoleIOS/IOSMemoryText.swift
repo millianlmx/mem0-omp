@@ -113,7 +113,7 @@ enum IOSMemoryText {
     static let graphRecipeMemory = "m1"
 
     /// Le signal de PRÊT, écrit sur la sortie d'erreur quand l'état forcé de la recette
-    /// est atteint. `scripts/ios-shots.sh` le lit (miroir littéral dans le script) au lieu
+    /// est atteint. `scripts/recette/ios-shots.sh` le lit (miroir littéral dans le script) au lieu
     /// d'attendre un délai fixe.
     static let graphRecipeReady = "memoire-recipe-ready"
 
@@ -123,7 +123,7 @@ enum IOSMemoryText {
 
     /// Le signal de LECTURE de la recette `clavier`, écrit sur la sortie d'erreur à
     /// chaque lecture du sommaire : la recette du clavier compte ⌘R par lui (miroir
-    /// littéral dans `scripts/ios-clavier-largeur-recette.sh`).
+    /// littéral dans `scripts/recette/ios-clavier-largeur-recette.sh`).
     static let keyboardRecipeRead = "memoire-recipe-read"
 
     /// Les recettes de PANNE (ios-redaction-vouvoiement, S-2) : `injoignable` montre la

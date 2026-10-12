@@ -61,7 +61,7 @@ enum IOSPipelinesBoardRecipe: String, Equatable {
     )
 
     /// Le signal de PRÊT sur la sortie d'erreur du lancement (`--stderr`), lu par
-    /// `scripts/ios-pipelines-voies-recette.sh` avant la capture.
+    /// `scripts/recette/ios-pipelines-voies-recette.sh` avant la capture.
     func announce() {
         FileHandle.standardError.write(Data(PipelinesText.boardRecipeReady.utf8))
     }

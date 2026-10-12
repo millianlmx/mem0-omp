@@ -10,7 +10,7 @@
 // ne construit PAS l'arbre d'accessibilité d'une `NSHostingView` : la vue rendue se
 // mesure par `fittingSize` et sa vraie `NSScrollView`, ses mots par les fonctions
 // pures qu'elle rend. La lecture AX du panneau ouvert par le menu est la recette
-// `scripts/mac-appairage-recette.sh`.
+// `scripts/recette/mac-appairage-recette.sh`.
 
 import AppKit
 import Foundation

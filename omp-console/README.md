@@ -334,13 +334,13 @@ Trois pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
 
 ### Recette : interface Mac automatisée
 
-`bash scripts/mac-recette-ui.sh` (sans argument) ouvre une à une les **23
+`bash scripts/recette/mac-recette-ui.sh` (sans argument) ouvre une à une les **23
 surfaces** de l'app — les 9 sections de la barre latérale, puis 14 feuilles
 (bienvenue, préparation, nouvelle pipeline, réponse, contrat, fiche de
 carte, modèles, lancement et question de projet, question de session, ouverture
 du Terminal, création, édition et lien d'un souvenir) — **à la taille minimale de
 la fenêtre**, capture chacune et sonde son arbre AX. Le catalogue est
-`scripts/mac-recette-ui/catalogue.ts` ; fenêtres (dont Réglages › Appareils),
+`scripts/recette/mac-recette-ui/catalogue.ts` ; fenêtres (dont Réglages › Appareils),
 alertes, menus, popovers, inspecteurs et
 item de barre de menus sont hors périmètre. Le script n'est appelé ni par
 `scripts/check.sh` ni par la CI : il lui faut une session graphique.
@@ -371,7 +371,7 @@ Sorties dans `omp-console/build/mac-recette-ui/sortie/` (vidé à chaque passage
 cadre, actions), `parcours.json`, `rapport.json` (déterministe : deux passages sur
 le même code le rendent identique octet pour octet) et `rapport.md` (lisible, avec
 les cadres, les tailles de fenêtre et la section Isolation). La sonde compilée
-(`scripts/mac-recette-ui/sonde.swift`) est mise en cache sous
+(`scripts/recette/mac-recette-ui/sonde.swift`) est mise en cache sous
 `omp-console/build/mac-recette-ui/` et ne se recompile que si sa source change.
 
 Règles (seuil HIG macOS) : un élément **hors de la zone visible** de la surface
@@ -395,7 +395,7 @@ consignée : une isolation rompue rend le verdict « défauts trouvés ». Le
 nettoyage (toujours, y compris sur ⌃C) retire la racine, le domaine
 `com.omp.console.recette` et son inscription LaunchServices.
 
-**Exceptions.** `scripts/mac-recette-ui/exceptions.json` :
+**Exceptions.** `scripts/recette/mac-recette-ui/exceptions.json` :
 
 ```json
 {"version":1,"exceptions":[{"surface":"<id du catalogue>|*","regle":"hors-ecran|identifiant-duplique|cible-trop-petite","element":"<clé du rapport>","justification":"faux positif : … | défaut connu, à corriger hors de cette feature : …"}]}
@@ -1469,7 +1469,7 @@ désactivé.
 ### Bascule réelle du poste (ancienne mémoire → service mémoire)
 
 La bascule d'un poste qui faisait tourner l'ancienne version se prouve à la main,
-avec `scripts/sans-podman-bascule-recette.sh` (jamais lancé par `check.sh` ni la
+avec `scripts/recette/sans-podman-bascule-recette.sh` (jamais lancé par `check.sh` ni la
 CI ; sans `MEM0_SANS_PODMAN_REEL=1`, il dit « non exécuté : MEM0_SANS_PODMAN_REEL=1
 requis (bascule réelle du poste) » et sort en `2`). Racine =
 `OMP_CONSOLE_SUPPORT_ROOT`, sinon `~/Library/Application Support/com.omp.console` ;
@@ -1477,14 +1477,14 @@ port = `OMP_CONSOLE_MEM0_PORT`, sinon 8321. Chaque vérification imprime `✓ �
 `✗ …` ; le premier écart sort en `1`, tout vert en `0`. Dans l'ordre :
 
 1. **Avant** — ancienne app, ancienne mémoire en marche :
-   `MEM0_SANS_PODMAN_REEL=1 bash scripts/sans-podman-bascule-recette.sh avant`.
+   `MEM0_SANS_PODMAN_REEL=1 bash scripts/recette/sans-podman-bascule-recette.sh avant`.
    Le script lit la clé `QDRANT_API_KEY` de `stack/env`, fait défiler
    la collection `omp_memory` de Qdrant (`127.0.0.1:6333`) et écrit
    `stack/podman-migration/recette-avant.json` (par `agent_id`, la liste triée
    des couples identifiant–texte) ; il échoue si `bascule.json` existe déjà.
 2. **Installer et lancer la nouvelle app** (bundle de `scripts/swift-app.sh`),
    et attendre « Préparation terminée. ».
-3. **Après** — `MEM0_SANS_PODMAN_REEL=1 bash scripts/sans-podman-bascule-recette.sh apres`.
+3. **Après** — `MEM0_SANS_PODMAN_REEL=1 bash scripts/recette/sans-podman-bascule-recette.sh apres`.
    Il exige `bascule.json` de source `podman` ; pour chaque `agent_id`,
    `GET /memory/all?agent_id=` rend les mêmes couples qu'avant (les lignes sans
    `agent_id` sont lues dans `GET /memory/all` sans paramètre), et la liste
@@ -1496,7 +1496,7 @@ port = `OMP_CONSOLE_MEM0_PORT`, sinon 8321. Chaque vérification imprime `✓ �
 4. **Relance** — redémarrer À LA MAIN la machine et le seul conteneur
    `omp-console-qdrant` (geste de « Retour arrière » ci-dessus ; PAS
    `omp-console-mem0-http`, dont le port est tenu par l'agent), relancer l'app,
-   puis `MEM0_SANS_PODMAN_REEL=1 bash scripts/sans-podman-bascule-recette.sh relance` :
+   puis `MEM0_SANS_PODMAN_REEL=1 bash scripts/recette/sans-podman-bascule-recette.sh relance` :
    `bascule.json` et `import-report.json` sont inchangés (SHA-256 et date) — la
    migration n'a pas été rejouée — et Qdrant rend le même ensemble de couples
    qu'avant — la source n'a pas été modifiée.
@@ -2505,9 +2505,9 @@ recette est **sautée**, jamais verte à tort.
 
 ```bash
 bash scripts/swift-app.sh --no-tests              # le bundle à éprouver
-bash scripts/mac-appairage-recette.sh             # Mac seul
-bash scripts/mac-appairage-recette.sh --ios       # + iOS/iPadOS
-bash scripts/mac-appairage-recette.sh --captures-only --bundle <app de la base>   # captures « avant »
+bash scripts/recette/mac-appairage-recette.sh             # Mac seul
+bash scripts/recette/mac-appairage-recette.sh --ios       # + iOS/iPadOS
+bash scripts/recette/mac-appairage-recette.sh --captures-only --bundle <app de la base>   # captures « avant »
 ```
 
 Elle lance une **instance de recette distincte** en arrière-plan (`open -g -n`), sur
@@ -2546,7 +2546,7 @@ verts ni rouges, et le bilan les compte. En `--captures-only` sur le bundle de l
 base, la feuille de préparation de l'instance est fermée (« Fermer ») si elle
 masque la feuille « Appairage ».
 
-La sonde AX `scripts/mac-appairage-sonde.swift` (compilée par `swiftc`) presse et
+La sonde AX `scripts/recette/mac-appairage-sonde.swift` (compilée par `swiftc`) presse et
 lit le panneau sans activer l'app ni la redimensionner : l'instance de
 l'utilisateur n'est jamais touchée. Son conteneur est la fenêtre qui contient
 `settings.devices` (à défaut, pour le bundle de la base, la feuille
@@ -2577,7 +2577,7 @@ Les textes visibles des fichiers `*Text.swift` (ConsoleCore, coque Mac, coque iO
 suivent [`GLOSSAIRE.md`](GLOSSAIRE.md) : un seul terme français par notion, sauf les
 termes conservés (« pipeline », « feature », « PR », /req, /specs, /impl, /review, noms
 propres), et la typographie française (’, espace insécable avant ; : ! ? et dans « »,
-…). La garde `test/typographie-et-glossaire-francais.test.ts` le vérifie.
+…). La garde `test/console/typographie-et-glossaire-francais.test.ts` le vérifie.
 
 ## Structure du paquet
 
@@ -2834,15 +2834,15 @@ Le bouton antenne (« Connexion ») rouvre la feuille de connexion à tout momen
 connecté ou non, une seule fois par écran : sur iPhone, dans la barre de chaque
 onglet, de la liste « Plus » et des écrans qu'elle pousse ; sur iPad, une fois,
 dans la barre de la section. La recette historique
-`scripts/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
+`scripts/recette/ios-connexion-recette.sh --connected <UDID> --unpaired <UDID>
 --ipad <UDID>` l'a prouvé au simulateur avec `idb` sur l'ancienne coque (captures
 sous `omp-console/build/ios-connexion/`). Elle compile elle-même une app signée
 (`scripts/ios-build.sh` compile sans signature, et le trousseau du simulateur
 refuse alors d'écrire le jeton d'appairage : l'état connecté serait
 inatteignable) et veut des simulateurs dédiés, que les autres runs
-(`ios-shots.sh`) ne pilotent pas. Elle et `scripts/ios-accessibilite-localisation-recette.sh`
+(`ios-shots.sh`) ne pilotent pas. Elle et `scripts/recette/ios-accessibilite-localisation-recette.sh`
 naviguent par l'ancienne liste racine (`ios.section.*`) et ne s'appliquent plus à
-la coque à onglets : celle-ci se prouve par `scripts/ios-navigation-onglets-recette.sh`
+la coque à onglets : celle-ci se prouve par `scripts/recette/ios-navigation-onglets-recette.sh`
 (voir plus bas).
 
 Hors connexion, les sept sections suivent la même règle, sur iPhone comme sur
@@ -3096,12 +3096,12 @@ Les preuves Swift de la section vivent dans
 `omp-console/ios/OMPConsoleIOSTests/IOSSessionTests.swift` (motif de parité
 compris), `omp-console/ios/OMPConsoleIOSTests/IOSRowAccessibilityTests.swift`
 (rangées lues par VoiceOver) et `omp-console/Tests/OMPConsoleTests/SessionParityTests.swift`
-côté macOS ; la garde textuelle est `test/ios-sessions.test.ts`. La recette de
+côté macOS ; la garde textuelle est `test/console/ios-sessions.test.ts`. La recette de
 design iOS fait autorité et vit dans `omp-console/ios/DESIGN.md`.
 
 ### Recette : la feuille Connexion
 
-`scripts/ios-connexion-feuille-recette.sh` rejoue les contrôles de la feuille
+`scripts/recette/ios-connexion-feuille-recette.sh` rejoue les contrôles de la feuille
 Connexion sur un iPhone et un iPad **privés**, créés par le script (noms
 `omp-connexion-tel-<moment>` / `omp-connexion-tab-<moment>`, sans « iPhone » ni
 « iPad ») puis supprimés à la sortie. Il construit l'app **signée** hors dépôt
@@ -3110,8 +3110,8 @@ au focus du Mac :
 
 ```bash
 # Relevé « avant » sur la base, puis « après » sur l'arbre de travail.
-bash scripts/ios-connexion-feuille-recette.sh --avant <ref> --source <udid appairé>
-bash scripts/ios-connexion-feuille-recette.sh --source <udid appairé>
+bash scripts/recette/ios-connexion-feuille-recette.sh --avant <ref> --source <udid appairé>
+bash scripts/recette/ios-connexion-feuille-recette.sh --source <udid appairé>
 ```
 
 - `--avant <ref>` construit depuis `git archive <ref> omp-console` ; sans lui,
@@ -3236,7 +3236,7 @@ Les règles jugeables vivent dans `omp-console/ios/DESIGN.md` (« Les feuilles �
 
 ### Recette : les feuilles
 
-`scripts/ios-feuilles-recette.sh` capture les neuf feuilles (Répondre, Contrat,
+`scripts/recette/ios-feuilles-recette.sh` capture les neuf feuilles (Répondre, Contrat,
 Connexion, Piloter un projet, OMP vous demande, Lancer une session OMP, Session,
 Nouvelle feature, Souvenir) sur un iPhone 17e et un iPad Pro 11" (M5)
 **privés** (`feuilles-recette-tel`, `feuilles-recette-tab`, iOS 27, apparence
@@ -3247,8 +3247,8 @@ Mac. Lancé à la main depuis la racine du dépôt, jamais par `check.sh` ni la 
 
 ```bash
 # Relevé « avant » (avant toute retouche visuelle), puis « après » en fin de feature.
-bash scripts/ios-feuilles-recette.sh avant [--source <udid appairé>]
-bash scripts/ios-feuilles-recette.sh apres [--source <udid appairé>]
+bash scripts/recette/ios-feuilles-recette.sh avant [--source <udid appairé>]
+bash scripts/recette/ios-feuilles-recette.sh apres [--source <udid appairé>]
 ```
 
 - Les feuilles s'ouvrent par les crochets de recette (`-home.recipe`,
@@ -3281,7 +3281,7 @@ bash scripts/ios-feuilles-recette.sh apres [--source <udid appairé>]
 
 ### Recette : bienvenue et Connexion en une feuille
 
-`scripts/ios-onboarding-recette.sh` prouve la feature ios-onboarding-et-connexion
+`scripts/recette/ios-onboarding-recette.sh` prouve la feature ios-onboarding-et-connexion
 sur un iPhone 18 Pro et un iPad Pro 11" (M5) **privés** (`onb-tel`, `onb-tab`,
 iOS 27.0, apparence claire), créés à chaque passe, démarrés sans Simulator.app et
 supprimés à la sortie (un appareil de même nom laissé par une passe interrompue
@@ -3292,8 +3292,8 @@ depuis la racine du dépôt, jamais par `check.sh` ni la CI :
 
 ```bash
 # Base fixe 8659c30 (worktree détaché temporaire), puis arbre de travail.
-bash scripts/ios-onboarding-recette.sh --avant
-bash scripts/ios-onboarding-recette.sh [--sans-mac] [--bundle <OMP Console.app>]
+bash scripts/recette/ios-onboarding-recette.sh --avant
+bash scripts/recette/ios-onboarding-recette.sh [--sans-mac] [--bundle <OMP Console.app>]
 ```
 
 Contrôles, une ligne `✔|✗|–  <AC>  <tel|tab>  <détail>` chacun dans
@@ -3328,8 +3328,8 @@ Contrôles, une ligne `✔|✗|–  <AC>  <tel|tab>  <détail>` chacun dans
 - **AC-5, AC-7** (tel) — instance Mac de RECETTE (`--bundle`, défaut
   `omp-console/build/OMP Console.app` : `bash scripts/swift-app.sh --no-tests`),
   lancée par `open -g -n` sur une racine jetable au port 18787 et pilotée par la
-  sonde AX de `scripts/mac-appairage-sonde.swift`, sans activation, avec les
-  pré-contrôles de `scripts/mac-appairage-recette.sh` (session verrouillée,
+  sonde AX de `scripts/recette/mac-appairage-sonde.swift`, sans activation, avec les
+  pré-contrôles de `scripts/recette/mac-appairage-recette.sh` (session verrouillée,
   manifeste du bundle, port, Accessibilité, Space plein écran). Depuis la
   bienvenue (`-client.manualAddress 127.0.0.1:18787`, « Continuer ») : un code
   frais du Mac (retiré jusqu'à contenir 0 ou 1), saisi en minuscules avec une
@@ -3408,7 +3408,7 @@ production) est gatée par `MEM0_REMOTE_RECIPE` :
 `MEM0_REMOTE_RECIPE=1 swift test --filter iosSessionOmpRecipe`. Comme pour
 `iosProjetRecipe`, elle ne prouve pas le Mac réel : la recette pas à pas ci-dessus
 est la preuve d'appareil. La garde textuelle de la feature est
-`test/ios-session-omp.test.ts`.
+`test/console/ios-session-omp.test.ts`.
 
 ### Prérequis
 
@@ -3452,7 +3452,7 @@ système. Les règles d'identité de l'app sont dans `omp-console/ios/DESIGN.md`
 ### Captures des sept écrans
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-shots.sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/recette/ios-shots.sh
 ```
 
 Le script démarre un simulateur iPhone et un iPad, installe l'app, puis l'ouvre
@@ -3490,7 +3490,7 @@ est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAI
 une capture inattendue ferait échouer le script.
 
 La feuille Contrat a sa propre recette idb, pour les preuves avant/après de la
-feature `contrat-ios-markdown-brut` : `bash scripts/ios-contrat-recette.sh
+feature `contrat-ios-markdown-brut` : `bash scripts/recette/ios-contrat-recette.sh
 <avant|apres>` ouvre la feuille sur un contrat long (`-home.recipe contractLong`)
 dans deux simulateurs PRIVÉS, `omp-contrat-telephone` et `omp-contrat-tablette`
 (créés au besoin sur le runtime iOS ≥ 26 le plus récent, jamais désinstallés ni
@@ -3576,7 +3576,7 @@ La recette des voies et des cartes de Pipelines (feature
 `pipelines-ipad-voies-sans-largeur`) s'appuie sur ce crochet :
 
 ```bash
-bash scripts/ios-pipelines-voies-recette.sh --phase avant|apres --source reel|fixture \
+bash scripts/recette/ios-pipelines-voies-recette.sh --phase avant|apres --source reel|fixture \
   --ipad13 <UDID> --ipad11 <UDID> --iphone <UDID>
 ```
 
@@ -3609,8 +3609,8 @@ xcrun simctl io <UDID> screenshot omp-console/build/ios-shots/error-session.png
 ### Recette de la navigation à onglets
 
 ```bash
-bash scripts/ios-navigation-onglets-recette.sh --avant [<ref>]
-bash scripts/ios-navigation-onglets-recette.sh
+bash scripts/recette/ios-navigation-onglets-recette.sh --avant [<ref>]
+bash scripts/recette/ios-navigation-onglets-recette.sh
 ```
 
 La recette de la feature `ios-navigation-onglets-adaptables` prouve la coque à
@@ -3633,8 +3633,8 @@ exemple un simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
 ### Recette des listes groupées natives
 
 ```bash
-bash scripts/ios-listes-groupees-recette.sh --avant <ref>
-bash scripts/ios-listes-groupees-recette.sh
+bash scripts/recette/ios-listes-groupees-recette.sh --avant <ref>
+bash scripts/recette/ios-listes-groupees-recette.sh
 ```
 
 La recette de la feature `ios-listes-groupees-natives` capture, avant (`--avant
@@ -3661,8 +3661,8 @@ par exemple un simulateur non supprimé). Jamais lancée par check.sh ni par la 
 ### Recette des Statistiques et du graphe accessibles
 
 ```bash
-bash scripts/ios-statistiques-graphe-recette.sh --avant <ref>
-bash scripts/ios-statistiques-graphe-recette.sh
+bash scripts/recette/ios-statistiques-graphe-recette.sh --avant <ref>
+bash scripts/recette/ios-statistiques-graphe-recette.sh
 ```
 
 La recette de la feature `ios-statistiques-et-graphe-accessibles` capture, avant
@@ -3691,8 +3691,8 @@ nouvelle exécution). Jamais lancée par check.sh ni par la CI.
 ### Recette des gestes et retours natifs
 
 ```bash
-bash scripts/ios-gestes-retours-recette.sh --avant <ref>
-bash scripts/ios-gestes-retours-recette.sh
+bash scripts/recette/ios-gestes-retours-recette.sh --avant <ref>
+bash scripts/recette/ios-gestes-retours-recette.sh
 ```
 
 La recette de la feature `ios-gestes-et-retours-natifs` capture, avant
@@ -3719,15 +3719,15 @@ AC-12, AC-13) ; en mode avant, les constats de l'audit sortent en
 (non versionné) : captures PNG, relevés JSON, `rapport.txt`, `commit.txt`,
 `logs/` et, en mode après, `preuve.md`. Le retour haptique (que le simulateur
 ne joue pas) et le survol d'iPad (qu'`idb` ne simule pas) se prouvent par les
-tests Swift et la garde `test/ios-gestes-et-retours-natifs.test.ts`. Codes : 0
+tests Swift et la garde `test/console/ios-gestes-et-retours-natifs.test.ts`. Codes : 0
 (aucun ✗), 1 (au moins un ✗), 2 (non conclu, par exemple un simulateur non
 supprimé ou une erreur d'outil). Jamais lancée par check.sh ni par la CI.
 
 ### Recette des finitions de composants
 
 ```bash
-bash scripts/ios-finitions-composants-recette.sh --avant df08c50
-bash scripts/ios-finitions-composants-recette.sh
+bash scripts/recette/ios-finitions-composants-recette.sh --avant df08c50
+bash scripts/recette/ios-finitions-composants-recette.sh
 ```
 
 La recette de la feature `ios-finitions-composants` capture, avant (`--avant
@@ -3764,8 +3764,8 @@ simulateur non supprimé). Jamais lancée par check.sh ni par la CI.
 ### Recette Dynamic Type sans plafond
 
 ```bash
-bash scripts/ios-dynamic-type-recette.sh --avant <ref>
-bash scripts/ios-dynamic-type-recette.sh
+bash scripts/recette/ios-dynamic-type-recette.sh --avant <ref>
+bash scripts/recette/ios-dynamic-type-recette.sh
 ```
 
 La recette de la feature `ios-dynamic-type-ax-residuel` capture, avant
@@ -3807,7 +3807,7 @@ par la CI.
 ### Recette idb de la fiche d'une carte
 
 ```bash
-IOS_RECETTE_IPHONE=<UDID> IOS_RECETTE_IPAD=<UDID> bash scripts/ios-fiche-carte-recette.sh
+IOS_RECETTE_IPHONE=<UDID> IOS_RECETTE_IPAD=<UDID> bash scripts/recette/ios-fiche-carte-recette.sh
 ```
 
 Le script compile l'app, l'installe sur un iPhone et un iPad du simulateur, lance
@@ -3833,7 +3833,7 @@ d'apparence. La recette rejoue la preuve sur de vrais simulateurs, par la lectur
 d'accessibilité d'idb :
 
 ```bash
-bash scripts/ios-cibles-tactiles-recette.sh --iphone <UDID> --ipad <UDID> [--avant]
+bash scripts/recette/ios-cibles-tactiles-recette.sh --iphone <UDID> --ipad <UDID> [--avant]
 ```
 
 Préconditions, jamais satisfaites par le script (il n'appaire pas) : `idb`, Xcode 27,
@@ -3890,10 +3890,10 @@ en échec, app non connectée au Mac, capture absente ou uniforme, relevé insta
 Limite connue : le tap d'AC-3 ne distingue PAS l'avant de l'après. Le « touch slop »
 d'UIKit déclenche déjà un bouton de 20 pt jusqu'à environ 19 à 25 pt au-dessus du centre
 du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La garde
-textuelle de la correction est `test/ios-cibles-tactiles-sous-44pt.test.ts`.
+textuelle de la correction est `test/console/ios-cibles-tactiles-sous-44pt.test.ts`.
 ### Recette idb : cibles, identifiants et bords
 
-`scripts/ios-recette-ui.sh` relève 8 surfaces de l'app iOS sur un simulateur
+`scripts/recette/ios-recette-ui.sh` relève 8 surfaces de l'app iOS sur un simulateur
 iPhone dédié et signale trois classes de défauts sur chaque relevé : une cible
 tactile de moins de 44 pt, un identifiant d'accessibilité porté par plusieurs
 éléments, un élément collé au bord de l'écran. Elle se lance à la main : ni CI,
@@ -3908,7 +3908,7 @@ prendraient sinon cet appareil. La recette ne le crée ni ne le supprime.
 
 ```bash
 xcrun simctl create recette-ui-tel com.apple.CoreSimulator.SimDeviceType.iPhone-18-Pro com.apple.CoreSimulator.SimRuntime.iOS-27-0
-bash scripts/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…
+bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…
 ```
 
 **Matrice.** 8 surfaces × 3 configurations = **24 relevés** : les sept sections
@@ -3951,7 +3951,7 @@ inutilisée : <n>` par entrée qui n'excepte rien.
 `SIGNALÉ` ; `2` : la recette n'a pas pu conclure (prérequis, exceptions invalides,
 relevé non vérifié, construction ou installation impossible).
 
-**Exceptions.** `scripts/ios-recette-ui-exceptions.json` (versionné)
+**Exceptions.** `scripts/recette/ios-recette-ui-exceptions.json` (versionné)
 est un tableau d'objets aux clés exactes `surface` (une des 8 clés ou `*`),
 `apparence` (`clair`, `sombre`, `*`), `taille` (`defaut`, `ax-xl`, `*`), `regle`,
 `source` (`ax` ou `capture`, `capture` seulement avec `bord`), `element`
@@ -4016,7 +4016,7 @@ idb lance un `idb_companion --udid <UDID>` qui survit à `simctl delete` : sans
 ### Recette des rangées et des gestes de l'Accueil
 
 ```bash
-DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/ios-accueil-rangees-recette.sh
+DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/recette/ios-accueil-rangees-recette.sh
 ```
 
 Le script compile l'app sans signature, crée un iPhone 18 Pro et un iPad (A16)
@@ -4033,7 +4033,7 @@ créés sont supprimés à la sortie.
 
 ### Recette des sections de l'Accueil et de l'item de barre de menus
 
-`bash scripts/accueil-sections-recette.sh [--avant]` : `--avant` capture l'Accueil
+`bash scripts/recette/accueil-sections-recette.sh [--avant]` : `--avant` capture l'Accueil
 iOS de la base `8079e6e` (worktree détaché temporaire) et lit en AX l'item de
 l'instance OMP Console de l'utilisateur, sans l'activer ; sans option, il capture
 l'Accueil iOS (iPhone, iPad) et Mac (2e instance `-home.recipe dashboard`, racine
@@ -4047,7 +4047,7 @@ limite consignée, la preuve restant la lecture AX.
 ### Recette : états non connecté
 
 ```bash
-bash scripts/ios-etats-connexion-recette.sh [--avant <ref>] --source <UDID appairé>
+bash scripts/recette/ios-etats-connexion-recette.sh [--avant <ref>] --source <UDID appairé>
 ```
 
 La recette prouve, sur un iPhone 17 Pro puis un iPad Pro 13 pouces privés, les deux
@@ -4092,15 +4092,15 @@ build, simulateur ou argument en défaut ; **2** non exécuté. Une passe dure ~
 
 ### Recette : accessibilité et langue
 
-`scripts/ios-accessibilite-localisation-recette.sh` prouve à l'exécution, avant et
+`scripts/recette/ios-accessibilite-localisation-recette.sh` prouve à l'exécution, avant et
 après, les neuf critères de la feature `accessibilite-et-localisation-ios-residu`
 (symboles décoratifs muets, identifiants de conteneur non propagés, un identifiant
 par carte, cibles de 44 pt, app française seulement, nom sous l'icône, titre et
 chevrons de la liste racine) :
 
 ```bash
-bash scripts/ios-accessibilite-localisation-recette.sh               # arbre de travail
-bash scripts/ios-accessibilite-localisation-recette.sh --avant 032a0df
+bash scripts/recette/ios-accessibilite-localisation-recette.sh               # arbre de travail
+bash scripts/recette/ios-accessibilite-localisation-recette.sh --avant 032a0df
 ```
 
 - **Construction** non signée par `scripts/ios-build.sh --no-tests` (aucun
@@ -4128,7 +4128,7 @@ bash scripts/ios-accessibilite-localisation-recette.sh --avant 032a0df
   non faite : sur la base, celles qui demandent le crochet `ardoise` ; partout, la
   fiche « Ouvrir la PR », le lien du plan Projet et les « Réessayer » de la Mémoire,
   inatteignables sans appairage ni panne (leur forme est gardée par
-  `test/accessibilite-et-localisation-ios-residu.test.ts`).
+  `test/console/accessibilite-et-localisation-ios-residu.test.ts`).
 - **Codes de sortie** : 0 tout est ✓ ; 1 au moins un ✗ ; 2 rien n'a pu être conclu
   (outil manquant, Xcode inutilisable, construction impossible, signal absent, arbre
   instable, menu d'édition introuvable après 3 essais, simulateur non supprimé).
@@ -4409,14 +4409,14 @@ des feuilles (Annuler, valider) restent inchangés, aucune commande ne les prend
 
 ### Recette : clavier et largeur de lecture
 
-`scripts/ios-clavier-largeur-recette.sh` prouve la colonne de lecture et le
+`scripts/recette/ios-clavier-largeur-recette.sh` prouve la colonne de lecture et le
 clavier de l'iPad par captures et par touches `idb`, sur deux simulateurs DÉDIÉS
 dont le nom ne contient ni « iPhone » ni « iPad » (un iPad Pro 13-inch et un
 iPhone) :
 
 ```bash
 IOS_RECETTE_IPAD=<UDID iPad> IOS_RECETTE_IPHONE=<UDID iPhone> \
-  bash scripts/ios-clavier-largeur-recette.sh --phase avant|apres [--source fixture|reel]
+  bash scripts/recette/ios-clavier-largeur-recette.sh --phase avant|apres [--source fixture|reel]
 ```
 
 - `--phase avant`, sur l'arbre d'avant la feature, capture et mesure les sept
@@ -4440,15 +4440,15 @@ IOS_RECETTE_IPAD=<UDID iPad> IOS_RECETTE_IPHONE=<UDID iPhone> \
 
 ### Recette : identité de l'app
 
-`scripts/ios-identite-recette.sh` prouve au simulateur, avant et après, les
+`scripts/recette/ios-identite-recette.sh` prouve au simulateur, avant et après, les
 critères de la feature `ios-identite-app` (icône claire et sombre sous « OMP
 Console », catalogue de l'AppIcon, accent égal au bleu système, nom et région,
 message « Réseau local », écran de lancement, icône du Mac) et relit les constats
 de l'audit sur l'app de la base :
 
 ```bash
-bash scripts/ios-identite-recette.sh                 # arbre de travail
-bash scripts/ios-identite-recette.sh --avant f3fbfe6
+bash scripts/recette/ios-identite-recette.sh                 # arbre de travail
+bash scripts/recette/ios-identite-recette.sh --avant f3fbfe6
 ```
 
 - **Construction** signée ad hoc (`CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES
@@ -4457,7 +4457,7 @@ bash scripts/ios-identite-recette.sh --avant f3fbfe6
   construite dans un worktree détaché temporaire, retiré à la sortie. Le volet Mac
   assemble seulement `omp-console/build/OMP Console.app` par
   `bash scripts/swift-app.sh --no-tests`, sans l'ouvrir. Le programme de mesure des
-  images, `scripts/ios-identite-recette/images.swift`, est compilé par `swiftc`
+  images, `scripts/recette/ios-identite-recette/images.swift`, est compilé par `swiftc`
   dans `omp-console/build/ios-identite-app/`. Prérequis : Xcode 27, `idb`, `python3`
   avec PIL.
 - **Simulateurs privés** `identite-tel` (iPhone 18 Pro, sinon iPhone 17 Pro) et,
@@ -4493,7 +4493,7 @@ bash scripts/ios-identite-recette.sh --avant f3fbfe6
 - **Sortie** : `omp-console/build/ios-identite-app/<avant|apres>/`, avec
   `rapport.txt` (une ligne `AC-n – <appareil> ✓|✗ <mesure>` par contrôle), `logs/`
   et les PNG. Sans captures avant, chaque ligne AC-4 est en ✗ « captures avant
-  absentes (bash scripts/ios-identite-recette.sh --avant f3fbfe6) ».
+  absentes (bash scripts/recette/ios-identite-recette.sh --avant f3fbfe6) ».
 - **Codes de sortie** : 0 toutes les lignes sont ✓ ; 1 au moins un ✗, ou un
   prérequis manque (`✗ PIL absent : python3 -m pip install pillow`) ; 2 un
   simulateur ou le worktree temporaire n'a pas pu être retiré.

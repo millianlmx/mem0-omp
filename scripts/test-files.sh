@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # Imprime les fichiers de test node que `── Tests` de scripts/check.sh doit
-# lancer, un chemin `test/<nom>.test.ts` par ligne, dans l'ordre du glob.
+# lancer, un chemin `test/<domaine>/<nom>.test.ts` par ligne, sous-dossiers
+# compris, triés octet par octet (`LC_ALL=C sort`, l'ordre de listTestFiles de
+# test/support/repo.ts). test/support/ ne porte aucun `.test.ts` : ses modules
+# ne sont jamais lancés seuls.
 #
-#   bash scripts/test-files.sh                 tous les test/*.test.ts
+#   bash scripts/test-files.sh                 tous les test/**/*.test.ts
 #   bash scripts/test-files.sh --scope=macos   ceux qui dépendent de macOS
 #
 # `--scope=macos` est la SEULE définition de « fichier de test qui appelle swift
@@ -26,9 +29,11 @@ for arg in "$@"; do
   esac
 done
 
-shopt -s nullglob
-files=(test/*.test.ts)
-shopt -u nullglob
+# `find`, jamais `**` : le bash 3.2 des Mac n'a pas `globstar`.
+files=()
+while IFS= read -r file; do
+  files+=("$file")
+done < <(find test -type f -name '*.test.ts' | LC_ALL=C sort)
 
 if [ "${#files[@]}" -eq 0 ]; then
   echo "✗ aucun fichier de test retenu" >&2
@@ -46,8 +51,8 @@ if ! command -v python3 >/dev/null 2>&1; then
 fi
 
 # Le filtre passe par python3, jamais par `grep -P` (rejeté par le grep BSD de
-# macOS, voir `── Extension` de check.sh). L'ordre est celui du glob bash, reçu
-# en arguments : python ne retrie rien.
+# macOS, voir `── Extension` de check.sh). L'ordre est celui du tri ci-dessus,
+# reçu en arguments : python ne retrie rien.
 python3 - "${files[@]}" <<'PY'
 import os, re, sys
 rule = re.compile(r"\b(swift|swiftc|xcodebuild|xcrun)\b|swift-app\.sh|ios-build\.sh")

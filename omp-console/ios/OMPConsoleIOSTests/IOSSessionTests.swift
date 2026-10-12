@@ -839,7 +839,7 @@ struct IOSSessionTests {
         #expect(model.notes == [ConversationText.ignored(2)])
 
         // Le rendu se monte sur le modèle SEUL : aucune référence de client, aucune
-        // référence de section (`test/ios-sessions.test.ts` interdit leurs noms dans
+        // référence de section (`test/console/ios-sessions.test.ts` interdit leurs noms dans
         // ces fichiers).
         _ = IOSSessionThreadView(model: model, sessionEnded: false)
         _ = IOSSessionRowView(
