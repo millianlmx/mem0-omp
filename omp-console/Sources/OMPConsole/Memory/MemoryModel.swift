@@ -113,7 +113,7 @@ final class MemoryModel: ObservableObject {
             )
         }
         // `stack/env` absent (ou illisible) ⇒ les défauts de la pile : l'URL de
-        // sonde est alors `http://127.0.0.1:8000/models` (S-6, cas limite).
+        // sonde est alors `http://127.0.0.1:8000/v1/models` (S-6, cas limite).
         let stack = stackConfig ?? StackEnvStore.load(at: paths.stackEnv, fileManager: fileManager) ?? .defaults
         self.stackConfig = stack
         self.omlxProbeURL = stack.omlxProbeURL

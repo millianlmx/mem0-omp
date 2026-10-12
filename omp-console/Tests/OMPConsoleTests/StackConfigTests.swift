@@ -99,11 +99,11 @@ func envFileIsWrittenPrivate() throws {
 func omlxProbeURLDerivesThePort() {
     #expect(
         StackConfig(omlxBaseURL: "http://host.containers.internal:9000/v1").omlxProbeURL
-            == URL(string: "http://127.0.0.1:9000/models")!
+            == URL(string: "http://127.0.0.1:9000/v1/models")!
     )
     #expect(StackConfig(omlxBaseURL: "http://localhost:8000/v1").omlxProbeURL
-        == URL(string: "http://127.0.0.1:8000/models")!)
+        == URL(string: "http://127.0.0.1:8000/v1/models")!)
     #expect(StackConfig(omlxBaseURL: "pas une url").omlxProbeURL
-        == URL(string: "http://127.0.0.1:8000/models")!)
-    #expect(StackConfig.defaults.omlxProbeURL == URL(string: "http://127.0.0.1:8000/models")!)
+        == URL(string: "http://127.0.0.1:8000/v1/models")!)
+    #expect(StackConfig.defaults.omlxProbeURL == URL(string: "http://127.0.0.1:8000/v1/models")!)
 }

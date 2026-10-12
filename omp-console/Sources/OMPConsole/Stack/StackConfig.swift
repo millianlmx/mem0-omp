@@ -106,15 +106,20 @@ struct StackConfig: Equatable, Sendable {
 
     /// L'URL sondée pour oMLX (S-6, S-5 « Prérequis ») : l'hôte 127.0.0.1 (le Mac
     /// lui-même, où oMLX tourne en natif), le port d'`OMLX_BASE_URL` — 8000 par
-    /// défaut, y compris si l'URL est illisible — et le chemin `/models`.
+    /// défaut, y compris si l'URL est illisible — et `/models` SOUS le chemin de
+    /// la base (`/v1` par défaut) : c'est la route que lisent l'embedder et le LLM
+    /// (`<base>/models`), oMLX rend 404 sur `/models` à la racine.
     var omlxProbeURL: URL {
-        let port = URL(string: omlxBaseURL)?.port ?? 8000
+        // Une base sans hôte (illisible) retombe entièrement sur le défaut.
+        let base = URL(string: omlxBaseURL).flatMap { $0.host == nil ? nil : $0 }
+        var basePath = base?.path ?? "/v1"
+        while basePath.hasSuffix("/") { basePath.removeLast() }
         var components = URLComponents()
         components.scheme = "http"
         components.host = "127.0.0.1"
-        components.port = port
-        components.path = "/models"
-        return components.url ?? URL(string: "http://127.0.0.1:8000/models")!
+        components.port = base?.port ?? 8000
+        components.path = basePath + "/models"
+        return components.url ?? URL(string: "http://127.0.0.1:8000/v1/models")!
     }
 
     /// L'URL oMLX vue depuis l'hôte (S-2) : l'hôte `host.containers.internal`
