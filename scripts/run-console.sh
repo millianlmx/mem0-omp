@@ -22,8 +22,8 @@
 # appellent ce script en mode `hook`, qui recompile le bundle si — et seulement
 # si — les commits arrivés ont touché une ENTRÉE de l'app :
 #   omp-console/Sources/**/*.swift, omp-console/Package.swift,
-#   omp-console/Bundle/**  et  omp-console/stack/mem0-http/** (embarqué dans le bundle
-#   par swift-app.sh).
+#   omp-console/Bundle/**  et  mem0-stack/mem0-rs/{src/**,Cargo.toml,Cargo.lock}
+#   (le service mémoire, compilé et embarqué dans le bundle par swift-app.sh).
 # Les tests, la documentation et le reste du dépôt ne déclenchent donc rien : un
 # pull sans entrée d'app ne paie que la lecture du diff. Le point de comparaison
 # est ORIG_HEAD, que git pose avant le pull (repli : HEAD@{1}).
@@ -134,7 +134,7 @@ hook_mode() {
     echo "OMP Console : point de comparaison absent — recompilation par précaution…"
   else
     changed="$(git diff --name-only "$base" HEAD 2>/dev/null |
-      grep -E '^omp-console/(Sources/.*\.swift|Package\.swift|Bundle/|stack/mem0-http/)' || true)"
+      grep -E '^(omp-console/(Sources/.*\.swift|Package\.swift|Bundle/)|mem0-stack/mem0-rs/(src/|Cargo\.toml|Cargo\.lock))' || true)"
     [ -n "$changed" ] || exit 0
     echo "OMP Console : $(printf '%s\n' "$changed" | grep -c .) entrée(s) d'app modifiée(s) — recompilation…"
   fi

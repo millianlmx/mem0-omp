@@ -7,8 +7,11 @@
 // la pile manuelle.
 //
 // Défauts (mesurés sur `mem0-stack/.env.example` le 2026-10-04) : la clé Qdrant
-// locale `mem0-local-qdrant-key`, `OMLX_BASE_URL` par défaut (host.containers.internal
-// :8000/v1), les modèles `qwen3-8b`/`bge-m3`, 1024 dimensions, jetons vides.
+// locale `mem0-local-qdrant-key`, les modèles `qwen3-8b`/`bge-m3`, 1024
+// dimensions, jetons vides. `OMLX_BASE_URL` par défaut vise oMLX sur le Mac
+// lui-même (`127.0.0.1:8000/v1`) : l'agent mem0-rs tourne en natif, hors de tout
+// conteneur (S-2) ; une valeur `host.containers.internal` héritée d'un `stack/env`
+// existant est traduite par `nativeOMLXBaseURL` sans réécrire le fichier.
 
 import Foundation
 
@@ -27,7 +30,7 @@ struct StackConfig: Equatable, Sendable {
     static let defaults = StackConfig(
         qdrantApiKey: "mem0-local-qdrant-key",
         mem0HttpToken: "",
-        omlxBaseURL: "http://host.containers.internal:8000/v1",
+        omlxBaseURL: "http://127.0.0.1:8000/v1",
         omlxApiToken: "",
         omlxLLMModel: "qwen3-8b",
         omlxEmbedModel: "bge-m3",
@@ -112,6 +115,17 @@ struct StackConfig: Equatable, Sendable {
         components.port = port
         components.path = "/models"
         return components.url ?? URL(string: "http://127.0.0.1:8000/models")!
+    }
+
+    /// L'URL oMLX vue depuis l'hôte (S-2) : l'hôte `host.containers.internal`
+    /// (nom d'hôte CONTENEUR, injoignable en natif) devient `127.0.0.1` ; schéma,
+    /// port et chemin sont gardés. Toute autre valeur est rendue inchangée.
+    static func nativeOMLXBaseURL(_ value: String) -> String {
+        guard var components = URLComponents(string: value),
+              components.host == "host.containers.internal"
+        else { return value }
+        components.host = "127.0.0.1"
+        return components.string ?? value
     }
 }
 

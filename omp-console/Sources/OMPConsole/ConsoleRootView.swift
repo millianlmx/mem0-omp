@@ -48,6 +48,9 @@ struct ConsoleRootView: View {
     /// Le modèle du MODE GRAPHE de la mémoire (S-1) : à l'échelle de l'app, comme
     /// celui de la liste.
     @ObservedObject var memoryGraph: MemoryGraphModel
+    /// Le bandeau de nettoyage de l'ancien moteur (S-6 d'omp-console-sans-podman),
+    /// montré par la section Mémoire.
+    @ObservedObject var podmanCleanup: PodmanCleanupModel
     /// Le modèle de la feuille Contrat (S-7) : la feuille est présentée par la
     /// racine, comme les autres — une seule à la fois.
     @ObservedObject var contract: ContractModel
@@ -167,6 +170,7 @@ struct ConsoleRootView: View {
                 projectModel: projectModel,
                 memoryModel: memoryModel,
                 memoryGraph: memoryGraph,
+                podmanCleanup: podmanCleanup,
                 contract: contract,
                 alerts: alerts,
                 setup: setup,

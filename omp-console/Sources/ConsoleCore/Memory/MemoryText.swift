@@ -40,12 +40,25 @@ public enum MemoryText {
     // de l'app : la section Mémoire le NOMME au lieu de rendre un état disponible.
     public static let foreignTitle = "Ce n’est pas la pile d’OMP Console"
     public static let foreignDescription = "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n’est pas celle d’OMP Console tant que sa pile n’occupe pas le port."
-    /// Le libellé du bouton de reprise (S-6), partagé avec la feuille de
-    /// préparation (`SetupText.takeover`) : une seule action, un seul mot.
-    public static let takeover = "Arrêter l’ancienne pile et reprendre"
     /// Le message d'erreur du client quand `/health` répond sans notre jeton (S-4) :
     /// il alimente le détail de l'état « indisponible ».
     public static let foreignService = "Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent."
+
+    // MARK: - Nettoyage de l'ancien moteur (omp-console-sans-podman S-6, AC-10)
+
+    // Après la bascule vers le service mémoire de l'app, l'ancien moteur de
+    // conteneurs occupe encore de la place : un bandeau le dit et propose de le
+    // supprimer, SEULEMENT après confirmation. Le brut (commande, chemin, détail)
+    // ne vit que dans le diagnostic copiable (`podmanCleanupDiagnostic`, coque).
+    public static let podmanCleanupMessage =
+        "L’ancienne mémoire n’est plus utilisée, mais son moteur de conteneurs occupe encore de la place sur ce Mac."
+    public static let podmanCleanupRemove = "Supprimer l’ancien moteur…"
+    public static let podmanCleanupConfirmTitle = "Supprimer l’ancien moteur de conteneurs ?"
+    public static let podmanCleanupConfirmMessage =
+        "Sa machine virtuelle, ses images et le moteur installé par OMP Console seront supprimés. Vos souvenirs restent servis par la mémoire actuelle, et la copie de l’ancienne base est conservée."
+    public static let podmanCleanupProgress = "Suppression de l’ancien moteur…"
+    public static let podmanCleanupFailed =
+        "La suppression de l’ancien moteur a échoué : il occupe toujours de la place. Réessayez ; si l’échec revient, copiez le diagnostic pour le signaler."
 
     // MARK: - Prérequis système (S-6, all-in-one-app/AC-6)
 

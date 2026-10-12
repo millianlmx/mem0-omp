@@ -154,8 +154,11 @@ func watcherResumesOnAFileUnreadableAtArming() async throws {
     #expect(seen.count == 0)
 
     // Il redevient lisible SANS être touché autrement — c'est tout AC-13, 3e clause.
+    // Ce réveil passe par le repli FSEvents, dont la latence n'est pas bornée :
+    // 2 s rougissait en fin de suite complète sous charge (mesuré le 2026-10-12) ;
+    // 5 s est l'échéance déjà retenue pour la même reprise par `ViewerFixtures`.
     chmod(fixture.path, 0o644)
-    #expect(await awaitTrue(timeout: 2.0) { seen.count >= 1 })
+    #expect(await awaitTrue(timeout: 5.0) { seen.count >= 1 })
 
     // Le ré-armement a rendu le vnode : un ajout d'octets délivre lui aussi un réveil.
     let afterChmod = seen.count

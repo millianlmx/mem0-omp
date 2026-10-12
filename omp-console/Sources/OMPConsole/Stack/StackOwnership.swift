@@ -1,45 +1,41 @@
-// La vérité des ports (S-2, BR-2 ; AC-1) : qui tient `127.0.0.1:<port>`, prouvé
-// par `lsof`, et jamais une accusation inventée.
+// La vérité des ports (S-3 d'omp-console-sans-podman ; AC-5) : qui tient
+// `127.0.0.1:<port>`, prouvé par `lsof`, et jamais une accusation inventée.
 //
-// Transport figé par la Documentation du contrat (mesuré le 2026-10-06) :
+// Transport figé (mesuré le 2026-10-06) :
 // `/usr/sbin/lsof -nP -iTCP:<port> -sTCP:LISTEN -F pcn` (binaire ABSOLU, convention
-// du dépôt) puis `/bin/ps -p <pid> -o command=` pour rattacher le processus à la
-// racine de support de l'app. Aucun enregistrement ⇒ personne n'écoute (le code de
-// sortie 1 de lof n'est pas une erreur).
+// du dépôt) puis `/bin/ps -p <pid> -o command=` pour rattacher le processus au
+// binaire mem0-rs embarqué. Aucun enregistrement ⇒ personne n'écoute (le code de
+// sortie 1 de lsof n'est pas une erreur).
 //
-// Ordre de classification FIGÉ (contrat) :
-//   1. ligne de commande préfixée par `<supportRoot>/` ⇒ `.ours` ;
-//   2. sinon un conteneur de l'ANCIENNE pile en marche publiant ce port ⇒ `.legacyStack` ;
-//   3. sinon `.foreign`.
+// Classification FIGÉE :
+//   1. ligne de commande égale au chemin de `ourExecutable`, ou commençant par
+//      `<chemin> ` (suivi d'arguments) ⇒ `.ours` ;
+//   2. sinon `.foreign`.
 // Plusieurs enregistrements lsof ⇒ le PREMIER fait foi. `lsof` absent ou sortie
 // illisible ⇒ `.unknown(detail:)` : la préparation continue, aucune accusation.
 //
-// Ce que ce fichier ne connaît PAS : `MemoryStack`, les messages d'échec de la
+// Ce que ce fichier ne connaît PAS : `MemoryAgent`, les messages d'échec de la
 // préparation (`SetupText`) et la section Mémoire. La traduction en erreur de
 // domaine appartient à l'appelant.
 
 import Foundation
 
-/// Qui tient un port, tel que la sonde le prouve (S-2).
+/// Qui tient un port, tel que la sonde le prouve (S-3).
 enum MemoryPortOwnership: Equatable, Sendable {
     case free
-    /// Le forwarder de la pile de l'app : ligne de commande sous `<supportRoot>/`.
+    /// Le mem0-rs embarqué dans l'app : ligne de commande = son chemin.
     case ours(process: String, pid: Int32)
-    /// Un conteneur de l'ancienne pile mémoire qui publie ce port.
-    case legacyStack(container: String)
     case foreign(process: String, pid: Int32)
     /// `lsof` indisponible ou sortie illisible.
     case unknown(detail: String)
 
-    /// Le texte montré à l'utilisateur (S-2).
+    /// Le texte du diagnostic (S-3).
     var userDescription: String {
         switch self {
         case .free:
             return "personne"
         case .ours:
-            return "la pile d'OMP Console"
-        case .legacyStack(let container):
-            return "l'ancienne pile mémoire (conteneur \(container))"
+            return "le service mémoire d'OMP Console"
         case .foreign(let process, let pid):
             return "un autre programme (\(process), pid \(pid))"
         case .unknown(let detail):
@@ -47,26 +43,14 @@ enum MemoryPortOwnership: Equatable, Sendable {
         }
     }
 
-    /// Le geste EXACT de la Documentation (S-2) : arrêter les conteneurs de
-    /// l'ancienne pile, ou couper le programme qui tient le port.
+    /// Le geste du diagnostic : couper le programme qui tient le port.
     var gesture: String {
-        switch self {
-        case .legacyStack:
-            return "podman stop mem0-qdrant mem0-http"
-        default:
-            return "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"
-        }
-    }
-
-    /// Le conteneur de l'ancienne pile, non nil SEULEMENT pour `.legacyStack`.
-    var legacyContainer: String? {
-        if case .legacyStack(let container) = self { return container }
-        return nil
+        "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"
     }
 }
 
-/// La sonde de propriété d'un port (S-2). Fonction PURE vis-à-vis de l'app :
-/// elle ne lit que `lsof`, `ps` et l'API Docker, toutes injectées par `run`.
+/// La sonde de propriété d'un port (S-3). Fonction PURE vis-à-vis de l'app :
+/// elle ne lit que `lsof` et `ps`, tous deux injectés par `run`.
 enum StackOwnership {
     /// Le binaire `lsof`, visé par chemin ABSOLU (jamais via `PATH`).
     static let lsof = URL(fileURLWithPath: "/usr/sbin/lsof")
@@ -89,10 +73,10 @@ enum StackOwnership {
         ["-p", String(pid), "-o", "command="]
     }
 
-    /// Qui tient `port` (S-2). Voir l'algorithme figé en tête de fichier.
+    /// Qui tient `port` (S-3). Voir l'algorithme figé en tête de fichier.
     static func holder(
         ofPort port: Int,
-        paths: AppPaths,
+        ourExecutable: URL,
         environment: [String: String],
         run: CommandRunner
     ) async -> MemoryPortOwnership {
@@ -116,49 +100,20 @@ enum StackOwnership {
         }
 
         let process = record.command ?? "processus"
-
-        // (1) Le processus appartient-il à la pile de l'app ?
         let commandRun = try? await run(ps, psArguments(pid: record.pid), environment, timeout)
         let commandLine = commandRun?.stdout.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !commandLine.isEmpty, commandLine.hasPrefix(supportPrefix(of: paths)) {
+        if isCommandLine(commandLine, of: ourExecutable) {
             return .ours(process: process, pid: record.pid)
         }
-
-        // (2) Un conteneur de l'ancienne pile en marche publie-t-il ce port ?
-        if let container = await legacyContainer(
-            port: port,
-            paths: paths,
-            environment: environment,
-            run: run
-        ) {
-            return .legacyStack(container: container)
-        }
-
-        // (3) Sinon : un autre programme.
         return .foreign(process: process, pid: record.pid)
     }
 
-    // MARK: - L'ancienne pile, vue par l'API Docker
-
-    /// Le nom du premier conteneur de l'ancienne pile EN MARCHE publiant `port`,
-    /// cherché socket par socket dans l'ordre existant (`DockerSocket.candidates`).
-    /// Le PREMIER socket qui répond décide : s'il n'offre pas le port, le port n'est
-    /// pas celui de l'ancienne pile (on n'invente rien depuis un socket muet).
-    private static func legacyContainer(
-        port: Int,
-        paths: AppPaths,
-        environment: [String: String],
-        run: CommandRunner
-    ) async -> String? {
-        let home = environment["HOME"] ?? NSHomeDirectory()
-        for socket in DockerSocket.candidates(home: home) {
-            guard let containers = await DockerSocket.containers(socket: socket, run: run) else { continue }
-            for container in containers where container.running && container.publishedPorts.contains(port) {
-                return container.name
-            }
-            return nil
-        }
-        return nil
+    /// La ligne de commande lance-t-elle `executable` ? Égalité stricte, ou chemin
+    /// suivi d'une espace (arguments) : un autre mem0-rs, même homonyme, n'est
+    /// jamais « le nôtre ».
+    static func isCommandLine(_ commandLine: String, of executable: URL) -> Bool {
+        let path = executable.path
+        return commandLine == path || commandLine.hasPrefix(path + " ")
     }
 
     // MARK: - Le décodage `-F pcn`
@@ -183,12 +138,6 @@ enum StackOwnership {
         }
         guard let found = pid else { return nil }
         return (found, command)
-    }
-
-    /// Le préfixe de rattachement à la pile, avec son séparateur (`<supportRoot>/`).
-    private static func supportPrefix(of paths: AppPaths) -> String {
-        let path = paths.supportRoot.path
-        return path.hasSuffix("/") ? path : path + "/"
     }
 
     /// Le détail d'une erreur est borné à 300 caractères (convention S-2).

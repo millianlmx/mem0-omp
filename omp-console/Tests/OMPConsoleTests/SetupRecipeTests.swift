@@ -48,12 +48,11 @@ func recipeRequiresDisposableRoot() {
 }
 
 @MainActor
-@Test("mac-omp-manquant-non-bloquant/AC-12 : la recette `succes` pose OMP et Podman sous la racine jetable et mène à `.ready`")
+@Test("mac-omp-manquant-non-bloquant/AC-12 : la recette `succes` pose OMP sous la racine jetable et mène à `.ready`")
 func successRecipeInstallsUnderDisposableRoot() async throws {
     let root = ComponentsRoot()
     let installer = root.installer
     #expect(!installer.isInstalled(.omp))
-    #expect(!installer.isInstalled(.podman))
 
     let model = SetupRecipe.succes.model(paths: root.paths, manifest: root.manifest, autoPrepare: false)
     #expect(model.state == .idle)
@@ -64,14 +63,13 @@ func successRecipeInstallsUnderDisposableRoot() async throws {
     model.startInstall()
     #expect(await waitUntil { model.state == .ready })
 
-    // Les deux binaires sont de vrais exécutables, sous la racine jetable.
-    for component in ComponentID.allCases {
-        let location = installer.binaryLocation(component)
-        #expect(location.path.hasPrefix(root.paths.supportRoot.path))
-        #expect(installer.isInstalled(component))
-    }
-    // La cible était OMP (premier manquant) : téléchargement chiffré, puis pose.
+    // Le binaire d'OMP est un vrai exécutable, sous la racine jetable ; rien
+    // d'autre n'est posé (plus de podman embarqué).
+    let location = installer.binaryLocation(.omp)
+    #expect(location.path.hasPrefix(root.paths.supportRoot.path))
+    #expect(installer.isInstalled(.omp))
+    #expect(!FileManager.default.fileExists(atPath: root.paths.supportRoot.appendingPathComponent("components/podman").path))
+    // Téléchargement chiffré, puis pose.
     #expect(steps.contains(.preparing(.omp(downloaded: 60_000_000, total: 120_000_000))))
     #expect(steps.contains(.preparing(.ompInstall)))
-    #expect(!steps.contains { if case .preparing(.podman) = $0 { true } else { false } })
 }

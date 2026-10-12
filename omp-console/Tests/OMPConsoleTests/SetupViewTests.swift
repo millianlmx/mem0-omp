@@ -89,8 +89,9 @@ private func setupModel(
 ) -> SetupModel {
     SetupModel(
         install: install,
-        migrate: { _ in },
-        ensureStack: { _ in },
+        migrate: { _ in .alreadyDone },
+        switchOver: { _, _ in },
+        ensureAgent: { _ in },
         probeOMLX: { .unknown },
         autoPrepare: autoPrepare
     )
@@ -133,7 +134,7 @@ private func waitFor(_ timeout: Double = 5, _ condition: () -> Bool) async {
 func rowsFollowState() {
     // Au repos : tout est à venir.
     let idle = SetupPresentation.rows(state: .idle, omlx: .unknown, blocking: false)
-    #expect(idle.map(\.kind) == [.components, .migration, .stack, .prerequisites])
+    #expect(idle.map(\.kind) == [.components, .migration, .service, .prerequisites])
     #expect(idle.map(\.status) == [.upcoming, .upcoming, .upcoming, .upcoming])
 
     // Téléchargement d'OMP : la ligne Composants est en cours, SANS détail — le
@@ -143,10 +144,10 @@ func rowsFollowState() {
     #expect(downloading[0].detail == nil)
     #expect(downloading.allSatisfy { $0.technicalDetail == nil })
 
-    // Pile : composants et migration terminés, la pile en cours.
-    let stack = SetupPresentation.rows(state: .preparing(.containers), omlx: .unknown, blocking: false)
-    #expect(stack.map(\.status) == [.done, .done, .running, .upcoming])
-    #expect(stack[2].detail == nil)
+    // Service mémoire : composants et migration terminés, le service en cours.
+    let service = SetupPresentation.rows(state: .preparing(.agent), omlx: .unknown, blocking: false)
+    #expect(service.map(\.status) == [.done, .done, .running, .upcoming])
+    #expect(service[2].detail == nil)
 
     // Vérification des prérequis : les trois premières lignes sont terminées.
     let prerequisites = SetupPresentation.rows(state: .preparing(.prerequisites), omlx: .unknown, blocking: false)
@@ -160,9 +161,9 @@ func rowsFollowState() {
 
     // Échec de la migration : Composants terminé, Migration échouée avec la phrase
     // claire et le détail technique à part, le reste à venir.
-    let failed = SetupPresentation.rows(state: .failed(.migration(.copyFailed(detail: "disque plein"))), omlx: .unknown, blocking: false)
+    let failed = SetupPresentation.rows(state: .failed(.migration(.historyCopyFailed(detail: "disque plein"))), omlx: .unknown, blocking: false)
     #expect(failed.map(\.status) == [.done, .failed, .upcoming, .upcoming])
-    #expect(failed[1].detail == "La copie de la base mémoire existante a échoué.")
+    #expect(failed[1].detail == "\(SetupText.failureHistoryCopy) \(SetupText.failureRetryGesture)")
     #expect(failed[1].technicalDetail == "disque plein")
     #expect(failed.filter { $0.status != .failed }.allSatisfy { $0.technicalDetail == nil })
 
@@ -172,9 +173,9 @@ func rowsFollowState() {
     #expect(failingComponents[0].detail == "Ce Mac n’est pas pris en charge (arm64 requis).")
     #expect(failingComponents[0].technicalDetail == nil)
 
-    // Échec de la pile : seules les deux premières lignes sont terminées.
+    // Échec du service mémoire : seules les deux premières lignes sont terminées.
     let failingStack = SetupPresentation.rows(
-        state: .failed(.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711)))),
+        state: .failed(.agent(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711)))),
         omlx: .unknown,
         blocking: false
     )
@@ -194,19 +195,19 @@ func blockingReadyLooksIdle() {
     #expect(!SetupPresentation.showsDone(state: .ready, blocking: true))
     #expect(!SetupPresentation.showsDone(state: .idle, blocking: false))
     #expect(!SetupPresentation.showsDone(state: .preparing(.health), blocking: false))
-    #expect(!SetupPresentation.showsDone(state: .failed(.stack(.healthTimeout(seconds: 180))), blocking: false))
+    #expect(!SetupPresentation.showsDone(state: .failed(.agent(.healthTimeout(seconds: 30, log: ""))), blocking: false))
 }
 
 /// Un état de chaque sorte, pour parcourir la table du pied.
 private let preparingStates: [SetupState] = [
     .preparing(.omp(downloaded: 0, total: 0)),
-    .preparing(.podman(downloaded: 5, total: 10)),
-    .preparing(.machine),
+    .preparing(.migrationImport),
+    .preparing(.agent),
     .preparing(.prerequisites),
 ]
 private let failedStates: [SetupState] = [
     .failed(.components(.unsupportedMac)),
-    .failed(.stack(.healthTimeout(seconds: 180))),
+    .failed(.agent(.healthTimeout(seconds: 30, log: ""))),
 ]
 
 @Test("mac-omp-manquant-non-bloquant/AC-1 : OMP absent, le pied n'a pas de « Fermer » — « Quitter » à gauche, « Réessayer » et « Installer » (↩) à droite")
@@ -226,7 +227,7 @@ func blockingFooterHasNoClose() {
         #expect(!(footer.leading + footer.trailing).contains(.close))
     }
     #expect(SetupAction.allCases.map(SetupPresentation.label)
-        == ["Installer", "Réessayer", "Quitter", "Fermer", "Arrêter l’ancienne pile et reprendre"])
+        == ["Installer", "Réessayer", "Quitter", "Fermer", "Basculer quand même"])
 }
 
 @Test("mac-omp-manquant-non-bloquant/AC-4 : OMP présent, le pied propose « Fermer » — seul et proéminent, ou après « Réessayer » sur l'échec")
@@ -245,8 +246,6 @@ func closableFooterOffersClose() {
 func determinateProgressFollowsDownload() {
     #expect(SetupPresentation.progress(state: .preparing(.omp(downloaded: 40, total: 100)))
         == SetupProgress(label: "Téléchargement d’OMP — 40 %", fraction: 0.4))
-    #expect(SetupPresentation.progress(state: .preparing(.podman(downloaded: 30, total: 120)))
-        == SetupProgress(label: "Téléchargement de Podman — 25 %", fraction: 0.25))
 
     // La part remplie croît avec `downloaded`, bornée à 1.
     let fractions = stride(from: Int64(0), through: 120, by: 12).map {
@@ -264,8 +263,8 @@ func indeterminateProgressNamesTheStep() {
         == SetupProgress(label: "Téléchargement d’OMP…", fraction: nil))
     #expect(SetupPresentation.progress(state: .preparing(.ompInstall))
         == SetupProgress(label: "Installation d’OMP…", fraction: nil))
-    #expect(SetupPresentation.progress(state: .preparing(.machine))
-        == SetupProgress(label: "Préparation de la machine de conteneurs…", fraction: nil))
+    #expect(SetupPresentation.progress(state: .preparing(.agent))
+        == SetupProgress(label: "Démarrage du service mémoire…", fraction: nil))
     #expect(SetupPresentation.progress(state: .preparing(.prerequisites))
         == SetupProgress(label: "Vérification des prérequis…", fraction: nil))
 
@@ -281,32 +280,25 @@ func failureSplitsSummaryFromDetail() {
          "Ce Mac n’est pas pris en charge (arm64 requis).", nil),
         (.components(.network(component: "OMP", detail: "NSURLErrorDomain -1009")),
          "Pas de réseau : « OMP » n’a pas pu être téléchargé. Vérifiez votre connexion, puis réessayez.", "NSURLErrorDomain -1009"),
-        (.components(.checksum(component: "Podman")),
-         "« Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", nil),
-        (.components(.install(component: "Podman", detail: "pkgutil absent")),
-         "L’installation de « Podman » a échoué.", "pkgutil absent"),
-        (.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")),
-         SetupText.failureMessage(.legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé"))),
-         "mem0-qdrant : socket fermé"),
-        (.migration(.copyFailed(detail: "disque plein")),
-         "La copie de la base mémoire existante a échoué.", "disque plein"),
-        (.stack(.machineFailed(detail: "libkrun absent")),
-         SetupText.failureMessage(.stack(.machineFailed(detail: "libkrun absent"))), "libkrun absent"),
-        (.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711))),
-         SetupText.failureMessage(.stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711)))),
-         "Geste : arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
-        (.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))),
-         SetupText.failureMessage(.stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http")))),
-         "Geste : podman stop mem0-qdrant mem0-http"),
-        (.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")),
-         SetupText.failureMessage(.stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente"))),
-         "omp-console-qdrant : image absente"),
-        (.stack(.healthTimeout(seconds: 180)),
-         "La mémoire n’a pas répondu dans le délai imparti (180 s).", nil),
-        (.stack(.installationFailed(detail: "disque plein")),
-         "L’identité d’installation de la pile n’a pas pu être écrite.", "disque plein"),
-        (.stack(.podmanFailed(command: "machine start", detail: "boom")),
-         SetupText.failureMessage(.stack(.podmanFailed(command: "machine start", detail: "boom"))), "machine start : boom"),
+        (.components(.checksum(component: "OMP")),
+         "« OMP » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.", nil),
+        (.components(.install(component: "OMP", detail: "chmod refusé")),
+         "L’installation de « OMP » a échoué.", "chmod refusé"),
+        (.migration(.historyCopyFailed(detail: "disque plein")),
+         "\(SetupText.failureHistoryCopy) \(SetupText.failureRetryGesture)", "disque plein"),
+        (.migration(.machineFailed(detail: "libkrun absent")),
+         "\(SetupText.failureLegacyMachine) \(SetupText.failureRetryGesture)", "libkrun absent"),
+        (.migration(.importFailed(code: 1, detail: "base verrouillée")),
+         "\(SetupText.failureImport) \(SetupText.failureRetryGesture)", "code 1\u{00A0}: base verrouillée"),
+        (.agent(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))),
+         SetupText.failureMessage(.agent(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711)))),
+         "Geste\u{00A0}: arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
+        (.agent(.launchctlFailed(command: "bootstrap", detail: "boom")),
+         "\(SetupText.failureAgentLaunch) \(SetupText.failureRetryGesture)", "bootstrap\u{00A0}: boom"),
+        (.agent(.healthTimeout(seconds: 30, log: "")),
+         "\(SetupText.failureAgentHealth) \(SetupText.failureRetryGesture)", nil),
+        (.agent(.installationFailed(detail: "disque plein")),
+         "\(SetupText.failureAgentIdentity) \(SetupText.failureRetryGesture)", "disque plein"),
     ]
     for (failure, summary, detail) in table {
         #expect(SetupText.failureSummary(failure) == summary)
@@ -315,19 +307,18 @@ func failureSplitsSummaryFromDetail() {
         if let detail { #expect(!SetupText.failureSummary(failure).contains(detail)) }
     }
 
-    // Les échecs Podman (S-5 de jargon-technique-expose-mac-et-ios) : la phrase de
-    // la feuille est la conséquence suivie du geste, sans commande, port ni pid.
+    // Les échecs de la migration et du service mémoire (S-5 d'omp-console-sans-podman) :
+    // la phrase de la feuille est la conséquence suivie du geste, sans commande,
+    // port ni pid.
     for failure: SetupFailure in [
-        .legacy(.stopFailed(container: "mem0-qdrant", detail: "socket fermé")),
-        .stack(.machineFailed(detail: "libkrun absent")),
-        .stack(.portConflict(port: 6333, owner: .foreign(process: "python3", pid: 4711))),
-        .stack(.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))),
-        .stack(.containerFailed(name: "omp-console-qdrant", detail: "image absente")),
-        .stack(.podmanFailed(command: "machine start", detail: "boom")),
+        .migration(.stopFailed(detail: "socket fermé")),
+        .migration(.machineFailed(detail: "libkrun absent")),
+        .agent(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))),
+        .agent(.launchctlFailed(command: "bootstrap", detail: "boom")),
     ] {
         let summary = SetupText.failureSummary(failure)
         #expect(summary.hasPrefix(SetupText.failureConsequence(failure)))
-        for token in ["Podman", "podman", "machine start", "6333", "8321", "4711", "mem0-", "lsof"] {
+        for token in ["Podman", "podman", "bootstrap", "6333", "8321", "4711", "mem0-", "lsof"] {
             #expect(!summary.contains(token))
         }
     }
@@ -336,17 +327,17 @@ func failureSplitsSummaryFromDetail() {
     for blank in ["", "   ", "\n\t \n"] {
         #expect(SetupText.failureDetail(.components(.install(component: "OMP", detail: blank))) == nil)
         #expect(SetupText.failureDetail(.components(.network(component: "OMP", detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.migration(.copyFailed(detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.legacy(.stopFailed(container: "mem0-qdrant", detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.stack(.installationFailed(detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.stack(.machineFailed(detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.stack(.containerFailed(name: "omp-console-qdrant", detail: blank))) == nil)
-        #expect(SetupText.failureDetail(.stack(.podmanFailed(command: "machine start", detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.migration(.historyCopyFailed(detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.migration(.stopFailed(detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.agent(.installationFailed(detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.migration(.machineFailed(detail: blank))) == nil)
+        #expect(SetupText.failureDetail(.agent(.healthTimeout(seconds: 30, log: blank))) == nil)
+        #expect(SetupText.failureDetail(.agent(.launchctlFailed(command: "bootstrap", detail: blank))) == nil)
     }
 
     // Le bandeau de l'Accueil et l'API distante gardent leur phrase complète.
-    #expect(SetupText.failureMessage(.components(.install(component: "Podman", detail: "pkgutil absent")))
-        == "L’installation de « Podman » a échoué : pkgutil absent")
+    #expect(SetupText.failureMessage(.components(.install(component: "OMP", detail: "chmod refusé")))
+        == "L’installation de « OMP » a échoué : chmod refusé")
 }
 
 /// La hauteur idéale de la feuille rendue pour un échec d'installation donné.
@@ -364,7 +355,7 @@ private func failedSheetHeight(detail: String) async -> CGFloat {
 @Test("mac-omp-manquant-non-bloquant/AC-11 : replié, le détail ne change pas la hauteur de la feuille, quelle que soit sa longueur")
 func collapsedDetailKeepsSheetHeight() async {
     let long = (1...40).map { String(format: "Ligne %02d du détail technique.", $0) }.joined(separator: "\n")
-    let oneLine = await failedSheetHeight(detail: "pkgutil absent")
+    let oneLine = await failedSheetHeight(detail: "chmod refusé")
     let forty = await failedSheetHeight(detail: long)
     #expect(oneLine == forty)
     #expect(forty > 0 && forty < 600)
@@ -373,20 +364,20 @@ func collapsedDetailKeepsSheetHeight() async {
 @Test("all-in-one-app/AC-2 : le bandeau de l'Accueil ne paraît qu'après « Fermer », et dit l'étape ou l'échec")
 func bannerFollowsDismissedState() {
     // Feuille visible : aucun bandeau, c'est la feuille qui porte l'état.
-    #expect(SetupText.banner(state: .preparing(.machine), dismissed: false) == nil)
+    #expect(SetupText.banner(state: .preparing(.agent), dismissed: false) == nil)
     #expect(SetupText.banner(state: .failed(.components(.unsupportedMac)), dismissed: false) == nil)
 
     // Fermée pendant la préparation : le bandeau dit l'étape courante.
-    #expect(SetupText.banner(state: .preparing(.machine), dismissed: true)
-        == "Préparation en cours — Préparation de la machine de conteneurs…")
+    #expect(SetupText.banner(state: .preparing(.agent), dismissed: true)
+        == "Préparation en cours — Démarrage du service mémoire…")
     #expect(SetupText.banner(state: .preparing(.omp(downloaded: 40, total: 100)), dismissed: true)
         == "Préparation en cours — Téléchargement d’OMP — 40 %")
 
     // Fermée après un échec : le bandeau dit la cause.
-    #expect(SetupText.banner(state: .failed(.stack(.healthTimeout(seconds: 180))), dismissed: true)
-        == "Préparation incomplète. La mémoire n’a pas répondu dans le délai imparti (180 s).")
-    #expect(SetupText.banner(state: .failed(.components(.checksum(component: "Podman"))), dismissed: true)
-        == "Préparation incomplète. « Podman » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
+    #expect(SetupText.banner(state: .failed(.agent(.healthTimeout(seconds: 30, log: ""))), dismissed: true)
+        == "Préparation incomplète. Le service mémoire n’a pas répondu\u{00A0}: les souvenirs sont indisponibles.")
+    #expect(SetupText.banner(state: .failed(.components(.checksum(component: "OMP"))), dismissed: true)
+        == "Préparation incomplète. « OMP » téléchargé est corrompu (empreinte SHA-256 différente). La préparation a été interrompue.")
 
     // Terminée ou jamais commencée : rien à dire.
     #expect(SetupText.banner(state: .ready, dismissed: true) == nil)
@@ -552,85 +543,154 @@ func closableKeyboardClosesEverywhere() async {
     failedWindow.close()
 }
 
-// MARK: - AC-6 : la reprise de l'ancienne pile (BR-9)
+// MARK: - omp-console-sans-podman (S-3, S-5)
 
-/// Un modèle qui échoue sur le conflit de port legacy, avec une reprise fournie.
-@MainActor
-private func legacyConflictModel(
-    takeover: @escaping @MainActor () async throws -> Void = {}
-) -> SetupModel {
-    SetupModel(
-        install: { _ in },
-        migrate: { _ in },
-        ensureStack: { _ in
-            throw MemoryStackError.portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))
-        },
-        probeOMLX: { .unknown },
-        takeover: takeover,
-        autoPrepare: false
-    )
-}
+@Test("omp-console-sans-podman/AC-5 : la feuille d'un port occupé nomme le programme et propose Réessayer")
+func portConflictNamesProgramAndOffersRetry() {
+    let failure = SetupFailure.agent(.portConflict(port: 8321, owner: .foreign(process: "nc", pid: 4711)))
+    let state = SetupState.failed(failure)
 
-private let legacyConflictFailure = SetupFailure.stack(
-    .portConflict(port: 8321, owner: .legacyStack(container: "mem0-http"))
-)
+    let rows = SetupPresentation.rows(state: state, omlx: .unknown, blocking: false)
+    #expect(rows.map(\.status) == [.done, .done, .failed, .upcoming])
+    let failedRow = rows.first { $0.status == .failed }
+    #expect(failedRow?.kind == .service)
 
-@Test("bug-embedded-podman-machine/AC-6 : la reprise n'apparaît QUE sur un conflit tenu par l'ancienne pile")
-func takeoverShownOnlyForLegacyConflict() {
-    let legacy = SetupState.failed(legacyConflictFailure)
-    let foreign = SetupState.failed(.stack(.portConflict(port: 8321, owner: .foreign(process: "python3", pid: 4711))))
+    let summary = SetupText.failureSummary(failure)
+    #expect(summary == "Le programme «\u{00A0}nc\u{00A0}» occupe la place réservée à la mémoire\u{00A0}: celle-ci ne peut pas démarrer. Quittez-le, puis réessayez.")
+    #expect(failedRow?.detail == summary)
+    let banner = SetupText.banner(state: state, dismissed: true) ?? ""
+    #expect(banner == "Préparation incomplète. Le programme «\u{00A0}nc\u{00A0}» occupe la place réservée à la mémoire\u{00A0}: celle-ci ne peut pas démarrer.")
+    for text in [summary, banner] {
+        #expect(!text.contains("8321"))
+        #expect(!text.contains("4711"))
+        #expect(forbiddenTokens(in: text).isEmpty, "texte : \(text)")
+    }
 
-    #expect(SetupPresentation.showsTakeover(legacy))
-    #expect(!SetupPresentation.showsTakeover(foreign))
-    #expect(!SetupPresentation.showsTakeover(.failed(.components(.unsupportedMac))))
-    #expect(!SetupPresentation.showsTakeover(.preparing(.health)))
-    #expect(!SetupPresentation.showsTakeover(.ready))
-    #expect(!SetupPresentation.showsTakeover(.idle))
-
-    // Sur le conflit legacy, la reprise passe devant et porte ↩ ; « Réessayer »
-    // reste visible et « Fermer » n'est plus proéminent.
-    #expect(SetupPresentation.footer(state: legacy, blocking: false)
-        == SetupFooter(leading: [], trailing: [.takeover, .retry, .close], prominent: .takeover, disabled: []))
-    // Un conflit tenu par un autre programme garde le pied d'échec ordinaire.
-    #expect(SetupPresentation.footer(state: foreign, blocking: false)
+    #expect(SetupPresentation.footer(state: state, blocking: false)
         == SetupFooter(leading: [], trailing: [.retry, .close], prominent: .retry, disabled: []))
+    #expect(SetupPresentation.diagnostic(state: state)
+        == "Le port 8321 est déjà tenu par un autre programme (nc, pid 4711)\u{00A0}: la mémoire ne peut pas démarrer.\nGeste\u{00A0}: arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)")
 
-    // Pendant l'action, les DEUX boutons restent affichés et DÉSACTIVÉS ; « Fermer »
-    // garde ⎋ et reste la seule issue.
-    #expect(SetupPresentation.showsTakeover(.preparing(.legacyStop)))
-    #expect(SetupPresentation.footer(state: .preparing(.legacyStop), blocking: false)
-        == SetupFooter(leading: [], trailing: [.takeover, .retry, .close], prominent: .takeover, disabled: [.takeover, .retry]))
-    #expect(SetupPresentation.label(.takeover) == "Arrêter l’ancienne pile et reprendre")
+    // Propriétaire inconnu : la conséquence générique et le geste commun.
+    let unknown = SetupFailure.agent(.portConflict(port: 8321, owner: .unknown(detail: "lsof illisible")))
+    #expect(SetupText.failureSummary(unknown) == SetupText.failurePortOther + " " + SetupText.failureRetryGesture)
+    #expect(forbiddenTokens(in: SetupText.failureSummary(unknown)).isEmpty)
 }
 
-@MainActor
-@Test("bug-embedded-podman-machine/AC-6 : ↩ porte la REPRISE (pas « Réessayer »), ⎋ ferme, et l'action désactive les deux boutons")
-func keyboardPrefersTakeoverAndEscapeCloses() async {
-    let gate = KeyboardGate()
-    let calls = CallCounter()
-    let model = legacyConflictModel(takeover: {
-        calls.count += 1
-        await gate.wait()
-    })
+@Test("omp-console-sans-podman/AC-8 : chaque échec du service mémoire s'affiche lisible avec son geste")
+func agentFailuresReadableWithGesture() {
+    let retry = SetupText.failureRetryGesture
+    let table: [(MemoryAgentError, String)] = [
+        (.binaryMissing(path: "/Applications/OMP Console.app/Contents/Resources/mem0-rs"),
+         "Le service mémoire manque dans l’app\u{00A0}: les souvenirs sont indisponibles. Réinstallez OMP Console."),
+        (.launchctlFailed(command: "bootstrap", detail: "Input/output error"),
+         "Le service mémoire n’a pas pu être lancé\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
+        (.plistWriteFailed(path: "/Users/x/Library/LaunchAgents/com.omp.console.mem0.plist", detail: "permission refusée"),
+         "Le service mémoire n’a pas pu être lancé\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
+        (.healthTimeout(seconds: 30, log: "panic: qdrant"),
+         "Le service mémoire n’a pas répondu\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
+        (.installationFailed(detail: "disque plein"),
+         "L’identité de la mémoire n’a pas pu être écrite\u{00A0}: les souvenirs sont indisponibles. \(retry)"),
+        (.portConflict(port: 8321, owner: .unknown(detail: "lsof illisible")),
+         "La place réservée à la mémoire est occupée\u{00A0}: celle-ci ne peut pas démarrer. \(retry)"),
+    ]
+    #expect(retry == "Réessayez\u{00A0}; si l’échec revient, copiez le diagnostic pour le signaler.")
+    for (error, expected) in table {
+        let failure = SetupFailure.agent(error)
+        let summary = SetupText.failureSummary(failure)
+        #expect(summary == expected)
+        #expect(forbiddenTokens(in: summary).isEmpty, "phrase : \(summary)")
+        let rows = SetupPresentation.rows(state: .failed(failure), omlx: .unknown, blocking: false)
+        #expect(rows.first { $0.status == .failed }?.kind == .service)
+        #expect(SetupPresentation.footer(state: .failed(failure), blocking: false)
+            == SetupFooter(leading: [], trailing: [.retry, .close], prominent: .retry, disabled: []))
+    }
 
-    Task { await model.prepare() }
-    await waitFor { model.state == .failed(legacyConflictFailure) }
+    #expect(SetupText.failureDiagnostic(.agent(.healthTimeout(seconds: 30, log: "ligne 1\nligne 2")), logPath: "/tmp/mem0-rs.log")
+        == "Le service mémoire n’a pas répondu dans le délai imparti (30 s).\nJournal\u{00A0}: /tmp/mem0-rs.log\nligne 1\nligne 2")
+}
 
-    let window = shortcutWindow(SetupView(setup: model, omp: ompAvailable, quit: {}))
-    // ↩ déclenche la reprise : « Réessayer » n'a plus de raccourci dans ce cas.
-    #expect(pressReturn(on: window))
-    await waitFor { calls.count == 1 }
-    await waitFor { model.state == .preparing(.legacyStop) }
-    #expect(SetupPresentation.footer(state: model.state, blocking: false).disabled == [.takeover, .retry])
+private func reject(_ element: String, _ id: String, _ raison: String, _ detail: String) -> ImportReject {
+    ImportReject(element: element, id: id, raison: raison, detail: detail)
+}
 
-    // Un second ↩ n'atteint pas un bouton désactivé : le compteur ne bouge pas.
-    _ = pressReturn(on: window)
-    #expect(calls.count == 1)
+@Test("omp-console-sans-podman/AC-9 : les rejets se groupent par raison, du plus fréquent au plus rare, et le détail liste chaque élément")
+func rejectedGroupedByReason() {
+    let report = ImportReport(rejects: [
+        reject("souvenir", "a1", "texte_absent", "payload.data vide"),
+        reject("souvenir", "a2", "vecteur_absent", "point sans vecteur"),
+        reject("souvenir", "a3", "texte_absent", "payload.data vide"),
+        reject("historique", "h1", "code_mystere", "inconnu"),
+        reject("souvenir", "a4", "dimension", "768 ≠ 1024"),
+        reject("souvenir", "a5", "vecteur_absent", "point sans vecteur"),
+    ], totalRejected: 6)
+    // 2 × texte absent, 2 × vecteur absent (égalité ⇒ libellé), puis les uniques
+    // par libellé ; le code inconnu reste brut.
+    #expect(SetupText.rejectedSummary(report)
+        == "L’import a laissé de côté 6 éléments\u{00A0}: texte absent (2), vecteur absent (2), code_mystere (1), dimension inattendue (1).")
+    #expect(SetupText.rejectedDetail(report) == """
+        souvenir a1 — texte absent (payload.data vide)
+        souvenir a2 — vecteur absent (point sans vecteur)
+        souvenir a3 — texte absent (payload.data vide)
+        historique h1 — code_mystere (inconnu)
+        souvenir a4 — dimension inattendue (768 ≠ 1024)
+        souvenir a5 — vecteur absent (point sans vecteur)
+        """)
 
-    // ⎋ reste « Fermer », même pendant l'action.
-    #expect(pressEscape(on: window))
-    #expect(model.dismissed)
+    let single = ImportReport(rejects: [reject("historique", "h9", "historique_orphelin", "mémoire absente")], totalRejected: 1)
+    #expect(SetupText.rejectedSummary(single) == "L’import a laissé de côté 1 élément\u{00A0}: historique orphelin (1).")
+    #expect(SetupText.rejectedDetail(single) == "historique h9 — historique orphelin (mémoire absente)")
+    #expect(SetupText.rejectionReason("champ_invalide") == "champ invalide")
+}
 
-    gate.open()
-    window.close()
+@Test("omp-console-sans-podman/AC-9 : la feuille des rejets propose Basculer quand même sans raccourci, Réessayer proéminent et Fermer")
+func awaitingSwitchSheet() {
+    let report = ImportReport(
+        rejects: [reject("souvenir", "a1", "vecteur_absent", "point sans vecteur")],
+        totalRejected: 1,
+        raw: "{\"agents\":[]}"
+    )
+    let state = SetupState.awaitingSwitch(report)
+
+    #expect(SetupPresentation.footer(state: state, blocking: false)
+        == SetupFooter(leading: [], trailing: [.switchAnyway, .retry, .close], prominent: .retry, disabled: []))
+    #expect(SetupPresentation.label(.switchAnyway) == "Basculer quand même")
+
+    let rows = SetupPresentation.rows(state: state, omlx: .unknown, blocking: false)
+    #expect(rows.map(\.kind) == [.components, .migration, .service, .prerequisites])
+    #expect(rows.map(\.status) == [.done, .awaiting, .upcoming, .upcoming])
+    #expect(rows[1].detail == SetupText.rejectedSummary(report))
+    #expect(rows[1].technicalDetail == SetupText.rejectedDetail(report))
+    #expect(rows[1].note == SetupText.rejectedChoice)
+    #expect(SetupText.rejectedChoice
+        == "«\u{00A0}Basculer quand même\u{00A0}» démarre la nouvelle mémoire sans eux\u{00A0}; l’ancienne reste intacte sur ce Mac. «\u{00A0}Réessayer\u{00A0}» relance l’import.")
+    #expect(SetupPresentation.progress(state: state) == nil)
+    #expect(!SetupPresentation.showsDone(state: state, blocking: false))
+    #expect(SetupPresentation.diagnostic(state: state) == "{\"agents\":[]}")
+    #expect(SetupText.banner(state: state, dismissed: true)
+        == "Préparation incomplète. L’import de l’ancienne mémoire attend votre choix sur le Mac.")
+}
+
+@Test("omp-console-sans-podman/AC-6 : les étapes de migration et du service mémoire ont leur ligne et leur libellé")
+func migrationAndServiceStepsHaveRowAndLabel() {
+    let table: [(SetupStep, SetupRow.Kind, String)] = [
+        (.migrationStart, .migration, "Démarrage de l’ancienne mémoire…"),
+        (.migrationImport, .migration, "Reprise des souvenirs de l’ancienne mémoire…"),
+        (.migrationStop, .migration, "Arrêt de l’ancienne mémoire…"),
+        (.agent, .service, "Démarrage du service mémoire…"),
+        (.health, .service, "Attente de la mémoire…"),
+        (.ompInstall, .components, "Installation d’OMP…"),
+        (.prerequisites, .prerequisites, "Vérification des prérequis…"),
+    ]
+    for (step, kind, label) in table {
+        #expect(step.row == kind)
+        #expect(SetupText.stepDetail(step) == label)
+        #expect(SetupPresentation.progress(state: .preparing(step)) == SetupProgress(label: label, fraction: nil))
+        let rows = SetupPresentation.rows(state: .preparing(step), omlx: .unknown, blocking: false)
+        #expect(rows.first { $0.status == .running }?.kind == kind)
+    }
+    #expect(SetupText.body
+        == "OMP Console installe OMP, reprend si besoin l’ancienne mémoire, puis démarre son service mémoire. Cette étape n’a lieu qu’une fois.")
+    #expect(SetupRow.Kind.allCases.map(SetupPresentation.title)
+        == ["Composants", "Migration de la mémoire", "Service mémoire", "Prérequis"])
 }

@@ -6,9 +6,10 @@
 // construits à la main (`Binding(get:set:)`), comme la sélection de la coque.
 //
 // Tous les textes affichés viennent de `MemoryText` : une erreur, un texte — la vue
-// ne compose jamais un message. Aucun contrôle d'écriture n'existe ici (S-2) : ni
-// bouton, ni menu contextuel, ni raccourci ; « Copier » ne touche que le
-// presse-papiers.
+// ne compose jamais un message. Aucun contrôle d'écriture de souvenir n'existe ici
+// (S-2) : ni bouton, ni menu contextuel, ni raccourci ; « Copier » ne touche que le
+// presse-papiers. Le seul geste destructif est celui du bandeau de nettoyage de
+// l'ancien moteur (omp-console-sans-podman S-6), et il passe par une confirmation.
 
 import AppKit
 import ConsoleCore
@@ -25,9 +26,17 @@ struct MemoryView: ConsoleSectionView {
     /// Le sélecteur de projet de l'état « Aucun projet ouvert » (S-1 de
     /// mac-etats-vides-sans-issue), à l'échelle de l'app.
     let chooser: ProjectChooserModel
+    /// Le bandeau de nettoyage de l'ancien moteur (omp-console-sans-podman S-6),
+    /// à l'échelle de l'app : `onReady` le rafraîchit aussi.
+    @ObservedObject var cleanup: PodmanCleanupModel
 
     var body: some View {
         VStack(spacing: 0) {
+            // L'ancien moteur de conteneurs, encore installé après la bascule :
+            // au-dessus de tout, dans tous les états de la section (S-6).
+            if cleanup.state != .hidden {
+                podmanCleanupBanner
+            }
             // Le prérequis système manquant est NOMMÉ au-dessus du contenu (S-6,
             // AC-6) : la conséquence, le geste « Rafraîchir » et le diagnostic
             // copiable — oMLX n'est ni installé ni configuré par l'app.
@@ -57,7 +66,10 @@ struct MemoryView: ConsoleSectionView {
         .toolbar { toolbarContent }
         // Le premier chargement suit l'apparition de la section ; la requête en
         // vol est annulée quand elle disparaît (S-6 : aucun sondage périodique).
-        .task { await model.refresh() }
+        .task {
+            cleanup.refresh()
+            await model.refresh()
+        }
         .onDisappear {
             model.suspend()
             graph.suspend()
@@ -67,6 +79,73 @@ struct MemoryView: ConsoleSectionView {
         .onChange(of: graph.mutations) { _, _ in
             Task { await model.refresh() }
         }
+        // La confirmation du nettoyage : son état vit dans le modèle (`@State`
+        // interdit sous CLT) ; « Annuler » et ⎋ referment sans rien toucher.
+        .confirmationDialog(
+            MemoryText.podmanCleanupConfirmTitle,
+            isPresented: Binding(
+                get: { cleanup.state == .confirming },
+                set: { if !$0 { cleanup.cancel() } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button(MemoryText.deleteConfirm, role: .destructive) { cleanup.confirm() }
+                .accessibilityIdentifier("memory.podmanCleanup.confirm")
+            Button(MemoryText.cancel, role: .cancel) { cleanup.cancel() }
+        } message: {
+            Text(verbatim: MemoryText.podmanCleanupConfirmMessage)
+        }
+    }
+
+    // MARK: - Nettoyage de l'ancien moteur (omp-console-sans-podman S-6, AC-10)
+
+    /// Le bandeau de l'ancien moteur : bleu tant qu'il propose, orange quand la
+    /// suppression a échoué. Chaque bouton est atteignable au clavier (Tab), comme
+    /// celui du bandeau oMLX ; la suppression elle-même attend la confirmation.
+    private var podmanCleanupBanner: some View {
+        let state = cleanup.state
+        let failed: Bool
+        if case .failed = state { failed = true } else { failed = false }
+        return HStack(spacing: 6) {
+            switch state {
+            case .removing:
+                ProgressView()
+                    .controlSize(.small)
+                Text(verbatim: MemoryText.podmanCleanupProgress)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("memory.podmanCleanup.progress")
+                Spacer()
+                Button(MemoryText.podmanCleanupRemove) {}
+                    .controlSize(.small)
+                    .disabled(true)
+                    .accessibilityIdentifier("memory.podmanCleanup.remove")
+            case let .failed(diagnostic):
+                Image(systemName: "exclamationmark.triangle")
+                Text(verbatim: MemoryText.podmanCleanupFailed)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(MemoryText.retry) { cleanup.requestRemoval() }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("memory.podmanCleanup.retry")
+                DiagnosticCopyButton(diagnostic: diagnostic, identifier: "memory.podmanCleanup.diagnostic")
+            case .hidden, .offered, .confirming:
+                Image(systemName: "externaldrive")
+                Text(verbatim: MemoryText.podmanCleanupMessage)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                Button(MemoryText.podmanCleanupRemove) { cleanup.requestRemoval() }
+                    .controlSize(.small)
+                    .accessibilityIdentifier("memory.podmanCleanup.remove")
+            }
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .consoleBanner(tint: failed ? .orange : .blue)
+        .padding(.horizontal, 8)
+        .padding(.top, 8)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("memory.podmanCleanup")
     }
 
     // MARK: - Prérequis oMLX (S-6, AC-6)
@@ -208,22 +287,14 @@ struct MemoryView: ConsoleSectionView {
             }
 
         case let .foreignOwned(foreign):
-            // Quelqu'un répond sans notre jeton (S-4) : la section le dit, et
-            // n'offre la reprise QUE si c'est l'ancienne pile (S-6, BR-9). Le
-            // bouton porte un libellé explicite (jamais une icône seule) et il
-            // est désactivé pendant l'action (`canRefresh`). L'adresse, le
-            // propriétaire et le geste shell se copient, après la reprise dans
-            // l'ordre de tabulation (jargon-technique-expose-mac-et-ios S-6).
+            // Quelqu'un répond sans notre jeton (S-4) : la section le dit.
+            // L'adresse, le propriétaire et le geste shell se copient
+            // (jargon-technique-expose-mac-et-ios S-6).
             ContentUnavailableView {
                 Label(MemoryText.foreignTitle, systemImage: "exclamationmark.triangle")
             } description: {
                 Text(MemoryText.foreignDescription)
             } actions: {
-                if foreign.isLegacy {
-                    Button(MemoryText.takeover) { Task { await model.takeOverLegacyStack() } }
-                        .disabled(!model.canRefresh)
-                        .accessibilityIdentifier("memoire.foreignOwned.takeover")
-                }
                 DiagnosticCopyButton(
                     diagnostic: MemoryText.foreignOwnershipDetail(foreign),
                     identifier: "memoire.foreignOwned.diagnostic"

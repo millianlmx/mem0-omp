@@ -1,8 +1,8 @@
-// L'état de présence des deux composants embarqués de l'app (S-1, BR-1) : le
-// binaire de chacun est-il un fichier EXÉCUTABLE ? C'est la SEULE question
-// posée — jamais leur état de marche (aucun `omp --version`, aucune machine
-// podman, aucun conteneur, aucun `/health`) : le badge dit « installé ou pas »,
-// pas « en marche ou pas ».
+// L'état de présence des composants embarqués de l'app (S-1, BR-1) — OMP seul
+// depuis que la mémoire est servie par mem0-rs : son binaire est-il un fichier
+// EXÉCUTABLE ? C'est la SEULE question posée — jamais son état de marche (aucun
+// `omp --version`, aucun `/health`) : le badge dit « installé ou pas », pas
+// « en marche ou pas ».
 //
 // La lecture ne lève JAMAIS : une erreur d'accès est une absence. Les chemins
 // sont ceux du manifeste épinglé, composés par `ComponentInstaller` — une seule
@@ -10,24 +10,24 @@
 // le badge veille.
 //
 // Le modèle vit à l'échelle de l'app : sa valeur est disponible dès l'`init`
-// (lecture locale, synchrone), puis recalculée à chaque changement RÉEL de l'un
-// des deux binaires — deux veilles vnode (`FileWatcher`), jamais de scrutation,
+// (lecture locale, synchrone), puis recalculée à chaque changement RÉEL d'un
+// binaire — une veille vnode par binaire (`FileWatcher`), jamais de scrutation,
 // et rien n'est publié si l'état n'a pas bougé.
 
 import Combine
 import ConsoleCore
 import Foundation
 
-/// Un composant embarqué de l'app, dans l'ordre où le badge les nomme.
+/// Un composant embarqué de l'app : OMP seul, le service mémoire (mem0-rs) vivant
+/// dans le bundle.
 enum ComponentID: String, CaseIterable, Sendable {
-    case omp, podman
+    case omp
 
     /// Le nom porté par les erreurs de l'installateur (`ComponentInstaller`) :
     /// une seule table de noms pour toute l'app, jamais deux graphies.
     var name: String {
         switch self {
         case .omp: ComponentInstaller.ompComponent
-        case .podman: ComponentInstaller.podmanComponent
         }
     }
 }
@@ -54,7 +54,7 @@ struct ComponentPresence: Equatable, Sendable {
         )
     }
 
-    /// Lit l'état réel des deux composants sur le disque (S-1). Le prédicat de
+    /// Lit l'état réel des composants sur le disque (S-1). Le prédicat de
     /// présence ne lève jamais, donc cette lecture non plus.
     @MainActor
     static func read(_ installer: ComponentInstaller) -> ComponentPresence {
@@ -96,8 +96,7 @@ final class ComponentPresenceModel: ObservableObject {
 
     /// Arme une veille par binaire, sur le chemin EXACT du manifeste : quand le
     /// chemin n'existe pas, `FileWatcher` veille l'ancêtre existant le plus
-    /// proche et voit l'apparition. Les deux chemins sont disjoints, donc aucun
-    /// ordre n'est requis entre les veilles.
+    /// proche et voit l'apparition.
     private func arm() {
         for id in ComponentID.allCases {
             let watcher = FileWatcher(path: installer.binaryLocation(id).path)
@@ -112,8 +111,7 @@ final class ComponentPresenceModel: ObservableObject {
         }
     }
 
-    /// Recalcule l'état des deux composants et ne le publie que s'il a changé :
-    /// les deux veilles peuvent se réveiller pour le même geste, et un
+    /// Recalcule l'état des composants et ne le publie que s'il a changé : un
     /// rafraîchissement sans changement réel ne doit rien émettre.
     private func refresh() {
         let fresh = ComponentPresence.read(installer)

@@ -54,18 +54,19 @@ mem0-omp/                              racine = marketplace OMP
 La coque macOS (`omp-console/`, SwiftUI) a son propre document :
 `omp-console/README.md` explique comment la builder, la tester, assembler son
 bundle `.app` et ouvrir l'app — il documente aussi l'app iOS, dont le projet Xcode
-vit sous `omp-console/ios/`. C'est l'app unique : elle installe et démarre
-elle-même ses composants (son `omp` 18.6.0, son podman 6.1.3, sa machine podman
-`omp-console` et les conteneurs `omp-console-qdrant` / `omp-console-mem0-http`),
-qui sont les seuls propriétaires de `127.0.0.1:8321` et `127.0.0.1:6333`. Elle
-migre une seule fois la base mémoire existante : elle en découvre la source, la
-copie quand elle est quiescente et importe son `.env` — l'arrêt des conteneurs de
-l'ancienne pile (`mem0-qdrant` / `mem0-http`) n'a lieu que sur action explicite de
-l'utilisateur, jamais automatiquement. Sa pile survit à la fermeture de l'app.
-`GET /health` garde la même adresse et le plugin mémoire garde son contrat
-(`health.ok`) : la pile de l'app y ajoute seulement un champ **additif**
-`installation` (le jeton de l'installation). `mem0-stack/` (ci-dessus) reste la
-voie MANUELLE, intacte, que l'app ne modifie pas.
+vit sous `omp-console/ios/`. C'est l'app unique : elle installe elle-même son
+`omp` 18.6.0 et sert la mémoire par le `mem0-rs` natif embarqué dans son bundle,
+lancé par un agent launchd (`com.omp.console.mem0-rs`) sur `127.0.0.1:8321` —
+plus de machine podman ni de conteneurs. L'agent survit à la fermeture de l'app
+et launchd le relance s'il meurt. Sur un poste qui faisait tourner l'ancienne
+pile podman de l'app, la préparation reprend une seule fois ses souvenirs
+(`mem0-rs import` depuis son Qdrant, `127.0.0.1:6333`, AVANT d'arrêter ses
+conteneurs), sans jamais modifier la source ; un bandeau propose ensuite, sur
+confirmation, de supprimer l'ancien moteur. `GET /health` garde la même adresse
+et le plugin mémoire garde son contrat (`health.ok`) : le service de l'app y
+ajoute seulement un champ **additif** `installation` (le jeton de
+l'installation). `mem0-stack/` (ci-dessus) reste la voie MANUELLE, intacte, que
+l'app ne modifie pas.
 
 ## Ce que ça fait
 

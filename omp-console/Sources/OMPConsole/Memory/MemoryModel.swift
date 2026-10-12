@@ -64,17 +64,9 @@ final class MemoryModel: ObservableObject {
     /// Le propriétaire de l'adresse quand elle répond sans notre jeton (S-2) :
     /// non nil ⇒ l'état d'écran est `foreignOwned`.
     @Published private(set) var foreign: ForeignOwnership?
-    /// Vrai pendant l'action de reprise (S-6) : le bouton et le rafraîchissement
-    /// sont désactivés tant qu'elle tourne.
-    @Published private(set) var recovering = false
     /// Faux tant que la première sonde n'a pas rendu : la vue n'affiche pas
     /// « Aucun projet ouvert » avant de savoir (S-4, S-6).
     @Published private(set) var prepared = false
-
-    /// L'action de reprise de l'ancienne pile (S-6), posée par `OMPConsoleApp` sur
-    /// `SetupModel.takeOverLegacyStack` : UNE seule implémentation pour les deux
-    /// surfaces (feuille de préparation et section Mémoire).
-    var recoverOwnership: (@MainActor () async -> Void)?
 
     /// L'adresse affichée en en-tête, celle de `MEM0_HTTP_URL` EFFECTIF (S-7).
     let address: String
@@ -115,7 +107,7 @@ final class MemoryModel: ObservableObject {
         self.portOwner = portOwner ?? { address in
             await StackOwnership.foreignOwnership(
                 address: address,
-                paths: paths,
+                ourExecutable: MemoryAgent.embeddedBinary(),
                 environment: environment,
                 run: .live
             )
@@ -181,7 +173,7 @@ final class MemoryModel: ObservableObject {
     }
 
     var canRefresh: Bool {
-        !isLoading && !recovering
+        !isLoading
     }
 
     // MARK: - Prérequis oMLX (S-6, AC-6)
@@ -259,18 +251,6 @@ final class MemoryModel: ObservableObject {
         query = ""
         mode = .summary
         await perform { await self.loadSummaryIfPossible() }
-    }
-
-    /// Le bouton de reprise de l'état « pas la pile d'OMP Console » (S-6) : appelle
-    /// l'action posée par l'app (`SetupModel.takeOverLegacyStack`) PUIS recharge la
-    /// section — aucun état intermédiaire inventé, la vérité vient de la sonde
-    /// suivante.
-    func takeOverLegacyStack() async {
-        guard !recovering else { return }
-        recovering = true
-        defer { recovering = false }
-        await recoverOwnership?()
-        await refresh()
     }
 
     // MARK: - Geste : ouvrir un souvenir

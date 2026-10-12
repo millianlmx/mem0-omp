@@ -1,17 +1,12 @@
-// Les `argv` de la pile mémoire (S-2, BR-2) — des générateurs PURS, jamais de
-// lancement : `MemoryStack` est le seul à exécuter, et les tests figent ici chaque
-// commande au caractère près, comme `GitCommand` (Files/GitCLI.swift) le fait pour
-// git.
+// Les `argv` podman de la migration unique et du nettoyage confirmé de l'ancien
+// moteur (S-4, S-6, S-7) — des générateurs PURS, jamais de lancement :
+// `PodmanLegacy` est le seul à exécuter, et les tests figent ici chaque commande
+// au caractère près, comme `GitCommand` (Files/GitCLI.swift) le fait pour git.
 //
-// Les valeurs de la pile sont celles de la Documentation du contrat (mesures du
-// 2026-10-04) et de S-2 :
-//   - machine dédiée `omp-console`, réseau `omp-console-stack`, conteneurs
-//     `omp-console-qdrant` / `omp-console-mem0-http` (la dénomination des
-//     conteneurs ne peut PAS heurter l'ancienne pile `mem0-qdrant`/`mem0-http`) ;
-//   - publication de port `-p` sur `127.0.0.1` UNIQUEMENT (la machine podman est
-//     isolée par XDG ; exposer sur 0.0.0.0 ouvrirait la mémoire au réseau) ;
-//   - le conteneur qdrant monte `<stackRoot>/qdrant_storage` sur `/qdrant/storage`
-//     (même point de montage que `mem0-stack/docker-compose.yml`, mesuré).
+// La pile podman d'avant mem0-rs vivait dans la machine dédiée `omp-console`
+// (conteneurs `omp-console-qdrant` / `omp-console-mem0-http`) ; l'app ne la
+// crée plus, elle ne fait que la démarrer pour l'importer, l'arrêter, puis la
+// supprimer sur confirmation.
 //
 // `environment(base:paths:)` et `containersConf(helperBinariesDir:)` portent
 // l'ISOLATION : sans `XDG_CONFIG_HOME`/`XDG_DATA_HOME` app-privés, podman
@@ -22,13 +17,6 @@
 import Foundation
 
 enum PodmanCommand {
-    /// Les ports publiés sur l'hôte par le conteneur qdrant (S-2).
-    static let qdrantHostPorts = [6333, 6334]
-    /// Le port publié sur l'hôte par le conteneur mem0-http (S-2).
-    static let mem0HostPort = 8321
-    /// Le port interne de Qdrant dans le réseau de la pile (variable du conteneur).
-    static let qdrantNetworkPort = 6333
-
     // MARK: - Machine
 
     /// Sans `--format` : le défaut de `machine inspect` EST le JSON. `--format` y est
@@ -39,35 +27,11 @@ enum PodmanCommand {
         ["machine", "inspect", name]
     }
 
-    static func machineInit(
-        _ name: String,
-        image: String,
-        cpus: Int = 4,
-        memory: Int = 4096,
-        diskSize: Int = 50
-    ) -> [String] {
-        [
-            "machine", "init", name,
-            "--image", image,
-            "--cpus", String(cpus),
-            "--memory", String(memory),
-            "--disk-size", String(diskSize),
-        ]
-    }
-
     static func machineStart(_ name: String) -> [String] {
         ["machine", "start", name]
     }
 
-    /// `info` : la source de vérité de la JOIGNABILITÉ de l'API de la machine
-    /// (S-3). Elle traverse connexion → socket → forwarder → API ; `machine
-    /// inspect` ne dit que l'état de la VM. Un exit 0 prouve que l'API répond.
-    static func info() -> [String] {
-        ["info"]
-    }
-
-    /// La réparation de S-3 : podman n'a PAS de `machine restart`, l'arrêt puis le
-    /// démarrage sont les deux gestes.
+    /// L'arrêt de la machine une fois ses conteneurs arrêtés (S-4).
     static func machineStop(_ name: String) -> [String] {
         ["machine", "stop", name]
     }
@@ -77,129 +41,26 @@ enum PodmanCommand {
         ["machine", "rm", "-f", name]
     }
 
-    // MARK: - Réseau
-
-    static func networkInspect(_ name: String) -> [String] {
-        ["network", "inspect", name]
-    }
-
-    static func networkCreate(_ name: String) -> [String] {
-        ["network", "create", name]
-    }
-
-    // MARK: - Images
-
-    static func imageExists(_ reference: String) -> [String] {
-        ["image", "exists", reference]
-    }
-
-    static func imagePull(_ reference: String) -> [String] {
-        ["image", "pull", reference]
-    }
-
-    static func imageBuild(tag: String, context: URL) -> [String] {
-        ["image", "build", "-t", tag, context.path]
-    }
-
     // MARK: - Conteneurs
 
     static func containerInspect(_ name: String) -> [String] {
         ["container", "inspect", name, "--format", "json"]
     }
 
-    static func containerRemove(_ name: String) -> [String] {
-        ["container", "rm", "-f", name]
-    }
-
     static func containerStart(_ name: String) -> [String] {
         ["container", "start", name]
     }
 
-    /// Le `run` du conteneur Qdrant, exactement la forme de S-2 : l'image épinglée
-    /// du manifeste, les deux ports de l'API et des métriques, le volume de
-    /// données et la clé d'API du service.
-    static func qdrantRun(
-        name: String,
-        image: String,
-        network: String,
-        storage: URL,
-        apiKey: String
-    ) -> [String] {
-        var arguments = [
-            "run", "-d",
-            "--name", name,
-            "--restart", "unless-stopped",
-            "--network", network,
-        ]
-        for port in qdrantHostPorts {
-            arguments += ["-p", "127.0.0.1:\(port):\(port)"]
-        }
-        arguments += [
-            "-v", "\(storage.path):/qdrant/storage",
-            "-e", "QDRANT__SERVICE__API_KEY=\(apiKey)",
-            image,
-        ]
-        return arguments
+    /// L'arrêt des conteneurs de la migration (S-4) : `--ignore` rend un conteneur
+    /// absent du store sans erreur ; un conteneur déjà arrêté est un succès.
+    static func containerStop(_ names: [String]) -> [String] {
+        ["stop", "--ignore"] + names
     }
 
-    /// Le `run` du conteneur mem0-http : ses dix variables viennent de
-    /// `StackConfig` — jamais de l'environnement de l'app seule (invariant S-2) —
-    /// et son hôte Qdrant est le conteneur voisin, résolu par le DNS du réseau
-    /// (`host.containers.internal` reste l'hôte du Mac, pour oMLX). Le jeton
-    /// d'installation suit IMMÉDIATEMENT `MEM0_HTTP_TOKEN` (position figée par
-    /// test, S-4) : c'est lui que `/health` rend dans son champ additif.
-    static func mem0Run(
-        name: String,
-        image: String,
-        network: String,
-        qdrantHost: String,
-        config: StackConfig,
-        installationToken: String
-    ) -> [String] {
-        [
-            "run", "-d",
-            "--name", name,
-            "--restart", "unless-stopped",
-            "--network", network,
-            "-p", "127.0.0.1:\(mem0HostPort):\(mem0HostPort)",
-            "-e", "QDRANT_HOST=\(qdrantHost)",
-            "-e", "QDRANT_PORT=\(qdrantNetworkPort)",
-            "-e", "QDRANT_API_KEY=\(config.qdrantApiKey)",
-            "-e", "OMLX_BASE_URL=\(config.omlxBaseURL)",
-            "-e", "OMLX_API_TOKEN=\(config.omlxApiToken)",
-            "-e", "OMLX_LLM_MODEL=\(config.omlxLLMModel)",
-            "-e", "OMLX_EMBED_MODEL=\(config.omlxEmbedModel)",
-            "-e", "EMBEDDING_DIMS=\(config.embeddingDims)",
-            "-e", "MEM0_HTTP_TOKEN=\(config.mem0HttpToken)",
-            "-e", "OMP_INSTALLATION_TOKEN=\(installationToken)",
-            "-e", "PYTHONUNBUFFERED=1",
-            image,
-        ]
-    }
-
-    /// Le `run` du conteneur LECTEUR de l'union (S-8) : une instance Qdrant
-    /// TEMPORAIRE (`--rm`) montée sur une copie de staging, publiée sur un port
-    /// dédié pour que la cible (celle de l'app) ne soit jamais confondue avec
-    /// elle. Aucune donnée de l'ancienne pile n'est montée par ce conteneur : il
-    /// ne voit que la copie.
-    static func readerRun(
-        name: String,
-        image: String,
-        network: String,
-        storage: URL,
-        hostPort: Int,
-        apiKey: String
-    ) -> [String] {
-        [
-            "run", "-d",
-            "--rm",
-            "--name", name,
-            "--network", network,
-            "-p", "127.0.0.1:\(hostPort):\(qdrantNetworkPort)",
-            "-v", "\(storage.path):/qdrant/storage",
-            "-e", "QDRANT__SERVICE__API_KEY=\(apiKey)",
-            image,
-        ]
+    /// `podman cp <conteneur>:<chemin> <fichier hôte>` : marche conteneur arrêté
+    /// ou non ; le dossier parent de la destination doit exister (DOC-3).
+    static func copyOut(container: String, path: String, to destination: URL) -> [String] {
+        ["cp", "\(container):\(path)", destination.path]
     }
 
     // MARK: - Environnement et configuration
@@ -228,62 +89,5 @@ enum PodmanCommand {
     /// tout vit sous la racine privée de l'app.
     static func containersConf(helperBinariesDir: URL) -> String {
         "[engine]\nhelper_binaries_dir = [\"\(helperBinariesDir.path)\"]\n"
-    }
-
-    // MARK: - Lecture d'un argv
-
-    /// Le libellé court d'une commande, pour `MemoryStackError.podmanFailed(command:)`.
-    static func label(of arguments: [String]) -> String {
-        guard let first = arguments.first else { return "podman" }
-        let nouns = ["machine", "network", "image", "container"]
-        if nouns.contains(first), arguments.count >= 2 {
-            return "\(first) \(arguments[1])"
-        }
-        return first
-    }
-
-    /// Les ports HÔTE publiés par un `run` : le port de gauche de chaque `-p
-    /// 127.0.0.1:<hôte>:<interne>` (forme `[adresse:]hôte:interne`). Sert à nommer
-    /// le port occupé quand `run` échoue sur « address already in use ».
-    static func publishedPorts(in arguments: [String]) -> [Int] {
-        var ports: [Int] = []
-        var index = 0
-        while index < arguments.count {
-            let argument = arguments[index]
-            if argument == "-p" || argument == "--publish", index + 1 < arguments.count {
-                if let port = hostPort(of: arguments[index + 1]) { ports.append(port) }
-                index += 2
-                continue
-            }
-            if argument.hasPrefix("--publish="), let port = hostPort(of: String(argument.dropFirst("--publish=".count))) {
-                ports.append(port)
-            }
-            index += 1
-        }
-        return ports
-    }
-
-    /// Le port hôte d'une publication `[adresse:]hôte:interne` : l'avant-dernier
-    /// composant (le dernier est le port interne).
-    private static func hostPort(of publication: String) -> Int? {
-        let parts = publication.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count >= 2 else { return nil }
-        return Int(parts[parts.count - 2])
-    }
-
-    /// Deux références d'image désignent-elles la même ? On ignore le schéma
-    /// (`docker://`) et un préfixe de registre local (`localhost/`) : podman
-    /// réécrit une référence locale préfixée, et exiger l'égalité littérale
-    /// ferait recréer un conteneur pourtant à jour.
-    static func sameImage(_ lhs: String, _ rhs: String) -> Bool {
-        normalize(lhs) == normalize(rhs)
-    }
-
-    private static func normalize(_ reference: String) -> String {
-        var text = reference
-        for prefix in ["docker://", "docker.io/", "localhost/"] where text.hasPrefix(prefix) {
-            text.removeFirst(prefix.count)
-        }
-        return text
     }
 }

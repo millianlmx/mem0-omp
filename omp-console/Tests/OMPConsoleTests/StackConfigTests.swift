@@ -14,7 +14,7 @@ func defaultsMatchTheExampleFile() {
     let defaults = StackConfig.defaults
     #expect(defaults.qdrantApiKey == "mem0-local-qdrant-key")
     #expect(defaults.mem0HttpToken == "")
-    #expect(defaults.omlxBaseURL == "http://host.containers.internal:8000/v1")
+    #expect(defaults.omlxBaseURL == "http://127.0.0.1:8000/v1")
     #expect(defaults.omlxApiToken == "")
     #expect(defaults.omlxLLMModel == "qwen3-8b")
     #expect(defaults.omlxEmbedModel == "bge-m3")

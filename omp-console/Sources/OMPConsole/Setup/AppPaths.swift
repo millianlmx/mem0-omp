@@ -1,6 +1,7 @@
 // La racine privée de l'app (S-1, BR-1) : TOUT ce que l'app possède vit dessous —
-// composants téléchargés (omp, podman), configuration XDG de sa machine podman,
-// données de la VM, pile mémoire et son état.
+// composant téléchargé (omp), service mémoire mem0-rs et sa base, état de la
+// pile mémoire, et les restes de l'ancien moteur podman (configuration XDG et
+// données de sa VM) que la migration lit et que le nettoyage confirmé supprime.
 //
 // La variable `OMP_CONSOLE_SUPPORT_ROOT` déplace la racine entière (composants ET
 // état) : c'est l'échappatoire de test qui permet de prouver une installation
@@ -15,6 +16,17 @@ import Foundation
 struct AppPaths: Equatable, Sendable {
     var supportRoot: URL
 
+    /// La racine est-elle DÉPLACÉE (S-2) ? Vrai quand `OMP_CONSOLE_SUPPORT_ROOT`
+    /// est posée et non vide, et pour tout `AppPaths` construit directement sur une
+    /// racine (cas des tests) : une telle racine isole le label et le dossier du
+    /// plist de l'agent mem0-rs, sans jamais toucher `~/Library/LaunchAgents`.
+    var isOverridden: Bool
+
+    init(supportRoot: URL, isOverridden: Bool = true) {
+        self.supportRoot = supportRoot
+        self.isOverridden = isOverridden
+    }
+
     /// La variable qui déplace toute la racine (posée et non vide ⇒ elle gagne).
     static let supportRootEnvironmentKey = "OMP_CONSOLE_SUPPORT_ROOT"
 
@@ -25,11 +37,42 @@ struct AppPaths: Equatable, Sendable {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AppPaths {
         if let override = environment[supportRootEnvironmentKey], !override.isEmpty {
-            return AppPaths(supportRoot: URL(fileURLWithPath: override, isDirectory: true))
+            return AppPaths(supportRoot: URL(fileURLWithPath: override, isDirectory: true), isOverridden: true)
         }
         let root = URL(fileURLWithPath: home, isDirectory: true)
             .appendingPathComponent("Library/Application Support/com.omp.console", isDirectory: true)
-        return AppPaths(supportRoot: root)
+        return AppPaths(supportRoot: root, isOverridden: false)
+    }
+
+    /// `<racine>/mem0-rs` : le dossier de travail de l'agent mem0-rs (0700).
+    var mem0Root: URL {
+        supportRoot.appendingPathComponent("mem0-rs", isDirectory: true)
+    }
+
+    /// `<racine>/mem0-rs/mem0-rs.db` : la base SQLite servie par l'agent.
+    var mem0Database: URL {
+        mem0Root.appendingPathComponent("mem0-rs.db")
+    }
+
+    /// `<racine>/mem0-rs/mem0-rs.log` : stdout et stderr de l'agent.
+    var mem0Log: URL {
+        mem0Root.appendingPathComponent("mem0-rs.log")
+    }
+
+    /// Le dossier des plists d'agent : `~/Library/LaunchAgents` pour la racine
+    /// réelle, `<racine>/LaunchAgents` pour une racine déplacée — dont le job ne
+    /// survit donc pas à la session.
+    var launchAgentsDir: URL {
+        if isOverridden {
+            return supportRoot.appendingPathComponent("LaunchAgents", isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+    }
+
+    /// `<launchAgentsDir>/<label>.plist`.
+    func launchAgentPlist(label: String) -> URL {
+        launchAgentsDir.appendingPathComponent("\(label).plist")
     }
 
     /// `<racine>/components` : les binaires et leur charge utile.
@@ -41,13 +84,6 @@ struct AppPaths: Equatable, Sendable {
     func ompDir(_ version: String) -> URL {
         componentsRoot
             .appendingPathComponent("omp", isDirectory: true)
-            .appendingPathComponent(version, isDirectory: true)
-    }
-
-    /// `<racine>/components/podman/<version>` : contient `bin`, `lib`, `share`.
-    func podmanDir(_ version: String) -> URL {
-        componentsRoot
-            .appendingPathComponent("podman", isDirectory: true)
             .appendingPathComponent(version, isDirectory: true)
     }
 
@@ -103,30 +139,31 @@ struct AppPaths: Equatable, Sendable {
         remoteDir.appendingPathComponent("devices.json")
     }
 
-    /// L'image de machine retenue au dernier `machine init` de l'app.
-    var machineState: URL {
-        stackRoot.appendingPathComponent("machine.json")
+    /// `<stackRoot>/podman-migration` (0700) : les artefacts de la migration
+    /// unique de la pile podman vers mem0-rs (S-4 d'omp-console-sans-podman).
+    var podmanMigrationRoot: URL {
+        stackRoot.appendingPathComponent("podman-migration", isDirectory: true)
     }
 
-    /// Le marqueur informatif de la migration (S-3).
-    var migrationState: URL {
-        stackRoot.appendingPathComponent("migration.json")
+    /// La copie de `history.db` sortie du conteneur mem0-http par `podman cp`.
+    var podmanHistoryCopy: URL {
+        podmanMigrationRoot.appendingPathComponent("history.db")
+    }
+
+    /// Le stdout brut du dernier `mem0-rs import --json` terminé (codes 0 et 3).
+    var podmanImportReport: URL {
+        podmanMigrationRoot.appendingPathComponent("import-report.json")
+    }
+
+    /// `bascule.json` : le marqueur « une seule fois » de la migration (S-4),
+    /// écrit seulement après l'arrêt réussi de la pile podman.
+    var switchState: URL {
+        podmanMigrationRoot.appendingPathComponent("bascule.json")
     }
 
     /// `<stackRoot>/installation-token` : le jeton d'installation de la pile
     /// (S-4), écrit en 0600 — voir `InstallationTokenStore`.
     var installationToken: URL {
         stackRoot.appendingPathComponent(InstallationTokenStore.fileName)
-    }
-
-    /// `<stackRoot>/union-staging` : les copies de staging de l'union des
-    /// souvenirs (S-8), un sous-dossier par passage, supprimé en sortie.
-    var unionStagingRoot: URL {
-        stackRoot.appendingPathComponent("union-staging", isDirectory: true)
-    }
-
-    /// `<stackRoot>/union.json` : le relevé de la dernière union réussie (S-8).
-    var unionState: URL {
-        stackRoot.appendingPathComponent("union.json")
     }
 }

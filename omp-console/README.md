@@ -29,7 +29,10 @@ Cible minimale : macOS 26.
 ## Prérequis
 
 - macOS 26 ou plus récent, sur **Apple Silicon (arm64)** : l'app installe son
-  `omp` et son podman pour cette architecture, et refuse les autres.
+  `omp` et embarque son service mémoire `mem0-rs` pour cette architecture, et
+  refuse les autres.
+- Pour **assembler** le bundle : Rust (`cargo`), qui compile le `mem0-rs` embarqué
+  (voir « Assembler le bundle `.app` »). L'app installée n'en a pas besoin.
 - Les Command Line Tools d'Apple : `swift --version` doit répondre.
 - **`xcodebuild` n'est ni requis ni utilisable** sur un poste sans Xcode : sur un
   poste équipé des seuls Command Line Tools, il refuse de tourner (« requires
@@ -41,19 +44,21 @@ Cible minimale : macOS 26.
   `~/.omp/agent/pipeline/service.json`). L'app n'en lance **aucun** process :
   service absent ⇒ « service arrêté » et un bouton « Réessayer » (voir « Piloter
   le service »).
-- **Rien d'autre à installer** : ni `omp`, ni podman/Docker, ni la pile mémoire —
-  l'app installe et démarre tout ce qui lui manque au premier lancement (voir
-  « Composants de l'app »). Restent hors périmètre, mais SIGNALÉS par l'app quand
-  ils manquent : **oMLX** (natif, port 8000), **git** et **gh**.
+- **Rien d'autre à installer** : ni `omp`, ni Docker, ni podman, ni conteneur —
+  l'app installe son `omp` et démarre son service mémoire au premier lancement
+  (voir « Composants de l'app » et « Service mémoire »). Restent hors périmètre,
+  mais SIGNALÉS par l'app quand ils manquent : **oMLX** (natif, port 8000),
+  **git** et **gh**.
 
 ## Premiers pas
 
 Tout se fait depuis l'app, sans terminal :
 
-1. **La préparation** — l'app installe ses composants (OMP 18.6.0, podman 6.1.3),
-   migre la base mémoire existante si elle en trouve une, monte sa pile mémoire et
-   sonde oMLX. La feuille « Préparation d'OMP Console » montre une ligne par étape
-   (Composants, Migration de la mémoire, Pile mémoire, Prérequis) avec son état ;
+1. **La préparation** — l'app installe son composant (OMP 18.6.0), reprend une
+   seule fois les souvenirs de l'ancienne mémoire à conteneurs si elle en trouve
+   une, démarre son service mémoire (`mem0-rs`, agent launchd) et sonde oMLX. La
+   feuille « Préparation d'OMP Console » montre une ligne par étape
+   (Composants, Migration de la mémoire, Service mémoire, Prérequis) avec son état ;
    pendant une étape, un bloc pleine largeur sous les lignes nomme l'étape en
    cours et porte une barre de progression, chiffrée quand la taille du
    téléchargement est connue, indéterminée sinon.
@@ -63,25 +68,29 @@ Tout se fait depuis l'app, sans terminal :
      présence d'OMP sans rien télécharger ; s'il manque toujours, la feuille le
      dit) et « Installer » (`↩`, proéminent), qui lance toute la préparation. Dès
      que le binaire d'OMP est placé, la feuille devient fermable, pendant que la
-     pile mémoire se prépare.
-   - **OMP présent** (seul Podman, ou la pile, reste à préparer) : la préparation
+     mémoire se prépare.
+   - **OMP présent** (seule la mémoire reste à préparer) : la préparation
      démarre d'elle-même et la feuille est **fermable** ; « Fermer » (Échap)
      n'interrompt RIEN — la préparation continue et l'Accueil garde un bandeau
      « Reprendre… » ; `↩` déclenche le bouton proéminent.
    - **Échec** : une phrase claire (« Pas de réseau : … », « empreinte SHA-256
      différente », « Ce Mac n'est pas pris en charge (arm64 requis) », …) ; le
      détail technique, s'il existe, est replié derrière « Afficher le détail » et,
-     déplié, tient dans une zone de hauteur fixe qui défile. « Réessayer » relance
-     la chaîne. Sur un port tenu par l'ancienne pile mémoire, « Arrêter l'ancienne
-     pile et reprendre » (`↩`) passe devant « Réessayer » ; pendant l'arrêt, les
-     deux restent affichés mais éteints, et « Fermer » (Échap) reste disponible.
-     Un échec de la pile (Podman, machine, conteneur, port occupé, ancienne pile
-     qui ne s'arrête pas) dit la conséquence puis le geste (« Le moteur de la
-     mémoire n'a pas démarré : les souvenirs sont indisponibles. Réessayez ; … ») ;
-     « Copier le diagnostic » (`sheet.setup.diagnostic`, sous « Réessayer » et
-     « Fermer ») met la commande, le stderr, le port et le geste shell dans le
-     presse-papiers, et le bandeau de l'Accueil (relayé à l'iPhone) ne porte que
-     la conséquence.
+     déplié, tient dans une zone de hauteur fixe qui défile. « Réessayer » (`↩`)
+     relance la chaîne. Un échec de la migration ou du service mémoire dit la
+     conséquence puis le geste (« Le service mémoire n'a pas répondu : les
+     souvenirs sont indisponibles. Réessayez ; si l'échec revient, copiez le
+     diagnostic pour le signaler. ») ; un port tenu par un autre programme nomme
+     ce programme (« Le programme « nc » occupe la place réservée à la mémoire :
+     celle-ci ne peut pas démarrer. Quittez-le, puis réessayez. »), sans pid ni
+     port. « Copier le diagnostic » (`sheet.setup.diagnostic`, sous « Réessayer »
+     et « Fermer ») met la commande, le détail brut, le port et le geste shell
+     dans le presse-papiers, et le bandeau de l'Accueil (relayé à l'iPhone) ne
+     porte que la conséquence.
+   - **Import avec rejets** : la ligne « Migration de la mémoire » dit le nombre
+     d'éléments laissés de côté et leurs raisons ; le pied propose « Basculer
+     quand même », « Réessayer » (`↩`) et « Fermer » (voir « Migration unique de
+     l'ancienne mémoire »).
 
    À la fin de toute la préparation, la feuille se ferme d'elle-même. Rien ne
    dépend d'un `omp` système.
@@ -135,12 +144,11 @@ Tout se fait depuis l'app, sans terminal :
    d'historique et les échecs de projet sans feature de lot restent dans
    Pipelines › Arrêtées.
 
-**La pile mémoire survit à ⌘Q** : l'app ne possède aucun site d'arrêt — les
-processus de la machine (`krunkit`, `gvproxy`) sont lancés par des invocations
-podman courtes, les conteneurs sont `--restart unless-stopped`. Fermer l'app (ou
-la voir plantée) ne coupe donc pas la mémoire : une session `omp` au terminal, ou
-un `omp -p`, sur un dépôt reçoit toujours son rappel par `http://localhost:8321`
-(le défaut du plugin `omp-mem0-memory`).
+**La mémoire survit à ⌘Q** : le service mémoire est un agent launchd
+(`com.omp.console.mem0-rs`), pas un process de l'app — le Quitter de l'app ne le
+touche pas. Fermer l'app (ou la voir plantée) ne coupe donc pas la mémoire : une
+session `omp` au terminal, ou un `omp -p`, sur un dépôt reçoit toujours son rappel
+par `http://localhost:8321` (le défaut du plugin `omp-mem0-memory`).
 
 Un geste de carte **poste** sa commande au service (`POST /v1/repos/{repo}/commands`)
 et affiche l'accusé rendu par la **réponse** : `state:"taken"` (le service l'a prise)
@@ -197,10 +205,12 @@ prépare ses composants »), `home.setupBanner` (bandeau « Reprendre… »),
 `home.running.<carte>`, `home.paused.<carte>` (bouton `home.resume.<carte>`),
 `home.notStarted.<carte>`, `home.delivered.open.<carte>`, `home.allPipelines` ;
 feuille « Préparation d'OMP Console » `sheet.setup` (`sheet.setup.install`,
-`sheet.setup.retry`, `sheet.setup.takeover`, `sheet.setup.quit`,
-`sheet.setup.close`, `sheet.setup.ompMissing`, `sheet.setup.retryMissed`, bloc de
+`sheet.setup.retry`, `sheet.setup.switchAnyway`, `sheet.setup.quit`,
+`sheet.setup.close`, `sheet.setup.ompMissing`, `sheet.setup.retryMissed`, lignes
+`sheet.setup.row.<components|migration|service|prerequisites>`, bloc de
 progression `sheet.setup.progress` avec `sheet.setup.progress.label` et
-`sheet.setup.progress.bar`, échec `sheet.setup.failure`,
+`sheet.setup.progress.bar`, échec `sheet.setup.failure`, rejets de l'import
+`sheet.setup.rejected` (choix `sheet.setup.rejected.choice`),
 `sheet.setup.detail.toggle`, `sheet.setup.detail`, `sheet.setup.diagnostic`) ;
 feuille Bienvenue `welcome.sheet` (`welcome.continue`) ;
 feuille « Répondre » `answer.sheet` (`answer.question`,
@@ -377,7 +387,7 @@ premier plan quand sa fenêtre paraît), lancée par `open -g -n -F` avec le cro
 `-surface.recipe <id>` (`SurfaceRecipe.swift`, inerte sans
 `OMP_CONSOLE_SUPPORT_ROOT`), un magasin, un support, un dossier
 d'alertes et des préférences jetables, et un jeu de données fictif fixe servi sur
-`127.0.0.1` (service OMP, mem0-http, oMLX ; `gh` coupé). Votre instance
+`127.0.0.1` (service OMP, service mémoire, oMLX ; `gh` coupé). Votre instance
 `com.omp.console` n'est jamais relancée, activée ni visée ; ses pids, l'app au
 premier plan et l'empreinte de `defaults export com.omp.console` sont relevés
 avant et après, et toute activation d'OMP Console pendant le passage est
@@ -1101,6 +1111,18 @@ autre que macOS, il annonce « non exécuté » et sort en code 2 sans rien comp
 Sans l'icns, il sort en code 1 avec `✗ icône absente :
 omp-console/Bundle/AppIcon.icns (bash scripts/app-icon.sh)`, sans bundle signé.
 
+Le bundle **embarque le service mémoire** : avec ou sans `--no-tests`, le script
+compile `mem0-rs` depuis la racine (`cargo build --release --locked --manifest-path
+mem0-stack/mem0-rs/Cargo.toml`), prend le binaire dans
+`${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/release/mem0-rs`, exige `arm64`
+dans `lipo -archs`, le copie en `Contents/Resources/mem0-rs` (0755) et le signe en
+ad hoc LUI-MÊME (`codesign --force --sign -`) avant la signature du bundle :
+`  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)`. Chaque cas d'échec
+sort en code 1 sans bundle : `✗ cargo introuvable — installe Rust
+(https://rustup.rs)`, `✗ compilation de mem0-rs échouée (cargo build --release)`,
+`✗ mem0-rs n'est pas arm64 (lipo : <sortie>)`. Le bundle ne contient ni podman, ni
+contexte d'image, ni fichier de pile à conteneurs.
+
 L'icône est versionnée et ne se redessine qu'à la main, quand son dessin change :
 
 ```bash
@@ -1157,8 +1179,9 @@ bash scripts/run-console.sh install-hook    # pose .git/hooks/{post-merge,post-r
 
 Après `git pull`, la recompilation se fait toute seule **si** les commits arrivés
 touchent une entrée de l'app : un `*.swift` sous `omp-console/Sources/`,
-`Package.swift`, `omp-console/Bundle/` ou `omp-console/stack/mem0-http/` (embarqué dans
-le bundle). Un pull qui ne touche que les tests, la documentation ou le reste du
+`Package.swift`, `omp-console/Bundle/` ou le crate `mem0-stack/mem0-rs/` (`src/`,
+`Cargo.toml`, `Cargo.lock` : le service mémoire, compilé et embarqué dans le
+bundle). Un pull qui ne touche que les tests, la documentation ou le reste du
 dépôt ne déclenche rien — et ne paie que la lecture du diff. Le déclencheur est
 le couple post-merge (fusion, avance rapide) / post-rewrite (`pull.rebase=true`,
 le réglage **local** de ce dépôt) ; les deux comparent `ORIG_HEAD`, que git pose
@@ -1175,139 +1198,251 @@ les seuls hooks posés par ce script.
 ## Composants de l'app
 
 L'app possède TOUT ce qui lui sert, sous une racine privée — elle ne consulte ni
-`PATH`, ni `~/.bun/bin`, ni `/opt/homebrew/bin`, ni `/usr/local/bin` pour `omp`
-et podman (S-1, S-4) :
+`PATH`, ni `~/.bun/bin`, ni `/opt/homebrew/bin`, ni `/usr/local/bin` pour `omp`.
+Elle n'installe qu'un composant, **OMP** ; son service mémoire est le `mem0-rs`
+embarqué dans le bundle, servi par un agent launchd (voir « Service mémoire »).
+Aucune machine virtuelle, aucun conteneur, aucun moteur de conteneurs.
 
 | Quoi | Où | Version |
 |---|---|---|
 | binaire `omp` (binaire autonome GitHub, aucun `bun` requis) | `~/Library/Application Support/com.omp.console/components/omp/18.6.0/omp` | 18.6.0 (SHA-256 vérifié avant installation) |
-| podman (pkg extrait par `pkgutil --expand-full`, jamais installé) | `…/components/podman/6.1.3/{bin,lib,share}` | 6.1.3 |
-| configuration XDG de la machine podman | `…/config/` (`XDG_CONFIG_HOME`) | |
-| disque et cache de la machine podman | `…/data/` (`XDG_DATA_HOME`) | |
-| artefacts runtime de podman (gvproxy, sockets de la machine) | `…/tmp/` (`TMPDIR` de la machine) | |
-| pile mémoire | `…/stack/` (`qdrant_storage/`, `env`, `machine.json`, `migration.json`) | |
-| jeton d'installation de la pile | `…/stack/installation-token` (0600) | |
-| trace de la dernière union des bases | `…/stack/union.json` | |
-| copie de staging de l'union | `…/stack/union-staging/` | |
+| service mémoire `mem0-rs` (signé ad hoc avec le bundle) | `OMP Console.app/Contents/Resources/mem0-rs` | celle du crate `mem0-stack/mem0-rs` |
+| base de la mémoire | `…/mem0-rs/mem0-rs.db` (dossier `mem0-rs/` en 0700, répertoire de travail de l'agent) | |
+| journal du service mémoire (sortie et erreurs, sans rotation) | `…/mem0-rs/mem0-rs.log` | |
+| plist de l'agent (0600 : il porte des jetons) | `~/Library/LaunchAgents/com.omp.console.mem0-rs.plist` | |
+| configuration de la mémoire (jamais réécrite par l'app) | `…/stack/env` | |
+| jeton d'installation (jamais régénéré) | `…/stack/installation-token` (0600) | |
+| ancienne base Qdrant, source de la migration, jamais modifiée | `…/stack/qdrant_storage/` | |
+| traces de la migration unique | `…/stack/podman-migration/` (`history.db`, `import-report.json`, `bascule.json`) | |
+| appareils appairés | `…/remote/devices.json` (0600) | |
 
 - **Badge du coin inférieur gauche** — le pied de la barre latérale porte l'état
-  des composants embarqués (identifiant AX `components.badge`) : « Tout est
-  installé » (point vert), ou « OMP manquant », « Podman manquant », « OMP et
-  Podman manquants » (point orange). La présence se lit par le MÊME prédicat que
-  l'installateur — le binaire existe, est exécutable et n'est pas un dossier —
-  jamais l'état de marche : aucune version n'est exécutée. Deux veilles de
-  fichier (`FileWatcher`, jamais de scrutation) le recalculent sans redémarrer
-  l'app, et un changement de permission suffit. Quand un composant manque, le
-  badge est un bouton (clic, ou Espace au focus ; aide « Afficher la préparation
-  d'OMP Console ») qui rouvre la feuille de préparation — bloquante si OMP
-  manque, fermable si seul Podman manque ; « Tout est installé » reste un mot
-  non interactif. Si OMP disparaît pendant que l'app tourne, seul le badge
-  change : la feuille bloquante s'impose au clic du badge, ou d'elle-même au
-  lancement suivant. Replier la barre latérale masque le badge avec elle.
-- **Manifeste** — versions, URL et empreintes sont figées dans
+  du composant embarqué (identifiant AX `components.badge`) : « Tout est
+  installé » (point vert), ou « OMP manquant » (point orange). La présence se lit
+  par le MÊME prédicat que l'installateur — le binaire existe, est exécutable et
+  n'est pas un dossier — jamais l'état de marche : aucune version n'est exécutée.
+  Deux veilles de fichier (`FileWatcher`, jamais de scrutation) le recalculent
+  sans redémarrer l'app, et un changement de permission suffit. Quand OMP manque,
+  le badge est un bouton (clic, ou Espace au focus ; aide « Afficher la
+  préparation d'OMP Console ») qui rouvre la feuille de préparation, bloquante ;
+  « Tout est installé » reste un mot non interactif. Si OMP disparaît pendant que
+  l'app tourne, seul le badge change : la feuille bloquante s'impose au clic du
+  badge, ou d'elle-même au lancement suivant. Replier la barre latérale masque le
+  badge avec elle.
+- **Manifeste** — version, URL et empreinte d'OMP sont figées dans
   `ComponentManifest.current` (`Setup/ComponentManifest.swift`). L'installation
   est idempotente (un composant présent à la bonne version n'est ni retéléchargé
-  ni réinstallé), vérifie le SHA-256 AVANT de déplacer, puis `omp --version` /
-  `bin/podman --version` APRÈS ; après succès, les autres versions sous
-  `components/omp/` et `components/podman/` sont purgées. Rien n'est écrit de
-  façon non atomique.
-- **Machine podman dédiée** — `omp-console`, image
-  `docker://quay.io/podman/machine-os:6.1`, 4 CPU, 4 Gio, 50 Gio de disque, avec
-  `helper_binaries_dir` pointé sur les `bin/` du composant ; sa configuration et
-  son disque vivent sous la racine de l'app, donc elle ne voit jamais une machine
-  podman système. Son état est jugé à son **API** (une commande `info` portée par
-  son podman et son `TMPDIR` privés), pas au seul `machine inspect` : une VM qui
-  vit mais dont l'API ne répond pas est **réparée automatiquement** (`machine stop
-  omp-console` puis `machine start omp-console`), sans geste manuel (AC-2). Si
-  cette réparation échoue, le geste de secours est documenté ci-dessous.
-- **Conteneurs** — réseau `omp-console-stack`, `omp-console-qdrant`
-  (`qdrant/qdrant:v1.19.0`, ports `127.0.0.1:6333/6334`) et
-  `omp-console-mem0-http` (image construite depuis le contexte embarqué
-  `Contents/Resources/Stack/mem0-http`, port `127.0.0.1:8321`), tous deux
-  `--restart unless-stopped`. Ces conteneurs sont les seuls propriétaires légitimes
-  de `127.0.0.1:8321` et `127.0.0.1:6333`.
-- **Étiquette d'image par empreinte** — l'image mem0-http est étiquetée par
-  l'empreinte des sources embarquées
-  (`omp-console-mem0-http:<12 premiers hexadécimaux>` de
-  `omp-console/stack/mem0-http/STACK_FINGERPRINT`) et n'est **reconstruite que si cette
-  étiquette manque** : sources inchangées ⇒ aucune reconstruction (AC-7), source
-  modifiée ⇒ nouvelle étiquette ⇒ reconstruction (AC-8). Après toute modification
-  de `omp-console/stack/mem0-http/`, régénérer l'empreinte versionnée :
-  `bun scripts/stack-fingerprint.ts --write` ; le test `stack/AC-24` échoue si le
-  fichier versionné diverge des sources du dépôt (il nomme le fichier et la
-  commande).
-- **Migration** (une fois par racine) — l'app découvre la source de l'ancienne
-  pile par l'API Docker sur socket Unix (`~/.docker/run/docker.sock`, puis
-  `/var/run/docker.sock`), copie `qdrant_storage` **quand elle est quiescente**
-  (aucun conteneur legacy en marche : on ne copie pas une base RocksDB vivante),
-  la source reste INTACTE (une base déjà présente n'est JAMAIS recouverte),
-  importe le `.env` voisin dans `stack/env` (0600) et écrit `stack/migration.json`
-  (informatif). L'arrêt des conteneurs legacy n'est **jamais automatique** : il n'a
-  lieu que sur une action explicite de l'utilisateur (voir « Ancienne pile »).
-- **Ancienne pile** — si ses conteneurs tiennent `127.0.0.1:8321`/`6333`, l'app
-  nomme le conflit et le geste exact à exécuter, et ne reprend jamais ces ports
-  seule. Le geste, dans un terminal : `podman stop mem0-qdrant mem0-http` (ou
-  `docker stop …` selon le moteur qui porte l'ancienne pile). Dans l'app, le bouton
-  **« Arrêter l'ancienne pile et reprendre »** exécute ce même arrêt (par le socket
-  Docker, transport déjà en place) puis relance la préparation complète — c'est la
-  seule façon dont l'app arrête un conteneur d'une autre pile (AC-6).
-- **`stack/env`** — mêmes clés que `mem0-stack/.env` : `QDRANT_API_KEY`,
+  ni réinstallé), vérifie le SHA-256 AVANT de déplacer, puis `omp --version`
+  APRÈS ; après succès, les autres versions sous `components/omp/` sont purgées.
+  Rien n'est écrit de façon non atomique. Un `components/podman/` laissé par une
+  version antérieure n'est jamais touché par l'installateur : la migration s'en
+  sert, puis seul le bandeau de nettoyage le supprime.
+- **`stack/env`** — clés `QDRANT_API_KEY` (lue par la seule migration),
   `MEM0_HTTP_TOKEN`, `OMLX_BASE_URL`, `OMLX_API_TOKEN`, `OMLX_LLM_MODEL`,
   `OMLX_EMBED_MODEL`, `EMBEDDING_DIMS`. Sans fichier, les défauts de
-  `mem0-stack/.env.example` s'appliquent.
+  `StackConfig.defaults` s'appliquent (oMLX `http://127.0.0.1:8000/v1`,
+  `qwen3-8b` / `bge-m3`, 1024 dimensions, jetons vides). Un `OMLX_BASE_URL`
+  hérité qui vise `host.containers.internal` est traduit en `127.0.0.1` pour
+  l'agent, qui tourne en natif, sans que le fichier soit réécrit.
 - **Échappatoires de test** — `OMP_CONSOLE_SUPPORT_ROOT` déplace TOUTE la racine
-  (composants ET état) ; `OMP_CONSOLE_OMP_BINARY` force le binaire `omp` et
-  devient alors le seul candidat (les recettes s'en servent) ;
-  `OMP_CONSOLE_REMOTE_PORT` déplace le port de l'API distante (entier de 1 à
-  65535 ; toute autre valeur garde 8787), pour qu'une instance de recette écoute
-  à côté de celle de l'utilisateur. Sous une racine
-  jetable SEULEMENT, l'argument de lancement `-setup.recipe <valeur>`
-  (`Setup/SetupRecipe.swift`) remplace l'installateur par un script, sans réseau
-  ni pile : `progression` (téléchargement chiffré de 0 à 100 % en 10 s, puis
-  attente), `indeterminee` (téléchargement sans taille, puis attente), `echec`
-  (échec d'installation au détail de 41 lignes), `succes` (téléchargement court,
-  puis pose d'exécutables factices et préparation terminée). Valeur inconnue ou
-  racine réelle : la chaîne réelle, sans message.
+  (composants ET état) et isole l'agent : son label devient
+  `com.omp.console.mem0-rs.<12 premiers hexadécimaux du SHA-256 du chemin de la
+  racine>` et son plist vit sous `<racine>/LaunchAgents/`, jamais dans
+  `~/Library/LaunchAgents` ; `OMP_CONSOLE_MEM0_PORT` déplace le port de l'agent
+  (entier de 1 à 65535 ; toute autre valeur garde 8321) ; `OMP_CONSOLE_OMP_BINARY`
+  force le binaire `omp` et devient alors le seul candidat (les recettes s'en
+  servent) ; `OMP_CONSOLE_REMOTE_PORT` déplace le port de l'API distante (entier
+  de 1 à 65535 ; toute autre valeur garde 8787), pour qu'une instance de recette
+  écoute à côté de celle de l'utilisateur. Sous une racine jetable SEULEMENT,
+  l'argument de lancement `-setup.recipe <valeur>` (`Setup/SetupRecipe.swift`)
+  remplace l'installateur par un script, sans réseau ni mémoire : `progression`
+  (téléchargement chiffré de 0 à 100 % en 10 s, puis attente), `indeterminee`
+  (téléchargement sans taille, puis attente), `echec` (échec d'installation au
+  détail de 41 lignes), `succes` (téléchargement court, puis pose d'exécutables
+  factices et préparation terminée). Valeur inconnue ou racine réelle : la chaîne
+  réelle, sans message.
 
-### Geste de secours de la machine podman (AC-2)
+### Service mémoire
 
-La réparation est automatique (voir « Machine podman dédiée ») ; si elle échoue,
-relancer la machine à la main, dans un terminal, avec l'environnement privé de
-l'app et le joker du dossier de version de podman :
+La mémoire est servie par le `mem0-rs` embarqué, lancé par un **agent launchd**
+de l'utilisateur, `gui/<uid>/com.omp.console.mem0-rs` (`Stack/MemoryAgent.swift`) :
+`<bundle>/Contents/Resources/mem0-rs --host 127.0.0.1 --port 8321`, `KeepAlive`,
+`RunAtLoad`, `ProcessType` `Interactive`, journal `mem0-rs/mem0-rs.log`.
+L'environnement du job porte la base (`MEM0_DB_PATH` = `mem0-rs/mem0-rs.db`), les
+clés de `stack/env` (oMLX, `EMBEDDING_DIMS`, `MEM0_HTTP_TOKEN`), le jeton
+d'installation (`OMP_INSTALLATION_TOKEN`) et le SHA-256 du binaire
+(`OMP_CONSOLE_MEM0_RS_SHA256`).
+
+- **Démarrage** (ligne « Service mémoire » : « Démarrage du service mémoire… »,
+  puis « Attente de la mémoire… ») — l'état voulu EST le plist : à chaque
+  préparation, l'app recalcule le plist attendu et le compare (en dictionnaire) à
+  celui du disque. Égal et chargé ⇒ elle attend seulement la santé, sans
+  `bootout` ni `bootstrap`. Sinon : garde de port (10 s au plus), écriture
+  atomique du plist en 0600, `launchctl bootout` attendu par `launchctl print`
+  (10 s au plus), puis `launchctl bootstrap`, repris jusqu'à 3 fois. Santé :
+  `GET http://127.0.0.1:8321/health` toutes les 0,5 s pendant 30 s au plus,
+  acceptée seulement si `ok` vaut `true` **et** si `installation` égale le jeton
+  d'installation.
+- **Survit à ⌘Q** — le serveur a launchd pour parent (`ppid` = 1) : le Quitter de
+  l'app ne touche ni l'agent ni le plist, et un serveur tué (`kill -9`) est
+  relancé par launchd (`KeepAlive`) en 10 s au plus.
+- **Rechargé quand il le faut** — un binaire embarqué différent (nouvelle version
+  de l'app : autre chemin ou autre SHA-256), un `stack/env` modifié ou un autre
+  jeton d'installation donnent un autre plist ⇒ `bootout` puis `bootstrap` : le
+  process qui sert le port exécute toujours le binaire de l'app installée.
+- **Port occupé** — si un autre programme tient `127.0.0.1:8321` au-delà de la
+  garde, l'agent chargé est DÉCHARGÉ (il ne boucle pas sur un port impossible) et
+  la feuille dit « Le programme « <nom> » occupe la place réservée à la mémoire :
+  celle-ci ne peut pas démarrer. Quittez-le, puis réessayez. » ; « Réessayer »
+  démarre l'agent une fois le port libéré. Le diagnostic copié porte le port, le
+  pid et le geste `lsof -nP -iTCP:<port> -sTCP:LISTEN`. Le `mem0-rs` embarqué
+  (ligne de commande = le chemin du binaire de l'app) n'est jamais un conflit ;
+  `lsof` absent n'empêche rien.
+- **Pannes lisibles** — binaire absent (« Réinstallez OMP Console. »), plist ou
+  `launchctl` en échec, santé muette au bout de 30 s (le diagnostic porte le
+  chemin du journal et ses dernières lignes : par exemple une base créée avec un
+  autre `EMBEDDING_DIMS`, qui fait sortir `mem0-rs` en boucle). oMLX injoignable
+  n'empêche pas le démarrage : `/health` n'appelle pas oMLX, et le bandeau oMLX
+  de la section Mémoire le signale.
+- **Hors périmètre** — aucune interface pour désinstaller l'agent, et supprimer
+  l'app ne le décharge pas. macOS peut notifier « Éléments d'arrière-plan
+  ajoutés » au premier chargement.
+
+Gestes de diagnostic, dans un terminal :
 
 ```bash
-XDG_CONFIG_HOME="$HOME/Library/Application Support/com.omp.console/config" \
-XDG_DATA_HOME="$HOME/Library/Application Support/com.omp.console/data" \
-TMPDIR="$HOME/Library/Application Support/com.omp.console/tmp" \
-"$HOME/Library/Application Support/com.omp.console/components/podman/"*/bin/podman machine stop omp-console
-# puis la même ligne avec `machine start`
+launchctl print gui/$(id -u)/com.omp.console.mem0-rs     # chargé ? pid, dernier code de sortie
+tail -n 50 "$HOME/Library/Application Support/com.omp.console/mem0-rs/mem0-rs.log"
+curl -s http://127.0.0.1:8321/health                       # ok, mem0, installation
+launchctl bootout gui/$(id -u)/com.omp.console.mem0-rs   # décharge l'agent : la mémoire s'arrête
 ```
 
-### Recettes gatées de la préparation
+Après un `bootout`, relancer l'app (ou « Réessayer » dans la préparation)
+recharge l'agent ; à la main :
+`launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.omp.console.mem0-rs.plist`.
 
-Aucune n'est posée par `scripts/swift-app.sh` ni par la CI (elles sont
-« skipped ») ; chacune échoue explicitement si son prérequis manque, jamais en
+### Migration unique de l'ancienne mémoire
+
+Les versions antérieures de l'app servaient la mémoire depuis une machine podman
+`omp-console` et deux conteneurs, `omp-console-qdrant` (Qdrant,
+`127.0.0.1:6333`, données dans `stack/qdrant_storage/`) et
+`omp-console-mem0-http` (`127.0.0.1:8321`). La préparation en reprend les
+souvenirs **une seule fois**, avant de démarrer l'agent (`PodmanLegacy.migrate`,
+`Stack/PodmanLegacy.swift`, ligne « Migration de la mémoire ») :
+
+1. `stack/podman-migration/bascule.json` existe ⇒ déjà fait : aucune commande,
+   aucun fichier touché.
+2. Pas de collection `stack/qdrant_storage/collections/omp_memory` ⇒ rien à
+   reprendre : `bascule.json` est écrit avec `source: "none"` et l'agent démarre
+   sur une base neuve.
+3. Sinon (« Démarrage de l'ancienne mémoire… ») : le podman laissé par
+   l'ancienne version (`components/podman/6.1.3/bin/podman`) et le `mem0-rs`
+   embarqué doivent être exécutables. Chaque commande podman tourne dans
+   l'environnement ISOLÉ de l'app (`XDG_CONFIG_HOME=<racine>/config`,
+   `XDG_DATA_HOME=<racine>/data`, `TMPDIR=<racine>/tmp`), jamais sur une machine
+   podman du système.
+4. La machine `omp-console` est démarrée si elle est arrêtée, puis le conteneur
+   `omp-console-qdrant` ; l'app attend `GET 127.0.0.1:6333/readyz` (90 s au plus).
+5. `podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db` copie
+   l'historique dans `stack/podman-migration/history.db`.
+6. « Reprise des souvenirs de l'ancienne mémoire… » : `mem0-rs import
+   --history-db <copie> --qdrant-url http://127.0.0.1:6333 --collection
+   omp_memory --json`, avec la base de l'agent (`MEM0_DB_PATH`), `EMBEDDING_DIMS`
+   et `QDRANT_API_KEY` de `stack/env` (600 s au plus). Son rapport (stdout) est
+   gardé dans `stack/podman-migration/import-report.json`. L'import est tout ou
+   rien et idempotent.
+7. Import réussi ⇒ « Arrêt de l'ancienne mémoire… » : `podman stop --ignore
+   omp-console-mem0-http omp-console-qdrant`, puis `machine stop omp-console`
+   (son échec n'empêche rien), puis `bascule.json` (`version`, `switchedAt`,
+   `source: "podman"`, `rejected`, `forced`) — le marqueur « une seule fois ».
+   L'agent démarre ensuite.
+
+Invariants : l'import a lieu AVANT tout arrêt ; aucun conteneur n'est arrêté
+avant un import réussi ou un choix explicite ; tout échec avant `bascule.json`
+laisse la migration rejouable par « Réessayer » ; rien n'est jamais écrit,
+supprimé ni renommé sous `stack/qdrant_storage` ni dans les conteneurs (seuls la
+copie de l'historique et la lecture HTTP de Qdrant y touchent) ; la migration ne
+supprime jamais la machine ni les conteneurs.
+
+**Rejets.** Un import qui laisse des éléments de côté arrête la préparation sur
+une décision (AX `sheet.setup.rejected`) : « L'import a laissé de côté
+<n> éléments : vecteur absent (k), … » (raisons : vecteur absent, dimension
+inattendue, texte absent, champ invalide, historique orphelin), puis « « Basculer
+quand même » démarre la nouvelle mémoire sans eux ; l'ancienne reste intacte sur
+ce Mac. « Réessayer » relance l'import. » ; le détail repliable liste un élément
+par ligne et le diagnostic copié est le rapport brut. Pied : « Basculer quand
+même » (`sheet.setup.switchAnyway`, sans raccourci) arrête l'ancienne mémoire,
+écrit `bascule.json` (`forced: true`) puis démarre l'agent, SANS refaire
+d'import — une écriture reçue par l'ancienne mémoire entre l'import et l'arrêt
+n'est pas reprise ; « Réessayer » (`↩`) relance l'import ; « Fermer » (`⎋`)
+laisse l'ancienne mémoire en service. L'Accueil (et l'iPhone) portent alors
+« Préparation incomplète. L'import de l'ancienne mémoire attend votre choix sur
+le Mac. »
+
+**Échecs.** Chaque échec dit la conséquence puis « Réessayez ; si l'échec
+revient, copiez le diagnostic pour le signaler. », sans démarrer l'agent :
+ancienne mémoire introuvable (podman de l'ancienne version absent), qui n'a pas
+démarré (machine), qui ne répond pas (Qdrant), historique non copié, import en
+échec (« l'ancienne reste en place »), arrêt impossible, bascule non
+enregistrée. Le diagnostic copié nomme la commande et son détail brut (par
+exemple « mem0-rs import a échoué (code <n>) : … »).
+
+**Retour arrière.** L'ancienne mémoire reste intacte sur le Mac tant que le
+bandeau de nettoyage n'a pas été confirmé. Pour la consulter à la main (sans son
+service `omp-console-mem0-http`, dont le port est tenu par l'agent) :
+
+```bash
+R="$HOME/Library/Application Support/com.omp.console"
+( export XDG_CONFIG_HOME="$R/config" XDG_DATA_HOME="$R/data" TMPDIR="$R/tmp"
+  "$R/components/podman/6.1.3/bin/podman" machine start omp-console
+  "$R/components/podman/6.1.3/bin/podman" start omp-console-qdrant )
+```
+
+### Nettoyage de l'ancien moteur
+
+Après la bascule (`bascule.json` présent), tant qu'il reste `components/podman`,
+`config` ou `data` sous la racine, la section **Mémoire** porte en tête un bandeau
+bleu (AX `memory.podmanCleanup`, au-dessus du bandeau oMLX, en liste comme en
+graphe) : « L'ancienne mémoire n'est plus utilisée, mais son moteur de conteneurs
+occupe encore de la place sur ce Mac. » et « Supprimer l'ancien moteur… »
+(`memory.podmanCleanup.remove`). Rien n'est supprimé sans confirmation : le
+dialogue « Supprimer l'ancien moteur de conteneurs ? » (« Sa machine virtuelle,
+ses images et le moteur installé par OMP Console seront supprimés. Vos souvenirs
+restent servis par la mémoire actuelle, et la copie de l'ancienne base est
+conservée. ») propose « Supprimer » (destructif, `memory.podmanCleanup.confirm`)
+et « Annuler » (`⎋`). Pendant la suppression : « Suppression de l'ancien
+moteur… » (`memory.podmanCleanup.progress`), bouton éteint.
+
+- **Ce qui est supprimé**, dans cet ordre (`PodmanLegacy.removeLeftovers`) : la
+  machine (`machine rm -f omp-console`, environnement isolé ; une machine déjà
+  absente compte comme un succès), puis `components/podman`, `config`, `data` et
+  `tmp`. Une machine qui résiste arrête tout avant la moindre suppression ; un
+  dossier qui résiste laisse supprimés ceux qui le précèdent.
+- **Ce qui est gardé** : tout `stack/` (`qdrant_storage`, `env`,
+  `installation-token`, `podman-migration/`), `mem0-rs/`, `remote/`,
+  `components/omp`, le plist et l'agent (aucun appel `launchctl`).
+- **Succès** : le bandeau disparaît. **Échec** : bandeau orange « La suppression
+  de l'ancien moteur a échoué : il occupe toujours de la place. Réessayez ; si
+  l'échec revient, copiez le diagnostic pour le signaler. », « Réessayer »
+  (`memory.podmanCleanup.retry`, redemande la confirmation) et « Copier le
+  diagnostic » (`memory.podmanCleanup.diagnostic` : la commande ou le chemin, et
+  le détail brut).
+
+### Recettes gatées de la préparation et du service mémoire
+
+Aucune n'est posée par `scripts/swift-app.sh`, `scripts/check.sh` ni la CI (elles
+sont « skipped ») ; chacune échoue explicitement si son prérequis manque, jamais en
 silence. Depuis `omp-console/` :
 
 ```bash
-# Composants : télécharge omp et podman dans une racine temporaire, exécute leurs --version
+# Composants : télécharge omp seul dans une racine temporaire, exécute son --version
 MEM0_COMPONENTS_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
   --filter recetteReelleInstalleLesDeuxComposants -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
-# Pile : machine omp-console + conteneurs + /health, sur une racine de support
-MEM0_STACK_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
-  --filter recetteReelleDeLaPile -Xswiftc -plugin-path \
-  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
-
-# Migration : copie la base quand l'ancienne pile est quiescente, sans jamais l'arrêter
-MEM0_MIGRATION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
-  --filter recetteMigrationCopieSansArreterLAncienneBase -Xswiftc -plugin-path \
-  -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
-
-# Union : rejoue l'union réelle contre la pile de l'app (staging + conteneur lecteur)
-MEM0_UNION_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
-  --filter recetteUnionReelleContreLaPileDeLApp -Xswiftc -plugin-path \
+# Agent launchd : vrai launchctl sur une racine jetable, port libre (jamais 8321)
+MEM0_AGENT_RECIPE=1 swift test --scratch-path .build-recipe --no-parallel \
+  --filter recette -Xswiftc -plugin-path \
   -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 
 # Session composant + run terminal : une session servie vit sur le composant de
@@ -1316,6 +1451,68 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
   --filter "sessionRunsOnTheAppComponent|terminalRunRecallsMemoryWithoutTheApp" \
   -Xswiftc -plugin-path -Xswiftc "$(dirname "$(xcrun --find swift)")/../lib/swift/host/plugins/testing"
 ```
+
+La recette de l'agent (`Tests/OMPConsoleTests/MemoryAgentRecipeTests.swift`,
+fonctions `recetteAgent…`) prend le binaire dans `MEM0_RS_BIN`, sinon
+`mem0-stack/mem0-rs/target/release/mem0-rs` (absent ⇒ échec qui nomme `cargo
+build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml`), le
+copie dans une racine `/tmp/omp-agent-recette-*` (label et plist isolés sous
+`<racine>/LaunchAgents`), puis décharge le job et supprime la racine. Elle
+prouve : les 9 routes servies avec le jeton et refusées sans lui, la base sous la
+racine ; le parent launchd et le retour après `kill -9` ; le remplacement du
+process par un binaire re-signé ; un port tenu par `nc` qui bloque sans démarrer
+l'agent, puis « Réessayer » une fois libéré. Son test `omp-console-sans-podman/AC-13`
+(liste, ajout, recherche et suppression par le client de la section Mémoire) exige
+en plus `OMLX_BASE_URL`, `OMLX_API_TOKEN` et `OMLX_EMBED_MODEL` ; sans eux, il est
+désactivé.
+
+### Bascule réelle du poste (ancienne mémoire → service mémoire)
+
+La bascule d'un poste qui faisait tourner l'ancienne version se prouve à la main,
+avec `scripts/sans-podman-bascule-recette.sh` (jamais lancé par `check.sh` ni la
+CI ; sans `MEM0_SANS_PODMAN_REEL=1`, il dit « non exécuté : MEM0_SANS_PODMAN_REEL=1
+requis (bascule réelle du poste) » et sort en `2`). Racine =
+`OMP_CONSOLE_SUPPORT_ROOT`, sinon `~/Library/Application Support/com.omp.console` ;
+port = `OMP_CONSOLE_MEM0_PORT`, sinon 8321. Chaque vérification imprime `✓ …` ou
+`✗ …` ; le premier écart sort en `1`, tout vert en `0`. Dans l'ordre :
+
+1. **Avant** — ancienne app, ancienne mémoire en marche :
+   `MEM0_SANS_PODMAN_REEL=1 bash scripts/sans-podman-bascule-recette.sh avant`.
+   Le script lit la clé `QDRANT_API_KEY` de `stack/env`, fait défiler
+   la collection `omp_memory` de Qdrant (`127.0.0.1:6333`) et écrit
+   `stack/podman-migration/recette-avant.json` (par `agent_id`, la liste triée
+   des couples identifiant–texte) ; il échoue si `bascule.json` existe déjà.
+2. **Installer et lancer la nouvelle app** (bundle de `scripts/swift-app.sh`),
+   et attendre « Préparation terminée. ».
+3. **Après** — `MEM0_SANS_PODMAN_REEL=1 bash scripts/sans-podman-bascule-recette.sh apres`.
+   Il exige `bascule.json` de source `podman` ; pour chaque `agent_id`,
+   `GET /memory/all?agent_id=` rend les mêmes couples qu'avant (les lignes sans
+   `agent_id` sont lues dans `GET /memory/all` sans paramètre), et la liste
+   complète sans paramètre est l'union d'avant ; `POST /memory/search` rend au
+   moins un résultat (exige oMLX) ; `launchctl print
+   gui/<uid>/com.omp.console.mem0-rs` sort en 0 ; la machine ou les conteneurs
+   sont arrêtés. Il écrit `stack/podman-migration/recette-apres.json` (SHA-256 et
+   date de modification de `bascule.json` et d'`import-report.json`).
+4. **Relance** — redémarrer À LA MAIN la machine et le seul conteneur
+   `omp-console-qdrant` (geste de « Retour arrière » ci-dessus ; PAS
+   `omp-console-mem0-http`, dont le port est tenu par l'agent), relancer l'app,
+   puis `MEM0_SANS_PODMAN_REEL=1 bash scripts/sans-podman-bascule-recette.sh relance` :
+   `bascule.json` et `import-report.json` sont inchangés (SHA-256 et date) — la
+   migration n'a pas été rejouée — et Qdrant rend le même ensemble de couples
+   qu'avant — la source n'a pas été modifiée.
+5. Ensuite seulement, si on le souhaite : le **bandeau de nettoyage** de la
+   section Mémoire (voir « Nettoyage de l'ancien moteur »).
+
+Preuves manuelles de compatibilité des clients, sur le même poste après la
+bascule — ni ré-appairage, ni changement de jeton ou de configuration (même port
+8321, même `MEM0_HTTP_TOKEN`, même jeton d'installation) :
+
+- **iPhone déjà appairé** : la section Mémoire affiche la liste du projet, puis
+  une recherche rend des résultats, sans nouvel appairage.
+- **Session `omp` en terminal** sur un dépôt : `/mem0-status` dit le service
+  joignable, `mem0_search` rend des souvenirs repris de l'ancienne mémoire, et un
+  souvenir écrit par `mem0_add` est relu ensuite (par `mem0_search`, ou dans la
+  liste de la section Mémoire).
 
 ### Preuves manuelles (AC-3, AC-5, AC-10)
 
@@ -1326,13 +1523,14 @@ MEM0_SESSION_COMPONENT_RECIPE=1 swift test --scratch-path .build-recipe --no-par
   et l'app ne lance **aucun** process pour les sessions (elles sont servies par le
   service). Le renommage est réversible, et la suppression du composant seul
   provoque la réinstallation par « Réessayer ».
-- **AC-5 — la pile survit à l'app** : quittez l'app (⌘Q), puis, dans un terminal
-  sur un dépôt : `omp -p "résume ce dépôt"`. Le run reçoit le rappel mémoire du
-  plugin (`mem0-recall` dans son fichier de session) parce que la pile de l'app
-  tourne toujours en arrière-plan.
+- **AC-5 — la mémoire survit à l'app** : quittez l'app (⌘Q), puis, dans un
+  terminal sur un dépôt : `omp -p "résume ce dépôt"`. Le run reçoit le rappel
+  mémoire du plugin (`mem0-recall` dans son fichier de session) parce que l'agent
+  launchd du service mémoire tourne toujours.
 - **AC-10 — la voie manuelle reste intacte** : dans `mem0-stack/`,
-  `docker compose up -d` puis `curl http://localhost:8321/health` rend toujours
-  `ok` — aucune variable nouvelle n'est obligatoire, le champ additif
+  `docker compose up -d` puis `curl` sur son `/health` rend toujours `ok` (sur un
+  port libre, `MEM0_RS_PORT` de `mem0-stack/.env`, puisque l'agent de l'app tient
+  8321) — aucune variable nouvelle n'est obligatoire, le champ additif
   `installation` n'apparaissant que si `OMP_INSTALLATION_TOKEN` est posée (ce que
   la voie manuelle ne fait pas). L'app ne modifie jamais `mem0-stack/`.
 
@@ -1878,8 +2076,9 @@ au premier plan, puis ouvre :
 - **Notification périmée** (question déjà répondue, jalon déjà validé, carte sortie
   de l'état notifié) : la **fiche** de la carte si elle existe encore, l'**Accueil**
   si elle a disparu — sans feuille ni message d'erreur. Une notification sans
-  `userInfo` (livrée par une version antérieure, ou perte d'un port par la pile de
-  l'app, qui ne concerne aucune carte) ou illisible mène à l'Accueil.
+  `userInfo` (livrée par une version antérieure, ou perte d'un port par le
+  service mémoire de l'app, qui ne concerne aucune carte) ou illisible mène à
+  l'Accueil.
 - **Fenêtre fermée**, l'app vivante dans la barre des menus : la fenêtre se rouvre,
   puis la destination s'applique. Si l'ardoise n'est pas encore chargée, l'ouverture
   attend sa première publication (seule la plus récente est gardée). Le lancement à
@@ -1999,7 +2198,7 @@ MEM0_PIPELINE_STATE_DIR=/tmp/magasin-alertes \
 
 ## Consulter et corriger la mémoire du projet
 
-La section **Mémoire** lit la mémoire du service mem0-http et l'écrit : la **liste**
+La section **Mémoire** lit la mémoire du service mémoire (mem0-rs) et l'écrit : la **liste**
 montre le sommaire du projet courant et ouvre un souvenir pour en lire le texte
 complet ; le **graphe** montre TOUS les projets du service et permet d'écrire.
 `Sources/OMPConsole/Memory/` ne se lie jamais au service que par les traits de
@@ -2034,44 +2233,27 @@ refuse la clé d'accès configurée : … », avec « Rafraîchir »
 (`memory.omlxBanner.refresh`, refait la sonde) et « Copier le diagnostic »
 (`memory.omlxBanner.diagnostic` : URL sondée, code, `OMLX_API_TOKEN`).
 
-**L'identité de la pile.** `GET /health` reste à la même adresse, avec le même
-protocole et les mêmes autres champs ; la pile de l'app y ajoute un champ
-**additif** `installation` qui porte le jeton d'installation de cette installation
+**L'identité du service.** `GET /health` reste à la même adresse, avec le même
+protocole et les mêmes autres champs ; le service mémoire de l'app (mem0-rs, lancé
+avec `OMP_INSTALLATION_TOKEN`) y ajoute un champ **additif** `installation` qui
+porte le jeton d'installation de cette installation
 (`<racine de support>/stack/installation-token`, 0600). L'app n'accepte comme
-« sa » pile qu'une réponse `200` dont `ok` vaut `true` **et** dont `installation`
-égale son jeton : un `200` nu rendu par un autre service est traité comme étranger
-(état « Ce n'est pas la pile d'OMP Console »). Le contrat du plugin mémoire est
-inchangé — il ne lit que `health.ok` —, et la voie manuelle `mem0-stack/` (sans
-`OMP_INSTALLATION_TOKEN`) garde son `/health` identique.
+« son » service qu'une réponse `200` dont `ok` vaut `true` **et** dont
+`installation` égale son jeton : un `200` nu rendu par un autre service est traité
+comme étranger (état « Ce n'est pas la pile d'OMP Console »). Le contrat du plugin
+mémoire est inchangé — il ne lit que `health.ok` —, et la voie manuelle
+`mem0-stack/` (sans `OMP_INSTALLATION_TOKEN`) garde son `/health` identique.
 
 > La route `GET /memory/graph` et l'extension `PUT` (étiquettes) sont **nouvelles
-> côté service** : une pile construite avant cette version répond 404/405. L'iPhone
+> côté service** : un service construit avant elles répond 404/405. L'iPhone
 > affiche alors « Graphe indisponible : serveur mémoire trop ancien » (la fenêtre
 > macOS affiche l'erreur du service dans l'état « Mémoire indisponible »).
 >
-> **Pile de l'app (conteneur `omp-console-mem0-http`)** — l'étiquette d'image est
-> figée à `omp-console-mem0-http:1` : l'app ne reconstruit l'image que si
-> l'étiquette MANQUE, et ne recrée le conteneur que si le NOM d'image diffère.
-> Reconstruire sous la même étiquette ne remplace donc pas le conteneur en marche.
-> Opération ponctuelle, à la main, avec `P` = le binaire podman embarqué
-> (`~/Library/Application Support/com.omp.console/components/podman/<version>/bin/podman`),
-> `S` = `unix://$TMPDIR/podman/omp-console-api.sock` et `B` = le bundle en marche :
->
-> 1. Contrôler sans rien changer : `grep -n '@app.get("/memory/graph")' "$B/Contents/Resources/Stack/mem0-http/http_server.py"`
->    trouve une ligne, et `"$P" --url "$S" ps -a` liste `omp-console-mem0-http`.
-> 2. Construire : `"$P" --url "$S" image build -t omp-console-mem0-http:1 "$B/Contents/Resources/Stack/mem0-http"`
->    (le build rejoue `test_api.py` ; s'il échoue, rien n'a changé).
-> 3. Quitter l'app (`osascript -e 'quit app "OMP Console"'`), puis
->    `"$P" --url "$S" container rm -f omp-console-mem0-http` et relancer l'app : elle
->    recrée le conteneur avec l'environnement de `stack/env`. Attendre
->    `curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8321/health` = `200`.
-> 4. Vérifier : `curl -s http://127.0.0.1:8321/memory/graph` rend `200` et un JSON
->    `total` / `threshold` / `top_k` / `edges`, et `/openapi.json` liste `/memory/graph`.
->    L'ancienne image, devenue sans étiquette, se supprime par `"$P" --url "$S" image rm <id>`.
->
-> La base Qdrant (`omp-console-qdrant`) n'est jamais touchée. La commande
-> `compose build mem0-http && compose up -d` ne vaut que pour la pile MANUELLE de
-> `mem0-stack/`, pas pour celle de l'app.
+> Le service mémoire de l'app (le `mem0-rs` embarqué) porte ces routes. Il se met
+> à jour avec l'app : un binaire embarqué différent recharge l'agent à la
+> préparation suivante (voir « Service mémoire »), sans geste manuel. La pile
+> MANUELLE de `mem0-stack/` se met à jour par sa propre procédure
+> (`mem0-stack/README.md`).
 
 **La portée** est calculée par le même algorithme que `projectId` du plugin mémoire
 (`omp-mem0-memory/state.ts`) : override `MEM0_PROJECT_ID`, sinon la racine du dépôt
@@ -2131,7 +2313,7 @@ rechargement suivant.
 | aucune sonde encore | `Chargement de la mémoire du projet…` (liste) / `Chargement du graphe des souvenirs…` (graphe) |
 | portée incalculable (liste) | « Aucun projet ouvert » — « Choisissez le projet dont vous voulez consulter la mémoire. » + bouton « Choisir un projet… » : menu des projets connus puis « Choisir un dossier… », ou, sans projet connu, le panneau de Session OMP ; le choix recharge la liste sur place |
 | service indisponible | « Mémoire indisponible » + bouton « Réessayer », puis « Copier le diagnostic » (adresse du service et dernière erreur, jamais affichées) — jamais une liste vide, jamais un graphe partiel silencieux |
-| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », **seulement quand le propriétaire est l'ancienne pile** le bouton « Arrêter l'ancienne pile et reprendre » (arrêt des conteneurs legacy puis relance de la préparation), puis « Copier le diagnostic » (`<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>`) |
+| adresse tenue par un autre service (liste) | « Ce n'est pas la pile d'OMP Console » — « Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n'est pas celle d'OMP Console tant que sa pile n'occupe pas le port. », puis « Copier le diagnostic » (`<adresse>` · `Tenu par <propriétaire>.` · `Geste : <geste>`) |
 | écriture refusée (graphe) | « La modification n'a pas été enregistrée : la mémoire n'a pas répondu comme prévu. Réessayez ; si l'échec revient, copiez le diagnostic. », feuille laissée ouverte, et « Copier le diagnostic » (réponse brute du service) |
 | sommaire vide | « Aucun souvenir » — « Aucun souvenir dans la mémoire du projet « <portée> ». » |
 | sommaire | `<n> souvenirs` (vrai pluriel) puis les lignes, dans l'ordre du service : un titre court sur deux lignes au plus (`MemoryText.title` : début du souvenir jusqu'au premier « : » ou à la première phrase, sans code, chemins réduits à leur dernier composant, 90 caractères au plus), puis une ligne de contexte (date relative · étiquettes `#tag` lues de `metadata.tags`) |
@@ -2145,7 +2327,7 @@ rechargement suivant.
 
 **Identifiants d'accessibilité** : `memoire.summary.button`, `memoire.refresh`,
 `memoire.unavailable.diagnostic`, `memoire.foreignOwned.diagnostic`,
-`memoire.foreignOwned.takeover`, `memoire.summary.count`, `memoire.search.results`,
+`memoire.summary.count`, `memoire.search.results`,
 `memoire.list`, `memoire.list.row.<id>`, `memoire.detail`, `memoire.detail.title`,
 `memoire.detail.copy`, `memoire.detail.technical` ; mode graphe :
 `memoire.graph.toggle`, `memoire.graph.canvas` (libellé = bandeau de compte),
@@ -2155,7 +2337,9 @@ rechargement suivant.
 `memoire.graph.detach.<id>`, `memoire.graph.error` (et `.diagnostic`),
 `memoire.graph.unavailable.diagnostic`, `memoire.create.sheet`,
 `memoire.edit.sheet`, `memoire.link.sheet` (et `.text`, `.tags`, `.project`,
-`.cancel`, `.save`, `.error`, `.error.diagnostic` sur chacune). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
+`.cancel`, `.save`, `.error`, `.error.diagnostic` sur chacune) ; bandeau de
+nettoyage de l'ancien moteur : `memory.podmanCleanup` (et `.remove`, `.confirm`,
+`.progress`, `.retry`, `.diagnostic`). Clavier : `Tab`/`Maj-Tab` dans l'ordre de
 mise en page, `Retour` dans le champ de recherche lance la recherche du mode
 courant, le vider (ou sa croix) ramène la liste au sommaire et lève la restriction
 du graphe sans requête, les flèches haut/bas déplacent la sélection de la liste, les
@@ -2196,7 +2380,7 @@ un flux temps réel.
 - **Route graphe et service trop ancien** : `GET /v1/memory/graph` est la SEULE route
   qui rend le code partagé `outdated_service` (statut `503`, enveloppe
   `{"error":{"code":"outdated_service","message":"…"}}`), et uniquement quand
-  mem0-http répond 404 ou 405 sur son propre `/memory/graph` (service sans cette
+  le service mémoire répond 404 ou 405 sur son propre `/memory/graph` (service sans cette
   route). Le message est celui des autres pannes mémoire ; un client qui ne connaît
   pas ce code lit le `503` comme `unavailable`. La liste, la recherche et les autres
   pannes du graphe (service injoignable, `500`, délai dépassé) gardent `unavailable`.
@@ -2328,19 +2512,19 @@ bash scripts/mac-appairage-recette.sh --captures-only --bundle <app de la base> 
 
 Elle lance une **instance de recette distincte** en arrière-plan (`open -g -n`), sur
 un état jetable : 12 appareils hérités « iPhone » sans `deviceKey`, un magasin de
-pipeline vide, le port `OMP_CONSOLE_REMOTE_PORT=18787`. Les composants, les données
-et la pile de l'utilisateur sont **liés** : la préparation de l'instance y écrit
-(`ComponentInstaller` purge toute version d'omp ou de podman autre que celle du
-bundle, `MemoryStack` recrée la machine podman si l'image de `stack/machine.json`
-diffère et réécrit `stack/migration.json`). D'où la **garde du manifeste** : avant
-tout lancement, les versions épinglées dans le binaire du bundle (omp, podman,
-image de machine) doivent être exactement celles du support réel —
-`components/omp/<v>` et `components/podman/<v>` seuls dans leur dossier, même image
-dans `stack/machine.json` — sinon la recette sort en `2` sans rien lancer. La
-configuration podman (`config`) est **copiée** : la préparation réécrit
-`config/containers/containers.conf`, qui ne doit jamais viser le dossier jetable de
-la recette. `caffeinate -d` empêche la veille d'écran (et le verrouillage qui la
-suit) pendant la passe.
+pipeline vide, le port `OMP_CONSOLE_REMOTE_PORT=18787`. Seuls les composants de
+l'utilisateur (`components`) sont **liés** ; le reste du support de l'instance
+(`stack`, `mem0-rs`, `remote`…) est jetable. La préparation de l'instance écrit
+dans `components` (`ComponentInstaller` purge toute version d'omp autre que celle
+du bundle). D'où la **garde du manifeste** : avant tout lancement, la version
+d'omp épinglée dans le binaire du bundle doit être exactement celle du support
+réel — `components/omp/<v>` seul dans son dossier — sinon la recette sort en `2`
+sans rien lancer. L'instance démarre son propre service mémoire : sa racine
+jetable isole le label et le plist de l'agent (`<racine>/support/LaunchAgents/`),
+`OMP_CONSOLE_MEM0_PORT` le place sur un port libre, et la recette décharge en fin
+de passe tout plist de ce dossier (`launchctl bootout gui/$(id -u) <plist>`) ;
+l'agent de l'utilisateur n'est jamais touché. `caffeinate -d` empêche la veille
+d'écran (et le verrouillage qui la suit) pendant la passe.
 
 Chaque ligne du rapport est qualifiée par sa feature. Mac seul :
 `reglages-mac-appareils/AC-1` (« Réglages… » ouvre la fenêtre « Appareils », barre
@@ -2355,7 +2539,7 @@ libellés « Révoquer <nom> », date complète, adresse unique, décompte puis
 `AC-6` et `AC-11`. La recette ne touche **jamais** l'interrupteur : AC-4, AC-5 et
 AC-9 de reglages-mac-appareils sont prouvés par les tests Swift. Quand la
 préparation de l'instance de recette échoue (`sheet.setup.failure` lisible, par
-exemple le port 8321 de la pile mémoire déjà tenu par celle de l'utilisateur), le
+exemple un service mémoire qui ne répond pas), le
 service distant ne démarre pas : les contrôles qui l'exigent (`reglages-mac-appareils/AC-3`,
 l'adresse unique, la phase `--ios`) sortent en `– … — non évalué (<cause>)`, ni
 verts ni rouges, et le bilan les compte. En `--captures-only` sur le bundle de la
@@ -2444,29 +2628,24 @@ omp-console/
 │   │   ├── ServiceProtocol.swift  les valeurs de fil : dialogues, trames, accusés (pur)
 │   │   └── DialogPane.swift       le volet de dialogue partagé (Session OMP, Projet)
 │   ├── Setup/                     la préparation du premier lancement (S-1, S-5)
-│   │   ├── AppPaths.swift         la racine privée de l'app (composants, XDG, pile)
+│   │   ├── AppPaths.swift         la racine privée de l'app (composants, mémoire, agent, migration)
 │   │   ├── CommandRunner.swift    l'exécution d'une commande externe, injectable
 │   │   ├── ComponentManifest.swift les versions, URL et empreintes des composants
-│   │   ├── ComponentInstaller.swift téléchargement, SHA-256, pkgutil, `--version`, purge
+│   │   ├── ComponentInstaller.swift téléchargement d'OMP, SHA-256, `--version`, purge
 │   │   ├── ComponentPresence.swift présence des composants : lecture et veille (badge)
 │   │   ├── ComponentBadge.swift   le badge d'état, au pied de la barre latérale
-│   │   ├── SetupModel.swift       la chaîne composants → migration → pile → oMLX
+│   │   ├── SetupModel.swift       la chaîne composants → migration → service mémoire → oMLX
 │   │   ├── SetupRecipe.swift      crochet de recette `-setup.recipe` (racine jetable)
 │   │   ├── SetupText.swift        tous les textes de la préparation, en un endroit
 │   │   └── SetupView.swift        la feuille : lignes, progression, échec, pied bloquant ou fermable
-│   ├── Stack/                     la pile mémoire de l'app (S-2, S-3, S-4, S-6, S-7, S-8)
-│   │   ├── PodmanCommand.swift    argv purs et environnement XDG d'une commande podman
-│   │   ├── StackConfig.swift      la config `stack/env` (mêmes clés que mem0-stack)
+│   ├── Stack/                     le service mémoire de l'app et la reprise de l'ancienne mémoire
+│   │   ├── MemoryAgent.swift      l'agent launchd `com.omp.console.mem0-rs` : plist, launchctl, santé
+│   │   ├── PodmanLegacy.swift     migration unique de l'ancienne mémoire, puis nettoyage de son moteur
+│   │   ├── PodmanCommand.swift    argv purs et environnement isolé d'une commande podman
+│   │   ├── StackConfig.swift      la config `stack/env` (oMLX, jetons, dimensions)
 │   │   ├── InstallationToken.swift le jeton d'installation (0600) et sa sonde identitaire
-│   │   ├── StackSources.swift     l'empreinte des sources embarquées et l'étiquette d'image
-│   │   ├── MemoryStack.swift      machine `omp-console`, conteneurs, attentes, `/health`
-│   │   ├── DockerSocket.swift     l'API Docker sur socket Unix (curl), décodage tolérant
 │   │   ├── StackOwnership.swift   qui tient un port : lsof, classification, geste exact
 │   │   ├── StackOwnershipModel.swift le superviseur d'ownership et son évènement d'alerte
-│   │   ├── LegacyStack.swift      la seule autorité sur l'ancienne pile (découverte, arrêt sur ordre)
-│   │   ├── StackMigration.swift   copie gardée quand la source est quiescente, import `.env`
-│   │   ├── MemoryUnion.swift      l'union id-par-id des deux bases (scroll/retrieve/upsert)
-│   │   ├── MemoryUnionRunner.swift l'orchestration de l'union (staging, conteneur lecteur, trace)
 │   │   └── OMLXProbe.swift        la sonde oMLX (budget 5 s, jamais bruyante)
 │   ├── Terminal/                  la fenêtre de terminal : un shell de connexion dans un PTY
 │   │   ├── TerminalHost.swift     le PTY : forkpty, fermeture des descripteurs
@@ -2555,6 +2734,7 @@ omp-console/
 │   │   ├── MemoryLinkStore.swift  les liens manuels, dans `<racine de support>/memory-links.json`
 │   │   ├── MemoryGraphModel.swift l'état du MODE GRAPHE : chargement, filtres, recherche, écritures
 │   │   ├── MemoryGraphView.swift  le graphe : contrôles, canevas, fiche, feuilles d'écriture
+│   │   ├── PodmanCleanupModel.swift le bandeau de nettoyage de l'ancien moteur : offre, confirmation, échec
 │   │   └── MemoryView.swift       la section : bascule liste ⇄ graphe, liste, détail, états
 │   ├── Viewer/                    la visionneuse de session (aucune écriture)
 │   │   ├── ViewerTarget.swift     la session poussée dans Sessions, et son titre
@@ -4069,11 +4249,14 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
    La frappe seule n'émet aucune requête.
 4. **Revenir au sommaire** — vider le champ (croix système) ou toucher « Sommaire » :
    le sommaire DÉJÀ lu revient, sans aucune requête.
-5. **La mémoire tombe** — arrêter le conteneur (`podman stop omp-console-mem0-http`)
-   puis tirer la liste vers le bas : le bandeau rouge dit « Service indisponible sur le
-   Mac. » et son remède, sans adresse, sans JSON et sans code HTTP (le détail reste
-   sur le Mac, dans la fenêtre Mémoire) ; « Réessayer » repasse au sommaire dès que
-   la pile répond de nouveau. La liste et la recherche ne disent jamais « serveur
+5. **La mémoire tombe** — décharger l'agent du service mémoire (`launchctl bootout
+   gui/$(id -u)/com.omp.console.mem0-rs`) puis tirer la liste vers le bas : le
+   bandeau rouge dit « Service indisponible sur le Mac. » et son remède, sans
+   adresse, sans JSON et sans code HTTP (le détail reste sur le Mac, dans la fenêtre
+   Mémoire) ; « Réessayer » repasse au sommaire dès que le service répond de
+   nouveau (`launchctl bootstrap gui/$(id -u)
+   ~/Library/LaunchAgents/com.omp.console.mem0-rs.plist`, ou relance de l'app Mac).
+   La liste et la recherche ne disent jamais « serveur
    mémoire trop ancien » : cette cause n'existe que dans le graphe.
 6. **Aucun projet ouvert** — fermer le projet côté Mac puis tirer la liste : la carte
    dit « Aucun projet ouvert », sans lire la mémoire.
@@ -4104,9 +4287,9 @@ Recette PAS À PAS (chaque geste donne l'attendu observable et le mot exact) :
    toucher un nœud-étiquette pour n'afficher que sa famille, puis « Étiquette ▸
    Toutes les étiquettes » pour revenir. Toucher « Liste » rend le sommaire
    inchangé — c'est le mode d'ouverture.
-11. **Graphe et pile trop ancienne** — avec une pile mem0-http sans la route
-   `/memory/graph` (voir « Pile de l'app » dans « Consulter et corriger la mémoire du
-   projet »), toucher « Graphe » : le bandeau dit « Graphe indisponible : serveur
+11. **Graphe et service trop ancien** — avec un service mémoire sans la route
+   `/memory/graph` (servi à l'adresse `MEM0_HTTP_URL` de l'app Mac), toucher
+   « Graphe » : le bandeau dit « Graphe indisponible : serveur
    mémoire trop ancien sur le Mac. » puis « Mettez à jour OMP Console sur le Mac, puis
    réessayez. », sans nom de service, sans URL, sans JSON et sans code HTTP. Si
    c'est l'app Mac elle-même qui ne connaît pas la route, il dit « Graphe
@@ -4126,8 +4309,8 @@ MEM0_MEMOIRE_RECIPE=1 swift test --filter iosMemoireRecipe
 
 Banc sur la mémoire RÉELLE, sans toucher à l'app Mac : le test Swift gated
 `memoryDelayServe` (`omp-console/Tests/OMPConsoleTests/MemoryDelayServeTests.swift`)
-monte une coque construite depuis l'arbre de travail, branchée sur la vraie pile
-mem0-http, avec pour projet ouvert la racine `MEM0_MEMOIRE_DELAI_ROOT`. Variables :
+monte une coque construite depuis l'arbre de travail, branchée sur le vrai service
+mémoire, avec pour projet ouvert la racine `MEM0_MEMOIRE_DELAI_ROOT`. Variables :
 `MEM0_MEMOIRE_DELAI_SERVE=1` (sans elle, le test rend la main), `MEM0_MEMOIRE_DELAI_ROOT`
 (requise), `MEM0_MEMOIRE_DELAI_MINUTES` (durée de service, défaut 20 ; 0 = contrôles
 seuls) et `MEM0_MEMOIRE_DELAI_LATENCE` (secondes ajoutées avant chaque lecture lourde,

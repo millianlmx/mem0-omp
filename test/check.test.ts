@@ -553,6 +553,18 @@ esac`,
   // LC_BUILD_VERSION qu'un vrai binaire porte (vérification de la version minimale
   // du bundle assemblé, omp-console-redesign S-2).
   stub(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
+  // Le bundle embarque le service mémoire mem0-rs (omp-console-sans-podman S-1) :
+  // la doublure cargo pose un exécutable là où le vrai l'écrit, la doublure lipo
+  // le déclare arm64 — aucune compilation Rust réelle dans une copie jetable.
+  stub(
+    bin,
+    "cargo",
+    `target="\${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
+mkdir -p "$target/release"
+printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
+chmod +x "$target/release/mem0-rs"`,
+  );
+  stub(bin, "lipo", "printf 'arm64\\n'");
 
   const copy = copyRepo();
   const run = runCheck(copy, {

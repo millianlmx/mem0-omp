@@ -1,6 +1,7 @@
 // Ce que la coque garde des textes de la Mémoire : les surcharges qui nomment
-// un type de la coque (`MemoryRow`, `ForeignOwnership`). Toutes les constantes
-// et les fonctions pures vivent dans `ConsoleCore/Memory/MemoryText.swift` —
+// un type de la coque (`MemoryRow`, `ForeignOwnership`, `PodmanCleanupError`).
+// Toutes les constantes et les fonctions pures vivent dans
+// `ConsoleCore/Memory/MemoryText.swift` —
 // la ligne de contexte d'une ligne y est levée par la MÊME formule que l'app
 // iOS (une seule écriture, deux coques).
 
@@ -26,6 +27,17 @@ extension MemoryText {
     /// RÉELLEMENT sondée.
     static func omlxUnreachableDiagnostic(url: String) -> String {
         "oMLX est injoignable (\(url)) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
+    }
+
+    /// Le diagnostic copiable d'un nettoyage de l'ancien moteur en échec (S-6
+    /// d'omp-console-sans-podman) : la commande ou le chemin, puis le détail brut.
+    static func podmanCleanupDiagnostic(_ error: PodmanCleanupError) -> String {
+        switch error {
+        case let .machineRemoveFailed(detail):
+            "podman machine rm -f omp-console a échoué : \(detail)"
+        case let .deleteFailed(path, detail):
+            "Suppression impossible de \(path) : \(detail)"
+        }
     }
 
     /// Le diagnostic copiable de la clé refusée (S-6) : code, variable et URL.

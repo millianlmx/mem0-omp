@@ -14,16 +14,14 @@
 # `com.omp.console`.
 #
 # La préparation des composants (que le service distant attend avant de
-# démarrer) passe par le support RÉEL de l'utilisateur : `components` et `stack`
-# y sont liés, donc elle y écrit. `ComponentInstaller.install` purge toute
-# version d'omp ou de podman autre que celle du bundle testé ; `MemoryStack`
-# recrée la machine podman `omp-console` si l'image de `stack/machine.json`
-# diffère de celle du bundle, et réécrit `stack/migration.json`. Sur un dossier
-# de pile vide, elle lancerait les commandes `machine` sur cette même machine,
-# partagée avec l'instance de l'utilisateur. D'où la garde du manifeste : avant
-# tout lancement, les versions épinglées DANS le binaire du bundle (URL d'omp et
-# de podman, image de machine) doivent être exactement celles installées dans le
-# support réel — sinon « non exécuté » (2), sans rien lancer.
+# démarrer) passe par le support RÉEL de l'utilisateur : seul `components` y est
+# lié, donc elle y écrit. `ComponentInstaller.install` purge toute version d'omp
+# autre que celle du bundle testé. D'où la garde du manifeste : avant tout
+# lancement, la version d'omp épinglée DANS le binaire du bundle doit être
+# exactement celle installée dans le support réel — sinon « non exécuté » (2),
+# sans rien lancer. Le reste du support de l'instance est jetable : son agent
+# mémoire (plist sous `<racine>/support/LaunchAgents/`) écoute sur un port libre
+# (`OMP_CONSOLE_MEM0_PORT`) et il est déchargé par le nettoyage.
 #
 # Option `--ios` : la phase iOS/iPadOS appaire trois simulateurs DÉDIÉS
 # (`appairage-tab-a`, `appairage-tab-b` : iPad Pro 13-inch (M5) ; `appairage-tel` :
@@ -161,11 +159,7 @@ pinned() {
 }
 OMP_PINNED="$(pinned 'oh-my-pi/releases/download/v([0-9][0-9A-Za-z.+-]*)/omp-darwin-arm64')" \
   || not_run "version d'omp illisible dans $BUNDLE_BINARY (manifeste du bundle)"
-PODMAN_PINNED="$(pinned 'podman/releases/download/v([0-9][0-9A-Za-z.+-]*)/podman-installer-macos-arm64\.pkg')" \
-  || not_run "version de podman illisible dans $BUNDLE_BINARY (manifeste du bundle)"
-MACHINE_PINNED="$(pinned '(docker://quay\.io/podman/machine-os:[0-9A-Za-z.+-]+)')" \
-  || not_run "image de machine illisible dans $BUNDLE_BINARY (manifeste du bundle)"
-for component in "omp:$OMP_PINNED" "podman:$PODMAN_PINNED"; do
+for component in "omp:$OMP_PINNED"; do
   name="${component%%:*}"
   version="${component#*:}"
   dir="$REAL_SUPPORT/components/$name"
@@ -174,14 +168,7 @@ for component in "omp:$OMP_PINNED" "podman:$PODMAN_PINNED"; do
   others="$(ls -A "$dir" | grep -vx -- "$version" | tr '\n' ' ')"
   [ -z "$others" ] || not_run "$dir contient d'autres entrées que $version (${others% }) : la purge du bundle les supprimerait"
 done
-MACHINE_STATE="$REAL_SUPPORT/stack/machine.json"
-[ -f "$MACHINE_STATE" ] || not_run "$MACHINE_STATE absent : la préparation pourrait (re)créer la machine podman de l'utilisateur"
-MACHINE_REAL="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("image") or "")' "$MACHINE_STATE" 2>/dev/null)"
-# Même comparaison que `PodmanCommand.sameImage` : schéma et registre local ignorés.
-normalize_image() { local t="$1" p; for p in docker:// docker.io/ localhost/; do t="${t#"$p"}"; done; printf '%s' "$t"; }
-[ "$(normalize_image "$MACHINE_REAL")" = "$(normalize_image "$MACHINE_PINNED")" ] \
-  || not_run "image de machine « ${MACHINE_REAL:-illisible} » ($MACHINE_STATE) ≠ « $MACHINE_PINNED » (bundle) : la préparation recréerait la machine podman de l'utilisateur"
-say "manifeste du bundle : omp $OMP_PINNED, podman $PODMAN_PINNED, machine $MACHINE_PINNED — identiques au support réel"
+say "manifeste du bundle : omp $OMP_PINNED — identique au support réel"
 for tool in swiftc python3 screencapture pgrep lsof; do
   command -v "$tool" >/dev/null 2>&1 || not_run "$tool introuvable"
 done
@@ -223,7 +210,13 @@ cleanup() {
       say "nettoyage : instance de recette $APP_PID arrêtée"
     fi
   fi
-  [ -n "$R" ] && rm -rf "$R"
+  if [ -n "$R" ]; then
+    # L'agent mémoire de l'instance : décharger tout plist de sa racine jetable.
+    for plist in "$R"/support/LaunchAgents/*.plist; do
+      [ -e "$plist" ] && launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1
+    done
+    rm -rf "$R"
+  fi
   rm -rf "$WORK"
   exit "$code"
 }
@@ -706,18 +699,11 @@ fi
 R="$(mktemp -d -t mac-appairage-etat)"
 mkdir -p "$R/support/remote" "$R/pipeline"
 chmod 700 "$R/support/remote"
-# `REAL_SUPPORT` : défini et vérifié par la garde du manifeste (étape 1).
-# `config` est COPIÉ, jamais lié : la préparation de l'instance de recette
-# (MemoryStack.prepareSupportDirectories) réécrit `config/containers/containers.conf`
-# avec un `helper_binaries_dir` sous `$R`, que `rm -rf "$R"` supprime ensuite.
-# Lié, c'est le fichier réel de l'utilisateur qui serait réécrit. La copie ne
-# référence aucun chemin de `config` (la machine pointe vers `data`, lié).
-if [ -d "$REAL_SUPPORT/config" ]; then
-  cp -Rp "$REAL_SUPPORT/config" "$R/support/config" || not_run "copie de la configuration podman impossible"
-fi
-for entry in components data stack; do
-  [ -e "$REAL_SUPPORT/$entry" ] && ln -s "$REAL_SUPPORT/$entry" "$R/support/$entry"
-done
+# `REAL_SUPPORT` : défini et vérifié par la garde du manifeste (étape 1). Seul
+# `components` est lié ; `stack`, `mem0-rs` et le reste sont jetables.
+[ -e "$REAL_SUPPORT/components" ] && ln -s "$REAL_SUPPORT/components" "$R/support/components"
+MEM0_PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')" \
+  || not_run "aucun port libre pour le service mémoire de l'instance"
 while IFS= read -r id; do LEGACY_IDS+=("$id"); done < <(python3 "$TOOL" fixture "$R/support/remote")
 [ ${#LEGACY_IDS[@]} -eq "$LEGACY_COUNT" ] || not_run "registre de recette non écrit"
 
@@ -736,6 +722,7 @@ open -g -n "$BUNDLE" \
   --env "OMP_CONSOLE_SUPPORT_ROOT=$R/support" \
   --env "MEM0_PIPELINE_STATE_DIR=$R/pipeline" \
   --env "OMP_CONSOLE_REMOTE_PORT=$PORT" \
+  --env "OMP_CONSOLE_MEM0_PORT=$MEM0_PORT" \
   --env "TZ=Europe/Paris" || { fail "reglages-mac-appareils/AC-1" "instance de recette lancée / open a échoué"; exit 1; }
 sleep 8
 for pid in $(pgrep -f "$PATTERN" || true); do
