@@ -1,0 +1,240 @@
+{
+  "format": 1,
+  "source": {
+    "mem0ai": "2.2.1",
+    "fastembed": "0.8.1",
+    "qdrant": "1.19.0",
+    "capture": "2026-10-12T00:55:18.738Z"
+  },
+  "agent_id": "contrat-rang",
+  "corpus": [
+    {
+      "cle": "c01",
+      "texte": "The runner runs every morning before work."
+    },
+    {
+      "cle": "c02",
+      "texte": "Set MAX_RETRIES to 5 in the config.toml file right now!"
+    },
+    {
+      "cle": "c03",
+      "texte": "The réunion d'équipe à Genève : décision prise à l'été 2026, café offert."
+    },
+    {
+      "cle": "c04",
+      "texte": "Cache cache cache: the cache stays warm."
+    },
+    {
+      "cle": "c05",
+      "texte": "The end of the day"
+    },
+    {
+      "cle": "c06",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub"
+    },
+    {
+      "cle": "c07",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub banane banane banane kiwi"
+    },
+    {
+      "cle": "c08",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub mangue mangue mangue litchi goyave"
+    },
+    {
+      "cle": "c09",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub figue figue datte datte prune prune"
+    },
+    {
+      "cle": "c10",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub citron citron citron orange orange"
+    },
+    {
+      "cle": "c11",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub papaye papaye papaye melon melon ananas"
+    },
+    {
+      "cle": "c12",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub cerise cerise cerise pomme pomme poire abricot"
+    },
+    {
+      "cle": "c13",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub grenade grenade grenade grenade"
+    },
+    {
+      "cle": "c14",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub olive olive olive olive amande"
+    },
+    {
+      "cle": "c15",
+      "texte": "The hub of the graph links node edge vertex cluster star degree weight path tree orbit ring hub hub noix noix noix noisette noisette noisette"
+    }
+  ],
+  "requetes": [
+    {
+      "cle": "q01",
+      "query": "the running",
+      "limit": 5,
+      "threshold": null,
+      "attendu": [
+        "c01",
+        "c05",
+        "c06",
+        "c07",
+        "c08"
+      ]
+    },
+    {
+      "cle": "q02",
+      "query": "the MAX_RETRIES setting value",
+      "limit": 3,
+      "threshold": null,
+      "attendu": [
+        "c02",
+        "c05",
+        "c06"
+      ]
+    },
+    {
+      "cle": "q03",
+      "query": "what did the team decide at the Genève réunion",
+      "limit": 5,
+      "threshold": null,
+      "attendu": [
+        "c03",
+        "c05",
+        "c01",
+        "c06",
+        "c07"
+      ]
+    },
+    {
+      "cle": "q04",
+      "query": "the hub node and its neighbor edges in the star graph",
+      "limit": 5,
+      "threshold": null,
+      "attendu": [
+        "c06",
+        "c07",
+        "c08",
+        "c09",
+        "c10"
+      ]
+    },
+    {
+      "cle": "q05",
+      "query": "In the morning the runner checks the warm cache, then sets MAX_RETRIES and walks the graph hub",
+      "limit": 6,
+      "threshold": null,
+      "attendu": [
+        "c04",
+        "c01",
+        "c02",
+        "c05",
+        "c06",
+        "c07"
+      ]
+    },
+    {
+      "cle": "q06",
+      "query": "the xylophone quartet",
+      "limit": 5,
+      "threshold": null,
+      "attendu": [
+        "c05",
+        "c01",
+        "c06",
+        "c07",
+        "c08"
+      ]
+    },
+    {
+      "cle": "q07",
+      "query": "the running mornings works cache",
+      "limit": 5,
+      "threshold": 0.3,
+      "attendu": [
+        "c04",
+        "c05"
+      ]
+    },
+    {
+      "cle": "q08",
+      "query": "banane kiwi the orbit ring",
+      "limit": 3,
+      "threshold": null,
+      "attendu": [
+        "c07",
+        "c06",
+        "c05"
+      ]
+    },
+    {
+      "cle": "q09",
+      "query": "the café",
+      "limit": 4,
+      "threshold": 0.05,
+      "attendu": [
+        "c03",
+        "c05",
+        "c12",
+        "c01"
+      ]
+    }
+  ],
+  "seuil_avant_fusion": {
+    "requete": "q07",
+    "cle": "c01"
+  },
+  "graphe": {
+    "total": 15,
+    "threshold": 0.75,
+    "top_k": 8,
+    "aretes": [
+      {
+        "a": "c06",
+        "b": "c07",
+        "score": 0.862316493074558
+      },
+      {
+        "a": "c06",
+        "b": "c08",
+        "score": 0.8514693132825457
+      },
+      {
+        "a": "c06",
+        "b": "c09",
+        "score": 0.8410214503965643
+      },
+      {
+        "a": "c06",
+        "b": "c10",
+        "score": 0.8309489746138392
+      },
+      {
+        "a": "c06",
+        "b": "c11",
+        "score": 0.8212299320637749
+      },
+      {
+        "a": "c06",
+        "b": "c12",
+        "score": 0.811844139197849
+      },
+      {
+        "a": "c06",
+        "b": "c13",
+        "score": 0.8027729719194862
+      },
+      {
+        "a": "c06",
+        "b": "c14",
+        "score": 0.7939992354392166
+      },
+      {
+        "a": "c06",
+        "b": "c15",
+        "score": 0.7855070282897502
+      }
+    ]
+  }
+}

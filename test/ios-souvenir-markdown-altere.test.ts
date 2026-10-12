@@ -24,6 +24,7 @@ const EXCLUDED_DIRS: Record<string, true> = {
   ".typecheck": true,
   qdrant_storage: true,
   build: true,
+  target: true,
 };
 
 /** Les jetons qu'aucune vue de la section Mémoire iOS ne doit contenir (S-1). */

@@ -128,6 +128,7 @@ const DROPPED_DIRS: Record<string, true> = {
   // reconnue par PRÉFIXE dans le filtre —, et la section « App Swift » est
   // neutralisée dans la copie par MEM0_OMP_SKIP_SWIFT_APP (voir runSimulation).
   build: true,
+  target: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
   "check.test.ts": true,
@@ -160,6 +161,8 @@ const DROPPED_TESTS: Record<string, true> = {
   "ci-macos-jobs-paralleles.test.ts": true,
   // lance de vrais serveurs (Python, Qdrant) : le scénario couplé rejoue la suite au niveau 0
   "mem0-http-contrat-boite-noire.test.ts": true,
+  // lance cargo et le contrat contre mem0-rs ; le scénario couplé rejoue la suite au niveau 0
+  "mem0-rs-noyau.test.ts": true,
 };
 
 function copyRepo(dir: string): void {
@@ -304,8 +307,10 @@ function runSimulation(repo: Repo): SpawnSyncReturns<string> {
       // de la release simulée — la section « App iOS » de même.
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
-      // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici.
+      // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici, ni
+      // la section Rust (cargo, contrat contre mem0-rs).
       MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
+      MEM0_OMP_SKIP_RUST: "1",
       GH_JOURNAL: repo.journal,
       PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
     },
@@ -325,6 +330,7 @@ function runCheck(repo: Repo): SpawnSyncReturns<string> {
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
       MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
+      MEM0_OMP_SKIP_RUST: "1",
     },
   });
 }

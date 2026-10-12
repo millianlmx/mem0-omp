@@ -40,8 +40,10 @@ const NESTED_ENV = {
   MEM0_OMP_SKIP_SWIFT_APP: "1",
   MEM0_OMP_SKIP_IOS: "1",
   // Le contrat boîte noire mem0-http démarre de vrais serveurs (Python, Qdrant) :
-  // aucune copie jetable ne le relance, la racine l'exécute.
+  // aucune copie jetable ne le relance, la racine l'exécute. La section Rust
+  // (cargo, contrat contre mem0-rs) de même.
   MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
+  MEM0_OMP_SKIP_RUST: "1",
 };
 
 // Ce qui n'a rien à faire dans une copie : l'historique, les dépendances, la
@@ -55,6 +57,7 @@ const EXCLUDED_DIRS: Record<string, true> = {
   ".typecheck": true,
   qdrant_storage: true,
   build: true,
+  target: true,
 };
 const RECURSIVE_FILE = path.join("test", "check.test.ts");
 

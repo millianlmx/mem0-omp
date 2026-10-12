@@ -28,7 +28,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── omp-console/                       la coque macOS (SwiftUI), le noyau partagé et l'app iOS
 │   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
 ├── mem0-stack/                        mem0 + Qdrant, la voie MANUELLE (intacte)
-│   └── mem0-http/                     l'API HTTP et sa config mem0
+│   ├── mem0-http/                     l'API HTTP et sa config mem0
+│   └── mem0-rs/                       le serveur Rust mem0-rs (crate, infer=false)
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
@@ -1107,7 +1108,7 @@ service mem0 étant remplacé par un stub local, donc sans conteneur ni credenti
 Un plugin qui ne répond pas fait échouer le job, et `main` exige ces deux statuts
 ainsi que `release-simulation` : le merge est bloqué.
 
-Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses douze
+Sur Ubuntu, le job `check` lance `./scripts/check.sh` sans option : ses treize
 sections et toute la suite node, à chaque run. Sur macOS, le contrôle est éclaté en
 jobs **parallèles**, sur des runners distincts et sans `needs` entre eux : `macos-app-swift`
 (`--sections=app-swift`), `macos-app-ios` (`--sections=app-ios`) et `macos-tests (1/2)`,
@@ -1128,7 +1129,7 @@ local — sans option, toutes les sections et toute la suite tournent :
 
 | Option | Effet |
 |---|---|
-| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `api-http`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
+| `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `api-http`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
 | `--tests-part=1/2` ou `2/2` | `1/2` : les tests `mem0-http-hors-ci/*` et `socle-app-swift/*` de `test/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 
@@ -1172,10 +1173,45 @@ pièces et pose `MEM0_OMP_REQUIRE_HTTP_API=1` : une pièce manquante ou un cas e
 | `MEM0_CONTRAT_INFER` | `0` désactive le groupe infer=true (extraction LLM) |
 | `MEM0_CONTRAT_OPENAI_PORT` | port fixe du faux serveur OpenAI (libre par défaut) |
 | `MEM0_CONTRAT_QDRANT` | binaire Qdrant à utiliser à la place de celui du cache |
+| `MEM0_CONTRAT_RANG_FIXTURE` | fixture de rang à utiliser à la place de `scripts/mem0-http-contrat/rang.json` (capture comme exécution) |
+| `MEM0_RS_BIN` | binaire démarré par `--start-rs` (défaut : `${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs`) |
 | `MEM0_OMP_SKIP_HTTP_CONTRAT` | non vide : contrat ignoré (posé par les copies jetables des tests) |
 
-Viser mem0-rs = poser MEM0_CONTRAT_START (et MEM0_CONTRAT_URL), sans toucher à
-cas.ts.
+Le contrat joue aussi une phase **`rang`**, sur une instance neuve (l'IDF du BM25
+ne voit que ce corpus) : la fixture commitée `scripts/mem0-http-contrat/rang.json`
+porte un petit corpus, des requêtes et, capturés sur le Python, l'ordre des ids
+rendus par chaque recherche (`attendu`) et les arêtes du graphe. Toute divergence
+d'ordre, un `semantic_score` qui n'est pas le cosinus brut du faux embedder, un
+souvenir lexical rendu malgré `threshold` ou une arête différente fait échouer le
+run. Contre le Python, c'est la vérification « à chaud » que la fixture reflète
+encore mem0 2.2.1 ; contre mem0-rs, la preuve de parité. La phase est sautée en
+mode externe ; une fixture illisible ou non capturée est un refus (code 3). La
+fixture se (re)capture depuis le Python jetable, jamais depuis une autre cible :
+`bash scripts/mem0-http-contrat.sh --capture-rang` réécrit `attendu` et `graphe`
+après avoir vérifié la couverture du corpus (tranches de mots des requêtes, BM25
+qui réordonne, `max_possible_score` 1 et 2, seuil avant fusion, aucun ex-aequo,
+nœud à 9 arêtes) ; une condition manquée est nommée et la fixture n'est pas écrite.
+
+Viser mem0-rs (binaire construit par `cargo build --manifest-path
+mem0-stack/mem0-rs/Cargo.toml --locked`), sans toucher à cas.ts :
+
+```bash
+MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs" MEM0_CONTRAT_INFER=0 bash scripts/mem0-http-contrat.sh --run
+```
+
+`--start-rs` démarre le binaire sur une base SQLite neuve du répertoire de travail
+de la phase ; binaire absent → `non exécuté : binaire mem0-rs absent (<chemin>)`, code 2.
+
+La section `── Rust mem0-rs` (id `rust`, juste après `api-http`) éprouve la crate
+`mem0-stack/mem0-rs` : `cargo clippy --all-targets -- -D warnings` (aucun
+avertissement toléré), `cargo test`, `cargo build`, puis ce même contrat contre le
+binaire construit (`MEM0_CONTRAT_INFER=0`). Les trois étapes cargo tournent même si
+l'une échoue, et leur sortie n'est imprimée qu'en cas d'échec ; la commande à
+relancer est donnée par chaque ✗. Sans `cargo` (ou sans clippy) dans le `PATH`, la
+section annonce le saut sans ✓ et ne fait rien échouer sur un poste ; la CI installe
+clippy (`rustup component add clippy`) et pose `MEM0_OMP_REQUIRE_RUST=1`, qui
+change ce saut en échec. `MEM0_OMP_SKIP_RUST` non vide ignore la section, comme
+`MEM0_OMP_SKIP_HTTP_CONTRAT` le contrat : les copies jetables des tests le posent.
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
 **jamais** directement sur `main` (la protection de branche refuse un commit neuf

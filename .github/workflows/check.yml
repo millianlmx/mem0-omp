@@ -74,20 +74,24 @@ jobs:
         run: bash scripts/mem0-http-test.sh --prepare
       - name: Préparer le contrat boîte noire mem0-http
         run: bash scripts/mem0-http-contrat.sh --prepare
+      - name: Préparer la toolchain Rust (clippy)
+        run: rustup component add clippy
       - name: Valider le catalogue, le manifeste et l'extension
         env:
-          # En CI, un prérequis manquant (bun, hôte, environnement du test d'API)
-          # est un échec, jamais un skip : ni le harnais « plugins réels » ni le
-          # test d'API mem0-http ne doivent pouvoir disparaître en silence.
+          # En CI, un prérequis manquant (bun, hôte, environnement du test d'API,
+          # cargo ou clippy) est un échec, jamais un skip : ni le harnais « plugins
+          # réels », ni le test d'API mem0-http, ni la section Rust ne doivent
+          # pouvoir disparaître en silence.
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_HTTP_API: "1"
+          MEM0_OMP_REQUIRE_RUST: "1"
         run: ./scripts/check.sh
 
   # Le contrôle macOS est éclaté en jobs PARALLÈLES sur des runners distincts : en
   # un seul job, il durait ≈ 36 min, au-delà du `mergeTimeout` de 1200 s de
   # scripts/release.ts. Aucun de ces jobs n'a de `needs` ni de `if:` — ils démarrent
   # ensemble, et un job sauté rapporterait « Success » sans rien prouver. L'union de
-  # leurs `--sections` couvre les 12 sections de check.sh : rien de ce que le job
+  # leurs `--sections` couvre les 13 sections de check.sh : rien de ce que le job
   # macOS vérifiait ne disparaît.
 
   # Compilation, tests et bundle de l'app Swift : swift seul, aucune préparation.
@@ -126,7 +130,7 @@ jobs:
         part: ["1/2", "2/2"]
         include:
           - part: "1/2"
-            sections: catalogue,noms,plugins,versions,extension,types,api-http,smoke,tests,noyau
+            sections: catalogue,noms,plugins,versions,extension,types,api-http,rust,smoke,tests,noyau
           - part: "2/2"
             sections: tests
     runs-on: macos-latest
@@ -161,11 +165,14 @@ jobs:
         run: bash scripts/mem0-http-test.sh --prepare
       - name: Préparer le contrat boîte noire mem0-http
         run: bash scripts/mem0-http-contrat.sh --prepare
+      - name: Préparer la toolchain Rust (clippy)
+        run: rustup component add clippy
       - name: Valider le catalogue, le manifeste et l'extension (${{ matrix.part }})
         env:
           # Prérequis manquant = échec, jamais un skip (voir le job `check`).
           MEM0_OMP_REQUIRE_SMOKE: "1"
           MEM0_OMP_REQUIRE_HTTP_API: "1"
+          MEM0_OMP_REQUIRE_RUST: "1"
         run: ./scripts/check.sh --sections=${{ matrix.sections }} --tests-part=${{ matrix.part }} ${{ github.event_name == 'pull_request' && '--tests-scope=macos' || '' }}
 
   # Agrégateur : son nom est le statut requis `check (macos-latest)` de la
