@@ -95,6 +95,13 @@ environnement Python. Sans elles, la section annonce « non exécuté » plutôt
 ✓ trompeur. La CI, elle, les exige (`MEM0_OMP_REQUIRE_HTTP_API=1`) : un « non
 exécuté » y est un échec.
 
+La section Rust (`── Rust mem0-rs`) compile et teste la crate `mem0-stack/mem0-rs`
+avec la toolchain stable : sur un poste, installer rustup (https://rustup.rs) puis
+`rustup component add clippy`. Sans cargo ou sans clippy, la section annonce le
+saut sans ✓. La CI installe clippy et pose `MEM0_OMP_REQUIRE_RUST=1` : cargo ou
+clippy absent, un avertissement clippy, un `cargo test` rouge ou le contrat boîte
+noire en échec contre mem0-rs y font échouer le job.
+
 Le contrôle d'import mérite une explication : `import type { ExtensionAPI }` est
 effacé à la compilation, donc l'extension n'a aucune dépendance à résoudre au
 runtime. Un `import` de valeur en créerait une, et elle casse selon la

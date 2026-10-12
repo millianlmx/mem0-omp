@@ -4,7 +4,7 @@
 //
 // Il porte aussi le catalogue des formes (jeu de clés exact de chaque réponse 2xx)
 // et l'interface de phase / groupe / cas que consomme le lanceur contrat.ts.
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as pause } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
 import { plonger } from "./faux-openai.ts";
@@ -28,8 +28,13 @@ export type Requete = {
   jeton?: string | null;
   /** Statut attendu, 200 par défaut. Un autre statut fait échouer le cas. */
   statut?: number;
-  /** Forme OBLIGATOIRE de toute réponse 2xx ; le corps d'une réponse non 2xx n'est jamais lu. */
+  /** Forme OBLIGATOIRE de toute réponse 2xx ; le corps d'une réponse non 2xx n'est lu que si `corpsErreur` est posé. */
   forme?: Forme;
+  /**
+   * Corps JSON exact attendu quand le statut reçu est le statut attendu non 2xx :
+   * `content-type` application/json et `JSON.parse(corps)` profondément égal.
+   */
+  corpsErreur?: unknown;
 };
 
 export type EntreeJournal = { phase: string; route: string; jeton: boolean; statut: number };
@@ -47,6 +52,8 @@ export type Contexte = {
   journal(): readonly EntreeJournal[];
   /** Compteurs de requêtes reçues par le faux OpenAI. */
   compteursOpenAI(): { embeddings: number; chat: number };
+  /** Fixture de rang chargée par le lanceur (phase `rang`, hors mode externe). */
+  fixtureRang(): FixtureRang;
 };
 
 export type Cas = { libelle: string; executer(ctx: Contexte): Promise<void> };
@@ -79,6 +86,114 @@ export class EchecCas extends Error {
     super(ecarts.join("\n"));
     this.ecarts = ecarts;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Fixture de rang (scripts/mem0-http-contrat/rang.json, spec S-10 de mem0-rs-noyau)
+// ---------------------------------------------------------------------------
+
+export type RequeteRang = {
+  cle: string;
+  query: string;
+  limit: number;
+  threshold: number | null;
+  /** Clés du corpus rendues par le Python, dans l'ordre (écrit par la capture). */
+  attendu?: string[];
+};
+
+/** Arête rapportée aux clés du corpus, `a < b`. */
+export type AreteRang = { a: string; b: string; score: number };
+
+export type GrapheRang = { total: number; threshold: number; top_k: number; aretes: AreteRang[] };
+
+export type FixtureRang = {
+  format: 1;
+  source?: { mem0ai: string; fastembed: string; qdrant: string; capture: string };
+  agent_id: string;
+  corpus: { cle: string; texte: string }[];
+  requetes: RequeteRang[];
+  seuil_avant_fusion: { requete: string; cle: string };
+  /** Écrit par la capture. */
+  graphe?: GrapheRang;
+};
+
+const estObjetJson = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v);
+const estChaine = (v: unknown): v is string => typeof v === "string" && v !== "";
+const estEntierPositif = (v: unknown): v is number => Number.isInteger(v) && (v as number) >= 0;
+
+/**
+ * Valide la STRUCTURE d'une fixture de rang (la couverture est l'affaire de la
+ * capture) ; lève une Error dont le message est la raison du refus.
+ */
+export function analyserFixtureRang(texte: string): FixtureRang {
+  const f: unknown = JSON.parse(texte);
+  if (!estObjetJson(f)) throw new Error("objet JSON attendu");
+  if (f.format !== 1) throw new Error(`format attendu 1, reçu ${JSON.stringify(f.format)}`);
+  if (!estChaine(f.agent_id)) throw new Error("agent_id : chaîne non vide attendue");
+  if (!Array.isArray(f.corpus) || !f.corpus.every((s) => estObjetJson(s) && estChaine(s.cle) && typeof s.texte === "string")) {
+    throw new Error("corpus : liste de {cle, texte} attendue");
+  }
+  if (
+    !Array.isArray(f.requetes) ||
+    !f.requetes.every(
+      (q) =>
+        estObjetJson(q) &&
+        estChaine(q.cle) &&
+        estChaine(q.query) &&
+        estEntierPositif(q.limit) &&
+        (q.threshold === null || typeof q.threshold === "number") &&
+        (q.attendu === undefined || (Array.isArray(q.attendu) && q.attendu.every(estChaine))),
+    )
+  ) {
+    throw new Error("requetes : liste de {cle, query, limit, threshold, attendu?} attendue");
+  }
+  const seuil = f.seuil_avant_fusion;
+  if (!estObjetJson(seuil) || !estChaine(seuil.requete) || !estChaine(seuil.cle)) {
+    throw new Error("seuil_avant_fusion : {requete, cle} attendu");
+  }
+  const g = f.graphe;
+  if (
+    g !== undefined &&
+    !(
+      estObjetJson(g) &&
+      estEntierPositif(g.total) &&
+      typeof g.threshold === "number" &&
+      estEntierPositif(g.top_k) &&
+      Array.isArray(g.aretes) &&
+      g.aretes.every((a) => estObjetJson(a) && estChaine(a.a) && estChaine(a.b) && typeof a.score === "number")
+    )
+  ) {
+    throw new Error("graphe : {total, threshold, top_k, aretes: [{a, b, score}]} attendu");
+  }
+  return f as FixtureRang;
+}
+
+/**
+ * Corps de `POST /memory/search` d'une requête de la fixture — le même à la
+ * capture et au contrôle. `complete` : sans limite utile (taille du corpus) et à
+ * threshold 0, la liste complète des candidats.
+ */
+export function corpsRechercheRang(f: FixtureRang, q: RequeteRang, complete = false): Record<string, unknown> {
+  return {
+    query: q.query,
+    agent_id: f.agent_id,
+    limit: complete ? f.corpus.length : q.limit,
+    threshold: complete ? 0 : q.threshold,
+    explain: true,
+  };
+}
+
+/** Arêtes du serveur rapportées aux clés du corpus (`a < b`), triées par (`a`, `b`) : la forme de `graphe.aretes`. */
+export function aretesParCles(
+  edges: readonly { source: string; target: string; score: number }[],
+  cleDe: (id: string) => string,
+): AreteRang[] {
+  return edges
+    .map((e) => {
+      const [a, b] = [cleDe(e.source), cleDe(e.target)].sort();
+      return { a, b, score: e.score };
+    })
+    .sort((x, y) => (x.a === y.a ? (x.b < y.b ? -1 : x.b > y.b ? 1 : 0) : x.a < y.a ? -1 : 1));
 }
 
 // ---------------------------------------------------------------------------
@@ -175,14 +290,20 @@ type Ajout = { results: { id: string; memory: string }[] };
 type Souvenir = {
   id: string;
   memory: string;
+  hash: string;
   metadata: { tags: string } | null;
   created_at: string;
   updated_at: string;
+  agent_id: string;
+  role?: string;
   score?: number;
   score_details?: { semantic_score: number; threshold: number };
 };
 type Liste = { total: number; results: Souvenir[] };
 type Resultats = { results: Souvenir[] };
+type Details = { semantic_score: number; bm25_score: number; max_possible_score: number; threshold: number };
+export type LigneExpliquee = Souvenir & { score: number; score_details: Details };
+type ResultatsExpliques = { results: LigneExpliquee[] };
 type Graphe = { total: number; threshold: number; top_k: number; edges: { source: string; target: string; score: number }[] };
 type Historique = {
   memory_id: string;
@@ -237,6 +358,21 @@ async function chercher(ctx: Contexte, corps: Record<string, unknown>, forme: Fo
 async function modifier(ctx: Contexte, id: string, corps: Record<string, unknown>): Promise<void> {
   await ctx.appeler({ methode: "PUT", gabarit: "/memory/{id}", chemin: `/memory/${id}`, corps, forme: MAJ });
 }
+
+async function chercherExplique(ctx: Contexte, corps: Record<string, unknown>): Promise<ResultatsExpliques> {
+  return (await ctx.appeler({ methode: "POST", gabarit: "/memory/search", corps, forme: RECHERCHE_EXPLIQUEE })) as ResultatsExpliques;
+}
+
+async function lireHistorique(ctx: Contexte, id: string): Promise<Historique> {
+  return (await ctx.appeler({
+    methode: "GET",
+    gabarit: "/memory/{id}/history",
+    chemin: `/memory/${id}/history`,
+    forme: HISTORIQUE,
+  })) as Historique;
+}
+
+const md5 = (texte: string): string => createHash("md5").update(texte, "utf8").digest("hex");
 
 /** Le souvenir d'id donné dans une liste de résultats, ou un écart consigné. */
 function trouver(ctx: Contexte, route: string, resultats: readonly Souvenir[], id: string, nom: string): Souvenir | null {
@@ -721,6 +857,151 @@ const INFER_OUVERT: Groupe = {
   },
 };
 
+// Noyau (mem0-rs-noyau S-9) : hash, fusion du PUT, procédure octet pour octet et
+// trace de la suppression, sous la forme du Python — joué contre les deux serveurs.
+
+/** Le nombre de révisions, puis les champs nommés de chacune. */
+function exigerRevisions(ctx: Contexte, route: string, h: Historique, attendus: readonly Record<string, unknown>[]): void {
+  ctx.constater(h.length === attendus.length, `${route} : ${attendus.length} révision(s) attendue(s), reçu ${h.length}`);
+  for (const [i, attendu] of attendus.entries()) {
+    const entree: Record<string, unknown> | undefined = h[i];
+    if (entree === undefined) return;
+    for (const [cle, valeur] of Object.entries(attendu)) {
+      ctx.constater(entree[cle] === valeur, `${route} : [${i}].${cle} attendu ${json(valeur)}, reçu ${json(entree[cle])}`);
+    }
+  }
+}
+
+const NOYAU_OUVERT: Groupe = {
+  nom: "noyau",
+  cas: () => {
+    const agent = "contrat-noyau";
+    const tous = "GET /memory/all";
+    const historique = "GET /memory/{id}/history";
+    const recherche = "POST /memory/search";
+    return [
+      {
+        libelle: "mem0-rs-noyau AC-4 · hash = md5 du texte et révision ADD",
+        executer: async (ctx) => {
+          const t = "Révision « AC-4 » : ligne 1\nligne 2 — fin";
+          const id = await ajouter(ctx, agent, t);
+          const s = trouver(ctx, tous, (await lister(ctx, agent)).results, id, "T");
+          if (s !== null) ctx.constater(s.hash === md5(t), `${tous} : hash de T attendu ${md5(t)} (md5), reçu ${s.hash}`);
+          exigerRevisions(ctx, historique, await lireHistorique(ctx, id), [
+            { event: "ADD", old_memory: null, new_memory: t, is_deleted: false },
+          ]);
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-5 · PUT fusionne, ré-embarque et historise",
+        executer: async (ctx) => {
+          const v1 = "pomme cerise abricot";
+          const v2 = "voilier phare marée";
+          const id = await ajouter(ctx, agent, v1, "alpha");
+          const avant = trouver(ctx, tous, (await lister(ctx, agent)).results, id, "V1");
+          if (avant === null) return;
+          await pause(PAUSE_HORODATAGE_MS);
+          await modifier(ctx, id, { text: v2, tags: "beta" });
+          const apres = trouver(ctx, tous, (await lister(ctx, agent)).results, id, "V2");
+          if (apres !== null) {
+            ctx.constater(apres.agent_id === agent, `${tous} : agent_id de V2 attendu ${json(agent)}, reçu ${json(apres.agent_id)}`);
+            ctx.constater(apres.role === "user", `${tous} : role de V2 attendu "user", reçu ${json(apres.role)}`);
+            exigerMetadata(ctx, tous, apres, "V2", { tags: "beta" });
+            ctx.constater(
+              apres.created_at === avant.created_at,
+              `${tous} : created_at de V2 (${apres.created_at}) diffère de celui de V1 (${avant.created_at})`,
+            );
+            ctx.constater(
+              Date.parse(apres.updated_at) > Date.parse(apres.created_at),
+              `${tous} : updated_at de V2 (${apres.updated_at}) n'est pas postérieur à created_at (${apres.created_at})`,
+            );
+          }
+          await modifier(ctx, id, { text: v2 });
+          exigerMetadata(ctx, tous, trouver(ctx, tous, (await lister(ctx, agent)).results, id, "V2"), "V2", { tags: "beta" });
+          const nouveau = (await chercherExplique(ctx, { query: v2, agent_id: agent, explain: true })).results.find((r) => r.id === id);
+          ctx.constater(
+            nouveau !== undefined && nouveau.score_details.semantic_score >= 0.999,
+            `${recherche} : V2 (${id}) ${nouveau === undefined ? "absent" : `rendu avec semantic_score ${nouveau.score_details.semantic_score}`} pour son nouveau texte (≥ 0.999 attendu)`,
+          );
+          const ancien = await chercherExplique(ctx, { query: v1, agent_id: agent, threshold: 0.5, explain: true });
+          ctx.constater(
+            !ancien.results.some((r) => r.id === id),
+            `${recherche} : V2 (${id}) rendu pour l'ancien texte V1 au threshold 0.5 (vecteur non ré-embarqué)`,
+          );
+          exigerRevisions(ctx, historique, await lireHistorique(ctx, id), [
+            { event: "ADD", old_memory: null, new_memory: v1 },
+            { event: "UPDATE", old_memory: v1, new_memory: v2 },
+            { event: "UPDATE", old_memory: v2, new_memory: v2 },
+          ]);
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-6 · add_procedure conserve le texte octet pour octet",
+        executer: async (ctx) => {
+          const steps = "# Procédure\r\n\n1. **Lancer** `cargo test`  \n\t- cas \"limite\" \\ fin 🚀\n";
+          const r = (await ctx.appeler({
+            methode: "POST",
+            gabarit: "/memory/add_procedure",
+            corps: { steps, agent_id: agent },
+            forme: AJOUT,
+          })) as Ajout;
+          const ajoute = r.results[0];
+          if (ajoute === undefined) throw new EchecCas(["POST /memory/add_procedure : aucun souvenir créé"]);
+          ctx.constater(
+            ajoute.memory === steps,
+            `POST /memory/add_procedure : results[0].memory attendu ${json(steps)}, reçu ${json(ajoute.memory)}`,
+          );
+          const lignes: [string, Souvenir | undefined][] = [
+            [tous, (await lister(ctx, agent)).results.find((s) => s.id === ajoute.id)],
+            [
+              recherche,
+              (await chercherExplique(ctx, { query: "Procédure Lancer cargo test", agent_id: agent, explain: true })).results.find(
+                (s) => s.id === ajoute.id,
+              ),
+            ],
+          ];
+          for (const [route, s] of lignes) {
+            if (s === undefined) {
+              ctx.constater(false, `${route} : procédure (${ajoute.id}) absente des résultats`);
+              continue;
+            }
+            ctx.constater(s.memory === steps, `${route} : memory attendu ${json(steps)}, reçu ${json(s.memory)}`);
+            ctx.constater(s.hash === md5(steps), `${route} : hash attendu ${md5(steps)} (md5), reçu ${s.hash}`);
+          }
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-7 · DELETE retire de all et de search, history garde la trace",
+        executer: async (ctx) => {
+          const texte = "souvenir à supprimer zéphyr";
+          const id = await ajouter(ctx, agent, texte);
+          await ctx.appeler({ methode: "DELETE", gabarit: "/memory/{id}", chemin: `/memory/${id}`, forme: SUPPRESSION });
+          ctx.constater(
+            !(await lister(ctx, agent)).results.some((s) => s.id === id),
+            `${tous} : souvenir supprimé (${id}) encore listé`,
+          );
+          const r = await chercherExplique(ctx, { query: texte, agent_id: agent, threshold: 0, explain: true });
+          ctx.constater(!r.results.some((s) => s.id === id), `${recherche} : souvenir supprimé (${id}) encore rendu`);
+          const h = await lireHistorique(ctx, id);
+          exigerRevisions(ctx, historique, h, [
+            { event: "ADD", old_memory: null, new_memory: texte, is_deleted: false },
+            { event: "DELETE", old_memory: texte, new_memory: null, is_deleted: true },
+          ]);
+          if (h.length !== 2) return;
+          ctx.constater(
+            h[1].created_at === h[0].created_at,
+            `${historique} : [1].created_at (${h[1].created_at}) diffère de [0].created_at (${h[0].created_at})`,
+          );
+          ctx.constater(
+            Date.parse(h[1].updated_at) >= Date.parse(h[0].updated_at),
+            `${historique} : [1].updated_at (${h[1].updated_at}) antérieur à [0].updated_at (${h[0].updated_at})`,
+          );
+        },
+      },
+    ];
+  },
+};
+
 /** Les 8 gabarits /memory/*, tels que les nomment journal et écarts. */
 const ROUTES_MEMOIRE = [
   "POST /memory/add",
@@ -751,6 +1032,8 @@ const JETON_OUVERT: Groupe = {
 };
 
 const JETON = "contrat-jeton";
+/** Corps exact du 401 du Python (HTTPException de http_server.py), que mem0-rs reproduit. */
+const CORPS_401 = { detail: "bad or missing X-Mem0-Token" };
 
 /** Les 8 requêtes /memory/* de la phase jeton, corps valides (le rejet vient du jeton, pas d'un 422). */
 function requetesJeton(id: string): Requete[] {
@@ -783,10 +1066,10 @@ function requetesJeton(id: string): Requete[] {
 }
 
 /** Chaque route /memory/* doit rendre 401 ; tous les écarts sont consignés, pas seulement le premier. */
-async function exigerRejets(ctx: Contexte, jeton: string | null): Promise<void> {
+async function exigerRejets(ctx: Contexte, jeton: string | null, corpsErreur?: unknown): Promise<void> {
   for (const requete of requetesJeton(randomUUID())) {
     try {
-      await ctx.appeler({ ...requete, jeton, statut: 401 });
+      await ctx.appeler({ ...requete, jeton, statut: 401, corpsErreur });
     } catch (e) {
       if (!(e instanceof EchecCas)) throw e;
       for (const ecart of e.ecarts) ctx.constater(false, ecart);
@@ -810,6 +1093,18 @@ const JETON_JETON: Groupe = {
     {
       libelle: "AC-5 · les 8 routes /memory/* avec un jeton faux rendent 401",
       executer: (ctx) => exigerRejets(ctx, "contrat-jeton-faux"),
+    },
+    {
+      libelle: "mem0-rs-noyau AC-2 · 401 : corps exact, aucune lecture ni écriture",
+      executer: async (ctx) => {
+        const avant = ctx.compteursOpenAI().embeddings;
+        await exigerRejets(ctx, null, CORPS_401);
+        await exigerRejets(ctx, "contrat-jeton-faux", CORPS_401);
+        const recus = ctx.compteursOpenAI().embeddings - avant;
+        ctx.constater(recus === 0, `faux OpenAI : ${recus} requête(s) embeddings reçue(s) pendant les rejets 401, 0 attendue`);
+        const liste = (await ctx.appeler({ methode: "GET", gabarit: "/memory/all", jeton: JETON, forme: LISTE })) as Liste;
+        ctx.constater(liste.total === 0, `GET /memory/all : total attendu 0 après les rejets 401, reçu ${liste.total}`);
+      },
     },
     {
       libelle: "AC-5 · les 8 routes /memory/* avec le bon jeton rendent 200",
@@ -842,6 +1137,118 @@ const COUVERTURE: Groupe = {
   ],
 };
 
+// Rang (mem0-rs-noyau S-10) : la fixture commitée rang.json porte le corpus, les
+// requêtes et l'ordre capturé sur le Python. Phase à part, instance neuve : l'IDF
+// du BM25 ne voit que ce corpus.
+
+/** Seuil appliqué par le serveur quand `threshold` vaut null (mem0 2.2.1). */
+const SEUIL_DEFAUT = 0.1;
+
+const RANG: Groupe = {
+  nom: "rang",
+  horsExterne: true,
+  cas: () => {
+    /** id du serveur → clé du corpus. */
+    const cles = new Map<string, string>();
+    /** clé de requête → lignes rendues par la recherche de la fixture. */
+    const reponses = new Map<string, LigneExpliquee[]>();
+    const nommer = (id: string): string => cles.get(id) ?? id;
+    return [
+      {
+        libelle: "mem0-rs-noyau AC-13 · corpus du rang ajouté (infer=false)",
+        executer: async (ctx) => {
+          const f = ctx.fixtureRang();
+          for (const s of f.corpus) cles.set(await ajouter(ctx, f.agent_id, s.texte), s.cle);
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-13 · chaque requête rend les clés de la fixture dans l'ordre",
+        executer: async (ctx) => {
+          const f = ctx.fixtureRang();
+          for (const q of f.requetes) {
+            const r = await chercherExplique(ctx, corpsRechercheRang(f, q));
+            reponses.set(q.cle, r.results);
+            const recues = r.results.map((s) => nommer(s.id));
+            const attendu = q.attendu ?? [];
+            ctx.constater(
+              isDeepStrictEqual(recues, attendu),
+              `rang ${q.cle} : attendu [${attendu.join(", ")}], reçu [${recues.join(", ")}]`,
+            );
+          }
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-10 · score_details.semantic_score = cosinus brut du faux embedder",
+        executer: async (ctx) => {
+          for (const q of ctx.fixtureRang().requetes) {
+            for (const s of reponses.get(q.cle) ?? []) {
+              const c = cosinus(q.query, s.memory);
+              const semantique = s.score_details.semantic_score;
+              ctx.constater(
+                Math.abs(semantique - c) <= 1e-6,
+                `rang ${q.cle} : ${nommer(s.id)} a semantic_score ${semantique}, cosinus du faux embedder ${c}`,
+              );
+            }
+          }
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-11 · threshold écarte le souvenir lexical avant la fusion",
+        executer: async (ctx) => {
+          const f = ctx.fixtureRang();
+          const { requete, cle } = f.seuil_avant_fusion;
+          const q = f.requetes.find((x) => x.cle === requete);
+          const souvenir = f.corpus.find((s) => s.cle === cle);
+          if (q === undefined || souvenir === undefined) {
+            throw new EchecCas([`rang : seuil_avant_fusion (${requete}, ${cle}) ne désigne pas une requête et un souvenir de la fixture`]);
+          }
+          const seuil = q.threshold ?? SEUIL_DEFAUT;
+          const id = [...cles].find(([, c]) => c === cle)?.[0];
+          ctx.constater(
+            !(reponses.get(q.cle) ?? []).some((s) => s.id === id),
+            `rang ${q.cle} : ${cle} rendu malgré threshold ${seuil}`,
+          );
+          const c = cosinus(q.query, souvenir.texte);
+          ctx.constater(c < seuil, `rang ${q.cle} : cosinus local de ${cle} = ${c}, non inférieur à threshold ${seuil}`);
+          const ligne = (await chercherExplique(ctx, corpsRechercheRang(f, q, true))).results.find((s) => s.id === id);
+          ctx.constater(
+            ligne !== undefined && ligne.score_details.bm25_score > 0,
+            `rang ${q.cle} : à threshold 0, ${cle} ${ligne === undefined ? "absent" : `rendu avec bm25_score ${ligne.score_details.bm25_score}`} (présent avec bm25_score > 0 attendu)`,
+          );
+        },
+      },
+      {
+        libelle: "mem0-rs-noyau AC-15 · GET /memory/graph rend les arêtes de la fixture",
+        executer: async (ctx) => {
+          const route = "GET /memory/graph";
+          const attendu = ctx.fixtureRang().graphe;
+          if (attendu === undefined) throw new EchecCas(["rang : fixture sans graphe"]);
+          const g = (await ctx.appeler({ methode: "GET", gabarit: "/memory/graph", forme: GRAPHE })) as Graphe;
+          for (const champ of ["total", "threshold", "top_k"] as const) {
+            ctx.constater(g[champ] === attendu[champ], `${route} : ${champ} attendu ${attendu[champ]}, reçu ${g[champ]}`);
+          }
+          const recues = new Map(aretesParCles(g.edges, nommer).map((a) => [`${a.a} — ${a.b}`, a.score]));
+          const attendues = new Map(attendu.aretes.map((a) => [`${a.a} — ${a.b}`, a.score]));
+          for (const [paire, score] of attendues) {
+            const recu = recues.get(paire);
+            if (recu === undefined) ctx.constater(false, `${route} : arête attendue ${paire} absente`);
+            else ctx.constater(Math.abs(recu - score) <= 1e-6, `${route} : arête ${paire} : score attendu ${score}, reçu ${recu}`);
+          }
+          for (const paire of recues.keys()) ctx.constater(attendues.has(paire), `${route} : arête inattendue ${paire}`);
+          for (let i = 0; i + 1 < g.edges.length; i++) {
+            const [e, suivante] = [g.edges[i], g.edges[i + 1]];
+            const ordonnee =
+              e.score > suivante.score ||
+              (e.score === suivante.score &&
+                (e.source < suivante.source || (e.source === suivante.source && e.target <= suivante.target)));
+            ctx.constater(ordonnee, `${route} : edges[${i}] et edges[${i + 1}] ne sont pas triées par (score décroissant, source, target)`);
+          }
+        },
+      },
+    ];
+  },
+};
+
 /** Phases dans l'ordre d'exécution ; une phase sans groupe ne démarre aucune instance. */
 export const PHASES: readonly Phase[] = [
   {
@@ -857,9 +1264,12 @@ export const PHASES: readonly Phase[] = [
       RECHERCHE_OUVERT,
       SUPPRESSION_OUVERT,
       INFER_OUVERT,
+      NOYAU_OUVERT,
       JETON_OUVERT,
     ],
   },
+  // Instance neuve : l'IDF du BM25 ne compte que le corpus de la fixture.
+  { nom: "rang", jetonServeur: "", groupes: [RANG] },
   { nom: "jeton", jetonServeur: JETON, groupes: [JETON_JETON] },
   // Sans instance : le groupe ne lit que le journal de toutes les phases.
   { nom: "couverture", jetonServeur: null, groupes: [COUVERTURE] },

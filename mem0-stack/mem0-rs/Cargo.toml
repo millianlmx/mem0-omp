@@ -1,0 +1,28 @@
+[package]
+name = "mem0-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Service mémoire HTTP de mem0-omp : même contrat que mem0-http, stockage SQLite unique"
+publish = false
+
+[[bin]]
+name = "mem0-rs"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8.9"
+md-5 = "0.10"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+rust-stemmers = "1.2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order", "arbitrary_precision"] }
+sqlite-vec = "0.1.9"
+time = { version = "0.3", features = ["formatting"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "net", "signal", "sync", "time"] }
+unicode-general-category = "1.1"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+sha2 = "0.10"

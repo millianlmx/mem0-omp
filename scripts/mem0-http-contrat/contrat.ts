@@ -9,6 +9,10 @@
 // une instance vide. Le faux OpenAI (faux-openai.ts) remplace oMLX ; les cas
 // vivent dans cas.ts, les formes dans formes.ts.
 //
+// `--capture-rang` (via `mem0-http-contrat.sh --capture-rang`) : au lieu du
+// contrat, réécrit `attendu` et `graphe` de la fixture de rang (rang.json, ou
+// MEM0_CONTRAT_RANG_FIXTURE) depuis une instance neuve du Python jetable.
+//
 // Codes : 0 conforme, 1 échec (cas, serveur muet ou arrêté), 2 pièce manquante
 // (`non exécuté : <pièce>` en première ligne), 3 refus (`refus : …`).
 import { spawn } from "node:child_process";
@@ -20,8 +24,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { setTimeout as pause } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
-import { EchecCas, PHASES } from "./cas.ts";
-import type { Contexte, EntreeJournal, Groupe, Phase, Requete } from "./cas.ts";
+import { isDeepStrictEqual } from "node:util";
+import { AJOUT, analyserFixtureRang, aretesParCles, corpsRechercheRang, EchecCas, GRAPHE, PHASES, RECHERCHE_EXPLIQUEE } from "./cas.ts";
+import type { Contexte, EntreeJournal, FixtureRang, Groupe, LigneExpliquee, Phase, Requete } from "./cas.ts";
 import { demarrerFauxOpenAI } from "./faux-openai.ts";
 import type { FauxOpenAI } from "./faux-openai.ts";
 import { verifierForme } from "./formes.ts";
@@ -34,6 +39,18 @@ const INTERVALLE_SANTE_MS = 250;
 const DELAI_ARRET_MS = 10_000;
 const LIGNES_JOURNAL = 40;
 const RETRAIT = "      ";
+/** Fixture de rang par défaut (MEM0_CONTRAT_RANG_FIXTURE la remplace). */
+const FIXTURE_RANG_DEFAUT = path.join(path.dirname(fileURLToPath(import.meta.url)), "rang.json");
+/** Versions du Python jetable de la capture (mem0-http, venv et docker-compose.yml). */
+const SOURCE_RANG = { mem0ai: "2.2.1", fastembed: "0.8.1", qdrant: "1.19.0" } as const;
+/** Tranches de nombre de mots des requêtes (condition (b) de la capture), bornes incluses. */
+const TRANCHES_MOTS: readonly (readonly [number, number])[] = [
+  [1, 3],
+  [4, 6],
+  [7, 9],
+  [10, 15],
+  [16, Number.POSITIVE_INFINITY],
+];
 
 /** Fin de run anticipée : code de sortie et lignes à imprimer sur stdout. */
 class Arret extends Error {
@@ -55,6 +72,8 @@ type Config = {
   jetonExterne: string | null;
   infer: boolean;
   portOpenAI: number;
+  /** Chemin de la fixture de rang, tel qu'imprimé dans les messages. */
+  fixtureRang: string;
 };
 
 /** Lit les variables MEM0_CONTRAT_* (vide = absente) ; toute forme invalide → refus. */
@@ -95,6 +114,7 @@ function lireConfig(env: NodeJS.ProcessEnv): Config {
     jetonExterne: jeton === "" ? null : jeton,
     infer: infer !== "0",
     portOpenAI,
+    fixtureRang: brut("MEM0_CONTRAT_RANG_FIXTURE") || path.relative(process.cwd(), FIXTURE_RANG_DEFAUT),
   };
 }
 
@@ -132,6 +152,22 @@ function messageErreur(e: unknown): string {
   if (e.name === "TimeoutError") return `délai de ${DELAI_REQUETE_MS / 1000} s dépassé`;
   const cause = e.cause instanceof Error ? (("code" in e.cause && String(e.cause.code)) || e.cause.message) : "";
   return cause ? `${e.message} (${cause})` : e.message;
+}
+
+/** Lit et valide la fixture de rang ; illisible ou mal formée → refus (code 3). */
+function lireFixtureRang(chemin: string): FixtureRang {
+  try {
+    return analyserFixtureRang(fs.readFileSync(chemin, "utf8"));
+  } catch (e) {
+    throw new Arret(CODES_SORTIE.refus, [`refus : fixture de rang illisible (${chemin}) : ${messageErreur(e)}`]);
+  }
+}
+
+/** Capture refusée (code 1) : chaque condition manquée est nommée, la fixture n'est pas écrite. */
+function refuserCapture(manquees: readonly string[]): number {
+  console.log("capture du rang refusée, fixture non écrite :");
+  for (const m of manquees) console.log(`${RETRAIT}${m}`);
+  return CODES_SORTIE.echec;
 }
 
 /** Serveur démarré pour une phase : groupe de processus détaché + WORKDIR neuf. */
@@ -184,6 +220,7 @@ class Lanceur {
   readonly entrees: EntreeJournal[] = [];
   executes = 0;
   echecs = 0;
+  fixture: FixtureRang | null = null;
 
   constructor(config: Config) {
     this.config = config;
@@ -307,6 +344,10 @@ class Lanceur {
       },
       journal: () => this.entrees,
       compteursOpenAI: () => this.faux?.compteurs() ?? { embeddings: 0, chat: 0 },
+      fixtureRang: () => {
+        if (!this.fixture) throw new Error("fixture de rang non chargée (erreur de programmation du lanceur)");
+        return this.fixture;
+      },
     };
   }
 
@@ -334,7 +375,20 @@ class Lanceur {
       throw new EchecCas([`${route} : statut attendu ${attendu}, reçu ${reponse.status}`]);
     }
     if (attendu < 200 || attendu > 299) {
-      await reponse.body?.cancel();
+      if (requete.corpsErreur === undefined) {
+        await reponse.body?.cancel();
+        return null;
+      }
+      const brut = await reponse.text();
+      let conforme = (reponse.headers.get("content-type") ?? "").startsWith("application/json");
+      try {
+        conforme &&= isDeepStrictEqual(JSON.parse(brut), requete.corpsErreur);
+      } catch {
+        conforme = false;
+      }
+      if (!conforme) {
+        throw new EchecCas([`${route} : corps d'erreur attendu ${JSON.stringify(requete.corpsErreur)}, reçu ${brut}`]);
+      }
       return null;
     }
     const texte = await reponse.text();
@@ -400,6 +454,160 @@ class Lanceur {
     ]);
   }
 
+  /**
+   * `--capture-rang` : rejoue la fixture sur une instance NEUVE du Python
+   * jetable, contrôle sa couverture (a)-(h) et réécrit `attendu` et `graphe`.
+   */
+  async capturer(): Promise<number> {
+    const { config } = this;
+    if (config.start !== "" || config.url !== null) {
+      throw new Arret(CODES_SORTIE.refus, [
+        "refus : la capture du rang vise le serveur Python jetable ; retire MEM0_CONTRAT_START et MEM0_CONTRAT_URL",
+      ]);
+    }
+    const chemin = config.fixtureRang;
+    const f = lireFixtureRang(chemin);
+
+    const manquees: string[] = [];
+    const clesCorpus = f.corpus.map((s) => s.cle);
+    const clesRequetes = f.requetes.map((q) => q.cle);
+    if (
+      f.corpus.length < 12 ||
+      f.requetes.length < 8 ||
+      new Set(clesCorpus).size !== clesCorpus.length ||
+      new Set(clesRequetes).size !== clesRequetes.length
+    ) {
+      manquees.push(
+        `(a) au moins 12 souvenirs, au moins 8 requêtes et des clés uniques (${f.corpus.length} souvenirs, ${f.requetes.length} requêtes)`,
+      );
+    }
+    const mots = f.requetes.map((q) => q.query.split(/\s+/u).filter(Boolean).length);
+    const tranchesVides = TRANCHES_MOTS.filter(([min, max]) => !mots.some((n) => n >= min && n <= max));
+    if (tranchesVides.length > 0) {
+      const noms = tranchesVides.map(([min, max]) => (max === Number.POSITIVE_INFINITY ? `≥ ${min}` : `${min}-${max}`));
+      manquees.push(`(b) au moins une requête dans chaque tranche de mots ; aucune en ${noms.join(", ")}`);
+    }
+    if (manquees.length > 0) return refuserCapture(manquees);
+
+    try {
+      this.faux = await demarrerFauxOpenAI({ port: config.portOpenAI });
+    } catch (e) {
+      throw new Arret(CODES_SORTIE.echec, [messageErreur(e)]);
+    }
+    const port = await portLibre();
+    const url = `http://127.0.0.1:${port}`;
+    await this.demarrer({ nom: "rang", jetonServeur: "", groupes: [] }, url, config.hote, port);
+    await this.exigerVacuite(url, null, (n) => `refus : l'instance démarrée n'est pas vide (${n} souvenir(s))`);
+
+    const ecarts: string[] = [];
+    const ctx = this.contexte("rang", url, null, ecarts);
+    const cles = new Map<string, string>();
+    const limitees = new Map<string, LigneExpliquee[]>();
+    const completes = new Map<string, LigneExpliquee[]>();
+    let graphe: { total: number; threshold: number; top_k: number; edges: { source: string; target: string; score: number }[] };
+    try {
+      for (const s of f.corpus) {
+        const r = (await ctx.appeler({
+          methode: "POST",
+          gabarit: "/memory/add",
+          corps: { text: s.texte, agent_id: f.agent_id, infer: false },
+          forme: AJOUT,
+        })) as { results: { id: string }[] };
+        const id = r.results[0]?.id;
+        if (id === undefined) throw new EchecCas([`POST /memory/add : aucun souvenir créé pour ${s.cle}`]);
+        cles.set(id, s.cle);
+      }
+      for (const q of f.requetes) {
+        for (const [lignes, complete] of [
+          [limitees, false],
+          [completes, true],
+        ] as const) {
+          const r = (await ctx.appeler({
+            methode: "POST",
+            gabarit: "/memory/search",
+            corps: corpsRechercheRang(f, q, complete),
+            forme: RECHERCHE_EXPLIQUEE,
+          })) as { results: LigneExpliquee[] };
+          lignes.set(q.cle, r.results);
+        }
+      }
+      graphe = (await ctx.appeler({ methode: "GET", gabarit: "/memory/graph", forme: GRAPHE })) as typeof graphe;
+    } catch (e) {
+      if (!(e instanceof EchecCas)) throw e;
+      throw new Arret(CODES_SORTIE.echec, ["capture du rang interrompue :", ...e.ecarts.map((x) => `${RETRAIT}${x}`)]);
+    }
+    const cleDe = (id: string): string => cles.get(id) ?? id;
+    const attendus = new Map(f.requetes.map((q) => [q.cle, (limitees.get(q.cle) ?? []).map((s) => cleDe(s.id))]));
+
+    const reordonnee = f.requetes.some((q) => {
+      const lignes = limitees.get(q.cle) ?? [];
+      const parCosinus = [...lignes].sort((x, y) => y.score_details.semantic_score - x.score_details.semantic_score);
+      return !isDeepStrictEqual(lignes.map((s) => s.id), parCosinus.map((s) => s.id));
+    });
+    if (!reordonnee) manquees.push("(c) au moins une requête dont attendu diffère de l'ordre par semantic_score décroissant");
+
+    const maxPossibles = new Set(f.requetes.map((q) => completes.get(q.cle)?.[0]?.score_details.max_possible_score));
+    if (!maxPossibles.has(1) || !maxPossibles.has(2)) {
+      manquees.push("(d) au moins une requête à max_possible_score 1 et au moins une à 2");
+    }
+
+    if (!f.requetes.some((q) => q.limit < (completes.get(q.cle) ?? []).length)) {
+      manquees.push("(e) au moins une requête dont limit est inférieur au nombre de lignes rendues sans limite");
+    }
+
+    const { requete, cle } = f.seuil_avant_fusion;
+    const idSeuil = [...cles].find(([, c]) => c === cle)?.[0];
+    const ligneSeuil = (completes.get(requete) ?? []).find((s) => s.id === idSeuil);
+    if (
+      idSeuil === undefined ||
+      !limitees.has(requete) ||
+      (limitees.get(requete) ?? []).some((s) => s.id === idSeuil) ||
+      ligneSeuil === undefined ||
+      ligneSeuil.score_details.bm25_score <= 0
+    ) {
+      manquees.push(
+        `(f) seuil_avant_fusion (${requete}, ${cle}) : la clé doit être absente au threshold de la requête et présente avec bm25_score > 0 à threshold 0`,
+      );
+    }
+
+    const exAequo = f.requetes.filter((q) => {
+      const lignes = completes.get(q.cle) ?? [];
+      return lignes.some((s, i) => i > 0 && Math.abs(lignes[i - 1].score - s.score) < 1e-6);
+    });
+    if (exAequo.length > 0) {
+      manquees.push(`(g) aucun ex-aequo (|Δscore| ≥ 1e-6) ; ex-aequo dans ${exAequo.map((q) => q.cle).join(", ")}`);
+    }
+
+    const degres = new Map<string, number>();
+    for (const e of graphe.edges) {
+      for (const id of [e.source, e.target]) degres.set(id, (degres.get(id) ?? 0) + 1);
+    }
+    if (graphe.edges.length === 0 || Math.max(0, ...degres.values()) < 9) {
+      manquees.push(`(h) au moins une arête et un nœud touché par au moins 9 arêtes (${graphe.edges.length} arête(s))`);
+    }
+    if (manquees.length > 0) return refuserCapture(manquees);
+
+    const aretes = aretesParCles(graphe.edges, cleDe);
+    const capturee: FixtureRang = {
+      format: 1,
+      source: { ...SOURCE_RANG, capture: new Date().toISOString() },
+      agent_id: f.agent_id,
+      corpus: f.corpus.map((s) => ({ cle: s.cle, texte: s.texte })),
+      requetes: f.requetes.map((q) => ({
+        cle: q.cle,
+        query: q.query,
+        limit: q.limit,
+        threshold: q.threshold,
+        attendu: attendus.get(q.cle) ?? [],
+      })),
+      seuil_avant_fusion: { requete, cle },
+      graphe: { total: graphe.total, threshold: graphe.threshold, top_k: graphe.top_k, aretes },
+    };
+    fs.writeFileSync(chemin, `${JSON.stringify(capturee, null, 2)}\n`);
+    console.log(`fixture de rang capturée : ${chemin} (${f.requetes.length} requêtes, ${aretes.length} arêtes)`);
+    return CODES_SORTIE.conforme;
+  }
+
   estExterne(): boolean {
     return this.config.url !== null && this.config.start === "";
   }
@@ -420,6 +628,18 @@ class Lanceur {
         config.jetonExterne,
         (n) => `refus : l'instance ${url} contient déjà ${n} souvenir(s) ; le contrat n'écrit que dans une instance vide`,
       );
+    }
+
+    // Phase rang : la fixture commitée est exigée lisible ET capturée avant tout
+    // démarrage (sautée avec la phase en mode externe).
+    if (!this.estExterne()) {
+      const fixture = lireFixtureRang(config.fixtureRang);
+      if (fixture.graphe === undefined || fixture.requetes.some((q) => q.attendu === undefined)) {
+        throw new Arret(CODES_SORTIE.refus, [
+          `refus : fixture de rang non capturée (${config.fixtureRang}) — lance bash scripts/mem0-http-contrat.sh --capture-rang`,
+        ]);
+      }
+      this.fixture = fixture;
     }
 
     try {
@@ -489,7 +709,7 @@ async function main(): Promise<number> {
   process.once("SIGINT", surSignal);
   process.once("SIGTERM", surSignal);
   try {
-    return await lanceur.executer();
+    return await (process.argv[2] === "--capture-rang" ? lanceur.capturer() : lanceur.executer());
   } catch (e) {
     if (e instanceof Arret) {
       for (const ligne of e.lignes) console.log(ligne);

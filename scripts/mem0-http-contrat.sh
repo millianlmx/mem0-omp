@@ -4,8 +4,9 @@
 # Le contrat (scripts/mem0-http-contrat/contrat.ts) vise un « serveur à tester »
 # démarré par une commande remplaçable (MEM0_CONTRAT_START) : par défaut, le
 # serveur Python de mem0-stack/mem0-http, rendu jetable ici — Qdrant natif dans un
-# répertoire temporaire, faux OpenAI à la place d'oMLX. Viser mem0-rs = changer
-# MEM0_CONTRAT_START (et MEM0_CONTRAT_URL), sans toucher aux cas.
+# répertoire temporaire, faux OpenAI à la place d'oMLX. Viser mem0-rs :
+# MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs"
+# MEM0_CONTRAT_INFER=0, sans toucher aux cas.
 #
 # Modes (une seule invocation, `--run` par défaut) :
 #   --run           exécute le contrat (node --experimental-strip-types contrat.ts)
@@ -13,6 +14,12 @@
 #                   cache, hors du dépôt ; ne touche jamais au venv
 #   --start-python  commande de démarrage par défaut, appelée par contrat.ts avec
 #                   MEM0_CONTRAT_HOST/PORT/WORKDIR : Qdrant jetable + uvicorn
+#   --start-rs      commande de démarrage de mem0-rs (même contrat d'appel) : le
+#                   binaire ${MEM0_RS_BIN:-${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs}
+#                   sur MEM0_DB_PATH=$MEM0_CONTRAT_WORKDIR/mem0-rs.db
+#   --capture-rang  réécrit `attendu` et `graphe` de la fixture de rang
+#                   (scripts/mem0-http-contrat/rang.json, ou MEM0_CONTRAT_RANG_FIXTURE)
+#                   depuis le Python jetable (contrat.ts --capture-rang)
 #
 # Codes : 0 conforme / prêt, 1 échec, 2 non exécuté (pièce absente, raison en
 # première ligne `non exécuté : …`), 3 refus (cible non jetable, variable invalide).
@@ -29,11 +36,11 @@ BM25_DIR="$CACHE/fastembed"
 BM25_MARK="$BM25_DIR/.mem0-contrat-bm25"
 QDRANT_KEY="contrat-qdrant-cle"
 
-USAGE="usage: bash scripts/mem0-http-contrat.sh [--run|--prepare|--start-python]"
+USAGE="usage: bash scripts/mem0-http-contrat.sh [--run|--prepare|--start-python|--start-rs|--capture-rang]"
 MODE="--run"
 case "${1:-}" in
   "" | --run) MODE="--run" ;;
-  --prepare | --start-python) MODE="$1" ;;
+  --prepare | --start-python | --start-rs | --capture-rang) MODE="$1" ;;
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 if [ "$#" -gt 1 ]; then
@@ -41,10 +48,13 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 
-if [ "$MODE" = "--run" ]; then
+if [ "$MODE" = "--run" ] || [ "$MODE" = "--capture-rang" ]; then
   if ! command -v node >/dev/null 2>&1; then
     printf 'non exécuté : node absent\n'
     exit 2
+  fi
+  if [ "$MODE" = "--capture-rang" ]; then
+    exec node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/mem0-http-contrat/contrat.ts --capture-rang
   fi
   exec node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/mem0-http-contrat/contrat.ts
 fi
@@ -179,6 +189,22 @@ for nom in [desc.model_file, *desc.additional_files]:
     printf '  préparé : %s\n' "$BM25_DIR"
   fi
   exit 0
+fi
+
+# --start-rs : binaire mem0-rs déjà construit (code 2 sinon), base SQLite dans
+# MEM0_CONTRAT_WORKDIR ; OMLX_*, MEM0_HTTP_TOKEN, EMBEDDING_DIMS et
+# OMP_INSTALLATION_TOKEN posés par contrat.ts sont hérités.
+if [ "$MODE" = "--start-rs" ]; then
+  rs_bin="${MEM0_RS_BIN:-${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs}"
+  if [ ! -f "$rs_bin" ] || [ ! -x "$rs_bin" ]; then
+    printf 'non exécuté : binaire mem0-rs absent (%s) — lance cargo build --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked\n' "$rs_bin"
+    exit 2
+  fi
+  if [ -z "${MEM0_CONTRAT_PORT:-}" ] || [ -z "${MEM0_CONTRAT_WORKDIR:-}" ]; then
+    echo "usage : --start-rs exige MEM0_CONTRAT_PORT et MEM0_CONTRAT_WORKDIR (posés par contrat.ts)"
+    exit 1
+  fi
+  MEM0_DB_PATH="$MEM0_CONTRAT_WORKDIR/mem0-rs.db" exec "$rs_bin" --host "${MEM0_CONTRAT_HOST:-127.0.0.1}" --port "$MEM0_CONTRAT_PORT"
 fi
 
 # --start-python : contrôles des pièces (code 2, raison en première ligne), puis

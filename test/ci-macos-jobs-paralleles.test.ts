@@ -28,7 +28,7 @@ const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const DEPTH = Number(process.env.MEM0_CHECK_DEPTH ?? "0");
 const NESTED = "copie jetable — l'arbre réel est éprouvé au premier niveau";
 
-/** Les 12 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
+/** Les 13 en-têtes de check.sh, dans l'ordre d'exécution (S-1). */
 const HEADERS = [
   "── Catalogue marketplace",
   "── Noms",
@@ -37,6 +37,7 @@ const HEADERS = [
   "── Extension",
   "── Types",
   "── API mem0-http",
+  "── Rust mem0-rs",
   "── Plugins réels (OMP)",
   "── Tests",
   "── Noyau partagé",
@@ -74,6 +75,7 @@ function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_IOS: "1",
     MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
+    MEM0_OMP_SKIP_RUST: "1",
     ...extra,
   };
   delete env.NODE_TEST_CONTEXT;
@@ -101,11 +103,11 @@ const globTests = (cwd: string) =>
     .filter((name) => name.endsWith(".test.ts"))
     .sort()
     .map((name) => `test/${name}`);
-// Seuls les 12 en-têtes de section comptent : le harnais de `── Plugins réels`
+// Seuls les 13 en-têtes de section comptent : le harnais de `── Plugins réels`
 // imprime ses propres lignes `── <plugin>`.
 const headersOf = (text: string) => text.split("\n").filter((line) => HEADERS.includes(line));
 
-/** Les 12 identifiants de section de check.sh (S-1). */
+/** Les 13 identifiants de section de check.sh (S-1). */
 const SECTION_IDS = [
   "catalogue",
   "noms",
@@ -114,6 +116,7 @@ const SECTION_IDS = [
   "extension",
   "types",
   "api-http",
+  "rust",
   "smoke",
   "tests",
   "noyau",
@@ -183,7 +186,7 @@ function lightCopy(tests: Record<string, string>): string {
   return dir;
 }
 
-test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sections et toute la suite node", (t) => {
+test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 13 sections et toute la suite node", (t) => {
   if (DEPTH > 0) {
     t.skip(NESTED);
     return;
@@ -197,7 +200,7 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sect
       const rel = path.relative(ROOT, src);
       if (rel === "") return true;
       const segments = rel.split(path.sep);
-      if (segments.some((s) => [".git", "node_modules", ".typecheck", "qdrant_storage", "build"].includes(s))) return false;
+      if (segments.some((s) => [".git", "node_modules", ".typecheck", "qdrant_storage", "build", "target"].includes(s))) return false;
       if (segments.some((s) => s.startsWith(".build"))) return false;
       return segments[0] !== "test" || segments.length === 1;
     },
@@ -216,14 +219,14 @@ test("ci-macos-jobs-paralleles/AC-12 : check.sh sans option exécute les 12 sect
   assert.deepEqual(lines(fs.readFileSync(marker, "utf8")).sort(), ["fixture/a", "fixture/b"]);
 });
 
-test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 12 sections", () => {
+test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections listées, un id inconnu ne lance rien, et les jobs macOS couvrent les 13 sections", () => {
   const only = runCheck(ROOT, ["--sections=noms,catalogue"]);
   assert.equal(only.status, 0, output(only));
   // Ordre du script, pas celui de la liste.
   assert.deepEqual(headersOf(output(only)), ["── Catalogue marketplace", "── Noms"], output(only));
   assert.ok(only.stdout.includes("Dépôt prêt à publier."), output(only));
 
-  const ids = "catalogue, noms, plugins, versions, extension, types, api-http, smoke, tests, noyau, app-swift, app-ios";
+  const ids = "catalogue, noms, plugins, versions, extension, types, api-http, rust, smoke, tests, noyau, app-swift, app-ios";
   const cases: Array<[string[], string]> = [
     [["--sections=bogus"], `✗ section inconnue : « bogus » (attendu : ${ids})`],
     [["--sections="], `✗ section inconnue : «  » (attendu : ${ids})`],
@@ -240,7 +243,7 @@ test("ci-macos-jobs-paralleles/AC-4 : --sections n'exécute que les sections lis
     assert.equal(bad.stdout, "", `${args.join(" ")} : aucune section ne doit s'exécuter`);
   }
 
-  // Volet CI : l'union des --sections des jobs macOS couvre les 12 sections.
+  // Volet CI : l'union des --sections des jobs macOS couvre les 13 sections.
   const jobs = workflowJobs(readWorkflow());
   const covered: string[] = [];
   for (const id of MACOS_JOBS) {
@@ -460,8 +463,10 @@ test("ci-macos-jobs-paralleles/AC-3 : l'agrégateur ne réussit que sur trois su
 
 /** L'étape du contrat boîte noire mem0-http (S-9), ajoutée au job check après f3fbfe6. */
 const CONTRAT_STEP = ["      - name: Préparer le contrat boîte noire mem0-http", "        run: bash scripts/mem0-http-contrat.sh --prepare"];
+/** L'étape de la toolchain Rust (mem0-rs-noyau S-11), juste après celle du contrat. */
+const RUST_STEP = ["      - name: Préparer la toolchain Rust (clippy)", "        run: rustup component add clippy"];
 
-test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis MEM0_OMP_REQUIRE_IOS et l'étape du contrat boîte noire", (t) => {
+test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique, complet et identique à f3fbfe6 hormis MEM0_OMP_REQUIRE_IOS, l'étape du contrat boîte noire et celle de la toolchain Rust", (t) => {
   const jobs = workflowJobs(readWorkflow());
   const contexts = statusContexts(jobs);
   assert.equal(contexts.filter((c) => c === "check (ubuntu-latest)").length, 1, contexts.join(", "));
@@ -478,6 +483,12 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   assert.ok(at > 0, check);
   assert.equal(steps[at - 1], "        run: bash scripts/mem0-http-test.sh --prepare", check);
   assert.equal(steps[at + 1], CONTRAT_STEP[1], check);
+  // L'étape Rust : une seule fois, juste après celle du contrat ; la section
+  // Rust y est exigée (MEM0_OMP_REQUIRE_RUST), une seule fois.
+  assert.equal(steps.filter((line) => RUST_STEP.includes(line)).length, 2, check);
+  assert.equal(steps[at + 2], RUST_STEP[0], check);
+  assert.equal(steps[at + 3], RUST_STEP[1], check);
+  assert.equal(steps.filter((line) => line === '          MEM0_OMP_REQUIRE_RUST: "1"').length, 1, check);
 
   if (DEPTH > 0) {
     t.skip(NESTED);
@@ -488,7 +499,9 @@ test("ci-macos-jobs-paralleles/AC-8 : le job check (ubuntu-latest) reste unique,
   const old = stepsOf(workflowJobs(before.stdout).get("check") ?? "").filter((line) => !line.includes("MEM0_OMP_REQUIRE_IOS"));
   assert.ok(old.length > 0, "job check introuvable dans f3fbfe6");
   assert.deepEqual(
-    steps.filter((line) => !CONTRAT_STEP.includes(line)),
+    steps.filter(
+      (line) => !CONTRAT_STEP.includes(line) && !RUST_STEP.includes(line) && !line.includes("MEM0_OMP_REQUIRE_RUST"),
+    ),
     old,
   );
 });

@@ -35,7 +35,7 @@ test.after(() => {
   for (const dir of dirs) fs.rmSync(dir, { recursive: true, force: true });
 });
 
-const SKIP: Record<string, true> = { ".git": true, node_modules: true, ".build-ios": true };
+const SKIP: Record<string, true> = { ".git": true, node_modules: true, ".build-ios": true, target: true };
 
 /** Une copie jetable du dépôt, sans racines de build ni historique. */
 function copyRepo(): string {

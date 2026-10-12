@@ -30,6 +30,7 @@ const EXCLUDED_DIRS: Record<string, true> = {
   ".typecheck": true,
   qdrant_storage: true,
   build: true,
+  target: true,
 };
 
 const dirs: string[] = [];

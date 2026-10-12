@@ -25,7 +25,7 @@ pass() { echo "  ✓ $1"; }
 #                             Les tests qui portent ce motif ne vivent que dans
 #                             test/check.test.ts (criteria/AC-13 : un slug, un
 #                             fichier), donc 1/2 ∪ 2/2 lance chaque test une fois.
-SECTION_IDS="catalogue noms plugins versions extension types api-http smoke tests noyau app-swift app-ios"
+SECTION_IDS="catalogue noms plugins versions extension types api-http rust smoke tests noyau app-swift app-ios"
 TESTS_PART_PATTERN='^(mem0-http-hors-ci|socle-app-swift)/'
 sections=""
 sections_set=0
@@ -423,6 +423,75 @@ elif [ -f scripts/mem0-http-contrat.sh ]; then
   esac
 else
   echo "  · scripts/mem0-http-contrat.sh absent, contrat boîte noire non vérifié"
+fi
+fi
+
+if section_on rust; then
+echo "── Rust mem0-rs"
+
+# La crate mem0-stack/mem0-rs : clippy sans avertissement toléré sur toutes les
+# cibles, `cargo test`, le binaire, puis le contrat boîte noire contre lui
+# (groupe infer=true exclu). Les trois étapes cargo tournent même si la
+# précédente échoue, et leur sortie n'est imprimée qu'en cas d'échec ; le
+# contrat n'exige que le binaire, et sa sortie est recopiée telle quelle.
+# cargo ou clippy absent ⇒ saut annoncé sans ✓ — SAUF si MEM0_OMP_REQUIRE_RUST=1
+# (posée par la CI) : là, c'est un échec. Les copies jetables des harnais posent
+# MEM0_OMP_SKIP_RUST=1 pour ne rien compiler.
+rust_manifest=(--manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)
+rust_contrat_start="bash scripts/mem0-http-contrat.sh --start-rs"
+if [ -n "${MEM0_OMP_SKIP_RUST:-}" ]; then
+  echo "  · ignorée (MEM0_OMP_SKIP_RUST=1)"
+elif ! command -v cargo >/dev/null 2>&1; then
+  if [ "${MEM0_OMP_REQUIRE_RUST:-}" = "1" ]; then
+    fail "Rust mem0-rs — cargo absent (MEM0_OMP_REQUIRE_RUST=1)"
+  else
+    echo "  · cargo absent, sections Rust non exécutées (installe la toolchain : https://rustup.rs)"
+  fi
+elif ! cargo clippy --version >/dev/null 2>&1; then
+  if [ "${MEM0_OMP_REQUIRE_RUST:-}" = "1" ]; then
+    fail "Rust mem0-rs — cargo clippy absent (MEM0_OMP_REQUIRE_RUST=1)"
+  else
+    echo "  · cargo clippy absent, sections Rust non exécutées (rustup component add clippy)"
+  fi
+else
+  if rust_out="$(cargo clippy "${rust_manifest[@]}" --all-targets -- -D warnings 2>&1)"; then
+    pass "Rust mem0-rs : clippy sans avertissement (--all-targets -D warnings)"
+  else
+    printf '%s\n' "$rust_out"
+    fail "Rust mem0-rs — clippy en échec (relance : cargo clippy --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked --all-targets -- -D warnings)"
+  fi
+  if rust_out="$(cargo test "${rust_manifest[@]}" 2>&1)"; then
+    pass "Rust mem0-rs : cargo test conforme"
+  else
+    printf '%s\n' "$rust_out"
+    fail "Rust mem0-rs — cargo test en échec (relance : cargo test --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)"
+  fi
+  if rust_out="$(cargo build "${rust_manifest[@]}" 2>&1)"; then
+    pass "Rust mem0-rs : binaire mem0-rs construit"
+    rs_out="$(MEM0_CONTRAT_START="$rust_contrat_start" MEM0_CONTRAT_INFER=0 bash scripts/mem0-http-contrat.sh --run 2>&1)"
+    rs_status=$?
+    [ -n "$rs_out" ] && printf '%s\n' "$rs_out"
+    case "$rs_status" in
+      0)
+        pass "Rust mem0-rs : contrat boîte noire conforme contre mem0-rs (MEM0_CONTRAT_INFER=0)"
+        ;;
+      2)
+        rs_reason="$(printf '%s\n' "$rs_out" | head -n 1)"
+        if [ "${MEM0_OMP_REQUIRE_RUST:-}" = "1" ]; then
+          fail "Rust mem0-rs — contrat boîte noire contre mem0-rs ${rs_reason}"
+        else
+          echo "  · ${rs_reason}"
+        fi
+        ;;
+      *)
+        fail "Rust mem0-rs — contrat boîte noire contre mem0-rs en échec (relance : MEM0_CONTRAT_START=\"$rust_contrat_start\" MEM0_CONTRAT_INFER=0 bash scripts/mem0-http-contrat.sh --run)"
+        ;;
+    esac
+  else
+    printf '%s\n' "$rust_out"
+    fail "Rust mem0-rs — cargo build en échec (relance : cargo build --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked)"
+    echo "  · contrat boîte noire contre mem0-rs non exécuté (binaire absent)"
+  fi
 fi
 fi
 

@@ -486,6 +486,7 @@ const DROPPED_DIRS: Record<string, true> = {
   // neutralisée par MEM0_OMP_SKIP_SWIFT_APP (voir runEngine) pour ne pas y
   // relancer une compilation.
   build: true,
+  target: true,
 };
 const DROPPED_TESTS: Record<string, true> = {
   "check.test.ts": true,
@@ -514,6 +515,8 @@ const DROPPED_TESTS: Record<string, true> = {
   "fixview.test.ts": true,
   // lance de vrais serveurs (Python, Qdrant) : fichier lourd
   "mem0-http-contrat-boite-noire.test.ts": true,
+  // lance cargo et le contrat contre mem0-rs : fichier lourd
+  "mem0-rs-noyau.test.ts": true,
 };
 
 function copyRepo(dir: string): void {
@@ -773,8 +776,10 @@ function runEngine(
     // section « App iOS » de même.
     MEM0_OMP_SKIP_SWIFT_APP: "1",
     MEM0_OMP_SKIP_IOS: "1",
-    // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici.
+    // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici, ni
+    // la section Rust (cargo, contrat contre mem0-rs).
     MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
+    MEM0_OMP_SKIP_RUST: "1",
   };
   delete env.GH_TOKEN;
   delete env.RELEASE_TOKEN;
