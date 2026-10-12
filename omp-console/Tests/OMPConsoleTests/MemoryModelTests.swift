@@ -328,7 +328,7 @@ func ac3ReturnToSummaryClearsTheQuery() async {
 @Test("all-in-one-app/AC-6 : connexion refusée → oMLX injoignable, nommé avec l'URL sondée")
 func ac6OMLXConnectionRefusedIsNamed() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(error: URLError(.cannotConnectToHost)))
+    StubURLProtocol.reply("/v1/models", .init(error: URLError(.cannotConnectToHost)))
     let service = ScriptedMemoryService(
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
     )
@@ -343,7 +343,7 @@ func ac6OMLXConnectionRefusedIsNamed() async {
     #expect(model.omlxBanner?.message == MemoryText.omlxUnreachable)
     #expect(
         model.omlxBanner?.diagnostic
-            == "oMLX est injoignable (http://127.0.0.1:8000/models) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
+            == "oMLX est injoignable (http://127.0.0.1:8000/v1/models) — la mémoire a besoin de ses vecteurs sémantiques pour chercher."
     )
     // Le prérequis manquant n'efface JAMAIS la mémoire : la liste reste servie.
     #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
@@ -353,7 +353,7 @@ func ac6OMLXConnectionRefusedIsNamed() async {
 @Test("all-in-one-app/AC-6 : 401 → jeton refusé, texte exact du bandeau")
 func ac6OMLXUnauthorizedIsNamed() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 401))
+    StubURLProtocol.reply("/v1/models", .init(status: 401))
     let model = memoryModel(service: ScriptedMemoryService())
 
     await model.refresh()
@@ -361,7 +361,7 @@ func ac6OMLXUnauthorizedIsNamed() async {
     #expect(model.omlx == .unauthorized)
     #expect(model.omlxBanner?.message == MemoryText.omlxUnauthorized)
     #expect(model.omlxBanner?.diagnostic
-        == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/models")
+        == "oMLX a refusé le jeton configuré (401) — vérifiez OMLX_API_TOKEN.\nhttp://127.0.0.1:8000/v1/models")
 }
 
 @MainActor
@@ -369,7 +369,7 @@ func ac6OMLXUnauthorizedIsNamed() async {
 func omlxBannerIsReadable() async {
     for reply in [StubURLProtocol.Reply(error: URLError(.cannotConnectToHost)), .init(status: 401)] {
         StubURLProtocol.reset()
-        StubURLProtocol.reply("/models", reply)
+        StubURLProtocol.reply("/v1/models", reply)
         let model = memoryModel(service: ScriptedMemoryService())
         await model.refresh()
 
@@ -389,17 +389,17 @@ func omlxBannerIsReadable() async {
 @Test("jargon-technique-expose-mac-et-ios/AC-7 : le diagnostic du bandeau oMLX porte l'URL sondée, et OMLX_API_TOKEN avec le code pour une clé refusée")
 func omlxBannerDiagnosticKeepsTheRawDetail() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(error: URLError(.cannotConnectToHost)))
+    StubURLProtocol.reply("/v1/models", .init(error: URLError(.cannotConnectToHost)))
     let unreachable = memoryModel(service: ScriptedMemoryService())
     await unreachable.refresh()
-    #expect(unreachable.omlxBanner?.diagnostic.contains("http://127.0.0.1:8000/models") == true)
+    #expect(unreachable.omlxBanner?.diagnostic.contains("http://127.0.0.1:8000/v1/models") == true)
 
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 401))
+    StubURLProtocol.reply("/v1/models", .init(status: 401))
     let refused = memoryModel(service: ScriptedMemoryService())
     await refused.refresh()
     let diagnostic = refused.omlxBanner?.diagnostic ?? ""
-    #expect(diagnostic.contains("http://127.0.0.1:8000/models"))
+    #expect(diagnostic.contains("http://127.0.0.1:8000/v1/models"))
     #expect(diagnostic.contains("OMLX_API_TOKEN"))
     #expect(diagnostic.contains("401"))
 }
@@ -408,7 +408,7 @@ func omlxBannerDiagnosticKeepsTheRawDetail() async {
 @Test("all-in-one-app/AC-6 : 200 → oMLX joignable, AUCUN bandeau")
 func ac6OMLXReachableShowsNoBanner() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200, body: memoryJSON(["data": []])))
+    StubURLProtocol.reply("/v1/models", .init(status: 200, body: memoryJSON(["data": []])))
     let model = memoryModel(service: ScriptedMemoryService())
 
     await model.refresh()
@@ -422,7 +422,7 @@ func ac6OMLXReachableShowsNoBanner() async {
 func ac6UnavailableServiceNeverProbesOMLX() async {
     // Une réponse joignable est ARMÉE : si la sonde partait, elle la consommerait.
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200))
+    StubURLProtocol.reply("/v1/models", .init(status: 200))
     let service = ScriptedMemoryService(
         health: [MemoryHealth(isAvailable: false, errorMessage: "Connexion impossible")]
     )
@@ -443,12 +443,12 @@ func ac6StackEnvDrivesTheProbeURL() async throws {
     defer { try? FileManager.default.removeItem(at: root) }
     let paths = AppPaths(supportRoot: root)
 
-    // Absent : les défauts de `StackConfig` — hôte 127.0.0.1, port 8000, /models.
+    // Absent : les défauts de `StackConfig` — hôte 127.0.0.1, port 8000, /v1/models.
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200))
+    StubURLProtocol.reply("/v1/models", .init(status: 200))
     let absent = memoryModel(service: ScriptedMemoryService(), paths: paths)
     await absent.refresh()
-    #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:8000/models"])
+    #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:8000/v1/models"])
 
     // Présent : le port d'`OMLX_BASE_URL` est repris, l'hôte reste 127.0.0.1.
     var config = StackConfig.defaults
@@ -456,10 +456,10 @@ func ac6StackEnvDrivesTheProbeURL() async throws {
     try StackEnvStore.write(config, to: paths.stackEnv)
 
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200))
+    StubURLProtocol.reply("/v1/models", .init(status: 200))
     let present = memoryModel(service: ScriptedMemoryService(), paths: paths)
     await present.refresh()
-    #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:9999/models"])
+    #expect(StubURLProtocol.requests.map { $0.url?.absoluteString } == ["http://127.0.0.1:9999/v1/models"])
 }
 
 // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)

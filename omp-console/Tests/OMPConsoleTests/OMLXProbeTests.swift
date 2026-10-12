@@ -19,7 +19,7 @@ private func isUnreachable(_ status: OMLXStatus) -> Bool {
 @Test("all-in-one-app/AC-6 : un 200 rend `.reachable`, même si le corps n'est pas du JSON attendu")
 func okStatusIsReachable() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200, body: Data("pas du json".utf8)))
+    StubURLProtocol.reply("/v1/models", .init(status: 200, body: Data("pas du json".utf8)))
     let status = await OMLXProbe.status(
         config: StackConfig(omlxBaseURL: "http://localhost:1234/v1"),
         session: StubURLProtocol.session()
@@ -30,7 +30,7 @@ func okStatusIsReachable() async {
 @Test("all-in-one-app/AC-6 : un 401 rend `.unauthorized`")
 func unauthorizedStatusIsNamed() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 401, body: Data()))
+    StubURLProtocol.reply("/v1/models", .init(status: 401, body: Data()))
     let status = await OMLXProbe.status(
         config: StackConfig(omlxBaseURL: "http://localhost:1234/v1", omlxApiToken: "jeton"),
         session: StubURLProtocol.session()
@@ -41,7 +41,7 @@ func unauthorizedStatusIsNamed() async {
 @Test("all-in-one-app/AC-6 : une connexion refusée rend `.unreachable`, sans exception")
 func refusedConnectionIsAnUnreachableState() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(error: URLError(.cannotConnectToHost)))
+    StubURLProtocol.reply("/v1/models", .init(error: URLError(.cannotConnectToHost)))
     let status = await OMLXProbe.status(
         config: StackConfig(omlxBaseURL: "http://localhost:1234/v1"),
         session: StubURLProtocol.session()
@@ -52,7 +52,7 @@ func refusedConnectionIsAnUnreachableState() async {
 @Test("all-in-one-app/AC-6 : le jeton n'est envoyé que s'il est non vide")
 func tokenIsSentOnlyWhenPresent() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200, body: Data("{}".utf8)))
+    StubURLProtocol.reply("/v1/models", .init(status: 200, body: Data("{}".utf8)))
     _ = await OMLXProbe.status(
         config: StackConfig(omlxBaseURL: "http://localhost:1234/v1", omlxApiToken: "secret"),
         session: StubURLProtocol.session()
@@ -60,7 +60,7 @@ func tokenIsSentOnlyWhenPresent() async {
     #expect(StubURLProtocol.requests.last?.value(forHTTPHeaderField: "Authorization") == "Bearer secret")
 
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200, body: Data("{}".utf8)))
+    StubURLProtocol.reply("/v1/models", .init(status: 200, body: Data("{}".utf8)))
     _ = await OMLXProbe.status(
         config: StackConfig(omlxBaseURL: "http://localhost:1234/v1", omlxApiToken: ""),
         session: StubURLProtocol.session()
@@ -68,13 +68,13 @@ func tokenIsSentOnlyWhenPresent() async {
     #expect(StubURLProtocol.requests.last?.value(forHTTPHeaderField: "Authorization") == nil)
 }
 
-@Test("all-in-one-app/AC-6 : l'URL sondée est `http://127.0.0.1:<port>/models`")
+@Test("all-in-one-app/AC-6 : l'URL sondée est `http://127.0.0.1:<port><chemin de la base>/models`")
 func probeURLIsAlwaysLocalModels() async {
     StubURLProtocol.reset()
-    StubURLProtocol.reply("/models", .init(status: 200, body: Data("{}".utf8)))
+    StubURLProtocol.reply("/v1/models", .init(status: 200, body: Data("{}".utf8)))
     _ = await OMLXProbe.status(
         config: StackConfig(omlxBaseURL: "http://host.containers.internal:9000/v1"),
         session: StubURLProtocol.session()
     )
-    #expect(StubURLProtocol.requests.last?.url == URL(string: "http://127.0.0.1:9000/models")!)
+    #expect(StubURLProtocol.requests.last?.url == URL(string: "http://127.0.0.1:9000/v1/models")!)
 }

@@ -460,7 +460,7 @@ export class RouteurFixture {
             { source: "recette-4", target: "recette-5", score: 0.66 },
           ],
         });
-      case "/models":
+      case "/v1/models":
         return ok({ object: "list", data: [{ id: "qwen3-8b" }, { id: "bge-m3" }] });
       default:
         return INTROUVABLE;

@@ -112,7 +112,6 @@ struct MemoryView: ConsoleSectionView {
                 ProgressView()
                     .controlSize(.small)
                 Text(verbatim: MemoryText.podmanCleanupProgress)
-                    .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("memory.podmanCleanup.progress")
                 Spacer()
                 Button(MemoryText.podmanCleanupRemove) {}
@@ -122,7 +121,6 @@ struct MemoryView: ConsoleSectionView {
             case let .failed(diagnostic):
                 Image(systemName: "exclamationmark.triangle")
                 Text(verbatim: MemoryText.podmanCleanupFailed)
-                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button(MemoryText.retry) { cleanup.requestRemoval() }
                     .controlSize(.small)
@@ -131,7 +129,6 @@ struct MemoryView: ConsoleSectionView {
             case .hidden, .offered, .confirming:
                 Image(systemName: "externaldrive")
                 Text(verbatim: MemoryText.podmanCleanupMessage)
-                    .fixedSize(horizontal: false, vertical: true)
                 Spacer()
                 Button(MemoryText.podmanCleanupRemove) { cleanup.requestRemoval() }
                     .controlSize(.small)
@@ -160,7 +157,6 @@ struct MemoryView: ConsoleSectionView {
         HStack(spacing: 6) {
             Image(systemName: "exclamationmark.triangle")
             Text(verbatim: banner.message)
-                .fixedSize(horizontal: false, vertical: true)
             Spacer()
             Button(MemoryText.refresh) { Task { await model.refresh() } }
                 .controlSize(.small)
