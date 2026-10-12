@@ -2,6 +2,7 @@
 //!
 //! `mem0-rs [--host <adresse>] [--port <port>]` ; configuration par variables
 //! d'environnement (S-1). Codes de sortie : 0 arrêt propre, 1 erreur, 2 usage.
+//! `mem0-rs import …` : import depuis mem0-http (module [`import`]).
 
 mod bm25;
 mod config;
@@ -11,9 +12,11 @@ mod extraction;
 mod graphe;
 mod horodatage;
 mod http;
+mod import;
 mod openai;
 mod recherche;
 mod validation;
+mod verrou;
 
 use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
@@ -22,7 +25,11 @@ use crate::config::{Config, Ecoute};
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let Ok(ecoute) = config::lire_arguments(std::env::args_os().skip(1)) else {
+    let mut args = std::env::args_os().skip(1).peekable();
+    if args.next_if(|a| a == "import").is_some() {
+        return import::executer(args).await;
+    }
+    let Ok(ecoute) = config::lire_arguments(args) else {
         eprintln!("{}", config::USAGE);
         return ExitCode::from(2);
     };
@@ -49,12 +56,17 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind((host.as_str(), *port))
         .await
         .map_err(|e| format!("écoute impossible sur {host}:{port} : {e}"))?;
-    let conn = db::ouvrir(&cfg.db_path, cfg.embedding_dims).map_err(|e| match e {
-        db::ErreurOuverture::Dims { stockee, demandee } => format!(
-            "MEM0_DB_PATH={chemin} a été créée avec EMBEDDING_DIMS={stockee}, la configuration demande {demandee}"
-        ),
-        db::ErreurOuverture::Autre(raison) => format!("MEM0_DB_PATH={chemin} : {raison}"),
+    // Exclusivité (S-10) : gardé jusqu'au retour de `axum::serve`.
+    let _verrou = verrou::prendre(&cfg.db_path).map_err(|e| {
+        let lock = verrou::chemin(&cfg.db_path).display().to_string();
+        match e {
+            verrou::ErreurVerrou::Tenu => {
+                format!("MEM0_DB_PATH={chemin} est déjà servie par un autre processus mem0-rs (verrou {lock})")
+            }
+            verrou::ErreurVerrou::Io(e) => format!("MEM0_DB_PATH={chemin} : verrou {lock} impossible : {e}"),
+        }
     })?;
+    let conn = db::ouvrir(&cfg.db_path, cfg.embedding_dims).map_err(|e| e.message(&chemin))?;
     let client = openai::client().map_err(|e| e.to_string())?;
     let embedder =
         embedder::Embedder::new(client.clone(), &cfg.base_url, &cfg.embed_model, &cfg.api_token, cfg.embedding_dims);

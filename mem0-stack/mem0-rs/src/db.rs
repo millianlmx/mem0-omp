@@ -4,19 +4,19 @@
 //! Chaque écriture tient dans UNE transaction `IMMEDIATE` ; l'embedding est
 //! calculé par l'appelant avant, hors verrou.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Once;
 
 use rusqlite::types::Type;
-use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, TransactionBehavior, params};
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::bm25::{self, VecteurCreux};
 use crate::horodatage::Instant;
 
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "3";
 
 /// Nombre de messages gardés par scope de session dans `messages` (storage.py).
 pub const MESSAGES_PAR_PORTEE: usize = 10;
@@ -28,6 +28,18 @@ pub enum ErreurOuverture {
     Dims { stockee: String, demandee: usize },
     /// Base illisible ou étrangère : la raison.
     Autre(String),
+}
+
+impl ErreurOuverture {
+    /// Message d'erreur fatal pour la base `chemin` (`MEM0_DB_PATH`).
+    pub fn message(&self, chemin: &str) -> String {
+        match self {
+            ErreurOuverture::Dims { stockee, demandee } => format!(
+                "MEM0_DB_PATH={chemin} a été créée avec EMBEDDING_DIMS={stockee}, la configuration demande {demandee}"
+            ),
+            ErreurOuverture::Autre(raison) => format!("MEM0_DB_PATH={chemin} : {raison}"),
+        }
+    }
 }
 
 static SQLITE_VEC: Once = Once::new();
@@ -54,37 +66,67 @@ pub fn ouvrir(path: &Path, dims: usize) -> Result<Connection, ErreurOuverture> {
         std::fs::create_dir_all(parent).map_err(|e| autre(&e))?;
     }
     let mut conn = Connection::open(path).map_err(|e| autre(&e))?;
+    let existe = verifier_meta(&conn, dims)?;
+    pragmas(&conn).map_err(ErreurOuverture::Autre)?;
+    if !existe {
+        creer_schema(&mut conn, dims).map_err(|e| autre(&e))?;
+    }
+    Ok(conn)
+}
+
+/// Contrôle d'une base ouverte, commun à [`ouvrir`] et [`ouvrir_simulation`] :
+/// `Ok(true)` si c'est une base mem0-rs de version [`SCHEMA_VERSION`] et de
+/// dimension `dims`, `Ok(false)` si elle est vierge (aucune table).
+pub fn verifier_meta(conn: &Connection, dims: usize) -> Result<bool, ErreurOuverture> {
+    let autre = |e: &dyn std::fmt::Display| ErreurOuverture::Autre(e.to_string());
     let tables: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")
         .and_then(|mut st| st.query_map([], |r| r.get(0))?.collect())
         .map_err(|e| autre(&e))?;
-    if tables.iter().any(|t| t == "meta") {
-        let lire = |cle: &str| -> Result<Option<String>, ErreurOuverture> {
-            conn.query_row("SELECT valeur FROM meta WHERE cle = ?1", [cle], |r| r.get(0))
-                .optional()
-                .map_err(|e| autre(&e))
+    if !tables.iter().any(|t| t == "meta") {
+        return if tables.is_empty() {
+            Ok(false)
+        } else {
+            Err(ErreurOuverture::Autre("ce n'est pas une base mem0-rs (table meta absente)".to_owned()))
         };
-        let version = lire("schema_version")?;
-        if version.as_deref() != Some(SCHEMA_VERSION) {
-            return Err(ErreurOuverture::Autre(format!(
-                "schema_version {} inconnue (attendue {SCHEMA_VERSION})",
-                version.as_deref().unwrap_or("absente")
-            )));
-        }
-        let stockee = lire("embedding_dims")?.unwrap_or_default();
-        if stockee != dims.to_string() {
-            return Err(ErreurOuverture::Dims { stockee, demandee: dims });
-        }
-        pragmas(&conn).map_err(ErreurOuverture::Autre)?;
-    } else if !tables.is_empty() {
-        return Err(ErreurOuverture::Autre(
-            "ce n'est pas une base mem0-rs (table meta absente)".to_owned(),
-        ));
-    } else {
-        pragmas(&conn).map_err(ErreurOuverture::Autre)?;
-        creer_schema(&mut conn, dims).map_err(|e| autre(&e))?;
     }
-    Ok(conn)
+    let lire = |cle: &str| -> Result<Option<String>, ErreurOuverture> {
+        conn.query_row("SELECT valeur FROM meta WHERE cle = ?1", [cle], |r| r.get(0))
+            .optional()
+            .map_err(|e| autre(&e))
+    };
+    let version = lire("schema_version")?;
+    if version.as_deref() != Some(SCHEMA_VERSION) {
+        return Err(ErreurOuverture::Autre(format!(
+            "schema_version {} inconnue (attendue {SCHEMA_VERSION})",
+            version.as_deref().unwrap_or("absente")
+        )));
+    }
+    let stockee = lire("embedding_dims")?.unwrap_or_default();
+    if stockee != dims.to_string() {
+        return Err(ErreurOuverture::Dims { stockee, demandee: dims });
+    }
+    Ok(true)
+}
+
+/// Ouvre la base EXISTANTE `path` pour `--dry-run` (S-8), en lecture seule et
+/// `immutable=1` : aucun fichier n'est créé ni modifié (ni `-wal`, ni `-shm`).
+/// `Ok(None)` : base vierge, donc sans connaissance.
+pub fn ouvrir_simulation(path: &Path, dims: usize) -> Result<Option<Connection>, ErreurOuverture> {
+    enregistrer_sqlite_vec();
+    let chemin = path
+        .to_str()
+        .ok_or_else(|| ErreurOuverture::Autre("chemin non UTF-8, inutilisable en URI SQLite".to_owned()))?;
+    let uri = format!(
+        "file:{}?mode=ro&immutable=1",
+        chemin.replace('%', "%25").replace('?', "%3f").replace('#', "%23")
+    );
+    let conn = Connection::open_with_flags(
+        uri,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|e| ErreurOuverture::Autre(e.to_string()))?;
+    Ok(verifier_meta(&conn, dims)?.then_some(conn))
 }
 
 fn pragmas(conn: &Connection) -> Result<(), String> {
@@ -110,12 +152,13 @@ fn creer_schema(conn: &mut Connection, dims: usize) -> rusqlite::Result<()> {
              run_id TEXT,
              role TEXT,
              attributed_to TEXT,
+             metadata TEXT,
              tags_present INTEGER NOT NULL,
              tags TEXT,
              created_at TEXT NOT NULL,
              updated_at TEXT NOT NULL,
              updated_at_us INTEGER NOT NULL,
-             sparse TEXT NOT NULL
+             sparse TEXT
          );
          CREATE INDEX IF NOT EXISTS memories_portee ON memories (user_id, agent_id);
          CREATE INDEX IF NOT EXISTS memories_recence ON memories (updated_at_us DESC, id);
@@ -216,7 +259,8 @@ fn historiser(tx: &rusqlite::Transaction<'_>, r: &Revision<'_>) -> rusqlite::Res
     Ok(())
 }
 
-/// Écrit le souvenir, son vecteur et ses termes (`sparse`, `terms` : [`termes`]).
+/// Écrit le souvenir, son vecteur et ses termes (`sparse`, `terms` : [`termes`]) ;
+/// `metadata` est NULL : seul l'import la remplit.
 fn inserer(
     tx: &rusqlite::Transaction<'_>,
     s: &NouveauSouvenir<'_>,
@@ -224,8 +268,8 @@ fn inserer(
     (sparse, terms): &(String, String),
 ) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO memories (id, memory, hash, user_id, agent_id, run_id, role, attributed_to, tags_present, tags, created_at, updated_at, updated_at_us, sparse)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
+        "INSERT INTO memories (id, memory, hash, user_id, agent_id, run_id, role, attributed_to, metadata, tags_present, tags, created_at, updated_at, updated_at_us, sparse)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, NULL, ?9, ?10, ?11, ?11, ?12, ?13)",
         params![
             s.id,
             s.memory,
@@ -499,17 +543,20 @@ pub struct Souvenir {
     pub role: Option<String>,
     /// `None` : clé `attributed_to` absente.
     pub attributed_to: Option<Value>,
+    /// Clés du payload source hors cœur (import), sans `tags` ; `None` : aucune.
+    pub metadata: Option<Map<String, Value>>,
 }
 
 /// Colonnes d'un [`Souvenir`] (alias `m` pour `memories`), lues par [`souvenir`].
-const COLONNES: &str = "m.id, m.memory, m.hash, m.tags_present, m.tags, m.created_at, m.updated_at, m.user_id, m.agent_id, m.run_id, m.role, m.attributed_to";
+const COLONNES: &str = "m.id, m.memory, m.hash, m.tags_present, m.tags, m.created_at, m.updated_at, m.user_id, m.agent_id, m.run_id, m.role, m.attributed_to, m.metadata";
 /// Nombre de colonnes de [`COLONNES`] : l'indice de la première colonne suivante.
-const NB_COLONNES: usize = 12;
+const NB_COLONNES: usize = 13;
 
 fn souvenir(r: &Row<'_>) -> rusqlite::Result<Souvenir> {
     let present: i64 = r.get(3)?;
     let tags: Option<String> = r.get(4)?;
     let attributed_to: Option<String> = r.get(11)?;
+    let metadata: Option<String> = r.get(12)?;
     Ok(Souvenir {
         id: r.get(0)?,
         memory: r.get(1)?,
@@ -525,6 +572,10 @@ fn souvenir(r: &Row<'_>) -> rusqlite::Result<Souvenir> {
             .map(|j| serde_json::from_str(&j))
             .transpose()
             .map_err(|e| rusqlite::Error::FromSqlConversionFailure(11, Type::Text, Box::new(e)))?,
+        metadata: metadata
+            .map(|j| serde_json::from_str(&j))
+            .transpose()
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(12, Type::Text, Box::new(e)))?,
     })
 }
 
@@ -588,11 +639,12 @@ pub fn voisins(
     Ok(proches)
 }
 
-/// Statistiques de l'IDF (D-5) sur TOUTE la base : N = nombre de souvenirs, et
-/// pour chaque indice, le nombre de souvenirs dont le vecteur creux le porte
+/// Statistiques de l'IDF (D-5) sur TOUTE la base : N = nombre de souvenirs qui
+/// portent un vecteur creux (`sparse` non NULL, comme le N de Qdrant), et pour
+/// chaque indice, le nombre de souvenirs dont le vecteur creux le porte
 /// (`fts5vocab`, colonne `doc`).
 pub fn statistiques_idf(conn: &Connection, indices: &[u32]) -> rusqlite::Result<(u64, HashMap<u32, u64>)> {
-    let total: i64 = conn.query_row("SELECT count(*) FROM memories", [], |r| r.get(0))?;
+    let total: i64 = conn.query_row("SELECT count(*) FROM memories WHERE sparse IS NOT NULL", [], |r| r.get(0))?;
     let mut st = conn.prepare_cached("SELECT doc FROM memory_terms_vocab WHERE term = ?1")?;
     let mut documents = HashMap::with_capacity(indices.len());
     for &i in indices {
@@ -603,7 +655,7 @@ pub fn statistiques_idf(conn: &Connection, indices: &[u32]) -> rusqlite::Result<
 }
 
 /// Les souvenirs du scope qui portent au moins un des `indices` (FTS5), avec
-/// leur vecteur creux (S-5, étape 5).
+/// leur vecteur creux (S-5, étape 5) ; un souvenir sans vecteur creux est exclu.
 pub fn porteurs(
     conn: &Connection,
     user_id: &str,
@@ -616,7 +668,7 @@ pub fn porteurs(
     let mut st = conn.prepare_cached(&format!(
         "SELECT {COLONNES}, m.sparse
          FROM memory_terms JOIN memories m ON m.rowid = memory_terms.rowid
-         WHERE memory_terms MATCH ?3 AND m.user_id = ?1 AND (?2 IS NULL OR m.agent_id = ?2)"
+         WHERE memory_terms MATCH ?3 AND m.user_id = ?1 AND (?2 IS NULL OR m.agent_id = ?2) AND m.sparse IS NOT NULL"
     ))?;
     let requete = jetons_fts(indices.iter().copied(), " OR ");
     st.query_map(params![user_id, agent_id, requete], |r| {
@@ -679,6 +731,168 @@ pub fn historique(conn: &Connection, memory_id: &str) -> rusqlite::Result<Vec<Li
         })
     })?
     .collect()
+}
+
+/// Ce que la base cible « connaît » déjà (S-6 de mem0-rs-migration) : un id de
+/// souvenir présent dans `memories.id` OU dans `history.memory_id` (un souvenir
+/// supprimé n'est jamais ressuscité), et les portées qui ont au moins un message.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Connaissances {
+    pub ids: HashSet<String>,
+    pub portees: HashSet<String>,
+}
+
+pub fn connaissances(conn: &Connection) -> rusqlite::Result<Connaissances> {
+    let ids = conn
+        .prepare("SELECT id FROM memories UNION SELECT memory_id FROM history WHERE memory_id IS NOT NULL")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    let portees = conn
+        .prepare("SELECT DISTINCT session_scope FROM messages")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(Connaissances { ids, portees })
+}
+
+/// Un point source valide, écrit tel quel par [`importer`] (S-5).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SouvenirImporte {
+    pub id: String,
+    pub memory: String,
+    pub hash: String,
+    pub user_id: String,
+    pub agent_id: Option<String>,
+    pub run_id: Option<String>,
+    pub role: Option<String>,
+    /// JSON compact ; `None` : clé absente.
+    pub attributed_to: Option<String>,
+    /// Objet JSON compact des clés hors cœur ; `None` : aucune.
+    pub metadata: Option<String>,
+    /// `Some(v)` : clé `tags` présente avec la valeur `v`.
+    pub tags: Option<Option<String>>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub updated_at_us: i64,
+    /// Le `bm25` source dans l'ordre reçu ; `None` : la source n'en a pas.
+    pub creux: Option<VecteurCreux>,
+    pub dense: Vec<f32>,
+}
+
+/// Une ligne de `history` source, recopiée verbatim (`is_deleted` NULL → 0).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionImportee {
+    pub id: String,
+    pub memory_id: Option<String>,
+    pub old_memory: Option<String>,
+    pub new_memory: Option<String>,
+    pub event: Option<String>,
+    pub created_at: String,
+    pub updated_at: Option<String>,
+    pub is_deleted: i64,
+    pub actor_id: Option<String>,
+    pub role: Option<String>,
+}
+
+/// Une ligne de `messages` source, recopiée verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MessageImporte {
+    pub id: String,
+    pub session_scope: String,
+    pub role: Option<String>,
+    pub content: Option<String>,
+    pub name: Option<String>,
+    pub created_at: String,
+}
+
+/// Ce qu'un plan d'import écrit, dans l'ordre d'écriture.
+#[derive(Debug, Default)]
+pub struct Ecritures<'a> {
+    pub souvenirs: Vec<&'a SouvenirImporte>,
+    pub revisions: Vec<&'a RevisionImportee>,
+    pub messages: Vec<&'a MessageImporte>,
+}
+
+/// Import (S-7, étape 5) : dans UNE transaction `IMMEDIATE`, lit les
+/// [`Connaissances`], calcule le plan avec `calculer`, écrit ses souvenirs
+/// (vecteur dense par [`blob_normalise`], termes = indices du creux source),
+/// ses révisions et ses messages verbatim, puis `COMMIT`. Une erreur n'écrit rien.
+pub fn importer<'a>(
+    conn: &mut Connection,
+    calculer: impl FnOnce(&Connaissances) -> crate::import::Plan<'a>,
+) -> rusqlite::Result<crate::import::Plan<'a>> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let plan = calculer(&connaissances(&tx)?);
+    let ecritures = &plan.a_ecrire;
+    for s in &ecritures.souvenirs {
+        inserer_importe(&tx, s)?;
+    }
+    for r in &ecritures.revisions {
+        tx.execute(
+            "INSERT INTO history (id, memory_id, old_memory, new_memory, event, created_at, updated_at, is_deleted, actor_id, role)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                r.id,
+                r.memory_id,
+                r.old_memory,
+                r.new_memory,
+                r.event,
+                r.created_at,
+                r.updated_at,
+                r.is_deleted,
+                r.actor_id,
+                r.role
+            ],
+        )?;
+    }
+    for m in &ecritures.messages {
+        tx.execute(
+            "INSERT INTO messages (id, session_scope, role, content, name, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![m.id, m.session_scope, m.role, m.content, m.name, m.created_at],
+        )?;
+    }
+    tx.commit()?;
+    Ok(plan)
+}
+
+fn inserer_importe(tx: &rusqlite::Transaction<'_>, s: &SouvenirImporte) -> rusqlite::Result<()> {
+    let sparse = s
+        .creux
+        .as_ref()
+        .map(serde_json::to_string)
+        .transpose()
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    let terms = s.creux.as_ref().map_or_else(String::new, |creux| {
+        let mut vus = HashSet::with_capacity(creux.len());
+        jetons_fts(creux.iter().map(|&(i, _)| i).filter(|i| vus.insert(*i)), " ")
+    });
+    tx.execute(
+        "INSERT INTO memories (id, memory, hash, user_id, agent_id, run_id, role, attributed_to, metadata, tags_present, tags, created_at, updated_at, updated_at_us, sparse)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            s.id,
+            s.memory,
+            s.hash,
+            s.user_id,
+            s.agent_id,
+            s.run_id,
+            s.role,
+            s.attributed_to,
+            s.metadata,
+            i64::from(s.tags.is_some()),
+            s.tags.as_ref().and_then(Option::as_deref),
+            s.created_at,
+            s.updated_at,
+            s.updated_at_us,
+            sparse
+        ],
+    )?;
+    let rowid = tx.last_insert_rowid();
+    tx.execute(
+        "INSERT INTO memory_vec (rowid, embedding) VALUES (?1, ?2)",
+        params![rowid, blob_normalise(&s.dense)],
+    )?;
+    tx.execute("INSERT INTO memory_terms (rowid, terms) VALUES (?1, ?2)", params![rowid, terms])?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -764,17 +978,92 @@ mod tests {
         let Err(ErreurOuverture::Autre(raison)) = ouvrir(&base.0, DIMS) else {
             panic!("une base v1 doit être refusée");
         };
-        assert_eq!(raison, "schema_version 1 inconnue (attendue 2)");
+        assert_eq!(raison, "schema_version 1 inconnue (attendue 3)");
         assert_eq!(std::fs::read(&base.0).unwrap(), avant);
     }
 
+    /// AC-5 (S-6) : la cible connaît un id par `memories` OU par `history.memory_id`
+    /// (souvenir supprimé), et une portée par `messages`.
     #[test]
-    fn ac1_ac5_base_neuve_en_v2() {
+    fn ac5_connaissances_memories_historique_et_portees() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        ajouter_simple(&mut conn, "vivant", Some("a1"), None, &[1.0, 0.0, 0.0]);
+        ajouter_simple(&mut conn, "mort", Some("a1"), None, &[0.0, 1.0, 0.0]);
+        assert!(supprimer(&mut conn, "mort", &instant(3)).unwrap());
+        sauver_message(&mut conn, &message("agent_id=a1&user_id=moi", "c", &instant(4))).unwrap();
+        assert_eq!(
+            connaissances(&conn).unwrap(),
+            Connaissances {
+                ids: ["vivant", "mort"].map(String::from).into(),
+                portees: ["agent_id=a1&user_id=moi".to_owned()].into(),
+            }
+        );
+    }
+
+    /// AC-9 (S-8) : la simulation lit une base existante sans créer `-wal` ni `-shm`
+    /// et sans changer un octet ; elle contrôle `meta` comme `ouvrir`.
+    #[test]
+    fn ac9_ouvrir_simulation_sans_ecriture() {
+        let base = Temp::new();
+        {
+            let mut conn = ouvrir(&base.0, DIMS).unwrap();
+            ajouter_simple(&mut conn, "s1", Some("a1"), None, &[1.0, 0.0, 0.0]);
+        }
+        let voisin = |s: &str| {
+            let mut p = base.0.clone().into_os_string();
+            p.push(s);
+            PathBuf::from(p)
+        };
+        assert!(!voisin("-wal").exists() && !voisin("-shm").exists());
+        let avant = std::fs::read(&base.0).unwrap();
+        let conn = ouvrir_simulation(&base.0, DIMS).unwrap().expect("base non vierge");
+        assert_eq!(connaissances(&conn).unwrap().ids, ["s1".to_owned()].into());
+        drop(conn);
+        assert!(!voisin("-wal").exists() && !voisin("-shm").exists());
+        assert_eq!(std::fs::read(&base.0).unwrap(), avant);
+        let Err(ErreurOuverture::Dims { stockee, demandee }) = ouvrir_simulation(&base.0, 4) else {
+            panic!("dimension différente : refus attendu");
+        };
+        assert_eq!((stockee.as_str(), demandee), ("3", 4));
+        let vierge = Temp::new();
+        std::fs::write(&vierge.0, b"").unwrap();
+        assert!(ouvrir_simulation(&vierge.0, DIMS).unwrap().is_none());
+        assert_eq!(std::fs::read(&vierge.0).unwrap(), b"");
+    }
+
+    /// mem0-rs-migration S-11 / D-2 : une base v2 est refusée sans migration, fichier intact.
+    #[test]
+    fn schema_v2_refusee_sans_migration() {
+        let base = Temp::new();
+        Connection::open(&base.0)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE meta (cle TEXT PRIMARY KEY, valeur TEXT NOT NULL);
+                 INSERT INTO meta (cle, valeur) VALUES ('schema_version', '2'), ('embedding_dims', '3');
+                 CREATE TABLE memories (rowid INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, memory TEXT NOT NULL, hash TEXT NOT NULL,
+                     user_id TEXT NOT NULL, agent_id TEXT, run_id TEXT, role TEXT, attributed_to TEXT, tags_present INTEGER NOT NULL,
+                     tags TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, updated_at_us INTEGER NOT NULL, sparse TEXT NOT NULL);
+                 INSERT INTO memories VALUES (1, 'a', 'a', 'h', 'moi', NULL, NULL, 'user', NULL, 0, NULL, 'c', 'u', 0, '[]');",
+            )
+            .unwrap();
+        let avant = std::fs::read(&base.0).unwrap();
+        let Err(ErreurOuverture::Autre(raison)) = ouvrir(&base.0, DIMS) else {
+            panic!("une base v2 doit être refusée");
+        };
+        assert_eq!(raison, "schema_version 2 inconnue (attendue 3)");
+        assert_eq!(std::fs::read(&base.0).unwrap(), avant);
+    }
+
+    /// mem0-rs-migration S-11 (pré-requis de AC-1..AC-3) : `memories.metadata`
+    /// après `attributed_to`, `sparse` nullable.
+    #[test]
+    fn ac1_ac5_base_neuve_en_v3() {
         let base = Temp::new();
         let conn = ouvrir(&base.0, DIMS).unwrap();
         let version: String =
             conn.query_row("SELECT valeur FROM meta WHERE cle = 'schema_version'", [], |r| r.get(0)).unwrap();
-        assert_eq!(version, "2");
+        assert_eq!(version, "3");
         let colonnes = |table: &str| -> Vec<(String, bool)> {
             conn.prepare(&format!("PRAGMA table_info({table})"))
                 .unwrap()
@@ -783,29 +1072,104 @@ mod tests {
                 .collect::<Result<_, _>>()
                 .unwrap()
         };
-        let memories = colonnes("memories");
-        assert!(memories.contains(&("role".to_owned(), false)), "memories.role nullable");
-        assert!(memories.contains(&("attributed_to".to_owned(), false)), "memories.attributed_to nullable");
-        let attendu: Vec<(String, bool)> = [
-            ("rowid", false),
-            ("id", true),
-            ("session_scope", true),
-            ("role", false),
-            ("content", false),
-            ("name", false),
-            ("created_at", true),
-        ]
-        .iter()
-        .map(|&(c, n)| (c.to_owned(), n))
-        .collect();
-        assert_eq!(colonnes("messages"), attendu);
+        let liste = |c: &[(&str, bool)]| -> Vec<(String, bool)> { c.iter().map(|&(c, n)| (c.to_owned(), n)).collect() };
+        assert_eq!(
+            colonnes("memories"),
+            liste(&[
+                ("rowid", false),
+                ("id", true),
+                ("memory", true),
+                ("hash", true),
+                ("user_id", true),
+                ("agent_id", false),
+                ("run_id", false),
+                ("role", false),
+                ("attributed_to", false),
+                ("metadata", false),
+                ("tags_present", true),
+                ("tags", false),
+                ("created_at", true),
+                ("updated_at", true),
+                ("updated_at_us", true),
+                ("sparse", false),
+            ])
+        );
+        assert_eq!(
+            colonnes("messages"),
+            liste(&[
+                ("rowid", false),
+                ("id", true),
+                ("session_scope", true),
+                ("role", false),
+                ("content", false),
+                ("name", false),
+                ("created_at", true),
+            ])
+        );
         let index: String = conn
             .query_row("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'messages_portee'", [], |r| r.get(0))
             .unwrap();
         assert_eq!(index, "CREATE INDEX messages_portee ON messages (session_scope, created_at)");
         drop(conn);
-        // Une base v2 se rouvre.
+        // Une base v3 se rouvre.
         ouvrir(&base.0, DIMS).unwrap();
+    }
+
+    /// Ligne écrite comme l'import (BR-2) : `sparse` NULL, `metadata` donnée,
+    /// `terms` tels quels (`''` pour respecter l'invariant).
+    fn inserer_importe(conn: &Connection, id: &str, terms: &str, metadata: Option<&str>) {
+        conn.execute(
+            "INSERT INTO memories (id, memory, hash, user_id, agent_id, run_id, role, attributed_to, metadata, tags_present, tags, created_at, updated_at, updated_at_us, sparse)
+             VALUES (?1, ?1, ?1, 'moi', 'ag', NULL, 'user', NULL, ?2, 1, 'x', 'c', 'u', 0, NULL)",
+            params![id, metadata],
+        )
+        .unwrap();
+        let rowid = conn.last_insert_rowid();
+        conn.execute("INSERT INTO memory_vec (rowid, embedding) VALUES (?1, ?2)", params![rowid, blob_normalise(&[0.0, 1.0, 0.0])])
+            .unwrap();
+        conn.execute("INSERT INTO memory_terms (rowid, terms) VALUES (?1, ?2)", params![rowid, terms]).unwrap();
+    }
+
+    /// mem0-rs-migration S-11 (pré-requis de AC-1, AC-2, AC-3) : un souvenir sans
+    /// vecteur creux est hors du N de l'IDF et des porteurs BM25 ; `metadata` est
+    /// relue ; les écritures du serveur écrivent `metadata` NULL et ne la touchent
+    /// plus ; un PUT recalcule `sparse`.
+    #[test]
+    fn ac1_ac2_ac3_sparse_null_hors_idf_et_metadata_relue() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        ajouter_simple(&mut conn, "natif", Some("ag"), None, &[1.0, 0.0, 0.0]);
+        let indices: Vec<u32> = bm25::encoder("natif").iter().map(|&(i, _)| i).collect();
+        inserer_importe(&conn, "importe", "", Some(r#"{"memory_type":"procedural_memory","n":[1,2]}"#));
+        // Invariant violé exprès : des termes FTS sans `sparse` ne doivent ni casser
+        // la lecture ni rendre le souvenir porteur.
+        inserer_importe(&conn, "incoherent", &jetons_fts(indices.iter().copied(), " "), None);
+
+        let (total, _) = statistiques_idf(&conn, &indices).unwrap();
+        assert_eq!(total, 1, "N ne compte que les souvenirs à vecteur creux");
+        let ids = |p: Vec<(Souvenir, VecteurCreux)>| -> Vec<String> {
+            let mut v: Vec<String> = p.into_iter().map(|(s, _)| s.id).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(ids(porteurs(&conn, "moi", None, &indices).unwrap()), ["natif"]);
+
+        let lus = tous(&conn, "moi", None).unwrap();
+        let lu = |id: &str| lus.iter().find(|s| s.id == id).unwrap().clone();
+        assert_eq!(lu("natif").metadata, None);
+        assert_eq!(lu("incoherent").metadata, None);
+        let attendu = json!({"memory_type": "procedural_memory", "n": [1, 2]});
+        assert_eq!(lu("importe").metadata.map(Value::Object), Some(attendu.clone()));
+        let natif_null: bool =
+            conn.query_row("SELECT metadata IS NULL FROM memories WHERE id = 'natif'", [], |r| r.get(0)).unwrap();
+        assert!(natif_null, "ajouter écrit metadata NULL");
+
+        // PUT sur le souvenir importé : metadata intacte, sparse recalculé, compté dans N.
+        assert!(mettre_a_jour(&mut conn, "importe", "natif", "h2", &Tags::Inchangees, &[0.0, 1.0, 0.0], &instant(5)).unwrap());
+        let apres = tous(&conn, "moi", None).unwrap().into_iter().find(|s| s.id == "importe").unwrap();
+        assert_eq!(apres.metadata.map(Value::Object), Some(attendu));
+        assert_eq!(statistiques_idf(&conn, &indices).unwrap().0, 2);
+        assert_eq!(ids(porteurs(&conn, "moi", None, &indices).unwrap()), ["importe", "natif"]);
     }
 
     #[test]

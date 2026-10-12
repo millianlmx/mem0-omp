@@ -2,7 +2,7 @@
 name = "mem0-rs"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Service mémoire HTTP de mem0-omp : même contrat que mem0-http, stockage SQLite unique"
 publish = false
 

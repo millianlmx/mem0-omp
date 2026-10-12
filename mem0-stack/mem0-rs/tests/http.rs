@@ -374,11 +374,65 @@ async fn ac3_relance_meme_base() {
     assert_eq!(statut.code(), Some(0));
     for nom in dossier.entrees() {
         assert!(
-            ["mem0-rs.db", "mem0-rs.db-wal", "mem0-rs.db-shm", "mem0-rs.db-journal"].contains(&nom.as_str()),
+            ["mem0-rs.db", "mem0-rs.db-wal", "mem0-rs.db-shm", "mem0-rs.db-journal", "mem0-rs.db.lock"].contains(&nom.as_str()),
             "fichier inattendu : {nom}"
         );
     }
     assert!(base.exists());
+}
+
+/// AC-11 (mem0-rs-migration, moitié serveur, S-10) : un second mem0-rs lancé sur
+/// une base déjà servie sort en code 1 avec le message qui nomme le verrou, sans
+/// toucher la base ; le premier continue de servir, et son arrêt libère le verrou.
+#[tokio::test(flavor = "multi_thread")]
+async fn ac11_second_serveur_refuse_par_le_verrou() {
+    let faux = FauxOpenAI::demarrer().await;
+    let dossier = Dossier::nouveau("ac11-verrou");
+    let base = dossier.base();
+    let lancement = Lancement { base: &base, embedder_url: &faux.base_url, jeton: "", installation: "" };
+    let s = Serveur::demarrer(&lancement).await;
+    ajouter(&s, json!({"text":"souvenir gardé","agent_id":AGENT})).await;
+    let all = tous(&s, "").await;
+    let octets = |nom: &str| std::fs::read(dossier.chemin.join(nom)).ok();
+    let avant = (dossier.entrees(), octets("mem0-rs.db"), octets("mem0-rs.db-wal"));
+
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let mut second = std::process::Command::new(env!("CARGO_BIN_EXE_mem0-rs"))
+        .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+        .env("OMLX_BASE_URL", &faux.base_url)
+        .env("EMBEDDING_DIMS", common::DIMENSIONS.to_string())
+        .env("MEM0_DB_PATH", &base)
+        .env("MEM0_HTTP_TOKEN", "")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("lancement du second mem0-rs");
+    let debut = std::time::Instant::now();
+    let statut = loop {
+        if let Some(statut) = second.try_wait().unwrap() {
+            break statut;
+        }
+        if debut.elapsed() > Duration::from_secs(30) {
+            let _ = second.kill();
+            panic!("le second mem0-rs sert la base au lieu de refuser");
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    };
+    let mut stderr = String::new();
+    std::io::Read::read_to_string(&mut second.stderr.take().unwrap(), &mut stderr).unwrap();
+    assert_eq!(statut.code(), Some(1), "stderr : {stderr}");
+    let chemin = base.display();
+    assert_eq!(
+        stderr,
+        format!("MEM0_DB_PATH={chemin} est déjà servie par un autre processus mem0-rs (verrou {chemin}.lock)\n")
+    );
+    assert_eq!((dossier.entrees(), octets("mem0-rs.db"), octets("mem0-rs.db-wal")), avant);
+    assert_eq!(tous(&s, "").await, all, "le premier serveur sert toujours");
+
+    assert_eq!(s.arreter().await.code(), Some(0));
+    let s = Serveur::demarrer(&lancement).await;
+    assert_eq!(tous(&s, "").await, all, "verrou libéré à l'arrêt");
 }
 
 #[tokio::test(flavor = "multi_thread")]

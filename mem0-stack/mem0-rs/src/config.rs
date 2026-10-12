@@ -3,7 +3,8 @@
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]";
+pub const USAGE: &str = "usage : mem0-rs [--host <adresse>] [--port <port>]
+        mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]";
 
 /// Adresse d'écoute demandée en ligne de commande.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +38,52 @@ fn lire_port(brut: &str) -> Option<u16> {
         return None;
     }
     brut.parse::<u16>().ok().filter(|&p| p != 0)
+}
+
+/// Arguments de `mem0-rs import` (S-1 de mem0-rs-migration).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArgumentsImport {
+    pub history_db: PathBuf,
+    /// Sans barre oblique finale.
+    pub qdrant_url: String,
+    pub collection: String,
+    pub dry_run: bool,
+    pub json: bool,
+}
+
+/// Les arguments qui suivent `import`. `Err(())` = usage (code 2) : option
+/// inconnue ou répétée, valeur manquante ou vide, `--history-db` absente,
+/// argument positionnel.
+pub fn lire_arguments_import(args: impl IntoIterator<Item = OsString>) -> Result<ArgumentsImport, ()> {
+    let mut args = args.into_iter();
+    let (mut history_db, mut qdrant_url, mut collection) = (None, None, None);
+    let (mut dry_run, mut json) = (false, false);
+    while let Some(arg) = args.next() {
+        let mut valeur = || args.next().filter(|v| !v.is_empty()).ok_or(());
+        match arg.to_str() {
+            Some("--history-db") if history_db.is_none() => history_db = Some(PathBuf::from(valeur()?)),
+            Some("--qdrant-url") if qdrant_url.is_none() => {
+                qdrant_url = Some(valeur()?.into_string().map_err(|_| ())?);
+            }
+            Some("--collection") if collection.is_none() => {
+                collection = Some(valeur()?.into_string().map_err(|_| ())?);
+            }
+            Some("--dry-run") if !dry_run => dry_run = true,
+            Some("--json") if !json => json = true,
+            _ => return Err(()),
+        }
+    }
+    let mut qdrant_url = qdrant_url.unwrap_or_else(|| "http://127.0.0.1:6333".to_owned());
+    if qdrant_url.ends_with('/') {
+        qdrant_url.pop();
+    }
+    Ok(ArgumentsImport {
+        history_db: history_db.ok_or(())?,
+        qdrant_url,
+        collection: collection.unwrap_or_else(|| "omp_memory".to_owned()),
+        dry_run,
+        json,
+    })
 }
 
 /// Configuration lue dans l'environnement.
@@ -143,6 +190,62 @@ mod tests {
         ] {
             assert_eq!(lire_arguments(args(faux)), Err(()), "{faux:?}");
         }
+    }
+
+    #[test]
+    fn arguments_import() {
+        assert_eq!(
+            lire_arguments_import(args(&["--history-db", "/h.db"])),
+            Ok(ArgumentsImport {
+                history_db: PathBuf::from("/h.db"),
+                qdrant_url: "http://127.0.0.1:6333".into(),
+                collection: "omp_memory".into(),
+                dry_run: false,
+                json: false,
+            })
+        );
+        assert_eq!(
+            lire_arguments_import(args(&[
+                "--json", "--qdrant-url", "http://q:1/", "--dry-run", "--collection", "c", "--history-db", "h"
+            ])),
+            Ok(ArgumentsImport {
+                history_db: PathBuf::from("h"),
+                qdrant_url: "http://q:1".into(),
+                collection: "c".into(),
+                dry_run: true,
+                json: true,
+            })
+        );
+        for faux in [
+            &[][..],
+            &["--dry-run"],
+            &["--history-db"],
+            &["--history-db", ""],
+            &["--history-db", "h", "--qdrant-url", ""],
+            &["--history-db", "h", "--collection", ""],
+            &["--history-db", "h", "--collection"],
+            &["--history-db", "h", "--history-db", "i"],
+            &["--history-db", "h", "--collection", "a", "--collection", "b"],
+            &["--history-db", "h", "--qdrant-url", "u", "--qdrant-url", "u"],
+            &["--history-db", "h", "--json", "--json"],
+            &["--history-db", "h", "--dry-run", "--dry-run"],
+            &["--history-db", "h", "--port", "80"],
+            &["--history-db", "h", "en-trop"],
+            &["--history-db", "h", ""],
+        ] {
+            assert_eq!(lire_arguments_import(args(faux)), Err(()), "{faux:?}");
+        }
+    }
+
+    #[test]
+    fn usage_a_deux_lignes() {
+        assert_eq!(
+            USAGE.lines().collect::<Vec<_>>(),
+            [
+                "usage : mem0-rs [--host <adresse>] [--port <port>]",
+                "        mem0-rs import --history-db <chemin> [--qdrant-url <url>] [--collection <nom>] [--dry-run] [--json]",
+            ]
+        );
     }
 
     fn env(paires: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {

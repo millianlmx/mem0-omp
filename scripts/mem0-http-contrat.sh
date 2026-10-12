@@ -279,6 +279,10 @@ sys.exit(1)' "$q_port"; then
   exit 1
 fi
 
+# Port HTTP de la Qdrant jetable, pour qui lit la source directement (preuve de
+# migration mem0-rs-migration) ; la clé est $QDRANT_KEY.
+printf '%s\n' "$q_port" >"$WORKDIR/qdrant.port" || exit 1
+
 QDRANT_HOST=127.0.0.1 \
   QDRANT_PORT="$q_port" \
   QDRANT_API_KEY="$QDRANT_KEY" \
