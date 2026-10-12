@@ -3,7 +3,7 @@
 // quatre zones ont leurs libellés, et les identifiants d'accessibilité sont uniques.
 //
 // La preuve canonique d'AC-21 de client-distant-ios vit dans
-// `test/client-distant-ios.test.ts` ; seul AC-6 de ios-onboarding-et-connexion
+// `test/console/client-distant-ios.test.ts` ; seul AC-6 de ios-onboarding-et-connexion
 // (l'adresse du Mac sans zone, adresse manuelle comprise) porte son slug ici.
 
 import ConsoleClient

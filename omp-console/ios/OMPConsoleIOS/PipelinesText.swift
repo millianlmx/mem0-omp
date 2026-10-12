@@ -60,7 +60,7 @@ enum PipelinesText {
     static let recipeArdoise = "ardoise"
 
     /// Le signal de PRÊT, écrit sur la sortie d'erreur quand l'état forcé est atteint.
-    /// `scripts/ios-shots.sh` et `scripts/ios-fiche-carte-recette.sh` le lisent (miroir
+    /// `scripts/recette/ios-shots.sh` et `scripts/recette/ios-fiche-carte-recette.sh` le lisent (miroir
     /// littéral dans les scripts) au lieu d'attendre un délai fixe.
     static let recipeReady = "pipelines-recipe-ready"
 

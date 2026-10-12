@@ -19,7 +19,7 @@ concurrency:
 jobs:
   # Job ubuntu complet : toutes les sections et toute la suite node, à chaque run.
   # La matrice d'un seul OS est gardée pour le nom du statut requis,
-  # `check (ubuntu-latest)`. Il reste le PREMIER job du fichier (test/smoke.test.ts
+  # `check (ubuntu-latest)`. Il reste le PREMIER job du fichier (test/outillage/smoke.test.ts
   # y lit la matrice) et ne dépend d'aucun job.
   check:
     strategy:
@@ -102,7 +102,7 @@ jobs:
 
   # Suite node sur macOS, en deux parts qui exécutent chaque test exactement une
   # fois (motif unique TESTS_PART_PATTERN de check.sh) : 1/2 porte les tests lourds
-  # de test/check.test.ts et les sections légères, 2/2 tout le reste. En
+  # de test/outillage/check.test.ts et les sections légères, 2/2 tout le reste. En
   # pull_request, `--tests-scope=macos` ne garde que les fichiers qui dépendent de
   # macOS (scripts/test-files.sh) : la suite complète tourne déjà sur ubuntu. Au
   # push vers `main`, la suite complète tourne aussi sur macOS.

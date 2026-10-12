@@ -40,8 +40,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/fallback-bench.ts          banc de repli de modèle sans réseau, dans une vraie session OMP
 ├── scripts/swift-app.sh               suite release puis bundle .app de la coque SwiftUI
 ├── scripts/run-console.sh             recompiler vite et relancer OMP Console (hooks git fournis)
-├── scripts/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
-├── scripts/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
+├── scripts/recette/mac-recette-ui.sh          recette UI de l'app Mac : 23 surfaces capturées et sondées en AX, verdict 0/1/2
+├── scripts/recette/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
 ├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
 ├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire des 9 routes (prépare la Qdrant d'import, lance, démarre mem0-rs ou son conteneur)
 ├── scripts/mem0-http-contrat/         lanceur, cas, formes et faux serveur OpenAI du contrat
@@ -416,7 +416,7 @@ le pipeline ne choisit jamais un modèle de remplacement à sa place.
 - `bun scripts/fallback-bench.ts <sans-repli|repli|retour|epuise>` rejoue ces
   scénarios dans une vraie session OMP, sans réseau (fournisseur `banc` scripté, HOME
   factice, `config.yml` amorcé dont l'empreinte est comparée avant/après) et imprime une
-  ligne JSON ; `test/context-optimization-architecture.test.ts` le lance.
+  ligne JSON ; `test/req/context-optimization-architecture.test.ts` le lance.
 - **Quota : une escalade par fournisseur, jamais un modèle choisi à ta place.** Les
   features `blocked` portant un `quota` du **même fournisseur** forment **un seul groupe**,
   décidé sur **une** surface : la session /project ou /audit **ouverte** pour les features de
@@ -1077,6 +1077,36 @@ champ **additif** `installation` (le jeton d'installation) : le protocole et les
 autres champs sont inchangés, le contrat du plugin mémoire (`health.ok` seul) ne
 change pas, et la voie manuelle `mem0-stack/` garde son `/health` identique.
 
+## Tests et scripts
+
+La suite node vit dans `test/`, rangée par **ce qu'elle éprouve** ; un fichier =
+une feature (son slug), et un id `<slug>/AC-<n>` ne vit que dans un test
+(`criteria/AC-13`) :
+
+| Dossier | Ce qu'il éprouve |
+|---|---|
+| `test/memoire/` | le plugin `omp-mem0-memory` (rappel, brief, outils mem0) |
+| `test/req/` | le plugin `omp-mem0-req` (pipelines, lot, panneau, service, sessions) |
+| `test/console/` | les sources d'OMP Console — gardes textuelles Mac et iOS (`ios-*`), noyau partagé, coque iOS |
+| `test/stack/` | `mem0-stack` : mem0-rs, contrat boîte noire, migration, `doctor.sh` |
+| `test/outillage/` | l'outillage du dépôt : `check.sh`, CI, release, smoke des plugins, documentation |
+| `test/support/` | les modules partagés, jamais lancés seuls (pas de `.test.ts`) : `repo.ts` (racine, liste des tests, dossiers jetables, copie du dépôt, environnement des enfants), `git.ts` (dépôts git jetables), `spawn.ts` (processus enfants en parallèle), `swift-source.ts` (sources Swift sans commentaires, lexer de littéraux), `req-fixtures.ts` (lots, contrats, sessions, faux kit du plugin req), `fake-zod.ts`, `doctor-banc.ts` |
+
+Un test neuf va dans le dossier de ce qu'il éprouve, sans liste à tenir :
+`scripts/test-files.sh` les découvre récursivement. Un helper utile à plusieurs
+fichiers va dans `test/support/`, jamais recopié d'un fichier à l'autre.
+
+```bash
+node --test --experimental-strip-types 'test/**/*.test.ts'      # toute la suite
+node --test --experimental-strip-types test/req/lot.test.ts     # un fichier
+```
+
+`scripts/` ne garde à sa racine que ce que la CI, la release et le développement
+lancent (`check.sh`, `test-files.sh`, `typecheck.sh`, `release.ts`,
+`swift-app.sh`, `ios-build.sh`, `run-console.sh`, `mem0-http-contrat.sh`…) ; les
+recettes manuelles ou gatées (captures iOS, sondes AX, appairage, bascule réelle)
+vivent dans `scripts/recette/`.
+
 ## CI et release
 
 Chaque PR passe `./scripts/check.sh` sur Ubuntu **et** sur macOS. Le type-check y
@@ -1115,7 +1145,7 @@ local — sans option, toutes les sections et toute la suite tournent :
 |---|---|
 | `--sections=<id>[,<id>…]` | n'exécute que ces sections, dans l'ordre du script : `catalogue`, `noms`, `plugins`, `versions`, `extension`, `types`, `rust`, `smoke`, `tests`, `noyau`, `app-swift`, `app-ios` |
 | `--tests-scope=macos` | `── Tests` ne lance que les fichiers de `scripts/test-files.sh --scope=macos` |
-| `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
+| `--tests-part=1/2` ou `2/2` | `1/2` : les tests `socle-app-swift/*` de `test/outillage/check.test.ts` ; `2/2` : tous les autres — chaque test tourne exactement une fois |
 
 Chaque PR vers `main` passe aussi `scripts/release-simulation.sh`, qui rejoue la
 release de la PR **sur une copie jetable** — plan de `scripts/release.ts`,
@@ -1156,7 +1186,7 @@ job. Variables lues :
 `--start-qdrant` lance une Qdrant native jetable sur `MEM0_CONTRAT_PORT` (HTTP)
 et `MEM0_CONTRAT_GRPC_PORT`, stockage dans `$MEM0_CONTRAT_WORKDIR/qdrant`, clé
 API fixe `contrat-qdrant-cle` ; l'appelant attend `/readyz`. La preuve de
-migration `test/mem0-rs-migration.test.ts` y sème la collection `omp_memory` et
+migration `test/stack/mem0-rs-migration.test.ts` y sème la collection `omp_memory` et
 écrit à côté un `history.db`, puis les importe par `mem0-rs import`.
 
 `--start-conteneur` démarre le service mem0-rs de `mem0-stack/docker-compose.yml`
@@ -1165,7 +1195,7 @@ migration `test/mem0-rs-migration.test.ts` y sème la collection `omp_memory` et
 c'est la preuve locale du conteneur, jamais jouée en CI.
 
 Les **preuves conteneur** de la bascule vivent dans
-`test/mem0-stack-bascule-rust.test.ts`, sautées sans leur drapeau et jamais
+`test/stack/mem0-stack-bascule-rust.test.ts`, sautées sans leur drapeau et jamais
 jouées en CI. Moteur : `MEM0_CONTRAT_MOTEUR`, sinon `podman`, sinon `docker` ;
 le test refuse un moteur qui porte des conteneurs `omp-console-*`. Elles
 construisent l'image par `compose build mem0-rs` et ne publient que des ports
@@ -1183,8 +1213,8 @@ libres (jamais 8321 ni 6333) :
 
 ```bash
 export PATH=/opt/podman/bin:$PATH && podman machine start
-MEM0_BASCULE_CONTENEUR=1 node --test --experimental-strip-types test/mem0-stack-bascule-rust.test.ts
-MEM0_BASCULE_REEL=1 MEM0_BASCULE_HISTORY_DB=<copie> node --test --experimental-strip-types test/mem0-stack-bascule-rust.test.ts
+MEM0_BASCULE_CONTENEUR=1 node --test --experimental-strip-types test/stack/mem0-stack-bascule-rust.test.ts
+MEM0_BASCULE_REEL=1 MEM0_BASCULE_HISTORY_DB=<copie> node --test --experimental-strip-types test/stack/mem0-stack-bascule-rust.test.ts
 podman machine stop
 ```
 

@@ -24,8 +24,10 @@ omp-console/.build-review/
 omp-console/.build-run/
 omp-console/.build-impl/
 omp-console/.build-recipe/
+# Scratch persistant de socle-app-swift/AC-1 (test/outillage/check.test.ts) : `swift build` seul
+omp-console/.build-node/
 omp-console/build/
 # DerivedData de l'app iOS (xcodebuild -derivedDataPath omp-console/.build-ios)
 omp-console/.build-ios/
-# DerivedData de l'app iOS signée ad hoc de scripts/mac-appairage-recette.sh --ios
+# DerivedData de l'app iOS signée ad hoc de scripts/recette/mac-appairage-recette.sh --ios
 omp-console/.build-ios-recette/

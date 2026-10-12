@@ -2,7 +2,7 @@
 // (feuilles-ios-presentation-et-depots, S-7 ; ios-listes-groupees-natives, S-6) :
 // `-projet.recipe <lancement|dialogue|saisie|plan>` sur l'écran Projet et
 // `-sessionomp.recipe lancement` sur l'écran Session OMP. Des crochets de capture,
-// pas des fonctionnalités ; `scripts/ios-feuilles-recette.sh` les emploie.
+// pas des fonctionnalités ; `scripts/recette/ios-feuilles-recette.sh` les emploie.
 
 import Foundation
 

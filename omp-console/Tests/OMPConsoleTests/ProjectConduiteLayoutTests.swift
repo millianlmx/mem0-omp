@@ -1,5 +1,5 @@
 // Preuve de la mise en page du pilotage dans une petite fenêtre. Plantage mesuré
-// le 2026-10-11 en recette réelle (`scripts/mac-recette-ui.sh`, surface
+// le 2026-10-11 en recette réelle (`scripts/recette/mac-recette-ui.sh`, surface
 // projet-dialogue) : l'inspecteur reportait au partage de la fenêtre le minimum du
 // pilotage, plus haut qu'elle, et la mise en page bouclait jusqu'à l'exception
 // d'AppKit « Update Constraints in Window ». Une régression TUE le processus de

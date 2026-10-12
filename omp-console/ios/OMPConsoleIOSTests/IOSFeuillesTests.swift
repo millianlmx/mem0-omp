@@ -49,7 +49,7 @@ private final class HomeSessionSource: IOSSessionSource {
 }
 
 /// Les preuves Swift de la feature feuilles-ios-presentation-et-depots. Les crochets de
-/// recette ouvrent les feuilles que `scripts/ios-feuilles-recette.sh` capture avant et
+/// recette ouvrent les feuilles que `scripts/recette/ios-feuilles-recette.sh` capture avant et
 /// après (AC-11) : un crochet qui ne se résout pas, ou une fixture qui ne se décode
 /// pas, n'ouvre AUCUNE feuille, et le relevé perd sa capture sans autre signal.
 @Suite("feuilles-ios-presentation-et-depots — crochets de recette des feuilles")

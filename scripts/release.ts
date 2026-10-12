@@ -22,7 +22,7 @@
 //
 // Le fichier est importable : les fonctions pures (analyse des commits, plan,
 // historique des versions, bump semver, rendu du changelog et du corps de
-// release) sont testées sans réseau ni git par test/release.test.ts. Rien ne
+// release) sont testées sans réseau ni git par test/outillage/release.test.ts. Rien ne
 // s'exécute à l'import.
 //
 // PIÈGES MESURÉS (2026-09-24 → 2026-09-27, git 2.5x, gh 2.x) :

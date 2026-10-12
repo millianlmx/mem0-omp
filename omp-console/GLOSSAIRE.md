@@ -1,6 +1,6 @@
 # Glossaire des textes d’OMP Console
 
-Ce glossaire régit les textes des fichiers `*Text.swift` de `omp-console/Sources/ConsoleCore`, `omp-console/Sources/OMPConsole` et `omp-console/ios/OMPConsoleIOS`. La règle : on francise, sauf les termes conservés. Une même notion porte le même terme sur Mac et sur iOS. La garde `test/typographie-et-glossaire-francais.test.ts` lit les deux tableaux ci-dessous : ils sont la seule source des termes conservés et des anglicismes bannis.
+Ce glossaire régit les textes des fichiers `*Text.swift` de `omp-console/Sources/ConsoleCore`, `omp-console/Sources/OMPConsole` et `omp-console/ios/OMPConsoleIOS`. La règle : on francise, sauf les termes conservés. Une même notion porte le même terme sur Mac et sur iOS. La garde `test/console/typographie-et-glossaire-francais.test.ts` lit les deux tableaux ci-dessous : ils sont la seule source des termes conservés et des anglicismes bannis.
 
 ## Termes conservés
 

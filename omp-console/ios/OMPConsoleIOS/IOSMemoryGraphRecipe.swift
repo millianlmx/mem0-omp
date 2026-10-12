@@ -147,7 +147,7 @@ enum IOSMemoryGraphRecipe: Equatable {
     }
 
     /// Le signal de PRÊT sur la sortie d'erreur du lancement (`--stderr`), lu par
-    /// `scripts/ios-shots.sh` : il n'est émis que si l'état forcé est réellement affiché (graphe
+    /// `scripts/recette/ios-shots.sh` : il n'est émis que si l'état forcé est réellement affiché (graphe
     /// monté, zoom appliqué, fiche ouverte sur le souvenir de la recette, panne du service
     /// publiée). Un état non atteint n'émet rien, et le script refuse la capture.
     @MainActor private func announce(_ model: IOSMemoryGraphModel) {

@@ -4,7 +4,7 @@
 // coques (libellés de section, états vides, par exemple).
 //
 // Fichier de VOCABULAIRE de l'app (`*Text.swift`), comme `ConnectionText.swift` :
-// la garde `design-ios/AC-5` (`test/design-ios.test.ts`) n'autorise un littéral
+// la garde `design-ios/AC-5` (`test/console/design-ios.test.ts`) n'autorise un littéral
 // alphabétique que dans ces fichiers-là, un identifiant technique (`"ios."`,
 // `"-"`, un nom de symbole SF) — tout libellé en dur dans une vue fait rougir la
 // garde.
