@@ -79,6 +79,8 @@ struct SectionDetail: View {
     /// Le modèle du MODE GRAPHE de la mémoire (S-1) : à l'échelle de l'app, comme
     /// celui de la liste.
     @ObservedObject var memoryGraph: MemoryGraphModel
+    /// Le bandeau de nettoyage de l'ancien moteur (S-6 d'omp-console-sans-podman).
+    @ObservedObject var podmanCleanup: PodmanCleanupModel
     /// Le modèle de la feuille Contrat (S-7) : l'Accueil et Pipelines ouvrent la
     /// feuille depuis leurs gestes, la racine la présente.
     @ObservedObject var contract: ContractModel
@@ -115,7 +117,7 @@ struct SectionDetail: View {
         case .stats: StatsSectionView(model: statsModel, actions: actions)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .project: ProjectView(model: projectModel)
-        case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser)
+        case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)
         }
     }
 }

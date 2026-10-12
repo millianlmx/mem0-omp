@@ -1,10 +1,9 @@
-// L'exécution d'une commande EXTERNE (podman, pkgutil, curl…), injectable (S-1).
+// L'exécution d'une commande EXTERNE (podman, curl…), injectable (S-1).
 //
 // Un seul type pour les trois appels de l'app : les commandes podman de la pile
-// (S-2), `pkgutil --expand-full` et les vérifications `--version` de
-// l'installateur (S-1), et les appels `curl` sur socket Unix de la migration
-// (S-3). Les doublures de test remplacent la closure entière ; aucun test
-// unitaire ne lance un binaire réel.
+// (S-2), les vérifications `--version` de l'installateur (S-1), et les appels
+// `curl` sur socket Unix de la migration (S-3). Les doublures de test remplacent
+// la closure entière ; aucun test unitaire ne lance un binaire réel.
 //
 // Type NOMINAL, pas un alias de type fonction : Swift interdit d'étendre un type
 // fonction (« non-nominal type cannot be extended »), or le contrat exige
@@ -12,7 +11,7 @@
 // (`run(binary, arguments, environment, timeout)`), et l'initialiseur prend la
 // closure — une doublure s'écrit `CommandRunner { binary, arguments, env, timeout in … }`.
 //
-// Ce que ce fichier ne connaît PAS : podman, curl, pkgutil, et tout message
+// Ce que ce fichier ne connaît PAS : podman, curl, et tout message
 // destiné à l'utilisateur. La traduction d'un échec en erreur de domaine
 // appartient à l'appelant, qui garde ses textes.
 

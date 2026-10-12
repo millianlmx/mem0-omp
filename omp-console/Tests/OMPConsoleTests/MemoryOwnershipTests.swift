@@ -5,7 +5,7 @@
 // Une adresse NON locale ne sonde AUCUN port (on n'interroge pas `lsof` pour un
 // hôte distant) ; une adresse locale passe par `StackOwnership.holder` et sa
 // classification figée. Aucun binaire réel n'est lancé : la doublure route
-// `lsof`/`ps`/`curl` par chemin absolu.
+// `lsof`/`ps` par chemin absolu.
 
 import Foundation
 import Testing
@@ -16,8 +16,8 @@ import Testing
 
 private enum ForeignProbeError: Error { case unavailable }
 
-/// La doublure de `CommandRunner` : `lsof`, `ps` et les sockets Docker, routés par
-/// binaire ABSOLU, avec journal des appels.
+/// La doublure de `CommandRunner` : `lsof` et `ps`, routés par binaire ABSOLU,
+/// avec journal des appels.
 private final class ForeignOwnershipDouble: @unchecked Sendable {
     struct Call: Equatable {
         var binary: String
@@ -27,7 +27,6 @@ private final class ForeignOwnershipDouble: @unchecked Sendable {
     private(set) var calls: [Call] = []
     var lsofResult: ProcessRun? = ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false)
     var psResult: ProcessRun? = ProcessRun(code: 0, stdout: "", stderr: "", timedOut: false)
-    var curlRoutes: [String: ProcessRun] = [:]
 
     var runner: CommandRunner {
         CommandRunner { [self] binary, arguments, _, _ in
@@ -40,8 +39,7 @@ private final class ForeignOwnershipDouble: @unchecked Sendable {
                 guard let result = psResult else { throw ForeignProbeError.unavailable }
                 return result
             default:
-                let url = arguments.last ?? ""
-                return curlRoutes[url] ?? ProcessRun(code: 7, stdout: "", stderr: "socket muet", timedOut: false)
+                return ProcessRun(code: 127, stdout: "", stderr: "binaire inattendu", timedOut: false)
             }
         }
     }
@@ -51,25 +49,12 @@ private final class ForeignOwnershipDouble: @unchecked Sendable {
     }
 }
 
-private let containersURL = "http://localhost/containers/json?all=true"
-
-private let supportPaths = AppPaths(supportRoot: URL(fileURLWithPath: "/nonexistent-support", isDirectory: true))
+private let ourExecutable = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/mem0-rs")
 
 /// Un enregistrement `lsof -F pcn`.
 private func lsofRecord(pid: Int32, command: String, port: Int) -> String {
     "p\(pid)\nc\(command)\nf33\nn127.0.0.1:\(port)\n"
 }
-
-/// La charge `GET /containers/json?all=true` MESURÉE le 2026-10-06 (Documentation
-/// § Docker Engine API) : `mem0-http` en marche publie 8321.
-private let measuredContainersPayload = """
-[
-  {"Names":["/mem0-qdrant"],"State":"running","Status":"Up 21 minutes",
-   "Ports":[{"IP":"127.0.0.1","PrivatePort":6333,"PublicPort":6333,"Type":"tcp"}]},
-  {"Names":["/mem0-http"],"State":"running","Status":"Up 21 minutes",
-   "Ports":[{"IP":"127.0.0.1","PrivatePort":8321,"PublicPort":8321,"Type":"tcp"}]}
-]
-"""
 
 // MARK: - Adresse distante : aucun port sondé
 
@@ -78,16 +63,15 @@ func remoteAddressNamesTheHostWithoutProbing() async {
     let double = ForeignOwnershipDouble()
     let ownership = await StackOwnership.foreignOwnership(
         address: "http://mem0.example.com:8321",
-        paths: supportPaths,
+        ourExecutable: ourExecutable,
         environment: [:],
         run: double.runner
     )
 
     #expect(ownership?.owner == "le service distant mem0.example.com")
-    #expect(ownership?.isLegacy == false)
     #expect(ownership?.address == "http://mem0.example.com:8321")
     #expect(ownership?.gesture == StackOwnership.remoteAddressGesture)
-    // Aucun `lsof`, aucun `ps`, aucun `curl` : on ne sonde pas un hôte distant.
+    // Aucun `lsof`, aucun `ps` : on ne sonde pas un hôte distant.
     #expect(double.calls.isEmpty)
 }
 
@@ -111,33 +95,13 @@ func localForeignProcessIsNamed() async {
 
     let ownership = await StackOwnership.foreignOwnership(
         address: "http://localhost:8321",
-        paths: supportPaths,
+        ourExecutable: ourExecutable,
         environment: ["HOME": "/Users/x"],
         run: double.runner
     )
 
     #expect(ownership?.owner == "un autre programme (python3, pid 4711)")
-    #expect(ownership?.isLegacy == false)
     #expect(double.probedPorts == ["-iTCP:8321"])
-}
-
-@Test("bug-embedded-podman-machine/AC-1 : un conteneur de l'ancienne pile ⇒ `isLegacy == true` et le geste d'arrêt")
-func localLegacyContainerOffersTakeover() async {
-    let double = ForeignOwnershipDouble()
-    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "gvproxy", port: 8321), stderr: "", timedOut: false)
-    double.psResult = ProcessRun(code: 0, stdout: "/opt/podman/bin/gvproxy -mtu 1500\n", stderr: "", timedOut: false)
-    double.curlRoutes[containersURL] = ProcessRun(code: 0, stdout: measuredContainersPayload, stderr: "", timedOut: false)
-
-    let ownership = await StackOwnership.foreignOwnership(
-        address: "http://127.0.0.1:8321",
-        paths: supportPaths,
-        environment: ["HOME": "/Users/x"],
-        run: double.runner
-    )
-
-    #expect(ownership?.owner == "l'ancienne pile mémoire (conteneur mem0-http)")
-    #expect(ownership?.isLegacy == true)
-    #expect(ownership?.gesture == "podman stop mem0-qdrant mem0-http")
 }
 
 @Test("bug-embedded-podman-machine/AC-1 : une adresse sans hôte ou sans port ne rend AUCUN verdict")
@@ -145,13 +109,13 @@ func unparsableAddressYieldsNothing() async {
     let double = ForeignOwnershipDouble()
     let withoutHost = await StackOwnership.foreignOwnership(
         address: "pas-une-url",
-        paths: supportPaths,
+        ourExecutable: ourExecutable,
         environment: [:],
         run: double.runner
     )
     let withoutPort = await StackOwnership.foreignOwnership(
         address: "http://localhost",
-        paths: supportPaths,
+        ourExecutable: ourExecutable,
         environment: [:],
         run: double.runner
     )

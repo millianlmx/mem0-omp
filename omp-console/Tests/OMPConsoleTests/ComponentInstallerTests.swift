@@ -1,9 +1,10 @@
 // L'installateur de composants (S-1, BR-1) : la chaîne complète en doublure
 // (`URLProtocol` sert des octets dont le SHA-256 est calculé par le test, un
-// `CommandRunner` double rend les `--version`), les erreurs typées, l'idempotence,
-// la purge des autres versions et la garde d'architecture. Aucune socket, aucun
-// binaire réel : c'est la preuve d'AC-2 (récupération + erreur explicite) et d'AC-3
-// (aucun chemin système pour omp/podman).
+// `CommandRunner` double rend le `--version`), les erreurs typées, l'idempotence,
+// la purge des autres versions d'omp et la garde d'architecture. L'app n'installe
+// plus que omp : aucune requête podman, et `components/podman` n'est jamais créé
+// ni purgé. Aucune socket, aucun binaire réel : c'est la preuve d'AC-2
+// (récupération + erreur explicite) et d'AC-3 (aucun chemin système pour omp).
 
 import CryptoKit
 import Foundation
@@ -15,29 +16,19 @@ import Testing
 
 private enum ComponentsFixture {
     static let ompPath = "/releases/omp-darwin-arm64"
-    static let podmanPath = "/releases/podman-installer-macos-arm64.pkg"
 
     static func sha256(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    static func manifest(ompData: Data, podmanData: Data, ompSHA: String? = nil, podmanSHA: String? = nil) -> ComponentManifest {
+    static func manifest(ompData: Data, ompSHA: String? = nil) -> ComponentManifest {
         ComponentManifest(
             ompVersion: "18.6.0",
             omp: RemoteFile(
                 url: URL(string: "https://example.test\(ompPath)")!,
                 sha256: ompSHA ?? sha256(ompData),
                 bytes: Int64(ompData.count)
-            ),
-            podmanVersion: "6.1.3",
-            podmanInstaller: RemoteFile(
-                url: URL(string: "https://example.test\(podmanPath)")!,
-                sha256: podmanSHA ?? sha256(podmanData),
-                bytes: Int64(podmanData.count)
-            ),
-            machineImage: "docker://quay.io/podman/machine-os:6.1",
-            qdrantImage: "docker.io/qdrant/qdrant:v1.19.0",
-            stackImageRepository: "omp-console-mem0-http"
+            )
         )
     }
 
@@ -89,21 +80,13 @@ private final class RunnerDouble: @unchecked Sendable {
     }
 }
 
-/// Le comportement nominal du double : `pkgutil` matérialise la charge utile du
-/// pkg, omp et podman rendent leur version attendue.
+/// Le comportement nominal du double : omp rend sa version attendue.
 private func nominalReply(_ binary: URL, _ arguments: [String]) throws -> ProcessRun {
     switch binary.lastPathComponent {
-    case "pkgutil":
-        let directory = URL(fileURLWithPath: arguments[2])
-        let payload = directory.appendingPathComponent("podman.pkg/Payload/podman/bin/podman")
-        try FileManager.default.createDirectory(at: payload.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("podman".utf8).write(to: payload)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: payload.path)
-        return ProcessRun(code: 0, stdout: "", stderr: "", timedOut: false)
     case "omp":
         return ProcessRun(code: 0, stdout: "omp/18.6.0\n", stderr: "", timedOut: false)
     default:
-        return ProcessRun(code: 0, stdout: "podman version 6.1.3\n", stderr: "", timedOut: false)
+        return ProcessRun(code: 1, stdout: "", stderr: "binaire inattendu : \(binary.path)\n", timedOut: false)
     }
 }
 
@@ -125,18 +108,21 @@ private func makeInstaller(
 
 @MainActor
 @Test("all-in-one-app/AC-2 : la chaîne complète télécharge, vérifie le SHA, installe et observe la progression")
-func ac2FullChainInstallsBothComponents() async throws {
+func ac2FullChainInstallsOmp() async throws {
     StubURLProtocol.reset()
     let ompData = Data(repeating: 0x41, count: 4096)
-    let podmanData = Data(repeating: 0x42, count: 8192)
     StubURLProtocol.reply(ComponentsFixture.ompPath, .init(body: ompData))
-    StubURLProtocol.reply(ComponentsFixture.podmanPath, .init(body: podmanData))
 
     let paths = try ComponentsFixture.supportRoot("full")
+    // Une installation podman héritée : la migration `PodmanLegacy` s'en sert,
+    // donc l'installateur ne doit jamais la purger.
+    let legacyPodman = PodmanLegacy.podmanRoot(paths).appendingPathComponent("5.0.0").appendingPathComponent("bin/podman")
+    try FileManager.default.createDirectory(at: legacyPodman.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data("podman".utf8).write(to: legacyPodman)
     let runner = RunnerDouble(reply: nominalReply)
     let installer = makeInstaller(
         paths: paths,
-        manifest: ComponentsFixture.manifest(ompData: ompData, podmanData: podmanData),
+        manifest: ComponentsFixture.manifest(ompData: ompData),
         runner: runner
     )
 
@@ -144,22 +130,22 @@ func ac2FullChainInstallsBothComponents() async throws {
     try await installer.install { steps.append($0) }
 
     let omp = try #require(installer.installedOmpBinary())
-    let podman = try #require(installer.installedPodmanBinary())
     #expect(omp.path == paths.ompDir("18.6.0").appendingPathComponent("omp").path)
-    #expect(podman.path == paths.podmanDir("6.1.3").appendingPathComponent("bin/podman").path)
 
     // Progression : un pas à zéro AVANT le réseau, puis les écritures, puis l'étape
-    // d'installation — et la même chose pour podman.
+    // d'installation.
     #expect(steps.first == .omp(downloaded: 0, total: Int64(ompData.count)))
-    #expect(steps.contains(.ompInstall))
-    #expect(steps.contains(.podmanInstall))
+    #expect(steps.last == .ompInstall)
     #expect(steps.contains { if case let .omp(downloaded, _) = $0 { return downloaded == Int64(ompData.count) }; return false })
-    #expect(steps.contains { if case let .podman(downloaded, _) = $0 { return downloaded == Int64(podmanData.count) }; return false })
 
-    // Les deux `--version` ont été joués sur les binaires installés.
-    for (binary, arguments) in runner.calls where arguments == ["--version"] {
-        #expect(binary.path.hasPrefix(paths.supportRoot.path))
-    }
+    // Aucune requête podman, aucun `components/podman/<version du manifeste>`
+    // créé, et l'installation héritée est intacte.
+    #expect(StubURLProtocol.requests.map { $0.url?.path } == [ComponentsFixture.ompPath])
+    #expect(!FileManager.default.fileExists(atPath: PodmanLegacy.podmanRoot(paths).appendingPathComponent("6.1.3").path))
+    #expect(FileManager.default.fileExists(atPath: legacyPodman.path))
+
+    // Le seul `--version` a été joué sur le binaire omp installé.
+    #expect(runner.calls.map(\.binary.path) == [omp.path])
 }
 
 @MainActor
@@ -172,7 +158,7 @@ func ac2NetworkFailureIsExplicitAndInstallsNothing() async throws {
     let runner = RunnerDouble(reply: nominalReply)
     let installer = makeInstaller(
         paths: paths,
-        manifest: ComponentsFixture.manifest(ompData: Data("a".utf8), podmanData: Data("b".utf8)),
+        manifest: ComponentsFixture.manifest(ompData: Data("a".utf8)),
         runner: runner
     )
 
@@ -188,10 +174,9 @@ func ac2NetworkFailureIsExplicitAndInstallsNothing() async throws {
         #expect(!detail.isEmpty)
     }
 
-    // Filet : aucune écriture de composant, et aucune requête vers podman.
+    // Filet : aucune écriture de composant, et rien sous components/podman.
     #expect(installer.installedOmpBinary() == nil)
-    #expect(installer.installedPodmanBinary() == nil)
-    #expect(!FileManager.default.fileExists(atPath: paths.podmanDir("6.1.3").path))
+    #expect(!FileManager.default.fileExists(atPath: paths.componentsRoot.appendingPathComponent("podman").path))
 }
 
 @MainActor
@@ -207,7 +192,6 @@ func ac2ChecksumMismatchDiscardsFile() async throws {
         paths: paths,
         manifest: ComponentsFixture.manifest(
             ompData: ompData,
-            podmanData: Data("b".utf8),
             ompSHA: String(repeating: "0", count: 64)
         ),
         runner: runner
@@ -230,13 +214,11 @@ func ac2ChecksumMismatchDiscardsFile() async throws {
 func ac2SecondInstallIsIdempotent() async throws {
     StubURLProtocol.reset()
     let ompData = Data(repeating: 0x41, count: 2048)
-    let podmanData = Data(repeating: 0x42, count: 4096)
     StubURLProtocol.reply(ComponentsFixture.ompPath, .init(body: ompData))
-    StubURLProtocol.reply(ComponentsFixture.podmanPath, .init(body: podmanData))
 
     let paths = try ComponentsFixture.supportRoot("idempotent")
     let runner = RunnerDouble(reply: nominalReply)
-    let manifest = ComponentsFixture.manifest(ompData: ompData, podmanData: podmanData)
+    let manifest = ComponentsFixture.manifest(ompData: ompData)
     let installer = makeInstaller(paths: paths, manifest: manifest, runner: runner)
 
     try await installer.install { _ in }
@@ -250,7 +232,7 @@ func ac2SecondInstallIsIdempotent() async throws {
     #expect(steps.isEmpty)
     #expect(runner.calls.isEmpty)
     #expect(installer.installedOmpBinary() != nil)
-    #expect(installer.installedPodmanBinary() != nil)
+    #expect(!FileManager.default.fileExists(atPath: paths.componentsRoot.appendingPathComponent("podman").path))
 }
 
 @MainActor
@@ -258,17 +240,15 @@ func ac2SecondInstallIsIdempotent() async throws {
 func ac2PurgesOtherVersions() async throws {
     StubURLProtocol.reset()
     let ompData = Data(repeating: 0x41, count: 2048)
-    let podmanData = Data(repeating: 0x42, count: 4096)
     StubURLProtocol.reply(ComponentsFixture.ompPath, .init(body: ompData))
-    StubURLProtocol.reply(ComponentsFixture.podmanPath, .init(body: podmanData))
 
     let paths = try ComponentsFixture.supportRoot("purge")
     let fileManager = FileManager.default
-    // Une version antérieure de chaque composant, et une donnée de pile à préserver.
+    // Une version antérieure d'omp, un podman hérité et une donnée de pile à préserver.
     let staleOmp = paths.ompDir("17.0.0").appendingPathComponent("omp")
     try fileManager.createDirectory(at: staleOmp.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("vieux".utf8).write(to: staleOmp)
-    let stalePodman = paths.podmanDir("5.0.0").appendingPathComponent("bin/podman")
+    let stalePodman = PodmanLegacy.podmanRoot(paths).appendingPathComponent("5.0.0").appendingPathComponent("bin/podman")
     try fileManager.createDirectory(at: stalePodman.deletingLastPathComponent(), withIntermediateDirectories: true)
     try Data("vieux".utf8).write(to: stalePodman)
     let stackMarker = paths.stackRoot.appendingPathComponent("keep.txt")
@@ -278,15 +258,16 @@ func ac2PurgesOtherVersions() async throws {
     let runner = RunnerDouble(reply: nominalReply)
     let installer = makeInstaller(
         paths: paths,
-        manifest: ComponentsFixture.manifest(ompData: ompData, podmanData: podmanData),
+        manifest: ComponentsFixture.manifest(ompData: ompData),
         runner: runner
     )
     try await installer.install { _ in }
 
     #expect(!fileManager.fileExists(atPath: paths.ompDir("17.0.0").path))
-    #expect(!fileManager.fileExists(atPath: paths.podmanDir("5.0.0").path))
     #expect(fileManager.fileExists(atPath: paths.ompDir("18.6.0").path))
-    #expect(fileManager.fileExists(atPath: paths.podmanDir("6.1.3").path))
+    // components/podman n'est jamais purgé : la migration `PodmanLegacy` le lit.
+    #expect(fileManager.fileExists(atPath: stalePodman.path))
+    #expect(!fileManager.fileExists(atPath: PodmanLegacy.podmanRoot(paths).appendingPathComponent("6.1.3").path))
     // stackRoot et ses données n'ont jamais été touchés.
     #expect(fileManager.fileExists(atPath: stackMarker.path))
 }
@@ -299,7 +280,7 @@ func ac2UnsupportedMacIsRefused() async throws {
     let runner = RunnerDouble(reply: nominalReply)
     let installer = makeInstaller(
         paths: paths,
-        manifest: ComponentsFixture.manifest(ompData: Data("a".utf8), podmanData: Data("b".utf8)),
+        manifest: ComponentsFixture.manifest(ompData: Data("a".utf8)),
         runner: runner
     )
     installer.isSupportedArchitecture = false
@@ -323,15 +304,13 @@ func ac2UnsupportedMacIsRefused() async throws {
 func ac3NeverUsesSystemBinaries() async throws {
     StubURLProtocol.reset()
     let ompData = Data(repeating: 0x41, count: 1024)
-    let podmanData = Data(repeating: 0x42, count: 2048)
     StubURLProtocol.reply(ComponentsFixture.ompPath, .init(body: ompData))
-    StubURLProtocol.reply(ComponentsFixture.podmanPath, .init(body: podmanData))
 
     let paths = try ComponentsFixture.supportRoot("ac3")
     let runner = RunnerDouble(reply: nominalReply)
     let installer = makeInstaller(
         paths: paths,
-        manifest: ComponentsFixture.manifest(ompData: ompData, podmanData: podmanData),
+        manifest: ComponentsFixture.manifest(ompData: ompData),
         runner: runner
     )
     try await installer.install { _ in }
@@ -342,52 +321,15 @@ func ac3NeverUsesSystemBinaries() async throws {
         for marker in forbidden where path.contains(marker) {
             Issue.record("binaire système consulté : \(path)")
         }
-        if path.hasSuffix("/pkgutil") {
-            #expect(path == ComponentInstaller.pkgutil.path)
-        } else {
-            // Tout autre binaire est un composant de l'app, donc sous la racine.
-            #expect(path.hasPrefix(paths.supportRoot.path))
-        }
+        // Tout binaire lancé est un composant de l'app, donc sous la racine.
+        #expect(path.hasPrefix(paths.supportRoot.path))
         for argument in call.arguments {
             for marker in forbidden where argument.contains(marker) {
                 Issue.record("chemin système dans l'argv : \(argument)")
             }
         }
     }
-    // Les deux vérifications ont bien porté sur les binaires de l'app.
+    // La vérification a bien porté sur le binaire omp de l'app.
     let validated = runner.calls.filter { $0.arguments == ["--version"] }.map(\.binary.path)
-    #expect(validated.contains(installer.installedOmpBinary()!.path))
-    #expect(validated.contains(installer.installedPodmanBinary()!.path))
-}
-
-// MARK: - Recherche bornée de la charge utile
-
-@MainActor
-@Test("all-in-one-app/AC-2 : la charge utile est trouvée sous podman.pkg/Payload d'abord, puis par recherche bornée")
-func ac2PayloadSearchPrefersCanonicalPath() throws {
-    let paths = try ComponentsFixture.supportRoot("payload")
-    let installer = makeInstaller(
-        paths: paths,
-        manifest: ComponentsFixture.manifest(ompData: Data("a".utf8), podmanData: Data("b".utf8)),
-        runner: RunnerDouble(reply: nominalReply)
-    )
-
-    let root = try ComponentsFixture.supportRoot("payload-root")
-    let canonical = root.supportRoot.appendingPathComponent("podman.pkg/Payload/podman")
-    let canonicalBinary = canonical.appendingPathComponent("bin/podman")
-    try FileManager.default.createDirectory(at: canonicalBinary.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try Data("podman".utf8).write(to: canonicalBinary)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: canonicalBinary.path)
-    #expect(installer.findPodmanPayload(root: root.supportRoot)?.path == canonical.path)
-
-    // Nom de sous-paquet différent : la recherche bornée le retrouve.
-    let other = try ComponentsFixture.supportRoot("payload-other")
-    let nested = other.supportRoot.appendingPathComponent("Some.pkg/Payload/usr/local/podman")
-    let nestedBinary = nested.appendingPathComponent("bin/podman")
-    try FileManager.default.createDirectory(at: nestedBinary.deletingLastPathComponent(), withIntermediateDirectories: true)
-    try Data("podman".utf8).write(to: nestedBinary)
-    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: nestedBinary.path)
-    let found = try #require(installer.findPodmanPayload(root: other.supportRoot))
-    #expect(found.path.hasSuffix("Some.pkg/Payload/usr/local/podman"))
-    #expect(FileManager.default.isExecutableFile(atPath: found.appendingPathComponent("bin/podman").path))
+    #expect(validated == [installer.installedOmpBinary()!.path])
 }

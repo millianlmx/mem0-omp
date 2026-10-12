@@ -51,7 +51,7 @@ extension MainSheetPolicy {
         contract: ContractSheet?
     ) -> MainSheet? {
         switch setup {
-        case .idle, .preparing, .failed:
+        case .idle, .preparing, .failed, .awaitingSwitch:
             if !setupDismissed { return .setup }
         case .ready:
             break

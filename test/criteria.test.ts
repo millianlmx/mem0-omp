@@ -13,7 +13,6 @@ import * as path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TEST_DIR = path.join(ROOT, "test");
-const API_TESTS = path.join(ROOT, "omp-console", "stack", "mem0-http", "test_api.py");
 
 /** Forme qualifiée attendue : slug en minuscules/chiffres/tirets, puis l'id. */
 const QUALIFIED = /\b[a-z][a-z0-9-]*\/AC-\d+\b/g;
@@ -21,7 +20,6 @@ const QUALIFIED = /\b[a-z][a-z0-9-]*\/AC-\d+\b/g;
 const BARE = /\bAC-\d+\b/;
 const SLUG = /^([a-z][a-z0-9-]*)\//;
 const TITLE_LINE = /^\s*test\("([^"]*)"/gm;
-const LABEL_LINE = /^\s*check\(f?"([^"]*)"/gm;
 
 type Occurrence = { key: string; slug: string; file: string; text: string };
 
@@ -40,21 +38,8 @@ function collectTitles(): Occurrence[] {
   return out;
 }
 
-/** Libellés des cas du test d'API (même forme, même invariant). */
-function collectLabels(): Occurrence[] {
-  const src = fs.readFileSync(API_TESTS, "utf8");
-  const file = path.relative(ROOT, API_TESTS);
-  const out: Occurrence[] = [];
-  for (const [, label] of src.matchAll(LABEL_LINE)) {
-    for (const [key] of label.matchAll(QUALIFIED)) {
-      out.push({ key, slug: SLUG.exec(key)?.[1] ?? "", file, text: label });
-    }
-  }
-  return out;
-}
-
 test("criteria/AC-13 : un id de critère qualifié désigne un seul test, dans un seul fichier", () => {
-  const occurrences = [...collectTitles(), ...collectLabels()];
+  const occurrences = collectTitles();
 
   // Garde du scan lui-même : un scanner cassé rendrait l'invariant vrai à vide.
   assert.ok(occurrences.length > 0, "le scan doit trouver au moins un id qualifié");

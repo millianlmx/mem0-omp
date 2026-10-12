@@ -42,6 +42,10 @@ struct OMPConsoleApp: App {
     /// les autres, pour que la bascule liste ⇄ graphe ne perde ni la position, ni la
     /// sélection, ni les filtres.
     @StateObject private var memoryGraphModel = MemoryGraphModel()
+    /// Le bandeau de nettoyage de l'ancien moteur (S-6 d'omp-console-sans-podman) :
+    /// à l'échelle de l'app, rafraîchi par `onReady` et à l'apparition de la
+    /// section Mémoire.
+    @StateObject private var podmanCleanup: PodmanCleanupModel
     @StateObject private var contractModel: ContractModel
     @StateObject private var homeModel: HomeModel
     /// La préparation vit à l'échelle de l'app (S-5) : elle survit à la fermeture
@@ -140,8 +144,13 @@ struct OMPConsoleApp: App {
             home.recheck()
             return home.canLaunch
         }
+        // La bascule vient peut-être d'avoir lieu : le bandeau de nettoyage de
+        // l'ancien moteur se réévalue (S-6).
+        let cleanup = PodmanCleanupModel()
+        _podmanCleanup = StateObject(wrappedValue: cleanup)
         setup.onReady = {
             home.recheck()
+            cleanup.refresh()
             Task { await remote.startIfEnabled() }
         }
         _setupModel = StateObject(wrappedValue: setup)
@@ -150,10 +159,7 @@ struct OMPConsoleApp: App {
         // le retient.
         let router = AlertRouter(console: console, home: home, kanban: kanban, contract: contract, actions: actions)
         AppDelegate.openAlert = { router.open($0) }
-        // La section Mémoire reprend l'ancienne pile par LA MÊME action que la
-        // feuille de préparation (S-6) : une seule implémentation.
         let memory = MemoryModel()
-        memory.recoverOwnership = { await setup.takeOverLegacyStack() }
         _memoryModel = StateObject(wrappedValue: memory)
     }
 
@@ -175,6 +181,7 @@ struct OMPConsoleApp: App {
                 projectModel: projectModel,
                 memoryModel: memoryModel,
                 memoryGraph: memoryGraphModel,
+                podmanCleanup: podmanCleanup,
                 contract: contractModel,
                 home: homeModel,
                 setup: setupModel,

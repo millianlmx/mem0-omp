@@ -464,13 +464,6 @@ func ac6StackEnvDrivesTheProbeURL() async throws {
 
 // MARK: - État « pas la pile d'OMP Console » (S-2, S-4, S-5, BR-9)
 
-/// Un drapeau porté par une classe : la closure de reprise est `@MainActor`, et
-/// une `var` capturée par une closure concurrente ne compile pas sous Swift 6.
-@MainActor
-private final class OwnershipFlag {
-    var tookOver = false
-}
-
 /// Une boîte `Sendable` : la sonde de propriété est appelée depuis une closure
 /// `@Sendable`, une `var` capturée ne compilerait pas.
 private final class AddressBox: @unchecked Sendable {
@@ -486,9 +479,8 @@ func ac4ForeignAddressShowsForeignOwned() async {
     )
     let ownership = ForeignOwnership(
         address: "http://localhost:8321",
-        owner: "l'ancienne pile mémoire (conteneur mem0-http)",
-        gesture: "podman stop mem0-qdrant mem0-http",
-        isLegacy: true
+        owner: "un autre programme (python3, pid 4711)",
+        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"
     )
     let model = memoryModel(service: service, portOwner: { _ in ownership })
 
@@ -517,7 +509,7 @@ func ac4RecoveredServiceLeavesForeignState() async {
         ],
         page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
     )
-    let ownership = ForeignOwnership(address: "http://localhost:8321", owner: "un autre programme (python3, pid 4711)", gesture: "arrêtez-le", isLegacy: false)
+    let ownership = ForeignOwnership(address: "http://localhost:8321", owner: "un autre programme (python3, pid 4711)", gesture: "arrêtez-le")
     let model = memoryModel(service: service, portOwner: { _ in ownership })
 
     await model.refresh()
@@ -525,36 +517,4 @@ func ac4RecoveredServiceLeavesForeignState() async {
 
     await model.refresh()
     #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
-}
-
-@MainActor
-@Test("bug-embedded-podman-machine/AC-6 : le bouton de reprise appelle l'action de l'app PUIS recharge la section")
-func ac6TakeoverCallsActionThenRefreshes() async {
-    let service = ScriptedMemoryService(
-        health: [
-            MemoryHealth(isAvailable: false, errorMessage: MemoryText.foreignService, isForeign: true),
-            MemoryHealth(isAvailable: true, errorMessage: nil),
-        ],
-        page: .success(MemoryPage(total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
-    )
-    let ownership = ForeignOwnership(
-        address: "http://localhost:8321",
-        owner: "l'ancienne pile mémoire (conteneur mem0-http)",
-        gesture: "podman stop mem0-qdrant mem0-http",
-        isLegacy: true
-    )
-    let model = memoryModel(service: service, portOwner: { _ in ownership })
-    let flag = OwnershipFlag()
-    model.recoverOwnership = { flag.tookOver = true }
-
-    await model.refresh()
-    #expect(model.state == .foreignOwned(ownership))
-
-    await model.takeOverLegacyStack()
-
-    #expect(flag.tookOver)
-    // Après l'action, la section RECHARGE par une sonde neuve — aucun état inventé.
-    #expect(model.serviceAvailable)
-    #expect(model.state == .summary(scope: "memoire-mem0", total: 1, rows: [memoryRow(id: "m-1", text: "a")]))
-    #expect(service.healthCalls == 2)
 }

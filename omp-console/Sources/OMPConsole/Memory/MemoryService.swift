@@ -29,9 +29,12 @@ struct MemoryServiceConfig: Equatable, Sendable {
     /// aucune donnée réseau.
     static let defaultBaseURL = URL(string: "http://localhost:8321")!
 
+    /// Sans `MEM0_HTTP_URL`, la base vise le port de l'agent mem0-rs de l'app
+    /// (`MemoryAgent.port(environment:)`, 8321 hors recette — S-8).
     static func fromEnvironment(_ environment: [String: String]) -> MemoryServiceConfig {
         let raw = environment["MEM0_HTTP_URL"].flatMap { $0.isEmpty ? nil : $0 }
-        let baseURL = raw.flatMap { URL(string: $0) } ?? defaultBaseURL
+        let agentBase = URL(string: "http://localhost:\(MemoryAgent.port(environment: environment))") ?? defaultBaseURL
+        let baseURL = raw.flatMap { URL(string: $0) } ?? agentBase
         let token = environment["MEM0_HTTP_TOKEN"].flatMap { $0.isEmpty ? nil : $0 } ?? ""
         return MemoryServiceConfig(baseURL: baseURL, token: token)
     }

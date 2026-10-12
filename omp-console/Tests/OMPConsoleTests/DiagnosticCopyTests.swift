@@ -7,6 +7,7 @@
 // presse-papiers de l'utilisateur. Un presse-papiers nommé unique, relâché en fin
 // de test (sans `releaseGlobally()`, il survit au processus).
 
+import ConsoleCore
 import AppKit
 import Foundation
 import Testing
@@ -65,5 +66,37 @@ struct DiagnosticCopyTests {
 
         let withoutRaw = ReadableFailure(message: "La mémoire ne répond pas.", diagnostic: "")
         #expect(withoutRaw.diagnostic == "La mémoire ne répond pas.")
+    }
+
+    @Test("omp-console-sans-podman/AC-8 : le diagnostic copié d'un échec de migration porte la commande et le détail bruts")
+    func migrationDiagnosticCarriesRawCommandAndDetail() {
+        let detail = "la base /tmp/x/history.db est servie"
+        let table: [(PodmanMigrationError, String, String)] = [
+            (.podmanMissing(path: "/tmp/x/components/podman/6.1.3/bin/podman"),
+             "podman introuvable\u{00A0}: /tmp/x/components/podman/6.1.3/bin/podman", "/tmp/x/components/podman/6.1.3/bin/podman"),
+            (.machineFailed(detail: detail),
+             "La machine podman omp-console n’a pas démarré\u{00A0}: \(detail)", detail),
+            (.qdrantUnreachable(detail: detail),
+             "Qdrant (127.0.0.1:6333, conteneur omp-console-qdrant) injoignable\u{00A0}: \(detail)", detail),
+            (.historyCopyFailed(detail: detail),
+             "podman cp omp-console-mem0-http:/home/mem0/.mem0/history.db a échoué\u{00A0}: \(detail)", detail),
+            (.importFailed(code: 1, detail: detail),
+             "mem0-rs import a échoué (code 1)\u{00A0}: \(detail)", detail),
+            (.stopFailed(detail: detail),
+             "podman stop omp-console-mem0-http omp-console-qdrant a échoué\u{00A0}: \(detail)", detail),
+            (.stateWriteFailed(path: "/tmp/x/stack/podman-migration/bascule.json", detail: detail),
+             "État de bascule non inscriptible (/tmp/x/stack/podman-migration/bascule.json)\u{00A0}: \(detail)", detail),
+        ]
+        for (error, expected, raw) in table {
+            let failure = SetupFailure.migration(error)
+            let diagnostic = SetupText.failureDiagnostic(failure)
+            #expect(diagnostic == expected)
+            #expect(diagnostic.contains(raw))
+            #expect(SetupPresentation.diagnostic(state: .failed(failure)) == expected)
+            withScratchPasteboard { pasteboard in
+                DiagnosticPasteboard.copy(diagnostic, to: pasteboard)
+                #expect(pasteboard.string(forType: .string) == expected)
+            }
+        }
     }
 }

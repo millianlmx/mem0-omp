@@ -52,6 +52,15 @@ if ! command -v swift >/dev/null 2>&1; then
   exit 1
 fi
 
+# Le service mémoire de l'app est le binaire `mem0-rs` (crate du dépôt
+# mem0-stack/mem0-rs), compilé ici et embarqué dans le bundle (feature
+# omp-console-sans-podman, S-1). Sans cargo, aucun bundle : un bundle sans
+# mem0-rs n'aurait pas de mémoire.
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "✗ cargo introuvable — installe Rust (https://rustup.rs)" >&2
+  exit 1
+fi
+
 if [ ! -f "$PLIST" ]; then
   echo "✗ $PLIST manquant"
   exit 1
@@ -138,6 +147,34 @@ if [ -z "$bin_dir" ] || [ ! -x "$bin_dir/OMPConsole" ]; then
   exit 1
 fi
 
+# 2 bis) le binaire mem0-rs, en release, depuis la racine du dépôt (avec ET sans
+#    `--no-tests`). `--locked` : le Cargo.lock versionné fait foi. Le binaire est
+#    lu là où cargo l'écrit : `CARGO_TARGET_DIR` s'il est posé (un chemin relatif
+#    part de la racine, cwd de cargo), sinon le `target/` du crate. L'app est
+#    arm64 seulement : un binaire d'une autre architecture est refusé.
+if ! cargo build --release --locked --manifest-path mem0-stack/mem0-rs/Cargo.toml; then
+  echo "✗ compilation de mem0-rs échouée (cargo build --release)" >&2
+  exit 1
+fi
+MEM0_RS_TARGET="${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
+case "$MEM0_RS_TARGET" in
+  /*) ;;
+  *) MEM0_RS_TARGET="$ROOT/$MEM0_RS_TARGET" ;;
+esac
+MEM0_RS_BIN="$MEM0_RS_TARGET/release/mem0-rs"
+if [ ! -x "$MEM0_RS_BIN" ]; then
+  echo "✗ binaire mem0-rs introuvable après compilation : $MEM0_RS_BIN" >&2
+  exit 1
+fi
+mem0_rs_archs="$(lipo -archs "$MEM0_RS_BIN" 2>&1)"
+case " $mem0_rs_archs " in
+  *" arm64 "*) ;;
+  *)
+    echo "✗ mem0-rs n'est pas arm64 (lipo : $mem0_rs_archs)" >&2
+    exit 1
+    ;;
+esac
+
 # 3) assemblage du bundle aux emplacements imposés (D5). Le bundle précédent est
 #    retiré d'abord : le script est idempotent, sans résidu d'une exécution passée.
 rm -rf "$BUNDLE"
@@ -156,33 +193,26 @@ if [ ! -f "$ICON" ]; then
 fi
 cp "$ICON" "$BUNDLE/Contents/Resources/AppIcon.icns"
 
-# 3 ter) le contexte de build de la pile mémoire est EMBARQUÉ dans le bundle (S-1,
-#    BR-1) : l'app construit son image mem0-http depuis ces quatre fichiers, donc
-#    ils voyagent avec elle, ainsi que l'empreinte `STACK_FINGERPRINT` (S-7, BR-6)
-#    qui porte l'étiquette de l'image. La source unique reste
-#    `omp-console/stack/mem0-http/` ; un fichier manquant rendrait le bundle
-#    inutilisable, donc on échoue en le nommant.
-#    Package.swift ne porte AUCUNE ressource : la copie se fait ici, au bundle.
-STACK_SOURCE="$ROOT/omp-console/stack/mem0-http"
-STACK_DEST="$BUNDLE/Contents/Resources/Stack/mem0-http"
-mkdir -p "$STACK_DEST"
-for stack_file in Dockerfile http_server.py memory_config.py test_api.py STACK_FINGERPRINT; do
-  if [ ! -f "$STACK_SOURCE/$stack_file" ]; then
-    echo "✗ ressource de pile manquante : $STACK_SOURCE/$stack_file"
-    exit 1
-  fi
-  cp "$STACK_SOURCE/$stack_file" "$STACK_DEST/$stack_file"
-done
-echo "  ✓ contexte de pile embarqué ($STACK_DEST)"
+# 3 ter) le service mémoire : le binaire mem0-rs compilé en 2 bis, en
+#    `Contents/Resources/mem0-rs` (0755). Il est signé ad hoc LUI-MÊME avant le
+#    bundle : la signature du bundle scelle alors un code déjà signé, et
+#    `codesign --verify --strict` (étape 4) couvre les deux.
+if ! command -v codesign >/dev/null 2>&1; then
+  echo "✗ codesign introuvable"
+  exit 1
+fi
+cp "$MEM0_RS_BIN" "$BUNDLE/Contents/Resources/mem0-rs"
+chmod 0755 "$BUNDLE/Contents/Resources/mem0-rs"
+if ! codesign --force --sign - "$BUNDLE/Contents/Resources/mem0-rs" >/dev/null 2>&1; then
+  echo "✗ signature ad hoc de mem0-rs échouée (relance : codesign --force --sign - \"$BUNDLE/Contents/Resources/mem0-rs\")"
+  exit 1
+fi
+echo "  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"
 
 echo "  ✓ bundle assemblé ($BUNDLE)"
 
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
-if ! command -v codesign >/dev/null 2>&1; then
-  echo "✗ codesign introuvable"
-  exit 1
-fi
 if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then
   echo "✗ signature ad hoc échouée (relance : codesign --force --sign - \"$BUNDLE\")"
   exit 1

@@ -1,14 +1,17 @@
-// Le modèle de la préparation au premier lancement (S-5, BR-5) : il enchaîne les
-// quatre machines de l'app — composants (S-1), migration (S-3), pile mémoire (S-2),
-// sonde oMLX (S-6) — et publie UN état à la fois.
+// Le modèle de la préparation au premier lancement (omp-console-sans-podman S-5) :
+// il enchaîne les machines de l'app — composants (OMP), migration unique de
+// l'ancienne mémoire podman (`PodmanLegacy`), agent launchd mem0-rs
+// (`MemoryAgent`), sonde oMLX — et publie UN état à la fois.
 //
-// La chaîne est INJECTÉE (cloutes, comme `HomeModel.Resolver`) : les tests
+// La chaîne est INJECTÉE (clôtures, comme `HomeModel.Resolver`) : les tests
 // remplacent chaque étape sans réseau ni binaire, et la production câble les
 // objets réels dans `standard`. Le modèle vit à l'échelle de l'app : il survit à
 // la fermeture de la feuille, et `onReady` s'exécute même sans fenêtre ouverte.
 //
-// Chaque étape est idempotente (composants déjà installés, pile déjà montée) :
-// « Réessayer » relance la chaîne entière, sans nettoyage préalable.
+// Chaque étape est idempotente (composants déjà installés, migration déjà faite,
+// agent déjà à jour) : « Réessayer » relance la chaîne entière, sans nettoyage
+// préalable. Un import qui laisse des éléments de côté ARRÊTE la chaîne sur
+// `.awaitingSwitch` : l'agent ne démarre que sur « Basculer quand même ».
 //
 // L'absence d'OMP n'est PAS un état du modèle : la seule source est
 // `HomeModel.omp`, que le modèle relit par `refreshOmp` (posé par `OMPConsoleApp`)
@@ -23,26 +26,19 @@ import Foundation
 enum SetupStep: Equatable, Sendable {
     case omp(downloaded: Int64, total: Int64)
     case ompInstall
-    case podman(downloaded: Int64, total: Int64)
-    case podmanInstall
-    case legacyStop
-    case migrationCopy
-    case machine
-    case images
-    case containers
+    case migrationStart
+    case migrationImport
+    case migrationStop
+    case agent
     case health
-    /// Le rattrapage des souvenirs manquants (S-8), sur la ligne « Pile mémoire ».
-    case union
     case prerequisites
 }
 
 /// La cause d'un échec : l'une des machines, dans son vocabulaire à elle.
 enum SetupFailure: Equatable, Sendable {
     case components(ComponentInstallError)
-    case migration(StackMigrationError)
-    case stack(MemoryStackError)
-    /// L'ancienne pile n'a pas pu être arrêtée sur ordre de l'utilisateur (S-6).
-    case legacy(LegacyStackError)
+    case migration(PodmanMigrationError)
+    case agent(MemoryAgentError)
 }
 
 enum SetupState: Equatable, Sendable {
@@ -50,6 +46,10 @@ enum SetupState: Equatable, Sendable {
     case preparing(SetupStep)
     case ready
     case failed(SetupFailure)
+    /// L'import a laissé des éléments de côté : l'ancienne mémoire reste en
+    /// service tant que l'utilisateur n'a pas choisi (« Basculer quand même » ou
+    /// « Réessayer »).
+    case awaitingSwitch(ImportReport)
 }
 
 extension SetupStep {
@@ -57,45 +57,32 @@ extension SetupStep {
         switch step {
         case .omp(let downloaded, let total): self = .omp(downloaded: downloaded, total: total)
         case .ompInstall: self = .ompInstall
-        case .podman(let downloaded, let total): self = .podman(downloaded: downloaded, total: total)
-        case .podmanInstall: self = .podmanInstall
-        }
-    }
-
-    init(_ step: StackStep) {
-        switch step {
-        case .machine: self = .machine
-        case .images: self = .images
-        case .containers: self = .containers
-        case .health: self = .health
-        case .union: self = .union
         }
     }
 
     init(_ step: MigrationStep) {
         switch step {
-        case .copy: self = .migrationCopy
+        case .start: self = .migrationStart
+        case .importing: self = .migrationImport
+        case .stop: self = .migrationStop
         }
     }
-}
 
-/// Le contexte de build de la pile embarqué dans le bundle (S-1, S-5).
-enum StackBuildContext {
-    /// `<bundle>/Contents/Resources/Stack/mem0-http`, ou `nil` hors bundle (binaire
-    /// nu, tests) : c'est là que `scripts/swift-app.sh` copie les quatre fichiers
-    /// de `omp-console/stack/mem0-http/`.
-    static func resolve(bundle: Bundle = .main) -> URL? {
-        let url = bundle.bundleURL
-            .appendingPathComponent("Contents", isDirectory: true)
-            .appendingPathComponent("Resources", isDirectory: true)
-            .appendingPathComponent("Stack", isDirectory: true)
-            .appendingPathComponent("mem0-http", isDirectory: true)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    init(_ step: AgentStep) {
+        switch step {
+        case .agent: self = .agent
+        case .health: self = .health
+        }
     }
 }
 
 @MainActor
 final class SetupModel: ObservableObject {
+    typealias Install = @MainActor (_ progress: @escaping @MainActor (ComponentInstallStep) -> Void) async throws -> Void
+    typealias Migrate = @MainActor (_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> PodmanMigrationOutcome
+    typealias SwitchOver = @MainActor (_ report: ImportReport, _ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> Void
+    typealias EnsureAgent = @MainActor (_ progress: @escaping @MainActor (AgentStep) -> Void) async throws -> Void
+
     @Published private(set) var state: SetupState = .idle
     /// La feuille a été fermée par « Fermer » : l'Accueil montre le bandeau.
     @Published private(set) var dismissed = false
@@ -113,76 +100,73 @@ final class SetupModel: ObservableObject {
     /// `OMPConsoleApp` ; sans clôture, OMP est réputé présent.
     var refreshOmp: (@MainActor () -> Bool)?
 
-    private let install: @MainActor (_ progress: @escaping @MainActor (ComponentInstallStep) -> Void) async throws -> Void
-    private let migrate: @MainActor (_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> Void
-    private let ensureStack: @MainActor (_ progress: @escaping @MainActor (StackStep) -> Void) async throws -> Void
+    private let install: Install
+    private let migrate: Migrate
+    /// L'arrêt de l'ancienne mémoire APRÈS des rejets — seulement sur « Basculer
+    /// quand même ».
+    private let switchOver: SwitchOver
+    private let ensureAgent: EnsureAgent
     private let probeOMLX: @MainActor () async -> OMLXStatus
-    /// L'arrêt de l'ancienne pile — SEULEMENT sur action explicite (S-6).
-    private let takeover: @MainActor () async throws -> Void
     /// Une seule préparation à la fois : « Réessayer » pendant une préparation est
     /// sans effet (le bouton est désactivé, la garde est ici aussi).
     private var preparing = false
 
     init(
-        install: @escaping @MainActor (_ progress: @escaping @MainActor (ComponentInstallStep) -> Void) async throws -> Void,
-        migrate: @escaping @MainActor (_ progress: @escaping @MainActor (MigrationStep) -> Void) async throws -> Void,
-        ensureStack: @escaping @MainActor (_ progress: @escaping @MainActor (StackStep) -> Void) async throws -> Void,
+        install: @escaping Install,
+        migrate: @escaping Migrate,
+        switchOver: @escaping SwitchOver,
+        ensureAgent: @escaping EnsureAgent,
         probeOMLX: @escaping @MainActor () async -> OMLXStatus,
-        takeover: @escaping @MainActor () async throws -> Void = {},
         onReady: (@MainActor () -> Void)? = nil,
         autoPrepare: Bool = true
     ) {
         self.install = install
         self.migrate = migrate
-        self.ensureStack = ensureStack
+        self.switchOver = switchOver
+        self.ensureAgent = ensureAgent
         self.probeOMLX = probeOMLX
-        self.takeover = takeover
         self.onReady = onReady
         if autoPrepare {
             Task { [weak self] in await self?.prepare() }
         }
     }
 
-    /// La chaîne réelle : composants, migration, pile, sonde oMLX. `autoPrepare`
-    /// vaut `home.canLaunch` : sans OMP au lancement, rien ne se télécharge avant
-    /// « Installer ».
+    /// La chaîne réelle : OMP, migration unique, agent mem0-rs embarqué, sonde
+    /// oMLX. `autoPrepare` vaut `home.canLaunch` : sans OMP au lancement, rien ne
+    /// se télécharge avant « Installer ».
     static func standard(
         paths: AppPaths = .standard(),
-        manifest: ComponentManifest = .current,
-        buildContext: URL? = StackBuildContext.resolve(),
+        bundle: Bundle = .main,
         session: URLSession = .shared,
         autoPrepare: Bool
     ) -> SetupModel {
-        let installer = ComponentInstaller(paths: paths, manifest: manifest, session: session)
-        let migration = StackMigration(paths: paths)
-        let stack = MemoryStack(
+        let environment = ProcessInfo.processInfo.environment
+        let executable = MemoryAgent.embeddedBinary(bundle: bundle)
+        let installer = ComponentInstaller(paths: paths, session: session)
+        let legacy = PodmanLegacy(paths: paths, executable: executable, environment: environment)
+        let agent = MemoryAgent(
             paths: paths,
-            manifest: manifest,
-            buildContext: buildContext ?? URL(fileURLWithPath: "/nonexistent/omp-console-stack-context", isDirectory: true),
-            session: session
+            executable: executable,
+            port: MemoryAgent.port(environment: environment),
+            environment: environment
         )
         return SetupModel(
             install: { progress in try await installer.install(progress: progress) },
-            migrate: { progress in _ = try await migration.run(progress: progress) },
-            ensureStack: { progress in try await stack.ensureRunning(progress: progress) },
+            migrate: { progress in try await legacy.migrate(progress: progress) },
+            switchOver: { report, progress in
+                try await legacy.switchOver(forced: true, report: report, progress: progress)
+            },
+            ensureAgent: { progress in try await agent.ensureRunning(progress: progress) },
             probeOMLX: {
                 let config = StackEnvStore.load(at: paths.stackEnv) ?? .defaults
                 return await OMLXProbe.status(config: config, session: session)
-            },
-            takeover: {
-                // La SEULE autorité sur l'arrêt de l'ancienne pile (S-6) : le
-                // socket Docker, jamais un conteneur de l'app.
-                _ = try await LegacyStack.stop(
-                    environment: ProcessInfo.processInfo.environment,
-                    run: .live
-                )
             },
             autoPrepare: autoPrepare
         )
     }
 
-    /// La chaîne complète, de `.idle` à `.ready` (ou `.failed`). Sans effet si une
-    /// préparation tourne déjà.
+    /// La chaîne complète, de `.idle` à `.ready`, `.failed` ou `.awaitingSwitch`.
+    /// Sans effet si une préparation tourne déjà.
     func prepare() async {
         guard !preparing else { return }
         preparing = true
@@ -204,18 +188,48 @@ final class SetupModel: ObservableObject {
                 }
             }
             _ = refreshOmp?()
-            try await migrate { [weak self] step in self?.state = .preparing(SetupStep(step)) }
-            try await ensureStack { [weak self] step in self?.state = .preparing(SetupStep(step)) }
-            state = .preparing(.prerequisites)
-            omlx = await probeOMLX()
-            state = .ready
-            onReady?()
+            let outcome = try await migrate { [weak self] step in self?.state = .preparing(SetupStep(step)) }
+            if case .rejected(let report) = outcome {
+                // Rien n'est arrêté, l'agent ne démarre pas : l'utilisateur
+                // choisit, feuille visible.
+                state = .awaitingSwitch(report)
+                dismissed = false
+                return
+            }
+            try await startAgent()
         } catch {
             state = .failed(Self.failure(of: error))
         }
     }
 
-    /// « Fermer » : la feuille disparaît, la préparation CONTINUE.
+    /// « Basculer quand même » : seulement depuis `.awaitingSwitch` et hors
+    /// préparation. Arrête l'ancienne mémoire (bascule forcée, rejets comptés),
+    /// puis démarre l'agent comme `prepare` ; une erreur ⇒ `.failed`.
+    func switchAnyway() async {
+        guard !preparing, case .awaitingSwitch(let report) = state else { return }
+        preparing = true
+        defer { preparing = false }
+
+        state = .preparing(.migrationStop)
+        do {
+            try await switchOver(report) { [weak self] step in self?.state = .preparing(SetupStep(step)) }
+            try await startAgent()
+        } catch {
+            state = .failed(Self.failure(of: error))
+        }
+    }
+
+    /// La fin commune : agent, prérequis, `.ready`, `onReady`.
+    private func startAgent() async throws {
+        try await ensureAgent { [weak self] step in self?.state = .preparing(SetupStep(step)) }
+        state = .preparing(.prerequisites)
+        omlx = await probeOMLX()
+        state = .ready
+        onReady?()
+    }
+
+    /// « Fermer » : la feuille disparaît, la préparation CONTINUE (ou, devant des
+    /// rejets, l'ancienne mémoire reste en service).
     func dismiss() {
         dismissed = true
     }
@@ -229,7 +243,7 @@ final class SetupModel: ObservableObject {
         }
     }
 
-    /// « Installer » (feuille bloquante) : la chaîne complète, téléchargements
+    /// « Installer » (feuille bloquante) : la chaîne complète, téléchargement
     /// compris. Sans effet si une préparation tourne.
     func startInstall() {
         guard !preparing else { return }
@@ -239,8 +253,8 @@ final class SetupModel: ObservableObject {
     }
 
     /// « Réessayer » : relit la présence d'OMP sans rien télécharger. Absent, la
-    /// feuille reste bloquante et le dit ; présent, la chaîne repart (elle
-    /// installe ce qui manque encore, Podman compris). Sans effet si une
+    /// feuille reste bloquante et le dit ; présent, la chaîne repart — depuis un
+    /// échec comme depuis des rejets, l'import est relancé. Sans effet si une
     /// préparation tourne.
     func retry() {
         guard !preparing else { return }
@@ -255,12 +269,14 @@ final class SetupModel: ObservableObject {
     }
 
     /// Le clic du badge des composants : la feuille revient. Pendant une
-    /// préparation, elle montre celle en cours ; sinon OMP est relu — présent, la
-    /// chaîne repart pour installer ce qui manque ; absent, la feuille bloquante
+    /// préparation, ou devant des rejets en attente d'un choix, elle montre l'état
+    /// courant sans rien relancer ; sinon OMP est relu — présent, la chaîne
+    /// repart pour installer ce qui manque ; absent, la feuille bloquante
     /// s'impose par la politique.
     func reopen() {
         dismissed = false
         guard !preparing else { return }
+        if case .awaitingSwitch = state { return }
         if ompPresent() {
             Task { [weak self] in await self?.prepare() }
         } else if state == .ready {
@@ -272,46 +288,25 @@ final class SetupModel: ObservableObject {
         refreshOmp?() ?? true
     }
 
-    /// La reprise de l'ancienne pile (S-6), déclenchée par l'utilisateur
-    /// UNIQUEMENT (bouton de la feuille ou de la section Mémoire) : sans effet si
-    /// une préparation tourne déjà ; publie `.preparing(.legacyStop)` ; arrête les
-    /// conteneurs legacy par le socket Docker ; un arrêt raté ⇒
-    /// `.failed(.legacy(error))` SANS relance ; un arrêt réussi ⇒ relance
-    /// COMPLÈTE de la chaîne (même chemin que « Réessayer »).
-    func takeOverLegacyStack() async {
-        guard !preparing else { return }
-        state = .preparing(.legacyStop)
-        do {
-            try await takeover()
-        } catch {
-            state = .failed(Self.failure(of: error))
-            return
-        }
-        await prepare()
-    }
-
     private static func failure(of error: Error) -> SetupFailure {
         if let error = error as? ComponentInstallError { return .components(error) }
-        if let error = error as? StackMigrationError { return .migration(error) }
-        if let error = error as? LegacyStackError { return .legacy(error) }
-        if let error = error as? MemoryStackError { return .stack(error) }
+        if let error = error as? PodmanMigrationError { return .migration(error) }
+        if let error = error as? MemoryAgentError { return .agent(error) }
         // Une erreur inattendue (lancement d'un binaire, typage) est dite dans le
-        // vocabulaire de la pile : c'est elle qui tourne à ce moment-là.
-        return .stack(.podmanFailed(command: "préparation", detail: error.localizedDescription))
+        // vocabulaire du service mémoire, dernier maillon de la chaîne.
+        return .agent(.launchctlFailed(command: "préparation", detail: error.localizedDescription))
     }
 }
 
 /// Le cas d'un rappel de l'installateur, sans ses octets : deux rappels d'un même
 /// téléchargement ont le même cas.
 private enum ComponentInstallStage: Equatable {
-    case omp, ompInstall, podman, podmanInstall
+    case omp, ompInstall
 
     init(_ step: ComponentInstallStep) {
         switch step {
         case .omp: self = .omp
         case .ompInstall: self = .ompInstall
-        case .podman: self = .podman
-        case .podmanInstall: self = .podmanInstall
         }
     }
 }

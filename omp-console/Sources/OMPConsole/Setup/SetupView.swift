@@ -1,7 +1,8 @@
-// La feuille « Préparation d'OMP Console » (S-5, BR-5) : une ligne par étape —
-// Composants, Migration de la mémoire, Pile mémoire, Prérequis — chacune avec son
-// état (à venir / en cours / terminée / échouée), un bloc de progression pleine
-// largeur pendant la préparation, et le pied des gestes.
+// La feuille « Préparation d'OMP Console » (S-5, BR-5 ; omp-console-sans-podman
+// S-5) : une ligne par étape — Composants, Migration de la mémoire, Service
+// mémoire, Prérequis — chacune avec son état (à venir / en cours / terminée /
+// échouée / en attente d'un choix), un bloc de progression pleine largeur pendant
+// la préparation, et le pied des gestes.
 //
 // La présentation est une fonction PURE de `SetupState` et du mode
 // (`SetupPresentation`) : les tests la lisent sans rendre une vue, et la vue ne
@@ -12,10 +13,9 @@
 //   (proéminent, ↩) à droite ; aucun « Fermer », rien ne consomme ⎋, et la
 //   racine pose `.interactiveDismissDisabled`. ⌘Q passe par « Quitter » (Doc-3).
 // - FERMABLE (OMP présent) : « Fermer » (⎋) proéminent, ou « Réessayer »
-//   proéminent puis « Fermer » sur l'échec ; fermer n'interrompt rien. Sur un
-//   conflit de port tenu par l'ancienne pile (S-6, BR-9), « Arrêter l'ancienne
-//   pile et reprendre » passe devant et porte ↩ ; pendant l'action qu'il a
-//   déclenchée, lui et « Réessayer » restent affichés mais éteints.
+//   proéminent (↩) puis « Fermer » sur l'échec ; fermer n'interrompt rien. Quand
+//   l'import a laissé des éléments de côté, « Basculer quand même » (sans
+//   raccourci) précède « Réessayer » (↩) et « Fermer » (⎋).
 
 import ConsoleCore
 import SwiftUI
@@ -23,14 +23,14 @@ import SwiftUI
 /// Une ligne de la feuille.
 struct SetupRow: Equatable, Identifiable {
     enum Kind: String, CaseIterable {
-        case components, migration, stack, prerequisites
+        case components, migration, service, prerequisites
 
         /// L'ordre des lignes, pour « avant / en cours / après ».
         var index: Int {
             switch self {
             case .components: 0
             case .migration: 1
-            case .stack: 2
+            case .service: 2
             case .prerequisites: 3
             }
         }
@@ -41,16 +41,21 @@ struct SetupRow: Equatable, Identifiable {
         case running
         case done
         case failed
+        /// L'import a laissé des éléments de côté : la ligne attend un choix.
+        case awaiting
     }
 
     let kind: Kind
     let status: Status
-    /// Le mot oMLX d'une ligne terminée, ou la phrase claire de l'échec. La
-    /// ligne en cours n'en a pas : son détail vit dans le bloc de progression.
+    /// Le mot oMLX d'une ligne terminée, la phrase claire de l'échec, ou le
+    /// résumé des rejets. La ligne en cours n'en a pas : son détail vit dans le
+    /// bloc de progression.
     let detail: String?
-    /// Le détail technique de l'échec, replié derrière « Afficher le détail » ;
-    /// seulement sur la ligne `.failed`.
+    /// Le détail technique de l'échec, ou la liste des rejets, replié derrière
+    /// « Afficher le détail » ; seulement sur une ligne `.failed` ou `.awaiting`.
     let technicalDetail: String?
+    /// L'explication des choix, sous le résumé d'une ligne `.awaiting`.
+    var note: String? = nil
 
     var id: String { kind.rawValue }
 }
@@ -59,9 +64,9 @@ extension SetupStep {
     /// La ligne qui porte l'étape.
     var row: SetupRow.Kind {
         switch self {
-        case .omp, .ompInstall, .podman, .podmanInstall: .components
-        case .legacyStop, .migrationCopy: .migration
-        case .machine, .images, .containers, .health, .union: .stack
+        case .omp, .ompInstall: .components
+        case .migrationStart, .migrationImport, .migrationStop: .migration
+        case .agent, .health: .service
         case .prerequisites: .prerequisites
         }
     }
@@ -69,7 +74,7 @@ extension SetupStep {
     /// La progression déterminée d'un téléchargement (0…1), `nil` sinon.
     var fraction: Double? {
         switch self {
-        case .omp(let downloaded, let total), .podman(let downloaded, let total):
+        case .omp(let downloaded, let total):
             guard total > 0 else { return nil }
             return min(max(Double(downloaded) / Double(total), 0), 1)
         default:
@@ -84,17 +89,14 @@ extension SetupFailure {
         switch self {
         case .components: .components
         case .migration: .migration
-        case .stack: .stack
-        // L'arrêt refusé de l'ancienne pile appartient à la ligne « Migration de
-        // la mémoire », dont il est le geste explicite (S-6).
-        case .legacy: .migration
+        case .agent: .service
         }
     }
 }
 
 /// Un geste du pied de la feuille.
 enum SetupAction: String, CaseIterable {
-    case install, retry, quit, close, takeover
+    case install, retry, quit, close, switchAnyway
 }
 
 /// Le pied de la feuille : les gestes à gauche et à droite, le proéminent (↩)
@@ -114,7 +116,7 @@ struct SetupProgress: Equatable {
 }
 
 enum SetupPresentation {
-    static let kinds: [SetupRow.Kind] = [.components, .migration, .stack, .prerequisites]
+    static let kinds: [SetupRow.Kind] = [.components, .migration, .service, .prerequisites]
 
     /// Les quatre lignes dans leur ordre, avec l'état déduit de l'état global. En
     /// mode bloquant, `.ready` (OMP toujours absent) se présente comme `.idle`.
@@ -146,6 +148,22 @@ enum SetupPresentation {
                 }
                 return row(kind, .upcoming)
             }
+        case .awaitingSwitch(let report):
+            let current = SetupRow.Kind.migration
+            return kinds.map { kind in
+                if kind.index < current.index { return row(kind, .done) }
+                if kind == current {
+                    let lines = SetupText.rejectedDetail(report)
+                    return SetupRow(
+                        kind: kind,
+                        status: .awaiting,
+                        detail: SetupText.rejectedSummary(report),
+                        technicalDetail: lines.isEmpty ? nil : lines,
+                        note: SetupText.rejectedChoice
+                    )
+                }
+                return row(kind, .upcoming)
+            }
         }
     }
 
@@ -155,40 +173,28 @@ enum SetupPresentation {
         return SetupProgress(label: SetupText.stepDetail(step), fraction: step.fraction)
     }
 
-    /// La reprise de l'ancienne pile (S-6, BR-9) : proposée SEULEMENT sur un
-    /// conflit dont le propriétaire EST l'ancienne pile (`legacyContainer != nil`),
-    /// et maintenue — désactivée — pendant l'action qu'elle a déclenchée.
-    static func showsTakeover(_ state: SetupState) -> Bool {
+    /// Le diagnostic copiable : le brut de l'échec, ou le rapport de l'import
+    /// tel quel devant des rejets ; `nil` dans les autres états.
+    static func diagnostic(state: SetupState) -> String? {
         switch state {
-        case let .failed(.stack(.portConflict(_, owner))):
-            return owner.legacyContainer != nil
-        case .preparing(.legacyStop):
-            return true
-        default:
-            return false
+        case .failed(let failure): SetupText.failureDiagnostic(failure)
+        case .awaitingSwitch(let report): report.raw
+        case .idle, .preparing, .ready: nil
         }
     }
 
-    /// Le pied de la feuille (S-1/S-2, table du lot BR-2).
+    /// Le pied de la feuille (S-1/S-2, table du lot BR-2 ; rejets : S-5
+    /// d'omp-console-sans-podman).
     static func footer(state: SetupState, blocking: Bool) -> SetupFooter {
         switch (blocking, state) {
         case (true, .preparing):
             return SetupFooter(leading: [.quit], trailing: [.retry, .install], prominent: nil, disabled: [.retry, .install])
         case (true, _):
             return SetupFooter(leading: [.quit], trailing: [.retry, .install], prominent: .install, disabled: [])
-        case (false, _) where showsTakeover(state):
-            // La reprise de l'ancienne pile porte ↩ ; « Réessayer » reste visible
-            // sans raccourci. Pendant l'arrêt, les deux sont éteints et « Fermer »
-            // (⎋) reste la seule issue (BR-9).
-            let acting = state == .preparing(.legacyStop)
-            return SetupFooter(
-                leading: [],
-                trailing: [.takeover, .retry, .close],
-                prominent: .takeover,
-                disabled: acting ? [.takeover, .retry] : []
-            )
         case (false, .failed):
             return SetupFooter(leading: [], trailing: [.retry, .close], prominent: .retry, disabled: [])
+        case (false, .awaitingSwitch):
+            return SetupFooter(leading: [], trailing: [.switchAnyway, .retry, .close], prominent: .retry, disabled: [])
         case (false, _):
             return SetupFooter(leading: [], trailing: [.close], prominent: .close, disabled: [])
         }
@@ -206,7 +212,7 @@ enum SetupPresentation {
         switch kind {
         case .components: SetupText.componentsRow
         case .migration: SetupText.migrationRow
-        case .stack: SetupText.stackRow
+        case .service: SetupText.serviceRow
         case .prerequisites: SetupText.prerequisitesRow
         }
     }
@@ -218,7 +224,7 @@ enum SetupPresentation {
         case .retry: SetupText.retry
         case .quit: SetupText.quit
         case .close: SetupText.close
-        case .takeover: SetupText.takeover
+        case .switchAnyway: SetupText.switchAnyway
         }
     }
 
@@ -292,7 +298,7 @@ struct SetupView: View {
             // même bouton, le premier gagne et le second reste muet). « Fermer »
             // garde donc ⎋, et ce jumeau invisible — hors arbre d'accessibilité,
             // sans identifiant — porte ↩. Les autres proéminents (« Installer »,
-            // « Réessayer », la reprise) portent ↩ eux-mêmes. `.background` : aucun effet sur
+            // « Réessayer ») portent ↩ eux-mêmes. `.background` : aucun effet sur
             // la mise en page.
             .background {
                 if footer.prominent == .close {
@@ -303,19 +309,16 @@ struct SetupView: View {
                         .accessibilityHidden(true)
                 }
             }
-            // Le brut de l'échec (commande, stderr, propriétaire du port) ne
-            // s'affiche pas : il se copie (S-5). Le bouton a sa propre ligne,
-            // sous les gestes et aligné sur eux : à 520 pt, « Arrêter l'ancienne
-            // pile et reprendre » + « Réessayer » + « Fermer » occupent déjà la
-            // rangée (MESURÉ : un 4e bouton y tronque deux libellés). Il vient
+            // Le brut de l'échec (commande, détail, propriétaire du port) ou le
+            // rapport de l'import ne s'affiche pas : il se copie (S-5). Le bouton
+            // a sa propre ligne, sous les gestes et aligné sur eux : à 520 pt,
+            // « Basculer quand même » + « Réessayer » + « Fermer » occupent déjà
+            // la rangée (MESURÉ : un 4e bouton y tronque deux libellés). Il vient
             // après les gestes dans l'ordre de tabulation et ne porte jamais ↩.
-            if case let .failed(failure) = setup.state {
+            if let diagnostic = SetupPresentation.diagnostic(state: setup.state) {
                 HStack {
                     Spacer()
-                    DiagnosticCopyButton(
-                        diagnostic: SetupText.failureDiagnostic(failure),
-                        identifier: "sheet.setup.diagnostic"
-                    )
+                    DiagnosticCopyButton(diagnostic: diagnostic, identifier: "sheet.setup.diagnostic")
                 }
             }
         }
@@ -335,14 +338,17 @@ struct SetupView: View {
 
     /// Le raccourci d'un geste : ⎋ pour « Fermer » (qui n'existe qu'en mode
     /// fermable), ⌘Q pour « Quitter », ↩ pour le proéminent actif — sauf
-    /// « Fermer », dont le jumeau invisible porte ↩. Aucun ⎋ en mode bloquant.
+    /// « Fermer », dont le jumeau invisible porte ↩. Aucun ⎋ en mode bloquant ;
+    /// « Basculer quand même » n'a jamais de raccourci.
     private func shortcut(_ action: SetupAction, _ footer: SetupFooter) -> KeyboardShortcut? {
         switch action {
         case .close:
             return .cancelAction
         case .quit:
             return KeyboardShortcut("q", modifiers: .command)
-        case .install, .retry, .takeover:
+        case .switchAnyway:
+            return nil
+        case .install, .retry:
             guard action == footer.prominent, !footer.disabled.contains(action) else { return nil }
             return .defaultAction
         }
@@ -354,7 +360,7 @@ struct SetupView: View {
         case .retry: setup.retry()
         case .quit: quit()
         case .close: setup.dismiss()
-        case .takeover: Task { await setup.takeOverLegacyStack() }
+        case .switchAnyway: Task { await setup.switchAnyway() }
         }
     }
 }
@@ -393,8 +399,9 @@ private struct SetupProgressView: View {
 }
 
 /// Une ligne : symbole d'état + titre + détail. Le symbole ET le texte portent le
-/// sens (jamais la couleur seule). La ligne en échec porte la phrase claire, et
-/// son détail technique se replie derrière « Afficher le détail ».
+/// sens (jamais la couleur seule). La ligne en échec porte la phrase claire, la
+/// ligne en attente d'un choix le résumé des rejets et l'explication des choix ;
+/// leur détail technique se replie derrière « Afficher le détail ».
 private struct SetupRowView: View {
     let row: SetupRow
     /// Le détail technique déplié ; replié à chaque nouvel échec.
@@ -408,7 +415,7 @@ private struct SetupRowView: View {
                 Text(SetupPresentation.title(row.kind))
                     .font(.body.weight(.medium))
                 if let detail = row.detail {
-                    if row.status == .failed {
+                    if row.status == .failed || row.status == .awaiting {
                         failure(detail)
                     } else {
                         Text(detail)
@@ -432,7 +439,14 @@ private struct SetupRowView: View {
                 .font(.callout)
                 .fixedSize(horizontal: false, vertical: true)
                 .consoleBanner(tint: .orange)
-                .accessibilityIdentifier("sheet.setup.failure")
+                .accessibilityIdentifier(row.status == .awaiting ? "sheet.setup.rejected" : "sheet.setup.failure")
+            if let note = row.note {
+                Text(note)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("sheet.setup.rejected.choice")
+            }
             if let technical = row.technicalDetail {
                 Button(expanded ? SetupText.hideDetail : SetupText.showDetail) { expanded.toggle() }
                     .buttonStyle(.link)
@@ -469,6 +483,9 @@ private struct SetupRowView: View {
                 .foregroundStyle(.green)
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        case .awaiting:
+            Image(systemName: "questionmark.circle.fill")
                 .foregroundStyle(.orange)
         }
     }

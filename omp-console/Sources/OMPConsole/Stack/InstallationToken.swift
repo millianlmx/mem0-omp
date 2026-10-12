@@ -36,8 +36,8 @@ enum InstallationTokenStore {
 
     /// Le jeton du fichier, ou un jeton neuf écrit en 0600. Le fichier est créé
     /// (dossier compris) au besoin ; un échec d'écriture est remonté — la
-    /// préparation le traduit en `MemoryStackError.installationFailed` et
-    /// n'émet AUCUNE commande de conteneur.
+    /// préparation le traduit en `MemoryAgentError.installationFailed` et
+    /// n'écrit AUCUN plist d'agent.
     static func loadOrCreate(at url: URL, fileManager: FileManager = .default) throws -> String {
         if let existing = load(at: url) { return existing }
         let token = generate()

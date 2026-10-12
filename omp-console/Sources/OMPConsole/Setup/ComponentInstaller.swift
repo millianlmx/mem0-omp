@@ -1,12 +1,12 @@
-// L'installation des composants embarqués (S-1, BR-1) : omp et podman sont
-// téléchargés depuis les URL épinglées du manifeste, leur empreinte SHA-256 est
-// vérifiée EN FLUX (jamais 208 Mo en mémoire), puis ils sont déplacés sous la
-// racine privée de l'app.
+// L'installation du composant embarqué omp (S-1, BR-1) : il est téléchargé
+// depuis l'URL épinglée du manifeste, son empreinte SHA-256 est vérifiée EN FLUX
+// (jamais 208 Mo en mémoire), puis il est déplacé sous la racine privée de l'app.
+// L'app n'installe plus podman : la mémoire est servie par l'agent launchd
+// mem0-rs embarqué.
 //
 // Ce que ce fichier ne fait JAMAIS (S-1, AC-3) : consulter `PATH`, `~/.bun/bin`,
-// `/opt/homebrew/bin` ou `/usr/local/bin` pour trouver un omp/podman système. La
-// seule incursion hors de la racine est `/usr/bin/pkgutil`, outil d'extraction du
-// pkg (jamais un binaire omp/podman).
+// `/opt/homebrew/bin` ou `/usr/local/bin` pour trouver un omp système, ni
+// toucher `components/podman` (la migration unique `PodmanLegacy` s'en sert).
 //
 // Le seul réglage de plateforme — la détection arm64 — est isolé dans
 // `isSupportedArchitecture` : la signature d'`init` est figée par le contrat, donc
@@ -21,8 +21,6 @@ import Foundation
 enum ComponentInstallStep: Equatable, Sendable {
     case omp(downloaded: Int64, total: Int64)
     case ompInstall
-    case podman(downloaded: Int64, total: Int64)
-    case podmanInstall
 }
 
 /// Les échecs typés de l'installation (S-1). Les textes destinés à l'utilisateur
@@ -34,20 +32,13 @@ enum ComponentInstallError: Error, Equatable, Sendable {
     case install(component: String, detail: String)
 }
 
-/// L'installation idempotente des composants omp et podman (S-1, BR-1).
+/// L'installation idempotente du composant omp (S-1, BR-1).
 @MainActor
 final class ComponentInstaller {
     /// Les noms de composant portés par les erreurs (figés par le contrat).
     /// `nonisolated` : `ComponentID.name` (le badge) les lit hors du fil
     /// principal, et une constante est de toute façon immuable.
     nonisolated static let ompComponent = "OMP"
-    nonisolated static let podmanComponent = "Podman"
-
-    /// `pkgutil` est l'outil système d'extraction du pkg podman ; il n'est jamais
-    /// un binaire omp/podman, donc il échappe légitimement à l'interdiction des
-    /// chemins système de S-1. Sur macOS il vit sous `/usr/sbin` (mesuré : pas de
-    /// `/usr/bin/pkgutil`), pas dans le `PATH`.
-    static let pkgutil = URL(fileURLWithPath: "/usr/sbin/pkgutil")
 
     /// La sortie brute des vérifications est bornée à 300 caractères (S-1).
     static let detailLimit = 300
@@ -82,8 +73,6 @@ final class ComponentInstaller {
         switch component {
         case .omp:
             paths.ompDir(manifest.ompVersion).appendingPathComponent("omp")
-        case .podman:
-            paths.podmanDir(manifest.podmanVersion).appendingPathComponent("bin/podman")
         }
     }
 
@@ -110,26 +99,18 @@ final class ComponentInstaller {
         isInstalled(.omp) ? binaryLocation(.omp) : nil
     }
 
-    /// Le binaire podman du manifeste (`bin/podman`), même invariant.
-    func installedPodmanBinary() -> URL? {
-        isInstalled(.podman) ? binaryLocation(.podman) : nil
-    }
-
     // MARK: - Installation
 
-    /// Garantit la présence des deux composants à la version du manifeste.
+    /// Garantit la présence d'omp à la version du manifeste.
     ///
-    /// Idempotent : un composant déjà installé n'est ni retéléchargé ni revérifié.
-    /// Après une installation complète, les autres versions sous `components/omp/`
-    /// et `components/podman/` sont supprimées ; `stackRoot` n'est jamais touché.
+    /// Idempotent : un omp déjà installé n'est ni retéléchargé ni revérifié.
+    /// Ensuite, les autres versions sous `components/omp/` sont supprimées ;
+    /// `components/podman` et `stackRoot` ne sont jamais touchés.
     func install(progress: @escaping @MainActor (ComponentInstallStep) -> Void) async throws {
         guard isSupportedArchitecture else { throw ComponentInstallError.unsupportedMac }
 
         if installedOmpBinary() == nil {
             try await installOmp(progress: progress)
-        }
-        if installedPodmanBinary() == nil {
-            try await installPodman(progress: progress)
         }
         try purgeOtherVersions()
     }
@@ -164,72 +145,6 @@ final class ComponentInstaller {
         )
     }
 
-    // MARK: - podman
-
-    private func installPodman(progress: @escaping @MainActor (ComponentInstallStep) -> Void) async throws {
-        let remote = manifest.podmanInstaller
-        let component = ComponentInstaller.podmanComponent
-
-        progress(.podman(downloaded: 0, total: remote.bytes))
-        let staged = try await download(remote, component: component) { written, total in
-            progress(.podman(downloaded: written, total: total))
-        }
-        defer { try? FileManager.default.removeItem(at: staged.deletingLastPathComponent()) }
-        progress(.podman(downloaded: remote.bytes, total: remote.bytes))
-
-        try verifyChecksum(staged, remote: remote, component: component)
-        progress(.podmanInstall)
-
-        let payload = try await expandPodman(staged)
-        defer { try? FileManager.default.removeItem(at: payload.deletingLastPathComponent()) }
-        try placePodmanPayload(payload)
-
-        let binary = try requireBinary(installedPodmanBinary(), component: component)
-        try await verifyVersion(
-            binary,
-            arguments: ["--version"],
-            expecting: "podman version \(manifest.podmanVersion)",
-            component: component
-        )
-    }
-
-    /// `pkgutil --expand-full` puis recherche BORNÉE de la charge utile (S-1).
-    private func expandPodman(_ pkg: URL) async throws -> URL {
-        let component = ComponentInstaller.podmanComponent
-        // `pkgutil --expand-full` CRÉE le dossier de destination : il doit ne pas
-        // exister (sinon « Could not unarchive … File exists »). On ne le crée donc
-        // pas, contrairement au dossier de téléchargement.
-        let extractDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("omp-console-podman-expand-\(UUID().uuidString)", isDirectory: true)
-        let result: ProcessRun
-        do {
-            result = try await run(
-                ComponentInstaller.pkgutil,
-                ["--expand-full", pkg.path, extractDir.path],
-                ProcessInfo.processInfo.environment,
-                600
-            )
-        } catch {
-            // `pkgutil` absent (lancement impossible) : c'est un échec d'installation.
-            throw ComponentInstallError.install(component: component, detail: bounded("\(error)"))
-        }
-        guard result.code == 0 else {
-            try? FileManager.default.removeItem(at: extractDir)
-            throw ComponentInstallError.install(
-                component: component,
-                detail: bounded(result.stdout + result.stderr)
-            )
-        }
-        guard let payload = findPodmanPayload(root: extractDir) else {
-            try? FileManager.default.removeItem(at: extractDir)
-            throw ComponentInstallError.install(
-                component: component,
-                detail: "charge utile podman introuvable sous \(extractDir.path)"
-            )
-        }
-        return payload
-    }
-
     // MARK: - Placement atomique
 
     /// Place un fichier à sa destination finale (création des dossiers, chmod 0755).
@@ -244,74 +159,6 @@ final class ComponentInstaller {
         } catch {
             throw ComponentInstallError.install(component: component, detail: bounded("\(error)"))
         }
-    }
-
-    /// Monte `bin`, `lib`, `share` dans un dossier temporaire FRÈRE de la
-    /// destination, puis renomme le dossier — l'installation n'est jamais visible
-    /// à moitié faite.
-    private func placePodmanPayload(_ payload: URL) throws {
-        let component = ComponentInstaller.podmanComponent
-        let fileManager = FileManager.default
-        let destination = paths.podmanDir(manifest.podmanVersion)
-        let parent = destination.deletingLastPathComponent()
-        let staging = parent.appendingPathComponent(".podman-\(UUID().uuidString)", isDirectory: true)
-        do {
-            try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
-            for item in ["bin", "lib", "share"] {
-                let source = payload.appendingPathComponent(item)
-                guard fileManager.fileExists(atPath: source.path) else { continue }
-                try fileManager.moveItem(at: source, to: staging.appendingPathComponent(item))
-            }
-            if fileManager.fileExists(atPath: destination.path) {
-                try fileManager.removeItem(at: destination)
-            }
-            try fileManager.moveItem(at: staging, to: destination)
-            try? fileManager.setAttributes(
-                [.posixPermissions: 0o755],
-                ofItemAtPath: destination.appendingPathComponent("bin/podman").path
-            )
-        } catch {
-            try? fileManager.removeItem(at: staging)
-            throw ComponentInstallError.install(component: component, detail: bounded("\(error)"))
-        }
-    }
-
-    // MARK: - Recherche de la charge utile
-
-    /// `<extraction>/podman.pkg/Payload/podman` d'abord, puis un dossier nommé
-    /// `podman` contenant `bin/podman`, en profondeur bornée (S-1).
-    func findPodmanPayload(root: URL) -> URL? {
-        let direct = root.appendingPathComponent("podman.pkg/Payload/podman", isDirectory: true)
-        if isPodmanPayload(direct) { return direct }
-        return searchPodman(in: root, depth: 0, maxDepth: 5)
-    }
-
-    private func searchPodman(in directory: URL, depth: Int, maxDepth: Int) -> URL? {
-        guard depth <= maxDepth else { return nil }
-        let fileManager = FileManager.default
-        let entries = (try? fileManager.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: [.isDirectoryKey]
-        )) ?? []
-        for entry in entries where entry.lastPathComponent == "podman" {
-            if isPodmanPayload(entry) { return entry }
-        }
-        for entry in entries {
-            var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: entry.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue else { continue }
-            if let found = searchPodman(in: entry, depth: depth + 1, maxDepth: maxDepth) {
-                return found
-            }
-        }
-        return nil
-    }
-
-    private func isPodmanPayload(_ url: URL) -> Bool {
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
-              isDirectory.boolValue else { return false }
-        return FileManager.default.isExecutableFile(atPath: url.appendingPathComponent("bin/podman").path)
     }
 
     // MARK: - Vérifications
@@ -363,10 +210,10 @@ final class ComponentInstaller {
 
     // MARK: - Purge des autres versions
 
-    /// Supprime les versions autres que celle du manifeste, jamais `stackRoot`.
+    /// Supprime les versions d'omp autres que celle du manifeste ; jamais
+    /// `components/podman` (migration `PodmanLegacy`) ni `stackRoot`.
     private func purgeOtherVersions() throws {
         purge(versionRoot: paths.componentsRoot.appendingPathComponent("omp", isDirectory: true), keeping: manifest.ompVersion)
-        purge(versionRoot: paths.componentsRoot.appendingPathComponent("podman", isDirectory: true), keeping: manifest.podmanVersion)
     }
 
     private func purge(versionRoot: URL, keeping version: String) {

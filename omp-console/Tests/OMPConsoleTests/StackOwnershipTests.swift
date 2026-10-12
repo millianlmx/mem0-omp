@@ -1,9 +1,9 @@
 // La sonde de propriété des ports (S-2, BR-2 ; AC-1).
 //
-// Deux preuves distinctes, comme pour `DockerSocket` : la FORME exacte des argv
-// `lsof`/`ps` (une option perdue et la preuve ne serait plus celle de la
-// Documentation), et la CLASSIFICATION figée (ordre `.ours` > ancienne pile >
-// `.foreign`, premier enregistrement lsof, `.free`/`.unknown`).
+// Deux preuves distinctes : la FORME exacte des argv `lsof`/`ps` (une option
+// perdue et la preuve ne serait plus celle de la Documentation), et la
+// CLASSIFICATION figée (`.ours` ssi la ligne de commande est notre exécutable,
+// sinon `.foreign`, premier enregistrement lsof, `.free`/`.unknown`).
 //
 // Un seul test lance de VRAIS binaires : le listener POSIX réel, tenu par le
 // processus de test — il n'attache PAS le port 8321 (le poste de référence a sa
@@ -21,8 +21,8 @@ import Testing
 private enum OwnershipProbeError: Error { case unavailable }
 
 /// La doublure de `CommandRunner` pour la sonde : elle route par binaire ABSOLU
-/// (`/usr/sbin/lsof`, `/bin/ps`, `/usr/bin/curl`), journalise chaque appel et
-/// décide la réponse de chacun.
+/// (`/usr/sbin/lsof`, `/bin/ps`), journalise chaque appel et décide la réponse
+/// de chacun.
 ///
 /// `@unchecked Sendable` : tous les accès viennent du MainActor (les tests y
 /// vivent), il n'y a aucune course réelle.
@@ -42,10 +42,6 @@ final class OwnershipDouble: @unchecked Sendable {
     /// La réponse de `ps` ; `nil` ⇒ le lancement échoue.
     var psResult: ProcessRun? = ProcessRun(code: 0, stdout: "", stderr: "", timedOut: false)
 
-    /// Les réponses `curl`, indexées par URL. Une URL absente rend un socket muet
-    /// (code 7) : la sonde ne peut alors pas classer en ancienne pile.
-    var curlRoutes: [String: ProcessRun] = [:]
-
     var runner: CommandRunner {
         CommandRunner { [self] binary, arguments, environment, timeout in
             calls.append(Call(binary: binary.path, arguments: arguments, environment: environment, timeout: timeout))
@@ -57,8 +53,7 @@ final class OwnershipDouble: @unchecked Sendable {
                 guard let result = psResult else { throw OwnershipProbeError.unavailable }
                 return result
             default:
-                let url = arguments.last ?? ""
-                return curlRoutes[url] ?? ProcessRun(code: 7, stdout: "", stderr: "socket muet", timedOut: false)
+                return ProcessRun(code: 127, stdout: "", stderr: "binaire inattendu", timedOut: false)
             }
         }
     }
@@ -68,21 +63,8 @@ final class OwnershipDouble: @unchecked Sendable {
     }
 }
 
-/// La charge `GET /containers/json?all=true` MESURÉE le 2026-10-06 sur le poste
-/// (Documentation § Docker Engine API) : `mem0-http` en marche publie 8321.
-private let measuredContainersPayload = """
-[
-  {"Names":["/mem0-qdrant"],"State":"running","Status":"Up 21 minutes",
-   "Ports":[{"IP":"127.0.0.1","PrivatePort":6333,"PublicPort":6333,"Type":"tcp"},
-            {"IP":"127.0.0.1","PrivatePort":6334,"PublicPort":6334,"Type":"tcp"}]},
-  {"Names":["/mem0-http"],"State":"running","Status":"Up 21 minutes",
-   "Ports":[{"IP":"127.0.0.1","PrivatePort":8321,"PublicPort":8321,"Type":"tcp"}]}
-]
-"""
-
-private let containersURL = "http://localhost/containers/json?all=true"
-
-private let probePaths = AppPaths(supportRoot: URL(fileURLWithPath: "/nonexistent-support", isDirectory: true))
+/// Notre exécutable de test : jamais lancé, seul son chemin est comparé.
+private let ourExecutable = URL(fileURLWithPath: "/Applications/OMP Console.app/Contents/Resources/mem0-rs")
 
 /// Un enregistrement `lsof -F pcn` pour un processus donné.
 private func lsofRecord(pid: Int32, command: String, port: Int) -> String {
@@ -95,7 +77,7 @@ private func lsofRecord(pid: Int32, command: String, port: Int) -> String {
 func lsofCommandIsExact() async {
     let double = OwnershipDouble()
     double.lsofResult = ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false)
-    _ = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: [:], run: double.runner)
+    _ = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
 
     #expect(double.lsofArguments == ["-nP", "-iTCP:8321", "-sTCP:LISTEN", "-F", "pcn"])
     #expect(double.calls.first?.binary == "/usr/sbin/lsof")
@@ -107,7 +89,7 @@ func psCommandIsExact() async {
     let double = OwnershipDouble()
     double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 4711, command: "python3", port: 8321), stderr: "", timedOut: false)
     double.psResult = ProcessRun(code: 0, stdout: "python3 server.py\n", stderr: "", timedOut: false)
-    _ = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: [:], run: double.runner)
+    _ = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
 
     let psCall = double.calls.first { $0.binary == "/bin/ps" }
     #expect(psCall?.arguments == ["-p", "4711", "-o", "command="])
@@ -119,57 +101,29 @@ func psCommandIsExact() async {
 func noRecordIsFree() async {
     let double = OwnershipDouble()
     double.lsofResult = ProcessRun(code: 1, stdout: "", stderr: "", timedOut: false)
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: [:], run: double.runner)
+    let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
     #expect(ownership == .free)
 }
 
-@Test("bug-embedded-podman-machine/AC-1 : une ligne de commande sous `<supportRoot>/` ⇒ `.ours`")
-func commandUnderSupportRootIsOurs() async {
-    let paths = AppPaths(supportRoot: URL(fileURLWithPath: "/Users/x/App Support/com.omp.console", isDirectory: true))
+@Test("omp-console-sans-podman : une ligne de commande = chemin de notre exécutable suivi d'arguments ⇒ `.ours`")
+func commandOfOurExecutableIsOurs() async {
     let double = OwnershipDouble()
-    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "gvproxy", port: 8321), stderr: "", timedOut: false)
+    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "mem0-rs", port: 8321), stderr: "", timedOut: false)
     double.psResult = ProcessRun(
         code: 0,
-        stdout: "/Users/x/App Support/com.omp.console/components/podman/6.1.3/bin/gvproxy -mtu 1500 -ssh-port 56149\n",
+        stdout: "/Applications/OMP Console.app/Contents/Resources/mem0-rs serve --port 8321\n",
         stderr: "", timedOut: false
     )
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: paths, environment: [:], run: double.runner)
-    #expect(ownership == .ours(process: "gvproxy", pid: 11399))
+    let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
+    #expect(ownership == .ours(process: "mem0-rs", pid: 11399))
 }
 
-@Test("bug-embedded-podman-machine/AC-1 : `.ours` l'emporte sur l'ancienne pile (ordre figé)")
-func oursWinsOverLegacy() async {
-    let paths = AppPaths(supportRoot: URL(fileURLWithPath: "/Users/x/App Support/com.omp.console", isDirectory: true))
-    let double = OwnershipDouble()
-    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "gvproxy", port: 8321), stderr: "", timedOut: false)
-    double.psResult = ProcessRun(code: 0, stdout: "/Users/x/App Support/com.omp.console/components/podman/6.1.3/bin/gvproxy\n", stderr: "", timedOut: false)
-    double.curlRoutes[containersURL] = ProcessRun(code: 0, stdout: measuredContainersPayload, stderr: "", timedOut: false)
-
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: paths, environment: [:], run: double.runner)
-    #expect(ownership == .ours(process: "gvproxy", pid: 11399))
-    // La classification s'arrête AVANT l'API Docker : aucun appel curl.
-    #expect(double.calls.allSatisfy { $0.binary != "/usr/bin/curl" })
-}
-
-@Test("bug-embedded-podman-machine/AC-1 : un processus étranger sous un conteneur en marche `mem0-http` (8321) ⇒ `.legacyStack(container: \"mem0-http\")`")
-func runningLegacyContainerPublishingPortIsLegacy() async {
-    let double = OwnershipDouble()
-    double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 11399, command: "gvproxy", port: 8321), stderr: "", timedOut: false)
-    double.psResult = ProcessRun(code: 0, stdout: "/opt/podman/bin/gvproxy -mtu 1500\n", stderr: "", timedOut: false)
-    double.curlRoutes[containersURL] = ProcessRun(code: 0, stdout: measuredContainersPayload, stderr: "", timedOut: false)
-
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: ["HOME": "/Users/x"], run: double.runner)
-    #expect(ownership == .legacyStack(container: "mem0-http"))
-    #expect(ownership.legacyContainer == "mem0-http")
-}
-
-@Test("bug-embedded-podman-machine/AC-1 : une machine « running » au socket muet ne classe pas en ancienne pile ⇒ `.foreign`")
-func silentDockerSocketIsForeign() async {
+@Test("bug-embedded-podman-machine/AC-1 : une ligne de commande étrangère ⇒ `.foreign`")
+func foreignCommandIsForeign() async {
     let double = OwnershipDouble()
     double.lsofResult = ProcessRun(code: 0, stdout: lsofRecord(pid: 4711, command: "python3", port: 8321), stderr: "", timedOut: false)
     double.psResult = ProcessRun(code: 0, stdout: "python3 server.py\n", stderr: "", timedOut: false)
-    // Aucune route curl : les deux sockets sont muets (code 7).
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: ["HOME": "/Users/x"], run: double.runner)
+    let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: ["HOME": "/Users/x"], run: double.runner)
     #expect(ownership == .foreign(process: "python3", pid: 4711))
 }
 
@@ -182,7 +136,7 @@ func firstRecordWins() async {
         stderr: "", timedOut: false
     )
     double.psResult = ProcessRun(code: 0, stdout: "python3 server.py\n", stderr: "", timedOut: false)
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: [:], run: double.runner)
+    let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
     #expect(ownership == .foreign(process: "python3", pid: 111))
     // `ps` n'est appelé QUE pour le premier pid.
     #expect(double.calls.filter { $0.binary == "/bin/ps" }.map(\.arguments) == [["-p", "111", "-o", "command="]])
@@ -192,7 +146,7 @@ func firstRecordWins() async {
 func unavailableLsofIsUnknown() async {
     let double = OwnershipDouble()
     double.lsofResult = nil
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: [:], run: double.runner)
+    let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
     #expect(ownership == .unknown(detail: "lsof indisponible"))
 }
 
@@ -200,7 +154,7 @@ func unavailableLsofIsUnknown() async {
 func failingLsofIsUnknown() async {
     let double = OwnershipDouble()
     double.lsofResult = ProcessRun(code: 2, stdout: "", stderr: "lsof: WARNING impossible\n", timedOut: false)
-    let ownership = await StackOwnership.holder(ofPort: 8321, paths: probePaths, environment: [:], run: double.runner)
+    let ownership = await StackOwnership.holder(ofPort: 8321, ourExecutable: ourExecutable, environment: [:], run: double.runner)
     #expect(ownership == .unknown(detail: "lsof: WARNING impossible"))
 }
 
@@ -208,25 +162,21 @@ func failingLsofIsUnknown() async {
 
 @Test("bug-embedded-podman-machine/AC-1 : les textes figés de `MemoryPortOwnership`")
 func ownershipTextsAreFrozen() {
-    let cases: [(MemoryPortOwnership, String, String, String?)] = [
-        (.free, "personne", "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)", nil),
-        (.ours(process: "gvproxy", pid: 11399),
-         "la pile d'OMP Console",
-         "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)", nil),
-        (.legacyStack(container: "mem0-http"),
-         "l'ancienne pile mémoire (conteneur mem0-http)",
-         "podman stop mem0-qdrant mem0-http", "mem0-http"),
+    let cases: [(MemoryPortOwnership, String, String)] = [
+        (.free, "personne", "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
+        (.ours(process: "mem0-rs", pid: 11399),
+         "le service mémoire d'OMP Console",
+         "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
         (.foreign(process: "python3", pid: 4711),
          "un autre programme (python3, pid 4711)",
-         "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)", nil),
+         "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
         (.unknown(detail: "lsof indisponible"),
          "indéterminé (lsof indisponible)",
-         "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)", nil),
+         "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"),
     ]
-    for (ownership, description, gesture, legacy) in cases {
+    for (ownership, description, gesture) in cases {
         #expect(ownership.userDescription == description)
         #expect(ownership.gesture == gesture)
-        #expect(ownership.legacyContainer == legacy)
     }
 }
 
@@ -278,7 +228,7 @@ func realListenerIsForeign() async {
 
     let ownership = await StackOwnership.holder(
         ofPort: port,
-        paths: probePaths,
+        ourExecutable: ourExecutable,
         environment: ProcessInfo.processInfo.environment,
         run: .live
     )

@@ -188,7 +188,13 @@ cleanup() {
       say "# nettoyage : instance de recette $APP_PID arrêtée"
     fi
   fi
-  [ -n "$R" ] && rm -rf "$R"
+  if [ -n "$R" ]; then
+    # L'agent mémoire de l'instance Mac : décharger tout plist de sa racine jetable.
+    for plist in "$R"/support/LaunchAgents/*.plist; do
+      [ -e "$plist" ] && launchctl bootout "gui/$(id -u)" "$plist" >/dev/null 2>&1
+    done
+    rm -rf "$R"
+  fi
   for udid in ${CREATED[@]+"${CREATED[@]}"}; do
     xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
@@ -235,14 +241,12 @@ pinned() {
   [ -n "$found" ] && [ "$(printf '%s\n' "$found" | grep -c .)" -eq 1 ] || return 1
   printf '%s' "$found" | sed -E "s#$1#\\1#"
 }
-# Même comparaison que `PodmanCommand.sameImage` : schéma et registre local ignorés.
-normalize_image() { local t="$1" p; for p in docker:// docker.io/ localhost/; do t="${t#"$p"}"; done; printf '%s' "$t"; }
 # Garde du manifeste (scripts/mac-appairage-recette.sh) : l'instance de recette
-# prépare ses composants dans le support RÉEL (liens `components`, `stack`) ; si
-# les versions épinglées dans le binaire du bundle diffèrent de celles installées,
-# elle purgerait ou recréerait celles de l'utilisateur — rien n'est lancé.
+# prépare ses composants dans le support RÉEL (lien `components`) ; si la version
+# d'omp épinglée dans le binaire du bundle diffère de celle installée, elle
+# purgerait celle de l'utilisateur — rien n'est lancé.
 mac_prechecks() {
-  local console omp podman machine name version dir others real component
+  local console omp dir others
   console="$(ioreg -c IOConsoleUsers -l -w0 2>/dev/null)"
   case "$console" in
     *'"CGSSessionScreenIsLocked"=Yes'*) MAC_SKIP="session macOS verrouillée — l'arbre AX ne montre aucune fenêtre"; return 1 ;;
@@ -251,22 +255,10 @@ mac_prechecks() {
   [ -f "$BUNDLE/Contents/MacOS/OMPConsole" ] || { MAC_SKIP="binaire du bundle absent : $BUNDLE/Contents/MacOS/OMPConsole"; return 1; }
   omp="$(pinned 'oh-my-pi/releases/download/v([0-9][0-9A-Za-z.+-]*)/omp-darwin-arm64')" \
     || { MAC_SKIP="version d'omp illisible dans le binaire du bundle"; return 1; }
-  podman="$(pinned 'podman/releases/download/v([0-9][0-9A-Za-z.+-]*)/podman-installer-macos-arm64\.pkg')" \
-    || { MAC_SKIP="version de podman illisible dans le binaire du bundle"; return 1; }
-  machine="$(pinned '(docker://quay\.io/podman/machine-os:[0-9A-Za-z.+-]+)')" \
-    || { MAC_SKIP="image de machine illisible dans le binaire du bundle"; return 1; }
-  for component in "omp:$omp" "podman:$podman"; do
-    name="${component%%:*}"
-    version="${component#*:}"
-    dir="$REAL_SUPPORT/components/$name"
-    [ -d "$dir/$version" ] || { MAC_SKIP="$name $version (bundle) absent de $dir : l'instance l'installerait dans le support réel"; return 1; }
-    others="$(ls -A "$dir" | grep -vx -- "$version" | tr '\n' ' ')"
-    [ -z "$others" ] || { MAC_SKIP="$dir contient d'autres entrées que $version (${others% }) : la purge du bundle les supprimerait"; return 1; }
-  done
-  [ -f "$REAL_SUPPORT/stack/machine.json" ] || { MAC_SKIP="$REAL_SUPPORT/stack/machine.json absent : la préparation pourrait (re)créer la machine podman de l'utilisateur"; return 1; }
-  real="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("image") or "")' "$REAL_SUPPORT/stack/machine.json" 2>/dev/null)"
-  [ "$(normalize_image "$real")" = "$(normalize_image "$machine")" ] \
-    || { MAC_SKIP="image de machine « ${real:-illisible} » ≠ « $machine » (bundle) : la préparation recréerait la machine podman de l'utilisateur"; return 1; }
+  dir="$REAL_SUPPORT/components/omp"
+  [ -d "$dir/$omp" ] || { MAC_SKIP="omp $omp (bundle) absent de $dir : l'instance l'installerait dans le support réel"; return 1; }
+  others="$(ls -A "$dir" | grep -vx -- "$omp" | tr '\n' ' ')"
+  [ -z "$others" ] || { MAC_SKIP="$dir contient d'autres entrées que $omp (${others% }) : la purge du bundle les supprimerait"; return 1; }
   if lsof -nP -iTCP:"$MAC_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     MAC_SKIP="le port $MAC_PORT est déjà écouté — une autre recette tourne-t-elle ?"; return 1
   fi
@@ -275,7 +267,7 @@ mac_prechecks() {
   fi
   "$SONDE" confiance >/dev/null 2>&1 \
     || { MAC_SKIP="Accessibilité refusée au terminal qui lance la recette (Réglages Système › Confidentialité et sécurité › Accessibilité)"; return 1; }
-  say "# instance Mac : manifeste du bundle identique au support réel (omp $omp, podman $podman)"
+  say "# instance Mac : manifeste du bundle identique au support réel (omp $omp)"
   return 0
 }
 if [ "$MODE" = "apres" ] && [ -z "$SANS_MAC" ]; then
@@ -1260,19 +1252,17 @@ launch_mac() {
   R="$(mktemp -d -t ios-onboarding-mac)"
   mkdir -p "$R/support/remote" "$R/pipeline"
   chmod 700 "$R/support/remote"
-  # `config` est COPIÉ (la préparation le réécrit), `components data stack` liés.
-  if [ -d "$REAL_SUPPORT/config" ]; then
-    cp -Rp "$REAL_SUPPORT/config" "$R/support/config" || { MAC_SKIP="copie de la configuration podman impossible"; return 1; }
-  fi
-  for entry in components data stack; do
-    [ -e "$REAL_SUPPORT/$entry" ] && ln -s "$REAL_SUPPORT/$entry" "$R/support/$entry"
-  done
+  # Seul `components` est lié ; l'agent mémoire de l'instance écoute sur un port libre.
+  [ -e "$REAL_SUPPORT/components" ] && ln -s "$REAL_SUPPORT/components" "$R/support/components"
+  MEM0_PORT="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')" \
+    || { MAC_SKIP="aucun port libre pour le service mémoire de l'instance"; return 1; }
   pattern="$(printf '%s' "$BUNDLE/Contents/MacOS" | sed 's/[][\.*^$(){}?+|]/\\&/g')"
   before="$(pgrep -f "$pattern" || true)"
   open -g -n "$BUNDLE" \
     --env "OMP_CONSOLE_SUPPORT_ROOT=$R/support" \
     --env "MEM0_PIPELINE_STATE_DIR=$R/pipeline" \
     --env "OMP_CONSOLE_REMOTE_PORT=$MAC_PORT" \
+    --env "OMP_CONSOLE_MEM0_PORT=$MEM0_PORT" \
     --env "TZ=Europe/Paris" || { MAC_FAIL="open -g -n a échoué"; return 1; }
   sleep 8
   for pid in $(pgrep -f "$pattern" || true); do

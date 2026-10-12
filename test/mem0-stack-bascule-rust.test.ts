@@ -143,17 +143,12 @@ const REFERENCES_PYTHON = [
 ];
 
 /**
- * La copie embarquée d'omp-console, son outillage de build et les gardes qui la
- * lisent ; plus les gardes d'absence qui doivent nommer ce qu'elles interdisent
+ * omp-console (ses migration et nettoyage de l'ancienne pile podman), plus les
+ * gardes d'absence qui doivent nommer ce qu'elles interdisent
  * (ci-macos-jobs-paralleles/AC-8 retire le banc Python de f3fbfe6 par son nom).
  */
 const LISTE_BLANCHE = [
   "omp-console/",
-  "scripts/swift-app.sh",
-  "scripts/stack-fingerprint.ts",
-  "scripts/run-console.sh",
-  "test/stack.test.ts",
-  "test/criteria.test.ts",
   "test/ci-macos-jobs-paralleles.test.ts",
   "test/mem0-stack-bascule-rust.test.ts",
 ];

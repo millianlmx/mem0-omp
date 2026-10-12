@@ -277,6 +277,7 @@ const EXCEPTIONS: readonly Exception[] = [
   { file: "omp-console/Sources/ConsoleCore/Session/SessionParity.swift", literal: "Bonjour, corrige le fichier src/app.swift", reason: "message simulé de l’utilisateur à l’agent" },
   { file: "omp-console/Sources/ConsoleCore/Session/SessionParity.swift", literal: "Quel plan préfères-tu ?", reason: "question simulée de l’agent" },
   { file: "omp-console/ios/OMPConsoleIOS/IOSHomeRecipeText.swift", constant: "longContract", reason: "contrat simulé (3e personne qui a la forme de l’impératif)" },
+  { file: "omp-console/Sources/ConsoleCore/Setup/SetupText.swift", literal: "OMP Console installe OMP, reprend si besoin l’ancienne mémoire, puis démarre son service mémoire. Cette étape n’a lieu qu’une fois.", reason: "« OMP Console … puis démarre » : 3e personne qui a la forme de l’impératif (texte figé par omp-console-sans-podman S-5)" },
 ];
 
 /** Toutes les fautes de tutoiement des fichiers jugés et des exceptions ; triées, sans doublon. */

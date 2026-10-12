@@ -1,14 +1,15 @@
 // Le crochet de RECETTE `-setup.recipe <valeur>` (S-7) : il remplace l'installateur
 // de la feuille de préparation par un script, pour que la recette sur l'app réelle
 // observe la progression chiffrée, la progression indéterminée, l'échec à détail
-// long et la réussite — sans réseau, sans pile mémoire, sans machine podman.
+// long et la réussite — sans réseau, sans migration, sans service mémoire.
 //
 // Garde : le crochet n'agit QUE sous une racine jetable (`OMP_CONSOLE_SUPPORT_ROOT`
 // posée et non vide). Sans elle, ou avec une valeur inconnue, l'app prend la chaîne
 // réelle, sans message : le crochet ne touche JAMAIS la racine réelle de l'app.
 //
-// Seule l'étape Composants est scriptée ; migration et pile ne font rien, oMLX est
-// `.unknown`. Le reste du câblage (`refreshOmp`, `onReady`, service distant) est
+// Seule l'étape Composants (OMP) est scriptée ; la migration rend « déjà faite »,
+// l'agent ne démarre rien, oMLX est `.unknown`. Le reste du câblage
+// (`refreshOmp`, `onReady`, service distant) est
 // celui de la chaîne réelle, posé par `OMPConsoleApp`. Ce n'est pas une
 // fonctionnalité, comme `-home.welcomeSeen`.
 
@@ -45,8 +46,8 @@ enum SetupRecipe: String, CaseIterable {
     }
 
     /// Un modèle de préparation dont l'installateur suit la recette. La cible est
-    /// le premier composant manquant dans l'ordre `[.omp, .podman]`, relue à chaque
-    /// passage ; sans cible, l'installation rend la main tout de suite.
+    /// OMP s'il manque, relu à chaque passage ; sans cible, l'installation rend la
+    /// main tout de suite.
     @MainActor
     func model(
         paths: AppPaths = .standard(),
@@ -57,8 +58,9 @@ enum SetupRecipe: String, CaseIterable {
         let recipe = self
         return SetupModel(
             install: { progress in try await recipe.install(installer: installer, progress: progress) },
-            migrate: { _ in },
-            ensureStack: { _ in },
+            migrate: { _ in .alreadyDone },
+            switchOver: { _, _ in },
+            ensureAgent: { _ in },
             probeOMLX: { .unknown },
             autoPrepare: autoPrepare
         )
@@ -69,8 +71,7 @@ enum SetupRecipe: String, CaseIterable {
         installer: ComponentInstaller,
         progress: @escaping @MainActor (ComponentInstallStep) -> Void
     ) async throws {
-        let missing = ComponentID.allCases.filter { !installer.isInstalled($0) }
-        guard let target = missing.first else {
+        guard !installer.isInstalled(.omp) else {
             if self == .echec {
                 throw ComponentInstallError.install(component: ComponentID.omp.name, detail: Self.failureDetail)
             }
@@ -79,42 +80,26 @@ enum SetupRecipe: String, CaseIterable {
         switch self {
         case .progression:
             for k in 0...10 {
-                progress(Self.download(target, downloaded: Int64(k) * 12_000_000, total: 120_000_000))
+                progress(.omp(downloaded: Int64(k) * 12_000_000, total: 120_000_000))
                 try await Task.sleep(for: .seconds(1))
             }
-            progress(Self.installStep(target))
+            progress(.ompInstall)
             try await Task.sleep(for: .seconds(86_400))
         case .indeterminee:
             for k in 0..<10 {
-                progress(Self.download(target, downloaded: Int64(k) * 4_000_000, total: 0))
+                progress(.omp(downloaded: Int64(k) * 4_000_000, total: 0))
                 try await Task.sleep(for: .seconds(1))
             }
             try await Task.sleep(for: .seconds(86_400))
         case .echec:
-            throw ComponentInstallError.install(component: target.name, detail: Self.failureDetail)
+            throw ComponentInstallError.install(component: ComponentID.omp.name, detail: Self.failureDetail)
         case .succes:
             for k in 0...4 {
-                progress(Self.download(target, downloaded: Int64(k) * 30_000_000, total: 120_000_000))
+                progress(.omp(downloaded: Int64(k) * 30_000_000, total: 120_000_000))
                 try await Task.sleep(for: .milliseconds(500))
             }
-            progress(Self.installStep(target))
-            for component in missing {
-                try Self.placeStub(at: installer.binaryLocation(component))
-            }
-        }
-    }
-
-    private static func download(_ component: ComponentID, downloaded: Int64, total: Int64) -> ComponentInstallStep {
-        switch component {
-        case .omp: .omp(downloaded: downloaded, total: total)
-        case .podman: .podman(downloaded: downloaded, total: total)
-        }
-    }
-
-    private static func installStep(_ component: ComponentID) -> ComponentInstallStep {
-        switch component {
-        case .omp: .ompInstall
-        case .podman: .podmanInstall
+            progress(.ompInstall)
+            try Self.placeStub(at: installer.binaryLocation(.omp))
         }
     }
 

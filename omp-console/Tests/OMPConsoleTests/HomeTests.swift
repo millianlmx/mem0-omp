@@ -251,7 +251,7 @@ func setupImposesItsSheetFirst() {
         for welcomeSeen in [false, true] {
             // Règle 1 : préparation en cours (ou en échec), feuille non ignorée.
             #expect(MainSheetPolicy.sheet(
-                omp: available, setup: .preparing(.machine), setupDismissed: false, board: board,
+                omp: available, setup: .preparing(.agent), setupDismissed: false, board: board,
                 welcomeSeen: welcomeSeen, welcomeRequested: true, launchFormShown: true, answerCardID: "ask",
                 contract: nil
             ) == .setup)
@@ -271,7 +271,7 @@ func setupImposesItsSheetFirst() {
     ) == .setup)
     // Ignorée : les autres règles reprennent la main.
     #expect(MainSheetPolicy.sheet(
-        omp: available, setup: .preparing(.machine), setupDismissed: true, board: .storeEmpty(dir: "/s"),
+        omp: available, setup: .preparing(.agent), setupDismissed: true, board: .storeEmpty(dir: "/s"),
         welcomeSeen: true, welcomeRequested: false, launchFormShown: true, answerCardID: nil,
         contract: nil
     ) == .newFeature)
@@ -299,8 +299,8 @@ func missingOmpSheetIgnoresEveryOtherInput() {
     // AC-7 est le même cas vu du lancement : OMP supprimé pendant une session
     // précédente, le `HomeModel` neuf le lit absent et la politique rend `.setup`.
     let setups: [SetupState] = [
-        .idle, .preparing(.omp(downloaded: 0, total: 0)), .preparing(.machine), .ready,
-        .failed(.components(.unsupportedMac)),
+        .idle, .preparing(.omp(downloaded: 0, total: 0)), .preparing(.agent), .ready,
+        .failed(.components(.unsupportedMac)), .awaitingSwitch(ImportReport(rejects: [], totalRejected: 1)),
     ]
     let boards: [KanbanBoardState] = [
         .loading, .storeAbsent(dir: "/s"), .storeEmpty(dir: "/s"),
@@ -328,10 +328,10 @@ func missingOmpSheetIgnoresEveryOtherInput() {
             }
         }
     }
-    #expect(cases == 5 * 2 * 4 * 2 * 8)
+    #expect(cases == 6 * 2 * 4 * 2 * 8)
     // OMP présent, la feuille ignorée cède la place (elle est fermable).
     #expect(MainSheetPolicy.sheet(
-        omp: available, setup: .preparing(.podman(downloaded: 0, total: 20)), setupDismissed: true,
+        omp: available, setup: .preparing(.omp(downloaded: 0, total: 20)), setupDismissed: true,
         board: .storeEmpty(dir: "/s"), welcomeSeen: true, welcomeRequested: false,
         launchFormShown: false, answerCardID: nil, contract: nil
     ) == nil)

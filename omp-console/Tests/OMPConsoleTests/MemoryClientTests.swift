@@ -505,6 +505,35 @@ func ac4RealListenerRefusesThenAcceptsTheInstallationToken() async {
     #expect(!accepted.isForeign)
 }
 
+@Test("omp-console-sans-podman/AC-13 : la section Mémoire accepte le /health de mem0-rs portant le jeton d'installation et refuse un /health sans lui")
+func ac13Mem0RsHealthIsAcceptedOnlyWithTheInstallationToken() async {
+    // Le corps EXACT de mem0-rs 0.1.0 (DOC-4), sans puis avec `installation`.
+    guard let server = EphemeralHTTPServer(bodies: [
+        memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi"]),
+        memoryJSON(["ok": true, "mem0": "mem0-rs 0.1.0", "user": "moi", "installation": "jeton-agent"]),
+    ]) else {
+        Issue.record("impossible d'ouvrir un listener HTTP éphémère")
+        return
+    }
+    server.start()
+    defer { server.stop() }
+
+    let service = HTTPMemoryService(config: MemoryServiceConfig(
+        baseURL: URL(string: "http://127.0.0.1:\(server.port)")!,
+        token: "",
+        installationToken: "jeton-agent"
+    ))
+
+    let refused = await service.health()
+    #expect(!refused.isAvailable)
+    #expect(refused.isForeign)
+
+    let accepted = await service.health()
+    #expect(accepted.isAvailable)
+    #expect(!accepted.isForeign)
+    #expect(accepted.errorMessage == nil)
+}
+
 /// Un VRAI mini-serveur HTTP sur `127.0.0.1`, port éphémère attribué par le noyau
 /// (jamais 8321) : il rend les corps fournis DANS L'ORDRE, puis ferme chaque
 /// connexion. C'est la seule preuve qui traverse `URLSession` jusqu'à un socket

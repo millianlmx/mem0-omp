@@ -33,8 +33,7 @@ func unavailableDiagnosticKeepsAddressAndCode() {
     let foreign = ForeignOwnership(
         address: "http://127.0.0.1:8321",
         owner: "un autre programme (python3, pid 4711)",
-        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)",
-        isLegacy: false
+        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"
     )
     let owned = MemoryText.foreignOwnershipDetail(foreign)
     #expect(owned.contains("http://127.0.0.1:8321"))
@@ -231,34 +230,21 @@ func ac4ForeignOwnershipTextsAreFrozen() {
         MemoryText.foreignDescription
             == "Cette adresse répond, mais elle est tenue par un autre service : la mémoire du projet n’est pas celle d’OMP Console tant que sa pile n’occupe pas le port."
     )
-    #expect(MemoryText.takeover == "Arrêter l’ancienne pile et reprendre")
     #expect(MemoryText.foreignService == "Ce service n’est pas la pile d’OMP Console : son jeton d’installation est absent ou différent.")
 
     // Le détail : adresse, propriétaire et geste, une ligne chacun.
-    let legacy = ForeignOwnership(
-        address: "http://localhost:8321",
-        owner: "l'ancienne pile mémoire (conteneur mem0-http)",
-        gesture: "podman stop mem0-qdrant mem0-http",
-        isLegacy: true
-    )
-    #expect(
-        MemoryText.foreignOwnershipDetail(legacy)
-            == "http://localhost:8321\nTenu par l'ancienne pile mémoire (conteneur mem0-http).\nGeste : podman stop mem0-qdrant mem0-http"
-    )
-
     let foreign = ForeignOwnership(
         address: "http://127.0.0.1:8321",
         owner: "un autre programme (python3, pid 4711)",
-        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)",
-        isLegacy: false
+        gesture: "arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"
     )
-    #expect(MemoryText.foreignOwnershipDetail(foreign).contains("Tenu par un autre programme (python3, pid 4711)."))
-    // Aucun bouton de reprise n'est offert quand le propriétaire n'est pas l'ancienne pile.
-    #expect(!foreign.isLegacy)
-    #expect(legacy.isLegacy)
+    #expect(
+        MemoryText.foreignOwnershipDetail(foreign)
+            == "http://127.0.0.1:8321\nTenu par un autre programme (python3, pid 4711).\nGeste\u{00A0}: arrêtez le programme qui tient le port (lsof -nP -iTCP:<port> -sTCP:LISTEN)"
+    )
 
     // Les textes de l'état étranger ne portent AUCUN vocabulaire d'écriture (AC-4).
-    for label in [MemoryText.foreignTitle, MemoryText.foreignDescription, MemoryText.takeover, MemoryText.foreignService] {
+    for label in [MemoryText.foreignTitle, MemoryText.foreignDescription, MemoryText.foreignService] {
         let lowered = label.lowercased()
         #expect(!lowered.contains("ajout"))
         #expect(!lowered.contains("supprim"))
@@ -273,8 +259,7 @@ func ac4ForeignOwnedStateCarriesItsOwner() {
     let ownership = ForeignOwnership(
         address: "http://localhost:8321",
         owner: "une autre pile (importée)",
-        gesture: "arrêtez-la",
-        isLegacy: false
+        gesture: "arrêtez-la"
     )
     let state = MemoryModel.State.foreignOwned(ownership)
     #expect(state == .foreignOwned(ownership))
