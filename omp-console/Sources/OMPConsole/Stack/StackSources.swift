@@ -1,6 +1,6 @@
 // L'empreinte des sources embarquées de la pile (S-7, BR-6).
 //
-// `mem0-stack/mem0-http/STACK_FINGERPRINT` est un fichier VERSIONNÉ, écrit par
+// `omp-console/stack/mem0-http/STACK_FINGERPRINT` est un fichier VERSIONNÉ, écrit par
 // `scripts/stack-fingerprint.ts` (seul écrivain) à partir des quatre sources
 // embarquées (Dockerfile, http_server.py, memory_config.py, test_api.py). L'app
 // embarque ce fichier dans son bundle et en dérive l'étiquette de SON image :

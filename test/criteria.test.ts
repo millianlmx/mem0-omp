@@ -13,7 +13,7 @@ import * as path from "node:path";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const TEST_DIR = path.join(ROOT, "test");
-const API_TESTS = path.join(ROOT, "mem0-stack", "mem0-http", "test_api.py");
+const API_TESTS = path.join(ROOT, "omp-console", "stack", "mem0-http", "test_api.py");
 
 /** Forme qualifiée attendue : slug en minuscules/chiffres/tirets, puis l'id. */
 const QUALIFIED = /\b[a-z][a-z0-9-]*\/AC-\d+\b/g;

@@ -124,7 +124,7 @@ pub fn strip_python(s: &str) -> &str {
     s.trim_matches(blanc_python)
 }
 
-/// `_env` de memory_config.py : absente ou blanche → défaut ; sinon trimée.
+/// `_env` de l'ancien mem0-http Python : absente ou blanche → défaut ; sinon trimée.
 fn env_ou(lire: &impl Fn(&str) -> Option<String>, nom: &str, defaut: &str) -> String {
     match lire(nom) {
         Some(v) if !strip_python(&v).is_empty() => strip_python(&v).to_owned(),

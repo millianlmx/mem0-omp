@@ -159,7 +159,7 @@ const DROPPED_TESTS: Record<string, true> = {
   // MEM0_CHECK_DEPTH) : ce fichier y lirait l'arbre réel (test/check.test.ts,
   // historique f3fbfe6) que la fixture n'a pas.
   "ci-macos-jobs-paralleles.test.ts": true,
-  // lance de vrais serveurs (Python, Qdrant) : le scénario couplé rejoue la suite au niveau 0
+  // lance cargo et le contrat contre mem0-rs : fichier lourd
   "mem0-http-contrat-boite-noire.test.ts": true,
   // lance cargo et le contrat contre mem0-rs ; le scénario couplé rejoue la suite au niveau 0
   "mem0-rs-noyau.test.ts": true,
@@ -167,6 +167,8 @@ const DROPPED_TESTS: Record<string, true> = {
   "mem0-rs-extraction-llm.test.ts": true,
   // lance cargo et le contrat contre mem0-rs : fichier lourd
   "mem0-rs-migration.test.ts": true,
+  // AC-7 lit test/mem0-rs-migration.test.ts, écarté ci-dessus : la copie ne l'a pas
+  "mem0-stack-bascule-rust.test.ts": true,
 };
 
 function copyRepo(dir: string): void {
@@ -311,9 +313,7 @@ function runSimulation(repo: Repo): SpawnSyncReturns<string> {
       // de la release simulée — la section « App iOS » de même.
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
-      // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici, ni
-      // la section Rust (cargo, contrat contre mem0-rs).
-      MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
+      // La section Rust (cargo, contrat contre mem0-rs) n'a rien à faire ici.
       MEM0_OMP_SKIP_RUST: "1",
       GH_JOURNAL: repo.journal,
       PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
@@ -333,7 +333,6 @@ function runCheck(repo: Repo): SpawnSyncReturns<string> {
       GIT_CONFIG_GLOBAL: "/dev/null",
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
-      MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
       MEM0_OMP_SKIP_RUST: "1",
     },
   });

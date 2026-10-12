@@ -19,7 +19,7 @@ mem0-omp/                              ← racine du dépôt = marketplace
 │   └── extension.ts
 ├── omp-console/                       ← la coque macOS, hors publication marketplace
 ├── mem0-stack/                        ← le service mem0, à lancer séparément
-│   └── mem0-http/                     ← l'API HTTP et sa config mem0
+│   └── mem0-rs/                       ← le serveur Rust mem0-rs (crate)
 ├── test/                              ← suite de tests, hors publication
 ├── scripts/check.sh                   ← validation avant publication
 ├── scripts/release.ts                 ← PR de release auto-mergée, tags et releases au merge
@@ -74,26 +74,18 @@ de chaque entrée d'extension sur disque, **transpilation des deux `extension.ts
 **absence d'import de valeur depuis `@oh-my-pi/*` dans les deux**, cohérence du
 tableau `commands` de chaque entrée de catalogue avec les `registerCommand()`
 réellement appelés, **cohérence des versions** (voir « Mettre à jour »),
-type-check des deux plugins et des tests contre les types de l'hôte, **conformité
-du serveur mem0-http à l'API mem0 installée** (test_api.py exécuté hors du build
-d'image), et la suite de tests.
+type-check des deux plugins et des tests contre les types de l'hôte, la crate
+mem0-rs et son **contrat boîte noire** des 9 routes, et la suite de tests.
 
-Le test d'API de mem0-http tourne hors du build d'image, contre les dépendances
-déclarées par le Dockerfile — plage `mem0ai` comprise. C'est ce qui fait échouer
-la PR, et pas seulement la construction de l'image, quand une rupture d'API de
-mem0 rend une route du serveur inopérante. L'environnement Python vit hors du
-dépôt et se prépare une fois :
+Les tests de `mem0-rs import` lisent une Qdrant **native** comme source. Le
+binaire vit hors du dépôt et se prépare une fois :
 
 ```bash
-bash scripts/mem0-http-test.sh --prepare
 bash scripts/mem0-http-contrat.sh --prepare
 ```
 
-La seconde commande prépare les pièces du contrat boîte noire de mem0-http
-(binaire Qdrant natif et modèle BM25, hors du dépôt), qui réutilise le même
-environnement Python. Sans elles, la section annonce « non exécuté » plutôt qu'un
-✓ trompeur. La CI, elle, les exige (`MEM0_OMP_REQUIRE_HTTP_API=1`) : un « non
-exécuté » y est un échec.
+Sans lui, ces tests annoncent le saut plutôt qu'un ✓ trompeur ; la CI le prépare
+avant `check.sh`.
 
 La section Rust (`── Rust mem0-rs`) compile et teste la crate `mem0-stack/mem0-rs`
 avec la toolchain stable : sur un poste, installer rustup (https://rustup.rs) puis

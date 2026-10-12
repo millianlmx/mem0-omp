@@ -3,15 +3,14 @@
 //
 // - AC-12 : la documentation de la crate tranche entity_boost en citant la source
 //   de mem0 2.2.1, et ses dépendances directes ne comptent aucune bibliothèque NLP ;
-// - AC-13 / AC-14 : une fixture de rang divergente fait échouer le contrat, contre
-//   mem0-rs comme contre le Python jetable (vérification « à chaud ») ;
+// - AC-13 : une fixture de rang divergente fait échouer le contrat contre mem0-rs ;
 // - AC-16 / AC-17 : la section `rust` de scripts/check.sh rougit sur un
 //   avertissement clippy ou un `cargo test` en échec, saute sans cargo en local et
 //   échoue sous MEM0_OMP_REQUIRE_RUST=1, que la CI pose.
 //
 // Les tests lourds (cargo, vrais serveurs) ne tournent qu'au premier niveau
 // (`MEM0_CHECK_DEPTH` 0) : une copie jetable du dépôt ne les rejoue pas. Une pièce
-// manquante (cargo, venv Python) est un saut annoncé, ou un échec sous le
+// manquante (cargo) est un saut annoncé, ou un échec sous le
 // MEM0_OMP_REQUIRE_* correspondant.
 import test from "node:test";
 import type { TestContext } from "node:test";
@@ -154,7 +153,7 @@ test("mem0-rs-noyau/AC-12 : README cite la source d'entity_boost et la crate n'a
 });
 
 // ---------------------------------------------------------------------------
-// AC-13 / AC-14 : fixture de rang divergente
+// AC-13 : fixture de rang divergente
 // ---------------------------------------------------------------------------
 
 type Requete = { cle: string; attendu?: string[] };
@@ -208,23 +207,6 @@ test("mem0-rs-noyau/AC-13 : une fixture de rang divergente fait échouer le cont
   );
   if (r.code === 2) {
     manque(t, r.sortie.split("\n")[0] ?? "contrat non exécuté", exige);
-    return;
-  }
-  attendreEcartDeRang(r, requete);
-});
-
-test("mem0-rs-noyau/AC-14 : une fixture de rang divergente fait échouer la vérification à chaud contre le Python", { timeout: DELAI_LOURD }, async (t) => {
-  if (DEPTH !== 0) {
-    t.skip(`serveurs réels à la racine seulement (MEM0_CHECK_DEPTH=${DEPTH})`);
-    return;
-  }
-  const { fichier, requete } = fixturePermutee();
-  const r = await lancer(
-    ["scripts/mem0-http-contrat.sh", "--run"],
-    envEnfant({ MEM0_CONTRAT_INFER: "0", MEM0_CONTRAT_RANG_FIXTURE: fichier }),
-  );
-  if (r.code === 2) {
-    manque(t, r.sortie.split("\n")[0] ?? "contrat non exécuté", process.env.MEM0_OMP_REQUIRE_HTTP_API === "1");
     return;
   }
   attendreEcartDeRang(r, requete);

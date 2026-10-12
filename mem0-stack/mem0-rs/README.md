@@ -1,14 +1,14 @@
 # mem0-rs
 
 Service mémoire HTTP de mem0-omp, en un seul binaire Rust. Il sert les 9 routes de
-`mem0-stack/mem0-http/http_server.py` (mem0ai 2.2.1) avec le même contrat : port
+l'ancien mem0-http Python (mem0ai 2.2.1) avec le même contrat : port
 8321 par défaut, en-tête `X-Mem0-Token`, mêmes formes JSON, mêmes codes. Tout le
 stockage tient dans un seul fichier SQLite. Les embeddings et l'extraction viennent
 d'une API OpenAI-compatible (oMLX).
 
 `add` avec `infer=true` (y compris quand `infer` est omis) reproduit le chemin
 additif de mem0 2.2.1 : un seul appel `chat/completions` (invite d'extraction
-additive avec les `custom_instructions` de `memory_config.py`, réponse lue comme
+additive avec les `custom_instructions` de l'ancien mem0-http Python, réponse lue comme
 `{"memory":[{"text","attributed_to"?}]}`), embedding des faits extraits,
 dédoublonnage par hash md5 contre les 10 souvenirs existants les plus proches,
 événements `ADD` seuls. Un souvenir extrait n'a pas de `role` ; l'`attributed_to`
@@ -34,7 +34,7 @@ et `cargo clippy --manifest-path mem0-stack/mem0-rs/Cargo.toml --locked --all-ta
 
 ## Variables d'environnement
 
-Lues comme `_env` de `memory_config.py` : une variable absente ou faite seulement de
+Lues comme `_env` de l'ancien mem0-http Python : une variable absente ou faite seulement de
 blancs prend la valeur par défaut, et la valeur est trimée (sauf les deux jetons, lus
 bruts).
 
@@ -192,7 +192,7 @@ anglaise, TF BM25 (k=1.2, b=0.75, avg_len=256), indice `|murmur3_x86_32|`.
   `{"detail":"filters avancés (opérateurs, AND/OR/NOT, listes, \"*\") non supportés par mem0-rs"}` ;
 - des écarts de l'ordre de 1e-6 sur les scores (Qdrant calcule en float32).
 
-`GET /memory/graph` reproduit `graph_edges` de `http_server.py` : seuil 0.75,
+`GET /memory/graph` reproduit `graph_edges` de l'ancien mem0-http Python : seuil 0.75,
 8 meilleurs voisins par souvenir, voisinages réunis, tri (score décroissant, source,
 target).
 

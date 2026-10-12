@@ -167,7 +167,7 @@ test("docs/AC-20 : chaque plugin du catalogue est installé et cité dans l'arbo
 
   // Forme figée de l'arborescence : le service avec son sous-dossier, les tests
   // et le script de validation.
-  for (const expected of ["mem0-stack/", "mem0-http/", "test/", "scripts/check.sh"]) {
+  for (const expected of ["mem0-stack/", "mem0-rs/", "test/", "scripts/check.sh"]) {
     assert.ok(tree.includes(expected), `README : ${expected} absent de l'arborescence`);
   }
 });

@@ -93,7 +93,6 @@ function runCheck(cwd: string, env: Record<string, string> = {}) {
       MEM0_CHECK_DEPTH: String(DEPTH + 1),
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
-      MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
       MEM0_OMP_SKIP_RUST: "1",
       ...env,
     },

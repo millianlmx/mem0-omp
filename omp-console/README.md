@@ -1157,7 +1157,7 @@ bash scripts/run-console.sh install-hook    # pose .git/hooks/{post-merge,post-r
 
 Après `git pull`, la recompilation se fait toute seule **si** les commits arrivés
 touchent une entrée de l'app : un `*.swift` sous `omp-console/Sources/`,
-`Package.swift`, `omp-console/Bundle/` ou `mem0-stack/mem0-http/` (embarqué dans
+`Package.swift`, `omp-console/Bundle/` ou `omp-console/stack/mem0-http/` (embarqué dans
 le bundle). Un pull qui ne touche que les tests, la documentation ou le reste du
 dépôt ne déclenche rien — et ne paie que la lecture du diff. Le déclencheur est
 le couple post-merge (fusion, avance rapide) / post-rewrite (`pull.rebase=true`,
@@ -1229,10 +1229,10 @@ et podman (S-1, S-4) :
 - **Étiquette d'image par empreinte** — l'image mem0-http est étiquetée par
   l'empreinte des sources embarquées
   (`omp-console-mem0-http:<12 premiers hexadécimaux>` de
-  `mem0-stack/mem0-http/STACK_FINGERPRINT`) et n'est **reconstruite que si cette
+  `omp-console/stack/mem0-http/STACK_FINGERPRINT`) et n'est **reconstruite que si cette
   étiquette manque** : sources inchangées ⇒ aucune reconstruction (AC-7), source
   modifiée ⇒ nouvelle étiquette ⇒ reconstruction (AC-8). Après toute modification
-  de `mem0-stack/mem0-http/`, régénérer l'empreinte versionnée :
+  de `omp-console/stack/mem0-http/`, régénérer l'empreinte versionnée :
   `bun scripts/stack-fingerprint.ts --write` ; le test `stack/AC-24` échoue si le
   fichier versionné diverge des sources du dépôt (il nomme le fichier et la
   commande).

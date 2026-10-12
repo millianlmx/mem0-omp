@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# Contrat HTTP boîte noire des 9 routes de mem0-http (specs S-1 et S-3).
+# Contrat HTTP boîte noire des 9 routes de l'API mémoire, servie par mem0-rs.
 #
 # Le contrat (scripts/mem0-http-contrat/contrat.ts) vise un « serveur à tester »
 # démarré par une commande remplaçable (MEM0_CONTRAT_START) : par défaut, le
-# serveur Python de mem0-stack/mem0-http, rendu jetable ici — Qdrant natif dans un
-# répertoire temporaire, faux OpenAI à la place d'oMLX. Viser mem0-rs, groupe
-# infer=true compris, sans toucher aux cas :
-# MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs"
+# binaire mem0-rs (`--start-rs`), rendu jetable par une base SQLite dans un
+# répertoire temporaire, le faux OpenAI remplaçant oMLX. Viser le conteneur du
+# compose de mem0-stack (preuve locale) :
+# MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-conteneur"
 #
 # Modes (une seule invocation, `--run` par défaut) :
-#   --run           exécute le contrat (node --experimental-strip-types contrat.ts)
-#   --prepare       télécharge Qdrant (sha256 vérifié) et le modèle BM25 dans le
-#                   cache, hors du dépôt ; ne touche jamais au venv
-#   --start-python  commande de démarrage par défaut, appelée par contrat.ts avec
-#                   MEM0_CONTRAT_HOST/PORT/WORKDIR : Qdrant jetable + uvicorn
-#   --start-rs      commande de démarrage de mem0-rs (même contrat d'appel) : le
-#                   binaire ${MEM0_RS_BIN:-${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs}
-#                   sur MEM0_DB_PATH=$MEM0_CONTRAT_WORKDIR/mem0-rs.db
-#   --capture-rang  réécrit `attendu` et `graphe` de la fixture de rang
-#                   (scripts/mem0-http-contrat/rang.json, ou MEM0_CONTRAT_RANG_FIXTURE)
-#                   depuis le Python jetable (contrat.ts --capture-rang)
+#   --run              exécute le contrat (node --experimental-strip-types contrat.ts)
+#   --prepare          télécharge Qdrant (sha256 vérifié) dans le cache, hors du
+#                      dépôt : c'est la source de données des tests de `mem0-rs import`
+#   --start-rs         commande de démarrage par défaut, appelée par contrat.ts avec
+#                      MEM0_CONTRAT_HOST/PORT/WORKDIR : le binaire
+#                      ${MEM0_RS_BIN:-${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}/debug/mem0-rs}
+#                      sur MEM0_DB_PATH=$MEM0_CONTRAT_WORKDIR/mem0-rs.db
+#   --start-qdrant     Qdrant native jetable (MEM0_CONTRAT_PORT, MEM0_CONTRAT_GRPC_PORT,
+#                      MEM0_CONTRAT_WORKDIR), clé API `contrat-qdrant-cle` ; l'appelant
+#                      attend /readyz
+#   --start-conteneur  le service mem0-rs de mem0-stack/docker-compose.yml (image
+#                      mem0-rs:local déjà construite), projet mem0-contrat-<port>,
+#                      données dans un volume nommé supprimé à l'arrêt
 #
 # Codes : 0 conforme / prêt, 1 échec, 2 non exécuté (pièce absente, raison en
 # première ligne `non exécuté : …`), 3 refus (cible non jetable, variable invalide).
@@ -31,16 +33,13 @@ set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
 
 CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/mem0-omp"
-COMPOSE="mem0-stack/docker-compose.yml"
-BM25_DIR="$CACHE/fastembed"
-BM25_MARK="$BM25_DIR/.mem0-contrat-bm25"
 QDRANT_KEY="contrat-qdrant-cle"
 
-USAGE="usage: bash scripts/mem0-http-contrat.sh [--run|--prepare|--start-python|--start-rs|--capture-rang]"
+USAGE="usage: bash scripts/mem0-http-contrat.sh [--run|--prepare|--start-rs|--start-qdrant|--start-conteneur]"
 MODE="--run"
 case "${1:-}" in
   "" | --run) MODE="--run" ;;
-  --prepare | --start-python | --start-rs | --capture-rang) MODE="$1" ;;
+  --prepare | --start-rs | --start-qdrant | --start-conteneur) MODE="$1" ;;
   *) echo "$USAGE" >&2; exit 2 ;;
 esac
 if [ "$#" -gt 1 ]; then
@@ -48,44 +47,22 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 
-if [ "$MODE" = "--run" ] || [ "$MODE" = "--capture-rang" ]; then
+if [ "$MODE" = "--run" ]; then
   if ! command -v node >/dev/null 2>&1; then
     printf 'non exécuté : node absent\n'
     exit 2
   fi
-  if [ "$MODE" = "--capture-rang" ]; then
-    exec node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/mem0-http-contrat/contrat.ts --capture-rang
-  fi
   exec node --disable-warning=ExperimentalWarning --experimental-strip-types scripts/mem0-http-contrat/contrat.ts
 fi
 
-# Interpréteur du venv de mem0-http, résolu EXACTEMENT comme par
-# `mem0-http-test.sh --run` : pose `py`, ou laisse la raison dans `py_raison`.
-py=""
-py_raison=""
-resolve_py() {
-  local out
-  out="$(bash scripts/mem0-http-test.sh --interpreter)"
-  if [ "$?" -ne 0 ] || [ -z "$out" ]; then
-    py_raison="$out"
-    return 1
-  fi
-  py="$out"
-}
-
-# La version de Qdrant n'est PAS recopiée ici : elle vient du tag épinglé de
-# docker-compose.yml, seule source (première image qdrant/qdrant:v<X>).
-QDRANT_VERSION=""
+# Version de la Qdrant native de test. Le compose de mem0-stack ne déclare plus
+# Qdrant : elle vit ici, avec la table d'empreintes de ses archives.
+QDRANT_VERSION="1.19.0"
 QDRANT_BIN=""
 resolve_qdrant_bin() {
   if [ -n "${MEM0_CONTRAT_QDRANT:-}" ]; then
     QDRANT_BIN="$MEM0_CONTRAT_QDRANT"
     return 0
-  fi
-  QDRANT_VERSION="$(sed -nE "s/.*image:[[:space:]]*qdrant\/qdrant:v([^[:space:]\"']+).*/\1/p" "$COMPOSE" 2>/dev/null | head -n 1)"
-  if [ -z "$QDRANT_VERSION" ]; then
-    printf 'non exécuté : version de Qdrant introuvable dans %s\n' "$COMPOSE"
-    exit 2
   fi
   QDRANT_BIN="$CACHE/qdrant-v$QDRANT_VERSION/qdrant"
 }
@@ -102,11 +79,6 @@ qdrant_sha256() {
 }
 
 if [ "$MODE" = "--prepare" ]; then
-  if ! resolve_py; then
-    printf 'non exécuté : %s — lance d'"'"'abord bash scripts/mem0-http-test.sh --prepare\n' "${py_raison#non exécuté : }"
-    exit 2
-  fi
-
   # --- Qdrant ---
   resolve_qdrant_bin
   if [ -n "${MEM0_CONTRAT_QDRANT:-}" ]; then
@@ -120,6 +92,14 @@ if [ "$MODE" = "--prepare" ]; then
   else
     if ! command -v curl >/dev/null 2>&1; then
       printf 'non exécuté : curl absent\n'
+      exit 2
+    fi
+    if command -v shasum >/dev/null 2>&1; then
+      sha256="shasum -a 256"
+    elif command -v sha256sum >/dev/null 2>&1; then
+      sha256="sha256sum"
+    else
+      printf 'non exécuté : ni shasum ni sha256sum\n'
       exit 2
     fi
     case "$(uname -s)/$(uname -m)" in
@@ -150,7 +130,8 @@ if [ "$MODE" = "--prepare" ]; then
       printf 'téléchargement de Qdrant impossible : %s\n' "$url"
       exit 1
     fi
-    obtenu="$("$py" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$archive")"
+    obtenu="$($sha256 "$archive")" || exit 1
+    obtenu="${obtenu%% *}"
     if [ "$obtenu" != "$attendu" ]; then
       printf 'empreinte SHA-256 inattendue pour %s\n' "$asset"
       exit 1
@@ -161,32 +142,6 @@ if [ "$MODE" = "--prepare" ]; then
     fi
     chmod 0755 "$extrait/qdrant" && mv -f "$extrait/qdrant" "$QDRANT_BIN" || exit 1
     printf '  préparé : %s\n' "$QDRANT_BIN"
-  fi
-
-  # --- Modèle BM25 (même ligne que le Dockerfile, cache hors dépôt) ---
-  if [ -f "$BM25_MARK" ]; then
-    printf '  déjà préparé : %s\n' "$BM25_DIR"
-  else
-    mkdir -p "$BM25_DIR" || exit 1
-    # fastembed 0.8.1 ne relit le cache hors ligne (HF_HUB_OFFLINE=1, comme sous
-    # --start-python) que si TOUS les fichiers déclarés du modèle existent ; or le
-    # dépôt HF Qdrant/bm25 ne publie ni `mock.file` (model_file factice) ni
-    # `tamil.txt`. Ils sont créés vides (jamais lus : seuls les mots vides anglais
-    # servent), puis le chargement hors ligne est vérifié avant le marqueur.
-    if ! FASTEMBED_CACHE_PATH="$BM25_DIR" "$py" -c "
-from fastembed import SparseTextEmbedding
-modele = SparseTextEmbedding(model_name='Qdrant/bm25').model
-desc = modele._get_model_description('Qdrant/bm25')
-for nom in [desc.model_file, *desc.additional_files]:
-    chemin = modele._model_dir / nom
-    if not chemin.exists():
-        chemin.touch()
-" || ! FASTEMBED_CACHE_PATH="$BM25_DIR" HF_HUB_OFFLINE=1 "$py" -c "from fastembed import SparseTextEmbedding; SparseTextEmbedding(model_name='Qdrant/bm25')"; then
-      printf 'préparation du modèle BM25 impossible (%s)\n' "$BM25_DIR"
-      exit 1
-    fi
-    printf 'Qdrant/bm25\n' >"$BM25_MARK"
-    printf '  préparé : %s\n' "$BM25_DIR"
   fi
   exit 0
 fi
@@ -207,92 +162,89 @@ if [ "$MODE" = "--start-rs" ]; then
   MEM0_DB_PATH="$MEM0_CONTRAT_WORKDIR/mem0-rs.db" exec "$rs_bin" --host "${MEM0_CONTRAT_HOST:-127.0.0.1}" --port "$MEM0_CONTRAT_PORT"
 fi
 
-# --start-python : contrôles des pièces (code 2, raison en première ligne), puis
-# Qdrant jetable + uvicorn dans MEM0_CONTRAT_WORKDIR. Aucun accès réseau.
-if ! resolve_py; then
-  printf '%s\n' "$py_raison"
-  exit 2
-fi
-resolve_qdrant_bin
-if [ ! -x "$QDRANT_BIN" ]; then
-  printf 'non exécuté : binaire Qdrant absent (%s)\n' "$QDRANT_BIN"
-  exit 2
-fi
-if [ ! -f "$BM25_MARK" ]; then
-  printf 'non exécuté : modèle BM25 absent (%s)\n' "$BM25_DIR"
-  exit 2
-fi
-if [ -z "${MEM0_CONTRAT_PORT:-}" ] || [ -z "${MEM0_CONTRAT_WORKDIR:-}" ]; then
-  echo "usage : --start-python exige MEM0_CONTRAT_PORT et MEM0_CONTRAT_WORKDIR (posés par contrat.ts)"
-  exit 1
-fi
-HOST="${MEM0_CONTRAT_HOST:-127.0.0.1}"
-WORKDIR="$MEM0_CONTRAT_WORKDIR"
-
-ports="$("$py" -c 'import socket
-a = socket.socket(); a.bind(("127.0.0.1", 0))
-b = socket.socket(); b.bind(("127.0.0.1", 0))
-print(a.getsockname()[1], b.getsockname()[1])')" || exit 1
-q_port="${ports% *}"
-g_port="${ports#* }"
-
-qdrant_pid=""
-uvicorn_pid=""
-arreter() {
-  [ -n "$uvicorn_pid" ] && kill "$uvicorn_pid" 2>/dev/null
-  [ -n "$qdrant_pid" ] && kill "$qdrant_pid" 2>/dev/null
-  wait 2>/dev/null
-}
-trap arreter EXIT
-trap 'exit 143' TERM
-trap 'exit 130' INT
-
-mkdir -p "$WORKDIR/qdrant" || exit 1
-(
-  cd "$WORKDIR/qdrant" &&
-    exec env \
-      QDRANT__SERVICE__HOST=127.0.0.1 \
-      QDRANT__SERVICE__HTTP_PORT="$q_port" \
-      QDRANT__SERVICE__GRPC_PORT="$g_port" \
-      QDRANT__SERVICE__API_KEY="$QDRANT_KEY" \
-      QDRANT__STORAGE__STORAGE_PATH="$WORKDIR/qdrant/storage" \
-      QDRANT__STORAGE__SNAPSHOTS_PATH="$WORKDIR/qdrant/snapshots" \
-      QDRANT__TELEMETRY_DISABLED=true \
-      "$QDRANT_BIN"
-) >"$WORKDIR/qdrant.log" 2>&1 &
-qdrant_pid=$!
-
-if ! "$py" -c 'import sys, time, urllib.request
-url = "http://127.0.0.1:%s/readyz" % sys.argv[1]
-fin = time.monotonic() + 30
-while time.monotonic() < fin:
-    try:
-        with urllib.request.urlopen(url, timeout=1) as r:
-            if r.status == 200:
-                sys.exit(0)
-    except Exception:
-        pass
-    time.sleep(0.25)
-sys.exit(1)' "$q_port"; then
-  echo "Qdrant n'a pas démarré en 30 s"
-  tail -n 20 "$WORKDIR/qdrant.log"
-  exit 1
+# --start-qdrant : Qdrant native jetable, source de données des tests de
+# `mem0-rs import`. Ports et dossier viennent de l'appelant, qui attend /readyz
+# (en-tête `api-key: contrat-qdrant-cle` pour le reste de l'API).
+if [ "$MODE" = "--start-qdrant" ]; then
+  if [ -z "${MEM0_CONTRAT_PORT:-}" ] || [ -z "${MEM0_CONTRAT_GRPC_PORT:-}" ] || [ -z "${MEM0_CONTRAT_WORKDIR:-}" ]; then
+    echo "refus : MEM0_CONTRAT_PORT, MEM0_CONTRAT_GRPC_PORT et MEM0_CONTRAT_WORKDIR sont requis"
+    exit 1
+  fi
+  resolve_qdrant_bin
+  if [ ! -x "$QDRANT_BIN" ]; then
+    printf 'non exécuté : binaire Qdrant absent (%s) — lance bash scripts/mem0-http-contrat.sh --prepare\n' "$QDRANT_BIN"
+    exit 2
+  fi
+  # Le `cd` qui suit casserait un chemin relatif (MEM0_CONTRAT_QDRANT=./qdrant).
+  case "$QDRANT_BIN" in
+    /*) ;;
+    *) QDRANT_BIN="$PWD/$QDRANT_BIN" ;;
+  esac
+  WORKDIR="$MEM0_CONTRAT_WORKDIR"
+  mkdir -p "$WORKDIR/qdrant" && cd "$WORKDIR/qdrant" || exit 1
+  exec env \
+    QDRANT__SERVICE__HOST=127.0.0.1 \
+    QDRANT__SERVICE__HTTP_PORT="$MEM0_CONTRAT_PORT" \
+    QDRANT__SERVICE__GRPC_PORT="$MEM0_CONTRAT_GRPC_PORT" \
+    QDRANT__SERVICE__API_KEY="$QDRANT_KEY" \
+    QDRANT__STORAGE__STORAGE_PATH="$WORKDIR/qdrant/storage" \
+    QDRANT__STORAGE__SNAPSHOTS_PATH="$WORKDIR/qdrant/snapshots" \
+    QDRANT__TELEMETRY_DISABLED=true \
+    "$QDRANT_BIN"
 fi
 
-# Port HTTP de la Qdrant jetable, pour qui lit la source directement (preuve de
-# migration mem0-rs-migration) ; la clé est $QDRANT_KEY.
-printf '%s\n' "$q_port" >"$WORKDIR/qdrant.port" || exit 1
+# --start-conteneur : le service mem0-rs du compose de mem0-stack, image
+# mem0-rs:local déjà construite (jamais de build ici). Projet et conteneur
+# propres au port, données dans un volume NOMMÉ : `down -v` l'efface à l'arrêt,
+# rien ne reste sur l'hôte. Compose refuse un volume nommé non déclaré
+# (« refers to undefined volume ») : un second fichier, écrit dans
+# MEM0_CONTRAT_WORKDIR, le déclare sans toucher au compose de production.
+# `--env-file /dev/null` écarte le .env de l'utilisateur.
+if [ "$MODE" = "--start-conteneur" ]; then
+  if [ -z "${MEM0_CONTRAT_PORT:-}" ] || [ -z "${MEM0_CONTRAT_WORKDIR:-}" ]; then
+    echo "refus : MEM0_CONTRAT_PORT et MEM0_CONTRAT_WORKDIR sont requis"
+    exit 1
+  fi
+  if [ -n "${MEM0_CONTRAT_MOTEUR:-}" ]; then
+    CE="$MEM0_CONTRAT_MOTEUR"
+  elif command -v podman >/dev/null 2>&1; then
+    CE="podman"
+  else
+    CE="docker"
+  fi
+  if ! command -v "$CE" >/dev/null 2>&1 || ! "$CE" compose version >/dev/null 2>&1; then
+    printf 'non exécuté : moteur de conteneurs ou compose absent\n'
+    exit 2
+  fi
+  if ! "$CE" image inspect mem0-rs:local >/dev/null 2>&1; then
+    printf 'non exécuté : image mem0-rs:local absente — lance %s compose -f mem0-stack/docker-compose.yml build\n' "$CE"
+    exit 2
+  fi
+  P="mem0-contrat-$MEM0_CONTRAT_PORT"
+  # Le faux OpenAI écoute sur l'hôte : vu du conteneur, 127.0.0.1 est le
+  # conteneur lui-même.
+  case "$(basename "$CE")" in
+    *podman*) hote_moteur="host.containers.internal" ;;
+    *) hote_moteur="host.docker.internal" ;;
+  esac
+  if [ -n "${OMLX_BASE_URL:-}" ]; then
+    OMLX_BASE_URL="$(printf '%s' "$OMLX_BASE_URL" | sed -E "s#^(https?://)(127\\.0\\.0\\.1|localhost)([:/]|\$)#\\1$hote_moteur\\3#")"
+    export OMLX_BASE_URL
+  fi
+  export MEM0_RS_DATA_DIR="$P-data" MEM0_RS_PORT="$MEM0_CONTRAT_PORT" MEM0_RS_CONTAINER="$P"
+  mkdir -p "$MEM0_CONTRAT_WORKDIR" || exit 1
+  volume_decl="$MEM0_CONTRAT_WORKDIR/compose-volume.yml"
+  printf 'volumes:\n  %s: {}\n' "$MEM0_RS_DATA_DIR" >"$volume_decl" || exit 1
 
-QDRANT_HOST=127.0.0.1 \
-  QDRANT_PORT="$q_port" \
-  QDRANT_API_KEY="$QDRANT_KEY" \
-  MEM0_DIR="$WORKDIR/mem0" \
-  MEM0_TELEMETRY=False \
-  FASTEMBED_CACHE_PATH="$BM25_DIR" \
-  HF_HUB_OFFLINE=1 \
-  PYTHONUNBUFFERED=1 \
-  "$py" -m uvicorn http_server:app --app-dir mem0-stack/mem0-http \
-  --host "$HOST" --port "$MEM0_CONTRAT_PORT" --log-level warning &
-uvicorn_pid=$!
-wait "$uvicorn_pid"
-exit $?
+  up_pid=""
+  arreter_conteneur() {
+    trap - TERM INT EXIT
+    "$CE" compose -p "$P" -f mem0-stack/docker-compose.yml -f "$volume_decl" --env-file /dev/null down -v --timeout 3 >/dev/null 2>&1
+    [ -n "$up_pid" ] && kill "$up_pid" 2>/dev/null
+    exit 0
+  }
+  trap arreter_conteneur TERM INT EXIT
+  "$CE" compose -p "$P" -f mem0-stack/docker-compose.yml -f "$volume_decl" --env-file /dev/null up --no-build &
+  up_pid=$!
+  wait "$up_pid"
+fi

@@ -13,7 +13,7 @@ use crate::config::{blanc_python, strip_python};
 /// Invite système : `ADDITIVE_EXTRACTION_PROMPT` de mem0 2.2.1, octet pour octet.
 pub const ADDITIVE_EXTRACTION_PROMPT: &str = include_str!("prompts/additive_extraction.txt");
 
-/// `CUSTOM_INSTRUCTIONS` de mem0-stack/mem0-http/memory_config.py, octet pour octet.
+/// `CUSTOM_INSTRUCTIONS` de l'ancien mem0-http Python, octet pour octet.
 pub const CUSTOM_INSTRUCTIONS: &str = include_str!("prompts/custom_instructions.txt");
 
 /// Nombre de souvenirs existants montrés au LLM et vus par le dédoublonnage.
