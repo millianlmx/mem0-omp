@@ -11,11 +11,15 @@ use std::sync::Once;
 use rusqlite::types::Type;
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::bm25::{self, VecteurCreux};
 use crate::horodatage::Instant;
 
-pub const SCHEMA_VERSION: &str = "1";
+pub const SCHEMA_VERSION: &str = "2";
+
+/// Nombre de messages gardés par scope de session dans `messages` (storage.py).
+pub const MESSAGES_PAR_PORTEE: usize = 10;
 
 /// Échec d'ouverture de la base (code 1 au démarrage).
 #[derive(Debug)]
@@ -104,7 +108,8 @@ fn creer_schema(conn: &mut Connection, dims: usize) -> rusqlite::Result<()> {
              user_id TEXT NOT NULL,
              agent_id TEXT,
              run_id TEXT,
-             role TEXT NOT NULL,
+             role TEXT,
+             attributed_to TEXT,
              tags_present INTEGER NOT NULL,
              tags TEXT,
              created_at TEXT NOT NULL,
@@ -117,7 +122,17 @@ fn creer_schema(conn: &mut Connection, dims: usize) -> rusqlite::Result<()> {
          CREATE VIRTUAL TABLE IF NOT EXISTS memory_vec USING vec0(embedding float[{dims}] distance_metric=cosine);
          CREATE VIRTUAL TABLE IF NOT EXISTS memory_terms USING fts5(terms, tokenize='ascii');
          CREATE VIRTUAL TABLE IF NOT EXISTS memory_terms_vocab USING fts5vocab(memory_terms, 'row');
-         CREATE TABLE IF NOT EXISTS history (id TEXT PRIMARY KEY, memory_id TEXT, old_memory TEXT, new_memory TEXT, event TEXT, created_at DATETIME, updated_at DATETIME, is_deleted INTEGER, actor_id TEXT, role TEXT);"
+         CREATE TABLE IF NOT EXISTS history (id TEXT PRIMARY KEY, memory_id TEXT, old_memory TEXT, new_memory TEXT, event TEXT, created_at DATETIME, updated_at DATETIME, is_deleted INTEGER, actor_id TEXT, role TEXT);
+         CREATE TABLE IF NOT EXISTS messages (
+             rowid INTEGER PRIMARY KEY,
+             id TEXT NOT NULL UNIQUE,
+             session_scope TEXT NOT NULL,
+             role TEXT,
+             content TEXT,
+             name TEXT,
+             created_at TEXT NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS messages_portee ON messages (session_scope, created_at);"
     ))?;
     tx.execute(
         "INSERT INTO meta (cle, valeur) VALUES ('schema_version', ?1), ('embedding_dims', ?2)",
@@ -147,7 +162,8 @@ fn jetons_fts(indices: impl Iterator<Item = u32>, separateur: &str) -> String {
     indices.map(|i| format!("t{i}")).collect::<Vec<_>>().join(separateur)
 }
 
-/// Souvenir à créer (add infer=false, add_procedure).
+/// Souvenir à créer : add infer=false et add_procedure (`role` = `user`), ou
+/// fait extrait par add infer=true (`role` absent).
 pub struct NouveauSouvenir<'a> {
     pub id: &'a str,
     pub memory: &'a str,
@@ -155,7 +171,10 @@ pub struct NouveauSouvenir<'a> {
     pub user_id: &'a str,
     pub agent_id: Option<&'a str>,
     pub run_id: Option<&'a str>,
-    pub role: &'a str,
+    /// `None` : clé `role` absente du payload.
+    pub role: Option<&'a str>,
+    /// `attributed_to` en JSON compact ; `None` : clé absente.
+    pub attributed_to: Option<&'a str>,
     /// `Some` : clé `tags` présente avec cette valeur.
     pub tags: Option<&'a str>,
     pub instant: &'a Instant,
@@ -173,9 +192,9 @@ struct Revision<'a> {
     new_memory: Option<&'a str>,
     event: &'a str,
     created_at: &'a str,
-    updated_at: &'a str,
+    updated_at: Option<&'a str>,
     is_deleted: bool,
-    role: &'a str,
+    role: Option<&'a str>,
 }
 
 fn historiser(tx: &rusqlite::Transaction<'_>, r: &Revision<'_>) -> rusqlite::Result<()> {
@@ -197,13 +216,16 @@ fn historiser(tx: &rusqlite::Transaction<'_>, r: &Revision<'_>) -> rusqlite::Res
     Ok(())
 }
 
-/// Écrit souvenir, vecteur, termes et révision ADD dans une transaction.
-pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) -> rusqlite::Result<()> {
-    let (sparse, terms) = termes(s.memory)?;
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+/// Écrit le souvenir, son vecteur et ses termes (`sparse`, `terms` : [`termes`]).
+fn inserer(
+    tx: &rusqlite::Transaction<'_>,
+    s: &NouveauSouvenir<'_>,
+    vecteur: &[f32],
+    (sparse, terms): &(String, String),
+) -> rusqlite::Result<()> {
     tx.execute(
-        "INSERT INTO memories (id, memory, hash, user_id, agent_id, run_id, role, tags_present, tags, created_at, updated_at, updated_at_us, sparse)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11, ?12)",
+        "INSERT INTO memories (id, memory, hash, user_id, agent_id, run_id, role, attributed_to, tags_present, tags, created_at, updated_at, updated_at_us, sparse)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, ?12, ?13)",
         params![
             s.id,
             s.memory,
@@ -212,6 +234,7 @@ pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) 
             s.agent_id,
             s.run_id,
             s.role,
+            s.attributed_to,
             i64::from(s.tags.is_some()),
             s.tags,
             s.instant.iso,
@@ -225,6 +248,14 @@ pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) 
         params![rowid, blob_normalise(vecteur)],
     )?;
     tx.execute("INSERT INTO memory_terms (rowid, terms) VALUES (?1, ?2)", params![rowid, terms])?;
+    Ok(())
+}
+
+/// Écrit souvenir, vecteur, termes et révision ADD dans une transaction.
+pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) -> rusqlite::Result<()> {
+    let termes = termes(s.memory)?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    inserer(&tx, s, vecteur, &termes)?;
     historiser(
         &tx,
         &Revision {
@@ -233,12 +264,127 @@ pub fn ajouter(conn: &mut Connection, s: &NouveauSouvenir<'_>, vecteur: &[f32]) 
             new_memory: Some(s.memory),
             event: "ADD",
             created_at: &s.instant.iso,
-            updated_at: &s.instant.iso,
+            updated_at: Some(&s.instant.iso),
             is_deleted: false,
             role: s.role,
         },
     )?;
     tx.commit()
+}
+
+/// Un fait retenu par add infer=true (S-4), prêt à écrire.
+pub struct FaitInfere {
+    pub id: String,
+    pub memory: String,
+    pub hash: String,
+    /// Valeur JSON quelconque ; `None` : clé absente.
+    pub attributed_to: Option<Value>,
+    pub instant: Instant,
+    pub vecteur: Vec<f32>,
+}
+
+/// Le message d'une requête add infer=true, sauvé dans `messages` (S-5).
+pub struct MessageSession {
+    pub id: String,
+    /// Scope de session (`agent_id=…&user_id=moi`).
+    pub portee: String,
+    pub content: String,
+    pub instant: Instant,
+}
+
+/// Insère `message` (role `user`, name NULL) puis ne garde que les
+/// [`MESSAGES_PAR_PORTEE`] plus récents de son scope.
+fn inserer_message(tx: &rusqlite::Transaction<'_>, message: &MessageSession) -> rusqlite::Result<()> {
+    tx.execute(
+        "INSERT INTO messages (id, session_scope, role, content, name, created_at) VALUES (?1, ?2, 'user', ?3, NULL, ?4)",
+        params![message.id, message.portee, message.content, message.instant.iso],
+    )?;
+    tx.execute(
+        "DELETE FROM messages WHERE session_scope = ?1 AND rowid NOT IN (
+             SELECT rowid FROM messages WHERE session_scope = ?1 ORDER BY created_at DESC, rowid DESC LIMIT ?2)",
+        params![message.portee, MESSAGES_PAR_PORTEE as i64],
+    )?;
+    Ok(())
+}
+
+/// Sauve `message` seul, dans une transaction (add infer=true sans fait écrit).
+pub fn sauver_message(conn: &mut Connection, message: &MessageSession) -> rusqlite::Result<()> {
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    inserer_message(&tx, message)?;
+    tx.commit()
+}
+
+/// Écrit les `faits` extraits (souvenir sans `role`, vecteur, termes, révision
+/// ADD sans `updated_at` ni `role`) puis sauve `message`, dans UNE transaction :
+/// une erreur n'écrit rien. `tags` : comme [`NouveauSouvenir::tags`].
+pub fn ajouter_infere(
+    conn: &mut Connection,
+    user_id: &str,
+    agent_id: Option<&str>,
+    run_id: Option<&str>,
+    tags: Option<&str>,
+    faits: &[FaitInfere],
+    message: &MessageSession,
+) -> rusqlite::Result<()> {
+    let mut prepares = Vec::with_capacity(faits.len());
+    for f in faits {
+        let attributed_to = f
+            .attributed_to
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        prepares.push((termes(&f.memory)?, attributed_to));
+    }
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for (f, (termes, attributed_to)) in faits.iter().zip(&prepares) {
+        let s = NouveauSouvenir {
+            id: &f.id,
+            memory: &f.memory,
+            hash: &f.hash,
+            user_id,
+            agent_id,
+            run_id,
+            role: None,
+            attributed_to: attributed_to.as_deref(),
+            tags,
+            instant: &f.instant,
+        };
+        inserer(&tx, &s, &f.vecteur, termes)?;
+        historiser(
+            &tx,
+            &Revision {
+                memory_id: &f.id,
+                old_memory: None,
+                new_memory: Some(&f.memory),
+                event: "ADD",
+                created_at: &f.instant.iso,
+                updated_at: None,
+                is_deleted: false,
+                role: None,
+            },
+        )?;
+    }
+    inserer_message(&tx, message)?;
+    tx.commit()
+}
+
+/// Les `n` messages les plus récents du scope `portee` (`created_at` puis
+/// rowid décroissants), rendus du plus ancien au plus récent, en
+/// `(role, content)` ; un NULL est rendu `""`.
+pub fn derniers_messages(conn: &Connection, portee: &str, n: usize) -> rusqlite::Result<Vec<(String, String)>> {
+    let mut st = conn.prepare_cached(
+        "SELECT role, content FROM (
+             SELECT rowid, role, content, created_at FROM messages WHERE session_scope = ?1
+             ORDER BY created_at DESC, rowid DESC LIMIT ?2)
+         ORDER BY created_at ASC, rowid ASC",
+    )?;
+    st.query_map(params![portee, i64::try_from(n).unwrap_or(i64::MAX)], |r| {
+        let role: Option<String> = r.get(0)?;
+        let content: Option<String> = r.get(1)?;
+        Ok((role.unwrap_or_default(), content.unwrap_or_default()))
+    })?
+    .collect()
 }
 
 /// Le souvenir `id` existe-t-il ?
@@ -260,7 +406,7 @@ pub fn mettre_a_jour(
 ) -> rusqlite::Result<bool> {
     let (sparse, terms) = termes(texte)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let actuel: Option<(i64, String, String, String)> = tx
+    let actuel: Option<(i64, String, String, Option<String>)> = tx
         .query_row(
             "SELECT rowid, memory, created_at, role FROM memories WHERE id = ?1",
             [id],
@@ -294,9 +440,9 @@ pub fn mettre_a_jour(
             new_memory: Some(texte),
             event: "UPDATE",
             created_at: &created_at,
-            updated_at: &instant.iso,
+            updated_at: Some(&instant.iso),
             is_deleted: false,
-            role: &role,
+            role: role.as_deref(),
         },
     )?;
     tx.commit()?;
@@ -306,7 +452,7 @@ pub fn mettre_a_jour(
 /// Supprime le souvenir `id` (souvenir, vecteur, termes) ; `false` s'il n'existe pas.
 pub fn supprimer(conn: &mut Connection, id: &str, instant: &Instant) -> rusqlite::Result<bool> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let actuel: Option<(i64, String, String, String)> = tx
+    let actuel: Option<(i64, String, String, Option<String>)> = tx
         .query_row(
             "SELECT rowid, memory, created_at, role FROM memories WHERE id = ?1",
             [id],
@@ -327,9 +473,9 @@ pub fn supprimer(conn: &mut Connection, id: &str, instant: &Instant) -> rusqlite
             new_memory: None,
             event: "DELETE",
             created_at: &created_at,
-            updated_at: &instant.iso,
+            updated_at: Some(&instant.iso),
             is_deleted: true,
-            role: &role,
+            role: role.as_deref(),
         },
     )?;
     tx.commit()?;
@@ -349,18 +495,21 @@ pub struct Souvenir {
     pub user_id: String,
     pub agent_id: Option<String>,
     pub run_id: Option<String>,
-    pub role: String,
+    /// `None` : clé `role` absente (souvenir extrait par add infer=true).
+    pub role: Option<String>,
+    /// `None` : clé `attributed_to` absente.
+    pub attributed_to: Option<Value>,
 }
 
 /// Colonnes d'un [`Souvenir`] (alias `m` pour `memories`), lues par [`souvenir`].
-const COLONNES: &str =
-    "m.id, m.memory, m.hash, m.tags_present, m.tags, m.created_at, m.updated_at, m.user_id, m.agent_id, m.run_id, m.role";
+const COLONNES: &str = "m.id, m.memory, m.hash, m.tags_present, m.tags, m.created_at, m.updated_at, m.user_id, m.agent_id, m.run_id, m.role, m.attributed_to";
 /// Nombre de colonnes de [`COLONNES`] : l'indice de la première colonne suivante.
-const NB_COLONNES: usize = 11;
+const NB_COLONNES: usize = 12;
 
 fn souvenir(r: &Row<'_>) -> rusqlite::Result<Souvenir> {
     let present: i64 = r.get(3)?;
     let tags: Option<String> = r.get(4)?;
+    let attributed_to: Option<String> = r.get(11)?;
     Ok(Souvenir {
         id: r.get(0)?,
         memory: r.get(1)?,
@@ -372,6 +521,10 @@ fn souvenir(r: &Row<'_>) -> rusqlite::Result<Souvenir> {
         agent_id: r.get(8)?,
         run_id: r.get(9)?,
         role: r.get(10)?,
+        attributed_to: attributed_to
+            .map(|j| serde_json::from_str(&j))
+            .transpose()
+            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(11, Type::Text, Box::new(e)))?,
     })
 }
 
@@ -395,16 +548,44 @@ pub fn cosinus(
     agent_id: Option<&str>,
     requete: &[f32],
 ) -> rusqlite::Result<Vec<(Souvenir, f64)>> {
+    cosinus_portee(conn, user_id, agent_id, None, requete)
+}
+
+/// [`cosinus`], restreint en plus à `run_id` s'il est donné.
+fn cosinus_portee(
+    conn: &Connection,
+    user_id: &str,
+    agent_id: Option<&str>,
+    run_id: Option<&str>,
+    requete: &[f32],
+) -> rusqlite::Result<Vec<(Souvenir, f64)>> {
     let mut st = conn.prepare_cached(&format!(
-        "SELECT {COLONNES}, 1.0 - vec_distance_cosine(v.embedding, ?3)
+        "SELECT {COLONNES}, 1.0 - vec_distance_cosine(v.embedding, ?4)
          FROM memories m JOIN memory_vec v ON v.rowid = m.rowid
-         WHERE m.user_id = ?1 AND (?2 IS NULL OR m.agent_id = ?2)"
+         WHERE m.user_id = ?1 AND (?2 IS NULL OR m.agent_id = ?2) AND (?3 IS NULL OR m.run_id = ?3)"
     ))?;
-    st.query_map(params![user_id, agent_id, blob_normalise(requete)], |r| {
+    st.query_map(params![user_id, agent_id, run_id, blob_normalise(requete)], |r| {
         let cos: Option<f64> = r.get(NB_COLONNES)?;
         Ok((souvenir(r)?, cos.filter(|c| c.is_finite()).unwrap_or(0.0)))
     })?
     .collect()
+}
+
+/// Les `n` souvenirs les plus proches de `vecteur` dans le scope
+/// `user_id`/`agent_id`/`run_id` (S-2, étape 4) : cosinus décroissant, puis
+/// `id` croissant, sans seuil.
+pub fn voisins(
+    conn: &Connection,
+    user_id: &str,
+    agent_id: Option<&str>,
+    run_id: Option<&str>,
+    vecteur: &[f32],
+    n: usize,
+) -> rusqlite::Result<Vec<(Souvenir, f64)>> {
+    let mut proches = cosinus_portee(conn, user_id, agent_id, run_id, vecteur)?;
+    proches.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.id.cmp(&b.0.id)));
+    proches.truncate(n);
+    Ok(proches)
 }
 
 /// Statistiques de l'IDF (D-5) sur TOUTE la base : N = nombre de souvenirs, et
@@ -498,4 +679,295 @@ pub fn historique(conn: &Connection, memory_id: &str) -> rusqlite::Result<Vec<Li
         })
     })?
     .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::PathBuf;
+
+    /// Fichier de base temporaire, effacé (avec -wal et -shm) à la fin du test.
+    struct Temp(PathBuf);
+
+    impl Temp {
+        fn new() -> Self {
+            Temp(std::env::temp_dir().join(format!("mem0-rs-db-{}.db", uuid::Uuid::new_v4())))
+        }
+    }
+
+    impl Drop for Temp {
+        fn drop(&mut self) {
+            for suffixe in ["", "-wal", "-shm"] {
+                let mut p = self.0.clone().into_os_string();
+                p.push(suffixe);
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    }
+
+    const DIMS: usize = 3;
+
+    fn instant(seconde: u32) -> Instant {
+        Instant { iso: format!("2026-10-12T00:00:{seconde:02}+00:00"), micros: 1_791_763_200_000_000 + i64::from(seconde) * 1_000_000 }
+    }
+
+    fn message(portee: &str, content: &str, i: &Instant) -> MessageSession {
+        MessageSession {
+            id: uuid::Uuid::new_v4().to_string(),
+            portee: portee.to_owned(),
+            content: content.to_owned(),
+            instant: i.clone(),
+        }
+    }
+
+    fn fait(memory: &str, attributed_to: Option<Value>, vecteur: Vec<f32>, i: Instant) -> FaitInfere {
+        FaitInfere {
+            id: uuid::Uuid::new_v4().to_string(),
+            memory: memory.to_owned(),
+            hash: format!("h-{memory}"),
+            attributed_to,
+            instant: i,
+            vecteur,
+        }
+    }
+
+    fn ajouter_simple(conn: &mut Connection, id: &str, agent_id: Option<&str>, run_id: Option<&str>, vecteur: &[f32]) {
+        let i = instant(0);
+        let s = NouveauSouvenir {
+            id,
+            memory: id,
+            hash: id,
+            user_id: "moi",
+            agent_id,
+            run_id,
+            role: Some("user"),
+            attributed_to: None,
+            tags: None,
+            instant: &i,
+        };
+        ajouter(conn, &s, vecteur).unwrap();
+    }
+
+    #[test]
+    fn schema_v1_refusee() {
+        let base = Temp::new();
+        Connection::open(&base.0)
+            .unwrap()
+            .execute_batch(
+                "CREATE TABLE meta (cle TEXT PRIMARY KEY, valeur TEXT NOT NULL);
+                 INSERT INTO meta (cle, valeur) VALUES ('schema_version', '1'), ('embedding_dims', '3');
+                 CREATE TABLE memories (rowid INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, role TEXT NOT NULL);",
+            )
+            .unwrap();
+        let avant = std::fs::read(&base.0).unwrap();
+        let Err(ErreurOuverture::Autre(raison)) = ouvrir(&base.0, DIMS) else {
+            panic!("une base v1 doit être refusée");
+        };
+        assert_eq!(raison, "schema_version 1 inconnue (attendue 2)");
+        assert_eq!(std::fs::read(&base.0).unwrap(), avant);
+    }
+
+    #[test]
+    fn ac1_ac5_base_neuve_en_v2() {
+        let base = Temp::new();
+        let conn = ouvrir(&base.0, DIMS).unwrap();
+        let version: String =
+            conn.query_row("SELECT valeur FROM meta WHERE cle = 'schema_version'", [], |r| r.get(0)).unwrap();
+        assert_eq!(version, "2");
+        let colonnes = |table: &str| -> Vec<(String, bool)> {
+            conn.prepare(&format!("PRAGMA table_info({table})"))
+                .unwrap()
+                .query_map([], |r| Ok((r.get::<_, String>(1)?, r.get::<_, i64>(3)? != 0)))
+                .unwrap()
+                .collect::<Result<_, _>>()
+                .unwrap()
+        };
+        let memories = colonnes("memories");
+        assert!(memories.contains(&("role".to_owned(), false)), "memories.role nullable");
+        assert!(memories.contains(&("attributed_to".to_owned(), false)), "memories.attributed_to nullable");
+        let attendu: Vec<(String, bool)> = [
+            ("rowid", false),
+            ("id", true),
+            ("session_scope", true),
+            ("role", false),
+            ("content", false),
+            ("name", false),
+            ("created_at", true),
+        ]
+        .iter()
+        .map(|&(c, n)| (c.to_owned(), n))
+        .collect();
+        assert_eq!(colonnes("messages"), attendu);
+        let index: String = conn
+            .query_row("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = 'messages_portee'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(index, "CREATE INDEX messages_portee ON messages (session_scope, created_at)");
+        drop(conn);
+        // Une base v2 se rouvre.
+        ouvrir(&base.0, DIMS).unwrap();
+    }
+
+    #[test]
+    fn ac1_souvenir_infere_lu_et_historise() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        ajouter_simple(&mut conn, "classique", Some("ag"), None, &[0.0, 0.0, 1.0]);
+        let (i1, i2, im) = (instant(1), instant(2), instant(3));
+        let f1 = fait("Fait un", Some(json!("user")), vec![1.0, 0.0, 0.0], i1.clone());
+        let f2 = fait("Fait deux", Some(json!({"qui": [1, "x"], "n": 5})), vec![0.0, 1.0, 0.0], i2.clone());
+        let f3 = fait("Fait trois", None, vec![1.0, 1.0, 0.0], i2.clone());
+        let m = message("agent_id=ag&user_id=moi", "Texte de la requête", &im);
+        ajouter_infere(&mut conn, "moi", Some("ag"), Some("course"), Some("t1,t2"), &[f1, f2, f3], &m).unwrap();
+
+        let lus = tous(&conn, "moi", Some("ag")).unwrap();
+        let lire = |memory: &str| lus.iter().find(|s| s.memory == memory).unwrap().clone();
+        let (s1, s2, s3, classique) = (lire("Fait un"), lire("Fait deux"), lire("Fait trois"), lire("classique"));
+        assert_eq!(lus.len(), 4);
+        assert_eq!((s1.role.as_deref(), s1.attributed_to.clone()), (None, Some(json!("user"))));
+        assert_eq!(s2.attributed_to, Some(json!({"qui": [1, "x"], "n": 5})));
+        assert_eq!((s3.role.as_deref(), s3.attributed_to.clone()), (None, None));
+        assert_eq!((classique.role.as_deref(), classique.attributed_to.clone()), (Some("user"), None));
+        assert_eq!((s1.created_at.as_str(), s1.updated_at.as_str()), (i1.iso.as_str(), i1.iso.as_str()));
+        assert_eq!((s1.agent_id.as_deref(), s1.run_id.as_deref()), (Some("ag"), Some("course")));
+        assert_eq!(s1.tags, Some(Some("t1,t2".to_owned())));
+        assert_eq!(s1.hash, "h-Fait un");
+        // JSON compact en base.
+        let brut: String =
+            conn.query_row("SELECT attributed_to FROM memories WHERE id = ?1", [&s2.id], |r| r.get(0)).unwrap();
+        assert_eq!(brut, r#"{"qui":[1,"x"],"n":5}"#);
+        // Vecteur et termes écrits : le fait est trouvé par le cosinus et par BM25.
+        let proches = voisins(&conn, "moi", Some("ag"), Some("course"), &[1.0, 0.0, 0.0], 1).unwrap();
+        assert_eq!(proches[0].0.id, s1.id);
+        let indices: Vec<u32> = bm25::encoder("trois").iter().map(|&(i, _)| i).collect();
+        let porteurs = porteurs(&conn, "moi", Some("ag"), &indices).unwrap();
+        assert_eq!(porteurs.iter().map(|(s, _)| s.id.as_str()).collect::<Vec<_>>(), [s3.id.as_str()]);
+
+        // Révision ADD d'un fait extrait : updated_at et role NULL.
+        let h = historique(&conn, &s1.id).unwrap();
+        assert_eq!(h.len(), 1);
+        assert_eq!(
+            (h[0].event.as_deref(), h[0].old_memory.as_deref(), h[0].new_memory.as_deref()),
+            (Some("ADD"), None, Some("Fait un"))
+        );
+        assert_eq!((h[0].created_at.as_deref(), h[0].updated_at.as_deref()), (Some(i1.iso.as_str()), None));
+        assert_eq!((h[0].is_deleted, h[0].actor_id.as_deref(), h[0].role.as_deref()), (false, None, None));
+        // Révision ADD d'un add infer=false : inchangée.
+        let h = historique(&conn, "classique").unwrap();
+        assert_eq!((h[0].updated_at.as_deref(), h[0].role.as_deref()), (h[0].created_at.as_deref(), Some("user")));
+
+        // Le message est sauvé dans la même transaction.
+        assert_eq!(
+            derniers_messages(&conn, "agent_id=ag&user_id=moi", 10).unwrap(),
+            [("user".to_owned(), "Texte de la requête".to_owned())]
+        );
+
+        // PUT : role reste NULL, attributed_to conservé, révision UPDATE avec role NULL.
+        let i4 = instant(4);
+        assert!(mettre_a_jour(&mut conn, &s1.id, "Fait un révisé", "h2", &Tags::Inchangees, &[1.0, 0.0, 0.0], &i4).unwrap());
+        let apres = tous(&conn, "moi", Some("ag")).unwrap().into_iter().find(|s| s.id == s1.id).unwrap();
+        assert_eq!((apres.memory.as_str(), apres.role.as_deref()), ("Fait un révisé", None));
+        assert_eq!(apres.attributed_to, Some(json!("user")));
+        let h = historique(&conn, &s1.id).unwrap();
+        assert_eq!(h.len(), 2);
+        assert_eq!((h[1].event.as_deref(), h[1].role.as_deref()), (Some("UPDATE"), None));
+        assert_eq!((h[1].created_at.as_deref(), h[1].updated_at.as_deref()), (Some(i1.iso.as_str()), Some(i4.iso.as_str())));
+
+        // DELETE : révision avec role NULL.
+        assert!(supprimer(&mut conn, &s1.id, &instant(5)).unwrap());
+        let h = historique(&conn, &s1.id).unwrap();
+        assert_eq!((h[2].event.as_deref(), h[2].role.as_deref(), h[2].is_deleted), (Some("DELETE"), None, true));
+    }
+
+    #[test]
+    fn ac5_ajouter_infere_atomique() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        // Le second fait a une mauvaise dimension : sqlite-vec refuse l'insertion.
+        let faits = [fait("Bon", None, vec![1.0, 0.0, 0.0], instant(1)), fait("Mauvais", None, vec![1.0, 0.0], instant(1))];
+        let m = message("user_id=moi", "requête", &instant(2));
+        assert!(ajouter_infere(&mut conn, "moi", None, None, None, &faits, &m).is_err());
+        assert!(tous(&conn, "moi", None).unwrap().is_empty());
+        assert!(historique(&conn, &faits[0].id).unwrap().is_empty());
+        assert!(derniers_messages(&conn, "user_id=moi", 10).unwrap().is_empty());
+        let vecteurs: i64 = conn.query_row("SELECT count(*) FROM memory_vec", [], |r| r.get(0)).unwrap();
+        assert_eq!(vecteurs, 0);
+    }
+
+    #[test]
+    fn ac5_messages_sauves_evinces_a_dix() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        let long = "é".repeat(400);
+        for s in 1..=12 {
+            let content = if s == 12 { long.clone() } else { format!("m{s}") };
+            sauver_message(&mut conn, &message("P", &content, &instant(s))).unwrap();
+        }
+        sauver_message(&mut conn, &message("Q", "autre scope", &instant(30))).unwrap();
+        let nombre = |portee: &str| -> i64 {
+            conn.query_row("SELECT count(*) FROM messages WHERE session_scope = ?1", [portee], |r| r.get(0)).unwrap()
+        };
+        assert_eq!((nombre("P"), nombre("Q")), (10, 1));
+        let contenus = |n: usize| -> Vec<String> {
+            derniers_messages(&conn, "P", n).unwrap().into_iter().map(|(role, c)| {
+                assert_eq!(role, "user");
+                c
+            }).collect()
+        };
+        // Les 10 plus récents, du plus ancien au plus récent ; contenu complet en base.
+        let mut attendu: Vec<String> = (3..=11).map(|s| format!("m{s}")).collect();
+        attendu.push(long.clone());
+        assert_eq!(contenus(10), attendu);
+        assert_eq!(contenus(3), ["m10".to_owned(), "m11".to_owned(), long.clone()]);
+        assert_eq!(derniers_messages(&conn, "Q", 10).unwrap(), [("user".to_owned(), "autre scope".to_owned())]);
+        assert!(derniers_messages(&conn, "R", 10).unwrap().is_empty());
+
+        // À created_at égal, le rowid départage (le plus grand est le plus récent).
+        let egal = instant(50);
+        for c in ["e1", "e2"] {
+            sauver_message(&mut conn, &message("E", c, &egal)).unwrap();
+        }
+        assert_eq!(
+            derniers_messages(&conn, "E", 1).unwrap(),
+            [("user".to_owned(), "e2".to_owned())]
+        );
+        assert_eq!(
+            derniers_messages(&conn, "E", 2).unwrap().into_iter().map(|(_, c)| c).collect::<Vec<_>>(),
+            ["e1", "e2"]
+        );
+
+        // role ou content NULL : rendus "".
+        conn.execute(
+            "INSERT INTO messages (id, session_scope, role, content, name, created_at) VALUES ('n', 'N', NULL, NULL, NULL, ?1)",
+            [&egal.iso],
+        )
+        .unwrap();
+        assert_eq!(derniers_messages(&conn, "N", 10).unwrap(), [(String::new(), String::new())]);
+    }
+
+    #[test]
+    fn ac3_voisins_top_n_par_portee() {
+        let base = Temp::new();
+        let mut conn = ouvrir(&base.0, DIMS).unwrap();
+        ajouter_simple(&mut conn, "proche", Some("ag"), Some("r1"), &[1.0, 0.0, 0.0]);
+        ajouter_simple(&mut conn, "b-moyen", Some("ag"), Some("r1"), &[1.0, 1.0, 0.0]);
+        ajouter_simple(&mut conn, "a-moyen", Some("ag"), Some("r1"), &[1.0, 1.0, 0.0]);
+        ajouter_simple(&mut conn, "loin", Some("ag"), Some("r1"), &[0.0, 1.0, 0.0]);
+        ajouter_simple(&mut conn, "autre-course", Some("ag"), Some("r2"), &[1.0, 0.0, 0.0]);
+        ajouter_simple(&mut conn, "autre-agent", Some("zz"), Some("r1"), &[1.0, 0.0, 0.0]);
+        let ids = |agent: Option<&str>, run: Option<&str>, n: usize| -> Vec<String> {
+            voisins(&conn, "moi", agent, run, &[2.0, 0.0, 0.0], n).unwrap().into_iter().map(|(s, _)| s.id).collect()
+        };
+        // Cosinus décroissant, à égalité id croissant, tronqué à n.
+        assert_eq!(ids(Some("ag"), Some("r1"), 10), ["proche", "a-moyen", "b-moyen", "loin"]);
+        assert_eq!(ids(Some("ag"), Some("r1"), 2), ["proche", "a-moyen"]);
+        // run_id absent : toutes les courses de l'agent ; agent absent : tous les agents.
+        assert_eq!(ids(Some("ag"), None, 2), ["autre-course", "proche"]);
+        assert_eq!(ids(None, Some("r1"), 10), ["autre-agent", "proche", "a-moyen", "b-moyen", "loin"]);
+        let scores: Vec<f64> =
+            voisins(&conn, "moi", Some("ag"), Some("r1"), &[2.0, 0.0, 0.0], 10).unwrap().into_iter().map(|(_, c)| c).collect();
+        assert!((scores[0] - 1.0).abs() < 1e-6 && (scores[1] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+        assert!(scores[3].abs() < 1e-6);
+        assert!(voisins(&conn, "autre", None, None, &[1.0, 0.0, 0.0], 10).unwrap().is_empty());
+    }
 }

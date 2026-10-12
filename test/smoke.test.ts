@@ -118,6 +118,8 @@ const DROPPED_TESTS: Record<string, true> = {
   "mem0-http-contrat-boite-noire.test.ts": true,
   // lance cargo et le contrat contre mem0-rs : fichier lourd
   "mem0-rs-noyau.test.ts": true,
+  // lance cargo et le contrat contre mem0-rs : fichier lourd
+  "mem0-rs-extraction-llm.test.ts": true,
 };
 
 function copyRepo(prefix: string): string {

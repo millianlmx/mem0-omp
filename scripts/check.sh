@@ -430,10 +430,10 @@ if section_on rust; then
 echo "── Rust mem0-rs"
 
 # La crate mem0-stack/mem0-rs : clippy sans avertissement toléré sur toutes les
-# cibles, `cargo test`, le binaire, puis le contrat boîte noire contre lui
-# (groupe infer=true exclu). Les trois étapes cargo tournent même si la
-# précédente échoue, et leur sortie n'est imprimée qu'en cas d'échec ; le
-# contrat n'exige que le binaire, et sa sortie est recopiée telle quelle.
+# cibles, `cargo test`, le binaire, puis le contrat boîte noire contre lui. Les
+# trois étapes cargo tournent même si la précédente échoue, et leur sortie n'est
+# imprimée qu'en cas d'échec ; le contrat n'exige que le binaire, et sa sortie
+# est recopiée telle quelle.
 # cargo ou clippy absent ⇒ saut annoncé sans ✓ — SAUF si MEM0_OMP_REQUIRE_RUST=1
 # (posée par la CI) : là, c'est un échec. Les copies jetables des harnais posent
 # MEM0_OMP_SKIP_RUST=1 pour ne rien compiler.
@@ -468,12 +468,12 @@ else
   fi
   if rust_out="$(cargo build "${rust_manifest[@]}" 2>&1)"; then
     pass "Rust mem0-rs : binaire mem0-rs construit"
-    rs_out="$(MEM0_CONTRAT_START="$rust_contrat_start" MEM0_CONTRAT_INFER=0 bash scripts/mem0-http-contrat.sh --run 2>&1)"
+    rs_out="$(MEM0_CONTRAT_START="$rust_contrat_start" bash scripts/mem0-http-contrat.sh --run 2>&1)"
     rs_status=$?
     [ -n "$rs_out" ] && printf '%s\n' "$rs_out"
     case "$rs_status" in
       0)
-        pass "Rust mem0-rs : contrat boîte noire conforme contre mem0-rs (MEM0_CONTRAT_INFER=0)"
+        pass "Rust mem0-rs : contrat boîte noire conforme contre mem0-rs"
         ;;
       2)
         rs_reason="$(printf '%s\n' "$rs_out" | head -n 1)"
@@ -484,7 +484,7 @@ else
         fi
         ;;
       *)
-        fail "Rust mem0-rs — contrat boîte noire contre mem0-rs en échec (relance : MEM0_CONTRAT_START=\"$rust_contrat_start\" MEM0_CONTRAT_INFER=0 bash scripts/mem0-http-contrat.sh --run)"
+        fail "Rust mem0-rs — contrat boîte noire contre mem0-rs en échec (relance : MEM0_CONTRAT_START=\"$rust_contrat_start\" bash scripts/mem0-http-contrat.sh --run)"
         ;;
     esac
   else

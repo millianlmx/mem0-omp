@@ -356,7 +356,7 @@ test("mem0-http-contrat-boite-noire/AC-14 : MEM0_CONTRAT_INFER=0 annonce le grou
   const run = await partage();
   if (!piecesPresentes(t, run)) return;
   assert.ok(run.sortie.includes("SKIP  ouvert/infer · groupe infer=true désactivé (MEM0_CONTRAT_INFER=0)"), run.sortie);
-  assert.ok(!run.sortie.split("\n").some((ligne) => ligne.includes("AC-14 ·")), run.sortie);
+  assert.ok(!run.sortie.split("\n").some((ligne) => /^(PASS|FAIL) {2}ouvert\/infer · /.test(ligne)), run.sortie);
   assert.ok(run.sortie.includes("0 requête(s) chat"), run.sortie);
   assert.equal(run.code, CODES_SORTIE.conforme, run.sortie);
 });

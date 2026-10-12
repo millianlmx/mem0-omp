@@ -7,9 +7,11 @@ mod bm25;
 mod config;
 mod db;
 mod embedder;
+mod extraction;
 mod graphe;
 mod horodatage;
 mod http;
+mod openai;
 mod recherche;
 mod validation;
 
@@ -53,11 +55,14 @@ async fn demarrer(ecoute: &Ecoute, cfg: Config) -> Result<(), String> {
         ),
         db::ErreurOuverture::Autre(raison) => format!("MEM0_DB_PATH={chemin} : {raison}"),
     })?;
-    let embedder = embedder::Embedder::new(&cfg.base_url, &cfg.embed_model, &cfg.api_token, cfg.embedding_dims)
-        .map_err(|e| e.to_string())?;
+    let client = openai::client().map_err(|e| e.to_string())?;
+    let embedder =
+        embedder::Embedder::new(client.clone(), &cfg.base_url, &cfg.embed_model, &cfg.api_token, cfg.embedding_dims);
+    let chat = openai::ClientChat::new(client, &cfg.base_url, &cfg.llm_model, &cfg.api_token);
     let etat = Arc::new(http::Etat {
         db: Arc::new(Mutex::new(conn)),
         embedder,
+        chat,
         http_token: cfg.http_token.clone(),
         installation_token: cfg.installation_token.clone(),
     });

@@ -27,7 +27,7 @@ import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 import { AJOUT, analyserFixtureRang, aretesParCles, corpsRechercheRang, EchecCas, GRAPHE, PHASES, RECHERCHE_EXPLIQUEE } from "./cas.ts";
 import type { Contexte, EntreeJournal, FixtureRang, Groupe, LigneExpliquee, Phase, Requete } from "./cas.ts";
-import { demarrerFauxOpenAI } from "./faux-openai.ts";
+import { demarrerFauxOpenAI, JETON_OPENAI, MODELE_CHAT, MODELE_EMBEDDINGS } from "./faux-openai.ts";
 import type { FauxOpenAI } from "./faux-openai.ts";
 import { verifierForme } from "./formes.ts";
 
@@ -287,9 +287,9 @@ class Lanceur {
         MEM0_CONTRAT_WORKDIR: workdir,
         MEM0_HTTP_TOKEN: phase.jetonServeur,
         OMLX_BASE_URL: faux.url,
-        OMLX_API_TOKEN: "contrat-faux-openai",
-        OMLX_LLM_MODEL: "contrat-chat",
-        OMLX_EMBED_MODEL: "contrat-embed",
+        OMLX_API_TOKEN: JETON_OPENAI,
+        OMLX_LLM_MODEL: MODELE_CHAT,
+        OMLX_EMBED_MODEL: MODELE_EMBEDDINGS,
         EMBEDDING_DIMS: "1024",
         OMP_INSTALLATION_TOKEN: "",
       },
@@ -344,6 +344,8 @@ class Lanceur {
       },
       journal: () => this.entrees,
       compteursOpenAI: () => this.faux?.compteurs() ?? { embeddings: 0, chat: 0 },
+      requetesChat: () => this.faux?.requetesChat() ?? [],
+      requetesEmbeddings: () => this.faux?.requetesEmbeddings() ?? [],
       fixtureRang: () => {
         if (!this.fixture) throw new Error("fixture de rang non chargée (erreur de programmation du lanceur)");
         return this.fixture;

@@ -1,17 +1,17 @@
 //! Tests boîte noire du binaire mem0-rs (BR-1 de mem0-rs-noyau) : chaque test
-//! lance le vrai binaire sur un port libre, branché sur un faux embedder.
+//! lance le vrai binaire sur un port libre, branché sur un faux serveur OpenAI.
 
+#[allow(dead_code, reason = "module partagé : chaque fichier de tests n'en utilise qu'une partie")]
 mod common;
 
 use std::time::Duration;
 
-use common::{Dossier, FauxEmbedder, Lancement, Reponse, Serveur};
+use common::{Dossier, FauxOpenAI, Lancement, Reponse, Serveur};
 use md5::{Digest, Md5};
 use serde_json::{Value, json};
 
 const AGENT: &str = "contrat-noyau";
 const CORPS_401: &str = r#"{"detail":"bad or missing X-Mem0-Token"}"#;
-const CORPS_501: &str = r#"{"detail":"infer=true n'est pas encore supporté par mem0-rs"}"#;
 
 fn md5_hex(texte: &str) -> String {
     Md5::digest(texte.as_bytes()).iter().map(|o| format!("{o:02x}")).collect()
@@ -21,12 +21,12 @@ fn md5_hex(texte: &str) -> String {
 /// dans l'ordre : le serveur est tué avant que son dossier soit supprimé.
 struct Banc {
     serveur: Serveur,
-    faux: FauxEmbedder,
+    faux: FauxOpenAI,
     _dossier: Dossier,
 }
 
 async fn banc(nom: &str, jeton: &str) -> Banc {
-    let faux = FauxEmbedder::demarrer().await;
+    let faux = FauxOpenAI::demarrer().await;
     let dossier = Dossier::nouveau(nom);
     let serveur = Serveur::demarrer(&Lancement {
         base: &dossier.base(),
@@ -95,7 +95,7 @@ fn cle_instant(iso: &str) -> String {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn health_sans_jeton_et_installation() {
-    let faux = FauxEmbedder::demarrer().await;
+    let faux = FauxOpenAI::demarrer().await;
     let dossier = Dossier::nouveau("health");
     let s = Serveur::demarrer(&Lancement {
         base: &dossier.base(),
@@ -348,7 +348,7 @@ async fn ac7_delete_retire_et_historise() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ac3_relance_meme_base() {
-    let faux = FauxEmbedder::demarrer().await;
+    let faux = FauxOpenAI::demarrer().await;
     let dossier = Dossier::nouveau("ac3");
     let base = dossier.base();
     let lancement = Lancement { base: &base, embedder_url: &faux.base_url, jeton: "", installation: "" };
@@ -411,26 +411,6 @@ async fn ac8_all_505_souvenirs() {
     let mut tous_ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     tous_ids.sort_unstable();
     assert_eq!(vus, tous_ids, "des lignes manquent");
-}
-
-#[tokio::test(flavor = "multi_thread")]
-async fn ac9_infer_true_501_sans_ecriture() {
-    let b = banc("ac9", "").await;
-    let s = &b.serveur;
-    let id = ajouter(s, json!({"text":"souvenir existant"})).await;
-    let appels = b.faux.appels();
-    let avant_all = tous(s, "").await;
-    let avant_hist = historique(s, &id).await;
-    for corps in [json!({"text":"extraction demandée","infer":true}), json!({"text":"extraction implicite"})] {
-        let r = s.appeler("POST", "/memory/add", Some(&corps)).await;
-        assert_eq!(r.statut, 501);
-        assert_eq!(r.content_type, "application/json");
-        assert_eq!(r.texte, CORPS_501);
-    }
-    assert_eq!(b.faux.appels(), appels);
-    assert_eq!(tous(s, "").await, avant_all);
-    assert_eq!(avant_all["total"], 1);
-    assert_eq!(historique(s, &id).await, avant_hist);
 }
 
 #[tokio::test(flavor = "multi_thread")]
