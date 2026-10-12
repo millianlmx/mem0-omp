@@ -158,6 +158,8 @@ const DROPPED_TESTS: Record<string, true> = {
   // MEM0_CHECK_DEPTH) : ce fichier y lirait l'arbre réel (test/check.test.ts,
   // historique f3fbfe6) que la fixture n'a pas.
   "ci-macos-jobs-paralleles.test.ts": true,
+  // lance de vrais serveurs (Python, Qdrant) : le scénario couplé rejoue la suite au niveau 0
+  "mem0-http-contrat-boite-noire.test.ts": true,
 };
 
 function copyRepo(dir: string): void {
@@ -302,6 +304,8 @@ function runSimulation(repo: Repo): SpawnSyncReturns<string> {
       // de la release simulée — la section « App iOS » de même.
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
+      // Le contrat boîte noire mem0-http (vrais serveurs) n'a rien à faire ici.
+      MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
       GH_JOURNAL: repo.journal,
       PATH: `${repo.bin}:${process.env.PATH ?? ""}`,
     },
@@ -320,6 +324,7 @@ function runCheck(repo: Repo): SpawnSyncReturns<string> {
       GIT_CONFIG_GLOBAL: "/dev/null",
       MEM0_OMP_SKIP_SWIFT_APP: "1",
       MEM0_OMP_SKIP_IOS: "1",
+      MEM0_OMP_SKIP_HTTP_CONTRAT: "1",
     },
   });
 }

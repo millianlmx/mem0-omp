@@ -393,6 +393,37 @@ if [ -f scripts/mem0-http-test.sh ]; then
 else
   echo "  · scripts/mem0-http-test.sh absent, test d'API mem0-http non vérifié"
 fi
+
+# Contrat boîte noire des 9 routes (scripts/mem0-http-contrat.sh) : il démarre un
+# serveur jetable (Python + Qdrant natif + faux OpenAI) et exerce l'API par HTTP.
+# Même règle que test_api.py : sortie recopiée telle quelle, pièce manquante (code
+# 2) annoncée sans ✓ — ou ✗ si MEM0_OMP_REQUIRE_HTTP_API=1 (CI). Les copies jetables
+# des harnais posent MEM0_OMP_SKIP_HTTP_CONTRAT=1 pour ne démarrer aucun serveur.
+if [ -n "${MEM0_OMP_SKIP_HTTP_CONTRAT:-}" ]; then
+  echo "  · contrat boîte noire ignoré (MEM0_OMP_SKIP_HTTP_CONTRAT=1)"
+elif [ -f scripts/mem0-http-contrat.sh ]; then
+  contrat_out="$(bash scripts/mem0-http-contrat.sh --run 2>&1)"
+  contrat_status=$?
+  [ -n "$contrat_out" ] && printf '%s\n' "$contrat_out"
+  case "$contrat_status" in
+    0)
+      pass "API mem0-http : contrat boîte noire conforme (9 routes)"
+      ;;
+    2)
+      contrat_reason="$(printf '%s\n' "$contrat_out" | head -n 1)"
+      if [ "${MEM0_OMP_REQUIRE_HTTP_API:-}" = "1" ]; then
+        fail "API mem0-http — contrat boîte noire ${contrat_reason} (relance : bash scripts/mem0-http-contrat.sh --prepare)"
+      else
+        echo "  · ${contrat_reason} (prépare : bash scripts/mem0-http-test.sh --prepare && bash scripts/mem0-http-contrat.sh --prepare)"
+      fi
+      ;;
+    *)
+      fail "API mem0-http — contrat boîte noire en échec (relance : bash scripts/mem0-http-contrat.sh --run)"
+      ;;
+  esac
+else
+  echo "  · scripts/mem0-http-contrat.sh absent, contrat boîte noire non vérifié"
+fi
 fi
 
 if section_on smoke; then

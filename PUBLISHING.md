@@ -86,10 +86,14 @@ dépôt et se prépare une fois :
 
 ```bash
 bash scripts/mem0-http-test.sh --prepare
+bash scripts/mem0-http-contrat.sh --prepare
 ```
 
-Sans lui, la section annonce « non exécuté » plutôt qu'un ✓ trompeur. La CI, elle,
-l'exige (`MEM0_OMP_REQUIRE_HTTP_API=1`) : un « non exécuté » y est un échec.
+La seconde commande prépare les pièces du contrat boîte noire de mem0-http
+(binaire Qdrant natif et modèle BM25, hors du dépôt), qui réutilise le même
+environnement Python. Sans elles, la section annonce « non exécuté » plutôt qu'un
+✓ trompeur. La CI, elle, les exige (`MEM0_OMP_REQUIRE_HTTP_API=1`) : un « non
+exécuté » y est un échec.
 
 Le contrôle d'import mérite une explication : `import type { ExtensionAPI }` est
 effacé à la compilation, donc l'extension n'a aucune dépendance à résoudre au

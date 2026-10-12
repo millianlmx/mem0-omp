@@ -43,6 +43,8 @@ mem0-omp/                              racine = marketplace OMP
 ├── scripts/mac-recette-ui/            sonde Swift, catalogue, analyse, jeu fictif et exceptions de cette recette
 ├── scripts/omp-console-api.ts         sonde CLI de l'API distante d'OMP Console (appairage, magasin, flux)
 ├── scripts/mem0-http-test.sh          test d'API mem0-http hors conteneur, dérivé du Dockerfile
+├── scripts/mem0-http-contrat.sh       contrat HTTP boîte noire des 9 routes (prépare, lance, démarre le Python jetable)
+├── scripts/mem0-http-contrat/         lanceur, cas, formes et faux serveur OpenAI du contrat
 ├── scripts/release.ts                 PR de release auto-mergée, tags et releases au merge
 ├── scripts/no-manual-bump.sh          refuse un bump de version manuel dans une PR
 ├── scripts/release-simulation.sh      simule la release d'une PR sur une copie jetable
@@ -1146,6 +1148,34 @@ qui nomme la route fautive. Un serveur qui n'est plus conforme à l'API mem0
 installée fait donc échouer la PR, et pas seulement la construction de l'image.
 Sur un poste, l'environnement se prépare une fois :
 `bash scripts/mem0-http-test.sh --prepare`.
+
+La même section exécute ensuite le **contrat boîte noire** de mem0-http
+(`scripts/mem0-http-contrat.sh --run`) : il exerce par HTTP les 9 routes du
+serveur (`/health`, add, add_procedure, search, all, graph, PUT, DELETE, history)
+et vérifie pour chaque réponse le jeu de clés exact et le type des valeurs. Le
+serveur à tester est démarré jetable, sans conteneur : le Python de mem0-http
+(venv du test d'API), une Qdrant **native** v1.19.0 — la version épinglée par
+`mem0-stack/docker-compose.yml` — et un faux serveur OpenAI-compatible
+(embeddings déterministes de 1024 dimensions, réponses chat scriptées), donc ni
+oMLX ni la base réelle. Le binaire Qdrant et le modèle BM25 se préparent une fois,
+hors du dépôt, par `bash scripts/mem0-http-contrat.sh --prepare` ; sans eux, la
+section annonce le saut en nommant la pièce manquante, sans ✓. La CI prépare ces
+pièces et pose `MEM0_OMP_REQUIRE_HTTP_API=1` : une pièce manquante ou un cas en
+échec y rougit le job. Variables lues :
+
+| Variable | Effet |
+|---|---|
+| `MEM0_CONTRAT_URL` | URL de base `http://<hôte>:<port>` du serveur à tester |
+| `MEM0_CONTRAT_START` | commande shell qui démarre le serveur à tester (défaut : le Python jetable) |
+| `MEM0_CONTRAT_EXTERNE` | `1` accepte une URL sans commande de démarrage (instance externe, vide exigée) |
+| `MEM0_CONTRAT_TOKEN` | `X-Mem0-Token` envoyé à une instance externe |
+| `MEM0_CONTRAT_INFER` | `0` désactive le groupe infer=true (extraction LLM) |
+| `MEM0_CONTRAT_OPENAI_PORT` | port fixe du faux serveur OpenAI (libre par défaut) |
+| `MEM0_CONTRAT_QDRANT` | binaire Qdrant à utiliser à la place de celui du cache |
+| `MEM0_OMP_SKIP_HTTP_CONTRAT` | non vide : contrat ignoré (posé par les copies jetables des tests) |
+
+Viser mem0-rs = poser MEM0_CONTRAT_START (et MEM0_CONTRAT_URL), sans toucher à
+cas.ts.
 
 Un merge sur `main` déclenche `.github/workflows/release.yml`. Le job ne pousse
 **jamais** directement sur `main` (la protection de branche refuse un commit neuf

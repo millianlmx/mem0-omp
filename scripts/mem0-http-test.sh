@@ -17,6 +17,7 @@
 #   --python-version     imprime X.Y de `FROM python:X.Y…`
 #   --prepare [--dry-run]  construit le venv et installe les exigences
 #   --run                exécute test_api.py avec l'environnement préparé
+#   --interpreter        imprime l'interpréteur que --run utiliserait
 #
 # Codes de sortie : 0 conforme, 1 au moins un cas de test_api.py a échoué,
 # 2 non exécuté (prérequis absent), tout autre code propagé tel quel.
@@ -117,10 +118,42 @@ prepared_matches() {
   cmp -s "$VENV/.requirements" <(printf '%s\n' "$1")
 }
 
+# Résolution de l'interpréteur, partagée par --run et --interpreter : pose `py`
+# et rend 0, ou imprime la raison `non exécuté : …` et rend 2. N'installe JAMAIS
+# rien et n'écrit jamais dans le venv. $1 = exigences extraites du Dockerfile.
+resolve_interpreter() {
+  py=""
+  local from_venv=0
+  if [ -n "${MEM0_HTTP_PYTHON:-}" ] && [ -x "${MEM0_HTTP_PYTHON}" ]; then
+    # Un interpréteur explicite et exécutable gagne sur le venv, et aucune
+    # empreinte n'est exigée de lui.
+    py="${MEM0_HTTP_PYTHON}"
+    case "$py" in
+      /*) : ;;
+      */*) py="$ROOT/$py" ;;
+    esac
+  elif [ -x "$VENV/bin/python" ]; then
+    py="$VENV/bin/python"
+    from_venv=1
+  else
+    # Un MEM0_HTTP_PYTHON posé mais non exécutable est traité comme absent, jamais
+    # comme un « command not found » déguisé en échec de test.
+    printf 'non exécuté : environnement du test absent (%s)\n' "$VENV"
+    return 2
+  fi
+
+  if [ "$from_venv" -eq 1 ] && ! prepared_matches "$1"; then
+    printf 'non exécuté : déclaration de dépendances modifiée depuis la préparation\n'
+    return 2
+  fi
+  return 0
+}
+
 MODE="--run"
 DRY=0
 case "${1:-}" in
   "" | --run) MODE="--run" ;;
+  --interpreter) MODE="--interpreter" ;;
   --requirements | --python-version) MODE="$1" ;;
   --prepare)
     MODE="--prepare"
@@ -131,7 +164,7 @@ case "${1:-}" in
     esac
     ;;
   *)
-    echo "usage: bash scripts/mem0-http-test.sh [--requirements|--python-version|--prepare [--dry-run]|--run]" >&2
+    echo "usage: bash scripts/mem0-http-test.sh [--requirements|--python-version|--prepare [--dry-run]|--run|--interpreter]" >&2
     exit 2
     ;;
 esac
@@ -195,30 +228,13 @@ if [ "$MODE" = "--prepare" ]; then
   exit 0
 fi
 
-# --run : n'installe JAMAIS rien et n'écrit jamais dans le venv.
-py=""
-from_venv=0
-if [ -n "${MEM0_HTTP_PYTHON:-}" ] && [ -x "${MEM0_HTTP_PYTHON}" ]; then
-  # Un interpréteur explicite et exécutable gagne sur le venv, et aucune
-  # empreinte n'est exigée de lui.
-  py="${MEM0_HTTP_PYTHON}"
-  case "$py" in
-    /*) : ;;
-    */*) py="$ROOT/$py" ;;
-  esac
-elif [ -x "$VENV/bin/python" ]; then
-  py="$VENV/bin/python"
-  from_venv=1
-else
-  # Un MEM0_HTTP_PYTHON posé mais non exécutable est traité comme absent, jamais
-  # comme un « command not found » déguisé en échec de test.
-  printf 'non exécuté : environnement du test absent (%s)\n' "$VENV"
+if ! resolve_interpreter "$reqs"; then
   exit 2
 fi
 
-if [ "$from_venv" -eq 1 ] && ! prepared_matches "$reqs"; then
-  printf 'non exécuté : déclaration de dépendances modifiée depuis la préparation\n'
-  exit 2
+if [ "$MODE" = "--interpreter" ]; then
+  printf '%s\n' "$py"
+  exit 0
 fi
 
 # Même invocation que le Dockerfile, depuis le dossier du serveur. La sortie est

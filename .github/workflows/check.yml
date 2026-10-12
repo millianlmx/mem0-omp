@@ -72,6 +72,8 @@ jobs:
       # seconde liste à maintenir. Le venv vit hors du dépôt.
       - name: Préparer l'environnement du test d'API mem0-http
         run: bash scripts/mem0-http-test.sh --prepare
+      - name: Préparer le contrat boîte noire mem0-http
+        run: bash scripts/mem0-http-contrat.sh --prepare
       - name: Valider le catalogue, le manifeste et l'extension
         env:
           # En CI, un prérequis manquant (bun, hôte, environnement du test d'API)
@@ -157,6 +159,8 @@ jobs:
           python-version: ${{ steps.image_python.outputs.version }}
       - name: Préparer l'environnement du test d'API mem0-http
         run: bash scripts/mem0-http-test.sh --prepare
+      - name: Préparer le contrat boîte noire mem0-http
+        run: bash scripts/mem0-http-contrat.sh --prepare
       - name: Valider le catalogue, le manifeste et l'extension (${{ matrix.part }})
         env:
           # Prérequis manquant = échec, jamais un skip (voir le job `check`).
