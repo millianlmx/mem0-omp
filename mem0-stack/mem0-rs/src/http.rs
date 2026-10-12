@@ -1,6 +1,7 @@
 //! Surface HTTP (S-2 à S-5, S-7) : les 9 routes du Python, le jeton après la
 //! validation, et les corps d'erreur exacts de FastAPI/starlette (D-6).
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
@@ -12,13 +13,15 @@ use axum::routing::{get, post, put};
 use md5::{Digest, Md5};
 use rusqlite::Connection;
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Map, Value, json};
 
 use crate::config::{blanc_python, strip_python};
-use crate::db::{self, Souvenir};
+use crate::db::{self, FaitInfere, MessageSession, Souvenir};
 use crate::embedder::Embedder;
+use crate::extraction::{self, Lecture};
 use crate::graphe::{self, Arete, GRAPH_THRESHOLD, GRAPH_TOP_K};
 use crate::horodatage;
+use crate::openai::ClientChat;
 use crate::recherche::{self, Details, Refus};
 use crate::validation::{self, Rejet};
 
@@ -29,6 +32,8 @@ pub const USER: &str = "moi";
 pub struct Etat {
     pub db: Arc<Mutex<Connection>>,
     pub embedder: Embedder,
+    /// chat/completions de l'extraction (add infer=true).
+    pub chat: ClientChat,
     /// Secret : jamais imprimé. Vide = aucun contrôle.
     pub http_token: String,
     pub installation_token: String,
@@ -165,17 +170,15 @@ async fn add(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Response
     if let Some(refus) = controle_jeton(&etat, &entetes) {
         return refus;
     }
-    if req.infer {
-        return json(
-            StatusCode::NOT_IMPLEMENTED,
-            &json!({ "detail": "infer=true n'est pas encore supporté par mem0-rs" }),
-        );
-    }
     let (Ok(agent_id), Ok(run_id)) = (portee(req.agent_id), portee(req.run_id)) else {
         return interne();
     };
     let tags = req.tags.filter(|t| !t.is_empty());
-    ajouter(&etat, req.text, agent_id, run_id, tags).await
+    if req.infer {
+        ajouter_infere(&etat, req.text, agent_id, run_id, tags).await
+    } else {
+        ajouter(&etat, req.text, agent_id, run_id, tags).await
+    }
 }
 
 async fn add_procedure(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Response {
@@ -218,7 +221,8 @@ async fn ajouter(
                     user_id: USER,
                     agent_id: agent_id.as_deref(),
                     run_id: run_id.as_deref(),
-                    role: "user",
+                    role: Some("user"),
+                    attributed_to: None,
                     tags: tags.as_deref(),
                     instant: &instant,
                 },
@@ -234,6 +238,161 @@ async fn ajouter(
         ),
         Err(()) => interne(),
     }
+}
+
+/// add infer=true (S-2 à S-4) : chemin additif de mem0 2.2.1. Aucune écriture
+/// avant la dernière étape, atomique ; le verrou de la base n'est jamais tenu
+/// pendant un appel sortant.
+async fn ajouter_infere(
+    etat: &Etat,
+    texte: String,
+    agent_id: Option<String>,
+    run_id: Option<String>,
+    tags: Option<String>,
+) -> Response {
+    let scope = extraction::portee_session(USER, agent_id.as_deref(), run_id.as_deref());
+    let derniers = {
+        let scope = scope.clone();
+        avec_base(etat, move |conn| db::derniers_messages(conn, &scope, db::MESSAGES_PAR_PORTEE)).await
+    };
+    let Ok(derniers) = derniers else {
+        return interne();
+    };
+    let Ok(requete) = etat.embedder.plonger(&format!("user: {texte}\n")).await.map_err(|e| eprintln!("mem0-rs : {e}"))
+    else {
+        return interne();
+    };
+    let voisins = {
+        let (agent_id, run_id) = (agent_id.clone(), run_id.clone());
+        avec_base(etat, move |conn| {
+            db::voisins(conn, USER, agent_id.as_deref(), run_id.as_deref(), &requete, extraction::VOISINS)
+        })
+        .await
+    };
+    let Ok(voisins) = voisins else {
+        return interne();
+    };
+    let existants: Vec<String> = voisins.iter().map(|(s, _)| s.memory.clone()).collect();
+    let hashes: HashSet<String> = voisins.into_iter().map(|(s, _)| s.hash).collect();
+    let date = &horodatage::maintenant().iso[..10];
+    let invite = extraction::invite_utilisateur(&derniers, &existants, &texte, date);
+    let contenu = match etat.chat.completer(extraction::ADDITIVE_EXTRACTION_PROMPT, &invite).await {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("mem0-rs : extraction : {e}");
+            return interne();
+        }
+    };
+    let elements = match extraction::lire_faits(&contenu) {
+        Lecture::Elements(e) => e,
+        Lecture::Vide => Vec::new(),
+        Lecture::Illisible(raison) => {
+            eprintln!("mem0-rs : extraction : {raison}");
+            Vec::new()
+        }
+        Lecture::Invalide => {
+            eprintln!("mem0-rs : extraction : `memory` n'est pas une liste d'objets");
+            return interne();
+        }
+    };
+    let plongees = plonger_faits(&etat.embedder, &elements).await;
+    let Ok(faits) = retenir(&elements, &plongees, hashes) else {
+        eprintln!("mem0-rs : extraction : un `text` extrait est un tableau ou un objet");
+        return interne();
+    };
+    let resultats: Vec<Value> =
+        faits.iter().map(|f| json!({ "id": f.id, "memory": f.memory, "event": "ADD" })).collect();
+    let message = MessageSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        portee: scope,
+        content: texte,
+        instant: horodatage::maintenant(),
+    };
+    let ecrit = avec_base(etat, move |conn| {
+        if faits.is_empty() {
+            db::sauver_message(conn, &message)
+        } else {
+            db::ajouter_infere(conn, USER, agent_id.as_deref(), run_id.as_deref(), tags.as_deref(), &faits, &message)
+        }
+    })
+    .await;
+    match ecrit {
+        Ok(()) => json(StatusCode::OK, &json!({ "results": resultats })),
+        Err(()) => interne(),
+    }
+}
+
+/// `text` d'un élément extrait (absent → `null`).
+fn texte_extrait(element: &Map<String, Value>) -> &Value {
+    element.get("text").unwrap_or(&Value::Null)
+}
+
+/// Vecteurs des `text` truthy extraits (S-4, étape 1) : par lots si tous sont des
+/// chaînes, sinon (ou si un lot échoue) une requête par chaîne ; un échec rend le
+/// texte « non embarqué ».
+async fn plonger_faits(embedder: &Embedder, elements: &[Map<String, Value>]) -> HashMap<String, Vec<f32>> {
+    let textes: Vec<&Value> = elements.iter().map(texte_extrait).filter(|t| extraction::truthy(t)).collect();
+    let chaines: Vec<String> = textes.iter().filter_map(|t| t.as_str()).map(str::to_owned).collect();
+    let mut plongees = HashMap::with_capacity(chaines.len());
+    if chaines.is_empty() {
+        return plongees;
+    }
+    if chaines.len() == textes.len() {
+        match embedder.plonger_lot(&chaines).await {
+            Ok(vecteurs) => {
+                plongees.extend(chaines.into_iter().zip(vecteurs));
+                return plongees;
+            }
+            Err(e) => eprintln!("mem0-rs : extraction : lot d'embeddings en échec, repli texte par texte : {e}"),
+        }
+    }
+    for t in chaines {
+        match embedder.plonger(&t).await {
+            Ok(v) => {
+                plongees.insert(t, v);
+            }
+            Err(e) => eprintln!("mem0-rs : extraction : fait non embarqué : {e}"),
+        }
+    }
+    plongees
+}
+
+/// Faits retenus (S-4, étape 2), dans l'ordre : `text` chaîne embarquée dont le
+/// md5 n'est ni dans `hashes` (top 10 existant) ni déjà retenu. `Err` : un `text`
+/// truthy est un tableau ou un objet (500).
+fn retenir(
+    elements: &[Map<String, Value>],
+    plongees: &HashMap<String, Vec<f32>>,
+    mut hashes: HashSet<String>,
+) -> Result<Vec<FaitInfere>, ()> {
+    let mut faits = Vec::new();
+    for e in elements {
+        let t = texte_extrait(e);
+        if !extraction::truthy(t) {
+            continue;
+        }
+        let memory = match t {
+            Value::Array(_) | Value::Object(_) => return Err(()),
+            Value::String(s) => s,
+            _ => continue,
+        };
+        let Some(vecteur) = plongees.get(memory) else {
+            continue;
+        };
+        let hash = md5_hex(memory);
+        if !hashes.insert(hash.clone()) {
+            continue;
+        }
+        faits.push(FaitInfere {
+            id: uuid::Uuid::new_v4().to_string(),
+            memory: memory.clone(),
+            hash,
+            attributed_to: e.get("attributed_to").filter(|a| extraction::truthy(a)).cloned(),
+            instant: horodatage::maintenant(),
+            vecteur: vecteur.clone(),
+        });
+    }
+    Ok(faits)
 }
 
 async fn search(State(etat): Partage, entetes: HeaderMap, corps: Bytes) -> Response {
@@ -299,7 +458,8 @@ async fn graph(State(etat): Partage, entetes: HeaderMap) -> Response {
 }
 
 /// Ligne de résultat (D-1, `MemoryItem.model_dump`) : `score` après `metadata`
-/// pour la recherche seulement (`exclude={"score"}` pour all), et
+/// pour la recherche seulement (`exclude={"score"}` pour all), `role` absent
+/// et `attributed_to` présent pour un souvenir extrait (add infer=true), et
 /// `score_details` en dernier avec `explain`.
 #[derive(Serialize)]
 struct Ligne<'a> {
@@ -316,7 +476,10 @@ struct Ligne<'a> {
     agent_id: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     run_id: Option<&'a str>,
-    role: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    role: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    attributed_to: Option<&'a serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     score_details: Option<&'a Details>,
 }
@@ -335,7 +498,8 @@ impl<'a> Ligne<'a> {
             user_id: &s.user_id,
             agent_id: s.agent_id.as_deref(),
             run_id: s.run_id.as_deref(),
-            role: &s.role,
+            role: s.role.as_deref(),
+            attributed_to: s.attributed_to.as_ref(),
             score_details: None,
         }
     }
@@ -445,5 +609,53 @@ mod tests {
     fn md5_minuscule() {
         assert_eq!(md5_hex(""), "d41d8cd98f00b204e9800998ecf8427e");
         assert_eq!(md5_hex("a\0b"), format!("{:x}", Md5::digest(b"a\0b")));
+    }
+
+    fn cles(v: &serde_json::Value) -> Vec<&str> {
+        v.as_object().unwrap().keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn ac1_ligne_souvenir_infere_sans_role_avec_attributed_to() {
+        let classique = Souvenir {
+            id: "i".into(),
+            memory: "m".into(),
+            hash: "h".into(),
+            tags: None,
+            created_at: "c".into(),
+            updated_at: "u".into(),
+            user_id: USER.into(),
+            agent_id: Some("ag".into()),
+            run_id: None,
+            role: Some("user".into()),
+            attributed_to: None,
+        };
+        // add infer=false : forme inchangée.
+        let v = serde_json::to_value(Ligne::de(&classique)).unwrap();
+        assert_eq!(cles(&v), ["id", "memory", "hash", "metadata", "created_at", "updated_at", "user_id", "agent_id", "role"]);
+        assert_eq!(v["role"], "user");
+
+        // add infer=true : pas de role, attributed_to (JSON quelconque) après run_id.
+        let extrait = Souvenir {
+            run_id: Some("r".into()),
+            role: None,
+            attributed_to: Some(json!({"qui": [1, "x"]})),
+            ..classique.clone()
+        };
+        let v = serde_json::to_value(Ligne::de(&extrait)).unwrap();
+        assert_eq!(
+            cles(&v),
+            ["id", "memory", "hash", "metadata", "created_at", "updated_at", "user_id", "agent_id", "run_id", "attributed_to"]
+        );
+        assert_eq!(v["attributed_to"], json!({"qui": [1, "x"]}));
+        let v = serde_json::to_value(Ligne { score: Some(0.5), ..Ligne::de(&extrait) }).unwrap();
+        assert_eq!(
+            cles(&v),
+            ["id", "memory", "hash", "metadata", "score", "created_at", "updated_at", "user_id", "agent_id", "run_id", "attributed_to"]
+        );
+        // Souvenir extrait sans attributed_to : ni role ni attributed_to.
+        let nu = Souvenir { agent_id: None, run_id: None, role: None, attributed_to: None, ..classique };
+        let v = serde_json::to_value(Ligne::de(&nu)).unwrap();
+        assert_eq!(cles(&v), ["id", "memory", "hash", "metadata", "created_at", "updated_at", "user_id"]);
     }
 }

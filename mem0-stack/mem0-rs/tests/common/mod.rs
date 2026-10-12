@@ -1,6 +1,8 @@
-//! Banc d'essai des tests HTTP : faux embedder OpenAI-compatible et lanceur du
-//! binaire `mem0-rs` sur un port libre, avec une base dans un dossier jetable.
+//! Banc d'essai des tests HTTP : faux serveur OpenAI-compatible (embeddings et
+//! chat/completions scriptées) et lanceur du binaire `mem0-rs` sur un port libre,
+//! avec une base dans un dossier jetable.
 
+use std::collections::VecDeque;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -10,12 +12,18 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 /// Dimension des vecteurs du faux embedder (`DIMENSIONS` de faux-openai.ts).
 pub const DIMENSIONS: usize = 1024;
+
+/// `OMLX_API_TOKEN` et `OMLX_LLM_MODEL` des instances lancées par les tests.
+pub const JETON_OMLX: &str = "jeton-omlx";
+pub const MODELE_CHAT: &str = "modele-chat-test";
 
 /// `plonger` de scripts/mem0-http-contrat/faux-openai.ts : sac de mots haché par
 /// sha256, normalisé en L2 ; sans jeton, le vecteur unitaire e0.
@@ -39,31 +47,48 @@ pub fn plonger(texte: &str) -> Vec<f64> {
     vecteur.iter().map(|x| x / norme).collect()
 }
 
+/// Réponse scriptée de `POST /v1/chat/completions`.
+#[derive(Debug, Clone)]
+pub enum ReponseChat {
+    /// 200, `choices[0].message.content` = ce texte.
+    Contenu(String),
+    /// Ce statut, corps d'erreur OpenAI.
+    Statut(u16),
+    /// 200, ce corps JSON tel quel (enveloppe incomplète, `content` non textuel…).
+    Enveloppe(Value),
+}
+
 #[derive(Default)]
 struct EtatFaux {
     appels: AtomicUsize,
     textes: Mutex<Vec<String>>,
+    entrees: Mutex<Vec<Vec<String>>>,
+    file_chat: Mutex<VecDeque<ReponseChat>>,
+    requetes_chat: Mutex<Vec<Value>>,
+    autorisations_chat: Mutex<Vec<String>>,
 }
 
-/// Faux serveur OpenAI-compatible (`POST /v1/embeddings`) sur 127.0.0.1:0.
-pub struct FauxEmbedder {
+/// Faux serveur OpenAI-compatible (`POST /v1/embeddings`, `POST /v1/chat/completions`)
+/// sur 127.0.0.1:0.
+pub struct FauxOpenAI {
     /// Base à passer dans `OMLX_BASE_URL`.
     pub base_url: String,
     etat: Arc<EtatFaux>,
 }
 
-impl FauxEmbedder {
-    pub async fn demarrer() -> FauxEmbedder {
+impl FauxOpenAI {
+    pub async fn demarrer() -> FauxOpenAI {
         let etat = Arc::new(EtatFaux::default());
         let app = axum::Router::new()
             .route("/v1/embeddings", post(embeddings))
+            .route("/v1/chat/completions", post(chat))
             .with_state(Arc::clone(&etat));
-        let ecoute = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("faux embedder : écoute");
-        let port = ecoute.local_addr().expect("faux embedder : adresse").port();
+        let ecoute = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("faux OpenAI : écoute");
+        let port = ecoute.local_addr().expect("faux OpenAI : adresse").port();
         tokio::spawn(async move {
-            axum::serve(ecoute, app).await.expect("faux embedder : service");
+            axum::serve(ecoute, app).await.expect("faux OpenAI : service");
         });
-        FauxEmbedder { base_url: format!("http://127.0.0.1:{port}/v1"), etat }
+        FauxOpenAI { base_url: format!("http://127.0.0.1:{port}/v1"), etat }
     }
 
     /// Nombre de requêtes d'embeddings reçues.
@@ -71,9 +96,29 @@ impl FauxEmbedder {
         self.etat.appels.load(Ordering::SeqCst)
     }
 
-    /// Textes reçus, dans l'ordre.
+    /// Textes reçus par les embeddings, dans l'ordre.
     pub fn textes(&self) -> Vec<String> {
         verrou(&self.etat.textes).clone()
+    }
+
+    /// `input` de chaque requête d'embeddings, dans l'ordre.
+    pub fn entrees(&self) -> Vec<Vec<String>> {
+        verrou(&self.etat.entrees).clone()
+    }
+
+    /// Ajoute des réponses à la file de chat/completions ; file vide : `{"memory":[]}`.
+    pub fn scripter(&self, reponses: Vec<ReponseChat>) {
+        verrou(&self.etat.file_chat).extend(reponses);
+    }
+
+    /// Corps des requêtes chat/completions reçues, dans l'ordre.
+    pub fn requetes_chat(&self) -> Vec<Value> {
+        verrou(&self.etat.requetes_chat).clone()
+    }
+
+    /// En-têtes `authorization` des requêtes chat/completions, dans l'ordre.
+    pub fn autorisations_chat(&self) -> Vec<String> {
+        verrou(&self.etat.autorisations_chat).clone()
     }
 }
 
@@ -87,12 +132,37 @@ async fn embeddings(State(etat): State<Arc<EtatFaux>>, Json(corps): Json<Value>)
     assert_eq!(corps["encoding_format"], "float");
     assert!(corps.get("dimensions").is_none(), "mem0-rs ne doit pas envoyer `dimensions`");
     verrou(&etat.textes).extend(textes.iter().cloned());
+    verrou(&etat.entrees).push(textes.clone());
     let data: Vec<Value> = textes
         .iter()
         .enumerate()
         .map(|(index, t)| json!({ "object": "embedding", "index": index, "embedding": plonger(t) }))
         .collect();
     Json(json!({ "object": "list", "data": data, "model": corps["model"], "usage": { "prompt_tokens": 0, "total_tokens": 0 } }))
+}
+
+async fn chat(State(etat): State<Arc<EtatFaux>>, entetes: HeaderMap, Json(corps): Json<Value>) -> Response {
+    let autorisation = entetes.get("authorization").map(|v| v.to_str().unwrap().to_owned()).unwrap_or_default();
+    verrou(&etat.autorisations_chat).push(autorisation);
+    verrou(&etat.requetes_chat).push(corps.clone());
+    let reponse = verrou(&etat.file_chat).pop_front().unwrap_or_else(|| ReponseChat::Contenu(r#"{"memory":[]}"#.into()));
+    match reponse {
+        ReponseChat::Contenu(contenu) => Json(json!({
+            "id": "chatcmpl-test",
+            "object": "chat.completion",
+            "created": 0,
+            "model": corps["model"],
+            "choices": [{ "index": 0, "message": { "role": "assistant", "content": contenu }, "finish_reason": "stop" }],
+            "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 },
+        }))
+        .into_response(),
+        ReponseChat::Statut(statut) => (
+            StatusCode::from_u16(statut).unwrap(),
+            Json(json!({ "error": { "message": "faux OpenAI : erreur scriptée", "type": "server_error" } })),
+        )
+            .into_response(),
+        ReponseChat::Enveloppe(v) => Json(v).into_response(),
+    }
 }
 
 /// Dossier temporaire unique, supprimé à la fin du test.
@@ -174,7 +244,8 @@ impl Serveur {
             let mut enfant = Command::new(env!("CARGO_BIN_EXE_mem0-rs"))
                 .args(["--host", "127.0.0.1", "--port", &port.to_string()])
                 .env("OMLX_BASE_URL", l.embedder_url)
-                .env("OMLX_API_TOKEN", "jeton-omlx")
+                .env("OMLX_API_TOKEN", JETON_OMLX)
+                .env("OMLX_LLM_MODEL", MODELE_CHAT)
                 .env("EMBEDDING_DIMS", DIMENSIONS.to_string())
                 .env("MEM0_DB_PATH", l.base)
                 .env("MEM0_HTTP_TOKEN", l.jeton)

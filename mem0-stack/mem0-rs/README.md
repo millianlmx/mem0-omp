@@ -3,12 +3,17 @@
 Service mémoire HTTP de mem0-omp, en un seul binaire Rust. Il sert les 9 routes de
 `mem0-stack/mem0-http/http_server.py` (mem0ai 2.2.1) avec le même contrat : port
 8321 par défaut, en-tête `X-Mem0-Token`, mêmes formes JSON, mêmes codes. Tout le
-stockage tient dans un seul fichier SQLite. Les embeddings viennent d'une API
-OpenAI-compatible (oMLX).
+stockage tient dans un seul fichier SQLite. Les embeddings et l'extraction viennent
+d'une API OpenAI-compatible (oMLX).
 
-`add` avec `infer=true` (y compris quand `infer` est omis) rend
-`501 {"detail":"infer=true n'est pas encore supporté par mem0-rs"}` sans rien écrire :
-l'extraction par LLM arrive avec la feature mem0-rs-extraction-llm.
+`add` avec `infer=true` (y compris quand `infer` est omis) reproduit le chemin
+additif de mem0 2.2.1 : un seul appel `chat/completions` (invite d'extraction
+additive avec les `custom_instructions` de `memory_config.py`, réponse lue comme
+`{"memory":[{"text","attributed_to"?}]}`), embedding des faits extraits,
+dédoublonnage par hash md5 contre les 10 souvenirs existants les plus proches,
+événements `ADD` seuls. Un souvenir extrait n'a pas de `role` ; l'`attributed_to`
+du fait est promu dans le souvenir. Le chemin de décision ADD/UPDATE/DELETE/NONE de
+mem0 1.x n'est pas reproduit.
 
 ## Usage
 
@@ -33,10 +38,10 @@ bruts).
 
 | Variable | Défaut | Usage |
 |---|---|---|
-| `OMLX_BASE_URL` | `http://host.containers.internal:8000/v1` | base de l'API embeddings (`POST {base}/embeddings`) |
+| `OMLX_BASE_URL` | `http://host.containers.internal:8000/v1` | base de l'API OpenAI-compatible (`POST {base}/embeddings` et `POST {base}/chat/completions`) |
 | `OMLX_EMBED_MODEL` | `bge-m3` | champ `model` de la requête d'embedding |
 | `OMLX_API_TOKEN` | `not-needed` | `Authorization: Bearer` ; jamais imprimé |
-| `OMLX_LLM_MODEL` | `qwen3-8b` | affiché au démarrage (servira à mem0-rs-extraction-llm) |
+| `OMLX_LLM_MODEL` | `qwen3-8b` | modèle chat/completions de l'extraction (`add` infer=true) |
 | `EMBEDDING_DIMS` | `1024` | dimension des vecteurs ; entier positif, sinon code 1 |
 | `MEM0_DB_PATH` | `$HOME/.mem0/mem0-rs.db` | seul fichier de stockage ; dossier parent créé s'il manque |
 | `MEM0_HTTP_TOKEN` | `""` | jeton exigé dans `X-Mem0-Token` ; vide = aucun contrôle ; jamais imprimé |
@@ -49,14 +54,19 @@ Les variables `QDRANT_*` ne sont pas lues.
 Un seul fichier SQLite, `MEM0_DB_PATH` (journal WAL : seuls `<db>-wal`, `<db>-shm`
 et `<db>-journal` peuvent apparaître à côté) :
 
-- `meta` : `schema_version` et `embedding_dims`. Relancer la base avec une autre
-  `EMBEDDING_DIMS` est refusé (code 1), sans toucher au fichier.
-- `memories` : les souvenirs (texte, hash md5, portée, rôle, étiquettes, dates) et
-  leur vecteur creux BM25 (`sparse`, JSON `[[indice,poids],…]`).
+- `meta` : `schema_version` (`2`) et `embedding_dims`. Relancer la base avec une
+  autre `EMBEDDING_DIMS` est refusé (code 1), sans toucher au fichier. Une base v1
+  est refusée (`schema_version 1 inconnue (attendue 2)`, code 1), sans migration.
+- `memories` : les souvenirs (texte, hash md5, portée, rôle — NULL pour un souvenir
+  extrait —, `attributed_to` en JSON compact, étiquettes, dates) et leur vecteur
+  creux BM25 (`sparse`, JSON `[[indice,poids],…]`).
 - `memory_vec` (sqlite-vec, `vec0`) : le vecteur dense normalisé L2 en float32.
 - `memory_terms` (FTS5) : les indices creux du souvenir en jetons `t<indice>` ;
   `memory_terms_vocab` (`fts5vocab`) en donne les fréquences documentaires.
 - `history` : le schéma de mem0 (`storage.py`), révisions ADD, UPDATE et DELETE.
+- `messages` : les textes des `add` infer=true rendus en 200, par portée (les 10
+  plus récents sont gardés) ; ils alimentent la section `Last k Messages` de
+  l'invite d'extraction, comme la table `messages` de mem0.
 
 Chaque écriture calcule son embedding avant, puis écrit souvenir, vecteurs, termes et
 historique dans une seule transaction. Aucun autre fichier n'est créé (ni
@@ -139,7 +149,7 @@ Dépendances directes (`[dependencies]` de `Cargo.toml`) :
 | `serde_json` | JSON (`preserve_order` pour l'ordre des clés, `arbitrary_precision` pour les entiers hors i64) |
 | `rusqlite` | SQLite embarqué (`bundled`, avec FTS5) |
 | `sqlite-vec` | extension `vec0` et `vec_distance_cosine` |
-| `reqwest` | client de l'API embeddings (rustls, sans openssl) |
+| `reqwest` | client de l'API OpenAI-compatible (embeddings, chat/completions ; rustls, sans openssl) |
 | `md-5` | `hash` des souvenirs (md5 du texte) |
 | `uuid` | identifiants v4 des souvenirs et des révisions |
 | `time` | horodatage isoformat UTC |

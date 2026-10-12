@@ -4,9 +4,9 @@
 # Le contrat (scripts/mem0-http-contrat/contrat.ts) vise un « serveur à tester »
 # démarré par une commande remplaçable (MEM0_CONTRAT_START) : par défaut, le
 # serveur Python de mem0-stack/mem0-http, rendu jetable ici — Qdrant natif dans un
-# répertoire temporaire, faux OpenAI à la place d'oMLX. Viser mem0-rs :
+# répertoire temporaire, faux OpenAI à la place d'oMLX. Viser mem0-rs, groupe
+# infer=true compris, sans toucher aux cas :
 # MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs"
-# MEM0_CONTRAT_INFER=0, sans toucher aux cas.
 #
 # Modes (une seule invocation, `--run` par défaut) :
 #   --run           exécute le contrat (node --experimental-strip-types contrat.ts)

@@ -29,7 +29,7 @@ mem0-omp/                              racine = marketplace OMP
 │   └── ios/                           le projet Xcode de l'app iOS (coque-ios)
 ├── mem0-stack/                        mem0 + Qdrant, la voie MANUELLE (intacte)
 │   ├── mem0-http/                     l'API HTTP et sa config mem0
-│   └── mem0-rs/                       le serveur Rust mem0-rs (crate, infer=false)
+│   └── mem0-rs/                       le serveur Rust mem0-rs (crate)
 ├── CHANGELOG.md                       journal des versions, écrit par le job de release
 ├── test/                              suite node --test
 ├── scripts/check.sh                   validation avant publication
@@ -1196,7 +1196,7 @@ Viser mem0-rs (binaire construit par `cargo build --manifest-path
 mem0-stack/mem0-rs/Cargo.toml --locked`), sans toucher à cas.ts :
 
 ```bash
-MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs" MEM0_CONTRAT_INFER=0 bash scripts/mem0-http-contrat.sh --run
+MEM0_CONTRAT_START="bash scripts/mem0-http-contrat.sh --start-rs" bash scripts/mem0-http-contrat.sh --run
 ```
 
 `--start-rs` démarre le binaire sur une base SQLite neuve du répertoire de travail
@@ -1205,7 +1205,7 @@ de la phase ; binaire absent → `non exécuté : binaire mem0-rs absent (<chemi
 La section `── Rust mem0-rs` (id `rust`, juste après `api-http`) éprouve la crate
 `mem0-stack/mem0-rs` : `cargo clippy --all-targets -- -D warnings` (aucun
 avertissement toléré), `cargo test`, `cargo build`, puis ce même contrat contre le
-binaire construit (`MEM0_CONTRAT_INFER=0`). Les trois étapes cargo tournent même si
+binaire construit, groupe infer=true compris. Les trois étapes cargo tournent même si
 l'une échoue, et leur sortie n'est imprimée qu'en cas d'échec ; la commande à
 relancer est donnée par chaque ✗. Sans `cargo` (ou sans clippy) dans le `PATH`, la
 section annonce le saut sans ✓ et ne fait rien échouer sur un poste ; la CI installe

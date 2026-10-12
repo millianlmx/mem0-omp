@@ -1,17 +1,15 @@
 //! Client embeddings OpenAI-compatible (D-1 « Embedder OpenAI », D-8).
 //!
 //! Imite mem0 2.2.1 sur openai-python 3.24.0 : `\n` remplacé par une espace,
-//! `{"input":[texte],"model":…,"encoding_format":"float"}` sans `dimensions`,
-//! 2 nouvelles tentatives (0,5 s puis 1 s) sur erreur de connexion ou statut
-//! 408, 409, 429 ou ≥ 500 ; 600 s par tentative, dont 5 s de connexion.
+//! `{"input":[texte…],"model":…,"encoding_format":"float"}` sans `dimensions`.
+//! Délais et nouvelles tentatives : [`crate::openai::poster`].
 
-use std::time::Duration;
-
-use reqwest::StatusCode;
 use serde_json::{Value, json};
 
-/// Délais avant chaque nouvelle tentative.
-const NOUVELLES_TENTATIVES: [Duration; 2] = [Duration::from_millis(500), Duration::from_millis(1000)];
+use crate::openai;
+
+/// Nombre maximal de textes par requête de [`Embedder::plonger_lot`] (`embed_batch`).
+const TEXTES_PAR_LOT: usize = 100;
 
 /// Échec de l'embedder : la requête HTTP rend 500 (S-2).
 #[derive(Debug)]
@@ -20,6 +18,12 @@ pub struct ErreurEmbedding(pub String);
 impl std::fmt::Display for ErreurEmbedding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
+    }
+}
+
+impl From<openai::ErreurOpenAI> for ErreurEmbedding {
+    fn from(e: openai::ErreurOpenAI) -> Self {
+        ErreurEmbedding(format!("embedder : {e}"))
     }
 }
 
@@ -34,57 +38,62 @@ pub struct Embedder {
 }
 
 impl Embedder {
-    pub fn new(base_url: &str, model: &str, token: &str, dims: usize) -> Result<Self, ErreurEmbedding> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(600))
-            .connect_timeout(Duration::from_secs(5))
-            .no_proxy()
-            .build()
-            .map_err(|e| ErreurEmbedding(format!("client HTTP : {e}")))?;
-        Ok(Embedder {
-            client,
-            url: format!("{}/embeddings", base_url.trim_end_matches('/')),
-            model: model.to_owned(),
-            token: token.to_owned(),
-            dims,
-        })
+    pub fn new(client: reqwest::Client, base_url: &str, model: &str, token: &str, dims: usize) -> Self {
+        Embedder { client, url: openai::url(base_url, "embeddings"), model: model.to_owned(), token: token.to_owned(), dims }
     }
 
     /// Vecteur de `texte` (longueur contrôlée = EMBEDDING_DIMS).
     pub async fn plonger(&self, texte: &str) -> Result<Vec<f32>, ErreurEmbedding> {
+        let mut vecteurs = self.requete(std::slice::from_ref(&texte)).await?;
+        Ok(vecteurs.swap_remove(0))
+    }
+
+    /// Vecteurs de `textes`, dans leur ordre, par lots de 100 (`embed_batch`) ;
+    /// une liste vide n'émet aucune requête. Un lot en échec fait échouer le tout.
+    pub async fn plonger_lot(&self, textes: &[String]) -> Result<Vec<Vec<f32>>, ErreurEmbedding> {
+        let mut vecteurs = Vec::with_capacity(textes.len());
+        for lot in textes.chunks(TEXTES_PAR_LOT) {
+            vecteurs.extend(self.requete(lot).await?);
+        }
+        Ok(vecteurs)
+    }
+
+    /// Une requête embeddings pour `textes` (non vide) : un vecteur par texte.
+    async fn requete(&self, textes: &[impl AsRef<str>]) -> Result<Vec<Vec<f32>>, ErreurEmbedding> {
+        let entrees: Vec<String> = textes.iter().map(|t| t.as_ref().replace('\n', " ")).collect();
         let corps = json!({
-            "input": [texte.replace('\n', " ")],
+            "input": entrees,
             "model": self.model,
             "encoding_format": "float",
         });
-        let mut delais = NOUVELLES_TENTATIVES.iter();
-        let reponse = loop {
-            let essai = self.client.post(&self.url).bearer_auth(&self.token).json(&corps).send().await;
-            let a_retenter = match &essai {
-                Ok(r) => retentable(r.status()),
-                Err(e) => e.is_connect() || e.is_timeout() || e.is_request(),
-            };
-            match (a_retenter, delais.next()) {
-                (true, Some(delai)) => tokio::time::sleep(*delai).await,
-                _ => break essai.map_err(|e| ErreurEmbedding(format!("embedder injoignable : {e}")))?,
-            }
-        };
-        let statut = reponse.status();
-        if !statut.is_success() {
-            return Err(ErreurEmbedding(format!("embedder : statut {statut}")));
-        }
-        let valeur: Value = reponse
-            .json()
-            .await
-            .map_err(|e| ErreurEmbedding(format!("embedder : réponse illisible : {e}")))?;
-        self.vecteur(&valeur)
+        let valeur = openai::poster(&self.client, &self.url, &self.token, &corps).await?;
+        self.vecteurs(&valeur, textes.len())
     }
 
-    fn vecteur(&self, valeur: &Value) -> Result<Vec<f32>, ErreurEmbedding> {
-        let composantes = valeur
-            .pointer("/data/0/embedding")
+    /// Les `n` vecteurs de `data`, rangés par `index` (en son absence, l'ordre
+    /// reçu), chacun de longueur EMBEDDING_DIMS.
+    fn vecteurs(&self, valeur: &Value, n: usize) -> Result<Vec<Vec<f32>>, ErreurEmbedding> {
+        let data = valeur
+            .get("data")
             .and_then(Value::as_array)
-            .ok_or_else(|| ErreurEmbedding("embedder : data[0].embedding absent".to_owned()))?;
+            .ok_or_else(|| ErreurEmbedding("embedder : data absent".to_owned()))?;
+        if data.len() != n {
+            return Err(ErreurEmbedding(format!("embedder : {} vecteurs reçus pour {n} textes", data.len())));
+        }
+        let mut ranges: Vec<(u64, &Value)> = data
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.get("index").and_then(Value::as_u64).unwrap_or(i as u64), d))
+            .collect();
+        ranges.sort_by_key(|(index, _)| *index);
+        ranges.into_iter().map(|(_, d)| self.vecteur(d)).collect()
+    }
+
+    fn vecteur(&self, donnee: &Value) -> Result<Vec<f32>, ErreurEmbedding> {
+        let composantes = donnee
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(|| ErreurEmbedding("embedder : embedding absent".to_owned()))?;
         if composantes.len() != self.dims {
             return Err(ErreurEmbedding(format!(
                 "embedder : {} composantes reçues, EMBEDDING_DIMS={}",
@@ -103,31 +112,32 @@ impl Embedder {
     }
 }
 
-fn retentable(statut: StatusCode) -> bool {
-    matches!(statut.as_u16(), 408 | 409 | 429) || statut.is_server_error()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn statuts_retentables() {
-        for s in [408, 409, 429, 500, 502, 503, 599] {
-            assert!(retentable(StatusCode::from_u16(s).unwrap()), "{s}");
-        }
-        for s in [200, 400, 401, 404, 422] {
-            assert!(!retentable(StatusCode::from_u16(s).unwrap()), "{s}");
-        }
+    fn embedder() -> Embedder {
+        Embedder::new(openai::client().unwrap(), "http://h/v1/", "m", "k", 3)
     }
 
     #[test]
     fn url_et_controle_de_longueur() {
-        let e = Embedder::new("http://h/v1/", "m", "k", 3).unwrap();
+        let e = embedder();
         assert_eq!(e.url, "http://h/v1/embeddings");
-        assert_eq!(e.vecteur(&json!({"data":[{"embedding":[1, 0.5, -2]}]})).unwrap(), vec![1.0, 0.5, -2.0]);
-        assert!(e.vecteur(&json!({"data":[{"embedding":[1, 0.5]}]})).is_err());
-        assert!(e.vecteur(&json!({"data":[{"embedding":[1, "a", 2]}]})).is_err());
-        assert!(e.vecteur(&json!({"data":[]})).is_err());
+        assert_eq!(e.vecteurs(&json!({"data":[{"embedding":[1, 0.5, -2]}]}), 1).unwrap(), vec![vec![1.0, 0.5, -2.0]]);
+        assert!(e.vecteurs(&json!({"data":[{"embedding":[1, 0.5]}]}), 1).is_err());
+        assert!(e.vecteurs(&json!({"data":[{"embedding":[1, "a", 2]}]}), 1).is_err());
+        assert!(e.vecteurs(&json!({"data":[]}), 1).is_err());
+    }
+
+    #[test]
+    fn ac1_lot_range_par_index_et_compte_controle() {
+        let e = embedder();
+        let data = json!({"data":[
+            {"index": 1, "embedding": [0, 1, 0]},
+            {"index": 0, "embedding": [1, 0, 0]},
+        ]});
+        assert_eq!(e.vecteurs(&data, 2).unwrap(), vec![vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]]);
+        assert!(e.vecteurs(&data, 3).is_err(), "nombre de vecteurs différent du nombre de textes");
     }
 }

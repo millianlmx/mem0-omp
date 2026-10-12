@@ -91,7 +91,7 @@ fn champ<'a>(s: &'a Souvenir, cle: &str) -> Option<Option<&'a str>> {
         "user_id" => Some(Some(&s.user_id)),
         "agent_id" => s.agent_id.as_deref().map(Some),
         "run_id" => s.run_id.as_deref().map(Some),
-        "role" => Some(Some(&s.role)),
+        "role" => s.role.as_deref().map(Some),
         "tags" => s.tags.as_ref().map(|t| t.as_deref()),
         "data" | "text_lemmatized" => Some(Some(&s.memory)),
         "hash" => Some(Some(&s.hash)),
@@ -363,7 +363,8 @@ mod tests {
             user_id: "moi".into(),
             agent_id: Some("ag".into()),
             run_id: None,
-            role: "user".into(),
+            role: Some("user".into()),
+            attributed_to: None,
         };
         let f = |paires: &[(&str, Option<&str>)]| {
             correspond(&s, &paires.iter().map(|(k, v)| (k.to_string(), v.map(str::to_owned))).collect::<Vec<_>>())
@@ -373,7 +374,11 @@ mod tests {
         assert!(!f(&[("run_id", Some("r"))]));
         assert!(!f(&[("tags", Some("a"))]));
         assert!(!f(&[("role", None)]));
+        assert!(f(&[("role", Some("user"))]));
         assert!(!f(&[("memory_type", Some("x"))]));
+        // Souvenir extrait (add infer=true) : clé `role` absente du payload.
+        let extrait = Souvenir { role: None, ..s.clone() };
+        assert!(!correspond(&extrait, &[("role".to_owned(), Some("user".to_owned()))]));
     }
 
     #[test]
