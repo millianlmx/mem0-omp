@@ -110,6 +110,10 @@ public final class ConsoleClientModel: ObservableObject {
     private var revoked = false
     /// Le trousseau a été lu au moins une fois (fin de `restoreToken`).
     private var tokenRead = false
+    /// Les attentes de `awaitPairingRestored()` suspendues pendant la première
+    /// lecture du trousseau : toutes reprises, une seule fois, à la fin de
+    /// `restoreToken()`, avec le même statut.
+    private var pairingWaiters: [CheckedContinuation<ClientPairingStatus, Never>] = []
     /// L'endpoint vers lequel était partie la requête ou le flux refusé (401) :
     /// porté par `.refused`, repli de `pairingEndpoint()`. Remis à `nil` par un
     /// appairage réussi et par `forget()`.
@@ -224,6 +228,20 @@ public final class ConsoleClientModel: ObservableObject {
         searchExpired = false
         discovery.stop()
         pathSource.stop()
+    }
+
+    /// Démarre le client s'il ne tourne pas (`start()`, idempotent), puis attend la
+    /// fin de la première lecture du trousseau. Rend `.paired`, `.unpaired` ou
+    /// `.refused`, JAMAIS `.restoring`. N'attend ni la découverte du Mac ni la
+    /// connexion ; ne déclenche aucune lecture du trousseau en plus de celle que
+    /// `start()` lance, et aucune requête. L'annulation de la tâche appelante est
+    /// ignorée : la lecture est locale et bornée, l'attente se termine avec elle.
+    public func awaitPairingRestored() async -> ClientPairingStatus {
+        start()
+        guard pairing == .restoring else { return pairing }
+        return await withCheckedContinuation { continuation in
+            pairingWaiters.append(continuation)
+        }
     }
 
     /// L'app passe en arrière-plan : le flux est coupé et l'état n'est JAMAIS
@@ -1118,6 +1136,10 @@ public final class ConsoleClientModel: ObservableObject {
         }
         tokenRead = true
         beginConnection(resetCounter: true)
+        // L'état est publié : chaque attente reprend une fois, avec le même statut.
+        let waiters = pairingWaiters
+        pairingWaiters = []
+        for waiter in waiters { waiter.resume(returning: pairing) }
     }
 
     private func beginConnection(resetCounter: Bool) {
