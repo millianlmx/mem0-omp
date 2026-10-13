@@ -232,7 +232,9 @@ public enum VoiceSpeechText {
 
     /// Le succès d'un geste, qui nomme le geste et sa cible `t` (déjà épurée).
     /// La cible d'un arrêt est le DÉPÔT : `card.stop` arrête toutes ses pipelines.
+    /// Un message dicté à la session se dit « Reçu. », cible vide comprise.
     private static func sent(_ gesture: VoiceGesture, target t: String) -> String {
+        if gesture == .promptHostedSession { return "Reçu." }
         guard !t.isEmpty else { return "C’est fait." }
         switch gesture {
         case .stopFeature:
@@ -253,6 +255,8 @@ public enum VoiceSpeechText {
             return "Votre réponse au dialogue de session \(t) est envoyée."
         case .answerAuditEscalation:
             return "Votre réponse à l’escalade d’audit \(t) est envoyée."
+        case .promptHostedSession:
+            return "Reçu."
         case .resume:
             return "La pipeline \(t) est reprise."
         case .consult:
@@ -266,6 +270,12 @@ public enum VoiceSpeechText {
         guard let last = text.unicodeScalars.last else { return false }
         return [0x2E, 0x21, 0x3F, 0x2026].contains(last.value)
     }
+
+    // --- dictée vers la session OMP ---------------------------------------------
+    /// La question posée quand l'intent n'a reçu aucun message.
+    public static let dictationPrompt = "Quel message ?"
+    /// L'issue d'une dictée restée vide : rien n'est envoyé.
+    public static let dictationEmpty = "Aucun message n’a été envoyé."
 
     // --- énumération --------------------------------------------------------------
     /// « a », « a et b », « a, b et c » ; avec `more > 0`, tous les éléments puis

@@ -49,8 +49,7 @@ struct IOSSiriPilotChannel: VoicePilotChannel {
     }
 
     func issue(of error: Error) -> VoiceIssue {
-        guard let cause = error as? ClientError else { return .macRefused(motive: "") }
-        return IOSSiriPending.issue(of: cause)
+        IOSSiriPending.issue(of: error)
     }
 }
 
@@ -65,7 +64,7 @@ enum IOSSiriPilot {
         conversation: some VoiceConversation,
         isProtectedDataAvailable: @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) async throws -> String {
-        if let issue = await IOSSiriPending.ready(client: client, isProtectedDataAvailable: isProtectedDataAvailable) {
+        if let issue = await IOSSiriPending.readiness(client: client, isProtectedDataAvailable: isProtectedDataAvailable) {
             return issue.phrase
         }
         return try await VoicePilot.run(gesture, channel: IOSSiriPilotChannel(client: client), conversation: conversation)
@@ -77,7 +76,7 @@ enum IOSSiriPilot {
         conversation: some VoiceConversation,
         isProtectedDataAvailable: @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) async throws -> String {
-        if let issue = await IOSSiriPending.ready(client: client, isProtectedDataAvailable: isProtectedDataAvailable) {
+        if let issue = await IOSSiriPending.readiness(client: client, isProtectedDataAvailable: isProtectedDataAvailable) {
             return issue.phrase
         }
         return try await VoicePilot.launch(channel: IOSSiriPilotChannel(client: client), conversation: conversation)

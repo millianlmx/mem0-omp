@@ -96,7 +96,7 @@ test(`${FEATURE} : traçabilité — chacun des critères 1 à 16 a un test Swif
 
 test(`${FEATURE}/AC-16 : chaque phrase d’App Shortcut de l’app iOS contient le nom de l’app, sans fichier de localisation`, () => {
   const blocks = shortcutPhrases(stripComments(read(SIRI_TEXT)));
-  assert.equal(blocks.length, 7, "7 App Shortcuts attendus, sous la limite de 10");
+  assert.equal(blocks.length, 8, "8 App Shortcuts attendus, sous la limite de 10");
   const faults: string[] = [];
   blocks.forEach((phrases, i) => {
     if (phrases.length === 0) faults.push(`App Shortcut n°${i + 1} : aucune phrase`);

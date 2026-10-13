@@ -793,7 +793,7 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
 });
 
 const VOCAL_OK =
-  "  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)";
+  "  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)";
 
 test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingIntent et MacAnswerIntent avec leurs phrases françaises en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
   const { bundle, lancer, planterAncienBundle } = montageAppIntents();
@@ -835,6 +835,63 @@ test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingI
     assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
     assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
   }
+});
+
+/** Les phrases de l'App Shortcut de MacSessionPromptIntent, dans l'ordre de ConsoleShortcuts. */
+const PHRASES_DICTEE = ["Dis à ${applicationName}", "Envoyer un message à ${applicationName}", "Écrire à ${applicationName}"];
+
+test("siri-dictee-session-omp/AC-3 : le bundle livré déclare MacSessionPromptIntent, sinon l'assemblage sort en 1 sans bundle", () => {
+  const { bundle, lancer, planterAncienBundle } = montageAppIntents();
+
+  for (const args of [[], ["--no-tests"]]) {
+    const voie = args.length === 0 ? "complet" : "--no-tests";
+    const r = lancer(args);
+    assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
+    assert.ok(r.sortie.includes(VOCAL_OK), `[${voie}] ligne ✓ des intents vocaux absente\n${r.sortie}`);
+    assert.ok(
+      r.sortie.includes("MacSessionPromptIntent « Dis à ${applicationName} »"),
+      `[${voie}] la ligne ✓ ne cite pas l'intent de dictée\n${r.sortie}`,
+    );
+    const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
+    assert.ok(actions.includes('"identifier":"MacSessionPromptIntent"'), `[${voie}] MacSessionPromptIntent absent du bundle : ${actions}`);
+  }
+
+  planterAncienBundle();
+  const r = lancer([], { FAUX_APPINTENTS: "sans-dictee" });
+  const attendu = "✗ intent vocal absent de Metadata.appintents : MacSessionPromptIntent introuvable dans extract.actionsdata";
+  assert.equal(r.status, 1, r.sortie);
+  assert.ok(r.stderr.includes(attendu), `message absent : ${attendu}\n${r.sortie}`);
+  assert.ok(!r.sortie.includes(VOCAL_OK), `✓ des intents vocaux affiché malgré l'échec\n${r.sortie}`);
+  assert.ok(!fs.existsSync(bundle), `un bundle a survécu à l'échec : ${bundle}`);
+  assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], "le bundle a été signé malgré l'échec");
+});
+
+test("siri-dictee-session-omp/AC-12 : l'App Shortcut de MacSessionPromptIntent porte ses trois phrases françaises en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
+  const { bundle, lancer, planterAncienBundle } = montageAppIntents();
+
+  const r = lancer(["--no-tests"]);
+  assert.equal(r.status, 0, r.sortie);
+  const actions = JSON.parse(fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8")) as {
+    autoShortcuts: { actionIdentifier: string; phraseTemplates: { key: string }[] }[];
+  };
+  const raccourci = actions.autoShortcuts.find((s) => s.actionIdentifier === "MacSessionPromptIntent");
+  assert.ok(raccourci, "App Shortcut de MacSessionPromptIntent absent du bundle");
+  const phrases = raccourci.phraseTemplates.map((p) => p.key);
+  assert.deepEqual(phrases, PHRASES_DICTEE);
+  for (const phrase of phrases) {
+    assert.ok(phrase.includes("${applicationName}"), `phrase sans le nom de l'app : ${phrase}`);
+    assert.match(phrase, /^(Dis|Envoyer un message|Écrire) à \$\{applicationName\}$/, `phrase non française : ${phrase}`);
+  }
+
+  planterAncienBundle();
+  const echec = lancer([], { FAUX_APPINTENTS: "sans-phrase-dictee" });
+  const attendu =
+    "✗ App Shortcut de l'intent vocal MacSessionPromptIntent absent de Metadata.appintents : phrase « Écrire à ${applicationName} » introuvable dans extract.actionsdata";
+  assert.equal(echec.status, 1, echec.sortie);
+  assert.ok(echec.stderr.includes(attendu), `message absent : ${attendu}\n${echec.sortie}`);
+  assert.ok(!echec.sortie.includes(VOCAL_OK), `✓ des intents vocaux affiché malgré l'échec\n${echec.sortie}`);
+  assert.ok(!fs.existsSync(bundle), `un bundle a survécu à l'échec : ${bundle}`);
+  assert.deepEqual(signaturesDuBundle(echec.lignes, bundle), [], "le bundle a été signé malgré l'échec");
 });
 
 const PILOT_OK =

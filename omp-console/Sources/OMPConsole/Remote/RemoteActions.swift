@@ -511,12 +511,12 @@ final class RemoteActions {
         )
     }
 
-    /// Envoie une invite à la session hébergée. Un message blanc est refusé AVANT
-    /// tout contrôle d'état.
+    /// Envoie une invite à la session hébergée, selon la règle du champ de saisie
+    /// (`SessionConsoleModel.promptRefusal(for:)`) : le contrôle et l'appel de
+    /// `host.send` se font sans suspension intermédiaire.
     func prompt(message: String) async throws(GestureRefusal) {
-        guard !Self.isBlank(message) else { throw .emptyText }
+        if let refusal = session.promptRefusal(for: message) { throw refusal }
         let host = session.host
-        guard host.state == .running else { throw .sessionNotRunning }
         do {
             try await host.send(prompt: message)
         } catch {

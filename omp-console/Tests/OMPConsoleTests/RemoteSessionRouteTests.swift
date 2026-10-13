@@ -85,6 +85,7 @@ func hostedSessionEdgeCases() async throws {
     #expect(idlePayload.transcript.isEmpty)
     let idlePrompt = try await idle.call("POST", "/v1/session/prompt", token: token, json: ["message": "bonjour"])
     #expect(idlePrompt.status == 409)
+    #expect(idlePrompt.errorMessage == "aucune session OMP n'est lancée")
 
     let hosted = try await makeHostedSession()
     let stack = try await RemoteStack.make(sessionModel: hosted.session)
@@ -510,7 +511,7 @@ private func servicePosts(_ transport: ScriptedServiceTransport, suffix: String)
 @MainActor
 @Test("validations-de-geste-enfermees-dans-le-h/AC-4 : une invite ou une saisie de dialogue blanche rend « texte vide » sans rien émettre")
 func typedBlankHostedTextIsRefused() async throws {
-    // Session au repos : le blanc gagne sur l'état (sinon « la session n'est pas en marche »).
+    // Session au repos : le blanc gagne sur l'état (sinon « aucune session OMP n'est lancée »).
     let idle = try await RemoteStack.make()
     defer { idle.stop() }
     for blank in ["", " \n"] {

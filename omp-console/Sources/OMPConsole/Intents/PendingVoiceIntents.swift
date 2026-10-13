@@ -169,14 +169,33 @@ struct MacPendingChannel: VoicePendingChannel {
     }
 
     /// L'issue d'un échec. `pending()` ne lève que `MacStateUnreadable` ; un refus
-    /// de livraison rend `nil` quand la question ou le dialogue a changé (ou n'est
-    /// plus là), sinon l'issue commune des intents du Mac.
+    /// de livraison passe par `MacVoiceRefusal.issue(for:)`.
     func issue(of error: Error, delivery: VoiceDelivery?) -> VoiceIssue? {
-        switch error as? GestureRefusal {
+        if error is MacStateUnreadable { return .stateUnreadable }
+        guard let refusal = error as? GestureRefusal else { return .macRefused(motive: "") }
+        return MacVoiceRefusal.issue(for: refusal)
+    }
+}
+
+/// La traduction d'un refus de geste du Mac en issue énoncée par Siri, UNE pour
+/// tous les intents du Mac (canal des attentes, dictée vers la session, pilotage).
+enum MacVoiceRefusal {
+    /// `nil` quand la question ou le dialogue visé a changé (ou n'est plus là),
+    /// sinon le motif EXACT de la route HTTP du même geste.
+    static func issue(for refusal: GestureRefusal) -> VoiceIssue? {
+        switch refusal {
         case .staleQuestion, .noQuestionInFlight, .notAwaitingReply, .noPendingDialog, .staleDialog:
             return nil
         default:
-            return MacVoiceContext.issue(of: error)
+            return issue(of: refusal)
         }
+    }
+
+    /// L'issue de tout échec d'un intent du Mac : l'état non lu à temps, le motif
+    /// EXACT de la route HTTP d'un geste refusé, sinon un refus sans motif.
+    static func issue(of error: Error) -> VoiceIssue {
+        if error is MacStateUnreadable { return .stateUnreadable }
+        guard let refusal = error as? GestureRefusal else { return .macRefused(motive: "") }
+        return .macRefused(motive: refusal.apiError.message ?? "")
     }
 }

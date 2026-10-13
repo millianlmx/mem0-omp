@@ -61,7 +61,7 @@ struct MacPilotChannel: VoicePilotChannel {
     }
 
     func issue(of error: Error) -> VoiceIssue {
-        MacVoiceContext.issue(of: error)
+        MacVoiceRefusal.issue(of: error)
     }
 
     /// Attend la conclusion de la commande que le geste vient d'écrire ; un geste

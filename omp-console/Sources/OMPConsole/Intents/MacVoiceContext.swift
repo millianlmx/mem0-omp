@@ -69,14 +69,6 @@ final class MacVoiceContext {
             .filter { LaunchRepo.isGitRoot(path: $0) }
     }
 
-    /// L'issue qu'énonce Siri pour un échec d'intent : l'état non lu à temps, ou le
-    /// motif EXACT que rend la route HTTP du même geste refusé.
-    static func issue(of error: Error) -> VoiceIssue {
-        if error is MacStateUnreadable { return .stateUnreadable }
-        guard let refusal = error as? GestureRefusal else { return .macRefused(motive: "") }
-        return .macRefused(motive: refusal.apiError.message ?? "")
-    }
-
     /// Démarre l'ardoise d'un processus lancé sans fenêtre, puis attend au plus
     /// `readinessTimeout` qu'elle quitte `.loading` ; au-delà, lève `MacStateUnreadable`.
     private func waitForBoard() async throws {

@@ -328,13 +328,15 @@ if ! grep -Eq '"actionIdentifier" *: *"OpenConsoleIntent"' "$ACTIONS_DATA" \
 fi
 echo '  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)'
 
-# Puis les deux intents vocaux de la coque (feature siri-mac-questions-en-attente,
-# S-7) : chacun doit être déclaré (E-9) et porter son App Shortcut, avec sa
-# première phrase française (E-10). Que chaque phrase contienne
+# Puis les intents vocaux de la coque (features siri-mac-questions-en-attente,
+# S-7, et siri-dictee-session-omp, S-6) : chacun doit être déclaré (E-9) et porter
+# son App Shortcut, avec ses phrases françaises (E-10). Que chaque phrase contienne
 # `${applicationName}` est déjà garanti par le processeur, qui sort en erreur sinon.
 # Les ’ (U+2019) sont voulus : le processeur les écrit tels quels.
 # shellcheck disable=SC1112
-for intent_vocal in 'MacPendingIntent|Qu’est-ce qui m’attend dans ${applicationName}' 'MacAnswerIntent|Réponds dans ${applicationName}'; do
+for intent_vocal in 'MacPendingIntent|Qu’est-ce qui m’attend dans ${applicationName}' 'MacAnswerIntent|Réponds dans ${applicationName}' \
+  'MacSessionPromptIntent|Dis à ${applicationName}' 'MacSessionPromptIntent|Envoyer un message à ${applicationName}' \
+  'MacSessionPromptIntent|Écrire à ${applicationName}'; do
   intent_type="${intent_vocal%%|*}"
   intent_phrase="${intent_vocal#*|}"
   if ! grep -Eq "\"identifier\" *: *\"$intent_type\"" "$ACTIONS_DATA"; then
@@ -346,7 +348,7 @@ for intent_vocal in 'MacPendingIntent|Qu’est-ce qui m’attend dans ${applicat
   fi
 done
 # shellcheck disable=SC1112
-echo '  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)'
+echo '  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)'
 
 # Puis les cinq intents de pilotage de la coque (feature
 # siri-mac-pilotage-pipelines, S-8), sur le même patron : chacun doit être
@@ -366,7 +368,6 @@ for intent_pilotage in 'MacLaunchPipelineIntent|Lancer une pipeline dans ${appli
 done
 # shellcheck disable=SC1112
 echo '  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)'
-
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
 if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then

@@ -232,11 +232,11 @@ struct IOSSiriPilotTests {
         #expect(reviewResult == VoiceIssue.sent(.acceptReview, target: review.title).phrase)
     }
 
-    @Test("siri-iphone-pilotage-pipelines/AC-9 : les intents de l'app sont les 7 attendus ; ceux de verdict n'émettent que « specs » ou « review »")
+    @Test("siri-iphone-pilotage-pipelines/AC-9 : les intents de l'app sont les 8 attendus ; ceux de verdict n'émettent que « specs » ou « review »")
     func verdictIntentsArePositiveOnly() async throws {
         let actions = try #require(try actionsData()["actions"] as? [String: Any])
         let types: [Any.Type] = [
-            IOSConnectionStatusIntent.self, IOSPendingRequestsIntent.self,
+            IOSConnectionStatusIntent.self, IOSPendingRequestsIntent.self, IOSSessionPromptIntent.self,
             IOSLaunchFeatureIntent.self, IOSResumeFeatureIntent.self, IOSStopFeatureIntent.self,
             IOSValidateSpecsIntent.self, IOSAcceptReviewIntent.self,
         ]
@@ -362,7 +362,7 @@ struct IOSSiriPilotTests {
     @Test("siri-iphone-pilotage-pipelines/AC-16 : les phrases des 5 nouveaux App Shortcuts sont exactement celles de S-9, avec le nom de l'app")
     func pilotShortcutPhrases() throws {
         let shortcuts = try #require(try actionsData()["autoShortcuts"] as? [[String: Any]])
-        #expect(shortcuts.count == 7)
+        #expect(shortcuts.count == 8)
         func keys(_ shortcut: [String: Any]) -> [String] {
             (shortcut["phraseTemplates"] as? [[String: Any]] ?? []).compactMap { $0["key"] as? String }
         }
