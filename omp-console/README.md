@@ -285,10 +285,13 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
   cliente (doublures de transport, de trousseau et de découverte : aucun Mac
   réel) ; dépend de `ConsoleClient` et de `ConsoleCore`.
 - **ConsoleCore** — la **cible partagée macOS/iOS** : les modèles et constantes
-  pures du magasin d'état, le vocabulaire figé des sections et le socle du
-  contrat de l'API distante. Aucune dépendance (ni interne, ni externe) : elle se
+  pures du magasin d'état, le vocabulaire figé des sections, le socle du
+  contrat de l'API distante et la politique vocale (`Voice/`, voir « Politique
+  vocale (App Intents) »). Aucune dépendance (ni interne, ni externe) : elle se
   compile seule (`swift build --target ConsoleCore`) et n'importe ni AppKit ni
   UIKit — la section « Noyau partagé » de `scripts/check.sh` le tient.
+  `Voice/VoiceGestureIntent.swift` est le seul fichier du noyau qui importe
+  AppIntents (framework système, pas une dépendance de paquet).
 
 ## Builder
 
@@ -2652,6 +2655,48 @@ quittent le trousseau du Mac) et l'instance reçoit `kill -TERM`. Codes de sorti
 ou capture « avant » manquante, `2` non exécuté (hors macOS, session verrouillée,
 Space plein écran d'une autre app, bundle absent, manifeste du bundle différent du
 support réel, Accessibilité refusée au terminal).
+
+## Politique vocale (App Intents)
+
+Les gestes exécutés par Siri ou Raccourcis, sur l'iPhone comme sur le Mac, suivent
+une table pure de ConsoleCore (`Sources/ConsoleCore/Voice/`). Elle ne régit que les
+App Intents : les gestes tactiles des écrans gardent leurs confirmations (sur
+l'Accueil iOS, seul « Valider les specs » confirme).
+
+| geste (`VoiceGesture`) | confirmation iPhone | déverrouillage iPhone | confirmation Mac | déverrouillage Mac |
+|---|---|---|---|---|
+| `stopFeature`, `validateSpecs`, `acceptReview`, `launchPipeline` | oui | oui | oui | oui |
+| `answerOption`, `answerText`, `answerProjectDialog`, `answerHostedDialog`, `answerAuditEscalation`, `resume`, `consult` | non | oui | non | non |
+
+Sur iPhone, tout intent exige le déverrouillage : le jeton est au trousseau en
+`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. La table
+(`VoiceGesturePolicy.rule(for:on:)`) classe les gestes par un `switch` sans
+`default` : un geste ajouté sans ligne ne compile pas, et
+`Tests/OMPConsoleTests/VoiceGesturePolicyTests.swift` échoue sur tout geste absent de
+ses listes écrites à la main.
+
+Écrire un intent vocal :
+
+- il se conforme à `VoiceGestureIntent` et déclare son geste,
+  `static let voiceGesture: VoiceGesture = .stopFeature` ;
+- il écrit sa politique en **littéral**,
+  `static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication`
+  si la table exige le déverrouillage sur sa plateforme, `.alwaysAllowed` sinon ;
+- `perform()` appelle `applyVoicePolicy(target:send:)` avec la cible nommée (le slug
+  de la feature, le nom de la pipeline) et la closure qui émet le geste par les
+  modèles existants ; la porte demande la confirmation à Siri
+  (« Arrêter la feature login-oauth ? ») et n'appelle `send` qu'après un oui ;
+- il traduit l'issue : `.sent` → son propre dialogue de succès ; `.cancelled(let d)` et
+  `.misconfigured(let d)` → `.result(dialog: IntentDialog(LocalizedStringResource(stringLiteral: d)))`.
+  Un refus, une absence de réponse ou une cible vide n'émettent rien ; une erreur de
+  `send` remonte telle quelle.
+
+Piège du littéral : `appintentsmetadataprocessor` exige que `authenticationPolicy`
+soit initialisée par un littéral (« 'IntentAuthenticationPolicy' must be initialized
+with a literal value ») ; une valeur calculée depuis la table fait échouer TOUT
+l'export des métadonnées App Intents. La table ne peut donc pas fournir la valeur :
+`applyVoicePolicy` confronte le littéral à `VoiceGesturePolicy.authenticationPolicy(for:on:)`
+à chaque exécution, et une divergence rend `.misconfigured` sans rien émettre.
 
 ## Vocabulaire et typographie
 
