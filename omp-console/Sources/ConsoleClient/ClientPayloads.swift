@@ -794,26 +794,8 @@ public struct RemoteDevicesEvent: Codable, Equatable, Sendable {
 
 // MARK: - Types portés par `GET /v1/session` et par les évènements
 
-/// Les quatre méthodes de dialogue auxquelles l'app répond.
-public enum RpcDialogMethod: String, CaseIterable, Codable, Sendable {
-    case select
-    case confirm
-    case input
-    case editor
-}
-
-/// Une demande de dialogue dépliée.
-public struct RpcDialogRequest: Identifiable, Codable, Equatable, Sendable {
-    public let id: String
-    public let method: RpcDialogMethod
-    public let title: String
-    public let message: String?
-    public let options: [String]
-    public let optionDescriptions: [String?]
-    public let placeholder: String?
-    public let prefill: String?
-    public let promptStyle: Bool
-}
+// `RpcDialogMethod` et `RpcDialogRequest` vivent dans ConsoleCore
+// (Session/RpcDialog.swift), partagés avec la coque Mac.
 
 /// Une ligne de la transcription brute.
 public struct TranscriptLine: Identifiable, Codable, Equatable, Sendable {

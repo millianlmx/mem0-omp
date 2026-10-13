@@ -470,6 +470,47 @@ section **Kanban** consomme le flux global en lecture, et c'est la couche
 familles : les livraisons d'un run (dans `<stateDir>/inbox/`) et les commandes
 postées au service (`POST /v1/repos/{repo}/commands`).
 
+### Liste des attentes
+
+`ConsoleCore/Pending/PendingRequests.swift` dérive, en fonction **pure** (ni E/S,
+ni horloge), la liste de toutes les demandes qui posent une question à
+l'utilisateur : `PendingRequests.list(PendingSources)`. Le Mac et l'iPhone la
+calculent des mêmes données transportées et obtiennent la même liste. Quatre
+sources y entrent :
+
+- **l'ardoise** (`KanbanBoardState`) : les cartes des colonnes « question en vol »
+  (question `ask` du run, sinon question en texte `waitPrompt`), « jalon specs » et
+  « jalon revue ». Les cartes en échec ou bloquées n'y entrent jamais, même
+  relançables. Une carte au pilote arrêté (« En pause ») y figure, marquée
+  `paused`, avec la reprise pour geste ;
+- **les dialogues de la conduite de projet** (`GET /v1/conduite`) ;
+- **les dialogues de la session hébergée** (`GET /v1/session`) ;
+- **les escalades d'audit** (`AuditBoard.of(snapshot)`).
+
+Deux exclusions évitent de compter une question deux fois ou trop tôt. Une carte
+dont la feature est en arbitrage (`arbitration`) est écartée, car l'arbitre décide.
+Une carte dont l'escalade figure déjà comme escalade d'un audit du magasin est
+aussi écartée : elle n'est listée qu'une fois, comme escalade.
+
+Chaque attente porte sa nature, sa question, ses options verbatim et son geste de
+réponse (`PendingReply`). Ce geste est une donnée, la route à appeler : rien n'est
+exécuté ici. L'identité est stable d'une lecture à l'autre et unique par question.
+Elle est préfixée par la nature : `ask:<carte>:<toolCallId>`,
+`reply|specs|review:<carte>:<sinceAt>`, `conduite|session:<dlg-N>:<at>` et
+`audit:<audit>:<clé>`. Une nouvelle question sur la même carte, un nouveau
+dialogue ou une nouvelle escalade reçoivent donc une nouvelle identité.
+
+L'ancienneté (ms epoch) vient elle aussi des données transportées. C'est
+`updatedAt` du run pour une question en vol, `sinceAt` de la feature pour une
+question en texte ou un jalon, `at` du dialogue (0 quand le service ne l'a pas
+posé) et `at` de l'escalade. La liste va de la plus ancienne à la plus récente ;
+à ancienneté égale, l'identité comparée octet par octet (UTF-8) départage.
+Fixtures et tests : `Tests/OMPConsoleTests/PendingFixtures.swift` et
+`PendingRequestsTests.swift`. Le calcul local du Mac
+(`Sources/OMPConsole/Pending/LocalPendingRequests.swift`) et celui de l'iPhone
+(voir « API distante ») sont confrontés sur la vraie pile par
+`PendingRequestsParityTests.swift`.
+
 ## Section Kanban
 
 `Sources/OMPConsole/Kanban/` est le **tableau des pipelines** : une ardoise unique
@@ -2547,6 +2588,13 @@ un flux temps réel.
   déjà répondue ou périmée ») et un service arrêté ou injoignable rend `503`. Aucune
   route de lecture : audits, escalades et décisions arrivent par la trame `store`.
   L'API sert ainsi **43 routes**, image exacte de `ClientRoute.all`.
+- **Liste des attentes** : aucune route dédiée. L'iPhone calcule la liste des
+  attentes depuis `/v1/store`, `/v1/conduite` et `/v1/session`
+  (`ConsoleClientModel.pendingRequests()`, lues dans cet ordre, l'une après
+  l'autre), avec la même fonction que le Mac (`LocalPendingRequests` côté coque) :
+  mêmes identités, même ordre. Une source en échec ⇒ `PendingRequestsUnavailable`
+  (`source` = `store`, `conduite` ou `session`, `cause` = l'erreur du client),
+  jamais une liste partielle. Les escalades d'audit arrivent avec `/v1/store`.
 - **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
   `store`, `conduite`, `devices`, `components`, `journal`, `pull-request-states`,
   `sessions` et `hosted`, avec un battement de cœur toutes les 15 secondes. À
@@ -2867,10 +2915,16 @@ omp-console/
 │   │   └── DevicesSettingsView.swift l'onglet Appareils des Réglages, ses états et ses textes
 │   ├── Settings/                  le panneau Réglages (⌘,)
 │   │   └── ConsoleSettingsView.swift la scène à un seul onglet « Appareils »
+│   ├── Pending/                   la liste des attentes calculée sur le Mac
+│   │   └── LocalPendingRequests.swift magasin, ardoise locale et files de dialogues → liste
 │   └── MenuBar/                   l'item de barre de menus, ses comptes, les séparateurs des menus
 │       ├── AlertsStatus.swift     l'état publié : comptes « À vous » / « En cours » de l'Accueil
 │       ├── MainMenuSeparators.swift masque les séparateurs de tête, de fin et doubles de la barre des menus
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
+├── Sources/ConsoleCore/           la cible partagée macOS/iOS (extrait)
+│   ├── Session/RpcDialog.swift    la demande de dialogue du service OMP, type unique Mac/iPhone
+│   └── Pending/                   la liste des attentes
+│       └── PendingRequests.swift  toutes les demandes qui posent une question (fonction pure)
 ├── Tests/OMPConsoleTests/         la suite Swift Testing (Service/ : ServiceClientTests,
 │                                  ServiceSessionModelTests, ServiceActionsTests ;
 │                                  ScriptedServiceTransport, le transport HTTP scripté)

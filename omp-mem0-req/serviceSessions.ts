@@ -294,7 +294,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
           return Promise.resolve({ cancelled: true });
         }
         dialogSeq += 1;
-        const request: DialogRequest = { id: `dlg-${dialogSeq}`, ...input };
+        const request: DialogRequest = { id: `dlg-${dialogSeq}`, ...input, at: now() };
         // Constructeur plutôt que `Promise.withResolvers` : le plugin est compilé
         // en `lib: ES2023` (tsconfig.json), qui ne l'a pas encore.
         const promise = new Promise<DialogAnswer>(resolve => {

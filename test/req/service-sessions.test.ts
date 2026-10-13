@@ -263,7 +263,7 @@ test("service-sessions/AC-3 : un dialogue select puis confirm fait poursuivre le
   const stateDir = mktmp("sessions-state-");
   const cwd = mktmp("sessions-cwd-");
   const { pi, created } = fakePi();
-  const host = createSessionHost({ pi: pi as never, stateDir, selfPath: null, log: () => {} });
+  const host = createSessionHost({ pi: pi as never, stateDir, selfPath: null, log: () => {}, now: () => 1_700_000_000_123 });
   const session = await host.open({ cwd, purpose: "session" });
   const fake = created[0]!;
   const frames = framesOf(host, session.id);
@@ -283,6 +283,7 @@ test("service-sessions/AC-3 : un dialogue select puis confirm fait poursuivre le
     title: "Choisis une option",
     options: ["alpha", "beta"],
     optionDescriptions: [null, "la seconde"],
+    at: 1_700_000_000_123,
   });
   // La session reste `running` pendant qu'un dialogue est en vol (S-6).
   assert.equal(host.view(session.id)?.dialogs.length, 1);
@@ -355,6 +356,44 @@ test("service-sessions/AC-4 : l'abonnement donne l'instantané (dialogue en vol)
   // Un sous-agent n'a pas de session servie : `view` rend `null` (404 côté route).
   assert.equal(host.view("inconnue"), null);
   assert.equal(host.subscribe("inconnue"), null);
+  await host.disposeAll();
+});
+
+test("service-sessions : un dialogue porte l'instant de sa création, que l'instantané et la vue rejouent tel quel", async () => {
+  const stateDir = mktmp("sessions-state-");
+  const cwd = mktmp("sessions-cwd-");
+  const { pi, created } = fakePi();
+  let clock = 1_700_000_000_000;
+  const host = createSessionHost({ pi: pi as never, stateDir, selfPath: null, log: () => {}, now: () => clock });
+  const session = await host.open({ cwd, purpose: "session" });
+  const ui = uiOf(created[0]!);
+  const frames = framesOf(host, session.id);
+
+  const pending: Promise<string | undefined> = ui.input("Une question");
+  const live = frames.find(frame => frame.event === "dialog");
+  assert.ok(live && live.event === "dialog");
+  assert.equal(live.data.at, 1_700_000_000_000, "la trame vivante porte l'instant de création");
+
+  // L'horloge avance : un abonné tardif et la vue rejouent l'instant d'ORIGINE.
+  clock = 1_700_000_009_999;
+  const subscription = host.subscribe(session.id);
+  assert.ok(subscription);
+  const replayed = subscription.snapshot.find(frame => frame.event === "dialog");
+  assert.ok(replayed && replayed.event === "dialog");
+  assert.deepEqual(replayed.data, live.data);
+  assert.equal(host.view(session.id)?.dialogs[0]?.at, 1_700_000_000_000);
+
+  // Un second dialogue prend l'instant courant, sous un identifiant distinct.
+  const second: Promise<boolean> = ui.confirm("Livrer ?", "maintenant");
+  const next = frames.filter(frame => frame.event === "dialog").at(-1);
+  assert.ok(next && next.event === "dialog");
+  assert.equal(next.data.at, 1_700_000_009_999);
+  assert.notEqual(next.data.id, live.data.id);
+
+  await host.answer(session.id, live.data.id, { value: "texte" });
+  assert.equal(await pending, "texte");
+  await host.answer(session.id, next.data.id, { confirmed: true });
+  assert.equal(await second, true);
   await host.disposeAll();
 });
 
