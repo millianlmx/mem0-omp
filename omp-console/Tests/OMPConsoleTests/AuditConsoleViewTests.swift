@@ -309,6 +309,46 @@ private func states(_ steps: [PipelineStep]) -> [PipelineStepState] {
     steps.map(\.state)
 }
 
+/// Les éléments d'accessibilité sous `element` (lui compris), en profondeur.
+@MainActor
+private func accessibilityTree(_ element: Any, depth: Int = 0) -> [NSAccessibilityProtocol] {
+    guard let node = element as? NSAccessibilityProtocol, depth < 12 else { return [] }
+    var nodes = [node]
+    if let view = node as? NSView {
+        for sub in view.subviews { nodes += accessibilityTree(sub, depth: depth + 1) }
+    }
+    for child in node.accessibilityChildren() ?? [] where !(child is NSView) {
+        nodes += accessibilityTree(child, depth: depth + 1)
+    }
+    return nodes
+}
+
+/// Les textes d'aide qu'AppKit porte pour un item de barre d'outils SwiftUI.
+/// Le `.help` n'atterrit pas au même endroit selon la version de SwiftUI :
+/// `toolTip` de l'item (macOS 27), de sa forme menu, ou de la vue hébergée
+/// (`toolTip` / `accessibilityHelp`).
+@MainActor
+private func toolbarHelpTexts(_ item: NSToolbarItem) -> [String] {
+    var texts = [item.toolTip, item.menuFormRepresentation?.toolTip]
+    if let view = item.view {
+        for node in accessibilityTree(view) {
+            texts.append((node as? NSView)?.toolTip)
+            texts.append(node.accessibilityHelp())
+        }
+    }
+    return texts.compactMap { $0 }
+}
+
+/// Ce qu'AppKit expose de l'item, pour diagnostiquer une aide absente.
+@MainActor
+private func toolbarHelpDiagnostic(_ item: NSToolbarItem) -> String {
+    let nodes = item.view.map { accessibilityTree($0) } ?? []
+    let described = nodes.map { node in
+        "\(type(of: node)) role=\(node.accessibilityRole()?.rawValue ?? "-") label=\(node.accessibilityLabel() ?? "-") help=\(node.accessibilityHelp() ?? "-") tip=\((node as? NSView)?.toolTip ?? "-")"
+    }
+    return "item=\(type(of: item)) toolTip=\(item.toolTip ?? "-") menu=\(item.menuFormRepresentation?.toolTip ?? "-") vues=[\(described.joined(separator: " | "))]"
+}
+
 @MainActor
 @Test("audit-ui-redesign-mac/AC-1 : la barre d’outils de la section porte « Nouvel audit » (libellé visible, symbole text.magnifyingglass) et aucun « plus » ; le geste ouvre la feuille de lancement")
 func newAuditToolbarButtonOpensTheLaunchSheet() {
@@ -336,7 +376,15 @@ func newAuditToolbarButtonOpensTheLaunchSheet() {
     #expect(!items.contains { $0.image?.tiffRepresentation == plus && plus != nil }, "aucun « plus » dans la barre de la section")
     if let item = labelled.first {
         #expect(item.isEnabled)
-        #expect(item.toolTip == AuditText.startAudit)
+        // Le `.help` relayé par AppKit : attendu jusqu'à ce qu'il paraisse.
+        let deadline = Date().addingTimeInterval(3)
+        while !toolbarHelpTexts(item).contains(AuditText.startAudit), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        }
+        #expect(
+            toolbarHelpTexts(item).contains(AuditText.startAudit),
+            "aide « \(AuditText.startAudit) » absente — \(ProcessInfo.processInfo.operatingSystemVersionString) ; \(toolbarHelpDiagnostic(item))"
+        )
     }
 
     #expect(!model.isLaunchSheetPresented)
