@@ -132,6 +132,33 @@ struct StoreReader: Sendable {
         return AuditEnvelope(availability: availability, relays: relays, discardedEntries: discardedEntries)
     }
 
+    /// `audits/` et `journal/` (audit-panel-in-omp-console S-5) : les audits triés
+    /// par nom, puis, pour chaque `repoKey` distinct, les lignes de
+    /// `journal/<repoKey>.jsonl` dont `context` est la clé d'un audit et dont la
+    /// source est l'arbitre (contexte ou arbitrage), dans l'ordre d'écriture.
+    ///
+    /// Un `repoKey` hors `^[0-9a-f]{16}$` (la seule forme que `lotRepoKey` écrit)
+    /// n'ouvre aucun journal : le nom d'un fichier lu ne vient jamais d'un champ
+    /// libre. Une ligne illisible est ignorée (parité `journalFor`).
+    func readAudits() -> AuditsEnvelope {
+        let (availability, records, discardedEntries) = scan(.audits) { _, json in
+            AuditRecord(json: json)
+        }
+        let auditIdByKey = Dictionary(records.map { ($0.key, $0.id) }, uniquingKeysWith: { first, _ in first })
+        var decisions: [AuditDecision] = []
+        var seen: Set<String> = []
+        let journalDir = PipelineStore.directory(.journal, stateDir: stateDir)
+        for record in records where isAuditId(record.repoKey) && seen.insert(record.repoKey).inserted {
+            guard let data = FileManager.default.contents(atPath: joinPath(journalDir, "\(record.repoKey).jsonl")) else { continue }
+            for line in data.split(separator: UInt8(ascii: "\n")) {
+                guard let json = JSONValue.parse(Data(line)),
+                      let decision = AuditDecision(journalLine: json, auditIdByKey: auditIdByKey) else { continue }
+                decisions.append(decision)
+            }
+        }
+        return AuditsEnvelope(availability: availability, records: records, decisions: decisions, discardedEntries: discardedEntries)
+    }
+
     /// Les boîtes d'un run : deux niveaux, donc pas le balayage générique. Un nom
     /// de boîte hors `^[0-9a-f]{16}-[0-9]+$` est ignoré SANS être compté, et une
     /// livraison illisible est CONSERVÉE avec `payload == nil` (le consommateur du
@@ -171,11 +198,12 @@ struct StoreReader: Sendable {
             lots: readLots(),
             projects: readProjects(),
             inbox: readInbox(),
-            audit: readAudit()
+            audit: readAudit(),
+            audits: readAudits()
         )
     }
 
-    /// Le balayage commun aux cinq stores plats : noms conformes (`<16 hex>.json`)
+    /// Le balayage commun aux six stores plats : noms conformes (`<16 hex>.json`)
     /// triés, un fichier illisible ou au schéma invalide est ÉCARTÉ et NOMMÉ. Tout
     /// autre nom — temporaire `<fichier>.tmp-<pid>`, `.DS_Store`, sous-répertoire —
     /// est ignoré sans être compté (S-8).

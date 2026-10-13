@@ -1,8 +1,9 @@
 // Les routes de GESTE (S-10, S-11, S-12) : les gestes de la coque, servis à
 // distance. Ils passent EXCLUSIVEMENT par les méthodes publiques des modèles
-// existants — `ActionsModel`, `ProjectConsoleModel`, `SessionConsoleModel` — et
-// n'ouvrent aucune seconde voie d'écriture : pas d'écriture directe dans
-// `<stateDir>`, pas de process lancé (les gestes partent au service par son API).
+// existants — `ActionsModel`, `ProjectConsoleModel`, `SessionConsoleModel`,
+// `AuditConsoleModel` — et n'ouvrent aucune seconde voie d'écriture : pas
+// d'écriture directe dans `<stateDir>`, pas de process lancé (les gestes partent
+// au service par son API).
 
 import ConsoleCore
 import Foundation
@@ -13,6 +14,7 @@ final class RemoteActions {
     private let actions: ActionsModel
     private let session: SessionConsoleModel
     private let project: ProjectConsoleModel
+    private let audit: AuditConsoleModel
     private let hub: StoreHub
     private let environment: [String: String]
     private let clock: RemoteClock
@@ -22,6 +24,7 @@ final class RemoteActions {
         actions: ActionsModel,
         session: SessionConsoleModel,
         project: ProjectConsoleModel,
+        audit: AuditConsoleModel,
         hub: StoreHub,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         clock: RemoteClock = .live
@@ -30,6 +33,7 @@ final class RemoteActions {
         self.actions = actions
         self.session = session
         self.project = project
+        self.audit = audit
         self.hub = hub
         self.environment = environment
         self.clock = clock
@@ -388,6 +392,83 @@ final class RemoteActions {
             ))
         }
         return .conflict(ProjectViewText.refusalTitle)
+    }
+
+    // MARK: - Audits
+
+    /// Démarre un audit (S-7) : la clé est résolue contre les dépôts CONNUS (comme
+    /// `startConduite`), puis la requête part au service par le MÊME geste que la
+    /// feuille de lancement du Mac (`AuditConsoleModel.startAudit`).
+    func startAudit(body: Data) async throws -> RemoteAuditStartedPayload {
+        let request = try Self.decode(RemoteAuditStartRequest.self, body)
+        guard let repo = knownRepos().first(where: { $0.repoKey == request.repoKey }) else {
+            throw ConsoleAPIError.notFound("dépôt inconnu")
+        }
+        let id = try await Self.auditGesture {
+            try await self.audit.startAudit(repoRoot: repo.repoRoot, orientation: request.orientation)
+        }
+        return RemoteAuditStartedPayload(id: id)
+    }
+
+    /// Lance les propositions cochées avec le brief validé (S-7).
+    func launchAudit(id: String, body: Data) async throws -> RemoteAuditLaunchPayload {
+        try Self.requireAuditId(id)
+        let request = try Self.decode(RemoteAuditLaunchRequest.self, body)
+        let launches = try await Self.auditGesture {
+            try await self.audit.launchAudit(id: id, selected: request.selected, brief: request.brief)
+        }
+        return RemoteAuditLaunchPayload(launches: launches)
+    }
+
+    /// Répond à une escalade d'une feature de l'audit (S-7) : la clé de
+    /// l'escalade est renvoyée telle quelle, le service juge sa fraîcheur.
+    func answerAudit(id: String, body: Data) async throws -> RemoteAcceptedPayload {
+        try Self.requireAuditId(id)
+        let request = try Self.decode(RemoteAuditAnswerRequest.self, body)
+        try await Self.auditGesture {
+            try await self.audit.answerEscalation(
+                auditId: id,
+                slug: request.slug,
+                key: request.key,
+                answer: request.answer,
+                decision: request.decision
+            )
+        }
+        return RemoteAcceptedPayload(accepted: true)
+    }
+
+    /// Arrête l'audit (S-7) : l'issue du service, recopiée.
+    func stopAudit(id: String) async throws -> RemoteAuditStopPayload {
+        try Self.requireAuditId(id)
+        let outcome = try await Self.auditGesture { try await self.audit.stopAudit(id: id) }
+        return RemoteAuditStopPayload(
+            cancelled: outcome.cancelled,
+            kept: outcome.kept,
+            refused: outcome.refused.map { RemoteAuditStopRefusal(slug: $0.slug, reason: $0.reason) }
+        )
+    }
+
+    /// Un identifiant hors forme ne peut désigner aucun audit : 404 sans appel au
+    /// service.
+    private static func requireAuditId(_ id: String) throws {
+        guard isAuditId(id) else { throw ConsoleAPIError.notFound("audit inconnu") }
+    }
+
+    /// Les refus du service se recopient (400, 404, 409) ; tout autre échec — service
+    /// arrêté, injoignable, réponse illisible — est un `503`, comme le lancement de
+    /// la session hébergée.
+    private static func auditGesture<T>(_ gesture: () async throws -> T) async throws -> T {
+        do {
+            return try await gesture()
+        } catch ServiceClientError.badRequest(let reason) {
+            throw ConsoleAPIError.badRequest(reason)
+        } catch ServiceClientError.notFound(let reason) {
+            throw ConsoleAPIError.notFound(reason)
+        } catch ServiceClientError.conflict(let reason) {
+            throw ConsoleAPIError.conflict(reason)
+        } catch {
+            throw ConsoleAPIError.unavailable(ServiceSessionModel.userMessage(of: error))
+        }
     }
 
     // MARK: - Session hébergée

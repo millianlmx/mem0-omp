@@ -42,6 +42,8 @@ struct ConsoleRootView: View {
     /// Le modèle de pilotage de projet : à l'échelle de l'app, comme les autres,
     /// pour que la session hébergée survive au changement de section.
     @ObservedObject var projectModel: ProjectConsoleModel
+    /// Le modèle de la section « Audit » : même raison.
+    @ObservedObject var auditModel: AuditConsoleModel
     /// Le modèle de la section « Mémoire » : même raison, la portée et la liste
     /// survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
@@ -168,6 +170,7 @@ struct ConsoleRootView: View {
                 kanban: kanban,
                 actions: actions,
                 projectModel: projectModel,
+                auditModel: auditModel,
                 memoryModel: memoryModel,
                 memoryGraph: memoryGraph,
                 podmanCleanup: podmanCleanup,

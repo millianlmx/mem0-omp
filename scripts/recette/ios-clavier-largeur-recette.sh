@@ -2,7 +2,7 @@
 # La RECETTE SIMULATEUR de la feature `ipad-clavier-et-largeur-de-lecture` (spec
 # S-7 du contrat) : elle mesure la largeur du contenu des écrans iPad et iPhone
 # (colonne de lecture, AC-1 à AC-3) et, en phase après, exerce les commandes
-# clavier de l'iPad (⌘1…⌘7, ⌘R, ⌘N, ⌘F, garde modale, ⎋ des feuilles : AC-4 à
+# clavier de l'iPad (⌘1…⌘8, ⌘R, ⌘N, ⌘F, garde modale, ⎋ des feuilles : AC-4 à
 # AC-8 et AC-10). Elle garde les captures pour la revue.
 #
 #   IOS_RECETTE_IPAD=<UDID> IOS_RECETTE_IPHONE=<UDID> \
@@ -10,7 +10,7 @@
 #
 # `--source fixture` par défaut. En `--source reel`, la variable
 # IOS_RECETTE_IPAD_APPAIRE (UDID d'un iPad appairé à l'app Mac OMP Console, qui
-# sert 127.0.0.1:8787) s'ajoute : ⌘R est alors exercé sur les sept écrans avec de
+# sert 127.0.0.1:8787) s'ajoute : ⌘R est alors exercé sur les huit écrans avec de
 # vraies données (AC-5) et ⎋ sur la feuille « Lancer une session OMP » (AC-10).
 #
 # APPAREILS DÉDIÉS : IOS_RECETTE_IPAD est un iPad Pro 13-inch, IOS_RECETTE_IPHONE
@@ -24,7 +24,7 @@
 # Sorties : `omp-console/build/ipad-clavier-et-largeur-de-lecture/<phase>/<source>/`
 # (ignoré par git), vidé au départ :
 #   · `<appareil>-<écran>.png` et le relevé `idb ui describe-all` du même nom en
-#     `.json` — sept écrans iPad, six écrans iPhone (Pipelines n'est pas plafonné) ;
+#     `.json` — huit écrans iPad, six écrans iPhone (ceux de `CAPPED`, sans Pipelines ni Audit) ;
 #   · en phase après, `ipad-ac<n>-<étape>.png/.json` aux moments clés des
 #     contrôles clavier ;
 #   · `mesures.json` : largeur, marges et fenêtre de chaque écran, en points ;
@@ -270,6 +270,7 @@ SECTIONS = [
     ("accueil", "home", "Accueil"),
     ("pipelines", "kanban", "Pipelines"),
     ("projet", "project", "Projet"),
+    ("audit", "audit", "Audit"),
     ("session-omp", "session", "Session OMP"),
     ("sessions", "sessions", "Sessions"),
     ("memoire", "memory", "Mémoire"),
@@ -285,8 +286,8 @@ HIDE_SIDEBAR = ("Hide Sidebar", "Masquer la barre latérale")
 SHEET_MARKS = ("pipelines.newFeature.", "pipelines.card.sheet", "ios.home.answer",
                "ios.home.contract", ".launch.", "ios.projet.dialog", "connection.", "welcome")
 MAX_WIDTH, MARGIN_GAP, PANEL_MARGIN, PHONE_GAP = 700.0, 2.0, 24.0, 1.0
-# Codes HID (D-6) : chiffres 1…7 = 30…36, r = 21, f = 9, n = 17, ⎋ = 41, q (AZERTY) = 4.
-DIGIT = {n: 29 + n for n in range(1, 8)}
+# Codes HID (D-6) : chiffres 1…8 = 30…37, r = 21, f = 9, n = 17, ⎋ = 41, q (AZERTY) = 4.
+DIGIT = {n: 29 + n for n in range(1, 9)}
 KEY_R, KEY_F, KEY_N, KEY_ESC, KEY_Q = 21, 9, 17, 41, 4
 # La feuille « Nouvelle feature » : son champ titre (présent dans tous ses états),
 # le groupe de sa barre (identifiant = son titre) et son bouton « Annuler ».
@@ -726,10 +727,10 @@ def variant_name(shift):
 shift_order = [False, True]
 
 if phase == "apres":
-    # AC-4 : ⌘1…⌘7 depuis l'Accueil, puis ⌘1 encore (retour de Statistiques à
+    # AC-4 : ⌘1…⌘8 depuis l'Accueil, puis ⌘1 encore (retour de Statistiques à
     # l'Accueil, pour que le chiffre 1 change vraiment de section).
     launch(ipad, "ipad-ac4", "accueil", ("-home.recipe", "dashboard"))
-    sequence = list(range(1, 8)) + [1]
+    sequence = list(range(1, 9)) + [1]
     seen, worked = [], []
     for n in sequence:
         expected = SECTIONS[n - 1][2]
@@ -754,7 +755,7 @@ if phase == "apres":
     ok = seen == expected_seq
     used = sorted({variant_name(s) for s in worked if s is not None}) or ["aucune"]
     emit("ok" if ok else "échec", "AC-4", "ipad",
-         f"⌘1…⌘7 puis ⌘1 : {' → '.join(seen)} (attendu {' → '.join(expected_seq)} ; "
+         f"⌘1…⌘8 puis ⌘1 : {' → '.join(seen)} (attendu {' → '.join(expected_seq)} ; "
          f"variante : {', '.join(used)})")
     # La garde de AC-6 rejoue la variante efficace ; à défaut, celle que D-7 a
     # mesurée sur l'hôte AZERTY.
@@ -858,7 +859,7 @@ if phase == "apres":
              f"{tag} : ⌘F → titre « {before_title} » → « {after_title} », feuilles {after_sheets or 'aucune'}, "
              f"champ IsEditing {'présent' if editing else 'aucun'}")
 
-    # Source réelle : ⌘R sur les sept écrans connectés (AC-5) et ⎋ sur la feuille
+    # Source réelle : ⌘R sur les huit écrans connectés (AC-5) et ⎋ sur la feuille
     # « Lancer une session OMP » (AC-10), sur l'iPad appairé.
     if source == "reel":
         for screen, _, expected in SECTIONS:

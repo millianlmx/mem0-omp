@@ -330,14 +330,14 @@ AVANT = moment == "avant"
 BUNDLE = "com.omp.console.ios"
 
 # Les sections, dans l'ordre de la barre latérale (ConsoleSection, IOSSection).
-SECTIONS = (("home", "Accueil"), ("kanban", "Pipelines"), ("project", "Projet"),
+SECTIONS = (("home", "Accueil"), ("kanban", "Pipelines"), ("project", "Projet"), ("audit", "Audit"),
             ("session", "Session OMP"), ("sessions", "Sessions"), ("memory", "Mémoire"),
             ("stats", "Statistiques"))
 TITLE = dict(SECTIONS)
-PILOTAGE = ("home", "kanban", "project", "session")
+PILOTAGE = ("home", "kanban", "project", "audit", "session")
 CONSULTATION = ("sessions", "memory", "stats")
 PLUS = "Plus"
-PLUS_SECTIONS = ("project", "session", "stats")
+PLUS_SECTIONS = ("project", "audit", "session", "stats")
 PHONE_TABS = ("Accueil", "Pipelines", "Sessions", "Mémoire", PLUS)
 TITLES = set(TITLE.values()) | {PLUS}
 ROOT_TITLE = "OMP Console"
@@ -345,8 +345,8 @@ TAB_BAR = "Barre d’onglets"
 CONNECT_OPEN, CONNECT_SHEET, CONNECT_CLOSE = "connection.open", "connection.sheet", "connection.close"
 TOGGLE_IN_SIDEBAR, TOGGLE_IN_BAR = "ToggleSidebar", "ToggleSideBar"
 ROW = "ios.sessions.row."
-# Codes HID des chiffres 1…7 (`idb ui key`).
-DIGIT = {n: 29 + n for n in range(1, 8)}
+# Codes HID des chiffres 1…8 (`idb ui key`).
+DIGIT = {n: 29 + n for n in range(1, 9)}
 
 
 class Inconclusive(Exception):

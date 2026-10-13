@@ -18,6 +18,7 @@ import type { CommandOutcome, ServiceHealth } from "./serviceApi.ts";
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
 import type { SessionHost } from "./serviceSessions.ts";
 import type { ArbiterRunner, LotRunner } from "./serviceRuns.ts";
+import type { AuditService } from "./serviceAudits.ts";
 import { SERVICE_VERSION } from "./serviceState.ts";
 import { pipelineStateDir } from "./store.ts";
 import * as fs from "node:fs";
@@ -39,6 +40,11 @@ export type PilotDeps = {
   startedAt?: number;
   /** La minuterie du balayage : injectable pour que les tests n'attendent pas. */
   schedule?: (callback: () => void, ms: number) => () => void;
+  /**
+   * Les audits de l'app (S-1, S-2) : balayés à chaque passe, APRÈS les lots ;
+   * `first` n'est vrai qu'au premier balayage du process (patron `resumeConduites`).
+   */
+  audits?: Pick<AuditService, "sweep">;
 };
 
 /** Ce que le routeur appelle pour piloter : l'API du service côté dépôts. */
@@ -59,7 +65,7 @@ export interface ServicePilot {
  * Le dépôt visé par une route : chemin absolu EXISTANT. Un chemin relatif ou
  * disparu est un 404 nommé (S-2, cas limites) — jamais un lot créé ailleurs.
  */
-function requireRepo(repo: string): string {
+export function requireRepo(repo: string): string {
   if (!path.isAbsolute(repo)) throw notFound(`chemin de dépôt non absolu : ${repo}`);
   if (!fs.existsSync(repo)) throw notFound(`dépôt introuvable : ${repo}`);
   return realpathOr(repo);
@@ -85,6 +91,7 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
   const controllers = new Map<string, LotController>();
   let stopSweep: (() => void) | null = null;
   let conduitesResumed = false;
+  let auditsSwept = false;
 
   /**
    * La REPRISE des conduites (S-5) : une session `project` n'existe que tant que
@@ -191,6 +198,14 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
     // d'une session reprise scanne au `session_start` et doit trouver le service
     // déjà propriétaire.
     resumeConduites();
+    // Les AUDITS (S-1, S-2) : au premier balayage, une analyse que l'arrêt du
+    // service a coupée passe en échec ; à chaque passe, l'avancement des features
+    // lancées est recopié dans l'audit.
+    if (deps.audits) {
+      const first = !auditsSwept;
+      auditsSwept = true;
+      deps.audits.sweep(first);
+    }
   }
 
   return {

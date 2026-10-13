@@ -36,6 +36,10 @@ function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
     startConduite: async () => ({ sessionId: "s1", state: "idle" }),
     stopConduite: async () => {},
     subscribeSession: () => null,
+    startAudit: async () => ({ id: "0".repeat(16), status: "analysing" }),
+    launchAudit: async () => ({ launches: [] }),
+    answerAudit: async () => ({ accepted: true }),
+    stopAudit: async () => ({ cancelled: [], kept: [], refused: [] }),
     ...over,
   };
 }

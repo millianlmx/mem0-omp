@@ -1,4 +1,4 @@
-// Racine du magasin d'état partagé et noms de ses six répertoires (S-1).
+// Racine du magasin d'état partagé et noms de ses huit répertoires (S-1).
 //
 // Parité avec `pipelineStateDir` (omp-mem0-req/store.ts:126-136) : la racine est
 // résolue UNE fois pour la session, et le nom du répertoire d'un store EST son
@@ -9,8 +9,13 @@
 
 import Foundation
 
-/// Les six répertoires du magasin d'état. `commands/` est HORS PÉRIMÈTRE (specs) :
+/// Les huit répertoires du magasin d'état. `commands/` est HORS PÉRIMÈTRE (specs) :
 /// il ne fait pas partie du magasin lu par la salle de contrôle.
+///
+/// `audits/` (les audits lancés depuis la section Audit, un `<id>.json` par audit)
+/// et `journal/` (un `<repoKey>.jsonl` par dépôt, décisions de l'arbitre) ne
+/// forment qu'UNE enveloppe, `AuditsEnvelope` (audit-panel-in-omp-console S-5) :
+/// deux répertoires veillés, une seule lecture.
 public enum PipelineStore: String, CaseIterable, Sendable {
     case running
     case history
@@ -18,6 +23,8 @@ public enum PipelineStore: String, CaseIterable, Sendable {
     case projects
     case inbox
     case audit
+    case audits
+    case journal
 
     /// Bornes d'une passe de lecture (parité `RUNNING_READ_LIMIT` /
     /// `HISTORY_READ_LIMIT`, store.ts:107-109) : au-delà, la lecture synchrone

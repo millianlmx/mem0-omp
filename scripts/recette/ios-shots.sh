@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produit les captures de la coque iOS (S-6, BR-4) : d'abord CINQUANTE-SIX, sept écrans en
+# Produit les captures de la coque iOS (S-6, BR-4) : d'abord SOIXANTE-QUATRE, huit écrans en
 # portrait sur iPhone et sur iPad, en clair et en sombre, à taille de texte par
 # défaut puis en Dynamic Type maximum ; puis les groupes de recette (Accueil, graphe
 # Mémoire, fiche d'une carte Pipelines).
@@ -23,11 +23,11 @@
 # L'app DÉCLARE portrait + paysages : elle reste utilisable en paysage sur un vrai
 # iPad, ce que la recette (`omp-console/ios/DESIGN.md`) fait vérifier à la main.
 #
-# Vérifications DURES avant de rendre 0 : 56 PNG, et les dimensions de CHAQUE
+# Vérifications DURES avant de rendre 0 : 64 PNG, et les dimensions de CHAQUE
 # PNG (`sips`) — toutes PORTRAIT. Une capture inattendue fait sortir 1 avec le
 # fichier fautif.
 #
-# Codes de sortie : 0 les 56 captures produites, 1 échec, 2 « non exécuté »
+# Codes de sortie : 0 les 64 captures produites, 1 échec, 2 « non exécuté »
 # (Xcode inutilisable, ou aucun runtime iOS ≥ 26 à nommer).
 set -uo pipefail
 
@@ -39,10 +39,10 @@ SHOTS="$ROOT/omp-console/build/ios-shots"
 APP="$ROOT/omp-console/.build-ios/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app"
 BUNDLE_ID="com.omp.console.ios"
 
-# Les sept sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
+# Les huit sections de l'app iOS, par `rawValue`, dans l'ordre de `allCases` —
 # jamais un libellé affiché : la liste des sections de l'app est filtrée du type
 # partagé, et ce script de développement se contente des valeurs brutes.
-sections=(home kanban project session sessions memory stats)
+sections=(home kanban project audit session sessions memory stats)
 
 # Les deux tailles de texte des passages : le défaut système, et le MAXIMUM de
 # Dynamic Type (`accessibility-extra-extra-extra-large`, D-1).
@@ -217,23 +217,23 @@ shoot() {
   done
 }
 
-# Passage 1 — sept écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
-# à la taille de texte par défaut : 28 captures.
+# Passage 1 — huit écrans × {iPhone portrait, iPad portrait} × {clair, sombre},
+# à la taille de texte par défaut : 32 captures.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_DEFAULT" ""
   shoot ipad "$ipad" "$appearance" "$TEXT_DEFAULT" ""
 done
 
-# Passage 2 — sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
-# MAXIMUM : 28 captures `-ax`.
+# Passage 2 — huit écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type
+# MAXIMUM : 32 captures `-ax`.
 for appearance in light dark; do
   shoot iphone "$iphone" "$appearance" "$TEXT_AX" "-ax"
   shoot ipad "$ipad" "$appearance" "$TEXT_AX" "-ax"
 done
 
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "56" ]; then
-  echo "  ✗ $count captures produites (56 attendues)" >&2
+if [ "$count" != "64" ]; then
+  echo "  ✗ $count captures produites (64 attendues)" >&2
   exit 1
 fi
 
@@ -279,10 +279,10 @@ for appearance in light dark; do
 done
 
 # Le second groupe fait 8 états × {iPhone, iPad} × {clair, sombre} = 32 captures ;
-# le total avec les 56 écrans est 88.
+# le total avec les 64 écrans est 96.
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "88" ]; then
-  echo "  ✗ $count captures produites (88 attendues : 56 écrans + 32 Accueil)" >&2
+if [ "$count" != "96" ]; then
+  echo "  ✗ $count captures produites (96 attendues : 64 écrans + 32 Accueil)" >&2
   exit 1
 fi
 
@@ -340,10 +340,10 @@ for appearance in light dark; do
 done
 
 # Le troisième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 56 écrans et les 32 de l'Accueil est 100.
+# le total avec les 64 écrans et les 32 de l'Accueil est 108.
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "100" ]; then
-  echo "  ✗ $count captures produites (100 attendues : 56 écrans + 32 Accueil + 12 graphe)" >&2
+if [ "$count" != "108" ]; then
+  echo "  ✗ $count captures produites (108 attendues : 64 écrans + 32 Accueil + 12 graphe)" >&2
   exit 1
 fi
 
@@ -378,11 +378,11 @@ shoot_rows() {
 
 shoot_rows iphone "$iphone"
 
-# Le cinquième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 56
-# écrans, les 32 de l'Accueil et les 12 du graphe est 112.
+# Le cinquième groupe fait 4 rangées × 3 tailles = 12 captures ; le total avec les 64
+# écrans, les 32 de l'Accueil et les 12 du graphe est 120.
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "112" ]; then
-  echo "  ✗ $count captures produites (112 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées)" >&2
+if [ "$count" != "120" ]; then
+  echo "  ✗ $count captures produites (120 attendues : 64 écrans + 32 Accueil + 12 graphe + 12 rangées)" >&2
   exit 1
 fi
 
@@ -418,11 +418,11 @@ for appearance in light dark; do
 done
 
 # Le sixième groupe fait 3 états × {iPhone, iPad} × {clair, sombre} = 12 captures ;
-# le total avec les 56 écrans, les 32 de l'Accueil, les 12 du graphe et les 12 rangées
-# est 124.
+# le total avec les 64 écrans, les 32 de l'Accueil, les 12 du graphe et les 12 rangées
+# est 132.
 count="$(ls "$SHOTS"/*.png 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$count" != "124" ]; then
-  echo "  ✗ $count captures produites (124 attendues : 56 écrans + 32 Accueil + 12 graphe + 12 rangées + 12 nouvelle feature)" >&2
+if [ "$count" != "132" ]; then
+  echo "  ✗ $count captures produites (132 attendues : 64 écrans + 32 Accueil + 12 graphe + 12 rangées + 12 nouvelle feature)" >&2
   exit 1
 fi
 

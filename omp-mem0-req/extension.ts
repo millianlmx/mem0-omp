@@ -1,7 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { createAuditRelay } from "./audit.ts";
+import { auditRepoRootOf, createAuditRelay, registerAuditReportTool } from "./audit.ts";
 import { hasPendingCommands } from "./commands.ts";
 import { buildNextStepNotice, buildReqHandoff, isPipelineNotice, nextStepFor, saysFin } from "./contract.ts";
 import type { NextStep, PipelinePhase } from "./contract.ts";
@@ -24,7 +24,7 @@ import { armPipeline, closePipeline, ensureHeartbeat, isSubagentSession, publish
 import type { PublishDeps } from "./publish.ts";
 import { createServiceClient, createServiceLotActions } from "./serviceClient.ts";
 import { createServiceHost } from "./serviceHost.ts";
-import { arbiterCaptureOf, maillonIdentityOf } from "./serviceSessions.ts";
+import { arbiterCaptureOf, auditSessionOf, maillonIdentityOf } from "./serviceSessions.ts";
 import { registerArbiterTool } from "./arbiter.ts";
 import { exhaustedUntil } from "./quota.ts";
 import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
@@ -616,6 +616,13 @@ export default function reqExtension(pi: ExtensionAPI) {
         registerArbiterTool(pi, capture);
         return;
       }
+      // ANALYSE D'UN AUDIT DE L'APP (S-1) : un seul outil, `audit_report` — ni
+      // relais `/audit`, ni relais /project : un relais armé ailleurs le reste.
+      const audit = auditSessionOf(sessionIdOf(ctx as PipelineCtx));
+      if (audit !== null) {
+        registerAuditReportTool(pi, audit);
+        return;
+      }
       const identity = maillonIdentityOf(sessionIdOf(ctx as PipelineCtx));
       if (identity !== null) {
         // MAILLON : sa boîte vient de son identité (jamais d'un drapeau — le
@@ -973,19 +980,12 @@ export default function reqExtension(pi: ExtensionAPI) {
         ctx.ui?.notify?.("[audit] indisponible hors session interactive", "warning");
         return;
       }
-      const root = resolveFeatureRoot(ctx.cwd);
-      if (root.primary) {
-        ctx.ui?.notify?.(
-          `[audit] déjà dans le worktree d'une feature (${root.dir}) — /audit s'ouvre depuis le dépôt principal (${root.primary})`,
-          "warning",
-        );
+      const resolved = auditRepoRootOf(ctx.cwd);
+      if (!resolved.ok) {
+        ctx.ui?.notify?.(resolved.refusal, "warning");
         return;
       }
-      if (!fs.existsSync(path.join(root.dir, ".git"))) {
-        ctx.ui?.notify?.(`[audit] ${root.dir} n'est pas un dépôt git`, "warning");
-        return;
-      }
-      const seed = buildAuditSeed(root.dir, String(args ?? "").trim());
+      const seed = buildAuditSeed(resolved.repoRoot, String(args ?? "").trim());
       await ctx.waitForIdle?.();
       if (typeof ctx.newSession === "function") {
         try {
@@ -1151,8 +1151,13 @@ export default function reqExtension(pi: ExtensionAPI) {
     // Le « fin » du cadrage /project (S-2 §4) : lu d'abord, sans rien changer au
     // prompt système ni à la logique /req qui suit.
     projectRelay.onProjectPrompt(event.prompt, ctx);
-    // L'arbitre (S-9) partage le cwd d'une feature : le mode /req d'un maillon voisin ne le concerne pas.
-    if (isServiceProcess() && arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null) {
+    // L'arbitre (S-9) partage le cwd d'une feature, l'analyse d'un audit de l'app
+    // (S-1) celui du dépôt : le mode /req d'une autre session du même cwd ne les
+    // concerne pas.
+    if (
+      isServiceProcess() &&
+      (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null || auditSessionOf(sessionIdOf(ctx as PipelineCtx)) !== null)
+    ) {
       return { systemPrompt: event.systemPrompt };
     }
     const st = stateOfCwd(ctx.cwd);
@@ -1218,8 +1223,14 @@ export default function reqExtension(pi: ExtensionAPI) {
       // clôturerait l'entrée du run vivant et annoncerait une fin de maillon qui
       // n'a pas eu lieu (le sous-agent partage le cwd de son parent).
       if (isSubagentSession(sessionFileOf(ctx as PipelineCtx))) return;
-      // Une session d'ARBITRE (S-9) ne publie rien : aucune annonce, aucune entrée.
-      if (isServiceProcess() && arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null) return;
+      // Une session d'ARBITRE (S-9) ou d'analyse d'audit (S-1) ne publie rien :
+      // aucune annonce, aucune entrée, aucune bascule vers le lot.
+      if (
+        isServiceProcess() &&
+        (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) !== null || auditSessionOf(sessionIdOf(ctx as PipelineCtx)) !== null)
+      ) {
+        return;
+      }
       // Un run (maillon de lot ou run lancé par le panneau) : il libère son entrée
       // du magasin et n'annonce RIEN — la chaîne appartient au pilote (S-13), et
       // une notice « commande suivante » n'a aucun sens dans une session reprise.

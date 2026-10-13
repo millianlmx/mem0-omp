@@ -72,8 +72,8 @@ struct ClientContractTests {
     func catalogIsImageOfRouter() async throws {
         // 1. Confrontation des catalogues : méthode et chemin mis à part, l'image exacte.
         let served = RemoteRouter.routes.map { "\($0.method) \($0.path)" }
-        #expect(served.count == 39)
-        #expect(ClientRoute.all.count == 39)
+        #expect(served.count == 43)
+        #expect(ClientRoute.all.count == 43)
         #expect(Set(served) == Set(ClientRoute.all.map { "\($0.method) \($0.path)" }))
 
         // 2. Chaque route est RÉSOLUE par le routeur réel : une route absente du
@@ -180,6 +180,41 @@ struct ClientContractTests {
             #"{"kind":"value","value":"x"}"#,
             client: ConsoleClient.RemoteDialogAnswerRequest.self,
             host: OMPConsole.RemoteDialogAnswerRequest.self
+        ))
+        #expect(try contractSameShape(
+            #"{"repoKey":"k","orientation":"accessibilité VoiceOver"}"#,
+            client: ConsoleClient.RemoteAuditStartRequest.self,
+            host: OMPConsole.RemoteAuditStartRequest.self
+        ))
+        #expect(try contractSameShape(
+            #"{"id":"a0d1700000000001"}"#,
+            client: ConsoleClient.RemoteAuditStartedPayload.self,
+            host: OMPConsole.RemoteAuditStartedPayload.self
+        ))
+        #expect(try contractSameShape(
+            #"{"selected":["a","b"],"brief":"Orientation\nx"}"#,
+            client: ConsoleClient.RemoteAuditLaunchRequest.self,
+            host: OMPConsole.RemoteAuditLaunchRequest.self
+        ))
+        #expect(try contractSameShape(
+            #"{"launches":[{"slug":"a","launched":true,"reason":null,"state":"running","phase":"req","prUrl":null},{"slug":"b","launched":false,"reason":"déjà dans le lot","state":null,"phase":null,"prUrl":null}]}"#,
+            client: ConsoleClient.RemoteAuditLaunchPayload.self,
+            host: OMPConsole.RemoteAuditLaunchPayload.self
+        ))
+        #expect(try contractSameShape(
+            #"{"slug":"a","key":"question:a:1","answer":"Oui"}"#,
+            client: ConsoleClient.RemoteAuditAnswerRequest.self,
+            host: OMPConsole.RemoteAuditAnswerRequest.self
+        ))
+        #expect(try contractSameShape(
+            #"{"slug":"a","key":"specs:a","decision":"approve"}"#,
+            client: ConsoleClient.RemoteAuditAnswerRequest.self,
+            host: OMPConsole.RemoteAuditAnswerRequest.self
+        ))
+        #expect(try contractSameShape(
+            #"{"cancelled":["a"],"kept":["b"],"refused":[{"slug":"c","reason":"déjà livrée"}]}"#,
+            client: ConsoleClient.RemoteAuditStopPayload.self,
+            host: OMPConsole.RemoteAuditStopPayload.self
         ))
         #expect(try contractSameShape(
             #"{"id":"memory:m1","label":"titre","scope":"p","text":"texte","tags":["a"]}"#,

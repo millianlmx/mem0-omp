@@ -95,6 +95,11 @@ func makeRemoteServiceModel(
             attention: RecordingAttention(),
             prService: StubPRService()
         ),
+        audit: AuditConsoleModel(
+            stateDir: dir,
+            snapshots: { AsyncStream { $0.finish() } },
+            makeClient: { throw ServiceClientError.unavailable }
+        ),
         registry: store,
         makeListener: { _ in listener }
     )

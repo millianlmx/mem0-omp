@@ -50,7 +50,7 @@ func stateDirRules() {
         == "/Users/test/.omp/agent/pipeline")
     // Le nom du répertoire d'un store EST son `rawValue`.
     #expect(PipelineStore.directory(.inbox, stateDir: "/var/etat") == "/var/etat/inbox")
-    #expect(PipelineStore.allCases.map(\.rawValue) == ["running", "history", "lots", "projects", "inbox", "audit"])
+    #expect(PipelineStore.allCases.map(\.rawValue) == ["running", "history", "lots", "projects", "inbox", "audit", "audits", "journal"])
 }
 
 @Test("client-magasin-etat/AC-8 : temporaire et .DS_Store ignorés, tronqué compté illisible")

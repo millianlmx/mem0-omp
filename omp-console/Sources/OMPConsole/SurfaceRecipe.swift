@@ -16,10 +16,11 @@ import ConsoleCore
 import Foundation
 
 enum SurfaceRecipe: String, CaseIterable {
-    // Les neuf sections de la barre latérale.
+    // Les dix sections de la barre latérale.
     case accueil
     case pipelines
     case projet
+    case audit
     case sessionOmp = "session-omp"
     case terminal
     case sessions
@@ -68,6 +69,7 @@ enum SurfaceRecipe: String, CaseIterable {
         case .accueil, .bienvenue, .preparation, .nouvellePipeline, .reponse: .home
         case .pipelines, .contrat, .ficheCarte, .modeles: .kanban
         case .projet, .projetLancement, .projetDialogue: .project
+        case .audit: .audit
         case .sessionOmp, .sessionOmpDialogue: .session
         case .terminal, .terminalLancement: .terminal
         case .sessions: .sessions
@@ -111,7 +113,7 @@ enum SurfaceRecipe: String, CaseIterable {
         console.select(section)
 
         switch self {
-        case .accueil, .pipelines, .projet, .sessionOmp, .terminal, .sessions, .fichiers, .memoire,
+        case .accueil, .pipelines, .projet, .audit, .sessionOmp, .terminal, .sessions, .fichiers, .memoire,
              .statistiques, .preparation:
             break
         case .bienvenue:

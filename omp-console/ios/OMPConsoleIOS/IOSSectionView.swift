@@ -2,11 +2,12 @@ import ConsoleClient
 import ConsoleCore
 import SwiftUI
 
-/// L'écran UNIQUE des sept sections (S-2, BR-3) : il rend le contenu pur de
-/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les six sections
+/// L'écran UNIQUE des huit sections (S-2, BR-3) : il rend le contenu pur de
+/// `IOSSectionContent` sur le kit de design de `Design/` — SAUF les sept sections
 /// à écran réel : Pipelines (`PipelinesScreen`), Projet (`IOSProjectScreen`),
-/// Mémoire (`IOSMemoryScreen`), Statistiques (`IOSStatsScreen`), Sessions
-/// (`IOSSessionsScreen`) et Session OMP (`IOSSessionOmpScreen`), toutes nourries
+/// Audit (`IOSAuditScreen`), Mémoire (`IOSMemoryScreen`), Statistiques
+/// (`IOSStatsScreen`), Sessions (`IOSSessionsScreen`) et Session OMP
+/// (`IOSSessionOmpScreen`), toutes nourries
 /// par le client partagé et routées directement : chacune porte son propre cadre,
 /// pour que le composant d'état de connexion plein écran soit rendu hors de tout
 /// panneau (etats-non-connecte-heterogenes-ios, S-4).
@@ -37,6 +38,8 @@ struct IOSSectionView: View {
     let projectRecipe: IOSProjectRecipe?
     /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
     let sessionOmpRecipe: IOSSessionOmpRecipe?
+    /// Le crochet de recette `-audit.recipe <liste|propositions|suivi>` de l'écran Audit.
+    let auditRecipe: IOSAuditRecipe?
     /// La feuille Connexion de la racine, ouverte par « Se connecter » du
     /// composant d'état de connexion des sections.
     @Binding var showConnection: Bool
@@ -60,6 +63,8 @@ struct IOSSectionView: View {
             IOSSessionOmpScreen(client: client, recipe: sessionOmpRecipe, showConnection: $showConnection)
         } else if section == .project {
             IOSProjectScreen(client: client, recipe: projectRecipe, showConnection: $showConnection)
+        } else if section == .audit {
+            IOSAuditScreen(client: client, recipe: auditRecipe, showConnection: $showConnection)
         } else if section == .stats {
             IOSStatsScreen(client: client, recipe: statsRecipe, showConnection: $showConnection)
         } else {

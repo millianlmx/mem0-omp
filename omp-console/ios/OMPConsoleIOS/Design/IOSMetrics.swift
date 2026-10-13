@@ -68,6 +68,13 @@ enum IOSMetrics {
     /// en LIGNES : 3 à vide, il grandit avec le texte jusqu'à 8, puis défile dans le
     /// champ. Aucun point : la hauteur suit la taille de police (Dynamic Type).
     static let dialogAnswerLines: ClosedRange<Int> = 3...8
+    /// L'orientation d'un audit dans sa feuille de lancement, en LIGNES : 3 à vide,
+    /// jusqu'à 8, puis défile (audit-panel-in-omp-console, S-8).
+    static let auditOrientationLines: ClosedRange<Int> = 3...8
+    /// L'orientation d'un audit dans sa rangée de liste : deux lignes au plus.
+    static let auditRowOrientationLines = 2
+    /// Le champ « Autre réponse » d'une question en attente : 1 à vide, jusqu'à 4.
+    static let auditOtherAnswerLines: ClosedRange<Int> = 1...4
 
     /// La marge horizontale d'un écran, selon la largeur disponible.
     static func margin(_ sizeClass: UserInterfaceSizeClass?) -> CGFloat {

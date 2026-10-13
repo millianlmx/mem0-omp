@@ -431,6 +431,48 @@ public struct RemoteConduitePayload: Codable, Equatable, Sendable {
     public var state: String
 }
 
+/// La réponse de `POST /v1/audits` (S-7, miroir de `remote.RemoteAuditStartedPayload`).
+public struct RemoteAuditStartedPayload: Codable, Equatable, Sendable {
+    public var id: String
+
+    public init(id: String) {
+        self.id = id
+    }
+}
+
+/// La réponse de `POST /v1/audits/{id}/launch` (S-7) : l'issue de chaque proposition.
+public struct RemoteAuditLaunchPayload: Codable, Equatable, Sendable {
+    public var launches: [AuditLaunchOutcome]
+
+    public init(launches: [AuditLaunchOutcome]) {
+        self.launches = launches
+    }
+}
+
+/// Une feature que l'arrêt d'un audit n'a pas pu annuler, avec le refus du pilote.
+public struct RemoteAuditStopRefusal: Codable, Equatable, Sendable {
+    public var slug: String
+    public var reason: String
+
+    public init(slug: String, reason: String) {
+        self.slug = slug
+        self.reason = reason
+    }
+}
+
+/// La réponse de `DELETE /v1/audits/{id}` (S-7) : `{cancelled, kept, refused}`.
+public struct RemoteAuditStopPayload: Codable, Equatable, Sendable {
+    public var cancelled: [String]
+    public var kept: [String]
+    public var refused: [RemoteAuditStopRefusal]
+
+    public init(cancelled: [String], kept: [String], refused: [RemoteAuditStopRefusal]) {
+        self.cancelled = cancelled
+        self.kept = kept
+        self.refused = refused
+    }
+}
+
 /// Un dépôt connu de la coque (miroir de `remote.RemoteRepoRow`, S-8) : `repoKey`
 /// est CALCULÉ par la coque, jamais par le client.
 public struct RemoteRepoRow: Codable, Equatable, Sendable {
@@ -663,6 +705,46 @@ public struct RemoteHostedLaunchRequest: Codable, Equatable, Sendable {
 
     public init(repoKey: String) {
         self.repoKey = repoKey
+    }
+}
+
+/// Le corps de `POST /v1/audits` (S-7, miroir client) : la clé d'un dépôt servi
+/// par `GET /v1/repos` et l'orientation saisie.
+public struct RemoteAuditStartRequest: Codable, Equatable, Sendable {
+    public var repoKey: String
+    public var orientation: String
+
+    public init(repoKey: String, orientation: String) {
+        self.repoKey = repoKey
+        self.orientation = orientation
+    }
+}
+
+/// Le corps de `POST /v1/audits/{id}/launch` (S-7) : les slugs cochés et le brief validé.
+public struct RemoteAuditLaunchRequest: Codable, Equatable, Sendable {
+    public var selected: [String]
+    public var brief: String
+
+    public init(selected: [String], brief: String) {
+        self.selected = selected
+        self.brief = brief
+    }
+}
+
+/// Le corps de `POST /v1/audits/{id}/escalations` (S-7) : la clé de l'escalade
+/// telle quelle, puis une réponse (`ask`, `question`) OU une décision de jalon
+/// (`specs`, `review`).
+public struct RemoteAuditAnswerRequest: Codable, Equatable, Sendable {
+    public var slug: String
+    public var key: String
+    public var answer: String?
+    public var decision: AuditMilestoneDecision?
+
+    public init(slug: String, key: String, answer: String? = nil, decision: AuditMilestoneDecision? = nil) {
+        self.slug = slug
+        self.key = key
+        self.answer = answer
+        self.decision = decision
     }
 }
 

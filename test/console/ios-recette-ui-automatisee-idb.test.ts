@@ -1,6 +1,6 @@
 // Garde de l'ANALYSEUR de la recette idb (`scripts/recette/ios-recette-ui-analyse.py`) :
 // règles de défaut, exceptions, rapport et verdict. L'analyseur est pur, donc on
-// l'éprouve sur 24 relevés SYNTHÉTIQUES (JSON écrits ici, PNG unis 1206 × 2622
+// l'éprouve sur 27 relevés SYNTHÉTIQUES (JSON écrits ici, PNG unis 1206 × 2622
 // écrits par zlib) lancés par `spawnSync` — aucun simulateur, aucun idb, aucun Pillow.
 //
 // Le script `scripts/recette/ios-recette-ui.sh` (relevés réels, intégration) est prouvé
@@ -19,7 +19,7 @@ import { ROOT, tmpdir } from "../support/repo.ts";
 const ANALYSEUR = path.join(ROOT, "scripts", "recette", "ios-recette-ui-analyse.py");
 const EXCEPTIONS_VERSIONNEES = path.join(ROOT, "scripts", "recette", "ios-recette-ui-exceptions.json");
 
-const SURFACES = ["home", "kanban", "project", "session", "sessions", "memory", "stats", "kanban-fiche"];
+const SURFACES = ["home", "kanban", "project", "audit", "session", "sessions", "memory", "stats", "kanban-fiche"];
 const CONFIGS: Array<[string, string]> = [
   ["clair", "defaut"],
   ["sombre", "defaut"],
@@ -113,6 +113,8 @@ function marqueurPropre(surface: string): Element[] {
       ];
     case "project":
       return [{ type: "Heading", AXLabel: "Projet", frame: f }];
+    case "audit":
+      return [{ type: "StaticText", AXUniqueId: "ios.audit", frame: f }];
     case "session":
       return [{ type: "StaticText", AXUniqueId: "ios.sessionomp.status", frame: f }];
     case "sessions":
@@ -142,7 +144,7 @@ type Personnalisation = {
   sans?: string[];
 };
 
-/** Dossier de 24 relevés synthétiques propres, modifiables par `perso`. */
+/** Dossier de 27 relevés synthétiques propres, modifiables par `perso`. */
 function releves(perso: Personnalisation = {}): string {
   const dossier = frais("releves");
   for (const [apparence, taille] of CONFIGS) {

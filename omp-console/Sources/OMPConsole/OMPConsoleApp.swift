@@ -12,7 +12,7 @@
 // Barre des menus (HIG Keyboards : ⌘N crée l'objet principal de l'app, aucun
 // raccourci standard n'est détourné) : Fichier ▸ « Nouvelle feature… » ⌘N,
 // « Nouvelle session OMP » ⌥⌘N, « Piloter un projet… » ⇧⌘N ; Présentation ▸ les
-// neuf sections ⌘1…⌘9.
+// dix sections (⌘1…⌘9, ⌘0).
 //
 // Les modèles de terminal, de session et de pilotage vivent sur la structure `App`
 // (`@StateObject`), donc à l'échelle de l'app : fermer une fenêtre ne laisse pas un
@@ -36,6 +36,7 @@ struct OMPConsoleApp: App {
     @StateObject private var kanbanModel: KanbanModel
     @StateObject private var actionsModel: ActionsModel
     @StateObject private var projectModel: ProjectConsoleModel
+    @StateObject private var auditModel: AuditConsoleModel
     @StateObject private var statsModel: StatsModel
     @StateObject private var memoryModel: MemoryModel
     /// Le modèle du mode graphe de la mémoire (S-1) : à l'échelle de l'app, comme
@@ -94,6 +95,10 @@ struct OMPConsoleApp: App {
         ))
         let project = ProjectConsoleModel()
         _projectModel = StateObject(wrappedValue: project)
+        // Le MÊME modèle sert la section et l'API distante (S-7) : un geste de
+        // l'iPhone part au service par le geste du Mac.
+        let audit = AuditConsoleModel()
+        _auditModel = StateObject(wrappedValue: audit)
         let stats = StatsModel()
         _statsModel = StateObject(wrappedValue: stats)
         // `onReady` revérifie OMP : le composant vient d'être installé par l'app
@@ -119,6 +124,7 @@ struct OMPConsoleApp: App {
             actions: actions,
             session: session,
             project: project,
+            audit: audit,
             components: { [weak presence, weak setup] in
                 let installed = presence.map { !$0.presence.missing.contains(.omp) } ?? false
                 return RemoteComponentsPayload(
@@ -179,6 +185,7 @@ struct OMPConsoleApp: App {
                 quit: appDelegate.quit,
                 actions: actionsModel,
                 projectModel: projectModel,
+                auditModel: auditModel,
                 memoryModel: memoryModel,
                 memoryGraph: memoryGraphModel,
                 podmanCleanup: podmanCleanup,
@@ -253,8 +260,8 @@ struct NewItemCommands: Commands {
     }
 }
 
-/// Menu Présentation ▸ les neuf sections, dans l'ordre de la barre latérale
-/// (⌘1…⌘9) : ramène la fenêtre principale, puis y sélectionne la section.
+/// Menu Présentation ▸ les dix sections (⌘1…⌘9, ⌘0), dans l'ordre de la barre
+/// latérale : ramène la fenêtre principale, puis y sélectionne la section.
 struct SectionCommands: Commands {
     let console: ConsoleModel
 
@@ -265,10 +272,16 @@ struct SectionCommands: Commands {
                     MainWindow.reveal()
                     console.select(section)
                 }
-                .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: .command)
+                .keyboardShortcut(KeyEquivalent(Self.key(at: index)), modifiers: .command)
             }
             Divider()
         }
+    }
+
+    /// La touche du raccourci de la section à `index` : 1…9, puis 0 pour la
+    /// dixième (comme la rangée des chiffres du clavier).
+    static func key(at index: Int) -> Character {
+        index == 9 ? "0" : Character(String(index + 1))
     }
 }
 

@@ -20,9 +20,9 @@ struct IOSTabsTests {
         #expect(IOSTabs.compactTabs == declared)
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Projet, Session OMP et Statistiques, et elles seules")
-    func plusListsTheThreeOtherSections() {
-        #expect(IOSTabs.plusSections == [.project, .session, .stats])
+    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Projet, Audit, Session OMP et Statistiques, et elles seules")
+    func plusListsTheFourOtherSections() {
+        #expect(IOSTabs.plusSections == [.project, .audit, .session, .stats])
         let tabSections: [ConsoleSection] = IOSTabs.compactTabs.compactMap {
             if case let .section(section) = $0 { section } else { nil }
         }
@@ -48,6 +48,7 @@ struct IOSTabsTests {
             .home: IOSTabRoute(tab: .section(.home), plusPath: []),
             .kanban: IOSTabRoute(tab: .section(.kanban), plusPath: []),
             .project: IOSTabRoute(tab: .plus, plusPath: [.project]),
+            .audit: IOSTabRoute(tab: .plus, plusPath: [.audit]),
             .session: IOSTabRoute(tab: .plus, plusPath: [.session]),
             .sessions: IOSTabRoute(tab: .section(.sessions), plusPath: []),
             .memory: IOSTabRoute(tab: .section(.memory), plusPath: []),
@@ -68,6 +69,7 @@ struct IOSTabsTests {
             .home: .pilotage,
             .kanban: .pilotage,
             .project: .pilotage,
+            .audit: .pilotage,
             .session: .pilotage,
             .sessions: .consultation,
             .memory: .consultation,
@@ -127,7 +129,7 @@ struct IOSTabsTests {
         }
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘7 sélectionnent l'entrée de la barre latérale de l'iPad")
+    @Test("ios-navigation-onglets-adaptables/AC-12 : ⌘1…⌘8 sélectionnent l'entrée de la barre latérale de l'iPad")
     func keyboardSelectsTheSidebarEntry() {
         let start = IOSTabRoute(tab: .section(.home), plusPath: [])
         for (index, entry) in IOSKeyboard.sections.enumerated() {

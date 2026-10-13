@@ -55,7 +55,7 @@ test("service-e2e/AC-2 : l'app ne lance plus jamais le mode RPC, et ses trois su
     .join("\n");
   // Les routes de S-2, dans la forme où l'app les compose (des segments) et dans
   // celle du contrat (le chemin complet) : les deux doivent s'y trouver.
-  for (const segment of ['"sessions"', '"prompt"', '"dialogs"', '"events"', '"conduite"', '"pilot"', '"commands"', '"abort"']) {
+  for (const segment of ['"sessions"', '"prompt"', '"dialogs"', '"events"', '"conduite"', '"pilot"', '"commands"', '"abort"', '"audits"', '"launch"', '"escalations"']) {
     assert.ok(sources.includes(segment), `l'app appelle le segment ${segment}`);
   }
   assert.ok(sources.includes("/v1"), "l'API est versionnée : le chemin porte /v1");

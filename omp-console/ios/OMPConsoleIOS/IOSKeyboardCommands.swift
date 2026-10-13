@@ -1,5 +1,5 @@
 // Les commandes clavier de l'iPad (ipad-clavier-et-largeur-de-lecture, S-2, S-3) :
-// la table des dix raccourcis, leur routage vers l'écran courant, et les commandes
+// la table des onze raccourcis, leur routage vers l'écran courant, et les commandes
 // de scène qui les posent dans la barre des menus de l'iPad (menus Présentation et
 // Fichier), sur le patron des commandes du Mac (`SectionCommands`, `NewItemCommands`).
 //
@@ -24,13 +24,13 @@ struct IOSShortcut: Equatable {
     let key: Character
 }
 
-/// La table des dix raccourcis de l'iPad.
+/// La table des onze raccourcis de l'iPad.
 enum IOSKeyboard {
-    /// Le modificateur des dix raccourcis : ⌘ seul. Aucune touche nue, donc ⎋ et ↩
+    /// Le modificateur des onze raccourcis : ⌘ seul. Aucune touche nue, donc ⎋ et ↩
     /// restent aux feuilles.
     static let modifiers: EventModifiers = .command
 
-    /// ⌘1…⌘7 : les sept sections, dans l'ordre affiché par la barre latérale.
+    /// ⌘1…⌘8 : les huit sections, dans l'ordre affiché par la barre latérale.
     static var sections: [(section: ConsoleSection, shortcut: IOSShortcut)] {
         IOSSection.sidebarOrder.enumerated().map { index, section in
             (section, IOSShortcut(title: section.title, key: Character(String(index + 1))))
@@ -44,7 +44,7 @@ enum IOSKeyboard {
     /// ⌘N : basculer sur Pipelines et ouvrir « Nouvelle feature ».
     static let newFeature = IOSShortcut(title: NewFeatureText.command, key: IOSKeyboardText.newFeatureKey)
 
-    /// Les dix raccourcis : les sections, puis Actualiser, Rechercher, Nouvelle feature.
+    /// Les onze raccourcis : les sections, puis Actualiser, Rechercher, Nouvelle feature.
     static var all: [IOSShortcut] {
         sections.map(\.shortcut) + [refresh, search, newFeature]
     }

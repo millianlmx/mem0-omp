@@ -94,6 +94,40 @@ export function forgetArbiterCapture(sessionId: string | null | undefined): void
 }
 
 
+/** L'audit de l'app qu'analyse une session `audit` (S-1) : lu par l'outil `audit_report`. */
+export type AuditSessionBinding = { auditId: string; stateDir: string };
+
+/** Le registre des sessions d'analyse d'audit, par session — même patron que les captures d'arbitre. */
+const AUDIT_SESSIONS_KEY = Symbol.for("omp-mem0-req.auditSessions");
+
+function auditSessions(): Map<string, AuditSessionBinding> {
+  const host = globalThis as typeof globalThis & { [AUDIT_SESSIONS_KEY]?: Map<string, AuditSessionBinding> };
+  let known = host[AUDIT_SESSIONS_KEY];
+  if (!known) {
+    known = new Map<string, AuditSessionBinding>();
+    host[AUDIT_SESSIONS_KEY] = known;
+  }
+  return known;
+}
+
+
+export function registerAuditSession(sessionId: string, binding: AuditSessionBinding): void {
+  auditSessions().set(sessionId, binding);
+}
+
+
+/** L'audit de la session `sessionId` si c'est une session d'analyse d'audit, sinon `null`. */
+export function auditSessionOf(sessionId: string | null | undefined): AuditSessionBinding | null {
+  if (typeof sessionId !== "string" || sessionId === "") return null;
+  return auditSessions().get(sessionId) ?? null;
+}
+
+
+export function forgetAuditSession(sessionId: string | null | undefined): void {
+  if (typeof sessionId === "string" && sessionId !== "") auditSessions().delete(sessionId);
+}
+
+
 /** Les rôles de modèle « chat » d'OMP (Doc-1) : un sous-agent résolu par rôle suit le modèle du run. */
 const MODEL_ROLES = ["default", "smol", "slow", "vision", "plan", "commit", "tiny", "memory", "task", "advisor"] as const;
 
@@ -116,8 +150,12 @@ export function hostedSettingsOverrides(model: string | null, fallback: string |
 }
 
 
-/** Les formes INTERNES d'une session hébergée : l'API n'en expose que deux (S-6). */
-export type HostedPurpose = SessionPurpose | "run" | "arbiter";
+/**
+ * Les formes INTERNES d'une session hébergée : l'API n'en expose que deux (S-6).
+ * `audit` est la session d'analyse d'un audit de l'app (S-1) : interne, sans
+ * unicité, dialogues refusés d'office.
+ */
+export type HostedPurpose = SessionPurpose | "run" | "arbiter" | "audit";
 
 
 /** Une session servie : sa boucle, ses dialogues, ses auditeurs de flux. */
@@ -140,6 +178,8 @@ export type HostedSession = {
   /** Les textes assistant du tour en cours : le `stdout` d'un maillon (S-3). */
   transcript: string[];
   dispose: () => Promise<void>;
+  /** Résolue quand la session est libérée, par `dispose` ou par l'arrêt de son runner. */
+  disposed: Promise<void>;
 };
 
 type PendingDialog = {
@@ -170,6 +210,11 @@ export type OpenSessionOptions = {
   autoApprove?: boolean;
   /** La capture de décision d'une session `arbiter` (S-9) : lue par l'outil `arbiter_decide`. */
   arbiter?: ArbiterCapture;
+  /**
+   * L'audit d'une session `audit` (S-1) : inscrit au registre avant l'émission de
+   * son `session_start`, qui n'inscrit alors que l'outil `audit_report`.
+   */
+  audit?: AuditSessionBinding;
 };
 
 
@@ -242,6 +287,12 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
   function dialogChannel(session: HostedSession) {
     return {
       request: (input: DialogOpen): Promise<DialogAnswer> => {
+        // Une session d'analyse d'audit ne pose aucune question (S-1) : chaque
+        // dialogue est annulé sur-le-champ, sans trame.
+        if (session.purpose === "audit") {
+          log(`[service] dialogue refusé (session d'audit) : ${input.title}`);
+          return Promise.resolve({ cancelled: true });
+        }
         dialogSeq += 1;
         const request: DialogRequest = { id: `dlg-${dialogSeq}`, ...input };
         // Constructeur plutôt que `Promise.withResolvers` : le plugin est compilé
@@ -279,11 +330,11 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     return { value: record.value };
   }
 
-  /** Une session VISIBLE de l'API : `run` est interne au service (S-3). */
+  /** Une session VISIBLE de l'API : `run`, `arbiter` et `audit` sont internes au service. */
   type AppSession = HostedSession & { purpose: SessionPurpose };
 
   function isAppSession(session: HostedSession): session is AppSession {
-    return session.purpose !== "run" && session.purpose !== "arbiter";
+    return session.purpose !== "run" && session.purpose !== "arbiter" && session.purpose !== "audit";
   }
 
 
@@ -311,7 +362,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       if (known.purpose !== purpose) continue;
       // `run` est interne au service (S-3) : il n'est pas borné par l'API — deux
       // maillons peuvent viser le même cwd (reprise, relance).
-      if (purpose === "run" || purpose === "arbiter") continue;
+      if (purpose === "run" || purpose === "arbiter" || purpose === "audit") continue;
       if (path.resolve(known.cwd) !== cwd) continue;
       if (purpose === "session") throw conflict(`une session vit déjà pour ${cwd} (${known.id})`);
       throw conflict(`une conduite vit déjà pour ${cwd} (${known.id})`);
@@ -345,6 +396,10 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     });
     const session = created.session;
     const id = manager.getSessionId();
+    let markDisposed: () => void = () => {};
+    const disposed = new Promise<void>(resolve => {
+      markDisposed = resolve;
+    });
     const hosted: HostedSession = {
       id,
       cwd,
@@ -372,11 +427,15 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
         }
         forgetMaillonIdentity(id);
         forgetArbiterCapture(id);
+        forgetAuditSession(id);
         sessions.delete(id);
+        markDisposed();
       },
+      disposed,
     };
     if (options.identity) registerMaillonIdentity(id, options.identity);
     if (options.arbiter) registerArbiterCapture(id, options.arbiter);
+    if (options.audit) registerAuditSession(id, options.audit);
     // Le contexte UI du runner ET celui des outils : `setToolUIContext` ne touche
     // que les contextes d'outil (Doc-1 §6), les deux sont nécessaires.
     const ui = createServiceUIContext(dialogChannel(hosted), log);

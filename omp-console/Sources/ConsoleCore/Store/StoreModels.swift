@@ -434,6 +434,71 @@ public struct LotOwner: Sendable, Equatable, Codable {
     }
 }
 
+/// La sorte d'une escalade de l'arbitre (`FeatureEscalation.kind`, lot.ts:129-137).
+public enum FeatureEscalationKind: String, Sendable, Codable {
+    case question, jalon
+}
+
+/// Un élément que l'arbitre n'a pas pu trancher : il attend l'utilisateur
+/// (`FeatureEscalation`, lot.ts:129-137). Relu COMPLET ou absent
+/// (`asFeatureEscalation`, lot.ts:842-860) : un champ manquant ou mal typé rend
+/// l'escalade absente, jamais la feature rejetée.
+public struct FeatureEscalation: Sendable, Equatable, Codable {
+    public var key: String
+    public var kind: FeatureEscalationKind
+    public var phase: PipelinePhase
+    public var question: String
+    public var options: [String]
+    public var reason: String
+    public var at: Double
+
+    public init(key: String, kind: FeatureEscalationKind, phase: PipelinePhase, question: String, options: [String], reason: String, at: Double) {
+        self.key = key
+        self.kind = kind
+        self.phase = phase
+        self.question = question
+        self.options = options
+        self.reason = reason
+        self.at = at
+    }
+}
+
+/// `asFeatureEscalation` (lot.ts:842-860).
+public func asFeatureEscalation(_ raw: JSONValue?) -> FeatureEscalation? {
+    guard let e = asObject(raw) else { return nil }
+    guard let key = asString(e["key"]), !key.isEmpty else { return nil }
+    guard let kind = FeatureEscalationKind(rawValue: asString(e["kind"]) ?? "") else { return nil }
+    guard let phase = PipelinePhase(rawValue: asString(e["phase"]) ?? "") else { return nil }
+    guard let question = asString(e["question"]), let reason = asString(e["reason"]) else { return nil }
+    guard let rawOptions = asArray(e["options"]) else { return nil }
+    var options: [String] = []
+    for rawOption in rawOptions {
+        guard let option = asString(rawOption) else { return nil }
+        options.append(option)
+    }
+    guard let at = asNumber(e["at"]) else { return nil }
+    return FeatureEscalation(key: key, kind: kind, phase: phase, question: question, options: options, reason: reason, at: at)
+}
+
+/// Un arbitrage EN VOL : la clé de l'élément arbitré et l'instant de départ
+/// (`FeatureArbitration`, lot.ts:110).
+public struct FeatureArbitration: Sendable, Equatable, Codable {
+    public var key: String
+    public var startedAt: Double
+
+    public init(key: String, startedAt: Double) {
+        self.key = key
+        self.startedAt = startedAt
+    }
+}
+
+/// `asFeatureArbitration` (lot.ts:833-839) : complet ou absent.
+public func asFeatureArbitration(_ raw: JSONValue?) -> FeatureArbitration? {
+    guard let a = asObject(raw) else { return nil }
+    guard let key = asString(a["key"]), !key.isEmpty, let startedAt = asNumber(a["startedAt"]) else { return nil }
+    return FeatureArbitration(key: key, startedAt: startedAt)
+}
+
 /// Une feature d'un lot (`asLotFeature`, lot.ts:653-740).
 public struct LotFeature: Sendable, Equatable, Codable {
     public var slug: String
@@ -477,8 +542,14 @@ public struct LotFeature: Sendable, Equatable, Codable {
     public var sinceAt: Double
     public var updatedAt: Double
     public var endedAt: Double?
+    /// L'escalade vers l'utilisateur (lot.ts:248) : posée par l'arbitre, effacée
+    /// quand la décision est appliquée.
+    public var escalation: FeatureEscalation?
+    /// L'arbitrage en vol (lot.ts:246) : posé avant l'ouverture de la session
+    /// d'arbitre, effacé à la décision.
+    public var arbitration: FeatureArbitration?
 
-    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?) {
+    public init(slug: String, name: String, branch: String, worktree: String, deps: [String], origin: LotOrigin, state: LotFeatureState, phase: PipelinePhase, waitKind: LotWaitKind?, waitPrompt: String?, sessionFile: String?, pendingTexts: [String], prUrl: String?, stopReason: String?, fixes: Int, reviewRuns: Int, unreadableRuns: Int, reviewHash: String?, lastVerdict: ReviewVerdict?, lastBlockers: Int, lastRunSessionFile: String?, launched: Bool?, auditSession: String?, relayKind: ProjectRelayKind?, base: String?, model: String?, modelReqSpecs: String?, modelImplReview: String?, held: HeldLaunch?, contractHash: String?, addedAt: Double, sinceAt: Double, updatedAt: Double, endedAt: Double?, escalation: FeatureEscalation? = nil, arbitration: FeatureArbitration? = nil) {
         self.slug = slug
         self.name = name
         self.branch = branch
@@ -513,6 +584,8 @@ public struct LotFeature: Sendable, Equatable, Codable {
         self.sinceAt = sinceAt
         self.updatedAt = updatedAt
         self.endedAt = endedAt
+        self.escalation = escalation
+        self.arbitration = arbitration
     }
 }
 
@@ -583,7 +656,9 @@ extension LotFeature {
             addedAt: asNumber(f["addedAt"]) ?? 0,
             sinceAt: asNumber(f["sinceAt"]) ?? 0,
             updatedAt: asNumber(f["updatedAt"]) ?? 0,
-            endedAt: asNumber(f["endedAt"])
+            endedAt: asNumber(f["endedAt"]),
+            escalation: asFeatureEscalation(f["escalation"]),
+            arbitration: asFeatureArbitration(f["arbitration"])
         )
     }
 }

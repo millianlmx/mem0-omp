@@ -98,6 +98,10 @@ final class RemoteRouter {
         .of("GET", "v1/projects/:repoKey/pull-requests", "prs"),
         .of("POST", "v1/projects/:repoKey/pull-requests/:slug/merge", "prs.merge"),
         .of("POST", "v1/pull-request-states/refresh", "prStates.refresh"),
+        .of("POST", "v1/audits", "audit.start"),
+        .of("POST", "v1/audits/:id/launch", "audit.launch"),
+        .of("POST", "v1/audits/:id/escalations", "audit.answer"),
+        .of("DELETE", "v1/audits/:id", "audit.stop"),
     ]
 
     // MARK: - Entrée
@@ -270,6 +274,14 @@ final class RemoteRouter {
             ))
         case "prStates.refresh":
             return try json(actions.refreshPullRequestStates(), code: 202)
+        case "audit.start":
+            return try json(try await actions.startAudit(body: request.body))
+        case "audit.launch":
+            return try json(try await actions.launchAudit(id: parameters["id"] ?? "", body: request.body))
+        case "audit.answer":
+            return try json(try await actions.answerAudit(id: parameters["id"] ?? "", body: request.body), code: 202)
+        case "audit.stop":
+            return try json(try await actions.stopAudit(id: parameters["id"] ?? ""))
         default:
             return respond(.notFound("route inconnue"))
         }
