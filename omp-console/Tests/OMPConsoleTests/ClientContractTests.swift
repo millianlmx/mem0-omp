@@ -12,45 +12,8 @@ import Foundation
 import Testing
 @testable import OMPConsole
 
-// MARK: - Doublures minimales (le harnais ConsoleClientTests n'est pas visible ici)
-
-@MainActor
-private final class ContractDiscovery: DiscoverySource {
-    var onChange: (([DiscoveredMac]) -> Void)?
-    var onProtocolVersion: ((Int) -> Void)?
-    var onDenied: ((Bool) -> Void)?
-    func start(serviceType: String) {}
-    func stop() {}
-}
-
-@MainActor
-private final class ContractPath: ClientPathSource {
-    var onChange: ((Bool) -> Void)?
-    func start() {}
-    func stop() {}
-}
-
-@MainActor
-private func makeModel(
-    discovery: any DiscoverySource,
-    tokens: InMemoryTokenStore = InMemoryTokenStore(),
-    deviceName: String = "Tests"
-) -> ConsoleClientModel {
-    ConsoleClientModel(
-        transport: ConsoleClient.URLSessionTransport(),
-        discovery: discovery,
-        preferences: InMemoryClientPreferences(),
-        tokens: tokens,
-        pacer: LiveClientPacer(),
-        pathSource: ContractPath(),
-        deviceName: deviceName
-    )
-}
-
-/// L'endpoint d'une pile réelle.
-private func endpoint(of stack: RemoteStack) -> ClientEndpoint {
-    .manual(host: "127.0.0.1", port: Int(stack.port))
-}
+// Les doublures du client (`ContractDiscovery`, `ContractPath`,
+// `makeContractClient`, `endpoint(of:)`) vivent dans RemoteClientFixtures.swift.
 
 /// Le message d'erreur d'un corps, quand il y en a un.
 private func errorMessage(_ body: Data) -> String? {
@@ -101,7 +64,7 @@ struct ClientContractTests {
         // 3. Les routes servies sur une pile neuve se décodent TYPÉES.
         stack.stats.start()
         let code = try stack.registry.generateCode()
-        let model = makeModel(discovery: ContractDiscovery())
+        let model = makeContractClient(discovery: ContractDiscovery())
         _ = model.setManualAddress("127.0.0.1:\(stack.port)")
         try await model.pair(code: code.value, deviceName: "Tests")
 
@@ -135,7 +98,7 @@ struct ClientContractTests {
         let ipad = ClientDeviceModel.displayName(forIdentifier: "iPad17,4")
         let iphone = ClientDeviceModel.displayName(forIdentifier: "iPhone18,5")
         for name in [ipad, iphone] {
-            let model = makeModel(discovery: ContractDiscovery(), deviceName: name)
+            let model = makeContractClient(discovery: ContractDiscovery(), deviceName: name)
             _ = model.setManualAddress("127.0.0.1:\(stack.port)")
             // Le chemin de l'app : `pair(code:)`, nom pris du modèle.
             try await model.pair(code: PairingPresentation.grouped(try stack.registry.generateCode().value))
@@ -331,7 +294,7 @@ struct ClientContractTests {
     func discoversMacOverBonjour() async throws {
         let stack = try await RemoteStack.make()
         defer { stack.stop() }
-        let model = makeModel(discovery: BonjourDiscoverySource())
+        let model = makeContractClient(discovery: BonjourDiscoverySource())
         model.start()
         // Aucune adresse n'a été saisie : la coque doit apparaître seule.
         let found = await contractEventually(timeout: 10) {
@@ -385,7 +348,7 @@ struct ClientContractTests {
         defer { stack.stop() }
         let code = try stack.registry.generateCode()
         let discovery = ContractDiscovery()
-        let model = makeModel(discovery: discovery)
+        let model = makeContractClient(discovery: discovery)
         // `start()` branche `discovery.onChange` : sans lui, la découverte est ignorée.
         model.start()
         discovery.onChange?([DiscoveredMac(
@@ -413,7 +376,7 @@ struct ClientContractTests {
         let stack = try await RemoteStack.make()
         defer { stack.stop() }
         let code = try stack.registry.generateCode()
-        let model = makeModel(discovery: ContractDiscovery())
+        let model = makeContractClient(discovery: ContractDiscovery())
         _ = model.setManualAddress("127.0.0.1:\(stack.port)")
         try await model.pair(code: code.value, deviceName: "Recette")
         #expect(model.pairingFailure == nil)

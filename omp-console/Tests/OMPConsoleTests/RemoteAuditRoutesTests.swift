@@ -215,3 +215,58 @@ func remoteAuditErrorsAreCopied() async throws {
     #expect(down.status == 503)
     #expect(down.errorMessage == ServiceClientError.unavailable.userMessage)
 }
+
+// MARK: - Réponse d'escalade typée (validations-de-geste-enfermees-dans-le-h, BR-2)
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : répondre à une escalade d'audit par la méthode typée poste au service la même requête que la route")
+func typedAuditAnswerMatchesTheRoute() async throws {
+    let remote = ScriptedServiceTransport()
+    stubAuditService(remote)
+    let fixture = try await auditStack(remote)
+    defer { fixture.stack.stop() }
+
+    let routed = try await fixture.stack.call(
+        "POST", "/v1/audits/\(AuditParity.launchedId)/escalations",
+        token: fixture.token,
+        json: ["slug": "a", "key": "question:a:1", "answer": "Oui"]
+    )
+    #expect(routed.status == 202)
+    try await fixture.stack.remoteActions.answerAudit(
+        id: AuditParity.launchedId,
+        slug: "a",
+        key: "question:a:1",
+        answer: "Oui",
+        decision: nil
+    )
+
+    #expect(remote.requests.count == 2)
+    let fromRoute = try #require(remote.requests.first)
+    let fromTyped = try #require(remote.requests.last)
+    #expect(sameServiceRequest(fromRoute, fromTyped), "\(fromRoute.method) \(fromRoute.path) ≠ \(fromTyped.method) \(fromTyped.path)")
+    #expect(fromTyped.path.hasSuffix("/v1/audits/\(AuditParity.launchedId)/escalations"))
+    #expect(fromTyped.body?["answer"] as? String == "Oui")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-9 : un corps de réponse d'escalade d'audit mal formé est un 400 sans requête au service")
+func malformedAuditAnswerNeverReachesTheService() async throws {
+    let remote = ScriptedServiceTransport()
+    stubAuditService(remote)
+    let fixture = try await auditStack(remote)
+    defer { fixture.stack.stop() }
+
+    let path = "/v1/audits/\(AuditParity.launchedId)/escalations"
+    let unreadable = try await fixture.stack.call("POST", path, token: fixture.token, body: Data("{".utf8))
+    #expect(unreadable.status == 400)
+    #expect(unreadable.errorCode == "bad_request")
+    #expect(unreadable.errorMessage == "corps JSON illisible")
+    let absent = try await fixture.stack.call("POST", path, token: fixture.token)
+    #expect(absent.status == 400)
+    #expect(absent.errorMessage == "corps JSON absent")
+    // Le corps est décodé AVANT le contrôle d'identité : un id hors forme avec un
+    // corps illisible est un 400, jamais un 404.
+    let outOfShape = try await fixture.stack.call("POST", "/v1/audits/inconnu/escalations", token: fixture.token, body: Data("{".utf8))
+    #expect(outOfShape.status == 400)
+    #expect(remote.requests.isEmpty, "aucune requête ne part au service")
+}
