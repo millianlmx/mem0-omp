@@ -328,6 +328,25 @@ if ! grep -Eq '"actionIdentifier" *: *"OpenConsoleIntent"' "$ACTIONS_DATA" \
 fi
 echo '  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)'
 
+# Puis les deux intents vocaux de la coque (feature siri-mac-questions-en-attente,
+# S-7) : chacun doit être déclaré (E-9) et porter son App Shortcut, avec sa
+# première phrase française (E-10). Que chaque phrase contienne
+# `${applicationName}` est déjà garanti par le processeur, qui sort en erreur sinon.
+# Les ’ (U+2019) sont voulus : le processeur les écrit tels quels.
+# shellcheck disable=SC1112
+for intent_vocal in 'MacPendingIntent|Qu’est-ce qui m’attend dans ${applicationName}' 'MacAnswerIntent|Réponds dans ${applicationName}'; do
+  intent_type="${intent_vocal%%|*}"
+  intent_phrase="${intent_vocal#*|}"
+  if ! grep -Eq "\"identifier\" *: *\"$intent_type\"" "$ACTIONS_DATA"; then
+    echec_sans_bundle "intent vocal absent de Metadata.appintents : $intent_type introuvable dans extract.actionsdata"
+  fi
+  if ! grep -Eq "\"actionIdentifier\" *: *\"$intent_type\"" "$ACTIONS_DATA" \
+    || ! grep -Fq "\"$intent_phrase\"" "$ACTIONS_DATA"; then
+    echec_sans_bundle "App Shortcut de l'intent vocal $intent_type absent de Metadata.appintents : phrase « $intent_phrase » introuvable dans extract.actionsdata"
+  fi
+done
+# shellcheck disable=SC1112
+echo '  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)'
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
 if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then

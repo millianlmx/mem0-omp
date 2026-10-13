@@ -22,6 +22,8 @@ public enum VoiceIssue: Equatable, Sendable {
     case incompatibleVersion(local: Int, remote: Int?)
     /// L'appareil est verrouillé : le jeton d'appairage est illisible.
     case deviceLocked
+    /// Le Mac lancé par Siri n'a pas lu son état dans le délai borné.
+    case stateUnreadable
 
     /// Le pont depuis la porte `VoiceGesturePolicy.apply` : le dialogue d'une
     /// annulation ou d'une mauvaise configuration est celui de `VoiceGestureText`.
@@ -43,7 +45,7 @@ public enum VoiceIssue: Equatable, Sendable {
     /// la conversation s'arrête sur cette phrase.
     public var endsConversation: Bool {
         switch self {
-        case .notPaired, .macUnreachable, .incompatibleVersion, .deviceLocked:
+        case .notPaired, .macUnreachable, .incompatibleVersion, .deviceLocked, .stateUnreadable:
             return true
         case .sent, .cancelled, .misconfigured, .staleQuestion, .invalidOption, .macRefused:
             return false

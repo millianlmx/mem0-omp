@@ -1,9 +1,11 @@
-// La conversation des attentes (siri-iphone-questions-en-attente, S-2 à S-4) :
+// La conversation des attentes, SEUL moteur des deux coques (iPhone :
+// siri-iphone-questions-en-attente, S-2 à S-4 ; Mac : siri-mac-questions-en-attente) :
 // Siri annonce le total, présente les attentes de la plus ancienne à la plus
 // récente, recueille la réponse dite, relit la liste pour ne jamais répondre à
 // une question périmée, passe la réponse par la porte `VoiceGesturePolicy.apply`
 // puis propose la suivante. Les coques ne fournissent qu'un canal (la liste, une
-// requête par livraison, l'issue d'un échec) et un adaptateur de dialogue.
+// requête ou un geste typé par livraison, l'issue d'un échec), les gestes qu'elles
+// émettent et un adaptateur de dialogue.
 //
 // Aucune phrase n'est composée ici : elles vivent dans `VoiceSpeechText`.
 //
@@ -78,8 +80,34 @@ public enum VoicePendingWalk {
 
     // MARK: - Mode, plan, identité
 
-    /// Le mode de réponse de `request` ; la première règle qui s'applique l'emporte.
-    public static func mode(of request: PendingRequest, on platform: VoicePlatform = .current) -> VoicePendingMode {
+    /// Le mode de réponse de `request` quand la coque n'émet que les gestes
+    /// `gestures` : une réponse dont le geste n'y figure pas n'est pas proposée
+    /// (le texte libre d'une question à options est retiré, une attente qui n'a
+    /// plus aucune réponse émissible devient `.appOnly`).
+    public static func mode(
+        of request: PendingRequest,
+        on platform: VoicePlatform = .current,
+        admitting gestures: [VoiceGesture] = VoicePendingWalk.gestures
+    ) -> VoicePendingMode {
+        func admitted(_ choice: VoiceAnswerChoice) -> Bool {
+            plan(request, choice).map { gestures.contains($0.gesture) } ?? false
+        }
+        switch naturalMode(of: request, on: platform) {
+        case .appOnly:
+            return .appOnly
+        case .approve:
+            return admitted(.approve) ? .approve : .appOnly
+        case .dictate:
+            return admitted(.text("")) ? .dictate : .appOnly
+        case let .choose(options, acceptsFreeText):
+            guard let first = options.first, admitted(.option(index: 0, label: first.label)) else { return .appOnly }
+            return .choose(options: options, acceptsFreeText: acceptsFreeText && admitted(.text("")))
+        }
+    }
+
+    /// Le mode de réponse de `request`, tous gestes admis ; la première règle qui
+    /// s'applique l'emporte.
+    private static func naturalMode(of request: PendingRequest, on platform: VoicePlatform) -> VoicePendingMode {
         if request.paused { return .appOnly }
         switch request.reply {
         case .cardAnswer:
@@ -214,10 +242,16 @@ public enum VoicePendingWalk {
     /// La conversation entière. Rend la phrase FINALE, jamais vide, que l'intent
     /// remet comme dialogue de son résultat. Ne lève que si `conversation.ask` lève
     /// ou sur `CancellationError` ; rien n'est alors envoyé au-delà des livraisons
-    /// déjà faites.
+    /// déjà faites. `announcing` faux omet l'annonce du total ; `gestures` sont les
+    /// seuls gestes que la coque émet (`mode(of:on:admitting:)`).
     @MainActor
-    public static func run(channel: some VoicePendingChannel, conversation: some VoiceConversation) async throws -> String {
-        try await PendingWalk(channel: channel, conversation: conversation).run()
+    public static func run(
+        channel: some VoicePendingChannel,
+        conversation: some VoiceConversation,
+        announcing: Bool = true,
+        admitting gestures: [VoiceGesture] = VoicePendingWalk.gestures
+    ) async throws -> String {
+        try await PendingWalk(channel: channel, conversation: conversation, announcing: announcing, gestures: gestures).run()
     }
 }
 
@@ -227,13 +261,17 @@ public enum VoicePendingWalk {
 private final class PendingWalk<Channel: VoicePendingChannel, Conversation: VoiceConversation> {
     private let channel: Channel
     private let conversation: Conversation
+    private let announcing: Bool
+    private let gestures: [VoiceGesture]
     private var speech: [String] = []
     private var latest: [PendingRequest] = []
     private var visited: Set<String> = []
 
-    init(channel: Channel, conversation: Conversation) {
+    init(channel: Channel, conversation: Conversation, announcing: Bool, gestures: [VoiceGesture]) {
         self.channel = channel
         self.conversation = conversation
+        self.announcing = announcing
+        self.gestures = gestures
     }
 
     /// Ce qu'il advient d'une attente : passer à la suivante, la présenter à
@@ -261,7 +299,7 @@ private final class PendingWalk<Channel: VoicePendingChannel, Conversation: Voic
         }
         guard var current = latest.first else { return VoiceSpeechText.noPending }
 
-        speech = [VoiceSpeechText.walkCount(latest.count)]
+        speech = announcing ? [VoiceSpeechText.walkCount(latest.count)] : []
         var present: (String) -> String = VoiceSpeechText.walkFirst
         while true {
             visited.insert(VoicePendingWalk.slot(of: current))
@@ -295,7 +333,7 @@ private final class PendingWalk<Channel: VoicePendingChannel, Conversation: Voic
     /// porte de la table.
     private func settle(_ request: PendingRequest) async throws -> Step {
         let choice: VoiceAnswerChoice
-        switch VoicePendingWalk.mode(of: request) {
+        switch VoicePendingWalk.mode(of: request, admitting: gestures) {
         case .appOnly:
             speech.append(VoiceSpeechText.appOnly)
             return .next
