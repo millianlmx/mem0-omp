@@ -495,7 +495,8 @@ struct MacPilotIntentTests {
         #expect(try head(voice) == head(twin))
         #expect(try head(voice).kind == ActionsText.stopLabel)
         #expect(try head(voice).target == "depot-a")
-        #expect(phrase == sent(.stopFeature, "audit-ui-redesign"))
+        #expect(phrase == sent(.stopFeature, "depot-a"))
+        #expect(phrase == "Les pipelines de depot-a sont arrêtées.")
     }
 
     @Test("siri-mac-pilotage-pipelines/AC-8 : valider les specs puis accepter la revue écrivent les entrées des boutons de la fenêtre")
@@ -562,7 +563,7 @@ struct MacPilotIntentTests {
         voice.service.reply = .refused("lot occupé")
         let stop = try await voice.run(.stop, Script(["audit ui redesign"]))
         #expect(stop == refused)
-        #expect(stop != sent(.stopFeature, "audit-ui-redesign"))
+        #expect(!stop.contains("sont arrêtées"))
         #expect(try head(voice).state == .refused(reason: "lot occupé"))
 
         let specs = try await voice.run(.validateSpecs, Script(["export csv"]))
@@ -632,7 +633,7 @@ struct MacPilotIntentTests {
         #expect(script.asks.dropFirst() == [VoiceSpeechText.featureAmbiguous(titles: ["audit-ui", "audit-ui-redesign"], more: 0)])
         #expect(script.asks.last == "Plusieurs features correspondent\u{00A0}: audit-ui et audit-ui-redesign. Laquelle\u{00A0}?")
         #expect(script.confirms == [VoiceGestureText.stopConfirmation(repo: "depot-a", feature: "audit-ui-redesign")])
-        #expect(phrase == sent(.stopFeature, "audit-ui-redesign"))
+        #expect(phrase == "Les pipelines de depot-a sont arrêtées.")
         #expect(voice.service.posts.count == 1)
 
         let unknown = Script(["zorglub"])
