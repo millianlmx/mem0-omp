@@ -184,6 +184,8 @@ public enum VoiceSpeechText {
                 : "OMP Console sur le Mac est plus ancien que l’app de cet appareil. Mettez-le à jour."
         case .deviceLocked:
             return "Cet appareil est verrouillé. Déverrouillez-le, puis réessayez."
+        case .stateUnreadable:
+            return "OMP Console n’a pas pu lire l’état du Mac à temps, rien n’a été envoyé. Réessayez dans un instant."
         }
     }
 

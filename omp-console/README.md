@@ -2829,28 +2829,18 @@ ses listes écrites à la main.
   `.misconfigured(let d)` → `.result(dialog: IntentDialog(LocalizedStringResource(stringLiteral: d)))`.
   Un refus, une absence de réponse ou une cible vide n'émettent rien ; une erreur de
   `send` remonte telle quelle.
-- un intent qui émet **plusieurs** gestes (la conversation des demandes en attente)
-  ne se conforme pas à `VoiceGestureIntent` : son `perform()` vérifie
+- un intent qui émet **plusieurs** gestes (la conversation des demandes en attente,
+  sur l'iPhone comme sur le Mac) ne se conforme pas à `VoiceGestureIntent` : son
+  `perform()` vérifie
   `VoiceGesturePolicy.admits(Self.authenticationPolicy, for: <liste de ses gestes>, on: .current)`
   et rend `VoiceGestureText.misconfigured` sans rien émettre si le littéral ne vaut
-  pas, pour CHACUN de ses gestes, la politique de la table.
-
-Un intent qui émet **plusieurs** gestes — celui qui répond aux demandes en attente,
-dont la source n'est connue qu'à l'exécution — se conforme à `VoiceAnswerIntent` au
-lieu de `VoiceGestureIntent` :
-
-- il déclare la liste de ses gestes,
-  `static let voiceGestures: [VoiceGesture] = [.answerOption, .answerText, .answerProjectDialog, .answerHostedDialog, .answerAuditEscalation]`,
-  et UN littéral `authenticationPolicy`, valable pour chacun d'eux ;
-- à chaque envoi, `applyVoicePolicy(_:target:send:)` reçoit le geste de la demande
-  visée : un geste absent de `voiceGestures`, ou dont la ligne de la table diverge du
-  littéral, rend `.misconfigured` sans appeler `send` ; sinon la porte est la même que
-  pour `VoiceGestureIntent` (confirmation au besoin, puis `send`).
-
-`MacPendingIntent` et `MacAnswerIntent` (*Siri sur le Mac*) en sont les deux
-conformités ; `Tests/OMPConsoleTests/MacVoiceIntentTests.swift`
-(`siri-mac-questions-en-attente/AC-12`) confronte leurs littéraux à la table geste par
-geste.
+  pas, pour CHACUN de ses gestes, la politique de la table ; la conversation
+  (`VoicePendingWalk.run`) applique ensuite la porte `VoiceGesturePolicy.apply` à
+  chaque livraison. `IOSPendingRequestsIntent` (gestes `VoicePendingWalk.gestures`)
+  et `MacPendingIntent`/`MacAnswerIntent` (gestes `MacSiriPending.gestures`) en sont
+  les exemples ; `IOSSiriPendingTests` (`siri-iphone-questions-en-attente/AC-10`) et
+  `MacVoiceIntentTests` (`siri-mac-questions-en-attente/AC-12`) confrontent leurs
+  littéraux à la table geste par geste.
 
 Piège du littéral : `appintentsmetadataprocessor` exige que `authenticationPolicy`
 soit initialisée par un littéral (« 'IntentAuthenticationPolicy' must be initialized

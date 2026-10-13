@@ -1,8 +1,9 @@
 // Les intents Siri des demandes en attente du Mac (siri-mac-questions-en-attente,
-// S-6). Le parcours (annonce, lecture, interprétation, contrôle avant envoi,
-// issue, suivante) est celui de `VoiceConversation` (ConsoleCore) ; la coque ne
-// fournit que la lecture de la liste, la question posée à Siri et l'envoi par les
-// gestes typés de `RemoteActions`.
+// S-6). La conversation (annonce, lecture, interprétation, contrôle avant envoi,
+// issue, suivante) est celle de `VoicePendingWalk` (ConsoleCore), la même que sur
+// l'iPhone ; la coque ne fournit que le canal (la liste lue après l'attente bornée
+// de `MacVoiceContext`, l'envoi par les gestes typés de `RemoteActions`), les
+// gestes qu'elle émet et les tours de parole de Siri.
 //
 // Titres, descriptions, modes, politique d'authentification et titre du paramètre
 // sont des LITTÉRAUX : l'outillage d'extraction des métadonnées App Intents refuse
@@ -13,16 +14,13 @@ import ConsoleCore
 
 /// « Qu'est-ce qui m'attend » : annonce le nombre de demandes puis les parcourt,
 /// de la plus ancienne à la plus récente.
-struct MacPendingIntent: AppIntent, VoiceAnswerIntent {
+struct MacPendingIntent: AppIntent {
     static let title: LocalizedStringResource = "Ce qui m’attend"
     static let description = IntentDescription("Annonce les demandes en attente sur ce Mac, lit la plus ancienne et recueille votre réponse.")
     static let supportedModes: IntentModes = .background
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
-    static let voiceGestures: [VoiceGesture] = [
-        .answerOption, .answerText, .answerProjectDialog, .answerHostedDialog, .answerAuditEscalation,
-    ]
 
-    /// Sert UNIQUEMENT à `requestValue` : sa valeur initiale est ignorée.
+    /// La réponse dictée, redemandée à chaque tour par `requestValue`.
     @Parameter(title: "Réponse") var answer: String?
     @AppDependency var voice: MacVoiceContext
 
@@ -36,26 +34,28 @@ struct MacPendingIntent: AppIntent, VoiceAnswerIntent {
     // `MainWindow.reveal()` ni `NSApp.activate` : l'app reste en arrière-plan.
     @MainActor
     func perform() async throws -> IntentResultContainer<Never, Never, Never, IntentDialog> {
-        let phrase = await MacVoiceSession(context: voice, policy: { gesture, target, send in
-            try await self.applyVoicePolicy(gesture, target: target, send: send)
-        }).run(announcing: true, ask: { prompt in
-            try await $answer.requestValue(IntentDialog(stringLiteral: prompt))
-        })
-        return .result(dialog: IntentDialog(stringLiteral: phrase))
+        .result(dialog: IntentDialog(stringLiteral: try await MacSiriPending.answer(self, context: voice, announcing: true)))
     }
 }
 
-/// « Réponds » : le même parcours, sans l'annonce du nombre.
-struct MacAnswerIntent: AppIntent, VoiceAnswerIntent {
+extension MacPendingIntent: VoiceConversation {
+    func ask(_ dialog: String) async throws -> String {
+        try await $answer.requestValue(IntentDialog(stringLiteral: dialog))
+    }
+
+    func confirm(_ dialog: String) async throws {
+        try await requestConfirmation(actionName: .continue, dialog: IntentDialog(stringLiteral: dialog))
+    }
+}
+
+/// « Réponds » : la même conversation, sans l'annonce du nombre.
+struct MacAnswerIntent: AppIntent {
     static let title: LocalizedStringResource = "Répondre aux demandes"
     static let description = IntentDescription("Lit la plus ancienne demande en attente sur ce Mac, recueille votre réponse puis passe à la suivante.")
     static let supportedModes: IntentModes = .background
     static let authenticationPolicy: IntentAuthenticationPolicy = .alwaysAllowed
-    static let voiceGestures: [VoiceGesture] = [
-        .answerOption, .answerText, .answerProjectDialog, .answerHostedDialog, .answerAuditEscalation,
-    ]
 
-    /// Sert UNIQUEMENT à `requestValue` : sa valeur initiale est ignorée.
+    /// La réponse dictée, redemandée à chaque tour par `requestValue`.
     @Parameter(title: "Réponse") var answer: String?
     @AppDependency var voice: MacVoiceContext
 
@@ -66,109 +66,107 @@ struct MacAnswerIntent: AppIntent, VoiceAnswerIntent {
 
     @MainActor
     func perform() async throws -> IntentResultContainer<Never, Never, Never, IntentDialog> {
-        let phrase = await MacVoiceSession(context: voice, policy: { gesture, target, send in
-            try await self.applyVoicePolicy(gesture, target: target, send: send)
-        }).run(announcing: false, ask: { prompt in
-            try await $answer.requestValue(IntentDialog(stringLiteral: prompt))
-        })
-        return .result(dialog: IntentDialog(stringLiteral: phrase))
+        .result(dialog: IntentDialog(stringLiteral: try await MacSiriPending.answer(self, context: voice, announcing: false)))
     }
 }
 
-/// Une session vocale : le moteur de ConsoleCore branché sur le contexte du Mac.
-/// L'envoi applique la politique vocale de l'intent, puis le geste typé de la
-/// source de la demande.
+extension MacAnswerIntent: VoiceConversation {
+    func ask(_ dialog: String) async throws -> String {
+        try await $answer.requestValue(IntentDialog(stringLiteral: dialog))
+    }
+
+    func confirm(_ dialog: String) async throws {
+        try await requestConfirmation(actionName: .continue, dialog: IntentDialog(stringLiteral: dialog))
+    }
+}
+
+/// L'orchestration des intents des attentes du Mac.
 @MainActor
-struct MacVoiceSession {
-    typealias Policy = @MainActor (VoiceGesture, String, @MainActor () async throws -> Void) async throws -> VoiceGestureOutcome
+enum MacSiriPending {
+    /// Les seuls gestes qu'émettent les intents du Mac : les réponses. Les jalons
+    /// de carte (`validateSpecs`, `acceptReview`) restent à traiter dans l'app.
+    nonisolated static let gestures: [VoiceGesture] = [
+        .answerOption, .answerText, .answerProjectDialog, .answerHostedDialog, .answerAuditEscalation,
+    ]
 
-    private let context: MacVoiceContext
-    private let policy: Policy
-
-    init(context: MacVoiceContext, policy: @escaping Policy) {
-        self.context = context
-        self.policy = policy
+    /// La politique littérale de `intent` confrontée à la table pour chacun de ses
+    /// gestes (dialogue `misconfigured` sans rien lire ni envoyer si elle diverge),
+    /// puis la conversation des attentes sur le contexte du Mac.
+    static func answer<Intent: AppIntent & VoiceConversation>(
+        _ intent: Intent,
+        context: MacVoiceContext,
+        announcing: Bool
+    ) async throws -> String {
+        guard VoiceGesturePolicy.admits(Intent.authenticationPolicy, for: gestures, on: .current) else {
+            return VoiceGestureText.misconfigured
+        }
+        return try await walk(context: context, conversation: intent, announcing: announcing)
     }
 
-    /// Rend la dernière phrase de la session, que l'intent dit en résultat.
-    func run(announcing: Bool, ask: @escaping @MainActor (String) async throws -> String) async -> String {
-        let context = self.context
-        return await VoiceConversation(
-            read: { await context.read() },
-            ask: ask,
-            send: { request, answer in await self.send(request, answer) }
-        ).run(announcing: announcing)
+    /// La conversation des attentes sur le contexte du Mac.
+    static func walk(context: MacVoiceContext, conversation: some VoiceConversation, announcing: Bool) async throws -> String {
+        try await VoicePendingWalk.run(
+            channel: MacPendingChannel(context: context),
+            conversation: conversation,
+            announcing: announcing,
+            admitting: gestures
+        )
+    }
+}
+
+/// Le canal de `VoicePendingWalk.run` sur le Mac même : la liste locale des
+/// attentes, et chaque livraison par UN geste typé de `RemoteActions`.
+@MainActor
+struct MacPendingChannel: VoicePendingChannel {
+    let context: MacVoiceContext
+
+    func pending() async throws -> [PendingRequest] {
+        try await context.pending()
     }
 
-    /// Applique la politique au geste de la demande puis l'envoie ; un refus du
-    /// Mac devient l'issue dite par Siri.
-    func send(_ request: PendingRequest, _ answer: VoiceAnswer) async -> VoiceIssue {
-        guard let gesture = request.voiceGesture else { return .misconfigured }
-        let target = request.subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        do {
-            let outcome = try await policy(gesture, target) { try await self.deliver(request, answer) }
-            return VoiceIssue(outcome, gesture: gesture, target: target)
-        } catch let refusal as GestureRefusal {
-            return Self.issue(for: refusal)
-        } catch {
-            return .macRefused(motive: "")
+    /// La SEULE voie d'écriture : les méthodes typées de `RemoteActions` que sert
+    /// aussi le routeur HTTP, aucun corps HTTP, aucun appel direct à un modèle.
+    func deliver(_ delivery: VoiceDelivery) async throws {
+        let actions = context.remoteActions
+        switch delivery {
+        case let .cardOption(cardId, toolCallId, label):
+            try await actions.answer(cardId: cardId, toolCallId: toolCallId, answer: .selected(label: label))
+        case let .cardCustom(cardId, toolCallId, text):
+            try await actions.answer(cardId: cardId, toolCallId: toolCallId, answer: .custom(text: text))
+        case let .cardReply(cardId, text):
+            try await actions.reply(cardId: cardId, text: text)
+        case let .cardVerdict(cardId, milestone):
+            switch milestone {
+            case .specs: try await actions.verdict(cardId: cardId, verdict: .specs)
+            case .review: try await actions.verdict(cardId: cardId, verdict: .review)
+            case .answer: throw GestureRefusal.milestoneNotAwaited
+            }
+        case let .conduiteValue(dialogId, value):
+            try await actions.answerDialog(id: dialogId, answer: .value(value))
+        case let .conduiteConfirmed(dialogId, confirmed):
+            try await actions.answerDialog(id: dialogId, answer: .confirmed(confirmed))
+        case let .sessionValue(dialogId, value):
+            try await actions.answerHostedDialog(id: dialogId, answer: .value(value))
+        case let .sessionConfirmed(dialogId, confirmed):
+            try await actions.answerHostedDialog(id: dialogId, answer: .confirmed(confirmed))
+        case let .auditAnswer(auditId, slug, key, answer):
+            try await actions.answerAudit(id: auditId, slug: slug, key: key, answer: answer, decision: nil)
+        case let .auditDecision(auditId, slug, key, decision):
+            try await actions.answerAudit(id: auditId, slug: slug, key: key, answer: nil, decision: decision)
         }
     }
 
-    /// Un refus du Mac dit par Siri : la question ou le dialogue a changé (ou n'est
-    /// plus là) → question périmée ; sinon le motif EXACT de la route HTTP du même
-    /// geste.
-    static func issue(for refusal: GestureRefusal) -> VoiceIssue {
+    /// L'issue d'un échec. `pending()` ne lève que `MacStateUnreadable` ; un refus
+    /// de livraison rend `nil` quand la question ou le dialogue a changé (ou n'est
+    /// plus là), sinon le motif EXACT de la route HTTP du même geste.
+    func issue(of error: Error, delivery: VoiceDelivery?) -> VoiceIssue? {
+        if error is MacStateUnreadable { return .stateUnreadable }
+        guard let refusal = error as? GestureRefusal else { return .macRefused(motive: "") }
         switch refusal {
         case .staleQuestion, .noQuestionInFlight, .notAwaitingReply, .noPendingDialog, .staleDialog:
-            return .staleQuestion
+            return nil
         default:
             return .macRefused(motive: refusal.apiError.message ?? "")
-        }
-    }
-
-    /// La SEULE voie d'écriture : les méthodes typées de `RemoteActions`, aucun
-    /// corps HTTP, aucun appel direct à un modèle.
-    private func deliver(_ request: PendingRequest, _ answer: VoiceAnswer) async throws(GestureRefusal) {
-        let actions = context.remoteActions
-        switch request.reply {
-        case let .cardAnswer(cardId, toolCallId):
-            switch answer {
-            case let .option(_, label):
-                try await actions.answer(cardId: cardId, toolCallId: toolCallId, answer: .selected(label: label))
-            case let .text(text):
-                try await actions.answer(cardId: cardId, toolCallId: toolCallId, answer: .custom(text: text))
-            }
-        case let .cardReply(cardId):
-            try await actions.reply(cardId: cardId, text: Self.said(answer))
-        case let .conduiteDialog(dialogId, method):
-            try await actions.answerDialog(id: dialogId, answer: Self.dialogAnswer(method, answer))
-        case let .sessionDialog(dialogId, method):
-            try await actions.answerHostedDialog(id: dialogId, answer: Self.dialogAnswer(method, answer))
-        case let .auditEscalation(auditId, slug, key, _):
-            try await actions.answerAudit(id: auditId, slug: slug, key: key, answer: Self.said(answer), decision: nil)
-        case .cardVerdict, .resume:
-            // Inatteignable : ces demandes n'ont aucun geste vocal, `send` s'arrête avant.
-            throw .cardWithoutGesture
-        }
-    }
-
-    /// Le texte d'une réponse : le libellé de l'option, ou le texte dicté.
-    private static func said(_ answer: VoiceAnswer) -> String {
-        switch answer {
-        case let .option(_, label): return label
-        case let .text(text): return text
-        }
-    }
-
-    /// La réponse à un dialogue : une confirmation (rang 0 = « Oui ») pour
-    /// `confirm`, sinon la valeur dite.
-    private static func dialogAnswer(_ method: RpcDialogMethod, _ answer: VoiceAnswer) -> DialogAnswer {
-        switch answer {
-        case let .option(index, label):
-            return method == .confirm ? .confirmed(index == 0) : .value(label)
-        case let .text(text):
-            return .value(text)
         }
     }
 }

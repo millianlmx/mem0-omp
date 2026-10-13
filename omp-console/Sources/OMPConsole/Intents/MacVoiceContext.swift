@@ -45,15 +45,13 @@ final class MacVoiceContext {
     /// La liste des attentes du Mac, une fois l'ardoise dérivée d'au moins un
     /// instantané : c'est elle que consultent les gestes de carte. Un processus
     /// lancé sans fenêtre n'a jamais démarré ses modèles : la lecture les démarre,
-    /// puis attend au plus `readinessTimeout`.
-    func read() async -> VoiceReading {
+    /// puis attend au plus `readinessTimeout` ; au-delà, elle lève `MacStateUnreadable`.
+    func pending() async throws -> [PendingRequest] {
         if kanban.state == .loading {
             startModels()
-            guard await boardLoaded() else {
-                return .unavailable(phrase: VoiceSpeechText.stateUnreadable)
-            }
+            guard await boardLoaded() else { throw MacStateUnreadable() }
         }
-        return .ready(LocalPendingRequests.list(storeHub: storeHub, project: project, session: session))
+        return LocalPendingRequests.list(storeHub: storeHub, project: project, session: session)
     }
 
     /// Vrai dès que l'ardoise publiée quitte `.loading`, faux à l'échéance : un
@@ -86,6 +84,10 @@ final class MacVoiceContext {
         return context
     }
 }
+
+/// L'ardoise n'a pas quitté `.loading` dans le délai borné : rien n'est lu, rien
+/// n'est envoyé (issue `stateUnreadable`).
+struct MacStateUnreadable: Error {}
 
 /// L'issue unique de l'attente « état lu » : le premier de l'abonnement ou de la
 /// borne reprend la tâche en attente, puis tous deux sont annulés.
