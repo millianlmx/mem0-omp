@@ -2573,14 +2573,18 @@ un flux temps réel.
   carte inconnue, `409` carte sans contrat (moment ou worktree absent).
 - **Réponse à une carte** : `POST /v1/cards/{id}/answer` exige `toolCallId`,
   l'identifiant de la question affichée (`pendingAsk.toolCallId` de la trame
-  `store`), avec `{"toolCallId","kind":"selected"|"custom","label"?,"text"?}`. Les
-  refus se contrôlent dans cet ordre, le premier gagne et AUCUN ne livre quoi que ce
-  soit à la pipeline : `404` « carte inconnue », `409` « carte sans geste », `409`
-  « aucune question en vol », `400` « identifiant de question manquant » (absent ou
-  blanc, quel que soit `kind`), `409` « la question a changé depuis la demande »
-  (identifiant d'une question qui n'est plus en vol, contrôlé AVANT le libellé),
-  puis `400` « libellé hors des options de la question », « texte vide » ou « kind
-  inconnu ». La réponse livrée rend `202 {"accepted":true}`.
+  `store`), avec `{"toolCallId","kind":"selected"|"custom","label"?,"text"?}`. Un
+  corps absent ou illisible est d'abord un `400` ; un corps dont la forme ne se
+  convertit pas (`kind` inconnu, `label` ou `text` absent) est un `400` « kind
+  inconnu », « libellé absent » ou « texte absent » avant tout contrôle d'état,
+  sauf si l'identifiant manque : « identifiant de question manquant » prime alors.
+  Les refus du geste typé `RemoteActions.answer` se contrôlent ensuite dans cet
+  ordre, le premier gagne et AUCUN ne livre quoi que ce soit à la pipeline : `404`
+  « carte inconnue », `409` « carte sans geste », `409` « aucune question en vol »,
+  `400` « identifiant de question manquant » (blanc), `409` « la question a changé
+  depuis la demande » (identifiant d'une question qui n'est plus en vol, contrôlé
+  AVANT le libellé), puis `400` « libellé hors des options de la question » ou
+  « texte vide ». La réponse livrée rend `202 {"accepted":true}`.
 - **Faits de PR de l'ardoise** : `POST /v1/pull-request-states/refresh` (sans corps)
   relance la lecture des états de PR sur GitHub sans l'attendre et répond `202
   {"accepted":true}`, même quand `gh` est absent ; le résultat arrive par la trame
@@ -2604,6 +2608,26 @@ un flux temps réel.
   déjà répondue ou périmée ») et un service arrêté ou injoignable rend `503`. Aucune
   route de lecture : audits, escalades et décisions arrivent par la trame `store`.
   L'API sert ainsi **43 routes**, image exacte de `ClientRoute.all`.
+- **Gestes typés** : chaque geste de `RemoteActions` est une méthode Swift typée
+  (`throws(GestureRefusal)`, sauf `stopHostedSession` et `refreshPullRequestStates`
+  qui ne refusent jamais), appelable par du code Swift du Mac sans corps
+  HTTP : gestes de carte (`answer`, `reply`, `text`, `verdict`, `resume`, `stop`),
+  lancement de feature (`launch`), conduite (`startConduite`, `closeConduite`,
+  `answerDialog`), session hébergée (`prompt`, `launchHostedSession`,
+  `relaunchHostedSession`, `stopHostedSession`, `answerHostedDialog`), audits
+  (`startAudit`, `launchAudit`, `answerAudit`, `stopAudit`) et PR (`pullRequests`,
+  `merge`, `refreshPullRequestStates`). Chacune applique seule les règles du geste
+  et lève une cause typée `GestureRefusal` (un cas par règle : carte inconnue,
+  identifiant de question manquant, question périmée, libellé hors options, texte
+  vide, jalon non attendu, dialogue
+  périmé, dépôt inconnu, échec relu au journal…). Le routeur ne fait que décoder
+  le corps (un corps absent ou illisible est un `400` AVANT tout contrôle d'état,
+  même sur une carte, un dépôt ou un audit inconnus), convertir la forme et
+  appeler la méthode ; `GestureRefusal.apiError` est la seule table qui traduit un
+  refus vers l'enveloppe `{"error":{"code","message"}}` habituelle. Un échec
+  d'écriture du canal relu en tête du journal rend `409 conflict` à son motif
+  (« écriture impossible (Permission denied) ») — il était `500`. Une invite
+  blanche à la session hébergée rend « texte vide ».
 - **Liste des attentes** : aucune route dédiée. L'iPhone calcule la liste des
   attentes depuis `/v1/store`, `/v1/conduite` et `/v1/session`
   (`ConsoleClientModel.pendingRequests()`, lues dans cet ordre, l'une après
@@ -2981,6 +3005,7 @@ omp-console/
 │   │   ├── Payloads.swift         charges utiles des routes et corps de requête
 │   │   ├── RemoteReads.swift      lectures : magasin, sessions, documents, stats, mémoire
 │   │   ├── RemoteActions.swift    gestes : cartes, feature, conduite, session, PR
+│   │   ├── GestureRefusal.swift   la cause typée d'un refus de geste et sa traduction HTTP
 │   │   ├── RemoteRouter.swift     la table des routes, un seul point de réponse
 │   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
 │   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service
