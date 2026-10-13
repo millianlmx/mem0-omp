@@ -446,7 +446,7 @@ private final class RevokingReader: IOSMemoryReading {
 /// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
 private enum MacMemoryDouble {
     static func error(status: Int, body: Data) -> ClientError {
-        ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+        ClientErrorMapping.translate(status: status, protocolVersion: ConsoleAPI.protocolVersion, body: body)
     }
 
     static func error(status: Int, code: String, message: String) -> ClientError {

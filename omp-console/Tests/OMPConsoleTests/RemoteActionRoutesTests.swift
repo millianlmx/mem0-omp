@@ -325,17 +325,125 @@ func answeringAnAskResolvesIt() async throws {
     let unknown = try await fixture.stack.call(
         "POST", "/v1/cards/feature:0000000000000000:beta/answer",
         token: fixture.token,
-        json: ["kind": "custom", "text": "bonjour"]
+        json: ["toolCallId": "call-1", "kind": "custom", "text": "bonjour"]
     )
     #expect(unknown.status == 404)
 
-    // Une carte sans question en vol est un 409.
+    // Une carte sans question en vol est un 409, même sans identifiant : le
+    // contrôle de la question en vol passe avant celui de l'identifiant.
     let other = try await fixture.stack.call(
         "POST", "/v1/cards/\(fixture.idleCardId)/answer",
         token: fixture.token,
         json: ["kind": "custom", "text": "bonjour"]
     )
     #expect(other.status == 409)
+}
+
+// MARK: - reponse-ios-sans-identifiant-de-question
+
+/// La question Q2 en vol côté Mac : Q1 (`call-1`, options main/feat/x) a été
+/// résolue et remplacée.
+private var replacingQuestion: [String: Any] { [
+    "toolCallId": "call-2",
+    "id": "ask-2",
+    "question": "Quel nom de PR ?",
+    "options": [["label": "court"], ["label": "long"]],
+] }
+
+/// La question Q en vol, pour les réponses acceptées ou sans identifiant.
+private var pendingQuestion: [String: Any] { [
+    "toolCallId": "call-1",
+    "id": "ask-1",
+    "question": "Quelle branche ?",
+    "options": [["label": "main"], ["label": "feat/x"]],
+] }
+
+/// Les livraisons déposées dans la boîte du run : chaque fichier est un geste
+/// livré à la pipeline.
+@MainActor
+private func deliveries(_ fixture: ActionFixture) throws -> [String] {
+    try FileManager.default.contentsOfDirectory(atPath: fixture.inbox).map {
+        try String(contentsOfFile: fixture.inbox + "/" + $0, encoding: .utf8)
+    }
+}
+
+@MainActor
+@Test("reponse-ios-sans-identifiant-de-question/AC-1 : une réponse à une question remplacée est refusée et la nouvelle question ne reçoit rien")
+func answerToAReplacedQuestionIsRefused() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: replacingQuestion)
+    defer { fixture.stack.stop() }
+
+    // `main` n'existe que dans Q1 : l'identifiant se juge AVANT le libellé, d'où 409 et non 400.
+    let bodies: [[String: Any]] = [
+        ["toolCallId": "call-1", "kind": "selected", "label": "main"],
+        ["toolCallId": "call-1", "kind": "custom", "text": "réponse tardive"],
+    ]
+    for body in bodies {
+        let reply = try await fixture.stack.call(
+            "POST", "/v1/cards/\(fixture.featureCardId)/answer",
+            token: fixture.token,
+            json: body
+        )
+        #expect(reply.status == 409, "\(body)")
+        #expect(reply.errorCode == "conflict")
+        #expect(reply.errorMessage == "la question a changé depuis la demande")
+    }
+    #expect(try deliveries(fixture).isEmpty, "Q2 ne doit recevoir aucune réponse")
+    #expect(fixture.stack.actions.journal.isEmpty, "aucun geste ne part")
+}
+
+@MainActor
+@Test("reponse-ios-sans-identifiant-de-question/AC-2 : une réponse sans identifiant de question est refusée sans rien livrer")
+func answerWithoutQuestionIdIsRefused() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: pendingQuestion)
+    defer { fixture.stack.stop() }
+
+    let bodies: [[String: Any]] = [
+        ["kind": "selected", "label": "main"],
+        ["kind": "custom", "text": "bonjour"],
+        ["toolCallId": "", "kind": "selected", "label": "main"],
+        ["toolCallId": "", "kind": "custom", "text": "bonjour"],
+        ["toolCallId": "  ", "kind": "custom", "text": "bonjour"],
+        ["kind": "inconnu"],
+    ]
+    for body in bodies {
+        let reply = try await fixture.stack.call(
+            "POST", "/v1/cards/\(fixture.featureCardId)/answer",
+            token: fixture.token,
+            json: body
+        )
+        #expect(reply.status == 400, "\(body)")
+        #expect(reply.errorCode == "bad_request")
+        #expect(reply.errorMessage == "identifiant de question manquant")
+    }
+    #expect(try deliveries(fixture).isEmpty, "rien n'est livré à la pipeline")
+    #expect(fixture.stack.actions.journal.isEmpty, "aucun geste ne part")
+}
+
+@MainActor
+@Test("reponse-ios-sans-identifiant-de-question/AC-3 : une réponse portant l'identifiant de la question en vol lui est livrée")
+func answerWithTheQuestionIdIsDelivered() async throws {
+    let bodies: [(json: [String: Any], answer: String)] = [
+        (["toolCallId": "call-1", "kind": "selected", "label": "feat/x"], "feat"),
+        (["toolCallId": "call-1", "kind": "custom", "text": "une autre branche"], "une autre branche"),
+    ]
+    for body in bodies {
+        let fixture = try await makeActionFixture(pendingAsk: pendingQuestion)
+        defer { fixture.stack.stop() }
+        let reply = try await fixture.stack.call(
+            "POST", "/v1/cards/\(fixture.featureCardId)/answer",
+            token: fixture.token,
+            json: body.json
+        )
+        #expect(reply.status == 202, "\(body.json)")
+        #expect(String(decoding: reply.body, as: UTF8.self) == #"{"accepted":true}"#)
+        let delivered = try deliveries(fixture)
+        #expect(delivered.count == 1)
+        let payload = try #require(delivered.first)
+        #expect(payload.contains("\"kind\":\"ask\""))
+        #expect(payload.contains("\"toolCallId\":\"call-1\""), "la livraison vise Q")
+        #expect(payload.contains(body.answer))
+    }
 }
 
 // MARK: - AC-11
@@ -1103,14 +1211,6 @@ func typedAnswerToAStaleQuestionIsRefused() async throws {
             )
         }
     }
-    // Un identifiant VIDE est fourni : il ne désigne pas la question en vol.
-    await #expect(throws: GestureRefusal.staleQuestion) {
-        try await fixture.stack.remoteActions.answer(
-            cardId: fixture.featureCardId,
-            toolCallId: "",
-            answer: .custom(text: "bonjour")
-        )
-    }
     #expect(try EmittedEffects(fixture) == before, "aucune réponse n'est émise")
     #expect(before.deliveries.isEmpty)
 }
@@ -1158,6 +1258,23 @@ func typedBlankTextGesturesAreRefused() async throws {
 }
 
 @MainActor
+@Test("reponse-ios-sans-identifiant-de-question/AC-2 : la méthode typée refuse un identifiant de question blanc sans rien livrer")
+func typedAnswerWithoutQuestionIdIsRefused() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let actions = fixture.stack.remoteActions
+    let before = try EmittedEffects(fixture)
+
+    for blank in ["", "  "] {
+        await #expect(throws: GestureRefusal.missingQuestionId) {
+            try await actions.answer(cardId: fixture.featureCardId, toolCallId: blank, answer: .selected(label: "main"))
+        }
+    }
+    #expect(try EmittedEffects(fixture) == before, "rien n'est émis")
+    #expect(before.deliveries.isEmpty)
+}
+
+@MainActor
 @Test("validations-de-geste-enfermees-dans-le-h/AC-5 : un échec consigné au journal rend « échec au journal » avec le motif relu")
 func typedAnswerReportsTheJournalFailure() async throws {
     let toggle = WriteFailToggle()
@@ -1190,7 +1307,7 @@ func typedCardGesturesOnAnUnknownCardAreRefused() async throws {
     let before = try EmittedEffects(fixture)
 
     await #expect(throws: GestureRefusal.unknownCard) {
-        try await actions.answer(cardId: unknownCardId, toolCallId: nil, answer: .custom(text: "bonjour"))
+        try await actions.answer(cardId: unknownCardId, toolCallId: "call-1", answer: .custom(text: "bonjour"))
     }
     await #expect(throws: GestureRefusal.unknownCard) {
         try await actions.reply(cardId: unknownCardId, text: "x")
@@ -1221,7 +1338,7 @@ func typedAnswerSucceeds() async throws {
 
     try await fixture.stack.remoteActions.answer(
         cardId: fixture.featureCardId,
-        toolCallId: nil,
+        toolCallId: "call-1",
         answer: .custom(text: "une autre branche")
     )
     let files = try FileManager.default.contentsOfDirectory(atPath: fixture.inbox)
@@ -1411,9 +1528,9 @@ func malformedBodiesNeverReachTheGesture() async throws {
     let cases: [(path: String, body: Data?, message: String)] = [
         (answer, nil, "corps JSON absent"),
         (answer, Data("{".utf8), "corps JSON illisible"),
-        (answer, jsonBody(["kind": "autre"]), "kind inconnu"),
-        (answer, jsonBody(["kind": "selected"]), "libellé absent"),
-        (answer, jsonBody(["kind": "custom"]), "texte absent"),
+        (answer, jsonBody(["toolCallId": "call-1", "kind": "autre"]), "kind inconnu"),
+        (answer, jsonBody(["toolCallId": "call-1", "kind": "selected"]), "libellé absent"),
+        (answer, jsonBody(["toolCallId": "call-1", "kind": "custom"]), "texte absent"),
         (verdict, jsonBody(["verdict": "x"]), "verdict inconnu"),
         ("/v1/cards/\(fixture.featureCardId)/reply", Data("{".utf8), "corps JSON illisible"),
         ("/v1/cards/\(fixture.featureCardId)/text", nil, "corps JSON absent"),

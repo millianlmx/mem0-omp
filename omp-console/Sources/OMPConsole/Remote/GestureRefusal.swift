@@ -31,7 +31,7 @@ enum DialogAnswer: Equatable, Sendable {
 /// qu'aucun geste de modèle n'a été appelé.
 enum GestureRefusal: Error, Equatable, Sendable {
     // cartes
-    case unknownCard, cardWithoutGesture, noQuestionInFlight, staleQuestion, labelNotInOptions,
+    case unknownCard, cardWithoutGesture, noQuestionInFlight, missingQuestionId, staleQuestion, labelNotInOptions,
          emptyText, notAwaitingReply, noLiveRun, milestoneNotAwaited, cardWithoutRepository, cardWithoutLot
     /// Motif relu en tête du journal par `checkJournal`.
     case journalFailure(String)
@@ -67,6 +67,7 @@ enum GestureRefusal: Error, Equatable, Sendable {
         case .unknownCard: return .notFound("carte inconnue")
         case .cardWithoutGesture: return .conflict("carte sans geste")
         case .noQuestionInFlight: return .conflict("aucune question en vol")
+        case .missingQuestionId: return .badRequest("identifiant de question manquant")
         case .staleQuestion: return .conflict("la question a changé depuis la demande")
         case .labelNotInOptions: return .badRequest("libellé hors des options de la question")
         case .emptyText: return .badRequest("texte vide")

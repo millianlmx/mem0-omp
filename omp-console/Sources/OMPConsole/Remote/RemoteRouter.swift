@@ -239,7 +239,7 @@ final class RemoteRouter {
             let body = try RemoteBody.decode(RemoteAnswerRequest.self, from: request)
             try await actions.answer(
                 cardId: parameters["id"] ?? "",
-                toolCallId: body.toolCallId,
+                toolCallId: body.toolCallId ?? "",
                 answer: try Self.cardAnswer(body)
             )
             return try json(RemoteAcceptedPayload(accepted: true), code: 202)
@@ -340,17 +340,23 @@ final class RemoteRouter {
 
     // MARK: - Conversion des corps vers les gestes typés
 
+    /// Un identifiant de question manquant prime sur un `kind` inconnu ou une
+    /// réponse sans libellé ni texte (protocole 2, quel que soit `kind`) : la
+    /// règle reste celle du geste, `RemoteActions.requireQuestionId`.
     private static func cardAnswer(_ body: RemoteAnswerRequest) throws -> CardAnswer {
+        let shapeError: String
         switch body.kind {
         case "selected":
-            guard let label = body.label else { throw ConsoleAPIError.badRequest("libellé absent") }
-            return .selected(label: label)
+            if let label = body.label { return .selected(label: label) }
+            shapeError = "libellé absent"
         case "custom":
-            guard let text = body.text else { throw ConsoleAPIError.badRequest("texte absent") }
-            return .custom(text: text)
+            if let text = body.text { return .custom(text: text) }
+            shapeError = "texte absent"
         default:
-            throw ConsoleAPIError.badRequest("kind inconnu")
+            shapeError = "kind inconnu"
         }
+        _ = try RemoteActions.requireQuestionId(body.toolCallId)
+        throw ConsoleAPIError.badRequest(shapeError)
     }
 
     private static func verdict(_ body: RemoteVerdictRequest) throws -> MilestoneVerdict {

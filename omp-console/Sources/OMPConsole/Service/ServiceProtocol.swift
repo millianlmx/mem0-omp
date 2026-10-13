@@ -73,51 +73,9 @@ extension JSONValue {
 
 // --- dialogues (S-6, Doc-4 §3) -----------------------------------------------
 
-/// Les quatre méthodes de dialogue auxquelles l'app répond.
-enum RpcDialogMethod: String, CaseIterable, Sendable, Codable {
-    case select
-    case confirm
-    case input
-    case editor
-}
-
-/// Une demande de dialogue : forme exacte de `RpcDialogRequest` (Doc-4 §3),
-/// réduite aux champs que le service publie. `Codable` : la forme voyage telle
-/// quelle dans les charges utiles de l'API distante (S-2, S-6).
-struct RpcDialogRequest: Identifiable, Equatable, Sendable, Codable {
-    let id: String
-    let method: RpcDialogMethod
-    let title: String
-    let message: String?
-    let options: [String]
-    /// `optionDescriptions[i]` correspond POSITIONNELLEMENT à `options[i]`.
-    let optionDescriptions: [String?]
-    let placeholder: String?
-    let prefill: String?
-    let promptStyle: Bool
-
-    init(
-        id: String,
-        method: RpcDialogMethod,
-        title: String,
-        message: String? = nil,
-        options: [String] = [],
-        optionDescriptions: [String?] = [],
-        placeholder: String? = nil,
-        prefill: String? = nil,
-        promptStyle: Bool = false
-    ) {
-        self.id = id
-        self.method = method
-        self.title = title
-        self.message = message
-        self.options = options
-        self.optionDescriptions = optionDescriptions
-        self.placeholder = placeholder
-        self.prefill = prefill
-        self.promptStyle = promptStyle
-    }
-
+// `RpcDialogMethod` et `RpcDialogRequest` vivent dans ConsoleCore
+// (Session/RpcDialog.swift) ; la coque n'en garde que le décodeur de trame.
+extension RpcDialogRequest {
     /// Décode un dialogue depuis un objet JSON. `nil` si la forme est inconnue :
     /// une trame illisible est ignorée, jamais devinée.
     static func decode(_ value: JSONValue) -> RpcDialogRequest? {
@@ -143,7 +101,8 @@ struct RpcDialogRequest: Identifiable, Equatable, Sendable, Codable {
             optionDescriptions: descriptions,
             placeholder: object["placeholder"]?.stringValue,
             prefill: object["prefill"]?.stringValue,
-            promptStyle: promptStyle
+            promptStyle: promptStyle,
+            at: object["at"]?.numberValue
         )
     }
 }

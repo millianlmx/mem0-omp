@@ -89,7 +89,8 @@ func serviceDialogFrame(
     options: [String] = [],
     optionDescriptions: [String?] = [],
     prefill: String? = nil,
-    placeholder: String? = nil
+    placeholder: String? = nil,
+    at: Double? = nil
 ) -> [String] {
     let descriptions: [Any] = optionDescriptions.map { $0.map { $0 as Any } ?? NSNull() }
     var json: [String: Any] = [
@@ -101,6 +102,7 @@ func serviceDialogFrame(
     ]
     if let prefill { json["prefill"] = prefill }
     if let placeholder { json["placeholder"] = placeholder }
+    if let at { json["at"] = at }
     return serviceFrame("dialog", json)
 }
 
@@ -114,7 +116,8 @@ func emitProjectDialog(
     options: [String] = [],
     optionDescriptions: [String?] = [],
     prefill: String? = nil,
-    placeholder: String? = nil
+    placeholder: String? = nil,
+    at: Double? = nil
 ) {
     transport.scriptStream(serviceDialogFrame(
         id: id,
@@ -123,7 +126,8 @@ func emitProjectDialog(
         options: options,
         optionDescriptions: optionDescriptions,
         prefill: prefill,
-        placeholder: placeholder
+        placeholder: placeholder,
+        at: at
     ))
 }
 
@@ -146,7 +150,8 @@ func emitServiceDialog(
     title: String,
     options: [String] = [],
     prefill: String? = nil,
-    placeholder: String? = nil
+    placeholder: String? = nil,
+    at: Double? = nil
 ) {
     transport.emit(serviceDialogFrame(
         id: id,
@@ -154,7 +159,8 @@ func emitServiceDialog(
         title: title,
         options: options,
         prefill: prefill,
-        placeholder: placeholder
+        placeholder: placeholder,
+        at: at
     ))
 }
 

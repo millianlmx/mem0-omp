@@ -43,36 +43,6 @@ private final class PublishedTrace {
     }
 }
 
-/// Un sommeil qui ne rend la main qu'à `release()` : le délai de recherche est
-/// tenu par le test, sans attente réelle.
-private actor GatePacer: ClientPacer {
-    private var waiters: [CheckedContinuation<Void, Never>] = []
-    private var released = false
-    private(set) var requested: [Double] = []
-
-    func sleep(seconds: Double) async throws {
-        requested.append(seconds)
-        if released { return }
-        await withCheckedContinuation { waiters.append($0) }
-    }
-
-    func release() {
-        released = true
-        let pending = waiters
-        waiters.removeAll()
-        for waiter in pending { waiter.resume() }
-    }
-
-    /// Attend qu'un sommeil soit en cours, borné à 3 s.
-    func untilWaiting() async -> Bool {
-        let deadline = Date().addingTimeInterval(3)
-        while waiters.isEmpty, Date() < deadline {
-            try? await Task.sleep(nanoseconds: 5_000_000)
-        }
-        return !waiters.isEmpty
-    }
-}
-
 @Suite("Faits de connexion présentés")
 @MainActor
 struct ConnectionAttemptTests {

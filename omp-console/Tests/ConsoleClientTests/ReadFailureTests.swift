@@ -83,22 +83,22 @@ private func connectedHarness(answering reply: MacReply) async -> ClientHarness 
     harness.transport.respond { request in
         if request.path == "/v1/components" {
             return .success(ClientHTTPResponse(
-                status: 200, protocolVersion: 1, body: Data(#"{"ompInstalled":true}"#.utf8)
+                status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"ompInstalled":true}"#.utf8)
             ))
         }
         if request.path == "/v1/journal" {
             return .success(ClientHTTPResponse(
-                status: 200, protocolVersion: 1, body: Data(#"{"entries":[]}"#.utf8)
+                status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"entries":[]}"#.utf8)
             ))
         }
         if request.path == "/v1/pull-request-states/refresh" {
             return .success(ClientHTTPResponse(
-                status: 202, protocolVersion: 1, body: Data(#"{"accepted":true}"#.utf8)
+                status: 202, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"accepted":true}"#.utf8)
             ))
         }
         switch reply {
         case .http(let status, let body):
-            return .success(ClientHTTPResponse(status: status, protocolVersion: 1, body: Data(body.utf8)))
+            return .success(ClientHTTPResponse(status: status, protocolVersion: ConsoleAPI.protocolVersion, body: Data(body.utf8)))
         case .refusedConnection:
             return .failure(ClientError.transport(.unreachable("Could not connect to the server.")))
         }

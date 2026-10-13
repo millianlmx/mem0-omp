@@ -308,7 +308,7 @@ struct IOSStatsModelTests {
         let body = (try? JSONSerialization.data(
             withJSONObject: ["error": ["code": "unavailable", "message": detail]]
         )) ?? Data()
-        return ClientErrorMapping.translate(status: 503, protocolVersion: 1, body: body)
+        return ClientErrorMapping.translate(status: 503, protocolVersion: ConsoleAPI.protocolVersion, body: body)
     }
 
     @Test("ios-erreurs-serveur-lisibles/AC-8 : statsShowsTranslatedFailure — le 503 relayé s'affiche en « service indisponible », sans URL ni JSON")

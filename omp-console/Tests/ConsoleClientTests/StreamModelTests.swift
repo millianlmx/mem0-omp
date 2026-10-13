@@ -55,7 +55,7 @@ struct StreamModelTests {
             if request.path == "/v1/cards/c1/reply" {
                 return .success(ClientHTTPResponse(
                     status: 202,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }

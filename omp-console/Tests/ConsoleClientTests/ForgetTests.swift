@@ -13,7 +13,7 @@ import Testing
 private let manualEndpoint = ClientEndpoint.manual(host: "192.168.1.20", port: 8787)
 
 private func reply(_ status: Int, _ json: String) -> Result<ClientHTTPResponse, Error> {
-    .success(ClientHTTPResponse(status: status, protocolVersion: 1, body: Data(json.utf8)))
+    .success(ClientHTTPResponse(status: status, protocolVersion: ConsoleAPI.protocolVersion, body: Data(json.utf8)))
 }
 
 /// 200 aux lectures de fond de l'Accueil ; `other` décide du reste.

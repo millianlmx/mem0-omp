@@ -111,7 +111,7 @@ struct ClientContractTests {
         // Deux installations distinctes : deux identités, deux lignes.
         #expect(Set(stack.registry.devices.compactMap(\.deviceKey)).count == 2)
         #expect(try contractSameShape(
-            #"{"code":"ABCDEFGH","name":"iPhone 17e","deviceKey":"k","protocolVersion":1}"#,
+            #"{"code":"ABCDEFGH","name":"iPhone 17e","deviceKey":"k","protocolVersion":\#(ConsoleAPI.protocolVersion)}"#,
             client: ConsoleClient.RemotePairRequest.self,
             host: OMPConsole.RemotePairRequest.self
         ))

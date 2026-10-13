@@ -68,14 +68,24 @@ final class RemoteActions {
 
     // MARK: - Répondre, texte, jalon
 
-    /// Répond à la question en vol de la carte. `toolCallId` nul : pas de contrôle
-    /// de péremption. Une réponse tardive est périmée QUEL QUE SOIT son libellé :
-    /// l'identité de la question se vérifie avant le libellé.
-    func answer(cardId: String, toolCallId: String?, answer: CardAnswer) async throws(GestureRefusal) {
+    /// L'identifiant de question est OBLIGATOIRE (protocole 2) : absent ou blanc,
+    /// il est refusé. Le routeur s'en sert aussi pour qu'un identifiant manquant
+    /// prime sur un `kind` inconnu.
+    static func requireQuestionId(_ toolCallId: String?) throws(GestureRefusal) -> String {
+        guard let toolCallId, !isBlank(toolCallId) else { throw .missingQuestionId }
+        return toolCallId
+    }
+
+    /// Répond à la question en vol de la carte. L'identifiant de question est
+    /// obligatoire et se contrôle après la question en vol, AVANT le libellé : une
+    /// réponse tardive vise une question qui n'est plus en vol, elle est périmée
+    /// même si son libellé n'existe pas dans la nouvelle question. Aucun refus ne
+    /// livre quoi que ce soit à la pipeline.
+    func answer(cardId: String, toolCallId: String, answer: CardAnswer) async throws(GestureRefusal) {
         let card = try card(cardId)
         let action = try action(card)
         guard let ask = action.run?.pendingAsk else { throw .noQuestionInFlight }
-        if let toolCallId, toolCallId != ask.toolCallId { throw .staleQuestion }
+        guard try Self.requireQuestionId(toolCallId) == ask.toolCallId else { throw .staleQuestion }
         let before = actions.journal.first?.id
         switch answer {
         case .selected(let label):
