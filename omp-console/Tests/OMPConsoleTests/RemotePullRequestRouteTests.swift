@@ -209,6 +209,7 @@ private func makeStack(
         session: session,
         project: project,
         streams: streams,
+        remoteActions: remoteActions,
         router: router,
         server: server,
         port: server.port ?? 0
