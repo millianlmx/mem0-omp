@@ -26,9 +26,9 @@ enum DialogAnswer: Equatable, Sendable {
 
 /// Pourquoi un geste typé a été refusé : un cas par règle. Sauf les cas d'échec
 /// d'un geste TENTÉ (`journalFailure`, `nothingRecorded`, `relaunchRefused`,
-/// `serviceFailure`, `serviceBadRequest/NotFound/Conflict`, `conduiteNotLive`,
-/// `mergeRefused`, `mergeFailed`, `pullRequestChanged`), un refus garantit
-/// qu'aucun geste de modèle n'a été appelé.
+/// `commandRefused`, `serviceFailure`, `serviceBadRequest/NotFound/Conflict`,
+/// `conduiteNotLive`, `mergeRefused`, `mergeFailed`, `pullRequestChanged`), un
+/// refus garantit qu'aucun geste de modèle n'a été appelé.
 enum GestureRefusal: Error, Equatable, Sendable {
     // cartes
     case unknownCard, cardWithoutGesture, noQuestionInFlight, missingQuestionId, staleQuestion, labelNotInOptions,
@@ -40,6 +40,9 @@ enum GestureRefusal: Error, Equatable, Sendable {
     case nothingRecorded
     /// Refus du service à une relance ; motif absent possible.
     case relaunchRefused(String?)
+    /// Refus du service, relu dans l'accusé d'une commande déjà postée
+    /// (`RemoteActions.settlement(of:)`) ; motif absent possible.
+    case commandRefused(String?)
     /// Message utilisateur d'une panne du service.
     case serviceFailure(String)
     // lancer une feature
@@ -80,6 +83,7 @@ enum GestureRefusal: Error, Equatable, Sendable {
         case .journalFailure(let reason): return .conflict(reason)
         case .nothingRecorded: return .server("le geste de reprise n'a rien consigné")
         case .relaunchRefused(let reason): return .conflict(reason ?? "relance refusée")
+        case .commandRefused(let reason): return .conflict(reason ?? "geste refusé")
         case .serviceFailure(let message): return .unavailable(message)
         case .emptyTitle: return .badRequest("titre vide")
         case .emptyDescription: return .badRequest("description vide")

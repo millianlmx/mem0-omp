@@ -1212,7 +1212,16 @@ Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script
    `MacSessionPromptIntent` et chacune de ses trois phrases, « Dis à
    ${applicationName} », « Envoyer un message à ${applicationName} » et « Écrire à
    ${applicationName} » :
-   `  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)`.
+   `  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)` ;
+7. contrôle enfin les cinq intents de pilotage (voir *Piloter les pipelines à la
+   voix*) : `extract.actionsdata` doit déclarer chacun avec son App Shortcut et sa
+   première phrase — `MacLaunchPipelineIntent` « Lancer une pipeline dans
+   ${applicationName} », `MacResumeFeatureIntent` « Reprendre une pipeline dans
+   ${applicationName} », `MacStopFeatureIntent` « Arrêter une pipeline dans
+   ${applicationName} », `MacValidateSpecsIntent` « Valider les specs dans
+   ${applicationName} », `MacAcceptReviewIntent` « Accepter la revue dans
+   ${applicationName} » :
+   `  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)`.
 
 Chaque échec sort en code 1, sur la sortie d'erreur, retire le bundle (y compris
 celui d'un assemblage antérieur) et ne signe rien :
@@ -1229,6 +1238,8 @@ celui d'un assemblage antérieur) et ne signe rien :
 | App Shortcut absent | `✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata` |
 | intent vocal absent (`<Type>` = `MacPendingIntent`, puis `MacAnswerIntent`, puis `MacSessionPromptIntent`) | `✗ intent vocal absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
 | App Shortcut vocale absente | `✗ App Shortcut de l'intent vocal <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est « Qu’est-ce qui m’attend dans ${applicationName} », « Réponds dans ${applicationName} », ou l'une des trois phrases de `MacSessionPromptIntent` (« Dis à ${applicationName} », « Envoyer un message à ${applicationName} », « Écrire à ${applicationName} ») |
+| intent de pilotage absent (`<Type>` dans l'ordre : `MacLaunchPipelineIntent`, `MacResumeFeatureIntent`, `MacStopFeatureIntent`, `MacValidateSpecsIntent`, `MacAcceptReviewIntent`) | `✗ intent de pilotage absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
+| App Shortcut de pilotage absente | `✗ App Shortcut de l'intent de pilotage <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est la première phrase de l'intent, citée au point 7 |
 
 Le premier assemblage après l'ajout du drapeau recompile tout `.build-run` et
 `.build-app` (mesuré : environ 45 s pour `swift build -c release`, 3 min 30 pour la
@@ -2895,7 +2906,10 @@ ses listes écrites à la main.
 - `perform()` appelle `applyVoicePolicy(target:send:)` avec la cible nommée (le slug
   de la feature, le nom de la pipeline) et la closure qui émet le geste par les
   modèles existants ; la porte demande la confirmation à Siri
-  (« Arrêter la feature login-oauth ? ») et n'appelle `send` qu'après un oui ;
+  (« Arrêter la feature login-oauth ? ») et n'appelle `send` qu'après un oui. Les
+  intents de pilotage (iPhone et Mac) ne l'appellent pas : ils vérifient
+  `VoiceGesturePolicy.admits(Self.authenticationPolicy, for: [Self.voiceGesture], on: .current)`
+  puis confient le geste à `VoicePilot`, qui passe lui-même la porte ;
 - il traduit l'issue : `.sent` → son propre dialogue de succès ; `.cancelled(let d)` et
   `.misconfigured(let d)` → `.result(dialog: IntentDialog(LocalizedStringResource(stringLiteral: d)))`.
   Un refus, une absence de réponse ou une cible vide n'émettent rien ; une erreur de
@@ -2952,6 +2966,22 @@ les 3 plus récentes, puis « et N autres ». `VoiceIssue.phrase` dit l'issue d'
 succès qui nomme le geste et sa cible, annulation, refus du Mac, cause de connexion.
 Toutes leurs phrases vivent dans `VoiceSpeechText`. Preuves :
 `Tests/OMPConsoleTests/VoiceSpeechTests.swift` et `test/console/noyau-vocal-partage.test.ts`.
+
+Pilotage des pipelines : `Sources/ConsoleCore/Voice/VoicePilot.swift` est le moteur
+commun à l'iPhone et au Mac des gestes vocaux sur une feature existante
+(`VoicePilotGesture` : reprendre, arrêter, valider les specs, accepter la revue) et
+du lancement dicté, sur un canal (`VoicePilotChannel` : ardoise, dépôts lançables,
+UNE livraison `VoicePilotDelivery`, issue d'un échec) et un adaptateur de dialogue
+(`VoiceConversation`). `VoicePilot.eligible(_:in:)` ne garde que les cartes dont la
+fenêtre offre le geste, par les seuls prédicats de `KanbanActionPresentation`
+(`resumable` ou `relaunchable`, zone `.stopLot`, jalon `.specs` ou `.review`) ;
+`VoicePilot.run` y désigne la feature par `VoiceFeatureSearch.find(_:among:)`, puis
+passe la porte `VoiceGesturePolicy.apply` (confirmation `stopConfirmation` pour
+l'arrêt) ; `VoicePilot.launch` choisit le dépôt, fait dicter le titre puis le
+besoin et confirme par `VoiceGestureText.launchConfirmation`. Coques :
+`IOSSiriPilotChannel` (*Siri : piloter les pipelines*) et `MacPilotChannel`
+(*Piloter les pipelines à la voix*). Preuves :
+`Tests/OMPConsoleTests/VoicePilotTests.swift`.
 
 ## Vocabulaire et typographie
 
@@ -4891,7 +4921,7 @@ intents du Mac n'émettent que les cinq gestes de réponse
 conduite, dialogue de la session hébergée, escalade d'audit) : les jalons specs et
 revue d'une carte et la carte en pause à reprendre sont comptés, lus, puis « à
 traiter dans l'app ». Valider, accepter, reprendre, arrêter ou lancer à la voix ne
-font pas partie de ces intents.
+font pas partie de ces intents : voir *Piloter les pipelines à la voix* ci-dessous.
 
 Le Mac déclare aussi `MacSessionPromptIntent` (« Dis à OMP Console »,
 `Sources/OMPConsole/Intents/SessionPromptIntent.swift`), qui envoie un message
@@ -4940,6 +4970,78 @@ réglé en français) :
    choix.
 6. Dicter une des options. Attendu : Siri dit l'issue, la carte quitte « Question
    en vol » et le run reprend avec la réponse dictée.
+
+Résultat consigné par l'utilisateur.
+
+#### Piloter les pipelines à la voix
+
+Feature `siri-mac-pilotage-pipelines`. La coque déclare cinq App Intents de
+commande dans `Sources/OMPConsole/Intents/PilotVoiceIntents.swift`. Leurs
+conversations sont celles de l'iPhone : `VoicePilot.run` et `VoicePilot.launch` de
+ConsoleCore, décrites dans *Siri : piloter les pipelines* (désignation parmi les
+seules features éligibles, choix du dépôt, titre et besoin dictés, confirmation
+selon `VoiceGesturePolicy`, phrases de `VoiceSpeechText` et `VoiceGestureText`).
+La coque ne fournit que le canal `MacPilotChannel` et les tours de parole de Siri
+(`MacSiriDictation`, partagé avec les intents des attentes) : chaque livraison
+passe par la MÊME méthode typée de `RemoteActions` que la route HTTP et le bouton
+de la fenêtre — même commande, même entrée de journal (« Activité récente »).
+Phrases Siri (tuiles de Raccourcis entre parenthèses) :
+
+| Intent | Phrases | Confirmation (`VoiceGesturePolicy`, Mac) |
+|---|---|---|
+| `MacLaunchPipelineIntent` (*Lancer une pipeline*, `play.fill`) | « Lancer une pipeline dans OMP Console », « Lance une pipeline dans OMP Console », « Nouvelle feature dans OMP Console » | oui, Mac déverrouillé : « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› » |
+| `MacResumeFeatureIntent` (*Reprendre*, `arrow.clockwise`) | « Reprendre une pipeline dans OMP Console », « Reprends une pipeline dans OMP Console » | aucune |
+| `MacStopFeatureIntent` (*Arrêter*, `stop.fill`) | « Arrêter une pipeline dans OMP Console », « Arrête une pipeline dans OMP Console » | oui, Mac déverrouillé : « Arrêter les pipelines de ‹dépôt› ? (feature ‹titre›) » |
+| `MacValidateSpecsIntent` (*Valider les specs*, `checkmark.seal`) | « Valider les specs dans OMP Console », « Valide les specs dans OMP Console » | oui, Mac déverrouillé : « Valider les specs de la feature ‹titre› ? » |
+| `MacAcceptReviewIntent` (*Accepter la revue*, `checkmark.circle`) | « Accepter la revue dans OMP Console », « Accepte la revue dans OMP Console » | oui, Mac déverrouillé : « Accepter la revue de la feature ‹titre› ? » |
+
+Ce qui est propre au Mac :
+
+- **Dépôts** : ceux de la feuille « Nouvelle feature » (ardoise et projet choisi
+  de l'app), sauf les dossiers qui ne sont pas des racines git
+  (`MacVoiceContext.launchRepos`).
+- **Reprendre** relance une carte relançable, sinon reprend une carte en pause,
+  exactement comme le bouton « Reprendre ».
+- **Arrêter** a l'effet du bouton « Arrêter » de la carte : la commande `stop`
+  vise le DÉPÔT de la feature, donc toutes ses pipelines en vol. Il n'existe pas
+  d'arrêt par feature.
+- Le succès d'une commande (lancer, arrêter, valider, accepter) n'est annoncé
+  qu'APRÈS l'accusé du service (`RemoteActions.settlement(of:)`) ; un refus du
+  service ou un POST en échec est énoncé avec son motif (« Le Mac a refusé la
+  demande : … »). Les routes HTTP, elles, répondent toujours 202 sans attendre
+  l'accusé.
+
+Les intents tournent en arrière-plan (`supportedModes = .background`), comme ceux
+des attentes, avec la même attente bornée de l'ardoise (au-delà, « OMP Console
+n’a pas pu lire l’état du Mac à temps, … »). Chaque `authenticationPolicy` est un
+littéral, confronté à la table par `VoiceGesturePolicy.admits` dans `perform()`
+(`MacSiriPilot`) et par `siri-mac-pilotage-pipelines/AC-13`. Les métadonnées sont
+contrôlées dans le bundle par `scripts/swift-app.sh` (*Assembler le bundle
+`.app`*, ligne `✓ intents de pilotage embarqués`). Preuves :
+`Tests/OMPConsoleTests/MacPilotIntentTests.swift` (`siri-mac-pilotage-pipelines/AC-1`
+à `AC-13`, sur une pile `RemoteStack` réelle et une pile jumelle pour la parité),
+`VoicePilotTests.swift` (moteur commun) et `test/outillage/check.test.ts`
+(`siri-mac-pilotage-pipelines/AC-14`).
+
+#### Recette du pilotage à la voix
+
+`siri-mac-pilotage-pipelines/AC-15`, conduite par l'utilisateur sur le Mac réel,
+Siri réglé en français, AVANT la fusion ; le résultat est noté dans le corps de PR.
+Préparation : `bash scripts/swift-app.sh`, ouvrir une fois
+`omp-console/build/OMP Console.app`, choisir au moins deux dépôts dans la feuille
+« Nouvelle feature ». Jouer toute la recette une première fois fenêtre fermée
+(⌘W), puis une seconde fois app en arrière-plan (une autre app au premier plan).
+Après chaque geste, la fenêtre montre l'effet sans être passée au premier plan.
+
+| # | État de départ | Phrase dite | Réponse attendue de Siri | Effet dans la fenêtre |
+|---|---|---|---|---|
+| 1 | deux dépôts connus | « Lancer une pipeline dans OMP Console » ; choisir un dépôt, dicter un titre puis un besoin, confirmer | « Sur quel dépôt ? … », « Quel titre pour la feature ? », « Quel est le besoin ? », « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› », puis « La pipeline ‹titre› est lancée. » | nouvelle carte du dépôt sur l'ardoise ; entrée « lancement · ‹titre› » dans « Activité récente » |
+| 2 | une carte en pause, que la fenêtre propose de « Reprendre » | « Reprendre une pipeline dans OMP Console » ; dire son titre | « Quelle feature reprendre ? … », aucune confirmation, puis « La pipeline ‹titre› est reprise. » | la carte quitte la colonne de la pause ; entrée « reprise · ‹slug› » |
+| 3 | une carte qui propose « Arrêter » | « Arrêter une pipeline dans OMP Console » ; dire son titre ; REFUSER | « Arrêter les pipelines de ‹dépôt› ? (feature ‹titre›) », puis « Annulé, rien n’a été fait. » | rien ne change ; aucune entrée nouvelle |
+| 4 | la même carte | même phrase ; dire son titre ; confirmer | « Les pipelines de ‹dépôt› sont arrêtées. » | les pipelines en vol du dépôt s'arrêtent ; entrée « arrêt · ‹dépôt› » |
+| 5 | une carte au jalon specs | « Valider les specs dans OMP Console » ; dire son titre ; confirmer | « Valider les specs de la feature ‹titre› ? », puis « Les specs de la feature ‹titre› sont validées. » | la carte quitte le jalon specs ; entrée « validation des spécifications · ‹slug› » |
+| 6 | une carte au jalon revue | « Accepter la revue dans OMP Console » ; dire son titre ; confirmer | « Accepter la revue de la feature ‹titre› ? », puis « La revue de la feature ‹titre› est acceptée. » | la carte quitte le jalon revue ; entrée « acceptation de la revue · ‹slug› » |
+| 7 | deux cartes reprenables au titre voisin (« audit UI », « audit UI redesign ») | « Reprendre une pipeline dans OMP Console » ; dire « audit UI » ; puis « audit UI redesign » | « Plusieurs features correspondent : audit UI et audit UI redesign. Laquelle ? », puis « La pipeline audit UI redesign est reprise. » | seule « audit UI redesign » repart |
 
 Résultat consigné par l'utilisateur.
 

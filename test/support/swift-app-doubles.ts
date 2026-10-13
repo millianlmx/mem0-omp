@@ -29,13 +29,14 @@ export const CONST_VALUES_REL =
 export const SWIFT_CONST_VALUES_SNIPPET = `case " $* " in *" --build-system swiftbuild "*" -emit-const-values "*) mkdir -p "$(dirname "$scratch/${CONST_VALUES_REL}")" && printf '[]' > "$scratch/${CONST_VALUES_REL}" ;; esac`;
 
 /**
- * Le `extract.actionsdata` de l'état livré : l'intent sonde et ses voisins
- * vocaux (features siri-mac-questions-en-attente, S-7, et siri-dictee-session-omp,
- * S-6), chacun avec son App Shortcut et les phrases que le contrôle
- * post-assemblage cherche.
+ * Le `extract.actionsdata` de l'état livré : l'intent sonde, ses voisins vocaux
+ * (features siri-mac-questions-en-attente, S-7, et siri-dictee-session-omp, S-6)
+ * et les cinq intents de pilotage (feature siri-mac-pilotage-pipelines, S-8),
+ * chacun avec son App Shortcut et les phrases que le contrôle post-assemblage
+ * cherche.
  */
 export const SONDE_ACTIONSDATA =
-  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacSessionPromptIntent":{"identifier":"MacSessionPromptIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]},{"actionIdentifier":"MacSessionPromptIntent","phraseTemplates":[{"key":"Dis à ${applicationName}"},{"key":"Envoyer un message à ${applicationName}"},{"key":"Écrire à ${applicationName}"}]}]}';
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacSessionPromptIntent":{"identifier":"MacSessionPromptIntent"},"MacLaunchPipelineIntent":{"identifier":"MacLaunchPipelineIntent"},"MacResumeFeatureIntent":{"identifier":"MacResumeFeatureIntent"},"MacStopFeatureIntent":{"identifier":"MacStopFeatureIntent"},"MacValidateSpecsIntent":{"identifier":"MacValidateSpecsIntent"},"MacAcceptReviewIntent":{"identifier":"MacAcceptReviewIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]},{"actionIdentifier":"MacSessionPromptIntent","phraseTemplates":[{"key":"Dis à ${applicationName}"},{"key":"Envoyer un message à ${applicationName}"},{"key":"Écrire à ${applicationName}"}]},{"actionIdentifier":"MacLaunchPipelineIntent","phraseTemplates":[{"key":"Lancer une pipeline dans ${applicationName}"}]},{"actionIdentifier":"MacResumeFeatureIntent","phraseTemplates":[{"key":"Reprendre une pipeline dans ${applicationName}"}]},{"actionIdentifier":"MacStopFeatureIntent","phraseTemplates":[{"key":"Arrêter une pipeline dans ${applicationName}"}]},{"actionIdentifier":"MacValidateSpecsIntent","phraseTemplates":[{"key":"Valider les specs dans ${applicationName}"}]},{"actionIdentifier":"MacAcceptReviewIntent","phraseTemplates":[{"key":"Accepter la revue dans ${applicationName}"}]}]}';
 
 const VERSION_JSON = '{"toolsVersion":"27A266a","version":"3.0"}';
 const SANS_SONDE = '{"actions":{},"autoShortcuts":[]}';
@@ -52,6 +53,13 @@ const SANS_DICTEE =
 /** La sonde complète, mais l'App Shortcut de `MacSessionPromptIntent` sans la phrase « Écrire à ${applicationName} ». */
 const SANS_PHRASE_DICTEE =
   '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacSessionPromptIntent":{"identifier":"MacSessionPromptIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]},{"actionIdentifier":"MacSessionPromptIntent","phraseTemplates":[{"key":"Dis à ${applicationName}"},{"key":"Envoyer un message à ${applicationName}"}]}]}';
+
+/** La sonde et les intents vocaux avec leurs App Shortcuts, sans aucun intent de pilotage. */
+const SANS_PILOTAGE =
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacSessionPromptIntent":{"identifier":"MacSessionPromptIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]},{"actionIdentifier":"MacSessionPromptIntent","phraseTemplates":[{"key":"Dis à ${applicationName}"},{"key":"Envoyer un message à ${applicationName}"},{"key":"Écrire à ${applicationName}"}]}]}';
+/** Tous les intents déclarés, mais sans les App Shortcuts des intents de pilotage. */
+const SANS_PHRASE_PILOTAGE =
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacSessionPromptIntent":{"identifier":"MacSessionPromptIntent"},"MacLaunchPipelineIntent":{"identifier":"MacLaunchPipelineIntent"},"MacResumeFeatureIntent":{"identifier":"MacResumeFeatureIntent"},"MacStopFeatureIntent":{"identifier":"MacStopFeatureIntent"},"MacValidateSpecsIntent":{"identifier":"MacValidateSpecsIntent"},"MacAcceptReviewIntent":{"identifier":"MacAcceptReviewIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]},{"actionIdentifier":"MacSessionPromptIntent","phraseTemplates":[{"key":"Dis à ${applicationName}"},{"key":"Envoyer un message à ${applicationName}"},{"key":"Écrire à ${applicationName}"}]}]}';
 
 function writeDouble(bin: string, name: string, body: string): void {
   const file = path.join(bin, name);
@@ -77,6 +85,9 @@ function writeDouble(bin: string, name: string, body: string): void {
  *   `sans-dictee` → la sonde complète sans `MacSessionPromptIntent` ni son App
  *   Shortcut ; `sans-phrase-dictee` → son App Shortcut sans la phrase « Écrire à
  *   ${applicationName} » ;
+ *   `sans-pilotage` → la sonde et les intents vocaux, sans aucun intent de
+ *   pilotage ; `sans-phrase-pilotage` → tous les intents, sans les App
+ *   Shortcuts de pilotage ;
  *   `absent` → rien d'écrit, code 0 ; `echec` → erreur de phrase, code 255.
  */
 export function writeXcodeDoubles(bin: string): void {
@@ -150,6 +161,8 @@ case "\${FAUX_APPINTENTS:-}" in
   # La sonde complète sans l'intent de dictée, puis sans sa phrase « Écrire à ».
   sans-dictee) ecrire '${SANS_DICTEE}' ;;
   sans-phrase-dictee) ecrire '${SANS_PHRASE_DICTEE}' ;;
+  sans-pilotage) ecrire '${SANS_PILOTAGE}' ;;
+  sans-phrase-pilotage) ecrire '${SANS_PHRASE_PILOTAGE}' ;;
   absent) ;;
   echec)
     printf "%s: error: Every App Shortcut utterance should contain '%s'\\n" "Sources/OMPConsole/Intents/OpenConsoleIntent.swift:20" '\${applicationName}' >&2

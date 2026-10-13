@@ -38,14 +38,12 @@ struct MacPendingIntent: AppIntent {
     }
 }
 
-extension MacPendingIntent: VoiceConversation {
-    func ask(_ dialog: String) async throws -> String {
-        try await $answer.requestValue(IntentDialog(stringLiteral: dialog))
-    }
-
-    func confirm(_ dialog: String) async throws {
-        try await requestConfirmation(actionName: .continue, dialog: IntentDialog(stringLiteral: dialog))
-    }
+// Conformité déclarée en extension : `MacSiriDictation` raffine `VoiceConversation`,
+// isolé `@MainActor` ; déclarée sur le type, elle isolerait tout l'intent sur
+// l'acteur principal, et ses App Shortcuts (non isolés) ne pourraient plus le
+// construire.
+extension MacPendingIntent: MacSiriDictation {
+    var answerParameter: IntentParameter<String?> { $answer }
 }
 
 /// « Réponds » : la même conversation, sans l'annonce du nombre.
@@ -70,11 +68,25 @@ struct MacAnswerIntent: AppIntent {
     }
 }
 
-extension MacAnswerIntent: VoiceConversation {
+extension MacAnswerIntent: MacSiriDictation {
+    var answerParameter: IntentParameter<String?> { $answer }
+}
+
+/// Les tours de parole d'une conversation Siri sur le Mac : une dictée par
+/// `requestValue` sur le paramètre de réponse, un oui/non par
+/// `requestConfirmation` (qui lève sur « non »). Commun aux intents des attentes
+/// et du pilotage.
+protocol MacSiriDictation: AppIntent, VoiceConversation {
+    var answerParameter: IntentParameter<String?> { get }
+}
+
+extension MacSiriDictation {
+    @MainActor
     func ask(_ dialog: String) async throws -> String {
-        try await $answer.requestValue(IntentDialog(stringLiteral: dialog))
+        try await answerParameter.requestValue(IntentDialog(stringLiteral: dialog))
     }
 
+    @MainActor
     func confirm(_ dialog: String) async throws {
         try await requestConfirmation(actionName: .continue, dialog: IntentDialog(stringLiteral: dialog))
     }
@@ -166,7 +178,7 @@ struct MacPendingChannel: VoicePendingChannel {
 }
 
 /// La traduction d'un refus de geste du Mac en issue énoncée par Siri, UNE pour
-/// tous les intents du Mac (canal des attentes, dictée vers la session).
+/// tous les intents du Mac (canal des attentes, dictée vers la session, pilotage).
 enum MacVoiceRefusal {
     /// `nil` quand la question ou le dialogue visé a changé (ou n'est plus là),
     /// sinon le motif EXACT de la route HTTP du même geste.
@@ -175,7 +187,15 @@ enum MacVoiceRefusal {
         case .staleQuestion, .noQuestionInFlight, .notAwaitingReply, .noPendingDialog, .staleDialog:
             return nil
         default:
-            return .macRefused(motive: refusal.apiError.message ?? "")
+            return issue(of: refusal)
         }
+    }
+
+    /// L'issue de tout échec d'un intent du Mac : l'état non lu à temps, le motif
+    /// EXACT de la route HTTP d'un geste refusé, sinon un refus sans motif.
+    static func issue(of error: Error) -> VoiceIssue {
+        if error is MacStateUnreadable { return .stateUnreadable }
+        guard let refusal = error as? GestureRefusal else { return .macRefused(motive: "") }
+        return .macRefused(motive: refusal.apiError.message ?? "")
     }
 }

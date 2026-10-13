@@ -146,7 +146,9 @@ struct OMPConsoleApp: App {
             project: project,
             session: session,
             remoteActions: remote.remoteActions,
-            startModels: { kanban.start() }
+            startModels: { kanban.start() },
+            // Le projet choisi de l'app, résolu comme la feuille « Nouvelle feature ».
+            projectRoot: { ProjectRoot.resolve(defaults: .standard, fileManager: .default)?.path }
         ), in: .shared)
         // L'annonce Bonjour ne survit pas au process (S-14) : l'accroche de
         // terminaison est posée dès la construction, comme celles des autres

@@ -22,10 +22,11 @@ struct OpenConsoleIntent: AppIntent {
 }
 
 /// Les App Shortcuts de la coque : l'intent sonde, les deux intents vocaux des
-/// demandes en attente (siri-mac-questions-en-attente, S-6), puis la dictée vers
-/// la session OMP (siri-dictee-session-omp, S-4). Toute phrase doit
-/// contenir `\(.applicationName)` : sans lui, le processeur de métadonnées sort en
-/// erreur.
+/// demandes en attente (siri-mac-questions-en-attente, S-6), la dictée vers la
+/// session OMP (siri-dictee-session-omp, S-4), puis les cinq intents de pilotage
+/// des pipelines (siri-mac-pilotage-pipelines, S-8), soit 9 App Shortcuts sur les
+/// 10 qu'admet une app. Toute phrase doit contenir `\(.applicationName)` : sans
+/// lui, le processeur de métadonnées sort en erreur.
 struct ConsoleShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -64,6 +65,52 @@ struct ConsoleShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Écrire à la session OMP",
             systemImageName: "text.bubble"
+        )
+        AppShortcut(
+            intent: MacLaunchPipelineIntent(),
+            phrases: [
+                "Lancer une pipeline dans \(.applicationName)",
+                "Lance une pipeline dans \(.applicationName)",
+                "Nouvelle feature dans \(.applicationName)",
+            ],
+            shortTitle: "Lancer une pipeline",
+            systemImageName: "play.fill"
+        )
+        AppShortcut(
+            intent: MacResumeFeatureIntent(),
+            phrases: [
+                "Reprendre une pipeline dans \(.applicationName)",
+                "Reprends une pipeline dans \(.applicationName)",
+            ],
+            shortTitle: "Reprendre",
+            systemImageName: "arrow.clockwise"
+        )
+        AppShortcut(
+            intent: MacStopFeatureIntent(),
+            phrases: [
+                "Arrêter une pipeline dans \(.applicationName)",
+                "Arrête une pipeline dans \(.applicationName)",
+            ],
+            shortTitle: "Arrêter",
+            systemImageName: "stop.fill"
+        )
+        AppShortcut(
+            intent: MacValidateSpecsIntent(),
+            phrases: [
+                "Valider les specs dans \(.applicationName)",
+                "Valide les specs dans \(.applicationName)",
+            ],
+            shortTitle: "Valider les specs",
+            systemImageName: "checkmark.seal"
+        )
+        AppShortcut(
+            intent: MacAcceptReviewIntent(),
+            phrases: [
+                "Accepter la revue dans \(.applicationName)",
+                "Accepte la revue dans \(.applicationName)",
+            ],
+            shortTitle: "Accepter la revue",
+            systemImageName: "checkmark.circle"
         )
     }
 }

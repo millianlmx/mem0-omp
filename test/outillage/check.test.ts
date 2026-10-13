@@ -893,3 +893,53 @@ test("siri-dictee-session-omp/AC-12 : l'App Shortcut de MacSessionPromptIntent p
   assert.ok(!fs.existsSync(bundle), `un bundle a survécu à l'échec : ${bundle}`);
   assert.deepEqual(signaturesDuBundle(echec.lignes, bundle), [], "le bundle a été signé malgré l'échec");
 });
+
+const PILOT_OK =
+  "  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)";
+
+test("siri-mac-pilotage-pipelines/AC-14 : le bundle livré déclare les cinq intents de pilotage avec une phrase française en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
+  const { bundle, lancer, planterAncienBundle } = montageAppIntents();
+
+  for (const args of [[], ["--no-tests"]]) {
+    const voie = args.length === 0 ? "complet" : "--no-tests";
+    const r = lancer(args);
+    assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
+    assert.ok(r.sortie.includes(PILOT_OK), `[${voie}] ligne ✓ des intents de pilotage absente\n${r.sortie}`);
+    const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
+    for (const marqueur of [
+      '"identifier":"MacLaunchPipelineIntent"',
+      '"identifier":"MacResumeFeatureIntent"',
+      '"identifier":"MacStopFeatureIntent"',
+      '"identifier":"MacValidateSpecsIntent"',
+      '"identifier":"MacAcceptReviewIntent"',
+      '"key":"Lancer une pipeline dans ${applicationName}"',
+      '"key":"Reprendre une pipeline dans ${applicationName}"',
+      '"key":"Arrêter une pipeline dans ${applicationName}"',
+      '"key":"Valider les specs dans ${applicationName}"',
+      '"key":"Accepter la revue dans ${applicationName}"',
+    ]) {
+      assert.ok(actions.includes(marqueur), `[${voie}] ${marqueur} absent du bundle : ${actions}`);
+    }
+  }
+
+  const scenarios: { mode: string; attendu: string }[] = [
+    {
+      mode: "sans-pilotage",
+      attendu: "✗ intent de pilotage absent de Metadata.appintents : MacLaunchPipelineIntent introuvable dans extract.actionsdata",
+    },
+    {
+      mode: "sans-phrase-pilotage",
+      attendu:
+        "✗ App Shortcut de l'intent de pilotage MacLaunchPipelineIntent absent de Metadata.appintents : phrase « Lancer une pipeline dans ${applicationName} » introuvable dans extract.actionsdata",
+    },
+  ];
+  for (const { mode, attendu } of scenarios) {
+    planterAncienBundle();
+    const r = lancer([], { FAUX_APPINTENTS: mode });
+    assert.equal(r.status, 1, `[${mode}] ${r.sortie}`);
+    assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
+    assert.ok(!r.sortie.includes(PILOT_OK), `[${mode}] ✓ des intents de pilotage affiché malgré l'échec\n${r.sortie}`);
+    assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
+    assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
+  }
+});
