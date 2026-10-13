@@ -107,7 +107,7 @@ func fullyPopulatedSnapshotRoundTripsThroughJSON() throws {
 
     // Les noms de champs du dépôt, store par store : l'encodage ne les renomme pas.
     let object = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-    #expect(Set(object.keys) == ["root", "running", "history", "lots", "projects", "inbox", "audit"])
+    #expect(Set(object.keys) == ["root", "running", "history", "lots", "projects", "inbox", "audit", "audits"])
     let envelopes: [String: Set<String>] = [
         "running": ["availability", "entries", "discardedEntries"],
         "history": ["availability", "entries", "discardedEntries"],
@@ -115,6 +115,7 @@ func fullyPopulatedSnapshotRoundTripsThroughJSON() throws {
         "projects": ["availability", "projects", "discardedEntries"],
         "inbox": ["availability", "boxes", "discardedEntries"],
         "audit": ["availability", "relays", "discardedEntries"],
+        "audits": ["availability", "records", "decisions", "discardedEntries"],
     ]
     for (store, keys) in envelopes {
         let envelope = try #require(object[store] as? [String: Any], "l'enveloppe \(store) doit être un objet")

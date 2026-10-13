@@ -102,9 +102,13 @@ function rubricBody(text: string, name: string): string | null {
 }
 
 
-/** La première rubrique absente d'un brief, `null` s'il est complet (S-6 « brief incomplet »). */
-export function briefRubricsMissing(text: string): string | null {
-  for (const name of BRIEF_SECTIONS) {
+/**
+ * La première rubrique absente d'un brief, `null` s'il est complet (S-6 « brief
+ * incomplet »). `sections` : les rubriques exigées (celles d'un brief d'audit de
+ * l'app ajoutent « Orientation » et « Constats »).
+ */
+export function briefRubricsMissing(text: string, sections: readonly string[] = BRIEF_SECTIONS): string | null {
+  for (const name of sections) {
     if (rubricBody(text, name) === null) return name;
   }
   return null;

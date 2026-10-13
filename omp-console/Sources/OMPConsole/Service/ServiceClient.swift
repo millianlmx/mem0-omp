@@ -201,6 +201,46 @@ struct ServiceClient: Sendable {
         _ = try await request("DELETE", path: ["projects", repo, "conduite"])
     }
 
+    // MARK: - Audits (audit-panel-in-omp-console S-1 … S-4)
+
+    /// `POST /v1/audits` : le dépôt voyage dans le CORPS, jamais dans le chemin.
+    func startAudit(repoRoot: String, orientation: String) async throws -> ServiceAuditStarted {
+        let json = try await request("POST", path: ["audits"], body: ["repo": repoRoot, "orientation": orientation])
+        guard let started = ServiceAuditStarted.decode(json) else {
+            throw ServiceClientError.malformed(reason: "audit illisible")
+        }
+        return started
+    }
+
+    /// `POST /v1/audits/{id}/launch` : les slugs cochés et le brief validé, tel
+    /// quel. Rend l'issue de chaque proposition, dans l'ordre de lancement.
+    func launchAudit(id: String, selected: [String], brief: String) async throws -> [AuditLaunchOutcome] {
+        let json = try await request("POST", path: ["audits", id, "launch"], body: ["selected": selected, "brief": brief])
+        guard let list = json.objectValue?["launches"]?.arrayValue else {
+            throw ServiceClientError.malformed(reason: "lancement illisible")
+        }
+        let launches = list.compactMap(AuditLaunchOutcome.init(json:))
+        guard launches.count == list.count else {
+            throw ServiceClientError.malformed(reason: "lancement illisible")
+        }
+        return launches
+    }
+
+    /// `POST /v1/audits/{id}/escalations` : la réponse à une question escaladée,
+    /// ou la décision d'un jalon. Un 409 dit « déjà répondue ou périmée ».
+    func answerAuditEscalation(id: String, body: ServiceAuditAnswer) async throws {
+        _ = try await request("POST", path: ["audits", id, "escalations"], body: body.body)
+    }
+
+    /// `DELETE /v1/audits/{id}` : annule les pipelines non livrées de l'audit.
+    func stopAudit(id: String) async throws -> ServiceAuditStopOutcome {
+        let json = try await request("DELETE", path: ["audits", id])
+        guard let outcome = ServiceAuditStopOutcome.decode(json) else {
+            throw ServiceClientError.malformed(reason: "arrêt illisible")
+        }
+        return outcome
+    }
+
     /// Le flux SSE des trames d'une session (S-6).
     func eventsRequest(id: String) -> URLRequest {
         var request = makeRequest("GET", path: ["sessions", id, "events"])

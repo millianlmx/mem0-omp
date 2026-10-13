@@ -1,16 +1,24 @@
-// Le flux GLOBAL du magasin (S-9) : l'agrégat des six stores, poussé à ses abonnés
-// quand il change. Aucune veille supplémentaire — les six sources de `StoreWatcher`
-// sont les seules, et `commands/` n'est pas veillé (hors périmètre).
+// Le flux GLOBAL du magasin (S-9) : l'agrégat des stores, poussé à ses abonnés
+// quand il change. Aucune veille supplémentaire — les huit sources de
+// `StoreWatcher` sont les seules, et `commands/` n'est pas veillé (hors périmètre).
 
 import ConsoleCore
 import Foundation
 
-/// L'agrégat des six veilles. Le premier élément d'un abonnement est l'instantané
+/// L'agrégat des veilles. Le premier élément d'un abonnement est l'instantané
 /// courant ; ensuite un élément par changement de l'agrégat (le même, jamais un
-/// septième descripteur de veille).
+/// descripteur de veille de plus).
+///
+/// L'enveloppe des audits (`audits`, audit-panel-in-omp-console S-5) est RELUE
+/// sur un événement de `audits/`, de `journal/` OU de `lots/` : l'ajout d'une
+/// ligne à un `.jsonl` existant ne réveille pas la veille de son répertoire,
+/// mais toute décision de l'arbitre est suivie d'une écriture du lot
+/// (`clearArbitration`). Ces relectures passent par UNE file série : la dernière
+/// appliquée est toujours la plus récente, jamais une lecture plus ancienne
+/// arrivée en retard d'une autre veille.
 ///
 /// `@unchecked Sendable` : `aggregate` et `subscribers` sont protégés par `lock`,
-/// les six veilles portent leur propre file.
+/// les veilles portent leur propre file, et l'enveloppe des audits sa file série.
 final class StoreHub: @unchecked Sendable {
     private let lock = NSLock()
     /// La racine lue et l'horloge des lectures : conservées pour pouvoir recalculer
@@ -24,6 +32,9 @@ final class StoreHub: @unchecked Sendable {
     private let projects: StoreWatcher<ProjectEnvelope>
     private let inbox: StoreWatcher<InboxEnvelope>
     private let audit: StoreWatcher<AuditEnvelope>
+    private let audits: StoreWatcher<AuditsEnvelope>
+    private let journal: StoreWatcher<AuditsEnvelope>
+    private let auditsQueue = DispatchQueue(label: "omp.console.store.audits-envelope")
     private var aggregate: StoreSnapshot
     private var subscribers: [UUID: AsyncStream<StoreSnapshot>.Continuation] = [:]
     private var tasks: [Task<Void, Never>] = []
@@ -53,13 +64,23 @@ final class StoreHub: @unchecked Sendable {
         let audit = StoreHub.watcher(.audit, stateDir: stateDir, nowMs: nowMs) { reader in
             reader.readAudit()
         }
+        // Les deux veilles de l'enveloppe des audits lisent la MÊME enveloppe : c'est
+        // sa comparaison qui décide qu'un audit réécrit au même nom a changé.
+        let audits = StoreHub.watcher(.audits, stateDir: stateDir, nowMs: nowMs) { reader in
+            reader.readAudits()
+        }
+        let journal = StoreHub.watcher(.journal, stateDir: stateDir, nowMs: nowMs) { reader in
+            reader.readAudits()
+        }
         self.running = running
         self.history = history
         self.lots = lots
         self.projects = projects
         self.inbox = inbox
         self.audit = audit
-        // Amorçage depuis les six veilles (chacune a déjà fait « armer puis lire »),
+        self.audits = audits
+        self.journal = journal
+        // Amorçage depuis les veilles (chacune a déjà fait « armer puis lire »),
         // puis abonnement : chaque flux pousse son instantané courant à
         // l'abonnement, donc aucun changement survenu entre les deux n'est perdu.
         self.aggregate = StoreSnapshot(
@@ -69,7 +90,8 @@ final class StoreHub: @unchecked Sendable {
             lots: lots.current(),
             projects: projects.current(),
             inbox: inbox.current(),
-            audit: audit.current()
+            audit: audit.current(),
+            audits: audits.current()
         )
         start()
     }
@@ -115,7 +137,7 @@ final class StoreHub: @unchecked Sendable {
         return stream
     }
 
-    /// Désarme les six veilles, annule les abonnements internes et termine les flux.
+    /// Désarme les veilles, annule les abonnements internes et termine les flux.
     func stop() {
         lock.lock()
         if stopped {
@@ -135,6 +157,8 @@ final class StoreHub: @unchecked Sendable {
         projects.stop()
         inbox.stop()
         audit.stop()
+        audits.stop()
+        journal.stop()
         for continuation in continuations { continuation.finish() }
     }
 
@@ -142,7 +166,7 @@ final class StoreHub: @unchecked Sendable {
         stop()
     }
 
-    /// Les six abonnements internes qui tiennent l'agrégat à jour. Chacun est une
+    /// Les abonnements internes qui tiennent l'agrégat à jour. Chacun est une
     /// `Task` de longue durée sur le flux d'un store (doc §5 : un consommateur
     /// unique et durable, jamais une suite d'appels à échéance sur le même flux).
     private func start() {
@@ -156,6 +180,8 @@ final class StoreHub: @unchecked Sendable {
         let projects = self.projects
         let inbox = self.inbox
         let audit = self.audit
+        let audits = self.audits
+        let journal = self.journal
         let jobs: [Task<Void, Never>] = [
             Task { [weak self] in
                 for await value in running.snapshots() { self?.apply { $0.running = value } }
@@ -164,7 +190,10 @@ final class StoreHub: @unchecked Sendable {
                 for await value in history.snapshots() { self?.apply { $0.history = value } }
             },
             Task { [weak self] in
-                for await value in lots.snapshots() { self?.apply { $0.lots = value } }
+                for await value in lots.snapshots() {
+                    self?.apply { $0.lots = value }
+                    self?.refreshAudits()
+                }
             },
             Task { [weak self] in
                 for await value in projects.snapshots() { self?.apply { $0.projects = value } }
@@ -175,10 +204,26 @@ final class StoreHub: @unchecked Sendable {
             Task { [weak self] in
                 for await value in audit.snapshots() { self?.apply { $0.audit = value } }
             },
+            Task { [weak self] in
+                for await _ in audits.snapshots() { self?.refreshAudits() }
+            },
+            Task { [weak self] in
+                for await _ in journal.snapshots() { self?.refreshAudits() }
+            },
         ]
         lock.lock()
         tasks = jobs
         lock.unlock()
+    }
+
+    /// Relit l'enveloppe des audits sur la file série et l'applique : deux
+    /// relectures demandées l'une après l'autre s'appliquent dans cet ordre.
+    private func refreshAudits() {
+        let reader = StoreReader(stateDir: stateDir, clock: StoreClock(nowMs: nowMs))
+        auditsQueue.async { [weak self] in
+            let envelope = reader.readAudits()
+            self?.apply { $0.audits = envelope }
+        }
     }
 
     /// Applique un store de l'agrégat et n'émet que si l'agrégat ENTIER a changé.

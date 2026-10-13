@@ -47,6 +47,7 @@ final class RemoteServiceModel: ObservableObject {
         actions: ActionsModel,
         session: SessionConsoleModel,
         project: ProjectConsoleModel,
+        audit: AuditConsoleModel,
         components: @escaping @MainActor () -> RemoteComponentsPayload = {
             RemoteComponentsPayload(ompInstalled: false, ompPath: nil, setupBanner: nil)
         },
@@ -98,6 +99,7 @@ final class RemoteServiceModel: ObservableObject {
             actions: actions,
             session: session,
             project: project,
+            audit: audit,
             hub: storeHub,
             environment: environment,
             clock: clock

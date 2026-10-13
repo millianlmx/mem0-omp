@@ -31,17 +31,17 @@ function rowShotFaults(root: string): string[] {
     "accessibility-extra-large",
     "accessibility-extra-extra-extra-large",
     "home-row$row-$size",
-    '"112"',
-    '"100"',
+    '"120"',
+    '"108"',
   ]) {
     if (!script.includes(token)) faults.push(`ios-shots.sh ne porte pas ${token}`);
   }
-  // Le contrôle intermédiaire à 100 précède le passage 5, le contrôle dur à 112 le suit.
-  const intermediate = script.indexOf('"100"');
+  // Le contrôle intermédiaire à 108 précède le passage 5, le contrôle dur à 120 le suit.
+  const intermediate = script.indexOf('"108"');
   const rows = script.indexOf("-home.row");
-  const final = script.indexOf('"112"');
+  const final = script.indexOf('"120"');
   if (intermediate >= 0 && rows >= 0 && final >= 0 && !(intermediate < rows && rows < final)) {
-    faults.push("ios-shots.sh : l'ordre « 100 → rangées → 112 » n'est pas respecté");
+    faults.push("ios-shots.sh : l'ordre « 108 → rangées → 120 » n'est pas respecté");
   }
   return faults;
 }

@@ -1,6 +1,6 @@
-// Les neuf sections de la coque, dans l'ordre d'affichage de la barre latérale,
+// Les dix sections de la coque, dans l'ordre d'affichage de la barre latérale,
 // rangées en deux groupes (S-4 de omp-console-redesign) : « Pilotage » (Accueil,
-// Pipelines, Projet, Session OMP, Terminal) et « Consultation » (Sessions,
+// Pipelines, Projet, Audit, Session OMP, Terminal) et « Consultation » (Sessions,
 // Fichiers, Mémoire, Statistiques).
 //
 // Depuis le 2026-10-02, TOUT vit dans la fenêtre principale : Session OMP,
@@ -11,13 +11,14 @@
 //
 // Un enum plutôt qu'un tableau de vues : la section est l'identité PARTAGÉE entre
 // la liste, le détail, les tests et les features métier. L'ordre de déclaration
-// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘9,
-// donc il n'existe pas de seconde liste à tenir synchronisée.
+// des cas EST l'ordre d'affichage (`CaseIterable`) et celui des raccourcis ⌘1…⌘9
+// puis ⌘0 (dixième section), donc il n'existe pas de seconde liste à tenir synchronisée.
 
 public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendable {
     case home
     case kanban
     case project
+    case audit
     case session
     case terminal
     case sessions
@@ -33,6 +34,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .home: "Accueil"
         case .kanban: "Pipelines"
         case .project: "Projet"
+        case .audit: "Audit"
         case .session: "Session OMP"
         case .terminal: "Terminal"
         case .sessions: "Sessions"
@@ -48,6 +50,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
         case .home: "house"
         case .kanban: "square.grid.2x2"
         case .project: "target"
+        case .audit: "checklist"
         case .session: "bubble.left.and.bubble.right"
         case .terminal: "terminal"
         case .sessions: "bubble.left.and.text.bubble.right"
@@ -60,7 +63,7 @@ public enum ConsoleSection: String, CaseIterable, Identifiable, Hashable, Sendab
     /// Le groupe de la barre latérale.
     public var group: ConsoleSectionGroup {
         switch self {
-        case .home, .kanban, .project, .session, .terminal: .pilotage
+        case .home, .kanban, .project, .audit, .session, .terminal: .pilotage
         case .sessions, .files, .memory, .stats: .consultation
         }
     }

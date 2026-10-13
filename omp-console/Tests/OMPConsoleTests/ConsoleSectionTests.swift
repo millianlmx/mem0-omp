@@ -15,3 +15,14 @@ func selectingASectionChangesTheCurrentOne() {
         #expect(model.selection == section)
     }
 }
+
+@Test("audit-panel-in-omp-console-mac/S-9 : Audit est la quatrième section, dans Pilotage, après Projet")
+func auditSectionFollowsProject() {
+    #expect(ConsoleSection.allCases == [
+        .home, .kanban, .project, .audit, .session, .terminal, .sessions, .files, .memory, .stats,
+    ])
+    #expect(ConsoleSection.audit.title == "Audit")
+    #expect(ConsoleSection.audit.systemImage == "checklist")
+    #expect(ConsoleSection.audit.group == .pilotage)
+    #expect(ConsoleSectionGroup.pilotage.sections == [.home, .kanban, .project, .audit, .session, .terminal])
+}

@@ -157,14 +157,15 @@ function allIOSSources(root: string): { file: string; code: string }[] {
 const RETIRED_WAITING = "Cet écran arrive dans un prochain segment.";
 
 /**
- * Les dix-huit chaînes littérales interdites dans les sources de l'APP iOS : les
- * neuf `rawValue` et les neuf libellés. Recopiées ICI (jamais dans le code de
+ * Les vingt chaînes littérales interdites dans les sources de l'APP iOS : les
+ * dix `rawValue` et les dix libellés. Recopiées ICI (jamais dans le code de
  * l'app) : c'est la garde d'AC-2.
  */
 const SECTION_LITERALS = [
   "home",
   "kanban",
   "project",
+  "audit",
   "session",
   "terminal",
   "sessions",
@@ -174,6 +175,7 @@ const SECTION_LITERALS = [
   "Accueil",
   "Pipelines",
   "Projet",
+  "Audit",
   "Session OMP",
   "Terminal",
   "Sessions",
@@ -341,7 +343,7 @@ function navigationFaults(root: string): string[] {
   return faults;
 }
 
-/** Les manques des sept écrans et de l'argument de lancement (coque-ios/AC-4). */
+/** Les manques des huit écrans et de l'argument de lancement (coque-ios/AC-4). */
 function waitingFaults(root: string): string[] {
   const faults: string[] = [];
   const appDir = path.join(root, "omp-console", "ios", "OMPConsoleIOS");
@@ -503,7 +505,7 @@ test("coque-ios/AC-3 : une barre d'onglets adaptable, sans NavigationSplitView",
   assert.ok(navigationFaults(plain).some((f) => f.includes(".sidebarAdaptable")), "une RootView sans .sidebarAdaptable doit faire rougir la garde");
 });
 
-test("coque-ios/AC-4 : les sept écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
+test("coque-ios/AC-4 : les huit écrans réels remplacent l'écran d'attente et l'argument de lancement reste lu", () => {
   assert.deepEqual(waitingFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = copyRepo();

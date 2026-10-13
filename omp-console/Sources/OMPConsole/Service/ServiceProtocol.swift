@@ -261,3 +261,66 @@ struct ServiceCommandAck: Equatable, Sendable {
         return ServiceCommandAck(id: id, repo: repo, kind: kind, state: state, reason: reason, at: at)
     }
 }
+
+// --- audits (audit-panel-in-omp-console S-1 … S-4) ---------------------------
+
+/// La réponse de `POST /v1/audits` : `{id, status}`, rendue dès l'enregistrement
+/// écrit — l'analyse continue dans le service.
+struct ServiceAuditStarted: Equatable, Sendable {
+    let id: String
+    let status: AuditStatus
+
+    static func decode(_ value: JSONValue) -> ServiceAuditStarted? {
+        guard let object = value.objectValue,
+              let id = object["id"]?.stringValue, isAuditId(id),
+              let status = object["status"]?.stringValue.flatMap(AuditStatus.init(rawValue:)) else { return nil }
+        return ServiceAuditStarted(id: id, status: status)
+    }
+}
+
+/// Le corps de `POST /v1/audits/{id}/escalations` : la clé de l'escalade
+/// renvoyée telle quelle, puis une réponse (sortes `ask`, `question`) OU une
+/// décision de jalon (sortes `specs`, `review`). Un champ `nil` n'est pas envoyé.
+struct ServiceAuditAnswer: Equatable, Sendable {
+    let slug: String
+    let key: String
+    let answer: String?
+    let decision: AuditMilestoneDecision?
+
+    var body: [String: Any] {
+        var body: [String: Any] = ["slug": slug, "key": key]
+        if let answer { body["answer"] = answer }
+        if let decision { body["decision"] = decision.rawValue }
+        return body
+    }
+}
+
+/// Une feature que l'arrêt n'a pas pu annuler, avec le refus du pilote.
+struct ServiceAuditStopRefusal: Equatable, Sendable {
+    let slug: String
+    let reason: String
+}
+
+/// La réponse de `DELETE /v1/audits/{id}` : `{cancelled, kept, refused}`.
+struct ServiceAuditStopOutcome: Equatable, Sendable {
+    let cancelled: [String]
+    let kept: [String]
+    let refused: [ServiceAuditStopRefusal]
+
+    static func decode(_ value: JSONValue) -> ServiceAuditStopOutcome? {
+        guard let object = value.objectValue,
+              let cancelled = object["cancelled"]?.arrayValue?.map({ $0.stringValue }),
+              let kept = object["kept"]?.arrayValue?.map({ $0.stringValue }),
+              let refused = object["refused"]?.arrayValue?.map({ entry -> ServiceAuditStopRefusal? in
+                  guard let slug = entry.objectValue?["slug"]?.stringValue,
+                        let reason = entry.objectValue?["reason"]?.stringValue else { return nil }
+                  return ServiceAuditStopRefusal(slug: slug, reason: reason)
+              }) else { return nil }
+        // Tout ou rien : une entrée mal formée rend la réponse illisible.
+        let cancelledSlugs = cancelled.compactMap { $0 }
+        let keptSlugs = kept.compactMap { $0 }
+        let refusals = refused.compactMap { $0 }
+        guard cancelledSlugs.count == cancelled.count, keptSlugs.count == kept.count, refusals.count == refused.count else { return nil }
+        return ServiceAuditStopOutcome(cancelled: cancelledSlugs, kept: keptSlugs, refused: refusals)
+    }
+}

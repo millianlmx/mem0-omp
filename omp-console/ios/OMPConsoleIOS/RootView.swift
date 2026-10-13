@@ -70,6 +70,8 @@ struct RootView: View {
     private let projectRecipe: IOSProjectRecipe?
     /// Le crochet de recette `-sessionomp.recipe`, quand il est donné.
     private let sessionOmpRecipe: IOSSessionOmpRecipe?
+    /// Le crochet de recette `-audit.recipe`, quand il est donné.
+    private let auditRecipe: IOSAuditRecipe?
     /// Vrai quand `-section` n'a pas été fourni : les captures pilotées gardent
     /// ainsi leur écran, sans feuille par-dessus.
     private let autoPresentConnection: Bool
@@ -87,6 +89,7 @@ struct RootView: View {
         pipelinesBoardRecipe: IOSPipelinesBoardRecipe? = nil,
         projectRecipe: IOSProjectRecipe? = nil,
         sessionOmpRecipe: IOSSessionOmpRecipe? = nil,
+        auditRecipe: IOSAuditRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
         _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
@@ -101,6 +104,7 @@ struct RootView: View {
         self.pipelinesBoardRecipe = pipelinesBoardRecipe
         self.projectRecipe = projectRecipe
         self.sessionOmpRecipe = sessionOmpRecipe
+        self.auditRecipe = auditRecipe
         self.autoPresentConnection = autoPresentConnection
         _showConnection = State(initialValue: false)
     }
@@ -230,6 +234,7 @@ struct RootView: View {
                     pipelinesBoardRecipe: pipelinesBoardRecipe,
                     projectRecipe: projectRecipe,
                     sessionOmpRecipe: sessionOmpRecipe,
+                    auditRecipe: auditRecipe,
                     showConnection: $showConnection,
                     newFeatureRequested: $newFeatureRequested
                 )

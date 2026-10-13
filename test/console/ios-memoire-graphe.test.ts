@@ -260,7 +260,7 @@ function captureFaults(root: string): string[] {
   const faults: string[] = [];
   const scriptPath = path.join(root, "scripts", "recette", "ios-shots.sh");
   const script = fs.existsSync(scriptPath) ? fs.readFileSync(scriptPath, "utf8") : "";
-  for (const token of ["memoire_recipes=(graphe zoom fiche)", "-memoire.recipe", "memoire-graphe$suffix", '"112"']) {
+  for (const token of ["memoire_recipes=(graphe zoom fiche)", "-memoire.recipe", "memoire-graphe$suffix", '"120"']) {
     if (!script.includes(token)) faults.push(`ios-shots.sh ne porte pas ${token}`);
   }
   const guardPath = path.join(root, "test", "console", "design-ios.test.ts");

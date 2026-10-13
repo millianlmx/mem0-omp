@@ -394,6 +394,31 @@ struct RemoteMergedPayload: Codable, Equatable {
     var url: String
 }
 
+/// La réponse de `POST /v1/audits` (S-7) : l'identifiant de l'audit créé.
+struct RemoteAuditStartedPayload: Codable, Equatable {
+    var id: String
+}
+
+/// La réponse de `POST /v1/audits/{id}/launch` (S-7) : l'issue de chaque
+/// proposition, dans l'ordre de lancement du service.
+struct RemoteAuditLaunchPayload: Codable, Equatable {
+    var launches: [AuditLaunchOutcome]
+}
+
+/// Une feature que l'arrêt d'un audit n'a pas pu annuler, avec le refus du pilote.
+struct RemoteAuditStopRefusal: Codable, Equatable {
+    var slug: String
+    var reason: String
+}
+
+/// La réponse de `DELETE /v1/audits/{id}` (S-7) : `{cancelled, kept, refused}`
+/// recopiés du service.
+struct RemoteAuditStopPayload: Codable, Equatable {
+    var cancelled: [String]
+    var kept: [String]
+    var refused: [RemoteAuditStopRefusal]
+}
+
 struct RemoteHostedSessionPayload: Codable, Equatable {
     var state: String
     var stateLabel: String
@@ -470,6 +495,30 @@ struct RemoteConduiteRequest: Decodable, Equatable {
 /// `GET /v1/repos` — jamais un chemin.
 struct RemoteHostedLaunchRequest: Decodable, Equatable {
     var repoKey: String
+}
+
+/// Le corps de `POST /v1/audits` (S-7) : la clé d'un dépôt servi par
+/// `GET /v1/repos` — jamais un chemin — et l'orientation saisie.
+struct RemoteAuditStartRequest: Codable, Equatable {
+    var repoKey: String
+    var orientation: String
+}
+
+/// Le corps de `POST /v1/audits/{id}/launch` (S-7) : les slugs cochés et le
+/// brief validé, tels quels.
+struct RemoteAuditLaunchRequest: Codable, Equatable {
+    var selected: [String]
+    var brief: String
+}
+
+/// Le corps de `POST /v1/audits/{id}/escalations` (S-7) : la clé de l'escalade
+/// renvoyée telle quelle, puis une réponse (`ask`, `question`) OU une décision
+/// de jalon (`specs`, `review`).
+struct RemoteAuditAnswerRequest: Codable, Equatable {
+    var slug: String
+    var key: String
+    var answer: String?
+    var decision: AuditMilestoneDecision?
 }
 
 /// Le corps de `POST /v1/conduite/dialogs/{id}` (S-4, S-5) : `kind` vaut `value`,

@@ -1,11 +1,14 @@
 // /audit : le relais des questions et des jalons d'une pipeline vers sa session /audit.
-import type { ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+import * as fs from "node:fs";
 import * as path from "node:path";
 import { checkBrief, editBrief, renderBrief, writeBrief } from "./context.ts";
 import type { BriefInput } from "./context.ts";
-import { toSlug } from "./git.ts";
+import { readAudit, renderAuditBrief, transitionAudit, writeAudit } from "./auditRecord.ts";
+import { resolveFeatureRoot, toSlug } from "./git.ts";
 import { LOT_EDITOR_MAX, lotFeature, lotRepoKey, lotReplaceable, readLot } from "./lot.ts";
 import type { Lot, LotFeature } from "./lot.ts";
+import type { AddFeatureInput } from "./lotController.ts";
 import { askFeatureModels } from "./models.ts";
 import { createRelay, escalationRelayMessage, quotaRelayMessage, relayItemsOf, relayToolText as toolText } from "./relay.ts";
 import type { RelayCore, RelayDeps, RelayItem, RelayState, RelayToolResult } from "./relay.ts";
@@ -229,7 +232,7 @@ export function checkProposal(input: unknown): { ok: true; proposal: Proposal } 
  * l'ordre reçu le premier élément non traité dont toutes les dépendances qui
  * sont dans la liste sont déjà traitées. `checkProposal` exclut les cycles.
  */
-function launchOrder<T extends { slug: string; deps: readonly string[] }>(items: readonly T[]): T[] {
+export function launchOrder<T extends { slug: string; deps: readonly string[] }>(items: readonly T[]): T[] {
   const inList = new Set(items.map((item) => item.slug));
   const placed = new Set<string>();
   const order: T[] = [];
@@ -242,6 +245,83 @@ function launchOrder<T extends { slug: string; deps: readonly string[] }>(items:
     order.push(next);
   }
   return order;
+}
+
+
+/** Un élément à enrôler dans le lot : slug, intention, dépendances, et ses modèles éventuels. */
+export type EnrolElement = {
+  slug: string;
+  intention: string;
+  deps: readonly string[];
+  models?: Pick<AddFeatureInput, "modelReqSpecs" | "modelImplReview" | "fallbackReqSpecs" | "fallbackImplReview">;
+};
+
+/**
+ * L'issue de l'enrôlement d'un élément : lancé avec les dépendances passées au
+ * pilote, ou non lancé avec son motif (`refused` : c'est le pilote qui a refusé).
+ */
+export type EnrolOutcome =
+  | { slug: string; launched: true; deps: string[] }
+  | { slug: string; launched: false; reason: string; refused: boolean };
+
+/**
+ * L'enrôlement (S-4 de /audit, S-2 des audits de l'app) : un ajout à la fois,
+ * dans l'ordre des dépendances (`launchOrder`). Chaque `add` est une écriture
+ * autonome du pilote : un refus n'annule jamais un ajout précédent. Les règles de
+ * dépendance du lot restent celles du pilote : on choisit seulement quelles
+ * dépendances lui passer. Rend une issue par élément, dans l'ordre des ajouts ;
+ * `onLaunched` est appelé juste après chaque ajout accepté.
+ */
+export async function enrolElements(input: {
+  add: (feature: AddFeatureInput) => Promise<string | null>;
+  /** Le lot du dépôt, relu avant chaque ajout. */
+  lotOf: () => Lot | null;
+  /** La clé de contexte portée par chaque feature (`auditSession`). */
+  contextKey: string;
+  elements: readonly EnrolElement[];
+  onLaunched?: (slug: string) => void;
+}): Promise<EnrolOutcome[]> {
+  const retainedSlugs = new Set(input.elements.map((element) => element.slug));
+  const started = new Set<string>();
+  const outcomes: EnrolOutcome[] = [];
+  for (const element of launchOrder(input.elements)) {
+    const lot = input.lotOf();
+    const kept: string[] = [];
+    let missing: string | null = null;
+    for (const dep of element.deps) {
+      if (retainedSlugs.has(dep)) {
+        if (!started.has(dep)) {
+          missing = dep;
+          break;
+        }
+        kept.push(dep);
+        continue;
+      }
+      // Hors des retenus : attendue seulement si le lot la conduit encore (un lot
+      // remplaçable sera remplacé par cet ajout, une feature annulée ne finira pas).
+      const feature = lot !== null && !lotReplaceable(lot) ? lotFeature(lot, dep) : undefined;
+      if (feature !== undefined && feature.state !== "cancelled") kept.push(dep);
+    }
+    if (missing !== null) {
+      outcomes.push({ slug: element.slug, launched: false, reason: `dépend de ${missing}, non lancée`, refused: false });
+      continue;
+    }
+    const refusal = await input.add({
+      name: element.slug,
+      description: element.intention,
+      deps: kept,
+      auditSession: input.contextKey,
+      ...element.models,
+    });
+    if (refusal !== null) {
+      outcomes.push({ slug: element.slug, launched: false, reason: `lancement refusé : ${refusal}`, refused: true });
+      continue;
+    }
+    started.add(element.slug);
+    outcomes.push({ slug: element.slug, launched: true, deps: kept });
+    input.onLaunched?.(element.slug);
+  }
+  return outcomes;
 }
 
 
@@ -420,58 +500,41 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     if (interrupted()) return toolText(INTERRUPTED);
     if (briefText !== null && retained.length > 0) writeBrief(deps.stateDir(), sessionFile, briefText);
 
-    // S-4 — un ajout à la fois, dans l'ordre des dépendances. Chaque `add` est une
-    // écriture autonome du pilote : un refus n'annule jamais un ajout précédent.
-    // Les règles de dépendance du lot restent celles du pilote : on choisit
-    // seulement quelles dépendances lui passer.
+    // S-4 — l'enrôlement, un ajout à la fois dans l'ordre des dépendances.
     const controller = deps.controllerFor(ctx);
-    const retainedSlugs = new Set(retained.map((element) => element.slug));
     const started = new Map<string, string[]>();
     let refused = false;
-    for (const element of launchOrder(retained)) {
-      const lot = lotOf(repoRoot);
-      const kept: string[] = [];
-      let missing: string | null = null;
-      for (const dep of element.deps) {
-        if (retainedSlugs.has(dep)) {
-          if (!started.has(dep)) {
-            missing = dep;
-            break;
-          }
-          kept.push(dep);
-          continue;
+    const outcomes = await enrolElements({
+      add: (feature) => controller.add(feature),
+      lotOf: () => lotOf(repoRoot),
+      contextKey: sessionFile,
+      elements: retained.map((element) => ({
+        slug: element.slug,
+        intention: element.intention,
+        deps: element.deps,
+        models: {
+          modelReqSpecs: element.modelReqSpecs ?? undefined,
+          modelImplReview: element.modelImplReview ?? undefined,
+          fallbackReqSpecs: element.fallbackReqSpecs ?? undefined,
+          fallbackImplReview: element.fallbackImplReview ?? undefined,
+        },
+      })),
+      onLaunched: (slug) => {
+        let mine = state.launched.get(sessionFile);
+        if (mine === undefined) {
+          mine = new Set();
+          state.launched.set(sessionFile, mine);
         }
-        // Hors des retenus : attendue seulement si le lot la conduit encore (un lot
-        // remplaçable sera remplacé par cet ajout, une feature annulée ne finira pas).
-        const feature = lot !== null && !lotReplaceable(lot) ? lotFeature(lot, dep) : undefined;
-        if (feature !== undefined && feature.state !== "cancelled") kept.push(dep);
-      }
-      if (missing !== null) {
-        reasons.set(element.slug, `dépend de ${missing}, non lancée`);
+        mine.add(slug);
+      },
+    });
+    for (const outcome of outcomes) {
+      if (outcome.launched) {
+        started.set(outcome.slug, outcome.deps);
         continue;
       }
-      const refusal = await controller.add({
-        name: element.slug,
-        description: element.intention,
-        deps: kept,
-        auditSession: sessionFile,
-        modelReqSpecs: element.modelReqSpecs ?? undefined,
-        modelImplReview: element.modelImplReview ?? undefined,
-        fallbackReqSpecs: element.fallbackReqSpecs ?? undefined,
-        fallbackImplReview: element.fallbackImplReview ?? undefined,
-      });
-      if (refusal !== null) {
-        refused = true;
-        reasons.set(element.slug, `lancement refusé : ${refusal}`);
-        continue;
-      }
-      started.set(element.slug, kept);
-      let mine = state.launched.get(sessionFile);
-      if (mine === undefined) {
-        mine = new Set();
-        state.launched.set(sessionFile, mine);
-      }
-      mine.add(element.slug);
+      if (outcome.refused) refused = true;
+      reasons.set(outcome.slug, outcome.reason);
     }
     if (started.size > 0) core?.scan();
 
@@ -524,7 +587,6 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
       registerTools(relayCore) {
         core = relayCore;
         const { armedOn, inDialogTurn, notArmed, needsUi } = relayCore;
-        const element = pi.arktype({ name: "string", intention: "string", "deps?": "string[]" });
         pi.registerTool({
           name: "audit_propose",
           label: "Audit — proposer",
@@ -532,17 +594,7 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
             "Soumet l'analyse de /audit — faiblesses et features, chacune nommée, avec ses dépendances (deps) : l'outil montre à l'utilisateur une liste à cocher de tous les éléments pas encore lancés, lui fait valider ou amender l'intention puis choisir le modèle de chaque élément coché, et lance leurs pipelines en parallèle (un élément attend la fin de ceux dont il dépend). Rappelle-le avec la même analyse pour lancer d'autres éléments plus tard.",
           approval: "read",
           loadMode: "essential",
-          parameters: pi.arktype({
-            weaknesses: element.array(),
-            features: element.array(),
-            brief: pi.arktype({
-              purpose: "string",
-              function: "string",
-              decisions: "string[]",
-              constraints: "string[]",
-              nonGoals: "string[]",
-            }),
-          }),
+          parameters: proposalParameters(pi),
           async execute(_toolCallId: string, params: unknown, signal?: AbortSignal, _onUpdate?: unknown, ctx?: ExtensionContext) {
             const checked = checkProposal(params);
             if (!checked.ok) return toolText(checked.error, true);
@@ -561,4 +613,77 @@ export function createAuditRelay(deps: AuditRelayDeps): AuditRelay {
     },
     deps,
   ) as AuditRelay;
+}
+
+
+/** Le schéma des paramètres d'une proposition : partagé par `audit_propose` et `audit_report`. */
+function proposalParameters(pi: ExtensionAPI) {
+  const element = pi.arktype({ name: "string", intention: "string", "deps?": "string[]" });
+  return pi.arktype({
+    weaknesses: element.array(),
+    features: element.array(),
+    brief: pi.arktype({
+      purpose: "string",
+      function: "string",
+      decisions: "string[]",
+      constraints: "string[]",
+      nonGoals: "string[]",
+    }),
+  });
+}
+
+
+/**
+ * `audit_report` (S-1) : la SEULE surface de la session d'analyse d'un audit de
+ * l'app. Il enregistre la proposition dans l'audit `auditId` et ne montre aucun
+ * dialogue : l'utilisateur coche et valide le brief dans la section Audit d'OMP
+ * Console. Un audit absent se lit à l'état « absent ».
+ */
+export function registerAuditReportTool(pi: ExtensionAPI, binding: { auditId: string; stateDir: string }): void {
+  pi.registerTool({
+    name: "audit_report",
+    label: "Audit — enregistrer la proposition",
+    description:
+      "Enregistre l'analyse de l'audit — faiblesses et features, chacune nommée, avec ses dépendances (deps), et le brief durable : l'utilisateur coche les éléments à lancer et valide le brief dans la section Audit d'OMP Console. N'ouvre aucun dialogue ; après un appel réussi, termine ta réponse.",
+    approval: "read",
+    loadMode: "essential",
+    parameters: proposalParameters(pi),
+    async execute(_toolCallId: string, params: unknown) {
+      const record = readAudit(binding.stateDir, binding.auditId);
+      if (record === null || record.status !== "analysing") {
+        return toolText(`Error: cet audit n'attend plus de proposition (état : ${record?.status ?? "absent"})`, true);
+      }
+      const checked = checkProposal(params);
+      if (!checked.ok) return toolText(checked.error, true);
+      const { elements, brief } = checked.proposal;
+      const moved = transitionAudit(record, "proposed", Date.now());
+      if (!moved.ok) return toolText(`Error: ${moved.error}`, true);
+      const weaknesses = elements.filter((element) => element.kind === "weakness");
+      writeAudit(binding.stateDir, {
+        ...moved.audit,
+        proposal: { elements, briefDraft: renderAuditBrief(record, brief, weaknesses) },
+      });
+      return toolText(
+        `Propositions enregistrées : ${weaknesses.length} faiblesse(s), ${elements.length - weaknesses.length} feature(s). L'utilisateur les coche et valide le brief dans la section Audit d'OMP Console : termine ta réponse.`,
+      );
+    },
+  });
+}
+
+
+/**
+ * Le dépôt d'un audit ouvert depuis `cwd`, ou le refus — mêmes textes pour
+ * `/audit` (avertissement) et pour `POST /v1/audits` (409) : un audit s'ouvre
+ * depuis le dépôt principal, jamais depuis le worktree d'une feature.
+ */
+export function auditRepoRootOf(cwd: string): { ok: true; repoRoot: string } | { ok: false; refusal: string } {
+  const root = resolveFeatureRoot(cwd);
+  if (root.primary) {
+    return {
+      ok: false,
+      refusal: `[audit] déjà dans le worktree d'une feature (${root.dir}) — /audit s'ouvre depuis le dépôt principal (${root.primary})`,
+    };
+  }
+  if (!fs.existsSync(path.join(root.dir, ".git"))) return { ok: false, refusal: `[audit] ${root.dir} n'est pas un dépôt git` };
+  return { ok: true, repoRoot: root.dir };
 }

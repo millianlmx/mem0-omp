@@ -388,6 +388,24 @@ c'est lui qui exécute les maillons — plus aucun `omp -p` par maillon.
 Sans service, les pipelines **n'avancent plus** — aucune session terminale ne reprend
 un lot — et le panneau le dit (`pilote absent — les pipelines n'avancent plus`).
 
+Les routes de l'API (jeton `X-OMP-Service-Token` exigé partout, `{repo}` = chemin
+absolu percent-encodé, refus `{error, reason}`) :
+
+| Route | Rôle |
+|---|---|
+| `GET /v1/health` | version, pid, sessions, lots |
+| `POST /v1/repos/{repo}/pilot` | réveille le pilote d'un dépôt |
+| `POST /v1/repos/{repo}/commands` | commande de pipeline, rend son accusé |
+| `GET` / `POST /v1/sessions` | liste ou crée une session de l'app |
+| `GET` / `DELETE /v1/sessions/{id}` | lit ou ferme une session |
+| `GET /v1/sessions/{id}/events` | flux SSE de la session |
+| `POST /v1/sessions/{id}/prompt`, `…/abort`, `…/dialogs/{dialogId}` | prompt, abort, réponse de dialogue |
+| `POST` / `DELETE /v1/projects/{repo}/conduite` | démarre ou arrête la conduite d'un projet |
+| `POST /v1/audits` | démarre un audit de l'app `{repo, orientation}` |
+| `POST /v1/audits/{id}/launch` | lance les propositions cochées `{selected, brief}` |
+| `POST /v1/audits/{id}/escalations` | répond à une escalade `{slug, key, answer?, decision?}` |
+| `DELETE /v1/audits/{id}` | arrête un audit |
+
 ### Repli de modèle et quota
 
 Chaque run (étape de pipeline) tourne sur le **modèle principal** et le **repli** que
@@ -919,6 +937,25 @@ s'affiche tel quel au lieu d'être avalé.
   validé dans `<état>/briefs/<sha1(session)[:16]>.md`. Un nouvel `audit_propose` validé dans
   la même session réécrit le brief. Chaque run d'une feature de l'audit reçoit ce brief et le
   journal de sa feature (`<état>/journal/…jsonl`, voir « Projet ») dans son prompt.
+
+  **Audits lancés depuis OMP Console** : la section Audit de l'app ne passe ni par
+  `/audit` ni par son relais. `POST /v1/audits` écrit un enregistrement
+  `<état>/audits/<id>.json` (écrit par le seul service, jamais supprimé ; état
+  `analysing`, `proposed`, `launched`, `stopped` ou `failed`) puis ouvre une session
+  d'analyse interne au service, invisible de `GET /v1/sessions`, dont tout dialogue est
+  refusé d'office. Elle enregistre ses propositions par l'outil `audit_report` (mêmes
+  paramètres qu'`audit_propose`, aucun dialogue) ; l'app montre les cases et le brief, et
+  `POST /v1/audits/{id}/launch` écrit le brief validé puis ajoute les seules propositions
+  cochées par le pilote du service. La **clé de contexte** de l'audit vaut
+  `<état>/audits/<id>` : portée par `auditSession` de chaque feature lancée, elle isole le
+  brief, le journal et l'arbitrage — deux audits du même dépôt ne se mélangent pas. Les
+  escalades de l'arbitre se lisent dans le lot (`escalation`) et se répondent par
+  `POST /v1/audits/{id}/escalations`, traduites en commande de pipeline (`answer`,
+  `reply`, `verdict`, `cancel`). `DELETE /v1/audits/{id}` arrête l'audit : ses features non
+  livrées sont annulées (dossier et branche gardés), ses PR déjà ouvertes restent, sans
+  aucun appel `gh`. Une analyse coupée par l'arrêt du service passe `failed` au
+  redémarrage ; le service recopie à chaque balayage la phase, l'état et la PR des
+  features lancées dans l'audit.
 
 ## Projet
 

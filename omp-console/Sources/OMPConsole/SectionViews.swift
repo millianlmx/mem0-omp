@@ -73,6 +73,9 @@ struct SectionDetail: View {
     /// Le modèle de pilotage de projet : à l'échelle de l'app, comme les autres,
     /// pour que la session hébergée survive au changement de section.
     @ObservedObject var projectModel: ProjectConsoleModel
+    /// Le modèle de la section « Audit » : à l'échelle de l'app, la liste, la
+    /// sélection et les cases cochées survivent au changement de section.
+    @ObservedObject var auditModel: AuditConsoleModel
     /// Le modèle de la section « Mémoire » : même raison, la portée calculée, la
     /// liste affichée et la sélection survivent au passage d'une section à l'autre.
     @ObservedObject var memoryModel: MemoryModel
@@ -117,6 +120,7 @@ struct SectionDetail: View {
         case .stats: StatsSectionView(model: statsModel, actions: actions)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .project: ProjectView(model: projectModel)
+        case .audit: AuditView(model: auditModel)
         case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)
         }
     }

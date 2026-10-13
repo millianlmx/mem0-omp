@@ -181,6 +181,11 @@ private func makeStack(
         actions: actions,
         session: session,
         project: project,
+        audit: AuditConsoleModel(
+            stateDir: root,
+            snapshots: { AsyncStream { $0.finish() } },
+            makeClient: { throw ServiceClientError.unavailable }
+        ),
         hub: hub,
         environment: environment,
         clock: clock.clock

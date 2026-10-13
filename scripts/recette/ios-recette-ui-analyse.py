@@ -13,7 +13,7 @@ Sous-commandes :
   analyser --exceptions <f> --valider-seulement
       Valide seulement la liste d'exceptions : 0 si valide, 2 + message sinon.
   analyser --releves <dossier> --exceptions <f> --rapport <fichier.txt>
-      Valide les exceptions, exige les 24 paires <surface>-<apparence>-<taille>
+      Valide les exceptions, exige les 27 paires <surface>-<apparence>-<taille>
       .json|.png, vérifie les marqueurs et le contrôle « appairé », applique les
       trois règles de défaut, écrit le rapport. Sortie 0 (aucun SIGNALÉ),
       1 (au moins un SIGNALÉ), 2 (la recette n'a pas pu conclure).
@@ -45,6 +45,7 @@ SURFACES = [
     ("home", True),
     ("kanban", True),
     ("project", True),
+    ("audit", True),
     ("session", True),
     ("sessions", True),
     ("memory", True),
@@ -189,6 +190,8 @@ def _marqueur_propre(surface, arbre):
             or "Projet" in titres
             or "Projet" in ids
         )
+    if surface == "audit":
+        return any(i == "ios.audit" or i.startswith("ios.audit.") for i in ids)
     if surface == "session":
         return any(i.startswith("ios.sessionomp") for i in ids)
     if surface == "sessions":

@@ -13,6 +13,7 @@ import type { ServicePilot } from "./servicePilot.ts";
 import { createSessionHost } from "./serviceSessions.ts";
 import type { SessionHost } from "./serviceSessions.ts";
 import { createArbiterRunner, createMaillonRunner } from "./serviceRuns.ts";
+import { createAuditService } from "./serviceAudits.ts";
 import { startService } from "./service.ts";
 import type { ServiceHandle, ServiceStartResult } from "./service.ts";
 import { pipelineStateDir } from "./store.ts";
@@ -77,7 +78,11 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     now: options.now,
     schedule: options.schedule,
     startedAt: (options.now ?? Date.now)(),
+    // Le service d'audits est créé juste après : il a besoin du pilote (contrôleurs,
+    // commandes), le pilote de son balayage — appelé au plus tôt par `pilot.start()`.
+    audits: { sweep: first => audits.sweep(first) },
   });
+  const audits = createAuditService({ stateDir, host: sessions, pilot, log, now: options.now });
 
   const api: ServiceApi = {
     health: () => pilot.health(),
@@ -114,6 +119,10 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
     startConduite: (repo, body) => pilot.startConduite(repo, body),
     stopConduite: repo => pilot.stopConduite(repo),
     subscribeSession: id => sessions.subscribe(id),
+    startAudit: body => audits.start(body),
+    launchAudit: (id, body) => audits.launch(id, body),
+    answerAudit: (id, body) => audits.answer(id, body),
+    stopAudit: id => audits.stop(id),
   };
 
   let handle: ServiceHandle | null = null;

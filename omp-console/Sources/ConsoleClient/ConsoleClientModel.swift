@@ -640,6 +640,50 @@ public final class ConsoleClientModel: ObservableObject {
         )
     }
 
+    /// Démarre un audit sur un dépôt CONNU du Mac (S-7) : le client ne calcule
+    /// jamais la clé, il la reçoit de `GET /v1/repos`. L'audit créé arrive ensuite
+    /// par la trame `store`.
+    public func startAudit(repoKey: String, orientation: String) async throws -> RemoteAuditStartedPayload {
+        let body = try encode(RemoteAuditStartRequest(repoKey: repoKey, orientation: orientation))
+        return try await performGesture(
+            ClientHTTPRequest(method: "POST", path: "/v1/audits", body: body),
+            as: RemoteAuditStartedPayload.self
+        )
+    }
+
+    /// Lance les propositions cochées avec le brief validé (S-7).
+    public func launchAudit(id: String, selected: [String], brief: String) async throws -> RemoteAuditLaunchPayload {
+        let body = try encode(RemoteAuditLaunchRequest(selected: selected, brief: brief))
+        return try await performGesture(
+            ClientHTTPRequest(method: "POST", path: "/v1/audits/" + encode(id) + "/launch", body: body),
+            as: RemoteAuditLaunchPayload.self
+        )
+    }
+
+    /// Répond à une escalade de l'audit (S-7) : `answer` pour les sortes `ask` et
+    /// `question`, `decision` pour les jalons `specs` et `review`.
+    public func answerAuditEscalation(
+        id: String,
+        slug: String,
+        key: String,
+        answer: String?,
+        decision: AuditMilestoneDecision?
+    ) async throws -> RemoteAcceptedPayload {
+        let body = try encode(RemoteAuditAnswerRequest(slug: slug, key: key, answer: answer, decision: decision))
+        return try await performCommand(
+            ClientHTTPRequest(method: "POST", path: "/v1/audits/" + encode(id) + "/escalations", body: body),
+            as: RemoteAcceptedPayload.self
+        )
+    }
+
+    /// Arrête l'audit (S-7) : ses pipelines non livrées sont annulées.
+    public func stopAudit(id: String) async throws -> RemoteAuditStopPayload {
+        try await performGesture(
+            ClientHTTPRequest(method: "DELETE", path: "/v1/audits/" + encode(id)),
+            as: RemoteAuditStopPayload.self
+        )
+    }
+
     /// Les dépôts connus de la coque (S-8) : le client ne calcule jamais un `repoKey`.
     public func repos() async throws -> RemoteReposPayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/repos"), as: RemoteReposPayload.self)

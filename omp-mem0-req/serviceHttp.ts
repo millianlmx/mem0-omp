@@ -99,7 +99,11 @@ type Matched =
   | { kind: "prompt"; id: string }
   | { kind: "abort"; id: string }
   | { kind: "dialog"; id: string; dialogId: string }
-  | { kind: "conduite"; repo: string };
+  | { kind: "conduite"; repo: string }
+  | { kind: "audits" }
+  | { kind: "auditLaunch"; id: string }
+  | { kind: "auditEscalation"; id: string }
+  | { kind: "audit"; id: string };
 
 
 /**
@@ -118,6 +122,16 @@ function match(method: string, segments: string[]): Matched | null {
   if (head === "projects" && segments.length === 3 && one !== undefined && two !== undefined) {
     if (two !== "conduite") return null;
     return method === "POST" || method === "DELETE" ? { kind: "conduite", repo: one } : null;
+  }
+  if (head === "audits") {
+    if (segments.length === 1) return method === "POST" ? { kind: "audits" } : null;
+    if (one === undefined) return null;
+    if (segments.length === 2) return method === "DELETE" ? { kind: "audit", id: one } : null;
+    if (segments.length === 3 && method === "POST") {
+      if (two === "launch") return { kind: "auditLaunch", id: one };
+      if (two === "escalations") return { kind: "auditEscalation", id: one };
+    }
+    return null;
   }
   if (head !== "sessions") return null;
   if (segments.length === 1) {
@@ -253,6 +267,14 @@ export function createServiceRequestHandler(deps: RouterDeps) {
             return json({ closed: true });
           }
           return json(await deps.api.startConduite(route.repo, await readJsonBody(req, "conduite")));
+        case "audits":
+          return json(await deps.api.startAudit(await readJsonBody(req, "audit")));
+        case "auditLaunch":
+          return json(await deps.api.launchAudit(route.id, await readJsonBody(req, "lancement")));
+        case "auditEscalation":
+          return json(await deps.api.answerAudit(route.id, await readJsonBody(req, "réponse")));
+        case "audit":
+          return json(await deps.api.stopAudit(route.id));
       }
     } catch (err) {
       if (err instanceof ServiceError) return errorResponse(err);

@@ -129,9 +129,13 @@ export function buildSpecsSeed(extra: string): string {
 // questions et leurs jalons.
 // ---------------------------------------------------------------------------
 
+/** Les étapes 1 et 2 de l'analyse d'un audit, partagées par `/audit` et les audits de l'app. */
+export const AUDIT_ANALYSIS_STEPS = `1. Analyse le dépôt en LECTURE SEULE (read, grep, glob, lsp, mem0_search) : architecture, dette, tests, sécurité, documentation, conventions. N'écris, ne modifie et ne commite AUCUN fichier.
+2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` — de 1 à 20 faiblesses numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <constat, avec le fichier ou le module concerné, et ce que la corriger veut dire>\` —, puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi. Chaque faiblesse et chaque feature est un élément que l'utilisateur pourra lancer : son nom est unique dans toute la proposition. Quand un élément ne peut être construit qu'après la livraison d'un autre élément de la proposition, termine sa ligne par \`(après <nom>, <nom>)\`.`;
+
+
 export const AUDIT_DIRECTIVE = `Tu es l'auditeur de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :
-1. Analyse le dépôt en LECTURE SEULE (read, grep, glob, lsp, mem0_search) : architecture, dette, tests, sécurité, documentation, conventions. N'écris, ne modifie et ne commite AUCUN fichier.
-2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` — de 1 à 20 faiblesses numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <constat, avec le fichier ou le module concerné, et ce que la corriger veut dire>\` —, puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi. Chaque faiblesse et chaque feature est un élément que l'utilisateur pourra lancer : son nom est unique dans toute la proposition. Quand un élément ne peut être construit qu'après la livraison d'un autre élément de la proposition, termine sa ligne par \`(après <nom>, <nom>)\`.
+${AUDIT_ANALYSIS_STEPS}
 3. Appelle ENSUITE l'outil \`audit_propose\` avec exactement ces éléments : \`weaknesses\` et \`features\`, chaque élément sous la forme \`{ name, intention, deps }\` — mêmes noms, mêmes textes (l'intention d'une faiblesse est son constat), \`deps\` = les noms des éléments dont il dépend (liste vide sinon) — et \`brief\` : \`{ purpose, function, decisions, constraints, nonGoals }\`, le brief durable de l'audit tiré du cadrage (but, fonction, décisions déjà prises, contraintes, non-objectifs ; les trois listes sont des phrases courtes, vides si rien n'a été dit). L'utilisateur valide ce brief dans un éditeur, et chaque étape des pipelines le relira avant de poser une question. C'est l'outil qui montre à l'utilisateur la liste à cocher, lui fait valider l'intention et choisir le modèle de chaque élément coché, puis lance leurs pipelines : ne pose jamais ces choix toi-même. Si l'utilisateur te demande plus tard d'autres lancements de cette analyse, rappelle \`audit_propose\` avec la MÊME proposition et le brief à jour (il est réécrit après validation) : les éléments déjà lancés n'y sont plus cochables.
 4. Tu deviens le relais de chaque pipeline lancée, mais tu ne réponds JAMAIS à sa place : un arbitre éphémère tranche chaque question d'un maillon (/req, /specs, /impl, /review) et chaque jalon d'après le brief, le journal et le contrat, sans que tu aies à intervenir. Tu ne reçois un message \`[audit]\` que pour ce qu'il n'a pas pu trancher — une escalade (question, options numérotées, motif de l'arbitre), un plafond de la boucle revue ⇄ correction ou un quota épuisé — avec un identifiant d'élément. Plusieurs messages peuvent arriver en même temps : traite-les un par un, dans leur ordre d'arrivée, CHAQUE élément par exactement UN appel de \`audit_escalate\` qui porte son identifiant : l'outil ouvre le dialogue de l'utilisateur et transmet sa réponse mot pour mot. Il n'existe aucun outil pour répondre, valider ou accepter à sa place : la décision est TOUJOURS celle de l'utilisateur.
    Avant un \`audit_escalate\`, écris en une phrase de quoi il s'agit. N'utilise jamais l'outil \`ask\` pour relayer une question : seul \`audit_escalate\` transmet la réponse de l'utilisateur mot pour mot.
@@ -145,6 +149,25 @@ export function buildAuditSeed(repoDir: string, extra: string): string {
     (extra !== "" ? `Contexte ajouté : ${extra}\n\n` : "") +
     AUDIT_DIRECTIVE
   );
+}
+
+
+/**
+ * Amorce de la session d'analyse d'un audit lancé depuis la section Audit d'OMP
+ * Console (S-1). Fonction pure : la proposition s'enregistre par `audit_report`,
+ * sans aucun dialogue.
+ */
+export function buildAppAuditSeed(repoDir: string, orientation: string): string {
+  return [
+    `[audit] Session d'audit du dépôt ${repoDir}, lancée depuis la section Audit d'OMP Console.`,
+    "",
+    `Orientation de l'audit : ${orientation}`,
+    "",
+    "Tu es l'auditeur de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :",
+    AUDIT_ANALYSIS_STEPS,
+    "3. Appelle ENSUITE l'outil `audit_report` avec exactement ces éléments, en centrant faiblesses et features sur l'orientation de l'audit : `weaknesses` et `features`, chaque élément sous la forme `{ name, intention, deps }` — mêmes noms, mêmes textes (l'intention d'une faiblesse est son constat), `deps` = les noms des éléments dont il dépend (liste vide sinon) — et `brief` : `{ purpose, function, decisions, constraints, nonGoals }`, le brief durable de l'audit tiré de l'orientation et de l'analyse (but, fonction, décisions déjà prises, contraintes, non-objectifs ; les trois listes sont des phrases courtes, vides si rien n'est établi). L'outil enregistre la proposition : l'utilisateur coche les éléments à lancer et valide le brief dans la section Audit d'OMP Console. Si l'outil rend une erreur de validation, corrige les paramètres et rappelle-le.",
+    "4. Ne pose aucune question à l'utilisateur ; après un appel réussi d'`audit_report`, termine ta réponse.",
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------

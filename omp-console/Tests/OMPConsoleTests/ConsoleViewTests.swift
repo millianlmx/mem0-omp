@@ -1,6 +1,6 @@
 // Assertion 3 de S-4 : les vues de section déclarent chacune leur section.
 //
-// Le test nomme les neuf TYPES puis confronte l'ensemble des sections qu'ils
+// Le test nomme les dix TYPES puis confronte l'ensemble des sections qu'ils
 // déclarent à `Set(ConsoleSection.allCases)` : une vue manquante rend l'ensemble
 // plus petit, deux vues sur la même section le réduisent aussi — les deux
 // scénarios rougissent sans seconde table à maintenir.
@@ -18,6 +18,7 @@ func everySectionHasItsView() {
         HomeView.section,
         KanbanView.section,
         ProjectView.section,
+        AuditView.section,
         SessionConsoleSectionView.section,
         TerminalSectionView.section,
         SessionsView.section,

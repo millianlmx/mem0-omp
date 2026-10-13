@@ -21,8 +21,8 @@ const APP = path.join(IOS, "OMPConsoleIOS");
 const CORE = path.join(SHELL, "Sources", "ConsoleCore");
 const SHELL_SOURCES = path.join(SHELL, "Sources", "OMPConsole");
 
-/** Les sept sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
-const SECTIONS = ["home", "kanban", "project", "session", "sessions", "memory", "stats"];
+/** Les huit sections de l'app iOS, dans l'ordre de `ConsoleSection.allCases`. */
+const SECTIONS = ["home", "kanban", "project", "audit", "session", "sessions", "memory", "stats"];
 
 /** Les deux apparences de la matrice de captures. */
 const APPEARANCES = ["light", "dark"];
@@ -172,13 +172,14 @@ const SECTION_WORDS: Record<string, SectionWord> = {
   home: { message: "Lancez votre première feature", constant: "HomeText.firstRunTitle", core: "Home/HomeText.swift", detail: "HomeText.firstRunBody" },
   kanban: { message: "Aucune pipeline pour l’instant.", constant: "KanbanText.noPipeline", core: "Kanban/KanbanText.swift", detail: null },
   project: { message: "Aucun projet piloté.", constant: "ProjectViewText.emptyTitle", core: "Project/ProjectViewText.swift", detail: "ProjectViewText.emptyHelp" },
+  audit: { message: "Aucun audit.", constant: "AuditText.emptyTitle", core: "Audit/AuditText.swift", detail: "AuditText.emptyHelp" },
   session: { message: "Aucune session", constant: "SessionConsoleText.noProjectTitle", core: "Session/SessionConsoleText.swift", detail: "SessionConsoleText.noProjectBody" },
   sessions: { message: "Aucune session", constant: "SessionSelectorText.emptyTitle", core: "Viewer/SessionSelectorText.swift", detail: "SessionSelectorText.noRun" },
   memory: { message: "Aucun projet ouvert", constant: "MemoryText.noProjectTitle", core: "Memory/MemoryText.swift", detail: null },
   stats: { message: "Aucun projet", constant: "StatsPresentation.noProjectTitle", core: "Stats/StatsPresentation.swift", detail: "StatsPresentation.noProject" },
 };
 
-/** Les manques des sept écrans : contenu, mots partagés, composants employés. */
+/** Les manques des huit écrans : contenu, mots partagés, composants employés. */
 function screenFaults(root: string): string[] {
   const faults: string[] = [];
   const content = appFile(root, "IOSSectionContent.swift");
@@ -210,7 +211,7 @@ function screenFaults(root: string): string[] {
   if (!surface.includes("IOSMetrics.margin(")) faults.push("IOSSurface n'emploie pas IOSMetrics");
   if (!chip.includes("status.tone.tint")) faults.push("IOSStatusChip n'emploie pas les tons");
 
-  // L'état d'erreur est porté par les sept (S-3).
+  // L'état d'erreur est porté par les huit (S-3).
   if (!content.includes("state.banner") || !content.includes("state.bannerMessage")) {
     faults.push("IOSSectionContent ne porte pas le bandeau de l'état");
   }
@@ -219,7 +220,7 @@ function screenFaults(root: string): string[] {
   return faults;
 }
 
-/** Les noms des captures produites (S-6, AC-6) : 56 écrans + 12 graphe + 12 nouvelle feature + 8 fiche de carte. */
+/** Les noms des captures produites (S-6, AC-6) : 64 écrans + 12 graphe + 12 nouvelle feature + 8 fiche de carte. */
 function expectedShotNames(): string[] {
   const names: string[] = [];
   for (const appearance of APPEARANCES) {
@@ -273,7 +274,7 @@ function shotsFaults(root: string): string[] {
     "sips",
     "pixelWidth",
     "pixelHeight",
-    "56",
+    "64",
     "accessibility-extra-extra-extra-large",
     "large",
     "appearance",
@@ -447,7 +448,7 @@ function macOSFaults(root: string): string[] {
 // ---------------------------------------------------------------------------
 // Les tests, un par critère.
 
-test("design-ios/AC-1 : les sept écrans portent le kit (surfaces, pastille, métriques)", () => {
+test("design-ios/AC-1 : les huit écrans portent le kit (surfaces, pastille, métriques)", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = copyRepo("design-ios-copie-");
@@ -456,7 +457,7 @@ test("design-ios/AC-1 : les sept écrans portent le kit (surfaces, pastille, mé
   assert.ok(screenFaults(copy).some((f) => f.includes("iosPanel()")), "une surface retirée doit faire rougir la garde");
 });
 
-test("design-ios/AC-2 : aucun composant orphelin — les sept sections rendent le bandeau d'erreur", () => {
+test("design-ios/AC-2 : aucun composant orphelin — les huit sections rendent le bandeau d'erreur", () => {
   assert.deepEqual(screenFaults(ROOT), [], "l'arbre réel doit être sain");
 
   const copy = copyRepo("design-ios-copie-");
@@ -495,7 +496,7 @@ test("design-ios/AC-5 : aucun libellé alphabétique en dur hors du vocabulaire"
 test("design-ios/AC-6 : le script produit les captures et n'en committe aucune", () => {
   assert.deepEqual(shotsFaults(ROOT), [], "l'arbre réel doit être sain");
   assert.deepEqual(orientationFaults(ROOT), [], "l'arbre réel doit être sain");
-  assert.equal(expectedShotNames().length, 88, "la matrice attendue fait 88 noms");
+  assert.equal(expectedShotNames().length, 96, "la matrice attendue fait 96 noms");
 
   const copy = copyRepo("design-ios-copie-");
   const target = path.join(copy, "scripts", "recette", "ios-shots.sh");

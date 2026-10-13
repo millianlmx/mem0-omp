@@ -35,23 +35,23 @@ marqueur `[test: <fonction>]` (une fonction de
   `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Sessions, Mémoire,
   « Plus » — et chaque onglet ouvre son écran directement, sans bouton retour.
   `[test: compactTabsAreFourSectionsThenPlus]`
-- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Session OMP
-  et Statistiques ; leur bouton retour ramène à la liste.
-  `[test: plusListsTheThreeOtherSections]`
+- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Audit,
+  Session OMP et Statistiques ; leur bouton retour ramène à la liste.
+  `[test: plusListsTheFourOtherSections]`
 - Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
-  avec les groupes Pilotage (Accueil, Pipelines, Projet, Session OMP) puis
+  avec les groupes Pilotage (Accueil, Pipelines, Projet, Audit, Session OMP) puis
   Consultation (Sessions, Mémoire, Statistiques) ; la barre d'onglets du haut
   n'apparaît que lorsqu'on masque la barre latérale. `[test: groupedSections]`
 - Chaque onglet garde son état (écran poussé, position de défilement) quand on
   change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
-  Projet, Session OMP et Statistiques sous « Plus », et inversement.
+  Projet, Audit, Session OMP et Statistiques sous « Plus », et inversement.
   `[test: sizeClassChangeMovesBetweenPlusAndSidebar]`
-- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Session OMP et
-  Statistiques s'ouvrent déjà poussés dans « Plus ».
+- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Audit, Session
+  OMP et Statistiques s'ouvrent déjà poussés dans « Plus ».
   `[test: launchRoutesEachSectionOnIPhone]`
 - Le bouton Connexion (antenne, `connection.open`) figure une seule fois dans la
   barre de chaque écran : les quatre onglets, la liste « Plus », les écrans
-  qu'elle pousse et les sept sections de l'iPad. `[capture: iphone-*-light]`
+  qu'elle pousse et les huit sections de l'iPad. `[capture: iphone-*-light]`
 
 ## Surfaces (S-1)
 
@@ -90,7 +90,7 @@ marqueur `[test: <fonction>]` (une fonction de
   son défilement vertical et horizontal ; le mode Graphe de la Mémoire, hors de
   tout défilement, garde les gestes de son canevas. `[capture: iphone-kanban-light]`
 - Un bandeau est une surface de CONTENU : teinte du ton à 12 % d'opacité, rayon
-  12, jamais un fond rouge plein écran. `[test: errorStateBannersAllSeven]`
+  12, jamais un fond rouge plein écran. `[test: errorStateBannersAllEight]`
 - La pastille porte l'identifiant d'accessibilité `ios.status` et combine ses
   enfants (le mot se lit, la couleur le double). `[garde: design-ios/AC-2]`
 - Aucune couleur hors `ConsoleTone` : pas de teinte maison, pas de thème
@@ -136,11 +136,11 @@ marqueur `[test: <fonction>]` (une fonction de
 - Aucun contrôle maison : ni `Button`, ni `onTapGesture` dans les sources de
   l'app — les seules cibles sont les lignes de `List` et la barre de navigation
   du système. `[garde: design-ios/AC-8]`
-- Clavier de l'iPad : ⌘1…⌘7 ouvrent les sections dans l'ordre affiché par la
-  barre latérale (Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire,
-  Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
+- Clavier de l'iPad : ⌘1…⌘8 ouvrent les sections dans l'ordre affiché par la
+  barre latérale (Accueil, Pipelines, Projet, Audit, Session OMP, Sessions,
+  Mémoire, Statistiques), ⌘R rafraîchit l'écran courant, ⌘N bascule sur Pipelines et
   ouvre « Nouvelle feature… », ⌘F active la recherche de l'écran qui en a une.
-  Les dix commandes vivent dans la barre des menus de l'iPad (menus
+  Les onze commandes vivent dans la barre des menus de l'iPad (menus
   Présentation et Fichier) avec leur libellé français, toutes avec ⌘ seul :
   ⎋ et ↩ restent aux feuilles. Sous une feuille, une alerte ou un
   `confirmationDialog`, elles sont sans effet. `[test: keyboardShortcutsFollowTheSidebar]`
@@ -214,8 +214,8 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   les icônes de `ConsoleSection`. `[test: titlesAndIconsComeFromConsoleCore]`
 - La section Session OMP porte la pastille de l'état partagé « Aucun projet »
   (`ConsoleStatus`, ton `neutral`). `[test: sessionCarriesSharedStatus]`
-- En état d'erreur, les SEPT sections portent le bandeau `danger` avec le
-  message provisoire de `IOSText`. `[test: errorStateBannersAllSeven]`
+- En état d'erreur, les HUIT sections portent le bandeau `danger` avec le
+  message provisoire de `IOSText`. `[test: errorStateBannersAllEight]`
 - L'état d'erreur vient d'un chemin RÉEL : le crochet de recette
   `-ios.state error` — jamais une capture fabriquée. `[garde: design-ios/AC-4]`
 - Un repli silencieux (section inconnue ⇒ Accueil, sans message) reste
@@ -227,7 +227,7 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
 ## États de connexion (feature `etats-non-connecte-heterogenes-ios`)
 
 - Un seul composant, `IOSConnectionStateView` (Design/), dit l'état de connexion
-  dans les sept sections ; ses mots vivent dans `IOSConnectionStateText` et ses
+  dans les huit sections ; ses mots vivent dans `IOSConnectionStateText` et ses
   identifiants, tous préfixés `ios.connexion.`, dans
   `IOSConnectionStateAccessibility`. `[test: connectionIdentifiersAreUniqueAndPrefixed]`
 - Le statut présenté est une fonction pure de l'état du client

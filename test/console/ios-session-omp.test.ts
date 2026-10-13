@@ -14,6 +14,10 @@
 //  - AC-1/AC-7/AC-13 (`RemoteSessionRouteTests.swift`), AC-14
 //    (`IOSSessionOmpRecipeTests.swift`, gated) ;
 //  - AC-1/AC-2/AC-3/AC-6/AC-9/AC-10/AC-11/AC-12/AC-13 (`IOSSessionOmpTests.swift`).
+//
+// Il porte aussi la garde des quatre routes d'audit (slug
+// `audit-panel-in-omp-console-remote`) ; leurs preuves de comportement vivent dans
+// `RemoteAuditRoutesTests.swift`.
 import test from "node:test";
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -173,6 +177,47 @@ test("ios-session-omp/AC-1 : les quatre routes existent des deux côtés, la sec
   assert.ok(
     routeFaults(replant).some((f) => f.includes(".session")),
     "un mauvais aiguillage de section doit faire rougir la garde",
+  );
+});
+
+/**
+ * Les quatre routes d'audit (audit-panel-in-omp-console S-7) existent des deux
+ * côtés — le routeur porte `:id`, le catalogue `{id}` — et le client porte leurs
+ * quatre méthodes. Même patron que `routeFaults` ci-dessus.
+ */
+function auditRouteFaults(root: string): string[] {
+  const faults: string[] = [];
+  const router = code(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteRouter.swift"));
+  const catalog = code(path.join(root, "omp-console", "Sources", "ConsoleClient", "ClientRoute.swift"));
+  const pairs = [
+    ['"POST", "v1/audits", "audit.start"', 'name: "audit.start", method: "POST", path: "/v1/audits"'],
+    ['"POST", "v1/audits/:id/launch", "audit.launch"', 'name: "audit.launch", method: "POST", path: "/v1/audits/{id}/launch"'],
+    ['"POST", "v1/audits/:id/escalations", "audit.answer"', 'name: "audit.answer", method: "POST", path: "/v1/audits/{id}/escalations"'],
+    ['"DELETE", "v1/audits/:id", "audit.stop"', 'name: "audit.stop", method: "DELETE", path: "/v1/audits/{id}"'],
+  ];
+  for (const [served, mirrored] of pairs) {
+    if (!router.includes(served)) faults.push(`RemoteRouter.routes ne porte pas ${served}`);
+    if (!catalog.includes(mirrored)) faults.push(`ClientRoute.all ne porte pas ${mirrored}`);
+  }
+  for (const name of ["audit.start", "audit.launch", "audit.answer", "audit.stop"]) {
+    if (!router.includes(`case "${name}":`)) faults.push(`RemoteRouter.run ne traite pas ${name}`);
+  }
+  const model = code(path.join(root, "omp-console", "Sources", "ConsoleClient", "ConsoleClientModel.swift"));
+  for (const name of ["startAudit", "launchAudit", "answerAuditEscalation", "stopAudit"]) {
+    if (!model.includes(`public func ${name}(`)) faults.push(`ConsoleClientModel ne porte pas ${name}`);
+  }
+  return faults;
+}
+
+test("audit-panel-in-omp-console-remote/AC-8 : les quatre routes d'audit existent des deux côtés et le client porte leurs méthodes", () => {
+  assert.deepEqual(auditRouteFaults(ROOT), [], "l'arbre réel doit être sain");
+
+  const copy = copyRepo("ios-session-omp-audit-");
+  const catalog = path.join(copy, "omp-console", "Sources", "ConsoleClient", "ClientRoute.swift");
+  fs.writeFileSync(catalog, fs.readFileSync(catalog, "utf8").replace('path: "/v1/audits/{id}/escalations"', 'path: "/v1/audits/{id}/answer"'));
+  assert.ok(
+    auditRouteFaults(copy).some((f) => f.includes("audit.answer")),
+    "une route d'audit absente du catalogue doit faire rougir la garde",
   );
 });
 

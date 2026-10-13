@@ -188,7 +188,7 @@ function shotsFaults(root: string): string[] {
   if (!script.includes("nouvelle_feature_recipes=(vide choisi rempli)")) faults.push("les trois recettes vide/choisi/rempli ne sont pas listées");
   if (!script.includes("-pipelines.recipe")) faults.push("le passage ne lance pas le crochet -pipelines.recipe");
   if (!script.includes("nouvelle-feature-$recipe")) faults.push("les captures ne portent pas le nom nouvelle-feature-<recette>");
-  if (!script.includes('"112"')) faults.push("le total contrôlé n'est pas 112");
+  if (!script.includes('"132"')) faults.push("le total contrôlé n'est pas 132");
   if (!/shoot_nouvelle_feature iphone /.test(script)) faults.push("le passage n'est pas appelé pour iPhone");
   if (!/shoot_nouvelle_feature ipad /.test(script)) faults.push("le passage n'est pas appelé pour iPad");
   const recipe = code(root, "omp-console/ios/OMPConsoleIOS/IOSPipelinesRecipe.swift");

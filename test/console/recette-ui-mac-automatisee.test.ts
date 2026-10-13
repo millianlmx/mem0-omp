@@ -308,11 +308,11 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
   assert.deepEqual([...datesIso, ...datesMs].filter((d) => d > limite), [], "date à moins de 2 h du début");
 });
 
-test("recette-ui-mac-automatisee/AC-3 : 9 sections et 14 feuilles, toutes capturées et relevées, sont couvertes ; un relevé retiré rend sa surface « capture ou relevé manquant »", () => {
-  assert.equal(CATALOGUE.filter((s) => s.type === "section").length, 9);
+test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes capturées et relevées, sont couvertes ; un relevé retiré rend sa surface « capture ou relevé manquant »", () => {
+  assert.equal(CATALOGUE.filter((s) => s.type === "section").length, 10);
   assert.equal(CATALOGUE.filter((s) => s.type === "feuille").length, 14);
-  assert.equal(new Set(CATALOGUE.map((s) => s.id)).size, 23, "ids uniques");
-  assert.equal(new Set(CATALOGUE.map((s) => s.marqueur)).size, 23, "marqueurs uniques");
+  assert.equal(new Set(CATALOGUE.map((s) => s.id)).size, 24, "ids uniques");
+  assert.equal(new Set(CATALOGUE.map((s) => s.marqueur)).size, 24, "marqueurs uniques");
 
   // La CLI de la sonde lit le catalogue en JSON.
   const catalogue = spawnSync(process.execPath, ["--experimental-strip-types", CLI, "catalogue"], { encoding: "utf8" });
@@ -329,7 +329,7 @@ test("recette-ui-mac-automatisee/AC-3 : 9 sections et 14 feuilles, toutes captur
   const rapportMd = path.join(sortie, "rapport.md");
   assert.equal(
     complet.stdout.trimEnd().split("\n").at(-1),
-    `✓ recette Mac : vert — 23 surfaces couvertes, 0 signalement(s) excepté(s). Rapport : ${rapportMd}`,
+    `✓ recette Mac : vert — 24 surfaces couvertes, 0 signalement(s) excepté(s). Rapport : ${rapportMd}`,
   );
   const vert = JSON.parse(fs.readFileSync(path.join(sortie, "rapport.json"), "utf8"));
   assert.equal(vert.verdict, "vert");
@@ -471,14 +471,14 @@ test("recette-ui-mac-automatisee/AC-6 : une surface que le parcours n'a pas ouve
       { id: "memoire-lien", raison: "absente du parcours" },
     ],
   );
-  assert.equal(rapport.surfaces.length, 23, "une surface hors catalogue est ignorée");
+  assert.equal(rapport.surfaces.length, 24, "une surface hors catalogue est ignorée");
 
   const md = rendreRapportMd(rapport);
   assert.ok(md.includes("| modeles | feuille | non couverte | marqueur models.sheet absent après 20 s | — | — |"));
   assert.ok(md.includes("| memoire-lien | feuille | non couverte | absente du parcours | — | — |"));
   assert.match(ligneVerdict(rapport, "r.md"), /0 signalement\(s\) non excepté\(s\), 3 surface\(s\) non couverte\(s\),/);
 
-  // Sans parcours du tout : les 23 surfaces sont non couvertes, l'isolation n'est pas prouvée.
+  // Sans parcours du tout : les 24 surfaces sont non couvertes, l'isolation n'est pas prouvée.
   const vide = analyser({ ...passage(), parcours: null });
   assert.equal(vide.verdict, "defauts");
   assert.ok(vide.surfaces.every((s) => s.statut === "non-couverte" && s.raison === "absente du parcours"));
@@ -585,7 +585,7 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
   const rapport = analyser(passage(remplacer, exceptions));
   assert.equal(rapport.verdict, "vert");
   const json = JSON.parse(serialiserRapportJson(rapport));
-  assert.equal(json.signalements.length, 10);
+  assert.equal(json.signalements.length, 11);
   assert.ok(json.signalements.every((s: { exception: string | null }) => s.exception !== null));
   assert.deepEqual(json.signalements.at(-1), {
     surface: "contrat",
@@ -608,7 +608,7 @@ test("recette-ui-mac-automatisee/AC-8 : chaque signalement excepté figure au ra
   assert.ok(md.includes("| modeles | hors-ecran | id:modeles.absent |"));
   assert.equal(
     ligneVerdict(rapport, "r.md"),
-    "✓ recette Mac : vert — 23 surfaces couvertes, 10 signalement(s) excepté(s). Rapport : r.md",
+    "✓ recette Mac : vert — 24 surfaces couvertes, 11 signalement(s) excepté(s). Rapport : r.md",
   );
 
   // Le fichier LIVRÉ (S-10) : lisible, toutes ses entrées valides, chaque

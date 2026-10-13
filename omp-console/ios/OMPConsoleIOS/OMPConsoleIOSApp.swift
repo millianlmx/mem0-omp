@@ -68,6 +68,7 @@ struct OMPConsoleIOSApp: App {
     private let pipelinesBoardRecipe: IOSPipelinesBoardRecipe?
     private let projectRecipe: IOSProjectRecipe?
     private let sessionOmpRecipe: IOSSessionOmpRecipe?
+    private let auditRecipe: IOSAuditRecipe?
     private let requestedSection: Bool
 
     init() {
@@ -84,6 +85,7 @@ struct OMPConsoleIOSApp: App {
         pipelinesBoardRecipe = IOSPipelinesBoardRecipe.resolve(arguments)
         projectRecipe = IOSProjectRecipe.resolve(arguments)
         sessionOmpRecipe = IOSSessionOmpRecipe.resolve(arguments)
+        auditRecipe = IOSAuditRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
     }
 
@@ -102,6 +104,7 @@ struct OMPConsoleIOSApp: App {
                 pipelinesBoardRecipe: pipelinesBoardRecipe,
                 projectRecipe: projectRecipe,
                 sessionOmpRecipe: sessionOmpRecipe,
+                auditRecipe: auditRecipe,
                 autoPresentConnection: !requestedSection
             )
         }

@@ -8,6 +8,7 @@
 //
 // Module SANS `Bun` ni `@oh-my-pi` : le routeur est du web standard
 // (`Request`/`Response`), testable sous `node --test` comme sous Bun.
+import type { AuditLaunchOutcome } from "./auditRecord.ts";
 import type { PipelineCommand, PipelineCommandAck } from "./commands.ts";
 
 
@@ -106,6 +107,24 @@ export type SessionSubscription = {
 export type CommandOutcome = { command: PipelineCommand; ack: PipelineCommandAck };
 
 
+// --- audits de l'app (S-1 à S-4) --------------------------------------------
+
+/** `POST /v1/audits`, corps `{repo, orientation}` : l'audit naît en analyse. */
+export type AuditStartBody = { repo: string; orientation: string };
+export type AuditStartResult = { id: string; status: "analysing" };
+
+/** `POST /v1/audits/{id}/launch`, corps `{selected, brief}` : une issue par slug sélectionné. */
+export type AuditLaunchBody = { selected: string[]; brief: string };
+export type AuditLaunchResult = { launches: AuditLaunchOutcome[] };
+
+/** `POST /v1/audits/{id}/escalations` : une réponse (`ask`, `question`) ou une décision (`specs`, `review`). */
+export type AuditAnswerBody = { slug: string; key: string; answer?: string; decision?: "approve" | "abandon" };
+export type AuditAnswerResult = { accepted: true };
+
+/** `DELETE /v1/audits/{id}` : les features annulées, gardées (livrées) et refusées. */
+export type AuditStopResult = { cancelled: string[]; kept: string[]; refused: Array<{ slug: string; reason: string }> };
+
+
 // --- la surface que le routeur appelle (S-2 à S-9) --------------------------
 //
 // Chaque méthode rend sa charge utile ou lève une `ServiceError`. `repo` arrive
@@ -129,4 +148,12 @@ export type ServiceApi = {
   stopConduite: (repo: string) => Promise<void>;
   /** `null` : session inconnue (404) ; l'abonnement ne ferme jamais la session. */
   subscribeSession: (id: string) => SessionSubscription | null;
+  /** Démarre un audit de l'app (S-1). */
+  startAudit: (body: unknown) => Promise<AuditStartResult>;
+  /** Lance les propositions cochées d'un audit, brief validé (S-2). */
+  launchAudit: (id: string, body: unknown) => Promise<AuditLaunchResult>;
+  /** Répond à une escalade d'une feature de l'audit (S-3). */
+  answerAudit: (id: string, body: unknown) => Promise<AuditAnswerResult>;
+  /** Arrête un audit : ses features non livrées sont annulées (S-4). */
+  stopAudit: (id: string) => Promise<AuditStopResult>;
 };

@@ -10,7 +10,7 @@
     {
       "surface": "*",
       "regle": "cible-trop-petite",
-      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[6]/AXCell[0]/AXGroup[0]/AXHeading[0]",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[7]/AXCell[0]/AXGroup[0]/AXHeading[0]",
       "justification": "faux positif : en-tête de section de la barre latérale système (« Pilotage », « Consultation ») ; sa hauteur de 14 pt et son action AXPress (replier la section) sont fixées par AppKit, pas par l'app"
     },
     {
@@ -112,7 +112,7 @@
     {
       "surface": "fichiers",
       "regle": "cible-trop-petite",
-      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[6]/AXCell[0]/AXGroup[0]/AXHeading[0]",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXOutline[0]/AXRow[7]/AXCell[0]/AXGroup[0]/AXHeading[0]",
       "justification": "faux positif : en-tête de groupe (dossier) de l'arbre des fichiers, une ligne d'en-tête de NSOutlineView dont la hauteur de 16 pt est fixée par AppKit"
     },
     {

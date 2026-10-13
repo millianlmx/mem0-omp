@@ -3,6 +3,7 @@
 //
 // Aucun réseau : le transport scripté rend les réponses décidées.
 
+import ConsoleCore
 import Foundation
 import Testing
 @testable import OMPConsole
@@ -186,4 +187,81 @@ func clientMapsStopping() async throws {
     await #expect(throws: ServiceClientError.stopping) {
         _ = try await scriptedClient(transport).health()
     }
+}
+
+// MARK: - Audits (audit-panel-in-omp-console S-1 … S-4)
+
+private let auditId = "0123456789abcdef"
+
+@MainActor
+@Test("audit-panel-in-omp-console : POST /v1/audits porte le dépôt et l’orientation dans le corps, jamais dans le chemin")
+func clientStartsAudit() async throws {
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("POST", "/v1/audits", ["id": auditId, "status": "analysing"])
+    let started = try await scriptedClient(transport).startAudit(repoRoot: "/tmp/mon dépôt/app", orientation: "accessibilité VoiceOver")
+    #expect(started == ServiceAuditStarted(id: auditId, status: .analysing))
+    let request = try #require(transport.requests.first)
+    #expect(request.method == "POST")
+    #expect(request.path == "/v1/audits")
+    #expect(request.body?["repo"] as? String == "/tmp/mon dépôt/app")
+    #expect(request.body?["orientation"] as? String == "accessibilité VoiceOver")
+    #expect(request.body?.count == 2)
+}
+
+@MainActor
+@Test("audit-panel-in-omp-console : POST /v1/audits/{id}/launch envoie les seuls slugs cochés et le brief exact, et rend chaque issue")
+func clientLaunchesAudit() async throws {
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("POST", "/v1/audits/\(auditId)/launch", ["launches": [
+        ["slug": "b", "launched": true, "reason": NSNull(), "state": "pending", "phase": "req", "prUrl": NSNull()],
+        ["slug": "a", "launched": false, "reason": "dépend de c, non lancée", "state": NSNull(), "phase": NSNull(), "prUrl": NSNull()],
+    ]])
+    let brief = "# Brief — audit app\n\n## But\nx\n"
+    let launches = try await scriptedClient(transport).launchAudit(id: auditId, selected: ["a", "b"], brief: brief)
+    #expect(launches == [
+        AuditLaunchOutcome(slug: "b", launched: true, reason: nil, state: .pending, phase: .req, prUrl: nil),
+        AuditLaunchOutcome(slug: "a", launched: false, reason: "dépend de c, non lancée", state: nil, phase: nil, prUrl: nil),
+    ])
+    let request = try #require(transport.requests.first)
+    #expect(request.method == "POST")
+    #expect(request.path == "/v1/audits/\(auditId)/launch")
+    #expect(request.body?["selected"] as? [String] == ["a", "b"])
+    #expect(request.body?["brief"] as? String == brief)
+    #expect(request.body?.count == 2)
+}
+
+@MainActor
+@Test("audit-panel-in-omp-console : POST /v1/audits/{id}/escalations envoie la clé et la réponse, et un 409 garde le motif du service")
+func clientAnswersAuditEscalation() async throws {
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("POST", "/v1/audits/\(auditId)/escalations", ["accepted": true])
+    let client = scriptedClient(transport)
+    try await client.answerAuditEscalation(id: auditId, body: ServiceAuditAnswer(slug: "reprise", key: "question:reprise:12", answer: "Oui", decision: nil))
+    try await client.answerAuditEscalation(id: auditId, body: ServiceAuditAnswer(slug: "reprise", key: "specs:reprise:13", answer: nil, decision: .approve))
+    let requests = transport.requests
+    #expect(requests.map(\.method) == ["POST", "POST"])
+    #expect(requests.map(\.path) == ["/v1/audits/\(auditId)/escalations", "/v1/audits/\(auditId)/escalations"])
+    #expect(requests[0].body as? [String: String] == ["slug": "reprise", "key": "question:reprise:12", "answer": "Oui"])
+    #expect(requests[1].body as? [String: String] == ["slug": "reprise", "key": "specs:reprise:13", "decision": "approve"])
+
+    let refused = ScriptedServiceTransport()
+    refused.stubStatus("POST", "/escalations", status: 409, json: ["error": "conflict", "reason": "question déjà répondue ou périmée"])
+    await #expect(throws: ServiceClientError.conflict(reason: "question déjà répondue ou périmée")) {
+        try await scriptedClient(refused).answerAuditEscalation(id: auditId, body: ServiceAuditAnswer(slug: "reprise", key: "question:reprise:12", answer: "Oui", decision: nil))
+    }
+}
+
+@MainActor
+@Test("audit-panel-in-omp-console : DELETE /v1/audits/{id} rend les features annulées, gardées et refusées")
+func clientStopsAudit() async throws {
+    let transport = ScriptedServiceTransport()
+    transport.stubJSON("DELETE", "/v1/audits/\(auditId)", [
+        "cancelled": ["a", "b"], "kept": ["c"], "refused": [["slug": "d", "reason": "déjà close"]],
+    ])
+    let outcome = try await scriptedClient(transport).stopAudit(id: auditId)
+    #expect(outcome == ServiceAuditStopOutcome(cancelled: ["a", "b"], kept: ["c"], refused: [ServiceAuditStopRefusal(slug: "d", reason: "déjà close")]))
+    let request = try #require(transport.requests.first)
+    #expect(request.method == "DELETE")
+    #expect(request.path == "/v1/audits/\(auditId)")
+    #expect(request.body == nil)
 }

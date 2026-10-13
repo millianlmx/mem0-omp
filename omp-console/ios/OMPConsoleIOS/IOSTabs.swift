@@ -1,6 +1,6 @@
 import ConsoleCore
 
-/// La valeur de sélection de la barre d'onglets / barre latérale : une des sept
+/// La valeur de sélection de la barre d'onglets / barre latérale : une des huit
 /// sections, ou l'onglet « Plus » de l'iPhone.
 enum IOSTab: Hashable {
     case section(ConsoleSection)
@@ -15,11 +15,11 @@ struct IOSTabRoute: Equatable {
 
 /// Le routage pur entre onglets et sections de la coque iOS : sans état, sans
 /// UIKit, dérivé de `IOSSection`. L'iPhone (largeur compacte) montre quatre
-/// sections puis « Plus », qui pousse les trois autres ; l'iPad (largeur
-/// régulière) montre les sept sections dans la barre latérale, sans « Plus ».
+/// sections puis « Plus », qui pousse les quatre autres ; l'iPad (largeur
+/// régulière) montre les huit sections dans la barre latérale, sans « Plus ».
 enum IOSTabs {
     /// Les sections que l'iPhone range sous « Plus », dans l'ordre de la liste.
-    static let plusSections: [ConsoleSection] = [.project, .session, .stats]
+    static let plusSections: [ConsoleSection] = [.project, .audit, .session, .stats]
 
     /// La barre d'onglets de l'iPhone, dans l'ordre affiché : les sections de la
     /// barre latérale hors « Plus », puis « Plus ».

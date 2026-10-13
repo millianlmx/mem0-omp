@@ -53,6 +53,8 @@ struct IOSSectionContent: Equatable {
             return content(message: KanbanText.noPipeline, detail: nil)
         case .project:
             return content(message: ProjectViewText.emptyTitle, detail: ProjectViewText.emptyHelp)
+        case .audit:
+            return content(message: AuditText.emptyTitle, detail: AuditText.emptyHelp)
         case .session:
             return content(
                 message: SessionConsoleText.noProjectTitle,

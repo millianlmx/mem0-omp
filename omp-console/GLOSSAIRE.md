@@ -16,6 +16,10 @@ Ces termes s’écrivent tels quels, avec cette casse.
 | `specs` | terme métier OMP | « Valider les specs » |
 | `/impl` | terme métier OMP | « Modèle /impl et /review » |
 | `/review` | terme métier OMP | « Modèle /impl et /review » |
+| `audit` | terme métier OMP | « Lancer un audit… » |
+| `brief` | terme métier OMP | « Brief de l’audit » |
+| `arbitre` | terme métier OMP | « Décisions de l’arbitre » |
+| `escalade` | terme métier OMP | « Une escalade attend la réponse de l’utilisateur » |
 | `Given` | syntaxe des critères OMP | « Given un contrat long » |
 | `When` | syntaxe des critères OMP | « When la feuille s’ouvre » |
 | `Then` | syntaxe des critères OMP | « Then le nom se lit en entier dans la feuille. » |

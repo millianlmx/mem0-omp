@@ -1,10 +1,10 @@
 # omp-console — la coque de la salle de contrôle
 
 `omp-console/` est le paquet SwiftPM de l'application macOS de la salle de
-contrôle : **une seule fenêtre**, une barre latérale à neuf sections en deux
-groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Session OMP**,
-**Terminal**) et **Consultation** (**Sessions**, **Fichiers**, **Mémoire**,
-**Statistiques**), raccourcis ⌘1…⌘9 — et un panneau de détail. Rien n'ouvre de
+contrôle : **une seule fenêtre**, une barre latérale à dix sections en deux
+groupes — **Pilotage** (**Accueil**, **Pipelines**, **Projet**, **Audit**,
+**Session OMP**, **Terminal**) et **Consultation** (**Sessions**, **Fichiers**,
+**Mémoire**, **Statistiques**), raccourcis ⌘1…⌘9 puis ⌘0 pour la dixième — et un panneau de détail. Rien n'ouvre de
 fenêtre annexe : l'app est utilisable entièrement en plein écran (une session
 ouverte depuis **Sessions** est poussée dans la section, avec un bouton retour).
 Les fenêtres ne se regroupent pas en onglets : Présentation et Fenêtre n'ont
@@ -192,6 +192,7 @@ sessions et les conducteurs ; la commande part à l'API par
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer OMP » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
 | Projet | la pilule d'état de la session (`projet.sessionStatus`), « Arrêter le pilotage » (`projet.close`, inactif hors démarrage et pilotage actif), « Détails techniques » (`projet.details`), seulement pendant un pilotage |
+| Audit | « Lancer un audit… » (`audit.start`) |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau ou l'état « Aucune donnée » est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
@@ -334,8 +335,8 @@ Trois pièges mesurés sur Swift 6.4 CLT seuls expliquent cette ligne :
 
 ### Recette : interface Mac automatisée
 
-`bash scripts/recette/mac-recette-ui.sh` (sans argument) ouvre une à une les **23
-surfaces** de l'app — les 9 sections de la barre latérale, puis 14 feuilles
+`bash scripts/recette/mac-recette-ui.sh` (sans argument) ouvre une à une les **24
+surfaces** de l'app — les 10 sections de la barre latérale, puis 14 feuilles
 (bienvenue, préparation, nouvelle pipeline, réponse, contrat, fiche de
 carte, modèles, lancement et question de projet, question de session, ouverture
 du Terminal, création, édition et lien d'un souvenir) — **à la taille minimale de
@@ -362,7 +363,7 @@ Codes de sortie, la dernière ligne de stdout portant le verdict :
 
 | code | issue | dernière ligne |
 |---|---|---|
-| 0 | vert | `✓ recette Mac : vert — 23 surfaces couvertes, <e> signalement(s) excepté(s). Rapport : …` |
+| 0 | vert | `✓ recette Mac : vert — 24 surfaces couvertes, <e> signalement(s) excepté(s). Rapport : …` |
 | 1 | défauts trouvés | `✗ recette Mac : défauts trouvés — <s> signalement(s) non excepté(s), <n> surface(s) non couverte(s), <i> exception(s) invalide(s)[, isolation rompue]. Rapport : …` |
 | 2 | non exécutable | `· recette Mac non exécutable : <raison>` (macOS absent, sonde non compilée, écran refusé, recette déjà en cours, app non construite, jeu fictif non démarré, interruption) |
 
@@ -435,10 +436,11 @@ sa capture et son relevé, puis le corriger ou ajouter son entrée justifiée.
 ## Lire le magasin d'état
 
 `Sources/OMPConsole/Store/` est la **couche de lecture** du magasin d'état partagé
-(`~/.omp/agent/pipeline/`, ou `MEM0_PIPELINE_STATE_DIR`) : les six répertoires
-`running`, `history`, `lots`, `projects`, `inbox` et `audit` sont rendus en
-modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
-(`omp-mem0-req/store.ts`, `lot.ts`, `project.ts`).
+(`~/.omp/agent/pipeline/`, ou `MEM0_PIPELINE_STATE_DIR`) : les huit répertoires
+`running`, `history`, `lots`, `projects`, `inbox`, `audit`, `audits` et `journal`
+sont rendus en modèles Swift typés, en parité avec le lecteur TypeScript de
+`omp-mem0-req` (`omp-mem0-req/store.ts`, `lot.ts`, `project.ts`,
+`auditRecord.ts`, `context.ts`).
 
 - `StoreReader` lit une racine et une horloge injectables ; une entrée au schéma
   incomplet est **écartée et nommée** (`discardedEntries` : le fichier
@@ -448,8 +450,17 @@ modèles Swift typés, en parité avec le lecteur TypeScript de `omp-mem0-req`
   disponibilité de la **racine** elle-même.
 - `StoreWatcher` veille un store par **notification du système de fichiers**
   (source vnode sur le répertoire, jamais de scrutation) et pousse un instantané
-  typé à ses abonnés (`AsyncStream`, multicast) ; `StoreHub` agrège les six en un
+  typé à ses abonnés (`AsyncStream`, multicast) ; `StoreHub` les agrège en un
   flux global. L'émission n'a lieu que si l'instantané a changé.
+- `audits/` (un `<id>.json` par audit lancé depuis la section Audit) et
+  `journal/` (un `<repoKey>.jsonl` par dépôt) forment UNE enveloppe,
+  `StoreSnapshot.audits` : les audits, puis les décisions de l'arbitre prises
+  dans le contexte d'un audit (`context` = sa clé, source contexte ou
+  arbitrage). Une ligne ajoutée à un journal existant ne réveille pas la veille
+  de son répertoire : `StoreHub` relit donc l'enveloppe aussi à chaque écriture
+  de `lots/`, que toute décision de l'arbitre suit. `ConsoleCore/Audit/` en
+  dérive l'ardoise partagée Mac et iPhone (`AuditBoard.of`), sur la fixture
+  `AuditParity`.
 - La couche est un **lecteur** : aucune API d'écriture n'est appelée, jamais — un
   propriétaire mort est marqué (`isStale`), ni retiré ni déplacé vers `history/`.
 
@@ -1536,7 +1547,7 @@ bascule — ni ré-appairage, ni changement de jeton ou de configuration (même 
 
 ## Piloter le service
 
-La section **Session OMP** (⌘4, ou Fichier ▸ « Nouvelle session OMP » ⌥⌘N) ne
+La section **Session OMP** (⌘5, ou Fichier ▸ « Nouvelle session OMP » ⌥⌘N) ne
 lance **aucun** process `omp` : elle est **cliente** d'une API REST locale servie
 par le service. Elle pilote **une seule** session à la fois (le modèle est à
 instance unique et refuse un second lancement).
@@ -1606,7 +1617,7 @@ feuille « OMP est requis » n'existe plus (la préparation la remplace). Le bou
 
 ## Section Terminal (terminal intégré)
 
-La section **Terminal** (⌘5) héberge **un seul programme** dans un vrai PTY (le
+La section **Terminal** (⌘6) héberge **un seul programme** dans un vrai PTY (le
 modèle est à instance unique : jamais un second programme). Fermer la fenêtre
 principale tue le shell. Le programme hébergé est
 le **shell de connexion** de l'utilisateur (`$SHELL -l` s'il désigne un exécutable
@@ -1883,9 +1894,66 @@ l'horodatage du passage au segment suivant.
 7. Mettre la fenêtre en arrière-plan : un dialogue en attente doit lever une
    demande d'attention (icône de l'app dans le Dock qui rebondit).
 
+## Section Audit (pilotage)
+
+La section **Audit** (⌘4, juste après **Projet**) lance et suit les audits du
+service : une analyse d'un dépôt selon une orientation libre, des propositions à
+cocher, puis des pipelines lancées et suivies jusqu'à leur PR. À gauche, la liste
+des audits (`audit.row.<id>` : nom du dépôt, orientation sur deux lignes au plus,
+statut, badge du nombre de questions en attente) ; à droite, le détail de l'audit
+sélectionné. La barre d'outils porte « Lancer un audit… » (`audit.start`).
+
+1. **Vide** — sans audit, la section affiche « Aucun audit. » et « Lancez un audit
+   pour analyser un dépôt selon l’orientation de votre choix. », avec le bouton
+   « Lancer un audit… ».
+2. **Lancer** — la feuille « Lancer un audit » propose le dépôt (prérempli par le
+   projet ouvert, `ProjectRoot.resolve`, et « Choisir… » par `NSOpenPanel`) et
+   l'orientation (`TextEditor`). « Lancer l’audit » n'est actif que si le dossier
+   contient `.git` et si l'orientation, rognée, compte de 1 à 2 000 caractères. L'app
+   poste `POST /v1/audits {repo, orientation}` ; au succès, l'audit créé est
+   sélectionné et son en-tête montre l'orientation saisie. Pendant l'analyse, le
+   détail affiche « Analyse en cours… ».
+3. **Cocher** — un audit `proposed` montre une case par proposition, sous
+   « Faiblesses » et « Features proposées » (`audit.proposal.<slug>`), avec le
+   compteur des cases cochées. Une proposition déjà prise par une pipeline a sa
+   case désactivée (« Déjà dans le lot des pipelines »). Les cases vivent en
+   mémoire de l'app, par audit : rien n'est envoyé au simple clic.
+4. **Relire le brief** — « Relire le brief… » (actif dès qu'une case est cochée)
+   ouvre la feuille « Brief de l’audit » : le brief proposé par l'analyse,
+   éditable. Une rubrique manquante est signalée dans la feuille, avant tout
+   envoi. « Valider et lancer » poste les propositions cochées et le texte du brief
+   (`POST /v1/audits/{id}/launch`) ; « Annuler », Échap ou la fermeture de la
+   feuille ne postent rien.
+5. **Suivre** — un audit lancé (ou arrêté) montre « Avancement » : une rangée par
+   feature (slug, phase, attente, bouton « Ouvrir la PR » quand la PR existe), et
+   les propositions non lancées avec leur motif.
+6. **Répondre** — « Questions en attente » liste les escalades que l'arbitre n'a
+   pas tranchées : « <slug> · <phase> », la question, le motif de l'arbitre, puis
+   un bouton par option, un champ « Autre réponse » et « Répondre » — ou, pour un
+   jalon de specs ou de revue, ses deux boutons. Une réponse acceptée retire
+   l'escalade au relevé suivant ; une question déjà répondue affiche « Cette
+   question a déjà reçu une réponse. ».
+7. **Décisions de l’arbitre** — une rangée par décision (feature, phase, question,
+   réponse, et « Déjà tranchée » ou « Tranchée par l’arbitre »), la plus récente en
+   tête ; « Aucune décision pour l’instant. » sinon.
+8. **Arrêter** — « Arrêter l’audit… » demande confirmation (« Arrêter cet audit ? »)
+   puis poste `DELETE /v1/audits/{id}` : les pipelines non livrées de cet audit sont
+   annulées, leurs dossiers et branches conservés, les PR déjà créées restent
+   ouvertes, les autres audits ne sont pas touchés. Le bouton disparaît pour un
+   audit arrêté.
+
+Chaque échec (démarrage, lancement, réponse, arrêt, analyse) s'affiche en bandeau
+lisible dans le détail, avec « Copier le diagnostic » ; service arrêté, la section
+affiche « service arrêté » et « Réessayer », comme **Projet**, et la lecture du
+magasin reste affichée.
+
+**Survie** : quitter l'app n'appelle aucune route d'audit. Les audits vivent dans
+le service ; à la réouverture, la section relit le magasin — audits, escalades (y
+compris celles posées pendant l'absence) et décisions.
+
 ## Section Statistiques
 
-Une section **en lecture seule** (⌘9),
+Une section **en lecture seule** (⌘0),
 qui compte ce que les runs d'un projet ont consommé : tokens d'entrée et de sortie,
 durée murale (attente d'une réponse utilisateur comprise) et nombre de tours (un
 tour = un cycle complet prompt → réponse finale), par run puis agrégés par feature
@@ -2465,6 +2533,20 @@ un flux temps réel.
   ouverture du flux et sur `refreshPullRequestStates()` ; il publie la trame dans
   `pullRequestStates` et en dérive `board` (`prFacts`). Un Mac plus ancien répond
   404 : les cartes restent « PR créée ».
+- **Audits** : quatre routes servent depuis l'iPhone les gestes de la section Audit du
+  Mac, par le MÊME modèle (`AuditConsoleModel`) — les requêtes envoyées au service OMP
+  sont donc celles du Mac. `POST /v1/audits` `{repoKey, orientation}` rend `{id}` ; la
+  clé est celle de `GET /v1/repos` (`404` « dépôt inconnu » sinon), le client ne
+  calcule jamais de chemin. `POST /v1/audits/{id}/launch` `{selected, brief}` rend
+  `{launches:[{slug, launched, reason, state, phase, prUrl}]}`.
+  `POST /v1/audits/{id}/escalations` `{slug, key, answer?, decision?}` (`decision` =
+  `approve` ou `abandon` pour un jalon) rend `202 {"accepted":true}`.
+  `DELETE /v1/audits/{id}` rend `{cancelled, kept, refused:[{slug, reason}]}`. Un
+  identifiant hors forme (16 hexadécimaux) est un `404` « audit inconnu » sans appel
+  au service ; les refus du service se recopient (`400`, `404`, `409`, dont « question
+  déjà répondue ou périmée ») et un service arrêté ou injoignable rend `503`. Aucune
+  route de lecture : audits, escalades et décisions arrivent par la trame `store`.
+  L'API sert ainsi **43 routes**, image exacte de `ClientRoute.all`.
 - **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
   `store`, `conduite`, `devices`, `components`, `journal`, `pull-request-states`,
   `sessions` et `hosted`, avec un battement de cœur toutes les 15 secondes. À
@@ -2587,8 +2669,8 @@ omp-console/
 ├── Sources/OMPConsole/
 │   ├── OMPConsoleApp.swift        point d'entrée (@main), scènes et menu
 │   ├── ConsoleRootView.swift      fenêtre, barre latérale groupée, barre d'outils, feuille unique
-│   ├── SectionViews.swift         les neuf vues de section (Sessions : liste + visionneuse poussée)
-│   ├── ConsoleSection.swift       les neuf sections, leurs libellés et leurs groupes
+│   ├── SectionViews.swift         les dix vues de section (Sessions : liste + visionneuse poussée)
+│   ├── ConsoleSection.swift       les dix sections, leurs libellés et leurs groupes
 │   ├── ConsoleModel.swift         l'état : la section courante, la session ouverte dans Sessions
 │   ├── ProjectRoot.swift          le projet ouvert, résolu en UN endroit (clé partagée)
 │   ├── SessionConsoleView.swift   section « Session OMP » : conversation, composeur, inspecteur
@@ -2683,8 +2765,9 @@ omp-console/
 │   │   ├── ProjectConsoleView.swift la fenêtre (en-tête d'informations, barre d'outils, PR, plan, document, conversation, feuille, inspecteur)
 │   │   ├── ProjectView.swift      la section « Projet » (même surface)
 │   │   └── ProjectLaunchSheet.swift la feuille « Piloter un projet… »
+│   ├── Audit/                     la section « Audit » (liste, détail, feuilles de lancement et du brief, escalades, décisions)
 │   ├── Store/                     la couche de lecture du magasin d'état
-│   │   ├── PipelineStore.swift    racine du magasin et noms des six stores
+│   │   ├── PipelineStore.swift    racine du magasin et noms des huit stores
 │   │   ├── StoreModels.swift      modèles typés et validation champ par champ
 │   │   ├── StoreSnapshot.swift    enveloppes d'un instantané
 │   │   ├── StoreReader.swift      balayage, filtrage, entrées écartées nommées
@@ -2810,17 +2893,17 @@ absence en échec.
 ## Coque iOS
 
 `omp-console/ios/OMPConsoleIOS.xcodeproj` est l'app iOS de la salle de contrôle :
-sept sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
+huit sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
 sont hors périmètre), une seule barre d'onglets native (`TabView`, style
 `.sidebarAdaptable`) — sur iPhone, cinq onglets en bas (Accueil, Pipelines,
 Sessions, Mémoire, « Plus »), « Plus » étant une liste titrée qui pousse Projet,
-Session OMP et Statistiques dans sa propre pile ; sur iPad, une barre latérale
+Audit, Session OMP et Statistiques dans sa propre pile ; sur iPad, une barre latérale
 titrée « OMP Console », visible dès le lancement, à deux groupes (Pilotage :
-Accueil, Pipelines, Projet, Session OMP ; Consultation : Sessions, Mémoire,
+Accueil, Pipelines, Projet, Audit, Session OMP ; Consultation : Sessions, Mémoire,
 Statistiques), la barre d'onglets du haut n'apparaissant que lorsqu'on masque la
 barre latérale — et, pour chaque section, son écran avec son état vide RÉEL.
 Chaque onglet garde sa pile et sa position de défilement quand on en change ;
-passer en largeur compacte (iPad en Split View) range Projet, Session OMP et
+passer en largeur compacte (iPad en Split View) range Projet, Audit, Session OMP et
 Statistiques sous « Plus », et inversement. Le routage onglet ↔ section est pur
 (`IOSTabs.swift`, testé par `IOSTabsTests`). Elle n'a ni magasin local, ni
 écriture du magasin : son seul accès
@@ -2845,7 +2928,7 @@ naviguent par l'ancienne liste racine (`ios.section.*`) et ne s'appliquent plus 
 la coque à onglets : celle-ci se prouve par `scripts/recette/ios-navigation-onglets-recette.sh`
 (voir plus bas).
 
-Hors connexion, les sept sections suivent la même règle, sur iPhone comme sur
+Hors connexion, les huit sections suivent la même règle, sur iPhone comme sur
 iPad. Rien encore chargé : la section n'affiche QUE le composant « non connecté »
 — « Pas de connexion au Mac », une phrase de cause (non appairé, appairage refusé
 ou révoqué, Mac injoignable, ou l'app à mettre à jour) et « Se connecter », qui
@@ -3449,18 +3532,18 @@ Mac par `bash scripts/app-icon.sh` (voir « Assembler le bundle `.app` »), jama
 à la main dans Xcode. Le même catalogue porte l'`AccentColor`, égale au bleu
 système. Les règles d'identité de l'app sont dans `omp-console/ios/DESIGN.md`.
 
-### Captures des sept écrans
+### Captures des huit écrans
 
 ```bash
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer ./scripts/recette/ios-shots.sh
 ```
 
 Le script démarre un simulateur iPhone et un iPad, installe l'app, puis l'ouvre
-sur chacune des sept sections par son argument de lancement et capture l'écran :
-**56 PNG** dans `omp-console/build/ios-shots/` (dossier ignoré par git — les
-images sont des artefacts de PR, jamais committées) — sept écrans × {iPhone
+sur chacune des huit sections par son argument de lancement et capture l'écran :
+**64 PNG** dans `omp-console/build/ios-shots/` (dossier ignoré par git — les
+images sont des artefacts de PR, jamais committées) — huit écrans × {iPhone
 portrait, iPad portrait} × {clair, sombre} à taille de texte par défaut, plus
-sept écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffixe
+huit écrans × {iPhone, iPad} × {clair, sombre} en Dynamic Type maximum (suffixe
 `-ax`). Un SECOND groupe capture l'**Accueil** (feature `ios-accueil`) : ses cinq
 états de recette (`dashboard`, `degraded`, `firstRun`, `loading`, `ompMissing`) et
 ses feuilles « Répondre » et « Contrat » via `-home.recipe`, plus la feuille
@@ -3483,9 +3566,9 @@ carte Pipelines** (feature `ios-fiche-carte-pipelines`) via `-pipelines.recipe
 <fiche|actions|arret>` : la vraie feuille ouverte sur une carte de fixture dérivée
 de `HomeParity`, sans réseau — iPhone clair × {taille par défaut, AX-XL, maximum}
 × {`fiche`, `actions`}, la confirmation d'arrêt (`arret`) à la taille par défaut,
-et la fiche sur iPad = **8 PNG** `*-pipelines-fiche*.png`. Le script contrôle 124
-captures avant ce groupe (56 + 32 + 12 + 12 + 12), refuse un groupe de fiche qui
-n'en compte pas 8 et annonce le total réellement produit (**132**). Chaque capture
+et la fiche sur iPad = **8 PNG** `*-pipelines-fiche*.png`. Le script contrôle 132
+captures avant ce groupe (64 + 32 + 12 + 12 + 12), refuse un groupe de fiche qui
+n'en compte pas 8 et annonce le total réellement produit (**140**). Chaque capture
 est sondée en dimensions (`sips -g pixelWidth -g pixelHeight`) : toutes PORTRAIT —
 une capture inattendue ferait échouer le script.
 
@@ -3499,7 +3582,7 @@ d'accessibilité et `rapport.txt` dans
 `omp-console/build/contrat-ios-markdown-brut/<avant|apres>/` (ignoré par git).
 Codes de sortie : 0 relevé écrit (en mode `apres`, toutes les lignes `ok`), 1
 app absente, appareil en échec ou, en mode `apres`, un critère en `échec`, 2 non
-exécuté (idb ou runtime absent). Elle n'entre pas dans le compte des 112 captures.
+exécuté (idb ou runtime absent). Elle n'entre pas dans le compte des 140 captures.
 
 Il n'y a AUCUNE ligne « iPad paysage », pour une raison mesurée le 2026-10-06 sur
 le poste de référence : `simctl` n'a aucune sous-commande de rotation,
@@ -3893,7 +3976,7 @@ du texte ; seul le cadre AX (AC-1, AC-5, AC-6) prouve la taille de la cible. La 
 textuelle de la correction est `test/console/ios-cibles-tactiles-sous-44pt.test.ts`.
 ### Recette idb : cibles, identifiants et bords
 
-`scripts/recette/ios-recette-ui.sh` relève 8 surfaces de l'app iOS sur un simulateur
+`scripts/recette/ios-recette-ui.sh` relève 9 surfaces de l'app iOS sur un simulateur
 iPhone dédié et signale trois classes de défauts sur chaque relevé : une cible
 tactile de moins de 44 pt, un identifiant d'accessibilité porté par plusieurs
 éléments, un élément collé au bord de l'écran. Elle se lance à la main : ni CI,
@@ -3911,8 +3994,8 @@ xcrun simctl create recette-ui-tel com.apple.CoreSimulator.SimDeviceType.iPhone-
 bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…
 ```
 
-**Matrice.** 8 surfaces × 3 configurations = **24 relevés** : les sept sections
-(`home`, `kanban`, `project`, `session`, `sessions`, `memory`, `stats`) plus la
+**Matrice.** 9 surfaces × 3 configurations = **27 relevés** : les huit sections
+(`home`, `kanban`, `project`, `audit` (via `-audit.recipe liste`), `session`, `sessions`, `memory`, `stats`) plus la
 feuille d'une carte Pipelines (`kanban-fiche`), en clair à la taille par défaut,
 en sombre à la taille par défaut, puis en clair en AX-XL (`accessibility-extra-large`).
 Les écrans sont alimentés par les crochets de recette existants (`-home.recipe
@@ -3927,7 +4010,7 @@ décodé, `traits` pris comme un ensemble.
 
 **Sortie.** `omp-console/build/ios-recette-ui/base/` (ignoré par git, vidé à chaque
 passage) : `<surface>-<apparence>-<taille>.json` (arbre AX) et `.png` (capture sans
-masque de coins) pour chacun des 24 relevés, `logs/` (journaux `--stderr` de l'app,
+masque de coins) pour chacun des 27 relevés, `logs/` (journaux `--stderr` de l'app,
 construction) et `rapport.txt`. L'app et le simulateur sont remis à l'état par
 défaut à la sortie (apparence claire, taille `large`) ; le simulateur reste allumé.
 
@@ -3947,7 +4030,7 @@ désignation d'un élément est `id:<AXUniqueId>`, sinon `libellé:<AXLabel>`, s
 chemin du rapport, `<N> signalé(s), <M> excepté(s)` et un avertissement `exception
 inutilisée : <n>` par entrée qui n'excepte rien.
 
-**Codes de sortie.** `0` : 24 relevés faits et aucun `SIGNALÉ` ; `1` : au moins un
+**Codes de sortie.** `0` : 27 relevés faits et aucun `SIGNALÉ` ; `1` : au moins un
 `SIGNALÉ` ; `2` : la recette n'a pas pu conclure (prérequis, exceptions invalides,
 relevé non vérifié, construction ou installation impossible).
 
@@ -4202,6 +4285,27 @@ et se lance par :
 MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
 ```
 
+### Auditer depuis l’iPhone
+
+La section **Audit** (dans « Plus » sur iPhone, juste après Projet) liste les
+audits et pousse le détail de celui qu’on touche. « Lancer un audit… » ouvre une
+feuille : un dépôt parmi les dépôts connus du Mac, une orientation sur plusieurs
+lignes ; « Lancer l’audit » n’est actif que si l’orientation rognée fait de 1 à
+2 000 caractères.
+
+Le détail montre les propositions en rangées-boutons cochables (« Cochée » ou
+« Non cochée » pour VoiceOver) ; une proposition déjà dans le lot est désactivée.
+« Relire le brief… » ouvre l’éditeur du brief : « Valider et lancer » poste la
+sélection et le brief, « Annuler » n’envoie rien. Suivent l’avancement (phase,
+attente, « Ouvrir la PR »), les questions en attente — options, « Autre réponse »
+et « Répondre », ou « Valider les specs » / « Accepter la revue et livrer (PR) »
+et « Abandonner la feature » —, les décisions de l’arbitre et « Arrêter
+l’audit… », qui demande confirmation.
+
+Hors ligne, le contenu reçu reste visible et les gestes sont coupés. Une réponse
+donnée sur le Mac disparaît de l’iPhone à la trame `store` suivante. Capture :
+`-section audit -audit.recipe liste|propositions|suivi`.
+
 ### Lire la mémoire du projet depuis l'iPhone
 
 La section **Mémoire** de l'app affiche le sommaire du projet OUVERT côté Mac — les
@@ -4390,21 +4494,21 @@ MEM0_REMOTE_RECIPE=1 swift test --filter iosStatistiquesRecipe
 
 ### Clavier de l'iPad
 
-Avec un clavier matériel, l'app pose dix commandes dans la **barre des menus de
+Avec un clavier matériel, l'app pose onze commandes dans la **barre des menus de
 l'iPad** (Globe-M, ou glissement depuis le haut ; depuis iPadOS 26 elle remplace
 la superposition qu'on obtenait en maintenant ⌘). Chaque commande y affiche son
 libellé français et son raccourci :
 
 | Raccourci | Commande | Menu | Effet |
 |---|---|---|---|
-| ⌘1 … ⌘7 | Accueil, Pipelines, Projet, Session OMP, Sessions, Mémoire, Statistiques | Présentation | ouvre la section, dans l'ordre affiché par la barre latérale |
+| ⌘1 … ⌘8 | Accueil, Pipelines, Projet, Audit, Session OMP, Sessions, Mémoire, Statistiques | Présentation | ouvre la section, dans l'ordre affiché par la barre latérale |
 | ⌘R | Actualiser | Présentation | relit les données de l'écran courant, sans changer de section (sur Pipelines : la même relecture que le tirage de la liste, l'ardoise puis l'état des PR ; sur la Mémoire : la liste ou le graphe affiché) |
 | ⌘F | Rechercher | Présentation | met le focus dans le champ de recherche (Mémoire en mode Liste) ; inactive ailleurs |
 | ⌘N | Nouvelle feature… | Fichier | bascule sur Pipelines et ouvre la feuille « Nouvelle feature » (comme le bouton « + », rien ne s'ouvre hors connexion) |
 
 ⌘R est inactif hors connexion et pendant une lecture en cours. ⌘N remplace
 « Nouvelle fenêtre » : l'app garde une seule fenêtre. Sous une feuille, une
-alerte ou un `confirmationDialog`, les dix commandes sont sans effet ; ⎋ et ↩
+alerte ou un `confirmationDialog`, les onze commandes sont sans effet ; ⎋ et ↩
 des feuilles (Annuler, valider) restent inchangés, aucune commande ne les prend.
 
 ### Recette : clavier et largeur de lecture
@@ -4419,15 +4523,15 @@ IOS_RECETTE_IPAD=<UDID iPad> IOS_RECETTE_IPHONE=<UDID iPhone> \
   bash scripts/recette/ios-clavier-largeur-recette.sh --phase avant|apres [--source fixture|reel]
 ```
 
-- `--phase avant`, sur l'arbre d'avant la feature, capture et mesure les sept
+- `--phase avant`, sur l'arbre d'avant la feature, capture et mesure les huit
   écrans iPad et les six écrans iPhone (`mesures.json`) ; `--phase apres` vérifie
   la largeur (≤ 700 pt et marges égales sur iPad, Pipelines pleine largeur,
-  iPhone identique à l'avant) puis ⌘1…⌘7, ⌘R (un signal `memoire-recipe-read`
+  iPhone identique à l'avant) puis ⌘1…⌘8, ⌘R (un signal `memoire-recipe-read`
   de plus sous `-memoire.recipe clavier`), ⌘N et la garde sous la feuille, ⌘F
   (champ `IsEditing`, frappe reçue) et ⌘F sans effet sur Sessions et sur le mode
   Graphe.
 - `--source reel` ajoute `IOS_RECETTE_IPAD_APPAIRE` (un iPad appairé au Mac) :
-  ⌘R sur les sept écrans connectés et ⎋ sur la feuille « Lancer une session
+  ⌘R sur les huit écrans connectés et ⎋ sur la feuille « Lancer une session
   OMP ».
 - Sortie : `omp-console/build/ipad-clavier-et-largeur-de-lecture/<phase>/<source>/`
   (PNG, arbre AX JSON de chaque capture, `rapport.txt` à une ligne

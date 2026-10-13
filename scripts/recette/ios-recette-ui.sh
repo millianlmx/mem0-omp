@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Recette idb de la coque iOS (ios-recette-ui-automatisee-idb) : relève 8 surfaces
+# Recette idb de la coque iOS (ios-recette-ui-automatisee-idb) : relève 9 surfaces
 # dans 3 configurations sur un simulateur iPhone DÉDIÉ, puis signale trois classes
 # de défauts (cible tactile < 44 pt, identifiant d'accessibilité dupliqué, élément
 # collé au bord de l'écran) et rend un verdict.
@@ -19,12 +19,12 @@
 #                 supprimé à la sortie ; rien n'est poussé ni créé). Un conflit .md
 #                 garde la version déjà intégrée ; tout autre conflit sort en 2.
 #
-# Matrice : 8 surfaces (7 sections + la feuille d'une carte Pipelines) × 3
-# configurations (clair/défaut, sombre/défaut, clair/AX-XL) = 24 relevés, dans
+# Matrice : 9 surfaces (8 sections + la feuille d'une carte Pipelines) × 3
+# configurations (clair/défaut, sombre/défaut, clair/AX-XL) = 27 relevés, dans
 # omp-console/build/ios-recette-ui/<base|integration>/ (ignoré par git, vidé au
-# début du passage) : 24 arbres AX (JSON d'idb), 24 captures PNG, logs/ et
+# début du passage) : 27 arbres AX (JSON d'idb), 27 captures PNG, logs/ et
 # rapport.txt. Les écrans sont alimentés par les crochets de recette de l'app
-# (-home.recipe, -sessions.recipe, -memoire.recipe, -pipelines.recipe), sans
+# (-home.recipe, -audit.recipe, -sessions.recipe, -memoire.recipe, -pipelines.recipe), sans
 # appairage ; Projet, Session OMP, Statistiques et le tableau Pipelines sont
 # relevés dans leur état non appairé. Un relevé n'est accepté que quand deux
 # lectures consécutives de l'arbre sont identiques ET que le marqueur de la
@@ -34,7 +34,7 @@
 # L'analyse est celle de scripts/recette/ios-recette-ui-analyse.py ; le code de sortie de
 # la recette est le sien.
 #
-# Codes de sortie : 0 les 24 relevés faits et aucun signalement hors exceptions,
+# Codes de sortie : 0 les 27 relevés faits et aucun signalement hors exceptions,
 # 1 au moins un signalement (voir rapport.txt), 2 la recette n'a pas pu conclure
 # (prérequis, exceptions invalides, relevé non vérifié, construction ou
 # installation impossible).
@@ -50,9 +50,9 @@ BUNDLE_ID="com.omp.console.ios"
 ANALYSE="$ROOT/scripts/recette/ios-recette-ui-analyse.py"
 USAGE='usage : bash scripts/recette/ios-recette-ui.sh --sim <UDID> [--exceptions <fichier.json>] [--integrer <branche>]…'
 
-# Les 8 surfaces, dans l'ordre de l'analyseur : clé, section (rawValue de
+# Les 9 surfaces, dans l'ordre de l'analyseur : clé, section (rawValue de
 # `-section`), arguments de recette en plus, signal attendu sur la sortie d'erreur.
-surface_keys=(home kanban project session sessions memory stats kanban-fiche)
+surface_keys=(home kanban project audit session sessions memory stats kanban-fiche)
 
 surface_section() {
   case "$1" in
@@ -66,6 +66,7 @@ surface_section() {
 surface_recipe_args() {
   case "$1" in
     home) printf '%s\n' -home.recipe dashboard ;;
+    audit) printf '%s\n' -audit.recipe liste ;;
     sessions) printf '%s\n' -sessions.recipe liste ;;
     memory) printf '%s\n' -memoire.recipe graphe ;;
     kanban-fiche) printf '%s\n' -pipelines.recipe fiche ;;

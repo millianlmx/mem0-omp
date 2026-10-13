@@ -3,16 +3,17 @@ import Testing
 
 @testable import OMPConsoleIOS
 
-/// Les preuves Swift des sept écrans de la coque iOS (S-2, S-3, BR-3) : chaque
+/// Les preuves Swift des huit écrans de la coque iOS (S-2, S-3, BR-3) : chaque
 /// état vide rend le mot PARTAGÉ de `ConsoleCore`, mot pour mot celui de la coque
-/// macOS, et l'état d'erreur pose un bandeau `danger` sur les sept.
-@Suite("design-ios — les sept écrans et leurs états")
+/// macOS, et l'état d'erreur pose un bandeau `danger` sur les huit.
+@Suite("design-ios — les huit écrans et leurs états")
 struct IOSSectionContentTests {
     /// Le tableau de S-2, section par section.
     private static let expected: [(section: ConsoleSection, message: String, detail: String?)] = [
         (.home, HomeText.firstRunTitle, HomeText.firstRunBody),
         (.kanban, KanbanText.noPipeline, nil),
         (.project, ProjectViewText.emptyTitle, ProjectViewText.emptyHelp),
+        (.audit, AuditText.emptyTitle, AuditText.emptyHelp),
         (.session, SessionConsoleText.noProjectTitle, SessionConsoleText.noProjectBody),
         (.sessions, SessionSelectorText.emptyTitle, SessionSelectorText.noRun),
         (.memory, MemoryText.noProjectTitle, nil),
@@ -35,6 +36,7 @@ struct IOSSectionContentTests {
         #expect(HomeText.firstRunTitle == "Lancez votre première feature")
         #expect(KanbanText.noPipeline == "Aucune pipeline pour l’instant.")
         #expect(ProjectViewText.emptyTitle == "Aucun projet piloté.")
+        #expect(AuditText.emptyTitle == "Aucun audit.")
         #expect(SessionConsoleText.noProjectTitle == "Aucune session")
         #expect(SessionSelectorText.emptyTitle == "Aucune session")
         #expect(SessionSelectorText.noRun == "Les sessions des pipelines apparaîtront ici.")
@@ -65,8 +67,8 @@ struct IOSSectionContentTests {
         }
     }
 
-    @Test("design-ios/AC-4 : les sept sections rendent le bandeau danger en état d'erreur")
-    func errorStateBannersAllSeven() {
+    @Test("design-ios/AC-4 : les huit sections rendent le bandeau danger en état d'erreur")
+    func errorStateBannersAllEight() {
         for section in IOSSection.all {
             let content = IOSSectionContent.of(section, state: .error(IOSText.recipeError))
             #expect(content?.banner == ConsoleStatus(text: IOSText.recipeError, tone: .danger), "\(section.rawValue)")

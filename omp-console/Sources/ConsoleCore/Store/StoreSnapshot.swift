@@ -135,13 +135,41 @@ public struct AuditEnvelope: Sendable, Equatable, Codable {
     }
 }
 
+/// `audits/` et `journal/` (audit-panel-in-omp-console S-5) : les audits lancés
+/// depuis la section Audit, fichiers triés par nom, et les décisions de l'arbitre
+/// prises dans leur contexte (`context` = la clé d'un audit, `source` contexte ou
+/// arbitrage), dans l'ordre d'écriture du journal de chaque dépôt.
+///
+/// `availability` est celle de `audits/` : sans audit, il n'y a aucune décision
+/// d'audit à lire. Une ligne de journal illisible est ignorée sans être comptée
+/// (parité `journalFor`, context.ts:300-318) ; seul un audit illisible est écarté.
+public struct AuditsEnvelope: Sendable, Equatable, Codable {
+    public var availability: StoreAvailability
+    public var records: [AuditRecord]
+    public var decisions: [AuditDecision]
+    public var discardedEntries: [DiscardedEntry]
+
+    public var discarded: Int { discardedEntries.count }
+
+    public init(availability: StoreAvailability, records: [AuditRecord], decisions: [AuditDecision], discardedEntries: [DiscardedEntry]) {
+        self.availability = availability
+        self.records = records
+        self.decisions = decisions
+        self.discardedEntries = discardedEntries
+    }
+
+    /// L'enveloppe d'un magasin sans `audits/` — aussi celle d'un instantané
+    /// transporté par un Mac antérieur à la section Audit.
+    public static let absent = AuditsEnvelope(availability: .absent, records: [], decisions: [], discardedEntries: [])
+}
+
 /// L'instantané complet du magasin, celui que pousse le flux global (S-9). C'est
 /// lui qui est comparé avant émission : un instantané identique n'émet rien.
 ///
 /// `root` porte la disponibilité de la RACINE `<stateDir>` elle-même (S-11) :
 /// `.absent` quand le répertoire n'existe pas ou n'est pas un répertoire. Elle est
-/// distincte de la disponibilité des six stores — un magasin jamais écrit a une
-/// racine présente et six répertoires absents (ou vides), et le tableau doit dire
+/// distincte de la disponibilité des stores — un magasin jamais écrit a une
+/// racine présente et des répertoires absents (ou vides), et le tableau doit dire
 /// « vide », pas « absent ».
 public struct StoreSnapshot: Sendable, Equatable, Codable {
     public var root: StoreAvailability
@@ -151,8 +179,9 @@ public struct StoreSnapshot: Sendable, Equatable, Codable {
     public var projects: ProjectEnvelope
     public var inbox: InboxEnvelope
     public var audit: AuditEnvelope
+    public var audits: AuditsEnvelope
 
-    public init(root: StoreAvailability, running: RunningEnvelope, history: HistoryEnvelope, lots: LotEnvelope, projects: ProjectEnvelope, inbox: InboxEnvelope, audit: AuditEnvelope) {
+    public init(root: StoreAvailability, running: RunningEnvelope, history: HistoryEnvelope, lots: LotEnvelope, projects: ProjectEnvelope, inbox: InboxEnvelope, audit: AuditEnvelope, audits: AuditsEnvelope = .absent) {
         self.root = root
         self.running = running
         self.history = history
@@ -160,5 +189,25 @@ public struct StoreSnapshot: Sendable, Equatable, Codable {
         self.projects = projects
         self.inbox = inbox
         self.audit = audit
+        self.audits = audits
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case root, running, history, lots, projects, inbox, audit, audits
+    }
+
+    /// `audits` est FACULTATIF au décodage : la trame `store` d'un Mac antérieur à
+    /// la section Audit (et les fixtures JSON qui la précèdent) se lit avec une
+    /// enveloppe absente au lieu de faire échouer l'instantané entier.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        root = try container.decode(StoreAvailability.self, forKey: .root)
+        running = try container.decode(RunningEnvelope.self, forKey: .running)
+        history = try container.decode(HistoryEnvelope.self, forKey: .history)
+        lots = try container.decode(LotEnvelope.self, forKey: .lots)
+        projects = try container.decode(ProjectEnvelope.self, forKey: .projects)
+        inbox = try container.decode(InboxEnvelope.self, forKey: .inbox)
+        audit = try container.decode(AuditEnvelope.self, forKey: .audit)
+        audits = try container.decodeIfPresent(AuditsEnvelope.self, forKey: .audits) ?? .absent
     }
 }

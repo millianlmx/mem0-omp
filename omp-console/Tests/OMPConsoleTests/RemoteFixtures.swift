@@ -96,6 +96,7 @@ struct RemoteStack {
         projectModel: ProjectConsoleModel? = nil,
         actionsModel: ActionsModel? = nil,
         sessionModel: SessionConsoleModel? = nil,
+        auditModel: AuditConsoleModel? = nil,
         components: @escaping @MainActor () -> RemoteComponentsPayload = {
             RemoteComponentsPayload(ompInstalled: true, ompPath: nil, setupBanner: nil)
         },
@@ -161,6 +162,13 @@ struct RemoteStack {
             actions: actions,
             session: session,
             project: project,
+            // Hermétique par défaut : sans modèle fourni, aucun geste d'audit ne
+            // joint le service du poste (il est « arrêté »).
+            audit: auditModel ?? AuditConsoleModel(
+                stateDir: dir,
+                snapshots: { AsyncStream { $0.finish() } },
+                makeClient: { throw ServiceClientError.unavailable }
+            ),
             hub: hub,
             environment: [:],
             clock: clock.clock
