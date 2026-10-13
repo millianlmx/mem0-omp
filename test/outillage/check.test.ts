@@ -24,6 +24,7 @@ import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
+import { SONDE_ACTIONSDATA, SWIFT_CONST_VALUES_SNIPPET, writeXcodeDoubles } from "../support/swift-app-doubles.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 
@@ -500,7 +501,9 @@ test("socle-app-swift/AC-5 : sur macOS la section compile, teste et assemble le 
   stub(bin, "uname", "printf 'Darwin\\n'");
   // La doublure swift journalise ses arguments : elle fabrique le binaire factice
   // dans le dossier de build du test, et répond à `--show-bin-path` (interrogé par
-  // le script sur un dossier jetable) par le suffixe rendu par SwiftPM.
+  // le script sur un dossier jetable) par le suffixe rendu par SwiftPM. Avec
+  // `-emit-const-values`, elle écrit aussi les valeurs constantes que lit
+  // l'extraction App Intents (bundle-mac-sans-metadonnees-app-intents, S-2).
   stub(
     bin,
     "swift",
@@ -511,6 +514,7 @@ for a in "$@"; do
   if [ "$prev" = "--scratch-path" ]; then scratch="$a"; fi
   prev="$a"
 done
+${SWIFT_CONST_VALUES_SNIPPET}
 case "$*" in
   *--show-bin-path*)
     printf '%s\\n' "$scratch/out/Products/Release"
@@ -539,6 +543,9 @@ printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
 chmod +x "$target/release/mem0-rs"`,
   );
   stub(bin, "lipo", "printf 'arm64\\n'");
+  // L'outillage Xcode (processeur de métadonnées App Intents, version, SDK) :
+  // doublé, jamais le vrai, pour que la section tourne aussi hors macOS.
+  writeXcodeDoubles(bin);
 
   const copy = copyRepo();
   const run = runCheck(copy, "app-swift", {
@@ -586,4 +593,201 @@ test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes e
   assert.ok(tree !== undefined, "arborescence absente du README");
   assert.ok(tree.includes("omp-console/"), "README : omp-console/ absent de l'arborescence");
   assert.ok(rootReadme.includes("omp-console/README.md"), "README : aucun renvoi vers omp-console/README.md");
+});
+
+// ── bundle-mac-sans-metadonnees-app-intents : contrôle post-assemblage ──────
+//
+// Ces tests exécutent le VRAI scripts/swift-app.sh dans une copie jetable réduite
+// à ce qu'il lit (le script, omp-console/Bundle, omp-console/Sources/OMPConsole),
+// avec des doublures pour chaque outil externe, outillage Xcode compris
+// (test/support/swift-app-doubles.ts). Aucun outil Apple réel n'est requis : ils
+// tournent aussi sous ubuntu (doublure `uname`). Le PATH ne garde que les dossiers
+// système, pour qu'aucun swift, cargo ou xcrun installé ne masque une doublure.
+
+const META_ACTIONS_REL = path.join("Contents", "Resources", "Metadata.appintents", "extract.actionsdata");
+const META_OK =
+  "  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)";
+
+type AssemblageAppIntents = {
+  status: number | null;
+  stderr: string;
+  sortie: string;
+  /** Lignes du journal commun aux doublures, remis à zéro avant chaque lancement. */
+  lignes: string[];
+};
+
+/** Copie réduite + doublures + PATH restreint, comme omp-console-sans-podman/AC-1. */
+function montageAppIntents(): {
+  copie: string;
+  bundle: string;
+  lancer: (args: string[], env?: Record<string, string>) => AssemblageAppIntents;
+  planterAncienBundle: () => void;
+} {
+  const copie = tmpdir("app-intents-copie-");
+  fs.mkdirSync(path.join(copie, "scripts"));
+  fs.copyFileSync(path.join(ROOT, "scripts", "swift-app.sh"), path.join(copie, "scripts", "swift-app.sh"));
+  fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), {
+    recursive: true,
+  });
+
+  const { bin, log } = stubBin("app-intents-outils-");
+  stub(bin, "uname", "printf 'Darwin\\n'");
+  // swift : journalise son argv, écrit les valeurs constantes quand l'argv porte
+  // `-emit-const-values`, et pose un binaire OMPConsole là où le vrai l'écrit.
+  stub(
+    bin,
+    "swift",
+    `printf 'swift %s\\n' "$*" >> '${log}'
+scratch=""
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--scratch-path" ]; then scratch="$a"; fi
+  prev="$a"
+done
+${SWIFT_CONST_VALUES_SNIPPET}
+case "$*" in
+  *--show-bin-path*)
+    printf '%s\\n' "$scratch/out/Products/Release"
+    ;;
+  test*|build*)
+    mkdir -p "$scratch/out/Products/Release"
+    printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
+    chmod +x "$scratch/out/Products/Release/OMPConsole"
+    ;;
+esac`,
+  );
+  stub(
+    bin,
+    "cargo",
+    `target="\${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
+mkdir -p "$target/release"
+printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
+chmod +x "$target/release/mem0-rs"`,
+  );
+  stub(bin, "lipo", "printf 'arm64\\n'");
+  stub(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
+  // codesign : journalise son argv et dit si, AU MOMENT de l'appel, la cible porte
+  // déjà Metadata.appintents (preuve de la recopie avant la signature).
+  stub(
+    bin,
+    "codesign",
+    `cible="\${@: -1}"
+meta=non
+[ -f "$cible/${META_ACTIONS_REL}" ] && meta=oui
+printf 'codesign %s meta=%s\\n' "$*" "$meta" >> '${log}'`,
+  );
+  writeXcodeDoubles(bin);
+
+  const base: NodeJS.ProcessEnv = { ...process.env };
+  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "DEVELOPER_DIR"]) delete base[cle];
+  const bundle = path.join(copie, "omp-console", "build", "OMP Console.app");
+
+  const lancer = (args: string[], env: Record<string, string> = {}): AssemblageAppIntents => {
+    fs.rmSync(log, { force: true });
+    const r = spawnSync("bash", ["scripts/swift-app.sh", ...args], {
+      cwd: copie,
+      encoding: "utf8",
+      env: { ...base, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, ...env },
+      timeout: 120_000,
+    });
+    const lignes = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
+    return { status: r.status, stderr: r.stderr ?? "", sortie: output(r), lignes };
+  };
+
+  const planterAncienBundle = () => {
+    fs.mkdirSync(path.join(bundle, "Contents"), { recursive: true });
+    fs.writeFileSync(path.join(bundle, "Contents", "Info.plist"), "<plist/>\n");
+  };
+
+  return { copie, bundle, lancer, planterAncienBundle };
+}
+
+/** Les lignes `codesign` du journal dont la cible (dernier argument) est le bundle lui-même. */
+const signaturesDuBundle = (lignes: string[], bundle: string): string[] =>
+  lignes.filter((l) => l.startsWith("codesign ") && l.replace(/ meta=(oui|non)$/, "").endsWith(` ${bundle}`));
+
+test("bundle-mac-sans-metadonnees-app-intents/AC-4 : des métadonnées absentes, privées de l'intent sonde ou de son App Shortcut, ou une extraction en échec font sortir l'assemblage en 1 avec la cause nommée, sans bundle", () => {
+  const { bundle, lancer, planterAncienBundle } = montageAppIntents();
+  const scenarios: { mode: string; attendus: string[] }[] = [
+    {
+      mode: "absent",
+      attendus: [
+        "✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)",
+      ],
+    },
+    {
+      mode: "sans-sonde",
+      attendus: ["✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata"],
+    },
+    {
+      mode: "sans-raccourci",
+      attendus: [
+        "✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata",
+      ],
+    },
+    {
+      mode: "echec",
+      attendus: [
+        "✗ extraction des métadonnées App Intents échouée (appintentsmetadataprocessor, code 255)",
+        "Sources/OMPConsole/Intents/OpenConsoleIntent.swift:20: error: Every App Shortcut utterance should contain '${applicationName}'",
+      ],
+    },
+  ];
+
+  for (const { mode, attendus } of scenarios) {
+    // Un bundle d'un assemblage antérieur ne doit pas survivre à l'échec.
+    planterAncienBundle();
+    const r = lancer([], { FAUX_APPINTENTS: mode });
+    assert.equal(r.status, 1, `[${mode}] ${r.sortie}`);
+    for (const attendu of attendus) assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
+    assert.ok(!r.sortie.includes(META_OK), `[${mode}] ✓ des métadonnées affiché malgré l'échec\n${r.sortie}`);
+    assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
+    assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
+  }
+});
+
+test("bundle-mac-sans-metadonnees-app-intents/AC-5 : sans processeur de métadonnées App Intents, l'assemblage complet comme --no-tests échoue en 1 avant toute compilation et retire le bundle", () => {
+  const { bundle, lancer, planterAncienBundle } = montageAppIntents();
+  const e1 =
+    "✗ outillage Xcode introuvable : appintentsmetadataprocessor (xcrun --find appintentsmetadataprocessor) — installe Xcode puis sélectionne-le (sudo xcode-select -s /Applications/Xcode.app/Contents/Developer) ou pose DEVELOPER_DIR";
+
+  for (const args of [[], ["--no-tests"]]) {
+    const voie = args.length === 0 ? "complet" : "--no-tests";
+    planterAncienBundle();
+    const r = lancer(args, { FAUX_XCODE: "absent" });
+    assert.equal(r.status, 1, `[${voie}] ${r.sortie}`);
+    assert.ok(r.stderr.includes(e1), `[${voie}] message E-1 absent\n${r.sortie}`);
+    assert.ok(!fs.existsSync(bundle), `[${voie}] l'ancien bundle a survécu : ${bundle}`);
+    const compilations = r.lignes.filter((l) => l.startsWith("swift test") || l.startsWith("swift build"));
+    assert.deepEqual(compilations, [], `[${voie}] swift a été lancé malgré l'outillage Xcode absent`);
+  }
+});
+
+test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, complet comme --no-tests, Metadata.appintents est recopié dans Contents/Resources avant la signature du bundle", () => {
+  const { copie, bundle, lancer } = montageAppIntents();
+
+  for (const [args, scratch] of [
+    [[], ".build-app"],
+    [["--no-tests"], ".build-run"],
+  ] as const) {
+    const voie = args.length === 0 ? "complet" : "--no-tests";
+    const r = lancer([...args]);
+    assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
+    assert.ok(r.sortie.includes(META_OK), `[${voie}] ligne ✓ des métadonnées absente\n${r.sortie}`);
+
+    const actions = path.join(bundle, META_ACTIONS_REL);
+    assert.ok(fs.existsSync(actions), `[${voie}] ${actions} absent`);
+    assert.equal(fs.readFileSync(actions, "utf8"), SONDE_ACTIONSDATA, `[${voie}] extract.actionsdata n'est pas la copie exacte du processeur`);
+
+    assert.ok(
+      r.lignes.includes(`codesign --force --sign - ${bundle} meta=oui`),
+      `[${voie}] le bundle n'est pas signé APRÈS la recopie : ${r.lignes.join(" | ")}`,
+    );
+    const binaire = `--binary-file ${path.join(copie, "omp-console", scratch, "out", "Products", "Release", "OMPConsole")}`;
+    assert.ok(
+      r.lignes.some((l) => l.startsWith("aimp ") && l.includes("--module-name OMPConsole") && l.includes(binaire)),
+      `[${voie}] processeur non lancé sur le binaire ${scratch} : ${r.lignes.join(" | ")}`,
+    );
+  }
 });

@@ -1,9 +1,11 @@
 // omp-console sans podman (feature omp-console-sans-podman).
 //
 // AC-1 exécute le vrai scripts/swift-app.sh dans une copie jetable réduite à ce
-// qu'il lit (le script, omp-console/Bundle, l'ancienne pile omp-console/stack),
-// avec des doublures sur le PATH pour chaque outil externe (uname, swift,
-// codesign, otool, cargo, lipo) : aucune compilation réelle, le test est
+// qu'il lit (le script, omp-console/Bundle, omp-console/Sources/OMPConsole,
+// l'ancienne pile omp-console/stack), avec des doublures sur le PATH pour chaque
+// outil externe (uname, swift, codesign, otool, cargo, lipo, et l'outillage Xcode
+// de test/support/swift-app-doubles.ts : xcrun, appintentsmetadataprocessor) :
+// aucune compilation réelle, le test est
 // portable. Le PATH ne garde que les dossiers système, pour qu'un cargo installé
 // (Homebrew, rustup) ne masque jamais l'absence voulue de la doublure.
 //
@@ -27,6 +29,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ROOT, tmpdir } from "../support/repo.ts";
+import { SWIFT_CONST_VALUES_SNIPPET, writeXcodeDoubles } from "../support/swift-app-doubles.ts";
 
 function doublure(bin: string, nom: string, corps: string): void {
   const fichier = path.join(bin, nom);
@@ -40,12 +43,14 @@ function arborescence(racine: string): string[] {
 }
 
 test("omp-console-sans-podman/AC-1 : swift-app.sh compile mem0-rs, l'embarque signé en Contents/Resources/mem0-rs (arm64) et n'embarque plus rien de l'ancienne pile", () => {
-  // Copie jetable : ce que swift-app.sh lit, plus l'ancienne pile tant qu'elle
-  // existe — sa présence dans le dépôt ne doit plus rien faire entrer au bundle.
+  // Copie jetable : ce que swift-app.sh lit (le script, le Bundle, les sources de
+  // la coque, listées pour l'extraction App Intents), plus l'ancienne pile tant
+  // qu'elle existe — sa présence dans le dépôt ne doit plus rien faire entrer au bundle.
   const copie = tmpdir("sans-podman-copie-");
   fs.mkdirSync(path.join(copie, "scripts"));
   fs.copyFileSync(path.join(ROOT, "scripts", "swift-app.sh"), path.join(copie, "scripts", "swift-app.sh"));
   fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
+  fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), { recursive: true });
   const anciennePile = path.join(ROOT, "omp-console", "stack");
   if (fs.existsSync(anciennePile)) {
     fs.cpSync(anciennePile, path.join(copie, "omp-console", "stack"), {
@@ -60,7 +65,8 @@ test("omp-console-sans-podman/AC-1 : swift-app.sh compile mem0-rs, l'embarque si
   const journal = path.join(outils, "journal.txt");
 
   doublure(bin, "uname", "printf 'Darwin\\n'");
-  // swift : même doublure que socle-app-swift/AC-5 (test/outillage/check.test.ts).
+  // swift : même doublure que socle-app-swift/AC-5 (test/outillage/check.test.ts),
+  // valeurs constantes comprises quand l'argv porte `-emit-const-values`.
   doublure(
     bin,
     "swift",
@@ -70,6 +76,7 @@ for a in "$@"; do
   if [ "$prev" = "--scratch-path" ]; then scratch="$a"; fi
   prev="$a"
 done
+${SWIFT_CONST_VALUES_SNIPPET}
 case "$*" in
   *--show-bin-path*)
     printf '%s\\n' "$scratch/out/Products/Release"
@@ -95,6 +102,8 @@ printf '#!/usr/bin/env bash\\n# cible=%s\\nexit 0\\n' "$target" > "$target/relea
 chmod +x "$target/release/mem0-rs"`,
   );
   doublure(bin, "lipo", `printf 'lipo %s\\n' "$*" >> '${journal}'\nprintf '%s\\n' "\${FAUSSE_ARCH:-arm64}"`);
+  // Outillage Xcode doublé : processeur App Intents, version d'Xcode, SDK macOS.
+  writeXcodeDoubles(bin);
 
   const environnementDeBase = { ...process.env };
   delete environnementDeBase.CARGO_TARGET_DIR;
