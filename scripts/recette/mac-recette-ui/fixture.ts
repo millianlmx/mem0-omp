@@ -189,8 +189,161 @@ function lot(e: EntreeJeu, cle: string): Record<string, unknown> {
       lotFeature(e, "export", { state: "waiting", phase: "req", waitKind: "answer", waitPrompt: QUESTION_EXPORT, sinceAt: e.debut - 4 * HEURE }),
       lotFeature(e, "tri", { state: "running", phase: "impl", waitKind: null, sinceAt: e.debut - 3 * HEURE }),
       lotFeature(e, "theme", { state: "done", phase: "review", waitKind: null, prUrl: PR_THEME, sinceAt: e.debut - 2 * JOUR, endedAt: e.debut - 26 * HEURE }),
+      featureEscaladee(e),
     ],
   };
+}
+
+// ---------------------------------------------------------------------------
+// Audits (S-14 d'audit-ui-redesign) : les cinq audits d'`AuditParity`
+// (omp-console/Sources/ConsoleCore/Audit/AuditParity.swift), mêmes champs, au
+// format disque que lit `AuditRecord(json:)` (AuditModels.swift : `version: 1`).
+// Leurs dates gardent les écarts de la fixture Swift autour de `debut - 3 h`, sauf
+// l'audit `analysing`, créé 65 s avant `debut` (`AuditParity.snapshot(nowMs:)`).
+// La feature escaladée du lot (`reprise-pipeline`) porte la clé de l'audit lancé :
+// le badge Audit vaut 2 (le `proposed` et le `launched` à question).
+
+const AUDIT_LANCE = "a0d1700000000001";
+const AUDIT_PROPOSE = "a0d1700000000002";
+const AUDIT_ANALYSE = "a0d1700000000003";
+const AUDIT_ARRETE = "a0d1700000000004";
+const AUDIT_ECHOUE = "a0d1700000000005";
+
+/** L'instant `1700000000000 + decalage` d'`AuditParity`, ramené à `debut - 3 h`. */
+const instantAudit = (e: EntreeJeu, decalage: number): number => e.debut - 3 * HEURE + decalage;
+const cleAudit = (e: EntreeJeu, id: string): string => `${e.racine}/magasin/audits/${id}`;
+const QUESTION_REPRISE = "Faut-il reprendre automatiquement une pipeline interrompue ?";
+
+function featureEscaladee(e: EntreeJeu): Record<string, unknown> {
+  return {
+    ...lotFeature(e, "export", { state: "waiting", phase: "req", waitKind: "answer", waitPrompt: QUESTION_REPRISE, sinceAt: instantAudit(e, 1500) }),
+    slug: "reprise-pipeline",
+    name: "reprise-pipeline",
+    branch: "feat/reprise-pipeline",
+    origin: "session",
+    addedAt: instantAudit(e, 1000),
+    updatedAt: instantAudit(e, 5000),
+    auditSession: cleAudit(e, AUDIT_LANCE),
+    escalation: {
+      key: `question:reprise-pipeline:${instantAudit(e, 1500)}`,
+      kind: "question",
+      phase: "req",
+      question: QUESTION_REPRISE,
+      options: ["Oui, automatiquement", "Non, sur demande"],
+      reason: "Le brief ne dit rien de la reprise automatique.",
+      at: instantAudit(e, 5000),
+    },
+  };
+}
+
+type Element = [kind: "weakness" | "feature", slug: string, intention: string, deps: string[]];
+
+function brief(but: string, fonction: string, orientation: string, constats: string[]): string {
+  return `# Brief — audit depot\n\n## But\n${but}\n\n## Fonction\n${fonction}\n\n## Décisions\n- (aucune)\n\n## Contraintes\n- (aucune)\n\n## Non-objectifs\n- (aucune)\n\n## Orientation\n${orientation}\n\n## Constats\n${constats.map((c) => `- ${c}\n`).join("")}`;
+}
+
+function audit(e: EntreeJeu, cle: string, id: string, champs: {
+  orientation: string;
+  status: string;
+  createdAt: number;
+  updatedAt: number;
+  proposition: { elements: Element[]; briefDraft: string } | null;
+  launches?: Array<[slug: string, state: string | null, phase: string | null, prUrl: string | null, reason: string | null]>;
+  failure?: string;
+}): Record<string, unknown> {
+  return {
+    version: 1,
+    id,
+    repoRoot: `${e.racine}/depots/atelier`,
+    repoKey: cle,
+    key: cleAudit(e, id),
+    orientation: champs.orientation,
+    status: champs.status,
+    createdAt: champs.createdAt,
+    updatedAt: champs.updatedAt,
+    proposal: champs.proposition === null ? null : {
+      elements: champs.proposition.elements.map(([kind, slug, intention, deps]) => ({ kind, slug, intention, deps })),
+      briefDraft: champs.proposition.briefDraft,
+    },
+    launches: (champs.launches ?? []).map(([slug, state, phase, prUrl, reason]) => ({ slug, launched: reason === null, reason, state, phase, prUrl })),
+    failure: champs.failure ?? null,
+  };
+}
+
+function audits(e: EntreeJeu, cle: string): Array<[string, Record<string, unknown>]> {
+  return [
+    [AUDIT_LANCE, audit(e, cle, AUDIT_LANCE, {
+      orientation: "fiabilité des pipelines",
+      status: "launched",
+      createdAt: instantAudit(e, 0),
+      updatedAt: instantAudit(e, 5000),
+      proposition: {
+        elements: [
+          ["weakness", "erreurs-perdues", "Les erreurs des pipelines ne laissent aucune trace.", []],
+          ["feature", "journal-erreurs", "Journaliser les erreurs de chaque phase.", []],
+          ["feature", "reprise-pipeline", "Reprendre une pipeline interrompue.", []],
+          ["feature", "rapport-erreurs", "Résumer les erreurs dans la PR.", ["journal-erreurs"]],
+          ["feature", "alerte-quota", "Prévenir avant d’atteindre un quota.", []],
+          ["feature", "tableau-fiabilite", "Tableau de fiabilité par dépôt.", ["alerte-quota"]],
+        ],
+        briefDraft: brief("Fiabiliser les pipelines.", "Journaliser, reprendre et signaler.", "fiabilité des pipelines", ["erreurs-perdues — Les erreurs des pipelines ne laissent aucune trace."]),
+      },
+      launches: [
+        ["journal-erreurs", "running", "impl", null, null],
+        ["reprise-pipeline", "waiting", "req", null, null],
+        ["rapport-erreurs", "done", "release", "https://example.com/pr/7", null],
+        ["alerte-quota", "cancelled", "specs", null, null],
+        ["tableau-fiabilite", null, null, null, "lancement refusé : la feature existe déjà dans le lot"],
+      ],
+    })],
+    [AUDIT_PROPOSE, audit(e, cle, AUDIT_PROPOSE, {
+      orientation: "performances du démarrage",
+      status: "proposed",
+      createdAt: instantAudit(e, 6000),
+      updatedAt: instantAudit(e, 6500),
+      proposition: {
+        elements: [
+          ["weakness", "relecture-complete", "Le démarrage relit tous les fichiers de session.", []],
+          ["weakness", "cache-ignore", "Les erreurs du cache sont ignorées sans trace.", []],
+          ["feature", "cache-demarrage", "Mettre en cache l’index des sessions.", []],
+          ["feature", "index-sessions", "Indexer les sessions par date.", ["cache-demarrage"]],
+          ["feature", "mesure-demarrage", "Mesurer la durée du démarrage.", []],
+        ],
+        briefDraft: brief("Accélérer le démarrage.", "Mettre en cache et mesurer.", "performances du démarrage", [
+          "relecture-complete — Le démarrage relit tous les fichiers de session.",
+          "cache-ignore — Les erreurs du cache sont ignorées sans trace.",
+        ]),
+      },
+    })],
+    [AUDIT_ANALYSE, audit(e, cle, AUDIT_ANALYSE, {
+      orientation: "accessibilité VoiceOver",
+      status: "analysing",
+      createdAt: e.debut - 65_000,
+      updatedAt: e.debut - 65_000,
+      proposition: null,
+    })],
+    [AUDIT_ARRETE, audit(e, cle, AUDIT_ARRETE, {
+      orientation: "hygiène des journaux",
+      status: "stopped",
+      createdAt: instantAudit(e, -10_000),
+      updatedAt: instantAudit(e, -5000),
+      proposition: {
+        elements: [
+          ["weakness", "journaux-sans-fin", "Les journaux grossissent sans limite.", []],
+          ["feature", "rotation-journaux", "Faire tourner les journaux chaque semaine.", []],
+        ],
+        briefDraft: brief("Borner les journaux.", "Faire tourner les journaux.", "hygiène des journaux", ["journaux-sans-fin — Les journaux grossissent sans limite."]),
+      },
+    })],
+    [AUDIT_ECHOUE, audit(e, cle, AUDIT_ECHOUE, {
+      orientation: "audit complet de la robustesse du service OMP : reprise après une coupure réseau pendant une pipeline, nettoyage des worktrees orphelins laissés par une feature annulée, cohérence du journal des décisions entre plusieurs dépôts, comportement quand le quota du modèle est épuisé, et lisibilité des messages d’erreur montrés sur le Mac comme sur l’iPhone",
+      status: "failed",
+      createdAt: instantAudit(e, -20_000),
+      updatedAt: instantAudit(e, -15_000),
+      proposition: null,
+      failure: "l'analyse a été interrompue",
+    })],
+  ];
 }
 
 const INTENTIONS: Record<Slug, string> = {
@@ -362,6 +515,7 @@ export function jeuFictif(e: EntreeJeu): FichierJeu[] {
   return [
     json(`magasin/lots/${cle}.json`, lot(e, cle)),
     json(`magasin/projects/${cle}.json`, projet(e, cle)),
+    ...audits(e, cle).map(([id, objet]) => json(`magasin/audits/${id}.json`, objet)),
     json(`magasin/running/${idEntree("run-tri")}.json`, running(e)),
     json(`magasin/history/${idEntree("history-theme")}.json`, history(e, "theme", "review", 30 * HEURE, 26 * HEURE)),
     json(`magasin/history/${idEntree("history-carnet")}.json`, history(e, "carnet", "req", 6 * HEURE, 5 * HEURE)),

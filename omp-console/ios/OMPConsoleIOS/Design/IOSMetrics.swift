@@ -75,6 +75,13 @@ enum IOSMetrics {
     static let auditRowOrientationLines = 2
     /// Le champ « Autre réponse » d'une question en attente : 1 à vide, jusqu'à 4.
     static let auditOtherAnswerLines: ClosedRange<Int> = 1...4
+    /// La légende « dépôt · étape · âge » d'une rangée d'audit : une ligne
+    /// (audit-ui-redesign, S-3).
+    static let auditRowCaptionLines = 1
+    /// La pastille de statut d'une rangée d'audit, en points (S-3).
+    static let auditStatusDot: CGFloat = 8
+    /// L'orientation en titre du détail d'un audit, repliée : deux lignes (S-6).
+    static let auditHeaderOrientationLines = 2
 
     /// La marge horizontale d'un écran, selon la largeur disponible.
     static func margin(_ sizeClass: UserInterfaceSizeClass?) -> CGFloat {

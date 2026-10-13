@@ -13,6 +13,7 @@ import ConsoleClient
 import ConsoleCore
 import Foundation
 import Testing
+import UIKit
 
 /// Le Mac scripté : l'instantané servi (remplaçable entre deux trames) et la
 /// réponse des routes d'audit.
@@ -20,6 +21,7 @@ private final class AuditMac: @unchecked Sendable {
     private let lock = NSLock()
     private var snapshotJSON: Data
     private var answerStatus = 202
+    private var startStatus = 200
 
     init(snapshot: Data) {
         snapshotJSON = snapshot
@@ -27,6 +29,7 @@ private final class AuditMac: @unchecked Sendable {
 
     func serve(_ snapshot: Data) { lock.withLock { snapshotJSON = snapshot } }
     func refuseAnswers() { lock.withLock { answerStatus = 409 } }
+    func refuseStarts() { lock.withLock { startStatus = 503 } }
 
     func respond(_ request: ClientHTTPRequest) -> ClientHTTPResponse {
         lock.withLock {
@@ -37,6 +40,12 @@ private final class AuditMac: @unchecked Sendable {
                 body.append(Data("}".utf8))
                 return ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: body)
             case ("POST", "/v1/audits"):
+                if startStatus != 200 {
+                    return ClientDoubles.response(
+                        status: startStatus,
+                        json: #"{"error":{"code":"unavailable","message":"service arrêté"}}"#
+                    )
+                }
                 return ClientDoubles.response(status: 200, json: #"{"id":"\#(AuditParity.proposedId)"}"#)
             case ("POST", "/v1/audits/" + AuditParity.proposedId + "/launch"):
                 return ClientDoubles.response(status: 200, json: #"{"launches":[]}"#)
@@ -246,11 +255,286 @@ struct IOSAuditModelTests {
         let client = ClientDoubles.model(transport: ScriptedClientTransport { mac.respond($0) }, address: "")
         let model = IOSAuditModel(client: client, recipe: .propositions)
         #expect(model.surface == .content)
-        #expect(model.board == AuditParity.board)
+        #expect(model.board.audits.map(\.id) == AuditParity.board.audits.map(\.id))
         #expect(model.opened == AuditParity.proposedId)
         let card = try #require(model.card(AuditParity.proposedId))
         #expect(model.selectedSlugs(of: card).count == 2)
         #expect(IOSAuditModel(client: client, recipe: .suivi).opened == AuditParity.launchedId)
         #expect(IOSAuditModel(client: client, recipe: .liste).opened == nil)
+    }
+}
+
+/// Les preuves Swift de la refonte de l'écran Audit de l'iPhone et de l'iPad
+/// (audit-ui-redesign, BR-3) : liste en sections, menus, frise, relecture du
+/// brief, relance d'un audit en échec — sur la fixture partagée `AuditParity`.
+@MainActor
+@Suite("audit-ui-redesign-ios — l'écran Audit refondu de l'iPhone et de l'iPad")
+struct IOSAuditRedesignTests {
+    /// L'instant de la recette : l'audit en cours d'analyse a été lancé 65 s avant.
+    private static let nowMs: Double = 1_700_000_100_000
+
+    private static func recipeModel(_ recipe: IOSAuditRecipe) throws -> IOSAuditModel {
+        let mac = AuditMac(snapshot: try JSONEncoder().encode(AuditParity.snapshot))
+        let client = ClientDoubles.model(transport: ScriptedClientTransport { mac.respond($0) }, address: "")
+        return IOSAuditModel(client: client, recipe: recipe)
+    }
+
+    private func connectedModel() async throws -> (IOSAuditModel, ScriptedClientTransport, AuditMac) {
+        let mac = AuditMac(snapshot: try JSONEncoder().encode(AuditParity.snapshot))
+        let transport = ScriptedClientTransport { mac.respond($0) }
+        let client = ClientDoubles.model(transport: transport, address: "127.0.0.1:8787")
+        _ = try await client.store()
+        return (IOSAuditModel(client: client), transport, mac)
+    }
+
+    private static func card(_ id: String) throws -> AuditCard {
+        try #require(AuditParity.board(nowMs: nowMs).card(id: id))
+    }
+
+    // MARK: - AC-2, AC-3 : la liste
+
+    @Test("audit-ui-redesign-ios/AC-2 : « En cours » porte analysing, proposed, launched ; « Terminés » stopped et failed ; une section vide n'est pas rendue")
+    func listSectionsSplitRunningAndFinished() throws {
+        let board = try Self.recipeModel(.liste).board
+        let sections = AuditPresentation.sections(board)
+        #expect(sections.map(\.title) == [AuditText.sectionRunning, AuditText.sectionFinished])
+        #expect(Set(sections[0].cards.map(\.id)) == [AuditParity.analysingId, AuditParity.proposedId, AuditParity.launchedId])
+        #expect(Set(sections[1].cards.map(\.id)) == [AuditParity.stoppedId, AuditParity.failedId])
+
+        let runningOnly = AuditBoard(audits: board.audits.filter { AuditPresentation.isRunning($0.status) })
+        #expect(AuditPresentation.sections(runningOnly).map(\.kind) == [.running])
+        #expect(AuditPresentation.sections(AuditBoard(audits: [])).isEmpty)
+    }
+
+    @Test("audit-ui-redesign-ios/AC-3 : la légende de la rangée lit « dépôt · étape · âge », le dépôt une seule fois")
+    func rowCaptionNamesTheRepositoryOnce() throws {
+        let card = try Self.card(AuditParity.launchedId)
+        let caption = AuditPresentation.rowCaption(card, briefReviewOpen: false, nowMs: Self.nowMs)
+        let age = ConsoleFormat.relative(ms: card.createdAt, nowMs: Self.nowMs)
+        #expect(caption == AuditText.rowCaption(repo: card.repoName, step: AuditText.stepTitles[3], age: age))
+        #expect(caption.components(separatedBy: card.repoName).count == 2)
+        #expect(!card.escalations.isEmpty)
+        #expect(AuditText.pendingQuestions(card.escalations.count).contains(String(card.escalations.count)))
+        // La relecture du brief de CET audit fait lire « Brief » à la rangée proposed.
+        let proposed = try Self.card(AuditParity.proposedId)
+        #expect(AuditPresentation.rowCaption(proposed, briefReviewOpen: true, nowMs: Self.nowMs).contains(AuditText.stepTitles[2]))
+    }
+
+    // MARK: - AC-5 : menus et « Ouvrir dans Projet »
+
+    @Test("audit-ui-redesign-ios/AC-5 : le menu d'un audit copie le chemin complet, ouvre Projet, arrête en dernier — jamais un audit terminé")
+    func auditMenuFollowsConnectionAndStatus() throws {
+        let running = try Self.card(AuditParity.launchedId)
+        #expect(IOSContextMenu.auditRow(running, gesturesEnabled: true)
+            == [.copyPath(running.repoRoot), .openInProject, .stopAudit])
+        #expect(IOSContextMenu.auditRow(running, gesturesEnabled: false) == [.copyPath(running.repoRoot)])
+        for id in [AuditParity.stoppedId, AuditParity.failedId] {
+            let finished = try Self.card(id)
+            #expect(IOSContextMenu.auditRow(finished, gesturesEnabled: true) == [.copyPath(finished.repoRoot), .openInProject])
+        }
+        #expect(IOSContextMenu.label(.copyPath(running.repoRoot)) == AuditText.copyPath)
+        #expect(IOSContextMenu.label(.openInProject) == AuditText.openInProject)
+        #expect(IOSContextMenu.label(.stopAudit) == AuditText.stopAudit)
+
+        // « Copier le chemin » : le presse-papiers reçoit le chemin COMPLET.
+        guard case let .copyPath(path) = IOSContextMenu.auditRow(running, gesturesEnabled: true)[0] else {
+            Issue.record("la première entrée n'est pas « Copier le chemin »")
+            return
+        }
+        IOSPasteboard.copy(path)
+        #expect(UIPasteboard.general.string == running.repoRoot)
+        #expect(path.hasPrefix("/"))
+
+        // « Ouvrir dans Projet », côté écran Projet (conduite reçue du Mac).
+        let key = running.repoKey
+        #expect(AuditPresentation.projectOpening(auditRepoKey: key, pilotedRepoKey: key, pilotActive: true) == .show)
+        #expect(AuditPresentation.projectOpening(auditRepoKey: key, pilotedRepoKey: "autre", pilotActive: true) == .refuse)
+        #expect(AuditPresentation.projectOpening(auditRepoKey: key, pilotedRepoKey: nil, pilotActive: false) == .proposeLaunch)
+    }
+
+    @Test("audit-ui-redesign-ios/AC-5 : « Arrêter l'audit… » confirmé appelle DELETE /v1/audits/{id}")
+    func stopFromTheMenuDeletesTheAudit() async throws {
+        let (model, transport, _) = try await connectedModel()
+        let card = try #require(model.card(AuditParity.launchedId))
+        model.requestStop(card)
+        #expect(model.pendingStop == card.id)
+        _ = await model.confirmStop()
+        let requests = transport.requests.filter { $0.path.hasPrefix("/v1/audits") }
+        #expect(requests.map { "\($0.method) \($0.path)" } == ["DELETE /v1/audits/" + AuditParity.launchedId])
+    }
+
+    // MARK: - AC-8 : l'en-tête
+
+    @Test("audit-ui-redesign-ios/AC-8 : la légende de l'en-tête lit « dépôt · lancé à HH:MM », sans statut écrit")
+    func headerCaptionReadsRepositoryAndTime() throws {
+        let card = try Self.card(AuditParity.failedId)
+        let caption = AuditPresentation.headerCaption(card)
+        #expect(caption == AuditText.headerCaption(repo: card.repoName, time: ConsoleFormat.time(ms: card.createdAt)))
+        #expect(caption.range(of: #"\d{1,2}:\d{2}$"#, options: .regularExpression) != nil)
+        #expect(!caption.contains(AuditText.status(card.status)))
+        #expect(card.orientation.count >= 280)
+    }
+
+    // MARK: - AC-10, AC-12 : la frise
+
+    @Test("audit-ui-redesign-ios/AC-10 : la frise du détail montre exactement les états calculés pour chaque audit")
+    func stepperFollowsThePureFunction() throws {
+        let expected: [String: [PipelineStepState]] = [
+            AuditParity.analysingId: [.current, .upcoming, .upcoming, .upcoming],
+            AuditParity.proposedId: [.done, .current, .upcoming, .upcoming],
+            AuditParity.launchedId: [.done, .done, .done, .current],
+            AuditParity.stoppedId: [.done, .upcoming, .upcoming, .upcoming],
+            AuditParity.failedId: [.failed, .upcoming, .upcoming, .upcoming],
+        ]
+        for (id, states) in expected {
+            let card = try Self.card(id)
+            let steps = IOSAuditDetailView.steps(card, briefAudit: nil)
+            #expect(steps == AuditPresentation.steps(AuditPresentation.progressInput(card, briefReviewOpen: false)))
+            #expect(steps.map(\.state) == states, "audit \(id)")
+            #expect(steps.map(\.title) == AuditText.stepTitles)
+        }
+        // Un symbole par état, tous distincts.
+        let symbols = [PipelineStepState.done, .current, .failed, .upcoming].map(IOSAuditStepper.symbolName)
+        #expect(Set(symbols).count == 4)
+    }
+
+    @Test("audit-ui-redesign-ios/AC-12 : cocher compte « N cochées » ; « Relire le brief → » met Brief en cours, refermer ramène à Propositions")
+    func briefReviewDrivesTheStepper() throws {
+        let model = try Self.recipeModel(.propositions)
+        let card = try #require(model.card(AuditParity.proposedId))
+        #expect(AuditText.checkedCount(model.selectedSlugs(of: card).count) == "2 cochées")
+        let third = try #require(card.proposals.first { !$0.taken && !model.isChecked($0.slug, in: card.id) })
+        model.toggle(third.slug, in: card.id)
+        #expect(AuditText.checkedCount(model.selectedSlugs(of: card).count) == "3 cochées")
+        model.toggle(third.slug, in: card.id)
+        #expect(model.selectedSlugs(of: card).count == 2)
+        // « déjà prise » ne se coche pas, « après X » vient des dépendances.
+        let taken = try #require(card.proposals.first { $0.taken })
+        model.toggle(taken.slug, in: card.id)
+        #expect(!model.isChecked(taken.slug, in: card.id))
+
+        #expect(IOSAuditDetailView.steps(card, briefAudit: model.briefAudit).map(\.state) == [.done, .current, .upcoming, .upcoming])
+        model.presentBrief(card)
+        #expect(model.briefAudit == card.id)
+        #expect(IOSAuditDetailView.steps(card, briefAudit: model.briefAudit).map(\.state) == [.done, .done, .current, .upcoming])
+        model.cancelBrief()
+        #expect(IOSAuditDetailView.steps(card, briefAudit: model.briefAudit).map(\.state) == [.done, .current, .upcoming, .upcoming])
+    }
+
+    // MARK: - AC-11, AC-13 : corps des étapes
+
+    @Test("audit-ui-redesign-ios/AC-11 : la carte d'analyse montre la durée écoulée ; « Analyse en cours » n'y figure qu'une fois")
+    func analysisCardSaysAnalysingOnce() throws {
+        let model = try Self.recipeModel(.analyse)
+        let id = try #require(model.opened)
+        #expect(id == AuditParity.analysingId)
+        let card = try #require(model.card(id))
+        let now = Date.now.timeIntervalSince1970 * 1000
+        let elapsed = now - card.createdAt
+        #expect(elapsed >= 65_000 && elapsed < 75_000)
+        #expect(AuditPresentation.elapsed(ms: 65_000) == "1:05")
+        #expect(AuditPresentation.elapsed(ms: 68_000) != AuditPresentation.elapsed(ms: 65_000))
+
+        let phrase = "Analyse en cours"
+        let shown = [
+            AuditText.analysisCardTitle,
+            AuditText.analysisElapsed(AuditPresentation.elapsed(ms: elapsed)),
+            AuditText.analysisNext,
+            AuditText.stopAudit,
+            AuditPresentation.headerCaption(card),
+            AuditText.stepsAccessibility(IOSAuditDetailView.steps(card, briefAudit: nil)),
+        ] + AuditText.stepTitles
+        #expect(shown.filter { $0.contains(phrase) }.count == 1)
+        #expect(AuditText.analysisElapsed(AuditPresentation.elapsed(ms: elapsed)).contains(phrase))
+    }
+
+    @Test("audit-ui-redesign-ios/AC-13 : les questions précèdent l'avancement, les non lancées et les décisions repliées")
+    func followUpPutsQuestionsFirst() throws {
+        let card = try Self.card(AuditParity.launchedId)
+        let blocks = AuditPresentation.followUpBlocks(card)
+        #expect(blocks.first == .escalations)
+        #expect(blocks.contains(.progress))
+        #expect(card.features.contains { $0.prUrl != nil })
+        for row in card.features {
+            #expect(AuditPresentation.featureSteps(row).count == 5)
+        }
+        if !card.decisions.isEmpty {
+            #expect(blocks.last == .decisions)
+            #expect(AuditText.decisionsGroupTitle(card.decisions.count).contains("(\(card.decisions.count))"))
+        }
+        let stopped = try Self.card(AuditParity.stoppedId)
+        #expect(AuditPresentation.followUpBlocks(stopped) == [.stoppedBeforeLaunch])
+    }
+
+    // MARK: - AC-14 : échec et relance
+
+    @Test("audit-ui-redesign-ios/AC-14 : « Relancer avec la même orientation » poste le même dépôt et la même orientation, puis ouvre l'audit créé")
+    func relaunchPostsTheSameOrientation() async throws {
+        let (model, transport, _) = try await connectedModel()
+        let failed = try #require(model.card(AuditParity.failedId))
+        #expect(AuditPresentation.failureSentence(failed.failure) == "L'analyse a été interrompue.")
+        #expect(AuditPresentation.diagnostic(failed).contains(failed.repoRoot))
+
+        #expect(await model.relaunch(failed))
+        #expect(model.opened == AuditParity.proposedId)
+        let requests = transport.requests.filter { $0.path.hasPrefix("/v1/audits") }
+        #expect(requests.map { "\($0.method) \($0.path)" } == ["POST /v1/audits"])
+        let data = try #require(requests[0].body)
+        let body = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(body["repoKey"] as? String == failed.repoKey)
+        #expect(body["orientation"] as? String == failed.orientation.trimmingCharacters(in: .whitespacesAndNewlines))
+        // L'audit échoué reste listé sous « Terminés ».
+        let finished = try #require(AuditPresentation.sections(model.board).first { $0.kind == .finished })
+        #expect(finished.cards.contains { $0.id == AuditParity.failedId })
+    }
+
+    @Test("audit-ui-redesign-ios/AC-14 : une relance refusée s'affiche en bandeau, sans ouvrir d'audit")
+    func refusedRelaunchShowsTheBanner() async throws {
+        let (model, _, mac) = try await connectedModel()
+        mac.refuseStarts()
+        let failed = try #require(model.card(AuditParity.failedId))
+        #expect(!(await model.relaunch(failed)))
+        #expect(model.banner == AuditText.startFailed)
+        #expect(model.opened == nil)
+        #expect(model.inFlight == nil)
+    }
+
+    // MARK: - AC-15 : identifiants conservés
+
+    @Test("audit-ui-redesign-ios/AC-15 : les identifiants d'accessibilité conservés gardent leur valeur")
+    func accessibilityIdentifiersAreKept() {
+        let kept: [String: String] = [
+            IOSAuditAccessibility.screen: "ios.audit",
+            IOSAuditAccessibility.empty: "ios.audit.empty",
+            IOSAuditAccessibility.banner: "ios.audit.banner",
+            IOSAuditAccessibility.start: "ios.audit.start",
+            IOSAuditAccessibility.detail: "ios.audit.detail",
+            IOSAuditAccessibility.header: "ios.audit.header",
+            IOSAuditAccessibility.reviewBrief: "ios.audit.brief",
+            IOSAuditAccessibility.stop: "ios.audit.stop",
+            IOSAuditAccessibility.row("a"): "ios.audit.row.a",
+            IOSAuditAccessibility.proposal("s"): "ios.audit.proposal.s",
+            IOSAuditAccessibility.feature("s"): "ios.audit.feature.s",
+            IOSAuditAccessibility.openPR("s"): "ios.audit.feature.s.pr",
+            IOSAuditAccessibility.escalation("k"): "ios.audit.escalation.k",
+            IOSAuditAccessibility.decision(0): "ios.audit.decision.0",
+            IOSAuditAccessibility.checkedCount: "ios.audit.checkedCount",
+            IOSAuditAccessibility.orientationToggle: "ios.audit.orientation.toggle",
+            IOSAuditAccessibility.menu: "ios.audit.menu",
+            IOSAuditAccessibility.stepper: "ios.audit.stepper",
+            IOSAuditAccessibility.analysis: "ios.audit.analysis",
+            IOSAuditAccessibility.notLaunched: "ios.audit.notLaunched",
+            IOSAuditAccessibility.decisions: "ios.audit.decisions",
+            IOSAuditAccessibility.stoppedEmpty: "ios.audit.stoppedEmpty",
+            IOSAuditAccessibility.failure: "ios.audit.failure",
+            IOSAuditAccessibility.relaunch: "ios.audit.relaunch",
+            IOSAuditAccessibility.diagnostic: "ios.audit.diagnostic",
+        ]
+        for (value, expected) in kept {
+            #expect(value == expected)
+        }
+        #expect(IOSAuditRecipe.resolve(["-audit.recipe", "analyse"]) == .analyse)
+        #expect(IOSAuditRecipe.resolve(["-audit.recipe", "echec"]) == .echec)
+        #expect(IOSAuditRecipe.echec.openedAudit == AuditParity.failedId)
     }
 }

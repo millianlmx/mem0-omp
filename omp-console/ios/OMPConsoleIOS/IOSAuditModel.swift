@@ -73,7 +73,7 @@ final class IOSAuditModel: ObservableObject {
         opened = recipe?.openedAudit
         checked = recipe?.checked ?? [:]
         if let recipe {
-            board = recipe.board
+            board = recipe.board(nowMs: Date.now.timeIntervalSince1970 * 1000)
         } else {
             board = client.snapshot.map(AuditBoard.of) ?? AuditBoard(audits: [])
             client.$snapshot
@@ -115,17 +115,6 @@ final class IOSAuditModel: ObservableObject {
     /// bandeau de connexion est le seul bandeau d'état.
     static func shownFailure(_ failure: String?, connection: IOSConnectionStatus) -> String? {
         connection == .connected ? failure : nil
-    }
-
-    /// Le ton de la pastille d'un statut d'audit.
-    static func tone(_ status: AuditStatus) -> ConsoleTone {
-        switch status {
-        case .analysing: .info
-        case .proposed: .attention
-        case .launched: .success
-        case .stopped: .neutral
-        case .failed: .danger
-        }
     }
 
     static func isConflict(_ error: Error) -> Bool {
@@ -172,6 +161,19 @@ final class IOSAuditModel: ObservableObject {
         } catch {
             return AuditText.startFailed
         }
+    }
+
+    /// « Relancer avec la même orientation » d'un audit en échec (audit-ui-redesign,
+    /// S-11) : `POST /v1/audits` avec le dépôt et l'orientation de l'audit échoué,
+    /// qui reste tel quel. Succès → l'audit créé est poussé (`opened`) ; échec → le
+    /// message rendu par `start` en bandeau du détail, et `false`.
+    @discardableResult
+    func relaunch(_ card: AuditCard) async -> Bool {
+        if let failure = await start(repoKey: card.repoKey, orientation: card.orientation) {
+            banner = failure
+            return false
+        }
+        return true
     }
 
     // MARK: - Propositions

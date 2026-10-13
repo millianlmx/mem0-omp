@@ -5,7 +5,9 @@
 //     « Répondre » (ordre de tabulation : options, champ, Répondre) ;
 //   — specs : « Valider les specs » et « Abandonner la feature » ;
 //   — review : « Accepter la revue et livrer (PR) » et « Abandonner la feature ».
-// Une réponse acceptée retire l'escalade à l'instantané suivant.
+// Une réponse acceptée retire l'escalade à l'instantané suivant. La carte est un
+// bandeau orange (`consoleBanner`, audit-ui-redesign S-10), en tête du corps des
+// pipelines.
 
 import ConsoleCore
 import SwiftUI
@@ -36,9 +38,9 @@ struct AuditEscalationView: View {
                 .foregroundStyle(.secondary)
             answers
         }
-        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.orange.opacity(0.08), in: .rect(cornerRadius: ConsoleSurface.bannerRadius))
+        .padding(.vertical, 4)
+        .consoleBanner(tint: .orange)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(AuditAccessibility.escalation(escalation.slug))
     }

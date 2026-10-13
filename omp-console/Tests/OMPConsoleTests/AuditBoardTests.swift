@@ -102,7 +102,7 @@ func auditBoardIsolatesAuditsOfTheSameLot() throws {
 @Test("audit-panel-in-omp-console : les propositions gardent l’ordre de l’analyse et marquent celles déjà dans le lot du dépôt")
 func auditBoardMarksTakenProposals() throws {
     let board = AuditParity.board
-    #expect(board.audits.map(\.id) == [AuditParity.analysingId, AuditParity.proposedId, AuditParity.launchedId])
+    #expect(board.audits.map(\.id) == [AuditParity.analysingId, AuditParity.proposedId, AuditParity.launchedId, AuditParity.stoppedId, AuditParity.failedId])
 
     let propositions = try #require(card(board, AuditParity.proposedId))
     #expect(propositions.repoName == "depot")

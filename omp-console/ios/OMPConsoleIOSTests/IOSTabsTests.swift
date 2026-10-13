@@ -13,21 +13,51 @@ import Testing
 struct IOSTabsTests {
     @Test("ios-navigation-onglets-adaptables/AC-1 : l'iPhone montre quatre sections puis « Plus », dans l'ordre")
     func compactTabsAreFourSectionsThenPlus() {
-        let expected: [IOSTab] = [.section(.home), .section(.kanban), .section(.sessions), .section(.memory), .plus]
+        let expected: [IOSTab] = [.section(.home), .section(.kanban), .section(.sessions), .section(.audit), .plus]
         #expect(IOSTabs.compactTabs == expected)
-        // L'ordre de déclaration du `TabView` (la barre latérale), filtré par le masquage.
-        let declared = IOSSection.sidebarOrder.map(IOSTab.section).filter { !IOSTabs.isHidden($0, compact: true) } + [.plus]
+        // L'ordre de déclaration compact du `TabView`, filtré par le masquage.
+        let declared = ConsoleSectionGroup.allCases
+            .flatMap { IOSTabs.declaredSections(of: $0, compact: true) }
+            .map(IOSTab.section)
+            .filter { !IOSTabs.isHidden($0, compact: true) } + [.plus]
         #expect(IOSTabs.compactTabs == declared)
     }
 
-    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Projet, Audit, Session OMP et Statistiques, et elles seules")
+    @Test("ios-navigation-onglets-adaptables/AC-3 : « Plus » liste Projet, Mémoire, Session OMP et Statistiques, et elles seules")
     func plusListsTheFourOtherSections() {
-        #expect(IOSTabs.plusSections == [.project, .audit, .session, .stats])
+        #expect(IOSTabs.plusSections == [.project, .memory, .session, .stats])
         let tabSections: [ConsoleSection] = IOSTabs.compactTabs.compactMap {
             if case let .section(section) = $0 { section } else { nil }
         }
         #expect(Set(IOSTabs.plusSections).union(tabSections) == Set(IOSSection.all))
         #expect(Set(IOSTabs.plusSections).isDisjoint(with: tabSections))
+    }
+
+    @Test("audit-ui-redesign-ios/AC-7 : Audit prend la place de Mémoire dans la barre d'onglets, Mémoire celle d'Audit dans « Plus »")
+    func auditTakesTheMemoryTab() {
+        // Barre d'onglets de l'iPhone : Audit à l'index 3 (ancienne place de
+        // Mémoire), Mémoire n'y figure plus.
+        #expect(IOSTabs.compactTabs == [.section(.home), .section(.kanban), .section(.sessions), .section(.audit), .plus])
+        #expect(IOSTabs.compactTabs.firstIndex(of: .section(.audit)) == 3)
+        #expect(!IOSTabs.compactTabs.contains(.section(.memory)))
+        // « Plus » : Mémoire à l'index 1 (ancienne place d'Audit), Audit n'y figure plus.
+        #expect(IOSTabs.plusSections == [.project, .memory, .session, .stats])
+        #expect(IOSTabs.plusSections.firstIndex(of: .memory) == 1)
+        #expect(!IOSTabs.plusSections.contains(.audit))
+        // Déclaration : en compact, Audit quitte Pilotage pour suivre Sessions ; en
+        // régulier (barre latérale iPad), l'ordre de la barre latérale est intact.
+        #expect(IOSTabs.declaredSections(of: .pilotage, compact: true) == [.home, .kanban, .project, .session])
+        #expect(IOSTabs.declaredSections(of: .consultation, compact: true) == [.sessions, .audit, .memory, .stats])
+        for group in ConsoleSectionGroup.allCases {
+            #expect(IOSTabs.declaredSections(of: group, compact: false) == IOSSection.sections(of: group))
+        }
+        // Routes : `-section memory` ouvre « Plus » avec Mémoire poussée, `-section
+        // audit` sélectionne l'onglet Audit.
+        let start = IOSTabRoute(tab: .section(.home), plusPath: [])
+        #expect(IOSTabs.route(from: start, to: .memory, compact: true) == IOSTabRoute(tab: .plus, plusPath: [.memory]))
+        #expect(IOSTabs.route(from: start, to: .audit, compact: true) == IOSTabRoute(tab: .section(.audit), plusPath: []))
+        #expect(IOSTabs.isHidden(.section(.memory), compact: true))
+        #expect(!IOSTabs.isHidden(.section(.audit), compact: true))
     }
 
     @Test("ios-navigation-onglets-adaptables/AC-1, AC-4 : le masquage des onglets suit la classe de taille")
@@ -38,7 +68,8 @@ struct IOSTabsTests {
         #expect(IOSTabs.isHidden(.plus, compact: false))
 
         let hiddenCompact = IOSSection.all.filter { IOSTabs.isHidden(.section($0), compact: true) }
-        #expect(hiddenCompact == IOSTabs.plusSections)
+        #expect(Set(hiddenCompact) == Set(IOSTabs.plusSections))
+        #expect(hiddenCompact.count == IOSTabs.plusSections.count)
         #expect(!IOSTabs.isHidden(.plus, compact: true))
     }
 
@@ -48,10 +79,10 @@ struct IOSTabsTests {
             .home: IOSTabRoute(tab: .section(.home), plusPath: []),
             .kanban: IOSTabRoute(tab: .section(.kanban), plusPath: []),
             .project: IOSTabRoute(tab: .plus, plusPath: [.project]),
-            .audit: IOSTabRoute(tab: .plus, plusPath: [.audit]),
+            .audit: IOSTabRoute(tab: .section(.audit), plusPath: []),
             .session: IOSTabRoute(tab: .plus, plusPath: [.session]),
             .sessions: IOSTabRoute(tab: .section(.sessions), plusPath: []),
-            .memory: IOSTabRoute(tab: .section(.memory), plusPath: []),
+            .memory: IOSTabRoute(tab: .plus, plusPath: [.memory]),
             .stats: IOSTabRoute(tab: .plus, plusPath: [.stats]),
         ]
         #expect(Set(expected.keys) == Set(IOSSection.all))
@@ -115,8 +146,8 @@ struct IOSTabsTests {
         #expect(IOSTabs.adapt(IOSTabRoute(tab: .plus, plusPath: []), compact: false)
             == IOSTabRoute(tab: .section(.project), plusPath: []))
         // Une section visible dans les deux tailles ne bouge pas.
-        #expect(IOSTabs.adapt(IOSTabRoute(tab: .section(.memory), plusPath: [.project]), compact: true)
-            == IOSTabRoute(tab: .section(.memory), plusPath: [.project]))
+        #expect(IOSTabs.adapt(IOSTabRoute(tab: .section(.sessions), plusPath: [.project]), compact: true)
+            == IOSTabRoute(tab: .section(.sessions), plusPath: [.project]))
 
         var routes = IOSSection.all.map { IOSTabRoute(tab: .section($0), plusPath: []) }
         routes += [IOSTabRoute(tab: .plus, plusPath: []), IOSTabRoute(tab: .plus, plusPath: [.stats])]

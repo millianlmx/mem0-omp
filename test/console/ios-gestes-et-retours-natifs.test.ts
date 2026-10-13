@@ -250,8 +250,9 @@ function commandRouteFaults(client: string): string[] {
 
 // MARK: - AC-9, AC-10, AC-11, AC-12
 
-/** Les surfaces de texte sélectionnable (S-6), une pose chacune. */
-const SELECTABLE = ["IOSSessionViewerSheet.swift", "HomeContractSheet.swift", "IOSMemoryDetailView.swift"];
+/** Les surfaces de texte sélectionnable (S-6), une pose chacune — plus l'orientation
+ *  en titre du détail d'un audit (audit-ui-redesign, S-6 : sélectionnable par appui long). */
+const SELECTABLE = ["IOSSessionViewerSheet.swift", "HomeContractSheet.swift", "IOSMemoryDetailView.swift", "IOSAuditDetailView.swift"];
 
 /** AC-9 (S-6) : `.textSelection(.enabled)` une fois par surface, nulle part ailleurs. */
 function selectionFaults(all: Map<string, string>): string[] {

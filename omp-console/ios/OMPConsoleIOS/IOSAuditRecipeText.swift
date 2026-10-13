@@ -1,6 +1,7 @@
 // Le vocabulaire PROPRE à l'écran Audit de l'app iOS (audit-panel-in-omp-console,
-// S-8, BR-5) : le crochet de recette `-audit.recipe <liste|propositions|suivi>`,
-// les symboles SF des cases et les identifiants d'accessibilité `ios.audit.*`.
+// S-8, BR-5 ; étendu par audit-ui-redesign) : le crochet de recette
+// `-audit.recipe <liste|propositions|suivi|analyse|echec>`, les symboles SF (cases,
+// menu « ⋯ », frise, états vides) et les identifiants d'accessibilité `ios.audit.*`.
 //
 // Fichier de VOCABULAIRE de l'app (`*Text.swift`) : la garde `design-ios/AC-5`
 // n'autorise un littéral alphabétique que dans ces fichiers-là. Les MOTS affichés
@@ -12,12 +13,16 @@ import Foundation
 enum IOSAuditRecipeText {
     /// Le drapeau de la recette de l'écran Audit.
     static let flag = "-audit.recipe"
-    /// La liste des trois audits de `AuditParity`.
+    /// La liste des cinq audits de `AuditParity`.
     static let list = "liste"
     /// Le détail de l'audit qui attend la validation de son brief, deux cases cochées.
     static let proposals = "propositions"
     /// Le détail de l'audit lancé : avancement, question en attente, décisions.
     static let followUp = "suivi"
+    /// Le détail de l'audit en cours d'analyse (audit-ui-redesign, S-14).
+    static let analysis = "analyse"
+    /// Le détail de l'audit en échec (audit-ui-redesign, S-14).
+    static let failure = "echec"
 }
 
 /// Les symboles SF de l'écran Audit : des identifiants, pas des libellés.
@@ -26,8 +31,19 @@ enum IOSAuditSymbol {
     static let checked = "checkmark.circle.fill"
     /// Une proposition non cochée.
     static let unchecked = "circle"
-    /// Le badge des questions en attente d'une rangée d'audit.
-    static let escalations = "questionmark.bubble.fill"
+    /// Le menu « Plus d'actions » de l'en-tête du détail (audit-ui-redesign, S-6).
+    static let more = "ellipsis.circle"
+    /// Les états d'une étape de la frise (S-7).
+    static let stepDone = "checkmark.circle.fill"
+    static let stepCurrent = "circle.inset.filled"
+    static let stepFailed = "xmark.circle.fill"
+    static let stepUpcoming = "circle"
+    /// L'état vide d'un audit en échec (S-11).
+    static let failed = "exclamationmark.triangle"
+    /// L'état vide d'un audit arrêté avant le lancement (S-10).
+    static let stopped = "stop.circle"
+    /// « Relancer avec la même orientation » (S-11).
+    static let relaunch = "arrow.clockwise"
 }
 
 /// Les identifiants d'accessibilité de l'écran Audit (chaînes pointées `ios.audit.`).
@@ -36,6 +52,17 @@ enum IOSAuditAccessibility {
     static let empty = "ios.audit.empty"
     static let banner = "ios.audit.banner"
     static let start = "ios.audit.start"
+    static let checkedCount = "ios.audit.checkedCount"
+    static let orientationToggle = "ios.audit.orientation.toggle"
+    static let menu = "ios.audit.menu"
+    static let stepper = "ios.audit.stepper"
+    static let analysis = "ios.audit.analysis"
+    static let notLaunched = "ios.audit.notLaunched"
+    static let decisions = "ios.audit.decisions"
+    static let stoppedEmpty = "ios.audit.stoppedEmpty"
+    static let failure = "ios.audit.failure"
+    static let relaunch = "ios.audit.relaunch"
+    static let diagnostic = "ios.audit.diagnostic"
     static let detail = "ios.audit.detail"
     static let header = "ios.audit.header"
     static let reviewBrief = "ios.audit.brief"
