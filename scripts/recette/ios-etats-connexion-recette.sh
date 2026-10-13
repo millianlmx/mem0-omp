@@ -138,7 +138,7 @@ fi
 
 # Seule la coque répond avec l'en-tête de version (un autre service qui écouterait
 # ce port ne le pose pas) ; sans jeton, la réponse est 401, ce qui suffit.
-headers="$(curl -s -m 5 -D - -o /dev/null -H 'X-Console-Protocol-Version: 1' http://127.0.0.1:8787/v1/version 2>/dev/null)"
+headers="$(curl -s -m 5 -D - -o /dev/null -H 'X-Console-Protocol-Version: 2' http://127.0.0.1:8787/v1/version 2>/dev/null)"
 if ! grep -qi '^X-Console-Protocol-Version:' <<<"$headers"; then
   echo "  · non exécuté : le Mac ne sert pas 127.0.0.1:8787 (GET /v1/version sans réponse de la coque)"
   exit 2
@@ -754,7 +754,7 @@ def refuse(server, client):
             if not chunk:
                 break
             data += chunk
-        client.sendall(b"HTTP/1.1 401 Unauthorized\r\nX-Console-Protocol-Version: 1\r\n"
+        client.sendall(b"HTTP/1.1 401 Unauthorized\r\nX-Console-Protocol-Version: 2\r\n"
                        b"Content-Type: application/json\r\nConnection: close\r\n"
                        + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
     except OSError:
@@ -774,7 +774,7 @@ def mute(server, client):
                     break
             except socket.timeout:
                 pass
-        client.sendall(b"HTTP/1.1 503 Service Unavailable\r\nX-Console-Protocol-Version: 1\r\n"
+        client.sendall(b"HTTP/1.1 503 Service Unavailable\r\nX-Console-Protocol-Version: 2\r\n"
                        b"Content-Type: text/plain\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmuet.")
     except OSError:
         pass

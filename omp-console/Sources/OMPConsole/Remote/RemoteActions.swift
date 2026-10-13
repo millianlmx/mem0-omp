@@ -75,13 +75,20 @@ final class RemoteActions {
             throw ConsoleAPIError.conflict("aucune question en vol")
         }
         let request = try Self.decode(RemoteAnswerRequest.self, body)
+        // L'identifiant de question est OBLIGATOIRE et se contrôle AVANT le
+        // kind : une réponse tardive vise une question qui n'est plus en vol,
+        // elle rend 409 même si son libellé n'existe pas dans la nouvelle
+        // question. Aucun refus ne livre quoi que ce soit à la pipeline.
+        guard let toolCallId = request.toolCallId, !Self.isBlank(toolCallId) else {
+            throw ConsoleAPIError.badRequest("identifiant de question manquant")
+        }
+        guard toolCallId == ask.toolCallId else {
+            throw ConsoleAPIError.conflict("la question a changé depuis la demande")
+        }
         switch request.kind {
         case "selected":
             guard let label = request.label, ask.options.contains(where: { $0.label == label }) else {
                 throw ConsoleAPIError.badRequest("libellé hors des options de la question")
-            }
-            if let toolCallId = request.toolCallId, toolCallId != ask.toolCallId {
-                throw ConsoleAPIError.conflict("la question a changé depuis la demande")
             }
             let before = actions.journal.first?.id
             actions.answer(action, selected: label)
@@ -89,9 +96,6 @@ final class RemoteActions {
         case "custom":
             guard let text = request.text, !Self.isBlank(text) else {
                 throw ConsoleAPIError.badRequest("texte vide")
-            }
-            if let toolCallId = request.toolCallId, toolCallId != ask.toolCallId {
-                throw ConsoleAPIError.conflict("la question a changé depuis la demande")
             }
             let before = actions.journal.first?.id
             actions.answer(action, custom: text)

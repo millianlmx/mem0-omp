@@ -668,7 +668,9 @@ public struct RemotePairRequest: Codable, Equatable, Sendable {
 }
 
 public struct RemoteAnswerRequest: Codable, Equatable, Sendable {
-    public var toolCallId: String?
+    /// L'identifiant de la question AFFICHÉE : obligatoire depuis le protocole 2,
+    /// le Mac refuse toute réponse qui ne vise plus la question en vol.
+    public var toolCallId: String
     public var kind: String
     public var label: String?
     public var text: String?

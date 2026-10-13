@@ -2483,9 +2483,12 @@ un flux temps réel.
   type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
   protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
   adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
-- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 1` et
+- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 2` et
   chaque réponse le renvoie. Un client dont la version diffère est refusé par le code
-  partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie.
+  partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie. La version 2
+  rend `toolCallId` obligatoire sur la réponse à une carte : une app de version 1 se
+  verrouille sur « Version de protocole incompatible (app 1, Mac 2) », sans double
+  support.
 - **Route graphe et service trop ancien** : `GET /v1/memory/graph` est la SEULE route
   qui rend le code partagé `outdated_service` (statut `503`, enveloppe
   `{"error":{"code":"outdated_service","message":"…"}}`), et uniquement quand
@@ -2506,7 +2509,7 @@ un flux temps réel.
   servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
   sans lire le service. La route ne rend jamais `404`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
-  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":1}`
+  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":2}`
   et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
   routes). Le code est généré dans **Réglages… › Appareils** (⌘, ou menu « OMP Console ›
   Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
@@ -2565,6 +2568,16 @@ un flux temps réel.
   (`{entries:[…]}`, le plus récent en tête) ; `GET /v1/cards/{id}/contract` sert le
   contrat d'une carte sous `{document: {name, state, content, reason}}` — `404`
   carte inconnue, `409` carte sans contrat (moment ou worktree absent).
+- **Réponse à une carte** : `POST /v1/cards/{id}/answer` exige `toolCallId`,
+  l'identifiant de la question affichée (`pendingAsk.toolCallId` de la trame
+  `store`), avec `{"toolCallId","kind":"selected"|"custom","label"?,"text"?}`. Les
+  refus se contrôlent dans cet ordre, le premier gagne et AUCUN ne livre quoi que ce
+  soit à la pipeline : `404` « carte inconnue », `409` « carte sans geste », `409`
+  « aucune question en vol », `400` « identifiant de question manquant » (absent ou
+  blanc, quel que soit `kind`), `409` « la question a changé depuis la demande »
+  (identifiant d'une question qui n'est plus en vol, contrôlé AVANT le libellé),
+  puis `400` « libellé hors des options de la question », « texte vide » ou « kind
+  inconnu ». La réponse livrée rend `202 {"accepted":true}`.
 - **Faits de PR de l'ardoise** : `POST /v1/pull-request-states/refresh` (sans corps)
   relance la lecture des états de PR sur GitHub sans l'attendre et répond `202
   {"accepted":true}`, même quand `gh` est absent ; le résultat arrive par la trame
@@ -2612,6 +2625,7 @@ bun scripts/omp-console-api.ts snapshot
 bun scripts/omp-console-api.ts sessions
 bun scripts/omp-console-api.ts watch --seconds 10
 bun scripts/omp-console-api.ts resume feature:<repoKey>:<slug>
+bun scripts/omp-console-api.ts answer feature:<repoKey>:<slug> --question <toolCallId> --option <libellé>
 bun scripts/omp-console-api.ts forget
 ```
 

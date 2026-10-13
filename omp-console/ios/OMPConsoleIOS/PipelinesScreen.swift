@@ -45,8 +45,13 @@ struct PipelinesScreen: View {
     @State private var menuSending: Set<String> = []
     /// La carte dont « Arrêter… » (menu contextuel) attend confirmation.
     @State private var stopCard: KanbanCard?
-    /// L'échec d'une commande lancée d'un menu contextuel, montré en alerte.
+    /// L'échec d'une commande lancée d'un menu contextuel, montré en alerte ; aussi
+    /// « Réponse non envoyée » quand la fiche s'est fermée sur une question qui
+    /// n'attend plus de réponse (posée dans `onDismiss`, jamais pendant la fiche).
     @State private var menuFailure: IOSMenuFailure?
+    /// La fiche a signalé une question qui n'attend plus de réponse : l'alerte
+    /// attend sa fermeture, une seule présentation à la fois.
+    @State private var answerGonePending = false
 
     var body: some View {
         Group {
@@ -72,10 +77,19 @@ struct PipelinesScreen: View {
                 .accessibilityIdentifier(PipelinesAccessibility.newFeature)
             }
         }
-        .sheet(item: $sheet) { target in
+        .sheet(item: $sheet, onDismiss: {
+            guard answerGonePending else { return }
+            answerGonePending = false
+            menuFailure = IOSMenuFailure(title: IOSHomeText.answerNotSentTitle, message: IOSHomeText.answerQuestionGone)
+        }) { target in
             switch target {
             case .card(let cardId):
-                PipelinesCardSheet(client: client, cardId: cardId, recipe: cardRecipe)
+                PipelinesCardSheet(
+                    client: client,
+                    cardId: cardId,
+                    recipe: cardRecipe,
+                    onQuestionGone: { answerGonePending = true }
+                )
             case .newFeature:
                 NewFeatureSheetView(client: client, recipe: newFeatureRecipe)
             }

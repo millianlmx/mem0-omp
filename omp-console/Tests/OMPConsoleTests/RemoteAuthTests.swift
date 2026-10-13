@@ -67,7 +67,7 @@ struct RemoteAuthTests {
         let request = """
             GET /v1/devices HTTP/1.1\r
             Host: 127.0.0.1\r
-            X-Console-Protocol-Version: 1\r
+            X-Console-Protocol-Version: \(ConsoleAPI.protocolVersion)\r
             Authorization: Bearer premier\r
             Authorization: Bearer second\r
             \r

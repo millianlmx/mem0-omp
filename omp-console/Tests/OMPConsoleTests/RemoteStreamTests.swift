@@ -128,7 +128,7 @@ func storeChangeAndLiveSessionPushUpdates() async throws {
         await collector.waitFor("hello"),
         "l'évènement `hello` doit ouvrir le flux (échec=\(collector.failure ?? "aucun"))"
     )
-    #expect(hello.contains("\"protocolVersion\":1"))
+    #expect(hello.contains("\"protocolVersion\":\(ConsoleAPI.protocolVersion)"))
     let initial = try #require(await collector.waitFor("store"), "l'instantané courant doit suivre")
     #expect(initial.contains("\"running\""))
 
@@ -184,7 +184,7 @@ func streamHeadersAreTheEventStreamContract() async throws {
     #expect(http.statusCode == 200)
     #expect(http.value(forHTTPHeaderField: "Content-Type")?.contains("text/event-stream") == true)
     #expect(http.value(forHTTPHeaderField: "Cache-Control") == "no-store")
-    #expect(http.value(forHTTPHeaderField: ConsoleAPI.Service.protocolHeader) == "1")
+    #expect(http.value(forHTTPHeaderField: ConsoleAPI.Service.protocolHeader) == String(ConsoleAPI.protocolVersion))
     #expect(http.value(forHTTPHeaderField: "Content-Length") == nil)
 
     var iterator = bytes.lines.makeAsyncIterator()

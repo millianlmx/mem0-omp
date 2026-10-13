@@ -23,21 +23,21 @@ private let bonjourMac = DiscoveredMac(
 private func homeFactsOr401(_ request: ClientHTTPRequest) -> Result<ClientHTTPResponse, Error> {
     switch request.path {
     case "/v1/components":
-        return .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: Data(#"{"ompInstalled":true}"#.utf8)))
+        return .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"ompInstalled":true}"#.utf8)))
     case "/v1/journal":
-        return .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: Data(#"{"entries":[]}"#.utf8)))
+        return .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"entries":[]}"#.utf8)))
     case "/v1/pull-request-states/refresh":
-        return .success(ClientHTTPResponse(status: 202, protocolVersion: 1, body: Data(#"{"accepted":true}"#.utf8)))
+        return .success(ClientHTTPResponse(status: 202, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"accepted":true}"#.utf8)))
     case "/v1/pair":
         return .success(ClientHTTPResponse(
             status: 200,
-            protocolVersion: 1,
-            body: Data(#"{"deviceId":"FRESH-1","token":"tok-2","protocolVersion":1}"#.utf8)
+            protocolVersion: ConsoleAPI.protocolVersion,
+            body: Data(#"{"deviceId":"FRESH-1","token":"tok-2","protocolVersion":\#(ConsoleAPI.protocolVersion)}"#.utf8)
         ))
     default:
         return .success(ClientHTTPResponse(
             status: 401,
-            protocolVersion: 1,
+            protocolVersion: ConsoleAPI.protocolVersion,
             body: Data(#"{"error":{"code":"unauthorized"}}"#.utf8)
         ))
     }
@@ -66,7 +66,7 @@ struct PairingStatusTests {
         harness.transport.respond { request in
             request.path == "/v1/components" || request.path == "/v1/journal"
                 ? homeFactsOr401(request)
-                : .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: Data("{}".utf8)))
+                : .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: Data("{}".utf8)))
         }
         harness.transport.script(.hold)
         let recorder = PairingRecorder(harness.model)

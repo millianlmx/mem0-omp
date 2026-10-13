@@ -29,7 +29,7 @@ struct RemoteHomeRouteTests {
 
         let reply = try await stack.call("GET", "/v1/components", token: token)
         #expect(reply.status == 200)
-        #expect(reply.headers["x-console-protocol-version"] == "1")
+        #expect(reply.headers["x-console-protocol-version"] == String(ConsoleAPI.protocolVersion))
         let payload = try reply.json(RemoteComponentsPayload.self)
         #expect(payload.ompInstalled == false)
         #expect(payload.ompPath == nil)

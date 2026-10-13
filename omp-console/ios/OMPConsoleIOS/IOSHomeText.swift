@@ -54,6 +54,16 @@ enum IOSHomeText {
     /// en entier ; le titre de la carte passe en tête du formulaire.
     static let answerNavigationTitle = "Répondre"
 
+    /// Le bandeau d'une feuille de réponse (Accueil ou Pipelines) quand le Mac a
+    /// refusé la réponse parce que la question a changé : la feuille montre la
+    /// nouvelle question et garde le texte saisi (S-4 de reponse-ios-sans-identifiant-de-question).
+    static let answerQuestionChanged =
+        "La question a changé sur le Mac. Lisez la nouvelle question avant d’envoyer, votre texte est conservé."
+    /// L'alerte de l'écran sous-jacent quand la question n'attend plus de réponse
+    /// et que la feuille s'est fermée (S-5 de reponse-ios-sans-identifiant-de-question).
+    static let answerNotSentTitle = "Réponse non envoyée"
+    static let answerQuestionGone = "Cette question n’attend plus de réponse."
+
     // --- feuille Contrat (S-14) -----------------------------------------------
 
     static let contractNavigationTitle = "Contrat"

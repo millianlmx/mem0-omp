@@ -10,8 +10,10 @@
 
 /// Le socle du contrat de l'API distante du console.
 public enum ConsoleAPI {
-    /// La version du protocole de l'API distante du console (première version).
-    public static let protocolVersion = 1
+    /// La version du protocole de l'API distante du console. Version 2 :
+    /// `POST /v1/cards/{id}/answer` exige `toolCallId` — une app de version 1,
+    /// qui ne l'envoie pas, est refusée (aucun double support).
+    public static let protocolVersion = 2
 
     /// Les constantes de SERVICE : ce que le serveur annonce et ce que le client
     /// doit connaître pour le joindre — partagées macOS/iOS, jamais dupliquées.
