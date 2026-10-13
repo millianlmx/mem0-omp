@@ -337,8 +337,8 @@ TITLE = dict(SECTIONS)
 PILOTAGE = ("home", "kanban", "project", "audit", "session")
 CONSULTATION = ("sessions", "memory", "stats")
 PLUS = "Plus"
-PLUS_SECTIONS = ("project", "audit", "session", "stats")
-PHONE_TABS = ("Accueil", "Pipelines", "Sessions", "Mémoire", PLUS)
+PLUS_SECTIONS = ("project", "memory", "session", "stats")
+PHONE_TABS = ("Accueil", "Pipelines", "Sessions", "Audit", PLUS)
 TITLES = set(TITLE.values()) | {PLUS}
 ROOT_TITLE = "OMP Console"
 TAB_BAR = "Barre d’onglets"
@@ -682,19 +682,19 @@ def phone_sections(udid):
 
 
 def phone_switch(udid):
-    """AC-2 : de l'Accueil, l'onglet Mémoire ouvre directement la Mémoire."""
+    """AC-2 : de l'Accueil, l'onglet Sessions ouvre directement les Sessions."""
     launch(udid, "tel-ac2", "-section", "home", "-home.welcomeSeen", "YES")
     elements = stable(udid, lambda els: title(els) == "Accueil", "iPhone Accueil (AC-2)")
-    memory = tab_named(tab_buttons(udid, elements), "Mémoire")
-    if memory is None:
-        return [("AC-2", False, "tel", "onglet Mémoire introuvable")]
-    tap(udid, *center(memory), pause=2)
-    elements = stable(udid, lambda els: title(els) is not None, "iPhone onglet Mémoire")
+    sessions = tab_named(tab_buttons(udid, elements), "Sessions")
+    if sessions is None:
+        return [("AC-2", False, "tel", "onglet Sessions introuvable")]
+    tap(udid, *center(sessions), pause=2)
+    elements = stable(udid, lambda els: title(els) is not None, "iPhone onglet Sessions")
     back = back_button(udid, elements)
     plus_rows = sorted(i for i in ids(elements) if i.startswith("ios.plus."))
-    ok = title(elements) == "Mémoire" and back is None and not plus_rows
+    ok = title(elements) == "Sessions" and back is None and not plus_rows
     return [("AC-2", ok, "tel",
-             f"onglet Mémoire touché depuis Accueil → « {title(elements)} », "
+             f"onglet Sessions touché depuis Accueil → « {title(elements)} », "
              + ("aucun bouton retour" if back is None else f"bouton retour « {label(back)} »")
              + (f", rangées {', '.join(plus_rows)}" if plus_rows else ", aucune rangée ios.plus.*"))]
 

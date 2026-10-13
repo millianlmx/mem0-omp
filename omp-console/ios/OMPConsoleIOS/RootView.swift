@@ -5,8 +5,8 @@ import SwiftUI
 /// La racine UNIQUE de l'app iOS : une barre d'onglets native (`TabView`, style
 /// `.sidebarAdaptable`) porte les deux tailles d'écran. En largeur compacte
 /// (iPhone) elle montre cinq onglets en bas — Accueil, Pipelines, Sessions,
-/// Mémoire, « Plus » — et « Plus » pousse Projet, Session OMP et Statistiques
-/// dans sa propre pile ; en largeur régulière (iPad) elle s'ouvre en barre
+/// Audit, « Plus » — et « Plus » pousse Projet, Mémoire, Session OMP et
+/// Statistiques dans sa propre pile ; en largeur régulière (iPad) elle s'ouvre en barre
 /// latérale groupée (Pilotage, Consultation), la barre d'onglets du haut
 /// n'apparaissant que lorsque l'utilisateur masque la barre latérale. Chaque
 /// onglet a sa `NavigationStack` : changer d'onglet conserve écran poussé et
@@ -31,7 +31,8 @@ import SwiftUI
 /// posé une fois sur l'écran de section (`sectionScreen`, contenu de chaque
 /// onglet ET destination de « Plus ») et une fois sur la liste « Plus » —
 /// exactement un bouton par écran. L'onglet Accueil porte le badge du nombre
-/// d'attentes (S-12), quel que soit l'onglet affiché.
+/// d'attentes (S-12), l'onglet Audit celui des audits qui attendent l'utilisateur
+/// (audit-ui-redesign, S-4), quel que soit l'onglet affiché.
 struct RootView: View {
     @State private var route: IOSTabRoute
     @State private var state: IOSScreenState
@@ -49,6 +50,9 @@ struct RootView: View {
     /// La demande d'ouvrir « Nouvelle feature » (⌘N), consommée par Pipelines : la
     /// feuille y reste un état privé, la racine ne fait que la demander.
     @State private var newFeatureRequested = false
+    /// Le repoKey qu'« Ouvrir dans Projet » d'un audit demande d'ouvrir
+    /// (audit-ui-redesign, S-12), consommé par l'écran Projet.
+    @State private var projectRequest: String?
 
     /// Le crochet de recette `-home.recipe`, quand il est donné.
     private let recipe: IOSHomeRecipe?
@@ -116,7 +120,7 @@ struct RootView: View {
         TabView(selection: shownRoute.tab) {
             ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
                 TabSection(group.title) {
-                    ForEach(IOSSection.sections(of: group)) { section in
+                    ForEach(IOSTabs.declaredSections(of: group, compact: isCompact)) { section in
                         sectionTab(section)
                     }
                 }
@@ -141,7 +145,7 @@ struct RootView: View {
     /// L'onglet d'une section : badge d'attente, masquage sous « Plus » en compact.
     @TabContentBuilder<IOSTab>
     private func sectionTab(_ section: ConsoleSection) -> some TabContent<IOSTab> {
-        let badge: Int = IOSHomeContent.rowBadge(for: section, attentionCount: attentionCount)
+        let badge: Int = IOSHomeContent.rowBadge(for: section, attentionCount: attentionCount, auditCount: auditCount)
         let label: String = IOSHomeText.sectionRowLabel(section.title, badge: badge)
         let hidden: Bool = IOSTabs.isHidden(IOSTab.section(section), compact: isCompact)
         let identifier: String = "ios.tab." + section.rawValue
@@ -189,7 +193,7 @@ struct RootView: View {
     }
 
     /// Vrai en largeur compacte (iPhone, iPad en Split View étroit) : la barre
-    /// d'onglets range alors Projet, Session OMP et Statistiques sous « Plus ».
+    /// d'onglets range alors Projet, Mémoire, Session OMP et Statistiques sous « Plus ».
     private var isCompact: Bool { sizeClass == .compact }
 
     /// La route ramenée à la classe de taille COURANTE. `route` peut la précéder
@@ -235,6 +239,8 @@ struct RootView: View {
                     projectRecipe: projectRecipe,
                     sessionOmpRecipe: sessionOmpRecipe,
                     auditRecipe: auditRecipe,
+                    projectRequest: $projectRequest,
+                    openProject: { openProject($0) },
                     showConnection: $showConnection,
                     newFeatureRequested: $newFeatureRequested
                 )
@@ -261,6 +267,13 @@ struct RootView: View {
         route = IOSTabs.route(from: currentRoute, to: section, compact: isCompact)
     }
 
+    /// « Ouvrir dans Projet » d'un audit (S-12) : la demande est posée, puis la
+    /// section Projet est affichée ; l'écran Projet la consomme.
+    private func openProject(_ repoKey: String) {
+        projectRequest = repoKey
+        select(.project)
+    }
+
     /// Le bouton antenne (« Connexion ») : rouvre la feuille de connexion, sans
     /// condition. Il est posé sur l'écran de section et sur la liste « Plus » —
     /// jamais sur le `TabView` lui-même.
@@ -280,6 +293,14 @@ struct RootView: View {
     /// `-home.recipe` est donné, sinon le compte en direct (S-12).
     private var attentionCount: Int {
         recipe?.badge ?? IOSHomeContent.badge(omp: client.omp, board: client.board)
+    }
+
+    /// Le nombre d'audits qui attendent l'utilisateur (audit-ui-redesign, S-4) :
+    /// celui de la fixture sous `-audit.recipe`, sinon dérivé de l'instantané reçu,
+    /// sans `realpath`.
+    private var auditCount: Int {
+        auditRecipe?.board(nowMs: Date.now.timeIntervalSince1970 * 1000).awaitingUserCount
+            ?? client.snapshot.map(AuditBoard.awaitingUserCount(in:)) ?? 0
     }
 
     /// L'ordre de S-15 : la bienvenue d'abord, la connexion ensuite.

@@ -441,7 +441,7 @@ struct PipelinesScreen: View {
             IOSPasteboard.copy(copied)
         case .stop:
             stopCard = card
-        case .answer, .showInPipelines, .readContract:
+        case .answer, .showInPipelines, .readContract, .copyPath, .openInProject, .stopAudit:
             // Jamais offerts par une carte Pipelines (`IOSContextMenu.pipelinesCard`).
             break
         }

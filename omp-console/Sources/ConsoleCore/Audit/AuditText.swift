@@ -48,21 +48,16 @@ public enum AuditText {
 
     // --- propositions --------------------------------------------------------
     public static let weaknesses = "Faiblesses"
-    public static let proposedFeatures = "Features proposées"
-    public static let taken = "Déjà dans le lot des pipelines"
-    public static let reviewBrief = "Relire le brief…"
+    public static let taken = "déjà prise"
+    public static let reviewBrief = "Relire le brief →"
     /// L'état d'une case, lu par VoiceOver sur iPhone.
     public static let checked = "Cochée"
     public static let unchecked = "Non cochée"
 
-    /// Le compteur des cases cochées : « Aucune proposition cochée »,
-    /// « 1 proposition cochée », « <n> propositions cochées ».
+    /// Le compteur des cases cochées de la barre collante : « 0 cochée »,
+    /// « 1 cochée », « 3 cochées ».
     public static func checkedCount(_ count: Int) -> String {
-        switch count {
-        case ...0: "Aucune proposition cochée"
-        case 1: "1 proposition cochée"
-        default: "\(count) propositions cochées"
-        }
+        ConsoleFormat.count(count, "cochée", "cochées")
     }
 
     // --- brief ---------------------------------------------------------------
@@ -106,7 +101,6 @@ public enum AuditText {
 
     // --- questions en attente (S-6) ------------------------------------------
     public static let escalationsTitle = "Questions en attente"
-    public static let noEscalation = "Aucune question en attente."
     public static let otherAnswer = "Autre réponse"
     public static let answer = "Répondre"
     public static let approveSpecs = "Valider les specs"
@@ -129,8 +123,6 @@ public enum AuditText {
     }
 
     // --- décisions de l'arbitre (S-6) ----------------------------------------
-    public static let decisionsTitle = "Décisions de l’arbitre"
-    public static let noDecision = "Aucune décision pour l’instant."
     public static let sourceContexte = "Déjà tranchée"
     public static let sourceArbitrage = "Tranchée par l’arbitre"
 
@@ -152,5 +144,90 @@ public enum AuditText {
     public static let launchFailed = "Le lancement n’a pas eu lieu. Vérifiez le brief et la sélection, puis réessayez."
     public static let answerFailed = "La réponse n’a pas été transmise. La question reste en attente : réessayez."
     public static let stopFailed = "L’audit n’a pas été arrêté. Réessayez."
-    public static let analysisFailed = "L’analyse n’a rien proposé. Relancez un audit."
+
+    // --- refonte de la section (audit-ui-redesign S-13) ----------------------
+    /// Le bouton de la barre d'outils du Mac.
+    public static let newAudit = "Nouvel audit"
+    public static let sectionRunning = "En cours"
+    public static let sectionFinished = "Terminés"
+
+    /// La légende d'une rangée de la liste : « depot · Propositions · il y a 3 minutes ».
+    public static func rowCaption(repo: String, step: String, age: String) -> String {
+        "\(repo) · \(step) · \(age)"
+    }
+
+    /// La légende de l'en-tête du détail : « depot · lancé à 14:05 ».
+    public static func headerCaption(repo: String, time: String) -> String {
+        "\(repo) · lancé à \(time)"
+    }
+
+    public static let showFullOrientation = "Afficher l’orientation complète"
+    public static let hideFullOrientation = "Réduire l’orientation"
+    /// Le menu « ⋯ » de l'en-tête, lu par VoiceOver.
+    public static let moreActions = "Plus d’actions"
+    public static let copyPath = "Copier le chemin"
+    public static let openInProject = "Ouvrir dans Projet"
+
+    // --- frise des quatre étapes (S-7) ---------------------------------------
+    public static let stepTitles = ["Analyse", "Propositions", "Brief", "Pipelines"]
+
+    public static func stepState(_ state: PipelineStepState) -> String {
+        switch state {
+        case .done: "fait"
+        case .current: "en cours"
+        case .failed: "en échec"
+        case .upcoming: "à venir"
+        }
+    }
+
+    /// La frise lue d'un bloc : « Analyse : fait, Propositions : en cours, … ».
+    public static func stepsAccessibility(_ steps: [PipelineStep]) -> String {
+        steps.map { "\($0.title) : \(stepState($0.state))" }.joined(separator: ", ")
+    }
+
+    // --- carte d'analyse (S-8) -----------------------------------------------
+    public static let analysisCardTitle = "OMP analyse le dépôt"
+
+    /// La durée écoulée depuis le lancement : « Analyse en cours depuis 1:05 ».
+    public static func analysisElapsed(_ clock: String) -> String {
+        "Analyse en cours depuis \(clock)"
+    }
+
+    public static let analysisNext = "Quand l’analyse sera terminée, ses propositions s’afficheront ici : vous cocherez celles à lancer, puis vous relirez et validerez le brief — rien ne démarre avant. Vous pouvez quitter cet écran, l’analyse continue."
+
+    // --- propositions en cartes (S-9) ----------------------------------------
+    public static let featuresTitle = "Features"
+
+    /// Les dépendances d'une proposition : « après journal-erreurs, cache-demarrage ».
+    public static func after(_ deps: [String]) -> String {
+        "après \(deps.joined(separator: ", "))"
+    }
+
+    public static let noProposal = "L’analyse n’a rien proposé."
+
+    // --- corps des pipelines (S-10) ------------------------------------------
+    public static let notLaunchedTitle = "Non lancées"
+
+    public static func decisionsGroupTitle(_ count: Int) -> String {
+        "Décisions de l’arbitre (\(count))"
+    }
+
+    public static let stoppedTitle = "Audit arrêté"
+    public static let stoppedBeforeLaunch = "Cet audit a été arrêté avant le lancement de ses pipelines."
+
+    // --- audit en échec (S-11) -----------------------------------------------
+    public static let failedTitle = "L’analyse a échoué"
+    public static let failureUnknown = "La cause de l’échec n’a pas été transmise."
+    public static let relaunch = "Relancer avec la même orientation"
+    public static let copyDiagnostic = "Copier le diagnostic"
+
+    /// Le diagnostic copié d'un audit en échec : quatre lignes.
+    public static func diagnostic(id: String, repoRoot: String, orientation: String, failure: String) -> String {
+        [
+            "Audit : \(id)",
+            "Dépôt : \(repoRoot)",
+            "Orientation : \(orientation)",
+            "Échec : \(failure)",
+        ].joined(separator: "\n")
+    }
 }

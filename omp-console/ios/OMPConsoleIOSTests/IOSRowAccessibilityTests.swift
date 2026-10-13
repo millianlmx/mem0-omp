@@ -20,9 +20,9 @@ struct IOSRowAccessibilityTests {
 
     /// Le badge visible puis le libellé de la rangée, comme le fait `RootView`.
     private static func rowLabel(
-        _ section: ConsoleSection, attentionCount: Int
+        _ section: ConsoleSection, attentionCount: Int, auditCount: Int = 0
     ) -> (badge: Int, label: String) {
-        let badge = IOSHomeContent.rowBadge(for: section, attentionCount: attentionCount)
+        let badge = IOSHomeContent.rowBadge(for: section, attentionCount: attentionCount, auditCount: auditCount)
         return (badge, IOSHomeText.sectionRowLabel(section.title, badge: badge))
     }
 

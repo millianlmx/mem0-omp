@@ -32,10 +32,10 @@ marqueur `[test: <fonction>]` (une fonction de
 ## Navigation (feature `ios-navigation-onglets-adaptables`)
 
 - Sur iPhone, la racine est une barre d'onglets native (`TabView`, style
-  `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Sessions, Mémoire,
+  `.sidebarAdaptable`) de cinq onglets — Accueil, Pipelines, Sessions, Audit,
   « Plus » — et chaque onglet ouvre son écran directement, sans bouton retour.
   `[test: compactTabsAreFourSectionsThenPlus]`
-- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Audit,
+- L'onglet « Plus » est une liste titrée « Plus » qui pousse Projet, Mémoire,
   Session OMP et Statistiques ; leur bouton retour ramène à la liste.
   `[test: plusListsTheFourOtherSections]`
 - Sur iPad, la barre latérale est visible dès le lancement, titrée « OMP Console »,
@@ -44,10 +44,12 @@ marqueur `[test: <fonction>]` (une fonction de
   n'apparaît que lorsqu'on masque la barre latérale. `[test: groupedSections]`
 - Chaque onglet garde son état (écran poussé, position de défilement) quand on
   change d'onglet ; passer de l'iPad plein écran à une largeur compacte range
-  Projet, Audit, Session OMP et Statistiques sous « Plus », et inversement.
+  Projet, Mémoire, Session OMP et Statistiques sous « Plus » (Audit passe dans la
+  barre d'onglets, juste après Sessions, et sa pile repart de la liste), et
+  inversement.
   `[test: sizeClassChangeMovesBetweenPlusAndSidebar]`
-- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Audit, Session
-  OMP et Statistiques s'ouvrent déjà poussés dans « Plus ».
+- `-section <x>` ouvre l'onglet de la section ; sur iPhone, Projet, Mémoire,
+  Session OMP et Statistiques s'ouvrent déjà poussés dans « Plus ».
   `[test: launchRoutesEachSectionOnIPhone]`
 - Le bouton Connexion (antenne, `connection.open`) figure une seule fois dans la
   barre de chaque écran : les quatre onglets, la liste « Plus », les écrans
@@ -448,8 +450,13 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   visible — la même valeur alimente le badge et le libellé.
   `[test: sectionRowLabelFollowsShownBadge]`
 - Le badge ne dépend pas de l'onglet affiché : l'onglet Accueil le montre depuis
-  n'importe quel onglet, et aucun autre onglet n'en porte.
-  `[test: homeRowCarriesPositiveCount]`
+  n'importe quel onglet. Seuls Accueil et Audit en portent : Accueil le nombre
+  d'attentes, Audit le nombre d'audits qui attendent l'utilisateur (propositions
+  à valider ou question en attente, `AuditBoard.awaitingUserCount`), la même
+  valeur sur l'onglet Audit de l'iPhone et la rangée Audit de la barre latérale
+  de l'iPad (`IOSHomeContent.rowBadge`), rien à zéro ; VoiceOver lit « Audit, N
+  en attente ». `[test: homeRowCarriesPositiveCount]`
+  `[test: auditRowCarriesAwaitingAudits]`
 - La bienvenue ne s'affiche qu'à la première ouverture de l'Accueil (préférence
   `home.welcomeSeen`) ; « Continuer » pousse la Connexion dans la même feuille
   (« Plus tard » à la place de « Fermer ») sauf pour un appareil appairé.

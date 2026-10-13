@@ -114,6 +114,9 @@ public struct AuditEscalationRow: Sendable, Equatable, Identifiable {
 public struct AuditCard: Sendable, Equatable, Identifiable {
     public var id: String
     public var repoRoot: String
+    /// `AuditRecord.repoKey` (`lotRepoKey`) : la clé qui adresse le dépôt sans
+    /// jamais recalculer un `realpath` (l'app iOS n'en calcule aucun).
+    public var repoKey: String
     /// Le dernier composant de `repoRoot`.
     public var repoName: String
     public var orientation: String
@@ -133,9 +136,10 @@ public struct AuditCard: Sendable, Equatable, Identifiable {
     /// Les décisions de l'arbitre dans le contexte de cet audit, la plus récente d'abord.
     public var decisions: [AuditDecision]
 
-    public init(id: String, repoRoot: String, repoName: String, orientation: String, status: AuditStatus, createdAt: Double, failure: String?, briefDraft: String?, proposals: [AuditProposalRow], launches: [AuditLaunchOutcome], features: [AuditFeatureRow], escalations: [AuditEscalationRow], decisions: [AuditDecision]) {
+    public init(id: String, repoRoot: String, repoKey: String, repoName: String, orientation: String, status: AuditStatus, createdAt: Double, failure: String?, briefDraft: String?, proposals: [AuditProposalRow], launches: [AuditLaunchOutcome], features: [AuditFeatureRow], escalations: [AuditEscalationRow], decisions: [AuditDecision]) {
         self.id = id
         self.repoRoot = repoRoot
+        self.repoKey = repoKey
         self.repoName = repoName
         self.orientation = orientation
         self.status = status
@@ -162,6 +166,31 @@ public struct AuditBoard: Sendable, Equatable {
     public func card(id: String?) -> AuditCard? {
         guard let id else { return nil }
         return audits.first { $0.id == id }
+    }
+
+    /// Les audits qui attendent l'utilisateur (audit-ui-redesign S-1, S-4) : ceux
+    /// dont les propositions attendent leur validation, et ceux qui portent au
+    /// moins une question en attente.
+    public var awaitingUserCount: Int {
+        audits.filter { $0.status == .proposed || !$0.escalations.isEmpty }.count
+    }
+
+    /// Le même compte, lu de l'instantané SANS dériver l'ardoise ni appeler
+    /// `realpath` : un enregistrement `proposed`, ou dont la clé est l'`auditSession`
+    /// d'une feature de lot portant une escalade de sorte connue — exactement les
+    /// escalades que `of(_:)` retient. Invariant :
+    /// `awaitingUserCount(in: s) == AuditBoard.of(s).awaitingUserCount`.
+    public static func awaitingUserCount(in snapshot: StoreSnapshot) -> Int {
+        var escalatedKeys = Set<String>()
+        for lot in snapshot.lots.lots {
+            for feature in lot.features {
+                guard let key = feature.auditSession,
+                      let escalation = feature.escalation,
+                      AuditEscalationKind(key: escalation.key) != nil else { continue }
+                escalatedKeys.insert(key)
+            }
+        }
+        return snapshot.audits.records.filter { $0.status == .proposed || escalatedKeys.contains($0.key) }.count
     }
 
     /// Dérive l'ardoise d'un instantané. Une feature « vivante » d'un audit est
@@ -234,6 +263,7 @@ public struct AuditBoard: Sendable, Equatable {
             return AuditCard(
                 id: record.id,
                 repoRoot: record.repoRoot,
+                repoKey: record.repoKey,
                 repoName: auditRepoName(record.repoRoot),
                 orientation: record.orientation,
                 status: record.status,

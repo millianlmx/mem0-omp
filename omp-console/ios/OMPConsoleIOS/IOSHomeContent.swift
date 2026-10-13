@@ -74,11 +74,18 @@ enum IOSHomeContent {
     }
 
     /// Le badge d'UN onglet (iPhone) ou d'une entrée de barre latérale (iPad) : le
-    /// compte sur l'Accueil seulement, 0 (pas de badge) ailleurs. Indépendant de
-    /// l'onglet affiché : il ne reçoit pas la sélection. Alimente le badge ET le
-    /// libellé d'accessibilité de l'onglet.
-    static func rowBadge(for section: ConsoleSection, attentionCount: Int) -> Int {
-        section == .home && attentionCount > 0 ? attentionCount : 0
+    /// compte d'attentes sur l'Accueil, le nombre d'audits qui attendent
+    /// l'utilisateur sur Audit (audit-ui-redesign, S-4), 0 (pas de badge) ailleurs
+    /// ou pour un compte nul ou négatif. Indépendant de l'onglet affiché : il ne
+    /// reçoit pas la sélection. Alimente le badge ET le libellé d'accessibilité de
+    /// l'onglet.
+    static func rowBadge(for section: ConsoleSection, attentionCount: Int, auditCount: Int) -> Int {
+        let count = switch section {
+        case .home: attentionCount
+        case .audit: auditCount
+        default: 0
+        }
+        return max(0, count)
     }
 
     /// La bienvenue est due à la première ouverture de l'Accueil (S-15).

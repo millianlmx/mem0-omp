@@ -35,13 +35,20 @@ struct IOSProjectLaunchSheet: View {
         selected != nil && !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Le repoKey à présélectionner après chargement des dépôts (« Ouvrir dans
+    /// Projet » d'un audit, audit-ui-redesign S-12) ; absent des dépôts connus →
+    /// aucune présélection.
+    private let preselectedKey: String?
+
     init(
         client: ConsoleClientModel,
         recipe: IOSLaunchRecipe.Fixture? = nil,
+        preselectedKey: String? = nil,
         onLaunch: @escaping (String, String) async -> String?
     ) {
         self.client = client
         self.recipe = recipe
+        self.preselectedKey = preselectedKey
         self.onLaunch = onLaunch
     }
 
@@ -131,6 +138,9 @@ struct IOSProjectLaunchSheet: View {
         do {
             let payload = try await client.repos()
             repos = payload.rows
+            if let preselectedKey, let chosen = repos.first(where: { $0.repoKey == preselectedKey }) {
+                choose(chosen)
+            }
         } catch {
             loadFailure = ProjectText.failure(error, state: client.state)
         }

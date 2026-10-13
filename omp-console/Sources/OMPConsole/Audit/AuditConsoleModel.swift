@@ -25,13 +25,15 @@ import Foundation
 /// Ce que le détail rend pour un audit, selon son statut : la vue lit cette
 /// dérivation pure (ses preuves aussi, sans rendre de SwiftUI).
 enum AuditDetailContent: Equatable {
-    /// `analysing` : un indicateur et « Analyse en cours… ».
+    /// `analysing` : la carte « OMP analyse le dépôt ».
     case analysing
     /// `proposed` : les cases, faiblesses puis features.
     case proposals(weaknesses: [AuditProposalRow], features: [AuditProposalRow])
-    /// `launched` et `stopped` : avancement, questions en attente, décisions.
+    /// `launched` et `stopped` : les blocs de `AuditPresentation.followUpBlocks`.
     case followUp
-    /// `failed` : la phrase lisible, `failure` en diagnostic.
+    /// `stopped` avant toute pipeline : l'état vide « Audit arrêté ».
+    case stoppedBeforeLaunch
+    /// `failed` : la phrase d'échec lisible, le diagnostic complet à copier.
     case failed(ReadableFailure)
 
     static func of(_ card: AuditCard) -> AuditDetailContent {
@@ -44,9 +46,12 @@ enum AuditDetailContent: Equatable {
                 features: card.proposals.filter { $0.kind == .feature }
             )
         case .launched, .stopped:
-            return .followUp
+            return AuditPresentation.followUpBlocks(card) == [.stoppedBeforeLaunch] ? .stoppedBeforeLaunch : .followUp
         case .failed:
-            return .failed(ReadableFailure(message: AuditText.analysisFailed, diagnostic: card.failure ?? ""))
+            return .failed(ReadableFailure(
+                message: AuditPresentation.failureSentence(card.failure),
+                diagnostic: AuditPresentation.diagnostic(card)
+            ))
         }
     }
 }

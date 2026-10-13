@@ -192,7 +192,7 @@ sessions et les conducteurs ; la commande part à l'API par
 | Terminal | « Choisir… » (`terminal.choose`), « Relancer » (`terminal.relaunch`), « Lancer OMP » (`terminal.launchOmp`) — trois groupes séparés |
 | Session OMP | l'état en pilule Liquid Glass teintée (`session.status` : « Prête », « Active »…), menu du projet (nom du dossier, « Choisir un dossier… » ⌘O), puis UNE action selon l'état : « Lancer la session » (`session.launch`, ⌘R), « Relancer » (`session.relaunch`, ⌘R) ou « Arrêter la session » (`session.stop`, ⌘.) ; « Détails techniques » (`session.details`) ; quand le service est arrêté, la fenêtre affiche « service arrêté » avec un bouton « Réessayer » |
 | Projet | la pilule d'état de la session (`projet.sessionStatus`), « Arrêter le pilotage » (`projet.close`, inactif hors démarrage et pilotage actif), « Détails techniques » (`projet.details`), seulement pendant un pilotage |
-| Audit | « Lancer un audit… » (`audit.start`) |
+| Audit | « Nouvel audit » (`audit.start`, titre et icône, infobulle « Lancer un audit… ») : ouvre la feuille « Lancer un audit » ; seul bouton d'ajout de la section (le « + » de « Nouvelle feature… » reste le seul « + » de la barre) |
 | Statistiques | sélecteur « Projet » (`stats.project`), quand le tableau ou l'état « Aucune donnée » est affiché |
 | Sessions, session ouverte | bouton retour vers la liste ; l'état du fil en pilule Liquid Glass teintée de sa couleur (`viewer.status` : « En direct » vert, « Démarrage » bleu, « Erreur de lecture » rouge) ; aucune pilule quand le run de la session est fini (« Terminé » reste porté par la ligne de la liste) ; hors du direct, le bouton « Revenir au direct » (`viewer.returnToLive`) à sa place |
 
@@ -1899,53 +1899,120 @@ l'horodatage du passage au segment suivant.
 La section **Audit** (⌘4, juste après **Projet**) lance et suit les audits du
 service : une analyse d'un dépôt selon une orientation libre, des propositions à
 cocher, puis des pipelines lancées et suivies jusqu'à leur PR. À gauche, la liste
-des audits (`audit.row.<id>` : nom du dépôt, orientation sur deux lignes au plus,
-statut, badge du nombre de questions en attente) ; à droite, le détail de l'audit
-sélectionné. La barre d'outils porte « Lancer un audit… » (`audit.start`).
+des audits (`audit.list`, style inset, colonne de 220 à 260 pt) ; à droite, le
+détail de l'audit sélectionné. La barre d'outils porte « Nouvel audit »
+(`audit.start`). Tous les textes viennent d'`AuditText` (ConsoleCore), toutes les
+dérivations d'`AuditPresentation` — les mêmes sur Mac et sur iPhone/iPad —, et
+tous les identifiants d'`AuditAccessibility` (`AuditView.swift`).
 
 1. **Vide** — sans audit, la section affiche « Aucun audit. » et « Lancez un audit
    pour analyser un dépôt selon l’orientation de votre choix. », avec le bouton
-   « Lancer un audit… ».
-2. **Lancer** — la feuille « Lancer un audit » propose le dépôt (prérempli par le
-   projet ouvert, `ProjectRoot.resolve`, et « Choisir… » par `NSOpenPanel`) et
-   l'orientation (`TextEditor`). « Lancer l’audit » n'est actif que si le dossier
-   contient `.git` et si l'orientation, rognée, compte de 1 à 2 000 caractères. L'app
-   poste `POST /v1/audits {repo, orientation}` ; au succès, l'audit créé est
-   sélectionné et son en-tête montre l'orientation saisie. Pendant l'analyse, le
-   détail affiche « Analyse en cours… ».
-3. **Cocher** — un audit `proposed` montre une case par proposition, sous
-   « Faiblesses » et « Features proposées » (`audit.proposal.<slug>`), avec le
-   compteur des cases cochées. Une proposition déjà prise par une pipeline a sa
-   case désactivée (« Déjà dans le lot des pipelines »). Les cases vivent en
-   mémoire de l'app, par audit : rien n'est envoyé au simple clic.
-4. **Relire le brief** — « Relire le brief… » (actif dès qu'une case est cochée)
-   ouvre la feuille « Brief de l’audit » : le brief proposé par l'analyse,
+   « Lancer un audit… » (`audit.empty.start`).
+2. **Lancer** — « Nouvel audit » ouvre la feuille « Lancer un audit » : le dépôt
+   (prérempli par le projet ouvert, `ProjectRoot.resolve`, et « Choisir… » par
+   `NSOpenPanel`) et l'orientation (`TextEditor`). « Lancer l’audit » n'est actif
+   que si le dossier contient `.git` et si l'orientation, rognée, compte de 1 à
+   2 000 caractères. L'app poste `POST /v1/audits {repo, orientation}` ; au succès,
+   l'audit créé est sélectionné.
+3. **Liste** — deux sections, « En cours » (audits en analyse, à valider ou
+   lancés) puis « Terminés » (arrêtés ou en échec), chacune du plus récent au plus
+   ancien ; une section vide n'est pas affichée. Une rangée (`audit.row.<id>`)
+   montre une pastille ronde teintée selon le statut, l'orientation sur deux
+   lignes au plus, une légende d'une ligne « dépôt · étape · âge » (le nom du
+   dépôt n'apparaît que là ; l'étape est celle de la frise) et, s'il y a des
+   questions en attente, un badge orange de leur nombre (VoiceOver : « N questions
+   en attente »). Le statut n'est jamais écrit à l'écran : VoiceOver le lit en
+   valeur de la rangée. ↑/↓ changent la sélection.
+4. **Menu d'un audit** — le menu contextuel de la rangée (clic droit,
+   `audit.row.<id>.copyPath|openProject|stop`) et le menu « ⋯ » de l'en-tête
+   (« Plus d’actions », `audit.menu`, `audit.menu.copyPath|openProject|stop`)
+   offrent, dans cet ordre, « Copier le chemin » (le chemin COMPLET du dépôt au
+   presse-papiers), « Ouvrir dans Projet » (étape 11), un séparateur, puis
+   « Arrêter l’audit… » (destructif, absent pour un audit terminé), qui demande
+   confirmation (« Arrêter cet audit ? ») puis poste `DELETE /v1/audits/{id}` : les
+   pipelines non livrées de cet audit sont annulées, leurs dossiers et branches
+   conservés, les PR déjà créées restent ouvertes, les autres audits ne sont pas
+   touchés ; l'audit passe sous « Terminés ».
+5. **En-tête du détail** — la légende « dépôt · lancé à HH:MM » (infobulle : le
+   chemin complet) et, à droite, le menu « ⋯ » ; puis l'orientation en titre, sur
+   deux lignes au plus, sélectionnable (`audit.orientation`). Quand elle est
+   tronquée, « Afficher l’orientation complète » la déplie et « Réduire
+   l’orientation » la replie (`audit.orientation.toggle`). Sous l'en-tête, la
+   **frise** des quatre étapes — Analyse, Propositions, Brief, Pipelines
+   (`audit.stepper`) — marque chaque étape faite, en cours, en échec ou à venir ;
+   VoiceOver la lit d'un bloc (« Analyse : fait, Propositions : en cours, … »).
+6. **Analyse** — pendant l'analyse, la carte « OMP analyse le dépôt »
+   (`audit.analysing`) montre un indicateur d'activité, « Analyse en cours depuis
+   m:ss » (à la seconde), ce qui suivra (cocher, relire et valider le brief — rien
+   ne démarre avant ; quitter l'écran n'arrête pas l'analyse) et un bouton discret
+   « Arrêter l’audit… » (`audit.stop`).
+7. **Cocher** — un audit `proposed` montre ses propositions en deux cartes,
+   « Faiblesses » puis « Features » (`audit.proposals.weaknesses`,
+   `audit.proposals.features`, chacune omise si vide) : une case par proposition
+   (`audit.proposal.<slug>`), son intention, son slug en chasse fixe et « après
+   <dépendances> » s'il en a. Une proposition déjà prise par une pipeline porte
+   la pastille « déjà prise » et sa case est désactivée ; sans proposition, « L’analyse
+   n’a rien proposé. ». Les cases vivent en mémoire de l'app, par audit : rien
+   n'est envoyé au simple clic. Une barre collante au bas du détail, visible quel
+   que soit le défilement, porte « N cochées » (`audit.checkedCount` : « 0 cochée »,
+   « 3 cochées ») et « Relire le brief → » (`audit.reviewBrief`, ⌘↩, actif dès qu'une
+   case est cochée).
+8. **Relire le brief** — « Relire le brief → » ouvre la feuille « Brief de
+   l’audit » (la frise passe Brief en cours) : le brief proposé par l'analyse,
    éditable. Une rubrique manquante est signalée dans la feuille, avant tout
    envoi. « Valider et lancer » poste les propositions cochées et le texte du brief
    (`POST /v1/audits/{id}/launch`) ; « Annuler », Échap ou la fermeture de la
-   feuille ne postent rien.
-5. **Suivre** — un audit lancé (ou arrêté) montre « Avancement » : une rangée par
-   feature (slug, phase, attente, bouton « Ouvrir la PR » quand la PR existe), et
-   les propositions non lancées avec leur motif.
-6. **Répondre** — « Questions en attente » liste les escalades que l'arbitre n'a
-   pas tranchées : « <slug> · <phase> », la question, le motif de l'arbitre, puis
-   un bouton par option, un champ « Autre réponse » et « Répondre » — ou, pour un
-   jalon de specs ou de revue, ses deux boutons. Une réponse acceptée retire
-   l'escalade au relevé suivant ; une question déjà répondue affiche « Cette
-   question a déjà reçu une réponse. ».
-7. **Décisions de l’arbitre** — une rangée par décision (feature, phase, question,
-   réponse, et « Déjà tranchée » ou « Tranchée par l’arbitre »), la plus récente en
-   tête ; « Aucune décision pour l’instant. » sinon.
-8. **Arrêter** — « Arrêter l’audit… » demande confirmation (« Arrêter cet audit ? »)
-   puis poste `DELETE /v1/audits/{id}` : les pipelines non livrées de cet audit sont
-   annulées, leurs dossiers et branches conservés, les PR déjà créées restent
-   ouvertes, les autres audits ne sont pas touchés. Le bouton disparaît pour un
-   audit arrêté.
+   feuille ne postent rien et ramènent la frise à Propositions.
+9. **Pipelines** — un audit lancé (ou arrêté après lancement) montre, dans cet
+   ordre et seulement s'ils ont un contenu : « Questions en attente »
+   (`audit.escalations`) d'abord — une carte orange par escalade que l'arbitre
+   n'a pas tranchée : « <slug> · <phase> », la question, le motif de l'arbitre,
+   puis un bouton par option, un champ « Autre réponse » et « Répondre » — ou,
+   pour un jalon de specs ou de revue, ses deux boutons ; une réponse acceptée
+   retire l'escalade au relevé suivant, une question déjà répondue affiche
+   « Cette question a déjà reçu une réponse. » — ; puis « Avancement »
+   (`audit.progress`) : une rangée par feature (`audit.feature.<slug>` : slug,
+   barre de progression des cinq étapes de la pipeline, état d'attente en orange
+   quand elle attend votre réponse, « Ouvrir la PR » `audit.feature.<slug>.pr`
+   quand la PR existe) ; puis « Non lancées » (`audit.notLaunched`) : slug et
+   motif (`audit.notLaunched.<slug>`) ; enfin le groupe repliable « Décisions de
+   l’arbitre (N) » (`audit.decisions`), replié par défaut : une rangée par
+   décision (`audit.decision.<i>` : feature, phase, question, réponse, et « Déjà
+   tranchée » ou « Tranchée par l’arbitre »), la plus récente en tête. Un audit
+   arrêté avant le lancement de ses pipelines affiche « Audit arrêté » et « Cet
+   audit a été arrêté avant le lancement de ses pipelines. » (`audit.stoppedEmpty`).
+10. **Échec** — une analyse échouée affiche « L’analyse a échoué », la phrase
+    d'échec lisible (« La cause de l’échec n’a pas été transmise. » sans cause)
+    et deux actions (`audit.analysisFailed`) : « Relancer avec la même
+    orientation » (`audit.relaunch`), qui démarre un NOUVEL audit sur le même
+    dépôt et la même orientation (`POST /v1/audits`) et le sélectionne — l'audit
+    échoué reste sous « Terminés », inchangé —, et « Copier le diagnostic »
+    (`audit.analysisFailed.diagnostic`), qui copie quatre lignes « Audit : <id> »,
+    « Dépôt : <chemin> », « Orientation : … », « Échec : … ».
+11. **Ouvrir dans Projet** — bascule sur la section **Projet** : si ce dépôt est
+    déjà piloté, il est simplement affiché ; si rien n'est piloté, la feuille
+    « Piloter un projet… » s'ouvre préremplie avec ce dépôt (rien ne démarre sans
+    confirmation) ; si un autre dépôt est piloté, l'alerte de refus habituelle de
+    Projet s'affiche (`AuditProjectBridge`).
 
-Chaque échec (démarrage, lancement, réponse, arrêt, analyse) s'affiche en bandeau
-lisible dans le détail, avec « Copier le diagnostic » ; service arrêté, la section
-affiche « service arrêté » et « Réessayer », comme **Projet**, et la lecture du
-magasin reste affichée.
+**Badge** : la rangée **Audit** de la barre latérale porte le nombre d'audits qui
+attendent une action de l'utilisateur — propositions à valider ou au moins une
+question en attente (`AuditBoard.awaitingUserCount`,
+`HomePresentation.sidebarBadge`) —, comme la rangée Accueil porte ses attentes ;
+rien à zéro. L'ardoise des audits est lue dès l'ouverture de la fenêtre, sans
+ouvrir la section.
+
+**Sur iPhone et iPad** : la même présentation (sections « En cours » /
+« Terminés », frise, carte d'analyse, propositions et barre « N cochées »,
+corps Pipelines, échec et « Relancer avec la même orientation », « Ouvrir dans
+Projet ») est servie par l'onglet Audit de l'iPhone — quatrième onglet de la
+barre, entre Sessions et « Plus » — et par la rangée Audit de la barre latérale
+de l'iPad, qui portent le même badge ; voir « Auditer depuis l’iPhone ».
+
+Chaque échec de geste (démarrage, lancement, réponse, arrêt) s'affiche en bandeau
+lisible en tête de la section (`audit.failure`), avec « Copier le diagnostic » ;
+service arrêté, la section affiche « service arrêté » et « Réessayer »
+(`audit.retry`), comme **Projet**, et la lecture du magasin reste affichée.
 
 **Survie** : quitter l'app n'appelle aucune route d'audit. Les audits vivent dans
 le service ; à la réouverture, la section relit le magasin — audits, escalades (y
@@ -2896,15 +2963,16 @@ absence en échec.
 huit sections, dérivées du type partagé `ConsoleSection` (Terminal et Fichiers
 sont hors périmètre), une seule barre d'onglets native (`TabView`, style
 `.sidebarAdaptable`) — sur iPhone, cinq onglets en bas (Accueil, Pipelines,
-Sessions, Mémoire, « Plus »), « Plus » étant une liste titrée qui pousse Projet,
-Audit, Session OMP et Statistiques dans sa propre pile ; sur iPad, une barre latérale
+Sessions, Audit, « Plus »), « Plus » étant une liste titrée qui pousse Projet,
+Mémoire, Session OMP et Statistiques dans sa propre pile ; sur iPad, une barre latérale
 titrée « OMP Console », visible dès le lancement, à deux groupes (Pilotage :
 Accueil, Pipelines, Projet, Audit, Session OMP ; Consultation : Sessions, Mémoire,
 Statistiques), la barre d'onglets du haut n'apparaissant que lorsqu'on masque la
 barre latérale — et, pour chaque section, son écran avec son état vide RÉEL.
 Chaque onglet garde sa pile et sa position de défilement quand on en change ;
-passer en largeur compacte (iPad en Split View) range Projet, Audit, Session OMP et
-Statistiques sous « Plus », et inversement. Le routage onglet ↔ section est pur
+passer en largeur compacte (iPad en Split View) range Projet, Mémoire, Session OMP et
+Statistiques sous « Plus » et place l'onglet Audit juste après Sessions (sa pile
+repart alors de la liste), et inversement. Le routage onglet ↔ section est pur
 (`IOSTabs.swift`, testé par `IOSTabsTests`). Elle n'a ni magasin local, ni
 écriture du magasin : son seul accès
 réseau est le client distant (`ConsoleClient`) — découverte Bonjour, appairage au
@@ -2964,8 +3032,11 @@ bouton est désactivé et montre « Envoi en cours » jusqu'à la réponse du Ma
 second envoi possible ; un échec s'affiche sur la carte concernée, en français et
 sans détail technique, et le succès n'a pas de message (la carte suit l'ardoise).
 L'onglet Accueil (iPhone) et l'entrée Accueil de la barre latérale (iPad) portent
-le badge du nombre d'attentes quel que soit l'onglet affiché (aucun autre onglet
-n'en porte, et rien à zéro) ; VoiceOver lit « Accueil, N en attente ». Trois
+le badge du nombre d'attentes quel que soit l'onglet affiché, et l'onglet Audit
+(iPhone) comme l'entrée Audit (iPad) le nombre d'audits qui attendent
+l'utilisateur — propositions à valider ou question en attente,
+`AuditBoard.awaitingUserCount` (aucun autre onglet n'en porte, et rien à zéro) ;
+VoiceOver lit « Accueil, N en attente » et « Audit, N en attente ». Trois
 feuilles s'ouvrent depuis l'écran : « Répondre » (options d'un ask ou texte
 libre), Contrat (sections rendues en Markdown, bloc par bloc) et Bienvenue (première ouverture d'une
 installation neuve ; « Continuer » y pousse la Connexion dans la même feuille). Le crochet de recette
@@ -3701,6 +3772,11 @@ onglets avant (`--avant`, par défaut `origin/main` après une mise à jour tent
 par HTTPS — l'URL SSH de `origin` est réécrite, sans invite ; un échec est noté
 dans le rapport —, compilé depuis un worktree détaché) et après (le worktree
 courant).
+Sur iPhone, elle attend les onglets Accueil, Pipelines, Sessions, Audit et
+« Plus » (`PHONE_TABS`), et sous « Plus » les rangées Projet, Mémoire, Session OMP
+et Statistiques (`PLUS_SECTIONS`, miroir d'`IOSTabs.plusSections` depuis
+`audit-ui-redesign`) ; le contrôle AC-2 touche l'onglet Sessions depuis l'Accueil
+et vérifie que Sessions s'ouvre directement, sans bouton retour.
 Elle crée ses propres simulateurs privés `zz-onglets-tel` (iPhone) et
 `zz-onglets-tab` (iPad) sur iOS 27.0, les démarre, y installe l'app compilée
 sans signature, puis les supprime en fin de course — elle ne touche à aucun
@@ -4287,24 +4363,51 @@ MEM0_REMOTE_RECIPE=1 swift test --filter iosProjetRecipe
 
 ### Auditer depuis l’iPhone
 
-La section **Audit** (dans « Plus » sur iPhone, juste après Projet) liste les
-audits et pousse le détail de celui qu’on touche. « Lancer un audit… » ouvre une
+La section **Audit** est l'onglet Audit de l'iPhone (quatrième onglet, entre
+Sessions et « Plus ») et la rangée Audit de la barre latérale de l'iPad. Elle
+reprend la présentation du Mac (voir « Section Audit (pilotage) ») : une liste
+groupée en deux sections, « En cours » puis « Terminés » (une section vide est
+omise), dont chaque rangée (`ios.audit.row.<id>`) montre la pastille du statut,
+l'orientation sur deux lignes, la légende « dépôt · étape · âge » et le badge
+orange des questions en attente ; l'appui long ouvre le menu « Copier le
+chemin », « Ouvrir dans Projet » et « Arrêter l’audit… » (ces deux derniers
+seulement connecté, l'arrêt seulement pour un audit en cours). Toucher une
+rangée pousse le détail. « Lancer un audit… » (`ios.audit.start`) ouvre une
 feuille : un dépôt parmi les dépôts connus du Mac, une orientation sur plusieurs
 lignes ; « Lancer l’audit » n’est actif que si l’orientation rognée fait de 1 à
 2 000 caractères.
 
-Le détail montre les propositions en rangées-boutons cochables (« Cochée » ou
-« Non cochée » pour VoiceOver) ; une proposition déjà dans le lot est désactivée.
-« Relire le brief… » ouvre l’éditeur du brief : « Valider et lancer » poste la
-sélection et le brief, « Annuler » n’envoie rien. Suivent l’avancement (phase,
-attente, « Ouvrir la PR »), les questions en attente — options, « Autre réponse »
-et « Répondre », ou « Valider les specs » / « Accepter la revue et livrer (PR) »
-et « Abandonner la feature » —, les décisions de l’arbitre et « Arrêter
-l’audit… », qui demande confirmation.
+Le détail porte l’en-tête (`ios.audit.header` : « dépôt · lancé à HH:MM », menu
+« ⋯ » `ios.audit.menu`, orientation sur deux lignes sélectionnable et « Afficher
+l’orientation complète » `ios.audit.orientation.toggle`), puis la frise des
+quatre étapes (`ios.audit.stepper`, en colonnes ou, faute de place, en liste
+verticale ; lue d’un bloc par VoiceOver). Le corps suit le statut : la carte
+« OMP analyse le dépôt » (`ios.audit.analysis`, durée écoulée à la seconde,
+« Arrêter l’audit… » discret `ios.audit.stop`) ; les propositions en deux
+sections « Faiblesses » et « Features », rangées-boutons cochables (« Cochée »
+ou « Non cochée » pour VoiceOver ; « déjà prise » désactivée), avec la barre
+collante « N cochées » (`ios.audit.checkedCount`) et « Relire le brief → »
+(`ios.audit.brief`), qui ouvre l’éditeur du brief : « Valider et lancer » poste
+la sélection et le brief, « Annuler » n’envoie rien ; le corps Pipelines —
+questions en attente d’abord, en cartes orange (options, « Autre réponse » et
+« Répondre », ou « Valider les specs » / « Accepter la revue et livrer (PR) » et
+« Abandonner la feature »), puis « Avancement » (barre de progression, attente,
+« Ouvrir la PR »), « Non lancées » avec leur motif (`ios.audit.notLaunched`) et
+« Décisions de l’arbitre (N) » replié (`ios.audit.decisions`) ; « Audit arrêté »
+(`ios.audit.stoppedEmpty`) ; et l’échec : « L’analyse a échoué », la phrase
+d’échec, « Relancer avec la même orientation » (`ios.audit.relaunch`, pousse le
+nouvel audit) et « Copier le diagnostic » (`ios.audit.diagnostic`). « Ouvrir dans
+Projet » bascule sur Projet : dépôt déjà piloté affiché, sinon la feuille
+« Piloter un projet… » présélectionnée sur ce dépôt, ou le refus si un autre
+dépôt est piloté.
 
-Hors ligne, le contenu reçu reste visible et les gestes sont coupés. Une réponse
-donnée sur le Mac disparaît de l’iPhone à la trame `store` suivante. Capture :
-`-section audit -audit.recipe liste|propositions|suivi`.
+Hors ligne, le contenu reçu reste visible et les gestes sont coupés (« Copier le
+chemin » et « Copier le diagnostic » restent actifs). Une réponse donnée sur le
+Mac disparaît de l’iPhone à la trame `store` suivante. Capture :
+`-section audit -audit.recipe liste|propositions|suivi|analyse|echec` — `liste`
+les cinq audits d’`AuditParity` (badge 2 sur l’onglet Audit), `propositions`,
+`suivi`, `analyse` (l’audit en cours d’analyse) et `echec` (l’audit en échec)
+ouvrent le détail correspondant.
 
 ### Lire la mémoire du projet depuis l'iPhone
 

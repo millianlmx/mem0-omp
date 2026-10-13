@@ -38,8 +38,13 @@ struct IOSSectionView: View {
     let projectRecipe: IOSProjectRecipe?
     /// Le crochet de recette `-sessionomp.recipe lancement` de l'écran Session OMP.
     let sessionOmpRecipe: IOSSessionOmpRecipe?
-    /// Le crochet de recette `-audit.recipe <liste|propositions|suivi>` de l'écran Audit.
+    /// Le crochet de recette `-audit.recipe <liste|propositions|suivi|analyse|echec>` de l'écran Audit.
     let auditRecipe: IOSAuditRecipe?
+    /// La demande « Ouvrir dans Projet » d'un audit (audit-ui-redesign, S-12),
+    /// consommée par l'écran Projet.
+    @Binding var projectRequest: String?
+    /// « Ouvrir dans Projet » : pose la demande et affiche la section Projet.
+    let openProject: (String) -> Void
     /// La feuille Connexion de la racine, ouverte par « Se connecter » du
     /// composant d'état de connexion des sections.
     @Binding var showConnection: Bool
@@ -62,9 +67,9 @@ struct IOSSectionView: View {
         } else if section == .session {
             IOSSessionOmpScreen(client: client, recipe: sessionOmpRecipe, showConnection: $showConnection)
         } else if section == .project {
-            IOSProjectScreen(client: client, recipe: projectRecipe, showConnection: $showConnection)
+            IOSProjectScreen(client: client, recipe: projectRecipe, request: $projectRequest, showConnection: $showConnection)
         } else if section == .audit {
-            IOSAuditScreen(client: client, recipe: auditRecipe, showConnection: $showConnection)
+            IOSAuditScreen(client: client, recipe: auditRecipe, openProject: openProject, showConnection: $showConnection)
         } else if section == .stats {
             IOSStatsScreen(client: client, recipe: statsRecipe, showConnection: $showConnection)
         } else {
