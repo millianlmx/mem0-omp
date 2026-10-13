@@ -198,7 +198,7 @@ struct IOSSiriPilotTests {
         #expect(accepted.asks == [VoiceSpeechText.pilotAsk(.stop, titles: [target.title], more: 0)])
         #expect(accepted.confirms == [confirmation])
         #expect(sent.map(\.path) == [cardPath("export-csv", "stop")])
-        #expect(result == VoiceIssue.sent(.stopFeature, target: target.title).phrase)
+        #expect(result == VoiceIssue.sent(.stopFeature, target: target.repo).phrase, "l'issue nomme le dépôt, dont toutes les pipelines s'arrêtent")
 
         let declined = ScriptedConversation(answers: [target.title], confirmations: [false])
         let (cancelled, none) = try await play(.stop, on: state, conversation: declined)

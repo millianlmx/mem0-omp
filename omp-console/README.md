@@ -4861,9 +4861,9 @@ accepter la revue) :
    `{"verdict":"review"}`). L'ardoise n'est pas relue entre la désignation et
    l'envoi : si la feature a changé entre-temps, le refus du Mac fait foi et
    Siri en dit la cause.
-4. Issue : « La pipeline ‹X› est reprise. », « La feature ‹X› est arrêtée. »,
-   « Les specs de la feature ‹X› sont validées. » ou « La revue de la feature
-   ‹X› est acceptée. »
+4. Issue : « La pipeline ‹X› est reprise. », « Les pipelines de ‹dépôt› sont
+   arrêtées. » (l'arrêt vise tout le dépôt), « Les specs de la feature ‹X› sont
+   validées. » ou « La revue de la feature ‹X› est acceptée. »
 
 Confirmation et déverrouillage, par geste (table `VoiceGesturePolicy`, iPhone) :
 

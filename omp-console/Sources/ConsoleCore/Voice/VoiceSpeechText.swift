@@ -231,11 +231,12 @@ public enum VoiceSpeechText {
     }
 
     /// Le succès d'un geste, qui nomme le geste et sa cible `t` (déjà épurée).
+    /// La cible d'un arrêt est le DÉPÔT : `card.stop` arrête toutes ses pipelines.
     private static func sent(_ gesture: VoiceGesture, target t: String) -> String {
         guard !t.isEmpty else { return "C’est fait." }
         switch gesture {
         case .stopFeature:
-            return "La feature \(t) est arrêtée."
+            return "Les pipelines de \(t) sont arrêtées."
         case .validateSpecs:
             return "Les specs de la feature \(t) sont validées."
         case .acceptReview:
