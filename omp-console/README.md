@@ -4238,6 +4238,61 @@ dépôt et ne bloque rien.
    l'appareil : *Réglages ▸ Général ▸ VPN et gestion de l'appareil*.
 6. Relancer l'app — elle s'ouvre alors normalement.
 
+### Siri : statut de la connexion
+
+L'app iOS déclare un App Intent en lecture seule, **Statut de la connexion**
+(`IOSConnectionStatusIntent`, `ios/OMPConsoleIOS/IOSSiriText.swift`), et un App
+Shortcut qui le rend atteignable par la voix et depuis l'app Raccourcis. L'intent
+n'écrit rien, n'appaire rien et n'ouvre aucune connexion de plus : il lit le
+client distant UNIQUE de l'app (`OMPConsoleIOSApp` le crée et l'enregistre pour
+les intents par `IOSSharedClient`), attend la fin de la relecture du jeton au
+trousseau — jamais la découverte du Mac — puis énonce l'état à cet instant
+(`IOSSiriStatus`).
+
+Phrases Siri (en français, toutes avec le nom de l'app) :
+
+- « Statut de OMP Console »
+- « Connexion de OMP Console »
+- « Vérifier la connexion de OMP Console »
+
+Réponses énoncées :
+
+| État du client | Réponse |
+|---|---|
+| Aucun jeton, ou jeton refusé par le Mac | « Non appairé » |
+| Jeton présent, Mac non joint (recherche, connexion en cours, Mac éteint ou injoignable, hors réseau, version incompatible) | « Appairé, Mac non joint » |
+| Flux ouvert vers le Mac | « Connecté à *X* », où *X* est le nom d'instance Bonjour du Mac (« OMP Console », « OMP Console (2) »…), ou `hôte:port` pour une adresse manuelle |
+
+- L'intent **ouvre l'app** au premier plan avant de répondre ; app tuée, Siri la
+  lance à froid.
+- Il exige un **iPhone déverrouillé** : le jeton est au trousseau en
+  `WhenUnlockedThisDeviceOnly`, illisible appareil verrouillé. iPhone verrouillé,
+  le système demande d'abord le déverrouillage.
+- Dans l'app **Raccourcis**, OMP Console propose la tuile *Statut de la
+  connexion* (symbole `macbook.and.iphone`), qui lance le même intent.
+- Siri ne répond que s'il est interrogé : l'app n'annonce rien, aucune
+  notification.
+- La coque macOS doit être ouverte et joignable pour entendre « Connecté à … ».
+
+Le build (`xcodebuild`, `scripts/ios-build.sh`) produit
+`OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata`, qui porte l'intent
+et ses trois phrases (`${applicationName}`). La réponse est prouvée par
+`ios/OMPConsoleIOSTests/IOSSiriStatusTests.swift` ; la reconnaissance vocale, elle,
+ne se prouve qu'à la main, sur appareil réel.
+
+**Preuve manuelle sur iPhone réel** (client-ios-possede-par-la-vue/AC-6, conduite
+par l'utilisateur) :
+
+1. Installer l'app sur l'iPhone par Xcode (cible `OMPConsoleIOS`, signature de
+   l'équipe du projet), comme dans *Installer sur un appareil réel*.
+2. Appairer l'iPhone au Mac ; régler Siri en français ; garder l'iPhone
+   déverrouillé.
+3. App Mac ouverte : dire « Dis Siri, statut de OMP Console ». Attendu : l'app
+   s'ouvre et Siri dit « Connecté à OMP Console » (ou le nom d'instance du Mac).
+4. Quitter l'app Mac, puis redire la phrase. Attendu : « Appairé, Mac non joint ».
+5. Dans Raccourcis, toucher la tuile *Statut de la connexion* d'OMP Console.
+   Attendu : la même réponse qu'à l'étape précédente.
+
 ### Conduire un projet depuis l'iPad
 
 La section **Projet** de l'app conduit un projet de bout en bout : elle lit le
