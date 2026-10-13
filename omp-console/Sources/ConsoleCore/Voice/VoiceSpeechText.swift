@@ -103,6 +103,41 @@ public enum VoiceSpeechText {
         return pendingHeader(count) + items.joined(separator: " ; ") + end
     }
 
+    // --- parcours des attentes (siri-mac-questions-en-attente, S-2) -------------
+    /// L'annonce du nombre de demandes, qui introduit la première (finit par une
+    /// espace : la demande suit sans séparateur).
+    public static func walkHeader(_ count: Int) -> String {
+        count == 1 ? "1 demande en attente : " : "\(count) demandes en attente. La première : "
+    }
+
+    /// « sujet, nature : question. » ; la source tient lieu de sujet s'il est vide.
+    public static func walkRequest(_ request: PendingRequest) -> String {
+        let subject = VoiceSpeech.collapsingBlanks(request.subject ?? "")
+        let label = "\(subject.isEmpty ? pendingSource(request.nature) : subject), \(pendingNature(request.nature))"
+        let question = VoiceSpeech.collapsingBlanks(request.question)
+        return "\(label) : \(question)" + (endsSentence(question) ? "" : ".")
+    }
+
+    /// Tous les choix, dans leur ordre, puis l'invitation au texte libre s'il est admis.
+    public static func walkChoices(labels: [String], acceptsFreeText: Bool) -> String {
+        "Choix possibles : \(list(labels, more: 0))." + (acceptsFreeText ? " " + walkOtherAnswerHint : "")
+    }
+
+    public static let walkOtherAnswerHint = "Vous pouvez aussi dire « autre réponse »."
+    public static let walkDictate = "Dictez votre réponse."
+    public static let walkInApp = "À traiter dans l’app."
+    public static let walkNext = "La suivante : "
+    public static let walkNoneLeft = "Il n’en reste aucune."
+    public static let walkStopped = "D’accord, cette demande reste en attente."
+    public static let walkNotUnderstood = "Je n’ai pas compris votre réponse, rien n’a été envoyé."
+    public static let stateUnreadable = "OMP Console n’a pas pu lire l’état du Mac à temps, rien n’a été envoyé. Réessayez dans un instant."
+    public static let confirmYes = "Oui"
+    public static let confirmNo = "Non"
+
+    /// Les énoncés qui demandent à dicter un texte libre, sous forme normalisée
+    /// (`VoiceSpeech.normalized`).
+    static let otherAnswerWords: Set<String> = ["autre reponse", "une autre reponse", "autre", "reponse libre"]
+
     // --- issue d'un geste (S-5) --------------------------------------------------
     public static func issue(_ issue: VoiceIssue) -> String {
         switch issue {
@@ -165,7 +200,7 @@ public enum VoiceSpeechText {
 
     /// Vrai si `text` finit déjà une phrase : point, point d'exclamation, point
     /// d'interrogation ou points de suspension (U+002E, U+0021, U+003F, U+2026).
-    private static func endsSentence(_ text: String) -> Bool {
+    static func endsSentence(_ text: String) -> Bool {
         guard let last = text.unicodeScalars.last else { return false }
         return [0x2E, 0x21, 0x3F, 0x2026].contains(last.value)
     }

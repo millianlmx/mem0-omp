@@ -1203,7 +1203,12 @@ Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script
    `OpenConsoleIntent` (`Sources/OMPConsole/Intents/OpenConsoleIntent.swift`, qui
    ramène la fenêtre principale) et son App Shortcut, phrase « Ouvre
    ${applicationName} » (« Ouvre OMP Console ») :
-   `  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)`.
+   `  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)` ;
+6. contrôle ensuite les deux intents vocaux (voir *Siri sur le Mac*) : `extract.actionsdata`
+   doit déclarer `MacPendingIntent` et son App Shortcut « Qu’est-ce qui m’attend dans
+   ${applicationName} », puis `MacAnswerIntent` et son App Shortcut « Réponds dans
+   ${applicationName} » :
+   `  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)`.
 
 Chaque échec sort en code 1, sur la sortie d'erreur, retire le bundle (y compris
 celui d'un assemblage antérieur) et ne signe rien :
@@ -1218,6 +1223,8 @@ celui d'un assemblage antérieur) et ne signe rien :
 | rien d'extrait (aucun intent compilé) | `✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)` |
 | intent sonde absent | `✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata` |
 | App Shortcut absent | `✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata` |
+| intent vocal absent (`<Type>` = `MacPendingIntent`, puis `MacAnswerIntent`) | `✗ intent vocal absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
+| App Shortcut vocale absente | `✗ App Shortcut de l'intent vocal <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est « Qu’est-ce qui m’attend dans ${applicationName} » ou « Réponds dans ${applicationName} » |
 
 Le premier assemblage après l'ajout du drapeau recompile tout `.build-run` et
 `.build-app` (mesuré : environ 45 s pour `swift build -c release`, 3 min 30 pour la
@@ -2821,6 +2828,23 @@ ses listes écrites à la main.
   `.misconfigured(let d)` → `.result(dialog: IntentDialog(LocalizedStringResource(stringLiteral: d)))`.
   Un refus, une absence de réponse ou une cible vide n'émettent rien ; une erreur de
   `send` remonte telle quelle.
+
+Un intent qui émet **plusieurs** gestes — celui qui répond aux demandes en attente,
+dont la source n'est connue qu'à l'exécution — se conforme à `VoiceAnswerIntent` au
+lieu de `VoiceGestureIntent` :
+
+- il déclare la liste de ses gestes,
+  `static let voiceGestures: [VoiceGesture] = [.answerOption, .answerText, .answerProjectDialog, .answerHostedDialog, .answerAuditEscalation]`,
+  et UN littéral `authenticationPolicy`, valable pour chacun d'eux ;
+- à chaque envoi, `applyVoicePolicy(_:target:send:)` reçoit le geste de la demande
+  visée : un geste absent de `voiceGestures`, ou dont la ligne de la table diverge du
+  littéral, rend `.misconfigured` sans appeler `send` ; sinon la porte est la même que
+  pour `VoiceGestureIntent` (confirmation au besoin, puis `send`).
+
+`MacPendingIntent` et `MacAnswerIntent` (*Siri sur le Mac*) en sont les deux
+conformités ; `Tests/OMPConsoleTests/MacVoiceIntentTests.swift`
+(`siri-mac-questions-en-attente/AC-12`) confronte leurs littéraux à la table geste par
+geste.
 
 Piège du littéral : `appintentsmetadataprocessor` exige que `authenticationPolicy`
 soit initialisée par un littéral (« 'IntentAuthenticationPolicy' must be initialized
@@ -4488,6 +4512,105 @@ par l'utilisateur) :
 4. Quitter l'app Mac, puis redire la phrase. Attendu : « Appairé, Mac non joint ».
 5. Dans Raccourcis, toucher la tuile *Statut de la connexion* d'OMP Console.
    Attendu : la même réponse qu'à l'étape précédente.
+
+### Siri sur le Mac
+
+Contrepartie macOS de la section précédente : la **coque macOS** déclare deux App Intents qui
+parcourent à la voix la liste unifiée des attentes du Mac (voir *Liste des
+attentes*) et y répondent : `MacPendingIntent` (« Ce qui m’attend ») et
+`MacAnswerIntent` (« Répondre aux demandes »), dans
+`Sources/OMPConsole/Intents/PendingVoiceIntents.swift`. L'enchaînement est le moteur
+pur `VoiceConversation` de ConsoleCore (`Sources/ConsoleCore/Voice/`), le même que
+celui de l'iPhone ; la réponse part UNIQUEMENT par les méthodes typées de
+`RemoteActions`, celles que sert aussi l'API distante — aucune seconde voie
+d'écriture, aucun corps HTTP fabriqué.
+
+Phrases Siri (en français, toutes avec le nom de l'app ; tuiles de l'app
+Raccourcis entre parenthèses) :
+
+- *Ce qui m’attend* (`tray.full`) : « Qu’est-ce qui m’attend dans OMP Console »,
+  « Ce qui m’attend dans OMP Console », « Demandes en attente dans OMP Console »,
+  « Questions en attente dans OMP Console » ;
+- *Répondre* (`text.bubble`) : « Réponds dans OMP Console », « Répondre dans OMP
+  Console », « Répondre aux questions de OMP Console ».
+
+Enchaînement :
+
+1. *Ce qui m’attend* annonce le nombre (« 3 demandes en attente. La première : … ») ;
+   *Répondre* commence sans l'annoncer. Sans aucune demande : « Aucune demande ne
+   vous attend. », et rien n'est demandé.
+2. Siri prend la plus ancienne demande, lit son sujet, sa nature et sa question,
+   puis ses choix dans leur ordre (« Choix possibles : … »). Si la question admet
+   un texte libre, il ajoute « Vous pouvez aussi dire « autre réponse ». » ; une
+   question en texte d'une feature en attente, sans options, demande « Dictez votre
+   réponse. ».
+3. La réponse dite est confiée à `VoiceAnswerMatcher` : libellé, chiffre, « la
+   deuxième », « la dernière », ou « autre réponse » suivie du texte dicté. Une
+   réponse non reconnue n'envoie rien et relit les choix ; après trois questions
+   sans envoi pour une même demande, Siri dit « Je n’ai pas compris votre réponse,
+   rien n’a été envoyé. » et s'arrête.
+4. Juste avant l'envoi, la liste est relue : si la question de la demande a changé,
+   rien n'est envoyé et Siri relit la nouvelle question puis redemande ; si la
+   demande a disparu, il passe à la suivante. Une question en vol porte le
+   `toolCallId` lu, contrôlé par le geste.
+5. Siri dit l'issue : succès, ou refus du Mac avec le motif exact que rend la route
+   HTTP du même geste — la demande refusée n'est plus reproposée dans la même
+   session. Puis « La suivante : … », jusqu'à « Il n’en reste aucune. ».
+6. Annuler (« Annuler » à Siri) n'envoie rien : « D’accord, cette demande reste en
+   attente. ».
+
+Sources répondues à la voix : question en vol d'un run, question en texte d'une
+feature en attente, dialogue de conduite de projet, dialogue de la session OMP
+hébergée, escalade d'audit. Les autres demandes de la liste — dialogue « editor »,
+jalons specs et revue, décisions d'audit specs et revue, carte en pause à reprendre
+— sont comptées dans le nombre annoncé et lues, puis signalées « À traiter dans
+l’app. », sans réponse demandée, et Siri passe à la suivante. Valider, accepter,
+reprendre, arrêter ou lancer à la voix ne font pas partie de ces intents.
+
+**App fermée.** Les deux intents tournent en arrière-plan
+(`supportedModes = .background`) : Siri lance l'app sans la passer au premier
+plan, sans `MainWindow.reveal()` ni activation. Un lancement à froid n'a aucune
+vue, donc aucun `onAppear` : `MacVoiceContext` (installé par `OMPConsoleApp.init()`)
+démarre l'ardoise et attend **au plus 5 s** (`MacVoiceContext.readinessTimeout`,
+la borne de l'iPhone) qu'elle ait lu le magasin. Au-delà, Siri dit « OMP Console
+n’a pas pu lire l’état du Mac à temps, rien n’a été envoyé. Réessayez dans un
+instant. », et aucun geste n'est appelé.
+
+**Limite après un lancement à froid.** Les files des dialogues de conduite et de la
+session OMP hébergée appartiennent au processus de l'app : tant qu'elle n'a ni
+démarré ni adopté de conduite ou de session, elles sont vides, et ces dialogues
+n'apparaissent pas dans la liste vocale. Les questions de runs, les questions en
+texte et les escalades d'audit, lues dans le magasin, sont toujours là.
+
+Politique vocale : les deux intents se conforment à `VoiceAnswerIntent` (voir
+*Politique vocale (App Intents)*), littéral `authenticationPolicy = .alwaysAllowed`,
+aucune confirmation pour les cinq gestes de réponse sur le Mac. Les métadonnées des
+deux intents sont contrôlées dans le bundle par `scripts/swift-app.sh` (*Assembler
+le bundle `.app`*, ligne `✓ intents vocaux embarqués`). Preuves :
+`Tests/OMPConsoleTests/MacVoiceIntentTests.swift` (`siri-mac-questions-en-attente/AC-2`
+à `AC-12`, sur une pile `RemoteStack` réelle), `VoiceConversationTests.swift` (moteur
+pur) et `test/outillage/check.test.ts` (`siri-mac-questions-en-attente/AC-1`). La
+reconnaissance vocale ne se prouve qu'à la main.
+
+**Recette manuelle sur le Mac réel** (`siri-mac-questions-en-attente/AC-13`, et le
+volet « sans fenêtre au premier plan » d'AC-7 ; conduite par l'utilisateur, Siri
+réglé en français) :
+
+1. `bash scripts/swift-app.sh` depuis la racine du dépôt.
+2. Ouvrir une fois `omp-console/build/OMP Console.app` (enregistrement auprès du
+   système), puis la quitter (⌘Q).
+3. Lancer une pipeline qui s'arrête sur une question `ask` (carte « Question en
+   vol »).
+4. Ouvrir Raccourcis → *OMP Console*. Attendu : les tuiles *Ce qui m’attend* et
+   *Répondre* (actions « Ce qui m’attend » et « Répondre aux demandes »).
+5. Dire « Dis Siri, qu’est-ce qui m’attend dans OMP Console ». Attendu : l'app
+   démarre sans passer au premier plan (aucune fenêtre devant les autres, l'app de
+   premier plan inchangée), Siri annonce le nombre puis lit la question et ses
+   choix.
+6. Dicter une des options. Attendu : Siri dit l'issue, la carte quitte « Question
+   en vol » et le run reprend avec la réponse dictée.
+
+Résultat consigné par l'utilisateur.
 
 ### Conduire un projet depuis l'iPad
 

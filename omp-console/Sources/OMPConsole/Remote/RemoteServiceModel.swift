@@ -27,6 +27,9 @@ final class RemoteServiceModel: ObservableObject {
 
     let registry: DeviceRegistry
     let pairing: PairingModel
+    /// L'instance UNIQUE des gestes typés : celle que sert le routeur HTTP, et
+    /// celle qu'emploient les intents vocaux du Mac (siri-mac-questions-en-attente).
+    let remoteActions: RemoteActions
 
     private let defaults: UserDefaults
     private let clock: RemoteClock
@@ -104,6 +107,7 @@ final class RemoteServiceModel: ObservableObject {
             environment: environment,
             clock: clock
         )
+        self.remoteActions = remoteActions
         let router = RemoteRouter(reads: reads, registry: self.registry, actions: remoteActions, streams: hub)
         self.streams = hub
         self.router = router
