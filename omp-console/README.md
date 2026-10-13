@@ -1192,7 +1192,8 @@ Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script
 2. compile avec le moteur `swiftbuild` imposé (`--build-system swiftbuild`) et
    `-Xswiftc -emit-const-values` (`swift build -c release` comme
    `swift test -c release`), qui écrit les valeurs constantes Swift
-   (`…/OMPConsole-p.build/…/*.swiftconstvalues`) lues par le processeur. Le moteur
+   (`…/OMPConsole-p.build/…/*.swiftconstvalues`, `…/OMPConsole.build/…` sous
+   Swift 6.3) lues par le processeur. Le moteur
    est imposé parce que le moteur `native` (défaut avant Swift 6.4, donc sous
    Xcode 26) n'écrit aucune valeur constante en release, même avec le drapeau ;
 3. lance le processeur avec le jeu d'options qu'Xcode passe pour une cible app,
@@ -1213,7 +1214,7 @@ celui d'un assemblage antérieur) et ne signe rien :
 | processeur introuvable (Command Line Tools seuls, licence Xcode non acceptée) | `✗ outillage Xcode introuvable : appintentsmetadataprocessor (xcrun --find appintentsmetadataprocessor) — installe Xcode puis sélectionne-le (sudo xcode-select -s /Applications/Xcode.app/Contents/Developer) ou pose DEVELOPER_DIR` |
 | version d'Xcode illisible | `✗ version de Xcode illisible : aucune ligne « Build version » dans xcrun xcodebuild -version` |
 | SDK macOS introuvable | `✗ SDK macOS introuvable (xcrun --sdk macosx --show-sdk-path)` |
-| aucune valeur constante | `✗ valeurs constantes Swift introuvables sous <dossier de build> (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)` |
+| aucune valeur constante | `✗ valeurs constantes Swift introuvables sous <dossier de build> (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, ou …/OMPConsole.build/… avant Swift 6.4, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)` |
 | processeur en erreur (par exemple une phrase sans `\(.applicationName)`) | `✗ extraction des métadonnées App Intents échouée (appintentsmetadataprocessor, code <n>)`, suivi des sorties du processeur |
 | rien d'extrait (aucun intent compilé) | `✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)` |
 | intent sonde absent | `✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata` |

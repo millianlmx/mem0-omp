@@ -14,7 +14,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/** Où le moteur `swiftbuild` écrit les valeurs constantes du module OMPConsole, relatif au scratch. */
+/** Où le moteur `swiftbuild` de Swift 6.4 écrit les valeurs constantes du module OMPConsole, relatif au scratch (Swift 6.3 : `OMPConsole.build`). */
 export const CONST_VALUES_REL =
   "out/Intermediates.noindex/omp-console.build/Release/OMPConsole-p.build/Objects-normal/arm64/OMPConsole-primary.swiftconstvalues";
 
