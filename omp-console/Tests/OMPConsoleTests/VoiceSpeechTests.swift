@@ -224,12 +224,17 @@ struct VoiceSpeechTests {
         #expect(VoiceIssue.incompatibleVersion(local: 3, remote: 2).phrase == "OMP Console sur le Mac est plus ancien que l’app de cet appareil. Mettez-le à jour.")
     }
 
-    @Test("Chaque geste a son succès, et une cible vide dit seulement « C’est fait. »")
+    @Test("Chaque geste a son succès, et une cible vide dit seulement « C’est fait. » ; un message dicté à la session dit « Reçu. »")
     func everyGestureSuccess() {
         let phrases = VoiceGesture.allCases.map { VoiceIssue(.sent, gesture: $0, target: " audit UI ").phrase }
         #expect(Set(phrases).count == VoiceGesture.allCases.count)
-        #expect(phrases.allSatisfy { $0.contains("audit UI") })
+        #expect(VoiceGesture.allCases.count == 12)
+        for gesture in VoiceGesture.allCases where gesture != .promptHostedSession {
+            #expect(VoiceIssue(.sent, gesture: gesture, target: " audit UI ").phrase.contains("audit UI"))
+        }
         #expect(VoiceIssue(.sent, gesture: .stopFeature, target: "  ").phrase == "C’est fait.")
+        #expect(VoiceIssue(.sent, gesture: .promptHostedSession, target: " audit UI ").phrase == "Reçu.")
+        #expect(VoiceIssue(.sent, gesture: .promptHostedSession, target: "").phrase == "Reçu.")
     }
 
     @Test("Un seul reste se dit « et 1 autre »")
