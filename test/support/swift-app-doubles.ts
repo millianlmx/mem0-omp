@@ -28,13 +28,23 @@ export const CONST_VALUES_REL =
  */
 export const SWIFT_CONST_VALUES_SNIPPET = `case " $* " in *" --build-system swiftbuild "*" -emit-const-values "*) mkdir -p "$(dirname "$scratch/${CONST_VALUES_REL}")" && printf '[]' > "$scratch/${CONST_VALUES_REL}" ;; esac`;
 
-/** Le `extract.actionsdata` de l'intent sonde et de son App Shortcut (marqueurs du contrat de S-1). */
+/**
+ * Le `extract.actionsdata` de l'état livré : l'intent sonde et ses deux voisins
+ * vocaux (feature siri-mac-questions-en-attente, S-7), chacun avec son App
+ * Shortcut et la phrase que le contrôle post-assemblage cherche.
+ */
 export const SONDE_ACTIONSDATA =
-  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]}]}';
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]}]}';
 
 const VERSION_JSON = '{"toolsVersion":"27A266a","version":"3.0"}';
 const SANS_SONDE = '{"actions":{},"autoShortcuts":[]}';
 const SANS_RACCOURCI = '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent"}},"autoShortcuts":[]}';
+/** L'intent sonde et son App Shortcut seuls, sans aucun intent vocal. */
+const SANS_VOCAL =
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]}]}';
+/** Les trois intents déclarés, mais la seule App Shortcut de la sonde. */
+const SANS_PHRASE_VOCALE =
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]}]}';
 
 function writeDouble(bin: string, name: string, body: string): void {
   const file = path.join(bin, name);
@@ -55,6 +65,8 @@ function writeDouble(bin: string, name: string, body: string): void {
  *   `--swift-const-vals-list` n'existe → code 0, rien d'écrit. Sinon, selon
  *   `FAUX_APPINTENTS` : vide → {@link SONDE_ACTIONSDATA} ; `sans-sonde`,
  *   `sans-raccourci` → métadonnées privées de l'intent ou de son App Shortcut ;
+ *   `sans-vocal` → la sonde seule, sans intent vocal ;
+ *   `sans-phrase-vocale` → les intents vocaux sans leurs App Shortcuts ;
  *   `absent` → rien d'écrit, code 0 ; `echec` → erreur de phrase, code 255.
  */
 export function writeXcodeDoubles(bin: string): void {
@@ -123,6 +135,8 @@ case "\${FAUX_APPINTENTS:-}" in
   "") ecrire '${SONDE_ACTIONSDATA}' ;;
   sans-sonde) ecrire '${SANS_SONDE}' ;;
   sans-raccourci) ecrire '${SANS_RACCOURCI}' ;;
+  sans-vocal) ecrire '${SANS_VOCAL}' ;;
+  sans-phrase-vocale) ecrire '${SANS_PHRASE_VOCALE}' ;;
   absent) ;;
   echec)
     printf "%s: error: Every App Shortcut utterance should contain '%s'\\n" "Sources/OMPConsole/Intents/OpenConsoleIntent.swift:20" '\${applicationName}' >&2

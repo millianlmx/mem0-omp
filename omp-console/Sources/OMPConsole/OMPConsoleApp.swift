@@ -137,6 +137,17 @@ struct OMPConsoleApp: App {
             setupChanges: setup.$state.voidChanges()
         )
         _remoteModel = StateObject(wrappedValue: remote)
+        // Les intents Siri (siri-mac-questions-en-attente, S-5) résolvent les
+        // modèles mêmes que les vues et l'API distante. `init()` tourne aussi au
+        // lancement à froid par Siri, sans fenêtre : la lecture démarre l'ardoise.
+        MacVoiceContext.install(MacVoiceContext(
+            storeHub: storeHub,
+            kanban: kanban,
+            project: project,
+            session: session,
+            remoteActions: remote.remoteActions,
+            startModels: { kanban.start() }
+        ), in: .shared)
         // L'annonce Bonjour ne survit pas au process (S-14) : l'accroche de
         // terminaison est posée dès la construction, comme celles des autres
         // modèles.
