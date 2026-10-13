@@ -38,13 +38,6 @@ public enum VoiceAnswerMatcher {
         return .notFound(prompt: VoiceSpeechText.optionNotFound(labels: options.map(\.label)))
     }
 
-    /// Vrai si l'énoncé demande à dicter un texte libre (« autre réponse »). Ne
-    /// regarde pas les options : un libellé identique l'emporte chez l'appelant,
-    /// qui essaie `match` d'abord.
-    public static func isOtherAnswer(_ spoken: String) -> Bool {
-        VoiceSpeechText.otherAnswerWords.contains(VoiceSpeech.normalized(spoken))
-    }
-
     /// Le rang dit par `query` une fois retirés les mots de liaison, s'il reste
     /// exactement un mot ; `nil` sinon. Non borné : l'appelant vérifie les bornes.
     private static func rank(_ query: [String], count: Int) -> Int? {

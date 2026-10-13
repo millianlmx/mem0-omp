@@ -14,7 +14,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 
-/** Où le moteur `swiftbuild` écrit les valeurs constantes du module OMPConsole, relatif au scratch. */
+/** Où le moteur `swiftbuild` de Swift 6.4 écrit les valeurs constantes du module OMPConsole, relatif au scratch (Swift 6.3 : `OMPConsole.build`). */
 export const CONST_VALUES_REL =
   "out/Intermediates.noindex/omp-console.build/Release/OMPConsole-p.build/Objects-normal/arm64/OMPConsole-primary.swiftconstvalues";
 
@@ -64,8 +64,8 @@ function writeDouble(bin: string, name: string, body: string): void {
  *   (préfixe `aimp `). Sans `--xcode-version` → code 255 ; si aucun chemin de
  *   `--swift-const-vals-list` n'existe → code 0, rien d'écrit. Sinon, selon
  *   `FAUX_APPINTENTS` : vide → {@link SONDE_ACTIONSDATA} ; `sans-sonde`,
- *   `sans-raccourci` → métadonnées privées de l'intent sonde ou de son App
- *   Shortcut ; `sans-vocal` → la sonde seule, sans intent vocal ;
+ *   `sans-raccourci` → métadonnées privées de l'intent ou de son App Shortcut ;
+ *   `sans-vocal` → la sonde seule, sans intent vocal ;
  *   `sans-phrase-vocale` → les intents vocaux sans leurs App Shortcuts ;
  *   `absent` → rien d'écrit, code 0 ; `echec` → erreur de phrase, code 255.
  */

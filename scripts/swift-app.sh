@@ -230,16 +230,19 @@ esac
 
 # 2 ter) extraction des métadonnées App Intents, AVANT l'assemblage, avec le même
 #    jeu d'options que celui qu'Xcode passe pour une cible app. Les valeurs
-#    constantes sont prises dans le module du PRODUIT (`OMPConsole-p.build`) : sous
-#    `swift test`, un second module `OMPConsole--<hash>-testable-t.build` existe
-#    aussi et ne doit pas être lu. Un code 0 du processeur ne prouve rien (il sort
+#    constantes sont prises dans le module du PRODUIT, dont le dossier dépend de
+#    SwiftPM : `OMPConsole-p.build` depuis Swift 6.4 (suffixe TARGET_TEMP_DIR_SUFFIX
+#    « -p »), `OMPConsole.build` en Swift 6.3 (Xcode 26.6 de la CI) — relevé dans
+#    PackagePIFProjectBuilder+Products.swift des deux versions. Sous `swift test`,
+#    un second module `OMPConsole--<hash>-testable[-t].build` existe aussi et ne
+#    doit pas être lu. Un code 0 du processeur ne prouve rien (il sort
 #    en 0 sans rien écrire quand il ne trouve aucun intent) : c'est le contrôle de
 #    l'étape 3 quater qui juge ce qu'il a produit.
 META_DIR="$(mktemp -d)"
 trap 'rm -rf "$META_DIR"' EXIT
-find "$SCRATCH" -path '*/OMPConsole-p.build/*' -name '*.swiftconstvalues' -type f 2>/dev/null | LC_ALL=C sort > "$META_DIR/constvalues.txt"
+find "$SCRATCH" \( -path '*/OMPConsole-p.build/*' -o -path '*/OMPConsole.build/*' \) -name '*.swiftconstvalues' -type f 2>/dev/null | LC_ALL=C sort > "$META_DIR/constvalues.txt"
 if [ ! -s "$META_DIR/constvalues.txt" ]; then
-  echec_sans_bundle "valeurs constantes Swift introuvables sous $SCRATCH (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)"
+  echec_sans_bundle "valeurs constantes Swift introuvables sous $SCRATCH (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, ou …/OMPConsole.build/… avant Swift 6.4, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)"
 fi
 find "$PKG/Sources/OMPConsole" -name '*.swift' -type f | LC_ALL=C sort > "$META_DIR/sources.txt"
 aimp_out="$("$AIMP" \
@@ -344,7 +347,6 @@ for intent_vocal in 'MacPendingIntent|Qu’est-ce qui m’attend dans ${applicat
 done
 # shellcheck disable=SC1112
 echo '  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)'
-
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
 if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then
