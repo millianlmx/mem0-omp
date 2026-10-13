@@ -483,3 +483,156 @@ func hostedPromptReachesTheThread() async throws {
     #expect(entries.contains("user:corrige le lot"), "le prompt doit apparaître comme message utilisateur")
     #expect(entries.contains("assistant:lot corrigé"), "la réponse doit s'ajouter au fil")
 }
+
+// MARK: - Invite et dialogues typés (validations-de-geste-enfermees-dans-le-h, BR-2)
+
+/// Pousse un dialogue une fois le flux de la session OUVERT (sinon la trame se
+/// perd), puis attend qu'il soit en tête de file.
+@MainActor
+private func emitHostedDialog(
+    _ hosted: (transport: ScriptedServiceTransport, session: SessionConsoleModel, root: URL),
+    id: String,
+    method: String,
+    options: [String] = []
+) async throws {
+    let transport = hosted.transport
+    try #require(await awaitTrue(timeout: 5.0) { transport.streamOpenCount >= 1 })
+    emitServiceDialog(transport, id: id, method: method, title: "Dialogue", options: options)
+    try #require(await awaitMainTrue(timeout: 5.0) { hosted.session.host.dialogQueue.first?.id == id })
+}
+
+/// Les requêtes POST parties au service dont le chemin finit par `suffix`.
+@MainActor
+private func servicePosts(_ transport: ScriptedServiceTransport, suffix: String) -> Int {
+    transport.requests.filter { $0.method == "POST" && $0.path.hasSuffix(suffix) }.count
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-4 : une invite ou une saisie de dialogue blanche rend « texte vide » sans rien émettre")
+func typedBlankHostedTextIsRefused() async throws {
+    // Session au repos : le blanc gagne sur l'état (sinon « la session n'est pas en marche »).
+    let idle = try await RemoteStack.make()
+    defer { idle.stop() }
+    for blank in ["", " \n"] {
+        await #expect(throws: GestureRefusal.emptyText) {
+            try await idle.remoteActions.prompt(message: blank)
+        }
+    }
+
+    let hosted = try await makeHostedSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    for blank in ["", " \n\t"] {
+        await #expect(throws: GestureRefusal.emptyText) {
+            try await stack.remoteActions.prompt(message: blank)
+        }
+    }
+    #expect(servicePosts(hosted.transport, suffix: "/prompt") == 0, "aucune invite ne part au service")
+
+    try await emitHostedDialog(hosted, id: "s2", method: "input")
+    await #expect(throws: GestureRefusal.emptyText) {
+        try await stack.remoteActions.answerHostedDialog(id: "s2", answer: .value("   "))
+    }
+    #expect(hosted.session.host.dialogQueue.first?.id == "s2", "le dialogue reste en tête de file")
+    #expect(servicePosts(hosted.transport, suffix: "/dialogs/s2") == 0, "aucune réponse ne part au service")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : une invite par la méthode typée atteint la session hébergée")
+func typedPromptReachesTheHostedSession() async throws {
+    let hosted = try await makeHostedSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+
+    try await stack.remoteActions.prompt(message: "bonjour")
+    #expect(
+        hosted.transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/prompt") && ($0.body?["text"] as? String) == "bonjour"
+        },
+        "l'invite doit être POSTÉE au service"
+    )
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : répondre à un dialogue de la session hébergée par la méthode typée fait avancer la file")
+func typedHostedDialogSucceeds() async throws {
+    let hosted = try await makeHostedSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    try await emitHostedDialog(hosted, id: "s1", method: "select", options: ["a", "b"])
+
+    try await stack.remoteActions.answerHostedDialog(id: "s1", answer: .value("b"))
+    #expect(await awaitMainTrue { hosted.session.host.dialogQueue.isEmpty }, "la file avance")
+    #expect(
+        hosted.transport.requests.contains {
+            $0.method == "POST" && $0.path.hasSuffix("/dialogs/s1") && ($0.body?["value"] as? String) == "b"
+        },
+        "la réponse doit être POSTÉE au service"
+    )
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-9 : un corps d'invite ou de dialogue mal formé est un 400 qui n'atteint pas la session")
+func malformedHostedBodiesNeverReachTheGesture() async throws {
+    let hosted = try await makeHostedSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    let token = try await stack.pair()
+    try await emitHostedDialog(hosted, id: "s1", method: "select", options: ["a", "b"])
+
+    let cases: [(body: Data?, message: String)] = [
+        (jsonBody(["kind": "value"]), "valeur absente"),
+        (jsonBody(["kind": "confirmed"]), "confirmation absente"),
+        (jsonBody(["kind": "autre"]), "kind inconnu"),
+        (Data("{".utf8), "corps JSON illisible"),
+    ]
+    for item in cases {
+        let reply = try await stack.call("POST", "/v1/session/dialogs/s1", token: token, body: item.body)
+        #expect(reply.status == 400, "\(item.message) → \(reply.status) \(reply.text)")
+        #expect(reply.errorCode == "bad_request")
+        #expect(reply.errorMessage == item.message)
+        #expect(hosted.session.host.dialogQueue.first?.id == "s1", "\(item.message) : la tête de file est inchangée")
+    }
+    #expect(servicePosts(hosted.transport, suffix: "/dialogs/s1") == 0, "aucune réponse ne part au service")
+
+    let prompt = try await stack.call("POST", "/v1/session/prompt", token: token, body: Data("{".utf8))
+    #expect(prompt.status == 400)
+    #expect(prompt.errorMessage == "corps JSON illisible")
+    #expect(servicePosts(hosted.transport, suffix: "/prompt") == 0, "aucune invite ne part au service")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-8 : un dialogue périmé passe par la même cause typée, que le geste vienne de la route ou de la méthode typée")
+func hostedDialogRefusalIsTheSameCauseByRouteAndTypedCall() async throws {
+    let hosted = try await makeHostedSession()
+    let stack = try await RemoteStack.make(sessionModel: hosted.session)
+    defer {
+        stack.stop()
+        try? FileManager.default.removeItem(at: hosted.root)
+    }
+    let token = try await stack.pair()
+    try await emitHostedDialog(hosted, id: "s1", method: "select", options: ["a", "b"])
+
+    let cause = GestureRefusal.staleDialog(.hosted).apiError
+    let routed = try await stack.call("POST", "/v1/session/dialogs/s0", token: token, json: ["kind": "value", "value": "a"])
+    #expect(routed.status == 409)
+    #expect(routed.errorCode == cause.code)
+    #expect(routed.errorMessage == cause.message)
+    await #expect(throws: GestureRefusal.staleDialog(.hosted)) {
+        try await stack.remoteActions.answerHostedDialog(id: "s0", answer: .value("a"))
+    }
+    #expect(hosted.session.host.dialogQueue.first?.id == "s1", "le dialogue n'est pas consommé")
+    #expect(servicePosts(hosted.transport, suffix: "/dialogs/s1") == 0)
+}

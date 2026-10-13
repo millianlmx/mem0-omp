@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
 # Assemble le bundle .app de la coque SwiftUI (S-5, BR-4).
 #
-# Pourquoi un script et pas `xcodebuild` : sur le poste de référence il n'y a que
-# les Command Line Tools, et `xcodebuild` y refuse de tourner (« requires Xcode »).
-# Le bundle est donc écrit à la main, depuis le binaire rendu par SwiftPM, aux
-# emplacements qu'Apple impose (Contents/Info.plist, Contents/MacOS/, Resources/).
+# Pourquoi un script et pas `xcodebuild` : mesuré le 2026-10-13 (Xcode 27.0),
+# `xcodebuild` contre Package.swift construit le produit EXÉCUTABLE SwiftPM comme un
+# « tool », sans aucune extraction des métadonnées App Intents. Le bundle est donc
+# écrit à la main, depuis le binaire rendu par SwiftPM, aux emplacements qu'Apple
+# impose (Contents/Info.plist, Contents/MacOS/, Resources/), et le script appelle
+# LUI-MÊME le processeur d'Xcode (`appintentsmetadataprocessor`) pour produire
+# `Contents/Resources/Metadata.appintents`, sans lequel Siri et Raccourcis ne voient
+# aucun intent de l'app. Ce processeur n'existe que dans Xcode (pas dans les
+# Command Line Tools) : Xcode est donc REQUIS pour assembler, avec ou sans
+# `--no-tests`, et son absence fait échouer l'assemblage sans bundle.
 #
 # Le chemin du binaire n'est JAMAIS recopié : il est lu par `--show-bin-path`, que
 # ce toolchain installe sous `.build/out/Products/Release` (et non l'ancien
@@ -74,6 +80,36 @@ if command -v plutil >/dev/null 2>&1; then
   fi
 fi
 
+# Échec sans bundle (feature bundle-mac-sans-metadonnees-app-intents, S-3) : tout
+# échec lié aux métadonnées App Intents retire le bundle, y compris celui d'un
+# assemblage antérieur, pour qu'aucun bundle sans Metadata.appintents ne survive.
+# Le message part sur la sortie d'erreur, et la signature n'est jamais appelée.
+echec_sans_bundle() {
+  rm -rf "$BUNDLE"
+  echo "✗ $1" >&2
+  exit 1
+}
+
+# 0 bis) outillage Xcode, AVANT toute compilation (avec ou sans `--no-tests`) : le
+#    processeur de métadonnées App Intents, la version d'Xcode (exigée par le
+#    processeur) et le SDK macOS. Tout passe par `xcrun`, qui honore DEVELOPER_DIR :
+#    aucun chemin d'Xcode en dur, aucun repli implicite.
+AIMP="$(xcrun --find appintentsmetadataprocessor 2>/dev/null)"
+if [ -z "$AIMP" ] || [ ! -x "$AIMP" ]; then
+  echec_sans_bundle "outillage Xcode introuvable : appintentsmetadataprocessor (xcrun --find appintentsmetadataprocessor) — installe Xcode puis sélectionne-le (sudo xcode-select -s /Applications/Xcode.app/Contents/Developer) ou pose DEVELOPER_DIR"
+fi
+# Le dossier du toolchain est deux niveaux au-dessus de celui du processeur
+# (`…/XcodeDefault.xctoolchain/usr/bin/appintentsmetadataprocessor`).
+TOOLCHAIN_DIR="$(cd "$(dirname "$AIMP")/../.." && pwd)"
+XCODE_BUILD="$(xcrun xcodebuild -version 2>/dev/null | awk '/^Build version/ { print $3; exit }')"
+if [ -z "$XCODE_BUILD" ]; then
+  echec_sans_bundle "version de Xcode illisible : aucune ligne « Build version » dans xcrun xcodebuild -version"
+fi
+SDK_ROOT="$(xcrun --sdk macosx --show-sdk-path 2>/dev/null)"
+if [ -z "$SDK_ROOT" ] || [ ! -d "$SDK_ROOT" ]; then
+  echec_sans_bundle "SDK macOS introuvable (xcrun --sdk macosx --show-sdk-path)"
+fi
+
 # Dossier de build DÉDIÉ : `swift test` doit être la PREMIÈRE commande écrite dans
 # son dossier, sinon la compilation échoue. Mesuré sur Swift 6.4 (CLT seuls) :
 # un `swift build -c release` (produit seul) suivi de `swift test -c release` dans
@@ -100,14 +136,31 @@ else
   PLUGIN_FLAGS=()
 fi
 
+# Moteur de build IMPOSÉ : `swiftbuild`. Lui seul écrit les valeurs constantes que
+# lit l'étape 2 ter : il passe au compilateur la liste des protocoles App Intents
+# (`<module>_const_extract_protocols.json`, tirée du toolchain
+# `usr/share/swift/SwiftConstantValues/*.json`) et un chemin de sortie
+# `<module>-primary.swiftconstvalues`. Le moteur `native` transmet bien
+# `-emit-const-values`, mais en release (WMO) le pilote n'en reçoit aucun chemin de
+# sortie et n'écrit RIEN (mesuré le 2026-10-13, Swift 6.4, `--build-system
+# native`). Or le moteur par défaut dépend du toolchain : `swiftbuild` depuis Swift
+# 6.4 (Xcode 27), `native` avant (Xcode 26.6 de l'image macos-26 de la CI, où le
+# job macos-app-swift sortait en « valeurs constantes Swift introuvables »). Le
+# même moteur sert aux trois appels (build, test, `--show-bin-path`), puisque le
+# dossier du binaire en dépend.
+BUILD_SYSTEM=(--build-system swiftbuild)
+
 # 1) compilation release du produit ET de la suite, en une invocation, puis
 #    exécution des tests. La sortie est recopiée telle quelle : c'est elle qui
-#    nomme l'erreur de compilation ou le test tombé.
+#    nomme l'erreur de compilation ou le test tombé. `-emit-const-values` fait
+#    écrire au compilateur les « valeurs constantes » Swift (`*.swiftconstvalues`)
+#    que lit le processeur de métadonnées App Intents (étape 2 ter) ; sans elles,
+#    il sort en 0 sans rien produire.
 if [ -n "$NO_TESTS" ]; then
   # Tour rapide : compilation seule. La sortie reste sur le terminal (plusieurs
   # minutes de compilation muette seraient une panne d'ergonomie).
-  if ! (cd "$PKG" && swift build -c release --scratch-path "$SCRATCH"); then
-    echo "✗ compilation release échouée (relance : cd omp-console && swift build -c release --scratch-path .build-run)"
+  if ! (cd "$PKG" && swift build -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" -Xswiftc -emit-const-values); then
+    echo "✗ compilation release échouée (relance : cd omp-console && swift build -c release --build-system swiftbuild --scratch-path .build-run -Xswiftc -emit-const-values)"
     exit 1
   fi
   echo "  ✓ compilation release (OMPConsole), sans la suite"
@@ -118,11 +171,11 @@ else
 #    exécutée en parallèle, elle rend 10 à 15 échecs de DÉLAI (212 tests), alors
 #    qu'en série elle passe 212/212 en ~42 s. Le coût est assumé : la suite reste
 #    déterministe, et c'est elle qui garde la CI verte.
-test_out="$(cd "$PKG" && swift test -c release --scratch-path "$SCRATCH" --no-parallel ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
+test_out="$(cd "$PKG" && swift test -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" --no-parallel -Xswiftc -emit-const-values ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
 test_status=$?
 [ -n "$test_out" ] && printf '%s\n' "$test_out"
 if [ "$test_status" -ne 0 ]; then
-  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --scratch-path .build-app --no-parallel -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
+  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --build-system swiftbuild --scratch-path .build-app --no-parallel -Xswiftc -emit-const-values -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
   exit 1
 fi
 echo "  ✓ compilation release (OMPConsole) et tests release (Swift Testing)"
@@ -136,7 +189,7 @@ fi
 #    dossier jetable, il ne touche donc jamais le dossier réel.
 probe="$(mktemp -d)"
 probe="$(cd "$probe" && pwd -P)"
-probe_path="$(cd "$PKG" && swift build -c release --show-bin-path --scratch-path "$probe" 2>/dev/null)"
+probe_path="$(cd "$PKG" && swift build -c release "${BUILD_SYSTEM[@]}" --show-bin-path --scratch-path "$probe" 2>/dev/null)"
 rm -rf "$probe"
 case "$probe_path" in
   "$probe"/*) bin_dir="$SCRATCH/${probe_path#"$probe"/}" ;;
@@ -175,6 +228,47 @@ case " $mem0_rs_archs " in
     ;;
 esac
 
+# 2 ter) extraction des métadonnées App Intents, AVANT l'assemblage, avec le même
+#    jeu d'options que celui qu'Xcode passe pour une cible app. Les valeurs
+#    constantes sont prises dans le module du PRODUIT, dont le dossier dépend de
+#    SwiftPM : `OMPConsole-p.build` depuis Swift 6.4 (suffixe TARGET_TEMP_DIR_SUFFIX
+#    « -p »), `OMPConsole.build` en Swift 6.3 (Xcode 26.6 de la CI) — relevé dans
+#    PackagePIFProjectBuilder+Products.swift des deux versions. Sous `swift test`,
+#    un second module `OMPConsole--<hash>-testable[-t].build` existe aussi et ne
+#    doit pas être lu. Un code 0 du processeur ne prouve rien (il sort
+#    en 0 sans rien écrire quand il ne trouve aucun intent) : c'est le contrôle de
+#    l'étape 3 quater qui juge ce qu'il a produit.
+META_DIR="$(mktemp -d)"
+trap 'rm -rf "$META_DIR"' EXIT
+find "$SCRATCH" \( -path '*/OMPConsole-p.build/*' -o -path '*/OMPConsole.build/*' \) -name '*.swiftconstvalues' -type f 2>/dev/null | LC_ALL=C sort > "$META_DIR/constvalues.txt"
+if [ ! -s "$META_DIR/constvalues.txt" ]; then
+  echec_sans_bundle "valeurs constantes Swift introuvables sous $SCRATCH (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, ou …/OMPConsole.build/… avant Swift 6.4, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)"
+fi
+find "$PKG/Sources/OMPConsole" -name '*.swift' -type f | LC_ALL=C sort > "$META_DIR/sources.txt"
+aimp_out="$("$AIMP" \
+  --toolchain-dir "$TOOLCHAIN_DIR" \
+  --module-name OMPConsole \
+  --sdk-root "$SDK_ROOT" \
+  --xcode-version "$XCODE_BUILD" \
+  --platform-family macOS \
+  --deployment-target 26.0 \
+  --bundle-identifier com.omp.console \
+  --output "$META_DIR" \
+  --target-triple arm64-apple-macos26.0 \
+  --binary-file "$bin_dir/OMPConsole" \
+  --source-file-list "$META_DIR/sources.txt" \
+  --swift-const-vals-list "$META_DIR/constvalues.txt" \
+  --compile-time-extraction \
+  --deployment-aware-processing \
+  --no-app-shortcuts-localization 2>&1)"
+aimp_status=$?
+if [ "$aimp_status" -ne 0 ]; then
+  rm -rf "$BUNDLE"
+  echo "✗ extraction des métadonnées App Intents échouée (appintentsmetadataprocessor, code $aimp_status)" >&2
+  [ -n "$aimp_out" ] && printf '%s\n' "$aimp_out" >&2
+  exit 1
+fi
+
 # 3) assemblage du bundle aux emplacements imposés (D5). Le bundle précédent est
 #    retiré d'abord : le script est idempotent, sans résidu d'une exécution passée.
 rm -rf "$BUNDLE"
@@ -210,6 +304,29 @@ fi
 echo "  ✓ mem0-rs embarqué (Contents/Resources/mem0-rs, arm64)"
 
 echo "  ✓ bundle assemblé ($BUNDLE)"
+
+# 3 quater) les métadonnées App Intents extraites en 2 ter, copiées AVANT la
+#    signature ad hoc, qui les scelle. Puis le contrôle post-assemblage : le bundle
+#    doit porter l'intent sonde `OpenConsoleIntent` et son App Shortcut
+#    (« Ouvre ${applicationName} »), contrat de Sources/OMPConsole/Intents. Le
+#    contrôle n'emploie que `test` et `grep`, pour que la suite node l'exerce aussi
+#    hors macOS. `"actionIdentifier"` ne satisfait pas le motif de l'identifiant :
+#    le guillemet y précède `action`.
+if [ -d "$META_DIR/Metadata.appintents" ]; then
+  cp -R "$META_DIR/Metadata.appintents" "$BUNDLE/Contents/Resources/Metadata.appintents"
+fi
+ACTIONS_DATA="$BUNDLE/Contents/Resources/Metadata.appintents/extract.actionsdata"
+if [ ! -f "$ACTIONS_DATA" ]; then
+  echec_sans_bundle "Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)"
+fi
+if ! grep -Eq '"identifier" *: *"OpenConsoleIntent"' "$ACTIONS_DATA"; then
+  echec_sans_bundle "intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata"
+fi
+if ! grep -Eq '"actionIdentifier" *: *"OpenConsoleIntent"' "$ACTIONS_DATA" \
+  || ! grep -Fq '"Ouvre ${applicationName}"' "$ACTIONS_DATA"; then
+  echec_sans_bundle 'App Shortcut de l'"'"'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata'
+fi
+echo '  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)'
 
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.

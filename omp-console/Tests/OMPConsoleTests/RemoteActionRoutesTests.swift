@@ -2,6 +2,7 @@
 // distance produisent EXACTEMENT l'effet du geste local — une livraison dans une
 // boîte d'inbox, une commande POSTÉE au service, un dépôt piloté, un jalon validé.
 
+import ConsoleClient
 import ConsoleCore
 import Darwin
 import Foundation
@@ -246,7 +247,7 @@ func aLiveRunAdvancesOnTheDeviceGesture() async throws {
         json: ["text": "avance sur le magasin"]
     )
     #expect(text.status == 202, "text → \(text.status) \(text.text)")
-    #expect(try text.json(RemoteAcceptedPayload.self).accepted)
+    #expect(try text.json(OMPConsole.RemoteAcceptedPayload.self).accepted)
     let deliveries = try FileManager.default.contentsOfDirectory(atPath: fixture.inbox)
     #expect(deliveries.count == 1, "la livraison doit être publiée dans la boîte du run")
 
@@ -539,7 +540,7 @@ func launchingAFeatureOrConductingAProjectStartsOrchestration() async throws {
         json: ["name": "pilotage distant"]
     )
     #expect(conduite.status == 200, "conduite → \(conduite.status) \(conduite.text)")
-    #expect(try conduite.json(RemoteConduitePayload.self).state == "live")
+    #expect(try conduite.json(OMPConsole.RemoteConduitePayload.self).state == "live")
     #expect(fixture.stack.project.state == .live)
 
     // Second démarrage pendant que la conduite est vive : 409 (motif
@@ -558,7 +559,7 @@ func launchingAFeatureOrConductingAProjectStartsOrchestration() async throws {
         token: fixture.token
     )
     #expect(closed.status == 200)
-    #expect(try closed.json(RemoteConduitePayload.self).state == "closed")
+    #expect(try closed.json(OMPConsole.RemoteConduitePayload.self).state == "closed")
 
     // Le refus ci-dessus est COLLANT dans le modèle (`refusal` n'est remis à `nil`
     // que par `dismissRefusal()`, appelé par l'alerte de la vue) : le démarrage
@@ -571,7 +572,7 @@ func launchingAFeatureOrConductingAProjectStartsOrchestration() async throws {
         json: ["name": "reprise"]
     )
     #expect(restarted.status == 200, "redémarrage → \(restarted.status) \(restarted.text)")
-    #expect(try restarted.json(RemoteConduitePayload.self).state == "live")
+    #expect(try restarted.json(OMPConsole.RemoteConduitePayload.self).state == "live")
     #expect(fixture.stack.project.state == .live, "la conduite a réellement redémarré")
 
     let closedAgain = try await fixture.stack.call(
@@ -579,7 +580,7 @@ func launchingAFeatureOrConductingAProjectStartsOrchestration() async throws {
         token: fixture.token
     )
     #expect(closedAgain.status == 200)
-    #expect(try closedAgain.json(RemoteConduitePayload.self).state == "closed")
+    #expect(try closedAgain.json(OMPConsole.RemoteConduitePayload.self).state == "closed")
 
     // Plus aucune conduite pour ce projet : un second DELETE est un 409, jamais un
     // 200 (S-10).
@@ -765,11 +766,11 @@ func anotherGestureDoesNotConcludeAResumeInFlight() async throws {
 }
 
 /// Le journal est BORNÉ à 20 : la détection d'un échec ne peut pas comparer les
-/// comptes. Un canal qui échoue alors que le journal est plein doit rendre 500,
-/// jamais un 202 mensonger (S-10).
+/// comptes. Un canal qui échoue alors que le journal est plein doit rendre 409 au
+/// motif relu dans le journal, jamais un 202 mensonger (S-10).
 @MainActor
-@Test("un échec d'écriture du canal est un 500 même quand le journal est plein")
-func writeFailureIsServerEvenWithFullJournal() async throws {
+@Test("validations-de-geste-enfermees-dans-le-h/AC-5 : un échec d'écriture du canal est un 409 au motif du journal même quand le journal est plein")
+func writeFailureIsConflictEvenWithFullJournal() async throws {
     let toggle = WriteFailToggle()
     let fixture = try await makeActionFixture(fileOps: togglingFileOps(toggle))
     defer { fixture.stack.stop() }
@@ -790,8 +791,14 @@ func writeFailureIsServerEvenWithFullJournal() async throws {
         token: fixture.token,
         json: ["text": "après la panne"]
     )
-    #expect(failed.status == 500, "500 attendu, obtenu \(failed.status) \(failed.text)")
-    #expect(failed.errorCode == "server")
+    #expect(failed.status == 409, "409 attendu, obtenu \(failed.status) \(failed.text)")
+    #expect(failed.errorCode == "conflict")
+    let head = try #require(fixture.stack.actions.journal.first)
+    guard case .failed(let reason) = head.state else {
+        Issue.record("la tête du journal doit être l'échec d'écriture, obtenu \(head.state)")
+        return
+    }
+    #expect(failed.errorMessage == reason)
 }
 
 /// Même saturation que ci-dessus, pour l'attente asynchrone du conducteur : un
@@ -912,7 +919,7 @@ func conduiteStartsOnANeverFramedRepo() async throws {
     // Avant : aucune conduite vive, donc pas d'identité dans l'état réduit.
     let before = try await fixture.stack.call("GET", "/v1/conduite", token: fixture.token)
     #expect(before.status == 200)
-    let idle = try before.json(RemoteConduiteStatePayload.self)
+    let idle = try before.json(OMPConsole.RemoteConduiteStatePayload.self)
     #expect(idle.state == "none")
     #expect(idle.repoKey == nil)
     #expect(idle.name == nil)
@@ -925,10 +932,10 @@ func conduiteStartsOnANeverFramedRepo() async throws {
         json: ["name": "depuis l'app"]
     )
     #expect(started.status == 200, "POST → \(started.status) \(started.text)")
-    #expect(try started.json(RemoteConduitePayload.self).state == "live")
+    #expect(try started.json(OMPConsole.RemoteConduitePayload.self).state == "live")
 
     let live = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
-        .json(RemoteConduiteStatePayload.self)
+        .json(OMPConsole.RemoteConduiteStatePayload.self)
     #expect(live.state == "live")
     #expect(live.repoKey == fixture.repoKey, "le client ne calcule jamais le repoKey")
     #expect(live.name == "depuis l'app")
@@ -942,10 +949,10 @@ func conduiteStartsOnANeverFramedRepo() async throws {
         token: fixture.token
     )
     #expect(closed.status == 200, "DELETE → \(closed.status) \(closed.text)")
-    #expect(try closed.json(RemoteConduitePayload.self).state == "closed")
+    #expect(try closed.json(OMPConsole.RemoteConduitePayload.self).state == "closed")
 
     let gone = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
-        .json(RemoteConduiteStatePayload.self)
+        .json(OMPConsole.RemoteConduiteStatePayload.self)
     #expect(gone.state == "closed")
     #expect(gone.repoKey == nil)
 
@@ -1005,7 +1012,7 @@ func dialogAnswerRoutes() async throws {
     )
     #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == "d-select" })
     let pushed = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
-        .json(RemoteConduiteStatePayload.self)
+        .json(OMPConsole.RemoteConduiteStatePayload.self)
     #expect(pushed.dialogs.map(\.id) == ["d-select"])
     #expect(pushed.dialogs.first?.method == .select)
 
@@ -1124,6 +1131,582 @@ func dialogAnswerRoutes() async throws {
     // HTTP : on attend que la file se vide, jamais un délai deviné).
     #expect(await awaitMainTrue { fixture.stack.project.pendingDialog == nil })
     let final = try (await fixture.stack.call("GET", "/v1/conduite", token: fixture.token))
-        .json(RemoteConduiteStatePayload.self)
+        .json(OMPConsole.RemoteConduiteStatePayload.self)
     #expect(final.dialogs.isEmpty)
+}
+
+// MARK: - validations-de-geste-enfermees-dans-le-h (BR-1 : gestes de carte typés)
+
+/// La question en vol `call-1` des preuves de gestes typés.
+private var typedAsk: [String: Any] {
+    [
+        "toolCallId": "call-1",
+        "id": "ask-1",
+        "question": "Quelle branche ?",
+        "options": [["label": "main"], ["label": "feat/x"]],
+    ]
+}
+
+/// Une carte d'une forme valide mais absente du tableau.
+private let unknownCardId = "feature:0000000000000000:beta"
+
+/// Ce qu'un geste pourrait avoir émis : livraisons dans la boîte du run,
+/// commandes postées au service, dépôts pilotés, entrées de journal.
+private struct EmittedEffects: Equatable {
+    let deliveries: [String]
+    let posts: Int
+    let pilotedRoots: [String]
+    let journal: [String]
+
+    @MainActor
+    init(_ fixture: ActionFixture) throws {
+        deliveries = try FileManager.default.contentsOfDirectory(atPath: fixture.inbox).sorted()
+        posts = fixture.commands.posts.count
+        pilotedRoots = fixture.pilot.roots
+        journal = fixture.stack.actions.journal.map(\.id)
+    }
+}
+
+/// Un corps posté sans ses clés propres à chaque émission.
+private func comparable(_ body: [String: Any]?) -> NSDictionary {
+    var body = body ?? [:]
+    body.removeValue(forKey: "id")
+    body.removeValue(forKey: "sentAt")
+    return body as NSDictionary
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-1 : répondre par la méthode typée émet la réponse sans corps HTTP")
+func typedAnswerDeliversTheAnswer() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.answer(
+        cardId: fixture.featureCardId,
+        toolCallId: "call-1",
+        answer: .selected(label: "main")
+    )
+
+    let files = try FileManager.default.contentsOfDirectory(atPath: fixture.inbox)
+    #expect(files.count == 1)
+    let published = try #require(files.first)
+    let payload = try String(contentsOfFile: fixture.inbox + "/" + published, encoding: .utf8)
+    #expect(payload.contains("\"kind\":\"ask\""))
+    #expect(payload.contains("main"))
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-2 : une réponse à l'ancienne question est périmée quel que soit son libellé")
+func typedAnswerToAStaleQuestionIsRefused() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let before = try EmittedEffects(fixture)
+
+    for label in ["main", "develop"] {
+        await #expect(throws: GestureRefusal.staleQuestion) {
+            try await fixture.stack.remoteActions.answer(
+                cardId: fixture.featureCardId,
+                toolCallId: "call-0",
+                answer: .selected(label: label)
+            )
+        }
+    }
+    #expect(try EmittedEffects(fixture) == before, "aucune réponse n'est émise")
+    #expect(before.deliveries.isEmpty)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-3 : un libellé hors des options est refusé sans rien émettre")
+func typedAnswerWithALabelOutsideOptionsIsRefused() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let before = try EmittedEffects(fixture)
+
+    await #expect(throws: GestureRefusal.labelNotInOptions) {
+        try await fixture.stack.remoteActions.answer(
+            cardId: fixture.featureCardId,
+            toolCallId: "call-1",
+            answer: .selected(label: "develop")
+        )
+    }
+    #expect(try EmittedEffects(fixture) == before, "aucune réponse n'est émise")
+    #expect(before.deliveries.isEmpty)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-4 : réplique, réponse personnalisée et texte blancs rendent « texte vide » sans rien émettre")
+func typedBlankTextGesturesAreRefused() async throws {
+    let fixture = try await makeActionFixture(waitPrompt: "Que faire ensuite ?", pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let actions = fixture.stack.remoteActions
+    let before = try EmittedEffects(fixture)
+
+    for blank in ["", " \n\t"] {
+        await #expect(throws: GestureRefusal.emptyText) {
+            try await actions.reply(cardId: fixture.featureCardId, text: blank)
+        }
+        await #expect(throws: GestureRefusal.emptyText) {
+            try await actions.answer(cardId: fixture.featureCardId, toolCallId: "call-1", answer: .custom(text: blank))
+        }
+        await #expect(throws: GestureRefusal.emptyText) {
+            try await actions.text(cardId: fixture.featureCardId, text: blank)
+        }
+    }
+    #expect(try EmittedEffects(fixture) == before, "rien n'est émis")
+    #expect(before.deliveries.isEmpty)
+    #expect(before.posts == 0)
+}
+
+@MainActor
+@Test("reponse-ios-sans-identifiant-de-question/AC-2 : la méthode typée refuse un identifiant de question blanc sans rien livrer")
+func typedAnswerWithoutQuestionIdIsRefused() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let actions = fixture.stack.remoteActions
+    let before = try EmittedEffects(fixture)
+
+    for blank in ["", "  "] {
+        await #expect(throws: GestureRefusal.missingQuestionId) {
+            try await actions.answer(cardId: fixture.featureCardId, toolCallId: blank, answer: .selected(label: "main"))
+        }
+    }
+    #expect(try EmittedEffects(fixture) == before, "rien n'est émis")
+    #expect(before.deliveries.isEmpty)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-5 : un échec consigné au journal rend « échec au journal » avec le motif relu")
+func typedAnswerReportsTheJournalFailure() async throws {
+    let toggle = WriteFailToggle()
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk, fileOps: togglingFileOps(toggle))
+    defer { fixture.stack.stop() }
+    toggle.failing = true
+
+    let error = await #expect(throws: GestureRefusal.self) {
+        try await fixture.stack.remoteActions.answer(
+            cardId: fixture.featureCardId,
+            toolCallId: "call-1",
+            answer: .selected(label: "main")
+        )
+    }
+    let head = try #require(fixture.stack.actions.journal.first)
+    guard case .failed(let reason) = head.state else {
+        Issue.record("la tête du journal doit être l'échec d'écriture, obtenu \(head.state)")
+        return
+    }
+    #expect(error == .journalFailure(reason))
+    #expect(reason.hasPrefix("écriture impossible"), "motif de l'écrivain : \(reason)")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-6 : chaque geste de carte sur une carte inconnue rend « carte inconnue » sans rien émettre")
+func typedCardGesturesOnAnUnknownCardAreRefused() async throws {
+    let fixture = try await makeActionFixture(waitPrompt: "Que faire ensuite ?", pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let actions = fixture.stack.remoteActions
+    let before = try EmittedEffects(fixture)
+
+    await #expect(throws: GestureRefusal.unknownCard) {
+        try await actions.answer(cardId: unknownCardId, toolCallId: "call-1", answer: .custom(text: "bonjour"))
+    }
+    await #expect(throws: GestureRefusal.unknownCard) {
+        try await actions.reply(cardId: unknownCardId, text: "x")
+    }
+    await #expect(throws: GestureRefusal.unknownCard) {
+        try await actions.text(cardId: unknownCardId, text: "x")
+    }
+    await #expect(throws: GestureRefusal.unknownCard) {
+        try await actions.verdict(cardId: unknownCardId, verdict: .specs)
+    }
+    await #expect(throws: GestureRefusal.unknownCard) {
+        try await actions.resume(cardId: unknownCardId)
+    }
+    await #expect(throws: GestureRefusal.unknownCard) {
+        try await actions.stop(cardId: unknownCardId)
+    }
+    #expect(try EmittedEffects(fixture) == before, "rien n'est émis")
+    #expect(before.posts == 0)
+    #expect(before.pilotedRoots.isEmpty)
+    #expect(before.deliveries.isEmpty)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : répondre par la méthode typée réussit")
+func typedAnswerSucceeds() async throws {
+    let fixture = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.answer(
+        cardId: fixture.featureCardId,
+        toolCallId: "call-1",
+        answer: .custom(text: "une autre branche")
+    )
+    let files = try FileManager.default.contentsOfDirectory(atPath: fixture.inbox)
+    #expect(files.count == 1, "la réponse est livrée dans la boîte du run")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : répliquer par la méthode typée poste la commande reply")
+func typedReplySucceeds() async throws {
+    let fixture = try await makeActionFixture(waitPrompt: "Que faire ensuite ?")
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.reply(cardId: fixture.featureCardId, text: "fusionne")
+    await fixture.awaitCommand()
+    #expect(fixture.lastPostedBody?["kind"] as? String == "reply")
+    #expect(fixture.lastPostedBody?["text"] as? String == "fusionne")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : valider un jalon par la méthode typée poste le verdict")
+func typedVerdictSucceeds() async throws {
+    let fixture = try await makeActionFixture(waitKind: "specs")
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.verdict(cardId: fixture.featureCardId, verdict: .specs)
+    await fixture.awaitCommand()
+    #expect(fixture.lastPostedBody?["kind"] as? String == "verdict")
+    #expect(fixture.lastPostedBody?["verdict"] as? String == "v")
+
+    // Le jalon non attendu est refusé sans commande.
+    let posts = fixture.commands.posts.count
+    await #expect(throws: GestureRefusal.milestoneNotAwaited) {
+        try await fixture.stack.remoteActions.verdict(cardId: fixture.featureCardId, verdict: .review)
+    }
+    #expect(fixture.commands.posts.count == posts)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : reprendre par la méthode typée pilote le dépôt")
+func typedResumeSucceeds() async throws {
+    let fixture = try await makeActionFixture()
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.resume(cardId: fixture.featureCardId)
+    #expect(fixture.pilot.roots == [realpathOr(fixture.repoRoot)])
+
+    // Le pilote en panne : la cause porte le message utilisateur du service.
+    fixture.pilot.failure = ServiceSessionError.notRunning
+    await #expect(throws: GestureRefusal.serviceFailure(ServiceSessionError.notRunning.userMessage)) {
+        try await fixture.stack.remoteActions.resume(cardId: fixture.featureCardId)
+    }
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : arrêter par la méthode typée poste la commande stop")
+func typedStopSucceeds() async throws {
+    let fixture = try await makeActionFixture()
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.stop(cardId: fixture.featureCardId)
+    await fixture.awaitCommand()
+    #expect(fixture.lastPostedBody?["kind"] as? String == "stop")
+    #expect(fixture.pilot.roots.isEmpty, "arrêter ne pilote jamais un dépôt")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : lancer une feature par la méthode typée poste la commande launch")
+func typedLaunchSucceeds() async throws {
+    let fixture = try await makeActionFixture()
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.launch(
+        repoRoot: fixture.repoRoot,
+        title: "t",
+        description: "d",
+        modelReqSpecs: nil,
+        modelImplReview: nil
+    )
+    await fixture.awaitCommand()
+    let posted = try #require(fixture.commands.posts.last)
+    #expect(posted.body["kind"] as? String == "launch")
+    #expect(posted.body["title"] as? String == "t")
+    #expect(posted.repo == realpathOr(fixture.repoRoot))
+
+    // Chaque règle de lancement a sa cause, sans commande.
+    let posts = fixture.commands.posts.count
+    await #expect(throws: GestureRefusal.emptyTitle) {
+        try await fixture.stack.remoteActions.launch(
+            repoRoot: fixture.repoRoot, title: " ", description: "d", modelReqSpecs: nil, modelImplReview: nil
+        )
+    }
+    await #expect(throws: GestureRefusal.emptyDescription) {
+        try await fixture.stack.remoteActions.launch(
+            repoRoot: fixture.repoRoot, title: "t", description: "\n", modelReqSpecs: nil, modelImplReview: nil
+        )
+    }
+    await #expect(throws: GestureRefusal.invalidRepoRoot) {
+        try await fixture.stack.remoteActions.launch(
+            repoRoot: "/tmp/pas-un-depot-\(UUID().uuidString)",
+            title: "t", description: "d", modelReqSpecs: nil, modelImplReview: nil
+        )
+    }
+    #expect(fixture.commands.posts.count == posts)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-8 : la route et la méthode typée produisent le même effet et la même cause traduite")
+func routeAndTypedGestureHaveTheSameEffect() async throws {
+    let fixture = try await makeActionFixture(waitKind: "specs")
+    defer { fixture.stack.stop() }
+    let actions = fixture.stack.remoteActions
+
+    // Verdict : une fois par HTTP, une fois par la méthode typée.
+    let routed = try await fixture.stack.call(
+        "POST", "/v1/cards/\(fixture.featureCardId)/verdict",
+        token: fixture.token,
+        json: ["verdict": "specs"]
+    )
+    #expect(routed.status == 202, "verdict → \(routed.status) \(routed.text)")
+    await fixture.awaitCommand()
+    try await actions.verdict(cardId: fixture.featureCardId, verdict: .specs)
+    await fixture.awaitCommand()
+    try expectSameEffect(fixture, kind: "verdict")
+
+    // Arrêter : même preuve.
+    let stopped = try await fixture.stack.call(
+        "POST", "/v1/cards/\(fixture.featureCardId)/stop",
+        token: fixture.token
+    )
+    #expect(stopped.status == 202, "stop → \(stopped.status) \(stopped.text)")
+    await fixture.awaitCommand()
+    try await actions.stop(cardId: fixture.featureCardId)
+    await fixture.awaitCommand()
+    try expectSameEffect(fixture, kind: "stop")
+
+    // Refus : la même cause typée, traduite par la table unique.
+    let asking = try await makeActionFixture(pendingAsk: typedAsk)
+    defer { asking.stack.stop() }
+    let stale = try await asking.stack.call(
+        "POST", "/v1/cards/\(asking.featureCardId)/answer",
+        token: asking.token,
+        json: ["toolCallId": "call-0", "kind": "selected", "label": "main"]
+    )
+    #expect(stale.status == 409)
+    #expect(stale.errorCode == GestureRefusal.staleQuestion.apiError.code)
+    #expect(stale.errorMessage == GestureRefusal.staleQuestion.apiError.message)
+    await #expect(throws: GestureRefusal.staleQuestion) {
+        try await asking.stack.remoteActions.answer(
+            cardId: asking.featureCardId,
+            toolCallId: "call-0",
+            answer: .selected(label: "main")
+        )
+    }
+}
+
+/// Les deux dernières commandes postées sont identiques hors `id` et `sentAt`, et
+/// leurs entrées de journal disent la même chose.
+@MainActor
+private func expectSameEffect(_ fixture: ActionFixture, kind: String) throws {
+    let posts = fixture.commands.posts
+    try #require(posts.count >= 2)
+    let routed = posts[posts.count - 2]
+    let typed = posts[posts.count - 1]
+    #expect(typed.body["kind"] as? String == kind)
+    #expect(routed.repo == typed.repo)
+    #expect(comparable(routed.body) == comparable(typed.body), "\(kind) : même commande émise")
+    let journal = fixture.stack.actions.journal
+    try #require(journal.count >= 2)
+    let typedEntry = journal[0]
+    let routedEntry = journal[1]
+    #expect(typedEntry.id == typed.body["id"] as? String)
+    #expect(routedEntry.id == routed.body["id"] as? String)
+    #expect(typedEntry.kindLabel == routedEntry.kindLabel)
+    #expect(typedEntry.targetLabel == routedEntry.targetLabel)
+    #expect(typedEntry.state == routedEntry.state)
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-9 : un corps mal formé est un 400 qui n'atteint jamais le geste")
+func malformedBodiesNeverReachTheGesture() async throws {
+    let fixture = try await makeActionFixture(waitKind: "specs", pendingAsk: typedAsk)
+    defer { fixture.stack.stop() }
+    let before = try EmittedEffects(fixture)
+    let answer = "/v1/cards/\(fixture.featureCardId)/answer"
+    let verdict = "/v1/cards/\(fixture.featureCardId)/verdict"
+
+    let cases: [(path: String, body: Data?, message: String)] = [
+        (answer, nil, "corps JSON absent"),
+        (answer, Data("{".utf8), "corps JSON illisible"),
+        (answer, jsonBody(["toolCallId": "call-1", "kind": "autre"]), "kind inconnu"),
+        (answer, jsonBody(["toolCallId": "call-1", "kind": "selected"]), "libellé absent"),
+        (answer, jsonBody(["toolCallId": "call-1", "kind": "custom"]), "texte absent"),
+        (verdict, jsonBody(["verdict": "x"]), "verdict inconnu"),
+        ("/v1/cards/\(fixture.featureCardId)/reply", Data("{".utf8), "corps JSON illisible"),
+        ("/v1/cards/\(fixture.featureCardId)/text", nil, "corps JSON absent"),
+        ("/v1/features", Data("{".utf8), "corps JSON illisible"),
+        // Le corps est décodé AVANT tout contrôle d'état : une carte inconnue
+        // avec un corps illisible est un 400, jamais un 404.
+        ("/v1/cards/\(unknownCardId)/answer", Data("{".utf8), "corps JSON illisible"),
+    ]
+    for item in cases {
+        let reply = try await fixture.stack.call("POST", item.path, token: fixture.token, body: item.body)
+        #expect(reply.status == 400, "\(item.path) \(item.message) → \(reply.status) \(reply.text)")
+        #expect(reply.errorCode == "bad_request")
+        #expect(reply.errorMessage == item.message, "\(item.path) → \(reply.errorMessage ?? "-")")
+        #expect(try EmittedEffects(fixture) == before, "\(item.path) \(item.message) : aucun modèle touché")
+    }
+    #expect(before.deliveries.isEmpty)
+    #expect(before.posts == 0)
+}
+
+// MARK: - Dialogues de conduite typés (validations-de-geste-enfermees-dans-le-h, BR-2)
+
+/// Une conduite vive démarrée par la méthode typée, avec une escalade `id` en tête
+/// de file.
+@MainActor
+private func conduiteWithDialog(
+    _ id: String,
+    method: String,
+    options: [String] = []
+) async throws -> ConduiteFixture {
+    let fixture = try await makeConduiteFixture()
+    let started = try await fixture.stack.remoteActions.startConduite(repoKey: fixture.repoKey, name: "projet")
+    #expect(started.state == "live")
+    emitServiceDialog(fixture.transport, id: id, method: method, title: "Escalade", options: options)
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog?.id == id })
+    return fixture
+}
+
+/// Les réponses de dialogue POSTées au service par la conduite.
+@MainActor
+private func dialogPosts(_ fixture: ConduiteFixture) -> Int {
+    fixture.transport.requests.filter { $0.method == "POST" && $0.path.contains("/dialogs/") }.count
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-4 : une saisie blanche à une escalade de conduite rend « texte vide » sans rien émettre")
+func typedBlankConduiteDialogIsRefused() async throws {
+    let fixture = try await conduiteWithDialog("d-input", method: "input")
+    defer { fixture.stack.stop() }
+
+    for blank in ["  ", "", " \n\t"] {
+        await #expect(throws: GestureRefusal.emptyText) {
+            try await fixture.stack.remoteActions.answerDialog(id: "d-input", answer: .value(blank))
+        }
+    }
+    #expect(fixture.stack.project.pendingDialog?.id == "d-input", "l'escalade reste en tête de file")
+    #expect(dialogPosts(fixture) == 0, "aucune réponse ne part au service")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-7 : répondre à une escalade de conduite par la méthode typée la consomme")
+func typedConduiteDialogSucceeds() async throws {
+    let fixture = try await conduiteWithDialog("d-select", method: "select", options: ["Valider le plan", "Corriger le plan"])
+    defer { fixture.stack.stop() }
+
+    try await fixture.stack.remoteActions.answerDialog(id: "d-select", answer: .value("Corriger le plan"))
+    #expect(await awaitMainTrue { fixture.stack.project.pendingDialog == nil }, "la tête de file est consommée")
+    #expect(await awaitMainTrue {
+        fixture.transport.requests
+            .last { $0.path.hasSuffix("/dialogs/d-select") }?
+            .body?["value"] as? String == "Corriger le plan"
+    }, "la réponse part au service")
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-9 : un corps de réponse d'escalade mal formé est un 400 qui laisse la file intacte")
+func malformedConduiteDialogBodiesNeverReachTheGesture() async throws {
+    let fixture = try await conduiteWithDialog("d-select", method: "select", options: ["Valider le plan"])
+    defer { fixture.stack.stop() }
+    let path = "/v1/conduite/dialogs/d-select"
+
+    let cases: [(body: Data?, message: String)] = [
+        (jsonBody(["kind": "value"]), "valeur absente"),
+        (jsonBody(["kind": "confirmed"]), "confirmation absente"),
+        (jsonBody(["kind": "autre"]), "kind inconnu"),
+        (Data("{".utf8), "corps JSON illisible"),
+        (nil, "corps JSON absent"),
+    ]
+    for item in cases {
+        let reply = try await fixture.stack.call("POST", path, token: fixture.token, body: item.body)
+        #expect(reply.status == 400, "\(item.message) → \(reply.status) \(reply.text)")
+        #expect(reply.errorCode == "bad_request")
+        #expect(reply.errorMessage == item.message)
+        #expect(fixture.stack.project.pendingDialog?.id == "d-select", "\(item.message) : la tête de file est inchangée")
+    }
+    #expect(dialogPosts(fixture) == 0, "aucune réponse ne part au service")
+}
+
+// MARK: - validations-de-geste-enfermees-dans-le-h, AC-10 (rejeu iPhone)
+
+/// Un vrai client iPhone (`ConsoleClientModel`) appairé à la pile d'une fixture :
+/// adresse manuelle, code généré par la coque.
+@MainActor
+private func pairedPhone(_ fixture: ActionFixture) async throws -> ConsoleClientModel {
+    let client = makeContractClient(discovery: ContractDiscovery())
+    _ = client.setManualAddress("127.0.0.1:\(fixture.stack.port)")
+    try await client.pair(code: fixture.stack.registry.generateCode().value, deviceName: "iPhone de recette")
+    return client
+}
+
+@MainActor
+@Test("validations-de-geste-enfermees-dans-le-h/AC-10 : les gestes iPhone répondre, verdict, reprendre et arrêter rejoués contre le Mac réussissent ou rendent leur cause")
+func phoneGesturesReplayedAgainstTheMac() async throws {
+    // Répondre : question en vol `call-1`, écriture du canal commutable.
+    let toggle = WriteFailToggle()
+    let asking = try await makeActionFixture(pendingAsk: typedAsk, fileOps: togglingFileOps(toggle))
+    defer { asking.stack.stop() }
+    let askingPhone = try await pairedPhone(asking)
+    defer { askingPhone.stop() }
+
+    await #expect(throws: ClientError.api(.conflict("la question a changé depuis la demande"))) {
+        _ = try await askingPhone.answer(
+            cardId: asking.featureCardId, kind: "selected", label: "main", text: nil, toolCallId: "call-0"
+        )
+    }
+    #expect(try FileManager.default.contentsOfDirectory(atPath: asking.inbox).isEmpty, "question périmée : rien n'est livré")
+
+    toggle.failing = true
+    await #expect(throws: ClientError.api(.conflict("écriture impossible (Permission denied)"))) {
+        _ = try await askingPhone.answer(
+            cardId: asking.featureCardId, kind: "selected", label: "main", text: nil, toolCallId: "call-1"
+        )
+    }
+    toggle.failing = false
+
+    let answered = try await askingPhone.answer(
+        cardId: asking.featureCardId, kind: "selected", label: "main", text: nil, toolCallId: "call-1"
+    )
+    #expect(answered.accepted)
+    #expect(try FileManager.default.contentsOfDirectory(atPath: asking.inbox).count == 1, "la réponse est livrée au run")
+
+    // Verdict : jalon specs attendu.
+    let milestone = try await makeActionFixture(waitKind: "specs")
+    defer { milestone.stack.stop() }
+    let milestonePhone = try await pairedPhone(milestone)
+    defer { milestonePhone.stop() }
+
+    await #expect(throws: ClientError.api(.conflict("ce jalon n'est pas attendu"))) {
+        _ = try await milestonePhone.verdict(cardId: milestone.featureCardId, verdict: "review")
+    }
+    #expect(milestone.commands.posts.isEmpty, "jalon non attendu : aucune commande")
+    #expect(try await milestonePhone.verdict(cardId: milestone.featureCardId, verdict: "specs").accepted)
+    await milestone.awaitCommand()
+    #expect(milestone.lastPostedBody?["kind"] as? String == "verdict")
+
+    // Reprendre puis arrêter : carte de lot.
+    let lot = try await makeActionFixture()
+    defer { lot.stack.stop() }
+    let lotPhone = try await pairedPhone(lot)
+    defer { lotPhone.stop() }
+
+    lot.pilot.failure = ServiceSessionError.notRunning
+    await #expect(throws: ClientError.api(.unavailable(ServiceSessionError.notRunning.userMessage))) {
+        _ = try await lotPhone.resume(cardId: lot.featureCardId)
+    }
+    lot.pilot.failure = nil
+    let pilotedBefore = lot.pilot.roots.count
+    #expect(try await lotPhone.resume(cardId: lot.featureCardId).accepted)
+    #expect(lot.pilot.roots.count == pilotedBefore + 1, "le pilote sain est sollicité")
+
+    #expect(try await lotPhone.stop(cardId: lot.featureCardId).accepted)
+    await lot.awaitCommand()
+    #expect(lot.lastPostedBody?["kind"] as? String == "stop")
+
+    let postsBefore = lot.commands.posts.count
+    await #expect(throws: ClientError.api(.notFound("carte inconnue"))) {
+        _ = try await lotPhone.stop(cardId: unknownCardId)
+    }
+    #expect(lot.commands.posts.count == postsBefore, "carte inconnue : aucune commande")
 }
