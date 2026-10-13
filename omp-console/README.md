@@ -2760,6 +2760,19 @@ l'export des métadonnées App Intents. La table ne peut donc pas fournir la val
 `applyVoicePolicy` confronte le littéral à `VoiceGesturePolicy.authenticationPolicy(for:on:)`
 à chaque exécution, et une divergence rend `.misconfigured` sans rien émettre.
 
+Phrases vocales : quatre fonctions pures de `Sources/ConsoleCore/Voice/`, sans
+AppIntents ni framework d'interface, calculent ce que Siri prononce, à l'identique sur
+l'iPhone et sur le Mac. `VoiceFeatureSearch.find` retrouve une feature non terminée par
+son titre prononcé (casse, accents et tirets ignorés ; dès deux titres qui
+correspondent, une précision est demandée). `VoiceAnswerMatcher.match` fait
+correspondre une réponse dite à une option (libellé, chiffre, « la deuxième », « la
+dernière »), sinon au texte libre si l'appelant l'accepte, sinon rappelle les choix
+possibles. `VoicePendingSummary.phrase(for:)` dit la liste des attentes : le total,
+les 3 plus récentes, puis « et N autres ». `VoiceIssue.phrase` dit l'issue d'un geste :
+succès qui nomme le geste et sa cible, annulation, refus du Mac, cause de connexion.
+Toutes leurs phrases vivent dans `VoiceSpeechText`. Preuves :
+`Tests/OMPConsoleTests/VoiceSpeechTests.swift` et `test/console/noyau-vocal-partage.test.ts`.
+
 ## Vocabulaire et typographie
 
 Les textes visibles des fichiers `*Text.swift` (ConsoleCore, coque Mac, coque iOS)
