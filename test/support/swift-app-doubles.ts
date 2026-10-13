@@ -20,11 +20,13 @@ export const CONST_VALUES_REL =
 
 /**
  * Ligne bash à placer dans toute doublure `swift`, APRÈS le calcul de `$scratch` :
- * si l'argv porte le mot `-emit-const-values`, elle écrit les valeurs constantes
- * (`[]`) là où le vrai compilateur les écrit ; sinon elle ne fait rien. Sans le
- * drapeau, swift-app.sh ne trouve donc aucune valeur constante.
+ * si l'argv porte `--build-system swiftbuild` ET `-emit-const-values`, elle écrit
+ * les valeurs constantes (`[]`) là où le vrai compilateur les écrit ; sinon elle ne
+ * fait rien. Comme le vrai SwiftPM : sans le drapeau, aucune valeur constante, et
+ * le moteur `native` (défaut avant Swift 6.4, celui de la CI sous Xcode 26.6)
+ * n'en écrit aucune en release même avec le drapeau.
  */
-export const SWIFT_CONST_VALUES_SNIPPET = `case " $* " in *" -emit-const-values "*) mkdir -p "$(dirname "$scratch/${CONST_VALUES_REL}")" && printf '[]' > "$scratch/${CONST_VALUES_REL}" ;; esac`;
+export const SWIFT_CONST_VALUES_SNIPPET = `case " $* " in *" --build-system swiftbuild "*" -emit-const-values "*) mkdir -p "$(dirname "$scratch/${CONST_VALUES_REL}")" && printf '[]' > "$scratch/${CONST_VALUES_REL}" ;; esac`;
 
 /** Le `extract.actionsdata` de l'intent sonde et de son App Shortcut (marqueurs du contrat de S-1). */
 export const SONDE_ACTIONSDATA =

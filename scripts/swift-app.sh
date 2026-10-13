@@ -136,6 +136,20 @@ else
   PLUGIN_FLAGS=()
 fi
 
+# Moteur de build IMPOSÉ : `swiftbuild`. Lui seul écrit les valeurs constantes que
+# lit l'étape 2 ter : il passe au compilateur la liste des protocoles App Intents
+# (`<module>_const_extract_protocols.json`, tirée du toolchain
+# `usr/share/swift/SwiftConstantValues/*.json`) et un chemin de sortie
+# `<module>-primary.swiftconstvalues`. Le moteur `native` transmet bien
+# `-emit-const-values`, mais en release (WMO) le pilote n'en reçoit aucun chemin de
+# sortie et n'écrit RIEN (mesuré le 2026-10-13, Swift 6.4, `--build-system
+# native`). Or le moteur par défaut dépend du toolchain : `swiftbuild` depuis Swift
+# 6.4 (Xcode 27), `native` avant (Xcode 26.6 de l'image macos-26 de la CI, où le
+# job macos-app-swift sortait en « valeurs constantes Swift introuvables »). Le
+# même moteur sert aux trois appels (build, test, `--show-bin-path`), puisque le
+# dossier du binaire en dépend.
+BUILD_SYSTEM=(--build-system swiftbuild)
+
 # 1) compilation release du produit ET de la suite, en une invocation, puis
 #    exécution des tests. La sortie est recopiée telle quelle : c'est elle qui
 #    nomme l'erreur de compilation ou le test tombé. `-emit-const-values` fait
@@ -145,8 +159,8 @@ fi
 if [ -n "$NO_TESTS" ]; then
   # Tour rapide : compilation seule. La sortie reste sur le terminal (plusieurs
   # minutes de compilation muette seraient une panne d'ergonomie).
-  if ! (cd "$PKG" && swift build -c release --scratch-path "$SCRATCH" -Xswiftc -emit-const-values); then
-    echo "✗ compilation release échouée (relance : cd omp-console && swift build -c release --scratch-path .build-run -Xswiftc -emit-const-values)"
+  if ! (cd "$PKG" && swift build -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" -Xswiftc -emit-const-values); then
+    echo "✗ compilation release échouée (relance : cd omp-console && swift build -c release --build-system swiftbuild --scratch-path .build-run -Xswiftc -emit-const-values)"
     exit 1
   fi
   echo "  ✓ compilation release (OMPConsole), sans la suite"
@@ -157,11 +171,11 @@ else
 #    exécutée en parallèle, elle rend 10 à 15 échecs de DÉLAI (212 tests), alors
 #    qu'en série elle passe 212/212 en ~42 s. Le coût est assumé : la suite reste
 #    déterministe, et c'est elle qui garde la CI verte.
-test_out="$(cd "$PKG" && swift test -c release --scratch-path "$SCRATCH" --no-parallel -Xswiftc -emit-const-values ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
+test_out="$(cd "$PKG" && swift test -c release "${BUILD_SYSTEM[@]}" --scratch-path "$SCRATCH" --no-parallel -Xswiftc -emit-const-values ${PLUGIN_FLAGS[@]+"${PLUGIN_FLAGS[@]}"} 2>&1)"
 test_status=$?
 [ -n "$test_out" ] && printf '%s\n' "$test_out"
 if [ "$test_status" -ne 0 ]; then
-  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --scratch-path .build-app --no-parallel -Xswiftc -emit-const-values -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
+  echo "✗ compilation/tests release échoués (relance : cd omp-console && swift test -c release --build-system swiftbuild --scratch-path .build-app --no-parallel -Xswiftc -emit-const-values -Xswiftc -plugin-path -Xswiftc \"\$(dirname \"\$(xcrun --find swift)\")/../lib/swift/host/plugins/testing\")"
   exit 1
 fi
 echo "  ✓ compilation release (OMPConsole) et tests release (Swift Testing)"
@@ -175,7 +189,7 @@ fi
 #    dossier jetable, il ne touche donc jamais le dossier réel.
 probe="$(mktemp -d)"
 probe="$(cd "$probe" && pwd -P)"
-probe_path="$(cd "$PKG" && swift build -c release --show-bin-path --scratch-path "$probe" 2>/dev/null)"
+probe_path="$(cd "$PKG" && swift build -c release "${BUILD_SYSTEM[@]}" --show-bin-path --scratch-path "$probe" 2>/dev/null)"
 rm -rf "$probe"
 case "$probe_path" in
   "$probe"/*) bin_dir="$SCRATCH/${probe_path#"$probe"/}" ;;
@@ -225,7 +239,7 @@ META_DIR="$(mktemp -d)"
 trap 'rm -rf "$META_DIR"' EXIT
 find "$SCRATCH" -path '*/OMPConsole-p.build/*' -name '*.swiftconstvalues' -type f 2>/dev/null | LC_ALL=C sort > "$META_DIR/constvalues.txt"
 if [ ! -s "$META_DIR/constvalues.txt" ]; then
-  echec_sans_bundle "valeurs constantes Swift introuvables sous $SCRATCH (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, produit par -Xswiftc -emit-const-values)"
+  echec_sans_bundle "valeurs constantes Swift introuvables sous $SCRATCH (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)"
 fi
 find "$PKG/Sources/OMPConsole" -name '*.swift' -type f | LC_ALL=C sort > "$META_DIR/sources.txt"
 aimp_out="$("$AIMP" \
