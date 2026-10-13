@@ -1205,11 +1205,14 @@ Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script
    ramène la fenêtre principale) et son App Shortcut, phrase « Ouvre
    ${applicationName} » (« Ouvre OMP Console ») :
    `  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)` ;
-6. contrôle ensuite les deux intents vocaux (voir *Siri sur le Mac*) : `extract.actionsdata`
-   doit déclarer `MacPendingIntent` et son App Shortcut « Qu’est-ce qui m’attend dans
-   ${applicationName} », puis `MacAnswerIntent` et son App Shortcut « Réponds dans
+6. contrôle ensuite les trois intents vocaux (voir *Siri sur le Mac* et *Siri :
+   écrire à la session OMP*) : `extract.actionsdata` doit déclarer `MacPendingIntent`
+   et son App Shortcut « Qu’est-ce qui m’attend dans ${applicationName} », puis
+   `MacAnswerIntent` et son App Shortcut « Réponds dans ${applicationName} », puis
+   `MacSessionPromptIntent` et chacune de ses trois phrases, « Dis à
+   ${applicationName} », « Envoyer un message à ${applicationName} » et « Écrire à
    ${applicationName} » :
-   `  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)`.
+   `  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)`.
 
 Chaque échec sort en code 1, sur la sortie d'erreur, retire le bundle (y compris
 celui d'un assemblage antérieur) et ne signe rien :
@@ -1224,8 +1227,8 @@ celui d'un assemblage antérieur) et ne signe rien :
 | rien d'extrait (aucun intent compilé) | `✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)` |
 | intent sonde absent | `✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata` |
 | App Shortcut absent | `✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata` |
-| intent vocal absent (`<Type>` = `MacPendingIntent`, puis `MacAnswerIntent`) | `✗ intent vocal absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
-| App Shortcut vocale absente | `✗ App Shortcut de l'intent vocal <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est « Qu’est-ce qui m’attend dans ${applicationName} » ou « Réponds dans ${applicationName} » |
+| intent vocal absent (`<Type>` = `MacPendingIntent`, puis `MacAnswerIntent`, puis `MacSessionPromptIntent`) | `✗ intent vocal absent de Metadata.appintents : <Type> introuvable dans extract.actionsdata` |
+| App Shortcut vocale absente | `✗ App Shortcut de l'intent vocal <Type> absent de Metadata.appintents : phrase « <phrase> » introuvable dans extract.actionsdata`, où `<phrase>` est « Qu’est-ce qui m’attend dans ${applicationName} », « Réponds dans ${applicationName} », ou l'une des trois phrases de `MacSessionPromptIntent` (« Dis à ${applicationName} », « Envoyer un message à ${applicationName} », « Écrire à ${applicationName} ») |
 
 Le premier assemblage après l'ajout du drapeau recompile tout `.build-run` et
 `.build-app` (mesuré : environ 45 s pour `swift build -c release`, 3 min 30 pour la
@@ -2873,6 +2876,7 @@ l'Accueil iOS, seul « Valider les specs » confirme).
 |---|---|---|---|---|
 | `stopFeature`, `validateSpecs`, `acceptReview`, `launchPipeline` | oui | oui | oui | oui |
 | `answerOption`, `answerText`, `answerProjectDialog`, `answerHostedDialog`, `answerAuditEscalation`, `resume`, `consult` | non | oui | non | non |
+| `promptHostedSession` | non | oui | non | non |
 
 Sur iPhone, tout intent exige le déverrouillage : le jeton est au trousseau en
 `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. La table
@@ -4715,9 +4719,152 @@ conduite par l'utilisateur) :
 5. Attendu : dans la coque Mac, le run reçoit cette réponse et reprend (la carte
    quitte « Question en vol »).
 
+### Siri : écrire à la session OMP
+
+L'iPhone et le Mac déclarent chacun un App Intent, **Écrire à la session OMP**, qui
+envoie un message dicté comme prompt de l'UNIQUE session OMP hébergée du Mac (celle
+de la section *Session OMP*, sur le Mac comme sur l'iPhone) :
+`IOSSessionPromptIntent` (`ios/OMPConsoleIOS/IOSSiriText.swift`) et
+`MacSessionPromptIntent` (`Sources/OMPConsole/Intents/SessionPromptIntent.swift`).
+Les deux suivent le même déroulé pur de ConsoleCore, `VoiceSessionPrompt.run`
+(`Sources/ConsoleCore/Voice/VoiceSessionPrompt.swift`, Foundation seul), et les
+phrases de `VoiceSpeechText`.
+
+Siri n'a AUCUNE règle propre à la voix : le message passe par le geste existant,
+sans seconde voie d'écriture. L'iPhone poste `POST /v1/session/prompt` (geste
+`hosted.prompt` de l'API distante) ; le Mac appelle `RemoteActions.prompt(message:)`,
+la méthode que sert cette même route. Les deux décident par
+`SessionConsoleModel.promptRefusal(for:)`, la règle du champ de saisie de la Session
+OMP (`canSendPrompt` en dérive) : Siri accepte exactement ce que le champ accepte,
+et refuse avec le même motif.
+
+Phrases Siri (en français, toutes avec le nom de l'app, identiques sur l'iPhone et
+sur le Mac) :
+
+- « Dis à OMP Console »
+- « Envoyer un message à OMP Console »
+- « Écrire à OMP Console »
+
+Dans l'app **Raccourcis**, la tuile *Écrire à la session OMP* (symbole
+`text.bubble`) lance le même intent ; un paramètre *Message* rempli d'avance n'est
+jamais redemandé.
+
+**Le message ne tient pas dans la phrase.** Un paramètre interpolé dans une phrase
+d'App Shortcut doit appartenir à un ensemble fermé (`AppEntity` ou `AppEnum`) :
+un texte libre (`String`) en est exclu (Apple DTS, « the parameters in an App
+Shortcut invocation phrase can't be open ended »). « Dis à OMP Console, fais
+avancer le lot » d'une seule traite est donc impossible : la phrase déclenche
+l'intent, puis Siri demande « Quel message ? » (`$message.requestValue`) et prend
+la réponse dictée.
+
+Enchaînement sur l'iPhone (`IOSSiriPending.dictate`, sans ouvrir l'app,
+`supportedModes = .background`) :
+
+1. Garde de configuration : si le littéral `authenticationPolicy` diverge de la
+   table, Siri dit « Ce raccourci est mal configuré, rien n’a été fait. » sans rien
+   demander.
+2. Appareil déverrouillé ? Sinon, la phrase de verrouillage, sans toucher au
+   client ni lire le jeton.
+3. Client prêt, attente bornée à 5 s (`ClientRetry.readinessTimeout`) ; sinon, la
+   phrase de la cause de connexion.
+4. « Quel message ? », seulement si le message manque.
+5. UN `POST /v1/session/prompt` portant le message dicté, débarrassé des blancs
+   de tête et de fin.
+6. « Reçu. » ou le motif du refus, puis fin.
+
+Enchaînement sur le Mac (`MacSessionPrompt.run`, en arrière-plan, sans
+`MainWindow.reveal()` ni activation de l'app) : la même garde de configuration ;
+aucune attente de disponibilité, le modèle de session étant local ; « Quel
+message ? » si le message manque ; UN appel de `RemoteActions.prompt(message:)` ;
+« Reçu. » ou le motif, puis fin.
+
+Dans les deux cas, la ligne `promptHostedSession` de la politique vocale ne
+prescrit aucune confirmation : Siri ne relit pas le message, ne fait aucun nouvel
+essai et ne pose aucune autre question. Annuler pendant « Quel message ? » (à
+Siri) n'envoie rien.
+
+Issues énoncées, puis Siri s'arrête :
+
+| Situation | Phrase |
+|---|---|
+| Message accepté (session `running`, aucun dialogue en attente) | « Reçu. » |
+| Aucun message : réponse vide ou blanche à « Quel message ? » | « Aucun message n’a été envoyé. » |
+| Aucune session hébergée lancée (`idle`) | « Le Mac a refusé la demande : aucune session OMP n'est lancée. » |
+| Session arrêtée, morte ou en échec (`stopped`, `dead`, `failed`) | « Le Mac a refusé la demande : la session OMP est arrêtée. » |
+| Démarrage ou arrêt de la session en cours (`launching`, `stopping`) | « Le Mac a refusé la demande : la session n'est pas en marche. » |
+| Un dialogue de la session attend une réponse | « Le Mac a refusé la demande : un dialogue de la session attend une réponse. » |
+| Refus du service pendant l'envoi (503) | « Le Mac a refusé la demande : *motif du service*. » |
+| Intent mal configuré (littéral différent de la table) | « Ce raccourci est mal configuré, rien n’a été fait. » |
+
+Sur l'iPhone seulement, les phrases de connexion et de verrouillage du noyau
+(`VoiceIssue`, les mêmes que pour *Siri : demandes en attente*) :
+
+| Cause | Phrase |
+|---|---|
+| iPhone verrouillé (sondé avant tout accès au client) | « Cet appareil est verrouillé. Déverrouillez-le, puis réessayez. » |
+| Non appairé, jeton refusé, ou 401 à l'envoi | « Cet appareil n’est appairé à aucun Mac. Ouvrez OMP Console pour l’appairer. » |
+| Mac injoignable ou coque fermée (attente « prêt » bornée à 5 s), ou envoi en échec de transport | « Le Mac est injoignable. Vérifiez qu’OMP Console y est ouvert et que le réseau est disponible. » |
+| Version incompatible | « L’app de cet appareil est plus ancienne que celle du Mac. Mettez-la à jour. », ou « OMP Console sur le Mac est plus ancien que l’app de cet appareil. Mettez-le à jour. » |
+
+Une session occupée à répondre (état `running`, aucun dialogue en attente) reçoit
+le message, comme depuis le champ de saisie ; le service décide ensuite, et son
+refus éventuel est dit avec son motif.
+
+**Siri ne lit pas la réponse.** « Reçu. » dit seulement que la session a pris le
+message : Siri n'attend aucune trame et ne lit pas la réponse de la session, qui
+s'affiche dans le fil de la Session OMP. Ces intents ne lancent ni n'arrêtent de
+session et ne répondent pas à ses dialogues.
+
+**Limite après un lancement à froid sur le Mac.** App fermée, Siri lance l'app en
+arrière-plan avec un modèle de session dans son état initial : la coque n'adopte
+pas au démarrage une session hébergée déjà lancée. Le geste décide sur cet état,
+et Siri dit « Le Mac a refusé la demande : aucune session OMP n'est lancée. » tant
+que la coque n'a pas lancé ni rejoint la session. C'est une limite documentée, pas
+un défaut : ouvrez la section *Session OMP* du Mac, puis redites la phrase.
+
+Politique vocale : littéral `authenticationPolicy = .requiresLocalDeviceAuthentication`
+sur l'iPhone, `.alwaysAllowed` sur le Mac, confronté à la ligne
+`promptHostedSession` par `applyVoicePolicy`. Les métadonnées de
+`MacSessionPromptIntent` et ses trois phrases sont contrôlées dans le bundle par
+`scripts/swift-app.sh` (*Assembler le bundle `.app`*, ligne `✓ intents vocaux
+embarqués`). Preuves :
+
+- `Tests/OMPConsoleTests/VoiceSessionPromptTests.swift` : la ligne de table et le
+  déroulé partagé (`siri-dictee-session-omp/AC-9`, `AC-10`, `AC-11`) ;
+- `Tests/OMPConsoleTests/MacSessionPromptTests.swift` : la route, la règle unique
+  et l'intent du Mac sur une pile `RemoteStack` réelle (`AC-2`, `AC-4` à `AC-6`,
+  `AC-9` à `AC-11`) ;
+- `ios/OMPConsoleIOSTests/IOSSiriSessionPromptTests.swift` : l'intent de l'iPhone
+  sur un vrai `ConsoleClientModel` (`AC-1`, `AC-4` à `AC-12`) ;
+- `test/outillage/check.test.ts` : `siri-dictee-session-omp/AC-3` (l'intent dans
+  le bundle) et `siri-dictee-session-omp/AC-12` (ses trois phrases).
+
+La reconnaissance vocale ne se prouve qu'à la main.
+
+**Recette manuelle sur appareils réels** (siri-dictee-session-omp/AC-1, AC-2, AC-8
+et AC-10 ; conduite par l'utilisateur, Siri réglé en français, `bash
+scripts/swift-app.sh` puis l'app iOS installée comme dans *Installer sur un
+appareil réel*) :
+
+1. **R-1 (AC-1)** : iPhone appairé et déverrouillé, coque Mac ouverte, session
+   `running` sans dialogue en attente. Dire « Dis à OMP Console », puis répondre
+   au « Quel message ? » par une phrase. Attendu : Siri dit « Reçu. » et s'arrête,
+   et le message apparaît dans le fil de la Session OMP de l'iPhone et du Mac.
+2. **R-2 (AC-2)** : la même chose sur le Mac, par « Dis à OMP Console ». Attendu :
+   « Reçu. », et le message apparaît sur le Mac et sur l'iPhone appairé.
+3. **R-3 (AC-8)** : iPhone verrouillé, dire « Dis à OMP Console ». Attendu : aucun
+   envoi sans déverrouillage ; si l'intent s'exécute malgré tout, Siri dit « Cet
+   appareil est verrouillé. Déverrouillez-le, puis réessayez. ». Un refus de
+   déverrouiller est dit par Siri lui-même, hors de l'app.
+4. **R-4 (AC-10)** : sur chaque plateforme, à « Quel message ? », ne rien dire ou
+   dire un blanc. Attendu : Siri dit « Aucun message n’a été envoyé. » et le fil
+   est inchangé.
+
+Résultat consigné par l'utilisateur.
+
 ### Siri sur le Mac
 
-Contrepartie macOS de la section précédente : la **coque macOS** déclare deux App
+Contrepartie macOS de *Siri : demandes en attente* : la **coque macOS** déclare deux App
 Intents qui parcourent à la voix la liste unifiée des attentes du Mac (voir *Liste
 des attentes*) et y répondent : `MacPendingIntent` (« Ce qui m’attend ») et
 `MacAnswerIntent` (« Répondre aux demandes »), dans
@@ -4745,6 +4892,10 @@ conduite, dialogue de la session hébergée, escalade d'audit) : les jalons spec
 revue d'une carte et la carte en pause à reprendre sont comptés, lus, puis « à
 traiter dans l'app ». Valider, accepter, reprendre, arrêter ou lancer à la voix ne
 font pas partie de ces intents.
+
+Le Mac déclare aussi `MacSessionPromptIntent` (« Dis à OMP Console »,
+`Sources/OMPConsole/Intents/SessionPromptIntent.swift`), qui envoie un message
+dicté à la session OMP hébergée : voir *Siri : écrire à la session OMP*.
 
 **App fermée.** Les deux intents tournent en arrière-plan
 (`supportedModes = .background`) : Siri lance l'app sans la passer au premier
@@ -4816,7 +4967,7 @@ Phrases Siri (en français, toutes avec le nom de l'app) :
 | Valider les specs | « Valider les specs dans OMP Console », « Valider des specs avec OMP Console » | *Valider les specs* (`checkmark.seal`) |
 | Accepter la revue | « Accepter la revue dans OMP Console », « Accepter une revue avec OMP Console » | *Accepter la revue* (`checkmark.bubble`) |
 
-L'app déclare ainsi 7 App Shortcuts, sous la limite de 10 qu'impose iOS. Seuls
+L'app déclare ainsi 8 App Shortcuts, sous la limite de 10 qu'impose iOS. Seuls
 les verdicts positifs sont vocaux : refuser des specs ou une revue, ou demander
 des corrections, reste dans l'app.
 

@@ -22,6 +22,8 @@ public enum VoiceGesture: String, CaseIterable, Sendable, Hashable {
     case answerHostedDialog
     /// Répondre à une escalade d'audit.
     case answerAuditEscalation
+    /// Envoyer un message dicté à la session OMP hébergée.
+    case promptHostedSession
     /// Reprendre une pipeline.
     case resume
     /// Consulter : statut, attentes.
@@ -74,7 +76,7 @@ public enum VoiceGesturePolicy {
         case .stopFeature, .validateSpecs, .acceptReview, .launchPipeline:
             risky = true
         case .answerOption, .answerText, .answerProjectDialog, .answerHostedDialog,
-             .answerAuditEscalation, .resume, .consult:
+             .answerAuditEscalation, .promptHostedSession, .resume, .consult:
             risky = false
         }
         switch platform {

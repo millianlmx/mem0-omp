@@ -15,7 +15,7 @@ public enum VoiceGestureText {
         case .launchPipeline:
             return "Lancer la pipeline \(target) ?"
         case .answerOption, .answerText, .answerProjectDialog, .answerHostedDialog,
-             .answerAuditEscalation, .resume, .consult:
+             .answerAuditEscalation, .promptHostedSession, .resume, .consult:
             return nil
         }
     }

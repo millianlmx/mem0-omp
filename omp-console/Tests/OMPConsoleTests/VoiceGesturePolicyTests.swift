@@ -10,7 +10,7 @@ import Testing
 private let riskyGestures: [VoiceGesture] = [.stopFeature, .validateSpecs, .acceptReview, .launchPipeline]
 private let calmGestures: [VoiceGesture] = [
     .answerOption, .answerText, .answerProjectDialog, .answerHostedDialog,
-    .answerAuditEscalation, .resume, .consult,
+    .answerAuditEscalation, .promptHostedSession, .resume, .consult,
 ]
 
 /// Le refus de l'utilisateur, tel qu'une fausse `confirm` le lève.
