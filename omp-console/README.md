@@ -2765,6 +2765,26 @@ l'export des métadonnées App Intents. La table ne peut donc pas fournir la val
 `applyVoicePolicy` confronte le littéral à `VoiceGesturePolicy.authenticationPolicy(for:on:)`
 à chaque exécution, et une divergence rend `.misconfigured` sans rien émettre.
 
+Texte de la confirmation : `VoiceGesturePolicy.apply(_:target:prompt:on:confirm:send:)`
+prend un `prompt` optionnel qui, s'il n'est pas blanc, remplace le texte de la table
+pour dire l'effet réel du geste ; un `prompt` blanc retombe sur la table, et il est
+ignoré quand le geste part sans confirmation. Le pilotage vocal des pipelines
+(`VoicePilot`, `Sources/ConsoleCore/Voice/VoicePilot.swift`) passe toujours ce texte
+pour lancer et arrêter, par deux fonctions pures de `VoiceGestureText` partagées par
+l'iPhone et le Mac :
+
+- `launchConfirmation(title:repo:need:)` → « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› »,
+  qui relit la dictée avant d'envoyer `feature.launch` ;
+- `stopConfirmation(repo:feature:)` → « Arrêter les pipelines de ‹dépôt› ? (feature ‹X›) » :
+  `card.stop` arrête tout le dépôt, comme le bouton, dont il réemploie le titre de
+  confirmation (`KanbanText.stopConfirmTitle(repo:)`).
+
+`VoicePilot` propose, pour reprendre, arrêter, valider les specs ou accepter la revue,
+les seules features où l'app affiche le bouton (`VoicePilot.shows`, composé des
+prédicats de `KanbanActionPresentation`), les désigne par
+`VoiceFeatureSearch.find(_:among:)` et n'émet qu'une requête par geste. Preuves :
+`Tests/OMPConsoleTests/VoicePilotTests.swift`.
+
 Phrases vocales : quatre fonctions pures de `Sources/ConsoleCore/Voice/`, sans
 AppIntents ni framework d'interface, calculent ce que Siri prononce, à l'identique sur
 l'iPhone et sur le Mac. `VoiceFeatureSearch.find` retrouve une feature non terminée par
@@ -4511,6 +4531,135 @@ conduite par l'utilisateur) :
 4. Dicter la réponse (une option, ou « autre réponse » puis un texte).
 5. Attendu : dans la coque Mac, le run reçoit cette réponse et reprend (la carte
    quitte « Question en vol »).
+
+### Siri : piloter les pipelines
+
+Cinq App Intents de l'app iOS pilotent les pipelines du Mac appairé à la voix :
+**Lancer une feature** (`IOSLaunchFeatureIntent`), **Reprendre une feature**
+(`IOSResumeFeatureIntent`), **Arrêter une feature** (`IOSStopFeatureIntent`),
+**Valider les specs** (`IOSValidateSpecsIntent`) et **Accepter la revue**
+(`IOSAcceptReviewIntent`), tous dans `ios/OMPConsoleIOS/IOSSiriText.swift`. Les
+conversations vivent dans ConsoleCore (`VoicePilot.run` et `VoicePilot.launch`,
+`Sources/ConsoleCore/Voice/VoicePilot.swift`, phrases de `VoiceSpeechText` et
+`VoiceGestureText`) ; la coque iOS (`IOSSiriPilot.swift`) ne fournit que le canal
+vers le Mac et l'attente « prêt », partagée avec les demandes en attente. Chaque
+geste passe par la route existante de l'API distante, celle du bouton de l'app :
+aucune seconde voie d'écriture.
+
+Phrases Siri (en français, toutes avec le nom de l'app) :
+
+| Intent | Phrases | Tuile Raccourcis |
+|---|---|---|
+| Lancer une feature | « Lancer une feature dans OMP Console », « Nouvelle feature dans OMP Console », « Lancer une pipeline avec OMP Console » | *Lancer une feature* (`plus.circle`) |
+| Reprendre une feature | « Reprendre une feature dans OMP Console », « Relancer une feature dans OMP Console », « Reprendre une pipeline avec OMP Console » | *Reprendre une feature* (`play.circle`) |
+| Arrêter une feature | « Arrêter une feature dans OMP Console », « Arrêter une pipeline avec OMP Console » | *Arrêter une feature* (`stop.circle`) |
+| Valider les specs | « Valider les specs dans OMP Console », « Valider des specs avec OMP Console » | *Valider les specs* (`checkmark.seal`) |
+| Accepter la revue | « Accepter la revue dans OMP Console », « Accepter une revue avec OMP Console » | *Accepter la revue* (`checkmark.bubble`) |
+
+L'app déclare ainsi 7 App Shortcuts, sous la limite de 10 qu'impose iOS. Seuls
+les verdicts positifs sont vocaux : refuser des specs ou une revue, ou demander
+des corrections, reste dans l'app.
+
+Déroulé du lancement :
+
+1. Siri lit les dépôts connus de l'instantané du Mac, la source de la feuille
+   « Nouvelle feature » (`KanbanLaunchRepos.options`). Aucun : « Le Mac ne
+   connaît aucun dépôt, rien n’a été lancé. ». Un seul : il est retenu sans
+   question. Plusieurs : « Sur quel dépôt ? a, b et c. », tous les libellés,
+   désignés par nom ou rang.
+2. « Quel titre pour la feature ? », puis « Quel est le besoin ? ». Aucune
+   question sur les modèles : ceux par défaut de la feuille.
+3. Confirmation : « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› », pour
+   rattraper une mauvaise transcription. « non » : « Annulé, rien n’a été
+   fait. », sans requête.
+4. `POST /v1/features` `{repoRoot, title, description}`, sans modèle : le Mac
+   dépose exactement la commande de la feuille laissée sur ses modèles par
+   défaut. Issue : « La pipeline ‹titre› est lancée. »
+
+Déroulé d'un geste sur une feature (reprendre, arrêter, valider les specs,
+accepter la revue) :
+
+1. Siri relit l'ardoise du Mac (`GET /v1/store`, même dérivation que l'écran
+   Pipelines) et ne garde que les features **éligibles**, selon les prédicats qui
+   décident des boutons de l'app (`VoicePilot.shows`, composé de
+   `KanbanActionPresentation`) :
+   - reprendre : carte en pause (`resumable`) ou en échec/bloquée (`relaunchable`) ;
+   - arrêter : carte dont la fiche offre « Arrêter » (zone `.stopLot`) ;
+   - valider les specs / accepter la revue : carte au jalon specs / revue.
+   Aucune : « Aucune feature à reprendre. », « Aucune feature à arrêter. »,
+   « Aucune feature n’attend la validation de ses specs. » ou « Aucune feature
+   n’attend l’acceptation de sa revue. », sans question.
+2. « Quelle feature reprendre ? a, b, c et 2 autres. » (de même « arrêter »,
+   « De quelle feature valider les specs ? », « De quelle feature accepter la
+   revue ? »), posée même avec une seule éligible. Le titre dicté est cherché
+   parmi les éligibles (`VoiceFeatureSearch.find(_:among:)`) : plusieurs
+   correspondances → « Plusieurs features correspondent : … Laquelle ? » ; aucune
+   → « Je n’ai trouvé aucune feature en cours à ce nom. », rien n'est envoyé. Au
+   plus 3 questions, puis « Annulé, rien n’a été fait. »
+3. Confirmation selon la politique (tableau ci-dessous), puis UNE requête :
+   `/v1/cards/{id}/resume`, `/stop` ou `/verdict` (`{"verdict":"specs"}` ou
+   `{"verdict":"review"}`). L'ardoise n'est pas relue entre la désignation et
+   l'envoi : si la feature a changé entre-temps, le refus du Mac fait foi et
+   Siri en dit la cause.
+4. Issue : « La pipeline ‹X› est reprise. », « La feature ‹X› est arrêtée. »,
+   « Les specs de la feature ‹X› sont validées. » ou « La revue de la feature
+   ‹X› est acceptée. »
+
+Confirmation et déverrouillage, par geste (table `VoiceGesturePolicy`, iPhone) :
+
+| Geste | Confirmation | Texte relu | Déverrouillage |
+|---|---|---|---|
+| Lancer | oui | « Lancer ‹titre› sur ‹dépôt› ? Besoin : ‹besoin› » | exigé |
+| Reprendre / relancer | non | — | exigé |
+| Arrêter | oui | « Arrêter les pipelines de ‹dépôt› ? (feature ‹X›) » | exigé |
+| Valider les specs | oui | « Valider les specs de la feature ‹X› ? » | exigé |
+| Accepter la revue | oui | « Accepter la revue de la feature ‹X› ? » | exigé |
+
+L'arrêt vocal fait exactement ce que fait le bouton « Arrêter » : `card.stop`
+arrête **toutes les pipelines du dépôt** de la feature désignée, pas cette seule
+feature ; la confirmation le dit. Chaque intent déclare
+`authenticationPolicy = .requiresLocalDeviceAuthentication` (littéral exigé par
+l'export des métadonnées), confronté à la table par un test ; un intent dont la
+politique divergerait répond « Ce raccourci est mal configuré, rien n’a été
+fait. »
+
+Causes d'échec, une phrase chacune, sans ouvrir l'app (`supportedModes = .background`) :
+
+| Cause | Phrase |
+|---|---|
+| iPhone verrouillé (sondé avant tout accès au client) | « Cet appareil est verrouillé. Déverrouillez-le, puis réessayez. » |
+| Non appairé, ou jeton refusé | « Cet appareil n’est appairé à aucun Mac. Ouvrez OMP Console pour l’appairer. » |
+| Mac injoignable ou coque fermée (attente « prêt » bornée à 5 s) | « Le Mac est injoignable. Vérifiez qu’OMP Console y est ouvert et que le réseau est disponible. » |
+| Version incompatible | « L’app de cet appareil est plus ancienne que celle du Mac. Mettez-la à jour. », ou l'inverse |
+| Refus du Mac (jalon plus attendu, carte sans lot, relance refusée…) | « Le Mac a refusé la demande : ‹motif›. » |
+
+La conversation « ce qui attend » ne change pas : une demande dont le pilote est
+arrêté y reste « à traiter dans l’app », sans reprise proposée ; on reprend par
+« Reprendre une feature dans OMP Console ». Preuves :
+`Tests/OMPConsoleTests/VoicePilotTests.swift` (moteur),
+`ios/OMPConsoleIOSTests/IOSSiriPilotTests.swift` et `IOSSiriPendingTests.swift`
+(Mac scripté), `Tests/OMPConsoleTests/RemoteActionRoutesTests.swift` (parité du
+lancement côté Mac) et `test/console/siri-iphone-pilotage-pipelines.test.ts`.
+
+**Recette manuelle sur iPhone réel** (siri-iphone-pilotage-pipelines/AC-17,
+conduite par l'utilisateur) :
+
+1. Installer l'app sur un iPhone réel, l'appairer au Mac, régler Siri en
+   français, garder l'iPhone déverrouillé ; coque Mac ouverte, au moins un dépôt
+   connu.
+2. Dire « Dis Siri, lancer une feature dans OMP Console », choisir le dépôt,
+   dicter un titre puis un besoin, répondre « oui ». Attendu : la feature apparaît
+   dans Pipelines sur le Mac, sur ce dépôt, avec les modèles par défaut, comme
+   créée par la feuille « Nouvelle feature ».
+3. Quand elle attend ses specs : « Valider les specs dans OMP Console », la
+   désigner, « oui ». Attendu : le jalon specs est franchi sur le Mac et la
+   pipeline continue.
+4. « Arrêter une feature dans OMP Console », la désigner, « oui ». Attendu : les
+   pipelines du dépôt s'arrêtent sur le Mac ; puis « Reprendre une feature dans
+   OMP Console », la désigner. Attendu : sa pipeline repart sur le Mac.
+5. Quand elle attend sa revue : « Accepter la revue dans OMP Console », la
+   désigner, « oui ». Attendu : la revue est acceptée sur le Mac et la carte
+   quitte le jalon revue.
 
 ### Conduire un projet depuis l'iPad
 

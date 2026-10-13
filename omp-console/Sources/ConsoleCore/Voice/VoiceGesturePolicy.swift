@@ -87,12 +87,16 @@ public enum VoiceGesturePolicy {
 
     /// La porte d'application : un geste sans confirmation part aussitôt ; un geste
     /// à risque n'est émis qu'après une confirmation réussie qui nomme sa cible.
-    /// Toute erreur de `confirm` vaut refus et n'émet rien ; une erreur de `send`
-    /// se propage telle quelle, sans nouvel essai.
+    /// `prompt`, s'il n'est pas blanc, remplace le texte de la table : la phrase
+    /// qui dit l'effet réel (l'arrêt de tout un dépôt, le besoin d'un lancement).
+    /// Il est ignoré quand le geste part sans confirmation. Toute erreur de
+    /// `confirm` vaut refus et n'émet rien ; une erreur de `send` se propage telle
+    /// quelle, sans nouvel essai.
     @MainActor
     public static func apply(
         _ gesture: VoiceGesture,
         target: String,
+        prompt: String? = nil,
         on platform: VoicePlatform,
         confirm: @MainActor (String) async throws -> Void,
         send: @MainActor () async throws -> Void
@@ -102,11 +106,14 @@ public enum VoiceGesturePolicy {
             return .sent
         }
         let name = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty, let prompt = VoiceGestureText.confirmation(for: gesture, target: name) else {
+        let explicit = prompt.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        guard !name.isEmpty,
+              let question = explicit ?? VoiceGestureText.confirmation(for: gesture, target: name)
+        else {
             return .cancelled(dialog: VoiceGestureText.cancelled)
         }
         do {
-            try await confirm(prompt)
+            try await confirm(question)
         } catch {
             return .cancelled(dialog: VoiceGestureText.cancelled)
         }

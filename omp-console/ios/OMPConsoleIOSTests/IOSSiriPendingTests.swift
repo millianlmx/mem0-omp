@@ -7,10 +7,8 @@
 // `VoicePendingSummary`, `VoiceIssue`, `VoiceAnswerMatcher`), jamais par un
 // littéral recopié. AC-8 est la recette manuelle sur iPhone réel du README.
 //
-// Les corps des trois routes sont recopiés de
-// `Tests/ConsoleClientTests/PendingRequestsFetchTests.swift`, les fragments du
-// magasin de `Tests/OMPConsoleTests/PendingFixtures.swift` (doublures COPIÉES
-// entre cibles, invisibles du projet Xcode).
+// Le Mac scripté, la conversation scriptée et leurs outils vivent dans
+// `IOSSiriMacDoubles.swift`.
 
 import AppIntents
 import ConsoleClient
@@ -20,328 +18,12 @@ import Testing
 
 @testable import OMPConsoleIOS
 
-// MARK: - Le Mac scripté
-
-/// Les fragments JSON servis par le Mac : magasin, conduite, session hébergée.
-private enum PendingJSON {
-    static let repoRoot = "/tmp/siri/depot"
-    static let auditId = "a0d1700000000009"
-    static let auditKey = "/tmp/siri/state/audits/a0d1700000000009"
-    static let start = 1_700_000_000_000
-
-    /// L'instant `n` secondes après `start`, en ms.
-    static func at(_ n: Int) -> Int { start + n * 1000 }
-
-    static func cardId(_ slug: String) -> String {
-        "feature:\(KanbanRepoKey.key(forRoot: repoRoot)):\(slug)"
-    }
-
-    static func quoted(_ text: String) -> String {
-        guard let data = try? JSONEncoder().encode(text), let json = String(data: data, encoding: .utf8) else {
-            fatalError("PendingJSON : chaîne non encodable")
-        }
-        return json
-    }
-
-    static func quoted(_ texts: [String]) -> String {
-        "[" + texts.map { quoted($0) }.joined(separator: ",") + "]"
-    }
-
-    static func store(running: [String], features: [String], audits: [String]) -> String {
-        let lots = features.isEmpty ? "" : lot(features: features)
-        return """
-        {
-          "root": "present",
-          "running": { "availability": "present", "discardedEntries": [], "entries": [\(running.joined(separator: ","))] },
-          "history": { "availability": "present", "discardedEntries": [], "entries": [] },
-          "lots": { "availability": "present", "discardedEntries": [], "lots": [\(lots)] },
-          "projects": { "availability": "present", "discardedEntries": [], "projects": [] },
-          "inbox": { "availability": "present", "discardedEntries": [], "boxes": [] },
-          "audit": { "availability": "present", "discardedEntries": [], "relays": [] },
-          "audits": { "availability": "present", "discardedEntries": [], "records": [\(audits.joined(separator: ","))], "decisions": [] }
-        }
-        """
-    }
-
-    /// Un run vivant dans le worktree de `slug`, qui pose une question en vol.
-    static func run(id: String, slug: String, updatedAt: Int, toolCallId: String, question: String, labels: [String]) -> String {
-        let options = labels.map { "{ \"label\": \(quoted($0)) }" }.joined(separator: ",")
-        return """
-        {
-          "id": "\(id)",
-          "cwd": \(quoted("\(repoRoot)/\(slug)")),
-          "label": "depot/\(id)",
-          "phase": "impl",
-          "state": "running",
-          "phaseStartedAt": \(start),
-          "updatedAt": \(updatedAt),
-          "ownerPid": 1,
-          "inbox": "/tmp/siri/state/inbox/\(id)",
-          "pendingAsk": {
-            "toolCallId": \(quoted(toolCallId)),
-            "id": "ask-\(id)",
-            "question": \(quoted(question)),
-            "options": [\(options)]
-          },
-          "isStale": false
-        }
-        """
-    }
-
-    static func lot(features: [String]) -> String {
-        """
-        {
-          "id": "eeeeeeeeeeeeeee1",
-          "repoRoot": \(quoted(repoRoot)),
-          "status": "running",
-          "reviewCap": 1,
-          "slotCap": 4,
-          "recapAt": null,
-          "owner": { "pid": 1 },
-          "createdAt": \(start),
-          "launchedAt": \(start),
-          "features": [\(features.joined(separator: ","))],
-          "isStale": false
-        }
-        """
-    }
-
-    static func feature(
-        _ slug: String,
-        state: String,
-        phase: String,
-        waitKind: String? = nil,
-        worktree: String = "",
-        sinceAt: Int,
-        extra: String = ""
-    ) -> String {
-        """
-        {
-          "slug": "\(slug)",
-          "name": "\(slug)",
-          "branch": "feat/\(slug)",
-          "worktree": \(quoted(worktree)),
-          "deps": [],
-          "origin": "session",
-          "state": "\(state)",
-          "phase": "\(phase)",
-          "waitKind": \(waitKind.map { "\"\($0)\"" } ?? "null"),
-          "pendingTexts": [],
-          "fixes": 0,
-          "reviewRuns": 0,
-          "unreadableRuns": 0,
-          "lastBlockers": 0,
-          \(extra)
-          "addedAt": \(start),
-          "sinceAt": \(sinceAt),
-          "updatedAt": \(sinceAt)
-        }
-        """
-    }
-
-    static func audit(launched slug: String) -> String {
-        """
-        {
-          "id": "\(auditId)",
-          "repoRoot": \(quoted(repoRoot)),
-          "repoKey": "0123456789abcdef",
-          "key": \(quoted(auditKey)),
-          "orientation": "fiabilité du service",
-          "status": "launched",
-          "createdAt": \(start),
-          "updatedAt": \(start),
-          "launches": [{ "slug": "\(slug)", "launched": true, "reason": null, "state": "running", "phase": "req", "prUrl": null }],
-          "failure": null
-        }
-        """
-    }
-
-    static func dialog(id: String, method: String, title: String, options: [String], at: Int) -> String {
-        """
-        {"id":\(quoted(id)),"method":"\(method)","title":\(quoted(title)),"options":\(quoted(options)),\
-        "optionDescriptions":[],"promptStyle":false,"at":\(at)}
-        """
-    }
-
-    static func conduite(_ dialogs: [String]) -> String {
-        """
-        {"state":"live","repoKey":"0123456789abcdef","name":"Projet","repoRoot":"/tmp/projet",\
-        "dialogs":[\(dialogs.joined(separator: ","))]}
-        """
-    }
-
-    static func session(_ dialogs: [String]) -> String {
-        """
-        {"state":"running","stateLabel":"En marche","sessionId":"sess-1","dialogs":[\(dialogs.joined(separator: ","))],\
-        "transcript":[],"truncated":false}
-        """
-    }
-}
-
-/// Ce que le Mac porte à un instant : runs, features du lot, audits, dialogues.
-private struct MacState {
-    var running: [String] = []
-    var features: [String] = []
-    var audits: [String] = []
-    var conduite: [String] = []
-    var session: [String] = []
-
-    /// Une question en vol de la feature `slug`, posée à `at` par le run `runId`.
-    func asking(
-        _ slug: String, run runId: String, at: Int, toolCallId: String, question: String, labels: [String]
-    ) -> MacState {
-        var next = self
-        next.running.append(PendingJSON.run(
-            id: runId, slug: slug, updatedAt: at, toolCallId: toolCallId, question: question, labels: labels
-        ))
-        next.features.append(PendingJSON.feature(
-            slug, state: "running", phase: "impl", worktree: "\(PendingJSON.repoRoot)/\(slug)", sinceAt: PendingJSON.start
-        ))
-        return next
-    }
-
-    /// Une question en texte (sans run qui la pose) de la feature `slug`.
-    func textQuestion(_ slug: String, prompt: String, at: Int) -> MacState {
-        var next = self
-        next.features.append(PendingJSON.feature(
-            slug, state: "waiting", phase: "impl", waitKind: "answer", sinceAt: at,
-            extra: "\"waitPrompt\": \(PendingJSON.quoted(prompt)),"
-        ))
-        return next
-    }
-
-    /// Un jalon `specs` ou `review` de la feature `slug`.
-    func milestone(_ slug: String, _ kind: String, at: Int) -> MacState {
-        var next = self
-        next.features.append(PendingJSON.feature(slug, state: "waiting", phase: kind, waitKind: kind, sinceAt: at))
-        return next
-    }
-
-    /// Une escalade d'audit (question à options) portée par la feature `slug`.
-    func escalation(_ slug: String, question: String, labels: [String], at: Int) -> MacState {
-        var next = self
-        next.features.append(PendingJSON.feature(
-            slug, state: "waiting", phase: "req", waitKind: "answer", sinceAt: PendingJSON.start,
-            extra: """
-            "waitPrompt": \(PendingJSON.quoted(question)),
-            "auditSession": \(PendingJSON.quoted(PendingJSON.auditKey)),
-            "escalation": {
-              "key": \(PendingJSON.quoted("ask:\(slug):call-9")),
-              "kind": "question",
-              "phase": "req",
-              "question": \(PendingJSON.quoted(question)),
-              "options": \(PendingJSON.quoted(labels)),
-              "reason": "Le brief ne dit rien.",
-              "at": \(at)
-            },
-            """
-        ))
-        next.audits.append(PendingJSON.audit(launched: slug))
-        return next
-    }
-
-    func conduiteDialog(_ id: String, method: String, title: String, options: [String] = [], at: Int) -> MacState {
-        var next = self
-        next.conduite.append(PendingJSON.dialog(id: id, method: method, title: title, options: options, at: at))
-        return next
-    }
-
-    func sessionDialog(_ id: String, method: String, title: String, options: [String] = [], at: Int) -> MacState {
-        var next = self
-        next.session.append(PendingJSON.dialog(id: id, method: method, title: title, options: options, at: at))
-        return next
-    }
-}
-
-/// Le Mac scripté : la i-ème lecture du magasin sert le i-ème état (le dernier se
-/// répète), la conduite et la session suivent la dernière lecture du magasin ;
-/// toute réponse est acceptée, toute autre route répond 404.
-private final class PendingMac: @unchecked Sendable {
-    private let lock = NSLock()
-    private let states: [MacState]
-    private var reads = 0
-
-    init(_ states: [MacState]) {
-        precondition(!states.isEmpty)
-        self.states = states
-    }
-
-    func respond(_ request: ClientHTTPRequest) -> ClientHTTPResponse {
-        switch (request.method, request.path) {
-        case ("GET", "/v1/store"):
-            let state = lock.withLock { () -> MacState in
-                defer { reads += 1 }
-                return states[min(reads, states.count - 1)]
-            }
-            let store = PendingJSON.store(running: state.running, features: state.features, audits: state.audits)
-            return ClientDoubles.response(status: 200, json: "{\"snapshot\":\(store)}")
-        case ("GET", "/v1/conduite"):
-            return ClientDoubles.response(status: 200, json: PendingJSON.conduite(current.conduite))
-        case ("GET", "/v1/session"):
-            return ClientDoubles.response(status: 200, json: PendingJSON.session(current.session))
-        case ("POST", _):
-            return ClientDoubles.response(status: 200, json: #"{"accepted":true}"#)
-        default:
-            return ClientDoubles.response(status: 404, json: #"{"error":{"code":"not_found","message":"route"}}"#)
-        }
-    }
-
-    /// L'état de la dernière lecture du magasin.
-    private var current: MacState {
-        lock.withLock { states[min(max(reads - 1, 0), states.count - 1)] }
-    }
-}
-
-// MARK: - La conversation scriptée
-
-private struct Abandoned: Error {}
-
-/// Enregistre chaque dialogue ; `ask` rejoue `answers` puis lève (abandon),
-/// `confirm` rejoue `confirmations` (faux = « non », qui lève), puis lève.
-@MainActor
-private final class ScriptedConversation: VoiceConversation {
-    private var answers: [String]
-    private var confirmations: [Bool]
-    private(set) var asks: [String] = []
-    private(set) var confirms: [String] = []
-    /// Tous les dialogues, dans l'ordre.
-    private(set) var dialogs: [String] = []
-
-    init(answers: [String] = [], confirmations: [Bool] = []) {
-        self.answers = answers
-        self.confirmations = confirmations
-    }
-
-    func ask(_ dialog: String) async throws -> String {
-        asks.append(dialog)
-        dialogs.append(dialog)
-        guard !answers.isEmpty else { throw Abandoned() }
-        return answers.removeFirst()
-    }
-
-    func confirm(_ dialog: String) async throws {
-        confirms.append(dialog)
-        dialogs.append(dialog)
-        guard !confirmations.isEmpty, confirmations.removeFirst() else { throw Abandoned() }
-    }
-}
-
 // MARK: - Outils
 
-private let macAddress = "127.0.0.1:18787"
 private let labelsABC = ["A", "B", "C"]
 
 /// Les réponses dites qui désignent une option de A, B, C (AC-4).
 private let designations = ["la deuxième", "2", "la dernière", "b"]
-
-/// Un client non démarré, au Mac connu par son adresse manuelle, sur le Mac
-/// scripté par `states`.
-@MainActor
-private func connect(_ states: MacState...) -> (client: ConsoleClientModel, transport: ScriptedClientTransport) {
-    let mac = PendingMac(states)
-    let transport = ScriptedClientTransport { mac.respond($0) }
-    return (ClientDoubles.model(transport: transport, address: macAddress), transport)
-}
 
 /// La liste que le Mac sert dans `state`, lue par un client à part : la source
 /// des attendus (`VoicePendingSummary.item`, `subject`).
@@ -350,32 +32,9 @@ private func listed(_ state: MacState) async throws -> [PendingRequest] {
     try await connect(state).client.pendingRequests()
 }
 
-/// Les réponses envoyées : les POST vers une route de réponse (carte, dialogue,
-/// escalade). La relance de l'état des PR qu'un client connecté émet n'en est pas.
-private func posts(_ requests: [ClientHTTPRequest]) -> [ClientHTTPRequest] {
-    let routes = ["/v1/cards/", "/v1/conduite/dialogs/", "/v1/session/dialogs/", "/v1/audits/"]
-    return requests.filter { request in
-        request.method == "POST" && routes.contains { request.path.hasPrefix($0) }
-    }
-}
-
-private func body(_ request: ClientHTTPRequest) -> [String: Any] {
-    request.body.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] } ?? [:]
-}
-
 /// Les phrases non vides séparées d'une espace : ce que Siri dit d'une traite.
 private func joined(_ phrases: [String]) -> String {
     phrases.filter { !$0.isEmpty }.joined(separator: " ")
-}
-
-/// Un segment de route encodé comme le client l'encode.
-private func encoded(_ component: String) -> String {
-    component.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? component
-}
-
-/// La route d'une carte.
-private func cardPath(_ slug: String, _ route: String) -> String {
-    "/v1/cards/\(encoded(PendingJSON.cardId(slug)))/\(route)"
 }
 
 /// La route de réponse d'un dialogue de la conduite (`conduite`) ou de la
@@ -786,5 +445,39 @@ struct IOSSiriPendingTests {
         #expect(answered == VoiceSpeechText.noPending)
         #expect(ready.dialogs.isEmpty)
         #expect(readyTransport.requests.contains { $0.method == "GET" && $0.path == "/v1/store" }, "la liste est lue sur le Mac prêt")
+    }
+
+    @Test("siri-iphone-pilotage-pipelines/AC-6 : une demande au pilote arrêté reste « à traiter dans l'app » : aucune reprise proposée ni envoyée")
+    func pausedRequestStaysAppOnly() async throws {
+        let pausedRoot = "/tmp/siri/autre"
+        let state = MacState()
+            .lot(on: pausedRoot, features: [PendingJSON.feature(
+                "specs-arretees", state: "waiting", phase: "specs", waitKind: "specs", sinceAt: PendingJSON.at(1)
+            )], pilotDead: true)
+            .asking("f-question", run: "aaaaaaaaaaaaaaa1", at: PendingJSON.at(4), toolCallId: "call-1", question: "Quelle option ?", labels: labelsABC)
+
+        // Préalable : après la dérivation du client, l'app offre « Reprendre » sur
+        // cette carte (pilote mort).
+        let reader = connect(state).client
+        _ = try await reader.store()
+        let cards = PipelinesModel.boardState(of: reader, nowMs: Date().timeIntervalSince1970 * 1000)?.kanbanBoard?.cards ?? []
+        let pausedCard = try #require(cards.first { $0.id == PendingJSON.cardId("specs-arretees", root: pausedRoot) })
+        try #require(KanbanActionPresentation.resumable(pausedCard))
+        let paused = try #require(try await listed(state).first)
+        try #require(paused.paused)
+
+        let (client, transport) = connect(state)
+        let conversation = ScriptedConversation(confirmations: [false])
+        let result = try await IOSSiriPending.walk(client: client, conversation: conversation)
+        #expect(conversation.asks.isEmpty, "aucune reprise ni réponse demandée")
+        #expect(conversation.confirms == [joined([
+            VoiceSpeechText.walkCount(2),
+            VoiceSpeechText.walkFirst(VoicePendingSummary.item(paused)),
+            VoiceSpeechText.appOnly,
+            VoiceSpeechText.nextPrompt,
+        ])])
+        #expect(result == VoiceSpeechText.walkStopped)
+        #expect(posts(transport.requests).isEmpty)
+        #expect(!transport.requests.contains { $0.method == "POST" && $0.path.hasSuffix("/resume") })
     }
 }

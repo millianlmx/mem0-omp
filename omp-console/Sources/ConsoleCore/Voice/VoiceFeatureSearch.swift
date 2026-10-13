@@ -18,11 +18,17 @@ public enum VoiceFeatureSearch {
     /// pour mot et d'un seul tenant. Dès deux correspondances, une précision est
     /// demandée, même si l'un des titres est identique à l'énoncé.
     public static func find(_ spoken: String, in cards: [KanbanCard]) -> VoiceFeatureMatch {
+        find(spoken, among: cards.filter(isEligible))
+    }
+
+    /// La même recherche parmi `cards` tels quels, sans filtre de colonne : la
+    /// liste reçue fait foi (les features éligibles à un geste, par exemple).
+    public static func find(_ spoken: String, among cards: [KanbanCard]) -> VoiceFeatureMatch {
         let query = VoiceSpeech.tokens(spoken)
         guard !query.isEmpty else { return .notFound(prompt: VoiceSpeechText.featureNotFound) }
 
         let matches = cards
-            .filter { isEligible($0) && contains(VoiceSpeech.tokens($0.title), query) }
+            .filter { contains(VoiceSpeech.tokens($0.title), query) }
             .map { (key: VoiceSpeech.normalized($0.title), card: $0) }
             .sorted { a, b in
                 if a.key != b.key { return a.key.utf8.lexicographicallyPrecedes(b.key.utf8) }

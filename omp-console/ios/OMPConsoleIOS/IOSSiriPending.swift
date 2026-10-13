@@ -54,31 +54,8 @@ struct IOSSiriPendingChannel: VoicePendingChannel {
         guard let cause = (error as? PendingRequestsUnavailable)?.cause ?? (error as? ClientError) else {
             return .macRefused(motive: "")
         }
-        switch cause {
-        case .notConnected, .transport:
-            return .macUnreachable
-        case let .incompatibleProtocol(local, remote):
-            return .incompatibleVersion(local: local, remote: remote)
-        case .api(.incompatibleProtocol):
-            return .incompatibleVersion(local: ConsoleAPI.protocolVersion, remote: nil)
-        case .api(.unauthorized):
-            return .notPaired
-        case .api(.badRequest):
-            if case .cardOption = delivery { return .invalidOption }
-            return .macRefused(motive: cause.apiMessage)
-        case .api:
-            return .macRefused(motive: cause.apiMessage)
-        case .decoding, .unexpectedStatus:
-            return .macRefused(motive: "")
-        }
-    }
-}
-
-private extension ClientError {
-    /// Le motif lisible d'un refus de l'API, vide s'il n'en porte pas.
-    var apiMessage: String {
-        guard case let .api(error) = self else { return "" }
-        return error.message ?? ""
+        if case .api(.badRequest) = cause, case .cardOption = delivery { return .invalidOption }
+        return IOSSiriPending.issue(of: cause)
     }
 }
 
@@ -90,27 +67,55 @@ enum IOSSiriPending {
         try await VoicePendingWalk.run(channel: IOSSiriPendingChannel(client: client), conversation: conversation)
     }
 
-    /// Appareil verrouillé → phrase `deviceLocked` sans toucher au client (le
-    /// jeton, au trousseau en `WhenUnlocked`, serait lu comme absent). Sinon,
-    /// attente bornée « prêt à émettre », puis la conversation ; une cause de
+    /// Appareil verrouillé → `deviceLocked` sans toucher au client (le jeton, au
+    /// trousseau en `WhenUnlocked`, serait lu comme absent). Sinon, attente bornée
+    /// « prêt à émettre » : `nil` si le client est prêt, la cause de connexion
+    /// sinon. Partagée par les intents qui parlent au Mac.
+    static func ready(
+        client: ConsoleClientModel,
+        isProtectedDataAvailable: @MainActor () -> Bool
+    ) async -> VoiceIssue? {
+        guard isProtectedDataAvailable() else { return .deviceLocked }
+        switch await client.waitUntilReady() {
+        case .ready:
+            return nil
+        case .notPaired, .pairingRefused:
+            return .notPaired
+        case .macUnreachable:
+            return .macUnreachable
+        case let .incompatibleVersion(local, remote):
+            return .incompatibleVersion(local: local, remote: remote)
+        }
+    }
+
+    /// La cause d'une erreur du client, partagée par les canaux Siri.
+    static func issue(of cause: ClientError) -> VoiceIssue {
+        switch cause {
+        case .notConnected, .transport:
+            return .macUnreachable
+        case let .incompatibleProtocol(local, remote):
+            return .incompatibleVersion(local: local, remote: remote)
+        case .api(.incompatibleProtocol):
+            return .incompatibleVersion(local: ConsoleAPI.protocolVersion, remote: nil)
+        case .api(.unauthorized):
+            return .notPaired
+        case let .api(error):
+            return .macRefused(motive: error.message ?? "")
+        case .decoding, .unexpectedStatus:
+            return .macRefused(motive: "")
+        }
+    }
+
+    /// La readiness partagée (`ready`), puis la conversation ; une cause de
     /// connexion rend sa phrase sans rien envoyer.
     static func answer(
         client: ConsoleClientModel,
         conversation: some VoiceConversation,
         isProtectedDataAvailable: @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) async throws -> String {
-        guard isProtectedDataAvailable() else { return VoiceIssue.deviceLocked.phrase }
-        let issue: VoiceIssue
-        switch await client.waitUntilReady() {
-        case .ready:
-            return try await walk(client: client, conversation: conversation)
-        case .notPaired, .pairingRefused:
-            issue = .notPaired
-        case .macUnreachable:
-            issue = .macUnreachable
-        case let .incompatibleVersion(local, remote):
-            issue = .incompatibleVersion(local: local, remote: remote)
+        if let issue = await ready(client: client, isProtectedDataAvailable: isProtectedDataAvailable) {
+            return issue.phrase
         }
-        return issue.phrase
+        return try await walk(client: client, conversation: conversation)
     }
 }

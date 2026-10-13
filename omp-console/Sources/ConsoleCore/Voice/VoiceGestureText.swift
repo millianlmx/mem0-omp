@@ -20,6 +20,19 @@ public enum VoiceGestureText {
         }
     }
 
+    /// La confirmation d'un lancement vocal : le titre, le dépôt et le besoin
+    /// relu, pour rattraper une mauvaise transcription. Valeurs insérées telles
+    /// que reçues, l'appelant les ayant épurées.
+    public static func launchConfirmation(title: String, repo: String, need: String) -> String {
+        "Lancer \(title) sur \(repo) ? Besoin : \(need)"
+    }
+
+    /// La confirmation d'un arrêt vocal : l'arrêt vise tout le dépôt, comme le
+    /// bouton (titre de la confirmation tactile), et rappelle la feature désignée.
+    public static func stopConfirmation(repo: String, feature: String) -> String {
+        KanbanText.stopConfirmTitle(repo: repo) + " (feature \(feature))"
+    }
+
     /// L'annonce d'un geste refusé, resté sans réponse ou sans cible nommée.
     public static let cancelled = "Annulé, rien n’a été fait."
 
