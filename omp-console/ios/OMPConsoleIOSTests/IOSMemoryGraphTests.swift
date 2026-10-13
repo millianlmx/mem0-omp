@@ -272,7 +272,7 @@ struct IOSMemoryGraphTests {
     /// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
     private func macError(status: Int, code: String, message: String) -> ClientError {
         let body = (try? JSONSerialization.data(withJSONObject: ["error": ["code": code, "message": message]])) ?? Data()
-        return ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+        return ClientErrorMapping.translate(status: status, protocolVersion: ConsoleAPI.protocolVersion, body: body)
     }
 
     /// Le 503 que rend le Mac quand mem0-http répond 405 : l'adresse et le JSON amont

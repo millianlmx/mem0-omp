@@ -7,6 +7,7 @@
 // la garde `design-ios/AC-5` refuserait ici des littéraux alphabétiques.
 
 import ConsoleClient
+import ConsoleCore
 import Foundation
 
 enum IOSDialogGating {

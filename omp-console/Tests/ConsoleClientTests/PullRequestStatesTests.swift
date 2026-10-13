@@ -109,7 +109,7 @@ struct PullRequestStatesTests {
         let harness = await connectedHarness()
         harness.transport.respond { request in
             if request.method == "POST", request.path == refreshPath {
-                return .success(ClientHTTPResponse(status: 202, protocolVersion: 1, body: Data(#"{"accepted":true}"#.utf8)))
+                return .success(ClientHTTPResponse(status: 202, protocolVersion: ConsoleAPI.protocolVersion, body: Data(#"{"accepted":true}"#.utf8)))
             }
             return .failure(ClientError.transport(.unreachable("route non scriptée")))
         }

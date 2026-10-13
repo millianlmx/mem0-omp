@@ -285,10 +285,13 @@ Le paquet déclare ces cibles (une ligne par cible, `omp-console/Package.swift`)
   cliente (doublures de transport, de trousseau et de découverte : aucun Mac
   réel) ; dépend de `ConsoleClient` et de `ConsoleCore`.
 - **ConsoleCore** — la **cible partagée macOS/iOS** : les modèles et constantes
-  pures du magasin d'état, le vocabulaire figé des sections et le socle du
-  contrat de l'API distante. Aucune dépendance (ni interne, ni externe) : elle se
+  pures du magasin d'état, le vocabulaire figé des sections, le socle du
+  contrat de l'API distante et la politique vocale (`Voice/`, voir « Politique
+  vocale (App Intents) »). Aucune dépendance (ni interne, ni externe) : elle se
   compile seule (`swift build --target ConsoleCore`) et n'importe ni AppKit ni
   UIKit — la section « Noyau partagé » de `scripts/check.sh` le tient.
+  `Voice/VoiceGestureIntent.swift` est le seul fichier du noyau qui importe
+  AppIntents (framework système, pas une dépendance de paquet).
 
 ## Builder
 
@@ -469,6 +472,47 @@ section **Kanban** consomme le flux global en lecture, et c'est la couche
 `Actions/` (voir « Agir depuis Pipelines ») qui écrit — et seulement deux
 familles : les livraisons d'un run (dans `<stateDir>/inbox/`) et les commandes
 postées au service (`POST /v1/repos/{repo}/commands`).
+
+### Liste des attentes
+
+`ConsoleCore/Pending/PendingRequests.swift` dérive, en fonction **pure** (ni E/S,
+ni horloge), la liste de toutes les demandes qui posent une question à
+l'utilisateur : `PendingRequests.list(PendingSources)`. Le Mac et l'iPhone la
+calculent des mêmes données transportées et obtiennent la même liste. Quatre
+sources y entrent :
+
+- **l'ardoise** (`KanbanBoardState`) : les cartes des colonnes « question en vol »
+  (question `ask` du run, sinon question en texte `waitPrompt`), « jalon specs » et
+  « jalon revue ». Les cartes en échec ou bloquées n'y entrent jamais, même
+  relançables. Une carte au pilote arrêté (« En pause ») y figure, marquée
+  `paused`, avec la reprise pour geste ;
+- **les dialogues de la conduite de projet** (`GET /v1/conduite`) ;
+- **les dialogues de la session hébergée** (`GET /v1/session`) ;
+- **les escalades d'audit** (`AuditBoard.of(snapshot)`).
+
+Deux exclusions évitent de compter une question deux fois ou trop tôt. Une carte
+dont la feature est en arbitrage (`arbitration`) est écartée, car l'arbitre décide.
+Une carte dont l'escalade figure déjà comme escalade d'un audit du magasin est
+aussi écartée : elle n'est listée qu'une fois, comme escalade.
+
+Chaque attente porte sa nature, sa question, ses options verbatim et son geste de
+réponse (`PendingReply`). Ce geste est une donnée, la route à appeler : rien n'est
+exécuté ici. L'identité est stable d'une lecture à l'autre et unique par question.
+Elle est préfixée par la nature : `ask:<carte>:<toolCallId>`,
+`reply|specs|review:<carte>:<sinceAt>`, `conduite|session:<dlg-N>:<at>` et
+`audit:<audit>:<clé>`. Une nouvelle question sur la même carte, un nouveau
+dialogue ou une nouvelle escalade reçoivent donc une nouvelle identité.
+
+L'ancienneté (ms epoch) vient elle aussi des données transportées. C'est
+`updatedAt` du run pour une question en vol, `sinceAt` de la feature pour une
+question en texte ou un jalon, `at` du dialogue (0 quand le service ne l'a pas
+posé) et `at` de l'escalade. La liste va de la plus ancienne à la plus récente ;
+à ancienneté égale, l'identité comparée octet par octet (UTF-8) départage.
+Fixtures et tests : `Tests/OMPConsoleTests/PendingFixtures.swift` et
+`PendingRequestsTests.swift`. Le calcul local du Mac
+(`Sources/OMPConsole/Pending/LocalPendingRequests.swift`) et celui de l'iPhone
+(voir « API distante ») sont confrontés sur la vraie pile par
+`PendingRequestsParityTests.swift`.
 
 ## Section Kanban
 
@@ -2509,9 +2553,12 @@ un flux temps réel.
   type **`_ompconsole._tcp`** (instance « OMP Console », TXT `v` = version du
   protocole, `api` = base des chemins). Une connexion dont la source n'est pas une
   adresse locale (boucle locale, plages privées, lien-local) est coupée sans un octet.
-- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 1` et
+- **Version de protocole** : chaque requête porte `X-Console-Protocol-Version: 2` et
   chaque réponse le renvoie. Un client dont la version diffère est refusé par le code
-  partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie.
+  partagé `incompatible_protocol`, sans qu'aucune donnée ne soit servie. La version 2
+  rend `toolCallId` obligatoire sur la réponse à une carte : une app de version 1 se
+  verrouille sur « Version de protocole incompatible (app 1, Mac 2) », sans double
+  support.
 - **Route graphe et service trop ancien** : `GET /v1/memory/graph` est la SEULE route
   qui rend le code partagé `outdated_service` (statut `503`, enveloppe
   `{"error":{"code":"outdated_service","message":"…"}}`), et uniquement quand
@@ -2532,7 +2579,7 @@ un flux temps réel.
   servir moins d'un souvenir. Sans projet, la page est vide (`scope` nul, `total` 0)
   sans lire le service. La route ne rend jamais `404`.
 - **Appairage** : `POST /v1/pair` est la **seule route non authentifiée**. Elle prend
-  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":1}`
+  `{"code":"XXXXXXXX","name":"<appareil>","deviceKey":"<installation>","protocolVersion":2}`
   et rend un jeton d'appareil (`Authorization: Bearer <jeton>` sur toutes les autres
   routes). Le code est généré dans **Réglages… › Appareils** (⌘, ou menu « OMP Console ›
   Appairage… », ⌥⌘A), affiché huit caractères Crockford base32 groupés `XXXX-XXXX`,
@@ -2591,6 +2638,16 @@ un flux temps réel.
   (`{entries:[…]}`, le plus récent en tête) ; `GET /v1/cards/{id}/contract` sert le
   contrat d'une carte sous `{document: {name, state, content, reason}}` — `404`
   carte inconnue, `409` carte sans contrat (moment ou worktree absent).
+- **Réponse à une carte** : `POST /v1/cards/{id}/answer` exige `toolCallId`,
+  l'identifiant de la question affichée (`pendingAsk.toolCallId` de la trame
+  `store`), avec `{"toolCallId","kind":"selected"|"custom","label"?,"text"?}`. Les
+  refus se contrôlent dans cet ordre, le premier gagne et AUCUN ne livre quoi que ce
+  soit à la pipeline : `404` « carte inconnue », `409` « carte sans geste », `409`
+  « aucune question en vol », `400` « identifiant de question manquant » (absent ou
+  blanc, quel que soit `kind`), `409` « la question a changé depuis la demande »
+  (identifiant d'une question qui n'est plus en vol, contrôlé AVANT le libellé),
+  puis `400` « libellé hors des options de la question », « texte vide » ou « kind
+  inconnu ». La réponse livrée rend `202 {"accepted":true}`.
 - **Faits de PR de l'ardoise** : `POST /v1/pull-request-states/refresh` (sans corps)
   relance la lecture des états de PR sur GitHub sans l'attendre et répond `202
   {"accepted":true}`, même quand `gh` est absent ; le résultat arrive par la trame
@@ -2614,6 +2671,13 @@ un flux temps réel.
   déjà répondue ou périmée ») et un service arrêté ou injoignable rend `503`. Aucune
   route de lecture : audits, escalades et décisions arrivent par la trame `store`.
   L'API sert ainsi **43 routes**, image exacte de `ClientRoute.all`.
+- **Liste des attentes** : aucune route dédiée. L'iPhone calcule la liste des
+  attentes depuis `/v1/store`, `/v1/conduite` et `/v1/session`
+  (`ConsoleClientModel.pendingRequests()`, lues dans cet ordre, l'une après
+  l'autre), avec la même fonction que le Mac (`LocalPendingRequests` côté coque) :
+  mêmes identités, même ordre. Une source en échec ⇒ `PendingRequestsUnavailable`
+  (`source` = `store`, `conduite` ou `session`, `cause` = l'erreur du client),
+  jamais une liste partielle. Les escalades d'audit arrivent avec `/v1/store`.
 - **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
   `store`, `conduite`, `devices`, `components`, `journal`, `pull-request-states`,
   `sessions` et `hosted`, avec un battement de cœur toutes les 15 secondes. À
@@ -2631,6 +2695,7 @@ bun scripts/omp-console-api.ts snapshot
 bun scripts/omp-console-api.ts sessions
 bun scripts/omp-console-api.ts watch --seconds 10
 bun scripts/omp-console-api.ts resume feature:<repoKey>:<slug>
+bun scripts/omp-console-api.ts answer feature:<repoKey>:<slug> --question <toolCallId> --option <libellé>
 bun scripts/omp-console-api.ts forget
 ```
 
@@ -2719,6 +2784,61 @@ quittent le trousseau du Mac) et l'instance reçoit `kill -TERM`. Codes de sorti
 ou capture « avant » manquante, `2` non exécuté (hors macOS, session verrouillée,
 Space plein écran d'une autre app, bundle absent, manifeste du bundle différent du
 support réel, Accessibilité refusée au terminal).
+
+## Politique vocale (App Intents)
+
+Les gestes exécutés par Siri ou Raccourcis, sur l'iPhone comme sur le Mac, suivent
+une table pure de ConsoleCore (`Sources/ConsoleCore/Voice/`). Elle ne régit que les
+App Intents : les gestes tactiles des écrans gardent leurs confirmations (sur
+l'Accueil iOS, seul « Valider les specs » confirme).
+
+| geste (`VoiceGesture`) | confirmation iPhone | déverrouillage iPhone | confirmation Mac | déverrouillage Mac |
+|---|---|---|---|---|
+| `stopFeature`, `validateSpecs`, `acceptReview`, `launchPipeline` | oui | oui | oui | oui |
+| `answerOption`, `answerText`, `answerProjectDialog`, `answerHostedDialog`, `answerAuditEscalation`, `resume`, `consult` | non | oui | non | non |
+
+Sur iPhone, tout intent exige le déverrouillage : le jeton est au trousseau en
+`kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. La table
+(`VoiceGesturePolicy.rule(for:on:)`) classe les gestes par un `switch` sans
+`default` : un geste ajouté sans ligne ne compile pas, et
+`Tests/OMPConsoleTests/VoiceGesturePolicyTests.swift` échoue sur tout geste absent de
+ses listes écrites à la main.
+
+Écrire un intent vocal :
+
+- il se conforme à `VoiceGestureIntent` et déclare son geste,
+  `static let voiceGesture: VoiceGesture = .stopFeature` ;
+- il écrit sa politique en **littéral**,
+  `static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication`
+  si la table exige le déverrouillage sur sa plateforme, `.alwaysAllowed` sinon ;
+- `perform()` appelle `applyVoicePolicy(target:send:)` avec la cible nommée (le slug
+  de la feature, le nom de la pipeline) et la closure qui émet le geste par les
+  modèles existants ; la porte demande la confirmation à Siri
+  (« Arrêter la feature login-oauth ? ») et n'appelle `send` qu'après un oui ;
+- il traduit l'issue : `.sent` → son propre dialogue de succès ; `.cancelled(let d)` et
+  `.misconfigured(let d)` → `.result(dialog: IntentDialog(LocalizedStringResource(stringLiteral: d)))`.
+  Un refus, une absence de réponse ou une cible vide n'émettent rien ; une erreur de
+  `send` remonte telle quelle.
+
+Piège du littéral : `appintentsmetadataprocessor` exige que `authenticationPolicy`
+soit initialisée par un littéral (« 'IntentAuthenticationPolicy' must be initialized
+with a literal value ») ; une valeur calculée depuis la table fait échouer TOUT
+l'export des métadonnées App Intents. La table ne peut donc pas fournir la valeur :
+`applyVoicePolicy` confronte le littéral à `VoiceGesturePolicy.authenticationPolicy(for:on:)`
+à chaque exécution, et une divergence rend `.misconfigured` sans rien émettre.
+
+Phrases vocales : quatre fonctions pures de `Sources/ConsoleCore/Voice/`, sans
+AppIntents ni framework d'interface, calculent ce que Siri prononce, à l'identique sur
+l'iPhone et sur le Mac. `VoiceFeatureSearch.find` retrouve une feature non terminée par
+son titre prononcé (casse, accents et tirets ignorés ; dès deux titres qui
+correspondent, une précision est demandée). `VoiceAnswerMatcher.match` fait
+correspondre une réponse dite à une option (libellé, chiffre, « la deuxième », « la
+dernière »), sinon au texte libre si l'appelant l'accepte, sinon rappelle les choix
+possibles. `VoicePendingSummary.phrase(for:)` dit la liste des attentes : le total,
+les 3 plus récentes, puis « et N autres ». `VoiceIssue.phrase` dit l'issue d'un geste :
+succès qui nomme le geste et sa cible, annulation, refus du Mac, cause de connexion.
+Toutes leurs phrases vivent dans `VoiceSpeechText`. Preuves :
+`Tests/OMPConsoleTests/VoiceSpeechTests.swift` et `test/console/noyau-vocal-partage.test.ts`.
 
 ## Vocabulaire et typographie
 
@@ -2934,10 +3054,16 @@ omp-console/
 │   │   └── DevicesSettingsView.swift l'onglet Appareils des Réglages, ses états et ses textes
 │   ├── Settings/                  le panneau Réglages (⌘,)
 │   │   └── ConsoleSettingsView.swift la scène à un seul onglet « Appareils »
+│   ├── Pending/                   la liste des attentes calculée sur le Mac
+│   │   └── LocalPendingRequests.swift magasin, ardoise locale et files de dialogues → liste
 │   └── MenuBar/                   l'item de barre de menus, ses comptes, les séparateurs des menus
 │       ├── AlertsStatus.swift     l'état publié : comptes « À vous » / « En cours » de l'Accueil
 │       ├── MainMenuSeparators.swift masque les séparateurs de tête, de fin et doubles de la barre des menus
 │       └── StatusItem.swift       titre pur + contrôleur AppKit de l'item
+├── Sources/ConsoleCore/           la cible partagée macOS/iOS (extrait)
+│   ├── Session/RpcDialog.swift    la demande de dialogue du service OMP, type unique Mac/iPhone
+│   └── Pending/                   la liste des attentes
+│       └── PendingRequests.swift  toutes les demandes qui posent une question (fonction pure)
 ├── Tests/OMPConsoleTests/         la suite Swift Testing (Service/ : ServiceClientTests,
 │                                  ServiceSessionModelTests, ServiceActionsTests ;
 │                                  ScriptedServiceTransport, le transport HTTP scripté)
@@ -4313,6 +4439,61 @@ dépôt et ne bloque rien.
 5. À la première exécution, approuver le certificat de développement sur
    l'appareil : *Réglages ▸ Général ▸ VPN et gestion de l'appareil*.
 6. Relancer l'app — elle s'ouvre alors normalement.
+
+### Siri : statut de la connexion
+
+L'app iOS déclare un App Intent en lecture seule, **Statut de la connexion**
+(`IOSConnectionStatusIntent`, `ios/OMPConsoleIOS/IOSSiriText.swift`), et un App
+Shortcut qui le rend atteignable par la voix et depuis l'app Raccourcis. L'intent
+n'écrit rien, n'appaire rien et n'ouvre aucune connexion de plus : il lit le
+client distant UNIQUE de l'app (`OMPConsoleIOSApp` le crée et l'enregistre pour
+les intents par `IOSSharedClient`), attend la fin de la relecture du jeton au
+trousseau — jamais la découverte du Mac — puis énonce l'état à cet instant
+(`IOSSiriStatus`).
+
+Phrases Siri (en français, toutes avec le nom de l'app) :
+
+- « Statut de OMP Console »
+- « Connexion de OMP Console »
+- « Vérifier la connexion de OMP Console »
+
+Réponses énoncées :
+
+| État du client | Réponse |
+|---|---|
+| Aucun jeton, ou jeton refusé par le Mac | « Non appairé » |
+| Jeton présent, Mac non joint (recherche, connexion en cours, Mac éteint ou injoignable, hors réseau, version incompatible) | « Appairé, Mac non joint » |
+| Flux ouvert vers le Mac | « Connecté à *X* », où *X* est le nom d'instance Bonjour du Mac (« OMP Console », « OMP Console (2) »…), ou `hôte:port` pour une adresse manuelle |
+
+- L'intent **ouvre l'app** au premier plan avant de répondre ; app tuée, Siri la
+  lance à froid.
+- Il exige un **iPhone déverrouillé** : le jeton est au trousseau en
+  `WhenUnlockedThisDeviceOnly`, illisible appareil verrouillé. iPhone verrouillé,
+  le système demande d'abord le déverrouillage.
+- Dans l'app **Raccourcis**, OMP Console propose la tuile *Statut de la
+  connexion* (symbole `macbook.and.iphone`), qui lance le même intent.
+- Siri ne répond que s'il est interrogé : l'app n'annonce rien, aucune
+  notification.
+- La coque macOS doit être ouverte et joignable pour entendre « Connecté à … ».
+
+Le build (`xcodebuild`, `scripts/ios-build.sh`) produit
+`OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata`, qui porte l'intent
+et ses trois phrases (`${applicationName}`). La réponse est prouvée par
+`ios/OMPConsoleIOSTests/IOSSiriStatusTests.swift` ; la reconnaissance vocale, elle,
+ne se prouve qu'à la main, sur appareil réel.
+
+**Preuve manuelle sur iPhone réel** (client-ios-possede-par-la-vue/AC-6, conduite
+par l'utilisateur) :
+
+1. Installer l'app sur l'iPhone par Xcode (cible `OMPConsoleIOS`, signature de
+   l'équipe du projet), comme dans *Installer sur un appareil réel*.
+2. Appairer l'iPhone au Mac ; régler Siri en français ; garder l'iPhone
+   déverrouillé.
+3. App Mac ouverte : dire « Dis Siri, statut de OMP Console ». Attendu : l'app
+   s'ouvre et Siri dit « Connecté à OMP Console » (ou le nom d'instance du Mac).
+4. Quitter l'app Mac, puis redire la phrase. Attendu : « Appairé, Mac non joint ».
+5. Dans Raccourcis, toucher la tuile *Statut de la connexion* d'OMP Console.
+   Attendu : la même réponse qu'à l'étape précédente.
 
 ### Conduire un projet depuis l'iPad
 

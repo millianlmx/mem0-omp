@@ -69,6 +69,97 @@ struct ImmediatePacer: ClientPacer {
     }
 }
 
+/// Le trousseau qui compte ses lectures (client-ios-possede-par-la-vue, S-3) :
+/// `held` retient chaque lecture jusqu'à `open()`, pour observer l'intent témoin
+/// pendant que le trousseau est lu.
+actor CountingTokenStore: TokenStore {
+    private var tokens: [String: String]
+    private var held: Bool
+    private var gates: [CheckedContinuation<Void, Never>] = []
+    private(set) var reads = 0
+
+    init(_ tokens: [String: String] = [:], held: Bool = false) {
+        self.tokens = tokens
+        self.held = held
+    }
+
+    func save(_ token: String, for deviceId: String) async throws {
+        tokens[deviceId] = token
+    }
+
+    func token(for deviceId: String) async throws -> String? {
+        reads += 1
+        if held {
+            await withCheckedContinuation { gates.append($0) }
+        }
+        return tokens[deviceId]
+    }
+
+    func remove(deviceId: String) async throws {
+        tokens[deviceId] = nil
+    }
+
+    /// Libère les lectures retenues et laisse passer les suivantes.
+    func open() {
+        held = false
+        let waiting = gates
+        gates = []
+        for gate in waiting { gate.resume() }
+    }
+}
+
+/// La découverte qui annonce un Mac dès son démarrage.
+@MainActor
+final class AnnouncingDiscovery: DiscoverySource {
+    var onChange: (([DiscoveredMac]) -> Void)?
+    var onProtocolVersion: ((Int) -> Void)?
+    var onDenied: ((Bool) -> Void)?
+    private let mac: DiscoveredMac
+
+    init(_ mac: DiscoveredMac) {
+        self.mac = mac
+    }
+
+    func start(serviceType: String) {
+        onChange?([mac])
+    }
+
+    func stop() {}
+}
+
+/// Le transport dont le flux temps réel reste ouvert : le client se connecte et
+/// le reste. Chaque requête est enregistrée ; toute requête ordinaire reçoit un
+/// 404, aucune trame ne passe dans le flux.
+final class OpenStreamTransport: ClientTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [ClientHTTPRequest] = []
+    private var continuations: [AsyncThrowingStream<Data, Error>.Continuation] = []
+
+    var requests: [ClientHTTPRequest] { lock.withLock { recorded } }
+
+    func send(
+        _ request: ClientHTTPRequest,
+        to endpoint: ClientEndpoint,
+        token: String?
+    ) async throws -> ClientHTTPResponse {
+        lock.withLock { recorded.append(request) }
+        return ClientDoubles.response(status: 404, json: #"{"error":{"code":"not_found"}}"#)
+    }
+
+    func stream(
+        _ request: ClientHTTPRequest,
+        to endpoint: ClientEndpoint,
+        token: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        lock.withLock {
+            recorded.append(request)
+            continuations.append(continuation)
+        }
+        return stream
+    }
+}
+
 enum ClientDoubles {
     /// Un modèle client câblé sur `transport`, sans jeton, avec l'adresse
     /// manuelle `address` (l'endpoint connu de l'appairage). Le modèle n'est pas
@@ -87,6 +178,31 @@ enum ClientDoubles {
         )
         _ = model.setManualAddress(address)
         return model
+    }
+
+    /// Un modèle client APPAIRÉ (préférence `client.deviceId` = `dev-1`, le jeton
+    /// est celui de `tokens`), câblé sur `transport` et `discovery`, avec
+    /// l'adresse manuelle `address` si elle est donnée. Le modèle n'est PAS
+    /// démarré : c'est le lancement à froid d'un intent.
+    @MainActor
+    static func pairedModel(
+        tokens: CountingTokenStore,
+        transport: any ClientTransport,
+        discovery: (any DiscoverySource)? = nil,
+        address: String? = nil
+    ) -> ConsoleClientModel {
+        var preferences = [ClientPreferenceKey.deviceId: "dev-1"]
+        if let address { preferences[ClientPreferenceKey.manualAddress] = address }
+        return ConsoleClientModel(
+            transport: transport,
+            discovery: discovery ?? SilentDiscovery(),
+            preferences: InMemoryClientPreferences(preferences),
+            tokens: tokens,
+            pacer: ImmediatePacer(),
+            pathSource: SilentPathSource(),
+            deviceName: "iPhone",
+            searchPacer: ImmediatePacer()
+        )
     }
 
     /// Une réponse du Mac à la version de protocole de l'app.

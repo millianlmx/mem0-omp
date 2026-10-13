@@ -189,7 +189,7 @@ done
 
 # Le Mac sert-il 127.0.0.1:8787 ? Seule la coque répond avec l'en-tête de version.
 if [ "$source" = "reel" ]; then
-  headers="$(curl -s -m 5 -D - -o /dev/null -H 'X-Console-Protocol-Version: 1' http://127.0.0.1:8787/v1/version 2>/dev/null)"
+  headers="$(curl -s -m 5 -D - -o /dev/null -H 'X-Console-Protocol-Version: 2' http://127.0.0.1:8787/v1/version 2>/dev/null)"
   if ! grep -qi '^X-Console-Protocol-Version:' <<<"$headers"; then
     echo "  · non exécuté : le Mac ne sert pas 127.0.0.1:8787 (GET /v1/version sans réponse de la coque)" >&2
     exit 2

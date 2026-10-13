@@ -75,6 +75,8 @@ export type DialogRequest = {
   placeholder?: string;
   prefill?: string;
   promptStyle?: string;
+  /** L'instant où le canal a créé le dialogue, en ms epoch (`now()` du service). */
+  at: number;
 };
 
 /** La réponse d'un dialogue : `{value}` / `{confirmed}` / `{cancelled:true}`. */

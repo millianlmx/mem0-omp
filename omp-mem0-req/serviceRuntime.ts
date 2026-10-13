@@ -21,8 +21,8 @@ import type {
 import type { DialogAnswer, DialogRequest } from "./serviceApi.ts";
 
 
-/** L'ouverture d'un dialogue : la requête sans son identifiant, posé par le canal. */
-export type DialogOpen = Omit<DialogRequest, "id">;
+/** L'ouverture d'un dialogue : la requête sans son identifiant ni son instant, posés par le canal. */
+export type DialogOpen = Omit<DialogRequest, "id" | "at">;
 
 
 /**

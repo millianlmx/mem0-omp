@@ -411,6 +411,12 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   brut sinon. `[test: modelNameFromCatalog]`
 - Chaque élément de la fiche porte son propre identifiant `pipelines.card.sheet.*`.
   `[test: sheetIdentifiersAreDistinct]`
+- La question de la fiche est FIGÉE : aucune trame `store` ne la change sous les
+  yeux. La réponse (option ou texte libre) part avec l'identifiant de la question
+  affichée ; si le Mac répond que la question a changé, la fiche reste ouverte sur
+  la nouvelle question et ses options, bandeau « La question a changé sur le
+  Mac… » au-dessus (`pipelines.card.sheet.notice`), texte saisi conservé.
+  `[test: changedQuestionKeepsTextOnPipelines]`
 
 ## L'Accueil (S-10, S-11)
 
@@ -469,6 +475,15 @@ cette section porte ce que l'utilisateur voit avant le premier écran.
   `[test: welcomeContinueShowsConnectionUnlessPaired]`
 - La feuille « Répondre » aiguille les deux zones partagées (`pendingQuestion`,
   `textQuestion`) ; une option sélectionnée prime sur le champ libre. `[test: answerZones]`
+- La feuille « Répondre » fige la question affichée à son ouverture et y répond
+  avec son identifiant ; si le Mac répond que la question a changé, elle reste
+  ouverte sur la nouvelle question et ses options, bandeau « La question a changé
+  sur le Mac… » au-dessus (`ios.home.answer.notice`), texte saisi conservé.
+  `[test: changedQuestionKeepsTextOnHome]`
+- Si la question n'attend plus de réponse, la feuille (Répondre ou fiche
+  Pipelines) se ferme, puis l'écran présente l'alerte « Réponse non envoyée » /
+  « Cette question n’attend plus de réponse. », « OK » seul, une fois la feuille
+  fermée. `[test: goneQuestionClosesWithMessage]`
 - La feuille Contrat découpe le markdown par les fonctions partagées
   (`ContractDocument`) et rend chaque section en Markdown, bloc par bloc, par
   `IOSMarkdownView`, sans sa ligne « ## Titre » (l'en-tête de la feuille suffit) ;

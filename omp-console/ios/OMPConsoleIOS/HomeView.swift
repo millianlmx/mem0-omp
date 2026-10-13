@@ -61,6 +61,11 @@ struct HomeView: View {
     @State private var answerCard: SelectedCard?
     @State private var contractCard: SelectedCard?
     @State private var dismissedBannerID: String?
+    /// La feuille Répondre a signalé une question qui n'attend plus de réponse :
+    /// l'alerte attend sa fermeture (`onDismiss`), une seule présentation à la fois.
+    @State private var answerGonePending = false
+    /// L'alerte « Réponse non envoyée » posée à la fermeture de la feuille ; « OK » seul.
+    @State private var answerGone: IOSMenuFailure?
 
     init(
         client: ConsoleClientModel,
@@ -108,11 +113,28 @@ struct HomeView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(ConsoleSection.home.title)
-        .sheet(item: $answerCard) { selected in
-            HomeAnswerSheet(card: selected.card, client: client, connection: connection)
+        .sheet(item: $answerCard, onDismiss: {
+            guard answerGonePending else { return }
+            answerGonePending = false
+            answerGone = IOSMenuFailure(title: IOSHomeText.answerNotSentTitle, message: IOSHomeText.answerQuestionGone)
+        }) { selected in
+            HomeAnswerSheet(
+                card: selected.card,
+                client: client,
+                connection: connection,
+                onQuestionGone: { answerGonePending = true }
+            )
         }
         .sheet(item: $contractCard) { selected in
             HomeContractSheet(card: selected.card, client: client, recipePayload: recipe?.contractPayload)
+        }
+        .alert(
+            answerGone?.title ?? "",
+            isPresented: Binding(get: { answerGone != nil }, set: { if !$0 { answerGone = nil } }),
+            presenting: answerGone
+        ) { _ in
+        } message: { failure in
+            Text(failure.message)
         }
         .onAppear { presentRecipeSheet() }
         .focusedSceneValue(\.iosRefresh, IOSKeyboard.storeRefresh(client: client, owner: .home))

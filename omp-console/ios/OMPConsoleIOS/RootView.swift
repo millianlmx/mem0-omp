@@ -17,10 +17,11 @@ import SwiftUI
 /// un appareil, l'app déclare simplement portrait + paysages pour rester
 /// utilisable en paysage sur un vrai iPad (S-5).
 ///
-/// La racine POSSÈDE aussi le modèle du client distant (`ConsoleClientModel.live()`,
-/// créé UNE fois) : elle démarre la découverte et la connexion, présente la
-/// feuille de bienvenue (S-15, avant la connexion) — dont « Continuer » pousse la
-/// Connexion dans la MÊME feuille (S-2 d'ios-onboarding-et-connexion) —, puis ouvre
+/// La racine REÇOIT le client distant unique de `OMPConsoleIOSApp` (S-1 de
+/// client-ios-possede-par-la-vue) : elle le démarre, lance la découverte et la
+/// connexion, présente la feuille de bienvenue (S-15, avant la connexion) — dont
+/// « Continuer » pousse la Connexion dans la MÊME feuille (S-2
+/// d'ios-onboarding-et-connexion) —, puis ouvre
 /// d'elle-même la feuille de connexion SEULEMENT quand l'appareil n'a pas de jeton
 /// ou que le Mac l'a refusé (`ConnectionSheetMode.autoPresents`) et qu'aucune
 /// section n'a été demandée par `-section`. Une fois la bienvenue fermée,
@@ -36,7 +37,7 @@ import SwiftUI
 struct RootView: View {
     @State private var route: IOSTabRoute
     @State private var state: IOSScreenState
-    @StateObject private var client = ConsoleClientModel.live()
+    @ObservedObject var client: ConsoleClientModel
     /// Les gestes de carte de l'Accueil : l'état en vol survit à une sortie puis un
     /// retour sur l'Accueil.
     @StateObject private var homeGestures = IOSHomeGestureModel()
@@ -81,6 +82,7 @@ struct RootView: View {
     private let autoPresentConnection: Bool
 
     init(
+        client: ConsoleClientModel,
         selection: ConsoleSection = .home,
         state: IOSScreenState = .ready,
         recipe: IOSHomeRecipe? = nil,
@@ -96,6 +98,7 @@ struct RootView: View {
         auditRecipe: IOSAuditRecipe? = nil,
         autoPresentConnection: Bool = true
     ) {
+        self.client = client
         _route = State(initialValue: IOSTabRoute(tab: .section(selection), plusPath: []))
         _state = State(initialValue: state)
         self.recipe = recipe

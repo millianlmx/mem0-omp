@@ -3,6 +3,7 @@
 // Le rendu dans les sept sections se prouve par la recette idb (S-6).
 
 import ConsoleClient
+import ConsoleCore
 import Foundation
 import Testing
 
@@ -112,5 +113,19 @@ struct IOSConnectionStatusTests {
         // Le composant « connexion en cours » ne dit ni « Pas de connexion au Mac » ni « Se connecter ».
         #expect(IOSConnectionStateText.connectingTitle != IOSConnectionStateText.title)
         #expect(!IOSConnectionStateText.connectingTitle.contains(IOSConnectionStateText.connect))
+    }
+
+    @Test("reponse-ios-sans-identifiant-de-question/AC-4 : une app de la version précédente affiche l'incompatibilité")
+    func oldAppSeesIncompatibleVersion() {
+        let local = ConsoleAPI.protocolVersion - 1
+        let remote = ConsoleAPI.protocolVersion
+        #expect(ConnectionText.incompatibleProtocol(local: local, remote: remote)
+            == "Version de protocole incompatible (app 1, Mac 2)")
+        for failed in [false, true] {
+            #expect(
+                IOSConnectionStatus.resolve(.incompatibleProtocol(local: local, remote: remote), attemptFollowsFailure: failed)
+                    == .disconnected(.updateApp)
+            )
+        }
     }
 }

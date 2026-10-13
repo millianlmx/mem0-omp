@@ -288,6 +288,9 @@ const MOVED: string[] = [
   "MemoryGraphLayout",
   "MemoryGraphWire",
   "MemoryGraphParity",
+  // attentes-dispersees-entre-sources / BR-1 : le dialogue du service, un seul type (S-2).
+  "RpcDialogMethod",
+  "RpcDialogRequest",
 ];
 
 /** Les cinq symboles qui RESTENT dans la coque (S-1). */
@@ -409,17 +412,26 @@ test("noyau-partage-console/AC-4 : ConsoleCore porte le socle de l'API distante 
   const versions = swiftFiles(CORE_SOURCES).filter((file) => /\bprotocolVersion\b\s*(?::[^=]*)?=\s*\d/.test(code(file)));
   assert.equal(versions.length, 1, `protocolVersion déclaré ${versions.length} fois : ${versions.join(", ")}`);
 
+  // `RpcDialogRequest` et `PendingRequest` ne sont pas des charges utiles de
+  // route : le premier est la demande de dialogue du service OMP, type de domaine
+  // que les charges transportent telles quelles, comme `StoreSnapshot` ; le
+  // second est une attente de la liste pure des attentes, calculée des deux côtés
+  // et jamais transportée (attentes-dispersees-entre-sources, S-2 et S-3).
+  const DOMAIN_TYPES: Record<string, true> = { RpcDialogRequest: true, PendingRequest: true };
   const forbidden: [RegExp, string][] = [
     [/\/memory\//, "un chemin de route /memory/"],
     [/http:\/\//, "une URL http://"],
     [/https:\/\//, "une URL https://"],
     [/\bURLSession\b/, "URLSession"],
-    [/\b(?:struct|enum|class|actor)\s+\w*(?:Request|Response)\b/, "un type …Request/…Response"],
   ];
+  const payloadType = /\b(?:struct|enum|class|actor)\s+(\w*(?:Request|Response))\b/g;
   for (const file of swiftFiles(CORE_SOURCES)) {
     const body = code(file);
     for (const [pattern, label] of forbidden) {
       assert.ok(!pattern.test(body), `${path.relative(ROOT, file)} porte ${label} : ConsoleCore n'est pas le serveur`);
+    }
+    for (const [, name] of body.matchAll(payloadType)) {
+      assert.ok(DOMAIN_TYPES[name!], `${path.relative(ROOT, file)} porte un type …Request/…Response (${name}) : ConsoleCore n'est pas le serveur`);
     }
   }
 });

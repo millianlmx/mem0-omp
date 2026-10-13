@@ -32,27 +32,27 @@ struct RevocationTests {
             if request.path == "/v1/components" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"ompInstalled":true}"#.utf8)
                 ))
             }
             if request.path == "/v1/journal" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"entries":[]}"#.utf8)
                 ))
             }
             if request.path == "/v1/pull-request-states/refresh" {
                 return .success(ClientHTTPResponse(
                     status: 202,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }
             return .success(ClientHTTPResponse(
                 status: 401,
-                protocolVersion: 1,
+                protocolVersion: ConsoleAPI.protocolVersion,
                 body: Data(#"{"error":{"code":"unauthorized"}}"#.utf8)
             ))
         }
@@ -82,34 +82,34 @@ struct RevocationTests {
             if request.path == "/v1/pair" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
-                    body: Data(#"{"deviceId":"FRESH-1","token":"tok-2","protocolVersion":1}"#.utf8)
+                    protocolVersion: ConsoleAPI.protocolVersion,
+                    body: Data(#"{"deviceId":"FRESH-1","token":"tok-2","protocolVersion":\#(ConsoleAPI.protocolVersion)}"#.utf8)
                 ))
             }
             if request.path == "/v1/components" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"ompInstalled":true}"#.utf8)
                 ))
             }
             if request.path == "/v1/journal" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"entries":[]}"#.utf8)
                 ))
             }
             if request.path == "/v1/pull-request-states/refresh" {
                 return .success(ClientHTTPResponse(
                     status: 202,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }
             return .success(ClientHTTPResponse(
                 status: 401,
-                protocolVersion: 1,
+                protocolVersion: ConsoleAPI.protocolVersion,
                 body: Data(#"{"error":{"code":"unauthorized"}}"#.utf8)
             ))
         }

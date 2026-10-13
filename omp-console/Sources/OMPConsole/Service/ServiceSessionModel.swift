@@ -11,6 +11,7 @@
 // être affiché tel quel.
 
 import Combine
+import ConsoleCore
 import Foundation
 import os
 
