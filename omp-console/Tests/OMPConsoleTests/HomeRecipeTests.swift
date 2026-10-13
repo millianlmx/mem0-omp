@@ -190,7 +190,13 @@ func accueilRecipe() async throws {
        let pending = attention.card.action?.run?.pendingAsk {
         let label = pending.options.first?.label ?? pending.question
         do {
-            let accepted = try await client.answer(cardId: attention.card.id, kind: "selected", label: label, text: nil)
+            let accepted = try await client.answer(
+                cardId: attention.card.id,
+                kind: "selected",
+                label: label,
+                text: nil,
+                toolCallId: pending.toolCallId
+            )
             print("recette Accueil : réponse « \(label) » à \(attention.card.id) — accepted=\(accepted.accepted)")
         } catch {
             print("recette Accueil : réponse par option refusée — \(error)")
@@ -200,7 +206,8 @@ func accueilRecipe() async throws {
                 cardId: attention.card.id,
                 kind: "custom",
                 label: nil,
-                text: "Recette : je réponds depuis l'Accueil."
+                text: "Recette : je réponds depuis l'Accueil.",
+                toolCallId: pending.toolCallId
             )
             print("recette Accueil : texte libre à \(attention.card.id) — accepted=\(accepted.accepted)")
         } catch {

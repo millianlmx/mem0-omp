@@ -3,6 +3,12 @@
 // entière, options à choisir, champ libre) ou une question en texte (invite et
 // champ). Une option sélectionnée PRIME : le champ n'est alors pas envoyé.
 //
+// La question en vol est FIGÉE à l'ouverture (`IOSAnswerDraft`) et la réponse
+// part avec SON identifiant (reponse-ios-sans-identifiant-de-question, S-3/S-4) :
+// si le Mac répond qu'elle a changé, la feuille reste ouverte sur la nouvelle
+// question, bandeau en tête, texte conservé ; si elle n'attend plus de réponse,
+// la feuille le signale à l'Accueil (`onQuestionGone`) puis se ferme (S-5).
+//
 // Aucune phrase n'est composée ici : les mots viennent de `HomeText`,
 // `ActionsText` et `IOSHomeText`. Un échec montre le message EXACT de l'API,
 // garde la feuille ouverte et la saisie conservée.
@@ -18,27 +24,45 @@ struct HomeAnswerSheet: View {
     /// hors `.connected`, options, champ et « Répondre » sont grisés
     /// (etats-non-connecte-heterogenes-ios, S-5).
     let connection: IOSConnectionStatus
+    /// Appelée quand le Mac dit que la question n'attend plus de réponse, juste
+    /// avant la fermeture : l'Accueil présente alors son alerte (S-5).
+    let onQuestionGone: () -> Void
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var selectedOption: String?
-    @State private var text = ""
+    /// La question affichée, figée à l'ouverture, la sélection, le texte et le
+    /// bandeau « la question a changé » (S-4).
+    @State private var draft: IOSAnswerDraft
     @State private var failure: String?
     @State private var sending = false
+
+    init(
+        card: KanbanCard,
+        client: ConsoleClientModel,
+        connection: IOSConnectionStatus,
+        onQuestionGone: @escaping () -> Void
+    ) {
+        self.card = card
+        self.client = client
+        self.connection = connection
+        self.onQuestionGone = onQuestionGone
+        _draft = State(initialValue: IOSAnswerDraft(question: IOSAnswerQuestion(card: card)))
+    }
+
+    private var selectedOption: String? { draft.selectedOption }
 
     private var zone: KanbanActionZone? {
         IOSHomeContent.answerZone(card)
     }
 
     private var options: [PanelAskOption] {
-        if case .pendingQuestion(_, _, let options) = zone { return options }
-        return []
+        draft.question?.options ?? []
     }
 
     private var hasOptions: Bool { !options.isEmpty }
 
     private var canSubmit: Bool {
-        !sending && (selectedOption != nil || !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        !sending && draft.choice != nil
     }
 
     var body: some View {
@@ -81,38 +105,42 @@ struct HomeAnswerSheet: View {
 
     @ViewBuilder
     private var zoneSection: some View {
-        switch zone {
-        case .pendingQuestion(_, let question, let options):
+        if let question = draft.question {
             Section {
-                Text(question)
+                // Le bandeau se lit AVANT la question (S-4).
+                if let notice = draft.notice {
+                    Text(notice)
+                        .font(.callout)
+                        .iosBanner(tone: .attention)
+                        .accessibilityIdentifier(IOSHomeAccessibility.answerNotice)
+                }
+                Text(question.question)
                     .font(.body)
                     .accessibilityIdentifier(IOSHomeAccessibility.answerQuestion)
                 ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                     Button {
-                        selectedOption = option.label
+                        draft.selectedOption = option.label
                     } label: {
                         optionRow(option)
                     }
-                    .disabled(!connection.gesturesEnabled)
+                    .disabled(!connection.gesturesEnabled || sending)
                     // La coche est cachée : l'option choisie s'annonce par le trait (S-9).
                     .accessibilityAddTraits(selectedOption == option.label ? .isSelected : [])
                     .accessibilityIdentifier(IOSHomeAccessibility.answerOption(index))
                 }
             }
-        case .textQuestion(_, let prompt):
+        } else if case .textQuestion(_, let prompt) = zone {
             Section {
                 Text(prompt ?? HomeText.questionWithoutText)
                     .font(.body)
                     .accessibilityIdentifier(IOSHomeAccessibility.answerQuestion)
             }
-        default:
-            EmptyView()
         }
     }
 
     private var textSection: some View {
         Section {
-            TextField(hasOptions ? HomeText.answerOtherPlaceholder : HomeText.answerPlaceholder, text: $text)
+            TextField(hasOptions ? HomeText.answerOtherPlaceholder : HomeText.answerPlaceholder, text: $draft.text)
                 .disabled(!connection.gesturesEnabled)
                 .accessibilityIdentifier(IOSHomeAccessibility.answerText)
         }
@@ -139,39 +167,64 @@ struct HomeAnswerSheet: View {
         }
     }
 
-    /// Envoie le geste : une option sélectionnée prime sur le champ. Un échec
-    /// laisse la feuille ouverte et la saisie en place.
+    /// Envoie le geste : une option sélectionnée prime sur le champ. La réponse à
+    /// une question en vol part avec l'identifiant de la question AFFICHÉE ; un
+    /// échec laisse la feuille ouverte et la saisie en place.
     private func submit() {
-        guard !sending else { return }
+        guard !sending, let choice = draft.choice else { return }
         sending = true
         failure = nil
         Task {
-            do {
-                switch zone {
-                case .pendingQuestion:
-                    if let selectedOption {
-                        _ = try await client.answer(
-                            cardId: card.id,
-                            kind: IOSHomeText.kindSelected,
-                            label: selectedOption,
-                            text: nil
-                        )
-                    } else {
-                        _ = try await client.answer(
-                            cardId: card.id,
-                            kind: IOSHomeText.kindCustom,
-                            label: nil,
-                            text: text
-                        )
+            if let question = draft.question {
+                let outcome = await IOSAnswerFlow.submit(
+                    question: question,
+                    choice: choice,
+                    send: { toolCallId, choice in
+                        switch choice {
+                        case .option(let label):
+                            _ = try await client.answer(
+                                cardId: card.id,
+                                kind: IOSHomeText.kindSelected,
+                                label: label,
+                                text: nil,
+                                toolCallId: toolCallId
+                            )
+                        case .custom(let text):
+                            _ = try await client.answer(
+                                cardId: card.id,
+                                kind: IOSHomeText.kindCustom,
+                                label: nil,
+                                text: text,
+                                toolCallId: toolCallId
+                            )
+                        }
+                    },
+                    reread: {
+                        _ = try await client.store()
+                        return client.board.card(card.id)
                     }
-                case .textQuestion:
-                    _ = try await client.reply(cardId: card.id, text: text)
-                default:
-                    break
+                )
+                switch outcome {
+                case .delivered:
+                    dismiss()
+                case .questionChanged(let next):
+                    draft.adopt(next)
+                    failure = nil
+                case .questionGone:
+                    onQuestionGone()
+                    dismiss()
+                case .failed(let error):
+                    failure = IOSHomeContent.failure(error)
                 }
-                dismiss()
-            } catch {
-                failure = IOSHomeContent.failure(error)
+            } else {
+                do {
+                    if case .textQuestion = zone {
+                        _ = try await client.reply(cardId: card.id, text: draft.text)
+                    }
+                    dismiss()
+                } catch {
+                    failure = IOSHomeContent.failure(error)
+                }
             }
             sending = false
         }

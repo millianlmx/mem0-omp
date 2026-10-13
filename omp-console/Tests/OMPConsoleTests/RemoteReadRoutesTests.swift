@@ -93,7 +93,7 @@ struct RemoteReadRoutesTests {
         // (1) Le magasin : EXACTEMENT l'instantané du hub, octet pour octet.
         let storeReply = try await stack.call("GET", "/v1/store", token: token)
         #expect(storeReply.status == 200)
-        #expect(storeReply.headers["x-console-protocol-version"] == "1")
+        #expect(storeReply.headers["x-console-protocol-version"] == String(ConsoleAPI.protocolVersion))
         #expect((try? JSONSerialization.jsonObject(with: storeReply.body)) != nil)
         let expectedBody = try HTTPJSON.encode(RemoteStorePayload(snapshot: stack.storeHub.current()))
         #expect(storeReply.body == expectedBody)

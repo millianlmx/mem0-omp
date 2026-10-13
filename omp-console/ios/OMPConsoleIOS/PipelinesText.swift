@@ -102,6 +102,8 @@ enum PipelinesAccessibility {
     static let sheetTitle = "pipelines.card.sheet.title"
     static let answerField = "pipelines.card.sheet.answer"
     static let answerSend = "pipelines.card.sheet.send"
+    /// Le bandeau « la question a changé » de la fiche, au-dessus de la question.
+    static let answerNotice = "pipelines.card.sheet.notice"
     static let error = "pipelines.card.sheet.error"
     static let retry = "pipelines.card.sheet.retry"
 

@@ -35,6 +35,8 @@ enum IOSHomeAccessibility {
     static let answerText = "ios.home.answer.text"
     static let answerCancel = "ios.home.answer.cancel"
     static let answerSubmit = "ios.home.answer.submit"
+    /// Le bandeau « la question a changé » de la feuille, au-dessus de la question.
+    static let answerNotice = "ios.home.answer.notice"
 
     static let contractSheet = "ios.home.contract.sheet"
     static let contractBody = "ios.home.contract.body"

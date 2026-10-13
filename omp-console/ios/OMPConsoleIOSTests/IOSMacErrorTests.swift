@@ -14,7 +14,7 @@ import Testing
 /// La doublure du Mac : ce que le client lève pour une réponse d'erreur.
 private enum MacDouble {
     static func error(status: Int, body: Data) -> ClientError {
-        ClientErrorMapping.translate(status: status, protocolVersion: 1, body: body)
+        ClientErrorMapping.translate(status: status, protocolVersion: ConsoleAPI.protocolVersion, body: body)
     }
 
     /// Une enveloppe d'erreur du contrat, construite par `JSONSerialization`.

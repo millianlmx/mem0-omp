@@ -11,6 +11,8 @@ import Testing
 struct VersionTests {
     @Test("client-distant-ios/AC-14 : une version différente verrouille — les deux numéros, aucune requête")
     func incompatibleVersion() async throws {
+        let local = ConsoleAPI.protocolVersion
+        let other = ConsoleAPI.protocolVersion + 1
         // Sens 1 : le TXT Bonjour annonce une autre version → verrou SANS tentative.
         let announced = ClientHarness(
             tokens: ["d": "tok"],
@@ -18,14 +20,14 @@ struct VersionTests {
         )
         announced.model.start()
         #expect(await eventually { announced.model.state != .unpaired })
-        announced.discovery.emitProtocolVersion(2)
-        #expect(announced.model.state == .incompatibleProtocol(local: 1, remote: 2))
+        announced.discovery.emitProtocolVersion(other)
+        #expect(announced.model.state == .incompatibleProtocol(local: local, remote: other))
         #expect(announced.transport.requestCount == 0, "aucune tentative de connexion")
         // Toute méthode de route est refusée localement, sans un octet.
-        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: 2)) {
+        await #expect(throws: ClientError.incompatibleProtocol(local: local, remote: other)) {
             _ = try await announced.model.version()
         }
-        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: 2)) {
+        await #expect(throws: ClientError.incompatibleProtocol(local: local, remote: other)) {
             _ = try await announced.model.reply(cardId: "c1", text: "x")
         }
         #expect(announced.transport.requestCount == 0)
@@ -39,19 +41,52 @@ struct VersionTests {
         answered.transport.respond { _ in
             .success(ClientHTTPResponse(
                 status: 200,
-                protocolVersion: 2,
-                body: Data(#"{"protocolVersion":2}"#.utf8)
+                protocolVersion: other,
+                body: Data(#"{"protocolVersion":\#(other)}"#.utf8)
             ))
         }
         _ = answered.model.setManualAddress("10.0.0.5:9000")
-        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: 2)) {
+        await #expect(throws: ClientError.incompatibleProtocol(local: local, remote: other)) {
             _ = try await answered.model.version()
         }
-        #expect(answered.model.state == .incompatibleProtocol(local: 1, remote: 2))
+        #expect(answered.model.state == .incompatibleProtocol(local: local, remote: other))
         // `retry()` est la seule sortie du verrou.
         answered.model.retry()
-        #expect(answered.model.state != .incompatibleProtocol(local: 1, remote: 2))
+        #expect(answered.model.state != .incompatibleProtocol(local: local, remote: other))
         answered.stop()
+    }
+
+    @Test("reponse-ios-sans-identifiant-de-question/AC-4 : une app de la version précédente se verrouille face au Mac")
+    func previousVersionAppLocksAgainstTheMac() async throws {
+        let previous = ConsoleAPI.protocolVersion - 1
+        let mac = ConsoleAPI.protocolVersion
+        #expect(previous == 1 && mac == 2, "le critère vise l'app 1 face au Mac 2")
+        let harness = ClientHarness(
+            tokens: ["d": "tok"],
+            preferences: [ClientPreferenceKey.deviceId: "d"],
+            localProtocolVersion: previous
+        )
+        harness.transport.respond { _ in
+            .success(ClientHTTPResponse(
+                status: 200,
+                protocolVersion: mac,
+                body: Data(#"{"protocolVersion":\#(mac)}"#.utf8)
+            ))
+        }
+        _ = harness.model.setManualAddress("10.0.0.5:9000")
+        await #expect(throws: ClientError.incompatibleProtocol(local: previous, remote: mac)) {
+            _ = try await harness.model.version()
+        }
+        #expect(harness.model.state == .incompatibleProtocol(local: previous, remote: mac))
+        // Verrouillée, l'app ne peut plus répondre : la réponse est refusée localement.
+        let sent = harness.transport.requestCount
+        await #expect(throws: ClientError.incompatibleProtocol(local: previous, remote: mac)) {
+            _ = try await harness.model.answer(
+                cardId: "c1", kind: "custom", label: nil, text: "x", toolCallId: "call-1"
+            )
+        }
+        #expect(harness.transport.requestCount == sent, "aucune réponse ne part")
+        harness.stop()
     }
 
     @Test("ios-graphe-memoire-405-erreur-brute/AC-3 : le code outdated_service est décodé en .api(.outdatedService), un code inconnu retombe sur le statut")
@@ -110,13 +145,17 @@ struct VersionTests {
             preferences: [ClientPreferenceKey.deviceId: "d"]
         )
         harness.transport.respond { _ in
-            .success(ClientHTTPResponse(status: 200, protocolVersion: nil, body: Data(#"{"protocolVersion":1}"#.utf8)))
+            .success(ClientHTTPResponse(
+                status: 200,
+                protocolVersion: nil,
+                body: Data(#"{"protocolVersion":\#(ConsoleAPI.protocolVersion)}"#.utf8)
+            ))
         }
         _ = harness.model.setManualAddress("10.0.0.5:9000")
-        await #expect(throws: ClientError.incompatibleProtocol(local: 1, remote: nil)) {
+        await #expect(throws: ClientError.incompatibleProtocol(local: ConsoleAPI.protocolVersion, remote: nil)) {
             _ = try await harness.model.version()
         }
-        #expect(harness.model.state == .incompatibleProtocol(local: 1, remote: nil))
+        #expect(harness.model.state == .incompatibleProtocol(local: ConsoleAPI.protocolVersion, remote: nil))
         harness.stop()
     }
 }

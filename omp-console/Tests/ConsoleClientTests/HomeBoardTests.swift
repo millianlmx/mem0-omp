@@ -81,7 +81,7 @@ struct HomeBoardTests {
                 guard let body = try? JSONEncoder().encode(payload) else {
                     return .failure(ClientError.decoding("instantané non encodable"))
                 }
-                return .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: body))
+                return .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: body))
             }
             return .failure(ClientError.transport(.unreachable("route non scriptée")))
         }
@@ -160,21 +160,21 @@ struct HomeBoardTests {
             if request.path == "/v1/cards/c1/resume" {
                 return .success(ClientHTTPResponse(
                     status: 202,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"accepted":true}"#.utf8)
                 ))
             }
             if request.path == "/v1/journal" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: try! JSONEncoder().encode(payload)
                 ))
             }
             if request.path == "/v1/components" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"ompInstalled":true,"ompPath":"/usr/local/bin/omp"}"#.utf8)
                 ))
             }
@@ -193,14 +193,18 @@ struct HomeBoardTests {
             let accepted = request.method == "POST"
             return .success(ClientHTTPResponse(
                 status: accepted ? 202 : 200,
-                protocolVersion: 1,
+                protocolVersion: ConsoleAPI.protocolVersion,
                 body: Data((accepted ? #"{"accepted":true}"# : #"{"entries":[]}"#).utf8)
             ))
         }
         // Les cinq gestes de l'Accueil : deux formes de réponse, un verdict, une
         // reprise, un texte libre.
-        _ = try await harness.model.answer(cardId: "c1", kind: "selected", label: "Avec le drapeau", text: nil)
-        _ = try await harness.model.answer(cardId: "c1", kind: "custom", label: nil, text: "livrer plus tard")
+        _ = try await harness.model.answer(
+            cardId: "c1", kind: "selected", label: "Avec le drapeau", text: nil, toolCallId: "call-1"
+        )
+        _ = try await harness.model.answer(
+            cardId: "c1", kind: "custom", label: nil, text: "livrer plus tard", toolCallId: "call-1"
+        )
         _ = try await harness.model.reply(cardId: "c1", text: "ma réponse")
         _ = try await harness.model.verdict(cardId: "c1", verdict: "specs")
         _ = try await harness.model.verdict(cardId: "c1", verdict: "review")
@@ -214,8 +218,10 @@ struct HomeBoardTests {
 
         let answers = bodies("/v1/cards/c1/answer")
         #expect(answers.count == 2, "une réponse sélectionnée puis un texte libre")
+        #expect(answers.first?["toolCallId"] as? String == "call-1", "la question visée part dans le corps")
         #expect(answers.first?["kind"] as? String == "selected")
         #expect(answers.first?["label"] as? String == "Avec le drapeau")
+        #expect(answers.last?["toolCallId"] as? String == "call-1")
         #expect(answers.last?["kind"] as? String == "custom")
         #expect(answers.last?["text"] as? String == "livrer plus tard")
 

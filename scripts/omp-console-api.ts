@@ -26,7 +26,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 
 /** Protocole et en-tête figés par le contrat (ConsoleAPI.protocolVersion). */
-const PROTOCOL_VERSION = 1;
+const PROTOCOL_VERSION = 2;
 const PROTOCOL_HEADER = "X-Console-Protocol-Version";
 const DEFAULT_URL = "http://127.0.0.1:8787";
 /** `security(1)` vit ici sur macOS ; ailleurs, prérequis absent (sortie 2). */
@@ -74,7 +74,7 @@ commandes :
   stats [--project <repoKey>]                       statistiques du projet
   memory [--query <q>] [--scope <s>] [--graph]     mémoire du projet
   watch [--seconds <n>]                            suit le flux (store, sessions, hosted, devices)
-  answer <cardId> (--option <libellé>|--text <texte>)
+  answer <cardId> --question <toolCallId> (--option <libellé>|--text <texte>)
   reply <cardId> --text <t>
   steer <cardId> --text <t>
   verdict <cardId> (--specs|--review)
@@ -702,10 +702,17 @@ switch (command) {
       console.log("cardId manquant");
       process.exit(2);
     }
+    // Protocole 2 : la route exige l'identifiant de la question visée
+    // (`pendingAsk.toolCallId` de `snapshot`), refusé AVANT tout appel.
+    const toolCallId = flag("question");
+    if (!toolCallId) {
+      console.log("--question est requis");
+      process.exit(2);
+    }
     const option = flag("option");
     const text = flag("text");
-    if (option !== undefined) await cmdCard(pairing, cardId, "answer", { kind: "selected", label: option });
-    else if (text !== undefined) await cmdCard(pairing, cardId, "answer", { kind: "custom", text });
+    if (option !== undefined) await cmdCard(pairing, cardId, "answer", { toolCallId, kind: "selected", label: option });
+    else if (text !== undefined) await cmdCard(pairing, cardId, "answer", { toolCallId, kind: "custom", text });
     else {
       console.log("--option ou --text est requis");
       process.exit(2);

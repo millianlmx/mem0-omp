@@ -103,7 +103,7 @@ func loopbackRequestIsAnsweredOnTheSocket() async throws {
     // (`Connection: close`) pour tenir la trame complète, puis on l'examine.
     #expect(await awaitMainTrue(timeout: 5.0) { probe.finished })
     #expect(probe.text.hasPrefix("HTTP/1.1 200 OK\r\n"))
-    #expect(probe.text.contains("X-Console-Protocol-Version: 1\r\n"))
+    #expect(probe.text.contains("X-Console-Protocol-Version: \(ConsoleAPI.protocolVersion)\r\n"))
     #expect(probe.text.contains("Content-Length: 11\r\n"))
     #expect(probe.text.contains("Connection: close\r\n"))
     #expect(probe.text.hasSuffix(#"{"ok":true}"#))

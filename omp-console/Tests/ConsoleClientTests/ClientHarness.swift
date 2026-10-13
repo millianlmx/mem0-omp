@@ -22,7 +22,7 @@ struct ClientHarness {
         preferences initialPreferences: [String: String] = [:],
         pacerLimit: Int = Int.max,
         deviceName: String = "iPhone",
-        localProtocolVersion: Int = 1,
+        localProtocolVersion: Int = ConsoleAPI.protocolVersion,
         nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
         searchPacer: any ClientPacer = RecordingPacer()
     ) {

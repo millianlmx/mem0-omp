@@ -558,7 +558,7 @@ public final class ConsoleClientModel: ObservableObject {
         kind: String,
         label: String?,
         text: String?,
-        toolCallId: String? = nil
+        toolCallId: String
     ) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteAnswerRequest(toolCallId: toolCallId, kind: kind, label: label, text: text))
         return try await performGesture(
