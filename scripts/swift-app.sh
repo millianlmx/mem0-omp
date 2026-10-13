@@ -345,6 +345,25 @@ done
 # shellcheck disable=SC1112
 echo '  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)'
 
+# Puis les cinq intents de pilotage de la coque (feature
+# siri-mac-pilotage-pipelines, S-8), sur le même patron : chacun doit être
+# déclaré (E-11) et porter son App Shortcut, avec sa première phrase française
+# (E-12).
+# shellcheck disable=SC1112
+for intent_pilotage in 'MacLaunchPipelineIntent|Lancer une pipeline dans ${applicationName}' 'MacResumeFeatureIntent|Reprendre une pipeline dans ${applicationName}' 'MacStopFeatureIntent|Arrêter une pipeline dans ${applicationName}' 'MacValidateSpecsIntent|Valider les specs dans ${applicationName}' 'MacAcceptReviewIntent|Accepter la revue dans ${applicationName}'; do
+  intent_type="${intent_pilotage%%|*}"
+  intent_phrase="${intent_pilotage#*|}"
+  if ! grep -Eq "\"identifier\" *: *\"$intent_type\"" "$ACTIONS_DATA"; then
+    echec_sans_bundle "intent de pilotage absent de Metadata.appintents : $intent_type introuvable dans extract.actionsdata"
+  fi
+  if ! grep -Eq "\"actionIdentifier\" *: *\"$intent_type\"" "$ACTIONS_DATA" \
+    || ! grep -Fq "\"$intent_phrase\"" "$ACTIONS_DATA"; then
+    echec_sans_bundle "App Shortcut de l'intent de pilotage $intent_type absent de Metadata.appintents : phrase « $intent_phrase » introuvable dans extract.actionsdata"
+  fi
+done
+# shellcheck disable=SC1112
+echo '  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)'
+
 # 4) signature ad hoc du bundle, puis vérification : sans elle, `codesign
 #    --verify --strict` échoue (D6). La preuve est la vérification, pas la commande.
 if ! codesign --force --sign - "$BUNDLE" >/dev/null 2>&1; then

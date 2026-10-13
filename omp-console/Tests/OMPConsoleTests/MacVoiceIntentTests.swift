@@ -304,6 +304,7 @@ private func voiceContext(
         session: stack.session,
         remoteActions: stack.remoteActions,
         startModels: startModels ?? { kanban.start() },
+        projectRoot: { nil },
         readinessTimeout: readinessTimeout
     )
 }

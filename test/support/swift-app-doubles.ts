@@ -29,12 +29,13 @@ export const CONST_VALUES_REL =
 export const SWIFT_CONST_VALUES_SNIPPET = `case " $* " in *" --build-system swiftbuild "*" -emit-const-values "*) mkdir -p "$(dirname "$scratch/${CONST_VALUES_REL}")" && printf '[]' > "$scratch/${CONST_VALUES_REL}" ;; esac`;
 
 /**
- * Le `extract.actionsdata` de l'état livré : l'intent sonde et ses deux voisins
- * vocaux (feature siri-mac-questions-en-attente, S-7), chacun avec son App
+ * Le `extract.actionsdata` de l'état livré : l'intent sonde, ses deux voisins
+ * vocaux (feature siri-mac-questions-en-attente, S-7) et les cinq intents de
+ * pilotage (feature siri-mac-pilotage-pipelines, S-8), chacun avec son App
  * Shortcut et la phrase que le contrôle post-assemblage cherche.
  */
 export const SONDE_ACTIONSDATA =
-  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]}]}';
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacLaunchPipelineIntent":{"identifier":"MacLaunchPipelineIntent"},"MacResumeFeatureIntent":{"identifier":"MacResumeFeatureIntent"},"MacStopFeatureIntent":{"identifier":"MacStopFeatureIntent"},"MacValidateSpecsIntent":{"identifier":"MacValidateSpecsIntent"},"MacAcceptReviewIntent":{"identifier":"MacAcceptReviewIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]},{"actionIdentifier":"MacLaunchPipelineIntent","phraseTemplates":[{"key":"Lancer une pipeline dans ${applicationName}"}]},{"actionIdentifier":"MacResumeFeatureIntent","phraseTemplates":[{"key":"Reprendre une pipeline dans ${applicationName}"}]},{"actionIdentifier":"MacStopFeatureIntent","phraseTemplates":[{"key":"Arrêter une pipeline dans ${applicationName}"}]},{"actionIdentifier":"MacValidateSpecsIntent","phraseTemplates":[{"key":"Valider les specs dans ${applicationName}"}]},{"actionIdentifier":"MacAcceptReviewIntent","phraseTemplates":[{"key":"Accepter la revue dans ${applicationName}"}]}]}';
 
 const VERSION_JSON = '{"toolsVersion":"27A266a","version":"3.0"}';
 const SANS_SONDE = '{"actions":{},"autoShortcuts":[]}';
@@ -45,6 +46,13 @@ const SANS_VOCAL =
 /** Les trois intents déclarés, mais la seule App Shortcut de la sonde. */
 const SANS_PHRASE_VOCALE =
   '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]}]}';
+
+/** La sonde et les deux intents vocaux avec leurs App Shortcuts, sans aucun intent de pilotage. */
+const SANS_PILOTAGE =
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]}]}';
+/** Les huit intents déclarés, mais sans les App Shortcuts des intents de pilotage. */
+const SANS_PHRASE_PILOTAGE =
+  '{"actions":{"OpenConsoleIntent":{"identifier":"OpenConsoleIntent","openAppWhenRun":true},"MacPendingIntent":{"identifier":"MacPendingIntent"},"MacAnswerIntent":{"identifier":"MacAnswerIntent"},"MacLaunchPipelineIntent":{"identifier":"MacLaunchPipelineIntent"},"MacResumeFeatureIntent":{"identifier":"MacResumeFeatureIntent"},"MacStopFeatureIntent":{"identifier":"MacStopFeatureIntent"},"MacValidateSpecsIntent":{"identifier":"MacValidateSpecsIntent"},"MacAcceptReviewIntent":{"identifier":"MacAcceptReviewIntent"}},"autoShortcuts":[{"actionIdentifier":"OpenConsoleIntent","phraseTemplates":[{"key":"Ouvre ${applicationName}"}]},{"actionIdentifier":"MacPendingIntent","phraseTemplates":[{"key":"Qu’est-ce qui m’attend dans ${applicationName}"}]},{"actionIdentifier":"MacAnswerIntent","phraseTemplates":[{"key":"Réponds dans ${applicationName}"}]}]}';
 
 function writeDouble(bin: string, name: string, body: string): void {
   const file = path.join(bin, name);
@@ -67,6 +75,9 @@ function writeDouble(bin: string, name: string, body: string): void {
  *   `sans-raccourci` → métadonnées privées de l'intent sonde ou de son App
  *   Shortcut ; `sans-vocal` → la sonde seule, sans intent vocal ;
  *   `sans-phrase-vocale` → les intents vocaux sans leurs App Shortcuts ;
+ *   `sans-pilotage` → la sonde et les intents vocaux, sans aucun intent de
+ *   pilotage ; `sans-phrase-pilotage` → tous les intents, sans les App
+ *   Shortcuts de pilotage ;
  *   `absent` → rien d'écrit, code 0 ; `echec` → erreur de phrase, code 255.
  */
 export function writeXcodeDoubles(bin: string): void {
@@ -137,6 +148,8 @@ case "\${FAUX_APPINTENTS:-}" in
   sans-raccourci) ecrire '${SANS_RACCOURCI}' ;;
   sans-vocal) ecrire '${SANS_VOCAL}' ;;
   sans-phrase-vocale) ecrire '${SANS_PHRASE_VOCALE}' ;;
+  sans-pilotage) ecrire '${SANS_PILOTAGE}' ;;
+  sans-phrase-pilotage) ecrire '${SANS_PHRASE_PILOTAGE}' ;;
   absent) ;;
   echec)
     printf "%s: error: Every App Shortcut utterance should contain '%s'\\n" "Sources/OMPConsole/Intents/OpenConsoleIntent.swift:20" '\${applicationName}' >&2

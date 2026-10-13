@@ -1,6 +1,7 @@
 // Le contexte des intents Siri du Mac (siri-mac-questions-en-attente, S-5) : les
 // modèles mêmes que les vues et l'API distante, et l'attente bornée qui laisse une
-// app lancée à froid par Siri lire son état avant de répondre.
+// app lancée à froid par Siri lire son état avant de répondre. Le pilotage
+// (siri-mac-pilotage-pipelines, S-6) y lit l'ardoise et les dépôts lançables.
 
 import AppIntents
 import Combine
@@ -22,6 +23,7 @@ final class MacVoiceContext {
     private let project: ProjectConsoleModel
     private let session: SessionConsoleModel
     private let startModels: @MainActor () -> Void
+    private let projectRoot: @MainActor () -> String?
     private let readinessTimeout: Duration
 
     init(
@@ -31,6 +33,7 @@ final class MacVoiceContext {
         session: SessionConsoleModel,
         remoteActions: RemoteActions,
         startModels: @escaping @MainActor () -> Void,
+        projectRoot: @escaping @MainActor () -> String?,
         readinessTimeout: Duration = MacVoiceContext.readinessTimeout
     ) {
         self.storeHub = storeHub
@@ -39,6 +42,7 @@ final class MacVoiceContext {
         self.session = session
         self.remoteActions = remoteActions
         self.startModels = startModels
+        self.projectRoot = projectRoot
         self.readinessTimeout = readinessTimeout
     }
 
@@ -47,13 +51,30 @@ final class MacVoiceContext {
     /// lancé sans fenêtre n'a jamais démarré ses modèles : la lecture les démarre,
     /// puis attend au plus `readinessTimeout`.
     func read() async -> VoiceReading {
-        if kanban.state == .loading {
-            startModels()
-            guard await boardLoaded() else {
-                return .unavailable(phrase: VoiceSpeechText.stateUnreadable)
-            }
+        guard await board() != nil else {
+            return .unavailable(phrase: VoiceSpeechText.stateUnreadable)
         }
         return .ready(LocalPendingRequests.list(storeHub: storeHub, project: project, session: session))
+    }
+
+    /// Les cartes de l'ardoise, après la même attente bornée que `read()` ; `nil`
+    /// à l'échéance, quand l'ardoise n'a pas pu être lue à temps.
+    func board() async -> [KanbanCard]? {
+        if kanban.state == .loading {
+            startModels()
+            guard await boardLoaded() else { return nil }
+        }
+        return kanban.state.kanbanBoard?.cards ?? []
+    }
+
+    /// Les dépôts que propose la feuille « Nouvelle feature » (ceux de l'ardoise et
+    /// le projet choisi de l'app), sauf le dossier choisi à la main et sauf les
+    /// dossiers qui ne sont pas des racines git ; `nil` quand l'ardoise est illisible.
+    func launchRepos() async -> [KanbanLaunchRepoChoice]? {
+        guard let cards = await board() else { return nil }
+        let roots = LaunchRepo.options(cards: cards, projectRoot: projectRoot(), chosen: nil)
+            .filter { LaunchRepo.isGitRoot(path: $0) }
+        return KanbanLaunchRepos.choices(roots)
     }
 
     /// Vrai dès que l'ardoise publiée quitte `.loading`, faux à l'échéance : un

@@ -13,6 +13,16 @@ private let calmGestures: [VoiceGesture] = [
     .answerAuditEscalation, .resume, .consult,
 ]
 
+/// La question qu'un intent passe en `prompt` pour un geste dont la confirmation
+/// demande plusieurs valeurs (arrêt, lancement) ; `nil` pour les autres.
+private func ownPrompt(_ gesture: VoiceGesture) -> String? {
+    switch gesture {
+    case .stopFeature: return VoiceGestureText.stopConfirmation(repo: "mem0-omp", feature: "login-oauth")
+    case .launchPipeline: return VoiceGestureText.launchConfirmation(title: "login-oauth", repo: "mem0-omp", need: "se connecter")
+    default: return nil
+    }
+}
+
 /// Le refus de l'utilisateur, tel qu'une fausse `confirm` le lève.
 private struct Refused: Error {}
 /// L'échec d'émission, tel qu'une fausse `send` le lève.
@@ -59,9 +69,33 @@ struct VoiceGesturePolicyTests {
         "gestes-vocaux-sans-politique-de-confirma/AC-1 : les quatre gestes à risque exigent une confirmation, sur iPhone et sur Mac",
         arguments: riskyGestures, VoicePlatform.allCases
     )
-    func riskyGestureNeedsConfirmation(gesture: VoiceGesture, platform: VoicePlatform) {
+    func riskyGestureNeedsConfirmation(gesture: VoiceGesture, platform: VoicePlatform) async throws {
         #expect(VoiceGesturePolicy.rule(for: gesture, on: platform).needsConfirmation == true)
-        #expect(VoiceGestureText.confirmation(for: gesture, target: "login-oauth") != nil)
+        guard let own = ownPrompt(gesture) else {
+            #expect(VoiceGestureText.confirmation(for: gesture, target: "login-oauth") != nil)
+            return
+        }
+        // Arrêt et lancement : sans leur propre question, la porte n'envoie rien.
+        #expect(VoiceGestureText.confirmation(for: gesture, target: "login-oauth") == nil)
+        let bare = Calls()
+        let without = try await VoiceGesturePolicy.apply(
+            gesture, target: "login-oauth", on: platform,
+            confirm: { prompt in bare.confirm += 1; bare.prompts.append(prompt) },
+            send: { bare.send += 1 }
+        )
+        #expect(without == .cancelled(dialog: VoiceGestureText.cancelled))
+        #expect(bare.confirm == 0)
+        #expect(bare.send == 0)
+
+        let calls = Calls()
+        let with = try await VoiceGesturePolicy.apply(
+            gesture, target: "login-oauth", prompt: own, on: platform,
+            confirm: { prompt in calls.confirm += 1; calls.prompts.append(prompt) },
+            send: { calls.send += 1 }
+        )
+        #expect(with == .sent)
+        #expect(calls.prompts == [own])
+        #expect(calls.send == 1)
     }
 
     @Test(
@@ -111,21 +145,24 @@ struct VoiceGesturePolicyTests {
     // --- la porte d'application -------------------------------------------------
 
     @Test(
-        "gestes-vocaux-sans-politique-de-confirma/AC-5 : la confirmation d'arrêt énonce l'action et la feature nommée",
+        "gestes-vocaux-sans-politique-de-confirma/AC-5 : la confirmation d'arrêt énonce l'action, le dépôt arrêté et la feature nommée",
         arguments: VoicePlatform.allCases
     )
     func stopConfirmationNamesTheFeature(platform: VoicePlatform) async throws {
-        let expected = "Arrêter la feature login-oauth\u{00A0}?"
-        for target in ["login-oauth", "  login-oauth \n"] {
+        let expected = "Arrêter les pipelines de mem0-omp\u{00A0}? (feature login-oauth)"
+        #expect(VoiceGestureText.stopConfirmation(repo: "mem0-omp", feature: "login-oauth") == expected)
+        for target in ["mem0-omp", "  mem0-omp \n"] {
             let calls = Calls()
             let outcome = try await VoiceGesturePolicy.apply(
-                .stopFeature, target: target, on: platform,
+                .stopFeature, target: target,
+                prompt: VoiceGestureText.stopConfirmation(repo: "mem0-omp", feature: "login-oauth"),
+                on: platform,
                 confirm: { prompt in calls.confirm += 1; calls.prompts.append(prompt) },
                 send: { calls.send += 1 }
             )
             #expect(outcome == .sent)
             #expect(calls.prompts == [expected])
-            #expect(calls.prompts.first?.contains("login-oauth") == true)
+            #expect(calls.send == 1)
         }
     }
 
@@ -139,7 +176,7 @@ struct VoiceGesturePolicyTests {
         for failure in failures {
             let calls = Calls()
             let outcome = try await VoiceGesturePolicy.apply(
-                gesture, target: "login-oauth", on: platform,
+                gesture, target: "login-oauth", prompt: ownPrompt(gesture), on: platform,
                 confirm: { _ in calls.confirm += 1; throw failure },
                 send: { calls.send += 1 }
             )
@@ -150,7 +187,7 @@ struct VoiceGesturePolicyTests {
 
         let calls = Calls()
         let blank = try await VoiceGesturePolicy.apply(
-            gesture, target: "   ", on: platform,
+            gesture, target: "   ", prompt: ownPrompt(gesture), on: platform,
             confirm: { _ in calls.confirm += 1 },
             send: { calls.send += 1 }
         )
@@ -166,7 +203,7 @@ struct VoiceGesturePolicyTests {
     func confirmedGestureSendsExactlyOnce(gesture: VoiceGesture, platform: VoicePlatform) async throws {
         let calls = Calls()
         let outcome = try await VoiceGesturePolicy.apply(
-            gesture, target: "login-oauth", on: platform,
+            gesture, target: "login-oauth", prompt: ownPrompt(gesture), on: platform,
             confirm: { _ in calls.confirm += 1 },
             send: { calls.send += 1 }
         )
@@ -177,7 +214,7 @@ struct VoiceGesturePolicyTests {
         let failing = Calls()
         await #expect(throws: SendFailed()) {
             _ = try await VoiceGesturePolicy.apply(
-                gesture, target: "login-oauth", on: platform,
+                gesture, target: "login-oauth", prompt: ownPrompt(gesture), on: platform,
                 confirm: { _ in failing.confirm += 1 },
                 send: { failing.send += 1; throw SendFailed() }
             )

@@ -31,15 +31,22 @@ extension VoiceGesturePolicy {
 extension VoiceGestureIntent {
     /// Applique la table au geste de l'intent : rien n'est émis si sa politique
     /// d'authentification diverge de la table ; sinon la porte demande, au besoin,
-    /// la confirmation à Siri avant d'appeler `send`.
+    /// la confirmation à Siri avant d'appeler `send`. `prompt` est la question de
+    /// confirmation d'un geste qui en compose une à plusieurs valeurs (arrêt,
+    /// lancement) ; sans lui, ces gestes n'émettent rien.
     @MainActor
-    public func applyVoicePolicy(target: String, send: @MainActor () async throws -> Void) async throws -> VoiceGestureOutcome {
+    public func applyVoicePolicy(
+        target: String,
+        prompt: String? = nil,
+        send: @MainActor () async throws -> Void
+    ) async throws -> VoiceGestureOutcome {
         guard Self.authenticationPolicy == VoiceGesturePolicy.authenticationPolicy(for: Self.voiceGesture, on: .current) else {
             return .misconfigured(dialog: VoiceGestureText.misconfigured)
         }
         return try await VoiceGesturePolicy.apply(
             Self.voiceGesture,
             target: target,
+            prompt: prompt,
             on: .current,
             confirm: { prompt in try await requestVoiceConfirmation(self, prompt) },
             send: send

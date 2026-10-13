@@ -62,6 +62,40 @@ final class RemoteActions {
         }
     }
 
+    /// L'identifiant de l'entrée qu'un geste de commande vient d'écrire en tête du
+    /// journal, `nil` s'il n'a rien consigné. La route l'ignore (202 sans attendre
+    /// l'accusé) ; un geste vocal le passe à `settlement(of:)`.
+    private func recordedEntry(since id: String?) -> String? {
+        guard let entry = actions.journal.first, entry.id != id else { return nil }
+        return entry.id
+    }
+
+    /// Attend la conclusion de la commande de l'entrée `entryId` (siri-mac-pilotage-pipelines,
+    /// S-5) : rend la main quand le service l'a prise en charge, lève quand il l'a
+    /// refusée ou que le POST a échoué. Lecture seule : le parcours suit les
+    /// publications de `actions.journal` et n'écrit jamais rien. Aucune borne de
+    /// temps : `emitCommand` conclut toujours son entrée, par l'accusé ou par
+    /// l'erreur du POST.
+    func settlement(of entryId: String) async throws(GestureRefusal) {
+        for await journal in actions.$journal.values {
+            guard let entry = journal.first(where: { $0.id == entryId }) else { throw .nothingRecorded }
+            switch entry.state {
+            case .awaitingAck:
+                continue
+            case .taken, .delivered:
+                return
+            case .refused(let reason):
+                throw .commandRefused(reason)
+            case .failed(let reason):
+                throw .serviceFailure(reason)
+            case .unacknowledged:
+                throw .serviceFailure(ActionsText.unacknowledged)
+            }
+        }
+        // Le flux ne s'arrête qu'à l'annulation de la tâche : rien n'a été conclu.
+        throw .nothingRecorded
+    }
+
     private static func isBlank(_ text: String) -> Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -119,7 +153,8 @@ final class RemoteActions {
         try checkJournal(since: before)
     }
 
-    func verdict(cardId: String, verdict: MilestoneVerdict) async throws(GestureRefusal) {
+    @discardableResult
+    func verdict(cardId: String, verdict: MilestoneVerdict) async throws(GestureRefusal) -> String? {
         let card = try card(cardId)
         let action = try action(card)
         let before = actions.journal.first?.id
@@ -132,6 +167,7 @@ final class RemoteActions {
             actions.accept(action)
         }
         try checkJournal(since: before)
+        return recordedEntry(since: before)
     }
 
     func resume(cardId: String) async throws(GestureRefusal) {
@@ -192,22 +228,25 @@ final class RemoteActions {
         }
     }
 
-    func stop(cardId: String) async throws(GestureRefusal) {
+    @discardableResult
+    func stop(cardId: String) async throws(GestureRefusal) -> String? {
         let card = try card(cardId)
         let action = try action(card)
         guard action.slug != nil, action.repoRoot != nil else { throw .cardWithoutLot }
         let before = actions.journal.first?.id
         actions.stopLot(action)
         try checkJournal(since: before)
+        return recordedEntry(since: before)
     }
 
+    @discardableResult
     func launch(
         repoRoot: String,
         title: String,
         description: String,
         modelReqSpecs: String?,
         modelImplReview: String?
-    ) async throws(GestureRefusal) {
+    ) async throws(GestureRefusal) -> String? {
         guard !Self.isBlank(title) else { throw .emptyTitle }
         // MÊME règle que la feuille « Nouvelle feature » : le titre ET la
         // description doivent être non blancs — sinon `ActionsModel.launch` sort
@@ -223,6 +262,7 @@ final class RemoteActions {
             modelImplReview: modelImplReview
         )
         try checkJournal(since: before)
+        return recordedEntry(since: before)
     }
 
     // MARK: - Conduite

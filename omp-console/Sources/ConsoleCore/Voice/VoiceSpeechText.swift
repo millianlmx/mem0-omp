@@ -138,6 +138,60 @@ public enum VoiceSpeechText {
     /// (`VoiceSpeech.normalized`).
     static let otherAnswerWords: Set<String> = ["autre reponse", "une autre reponse", "autre", "reponse libre"]
 
+    // --- pilotage (siri-mac-pilotage-pipelines) ------------------------------------
+    /// La question qui demande la feature visée par un geste.
+    public static func pilotWhichFeature(_ gesture: VoicePilotGesture) -> String {
+        switch gesture {
+        case .resume:
+            return "Quelle feature reprendre ?"
+        case .stop:
+            return "Quelle feature arrêter ?"
+        case .validateSpecs:
+            return "De quelle feature valider les specs ?"
+        case .acceptReview:
+            return "De quelle feature accepter la revue ?"
+        }
+    }
+
+    /// Aucune carte de l'ardoise n'offre le geste.
+    public static func pilotNoEligible(_ gesture: VoicePilotGesture) -> String {
+        switch gesture {
+        case .resume:
+            return "Aucune feature ne peut être reprise pour l’instant."
+        case .stop:
+            return "Aucune feature n’a de pipeline à arrêter pour l’instant."
+        case .validateSpecs:
+            return "Aucune feature n’attend la validation de ses specs."
+        case .acceptReview:
+            return "Aucune feature n’attend l’acceptation de sa revue."
+        }
+    }
+
+    /// Le nom dit désigne une feature de l'ardoise, mais qui n'offre pas le geste.
+    public static func pilotNotOffered(_ gesture: VoicePilotGesture) -> String {
+        switch gesture {
+        case .resume:
+            return "Aucune feature à ce nom ne peut être reprise dans son état actuel, rien n’a été envoyé."
+        case .stop:
+            return "Aucune feature à ce nom n’a de pipeline à arrêter, rien n’a été envoyé."
+        case .validateSpecs:
+            return "Aucune feature à ce nom n’attend la validation de ses specs, rien n’a été envoyé."
+        case .acceptReview:
+            return "Aucune feature à ce nom n’attend l’acceptation de sa revue, rien n’a été envoyé."
+        }
+    }
+
+    /// Rappelle TOUS les dépôts lançables, sans plafond.
+    public static func launchWhichRepo(labels: [String]) -> String {
+        "Sur quel dépôt lancer la pipeline ? Choix possibles : \(list(labels, more: 0))."
+    }
+
+    public static let launchNoRepo = "Aucun dépôt n’est connu sur ce Mac, rien n’a été lancé. Ouvrez OMP Console pour en choisir un."
+    public static let launchAskTitle = "Quel est le titre de la feature ?"
+    public static let launchAskNeed = "Quel est le besoin ?"
+    public static let launchEmptyTitle = "Le titre dicté est vide, aucune feature n’a été créée."
+    public static let launchEmptyNeed = "Le besoin dicté est vide, aucune feature n’a été créée."
+
     // --- issue d'un geste (S-5) --------------------------------------------------
     public static func issue(_ issue: VoiceIssue) -> String {
         switch issue {
@@ -174,7 +228,7 @@ public enum VoiceSpeechText {
         guard !t.isEmpty else { return "C’est fait." }
         switch gesture {
         case .stopFeature:
-            return "La feature \(t) est arrêtée."
+            return "Les pipelines de \(t) sont arrêtées."
         case .validateSpecs:
             return "Les specs de la feature \(t) sont validées."
         case .acceptReview:
