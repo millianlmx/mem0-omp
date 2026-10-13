@@ -297,8 +297,9 @@ enum ClientFixtures {
         return Data("event: store\ndata: ".utf8) + data + Data("\n\n".utf8)
     }
 
-    /// La trame `hello` d'ouverture du flux, à la version d'API donnée.
-    static func helloFrame(_ version: Int = 1) -> Data {
+    /// La trame `hello` d'ouverture du flux, à la version d'API donnée (par défaut
+    /// la version courante du contrat, pour qu'une montée ne casse aucun test).
+    static func helloFrame(_ version: Int = ConsoleAPI.protocolVersion) -> Data {
         frame("hello", #"{"protocolVersion":\#(version)}"#)
     }
 }
