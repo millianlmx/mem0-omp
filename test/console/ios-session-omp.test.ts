@@ -95,7 +95,13 @@ function hostedStateFaults(root: string): string[] {
 function launchExclusivityFaults(root: string): string[] {
   const faults: string[] = [];
   const actions = code(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "RemoteActions.swift"));
-  if (!/guard\s+session\.canStart\s+else\s*\{\s*throw\s+ConsoleAPIError\.conflict\(SessionConsoleText\.launchBusy\)/.test(actions)) {
+  const refusals = code(path.join(root, "omp-console", "Sources", "OMPConsole", "Remote", "GestureRefusal.swift"));
+  // Le refus est la cause typée `sessionBusy`, que `GestureRefusal.apiError`
+  // traduit seule en 409 au texte SessionConsoleText.launchBusy.
+  if (
+    !/guard\s+session\.canStart\s+else\s*\{\s*throw\s+(GestureRefusal)?\.sessionBusy\b/.test(actions)
+    || !/case\s+\.sessionBusy[\s\S]*?SessionConsoleText\.launchBusy/.test(refusals)
+  ) {
     faults.push("RemoteActions ne refuse pas un second lancement avec SessionConsoleText.launchBusy");
   }
   const model = code(path.join(root, "omp-console", "ios", "OMPConsoleIOS", "IOSSessionOmpModel.swift"));
