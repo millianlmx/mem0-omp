@@ -215,8 +215,11 @@ struct ReadinessTests {
 
         let pending = PendingReadiness(harness.model)
         #expect(await eventually { harness.model.state == .connected(endpoint: manual) })
-        harness.transport.push(ClientFixtures.helloFrame(2))
-        #expect(await pending.value == .incompatibleVersion(local: 1, remote: 2))
+        harness.transport.push(ClientFixtures.helloFrame(ConsoleAPI.protocolVersion + 1))
+        #expect(await pending.value == .incompatibleVersion(
+            local: ConsoleAPI.protocolVersion,
+            remote: ConsoleAPI.protocolVersion + 1
+        ))
         await gate.release()
         harness.stop()
     }

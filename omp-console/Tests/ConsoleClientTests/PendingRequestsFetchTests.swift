@@ -45,7 +45,7 @@ private let sessionBody = Data("""
 """.utf8)
 
 private func ok(_ body: Data) -> Result<ClientHTTPResponse, Error> {
-    .success(ClientHTTPResponse(status: 200, protocolVersion: 1, body: body))
+    .success(ClientHTTPResponse(status: 200, protocolVersion: ConsoleAPI.protocolVersion, body: body))
 }
 
 /// Un modèle au Mac connu par son adresse manuelle, non démarré : aucune lecture de
@@ -56,7 +56,7 @@ private func harness(failing: PendingRequestsSource? = nil) -> ClientHarness {
     harness.transport.respond { request in
         if let failing, request.path == path(of: failing) {
             return .success(ClientHTTPResponse(
-                status: 503, protocolVersion: 1, body: envelope("unavailable", unavailableDetail)
+                status: 503, protocolVersion: ConsoleAPI.protocolVersion, body: envelope("unavailable", unavailableDetail)
             ))
         }
         switch request.path {
