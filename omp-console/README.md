@@ -2822,6 +2822,11 @@ ses listes écrites à la main.
   `.misconfigured(let d)` → `.result(dialog: IntentDialog(LocalizedStringResource(stringLiteral: d)))`.
   Un refus, une absence de réponse ou une cible vide n'émettent rien ; une erreur de
   `send` remonte telle quelle.
+- un intent qui émet **plusieurs** gestes (la conversation des demandes en attente)
+  ne se conforme pas à `VoiceGestureIntent` : son `perform()` vérifie
+  `VoiceGesturePolicy.admits(Self.authenticationPolicy, for: <liste de ses gestes>, on: .current)`
+  et rend `VoiceGestureText.misconfigured` sans rien émettre si le littéral ne vaut
+  pas, pour CHACUN de ses gestes, la politique de la table.
 
 Piège du littéral : `appintentsmetadataprocessor` exige que `authenticationPolicy`
 soit initialisée par un littéral (« 'IntentAuthenticationPolicy' must be initialized
@@ -4489,6 +4494,94 @@ par l'utilisateur) :
 4. Quitter l'app Mac, puis redire la phrase. Attendu : « Appairé, Mac non joint ».
 5. Dans Raccourcis, toucher la tuile *Statut de la connexion* d'OMP Console.
    Attendu : la même réponse qu'à l'étape précédente.
+
+### Siri : demandes en attente
+
+Le second App Intent de l'app iOS, **Demandes en attente**
+(`IOSPendingRequestsIntent`, `ios/OMPConsoleIOS/IOSSiriText.swift`), annonce les
+demandes du Mac en attente et laisse y répondre à la voix : questions des
+pipelines (à options ou en texte), jalons specs et revue, dialogues de conduite
+de projet et de session hébergée, escalades d'audit — la liste unifiée de
+`PendingRequests`, lue par `ConsoleClientModel.pendingRequests()`. Toute la
+conversation vit dans ConsoleCore (`VoicePendingWalk`, phrases de
+`VoiceSpeechText`) ; la coque iOS (`IOSSiriPending.swift`) ne fournit que le canal
+vers le Mac et l'attente « prêt », sans écrire une seule phrase.
+
+Phrases Siri (en français, toutes avec le nom de l'app) :
+
+- « Demandes en attente dans OMP Console »
+- « Questions en attente dans OMP Console »
+- « Répondre aux questions de OMP Console »
+- « Ce qui attend dans OMP Console »
+
+Dans l'app **Raccourcis**, la tuile *Demandes en attente* (symbole `tray.full`)
+lance le même intent.
+
+Déroulé d'une conversation :
+
+1. Siri lit la liste du Mac. Vide : « Aucune demande ne vous attend. », sans
+   aucune question.
+2. Il annonce le total puis la plus ancienne : « 3 demandes en attente. La
+   première : … ».
+3. Selon la demande :
+   - **à options** (question de pipeline, dialogue `select` ou `confirm`,
+     escalade d'audit) : « Choix possibles : … ». On désigne l'option par son
+     libellé, son rang (« la deuxième », « 2 », « la dernière ») — la correspondance
+     de `VoiceAnswerMatcher`. Quand la demande accepte le texte libre (question de
+     pipeline, escalade d'audit), Siri ajoute « Ou dites « autre réponse ». », puis
+     « Dictez votre réponse. » ;
+   - **en texte** (question sans option, dialogue `input`) : « Dictez votre
+     réponse. » ;
+   - **jalon specs ou revue** : Siri relit le geste (« Valider les specs de la
+     feature X ? ») et n'envoie rien sans « oui » ;
+   - **non vocale** (dialogue `editor`, `select` sans option, pilote arrêté, jalon
+     d'une autre nature) : « Elle est à traiter dans l’app, pas à la voix. »
+   Une réponse non reconnue fait redemander, au plus 3 fois ; au-delà, « Annulé,
+   rien n’a été fait. »
+4. Avant d'envoyer, Siri relit la liste du Mac. Si la question a changé (répondue
+   ailleurs, ou remplacée), RIEN n'est envoyé : « La question a changé
+   entre-temps, rien n’a été envoyé. », puis la nouvelle question est relue et
+   redemandée (« La nouvelle question : … »), ou Siri passe à la suivante si la
+   demande a disparu.
+5. La réponse part en UNE requête par l'API distante (`/v1/cards/{id}/answer`
+   avec l'identifiant de question, `/reply`, `/verdict`,
+   `/v1/conduite/dialogs/{id}`, `/v1/session/dialogs/{id}`,
+   `/v1/audits/{id}/escalations`), et Siri dit l'issue (« Votre choix est envoyé
+   à … »).
+6. « Passer à la suivante ? » : « oui » présente la suivante (« La suivante :
+   … ») ; « non » termine (« D’accord, j’arrête là. »). Sans suivante :
+   « Aucune demande ne vous attend. »
+
+La confirmation suit la table de la politique vocale : seuls les jalons specs et
+revue sont relus ; réponses, dialogues et escalades partent sans relecture.
+
+Causes d'échec, une phrase chacune, sans ouvrir l'app (`supportedModes = .background`) :
+
+| Cause | Phrase |
+|---|---|
+| iPhone verrouillé (sondé avant tout accès au client) | « Cet appareil est verrouillé. Déverrouillez-le, puis réessayez. » |
+| Non appairé, ou jeton refusé | « Cet appareil n’est appairé à aucun Mac. Ouvrez OMP Console pour l’appairer. » |
+| Mac injoignable ou coque fermée (attente « prêt » bornée à 5 s) | « Le Mac est injoignable. Vérifiez qu’OMP Console y est ouvert et que le réseau est disponible. » |
+| Version incompatible | « L’app de cet appareil est plus ancienne que celle du Mac. Mettez-la à jour. », ou l'inverse |
+
+L'intent exige le déverrouillage de CET iPhone
+(`authenticationPolicy = .requiresLocalDeviceAuthentication`), comme la table
+l'exige pour chacun de ses gestes (`VoicePendingWalk.gestures`). Siri ne parle que
+s'il est interrogé : aucune annonce, aucune notification. Preuves :
+`ios/OMPConsoleIOSTests/IOSSiriPendingTests.swift` (AC-1 à AC-15 hors AC-8, Mac
+et conversation scriptés) et `test/console/siri-iphone-questions-en-attente.test.ts`.
+
+**Preuve manuelle sur iPhone réel** (siri-iphone-questions-en-attente/AC-8,
+conduite par l'utilisateur) :
+
+1. Installer l'app sur un iPhone réel, l'appairer au Mac, régler Siri en
+   français, garder l'iPhone déverrouillé.
+2. Coque Mac ouverte, un run qui attend une question (carte « Question en vol »).
+3. Dire « Dis Siri, demandes en attente dans OMP Console ». Attendu : Siri annonce
+   le total et lit la question avec ses choix.
+4. Dicter la réponse (une option, ou « autre réponse » puis un texte).
+5. Attendu : dans la coque Mac, le run reçoit cette réponse et reprend (la carte
+   quitte « Question en vol »).
 
 ### Conduire un projet depuis l'iPad
 

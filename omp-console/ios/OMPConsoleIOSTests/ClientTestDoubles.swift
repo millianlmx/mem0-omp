@@ -69,6 +69,12 @@ struct ImmediatePacer: ClientPacer {
     }
 }
 
+/// L'horloge qui rend AUSSITÔT, sans lever : passée en `readinessPacer`,
+/// l'échéance de `waitUntilReady()` tombe tout de suite (Mac sans réponse).
+struct ReturningPacer: ClientPacer {
+    func sleep(seconds: Double) async throws {}
+}
+
 /// Le trousseau qui compte ses lectures (client-ios-possede-par-la-vue, S-3) :
 /// `held` retient chaque lecture jusqu'à `open()`, pour observer l'intent témoin
 /// pendant que le trousseau est lu.
@@ -160,6 +166,49 @@ final class OpenStreamTransport: ClientTransport, @unchecked Sendable {
     }
 }
 
+/// Le transport dont le flux temps réel s'ouvre sur la trame `hello` de
+/// `version` puis reste ouvert (trame de `ClientFixtures.helloFrame` du paquet).
+/// À la version de l'app, le client est « prêt » ; à une autre, il se verrouille
+/// en version incompatible. Chaque requête ordinaire est enregistrée et reçoit la
+/// réponse de `responder`.
+final class HelloStreamTransport: ClientTransport, @unchecked Sendable {
+    private let lock = NSLock()
+    private var recorded: [ClientHTTPRequest] = []
+    private var continuations: [AsyncThrowingStream<Data, Error>.Continuation] = []
+    private let version: Int
+    private let responder: @Sendable (ClientHTTPRequest) -> ClientHTTPResponse
+
+    init(version: Int, _ responder: @escaping @Sendable (ClientHTTPRequest) -> ClientHTTPResponse) {
+        self.version = version
+        self.responder = responder
+    }
+
+    var requests: [ClientHTTPRequest] { lock.withLock { recorded } }
+
+    func send(
+        _ request: ClientHTTPRequest,
+        to endpoint: ClientEndpoint,
+        token: String?
+    ) async throws -> ClientHTTPResponse {
+        lock.withLock { recorded.append(request) }
+        return responder(request)
+    }
+
+    func stream(
+        _ request: ClientHTTPRequest,
+        to endpoint: ClientEndpoint,
+        token: String?
+    ) async throws -> AsyncThrowingStream<Data, Error> {
+        let (stream, continuation) = AsyncThrowingStream<Data, Error>.makeStream()
+        continuation.yield(Data("event: hello\ndata: {\"protocolVersion\":\(version)}\n\n".utf8))
+        lock.withLock {
+            recorded.append(request)
+            continuations.append(continuation)
+        }
+        return stream
+    }
+}
+
 enum ClientDoubles {
     /// Un modèle client câblé sur `transport`, sans jeton, avec l'adresse
     /// manuelle `address` (l'endpoint connu de l'appairage). Le modèle n'est pas
@@ -182,14 +231,16 @@ enum ClientDoubles {
 
     /// Un modèle client APPAIRÉ (préférence `client.deviceId` = `dev-1`, le jeton
     /// est celui de `tokens`), câblé sur `transport` et `discovery`, avec
-    /// l'adresse manuelle `address` si elle est donnée. Le modèle n'est PAS
+    /// l'adresse manuelle `address` si elle est donnée, et l'échéance de
+    /// `waitUntilReady()` mesurée par `readinessPacer`. Le modèle n'est PAS
     /// démarré : c'est le lancement à froid d'un intent.
     @MainActor
     static func pairedModel(
         tokens: CountingTokenStore,
         transport: any ClientTransport,
         discovery: (any DiscoverySource)? = nil,
-        address: String? = nil
+        address: String? = nil,
+        readinessPacer: any ClientPacer = LiveClientPacer()
     ) -> ConsoleClientModel {
         var preferences = [ClientPreferenceKey.deviceId: "dev-1"]
         if let address { preferences[ClientPreferenceKey.manualAddress] = address }
@@ -201,7 +252,8 @@ enum ClientDoubles {
             pacer: ImmediatePacer(),
             pathSource: SilentPathSource(),
             deviceName: "iPhone",
-            searchPacer: ImmediatePacer()
+            searchPacer: ImmediatePacer(),
+            readinessPacer: readinessPacer
         )
     }
 
