@@ -18,6 +18,13 @@ extension VoiceGesturePolicy {
     public static func authenticationPolicy(for gesture: VoiceGesture, on platform: VoicePlatform) -> IntentAuthenticationPolicy {
         rule(for: gesture, on: platform).needsUnlock ? .requiresLocalDeviceAuthentication : .alwaysAllowed
     }
+
+    /// Vrai si `policy` est celle qu'exige la table pour CHACUN des `gestures` :
+    /// un intent qui émet plusieurs gestes la vérifie sur toute sa liste. Vrai pour
+    /// une liste vide.
+    public static func admits(_ policy: IntentAuthenticationPolicy, for gestures: [VoiceGesture], on platform: VoicePlatform) -> Bool {
+        gestures.allSatisfy { policy == authenticationPolicy(for: $0, on: platform) }
+    }
 }
 
 extension VoiceGestureIntent {

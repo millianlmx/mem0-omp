@@ -21,8 +21,10 @@ struct OpenConsoleIntent: AppIntent {
     }
 }
 
-/// L'App Shortcut de l'intent sonde. Toute phrase doit contenir
-/// `\(.applicationName)` : sans lui, le processeur de métadonnées sort en erreur.
+/// Les App Shortcuts de la coque : l'intent sonde, puis les deux intents vocaux des
+/// demandes en attente (siri-mac-questions-en-attente, S-6). Toute phrase doit
+/// contenir `\(.applicationName)` : sans lui, le processeur de métadonnées sort en
+/// erreur.
 struct ConsoleShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
         AppShortcut(
@@ -30,6 +32,27 @@ struct ConsoleShortcuts: AppShortcutsProvider {
             phrases: ["Ouvre \(.applicationName)"],
             shortTitle: "Ouvrir OMP Console",
             systemImageName: "macwindow"
+        )
+        AppShortcut(
+            intent: MacPendingIntent(),
+            phrases: [
+                "Qu’est-ce qui m’attend dans \(.applicationName)",
+                "Ce qui m’attend dans \(.applicationName)",
+                "Demandes en attente dans \(.applicationName)",
+                "Questions en attente dans \(.applicationName)",
+            ],
+            shortTitle: "Ce qui m’attend",
+            systemImageName: "tray.full"
+        )
+        AppShortcut(
+            intent: MacAnswerIntent(),
+            phrases: [
+                "Réponds dans \(.applicationName)",
+                "Répondre dans \(.applicationName)",
+                "Répondre aux questions de \(.applicationName)",
+            ],
+            shortTitle: "Répondre",
+            systemImageName: "text.bubble"
         )
     }
 }

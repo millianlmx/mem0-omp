@@ -1,11 +1,13 @@
 // Les mots de Siri dans l’app iOS (feature client-ios-possede-par-la-vue, S-4) :
-// les trois réponses de l’intent témoin, l’intent lui-même et ses phrases. Le
+// les trois réponses de l’intent témoin, l’intent lui-même et ses phrases, puis
+// l’intent « demandes en attente » (siri-iphone-questions-en-attente, S-7). Le
 // titre, la description, les phrases, le titre court et le symbole sont des
 // littéraux extraits AU BUILD par l’outillage App Intents : ils vivent donc ici,
 // à la déclaration, et non dans des constantes d’un autre type.
 
 import AppIntents
 import ConsoleClient
+import ConsoleCore
 
 /// Les mots de l’intent témoin.
 enum IOSSiriText {
@@ -38,6 +40,49 @@ struct IOSConnectionStatusIntent: AppIntent {
     }
 }
 
+/// Les demandes du Mac en attente : Siri les annonce, de la plus ancienne à la
+/// plus récente, et laisse y répondre à la voix (`VoicePendingWalk`). L’app ne
+/// s’ouvre pas ; l’intent parle au Mac, donc exige le déverrouillage de CET
+/// iPhone, comme la table de politique l’exige pour chacun de ses gestes.
+struct IOSPendingRequestsIntent: AppIntent {
+    static let title: LocalizedStringResource = "Demandes en attente"
+    static let description: IntentDescription? = IntentDescription("Siri annonce les demandes du Mac en attente et vous laisse y répondre à la voix.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
+
+    /// La réponse dictée, redemandée à chaque tour par `requestValue`.
+    @Parameter(title: "Réponse") var spokenAnswer: String?
+
+    @AppDependency var client: ConsoleClientModel
+
+    init() {}
+
+    /// Pour les tests : résout le client dans `dependencies`, jamais dans `.shared`.
+    init(dependencies: AppDependencyManager) { _client = AppDependency(manager: dependencies) }
+
+    @MainActor
+    func perform() async throws -> IntentResultContainer<Never, Never, Never, IntentDialog> {
+        guard VoiceGesturePolicy.admits(Self.authenticationPolicy, for: VoicePendingWalk.gestures, on: .current) else {
+            return .result(dialog: IntentDialog(stringLiteral: VoiceGestureText.misconfigured))
+        }
+        return .result(dialog: IntentDialog(stringLiteral: try await IOSSiriPending.answer(client: client, conversation: self)))
+    }
+}
+
+/// Les tours de parole de la conversation : une dictée par `requestValue`, un
+/// oui/non par `requestConfirmation` (qui lève sur « non »).
+extension IOSPendingRequestsIntent: VoiceConversation {
+    @MainActor
+    func ask(_ dialog: String) async throws -> String {
+        try await $spokenAnswer.requestValue(IntentDialog(stringLiteral: dialog))
+    }
+
+    @MainActor
+    func confirm(_ dialog: String) async throws {
+        try await requestConfirmation(actionName: .continue, dialog: IntentDialog(stringLiteral: dialog))
+    }
+}
+
 /// Les phrases Siri de l’app, toutes avec le nom de l’app.
 struct OMPConsoleShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
@@ -50,6 +95,17 @@ struct OMPConsoleShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Statut de la connexion",
             systemImageName: "macbook.and.iphone"
+        )
+        AppShortcut(
+            intent: IOSPendingRequestsIntent(),
+            phrases: [
+                "Demandes en attente dans \(.applicationName)",
+                "Questions en attente dans \(.applicationName)",
+                "Répondre aux questions de \(.applicationName)",
+                "Ce qui attend dans \(.applicationName)",
+            ],
+            shortTitle: "Demandes en attente",
+            systemImageName: "tray.full"
         )
     }
 }

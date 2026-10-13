@@ -103,6 +103,57 @@ public enum VoiceSpeechText {
         return pendingHeader(count) + items.joined(separator: " ; ") + end
     }
 
+    // --- conversation des attentes (siri-iphone-questions-en-attente, S-1) ------
+    /// Le total annoncé en tête de la conversation.
+    public static func walkCount(_ count: Int) -> String {
+        count == 1 ? "1 demande en attente." : "\(count) demandes en attente."
+    }
+
+    /// La présentation de la première attente, `item` étant `VoicePendingSummary.item`.
+    public static func walkFirst(_ item: String) -> String {
+        "La première : \(item)."
+    }
+
+    public static func walkNext(_ item: String) -> String {
+        "La suivante : \(item)."
+    }
+
+    /// La présentation d'une attente dont la question a été remplacée.
+    public static func walkReplaced(_ item: String) -> String {
+        "La nouvelle question : \(item)."
+    }
+
+    /// Tous les choix d'une question, sans plafond.
+    public static func choices(_ labels: [String]) -> String {
+        "Choix possibles : \(list(labels, more: 0))."
+    }
+
+    public static let otherAnswerOffer = "Ou dites « autre réponse »."
+
+    /// Le mot ENTENDU qui ouvre la dictée d'un texte libre, comparé après
+    /// normalisation (`VoiceSpeech.normalized`).
+    public static let otherAnswer = "autre réponse"
+
+    public static let dictate = "Dictez votre réponse."
+
+    /// Une attente qui ne se règle pas à la voix.
+    public static let appOnly = "Elle est à traiter dans l’app, pas à la voix."
+
+    public static let nextPrompt = "Passer à la suivante ?"
+
+    /// La fin d'une conversation refusée ou abandonnée avant la suivante.
+    public static let walkStopped = "D’accord, j’arrête là."
+
+    /// Les options prononcées d'un dialogue `confirm`.
+    public static let yes = "Oui"
+    public static let no = "Non"
+
+    /// Les phrases non vides de `phrases`, séparées par une espace : ce que Siri
+    /// dit d'une traite.
+    static func joined(_ phrases: [String]) -> String {
+        phrases.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     // --- issue d'un geste (S-5) --------------------------------------------------
     public static func issue(_ issue: VoiceIssue) -> String {
         switch issue {
@@ -131,6 +182,10 @@ public enum VoiceSpeechText {
             return local < remote
                 ? "L’app de cet appareil est plus ancienne que celle du Mac. Mettez-la à jour."
                 : "OMP Console sur le Mac est plus ancien que l’app de cet appareil. Mettez-le à jour."
+        case .deviceLocked:
+            return "Cet appareil est verrouillé. Déverrouillez-le, puis réessayez."
+        case .stateUnreadable:
+            return "OMP Console n’a pas pu lire l’état du Mac à temps, rien n’a été envoyé. Réessayez dans un instant."
         }
     }
 

@@ -791,3 +791,48 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
     );
   }
 });
+
+const VOCAL_OK =
+  "  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} »)";
+
+test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingIntent et MacAnswerIntent avec leurs phrases françaises en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
+  const { bundle, lancer, planterAncienBundle } = montageAppIntents();
+
+  for (const args of [[], ["--no-tests"]]) {
+    const voie = args.length === 0 ? "complet" : "--no-tests";
+    const r = lancer(args);
+    assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
+    assert.ok(r.sortie.includes(META_OK), `[${voie}] ligne ✓ des métadonnées absente\n${r.sortie}`);
+    assert.ok(r.sortie.includes(VOCAL_OK), `[${voie}] ligne ✓ des intents vocaux absente\n${r.sortie}`);
+    const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
+    for (const marqueur of [
+      '"identifier":"MacPendingIntent"',
+      '"identifier":"MacAnswerIntent"',
+      '"key":"Qu’est-ce qui m’attend dans ${applicationName}"',
+      '"key":"Réponds dans ${applicationName}"',
+    ]) {
+      assert.ok(actions.includes(marqueur), `[${voie}] ${marqueur} absent du bundle : ${actions}`);
+    }
+  }
+
+  const scenarios: { mode: string; attendu: string }[] = [
+    {
+      mode: "sans-vocal",
+      attendu: "✗ intent vocal absent de Metadata.appintents : MacPendingIntent introuvable dans extract.actionsdata",
+    },
+    {
+      mode: "sans-phrase-vocale",
+      attendu:
+        "✗ App Shortcut de l'intent vocal MacPendingIntent absent de Metadata.appintents : phrase « Qu’est-ce qui m’attend dans ${applicationName} » introuvable dans extract.actionsdata",
+    },
+  ];
+  for (const { mode, attendu } of scenarios) {
+    planterAncienBundle();
+    const r = lancer([], { FAUX_APPINTENTS: mode });
+    assert.equal(r.status, 1, `[${mode}] ${r.sortie}`);
+    assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
+    assert.ok(!r.sortie.includes(VOCAL_OK), `[${mode}] ✓ des intents vocaux affiché malgré l'échec\n${r.sortie}`);
+    assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
+    assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
+  }
+});
