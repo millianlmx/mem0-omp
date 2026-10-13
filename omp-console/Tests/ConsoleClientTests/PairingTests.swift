@@ -24,8 +24,8 @@ struct PairingTests {
             if request.path == "/v1/pair" {
                 return .success(ClientHTTPResponse(
                     status: 200,
-                    protocolVersion: 1,
-                    body: Data(#"{"deviceId":"ABC-123","token":"tok-1","protocolVersion":1}"#.utf8)
+                    protocolVersion: ConsoleAPI.protocolVersion,
+                    body: Data(#"{"deviceId":"ABC-123","token":"tok-1","protocolVersion":\#(ConsoleAPI.protocolVersion)}"#.utf8)
                 ))
             }
             return .failure(ClientError.transport(.unreachable("route non scriptée")))
@@ -64,7 +64,7 @@ struct PairingTests {
             if request.path == "/v1/pair" {
                 return .success(ClientHTTPResponse(
                     status: 401,
-                    protocolVersion: 1,
+                    protocolVersion: ConsoleAPI.protocolVersion,
                     body: Data(#"{"error":{"code":"unauthorized"}}"#.utf8)
                 ))
             }
@@ -120,7 +120,7 @@ struct PairingTests {
             if request.path == "/v1/pair" { return pairSucceeds(request) }
             return .success(ClientHTTPResponse(
                 status: 401,
-                protocolVersion: 1,
+                protocolVersion: ConsoleAPI.protocolVersion,
                 body: Data(#"{"error":{"code":"unauthorized"}}"#.utf8)
             ))
         }
@@ -152,8 +152,8 @@ private func pairSucceeds(_ request: ClientHTTPRequest) -> Result<ClientHTTPResp
     if request.path == "/v1/pair" {
         return .success(ClientHTTPResponse(
             status: 200,
-            protocolVersion: 1,
-            body: Data(#"{"deviceId":"ABC-123","token":"tok-1","protocolVersion":1}"#.utf8)
+            protocolVersion: ConsoleAPI.protocolVersion,
+            body: Data(#"{"deviceId":"ABC-123","token":"tok-1","protocolVersion":\#(ConsoleAPI.protocolVersion)}"#.utf8)
         ))
     }
     return .failure(ClientError.transport(.unreachable("route non scriptée")))

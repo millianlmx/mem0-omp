@@ -162,6 +162,73 @@ actor RecordingPacer: ClientPacer {
     func recorded() -> [Double] { delays }
 }
 
+/// Un sommeil qui ne rend la main qu'à `release()` : le délai est tenu par le
+/// test, sans attente réelle. Un `release()` antérieur rend la main aussitôt.
+actor GatePacer: ClientPacer {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+    private(set) var requested: [Double] = []
+
+    func sleep(seconds: Double) async throws {
+        requested.append(seconds)
+        if released { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        for waiter in pending { waiter.resume() }
+    }
+
+    /// Attend qu'un sommeil soit en cours, borné à 3 s.
+    func untilWaiting() async -> Bool {
+        let deadline = Date().addingTimeInterval(3)
+        while waiters.isEmpty, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        return !waiters.isEmpty
+    }
+}
+
+// MARK: - Trousseau
+
+/// Un trousseau dont la lecture ne rend la main qu'à `release()` : la relecture
+/// à froid est tenue par le test. Un `release()` antérieur rend la main aussitôt.
+actor GatedTokenStore: TokenStore {
+    private var stored: String?
+    private var readers: [CheckedContinuation<Void, Never>] = []
+    private var released = false
+
+    init(token: String?) {
+        stored = token
+    }
+
+    func save(_ token: String, for deviceId: String) async throws {
+        stored = token
+    }
+
+    /// Rend le jeton initial (ou le dernier enregistré) une fois relâché.
+    func token(for deviceId: String) async throws -> String? {
+        if !released {
+            await withCheckedContinuation { readers.append($0) }
+        }
+        return stored
+    }
+
+    func remove(deviceId: String) async throws {
+        stored = nil
+    }
+
+    func release() {
+        released = true
+        let pending = readers
+        readers.removeAll()
+        for reader in pending { reader.resume() }
+    }
+}
+
 // MARK: - Découverte
 
 @MainActor
@@ -228,6 +295,12 @@ enum ClientFixtures {
     static func storeFrame(_ snapshot: StoreSnapshot) -> Data {
         let data = try! JSONEncoder().encode(snapshot)
         return Data("event: store\ndata: ".utf8) + data + Data("\n\n".utf8)
+    }
+
+    /// La trame `hello` d'ouverture du flux, à la version d'API donnée (par défaut
+    /// la version courante du contrat, pour qu'une montée ne casse aucun test).
+    static func helloFrame(_ version: Int = ConsoleAPI.protocolVersion) -> Data {
+        frame("hello", #"{"protocolVersion":\#(version)}"#)
     }
 }
 

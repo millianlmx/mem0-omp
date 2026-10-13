@@ -4,11 +4,13 @@ import SwiftUI
 
 /// La feuille d'une carte (S-5 … S-12) : ce que la carte montre et les gestes
 /// qu'elle offre. La carte est RELUE par son identifiant à chaque rendu — la
-/// trame `store` met la feuille à jour sans la refermer.
+/// trame `store` met la feuille à jour sans la refermer —, sauf la question en
+/// vol, FIGÉE dans `answer` (reponse-ios-sans-identifiant-de-question, S-4) : la
+/// réponse part avec son identifiant, et seul un refus du Mac la remplace.
 ///
 /// Rendu en formulaire groupé natif (ios-listes-groupees-natives, S-7) : une
-/// section d'erreur, une section d'information, une section par question en
-/// attente (en-tête natif « Question »), puis une section de gestes — une rangée
+/// section d'erreur, une section d'information, la section de la question
+/// affichée (en-tête natif « Question »), puis une section de gestes — une rangée
 /// par geste, aucun panneau ni carte imbriqués.
 struct PipelinesCardSheet: View {
     @ObservedObject var client: ConsoleClientModel
@@ -16,6 +18,9 @@ struct PipelinesCardSheet: View {
     /// Le crochet de recette `-pipelines.recipe` : la carte de fixture et son
     /// catalogue remplacent l'instantané du Mac, et l'état forcé est appliqué puis annoncé.
     var recipe: PipelinesCardRecipe?
+    /// Appelée quand le Mac dit que la question n'attend plus de réponse, juste
+    /// avant la fermeture : l'écran Pipelines présente alors son alerte (S-5).
+    let onQuestionGone: () -> Void
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
@@ -23,7 +28,14 @@ struct PipelinesCardSheet: View {
     @State private var busy = false
     @State private var error: String?
     @State private var mergeFailed = false
+    /// Le texte d'une question en TEXTE (`client.reply`) ; la question en vol a le sien dans `answer`.
     @State private var freeText = ""
+    /// La question en vol AFFICHÉE, figée, et sa saisie (S-4) : posée depuis la carte
+    /// vivante seulement quand aucune n'est affichée, puis changée par `adopt` ou par une livraison.
+    @State private var answer = IOSAnswerDraft(question: nil)
+    /// La question à laquelle la fiche vient de répondre : sa section reste masquée
+    /// tant que la carte vivante la porte encore.
+    @State private var deliveredToolCallId: String?
     @State private var stopShown = false
     @State private var mergeShown = false
     @State private var mergeRow: ProjectPRRow?
@@ -131,6 +143,9 @@ struct PipelinesCardSheet: View {
                 }
                 .task(id: card?.models) { await loadModelNames() }
                 .task { await applyRecipe(proxy) }
+                .onChange(of: IOSAnswerQuestion(card: card), initial: true) { _, live in
+                    adoptLiveQuestion(live)
+                }
             }
         }
         .confirmationDialog(
@@ -228,35 +243,30 @@ struct PipelinesCardSheet: View {
         }
     }
 
-    /// Les questions en attente (une section chacune, en-tête natif), puis la
-    /// section des autres gestes, une rangée par geste. La première rangée rendue
-    /// porte l'ancre `PipelinesText.recipeActionsAnchor`, vers laquelle la recette
-    /// fait défiler (`applyRecipe`).
+    /// La question affichée (une section, en-tête natif, rendue depuis `answer`
+    /// même si la carte vivante n'a plus de question), puis la section des autres
+    /// gestes, une rangée par geste. La première rangée rendue porte l'ancre
+    /// `PipelinesText.recipeActionsAnchor`, vers laquelle la recette fait défiler
+    /// (`applyRecipe`).
     @ViewBuilder
     private func gestureSections(_ card: KanbanCard) -> some View {
-        let gestures = Array(PipelinesGesture.gestures(of: card).enumerated())
-        let questions = gestures.filter { Self.isQuestion($0.element) }
-        let actions = gestures.filter { !Self.isQuestion($0.element) }
-        let anchor = (questions.first ?? actions.first)?.offset
+        let actions = Array(PipelinesGesture.gestures(of: card).filter { !Self.isQuestion($0) }.enumerated())
+        let question = answer.question
+        if let question {
+            questionSection(question, anchored: true)
+        }
         if let motif = PipelinesGesture.motif(of: card) {
             Section {
                 Text(motif)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier(PipelinesAccessibility.sheetMotif)
-                    .id(PipelinesText.recipeActionsAnchor)
+                    .recipeAnchor(question == nil)
             }
-        } else {
-            ForEach(questions, id: \.offset) { item in
-                if case let .answerQuestion(toolCallId, question, options) = item.element {
-                    questionSection(card, toolCallId: toolCallId, question: question, options: options, anchored: item.offset == anchor)
-                }
-            }
-            if !actions.isEmpty {
-                Section {
-                    ForEach(actions, id: \.offset) { item in
-                        gestureRows(item.element, card: card, anchored: item.offset == anchor)
-                    }
+        } else if !actions.isEmpty {
+            Section {
+                ForEach(actions, id: \.offset) { item in
+                    gestureRows(item.element, card: card, anchored: question == nil && item.offset == 0)
                 }
             }
         }
@@ -268,7 +278,7 @@ struct PipelinesCardSheet: View {
         case .answerQuestion:
             EmptyView()
         case .answerText(let prompt):
-            textRows(card, prompt: prompt, placeholder: KanbanText.replyPlaceholder, customKind: false, anchored: anchored)
+            textRows(card, prompt: prompt, placeholder: KanbanText.replyPlaceholder, anchored: anchored)
         case .validateMilestone(let kind):
             actionButton(
                 label: kind == .specs ? KanbanText.validateSpecs : KanbanText.acceptReview,
@@ -318,34 +328,28 @@ struct PipelinesCardSheet: View {
         }
     }
 
-    /// La question en attente : en-tête natif « Question », la question, une rangée
-    /// par option, puis le champ libre et « Envoyer ».
+    /// La question affichée : en-tête natif « Question », le bandeau « la question
+    /// a changé » s'il y a lieu, la question, une rangée par option (envoi direct),
+    /// puis le champ libre et « Envoyer ».
     @ViewBuilder
-    private func questionSection(
-        _ card: KanbanCard,
-        toolCallId: String,
-        question: String,
-        options: [PanelAskOption],
-        anchored: Bool
-    ) -> some View {
+    private func questionSection(_ question: IOSAnswerQuestion, anchored: Bool) -> some View {
         Section {
-            Text(question)
+            // Le bandeau se lit AVANT la question (S-4).
+            if let notice = answer.notice {
+                Text(notice)
+                    .font(.callout)
+                    .iosBanner(tone: .attention)
+                    .iosBareListRow()
+                    .accessibilityIdentifier(PipelinesAccessibility.answerNotice)
+            }
+            Text(question.question)
                 .font(.callout)
                 .multilineTextAlignment(.leading)
                 .accessibilityIdentifier(PipelinesAccessibility.sheetQuestion)
                 .recipeAnchor(anchored)
-            ForEach(Array(options.enumerated()), id: \.offset) { item in
+            ForEach(Array(question.options.enumerated()), id: \.offset) { item in
                 Button {
-                    let label = item.element.label
-                    perform {
-                        _ = try await client.answer(
-                            cardId: card.id,
-                            kind: PipelinesAnswerKind.selected.rawValue,
-                            label: label,
-                            text: nil,
-                            toolCallId: toolCallId
-                        )
-                    }
+                    submitAnswer(.option(item.element.label))
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(item.element.label)
@@ -358,10 +362,18 @@ struct PipelinesCardSheet: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .frame(minHeight: IOSMetrics.minimumTarget, alignment: .leading)
                 }
-                .disabled(!connection.gesturesEnabled)
+                .disabled(!connection.gesturesEnabled || busy)
                 .accessibilityIdentifier(PipelinesAccessibility.option(item.offset))
             }
-            textRows(card, prompt: nil, placeholder: KanbanText.answerPlaceholder, customKind: true, toolCallId: toolCallId, anchored: false)
+            TextField(KanbanText.answerPlaceholder, text: $answer.text, axis: .vertical)
+                .disabled(!connection.gesturesEnabled)
+                .accessibilityIdentifier(PipelinesAccessibility.answerField)
+            Button(KanbanText.send) {
+                submitAnswer(.custom(answer.text))
+            }
+            .frame(minHeight: IOSMetrics.minimumTarget)
+            .disabled(!connection.gesturesEnabled || busy || isBlank(answer.text))
+            .accessibilityIdentifier(PipelinesAccessibility.answerSend)
         } header: {
             Text(KanbanText.questionTitle)
                 .textCase(nil)
@@ -369,14 +381,12 @@ struct PipelinesCardSheet: View {
         }
     }
 
-    /// Le texte libre : l'invite éventuelle, le champ, puis « Envoyer » — une rangée chacun.
+    /// La question en TEXTE : l'invite éventuelle, le champ, puis « Envoyer » — une rangée chacun.
     @ViewBuilder
     private func textRows(
         _ card: KanbanCard,
         prompt: String?,
         placeholder: String,
-        customKind: Bool,
-        toolCallId: String? = nil,
         anchored: Bool
     ) -> some View {
         let prompted = prompt.map { !$0.isEmpty } ?? false
@@ -395,17 +405,7 @@ struct PipelinesCardSheet: View {
             let text = freeText
             freeText = ""
             perform {
-                if customKind {
-                    _ = try await client.answer(
-                        cardId: card.id,
-                        kind: PipelinesAnswerKind.custom.rawValue,
-                        label: nil,
-                        text: text,
-                        toolCallId: toolCallId
-                    )
-                } else {
-                    _ = try await client.reply(cardId: card.id, text: text)
-                }
+                _ = try await client.reply(cardId: card.id, text: text)
             }
         }
         .frame(minHeight: IOSMetrics.minimumTarget)
@@ -440,6 +440,69 @@ struct PipelinesCardSheet: View {
 
     private func isBlank(_ text: String) -> Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Pose la question vivante dans `answer` quand aucune n'est affichée et que ce
+    /// n'est pas celle à laquelle la fiche vient de répondre (S-4). Ensuite, aucune
+    /// trame `store` ne change la question sous les yeux de l'utilisateur.
+    private func adoptLiveQuestion(_ live: IOSAnswerQuestion?) {
+        guard answer.question == nil, let live, live.toolCallId != deliveredToolCallId else { return }
+        answer = IOSAnswerDraft(question: live)
+    }
+
+    /// Répond à la question AFFICHÉE avec son identifiant (S-3), puis suit l'issue :
+    /// livrée, la section se masque jusqu'à la question suivante ; changée, la fiche
+    /// adopte la nouvelle question et garde le texte (S-4) ; partie, l'écran est
+    /// prévenu et la fiche se ferme (S-5) ; autre échec, bandeau d'erreur.
+    private func submitAnswer(_ choice: IOSAnswerChoice) {
+        guard !busy, let question = answer.question else { return }
+        busy = true
+        error = nil
+        mergeFailed = false
+        Task { @MainActor in
+            let outcome = await IOSAnswerFlow.submit(
+                question: question,
+                choice: choice,
+                send: { toolCallId, choice in
+                    switch choice {
+                    case .option(let label):
+                        _ = try await client.answer(
+                            cardId: cardId,
+                            kind: PipelinesAnswerKind.selected.rawValue,
+                            label: label,
+                            text: nil,
+                            toolCallId: toolCallId
+                        )
+                    case .custom(let text):
+                        _ = try await client.answer(
+                            cardId: cardId,
+                            kind: PipelinesAnswerKind.custom.rawValue,
+                            label: nil,
+                            text: text,
+                            toolCallId: toolCallId
+                        )
+                    }
+                },
+                reread: {
+                    _ = try await client.store()
+                    return PipelinesModel.boardState(of: client, nowMs: Self.nowMs)?.card(cardId)
+                }
+            )
+            switch outcome {
+            case .delivered:
+                deliveredToolCallId = question.toolCallId
+                answer = IOSAnswerDraft(question: nil)
+                adoptLiveQuestion(IOSAnswerQuestion(card: card))
+            case .questionChanged(let next):
+                answer.adopt(next)
+            case .questionGone:
+                onQuestionGone()
+                dismiss()
+            case .failed(let failure):
+                error = IOSMacErrorText.message(for: failure)
+            }
+            busy = false
+        }
     }
 
     private func perform(_ action: @escaping () async throws -> Void) {

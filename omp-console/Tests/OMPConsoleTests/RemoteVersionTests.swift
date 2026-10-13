@@ -29,24 +29,26 @@ struct RemoteVersionTests {
         ]
         for path in readRoutes {
             let reply = try await stack.call("GET", path, token: token)
-            #expect(reply.headers["x-console-protocol-version"] == "1", "\(path) → \(reply.status)")
+            #expect(reply.headers["x-console-protocol-version"] == current, "\(path) → \(reply.status)")
         }
 
         // La route d'appairage, non authentifiée, la porte aussi.
         let code = try stack.registry.generateCode().value
         let paired = try await stack.call("POST", "/v1/pair", json: ["code": code, "name": "Téléphone"])
         #expect(paired.status == 200)
-        #expect(paired.headers["x-console-protocol-version"] == "1")
+        #expect(paired.headers["x-console-protocol-version"] == current)
 
         // Et les ERREURS aussi : non autorisé, inconnu, version refusée.
         let unauthorized = try await stack.call("GET", "/v1/devices")
         let notFound = try await stack.call("GET", "/v1/route-qui-n-existe-pas", token: token)
-        let incompatible = try await stack.call("GET", "/v1/version", token: token, protocolVersion: 2)
+        let incompatible = try await stack.call(
+            "GET", "/v1/version", token: token, protocolVersion: ConsoleAPI.protocolVersion + 1
+        )
         #expect(unauthorized.status == 401)
         #expect(notFound.status == 404)
         #expect(incompatible.status == 400)
         for reply in [unauthorized, notFound, incompatible] {
-            #expect(reply.headers["x-console-protocol-version"] == "1", "erreur \(reply.status)")
+            #expect(reply.headers["x-console-protocol-version"] == current, "erreur \(reply.status)")
         }
     }
 
@@ -57,7 +59,9 @@ struct RemoteVersionTests {
         let token = try await stack.pair(name: "Téléphone")
 
         // (1) Une route de lecture, AVEC un jeton valide : la version est refusée avant tout.
-        let version = try await stack.call("GET", "/v1/version", token: token, protocolVersion: 2)
+        let version = try await stack.call(
+            "GET", "/v1/version", token: token, protocolVersion: ConsoleAPI.protocolVersion + 1
+        )
         #expect(version.status == 400)
         #expect(version.errorCode == "incompatible_protocol")
         let versionObject = try #require(try JSONSerialization.jsonObject(with: version.body) as? [String: Any])
@@ -69,12 +73,41 @@ struct RemoteVersionTests {
             "POST",
             "/v1/pair",
             json: ["code": "ABCDEFGH", "name": "Téléphone"],
-            protocolVersion: 2
+            protocolVersion: ConsoleAPI.protocolVersion + 1
         )
         #expect(paired.status == 400)
         #expect(paired.errorCode == "incompatible_protocol")
         let pairObject = try #require(try JSONSerialization.jsonObject(with: paired.body) as? [String: Any])
         #expect(Set(pairObject.keys) == ["error"])
+    }
+
+    @Test("reponse-ios-sans-identifiant-de-question/AC-4 : un client de la version précédente est refusé")
+    func previousVersionClientIsRefused() async throws {
+        let stack = try await RemoteStack.make()
+        defer { stack.stop() }
+        let token = try await stack.pair(name: "Téléphone")
+        let previous = ConsoleAPI.protocolVersion - 1
+
+        // Une lecture et la réponse à une carte : l'app de la version précédente,
+        // qui n'envoie pas l'identifiant de question, n'atteint aucune route.
+        let read = try await stack.call("GET", "/v1/store", token: token, protocolVersion: previous)
+        let answer = try await stack.call(
+            "POST", "/v1/cards/feature:0000000000000000:alpha/answer",
+            token: token,
+            json: ["kind": "custom", "text": "bonjour"],
+            protocolVersion: previous
+        )
+        for reply in [read, answer] {
+            #expect(reply.status == 400)
+            #expect(reply.errorCode == "incompatible_protocol")
+            #expect(
+                reply.errorMessage
+                    == "version de protocole \(previous) refusée (supportée : \(ConsoleAPI.protocolVersion))"
+            )
+            let object = try #require(try JSONSerialization.jsonObject(with: reply.body) as? [String: Any])
+            #expect(Set(object.keys) == ["error"], "aucune donnée servie")
+            #expect(reply.headers["x-console-protocol-version"] == current)
+        }
     }
 
     // MARK: - Cas limites de l'en-tête
@@ -116,8 +149,8 @@ struct RemoteVersionTests {
         let request = """
             GET /v1/version HTTP/1.1\r
             Host: 127.0.0.1\r
-            X-Console-Protocol-Version: 1\r
-            X-Console-Protocol-Version: 1\r
+            X-Console-Protocol-Version: \(ConsoleAPI.protocolVersion)\r
+            X-Console-Protocol-Version: \(ConsoleAPI.protocolVersion)\r
             Authorization: Bearer \(token)\r
             \r
 
@@ -135,14 +168,14 @@ struct RemoteVersionTests {
         let request = """
             GET /v1/version HTTP/1.1\r
             Host: 127.0.0.1\r
-            X-Console-Protocol-Version: 1 \r
+            X-Console-Protocol-Version: \(ConsoleAPI.protocolVersion) \r
             Authorization: Bearer \(token)\r
             \r
 
             """
         let response = try await rawConsoleExchange(port: stack.port, request)
         #expect(rawConsoleStatus(response) == 200)
-        #expect(response.contains(#"{"protocolVersion":1}"#))
+        #expect(response.contains(#"{"protocolVersion":\#(ConsoleAPI.protocolVersion)}"#))
     }
 
     @Test func versionRouteAnswersTheBaseVersion() async throws {
@@ -154,6 +187,9 @@ struct RemoteVersionTests {
         #expect(reply.status == 200)
         let payload = try reply.json(RemoteVersionPayload.self)
         #expect(payload.protocolVersion == ConsoleAPI.protocolVersion)
-        #expect(reply.text == #"{"protocolVersion":1}"#)
+        #expect(reply.text == #"{"protocolVersion":\#(ConsoleAPI.protocolVersion)}"#)
     }
 }
+
+/// La version courante telle qu'elle s'écrit dans l'en-tête.
+private let current = String(ConsoleAPI.protocolVersion)

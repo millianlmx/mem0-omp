@@ -92,6 +92,8 @@ public final class ConsoleClientModel: ObservableObject {
     private let pacer: any ClientPacer
     /// L'attente du délai de recherche Bonjour (`ClientRetry.searchGrace`).
     private let searchPacer: any ClientPacer
+    /// L'échéance de `waitUntilReady()` (`ClientRetry.readinessTimeout`).
+    private let readinessPacer: any ClientPacer
     private let pathSource: any ClientPathSource
     private let deviceName: String
     private let localProtocolVersion: Int
@@ -108,6 +110,10 @@ public final class ConsoleClientModel: ObservableObject {
     private var revoked = false
     /// Le trousseau a été lu au moins une fois (fin de `restoreToken`).
     private var tokenRead = false
+    /// Les attentes de `awaitPairingRestored()` suspendues pendant la première
+    /// lecture du trousseau : toutes reprises, une seule fois, à la fin de
+    /// `restoreToken()`, avec le même statut.
+    private var pairingWaiters: [CheckedContinuation<ClientPairingStatus, Never>] = []
     /// L'endpoint vers lequel était partie la requête ou le flux refusé (401) :
     /// porté par `.refused`, repli de `pairingEndpoint()`. Remis à `nil` par un
     /// appairage réussi et par `forget()`.
@@ -128,6 +134,12 @@ public final class ConsoleClientModel: ObservableObject {
     /// Le rang de la dernière issue de commande publiée (S-5) : 0 avant toute
     /// commande, +1 avant chaque publication de `commandOutcome`.
     private var commandSequence = 0
+    /// Une trame `hello` de la version locale a été reçue sur le flux ouvert : vrai
+    /// seulement entre ce `hello` et la prochaine ouverture de flux.
+    private var macConfirmed = false
+    /// Les attentes « prêt à émettre » en cours. Chaque continuation est RETIRÉE
+    /// avant d'être reprise (`finishReadiness`, `settleReadiness`) : reprise unique.
+    private var readinessWaiters: [UUID: CheckedContinuation<ClientReadiness, Never>] = [:]
 
     // MARK: - Cycle de vie
 
@@ -141,7 +153,8 @@ public final class ConsoleClientModel: ObservableObject {
         deviceName: String = ClientDeviceModel.current,
         localProtocolVersion: Int = ConsoleAPI.protocolVersion,
         nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
-        searchPacer: any ClientPacer = LiveClientPacer()
+        searchPacer: any ClientPacer = LiveClientPacer(),
+        readinessPacer: any ClientPacer = LiveClientPacer()
     ) {
         self.transport = transport
         self.discovery = discovery
@@ -153,6 +166,7 @@ public final class ConsoleClientModel: ObservableObject {
         self.localProtocolVersion = localProtocolVersion
         self.nowMs = nowMs
         self.searchPacer = searchPacer
+        self.readinessPacer = readinessPacer
     }
 
     /// La production : le vrai transport, la vraie découverte, le vrai trousseau.
@@ -216,6 +230,20 @@ public final class ConsoleClientModel: ObservableObject {
         pathSource.stop()
     }
 
+    /// Démarre le client s'il ne tourne pas (`start()`, idempotent), puis attend la
+    /// fin de la première lecture du trousseau. Rend `.paired`, `.unpaired` ou
+    /// `.refused`, JAMAIS `.restoring`. N'attend ni la découverte du Mac ni la
+    /// connexion ; ne déclenche aucune lecture du trousseau en plus de celle que
+    /// `start()` lance, et aucune requête. L'annulation de la tâche appelante est
+    /// ignorée : la lecture est locale et bornée, l'attente se termine avec elle.
+    public func awaitPairingRestored() async -> ClientPairingStatus {
+        start()
+        guard pairing == .restoring else { return pairing }
+        return await withCheckedContinuation { continuation in
+            pairingWaiters.append(continuation)
+        }
+    }
+
     /// L'app passe en arrière-plan : le flux est coupé et l'état n'est JAMAIS
     /// `connected`.
     public func suspend() {
@@ -238,6 +266,78 @@ public final class ConsoleClientModel: ObservableObject {
         incompatible = nil
         lastFailure = nil
         beginConnection(resetCounter: true)
+    }
+
+    // MARK: - Attente « prêt à émettre »
+
+    /// Attend, au plus `ClientRetry.readinessTimeout` (démarrage à froid compris),
+    /// que le client puisse émettre, et rend le verdict.
+    ///
+    /// - Démarre le modèle s'il ne l'est pas (`start()`, idempotent) : la relecture
+    ///   du trousseau ne fait jamais échouer l'attente.
+    /// - Après un échec (`.macAbsent`, relance automatique en attente), une
+    ///   tentative neuve part AUSSITÔT, sans subir le délai de relance ; dans tout
+    ///   autre état, aucune tentative n'est ajoutée.
+    /// - Seule l'adresse manuelle est essayée quand il y en a une, le Mac découvert
+    ///   par Bonjour sinon (règle de `effectiveEndpoint`, inchangée).
+    /// - « Prêt » exige le Mac confirmé : flux ouvert ET trame `hello` de la version
+    ///   locale reçue sur ce flux. Sinon : `.pairingRefused`, `.incompatibleVersion`,
+    ///   `.notPaired` dès qu'ils sont publiés, `.macUnreachable` à l'échéance ou si
+    ///   la tâche appelante est annulée.
+    /// - Ne lève ni le verrou de version ni le refus d'appairage, ne publie rien de
+    ///   neuf et ne coupe rien en rendant son verdict.
+    public func waitUntilReady() async -> ClientReadiness {
+        if Task.isCancelled { return .macUnreachable }
+        if !running { start() }
+        if case .macAbsent = state { beginConnection(resetCounter: true) }
+        if let verdict = readinessVerdict { return verdict }
+        let id = UUID()
+        let deadline = Task { @MainActor [weak self, pacer = readinessPacer] in
+            do {
+                try await pacer.sleep(seconds: ClientRetry.readinessTimeout)
+            } catch {
+                return
+            }
+            self?.finishReadiness(id, .macUnreachable)
+        }
+        // Tâche déjà annulée : `onCancel` s'exécute AVANT l'opération, mais la tâche
+        // `@MainActor` qu'il crée passe après l'enregistrement de la continuation.
+        let verdict = await withTaskCancellationHandler {
+            await withCheckedContinuation { readinessWaiters[id] = $0 }
+        } onCancel: {
+            Task { @MainActor [weak self] in self?.finishReadiness(id, .macUnreachable) }
+        }
+        deadline.cancel()
+        return verdict
+    }
+
+    /// Le verdict des faits publiés, dans cet ordre : refus, verrou de version,
+    /// absence de jeton (lue sur `pairing`, jamais sur `state`, qui vaut aussi
+    /// `.unpaired` pendant la relecture du trousseau), Mac confirmé ; `nil` : on
+    /// continue d'attendre.
+    private var readinessVerdict: ClientReadiness? {
+        if case .refused = pairing { return .pairingRefused }
+        if case .incompatibleProtocol(let local, let remote) = state {
+            return .incompatibleVersion(local: local, remote: remote)
+        }
+        if pairing == .unpaired { return .notPaired }
+        if case .connected(let endpoint) = state, macConfirmed { return .ready(endpoint: endpoint) }
+        return nil
+    }
+
+    /// Rend le verdict, s'il y en a un, à TOUTES les attentes en cours : la table
+    /// est vidée avant toute reprise.
+    private func settleReadiness() {
+        guard !readinessWaiters.isEmpty, let verdict = readinessVerdict else { return }
+        let waiters = readinessWaiters
+        readinessWaiters.removeAll()
+        for waiter in waiters.values { waiter.resume(returning: verdict) }
+    }
+
+    /// Reprend une attente précise ; ne fait rien si elle a déjà été reprise.
+    private func finishReadiness(_ id: UUID, _ verdict: ClientReadiness) {
+        guard let waiter = readinessWaiters.removeValue(forKey: id) else { return }
+        waiter.resume(returning: verdict)
     }
 
     // MARK: - Adresse manuelle
@@ -558,7 +658,7 @@ public final class ConsoleClientModel: ObservableObject {
         kind: String,
         label: String?,
         text: String?,
-        toolCallId: String? = nil
+        toolCallId: String
     ) async throws -> RemoteAcceptedPayload {
         let body = try encode(RemoteAnswerRequest(toolCallId: toolCallId, kind: kind, label: label, text: text))
         return try await performGesture(
@@ -692,6 +792,51 @@ public final class ConsoleClientModel: ObservableObject {
     /// L'état réduit de la conduite (S-11), lu à la demande.
     public func conduiteState() async throws -> RemoteConduiteStatePayload {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/conduite"), as: RemoteConduiteStatePayload.self)
+    }
+
+    /// La liste des attentes du Mac appairé (attentes-dispersees-entre-sources,
+    /// S-8), calculée ici sur les mêmes données que le Mac : `GET /v1/store`
+    /// (ardoise et escalades d'audit), `GET /v1/conduite` puis `GET /v1/session`,
+    /// lus dans cet ordre, l'un après l'autre. La première source qui échoue
+    /// arrête tout : le modèle lève `PendingRequestsUnavailable` et ne rend
+    /// aucune liste, même partielle. Les lectures gardent leurs effets de bord
+    /// (`applyStore`, `applyHosted`) ; une annulation est relancée telle quelle.
+    public func pendingRequests() async throws -> [PendingRequest] {
+        let storePayload = try await pendingSource(.store) { try await self.store() }
+        let conduitePayload = try await pendingSource(.conduite) { try await self.conduiteState() }
+        let hostedPayload = try await pendingSource(.session) { try await self.hostedSession() }
+        let snapshot = storePayload.snapshot
+        return PendingRequests.list(PendingSources(
+            snapshot: snapshot,
+            board: KanbanBoardState.derive(
+                snapshot: snapshot,
+                nowMs: nowMs(),
+                stateDir: "",
+                isAlive: .transported(snapshot),
+                prFacts: [:]
+            ),
+            conduiteDialogs: conduitePayload.dialogs,
+            sessionDialogs: hostedPayload.dialogs
+        ))
+    }
+
+    /// Lit une source de la liste des attentes et range son échec sous son nom.
+    private func pendingSource<T>(
+        _ source: PendingRequestsSource,
+        _ read: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await read()
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch let error as ClientError {
+            throw PendingRequestsUnavailable(source: source, cause: error)
+        } catch {
+            throw PendingRequestsUnavailable(
+                source: source,
+                cause: .transport(.unreachable(String(describing: error)))
+            )
+        }
     }
 
     /// La réponse à une escalade de la conduite (S-4/S-5) : `value` pour
@@ -991,6 +1136,10 @@ public final class ConsoleClientModel: ObservableObject {
         }
         tokenRead = true
         beginConnection(resetCounter: true)
+        // L'état est publié : chaque attente reprend une fois, avec le même statut.
+        let waiters = pairingWaiters
+        pairingWaiters = []
+        for waiter in waiters { waiter.resume(returning: pairing) }
     }
 
     private func beginConnection(resetCounter: Bool) {
@@ -1100,6 +1249,7 @@ public final class ConsoleClientModel: ObservableObject {
         connectingEndpoint = nil
         lastFailure = nil
         attempt = 0
+        macConfirmed = false
         publishState()
         refreshHomeFacts()
         requestPullRequestStates()
@@ -1121,6 +1271,9 @@ public final class ConsoleClientModel: ObservableObject {
         case .hello(let hello):
             if hello.protocolVersion != localProtocolVersion {
                 incompatible = ClientIncompatibility(local: localProtocolVersion, remote: hello.protocolVersion)
+            } else {
+                macConfirmed = true
+                settleReadiness()
             }
         case .store(let snapshot):
             applyStore(snapshot)
@@ -1300,6 +1453,7 @@ public final class ConsoleClientModel: ObservableObject {
         // Connexion s'ouvre sur un passage, jamais sur une republication.
         let status = resolvedPairing
         if status != pairing { pairing = status }
+        settleReadiness()
     }
 
     /// Le refus prime ; un jeton détenu vaut `.paired` (même avant la fin de la

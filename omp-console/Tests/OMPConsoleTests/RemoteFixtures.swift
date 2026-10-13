@@ -217,7 +217,7 @@ struct RemoteStack {
         body: Data? = nil,
         json: [String: Any]? = nil,
         headers: [String: String] = [:],
-        protocolVersion: Int? = 1,
+        protocolVersion: Int? = ConsoleAPI.protocolVersion,
         omitProtocolHeader: Bool = false
     ) -> URLRequest {
         var request = URLRequest(url: URL(string: base + path)!)
@@ -239,7 +239,7 @@ struct RemoteStack {
         json: [String: Any]? = nil,
         body: Data? = nil,
         headers: [String: String] = [:],
-        protocolVersion: Int? = 1,
+        protocolVersion: Int? = ConsoleAPI.protocolVersion,
         omitProtocolHeader: Bool = false
     ) async throws -> RemoteReply {
         let request = request(

@@ -1,3 +1,4 @@
+import ConsoleClient
 import ConsoleCore
 import Foundation
 import SwiftUI
@@ -53,6 +54,12 @@ import SwiftUI
 /// fourni : les captures de `scripts/recette/ios-shots.sh` gardent ainsi leur écran,
 /// sans feuille par-dessus.
 ///
+/// L'App POSSÈDE le client distant unique (`ConsoleClientModel.live()`, créé une
+/// fois par processus dans `init()`, y compris lors d'un lancement à froid par
+/// Siri) : elle l'enregistre pour les App Intents (`IOSSharedClient`) et le passe
+/// à `RootView`, qui le démarre. Vues et intents partagent ainsi la même instance
+/// et la même lecture du trousseau (S-1 de client-ios-possede-par-la-vue).
+///
 /// Aucun argument reconnu ⇒ l'Accueil et l'état `ready`.
 @main
 struct OMPConsoleIOSApp: App {
@@ -70,6 +77,9 @@ struct OMPConsoleIOSApp: App {
     private let sessionOmpRecipe: IOSSessionOmpRecipe?
     private let auditRecipe: IOSAuditRecipe?
     private let requestedSection: Bool
+    /// Le client distant unique, jamais en `@StateObject` : son autoclosure
+    /// paresseuse pourrait construire une autre instance que celle enregistrée.
+    private let client: ConsoleClientModel
 
     init() {
         let arguments = ProcessInfo.processInfo.arguments
@@ -87,11 +97,13 @@ struct OMPConsoleIOSApp: App {
         sessionOmpRecipe = IOSSessionOmpRecipe.resolve(arguments)
         auditRecipe = IOSAuditRecipe.resolve(arguments)
         requestedSection = arguments.contains("-section")
+        client = IOSSharedClient.install(ConsoleClientModel.live(), in: .shared)
     }
 
     var body: some Scene {
         WindowGroup {
             RootView(
+                client: client,
                 selection: initialSection,
                 state: initialState,
                 recipe: recipe,

@@ -461,6 +461,8 @@ struct RemotePairRequest: Decodable, Equatable {
 }
 
 struct RemoteAnswerRequest: Decodable, Equatable {
+    /// Obligatoire (protocole 2) mais décodé optionnel : son absence rend un 400
+    /// lisible « identifiant de question manquant », pas une erreur de décodage.
     var toolCallId: String?
     var kind: String
     var label: String?

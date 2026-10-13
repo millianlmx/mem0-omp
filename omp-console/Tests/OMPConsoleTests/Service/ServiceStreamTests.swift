@@ -64,3 +64,37 @@ func openStreamDeliversDialog() async throws {
     #expect(dialog.title == "Quel modèle ?")
     #expect(dialog.options == ["A", "B"])
 }
+
+@Test("coque-service : une trame dialog porte l'instant de création du service, absent chez un service antérieur")
+func dialogFrameCarriesCreationInstant() throws {
+    let stamped = ServiceFrame.decode(
+        event: "dialog",
+        data: #"{"id":"dlg-1","method":"input","title":"Une question","options":[],"optionDescriptions":[],"at":1700000000123}"#
+    )
+    guard case let .dialog(dialog)? = stamped else {
+        Issue.record("trame horodatée non décodée : \(String(describing: stamped))")
+        return
+    }
+    #expect(dialog.at == 1_700_000_000_123)
+
+    let legacy = ServiceFrame.decode(
+        event: "dialog",
+        data: #"{"id":"dlg-1","method":"input","title":"Une question","options":[],"optionDescriptions":[]}"#
+    )
+    guard case let .dialog(old)? = legacy else {
+        Issue.record("trame sans instant refusée : \(String(describing: legacy))")
+        return
+    }
+    #expect(old.at == nil)
+
+    // Un instant non numérique est ignoré : la trame reste acceptée.
+    let garbled = ServiceFrame.decode(
+        event: "dialog",
+        data: #"{"id":"dlg-2","method":"confirm","title":"Livrer ?","at":"hier"}"#
+    )
+    guard case let .dialog(odd)? = garbled else {
+        Issue.record("trame à instant illisible refusée : \(String(describing: garbled))")
+        return
+    }
+    #expect(odd.at == nil)
+}

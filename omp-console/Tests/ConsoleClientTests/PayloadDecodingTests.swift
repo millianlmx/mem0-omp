@@ -75,6 +75,36 @@ struct PayloadDecodingTests {
         #expect(PRCheckState.ignored.label == "ignoré")
     }
 
+    @Test("un dialogue de conduite se décode avec ou sans l'instant de création (Mac antérieur)")
+    func conduiteDialogInstant() throws {
+        let legacy = try JSONDecoder().decode(
+            RemoteConduiteStatePayload.self,
+            from: Data(
+                #"{"state":"live","dialogs":[{"id":"dlg-1","method":"select","title":"Quel lot ?","options":["A","B"],"optionDescriptions":[null,"le second"],"promptStyle":false}]}"#
+                    .utf8
+            )
+        )
+        #expect(legacy.dialogs == [
+            RpcDialogRequest(
+                id: "dlg-1",
+                method: .select,
+                title: "Quel lot ?",
+                options: ["A", "B"],
+                optionDescriptions: [nil, "le second"]
+            ),
+        ])
+        #expect(legacy.dialogs.first?.at == nil)
+
+        let stamped = try JSONDecoder().decode(
+            RemoteConduiteStatePayload.self,
+            from: Data(
+                #"{"state":"live","dialogs":[{"id":"dlg-2","method":"input","title":"Une question","options":[],"optionDescriptions":[],"promptStyle":false,"at":1700000000123}]}"#
+                    .utf8
+            )
+        )
+        #expect(stamped.dialogs.first?.at == 1_700_000_000_123)
+    }
+
     @Test("une trame de nom inconnu est ignorée sans couper le flux")
     func unknownFrame() {
         var parser = ClientStreamParser()
