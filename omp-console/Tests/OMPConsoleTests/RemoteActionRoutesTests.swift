@@ -592,6 +592,61 @@ func launchingAFeatureOrConductingAProjectStartsOrchestration() async throws {
     #expect(again.errorCode == "conflict")
 }
 
+// MARK: - siri-iphone-pilotage-pipelines, AC-1 (S-11)
+
+/// Le lancement vocal de l'iPhone poste `{repoRoot, title, description}` sans clé
+/// de modèle : le Mac doit en tirer EXACTEMENT la commande de la feuille
+/// « Nouvelle feature » laissée sur ses modèles par défaut (`modelReqSpecs: nil`,
+/// `modelImplReview: nil`), hors `id` et `sentAt` qui changent à chaque envoi.
+@MainActor
+@Test("siri-iphone-pilotage-pipelines/AC-1 : un lancement distant sans modèle dépose la commande de la feuille Nouvelle feature aux modèles par défaut")
+func voiceLaunchMatchesTheNewFeatureSheetCommand() async throws {
+    let fixture = try await makeActionFixture()
+    defer { fixture.stack.stop() }
+
+    let launch = try await fixture.stack.call(
+        "POST", "/v1/features",
+        token: fixture.token,
+        json: [
+            "repoRoot": fixture.repoRoot,
+            "title": "Export CSV",
+            "description": "Exporter la liste",
+        ]
+    )
+    #expect(launch.status == 202, "launch → \(launch.status) \(launch.text)")
+    await fixture.awaitCommand()
+    #expect(fixture.commands.posts.count == 1, "un seul lancement distant, une seule commande")
+    let remote = try #require(fixture.commands.posts.last)
+
+    // L'appel de la feuille, ses deux sélecteurs sur `ModelCatalog.defaultChoice`.
+    fixture.stack.actions.launch(
+        title: "Export CSV",
+        description: "Exporter la liste",
+        repoRoot: fixture.repoRoot,
+        modelReqSpecs: nil,
+        modelImplReview: nil
+    )
+    await fixture.awaitCommand()
+    #expect(fixture.commands.posts.count == 2)
+    let sheet = try #require(fixture.commands.posts.last)
+
+    #expect(remote.repo == sheet.repo, "les deux commandes visent le même dépôt")
+    #expect(remote.repo == realpathOr(fixture.repoRoot))
+    let volatile: Set<String> = ["id", "sentAt"]
+    let remoteBody = remote.body.filter { !volatile.contains($0.key) }
+    let sheetBody = sheet.body.filter { !volatile.contains($0.key) }
+    #expect(Set(remoteBody.keys) == Set(sheetBody.keys), "\(remoteBody.keys.sorted()) ≠ \(sheetBody.keys.sorted())")
+    #expect(NSDictionary(dictionary: remoteBody).isEqual(to: sheetBody), "\(remoteBody) ≠ \(sheetBody)")
+    #expect(remoteBody["kind"] as? String == "launch")
+    #expect(remoteBody["repo"] as? String == realpathOr(fixture.repoRoot))
+    #expect(remoteBody["title"] as? String == "Export CSV")
+    #expect(remoteBody["description"] as? String == "Exporter la liste")
+    #expect(
+        remoteBody.keys.allSatisfy { !$0.lowercased().contains("model") },
+        "aucun modèle : ceux par défaut de la feuille, \(remoteBody.keys.sorted())"
+    )
+}
+
 // MARK: - Complémentaires (sans id)
 
 @MainActor

@@ -154,6 +154,47 @@ public enum VoiceSpeechText {
         phrases.filter { !$0.isEmpty }.joined(separator: " ")
     }
 
+    // --- pilotage des pipelines -----------------------------------------------------
+    /// La désignation de la feature d'un geste : les 3 premières éligibles, puis
+    /// « et N autres ».
+    public static func pilotAsk(_ gesture: VoicePilotGesture, titles: [String], more: Int) -> String {
+        switch gesture {
+        case .resume:
+            return "Quelle feature reprendre ? \(list(titles, more: more))."
+        case .stop:
+            return "Quelle feature arrêter ? \(list(titles, more: more))."
+        case .validateSpecs:
+            return "De quelle feature valider les specs ? \(list(titles, more: more))."
+        case .acceptReview:
+            return "De quelle feature accepter la revue ? \(list(titles, more: more))."
+        }
+    }
+
+    /// L'absence de feature éligible à un geste : rien n'est demandé.
+    public static func pilotNone(_ gesture: VoicePilotGesture) -> String {
+        switch gesture {
+        case .resume:
+            return "Aucune feature à reprendre."
+        case .stop:
+            return "Aucune feature à arrêter."
+        case .validateSpecs:
+            return "Aucune feature n’attend la validation de ses specs."
+        case .acceptReview:
+            return "Aucune feature n’attend l’acceptation de sa revue."
+        }
+    }
+
+    /// Le choix du dépôt d'un lancement : TOUS les dépôts, sans plafond.
+    public static func launchRepoAsk(labels: [String]) -> String {
+        "Sur quel dépôt ? \(list(labels, more: 0))."
+    }
+
+    public static let launchTitleAsk = "Quel titre pour la feature ?"
+
+    public static let launchNeedAsk = "Quel est le besoin ?"
+
+    public static let launchNoRepo = "Le Mac ne connaît aucun dépôt, rien n’a été lancé."
+
     // --- issue d'un geste (S-5) --------------------------------------------------
     public static func issue(_ issue: VoiceIssue) -> String {
         switch issue {
@@ -190,13 +231,14 @@ public enum VoiceSpeechText {
     }
 
     /// Le succès d'un geste, qui nomme le geste et sa cible `t` (déjà épurée).
+    /// La cible d'un arrêt est le DÉPÔT : `card.stop` arrête toutes ses pipelines.
     /// Un message dicté à la session se dit « Reçu. », cible vide comprise.
     private static func sent(_ gesture: VoiceGesture, target t: String) -> String {
         if gesture == .promptHostedSession { return "Reçu." }
         guard !t.isEmpty else { return "C’est fait." }
         switch gesture {
         case .stopFeature:
-            return "La feature \(t) est arrêtée."
+            return "Les pipelines de \(t) sont arrêtées."
         case .validateSpecs:
             return "Les specs de la feature \(t) sont validées."
         case .acceptReview:

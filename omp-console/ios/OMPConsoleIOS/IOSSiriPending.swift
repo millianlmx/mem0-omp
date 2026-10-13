@@ -101,7 +101,6 @@ enum IOSSiriPending {
             return .macRefused(motive: "")
         }
     }
-
     /// La conversation des attentes sur le client partagé.
     static func walk(client: ConsoleClientModel, conversation: some VoiceConversation) async throws -> String {
         try await VoicePendingWalk.run(channel: IOSSiriPendingChannel(client: client), conversation: conversation)
