@@ -33,12 +33,16 @@ Cible minimale : macOS 26.
   refuse les autres.
 - Pour **assembler** le bundle : Rust (`cargo`), qui compile le `mem0-rs` embarqué
   (voir « Assembler le bundle `.app` »). L'app installée n'en a pas besoin.
-- Les Command Line Tools d'Apple : `swift --version` doit répondre.
-- **`xcodebuild` n'est ni requis ni utilisable** sur un poste sans Xcode : sur un
-  poste équipé des seuls Command Line Tools, il refuse de tourner (« requires
-  Xcode, but active developer directory is a CommandLineTools instance »). Tout
-  passe par SwiftPM (`swift build`, `swift test`) et par l'assemblage du bundle
-  décrit ci-dessous.
+- Les Command Line Tools d'Apple suffisent pour **builder et tester** le paquet :
+  `swift --version` doit répondre. Tout passe par SwiftPM (`swift build`,
+  `swift test`).
+- **Xcode** (et non plus les seuls Command Line Tools) est requis pour
+  **assembler** le bundle : `scripts/swift-app.sh` appelle le processeur de
+  métadonnées App Intents d'Xcode, que les Command Line Tools n'ont pas.
+  `xcrun --find appintentsmetadataprocessor` doit répondre ; `DEVELOPER_DIR` est
+  honoré (sinon `sudo xcode-select -s /Applications/Xcode.app/Contents/Developer`).
+  `xcodebuild` ne sert pas à construire : contre `Package.swift`, il construit le
+  produit exécutable comme un « tool », sans extraire aucune métadonnée App Intents.
 - **Un service local en marche** pour les sessions : l'app est **cliente** d'une
   API REST locale servie par `omp-mem0-req` (jeton et port dans
   `~/.omp/agent/pipeline/service.json`). L'app n'en lance **aucun** process :
@@ -1177,6 +1181,48 @@ sort en code 1 sans bundle : `✗ cargo introuvable — installe Rust
 (https://rustup.rs)`, `✗ compilation de mem0-rs échouée (cargo build --release)`,
 `✗ mem0-rs n'est pas arm64 (lipo : <sortie>)`. Le bundle ne contient ni podman, ni
 contexte d'image, ni fichier de pile à conteneurs.
+
+Le bundle **embarque les métadonnées App Intents**, sans lesquelles Siri et
+Raccourcis ne voient aucun intent de l'app. Avec ou sans `--no-tests`, le script :
+
+1. vérifie l'outillage Xcode AVANT toute compilation : le processeur
+   (`xcrun --find appintentsmetadataprocessor`), la version d'Xcode
+   (`xcrun xcodebuild -version`, ligne « Build version ») et le SDK macOS
+   (`xcrun --sdk macosx --show-sdk-path`) ;
+2. compile avec le moteur `swiftbuild` imposé (`--build-system swiftbuild`) et
+   `-Xswiftc -emit-const-values` (`swift build -c release` comme
+   `swift test -c release`), qui écrit les valeurs constantes Swift
+   (`…/OMPConsole-p.build/…/*.swiftconstvalues`, `…/OMPConsole.build/…` sous
+   Swift 6.3) lues par le processeur. Le moteur
+   est imposé parce que le moteur `native` (défaut avant Swift 6.4, donc sous
+   Xcode 26) n'écrit aucune valeur constante en release, même avec le drapeau ;
+3. lance le processeur avec le jeu d'options qu'Xcode passe pour une cible app,
+   dans un dossier temporaire ;
+4. copie `Metadata.appintents` dans `Contents/Resources/` AVANT la signature ad hoc,
+   qui le scelle ;
+5. contrôle le bundle : `extract.actionsdata` doit porter l'intent sonde
+   `OpenConsoleIntent` (`Sources/OMPConsole/Intents/OpenConsoleIntent.swift`, qui
+   ramène la fenêtre principale) et son App Shortcut, phrase « Ouvre
+   ${applicationName} » (« Ouvre OMP Console ») :
+   `  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)`.
+
+Chaque échec sort en code 1, sur la sortie d'erreur, retire le bundle (y compris
+celui d'un assemblage antérieur) et ne signe rien :
+
+| Cause | Message |
+|---|---|
+| processeur introuvable (Command Line Tools seuls, licence Xcode non acceptée) | `✗ outillage Xcode introuvable : appintentsmetadataprocessor (xcrun --find appintentsmetadataprocessor) — installe Xcode puis sélectionne-le (sudo xcode-select -s /Applications/Xcode.app/Contents/Developer) ou pose DEVELOPER_DIR` |
+| version d'Xcode illisible | `✗ version de Xcode illisible : aucune ligne « Build version » dans xcrun xcodebuild -version` |
+| SDK macOS introuvable | `✗ SDK macOS introuvable (xcrun --sdk macosx --show-sdk-path)` |
+| aucune valeur constante | `✗ valeurs constantes Swift introuvables sous <dossier de build> (attendu : …/OMPConsole-p.build/…/*.swiftconstvalues, ou …/OMPConsole.build/… avant Swift 6.4, produit par -Xswiftc -emit-const-values sous --build-system swiftbuild)` |
+| processeur en erreur (par exemple une phrase sans `\(.applicationName)`) | `✗ extraction des métadonnées App Intents échouée (appintentsmetadataprocessor, code <n>)`, suivi des sorties du processeur |
+| rien d'extrait (aucun intent compilé) | `✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)` |
+| intent sonde absent | `✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata` |
+| App Shortcut absent | `✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata` |
+
+Le premier assemblage après l'ajout du drapeau recompile tout `.build-run` et
+`.build-app` (mesuré : environ 45 s pour `swift build -c release`, 3 min 30 pour la
+compilation de `swift test -c release`).
 
 L'icône est versionnée et ne se redessine qu'à la main, quand son dessin change :
 
