@@ -776,6 +776,51 @@ public final class ConsoleClientModel: ObservableObject {
         try await perform(ClientHTTPRequest(method: "GET", path: "/v1/conduite"), as: RemoteConduiteStatePayload.self)
     }
 
+    /// La liste des attentes du Mac appairé (attentes-dispersees-entre-sources,
+    /// S-8), calculée ici sur les mêmes données que le Mac : `GET /v1/store`
+    /// (ardoise et escalades d'audit), `GET /v1/conduite` puis `GET /v1/session`,
+    /// lus dans cet ordre, l'un après l'autre. La première source qui échoue
+    /// arrête tout : le modèle lève `PendingRequestsUnavailable` et ne rend
+    /// aucune liste, même partielle. Les lectures gardent leurs effets de bord
+    /// (`applyStore`, `applyHosted`) ; une annulation est relancée telle quelle.
+    public func pendingRequests() async throws -> [PendingRequest] {
+        let storePayload = try await pendingSource(.store) { try await self.store() }
+        let conduitePayload = try await pendingSource(.conduite) { try await self.conduiteState() }
+        let hostedPayload = try await pendingSource(.session) { try await self.hostedSession() }
+        let snapshot = storePayload.snapshot
+        return PendingRequests.list(PendingSources(
+            snapshot: snapshot,
+            board: KanbanBoardState.derive(
+                snapshot: snapshot,
+                nowMs: nowMs(),
+                stateDir: "",
+                isAlive: .transported(snapshot),
+                prFacts: [:]
+            ),
+            conduiteDialogs: conduitePayload.dialogs,
+            sessionDialogs: hostedPayload.dialogs
+        ))
+    }
+
+    /// Lit une source de la liste des attentes et range son échec sous son nom.
+    private func pendingSource<T>(
+        _ source: PendingRequestsSource,
+        _ read: () async throws -> T
+    ) async throws -> T {
+        do {
+            return try await read()
+        } catch let cancellation as CancellationError {
+            throw cancellation
+        } catch let error as ClientError {
+            throw PendingRequestsUnavailable(source: source, cause: error)
+        } catch {
+            throw PendingRequestsUnavailable(
+                source: source,
+                cause: .transport(.unreachable(String(describing: error)))
+            )
+        }
+    }
+
     /// La réponse à une escalade de la conduite (S-4/S-5) : `value` pour
     /// `editor`/`select`/`input`, `confirmed` pour `confirm`, `cancelled` pour annuler.
     public func answerProjectDialog(

@@ -4,6 +4,7 @@
 
 @testable import OMPConsoleIOS
 import ConsoleClient
+import ConsoleCore
 import Foundation
 import Testing
 
