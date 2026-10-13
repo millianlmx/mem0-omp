@@ -155,7 +155,9 @@ public enum VoicePilot {
             prompt = nil
         }
 
-        return try await pass(gesture.voiceGesture, target: card.title, prompt: prompt,
+        // L'arrêt vise tout le dépôt (`card.stop`) : son issue nomme le dépôt.
+        let target = gesture == .stop ? card.repo : card.title
+        return try await pass(gesture.voiceGesture, target: target, prompt: prompt,
                               delivery: delivery, channel: channel, conversation: conversation)
     }
 

@@ -649,7 +649,7 @@ struct HomeView: View {
             openURL(url)
         case .copy(let copied):
             IOSPasteboard.copy(copied)
-        case .launch, .stop:
+        case .launch, .stop, .copyPath, .openInProject, .stopAudit:
             // Jamais offerts par l'Accueil (`IOSContextMenu.homeAttention`/`homeRow`).
             break
         }

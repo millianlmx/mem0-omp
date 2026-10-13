@@ -32,6 +32,11 @@ struct IOSProjectScreen: View {
     @State private var showingStop = false
     /// Le dialogue de la recette `-projet.recipe <dialogue|saisie>`, tant qu'il est ouvert.
     @State private var recipeDialog: RpcDialogRequest?
+    /// Le repoKey présélectionné de la feuille « Piloter un projet… » ouverte par
+    /// « Ouvrir dans Projet » d'un audit (audit-ui-redesign, S-12) ; `nil` sinon.
+    @State private var launchPreselection: String?
+    /// La demande « Ouvrir dans Projet » d'un audit, consommée à son arrivée.
+    @Binding private var request: String?
 
     /// Le crochet de recette `-projet.recipe <lancement|dialogue|saisie|plan>`, quand il est donné.
     private let recipe: IOSProjectRecipe?
@@ -41,9 +46,10 @@ struct IOSProjectScreen: View {
         case document
     }
 
-    init(client: ConsoleClientModel, recipe: IOSProjectRecipe? = nil, showConnection: Binding<Bool>) {
+    init(client: ConsoleClientModel, recipe: IOSProjectRecipe? = nil, request: Binding<String?> = .constant(nil), showConnection: Binding<Bool>) {
         self.client = client
         self.recipe = recipe
+        _request = request
         _showConnection = showConnection
         _model = StateObject(wrappedValue: IOSProjectModel(
             client: client,
@@ -90,10 +96,19 @@ struct IOSProjectScreen: View {
         .onChange(of: pane) {
             if pane == .document { model.reloadDocumentIfNeeded() }
         }
-        .sheet(isPresented: $showingLaunch) {
-            IOSProjectLaunchSheet(client: client, recipe: recipe == .lancement ? IOSLaunchRecipe.fixture : nil) { repoKey, name in
+        .sheet(isPresented: $showingLaunch, onDismiss: { launchPreselection = nil }) {
+            IOSProjectLaunchSheet(
+                client: client,
+                recipe: recipe == .lancement ? IOSLaunchRecipe.fixture : nil,
+                preselectedKey: launchPreselection
+            ) { repoKey, name in
                 await model.start(repoKey: repoKey, name: name)
             }
+        }
+        .onChange(of: request, initial: true) { _, key in
+            guard let key else { return }
+            request = nil
+            openFromAudit(key)
         }
         .sheet(item: pendingDialogBinding) { dialog in
             IOSProjectDialogSheet(dialog: dialog) { request in
@@ -356,6 +371,26 @@ struct IOSProjectScreen: View {
         if model.isConduiteLive {
             showingRefusal = true
         } else {
+            showingLaunch = true
+        }
+    }
+
+    /// « Ouvrir dans Projet » d'un audit (S-12) : dépôt déjà piloté → affiché tel
+    /// quel ; aucun pilotage → la feuille « Piloter un projet… » présélectionnée sur
+    /// ce dépôt (rien ne démarre sans confirmation) ; un autre dépôt piloté → le
+    /// refus existant.
+    private func openFromAudit(_ repoKey: String) {
+        switch AuditPresentation.projectOpening(
+            auditRepoKey: repoKey,
+            pilotedRepoKey: model.conduite?.repoKey,
+            pilotActive: model.isConduiteLive
+        ) {
+        case .show:
+            break
+        case .refuse:
+            showingRefusal = true
+        case .proposeLaunch:
+            launchPreselection = repoKey
             showingLaunch = true
         }
     }

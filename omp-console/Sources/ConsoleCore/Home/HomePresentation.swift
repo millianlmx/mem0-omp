@@ -178,6 +178,18 @@ public enum HomePresentation {
         return dashboard.attention.count
     }
 
+    /// Le badge d'une rangée de la barre latérale Mac (audit-ui-redesign S-4) :
+    /// Accueil → les attentes, Audit → les audits qui attendent l'utilisateur
+    /// (`AuditBoard.awaitingUserCount`), toute autre section → aucun. 0 : pas de
+    /// badge ; un compte négatif vaut 0.
+    public static func sidebarBadge(for section: ConsoleSection, attention: Int, auditsAwaiting: Int) -> Int {
+        switch section {
+        case .home: max(0, attention)
+        case .audit: max(0, auditsAwaiting)
+        default: 0
+        }
+    }
+
     /// Le geste du bouton d'une carte d'attente : répondre tant qu'elle attend une
     /// réponse, valider ou accepter un jalon actionnable, relancer une pipeline en
     /// échec ou bloquée, sinon l'ouvrir dans Pipelines.

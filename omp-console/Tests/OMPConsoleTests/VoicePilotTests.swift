@@ -301,7 +301,8 @@ struct VoicePilotTests {
         #expect(conversation.confirms == [VoiceGestureText.stopConfirmation(repo: "mem0-omp", feature: "Cache disque")])
         #expect(conversation.confirms == ["Arrêter les pipelines de mem0-omp\(nbsp)? (feature Cache disque)"])
         #expect(channel.deliveries == [.stop(cardId: "feature:mem0-omp:cache")])
-        #expect(phrase == VoiceIssue.sent(.stopFeature, target: "Cache disque").phrase)
+        #expect(phrase == VoiceIssue.sent(.stopFeature, target: "mem0-omp").phrase)
+        #expect(phrase == "Les pipelines de mem0-omp sont arrêtées.")
     }
 
     @Test("siri-iphone-pilotage-pipelines/AC-7 : un arrêt décliné n'envoie rien")
