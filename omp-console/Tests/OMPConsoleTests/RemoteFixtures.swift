@@ -78,6 +78,9 @@ struct RemoteStack {
     let session: SessionConsoleModel
     let project: ProjectConsoleModel
     let streams: RemoteStreamHub
+    /// L'instance de gestes que sert le routeur : un test appelle un geste typé
+    /// sans corps HTTP, sur les MÊMES modèles que la route.
+    let remoteActions: RemoteActions
     let router: RemoteRouter
     let server: RemoteServer
     let port: UInt16
@@ -194,6 +197,7 @@ struct RemoteStack {
             session: session,
             project: project,
             streams: streams,
+            remoteActions: remoteActions,
             router: router,
             server: server,
             port: port

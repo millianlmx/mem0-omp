@@ -2547,6 +2547,25 @@ un flux temps réel.
   déjà répondue ou périmée ») et un service arrêté ou injoignable rend `503`. Aucune
   route de lecture : audits, escalades et décisions arrivent par la trame `store`.
   L'API sert ainsi **43 routes**, image exacte de `ClientRoute.all`.
+- **Gestes typés** : chaque geste de `RemoteActions` est une méthode Swift typée
+  (`throws(GestureRefusal)`, sauf `stopHostedSession` et `refreshPullRequestStates`
+  qui ne refusent jamais), appelable par du code Swift du Mac sans corps
+  HTTP : gestes de carte (`answer`, `reply`, `text`, `verdict`, `resume`, `stop`),
+  lancement de feature (`launch`), conduite (`startConduite`, `closeConduite`,
+  `answerDialog`), session hébergée (`prompt`, `launchHostedSession`,
+  `relaunchHostedSession`, `stopHostedSession`, `answerHostedDialog`), audits
+  (`startAudit`, `launchAudit`, `answerAudit`, `stopAudit`) et PR (`pullRequests`,
+  `merge`, `refreshPullRequestStates`). Chacune applique seule les règles du geste
+  et lève une cause typée `GestureRefusal` (un cas par règle : carte inconnue,
+  question périmée, libellé hors options, texte vide, jalon non attendu, dialogue
+  périmé, dépôt inconnu, échec relu au journal…). Le routeur ne fait que décoder
+  le corps (un corps absent ou illisible est un `400` AVANT tout contrôle d'état,
+  même sur une carte, un dépôt ou un audit inconnus), convertir la forme et
+  appeler la méthode ; `GestureRefusal.apiError` est la seule table qui traduit un
+  refus vers l'enveloppe `{"error":{"code","message"}}` habituelle. Un échec
+  d'écriture du canal relu en tête du journal rend `409 conflict` à son motif
+  (« écriture impossible (Permission denied) ») — il était `500`. Une invite
+  blanche à la session hébergée rend « texte vide ».
 - **Flux** : `GET /v1/stream` ouvre un `text/event-stream` (SSE) qui pousse `hello`,
   `store`, `conduite`, `devices`, `components`, `journal`, `pull-request-states`,
   `sessions` et `hosted`, avec un battement de cœur toutes les 15 secondes. À
@@ -2861,6 +2880,7 @@ omp-console/
 │   │   ├── Payloads.swift         charges utiles des routes et corps de requête
 │   │   ├── RemoteReads.swift      lectures : magasin, sessions, documents, stats, mémoire
 │   │   ├── RemoteActions.swift    gestes : cartes, feature, conduite, session, PR
+│   │   ├── GestureRefusal.swift   la cause typée d'un refus de geste et sa traduction HTTP
 │   │   ├── RemoteRouter.swift     la table des routes, un seul point de réponse
 │   │   ├── RemoteStream.swift     le flux SSE : sources, battement, révocation
 │   │   ├── RemoteServiceModel.swift l'interrupteur persistant et la composition du service

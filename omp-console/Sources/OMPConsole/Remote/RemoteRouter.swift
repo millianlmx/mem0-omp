@@ -126,6 +126,9 @@ final class RemoteRouter {
         }
         do {
             return try await run(route.name, parameters: parameters, request: request, device: device, connection: connection)
+        } catch let refusal as GestureRefusal {
+            // Le SEUL endroit où un refus de geste devient une réponse HTTP.
+            return respond(refusal.apiError)
         } catch let error as ConsoleAPIError {
             return respond(error)
         } catch let error as RemoteServiceFailure {
@@ -230,60 +233,146 @@ final class RemoteRouter {
             return try json(RemoteAcceptedPayload(accepted: true))
 
         // --- gestes de carte --------------------------------------------------
+        // Simple adaptateur : décoder le corps (un corps mal formé n'atteint
+        // jamais le geste), convertir la forme, appeler le geste typé.
         case "card.answer":
-            return try json(try await actions.answer(cardId: parameters["id"] ?? "", body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteAnswerRequest.self, from: request)
+            try await actions.answer(
+                cardId: parameters["id"] ?? "",
+                toolCallId: body.toolCallId,
+                answer: try Self.cardAnswer(body)
+            )
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "card.reply":
-            return try json(try await actions.reply(cardId: parameters["id"] ?? "", body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteTextRequest.self, from: request)
+            try await actions.reply(cardId: parameters["id"] ?? "", text: body.text)
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "card.text":
-            return try json(try await actions.text(cardId: parameters["id"] ?? "", body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteTextRequest.self, from: request)
+            try await actions.text(cardId: parameters["id"] ?? "", text: body.text)
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "card.verdict":
-            return try json(try await actions.verdict(cardId: parameters["id"] ?? "", body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteVerdictRequest.self, from: request)
+            try await actions.verdict(cardId: parameters["id"] ?? "", verdict: try Self.verdict(body))
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "card.resume":
-            return try json(try await actions.resume(cardId: parameters["id"] ?? ""), code: 202)
+            try await actions.resume(cardId: parameters["id"] ?? "")
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "card.stop":
-            return try json(try await actions.stop(cardId: parameters["id"] ?? ""), code: 202)
+            try await actions.stop(cardId: parameters["id"] ?? "")
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
 
         // --- feature, projet, session hébergée, PR ----------------------------
         case "feature.launch":
-            return try json(try await actions.launch(body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteFeatureRequest.self, from: request)
+            try await actions.launch(
+                repoRoot: body.repoRoot,
+                title: body.title,
+                description: body.description,
+                modelReqSpecs: body.modelReqSpecs,
+                modelImplReview: body.modelImplReview
+            )
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "conduite.start":
-            return try json(try await actions.startConduite(repoKey: parameters["repoKey"] ?? "", body: request.body))
+            let body = try RemoteBody.decode(RemoteConduiteRequest.self, from: request)
+            return try json(try await actions.startConduite(repoKey: parameters["repoKey"] ?? "", name: body.name))
         case "conduite.close":
             return try json(try await actions.closeConduite(repoKey: parameters["repoKey"] ?? ""))
         case "conduite.dialog":
-            return try json(try await actions.answerDialog(id: parameters["id"] ?? "", body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteDialogAnswerRequest.self, from: request)
+            try await actions.answerDialog(id: parameters["id"] ?? "", answer: try Self.dialogAnswer(body))
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "hosted.get":
             return try json(actions.hostedSession())
         case "hosted.prompt":
-            return try json(try await actions.prompt(body: request.body))
+            let body = try RemoteBody.decode(RemotePromptRequest.self, from: request)
+            try await actions.prompt(message: body.message)
+            return try json(RemoteSentPayload(sent: true))
         case "hosted.launch":
-            return try json(try await actions.launchHostedSession(body: request.body))
+            let body = try RemoteBody.decode(RemoteHostedLaunchRequest.self, from: request)
+            return try json(try await actions.launchHostedSession(repoKey: body.repoKey))
         case "hosted.relaunch":
             return try json(try await actions.relaunchHostedSession())
         case "hosted.stop":
-            return try json(try await actions.stopHostedSession())
+            return try json(await actions.stopHostedSession())
         case "hosted.dialog":
-            return try json(try await actions.answerHostedDialog(id: parameters["id"] ?? "", body: request.body))
+            let body = try RemoteBody.decode(RemoteDialogAnswerRequest.self, from: request)
+            try await actions.answerHostedDialog(id: parameters["id"] ?? "", answer: try Self.dialogAnswer(body))
+            return try json(RemoteAcceptedPayload(accepted: true))
         case "prs":
             return try json(try await actions.pullRequests(repoKey: parameters["repoKey"] ?? ""))
         case "prs.merge":
+            let body = try RemoteBody.decode(RemoteMergeRequest.self, from: request)
             return try json(try await actions.merge(
                 repoKey: parameters["repoKey"] ?? "",
                 slug: parameters["slug"] ?? "",
-                body: request.body
+                headOid: body.headOid
             ))
         case "prStates.refresh":
-            return try json(actions.refreshPullRequestStates(), code: 202)
+            actions.refreshPullRequestStates()
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "audit.start":
-            return try json(try await actions.startAudit(body: request.body))
+            let body = try RemoteBody.decode(RemoteAuditStartRequest.self, from: request)
+            return try json(try await actions.startAudit(repoKey: body.repoKey, orientation: body.orientation))
         case "audit.launch":
-            return try json(try await actions.launchAudit(id: parameters["id"] ?? "", body: request.body))
+            let body = try RemoteBody.decode(RemoteAuditLaunchRequest.self, from: request)
+            return try json(try await actions.launchAudit(
+                id: parameters["id"] ?? "",
+                selected: body.selected,
+                brief: body.brief
+            ))
         case "audit.answer":
-            return try json(try await actions.answerAudit(id: parameters["id"] ?? "", body: request.body), code: 202)
+            let body = try RemoteBody.decode(RemoteAuditAnswerRequest.self, from: request)
+            try await actions.answerAudit(
+                id: parameters["id"] ?? "",
+                slug: body.slug,
+                key: body.key,
+                answer: body.answer,
+                decision: body.decision
+            )
+            return try json(RemoteAcceptedPayload(accepted: true), code: 202)
         case "audit.stop":
             return try json(try await actions.stopAudit(id: parameters["id"] ?? ""))
         default:
             return respond(.notFound("route inconnue"))
+        }
+    }
+
+    // MARK: - Conversion des corps vers les gestes typés
+
+    private static func cardAnswer(_ body: RemoteAnswerRequest) throws -> CardAnswer {
+        switch body.kind {
+        case "selected":
+            guard let label = body.label else { throw ConsoleAPIError.badRequest("libellé absent") }
+            return .selected(label: label)
+        case "custom":
+            guard let text = body.text else { throw ConsoleAPIError.badRequest("texte absent") }
+            return .custom(text: text)
+        default:
+            throw ConsoleAPIError.badRequest("kind inconnu")
+        }
+    }
+
+    private static func verdict(_ body: RemoteVerdictRequest) throws -> MilestoneVerdict {
+        switch body.verdict {
+        case "specs": return .specs
+        case "review": return .review
+        default: throw ConsoleAPIError.badRequest("verdict inconnu")
+        }
+    }
+
+    private static func dialogAnswer(_ body: RemoteDialogAnswerRequest) throws -> DialogAnswer {
+        switch body.kind {
+        case "value":
+            guard let value = body.value else { throw ConsoleAPIError.badRequest("valeur absente") }
+            return .value(value)
+        case "confirmed":
+            guard let confirmed = body.confirmed else { throw ConsoleAPIError.badRequest("confirmation absente") }
+            return .confirmed(confirmed)
+        case "cancelled":
+            return .cancelled
+        default:
+            throw ConsoleAPIError.badRequest("kind inconnu")
         }
     }
 

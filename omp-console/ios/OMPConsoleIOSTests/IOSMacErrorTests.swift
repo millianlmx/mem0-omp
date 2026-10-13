@@ -170,4 +170,27 @@ struct IOSMacErrorTests {
         #expect(IOSMacFailure.of(ClientError.api(.incompatibleProtocol("x")))
             == .incompatibleProtocol(local: ConsoleAPI.protocolVersion, remote: nil))
     }
+
+    @Test("validations-de-geste-enfermees-dans-le-h/AC-10 : chaque refus du Mac sur répondre, verdict, reprendre et arrêter est présenté avec sa cause")
+    func everyMacGestureRefusalIsPresentedWithItsCause() {
+        // Les `ClientError` exacts que le client rend quand le Mac refuse ces gestes
+        // (prouvés contre la vraie pile par RemoteActionRoutesTests, même AC).
+        let rejected: [(error: ClientError, motive: String)] = [
+            (.api(.conflict("la question a changé depuis la demande")), "la question a changé depuis la demande"),
+            (.api(.conflict("écriture impossible (Permission denied)")), "écriture impossible (Permission denied)"),
+            (.api(.conflict("ce jalon n'est pas attendu")), "ce jalon n'est pas attendu"),
+            (.api(.notFound("carte inconnue")), "carte inconnue"),
+        ]
+        for item in rejected {
+            #expect(IOSMacFailure.of(item.error) == .rejected(item.motive))
+            // Typographie française : espace insécable (U+00A0) avant le deux-points.
+            #expect(IOSMacErrorText.message(for: item.error)
+                == "Le Mac n’a pas pu traiter la demande\u{00A0}: \(item.motive).\nVérifiez la demande ou actualisez l’écran, puis réessayez.")
+        }
+
+        let unavailable = ClientError.api(.unavailable("le service OMP ne répond pas"))
+        #expect(IOSMacFailure.of(unavailable) == .serviceUnavailable)
+        #expect(IOSMacErrorText.message(for: unavailable)
+            == "Service indisponible sur le Mac.\nOuvrez OMP Console sur le Mac et vérifiez que ses services sont démarrés, puis réessayez.")
+    }
 }
