@@ -148,9 +148,26 @@ final class SessionConsoleModel: ObservableObject {
     }
 
     var canSendPrompt: Bool {
-        host.state == .running
-            && host.dialogQueue.isEmpty
-            && !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        promptRefusal(for: prompt) == nil
+    }
+
+    /// La SEULE règle d'acceptation d'un prompt, partagée par le champ de saisie et
+    /// le geste `RemoteActions.prompt(message:)` (route distante, intent Mac). Le
+    /// blanc est refusé avant tout contrôle d'état ; `nil` = le prompt peut partir.
+    func promptRefusal(for message: String) -> GestureRefusal? {
+        if message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .emptyText }
+        switch host.state {
+        case .idle:
+            return .noHostedSession
+        case .stopped, .dead, .failed:
+            return .hostedSessionStopped
+        case .launching, .stopping:
+            return .sessionNotRunning
+        case .running:
+            break
+        }
+        if !host.dialogQueue.isEmpty { return .hostedDialogPending }
+        return nil
     }
 
     var canAnswerDialog: Bool {

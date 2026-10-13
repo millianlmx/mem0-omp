@@ -1,6 +1,7 @@
 // Les mots de Siri dans l’app iOS (feature client-ios-possede-par-la-vue, S-4) :
 // les trois réponses de l’intent témoin, l’intent lui-même et ses phrases, puis
-// l’intent « demandes en attente » (siri-iphone-questions-en-attente, S-7). Le
+// l’intent « demandes en attente » (siri-iphone-questions-en-attente, S-7) et
+// l’intent « écrire à la session OMP » (siri-dictee-session-omp, S-5). Le
 // titre, la description, les phrases, le titre court et le symbole sont des
 // littéraux extraits AU BUILD par l’outillage App Intents : ils vivent donc ici,
 // à la déclaration, et non dans des constantes d’un autre type.
@@ -83,6 +84,43 @@ extension IOSPendingRequestsIntent: VoiceConversation {
     }
 }
 
+/// « Dis à OMP Console » : Siri envoie le message dicté à la session OMP hébergée
+/// du Mac appairé (`VoiceSessionPrompt`) et dit s’il a été reçu, sans attendre ni
+/// lire la réponse de la session. L’app ne s’ouvre pas ; l’intent parle au Mac,
+/// donc exige le déverrouillage de CET iPhone, comme la table l’exige.
+struct IOSSessionPromptIntent: AppIntent, VoiceGestureIntent {
+    static let title: LocalizedStringResource = "Écrire à la session OMP"
+    static let description: IntentDescription? = IntentDescription("Siri envoie votre message dicté à la session OMP du Mac et dit s’il a été reçu.")
+    static let supportedModes: IntentModes = .background
+    static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
+    static let voiceGesture: VoiceGesture = .promptHostedSession
+
+    /// Le message dicté, demandé par `requestValue` s’il manque.
+    @Parameter(title: "Message") var message: String?
+
+    @AppDependency var client: ConsoleClientModel
+
+    init() {}
+
+    /// Pour les tests : résout le client dans `dependencies`, jamais dans `.shared`.
+    init(dependencies: AppDependencyManager) { _client = AppDependency(manager: dependencies) }
+
+    @MainActor
+    func perform() async throws -> IntentResultContainer<Never, Never, Never, IntentDialog> {
+        guard Self.authenticationPolicy == VoiceGesturePolicy.authenticationPolicy(for: Self.voiceGesture, on: .current) else {
+            return .result(dialog: IntentDialog(stringLiteral: VoiceGestureText.misconfigured))
+        }
+        return .result(dialog: IntentDialog(stringLiteral: try await IOSSiriPending.dictate(
+            client: client,
+            message: message,
+            ask: { try await $message.requestValue(IntentDialog(stringLiteral: $0)) },
+            deliver: { text, send in
+                VoiceIssue(try await applyVoicePolicy(target: text, send: send), gesture: Self.voiceGesture, target: text)
+            }
+        )))
+    }
+}
+
 /// Les phrases Siri de l’app, toutes avec le nom de l’app.
 struct OMPConsoleShortcuts: AppShortcutsProvider {
     static var appShortcuts: [AppShortcut] {
@@ -106,6 +144,16 @@ struct OMPConsoleShortcuts: AppShortcutsProvider {
             ],
             shortTitle: "Demandes en attente",
             systemImageName: "tray.full"
+        )
+        AppShortcut(
+            intent: IOSSessionPromptIntent(),
+            phrases: [
+                "Dis à \(.applicationName)",
+                "Envoyer un message à \(.applicationName)",
+                "Écrire à \(.applicationName)",
+            ],
+            shortTitle: "Écrire à la session OMP",
+            systemImageName: "text.bubble"
         )
     }
 }

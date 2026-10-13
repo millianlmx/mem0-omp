@@ -1,11 +1,13 @@
-// La coque iOS de la conversation des attentes (siri-iphone-questions-en-attente,
-// S-6) : le canal vers le Mac appairé, qui lit la liste des attentes et livre
-// chaque réponse par UNE route existante de l'API distante, et l'orchestration
-// « appareil déverrouillé → client prêt → conversation ». La conversation, ses
-// phrases et la politique de confirmation vivent dans `ConsoleCore` ; ce fichier
-// ne cite pas la politique vocale (garde `gestes-vocaux-sans-politique-de-confirma/AC-9`)
-// et n'écrit aucun mot (garde `design-ios/AC-5`) : les constantes de fil viennent
-// de `IOSHomeText` et de `ProjectDialogKind`.
+// La coque iOS des intents Siri qui parlent au Mac appairé : le canal de la
+// conversation des attentes (siri-iphone-questions-en-attente, S-6), qui lit la
+// liste des attentes et livre chaque réponse par UNE route existante de l'API
+// distante, la dictée vers la session OMP (siri-dictee-session-omp, S-5), et ce
+// qu'ils partagent : « appareil déverrouillé → client prêt » et la traduction
+// d'un échec du client en issue. Les déroulés, leurs phrases et la politique de
+// confirmation vivent dans `ConsoleCore` ; ce fichier ne cite pas la politique
+// vocale (garde `gestes-vocaux-sans-politique-de-confirma/AC-9`) et n'écrit aucun
+// mot (garde `design-ios/AC-5`) : les constantes de fil viennent de `IOSHomeText`
+// et de `ProjectDialogKind`.
 
 import ConsoleClient
 import ConsoleCore
@@ -48,12 +50,42 @@ struct IOSSiriPendingChannel: VoicePendingChannel {
     }
 
     /// L'issue d'un échec : `nil` pour le refus « question périmée » d'une
-    /// livraison (409/404, `IOSAnswerFlow.isStale`), une cause sinon.
+    /// livraison (409/404, `IOSAnswerFlow.isStale`), « option invalide » pour un
+    /// 400 sur une option de carte, sinon la traduction commune.
     func issue(of error: Error, delivery: VoiceDelivery?) -> VoiceIssue? {
         if delivery != nil, IOSAnswerFlow.isStale(error) { return nil }
-        guard let cause = (error as? PendingRequestsUnavailable)?.cause ?? (error as? ClientError) else {
-            return .macRefused(motive: "")
+        let cause: Error = (error as? PendingRequestsUnavailable)?.cause ?? error
+        if case .api(.badRequest) = cause as? ClientError, case .cardOption = delivery { return .invalidOption }
+        return IOSSiriPending.issue(of: cause)
+    }
+}
+
+/// L'orchestration des intents Siri qui parlent au Mac appairé.
+@MainActor
+enum IOSSiriPending {
+    /// Appareil verrouillé → `deviceLocked` sans toucher au client (le jeton, au
+    /// trousseau en `WhenUnlocked`, serait lu comme absent). Sinon, attente bornée
+    /// « prêt à émettre » : `nil` si le client est prêt, la cause de connexion sinon.
+    static func readiness(
+        client: ConsoleClientModel,
+        isProtectedDataAvailable: @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
+    ) async -> VoiceIssue? {
+        guard isProtectedDataAvailable() else { return .deviceLocked }
+        switch await client.waitUntilReady() {
+        case .ready:
+            return nil
+        case .notPaired, .pairingRefused:
+            return .notPaired
+        case .macUnreachable:
+            return .macUnreachable
+        case let .incompatibleVersion(local, remote):
+            return .incompatibleVersion(local: local, remote: remote)
         }
+    }
+
+    /// L'issue d'un échec du client, indépendante de ce qui était livré.
+    static func issue(of error: Error) -> VoiceIssue {
+        guard let cause = error as? ClientError else { return .macRefused(motive: "") }
         switch cause {
         case .notConnected, .transport:
             return .macUnreachable
@@ -63,54 +95,56 @@ struct IOSSiriPendingChannel: VoicePendingChannel {
             return .incompatibleVersion(local: ConsoleAPI.protocolVersion, remote: nil)
         case .api(.unauthorized):
             return .notPaired
-        case .api(.badRequest):
-            if case .cardOption = delivery { return .invalidOption }
-            return .macRefused(motive: cause.apiMessage)
-        case .api:
-            return .macRefused(motive: cause.apiMessage)
+        case let .api(error):
+            return .macRefused(motive: error.message ?? "")
         case .decoding, .unexpectedStatus:
             return .macRefused(motive: "")
         }
     }
-}
 
-private extension ClientError {
-    /// Le motif lisible d'un refus de l'API, vide s'il n'en porte pas.
-    var apiMessage: String {
-        guard case let .api(error) = self else { return "" }
-        return error.message ?? ""
-    }
-}
-
-/// L'orchestration de l'intent « demandes en attente ».
-@MainActor
-enum IOSSiriPending {
     /// La conversation des attentes sur le client partagé.
     static func walk(client: ConsoleClientModel, conversation: some VoiceConversation) async throws -> String {
         try await VoicePendingWalk.run(channel: IOSSiriPendingChannel(client: client), conversation: conversation)
     }
 
-    /// Appareil verrouillé → phrase `deviceLocked` sans toucher au client (le
-    /// jeton, au trousseau en `WhenUnlocked`, serait lu comme absent). Sinon,
-    /// attente bornée « prêt à émettre », puis la conversation ; une cause de
-    /// connexion rend sa phrase sans rien envoyer.
+    /// L'appareil et le client d'abord (`readiness`), puis la conversation ; une
+    /// cause de connexion rend sa phrase sans rien envoyer.
     static func answer(
         client: ConsoleClientModel,
         conversation: some VoiceConversation,
         isProtectedDataAvailable: @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
     ) async throws -> String {
-        guard isProtectedDataAvailable() else { return VoiceIssue.deviceLocked.phrase }
-        let issue: VoiceIssue
-        switch await client.waitUntilReady() {
-        case .ready:
-            return try await walk(client: client, conversation: conversation)
-        case .notPaired, .pairingRefused:
-            issue = .notPaired
-        case .macUnreachable:
-            issue = .macUnreachable
-        case let .incompatibleVersion(local, remote):
-            issue = .incompatibleVersion(local: local, remote: remote)
+        if let issue = await readiness(client: client, isProtectedDataAvailable: isProtectedDataAvailable) {
+            return issue.phrase
         }
-        return issue.phrase
+        return try await walk(client: client, conversation: conversation)
+    }
+
+    /// La dictée vers la session OMP hébergée (`VoiceSessionPrompt`) : l'appareil
+    /// et le client d'abord, puis le message demandé au besoin, puis UN envoi par
+    /// `client.prompt`. `deliver` reçoit le message trimé et cet envoi, et rend
+    /// son issue ; une annulation est relancée, tout autre échec est traduit par
+    /// `issue(of:)`.
+    static func dictate(
+        client: ConsoleClientModel,
+        message: String?,
+        ask: @MainActor (String) async throws -> String,
+        deliver: @MainActor (String, @MainActor () async throws -> Void) async throws -> VoiceIssue,
+        isProtectedDataAvailable: @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }
+    ) async throws -> String {
+        try await VoiceSessionPrompt.run(
+            message: message,
+            ready: { await readiness(client: client, isProtectedDataAvailable: isProtectedDataAvailable) },
+            ask: ask,
+            deliver: { text in
+                do {
+                    return try await deliver(text) { _ = try await client.prompt(message: text) }
+                } catch let cancellation as CancellationError {
+                    throw cancellation
+                } catch {
+                    return issue(of: error)
+                }
+            }
+        )
     }
 }
