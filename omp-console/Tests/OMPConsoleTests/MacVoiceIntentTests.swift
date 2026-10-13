@@ -1,10 +1,11 @@
-// Preuves tracées de Siri sur le Mac (siri-mac-questions-en-attente, S-8.1) : une
-// session vocale `MacVoiceSession` sur une pile RÉELLE (`RemoteStack`), avec les
-// gestes typés de `RemoteActions` que sert aussi l'API distante. La question posée
-// à Siri est scriptée ; l'effet de chaque réponse est observé là où le geste
-// l'écrit (boîte du run, commande postée, requête au service scripté). Le contexte
-// est passé directement : un test ne lit jamais `intent.voice` (`AppDependency`
-// hors du déroulé d'un intent est fatal).
+// Preuves tracées de Siri sur le Mac (siri-mac-questions-en-attente, S-8.1) : la
+// conversation des attentes de ConsoleCore (`VoicePendingWalk`, la même que sur
+// l'iPhone) branchée par `MacSiriPending` sur une pile RÉELLE (`RemoteStack`), avec
+// les gestes typés de `RemoteActions` que sert aussi l'API distante. Les tours de
+// parole de Siri sont scriptés ; l'effet de chaque réponse est observé là où le
+// geste l'écrit (boîte du run, commande postée, requête au service scripté). Le
+// contexte est passé directement : un test ne lit jamais `intent.voice`
+// (`AppDependency` hors du déroulé d'un intent est fatal).
 
 import AppIntents
 import ConsoleCore
@@ -58,25 +59,32 @@ private func failingFileOps(_ failure: WriteFailure) -> PipelineFileOps {
     )
 }
 
-/// La question posée à Siri, scriptée : chaque étape rend l'énoncé de
-/// l'utilisateur (ou lève : annulation) ; les questions posées sont notées.
-@MainActor
-private final class SpokenScript {
-    private(set) var prompts: [String] = []
-    private var steps: [@MainActor () async throws -> String]
+/// Un « non » dit à Siri : `confirm` lève, sans annuler la tâche.
+private struct Declined: Error {}
 
-    init(steps: [@MainActor () async throws -> String]) {
+/// Les tours de parole scriptés : chaque étape de `ask` rend l'énoncé de
+/// l'utilisateur (ou lève : annulation), chaque `confirm` rejoue une réponse
+/// oui/non (« non » ou file vide lève) ; les dialogues dits sont notés.
+@MainActor
+private final class SpokenScript: VoiceConversation {
+    private(set) var prompts: [String] = []
+    private(set) var confirms: [String] = []
+    private var steps: [@MainActor () async throws -> String]
+    private var confirmations: [Bool]
+
+    init(steps: [@MainActor () async throws -> String], confirmations: [Bool] = []) {
         self.steps = steps
+        self.confirmations = confirmations
     }
 
     /// « annuler » lève `CancellationError`, comme Siri quand la personne annule.
-    convenience init(_ utterances: [String]) {
+    convenience init(_ utterances: [String], confirmations: [Bool] = []) {
         self.init(steps: utterances.map { said in
             { @MainActor in
                 if said == "annuler" { throw CancellationError() }
                 return said
             }
-        })
+        }, confirmations: confirmations)
     }
 
     func ask(_ prompt: String) async throws -> String {
@@ -86,6 +94,11 @@ private final class SpokenScript {
             throw CancellationError()
         }
         return try await steps.removeFirst()()
+    }
+
+    func confirm(_ prompt: String) async throws {
+        confirms.append(prompt)
+        guard !confirmations.isEmpty, confirmations.removeFirst() else { throw Declined() }
     }
 }
 
@@ -309,13 +322,10 @@ private func voiceContext(
     )
 }
 
-/// Une session vocale de l'intent « Ce qui m'attend », sa politique appliquée par
-/// l'intent lui-même.
+/// La conversation des attentes du Mac sur `context`.
 @MainActor
-private func session(_ context: MacVoiceContext) -> MacVoiceSession {
-    MacVoiceSession(context: context, policy: { gesture, target, send in
-        try await MacPendingIntent().applyVoicePolicy(gesture, target: target, send: send)
-    })
+private func walk(_ context: MacVoiceContext, _ script: SpokenScript, announcing: Bool = true) async throws -> String {
+    try await MacSiriPending.walk(context: context, conversation: script, announcing: announcing)
 }
 
 @MainActor
@@ -340,24 +350,42 @@ private func deliveries(_ inbox: String?) throws -> [String] {
     }
 }
 
+/// Ce que Siri dit d'une traite : les phrases non vides, séparées d'une espace.
+private func spoken(_ parts: String...) -> String {
+    parts.filter { !$0.isEmpty }.joined(separator: " ")
+}
+
+private func item(_ request: PendingRequest) -> String {
+    VoicePendingSummary.item(request)
+}
+
+/// Les choix d'une question, suivis de l'offre « autre réponse » si elle l'accepte.
 private func choices(_ labels: [String], freeText: Bool) -> String {
-    VoiceSpeechText.walkChoices(labels: labels, acceptsFreeText: freeText)
+    spoken(VoiceSpeechText.choices(labels), freeText ? VoiceSpeechText.otherAnswerOffer : "")
 }
 
-private func sent(_ request: PendingRequest) -> String {
-    VoiceIssue.sent(
-        request.voiceGesture ?? .consult,
-        target: request.subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-    ).phrase
+private func sent(_ gesture: VoiceGesture, _ request: PendingRequest) -> String {
+    VoiceIssue.sent(gesture, target: request.subject ?? "").phrase
 }
 
-/// Une sonde dont le littéral diverge de la table : la politique doit la refuser.
-private struct LockedProbeIntent: AppIntent, VoiceAnswerIntent {
+/// Une sonde dont le littéral diverge de la table : rien ne doit être lu ni dit.
+private struct LockedProbeIntent: AppIntent {
     static let title: LocalizedStringResource = "Sonde verrouillée"
     static let authenticationPolicy: IntentAuthenticationPolicy = .requiresLocalDeviceAuthentication
-    static let voiceGestures: [VoiceGesture] = [.answerOption]
 
     func perform() async throws -> some IntentResult { .result() }
+}
+
+extension LockedProbeIntent: VoiceConversation {
+    func ask(_ dialog: String) async throws -> String {
+        Issue.record("question inattendue : \(dialog)")
+        throw CancellationError()
+    }
+
+    func confirm(_ dialog: String) async throws {
+        Issue.record("confirmation inattendue : \(dialog)")
+        throw CancellationError()
+    }
 }
 
 private let answerGestures: [VoiceGesture] = [
@@ -384,11 +412,13 @@ struct MacVoiceIntentTests {
         #expect(oldest.nature == .question)
 
         let script = SpokenScript(["annuler"])
-        _ = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        _ = try? await walk(voiceContext(stack), script)
 
-        #expect(script.prompts.first == VoiceSpeechText.walkHeader(2)
-            + VoiceSpeechText.walkRequest(oldest) + " "
-            + choices(["Le garder", "Le vider", "Le compresser"], freeText: true))
+        #expect(script.prompts.first == spoken(
+            VoiceSpeechText.walkCount(2),
+            VoiceSpeechText.walkFirst(item(oldest)),
+            choices(["Le garder", "Le vider", "Le compresser"], freeText: true)
+        ))
     }
 
     @Test("siri-mac-questions-en-attente/AC-3 : sans demande, Siri dit que rien n’attend et n’appelle aucun geste")
@@ -400,10 +430,10 @@ struct MacVoiceIntentTests {
         try await awaitPending(stack, count: 0)
 
         let script = SpokenScript([])
-        let phrase = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        let phrase = try await walk(voiceContext(stack), script)
 
         #expect(phrase == VoiceSpeechText.noPending)
-        #expect(script.prompts.isEmpty)
+        #expect(script.prompts.isEmpty && script.confirms.isEmpty)
         #expect(stack.actions.journal.isEmpty)
         #expect(stack.project.host.dialogQueue.isEmpty && stack.session.host.dialogQueue.isEmpty)
     }
@@ -438,8 +468,8 @@ struct MacVoiceIntentTests {
             "la deuxième",                    // conduite, par rang
             "Garder",                         // session hébergée, par libellé
             "le dernier",                     // escalade d'audit, par rang
-        ])
-        let phrase = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        ], confirmations: [true, true, true, true])
+        let phrase = try await walk(voiceContext(stack), script)
 
         // La question en vol : la boîte du run reçoit l'option ET l'identifiant lu.
         let ask = try deliveries(world.inboxes["f-ask"])
@@ -467,12 +497,13 @@ struct MacVoiceIntentTests {
                 && $0.body?["answer"] as? String == "Non" && $0.body?["key"] as? String == "ask:f-audit:call-9"
         })
         // Chaque demande répondue n'est plus proposée : chaque question suivante
-        // passe à la suivante, la dernière phrase dit qu'il n'en reste aucune.
+        // présente la suivante, la dernière phrase dit que rien n'attend plus.
         #expect(script.prompts.count == 5)
+        #expect(script.confirms.count == 4)
         for (index, prompt) in script.prompts.dropFirst().enumerated() {
-            #expect(prompt.contains(VoiceSpeechText.walkNext + VoiceSpeechText.walkRequest(list[index + 1])))
+            #expect(prompt.hasPrefix(VoiceSpeechText.walkNext(item(list[index + 1]))))
         }
-        #expect(phrase == sent(list[4]) + " " + VoiceSpeechText.walkNoneLeft)
+        #expect(phrase == spoken(sent(.answerAuditEscalation, list[4]), VoiceSpeechText.noPending))
     }
 
     @Test("siri-mac-questions-en-attente/AC-5 : « autre réponse » envoie le texte dicté ; hors options sans texte libre, rien ne part et les options sont relues")
@@ -486,8 +517,8 @@ struct MacVoiceIntentTests {
         try await awaitPending(stack, count: 1)
 
         let free = SpokenScript(["autre réponse", "Garde-le encore une semaine"])
-        _ = await session(voiceContext(stack)).run(announcing: false, ask: free.ask)
-        #expect(free.prompts.last == VoiceSpeechText.walkDictate)
+        _ = try await walk(voiceContext(stack), free, announcing: false)
+        #expect(free.prompts.last == VoiceSpeechText.dictate)
         let ask = try deliveries(world.inboxes["f-ask"])
         #expect(ask.count == 1)
         #expect(ask.first?.contains("Garde-le encore une semaine") == true)
@@ -505,10 +536,11 @@ struct MacVoiceIntentTests {
         try await awaitPending(dialogStack, count: 1)
 
         let strict = SpokenScript(["peut-être plus tard", "annuler"])
-        let phrase = await session(voiceContext(dialogStack)).run(announcing: false, ask: strict.ask)
+        let context = voiceContext(dialogStack)
+        await #expect(throws: CancellationError.self) { try await walk(context, strict, announcing: false) }
         #expect(strict.prompts.count == 2)
+        #expect(!strict.prompts.contains { $0.contains(VoiceSpeechText.otherAnswerOffer) })
         #expect(strict.prompts.last == VoiceSpeechText.optionNotFound(labels: ["Garder", "Jeter"]))
-        #expect(phrase == VoiceSpeechText.walkStopped)
         #expect(!transport.requests.contains { $0.path.hasSuffix("/dialogs/d-select") })
         #expect(hosted.host.dialogQueue.first?.id == "d-select")
     }
@@ -525,14 +557,13 @@ struct MacVoiceIntentTests {
         try await awaitPending(stack, count: 2)
         let list = pending(stack)
 
-        let script = SpokenScript(["Le garder", "Continue"])
-        let phrase = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        let script = SpokenScript(["Le garder", "Continue"], confirmations: [true])
+        let phrase = try await walk(voiceContext(stack), script)
 
+        #expect(script.confirms == [spoken(sent(.answerOption, list[0]), VoiceSpeechText.nextPrompt)])
         #expect(script.prompts.count == 2)
-        #expect(script.prompts.last == sent(list[0]) + " " + VoiceSpeechText.walkNext
-            + VoiceSpeechText.walkRequest(list[1]) + " " + VoiceSpeechText.walkDictate)
-        #expect(phrase == sent(list[1]) + " " + VoiceSpeechText.walkNoneLeft)
-        #expect(phrase.hasSuffix(VoiceSpeechText.walkNoneLeft))
+        #expect(script.prompts.last == spoken(VoiceSpeechText.walkNext(item(list[1])), VoiceSpeechText.dictate))
+        #expect(phrase == spoken(sent(.answerText, list[1]), VoiceSpeechText.noPending))
     }
 
     @Test("siri-mac-questions-en-attente/AC-7 : lancée sans fenêtre, l’app démarre ses modèles et lit la demande ; au-delà du délai, Siri dit la cause sans geste")
@@ -550,20 +581,22 @@ struct MacVoiceIntentTests {
         // Délai dépassé : aucun modèle démarré, rien n'est lu ni envoyé.
         #expect(stack.kanban.state == .loading)
         let late = SpokenScript([])
-        let unreadable = await session(voiceContext(stack, startModels: {}, readinessTimeout: .milliseconds(200)))
-            .run(announcing: true, ask: late.ask)
-        #expect(unreadable == VoiceSpeechText.stateUnreadable)
-        #expect(late.prompts.isEmpty)
+        let unreadable = try await walk(voiceContext(stack, startModels: {}, readinessTimeout: .milliseconds(200)), late)
+        #expect(unreadable == VoiceIssue.stateUnreadable.phrase)
+        #expect(late.prompts.isEmpty && late.confirms.isEmpty)
         #expect(try deliveries(world.inboxes["f-ask"]).isEmpty)
         #expect(stack.actions.journal.isEmpty)
 
         // L'ardoise jamais démarrée : la lecture la démarre puis lit la demande.
         #expect(stack.kanban.state == .loading)
         let script = SpokenScript(["annuler"])
-        _ = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        _ = try? await walk(voiceContext(stack), script)
         let request = try #require(pending(stack).first)
-        #expect(script.prompts.first == VoiceSpeechText.walkHeader(1) + VoiceSpeechText.walkRequest(request) + " "
-            + choices(["Le garder", "Le vider"], freeText: true))
+        #expect(script.prompts.first == spoken(
+            VoiceSpeechText.walkCount(1),
+            VoiceSpeechText.walkFirst(item(request)),
+            choices(["Le garder", "Le vider"], freeText: true)
+        ))
     }
 
     @Test("siri-mac-questions-en-attente/AC-8 : un dialogue « editor » est compté, dit « à traiter dans l’app », sans réponse demandée, puis Siri passe à la question")
@@ -582,16 +615,22 @@ struct MacVoiceIntentTests {
         let list = pending(stack)
         #expect(list.first?.nature == .sessionDialog)
 
-        let script = SpokenScript(["annuler"])
-        let phrase = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        let script = SpokenScript(["annuler"], confirmations: [true])
+        let context = voiceContext(stack)
+        await #expect(throws: CancellationError.self) { try await walk(context, script) }
 
-        #expect(script.prompts == [
-            VoiceSpeechText.walkHeader(2) + VoiceSpeechText.walkRequest(list[0]) + " " + VoiceSpeechText.walkInApp
-                + " " + VoiceSpeechText.walkNext + VoiceSpeechText.walkRequest(list[1]) + " "
-                + choices(["Le garder", "Le vider"], freeText: true),
-        ])
-        #expect(!script.prompts.contains { $0.hasSuffix(VoiceSpeechText.walkRequest(list[0])) })
-        #expect(phrase == VoiceSpeechText.walkStopped)
+        // L'editor : compté, présenté, « à traiter dans l'app », sans question posée.
+        #expect(script.confirms == [spoken(
+            VoiceSpeechText.walkCount(2),
+            VoiceSpeechText.walkFirst(item(list[0])),
+            VoiceSpeechText.appOnly,
+            VoiceSpeechText.nextPrompt
+        )])
+        // Puis la question de run.
+        #expect(script.prompts == [spoken(
+            VoiceSpeechText.walkNext(item(list[1])),
+            choices(["Le garder", "Le vider"], freeText: true)
+        )])
         #expect(hosted.host.dialogQueue.first?.id == "d-editor")
         #expect(!transport.requests.contains { $0.path.hasSuffix("/dialogs/d-editor") })
     }
@@ -621,11 +660,14 @@ struct MacVoiceIntentTests {
             },
             { @MainActor in throw CancellationError() },
         ])
-        _ = await session(voiceContext(stack)).run(announcing: false, ask: replaced.ask)
+        _ = try? await walk(voiceContext(stack), replaced, announcing: false)
         let fresh = try #require(pending(stack).first)
         #expect(replaced.prompts.count == 2)
-        #expect(replaced.prompts.last == VoiceIssue.staleQuestion.phrase + " " + VoiceSpeechText.walkRequest(fresh) + " "
-            + choices(["Les garder", "Les purger"], freeText: true))
+        #expect(replaced.prompts.last == spoken(
+            VoiceIssue.staleQuestion.phrase,
+            VoiceSpeechText.walkReplaced(item(fresh)),
+            choices(["Les garder", "Les purger"], freeText: true)
+        ))
         #expect(try deliveries(world.inboxes["f-ask"]).isEmpty)
 
         // La demande disparaît pendant que Siri écoute.
@@ -638,8 +680,8 @@ struct MacVoiceIntentTests {
                 return "Les garder"
             },
         ])
-        let phrase = await session(voiceContext(stack)).run(announcing: false, ask: removed.ask)
-        #expect(phrase == VoiceIssue.staleQuestion.phrase + " " + VoiceSpeechText.walkNoneLeft)
+        let phrase = try await walk(voiceContext(stack), removed, announcing: false)
+        #expect(phrase == spoken(VoiceIssue.staleQuestion.phrase, VoiceSpeechText.noPending))
         #expect(try deliveries(world.inboxes["f-ask"]).isEmpty)
     }
 
@@ -669,9 +711,9 @@ struct MacVoiceIntentTests {
         let motive = try #require(route.errorMessage)
 
         let script = SpokenScript(["Le garder"])
-        let phrase = await session(voiceContext(stack)).run(announcing: false, ask: script.ask)
+        let phrase = try await walk(voiceContext(stack), script, announcing: false)
 
-        #expect(phrase == VoiceIssue.macRefused(motive: motive).phrase + " " + VoiceSpeechText.walkNoneLeft)
+        #expect(phrase == spoken(VoiceIssue.macRefused(motive: motive).phrase, VoiceSpeechText.noPending))
         #expect(pending(stack).contains { $0.id == request.id })
         #expect(try deliveries(world.inboxes["f-ask"]).isEmpty)
     }
@@ -687,9 +729,9 @@ struct MacVoiceIntentTests {
         let request = try #require(pending(stack).first)
 
         let script = SpokenScript(["annuler"])
-        let phrase = await session(voiceContext(stack)).run(announcing: true, ask: script.ask)
+        let context = voiceContext(stack)
+        await #expect(throws: CancellationError.self) { try await walk(context, script) }
 
-        #expect(phrase == VoiceSpeechText.walkStopped)
         #expect(script.prompts.count == 1)
         #expect(try deliveries(world.inboxes["f-ask"]).isEmpty)
         #expect(stack.actions.journal.isEmpty)
@@ -698,30 +740,41 @@ struct MacVoiceIntentTests {
 
     @Test("siri-mac-questions-en-attente/AC-12 : le littéral authenticationPolicy et la confirmation de chaque intent vocal du Mac suivent la table")
     func intentsFollowThePolicyTable() async throws {
-        func check<Intent: VoiceAnswerIntent>(_ intent: Intent) async throws {
-            #expect(Intent.voiceGestures == answerGestures)
-            for gesture in Intent.voiceGestures {
-                #expect(Intent.authenticationPolicy == VoiceGesturePolicy.authenticationPolicy(for: gesture, on: .mac))
-                var sends = 0
-                let outcome = try await intent.applyVoicePolicy(gesture, target: "x") { sends += 1 }
-                let confirms = VoiceGesturePolicy.rule(for: gesture, on: .mac).needsConfirmation
-                #expect(!confirms, "aucune réponse vocale ne demande de confirmation sur le Mac")
-                #expect(outcome == .sent)
-                #expect(sends == 1)
+        // Les littéraux des deux intents, confrontés à la table pour chaque geste émis.
+        #expect(MacSiriPending.gestures == answerGestures)
+        for policy in [MacPendingIntent.authenticationPolicy, MacAnswerIntent.authenticationPolicy] {
+            #expect(VoiceGesturePolicy.admits(policy, for: MacSiriPending.gestures, on: .mac))
+            for gesture in MacSiriPending.gestures {
+                #expect(policy == VoiceGesturePolicy.authenticationPolicy(for: gesture, on: .mac))
+                #expect(!VoiceGesturePolicy.rule(for: gesture, on: .mac).needsConfirmation,
+                        "aucune réponse vocale ne demande de confirmation sur le Mac")
             }
-            // Un geste que l'intent ne déclare pas n'est jamais envoyé.
-            var sends = 0
-            let foreign = try await intent.applyVoicePolicy(.stopFeature, target: "x") { sends += 1 }
-            #expect(foreign == .misconfigured(dialog: VoiceGestureText.misconfigured))
-            #expect(sends == 0)
         }
-        try await check(MacPendingIntent())
-        try await check(MacAnswerIntent())
 
-        // Un littéral qui diverge de la table : rien n'est envoyé.
-        var sends = 0
-        let locked = try await LockedProbeIntent().applyVoicePolicy(.answerOption, target: "x") { sends += 1 }
-        #expect(locked == .misconfigured(dialog: VoiceGestureText.misconfigured))
-        #expect(sends == 0)
+        // Un jalon de carte (geste à confirmation hors des gestes du Mac) n'est
+        // jamais proposé à la voix : il reste à traiter dans l'app.
+        let verdict = PendingRequest(
+            id: "v", nature: .milestoneSpecs, at: 0, subject: "f-specs", question: "Valider les specs ?", detail: nil,
+            options: [], paused: false, reply: .cardVerdict(cardId: "c", milestone: .specs)
+        )
+        #expect(VoicePendingWalk.mode(of: verdict, on: .mac) == .approve)
+        #expect(VoicePendingWalk.mode(of: verdict, on: .mac, admitting: MacSiriPending.gestures) == .appOnly)
+
+        // Une réponse réelle part sans aucune confirmation.
+        let world = try VoiceStore()
+        try world.ask("f-ask", at: Ages.ask, toolCallId: "call-1", question: "Que faire du cache ?", options: ["Le garder", "Le vider"])
+        world.publishLot()
+        let stack = try await makeStack(world)
+        defer { stack.stop() }
+        try await awaitPending(stack, count: 1)
+        let script = SpokenScript(["Le garder"])
+        _ = try await walk(voiceContext(stack), script)
+        #expect(script.confirms.isEmpty)
+        #expect(try deliveries(world.inboxes["f-ask"]).count == 1)
+
+        // Un littéral qui diverge de la table : rien n'est lu, demandé ni envoyé.
+        let locked = try await MacSiriPending.answer(LockedProbeIntent(), context: voiceContext(stack), announcing: true)
+        #expect(locked == VoiceGestureText.misconfigured)
+        #expect(try deliveries(world.inboxes["f-ask"]).count == 1)
     }
 }

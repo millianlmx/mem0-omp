@@ -103,94 +103,56 @@ public enum VoiceSpeechText {
         return pendingHeader(count) + items.joined(separator: " ; ") + end
     }
 
-    // --- parcours des attentes (siri-mac-questions-en-attente, S-2) -------------
-    /// L'annonce du nombre de demandes, qui introduit la première (finit par une
-    /// espace : la demande suit sans séparateur).
-    public static func walkHeader(_ count: Int) -> String {
-        count == 1 ? "1 demande en attente : " : "\(count) demandes en attente. La première : "
+    // --- conversation des attentes (siri-iphone-questions-en-attente, S-1) ------
+    /// Le total annoncé en tête de la conversation.
+    public static func walkCount(_ count: Int) -> String {
+        count == 1 ? "1 demande en attente." : "\(count) demandes en attente."
     }
 
-    /// « sujet, nature : question. » ; la source tient lieu de sujet s'il est vide.
-    public static func walkRequest(_ request: PendingRequest) -> String {
-        let subject = VoiceSpeech.collapsingBlanks(request.subject ?? "")
-        let label = "\(subject.isEmpty ? pendingSource(request.nature) : subject), \(pendingNature(request.nature))"
-        let question = VoiceSpeech.collapsingBlanks(request.question)
-        return "\(label) : \(question)" + (endsSentence(question) ? "" : ".")
+    /// La présentation de la première attente, `item` étant `VoicePendingSummary.item`.
+    public static func walkFirst(_ item: String) -> String {
+        "La première : \(item)."
     }
 
-    /// Tous les choix, dans leur ordre, puis l'invitation au texte libre s'il est admis.
-    public static func walkChoices(labels: [String], acceptsFreeText: Bool) -> String {
-        "Choix possibles : \(list(labels, more: 0))." + (acceptsFreeText ? " " + walkOtherAnswerHint : "")
+    public static func walkNext(_ item: String) -> String {
+        "La suivante : \(item)."
     }
 
-    public static let walkOtherAnswerHint = "Vous pouvez aussi dire « autre réponse »."
-    public static let walkDictate = "Dictez votre réponse."
-    public static let walkInApp = "À traiter dans l’app."
-    public static let walkNext = "La suivante : "
-    public static let walkNoneLeft = "Il n’en reste aucune."
-    public static let walkStopped = "D’accord, cette demande reste en attente."
-    public static let walkNotUnderstood = "Je n’ai pas compris votre réponse, rien n’a été envoyé."
-    public static let stateUnreadable = "OMP Console n’a pas pu lire l’état du Mac à temps, rien n’a été envoyé. Réessayez dans un instant."
-    public static let confirmYes = "Oui"
-    public static let confirmNo = "Non"
-
-    /// Les énoncés qui demandent à dicter un texte libre, sous forme normalisée
-    /// (`VoiceSpeech.normalized`).
-    static let otherAnswerWords: Set<String> = ["autre reponse", "une autre reponse", "autre", "reponse libre"]
-
-    // --- pilotage (siri-mac-pilotage-pipelines) ------------------------------------
-    /// La question qui demande la feature visée par un geste.
-    public static func pilotWhichFeature(_ gesture: VoicePilotGesture) -> String {
-        switch gesture {
-        case .resume:
-            return "Quelle feature reprendre ?"
-        case .stop:
-            return "Quelle feature arrêter ?"
-        case .validateSpecs:
-            return "De quelle feature valider les specs ?"
-        case .acceptReview:
-            return "De quelle feature accepter la revue ?"
-        }
+    /// La présentation d'une attente dont la question a été remplacée.
+    public static func walkReplaced(_ item: String) -> String {
+        "La nouvelle question : \(item)."
     }
 
-    /// Aucune carte de l'ardoise n'offre le geste.
-    public static func pilotNoEligible(_ gesture: VoicePilotGesture) -> String {
-        switch gesture {
-        case .resume:
-            return "Aucune feature ne peut être reprise pour l’instant."
-        case .stop:
-            return "Aucune feature n’a de pipeline à arrêter pour l’instant."
-        case .validateSpecs:
-            return "Aucune feature n’attend la validation de ses specs."
-        case .acceptReview:
-            return "Aucune feature n’attend l’acceptation de sa revue."
-        }
+    /// Tous les choix d'une question, sans plafond.
+    public static func choices(_ labels: [String]) -> String {
+        "Choix possibles : \(list(labels, more: 0))."
     }
 
-    /// Le nom dit désigne une feature de l'ardoise, mais qui n'offre pas le geste.
-    public static func pilotNotOffered(_ gesture: VoicePilotGesture) -> String {
-        switch gesture {
-        case .resume:
-            return "Aucune feature à ce nom ne peut être reprise dans son état actuel, rien n’a été envoyé."
-        case .stop:
-            return "Aucune feature à ce nom n’a de pipeline à arrêter, rien n’a été envoyé."
-        case .validateSpecs:
-            return "Aucune feature à ce nom n’attend la validation de ses specs, rien n’a été envoyé."
-        case .acceptReview:
-            return "Aucune feature à ce nom n’attend l’acceptation de sa revue, rien n’a été envoyé."
-        }
-    }
+    public static let otherAnswerOffer = "Ou dites « autre réponse »."
 
-    /// Rappelle TOUS les dépôts lançables, sans plafond.
-    public static func launchWhichRepo(labels: [String]) -> String {
-        "Sur quel dépôt lancer la pipeline ? Choix possibles : \(list(labels, more: 0))."
-    }
+    /// Le mot ENTENDU qui ouvre la dictée d'un texte libre, comparé après
+    /// normalisation (`VoiceSpeech.normalized`).
+    public static let otherAnswer = "autre réponse"
 
-    public static let launchNoRepo = "Aucun dépôt n’est connu sur ce Mac, rien n’a été lancé. Ouvrez OMP Console pour en choisir un."
-    public static let launchAskTitle = "Quel est le titre de la feature ?"
-    public static let launchAskNeed = "Quel est le besoin ?"
-    public static let launchEmptyTitle = "Le titre dicté est vide, aucune feature n’a été créée."
-    public static let launchEmptyNeed = "Le besoin dicté est vide, aucune feature n’a été créée."
+    public static let dictate = "Dictez votre réponse."
+
+    /// Une attente qui ne se règle pas à la voix.
+    public static let appOnly = "Elle est à traiter dans l’app, pas à la voix."
+
+    public static let nextPrompt = "Passer à la suivante ?"
+
+    /// La fin d'une conversation refusée ou abandonnée avant la suivante.
+    public static let walkStopped = "D’accord, j’arrête là."
+
+    /// Les options prononcées d'un dialogue `confirm`.
+    public static let yes = "Oui"
+    public static let no = "Non"
+
+    /// Les phrases non vides de `phrases`, séparées par une espace : ce que Siri
+    /// dit d'une traite.
+    static func joined(_ phrases: [String]) -> String {
+        phrases.filter { !$0.isEmpty }.joined(separator: " ")
+    }
 
     // --- issue d'un geste (S-5) --------------------------------------------------
     public static func issue(_ issue: VoiceIssue) -> String {
@@ -220,6 +182,10 @@ public enum VoiceSpeechText {
             return local < remote
                 ? "L’app de cet appareil est plus ancienne que celle du Mac. Mettez-la à jour."
                 : "OMP Console sur le Mac est plus ancien que l’app de cet appareil. Mettez-le à jour."
+        case .deviceLocked:
+            return "Cet appareil est verrouillé. Déverrouillez-le, puis réessayez."
+        case .stateUnreadable:
+            return "OMP Console n’a pas pu lire l’état du Mac à temps, rien n’a été envoyé. Réessayez dans un instant."
         }
     }
 
@@ -228,7 +194,7 @@ public enum VoiceSpeechText {
         guard !t.isEmpty else { return "C’est fait." }
         switch gesture {
         case .stopFeature:
-            return "Les pipelines de \(t) sont arrêtées."
+            return "La feature \(t) est arrêtée."
         case .validateSpecs:
             return "Les specs de la feature \(t) sont validées."
         case .acceptReview:
@@ -254,7 +220,7 @@ public enum VoiceSpeechText {
 
     /// Vrai si `text` finit déjà une phrase : point, point d'exclamation, point
     /// d'interrogation ou points de suspension (U+002E, U+0021, U+003F, U+2026).
-    static func endsSentence(_ text: String) -> Bool {
+    private static func endsSentence(_ text: String) -> Bool {
         guard let last = text.unicodeScalars.last else { return false }
         return [0x2E, 0x21, 0x3F, 0x2026].contains(last.value)
     }

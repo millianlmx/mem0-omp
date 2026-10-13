@@ -23,7 +23,8 @@ public enum VoicePendingSummary {
         )
     }
 
-    private static func item(_ request: PendingRequest) -> String {
+    /// L'élément prononcé d'une attente : « source, nature « question » ».
+    public static func item(_ request: PendingRequest) -> String {
         let subject = request.subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return VoiceSpeechText.pendingItem(
             source: subject.isEmpty ? VoiceSpeechText.pendingSource(request.nature) : subject,
