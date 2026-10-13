@@ -15,6 +15,8 @@ struct ClientHarness {
     let pacer: RecordingPacer
     /// L'attente du délai de recherche : par défaut, rendue sans attendre.
     let searchPacer: any ClientPacer
+    /// L'échéance de `waitUntilReady()` : par défaut, rendue sans attendre.
+    let readinessPacer: any ClientPacer
     let model: ConsoleClientModel
 
     init(
@@ -24,23 +26,28 @@ struct ClientHarness {
         deviceName: String = "iPhone",
         localProtocolVersion: Int = 1,
         nowMs: @Sendable @escaping () -> Double = { Date().timeIntervalSince1970 * 1000 },
-        searchPacer: any ClientPacer = RecordingPacer()
+        searchPacer: any ClientPacer = RecordingPacer(),
+        readinessPacer: any ClientPacer = RecordingPacer(),
+        retryPacer: (any ClientPacer)? = nil,
+        tokenStore: (any TokenStore)? = nil
     ) {
         preferences = InMemoryClientPreferences(initialPreferences)
         tokens = InMemoryTokenStore(initialTokens)
         pacer = RecordingPacer(limit: pacerLimit)
         self.searchPacer = searchPacer
+        self.readinessPacer = readinessPacer
         model = ConsoleClientModel(
             transport: transport,
             discovery: discovery,
             preferences: preferences,
-            tokens: tokens,
-            pacer: pacer,
+            tokens: tokenStore ?? tokens,
+            pacer: retryPacer ?? pacer,
             pathSource: path,
             deviceName: deviceName,
             localProtocolVersion: localProtocolVersion,
             nowMs: nowMs,
-            searchPacer: searchPacer
+            searchPacer: searchPacer,
+            readinessPacer: readinessPacer
         )
     }
 

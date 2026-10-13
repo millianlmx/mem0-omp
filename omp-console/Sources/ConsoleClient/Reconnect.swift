@@ -27,6 +27,11 @@ public enum ClientRetry {
     /// « Mac injoignable » au lieu de « connexion en cours ».
     public static let searchGrace: Double = 10
 
+    /// La borne de `waitUntilReady()`, en secondes, démarrage à froid compris ;
+    /// sous la limite d'exécution d'un intent Siri (≈ 10 s observées), elle laisse
+    /// au geste lui-même au moins autant de temps.
+    public static let readinessTimeout: Double = 5
+
     /// Le délai de la n-ième tentative (1 = première) : `delays[min(n-1, 6)]`.
     public static func delay(attempt: Int) -> Double {
         let index = min(max(attempt - 1, 0), delays.count - 1)
