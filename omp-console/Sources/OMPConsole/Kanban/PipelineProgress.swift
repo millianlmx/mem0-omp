@@ -1,20 +1,9 @@
 // L'avancement d'une carte (S-14 de omp-console-redesign) : les cinq étapes de la
 // pipeline, chacune faite, en cours, à venir ou en échec. Fonction PURE de la
-// carte — l'inspecteur la rend, le test la vérifie sans vue.
+// carte — l'inspecteur la rend, le test la vérifie sans vue. Les types
+// `PipelineStep` et `PipelineStepState` vivent dans `ConsoleCore`.
 
 import ConsoleCore
-
-/// L'état d'une étape de l'avancement.
-
-enum PipelineStepState: Equatable {
-    case done, current, upcoming, failed
-}
-
-/// Une étape de l'avancement : son titre et son état.
-struct PipelineStep: Equatable {
-    var title: String
-    var state: PipelineStepState
-}
 
 enum PipelineProgress {
     /// Les cinq étapes (`KanbanText.progressSteps`) d'une carte. L'étape courante

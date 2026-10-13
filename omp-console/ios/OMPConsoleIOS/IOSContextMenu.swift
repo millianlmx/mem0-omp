@@ -41,6 +41,13 @@ enum IOSMenuAction: Equatable {
     case copy(String)
     /// « Arrêter… » (`KanbanText.stop`), destructif, toujours dernier.
     case stop
+    /// « Copier le chemin » d'un audit (`AuditText.copyPath`) : le chemin COMPLET du
+    /// dépôt, copié tel quel (audit-ui-redesign, S-3).
+    case copyPath(String)
+    /// « Ouvrir dans Projet » d'un audit (`AuditText.openInProject`, S-12).
+    case openInProject
+    /// « Arrêter l'audit… » (`AuditText.stopAudit`), destructif, toujours dernier.
+    case stopAudit
 }
 
 /// Le genre d'une rangée de l'Accueil (hors cartes « À vous »).
@@ -126,6 +133,17 @@ enum IOSContextMenu {
         copy(choice.featureTitle).map { [$0] } ?? []
     }
 
+    /// Une rangée d'audit et le menu « ⋯ » de son détail (audit-ui-redesign, S-3,
+    /// S-6) : « Copier le chemin » toujours, puis — connecté et sans geste en vol —
+    /// « Ouvrir dans Projet » et, pour un audit en cours seulement, « Arrêter
+    /// l'audit… » en dernier.
+    static func auditRow(_ card: AuditCard, gesturesEnabled: Bool) -> [IOSMenuAction] {
+        var actions: [IOSMenuAction] = [.copyPath(card.repoRoot)]
+        if gesturesEnabled { actions.append(.openInProject) }
+        if gesturesEnabled, AuditPresentation.isRunning(card.status) { actions.append(.stopAudit) }
+        return actions
+    }
+
     /// Une rangée Mémoire : « Copier » le texte brut du souvenir, seul.
     static func memory(_ row: RemoteMemoryRow) -> [IOSMenuAction] {
         copy(row.text).map { [$0] } ?? []
@@ -144,6 +162,9 @@ enum IOSContextMenu {
         case .openPR: HomeText.openPR
         case .copy: MemoryText.copy
         case .stop: KanbanText.stop
+        case .copyPath: AuditText.copyPath
+        case .openInProject: AuditText.openInProject
+        case .stopAudit: AuditText.stopAudit
         }
     }
 
@@ -180,9 +201,15 @@ struct IOSContextMenuItems: View {
 
     var body: some View {
         ForEach(Array(actions.enumerated()), id: \.offset) { _, action in
-            if case .copy = action {
+            switch action {
+            case .copy:
                 Button(MemoryText.copy, systemImage: IOSMenuText.copySymbol) { perform(action) }
-            } else {
+            case .copyPath:
+                Button(AuditText.copyPath, systemImage: IOSMenuText.copySymbol) { perform(action) }
+            case .stopAudit:
+                Divider()
+                Button(IOSContextMenu.label(action), role: .destructive) { perform(action) }
+            default:
                 Button(IOSContextMenu.label(action), role: action == .stop ? .destructive : nil) { perform(action) }
             }
         }

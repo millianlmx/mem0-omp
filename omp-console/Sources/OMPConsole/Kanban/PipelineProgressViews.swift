@@ -3,6 +3,7 @@
 // étape n'est JAMAIS un contrôle : ni bouton radio ni case, seulement des formes
 // et des symboles (l'ancienne liste à pastilles ressemblait à un choix).
 
+import ConsoleCore
 import SwiftUI
 
 private extension PipelineStepState {

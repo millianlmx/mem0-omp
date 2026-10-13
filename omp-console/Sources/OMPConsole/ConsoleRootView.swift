@@ -4,7 +4,8 @@
 // qui y pose le verre (Liquid Glass, aucun fond maison).
 //
 // Organisation (S-4 de omp-console-redesign) : barre latérale groupée
-// « Pilotage » / « Consultation », badge des attentes sur l'Accueil, et au PIED
+// « Pilotage » / « Consultation », badge des attentes sur l'Accueil et des audits
+// qui attendent l'utilisateur sur Audit (audit-ui-redesign S-4), et au PIED
 // de la barre latérale le badge d'état des composants embarqués (S-2) — aucune
 // autre décoration (HIG Sidebars : l'état des notifications vit dans l'Accueil) ;
 // titre de fenêtre = la section courante, jamais le nom de l'app
@@ -134,14 +135,16 @@ struct ConsoleRootView: View {
 
     var body: some View {
         let attentionCount = HomePresentation.attentionCount(omp: home.omp, board: kanban.state)
+        let auditsAwaiting = auditModel.board.awaitingUserCount
         NavigationSplitView {
             List(selection: selection) {
                 ForEach(ConsoleSectionGroup.allCases, id: \.self) { group in
                     Section(group.title) {
                         ForEach(group.sections) { section in
-                            if section == .home && attentionCount > 0 {
+                            let badge = HomePresentation.sidebarBadge(for: section, attention: attentionCount, auditsAwaiting: auditsAwaiting)
+                            if badge > 0 {
                                 Label(section.title, systemImage: section.systemImage)
-                                    .badge(attentionCount)
+                                    .badge(badge)
                                     .tag(section)
                             } else {
                                 Label(section.title, systemImage: section.systemImage)
@@ -237,6 +240,9 @@ struct ConsoleRootView: View {
         // une fois, par la racine, et n'est plus lié à l'apparition d'une section.
         .onAppear {
             kanban.start()
+            // Le badge d'Audit lit l'ardoise sans ouvrir la section (idempotent :
+            // l'apparition d'`AuditView` ne rouvre pas l'abonnement).
+            auditModel.start()
             actions.loadModelCatalog()
             // Le service d'API distante démarre à l'apparition si la préférence
             // l'autorise (BR-9) ; `SetupModel.onReady` le relancera si la

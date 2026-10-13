@@ -1,11 +1,13 @@
-// La section « Audit » de la coque (audit-panel-in-omp-console S-6, BR-3) : la
-// liste des audits à gauche, le détail de l'audit sélectionné à droite, et
-// « Lancer un audit… » dans la barre d'outils. Les feuilles (lancement, brief) et
-// la confirmation d'arrêt sont présentées ici, sur l'état du modèle.
+// La section « Audit » de la coque (audit-panel-in-omp-console S-6, refondue par
+// audit-ui-redesign BR-2) : la liste des audits (style inset, 220 à 260 pt) à
+// gauche, le détail de l'audit sélectionné à droite avec, pour un audit proposé,
+// la barre collante « N cochées » / « Relire le brief → », et « Nouvel audit »
+// dans la barre d'outils. Les feuilles (lancement, brief) et la confirmation
+// d'arrêt sont présentées ici, sur l'état du modèle.
 //
 // Aucun mot ici : tous viennent d'`AuditText` (ou des textes partagés de la coque).
 // Aucun `.fixedSize(horizontal: false, vertical: true)` sur un `Text` du détail
-// (piège mem0 05ccad68).
+// (piège mem0 05ccad68). Aucun `@State` : l'état de vue est `AuditViewState`.
 
 import ConsoleCore
 import SwiftUI
@@ -21,15 +23,22 @@ enum AuditAccessibility {
     static let failureDiagnostic = "audit.failure.diagnostic"
     static let retry = "audit.retry"
     static let orientation = "audit.orientation"
-    static let status = "audit.status"
+    static let orientationToggle = "audit.orientation.toggle"
+    static let stepper = "audit.stepper"
+    static let menu = "audit.menu"
     static let stop = "audit.stop"
     static let stopConfirm = "audit.stop.confirm"
     static let reviewBrief = "audit.reviewBrief"
     static let checkedCount = "audit.checkedCount"
+    static let proposalsWeaknesses = "audit.proposals.weaknesses"
+    static let proposalsFeatures = "audit.proposals.features"
     static let analysing = "audit.analysing"
     static let analysisFailed = "audit.analysisFailed"
     static let analysisDiagnostic = "audit.analysisFailed.diagnostic"
+    static let relaunch = "audit.relaunch"
+    static let stoppedEmpty = "audit.stoppedEmpty"
     static let progress = "audit.progress"
+    static let notLaunchedGroup = "audit.notLaunched"
     static let escalations = "audit.escalations"
     static let decisions = "audit.decisions"
 
@@ -47,6 +56,22 @@ enum AuditAccessibility {
     static let briefCommit = "audit.brief.commit"
 
     static func row(_ id: String) -> String { "audit.row.\(id)" }
+    /// Une entrée du menu contextuel de la rangée `id`.
+    static func rowMenu(_ id: String, _ item: AuditMenuItem) -> String { "audit.row.\(id).\(menuSuffix(item))" }
+    /// Une entrée du menu « ⋯ » de l'en-tête.
+    static func headerMenu(_ item: AuditMenuItem) -> String { "audit.menu.\(menuSuffix(item))" }
+    /// Une entrée du menu d'un audit : celui de la rangée `row`, ou — `nil` — le
+    /// menu « ⋯ » de l'en-tête.
+    static func menuItem(_ item: AuditMenuItem, row: String?) -> String {
+        row.map { rowMenu($0, item) } ?? headerMenu(item)
+    }
+    private static func menuSuffix(_ item: AuditMenuItem) -> String {
+        switch item {
+        case .copyPath: "copyPath"
+        case .openInProject: "openProject"
+        case .stop: "stop"
+        }
+    }
     static func proposal(_ slug: String) -> String { "audit.proposal.\(slug)" }
     static func feature(_ slug: String) -> String { "audit.feature.\(slug)" }
     static func featurePR(_ slug: String) -> String { "audit.feature.\(slug).pr" }
@@ -64,9 +89,15 @@ struct AuditView: ConsoleSectionView {
     static let section = ConsoleSection.audit
 
     @ObservedObject var model: AuditConsoleModel
+    /// « Ouvrir dans Projet » : la coque bascule sur la section Projet
+    /// (`AuditProjectBridge`), branchée par `SectionDetail`.
+    let openInProject: @MainActor (AuditCard) -> Void
+    /// L'état de vue (orientations dépliées, décisions dépliées).
+    @StateObject private var viewState = AuditViewState()
 
-    init(model: AuditConsoleModel) {
+    init(model: AuditConsoleModel, openInProject: @escaping @MainActor (AuditCard) -> Void) {
         self.model = model
+        self.openInProject = openInProject
     }
 
     /// La confirmation d'arrêt : présentée si et seulement si un arrêt attend.
@@ -96,8 +127,9 @@ struct AuditView: ConsoleSectionView {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button { model.presentLaunchSheet() } label: {
-                    Label(AuditText.startAudit, systemImage: "plus")
+                    Label(AuditText.newAudit, systemImage: "text.magnifyingglass")
                 }
+                .labelStyle(.titleAndIcon)
                 .help(AuditText.startAudit)
                 .disabled(model.busy)
                 .accessibilityIdentifier(AuditAccessibility.start)
@@ -131,12 +163,12 @@ struct AuditView: ConsoleSectionView {
             emptyState
         } else {
             HStack(spacing: 0) {
-                AuditListView(model: model)
-                    .frame(minWidth: 240, idealWidth: 280, maxWidth: 320)
+                AuditListView(model: model, openInProject: openInProject)
+                    .frame(minWidth: 220, idealWidth: 240, maxWidth: 260)
                 Divider()
                 ScrollView {
                     if let card = model.selectedCard {
-                        AuditDetailView(model: model, card: card)
+                        AuditDetailView(model: model, viewState: viewState, card: card, openInProject: openInProject)
                             .padding(16)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                     } else if model.selection != nil {
@@ -144,6 +176,13 @@ struct AuditView: ConsoleSectionView {
                         ProgressView()
                             .padding(24)
                             .frame(maxWidth: .infinity)
+                    }
+                }
+                // La barre « N cochées » reste visible quel que soit le défilement :
+                // le contenu défilant est rentré de sa hauteur (Doc-7).
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if let card = model.selectedCard, card.status == .proposed {
+                        AuditProposalsBar(model: model, card: card)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

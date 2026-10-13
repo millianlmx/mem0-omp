@@ -292,7 +292,10 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
     else if (typeof v === "string") textes.push(v);
     else if (typeof v === "number") nombres.push([cle, v]);
   };
+  // Seule exception : l'audit `analysing` d'audit-ui-redesign S-14, créé 65 s
+  // avant le début (durée d'analyse crédible), comme `AuditParity.snapshot(nowMs:)`.
   for (const f of jeu) {
+    if (f.chemin === "magasin/audits/a0d1700000000003.json") continue;
     if (f.chemin.endsWith(".json")) relever(JSON.parse(f.contenu), "");
     else if (f.chemin.endsWith(".jsonl")) for (const l of f.contenu.trimEnd().split("\n")) relever(JSON.parse(l), "");
     else textes.push(f.contenu);
@@ -306,6 +309,51 @@ test("recette-ui-mac-automatisee/AC-2 : deux analyses des mêmes données renden
   const datesMs = nombres.filter(([k]) => /At$/.test(k)).map(([, v]) => v);
   assert.ok(datesIso.length > 0 && datesMs.length > 0, "garde : le jeu porte des dates");
   assert.deepEqual([...datesIso, ...datesMs].filter((d) => d > limite), [], "date à moins de 2 h du début");
+});
+
+test("audit-ui-redesign : jeu fictif de la recette UI Mac (B-12, S-14) — le jeu fictif écrit les cinq audits d'AuditParity au format disque, l'analyse lancée 65 s avant le début, et une feature escaladée de l'audit lancé : badge Audit à 2", () => {
+  const entree: EntreeJeu = {
+    racine: "/tmp/omp-console-recette-ui",
+    depotReel: "/private/tmp/omp-console-recette-ui/depots/atelier",
+    pid: 4242,
+    port: 51234,
+    debut: Date.UTC(2026, 9, 10, 12),
+  };
+  const jeu = jeuFictif(entree);
+  const audits = jeu
+    .filter((f) => f.chemin.startsWith("magasin/audits/"))
+    .map((f) => ({ chemin: f.chemin, a: JSON.parse(f.contenu) as Record<string, unknown> }));
+  // Mêmes ids et statuts que AuditParity.swift ; nom de fichier = id (AuditRecord).
+  assert.deepEqual(
+    audits.map(({ chemin, a }) => [chemin, a.id, a.status]),
+    [
+      ["magasin/audits/a0d1700000000001.json", "a0d1700000000001", "launched"],
+      ["magasin/audits/a0d1700000000002.json", "a0d1700000000002", "proposed"],
+      ["magasin/audits/a0d1700000000003.json", "a0d1700000000003", "analysing"],
+      ["magasin/audits/a0d1700000000004.json", "a0d1700000000004", "stopped"],
+      ["magasin/audits/a0d1700000000005.json", "a0d1700000000005", "failed"],
+    ],
+  );
+  // Champs obligatoires de `AuditRecord(json:)` : sans eux le lecteur écarte l'audit.
+  for (const { a } of audits) {
+    assert.equal(a.version, 1);
+    assert.equal(a.key, `${entree.racine}/magasin/audits/${a.id}`);
+    assert.equal(a.repoRoot, `${entree.racine}/depots/atelier`);
+    assert.ok(typeof a.repoKey === "string" && a.repoKey.length > 0);
+    assert.ok(Array.isArray(a.launches) && "proposal" in a && "failure" in a);
+  }
+  const analyse = audits[2].a;
+  assert.deepEqual([analyse.createdAt, analyse.updatedAt], [entree.debut - 65_000, entree.debut - 65_000]);
+
+  // Badge (AuditBoard.awaitingUserCount(in:)) : `proposed` + audits dont la clé est
+  // l'`auditSession` d'une feature de lot à escalade de sorte connue.
+  const lot = JSON.parse(jeu.find((f) => f.chemin.startsWith("magasin/lots/"))!.contenu) as { features: Array<Record<string, any>> };
+  const cles = new Set(
+    lot.features
+      .filter((f) => typeof f.auditSession === "string" && ["ask", "question", "specs", "review"].includes(String(f.escalation?.key).split(":")[0]))
+      .map((f) => f.auditSession),
+  );
+  assert.equal(audits.filter(({ a }) => a.status === "proposed" || cles.has(a.key)).length, 2);
 });
 
 test("recette-ui-mac-automatisee/AC-3 : 10 sections et 14 feuilles, toutes capturées et relevées, sont couvertes ; un relevé retiré rend sa surface « capture ou relevé manquant »", () => {

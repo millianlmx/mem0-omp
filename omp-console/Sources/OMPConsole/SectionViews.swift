@@ -120,7 +120,7 @@ struct SectionDetail: View {
         case .stats: StatsSectionView(model: statsModel, actions: actions)
         case .files: FilesView(model: filesModel, chooser: projectChooser)
         case .project: ProjectView(model: projectModel)
-        case .audit: AuditView(model: auditModel)
+        case .audit: AuditView(model: auditModel) { AuditProjectBridge.open($0, console: console, project: projectModel) }
         case .memory: MemoryView(model: memoryModel, graph: memoryGraph, chooser: projectChooser, cleanup: podmanCleanup)
         }
     }

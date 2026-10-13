@@ -3,7 +3,7 @@
 // `HomeParity`.
 //
 // Son CONTENU est figé par ses EFFETS attendus : depuis `AuditParity.snapshot`,
-// `AuditBoard.of` rend exactement trois audits, du plus récent au plus ancien —
+// `AuditBoard.of` rend exactement cinq audits, du plus récent au plus ancien —
 //   • `analysingId` (« recette-analyse ») : `analysing`, orientation
 //     « accessibilité VoiceOver », sans proposition ;
 //   • `proposedId` (« recette-propositions ») : `proposed`, 5 propositions
@@ -12,10 +12,17 @@
 //   • `launchedId` (« recette-suivi ») : `launched`, 4 features — `journal-erreurs`
 //     en cours, `reprise-pipeline` escaladée (sorte `question`, 2 options),
 //     `rapport-erreurs` à PR créée, `alerte-quota` annulée —, une proposition
-//     non lancée avec son motif, et 3 décisions de l'arbitre.
+//     non lancée avec son motif, et 3 décisions de l'arbitre ;
+//   • `stoppedId` (« recette-arret ») : `stopped` pendant les propositions
+//     (2 propositions, rien de lancé) ;
+//   • `failedId` (« recette-echec ») : `failed` pendant l'analyse, sans
+//     proposition, orientation longue (plus de 280 caractères) et phrase d'échec.
+// Deux audits attendent l'utilisateur (`awaitingUserCount == 2`) : le proposed
+// et le launched à question.
 //
 // Les deux coques nomment `AuditParity.snapshot` : la recette `-surface.recipe
-// audit` du Mac et `-audit.recipe` de l'iPhone.
+// audit` du Mac et `-audit.recipe` de l'iPhone. `snapshot(nowMs:)` rend la même
+// fixture avec l'analyse lancée 65 s avant `nowMs` (durée écoulée crédible).
 //
 // VIT DANS `ConsoleCore`.
 
@@ -28,9 +35,29 @@ public enum AuditParity {
     public static let proposedId = "a0d1700000000002"
     /// « recette-suivi » : l'audit dont les pipelines sont lancées.
     public static let launchedId = "a0d1700000000001"
+    /// « recette-arret » : l'audit arrêté pendant les propositions.
+    public static let stoppedId = "a0d1700000000004"
+    /// « recette-echec » : l'audit dont l'analyse a échoué.
+    public static let failedId = "a0d1700000000005"
 
     /// L'ardoise de la fixture.
     public static let board: AuditBoard = AuditBoard.of(snapshot)
+
+    /// La fixture dont l'audit analysing a été créé (et mis à jour) 65 s avant
+    /// `nowMs` ; le reste est identique.
+    public static func snapshot(nowMs: Double) -> StoreSnapshot {
+        var shifted = Self.snapshot
+        if let index = shifted.audits.records.firstIndex(where: { $0.id == analysingId }) {
+            shifted.audits.records[index].createdAt = nowMs - 65_000
+            shifted.audits.records[index].updatedAt = nowMs - 65_000
+        }
+        return shifted
+    }
+
+    /// L'ardoise de `snapshot(nowMs:)`.
+    public static func board(nowMs: Double) -> AuditBoard {
+        AuditBoard.of(snapshot(nowMs: nowMs))
+    }
 
     /// L'instantané de référence, décodé du littéral JSON ci-dessous
     /// (`StoreSnapshot` est `Codable`).
@@ -251,6 +278,38 @@ public enum AuditParity {
             "updatedAt": 1700000007000,
             "launches": [],
             "failure": null
+          },
+          {
+            "id": "a0d1700000000004",
+            "repoRoot": "/tmp/omp-audit-parity/depot",
+            "repoKey": "0123456789abcdef",
+            "key": "/tmp/omp-audit-parity/state/audits/a0d1700000000004",
+            "orientation": "hygiène des journaux",
+            "status": "stopped",
+            "createdAt": 1699999990000,
+            "updatedAt": 1699999995000,
+            "proposal": {
+              "elements": [
+                { "kind": "weakness", "slug": "journaux-sans-fin", "intention": "Les journaux grossissent sans limite.", "deps": [] },
+                { "kind": "feature", "slug": "rotation-journaux", "intention": "Faire tourner les journaux chaque semaine.", "deps": [] }
+              ],
+              "briefDraft": "# Brief — audit depot\\n\\n## But\\nBorner les journaux.\\n\\n## Fonction\\nFaire tourner les journaux.\\n\\n## Décisions\\n- (aucune)\\n\\n## Contraintes\\n- (aucune)\\n\\n## Non-objectifs\\n- (aucune)\\n\\n## Orientation\\nhygiène des journaux\\n\\n## Constats\\n- journaux-sans-fin — Les journaux grossissent sans limite.\\n"
+            },
+            "launches": [],
+            "failure": null
+          },
+          {
+            "id": "a0d1700000000005",
+            "repoRoot": "/tmp/omp-audit-parity/depot",
+            "repoKey": "0123456789abcdef",
+            "key": "/tmp/omp-audit-parity/state/audits/a0d1700000000005",
+            "orientation": "audit complet de la robustesse du service OMP : reprise après une coupure réseau pendant une pipeline, nettoyage des worktrees orphelins laissés par une feature annulée, cohérence du journal des décisions entre plusieurs dépôts, comportement quand le quota du modèle est épuisé, et lisibilité des messages d’erreur montrés sur le Mac comme sur l’iPhone",
+            "status": "failed",
+            "createdAt": 1699999980000,
+            "updatedAt": 1699999985000,
+            "proposal": null,
+            "launches": [],
+            "failure": "l'analyse a été interrompue"
           }
         ],
         "decisions": [

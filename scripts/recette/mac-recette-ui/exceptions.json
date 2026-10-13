@@ -34,6 +34,12 @@
     {
       "surface": "pipelines",
       "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXScrollArea[0]/AXGroup[1]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) de la barre de défilement système d'une voie de l'ardoise, qui défile depuis que le jeu fictif porte la feature escaladée de l'audit lancé ; épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "pipelines",
+      "regle": "cible-trop-petite",
       "element": "id:kanban.lane.livrees.header",
       "justification": "défaut connu, à corriger hors de cette feature : l'en-tête repliable « Livrées » de l'ardoise mesure 220 × 16 pt, sous le seuil de 20 pt"
     },
@@ -258,6 +264,30 @@
       "regle": "identifiant-duplique",
       "element": "id:ListColumn",
       "justification": "faux positif : identifiant interne « ListColumn » que SwiftUI pose sur la colonne de chaque List ; la surface en affiche deux (barre latérale et liste de la section)"
+    },
+    {
+      "surface": "memoire",
+      "regle": "cible-trop-petite",
+      "element": "chemin:AXGroup[0]/AXSplitGroup[0]/AXGroup[1]/AXSplitGroup[0]/AXGroup[0]/AXScrollArea[0]/AXScrollBar[0]/AXButton[2]",
+      "justification": "faux positif : zone « page suivante » (AXIncrementPage) d'une barre de défilement système, épaisse de 6 pt par construction"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "id:memory.omlxBanner",
+      "justification": "défaut connu, à corriger hors de cette feature : le bandeau « oMLX ne répond pas » n'apparaît que si oMLX ne répond pas sur le poste ; à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large et la fenêtre en rogne les deux bords"
+    },
+    {
+      "surface": "memoire",
+      "regle": "hors-ecran",
+      "element": "id:memory.omlxBanner.diagnostic",
+      "justification": "défaut connu, à corriger hors de cette feature : le bandeau « oMLX ne répond pas » n'apparaît que si oMLX ne répond pas sur le poste ; à la taille minimale (760 × 532), Mémoire mesure 1021 pt de large et la fenêtre en rogne les deux bords"
+    },
+    {
+      "surface": "audit",
+      "regle": "identifiant-duplique",
+      "element": "id:ListColumn",
+      "justification": "faux positif : identifiant interne « ListColumn » que SwiftUI pose sur la colonne de chaque List ; la surface en affiche deux (barre latérale et liste des audits)"
     },
     {
       "surface": "statistiques",
