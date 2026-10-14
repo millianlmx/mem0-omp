@@ -331,10 +331,10 @@ const PHASES: Array<{ command: string; args: string; tag: string; label: string;
   { command: "specs", args: "", tag: "specs", label: REQ_LABEL, model: MODEL_A },
   { command: "impl", args: "", tag: "impl", label: IMPL_LABEL, model: MODEL_B },
   { command: "impl", args: "--fix", tag: "impl", label: IMPL_LABEL, model: MODEL_B },
-  { command: "review", args: "", tag: "review", label: IMPL_LABEL, model: MODEL_B },
+  { command: "review", args: "", tag: "review", label: REQ_LABEL, model: MODEL_A },
 ];
 
-test("modele-du-groupe-en-session-interactive/AC-7 : /specs applique le groupe req+specs, /impl, /impl --fix et /review le groupe impl+review, après newSession", async () => {
+test("modele-du-groupe-en-session-interactive/AC-7 : /specs et /review appliquent le groupe cadrage+revue, /impl et /impl --fix le groupe exécution, après newSession", async () => {
   await inRepo(async (env) => {
     const app = mkApp();
     const worktree = await openFeature(app, env, "alpha", [MODEL_A, NO_FALLBACK, MODEL_B, NO_FALLBACK]);
@@ -358,18 +358,18 @@ test("modele-du-groupe-en-session-interactive/AC-7 : /specs applique le groupe r
 test("modele-du-groupe-en-session-interactive/AC-8 : /review applique le repli quand le principal est épuisé, sinon garde la session et nomme le modèle épuisé", async () => {
   await inRepo(async (env) => {
     const app = mkApp();
-    const worktree = await openFeature(app, env, "alpha", [MODEL_A, NO_FALLBACK, MODEL_B, MODEL_F]);
+    const worktree = await openFeature(app, env, "alpha", [MODEL_A, MODEL_F, MODEL_B, NO_FALLBACK]);
     const bare = await openFeature(app, env, "beta", [MODEL_A, NO_FALLBACK, MODEL_B, NO_FALLBACK]);
-    const until = exhaust(env, MODEL_B);
+    const until = exhaust(env, MODEL_A);
 
-    // B épuisé, repli B' disponible → B'.
+    // A épuisé, repli A' disponible → A' (la revue est du groupe cadrage+revue).
     const withFallback = mkCtx(app, worktree);
     await app.commands.get("review")!("", withFallback.ctx as never);
     assert.deepEqual(app.journal, ["newSession", `setModel:${MODEL_F}`], "le repli, jamais le principal");
     assert.ok(withFallback.notices[0]!.message.includes(MODEL_F) && withFallback.notices[0]!.message.includes("repli"));
     assert.deepEqual(warnings(withFallback.notices), []);
 
-    // B épuisé sans repli → aucun setModel, avertissement nommant B.
+    // A épuisé sans repli → aucun setModel, avertissement nommant A.
     app.reset();
     const without = mkCtx(app, bare);
     await app.commands.get("review")!("", without.ctx as never);
@@ -378,7 +378,7 @@ test("modele-du-groupe-en-session-interactive/AC-8 : /review applique le repli q
     assert.equal(warned.length, 1);
     assert.ok(
       warned[0]!.message.startsWith("[review] ") &&
-        warned[0]!.message.includes(quotaStopReason({ model: MODEL_B, provider: "cerebras", until, announced: true })),
+        warned[0]!.message.includes(quotaStopReason({ model: MODEL_A, provider: "anthropic", until, announced: true })),
       warned[0]!.message,
     );
     assert.equal(app.seeds.length, 1, "l'amorce part quand même");

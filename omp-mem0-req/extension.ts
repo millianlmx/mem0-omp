@@ -1073,7 +1073,7 @@ export default function reqExtension(pi: ExtensionAPI) {
         return;
       }
 
-      // Le modèle du groupe req+specs, JUSTE après la relocalisation réussie : la
+      // Le modèle du groupe cadrage+revue, JUSTE après la relocalisation réussie : la
       // session neuve est celle de la collecte. Une issue en échec n'annule rien —
       // la session et l'enrôlement restent (le modèle de la session est conservé).
       const modelIssue = await applyGroupModel(ctx, "req", modelReqSpecs, fallbackReqSpecs, `groupe ${MODEL_GROUP_LABELS.modelReqSpecs} sur défaut OMP`);
