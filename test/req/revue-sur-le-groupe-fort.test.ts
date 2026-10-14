@@ -344,7 +344,6 @@ function featureRow(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     lastVerdict: null,
     lastBlockers: 0,

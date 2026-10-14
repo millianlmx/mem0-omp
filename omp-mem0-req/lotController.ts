@@ -976,7 +976,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // Garde « contrat endommagé » (S-7), AVANT le verdict et la chaîne : un run
     // réussi qui a fait disparaître une section obligatoire présente à son
     // lancement bloque la feature — le maillon suivant lirait un contrat amputé.
-    if (result.outcome === "ok" && feature.phase !== "release" && feature.launchSections !== undefined) {
+    // Une vérification de worktree IMPOSSIBLE (worktree disparu) passe avant : le
+    // contrat n'a pas été amputé, il n'est plus lisible, et la chaîne le dit.
+    if (
+      result.outcome === "ok" &&
+      feature.phase !== "release" &&
+      feature.launchSections !== undefined &&
+      result.worktree?.kind !== "unknown"
+    ) {
       const lost = lostSections(feature.launchSections, contract);
       if (lost.length > 0) {
         settle(lot, feature, "blocked", `contrat endommagé par /${feature.phase} — section(s) disparue(s) : ${lost.map((t) => `## ${t}`).join(", ")}`);
