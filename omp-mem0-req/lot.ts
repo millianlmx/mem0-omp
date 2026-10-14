@@ -2,6 +2,7 @@
 import * as crypto from "node:crypto";
 import * as os from "node:os";
 import * as path from "node:path";
+import { REQUIRED_CONTRACT_SECTIONS } from "./chain.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr } from "./git.ts";
 import { clipTail } from "./panelWidth.ts";
@@ -186,6 +187,12 @@ export type LotFeature = {
   lastRunSessionFile?: string | null;
   /** sha1 du contrat au DÉMARRAGE du run courant — dit si un run a travaillé. */
   contractHash: string | null;
+  /**
+   * Titres obligatoires du contrat présents au lancement du run courant — garde
+   * « contrat endommagé » (S-7) ; absent = garde inactive (lot antérieur, release).
+   * Invariant : sous-ensemble ordonné de REQUIRED_CONTRACT_SECTIONS.
+   */
+  launchSections?: string[];
   /**
    * La feature a-t-elle le DROIT de démarrer ? Une feature ajoutée par `a` à un lot
    * au brouillon porte `false` : elle attend `l` (le lancement du lot), qui la passe
@@ -956,6 +963,11 @@ export function asLotFeature(raw: unknown): LotFeature | null {
       const rank = Math.trunc(num(f.implLot, -1));
       return ids.length >= 2 && rank >= 0 && rank < ids.length ? { implLots: ids, implLot: rank } : {};
     })(),
+    // Garde « contrat endommagé » : seules les chaînes connues sont gardées ; un
+    // non-tableau laisse la clé absente (garde inactive).
+    ...(Array.isArray(f.launchSections)
+      ? { launchSections: f.launchSections.filter((t): t is string => typeof t === "string" && (REQUIRED_CONTRACT_SECTIONS as readonly string[]).includes(t)) }
+      : {}),
     // Le quota bloquant (S-5) : relu seulement quand il est complet, sinon absent.
     ...(featureQuota ? { quota: featureQuota } : {}),
     // Les modèles (S-1) : chaque clé n'est écrite que si elle est non vide après

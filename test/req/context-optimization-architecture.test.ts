@@ -3054,7 +3054,7 @@ test("lots d'impl : `contractLots` lit les en-têtes de `## Lots` (dernière occ
     "## Autre",
     "BR-7 — type: ui",
   ].join("\n");
-  assert.deepEqual(contractLots(contract), ["BR-1", "BR-2", "BR-3", "BR-6"]);
+  assert.deepEqual(contractLots(contract), ["BR-1", "BR-2", "BR-3", "BR-4", "BR-6"]);
   assert.deepEqual(contractLots("## Besoins\n\nB-1 : x\n"), []);
 
   // Un seul lot : un seul run d'impl, aucune ligne de lot, aucune découpe.

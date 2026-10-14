@@ -189,6 +189,23 @@ export function reviewSectionHash(worktree: string): string | null {
 }
 
 
+/**
+ * Titres du contrat dont la DISPARITION entre le lancement d'un run et sa fin le
+ * rend « endommagé » (garde du pilote) : un maillon qui réécrit tout le fichier
+ * perd ces sections sans que son run échoue.
+ */
+export const REQUIRED_CONTRACT_SECTIONS = ["Besoins", "Critères d'acceptation", "Spécifications"] as const;
+
+
+/**
+ * Les titres de `before` que `contract` ne porte plus (au sens de
+ * `contractHasSection`), dans l'ordre de `before`. Pure : aucune lecture disque.
+ */
+export function lostSections(before: readonly string[], contract: string): string[] {
+  return before.filter((title) => !contractHasSection(contract, title));
+}
+
+
 /** Contenu du contrat d'un worktree, `""` s'il est absent ou illisible. */
 export function readContractText(worktree: string): string {
   try {

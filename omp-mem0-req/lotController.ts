@@ -2,9 +2,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { contractHashOf, effectiveReviewVerdict, isReviewCapReason, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
+import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
+import { contractHasSection, contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
@@ -769,6 +769,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
     // sa fin, une empreinte identique voudra dire que CE run n'a rien écrit — le
     // verdict lu viendrait d'un autre maillon (/impl --fix), donc illisible.
     feature.reviewHash = launch.phase === "review" ? reviewSectionHash(feature.worktree) : null;
+    // Garde « contrat endommagé » (S-7) : les sections obligatoires présentes au
+    // lancement, relues à la fin du run. Le maillon release est hors garde.
+    if (launch.phase === "release") delete feature.launchSections;
+    else {
+      const launched = readContractText(feature.worktree);
+      feature.launchSections = REQUIRED_CONTRACT_SECTIONS.filter((title) => contractHasSection(launched, title));
+    }
     // Le lot n'est pas écrit (propriétaire étranger vivant, écriture impossible) :
     // aucun run ne part — un maillon lancé sans que son lot le sache serait un
     // processus orphelin, dans un worktree que le véritable pilote conduit. Le
@@ -966,6 +973,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
     const out: { launches: PlannedLaunch[]; release: boolean } = { launches: [], release: false };
     const before = feature.state;
     const contract = readContractText(feature.worktree);
+    // Garde « contrat endommagé » (S-7), AVANT le verdict et la chaîne : un run
+    // réussi qui a fait disparaître une section obligatoire présente à son
+    // lancement bloque la feature — le maillon suivant lirait un contrat amputé.
+    if (result.outcome === "ok" && feature.phase !== "release" && feature.launchSections !== undefined) {
+      const lost = lostSections(feature.launchSections, contract);
+      if (lost.length > 0) {
+        settle(lot, feature, "blocked", `contrat endommagé par /${feature.phase} — section(s) disparue(s) : ${lost.map((t) => `## ${t}`).join(", ")}`);
+        return out;
+      }
+    }
     // La revue a-t-elle RÉÉCRIT sa section ? L'empreinte figée au lancement est le
     // seul juge : une section inchangée n'est pas un verdict de revue, quel que
     // soit le texte laissé par /impl --fix.
