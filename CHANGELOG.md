@@ -1,5 +1,9 @@
 # Journal des versions
 
+## omp-mem0-req 0.27.0 — 2026-10-14
+
+- feat(req,console,ios,test): liste unique des attentes dans ConsoleCore — ardoise, dialogues de conduite et de session, escalades d'audit, même liste sur Mac et iPhone (#163) (0b304c9)
+
 ## omp-mem0-req 0.26.0 — 2026-10-13
 
 - feat(req,console,ios,scripts,test,docs): section Audit sur Mac et iPhone — audit orienté, propositions à cocher, brief validé, pipelines pilotées par l'arbitre (#159) (dddf0b2)
