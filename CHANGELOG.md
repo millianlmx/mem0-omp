@@ -1,5 +1,14 @@
 # Journal des versions
 
+## omp-mem0-req 0.28.0 — 2026-10-14
+
+- feat(arbitre,audit,project,contexte,lot,seeds,readme): l'arbitre juge sur le rapport persisté, lit le dépôt et justifie ses décisions (#191) (690a7f2)
+- feat(req,service,panel,seeds,test,docs): borne de contexte active sur les runs et sessions parentes hébergés (#194) (cca58cc)
+- feat(req,quota,models,runs,panel,docs): modèle du groupe appliqué en session interactive par setModel, run de conversation sur le modèle de départ avec repli (#195) (89337b3)
+- fix(req,test,docs): verdict de revue robuste — parseur fidèle au champ BLOQUANTS, contrat protégé, textes de maillon sans commande (#192) (42277b6)
+- fix(runner,pilote,chaine,panneau,test,docs): un run en échec ou sans diff ne passe plus pour un succès (#193) (8824624)
+- feat(req,console,docs): revue sur le groupe de modèles fort, arbitre épinglé, libellés cadrage+revue / exécution (#190) (f413cf1)
+
 ## omp-mem0-req 0.27.0 — 2026-10-14
 
 - feat(req,console,ios,test): liste unique des attentes dans ConsoleCore — ardoise, dialogues de conduite et de session, escalades d'audit, même liste sur Mac et iPhone (#163) (0b304c9)
