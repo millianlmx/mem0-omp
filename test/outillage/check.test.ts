@@ -24,7 +24,16 @@ import type { SpawnSyncReturns } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { ROOT, copyRepo as copyRepoAs, tmpdir } from "../support/repo.ts";
-import { SONDE_ACTIONSDATA, SWIFT_CONST_VALUES_SNIPPET, writeXcodeDoubles } from "../support/swift-app-doubles.ts";
+import { readAttendus } from "../support/app-intents-doubles.ts";
+import {
+  META_ACTIONS_REL,
+  SONDE_ACTIONSDATA,
+  SWIFT_CONST_VALUES_SNIPPET,
+  montageAppIntents,
+  signaturesDuBundle,
+  writeXcodeDoubles,
+} from "../support/swift-app-doubles.ts";
+import type { AssemblageAppIntents } from "../support/swift-app-doubles.ts";
 
 const CATALOGS = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
 
@@ -604,108 +613,61 @@ test("socle-app-swift/AC-7 : le README de la coque documente les quatre gestes e
 // tournent aussi sous ubuntu (doublure `uname`). Le PATH ne garde que les dossiers
 // système, pour qu'aucun swift, cargo ou xcrun installé ne masque une doublure.
 
-const META_ACTIONS_REL = path.join("Contents", "Resources", "Metadata.appintents", "extract.actionsdata");
-const META_OK =
-  "  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents : OpenConsoleIntent, « Ouvre ${applicationName} »)";
+const META_OK = "  ✓ métadonnées App Intents embarquées (Contents/Resources/Metadata.appintents)";
+const ATTENDUS_MAC = readAttendus().mac;
+const CONFORME_MAC = `  ✓ intents Siri conformes à scripts/app-intents/attendus.json (bundle Mac : ${Object.keys(ATTENDUS_MAC).length} intents, ${
+  Object.values(ATTENDUS_MAC).flat().length
+} phrases)`;
+const NON_CONFORME_MAC = "✗ Metadata.appintents non conforme à scripts/app-intents/attendus.json (bundle Mac)";
 
-type AssemblageAppIntents = {
-  status: number | null;
-  stderr: string;
-  sortie: string;
-  /** Lignes du journal commun aux doublures, remis à zéro avant chaque lancement. */
-  lignes: string[];
+const intentAbsent = (type: string) => `  ✗ intent attendu absent du bundle Mac : ${type} introuvable dans extract.actionsdata`;
+const phraseAbsente = (type: string, phrase: string) =>
+  `  ✗ phrase attendue absente du bundle Mac : « ${phrase} » (intent ${type}) introuvable dans extract.actionsdata`;
+
+type ActionsData = {
+  actions: Record<string, unknown>;
+  autoShortcuts: { actionIdentifier: string; phraseTemplates: { key: string }[] }[];
 };
 
-/** Copie réduite + doublures + PATH restreint, comme omp-console-sans-podman/AC-1. */
-function montageAppIntents(): {
-  copie: string;
-  bundle: string;
-  lancer: (args: string[], env?: Record<string, string>) => AssemblageAppIntents;
-  planterAncienBundle: () => void;
-} {
-  const copie = tmpdir("app-intents-copie-");
-  fs.mkdirSync(path.join(copie, "scripts"));
-  fs.copyFileSync(path.join(ROOT, "scripts", "swift-app.sh"), path.join(copie, "scripts", "swift-app.sh"));
-  fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
-  fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), {
-    recursive: true,
-  });
-
-  const { bin, log } = stubBin("app-intents-outils-");
-  stub(bin, "uname", "printf 'Darwin\\n'");
-  // swift : journalise son argv, écrit les valeurs constantes quand l'argv porte
-  // `-emit-const-values`, et pose un binaire OMPConsole là où le vrai l'écrit.
-  stub(
-    bin,
-    "swift",
-    `printf 'swift %s\\n' "$*" >> '${log}'
-scratch=""
-prev=""
-for a in "$@"; do
-  if [ "$prev" = "--scratch-path" ]; then scratch="$a"; fi
-  prev="$a"
-done
-${SWIFT_CONST_VALUES_SNIPPET}
-case "$*" in
-  *--show-bin-path*)
-    printf '%s\\n' "$scratch/out/Products/Release"
-    ;;
-  test*|build*)
-    mkdir -p "$scratch/out/Products/Release"
-    printf '#!/usr/bin/env bash\\nexit 0\\n' > "$scratch/out/Products/Release/OMPConsole"
-    chmod +x "$scratch/out/Products/Release/OMPConsole"
-    ;;
-esac`,
-  );
-  stub(
-    bin,
-    "cargo",
-    `target="\${CARGO_TARGET_DIR:-mem0-stack/mem0-rs/target}"
-mkdir -p "$target/release"
-printf '#!/usr/bin/env bash\\nexit 0\\n' > "$target/release/mem0-rs"
-chmod +x "$target/release/mem0-rs"`,
-  );
-  stub(bin, "lipo", "printf 'arm64\\n'");
-  stub(bin, "otool", "printf '      cmd LC_BUILD_VERSION\\n  cmdsize 32\\n platform 1\\n    minos 26.0\\n      sdk 26.5\\n'");
-  // codesign : journalise son argv et dit si, AU MOMENT de l'appel, la cible porte
-  // déjà Metadata.appintents (preuve de la recopie avant la signature).
-  stub(
-    bin,
-    "codesign",
-    `cible="\${@: -1}"
-meta=non
-[ -f "$cible/${META_ACTIONS_REL}" ] && meta=oui
-printf 'codesign %s meta=%s\\n' "$*" "$meta" >> '${log}'`,
-  );
-  writeXcodeDoubles(bin);
-
-  const base: NodeJS.ProcessEnv = { ...process.env };
-  for (const cle of ["CARGO_TARGET_DIR", "FAUX_XCODE", "FAUX_APPINTENTS", "DEVELOPER_DIR"]) delete base[cle];
-  const bundle = path.join(copie, "omp-console", "build", "OMP Console.app");
-
-  const lancer = (args: string[], env: Record<string, string> = {}): AssemblageAppIntents => {
-    fs.rmSync(log, { force: true });
-    const r = spawnSync("bash", ["scripts/swift-app.sh", ...args], {
-      cwd: copie,
-      encoding: "utf8",
-      env: { ...base, PATH: `${bin}:/usr/bin:/bin:/usr/sbin:/sbin`, ...env },
-      timeout: 120_000,
-    });
-    const lignes = fs.existsSync(log) ? fs.readFileSync(log, "utf8").trim().split("\n") : [];
-    return { status: r.status, stderr: r.stderr ?? "", sortie: output(r), lignes };
-  };
-
-  const planterAncienBundle = () => {
-    fs.mkdirSync(path.join(bundle, "Contents"), { recursive: true });
-    fs.writeFileSync(path.join(bundle, "Contents", "Info.plist"), "<plist/>\n");
-  };
-
-  return { copie, bundle, lancer, planterAncienBundle };
+/**
+ * Écrit dans un fichier jetable (à passer par `FAUX_ACTIONSDATA`) la sortie
+ * nominale du processeur privée des intents `intents` (action ET App Shortcut)
+ * et des phrases `phrases` ; une App Shortcut vidée de ses phrases disparaît.
+ */
+function ecart(intents: string[], phrases: [type: string, phrase: string][] = []): string {
+  const data = JSON.parse(SONDE_ACTIONSDATA) as ActionsData;
+  for (const type of intents) delete data.actions[type];
+  data.autoShortcuts = data.autoShortcuts
+    .filter((s) => !intents.includes(s.actionIdentifier))
+    .map((s) => ({
+      ...s,
+      phraseTemplates: s.phraseTemplates.filter((p) => !phrases.some(([t, k]) => t === s.actionIdentifier && k === p.key)),
+    }))
+    .filter((s) => s.phraseTemplates.length > 0);
+  const fichier = path.join(tmpdir("actionsdata-"), "extract.actionsdata");
+  fs.writeFileSync(fichier, JSON.stringify(data));
+  return fichier;
 }
 
-/** Les lignes `codesign` du journal dont la cible (dernier argument) est le bundle lui-même. */
-const signaturesDuBundle = (lignes: string[], bundle: string): string[] =>
-  lignes.filter((l) => l.startsWith("codesign ") && l.replace(/ meta=(oui|non)$/, "").endsWith(` ${bundle}`));
+/** Toutes les phrases attendues des intents `intents`, en couples (intent, phrase). */
+const phrasesDe = (intents: string[]): [string, string][] =>
+  intents.flatMap((type) => (ATTENDUS_MAC[type] ?? []).map((phrase): [string, string] => [type, phrase]));
+
+/** Échec du contrôle : lignes attendues, ligne finale, pas de ✓, bundle retiré, aucune signature. */
+function assertNonConforme(
+  r: AssemblageAppIntents,
+  bundle: string,
+  nom: string,
+  attendus: string[],
+): void {
+  assert.equal(r.status, 1, `[${nom}] ${r.sortie}`);
+  for (const attendu of [...attendus, NON_CONFORME_MAC]) {
+    assert.ok(r.stderr.includes(attendu), `[${nom}] message absent : ${attendu}\n${r.sortie}`);
+  }
+  assert.ok(!r.sortie.includes(CONFORME_MAC), `[${nom}] ✓ des intents affiché malgré l'échec\n${r.sortie}`);
+  assert.ok(!fs.existsSync(bundle), `[${nom}] un bundle a survécu à l'échec : ${bundle}`);
+  assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${nom}] le bundle a été signé malgré l'échec`);
+}
 
 test("bundle-mac-sans-metadonnees-app-intents/AC-4 : des métadonnées absentes, privées de l'intent sonde ou de son App Shortcut, ou une extraction en échec font sortir l'assemblage en 1 avec la cause nommée, sans bundle", () => {
   const { bundle, lancer, planterAncienBundle } = montageAppIntents();
@@ -714,16 +676,6 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-4 : des métadonnées absentes,
       mode: "absent",
       attendus: [
         "✗ Metadata.appintents absent du bundle : Contents/Resources/Metadata.appintents/extract.actionsdata manque (l'extraction App Intents n'a rien produit)",
-      ],
-    },
-    {
-      mode: "sans-sonde",
-      attendus: ["✗ intent sonde absent de Metadata.appintents : OpenConsoleIntent introuvable dans extract.actionsdata"],
-    },
-    {
-      mode: "sans-raccourci",
-      attendus: [
-        "✗ App Shortcut de l'intent sonde absent de Metadata.appintents : phrase « Ouvre ${applicationName} » introuvable dans extract.actionsdata",
       ],
     },
     {
@@ -744,6 +696,20 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-4 : des métadonnées absentes,
     assert.ok(!r.sortie.includes(META_OK), `[${mode}] ✓ des métadonnées affiché malgré l'échec\n${r.sortie}`);
     assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
     assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
+  }
+
+  // Intent sonde retiré, puis son App Shortcut seule retirée.
+  const ecarts: { nom: string; fichier: string; attendus: string[] }[] = [
+    { nom: "sonde retirée", fichier: ecart(["OpenConsoleIntent"]), attendus: [intentAbsent("OpenConsoleIntent")] },
+    {
+      nom: "App Shortcut de la sonde retirée",
+      fichier: ecart([], [["OpenConsoleIntent", "Ouvre ${applicationName}"]]),
+      attendus: [phraseAbsente("OpenConsoleIntent", "Ouvre ${applicationName}")],
+    },
+  ];
+  for (const { nom, fichier, attendus } of ecarts) {
+    planterAncienBundle();
+    assertNonConforme(lancer([], { FAUX_ACTIONSDATA: fichier }), bundle, nom, attendus);
   }
 });
 
@@ -775,6 +741,7 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
     const r = lancer([...args]);
     assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
     assert.ok(r.sortie.includes(META_OK), `[${voie}] ligne ✓ des métadonnées absente\n${r.sortie}`);
+    assert.ok(r.sortie.includes(CONFORME_MAC), `[${voie}] ligne ✓ du contrôle des intents absente\n${r.sortie}`);
 
     const actions = path.join(bundle, META_ACTIONS_REL);
     assert.ok(fs.existsSync(actions), `[${voie}] ${actions} absent`);
@@ -792,8 +759,7 @@ test("bundle-mac-sans-metadonnees-app-intents/AC-6 : dans l'état livré, comple
   }
 });
 
-const VOCAL_OK =
-  "  ✓ intents vocaux embarqués (MacPendingIntent « Qu’est-ce qui m’attend dans ${applicationName} », MacAnswerIntent « Réponds dans ${applicationName} », MacSessionPromptIntent « Dis à ${applicationName} »)";
+const VOCAUX = ["MacPendingIntent", "MacAnswerIntent", "MacSessionPromptIntent"];
 
 test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingIntent et MacAnswerIntent avec leurs phrases françaises en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
   const { bundle, lancer, planterAncienBundle } = montageAppIntents();
@@ -803,7 +769,7 @@ test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingI
     const r = lancer(args);
     assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
     assert.ok(r.sortie.includes(META_OK), `[${voie}] ligne ✓ des métadonnées absente\n${r.sortie}`);
-    assert.ok(r.sortie.includes(VOCAL_OK), `[${voie}] ligne ✓ des intents vocaux absente\n${r.sortie}`);
+    assert.ok(r.sortie.includes(CONFORME_MAC), `[${voie}] ligne ✓ du contrôle des intents absente\n${r.sortie}`);
     const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
     for (const marqueur of [
       '"identifier":"MacPendingIntent"',
@@ -815,25 +781,18 @@ test("siri-mac-questions-en-attente/AC-1 : le bundle livré déclare MacPendingI
     }
   }
 
-  const scenarios: { mode: string; attendu: string }[] = [
+  // Intents vocaux retirés, puis leurs App Shortcuts seules retirées.
+  const ecarts: { nom: string; fichier: string; attendus: string[] }[] = [
+    { nom: "intents vocaux retirés", fichier: ecart(VOCAUX), attendus: VOCAUX.map(intentAbsent) },
     {
-      mode: "sans-vocal",
-      attendu: "✗ intent vocal absent de Metadata.appintents : MacPendingIntent introuvable dans extract.actionsdata",
-    },
-    {
-      mode: "sans-phrase-vocale",
-      attendu:
-        "✗ App Shortcut de l'intent vocal MacPendingIntent absent de Metadata.appintents : phrase « Qu’est-ce qui m’attend dans ${applicationName} » introuvable dans extract.actionsdata",
+      nom: "phrases vocales retirées",
+      fichier: ecart([], phrasesDe(VOCAUX)),
+      attendus: phrasesDe(VOCAUX).map(([type, phrase]) => phraseAbsente(type, phrase)),
     },
   ];
-  for (const { mode, attendu } of scenarios) {
+  for (const { nom, fichier, attendus } of ecarts) {
     planterAncienBundle();
-    const r = lancer([], { FAUX_APPINTENTS: mode });
-    assert.equal(r.status, 1, `[${mode}] ${r.sortie}`);
-    assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
-    assert.ok(!r.sortie.includes(VOCAL_OK), `[${mode}] ✓ des intents vocaux affiché malgré l'échec\n${r.sortie}`);
-    assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
-    assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
+    assertNonConforme(lancer([], { FAUX_ACTIONSDATA: fichier }), bundle, nom, attendus);
   }
 });
 
@@ -847,23 +806,14 @@ test("siri-dictee-session-omp/AC-3 : le bundle livré déclare MacSessionPromptI
     const voie = args.length === 0 ? "complet" : "--no-tests";
     const r = lancer(args);
     assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
-    assert.ok(r.sortie.includes(VOCAL_OK), `[${voie}] ligne ✓ des intents vocaux absente\n${r.sortie}`);
-    assert.ok(
-      r.sortie.includes("MacSessionPromptIntent « Dis à ${applicationName} »"),
-      `[${voie}] la ligne ✓ ne cite pas l'intent de dictée\n${r.sortie}`,
-    );
+    assert.ok(r.sortie.includes(CONFORME_MAC), `[${voie}] ligne ✓ du contrôle des intents absente\n${r.sortie}`);
     const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
     assert.ok(actions.includes('"identifier":"MacSessionPromptIntent"'), `[${voie}] MacSessionPromptIntent absent du bundle : ${actions}`);
   }
 
   planterAncienBundle();
-  const r = lancer([], { FAUX_APPINTENTS: "sans-dictee" });
-  const attendu = "✗ intent vocal absent de Metadata.appintents : MacSessionPromptIntent introuvable dans extract.actionsdata";
-  assert.equal(r.status, 1, r.sortie);
-  assert.ok(r.stderr.includes(attendu), `message absent : ${attendu}\n${r.sortie}`);
-  assert.ok(!r.sortie.includes(VOCAL_OK), `✓ des intents vocaux affiché malgré l'échec\n${r.sortie}`);
-  assert.ok(!fs.existsSync(bundle), `un bundle a survécu à l'échec : ${bundle}`);
-  assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], "le bundle a été signé malgré l'échec");
+  const r = lancer([], { FAUX_ACTIONSDATA: ecart(["MacSessionPromptIntent"]) });
+  assertNonConforme(r, bundle, "dictée retirée", [intentAbsent("MacSessionPromptIntent")]);
 });
 
 test("siri-dictee-session-omp/AC-12 : l'App Shortcut de MacSessionPromptIntent porte ses trois phrases françaises en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
@@ -871,9 +821,7 @@ test("siri-dictee-session-omp/AC-12 : l'App Shortcut de MacSessionPromptIntent p
 
   const r = lancer(["--no-tests"]);
   assert.equal(r.status, 0, r.sortie);
-  const actions = JSON.parse(fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8")) as {
-    autoShortcuts: { actionIdentifier: string; phraseTemplates: { key: string }[] }[];
-  };
+  const actions = JSON.parse(fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8")) as ActionsData;
   const raccourci = actions.autoShortcuts.find((s) => s.actionIdentifier === "MacSessionPromptIntent");
   assert.ok(raccourci, "App Shortcut de MacSessionPromptIntent absent du bundle");
   const phrases = raccourci.phraseTemplates.map((p) => p.key);
@@ -884,18 +832,11 @@ test("siri-dictee-session-omp/AC-12 : l'App Shortcut de MacSessionPromptIntent p
   }
 
   planterAncienBundle();
-  const echec = lancer([], { FAUX_APPINTENTS: "sans-phrase-dictee" });
-  const attendu =
-    "✗ App Shortcut de l'intent vocal MacSessionPromptIntent absent de Metadata.appintents : phrase « Écrire à ${applicationName} » introuvable dans extract.actionsdata";
-  assert.equal(echec.status, 1, echec.sortie);
-  assert.ok(echec.stderr.includes(attendu), `message absent : ${attendu}\n${echec.sortie}`);
-  assert.ok(!echec.sortie.includes(VOCAL_OK), `✓ des intents vocaux affiché malgré l'échec\n${echec.sortie}`);
-  assert.ok(!fs.existsSync(bundle), `un bundle a survécu à l'échec : ${bundle}`);
-  assert.deepEqual(signaturesDuBundle(echec.lignes, bundle), [], "le bundle a été signé malgré l'échec");
+  const echec = lancer([], { FAUX_ACTIONSDATA: ecart([], [["MacSessionPromptIntent", "Écrire à ${applicationName}"]]) });
+  assertNonConforme(echec, bundle, "phrase de dictée retirée", [phraseAbsente("MacSessionPromptIntent", "Écrire à ${applicationName}")]);
 });
 
-const PILOT_OK =
-  "  ✓ intents de pilotage embarqués (MacLaunchPipelineIntent « Lancer une pipeline dans ${applicationName} », MacResumeFeatureIntent « Reprendre une pipeline dans ${applicationName} », MacStopFeatureIntent « Arrêter une pipeline dans ${applicationName} », MacValidateSpecsIntent « Valider les specs dans ${applicationName} », MacAcceptReviewIntent « Accepter la revue dans ${applicationName} »)";
+const PILOTAGE = ["MacLaunchPipelineIntent", "MacResumeFeatureIntent", "MacStopFeatureIntent", "MacValidateSpecsIntent", "MacAcceptReviewIntent"];
 
 test("siri-mac-pilotage-pipelines/AC-14 : le bundle livré déclare les cinq intents de pilotage avec une phrase française en ${applicationName}, sinon l'assemblage sort en 1 sans bundle", () => {
   const { bundle, lancer, planterAncienBundle } = montageAppIntents();
@@ -904,7 +845,7 @@ test("siri-mac-pilotage-pipelines/AC-14 : le bundle livré déclare les cinq int
     const voie = args.length === 0 ? "complet" : "--no-tests";
     const r = lancer(args);
     assert.equal(r.status, 0, `[${voie}] ${r.sortie}`);
-    assert.ok(r.sortie.includes(PILOT_OK), `[${voie}] ligne ✓ des intents de pilotage absente\n${r.sortie}`);
+    assert.ok(r.sortie.includes(CONFORME_MAC), `[${voie}] ligne ✓ du contrôle des intents absente\n${r.sortie}`);
     const actions = fs.readFileSync(path.join(bundle, META_ACTIONS_REL), "utf8");
     for (const marqueur of [
       '"identifier":"MacLaunchPipelineIntent"',
@@ -922,24 +863,17 @@ test("siri-mac-pilotage-pipelines/AC-14 : le bundle livré déclare les cinq int
     }
   }
 
-  const scenarios: { mode: string; attendu: string }[] = [
+  // Intents de pilotage retirés, puis leurs App Shortcuts seules retirées.
+  const ecarts: { nom: string; fichier: string; attendus: string[] }[] = [
+    { nom: "intents de pilotage retirés", fichier: ecart(PILOTAGE), attendus: PILOTAGE.map(intentAbsent) },
     {
-      mode: "sans-pilotage",
-      attendu: "✗ intent de pilotage absent de Metadata.appintents : MacLaunchPipelineIntent introuvable dans extract.actionsdata",
-    },
-    {
-      mode: "sans-phrase-pilotage",
-      attendu:
-        "✗ App Shortcut de l'intent de pilotage MacLaunchPipelineIntent absent de Metadata.appintents : phrase « Lancer une pipeline dans ${applicationName} » introuvable dans extract.actionsdata",
+      nom: "phrases de pilotage retirées",
+      fichier: ecart([], phrasesDe(PILOTAGE)),
+      attendus: phrasesDe(PILOTAGE).map(([type, phrase]) => phraseAbsente(type, phrase)),
     },
   ];
-  for (const { mode, attendu } of scenarios) {
+  for (const { nom, fichier, attendus } of ecarts) {
     planterAncienBundle();
-    const r = lancer([], { FAUX_APPINTENTS: mode });
-    assert.equal(r.status, 1, `[${mode}] ${r.sortie}`);
-    assert.ok(r.stderr.includes(attendu), `[${mode}] message absent : ${attendu}\n${r.sortie}`);
-    assert.ok(!r.sortie.includes(PILOT_OK), `[${mode}] ✓ des intents de pilotage affiché malgré l'échec\n${r.sortie}`);
-    assert.ok(!fs.existsSync(bundle), `[${mode}] un bundle a survécu à l'échec : ${bundle}`);
-    assert.deepEqual(signaturesDuBundle(r.lignes, bundle), [], `[${mode}] le bundle a été signé malgré l'échec`);
+    assertNonConforme(lancer([], { FAUX_ACTIONSDATA: fichier }), bundle, nom, attendus);
   }
 });

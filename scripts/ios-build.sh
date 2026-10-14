@@ -15,6 +15,13 @@
 #     `-showsdks` — se fier à `-version` ferait conclure à tort que l'app peut
 #     être compilée, et la section rougirait.
 #
+# Après la compilation, et avant les tests (y compris avec `--no-tests`), le
+# `Metadata.appintents/extract.actionsdata` de l'app est contrôlé contre la liste
+# attendue unique scripts/app-intents/attendus.json, par le comparateur partagé
+# avec scripts/swift-app.sh (scripts/app-intents/controle.py, python3) : un intent
+# ou une phrase d'App Shortcut manquant, non listé ou sans `${applicationName}`
+# fait sortir le script en 1, sans aucun `xcodebuild test`.
+#
 # Codes de sortie : 0 compilé (et testé, sauf `--no-tests`), 1 échec de
 # compilation ou de test (la sortie de xcodebuild est recopiée telle quelle),
 # 2 « non exécuté » (hors macOS, Xcode inutilisable, ou aucun simulateur iOS 26 —
@@ -80,6 +87,18 @@ if ! xcodebuild build \
   -derivedDataPath "$DERIVED" \
   CODE_SIGNING_ALLOWED=NO; then
   echo "  ✗ la compilation de l'app iOS a échoué" >&2
+  exit 1
+fi
+
+# Contrôle des intents Siri embarqués, dans les deux modes : l'extraction App
+# Intents écrit à la RACINE du `.app` iOS (pas sous Resources).
+ACTIONS_DATA="$DERIVED/Build/Products/Debug-iphonesimulator/OMPConsoleIOS.app/Metadata.appintents/extract.actionsdata"
+if [ ! -f "$ACTIONS_DATA" ]; then
+  echo "  ✗ Metadata.appintents absent de l'app iOS : $ACTIONS_DATA manque (l'extraction App Intents n'a rien produit)" >&2
+  exit 1
+fi
+if ! python3 "$ROOT/scripts/app-intents/controle.py" ios "$ACTIONS_DATA"; then
+  echo "  ✗ Metadata.appintents de l'app iOS non conforme à scripts/app-intents/attendus.json" >&2
   exit 1
 fi
 

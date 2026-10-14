@@ -43,12 +43,14 @@ function arborescence(racine: string): string[] {
 }
 
 test("omp-console-sans-podman/AC-1 : swift-app.sh compile mem0-rs, l'embarque signé en Contents/Resources/mem0-rs (arm64) et n'embarque plus rien de l'ancienne pile", () => {
-  // Copie jetable : ce que swift-app.sh lit (le script, le Bundle, les sources de
-  // la coque, listées pour l'extraction App Intents), plus l'ancienne pile tant
-  // qu'elle existe — sa présence dans le dépôt ne doit plus rien faire entrer au bundle.
+  // Copie jetable : ce que swift-app.sh lit (le script, la liste attendue des
+  // intents Siri et son comparateur, le Bundle, les sources de la coque, listées
+  // pour l'extraction App Intents), plus l'ancienne pile tant qu'elle existe — sa
+  // présence dans le dépôt ne doit plus rien faire entrer au bundle.
   const copie = tmpdir("sans-podman-copie-");
   fs.mkdirSync(path.join(copie, "scripts"));
   fs.copyFileSync(path.join(ROOT, "scripts", "swift-app.sh"), path.join(copie, "scripts", "swift-app.sh"));
+  fs.cpSync(path.join(ROOT, "scripts", "app-intents"), path.join(copie, "scripts", "app-intents"), { recursive: true });
   fs.cpSync(path.join(ROOT, "omp-console", "Bundle"), path.join(copie, "omp-console", "Bundle"), { recursive: true });
   fs.cpSync(path.join(ROOT, "omp-console", "Sources", "OMPConsole"), path.join(copie, "omp-console", "Sources", "OMPConsole"), { recursive: true });
   const anciennePile = path.join(ROOT, "omp-console", "stack");
