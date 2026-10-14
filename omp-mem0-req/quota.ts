@@ -143,3 +143,21 @@ export function exhaustedUntil(stateDir: string, selector: string, now: number):
   if (!entry || entry.until <= now) return null;
   return { model: selector, ...entry };
 }
+
+
+/** Le départ d'un run ou d'une session (S-1) : un modèle (`null` = laisser le défaut) ou le quota qui bloque. */
+export type ModelStart = { model: string | null } | { blocked: QuotaHit };
+
+/**
+ * La règle de DÉPART partagée (S-1) : principal nul (défaut OMP) → `{ model: null }` ;
+ * principal non épuisé → le principal ; sinon le repli s'il existe et n'est pas épuisé ;
+ * sinon `{ blocked }` avec le quota du PRINCIPAL. Un seul `now` pour les deux lectures ;
+ * ne lit que quota.json, n'écrit rien.
+ */
+export function startModelFor(stateDir: string, primary: string | null, fallback: string | null, now: number): ModelStart {
+  if (primary === null) return { model: null };
+  const hit = exhaustedUntil(stateDir, primary, now);
+  if (hit === null) return { model: primary };
+  if (fallback !== null && exhaustedUntil(stateDir, fallback, now) === null) return { model: fallback };
+  return { blocked: hit };
+}

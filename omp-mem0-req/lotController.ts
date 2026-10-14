@@ -26,8 +26,8 @@ import { relayItemsOf } from "./relay.ts";
 import type { RelayItem } from "./relay.ts";
 import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, milestoneLine, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
 import type { LotPromptKind, WorktreeFate } from "./runs.ts";
-import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason } from "./quota.ts";
-import type { QuotaHit } from "./quota.ts";
+import { exhaustedUntil, markExhausted, quotaDeadlineLabel, quotaStopReason, startModelFor } from "./quota.ts";
+import type { ModelStart, QuotaHit } from "./quota.ts";
 import type { ArbiterRunner, LotRunner, LotRunnerResult, LotRunSpec } from "./serviceRuns.ts";
 import { dropInbox, liveRunFor, panelInboxDirFor, panelInboxDirOf, readStore, writeDelivery } from "./store.ts";
 import type { PanelDelivery, PanelPendingAsk, RunningEntry } from "./store.ts";
@@ -640,18 +640,11 @@ export function createLotController(deps: LotControllerDeps): LotController {
   }
 
   /**
-   * Le modèle de DÉPART d'un run (S-4) : le principal s'il est nul (défaut OMP —
-   * la garde est alors appliquée après ouverture, par le runner) ou non épuisé ;
-   * sinon le repli s'il existe et n'est pas épuisé ; sinon rien : le quota du
-   * principal bloque la feature.
+   * Le modèle de DÉPART d'un run (S-4) : la règle partagée `startModelFor` (quota.ts).
+   * Un principal nul (défaut OMP) laisse la garde au runner, après ouverture.
    */
-  function startModel(primary: string | null, fallback: string | null): { model: string | null } | { blocked: QuotaHit } {
-    if (primary === null) return { model: null };
-    const at = now();
-    const hit = exhaustedUntil(stateDir, primary, at);
-    if (hit === null) return { model: primary };
-    if (fallback !== null && exhaustedUntil(stateDir, fallback, at) === null) return { model: fallback };
-    return { blocked: hit };
+  function startModel(primary: string | null, fallback: string | null): ModelStart {
+    return startModelFor(stateDir, primary, fallback, now());
   }
 
   /** Passe la feature en « bloquée : quota » (S-5) : `blocked`, jamais `failed`, avec son quota. */

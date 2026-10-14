@@ -243,6 +243,21 @@ export function featureModelOf(lot: Lot | null, cwd: string, phase: PipelinePhas
   return null;
 }
 
+/**
+ * Le repli du groupe de la phase `phase` pour la feature dont le `worktree` est le même
+ * répertoire que `cwd` (même parcours que `featureModelOf`), ou `null` : hors lot, cwd
+ * vide ou feature sans repli.
+ */
+export function featureFallbackOf(lot: Lot | null, cwd: string, phase: PipelinePhase): string | null {
+  if (!lot || cwd === "") return null;
+  const target = realpathOr(cwd);
+  for (const feature of lot.features) {
+    if (feature.worktree === "" || realpathOr(feature.worktree) !== target) continue;
+    return featureFallbackForPhase(feature, phase);
+  }
+  return null;
+}
+
 
 // --- les portes à dialogue (S-2) ---------------------------------------------
 

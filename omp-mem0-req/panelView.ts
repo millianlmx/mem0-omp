@@ -93,6 +93,8 @@ export type PipelinesPanelDeps = {
       inbox: string;
       /** Le modèle de la feature dont ce rang est le worktree (S-5 §3), ou absent. */
       model?: string | null;
+      /** Le repli du groupe de la même feature, ou absent. */
+      fallback?: string | null;
     },
     text: string,
   ) => Promise<string | null>;
@@ -144,7 +146,7 @@ export function readOnlyReason(lot: Lot | null, feature: LotFeature): string {
 export type ViewTarget =
   | { kind: "lot"; slug: string }
   | { kind: "inbox"; dir: string }
-  | { kind: "session"; cwd: string; sessionFile: string; label: string; model?: string | null };
+  | { kind: "session"; cwd: string; sessionFile: string; label: string; model?: string | null; fallback?: string | null };
 
 
 /**

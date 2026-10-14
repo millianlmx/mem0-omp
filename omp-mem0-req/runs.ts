@@ -1,4 +1,5 @@
 // Runs : argv d'un maillon, prompts, livraison, devenir du worktree.
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -82,7 +83,24 @@ export type ConversationRunTarget = {
    * modèle), l'argv est celui d'avant cette feature, à l'octet près.
    */
   model?: string | null;
+  /**
+   * Le repli de groupe de la même feature : il devient la chaîne de repli native
+   * du principal (overlay `--config`, `launchConversationRun`). Absent, aucun repli.
+   */
+  fallback?: string | null;
 };
+
+
+/**
+ * L'overlay `--config` d'un repli : un fichier PAR repli distinct, sous
+ * `<stateDir>/conversation-overlays/`. Même chemin pour un même repli — l'écriture
+ * est idempotente et sûre entre runs concurrents. L'hôte relit l'overlay pendant
+ * toute la vie du run : le fichier n'est jamais supprimé.
+ */
+export function conversationOverlayPathFor(stateDir: string, fallback: string): string {
+  const digest = crypto.createHash("sha1").update(fallback).digest("hex").slice(0, 16);
+  return path.join(stateDir, "conversation-overlays", `${digest}.json`);
+}
 
 
 /**
@@ -100,6 +118,8 @@ export function buildConversationRunArgv(spec: {
   stateDir: string;
   prompt: string;
   selfPath?: string | null;
+  /** Le fichier d'overlay de réglages (`--config`) qui déclare le repli du modèle, ou absent. */
+  configOverlay?: string | null;
 }): string[] {
   const argv = [
     spec.ompBin,
@@ -116,7 +136,10 @@ export function buildConversationRunArgv(spec: {
   ];
   // Le modèle (S-5 §3) : même place que dans l'argv d'un maillon — après l'état,
   // avant la boîte. Absent, aucun élément n'est ajouté.
-  if (spec.target.model) argv.push("--model", spec.target.model);
+  if (spec.target.model) {
+    argv.push("--model", spec.target.model);
+    if (spec.configOverlay) argv.push("--config", spec.configOverlay);
+  }
   argv.push("--panel-inbox", spec.target.inbox);
   if (spec.selfPath) argv.push("-e", spec.selfPath);
   argv.push("--", spec.prompt);
