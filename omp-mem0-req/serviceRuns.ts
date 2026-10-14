@@ -12,12 +12,17 @@
 // rattrapage ici quand OMP ne bascule pas), et un quota épuisé des deux côtés est
 // rendu tel quel au contrôleur, jamais déguisé en échec.
 import type { ArbiterCapture, ArbiterDecision } from "./arbiter.ts";
+import { CONTRACT_PATH } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
+import { lotContextThresholds } from "./lot.ts";
 import { closePipeline } from "./publish.ts";
 import { exhaustedUntil, isQuotaFailure, isQuotaMessage, markExhausted, quotaHitFor, quotaStopReason } from "./quota.ts";
 import type { QuotaHit } from "./quota.ts";
-import { forgetMaillonIdentity } from "./serviceSessions.ts";
-import type { HostedSession, MaillonIdentity, SessionHost } from "./serviceSessions.ts";
+import { runCompact } from "./serviceRuntime.ts";
+import { createContextMeter, forgetMaillonIdentity } from "./serviceSessions.ts";
+import { readStore, runningIdFor } from "./store.ts";
+import type { PanelPendingAsk } from "./store.ts";
+import type { ContextMeter, HostedSession, MaillonIdentity, SessionHost } from "./serviceSessions.ts";
 
 
 /**
@@ -33,6 +38,16 @@ export type LotRunnerResult = {
   stderr: string;
   quota?: QuotaHit;
   peakContext?: number | null;
+  /** Les compactions réussies du run (S-2) ; les deux runners réels le renseignent toujours (0 sans compaction). */
+  compactions?: number;
+  /** La mesure qui a coupé le run au plafond de contexte (S-4) ; absent pour toute autre issue. */
+  contextExceeded?: number;
+  /**
+   * La question `ask` en vol à la coupure au plafond, relevée AVANT que la clôture
+   * du run retire son entrée du magasin : c'est elle qui fait `blocked` le run
+   * coupé (S-4). Présente seulement avec `contextExceeded`.
+   */
+  pendingAsk?: PanelPendingAsk;
 };
 
 /** Le maillon à exécuter, décrit sans argv : identité, prompt, session, boîte. */
@@ -86,26 +101,85 @@ function selectorOf(model: { provider: string; id: string } | undefined): string
 }
 
 
+/** La question `ask` publiée par le run du worktree, ou `null` : lue au moment de la coupure, avant la clôture. */
+function pendingAskOf(stateDir: string, worktree: string): PanelPendingAsk | null {
+  const id = runningIdFor(worktree);
+  return readStore(stateDir).running.find(entry => entry.id === id)?.pendingAsk ?? null;
+}
+
+
+/** Le motif exact d'un run coupé au plafond de contexte (S-4) : `n` est la mesure entière brute. */
+function contextExceededReason(measure: number): string {
+  return `contexte dépassé (${measure} tokens)`;
+}
+
+
 /**
- * Le suivi du pic de contexte d'un run (S-12) : à chaque fin de message assistant
- * portant `usage`, le contexte du tour est `input + cacheRead + cacheWrite` (Doc-4) ;
- * le pic est le maximum, `null` sans aucun usage. Aucune coupure n'en dépend.
+ * La consigne renvoyée à un run après une compaction (S-3). La compaction ne garde
+ * ni le prompt du maillon (premier message utilisateur) ni la référence au contrat :
+ * l'appelant les réinjecte, tels quels, avec la mesure qui a déclenché.
  */
-function createPeakTracker(): { observe: (event: unknown) => void; peak: () => number | null } {
-  let peak: number | null = null;
-  const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+export function compactionReminder(prompt: string, measure: number): string {
+  return `${prompt}\n\n[service] Ton tour a été interrompu pour compacter le contexte (mesure : ${measure} tokens). La consigne ci-dessus est celle de ce run ; le contrat de la feature vit dans ${CONTRACT_PATH} : relis-le avant de reprendre. Reprends là où tu t'es arrêté ; si ton travail est terminé, dis-le en une phrase sans rien refaire.`;
+}
+
+
+/** Un signal « le run est coupé » : une compaction en vol ne retient jamais un run coupé. */
+function createCutNotice(): { fire: () => void; promise: Promise<void> } {
+  let fire: () => void = () => {};
+  const promise = new Promise<void>(resolve => {
+    fire = resolve;
+  });
+  return { fire, promise };
+}
+
+
+/**
+ * Les compactions d'un run (S-2) : lancées depuis l'abonnement SANS être attendues
+ * par lui, SÉRIALISÉES (un verdict reçu pendant une compaction en vol en enchaîne
+ * une seconde : chaque verdict = exactement un appel), sans jamais rejeter. La
+ * première part au verdict même ; un échec est journalisé et laisse `compactions`
+ * inchangé, et il compte comme tenté (le palier du compteur l'a déjà enregistré).
+ */
+function createRunCompaction(options: {
+  session: HostedSession["session"];
+  meter: ContextMeter;
+  label: string;
+  log: (line: string) => void;
+}): {
+  launch: (measure: number) => void;
+  beginCycle: () => void;
+  launchedThisCycle: () => boolean;
+  lastMeasure: () => number;
+  settled: () => Promise<void>;
+} {
+  let chain: Promise<void> = Promise.resolve();
+  let pending = 0;
+  let launched = false;
+  let last = 0;
+  const attempt = async (measure: number): Promise<void> => {
+    try {
+      await runCompact(options.session, { suppressContinuation: true });
+      options.meter.compacted();
+      options.log(`${options.label} : contexte compacté à ${measure}`);
+    } catch (err) {
+      options.log(`${options.label} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`);
+    }
+    pending -= 1;
+  };
   return {
-    observe(event) {
-      if (!event || typeof event !== "object" || (event as { type?: unknown }).type !== "message_end") return;
-      const message = (event as { message?: unknown }).message;
-      if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "assistant") return;
-      const usage = (message as { usage?: unknown }).usage;
-      if (!usage || typeof usage !== "object") return;
-      const fields = usage as Record<string, unknown>;
-      const turn = count(fields.input) + count(fields.cacheRead) + count(fields.cacheWrite);
-      if (peak === null || turn > peak) peak = turn;
+    launch(measure) {
+      launched = true;
+      last = measure;
+      pending += 1;
+      chain = pending === 1 ? attempt(measure) : chain.then(() => attempt(measure));
     },
-    peak: () => peak,
+    beginCycle() {
+      launched = false;
+    },
+    launchedThisCycle: () => launched,
+    lastMeasure: () => last,
+    settled: () => chain,
   };
 }
 
@@ -161,6 +235,8 @@ export type MaillonRunnerDeps = {
   host: SessionHost;
   log?: (line: string) => void;
   now?: () => number;
+  /** Les variables de seuil de contexte (S-1) ; `process.env` par défaut. */
+  env?: Record<string, string | undefined>;
 };
 
 /**
@@ -178,14 +254,25 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
   return async ({ spec, signal }) => {
     let hosted: HostedSession | null = null;
     let killed = false;
+    let contextExceeded: number | null = null;
+    let pendingAsk: PanelPendingAsk | null = null;
     let timer: NodeJS.Timeout | undefined;
     let unsubscribe: (() => void) | undefined;
-    const peaks = createPeakTracker();
+    const meter = createContextMeter(lotContextThresholds(deps.env ?? process.env));
+    const cutNotice = createCutNotice();
     const cut = (reason: string) => {
       if (killed) return;
       killed = true;
+      cutNotice.fire();
       log(`[service] run ${spec.slug}/${spec.phase} coupé : ${reason}`);
       void Promise.resolve(hosted?.session.abort({ reason })).catch(() => {});
+    };
+    /** Le résultat d'un run coupé : l'échéance ou le budget (124), ou le plafond de contexte (même code, motif et mesure). */
+    const killedResult = (stdout: string, stderr: string): LotRunnerResult => {
+      const base = { code: RUN_KILLED_CODE, killed: true, stdout, peakContext: meter.peak(), compactions: meter.compactions() };
+      if (contextExceeded === null) return { ...base, stderr };
+      const exceeded = { ...base, stderr: contextExceededReason(contextExceeded), contextExceeded };
+      return pendingAsk === null ? exceeded : { ...exceeded, pendingAsk };
     };
     const onSignal = () => cut("budget du run dépassé");
     // Un seul objet d'identité : le service y inscrit le P EFFECTIF (S-2) quand
@@ -231,6 +318,8 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       stdout: hosted?.transcript.join("\n\n") ?? "",
       stderr: quotaStopReason(hit),
       quota: hit,
+      peakContext: meter.peak(),
+      compactions: meter.compactions(),
     });
     try {
       hosted = await deps.host.open({
@@ -245,10 +334,24 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
         autoApprove: true,
       });
       const session = hosted.session;
+      const compaction = createRunCompaction({
+        session,
+        meter,
+        label: `[service] run ${spec.slug}/${spec.phase}`,
+        log,
+      });
       // Le repli natif d'OMP suspend le modèle quitté : le registre du service le
       // retient pour que ni ce run ni un autre ne le relance avant l'échéance.
       unsubscribe = session.subscribe(event => {
-        peaks.observe(event);
+        const step = meter.observe(event);
+        if (step !== null && !killed) {
+          if (step.verdict === "compact") compaction.launch(step.measure);
+          else if (step.verdict === "exceeded") {
+            contextExceeded = step.measure;
+            pendingAsk = pendingAskOf(spec.stateDir, spec.worktree);
+            cut(contextExceededReason(step.measure));
+          }
+        }
         if (event.type !== "retry_fallback_applied") return;
         const reason = event.reason ?? "";
         if (!isQuotaMessage(reason)) return;
@@ -275,11 +378,24 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
       }, 1000);
       let text = spec.prompt;
       let quota: QuotaHit | null = null;
-      for (let resumes = 0; ; resumes += 1) {
+      for (let resumes = 0; ; ) {
+        compaction.beginCycle();
         const before = session.messages.length;
-        await session.prompt(text);
-        await session.waitForIdle();
+        try {
+          await session.prompt(text);
+          await session.waitForIdle();
+        } catch (err) {
+          // Un prompt interrompu par NOTRE compaction n'est pas un échec du run.
+          if (!compaction.launchedThisCycle() || killed) throw err;
+        }
         if (killed) break;
+        if (compaction.launchedThisCycle()) {
+          // Les reprises de compaction ne consomment pas les reprises de quota.
+          await Promise.race([compaction.settled(), cutNotice.promise]);
+          if (killed) break;
+          text = compactionReminder(spec.prompt, compaction.lastMeasure());
+          continue;
+        }
         const hit = quotaOfLastTurn(session, before, now());
         if (hit === null) break;
         markExhausted(spec.stateDir, hit);
@@ -288,24 +404,26 @@ export function createMaillonRunner(deps: MaillonRunnerDeps): LotRunner {
           quota = hit;
           break;
         }
+        resumes += 1;
         // Même session, mêmes messages : le modèle repart de ce qu'il a déjà fait.
         text = `[reprise] Le modèle ${hit.model} a atteint son quota : le run continue sur ${next}. Reprends exactement où tu t'es arrêté.`;
       }
       const stdout = hosted.transcript.join("\n\n");
-      if (killed) return { code: RUN_KILLED_CODE, killed: true, stdout, stderr: "run interrompu (budget ou échéance)", peakContext: peaks.peak() };
-      if (quota !== null) return { ...quotaResult(quota), peakContext: peaks.peak() };
+      if (killed) return killedResult(stdout, "run interrompu (budget ou échéance)");
+      if (quota !== null) return quotaResult(quota);
       // Le DERNIER tour fait foi : une erreur d'API (hors quota) qui le termine est
       // un échec du run, pas un succès muet. Une erreur plus tôt dans le run, suivie
       // d'un tour qui a abouti, n'en est pas un.
       const last = lastAssistantMessage(session);
       if (last !== null && typeof last === "object" && "stopReason" in last && last.stopReason === "error" && !isQuotaFailure(last)) {
-        return { code: 1, killed: false, stdout, stderr: turnErrorText(last), peakContext: peaks.peak() };
+        return { code: 1, killed: false, stdout, stderr: turnErrorText(last), peakContext: meter.peak(), compactions: meter.compactions() };
       }
-      return { code: 0, killed: false, stdout, stderr: "", peakContext: peaks.peak() };
+      return { code: 0, killed: false, stdout, stderr: "", peakContext: meter.peak(), compactions: meter.compactions() };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (killed) return { code: RUN_KILLED_CODE, killed: true, stdout: hosted?.transcript.join("\n\n") ?? "", stderr: message, peakContext: peaks.peak() };
-      return { code: 1, killed: false, stdout: hosted?.transcript.join("\n\n") ?? "", stderr: message, peakContext: peaks.peak() };
+      const stdout = hosted?.transcript.join("\n\n") ?? "";
+      if (killed) return killedResult(stdout, message);
+      return { code: 1, killed: false, stdout, stderr: message, peakContext: meter.peak(), compactions: meter.compactions() };
     } finally {
       clearInterval(timer);
       unsubscribe?.();
@@ -350,6 +468,10 @@ export type ArbiterRunResult = {
   startedAt: number;
   endedAt: number;
   peakContext?: number | null;
+  /** Les compactions réussies du run (S-2) ; les deux runners réels le renseignent toujours. */
+  compactions?: number;
+  /** La mesure qui a coupé l'arbitre au plafond (S-5) ; absent sinon. */
+  contextExceeded?: number;
 };
 
 export type ArbiterRunner = (input: ArbiterRunInput) => Promise<ArbiterRunResult>;
@@ -359,39 +481,83 @@ export type ArbiterRunner = (input: ArbiterRunInput) => Promise<ArbiterRunResult
  * Le lanceur d'arbitre (S-9) : une session NEUVE par élément, jamais reprise, ni
  * publiée, ni historisée, ni armée d'une boîte. Le tour est borné par l'échéance et
  * le signal ; un quota constaté est inscrit au registre (S-4) et le run rend alors
- * sans décision — le contrôleur escalade.
+ * sans décision — le contrôleur escalade. Le contexte est mesuré à chaque
+ * `message_end` : compacté au seuil SOFT (une fois par palier), coupé au plafond
+ * HARD après une compaction tentée.
  */
-export function createArbiterRunner(deps: { host: SessionHost; log?: (line: string) => void; now?: () => number }): ArbiterRunner {
+export function createArbiterRunner(deps: {
+  host: SessionHost;
+  log?: (line: string) => void;
+  now?: () => number;
+  env?: Record<string, string | undefined>;
+}): ArbiterRunner {
   const log = deps.log ?? (() => {});
   const now = deps.now ?? Date.now;
   return async ({ stateDir, cwd, prompt, model, fallback, deadline, signal }) => {
     const startedAt = now();
     const capture: ArbiterCapture = { decision: null };
-    const peaks = createPeakTracker();
+    const meter = createContextMeter(lotContextThresholds(deps.env ?? process.env));
     let hosted: HostedSession | null = null;
     let timer: NodeJS.Timeout | undefined;
+    let killed = false;
+    let contextExceeded: number | null = null;
+    const cutNotice = createCutNotice();
     const cut = (reason: string) => {
+      if (killed) return;
+      killed = true;
+      cutNotice.fire();
       log(`[service] arbitre coupé : ${reason}`);
       void Promise.resolve(hosted?.session.abort({ reason })).catch(() => {});
     };
     const onSignal = () => cut("arbitrage annulé");
     try {
       hosted = await deps.host.open({ cwd, purpose: "arbiter", model, fallback, autoApprove: true, arbiter: capture });
+      const session = hosted.session;
       if (signal.aborted) cut("arbitrage annulé");
       signal.addEventListener("abort", onSignal, { once: true });
       timer = setInterval(() => {
         if (expired(deadline, now())) cut("échéance de l'arbitre atteinte");
       }, 1000);
-      const before = hosted.session.messages.length;
-      const unsubscribe = hosted.session.subscribe(event => peaks.observe(event));
+      const compaction = createRunCompaction({
+        session,
+        meter,
+        label: "[service] arbitre",
+        log,
+      });
+      const unsubscribe = session.subscribe(event => {
+        const step = meter.observe(event);
+        if (step === null || killed) return;
+        if (step.verdict === "compact") compaction.launch(step.measure);
+        else if (step.verdict === "exceeded") {
+          contextExceeded = step.measure;
+          cut(contextExceededReason(step.measure));
+        }
+      });
       try {
-        await hosted.session.prompt(prompt);
-        await hosted.session.waitForIdle();
+        let text = prompt;
+        let before = 0;
+        for (;;) {
+          compaction.beginCycle();
+          before = session.messages.length;
+          try {
+            await session.prompt(text);
+            await session.waitForIdle();
+          } catch (err) {
+            // Un prompt interrompu par NOTRE compaction n'est pas un échec.
+            if (!compaction.launchedThisCycle() || killed) throw err;
+          }
+          if (killed || !compaction.launchedThisCycle()) break;
+          await Promise.race([compaction.settled(), cutNotice.promise]);
+          if (killed) break;
+          text = compactionReminder(prompt, compaction.lastMeasure());
+        }
+        if (contextExceeded === null) {
+          const hit = quotaOfLastTurn(session, before, now());
+          if (hit !== null) markExhausted(stateDir, hit);
+        }
       } finally {
         unsubscribe();
       }
-      const hit = quotaOfLastTurn(hosted.session, before, now());
-      if (hit !== null) markExhausted(stateDir, hit);
     } catch (err) {
       log(`[service] arbitre en échec : ${err instanceof Error ? err.message : String(err)}`);
     } finally {
@@ -404,8 +570,10 @@ export function createArbiterRunner(deps: { host: SessionHost; log?: (line: stri
       sessionFile: hosted?.sessionFile ?? null,
       startedAt,
       endedAt: now(),
-      peakContext: peaks.peak(),
+      peakContext: meter.peak(),
+      compactions: meter.compactions(),
     };
+    if (contextExceeded !== null) result.contextExceeded = contextExceeded;
     if (hosted !== null) await hosted.dispose();
     return result;
   };

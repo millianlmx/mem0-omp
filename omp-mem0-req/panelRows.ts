@@ -1003,10 +1003,17 @@ function peakLabel(peak: number | null): string {
   return peak > CONTEXT_PEAK_LIMIT ? `${text}${CONTEXT_PEAK_MARK}` : text;
 }
 
+/** Le suffixe de compactions d'un run : ` (1 compaction)`, ` (<k> compactions)`, rien à 0 ou sans champ. */
+function compactionsSuffix(compactions: number | undefined): string {
+  if (typeof compactions !== "number" || !Number.isInteger(compactions) || compactions < 1) return "";
+  return compactions === 1 ? " (1 compaction)" : ` (${compactions} compactions)`;
+}
+
 /**
  * La sous-ligne `contexte : …` d'une feature (S-12) : les pics des runs terminés,
  * groupés par étape (req, specs, impl, review, release, arbitre) dans l'ordre
- * chronologique ; `null` sans aucun run enregistré.
+ * chronologique, chacun suivi de son nombre de compactions s'il y en a eu ;
+ * `null` sans aucun run enregistré.
  */
 export function contextPeakLine(runs: readonly LotRunRecord[] | undefined): string | null {
   if (runs === undefined || runs.length === 0) return null;
@@ -1015,7 +1022,7 @@ export function contextPeakLine(runs: readonly LotRunRecord[] | undefined): stri
     const own = runs.filter((run) => run.step === step);
     if (own.length === 0) continue;
     const parts = own.map((run) => {
-      const label = peakLabel(run.peakContext);
+      const label = `${peakLabel(run.peakContext)}${compactionsSuffix(run.compactions)}`;
       return run.fix ? `fix ${label}` : run.lot !== null ? `${run.lot} ${label}` : label;
     });
     groups.push(`${step} ${parts.join(", ")}`);

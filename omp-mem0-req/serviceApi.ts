@@ -10,6 +10,7 @@
 // (`Request`/`Response`), testable sous `node --test` comme sous Bun.
 import type { AuditLaunchOutcome } from "./auditRecord.ts";
 import type { PipelineCommand, PipelineCommandAck } from "./commands.ts";
+import type { Lot } from "./lot.ts";
 
 
 export type ServiceErrorCode = "bad_request" | "not_found" | "conflict" | "unauthorized" | "stopping" | "internal";
@@ -53,13 +54,19 @@ export type SessionPurpose = "session" | "project";
 
 export type SessionRunState = "idle" | "running";
 
-/** L'identité d'une session telle que l'API la rend (jamais son objet interne). */
+/**
+ * L'identité d'une session telle que l'API la rend (jamais son objet interne).
+ * `contextPeak` et `compactions` sont ceux du compteur de contexte d'une session
+ * parente (`project`, `audit`) ; `null` / `0` pour une session sans compteur.
+ */
 export type SessionDescription = {
   id: string;
   cwd: string;
-  purpose: SessionPurpose;
+  purpose: SessionPurpose | "audit";
   state: SessionRunState;
   sessionFile: string | null;
+  contextPeak: number | null;
+  compactions: number;
 };
 
 /** Un dialogue en vol : la forme EXACTE de `RpcDialogRequest` (Doc-4 §3). */
@@ -83,6 +90,9 @@ export type DialogRequest = {
 export type DialogAnswer = { value: string } | { confirmed: boolean } | { cancelled: true };
 
 export type SessionView = SessionDescription & { dialogs: DialogRequest[] };
+
+/** `GET /v1/repos/{repo}/lot` : le lot normalisé du dépôt, ou `null` quand il n'en a pas. */
+export type LotSnapshot = { repoKey: string; lot: Lot | null };
 
 
 // --- trames SSE (S-6) -------------------------------------------------------
@@ -137,6 +147,8 @@ export type ServiceApi = {
   health: () => Promise<ServiceHealth> | ServiceHealth;
   /** Réveille un dépôt : contrôleur créé au besoin, adoption, tick (S-9). */
   pilot: (repo: string) => Promise<{ repoKey: string; lotId: string | null; state: "piloting" }>;
+  /** L'état du lot d'un dépôt, `runs[]` compris (pic et compactions). */
+  lot: (repo: string) => LotSnapshot;
   /** Applique une commande de pipeline et rend son accusé (S-9). */
   command: (repo: string, body: unknown) => Promise<CommandOutcome>;
   listSessions: () => SessionDescription[];

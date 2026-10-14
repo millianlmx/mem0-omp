@@ -10,8 +10,11 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { DialogAnswer, DialogRequest, ServiceFrame, SessionDescription, SessionPurpose, SessionRunState, SessionSubscription, SessionView } from "./serviceApi.ts";
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
-import { createServiceUIContext, initializeHostedRunner } from "./serviceRuntime.ts";
+import { createServiceUIContext, initializeHostedRunner, runCompact } from "./serviceRuntime.ts";
 import type { DialogOpen } from "./serviceRuntime.ts";
+import { lotContextThresholds, lotRepoKey } from "./lot.ts";
+import type { ContextThresholds } from "./lot.ts";
+import { appendJournal } from "./context.ts";
 import type { ArbiterCapture } from "./arbiter.ts";
 
 
@@ -61,6 +64,71 @@ export function maillonIdentityOf(sessionId: string | null | undefined): Maillon
 export function forgetMaillonIdentity(sessionId: string | null | undefined): void {
   if (typeof sessionId === "string" && sessionId !== "") identities().delete(sessionId);
 }
+
+/** Ce que la mesure d'un `message_end` commande : compacter, couper (run) ou noter (session parente), ou rien. */
+export type ContextVerdict = "compact" | "exceeded" | null;
+
+/**
+ * Le compteur de contexte d'un run ou d'une session hébergés. La mesure d'un
+ * `message_end` assistant porteur d'`usage` est `input + cacheRead + cacheWrite`
+ * (champ non numérique ou non fini compté 0) ; le pic est le maximum des mesures,
+ * `null` sans aucune. Pur : aucune I/O, aucune compaction lancée ici.
+ */
+export type ContextMeter = {
+  /** `null` pour tout évènement qui n'est pas une mesure. */
+  observe(event: unknown): { measure: number; verdict: ContextVerdict } | null;
+  peak(): number | null;
+  compactions(): number;
+  /** À appeler quand une compaction a RÉUSSI. */
+  compacted(): void;
+};
+
+/**
+ * Les paliers : un palier est un franchissement de `soft`. Armé au départ ; une
+ * mesure `n > 0` sous `soft` le réarme ; `n >= soft` sans compaction tentée dans
+ * le palier rend `compact` (même si `n >= hard`) ; ensuite, `n >= hard` rend
+ * `exceeded`, une seule fois par palier. Une mesure de 0 n'alimente que le pic.
+ */
+export function createContextMeter(thresholds: ContextThresholds): ContextMeter {
+  let peak: number | null = null;
+  let compactions = 0;
+  let attempted = false;
+  let exceeded = false;
+  const count = (value: unknown): number => (typeof value === "number" && Number.isFinite(value) ? value : 0);
+  const field = (value: unknown, key: string): unknown =>
+    value !== null && typeof value === "object" && key in value ? Reflect.get(value, key) : undefined;
+  return {
+    observe(event) {
+      if (field(event, "type") !== "message_end") return null;
+      const message = field(event, "message");
+      if (field(message, "role") !== "assistant") return null;
+      const usage = field(message, "usage");
+      if (usage === null || typeof usage !== "object") return null;
+      const measure = count(field(usage, "input")) + count(field(usage, "cacheRead")) + count(field(usage, "cacheWrite"));
+      if (peak === null || measure > peak) peak = measure;
+      let verdict: ContextVerdict = null;
+      if (measure > 0) {
+        if (measure < thresholds.soft) {
+          attempted = false;
+          exceeded = false;
+        } else if (!attempted) {
+          attempted = true;
+          verdict = "compact";
+        } else if (measure >= thresholds.hard && !exceeded) {
+          exceeded = true;
+          verdict = "exceeded";
+        }
+      }
+      return { measure, verdict };
+    },
+    peak: () => peak,
+    compactions: () => compactions,
+    compacted() {
+      compactions += 1;
+    },
+  };
+}
+
 
 /** Le registre des captures d'arbitre, par session — même patron que les identités (Doc-1 §8). */
 const ARBITERS_KEY = Symbol.for("omp-mem0-req.arbiterCaptures");
@@ -179,6 +247,16 @@ export type HostedSession = {
   dispose: () => Promise<void>;
   /** Résolue quand la session est libérée, par `dispose` ou par l'arrêt de son runner. */
   disposed: Promise<void>;
+  /**
+   * Le compteur de contexte d'une session PARENTE (`project`, `audit`), `null` pour
+   * toute autre (S-6) : mesure à chaque `message_end`, compaction au seuil SOFT.
+   */
+  meter: ContextMeter | null;
+  /**
+   * Les compactions lancées par le compteur, sérialisées : non nulle tant que l'une
+   * d'elles est en vol, et la trame `prompt_end` du tour interrompu est alors tue.
+   */
+  compacting: Promise<void> | null;
 };
 
 type PendingDialog = {
@@ -193,6 +271,8 @@ export type SessionHostDeps = {
   selfPath: string | null;
   log?: (line: string) => void;
   now?: () => number;
+  /** Les variables de seuil de contexte (S-1) lues à l'ouverture d'une session parente ; `process.env` par défaut. */
+  env?: Record<string, string | undefined>;
   /** Extensions SUPPLÉMENTAIRES chargées dans chaque session (banc de test) — ajoutées à `selfPath`. */
   extraExtensionPaths?: readonly string[];
 };
@@ -336,15 +416,81 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
     return session.purpose !== "run" && session.purpose !== "arbiter" && session.purpose !== "audit";
   }
 
+  /** Une session dont `view` rend la fiche : celles de l'API, plus l'analyse d'audit en cours (S-6). */
+  type DescribedSession = HostedSession & { purpose: SessionPurpose | "audit" };
 
-  function descriptionOf(session: AppSession): SessionDescription {
+  function isDescribedSession(session: HostedSession): session is DescribedSession {
+    return isAppSession(session) || session.purpose === "audit";
+  }
+
+  function descriptionOf(session: DescribedSession): SessionDescription {
     return {
       id: session.id,
       cwd: session.cwd,
       purpose: session.purpose,
       state: session.state,
       sessionFile: session.sessionFile,
+      contextPeak: session.meter?.peak() ?? null,
+      compactions: session.meter?.compactions() ?? 0,
     };
+  }
+
+  /** Le libellé des lignes de log d'une session parente. */
+  function parentLabel(session: HostedSession): string {
+    return `[service] session ${session.id} (${session.purpose})`;
+  }
+
+  /**
+   * Une compaction de session parente (S-6) : `session.compact()` SANS
+   * `suppressContinuation` — OMP relance lui-même le tour interrompu. Lancée sans
+   * être attendue, sérialisée (un verdict reçu pendant une compaction en vol en
+   * enchaîne une seconde), sans jamais rejeter ; un échec est journalisé et
+   * `compactions` reste inchangé.
+   */
+  function compactParent(session: HostedSession, meter: ContextMeter, measure: number): void {
+    const attempt = async (): Promise<void> => {
+      try {
+        await runCompact(session.session, undefined);
+        meter.compacted();
+        log(`${parentLabel(session)} : contexte compacté à ${measure}`);
+      } catch (err) {
+        log(`${parentLabel(session)} : compaction échouée à ${measure} : ${err instanceof Error ? err.message : String(err)}`);
+      }
+    };
+    const previous = session.compacting;
+    // La garde `prompt_end` tient déjà pendant la partie synchrone de l'appel.
+    session.compacting = previous ?? Promise.resolve();
+    const tracked: Promise<void> = (previous === null ? attempt() : previous.then(attempt)).then(() => {
+      if (session.compacting === tracked) session.compacting = null;
+    });
+    session.compacting = tracked;
+  }
+
+  /**
+   * Le dépassement du plafond d'une session parente (S-6) : jamais une coupure.
+   * Quatre effets, tous exécutés, dans cet ordre — entrée durable de la session,
+   * trame `notice`, ligne du journal de conduite du dépôt, log.
+   */
+  function noteExceeded(session: HostedSession, phase: "project" | "audit", measure: number): void {
+    const reason = `contexte dépassé (${measure} tokens)`;
+    const message = `${reason} — session non coupée`;
+    try {
+      session.session.sessionManager.appendCustomEntry("pipeline", { kind: "contexte", tokens: measure, message });
+    } catch (err) {
+      log(`${parentLabel(session)} : notice durable non écrite : ${err instanceof Error ? err.message : String(err)}`);
+    }
+    notice(session, "warning", message);
+    appendJournal(deps.stateDir, lotRepoKey(session.cwd), {
+      at: now(),
+      slug: "",
+      phase,
+      kind: "contexte",
+      question: reason,
+      answer: "session non coupée",
+      source: "contexte",
+      context: null,
+    });
+    log(`${parentLabel(session)} : ${reason}, session non coupée`);
   }
 
   async function open(options: OpenSessionOptions): Promise<HostedSession> {
@@ -417,6 +563,8 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
       listeners: new Set(),
       aborting: false,
       transcript: [],
+      meter: purpose === "project" || purpose === "audit" ? createContextMeter(lotContextThresholds(deps.env ?? process.env)) : null,
+      compacting: null,
       dispose: async () => {
         cancelDialogs(hosted);
         try {
@@ -455,11 +603,21 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
           const text = assistantTextOf(message);
           if (text !== "") hosted.transcript.push(text);
         }
+        const meter = hosted.meter;
+        if (meter !== null && (purpose === "project" || purpose === "audit")) {
+          const step = meter.observe(event);
+          if (step?.verdict === "compact") compactParent(hosted, meter, step.measure);
+          else if (step?.verdict === "exceeded") noteExceeded(hosted, purpose, step.measure);
+        }
         return;
       }
       if (event.type !== "agent_end") return;
       const yielded = (event as { yielded?: boolean }).yielded;
       if (yielded === false) return;
+      // Une compaction de session parente en vol a interrompu ce tour : OMP le
+      // relance, et c'est SA fin qui compte (l'analyse d'audit se clôt sur le
+      // premier `prompt_end`, elle ne doit pas se terminer sur le tour coupé).
+      if (hosted.compacting !== null) return;
       const status = hosted.aborting ? "aborted" : "completed";
       hosted.aborting = false;
       frame(hosted, { event: "prompt_end", data: { status } });
@@ -484,7 +642,7 @@ export function createSessionHost(deps: SessionHostDeps): SessionHost {
 
     view: (id: string): SessionView | null => {
       const session = sessions.get(id);
-      if (!session || !isAppSession(session)) return null;
+      if (!session || !isDescribedSession(session)) return null;
       return {
         ...descriptionOf(session),
         dialogs: [...session.dialogs.values()].map(pending => pending.request),

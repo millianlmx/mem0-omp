@@ -709,7 +709,7 @@ test("project/AC-10 : sans dépôt git, ou sans distant GitHub, /project refuse 
 test("project/AC-1 : le cadrage lit le code avant de questionner et ne se clôt que sur « fin » ou le contrôle de complétude", async () => {
   // (a) La directive impose la lecture du code, des questions ancrées, et la clôture explicite.
   for (const passage of [
-    "LIS-le AVANT ta première question",
+    "DÉLÈGUE OBLIGATOIREMENT sa lecture à des sous-agents scout (outil task, agent scout) AVANT ta première question",
     "élément réel que tu nommes",
     "« fin »",
     "« Tout est bon, c'est complet. »",

@@ -14,7 +14,7 @@ import { readProject, writeProject } from "./project.ts";
 import type { Project } from "./project.ts";
 import { conduiteBusyRefusal } from "./projectRelay.ts";
 import { asCommand, commandShapeRefusal } from "./commands.ts";
-import type { CommandOutcome, ServiceHealth } from "./serviceApi.ts";
+import type { CommandOutcome, LotSnapshot, ServiceHealth } from "./serviceApi.ts";
 import { badRequest, conflict, notFound } from "./serviceApi.ts";
 import type { SessionHost } from "./serviceSessions.ts";
 import type { ArbiterRunner, LotRunner } from "./serviceRuns.ts";
@@ -54,6 +54,7 @@ export interface ServicePilot {
   sweep: () => void;
   controllerFor: (repoRoot: string) => LotController;
   pilot: (repo: string) => Promise<{ repoKey: string; lotId: string | null; state: "piloting" }>;
+  lot: (repo: string) => LotSnapshot;
   command: (repo: string, body: unknown) => Promise<CommandOutcome>;
   health: () => ServiceHealth;
   startConduite: (repo: string, body: unknown) => Promise<{ sessionId: string; state: "idle" | "running" }>;
@@ -250,6 +251,12 @@ export function createServicePilot(deps: PilotDeps): ServicePilot {
       await controller.tick();
       const lot = controller.read();
       return { repoKey: lotRepoKey(root), lotId: lot === null ? null : lot.id, state: "piloting" as const };
+    },
+
+    /** Le lot du dépôt tel que le magasin le normalise (`runs[]` : pic et compactions), `null` sans lot. */
+    lot(repo) {
+      const repoKey = lotRepoKey(requireRepo(repo));
+      return { repoKey, lot: readLot(stateDir, repoKey) };
     },
 
     /** Une commande de pipeline : mêmes refus et même accusé que le canal (S-9). */

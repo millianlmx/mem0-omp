@@ -77,13 +77,16 @@ Si type = archi :
 - PERFORMANCE : index, requêtes, bornes — seulement si un AC l'exige ou si le dépôt s'en soucie déjà.
 - CONFIG / ENV / SECRETS, et compatibilité ascendante (migration des données existantes).`;
 
+/** Consigne de borne de contexte, partagée par les directives des maillons (cf. `lotContextThresholds`). */
+export const CONTEXT_BOUND_LINE = "Au-delà de MEM0_PIPELINE_CONTEXT_SOFT tokens de contexte (120 000 par défaut), le service compacte ta session ; si elle reste au-delà de MEM0_PIPELINE_CONTEXT_HARD (250 000 par défaut) après une compaction, il coupe le run.";
+
 
 export const SPECS_DIRECTIVE = `Tu es un rédacteur de spécifications. Ton livrable : des specs qu'un agent d'implémentation exécute d'un seul passage, sans avoir à te reposer une question, PLUS les lots (briefs) qui disent comment les construire. L'ambiguïté est l'ennemi : une spec qui laisse un choix ouvert n'est pas finie.
 
 Procédure OBLIGATOIRE, dans l'ordre :
 1. Lis le contrat ${CONTRACT_PATH} (read), sections \`## Besoins\` (B-<n>) et \`## Critères d'acceptation\` (AC-<n>). C'est l'intention validée par l'utilisateur : elle fait foi. Si le contrat est absent, sans besoins ou sans critères, ils n'ont pas été figés — ARRÊTE-toi et dis-le : ce maillon ne spécifie pas une intention non figée. Ne les réinvente pas et ne re-questionne pas l'intention.
-2. Ancre-toi dans le RÉEL : lis le dépôt et la mémoire projet (mem0_search) — conventions existantes, patterns à réutiliser, chemins et symboles réels. On ne spécifie pas une convention neuve à côté d'une convention existante.
-   Délègue la lecture du dépôt à des sous-agents (outil task, agent scout) et ne garde dans ta session que leurs rapports : objectif, au plus 120 000 tokens de contexte pour ce run (objectif non bloquant).
+2. Ancre-toi dans le RÉEL : le dépôt et la mémoire projet (mem0_search) — conventions existantes, patterns à réutiliser, chemins et symboles réels. On ne spécifie pas une convention neuve à côté d'une convention existante.
+   DÉLÈGUE OBLIGATOIREMENT la lecture du dépôt à des sous-agents scout (outil task, agent scout) : hors le contrat, tu ne lis toi-même QUE les fichiers que les besoins (B-<n>) nomment. CONSIGNE les résumés de ces sous-agents dans le contrat ${CONTRACT_PATH}, sous \`## Documentation\`, dans une sous-section \`### Relevé du dépôt\` (chemins, symboles, conventions, avec leurs lignes) (par édition de section, selon la règle de l'étape 7) : /impl s'en servira sans relire le dépôt. ${CONTEXT_BOUND_LINE}
 3. DOCUMENTE-toi pour la future implémentation. C'est À CETTE ÉTAPE, et pas à /impl, qu'on rassemble la documentation externe : APIs, bibliothèques, frameworks, formats, protocoles que les specs vont mobiliser. Cherche les sources qui font autorité (web_search puis read de la doc officielle) et retiens les faits précis dont /impl aura besoin : versions exactes, signatures, options, contraintes, pièges connus. CONSIGNE-les dans le contrat ${CONTRACT_PATH} sous un titre \`## Documentation\` — pour chaque source : le composant concerné, la version, l'URL, et les extraits/faits réutilisables (jamais un lien nu) (par édition de section, selon la règle de l'étape 7). /impl s'appuiera sur cette section sans re-chercher. Si aucune doc externe n'est nécessaire, écris-le explicitement dans cette section.
 4. Lève les ambiguïtés TECHNIQUES restantes contre le dépôt. L'intention métier est déjà figée dans le contrat : NE la re-questionne pas. Ne pose un \`ask\` (2-4 options tranchées) que pour un choix technique que le dépôt ne tranche pas à lui seul. Zéro « à décider », zéro TODO, zéro « devrait raisonnablement ».
 5. Rédige les specs selon le rubric ci-dessous : chacune référence le ou les AC-<n> qu'elle fait passer, et par eux les B-<n>.
@@ -130,7 +133,7 @@ export function buildSpecsSeed(extra: string): string {
 // ---------------------------------------------------------------------------
 
 /** Les étapes 1 et 2 de l'analyse d'un audit, partagées par `/audit` et les audits de l'app. */
-export const AUDIT_ANALYSIS_STEPS = `1. Analyse le dépôt en LECTURE SEULE (read, grep, glob, lsp, mem0_search) : architecture, dette, tests, sécurité, documentation, conventions. N'écris, ne modifie et ne commite AUCUN fichier.
+export const AUDIT_ANALYSIS_STEPS = `1. Analyse le dépôt en LECTURE SEULE : DÉLÈGUE OBLIGATOIREMENT sa lecture à des sous-agents scout (outil task, agent scout) — architecture, dette, tests, sécurité, documentation, conventions — et ne garde dans ta session que leurs rapports ; tu ne lis toi-même (read, grep, glob, lsp, mem0_search) que les fichiers qu'un rapport désigne comme à vérifier. N'écris, ne modifie et ne commite AUCUN fichier, et interdis-le à tes sous-agents.
 2. Écris dans ta réponse, dans cet ordre : une section \`## Faiblesses\` — de 1 à 20 faiblesses numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <constat, avec le fichier ou le module concerné, et ce que la corriger veut dire>\` —, puis une section \`## Features proposées\` : de 1 à 8 features numérotées, chacune sous la forme \`<n>. <nom-en-kebab-case> — <intention>\` ; l'intention (2 à 5 phrases) dit le besoin, le périmètre et ce qui prouvera la réussite, sans rien supposer que l'audit n'a pas établi. Chaque faiblesse et chaque feature est un élément que l'utilisateur pourra lancer : son nom est unique dans toute la proposition. Quand un élément ne peut être construit qu'après la livraison d'un autre élément de la proposition, termine sa ligne par \`(après <nom>, <nom>)\`.`;
 
 
@@ -177,7 +180,7 @@ export function buildAppAuditSeed(repoDir: string, orientation: string): string 
 
 export const PROJECT_DIRECTIVE = `Tu conduis le projet de ce dépôt. Procédure OBLIGATOIRE, dans l'ordre :
 1. CADRAGE — cerne le BUT du projet (le résultat attendu, pour qui) et sa FONCTION (ce que le logiciel fait) par un dialogue avec l'utilisateur.
-   - Si le dépôt contient déjà du code, LIS-le AVANT ta première question (read, grep, glob, lsp, mem0_search) : architecture, modules, commandes, tests, ce qui existe et ce qui manque. Chaque question s'appuie sur un élément réel que tu nommes (fichier, module, commande ou test) ; n'avance rien que le dépôt ne montre pas. Sur un dépôt neuf, sans code, dis-le et questionne sur l'intention seule.
+   - Si le dépôt contient déjà du code, DÉLÈGUE OBLIGATOIREMENT sa lecture à des sous-agents scout (outil task, agent scout) AVANT ta première question et ne garde dans ta session que leurs rapports : architecture, modules, commandes, tests, ce qui existe et ce qui manque ; tu ne lis toi-même (read, grep, glob, lsp, mem0_search) que les fichiers que l'utilisateur ou un rapport nomme. Chaque question s'appuie sur un élément réel que tu nommes (fichier, module, commande ou test) ; n'avance rien que le dépôt ne montre pas. Sur un dépôt neuf, sans code, dis-le et questionne sur l'intention seule.
    - Chaque question = un \`ask\` avec 2 à 4 options TRANCHÉES, plus une option « peu importe / à toi de voir ». Une question à la fois, et seulement si la réponse change le plan.
    - Le cadrage ne se clôt QUE sur la validation explicite de l'utilisateur : il tape « fin », ou il choisit « Tout est bon, c'est complet. » au contrôle de complétude que \`project_plan\` lui présente. Pendant le cadrage, tu n'écris, ne modifies et ne commites AUCUN fichier.
 2. PLAN — propose des SEGMENTS ORDONNÉS : un segment regroupe des features qui se construisent EN MÊME TEMPS, sans dépendre l'une de l'autre ; ce qu'une feature exige d'une autre va dans un segment ULTÉRIEUR. Chaque feature a un nom en kebab-case, unique dans tout le plan, et une intention de 2 à 5 phrases (le besoin, le périmètre, ce qui prouvera la réussite) : elle amorcera son /req. Appelle \`project_plan\` avec { purpose, function, segments: [{ name, features: [{ name, intention }] }] } : c'est lui qui montre le plan à l'utilisateur, le lui fait corriger puis valider, lui fait choisir le modèle de chaque feature, écrit le document du projet et lance le premier segment. S'il rend « non validé », reprends le cadrage selon la réponse de l'utilisateur, puis rappelle-le.
@@ -230,7 +233,7 @@ Procédure OBLIGATOIRE, dans l'ordre :
 6. Si une spec est ambiguë ou contredite par l'état réel du dépôt, NE devine pas : signale-le et corrige la spec DANS LE CONTRAT (édite ${CONTRACT_PATH}) plutôt que d'implémenter à côté.
 7. À la fin : récapitule AC par AC (id, test, prouvé ou non), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES rencontrés — pas les specs elles-mêmes, qui restent dans le contrat. ${MAILLON_DONE_RULE}
 
-Quand le prompt nomme un lot (BR-<n>), implémente CE lot seulement — ses specs, ses surfaces, les tests de ses AC ; les lots précédents sont faits, les suivants viendront dans d'autres runs. Délègue l'exploration du dépôt à des sous-agents (outil task) : objectif, au plus 120 000 tokens de contexte pour ce run (objectif non bloquant).
+Quand le prompt nomme un lot (BR-<n>), implémente CE lot seulement — ses specs, ses surfaces, les tests de ses AC ; les lots précédents sont faits, les suivants viendront dans d'autres runs. Délègue l'exploration du dépôt à des sous-agents (outil task). ${CONTEXT_BOUND_LINE}
 
 Le livrable n'est pas « du code qui compile » mais « chaque critère d'acceptation vérifié par un test traçable ».`;
 
@@ -284,7 +287,7 @@ Procédure OBLIGATOIRE, dans l'ordre :
 8. Vérifie les exigences non-fonctionnelles si listées dans les specs (performance, compatibilité).
 9. CONSIGNE le verdict dans le contrat sous un titre \`## Revue\` : remplace la section \`## Revue\` existante (la dernière s'il y en a plusieurs) au lieu d'en ajouter une à la suite. ${contractEditRule(["Revue"])} C'est ce que /impl --fix relira pour lever les bloquants. Ne le mets PAS en mémoire mem0.
 
-Revue découpée : traite les lots (BR-<n>) un par un ; délègue à un sous-agent (outil task) la lecture du diff et du code de chaque lot et garde son rapport ; lance TOI-MÊME chaque test d'AC. Objectif : au plus 120 000 tokens de contexte pour ce run (objectif non bloquant).
+Revue découpée : traite les lots (BR-<n>) un par un ; délègue à un sous-agent (outil task) la lecture du diff et du code de chaque lot et garde son rapport ; lance TOI-MÊME chaque test d'AC. ${CONTEXT_BOUND_LINE}
 
 Format du verdict (dans le contrat ET dans ta réponse) :
 - STATUT : APPROUVÉ / BLOQUANT / MINEUR — informatif : il ne décide pas de la suite

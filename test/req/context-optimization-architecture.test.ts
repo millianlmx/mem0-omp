@@ -98,10 +98,8 @@ import {
   type SessionHost,
 } from "../../omp-mem0-req/extension.ts";
 import {
-  IMPL_DIRECTIVE,
   LOT_WORKER_DIRECTIVE,
   REVIEW_DIRECTIVE,
-  SPECS_DIRECTIVE,
   buildImplSeed,
   buildReviewSeed,
   contractLots,
@@ -3076,10 +3074,7 @@ test("lots d'impl : `contractLots` lit les en-têtes de `## Lots` (dernière occ
   assert.equal(prompt, `${buildImplSeed("", false)}\n\n${lotPromptLine(lot)}\n\n${LOT_WORKER_DIRECTIVE}`);
   assert.equal(buildLotPrompt({ kind: "phase", phase: "impl", slug: "alpha" }).includes("[lot "), false);
 
-  // Les trois phrases de directive, mot pour mot.
-  assert.ok(SPECS_DIRECTIVE.includes("Délègue la lecture du dépôt à des sous-agents (outil task, agent scout) et ne garde dans ta session que leurs rapports : objectif, au plus 120 000 tokens de contexte pour ce run (objectif non bloquant)."));
-  assert.ok(IMPL_DIRECTIVE.includes("Quand le prompt nomme un lot (BR-<n>), implémente CE lot seulement — ses specs, ses surfaces, les tests de ses AC ; les lots précédents sont faits, les suivants viendront dans d'autres runs. Délègue l'exploration du dépôt à des sous-agents (outil task) : objectif, au plus 120 000 tokens de contexte pour ce run (objectif non bloquant)."));
-  assert.ok(REVIEW_DIRECTIVE.includes("Revue découpée : traite les lots (BR-<n>) un par un ; délègue à un sous-agent (outil task) la lecture du diff et du code de chaque lot et garde son rapport ; lance TOI-MÊME chaque test d'AC. Objectif : au plus 120 000 tokens de contexte pour ce run (objectif non bloquant)."));
+  // Les phrases de directive sur la borne de contexte sont épinglées par borne-de-contexte-des-runs/AC-17.
   assert.ok(REVIEW_DIRECTIVE.includes("`AC-<n> → fichier:ligne → pass/fail`"), "la procédure AC par AC reste");
 });
 
@@ -3173,17 +3168,20 @@ function br6UsageHost(turnsByKey: Record<string, number[] | null>) {
   return { host, opens };
 }
 
-/** Le mesureur dans le runner d'étape et dans celui de l'arbitre ; aucune compaction à l'ouverture. */
+/** Seuils de contexte hors de portée des scénarios de mesure de ce fichier : la mesure seule, sans compaction ni coupure (cf. borne-de-contexte-des-runs.test.ts). */
+const BR6_ENV = { MEM0_PIPELINE_CONTEXT_SOFT: "200000", MEM0_PIPELINE_CONTEXT_HARD: "300000" };
+
+/** Le mesureur dans le runner d'étape et dans celui de l'arbitre, sous des seuils qu'aucune mesure n'atteint. */
 async function br6Measure(): Promise<void> {
   const worktree = tmpdir("coa-wt-");
   const usage = br6UsageHost({ impl: [82_000, 130_000, 64_000], req: [41_000], specs: [], arbitre: [1_234, 900] });
-  const run = createMaillonRunner({ host: usage.host, log: () => {}, now: () => T0 });
+  const run = createMaillonRunner({ host: usage.host, log: () => {}, now: () => T0, env: BR6_ENV });
   const impl = await run({ spec: runSpec(tmpdir("coa-state-"), worktree, { phase: "impl" }), cwd: worktree, timeout: 60_000, signal: signal() });
   assert.equal(impl.code, 0);
   assert.equal(impl.peakContext, 130_000, "le pic est le MAXIMUM des tours : input + cacheRead + cacheWrite");
   const none = await run({ spec: runSpec(tmpdir("coa-state-"), worktree, { phase: "specs" }), cwd: worktree, timeout: 60_000, signal: signal() });
   assert.equal(none.peakContext, null, "aucun usage : null");
-  const arbiter = await createArbiterRunner({ host: usage.host, log: () => {}, now: () => T0 })({
+  const arbiter = await createArbiterRunner({ host: usage.host, log: () => {}, now: () => T0, env: BR6_ENV })({
     stateDir: tmpdir("coa-state-"),
     cwd: worktree,
     prompt: "p",
@@ -3242,19 +3240,19 @@ function br6Format(): void {
   assert.equal(feature.runs![0]!.peakContext, 5, "les plus anciens sont retirés");
 }
 
-test("context-optimization-architecture/AC-18 : le pic de contexte de chaque run est mesuré, conservé dans `runs` et affiché par étape, sans jamais couper le run (aucune compaction)", async () => {
+test("context-optimization-architecture/AC-18 : le pic de contexte de chaque run est mesuré, conservé dans `runs` et affiché par étape, sans jamais couper le run sous les seuils", async () => {
   await br6Measure();
   br6Format();
 
   // Au niveau contrôleur : le runner RÉEL sur des sessions qui émettent des usages —
   // un run à 130 000 (l'impl), les autres sous 120 000 —, puis un arbitre.
   const usage = br6UsageHost({ req: [30_000, 41_000], specs: [50_000, 82_000], impl: [90_000, 130_000], review: [60_000, 90_000], arbitre: [20_000, 25_000] });
-  const runner = createMaillonRunner({ host: usage.host, log: () => {}, now: () => T0 });
+  const runner = createMaillonRunner({ host: usage.host, log: () => {}, now: () => T0, env: BR6_ENV });
   const aborts: string[] = [];
   const clock = { now: T0 };
   const repoRoot = emptyGitRepo("coa-repo-");
   const stateDir = path.join(tmpdir("coa-lot-"), "pipeline");
-  const arbiter = createArbiterRunner({ host: usage.host, log: () => {}, now: () => clock.now });
+  const arbiter = createArbiterRunner({ host: usage.host, log: () => {}, now: () => clock.now, env: BR6_ENV });
   const controller = createLotController({
     stateDir,
     repoRoot,

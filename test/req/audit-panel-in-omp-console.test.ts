@@ -1220,14 +1220,18 @@ test("suivi des lancements : state, phase et prUrl recopiés au balayage, rien n
 });
 
 
-test("session d'analyse : invisible de GET /v1/sessions, 404 sur GET /v1/sessions/{id}, et ses dialogues sont refusés d'office sans trame", async () => {
+test("session d'analyse : invisible de GET /v1/sessions, servie par GET /v1/sessions/{id} (purpose audit, mesure de contexte), et ses dialogues sont refusés d'office sans trame", async () => {
   const r = rig();
   const repo = emptyGitRepo("apoc-repo-");
   const id = await r.start(repo, "accessibilité VoiceOver");
   const hosted = r.hostedOf(id);
   assert.deepEqual((await r.call("GET", "/sessions")).body, { sessions: [] });
   const view = await r.call("GET", `/sessions/${hosted.id}`);
-  assert.deepEqual([view.status, view.body.reason], [404, `session inconnue : ${hosted.id}`]);
+  assert.equal(view.status, 200);
+  assert.deepEqual(
+    [view.body.id, view.body.purpose, view.body.contextPeak, view.body.compactions],
+    [hosted.id, "audit", null, 0],
+  );
 
   const frames: string[] = [];
   r.sessions.subscribe(hosted.id)!.subscribe(frame => frames.push(frame.event));

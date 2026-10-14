@@ -413,8 +413,9 @@ absolu percent-encodé, refus `{error, reason}`) :
 | `GET /v1/health` | version, pid, sessions, lots |
 | `POST /v1/repos/{repo}/pilot` | réveille le pilote d'un dépôt |
 | `POST /v1/repos/{repo}/commands` | commande de pipeline, rend son accusé |
+| `GET /v1/repos/{repo}/lot` | état du lot du dépôt (`runs[]` avec pic et compactions) |
 | `GET` / `POST /v1/sessions` | liste ou crée une session de l'app |
-| `GET` / `DELETE /v1/sessions/{id}` | lit ou ferme une session |
+| `GET` / `DELETE /v1/sessions/{id}` | lit (avec `contextPeak` et `compactions`) ou ferme une session |
 | `GET /v1/sessions/{id}/events` | flux SSE de la session |
 | `POST /v1/sessions/{id}/prompt`, `…/abort`, `…/dialogs/{dialogId}` | prompt, abort, réponse de dialogue |
 | `POST` / `DELETE /v1/projects/{repo}/conduite` | démarre ou arrête la conduite d'un projet |
@@ -491,6 +492,54 @@ le pipeline ne choisit jamais un modèle de remplacement à sa place.
   (`[reprise] …`) sur `M` tant que le principal est épuisé, et revient sur lui à son
   échéance. Deux refus, rien n'est modifié : `aucune feature bloquée par le quota <fournisseur>`
   et `<M> est épuisé <échéance> — choisis un autre modèle`.
+
+### Contexte des runs
+
+Le contexte de chaque run hébergé (maillons `/req`, `/specs`, `/impl`, `/impl --fix`,
+`/review`, `/release`, et arbitre) est **borné** par deux seuils, relus au démarrage de
+chaque run ou session hébergée (jamais écrits dans le lot) :
+
+- `MEM0_PIPELINE_CONTEXT_SOFT` (défaut `120000`) : seuil de compaction ;
+- `MEM0_PIPELINE_CONTEXT_HARD` (défaut `250000`) : plafond.
+
+Une valeur absente, non numérique, nulle ou négative retombe sur le défaut de sa variable ;
+si `SOFT` atteint ou dépasse `HARD`, les deux défauts s'appliquent.
+
+- **Mesure** : le service mesure `input + cacheRead + cacheWrite` de l'usage assistant
+  à chaque fin de tour assistant (chaque `message_end`), pendant le run et non plus en
+  fin de run ; le pic reste archivé dans `features[].runs[]`, avec le nombre de
+  compactions (`compactions`, lu 0 sur un enregistrement ancien, sans changement de
+  version du lot).
+- **Compaction au seuil `SOFT`** : à la première mesure au-dessus, le service compacte la
+  session du run, une seule fois par palier. Un palier est un franchissement de `SOFT` :
+  la compaction n'est réarmée que lorsqu'une mesure retombe sous `SOFT`, jamais de
+  compaction en boucle tant que le contexte reste au-dessus. Le succès journalise
+  `contexte compacté à <n>` ; une compaction qui échoue est journalisée
+  (`compaction échouée à <n>`), ne compte pas dans `compactions` et ne fait pas échouer
+  le run.
+- **Réinjection de la consigne** : la compaction interrompt le tour en cours ; le runner
+  renvoie ensuite le prompt du maillon, suivi d'un rappel de relire le contrat
+  (`.omp/pipeline/contract.md`), puis le run va jusqu'à son résultat normal. Ces reprises
+  ne consomment pas les reprises de quota.
+- **Échec au plafond `HARD`** : une mesure au-dessus de `HARD` APRÈS qu'une compaction a
+  été tentée dans le palier coupe le run, qui passe `échoué` avec la raison
+  `contexte dépassé (<n> tokens)` — `bloqué` s'il y a une question en vol, comme pour
+  l'échéance. Une première mesure au-dessus de `HARD` déclenche d'abord la compaction. Le
+  run coupé garde son enregistrement (pic, compactions). L'arbitre emprunte son chemin
+  d'échec existant : l'élément est escaladé avec ce même motif.
+- **Sessions parentes** (conduite `/project`, analyse d'audit de l'app) : même mesure,
+  même compaction au seuil `SOFT` (une fois par palier, OMP relance lui-même le tour
+  interrompu), mais la session n'est **jamais coupée** : un dépassement de `HARD` y est
+  seulement journalisé — notice durable dans la session et entrée `contexte` du journal
+  de conduite du dépôt. Leur pic et leurs compactions sont servis par
+  `GET /v1/sessions/{id}` (`contextPeak`, `compactions`).
+- **Exposition** : `GET /v1/repos/{repo}/lot` rend l'état du lot (`runs[]` avec pic et
+  compactions) ; `/pipelines` affiche le pic et les compactions de chaque run, par
+  exemple `contexte : impl 182k ⚠ (1 compaction)`.
+- **Directives** : `/specs` délègue obligatoirement la lecture du dépôt à des
+  sous-agents scout et consigne leurs résumés dans le contrat (`### Relevé du dépôt`),
+  l'analyse d'un audit et la conduite `/project` délèguent de même la leur ; `/impl` et
+  `/review` annoncent la borne ci-dessus au lieu d'un objectif facultatif.
 
 ## Pipelines en cours
 
@@ -574,17 +623,19 @@ fenêtres qui pourraient manger l'écran, et de les faire défiler.
   pas pourquoi ; le motif, si. Deux autres seconds rangs existent : `dernière revue : n
   bloquant(s)` — le verdict que la chaîne vient de lire dans le contrat — et `PR : <url>`
   pour une feature livrée, l'URL que `gh` a imprimée.
-- **Le pic de contexte de chaque run** s'écrit sur une sous-ligne `contexte : …`, après les
-  autres : le service mesure, à chaque fin de tour assistant, `input + cacheRead +
-  cacheWrite` et retient le **maximum** du run (`—` quand le run n'a émis aucun usage) ;
-  l'enregistrement (au plus 100 par feature, les plus anciens retirés) est ajouté **à la fin
-  du run** — étape ou arbitre —, donc rien n'apparaît pour un run en cours. Les groupes
-  suivent `req`, `specs`, `impl`, `review`, `release`, `arbitre`, séparés par ` · ` ; un pic
-  s'écrit `<n>` sous 1000, sinon en milliers (`82k`), suivi de ` ⚠` au-delà de 120 000 :
-  `contexte : req 41k · specs 82k · impl BR-1 82k, BR-2 131k ⚠ · review 90k`. Un run d'impl
-  par lot porte l'id du lot, un `--fix` s'écrit `fix <pic>`. Ligne d'information : rien ne
-  coupe ni ne compacte un run quand son pic dépasse la limite, et la ligne est absente tant
-  qu'aucun run n'est terminé (et pour un lot d'avant cette version).
+- **Le pic de contexte et les compactions de chaque run** s'écrivent sur une sous-ligne
+  `contexte : …`, après les autres : le service mesure, à chaque fin de tour assistant,
+  `input + cacheRead + cacheWrite` et retient le **maximum** du run (`—` quand le run n'a
+  émis aucun usage) ; l'enregistrement (au plus 100 par feature, les plus anciens
+  retirés) est ajouté **à la fin du run** — étape ou arbitre —, donc rien n'apparaît pour
+  un run en cours. Les groupes suivent `req`, `specs`, `impl`, `review`, `release`,
+  `arbitre`, séparés par ` · ` ; un pic s'écrit `<n>` sous 1000, sinon en milliers
+  (`82k`), suivi de ` ⚠` au-delà de 120 000 (marqueur d'affichage, indépendant des
+  variables de « Contexte des runs »), puis de ` (1 compaction)` ou ` (<k> compactions)`
+  quand le run a été compacté — rien à 0 compaction :
+  `contexte : req 41k · specs 82k · impl BR-1 82k, BR-2 131k ⚠ (1 compaction) · review 90k`.
+  Un run d'impl par lot porte l'id du lot, un `--fix` s'écrit `fix <pic>`. La ligne est
+  absente tant qu'aucun run n'est terminé (et pour un lot d'avant cette version).
 - **Le pied a toujours trois rangs** : les touches du panneau, celles de la **ligne
   sélectionnée** — `Entrée écrire`, `Entrée répondre`, `v valider`, `y accepter`,
   `R relancer`, `x retirer`, `c annuler`, `d supprimer` (le seul rang qu'il supprime est
@@ -868,8 +919,8 @@ s'affiche tel quel au lieu d'être avalé.
   lot reprennent **la session de ce lot**. Un contrat réécrit pendant l'impl ne change
   pas la découpe en cours. Avec moins de deux lots : un seul run, comme avant. Les
   directives `/specs`, `/impl` et `/review` demandent en plus de déléguer la lecture du
-  dépôt à des sous-agents, avec pour objectif 120 000 tokens de contexte par run
-  (objectif non bloquant : rien ne coupe ni ne compacte). La boucle de correction
+  dépôt à des sous-agents, sous la borne de contexte décrite à « Contexte des runs »
+  (compaction au seuil, échec du run au plafond). La boucle de correction
   (`/impl --fix` en **un seul** run, sans ligne `[lot …]`), l'accord de fin de revue et la
   livraison (commit, push, PR) ne changent pas.
 - **La boucle de correction** (`/impl --fix` → `/review`) tourne seule, dans la limite de
@@ -1167,6 +1218,8 @@ message) n'est pas une fin de phase et ne déclenche rien.
 | `MEM0_PIPELINE_REVIEW_CAP` | `3` | plafond des tours de correction (`/impl --fix`, compteur `fixes`) et des revues illisibles d'affilée (`unreadableRuns`) d'une feature de lot avant de la passer `bloqué` (entier, 1-20) |
 | `MEM0_PIPELINE_SLOTS` | `4` | runs de features du lot menés en parallèle (entier, 1-32) ; au-delà, les features runnables attendent un créneau (`attend un créneau` dans `/pipelines`) — les runs hors lot ne comptent pas |
 | `MEM0_PIPELINE_RUN_TIMEOUT_MS` | `3600000` | budget de travail d'un run de maillon en millisecondes (10 s à 24 h), suspendu tant qu'une question est en vol ; au-delà, la feature passe `échoué` « délai dépassé (<budget> min) ». Seule borne dure : le minuteur du runner coupe la session à budget + 1 h (code 124) et la feature passe `échoué` « délai dépassé (<budget + 60> min) », soit 120 min par défaut |
+| `MEM0_PIPELINE_CONTEXT_SOFT` | `120000` | seuil de compaction du contexte d'un run ou d'une session parente hébergés (tokens, entier ≥ 1) ; s'il atteint ou dépasse `MEM0_PIPELINE_CONTEXT_HARD`, les deux défauts s'appliquent |
+| `MEM0_PIPELINE_CONTEXT_HARD` | `250000` | plafond : un run encore au-dessus après une compaction passe `échoué` (`bloqué` si une question est en vol) ; une session parente n'est jamais coupée |
 | `MEM0_PIPELINE_OMP_BIN` | `omp` | binaire `omp` du job launchd du service et des runs de conversation (chemin absolu si `omp` n'est pas dans le `PATH`) |
 | `MEM0_SERVICE_PORT` | `8788` | port d'écoute de l'API du service (boucle locale uniquement) ; s'il est occupé, le service prend un port éphémère et `service.json` porte le port réel — les clients lisent toujours ce fichier |
 | `MEM0_PIPELINE_ARCHIVE_DIR` | `~/.omp/pipeline-archive` | base d'archivage des worktrees de feature annulés (`~` accepté, chemin relatif ignoré) |
