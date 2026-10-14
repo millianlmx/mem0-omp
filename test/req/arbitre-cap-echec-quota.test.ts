@@ -92,7 +92,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -1014,10 +1013,10 @@ test("arbitre-cap-echec-quota/AC-15 : sans arbitre, le plafond, l'échec et le q
 });
 
 test("arbitre-cap-echec-quota/AC-16 : arbitre indisponible (groupe épuisé, ou run sans décision), le plafond et l'échec sont relayés avec leur escalade, sans run ni compteur", async () => {
-  // (a) Le modèle de la phase du plafond (review : groupe exécution+revue) est épuisé, sans repli : aucune session d'arbitre.
+  // (a) Le groupe de l'arbitre (cadrage+revue, quelle que soit la phase) est épuisé, sans repli : aucune session d'arbitre.
   const dry = mkWorld({ arbiter: () => assert.fail("pas d'arbitre sur un modèle épuisé") });
-  dry.seedCap({ modelImplReview: "prov/impl" });
-  markExhausted(dry.stateDir, { model: "prov/impl", provider: "prov", until: T0 + 3_600_000, announced: true, at: T0, reason: "429" });
+  dry.seedCap({ modelReqSpecs: "prov/req" });
+  markExhausted(dry.stateDir, { model: "prov/req", provider: "prov", until: T0 + 3_600_000, announced: true, at: T0, reason: "429" });
   await dry.controller.tick();
   await until(() => dry.alpha().escalation !== undefined, "le plafond est escaladé");
   const capEscalation = dry.alpha().escalation!;
