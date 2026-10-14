@@ -1020,10 +1020,14 @@ s'affiche tel quel au lieu d'être avalé.
   Tant que la session `/audit` est la session **courante** du process pilote, elle est
   le **relais** de ces pipelines, mais elle ne répond plus : chaque question d'un maillon
   et chaque jalon (« specs validées », « revue propre ») est tranché par un **arbitre** —
-  une session d'un instant, neuve, qui ne lit que le brief, le journal de la feature et le
-  contrat — sans aucun tour de la session `/audit`. La décision est **consignée au journal**
-  (source `contexte` ou `arbitrage`) et la chaîne repart. Quand l'arbitre ne peut pas
-  trancher, il **escalade** : la feature reste en attente et la session `/audit` reçoit UN
+  une session d'un instant, neuve, qui lit le **rapport** de l'audit, le brief, le contrat,
+  le **journal du lot** (toutes les features du même audit), le journal de la feature et le
+  dépôt en **lecture seule** — sans aucun tour de la session `/audit`. La décision est
+  **consignée au journal** (source `contexte` ou `arbitrage`, avec sa justification) et la
+  chaîne repart. L'arbitre tranche tout choix technique ; il **escalade** seulement un
+  choix de produit (nouveau besoin non couvert par le rapport ou le brief, changement de
+  périmètre, texte visible par l'utilisateur sans convention dans le dépôt) : la feature
+  reste alors en attente et la session `/audit` reçoit UN
   message `[audit] escalade — <feature> /<maillon> : <question>` (options numérotées, `motif
   de l'arbitre`) ; elle te le remonte par `audit_escalate` (dialogue avec la question et les
   options d'origine), et ta réponse — ou `Valider les specs` / `Accepter la revue et livrer
@@ -1042,16 +1046,24 @@ s'affiche tel quel au lieu d'être avalé.
   les escalades en attente — jamais une décision déjà au journal. Tant qu'elle est ouverte,
   le panneau affiche `relayé à /audit` pour ces escalades et refuse d'y répondre. Rien
   n'est jamais fusionné. Le battement du relais vit dans
-  `<état>/audit/<sha1(session)[:16]>.json`.
+  `<état>/audit/<sha1(session)[:16]>.json`. Les règles de l'arbitre (corpus, lecture seule,
+  justification, options, vérifications des jalons) sont décrites sous « L'arbitre
+  éphémère », dans la section *Projet*.
 
-  **Brief et journal** : l'outil `audit_propose` exige aussi un `brief` (`purpose`,
+  **Rapport, brief et journal** : l'outil `audit_propose` exige un `rapport` non vide — le
+  texte complet de l'analyse (faiblesses, features proposées, fichiers, symboles et chemins
+  cités) ; absent ou vide, il est refusé comme un brief manquant (`Error: rapport is
+  missing` / `is empty`), avant tout dialogue. Il exige aussi un `brief` (`purpose`,
   `function`, `decisions`, `constraints`, `nonGoals`). Après la sélection et la validation
   des intentions, **avant** les questions de modèle, tu valides le brief dans un éditeur
   titré `Brief de l'audit — …` (mêmes cinq rubriques que pour `/project`, mêmes règles :
   rubrique absente → l'éditeur rouvre, Échap n'écrit rien) ; il est écrit tel que tu l'as
-  validé dans `<état>/briefs/<sha1(session)[:16]>.md`. Un nouvel `audit_propose` validé dans
-  la même session réécrit le brief. Chaque run d'une feature de l'audit reçoit ce brief et le
-  journal de sa feature (`<état>/journal/…jsonl`, voir « Projet ») dans son prompt.
+  validé dans `<état>/briefs/<sha1(session)[:16]>.md`, et le rapport, tel que l'agent l'a
+  fourni, dans `<état>/reports/<sha1(session)[:16]>.md` au même instant — sans brief écrit
+  (Échap, aucune pipeline retenue), aucun rapport n'est écrit. Un nouvel `audit_propose`
+  validé dans la même session réécrit le brief et le rapport. Chaque run d'une feature de
+  l'audit reçoit ce brief et le journal de sa feature (`<état>/journal/…jsonl`, voir
+  « Projet ») dans son prompt ; le rapport, lui, n'est lu que par l'arbitre.
 
   **Audits lancés depuis OMP Console** : la section Audit de l'app ne passe ni par
   `/audit` ni par son relais. `POST /v1/audits` écrit un enregistrement
@@ -1059,11 +1071,16 @@ s'affiche tel quel au lieu d'être avalé.
   `analysing`, `proposed`, `launched`, `stopped` ou `failed`) puis ouvre une session
   d'analyse interne au service, invisible de `GET /v1/sessions`, dont tout dialogue est
   refusé d'office. Elle enregistre ses propositions par l'outil `audit_report` (mêmes
-  paramètres qu'`audit_propose`, aucun dialogue) ; l'app montre les cases et le brief, et
-  `POST /v1/audits/{id}/launch` écrit le brief validé puis ajoute les seules propositions
+  paramètres qu'`audit_propose`, dont le `rapport` obligatoire, aucun dialogue) : un
+  `rapport` absent ou vide est refusé et l'audit reste `analysing` ; sinon le rapport est
+  gardé en brouillon `<état>/audits/<id>.report.md` (il n'entre pas dans l'enregistrement
+  publié aux apps). L'app montre les cases et le brief, et
+  `POST /v1/audits/{id}/launch` écrit le brief validé, recopie le brouillon en rapport
+  `<état>/reports/<sha1(clé)[:16]>.md`, puis ajoute les seules propositions
   cochées par le pilote du service. La **clé de contexte** de l'audit vaut
   `<état>/audits/<id>` : portée par `auditSession` de chaque feature lancée, elle isole le
-  brief, le journal et l'arbitrage — deux audits du même dépôt ne se mélangent pas. Les
+  rapport, le brief, le journal et l'arbitrage — deux audits du même dépôt ne se mélangent
+  pas. Un audit antérieur sans brouillon se lance sans rapport. Les
   escalades de l'arbitre se lisent dans le lot (`escalation`) et se répondent par
   `POST /v1/audits/{id}/escalations`, traduites en commande de pipeline (`answer`,
   `reply`, `verdict`, `cancel`). `DELETE /v1/audits/{id}` arrête l'audit : ses features non
@@ -1109,7 +1126,8 @@ feature), dans une session interactive — le contexte optionnel est transmis à
 - **Le relais `[project]`** : les features d'un projet sont des features du lot (section
   *Lot* du panneau, même pilote, pipelines parallèles dans la limite de
   `MEM0_PIPELINE_SLOTS`). Les questions et les jalons y sont tranchés par l'**arbitre**
-  (brief, journal, contrat), consignés au journal, sans aucun tour de la session
+  (rapport, brief, contrat, journal du lot, dépôt en lecture seule), consignés au journal, sans
+  aucun tour de la session
   `/project` — même arbitre et mêmes règles que pour `/audit`. Tant que la session `/project`
   est la session courante, elle reçoit en message `[project]` les **escalades** de l'arbitre
   (`[project] escalade — <feature> /<maillon> : <question>`, options, motif), les échecs et
@@ -1145,27 +1163,68 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   brief. Un `project_amend` appliqué rouvre l'éditeur sur le brief courant dont les rubriques
   fournies (`decisions`, `constraints`, `nonGoals`, `purpose`, `function`) sont remplacées ;
   Échap n'applique pas l'amendement. Le brief est relu depuis le fichier à chaque usage.
+  **Le rapport du projet** : le `PROJECT.md` rendu est aussi écrit, tel quel, dans
+  `<état>/reports/<sha1(clé)[:16]>.md` au plan validé puis à chaque amendement validé (et
+  seulement alors) ; l'arbitre le lit comme rapport du contexte du projet.
 - **Le journal et le contexte des étapes** : chaque décision appliquée — réponse à une
   question, « specs validées », « revue propre », choix d'un repli après un quota — s'ajoute,
   avec sa feature, sa question, sa réponse et sa source (`utilisateur` pour toi), à
-  `<état>/journal/<sha1(realpath(dépôt))[:16]>.jsonl` (une ligne JSON par entrée, ajout seul).
+  `<état>/journal/<sha1(realpath(dépôt))[:16]>.jsonl` (une ligne JSON par entrée, ajout seul ;
+  une décision de l'arbitre y porte en plus sa justification).
   Le prompt de **chaque** run d'une feature du projet embarque, après le prompt de base, le
   brief et les 50 entrées les plus récentes du journal **de cette feature** : l'étape les lit
-  avant de poser une question.
+  avant de poser une question. Le **journal du lot** (les entrées de toutes les features du
+  même projet ou audit) n'est lu que par l'arbitre.
 - **L'arbitre éphémère** : une question d'une étape (`/req`, `/specs`, `/impl`, `/review`) ou un
   jalon (« specs validées », « revue propre ») d'une feature du projet n'est plus relayé à la
   session `/project` : le **service** ouvre une session d'arbitre **neuve** par élément, jamais
   reprise, sur le modèle cadrage+revue de la feature (principal puis repli, gardés par le registre des
-  quotas), avec pour seul corpus le brief, le journal de la feature et le contrat. **L'arbitre
-  tourne toujours sur le groupe cadrage+revue (principal puis repli), quelle que soit la phase de
-  l'élément arbitré** : s'il est épuisé pour quota, l'élément est escaladé, jamais basculé sur le
-  groupe exécution. Il appelle
-  `arbiter_decide` une fois : réponse (source `contexte` ou `arbitrage`, avec au moins une
-  citation mot pour mot du corpus), approbation d'un jalon justifié par le contrat, ou
-  escalade. Le pilote **valide** la décision sans rien accorder sur parole (citation
-  absente du corpus, jalon « répondu », aucun appel, échéance de 10 minutes ⇒ escalade,
-  `feature.escalation` posée) ; une question déjà au journal est livrée telle quelle, sans
-  arbitre. Aucun message ne part vers la session `/project`, qu'elle soit ouverte ou non.
+  quotas), avec pour cwd le worktree de la feature. **L'arbitre tourne toujours sur le groupe
+  cadrage+revue (principal puis repli), quelle que soit la phase de l'élément arbitré** : s'il est
+  épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe exécution. Les quotas,
+  les échecs et le plafond de la boucle revue ⇄ correction ne sont jamais arbitrés.
+  - **Corpus** : le rapport du contexte (`(aucun rapport)` quand il n'existe pas — audits et
+    projets antérieurs —, sans bloquer), le brief, le contrat, le **journal du lot** (les
+    entrées de toutes les features du même audit ou projet — feature, question, source,
+    réponse —, bornées aux N dernières par `MEM0_PIPELINE_ARBITER_JOURNAL`, 200 par défaut,
+    entier de 1 à 10000) et les 50 entrées les plus récentes du journal de la feature. Le
+    corpus est borné à 200 000 caractères : au-delà, une première ligne annonce la
+    troncature et nomme les sections coupées ; on sacrifie d'abord les plus anciennes
+    entrées du journal du lot, puis la fin du rapport, puis la fin du contrat — le brief et
+    les entrées de la feature restent intacts.
+  - **Dépôt en lecture seule** : seuls `read`, `grep`, `glob`, `lsp` et `arbiter_decide` sont
+    actifs ; tout autre outil (`bash`, `write`, `edit` compris) est refusé par l'extension
+    (liste blanche), donc aucun fichier du worktree ne peut changer.
+  - **Décision** : l'arbitre appelle `arbiter_decide` une fois — réponse (source `contexte`
+    ou `arbitrage`), approbation d'un jalon, ou escalade. Il tranche tout choix technique ;
+    l'escalade est réservée aux choix de produit (nouveau besoin non couvert par le rapport
+    ou le brief, changement de périmètre, texte visible par l'utilisateur sans convention
+    dans le dépôt).
+  - **Justification** : une réponse porte au moins une justification que le pilote vérifie —
+    une citation présente dans le corpus (espaces repliés), une référence `chemin:ligne` ou
+    `chemin:début-fin` relative au worktree (le fichier existe dans le worktree, les lignes
+    sont dans sa plage ; `..`, chemin absolu hors worktree ou lien sortant sont rejetés) ou
+    une rubrique (titre) présente dans le rapport. Sans aucune justification, ou avec
+    seulement des justifications rejetées, l'élément est escaladé avec un motif qui nomme
+    les rejets.
+  - **Options** : pour une question à options, la réponse est reconnue par son numéro
+    (`2`, espaces tolérés), son libellé exact ou son libellé normalisé (casse, espaces
+    repliés, ponctuation finale ignorés) ; la réponse transmise est le libellé canonique,
+    marqué sélectionné. Un numéro hors plage escalade ; un texte qui ne correspond à aucune
+    option reste une réponse libre.
+  - **Vérifications des jalons**, en plus du jugement de l'arbitre : « specs validées »
+    n'est approuvé que si chaque critère `AC-<n>` du contrat est référencé par une
+    spécification `S-<n>` (et le prompt exige la cohérence avec le rapport) ; « revue
+    propre » reçoit le `git diff --stat` et le diff du worktree par rapport à `HEAD`
+    (fichiers non suivis non ignorés compris, bornés à 60 000 caractères avec troncature
+    annoncée) et, pour chaque `AC-<n>`, les fichiers du worktree (hors `.omp/`) qui le
+    portent — l'approbation est refusée (escalade) tant qu'un critère n'a aucun fichier.
+  - **Validation et journal** : le pilote **valide** la décision sans rien accorder sur
+    parole (jalon « répondu », aucun appel, échéance de 10 minutes ⇒ escalade,
+    `feature.escalation` posée) ; chaque décision acceptée est consignée au journal avec sa
+    justification (motif, citations, références, rubriques ; les anciennes lignes sans ce
+    champ restent lues). Une question déjà au journal est livrée telle quelle, sans arbitre.
+  Aucun message ne part vers la session `/project`, qu'elle soit ouverte ou non.
   L'étape sait d'où vient la réponse : `[réponse de l'utilisateur]`, `[réponse tirée du
   contexte]` ou `[réponse de l'arbitre]` en tête du prompt, `Réponse tirée du contexte` /
   `Réponse de l'arbitre` dans le résultat de `ask`, et `[jalon « specs validées » — décision

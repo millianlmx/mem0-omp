@@ -9,10 +9,10 @@
 // l'arbitre (S-2, AC-5).
 import * as crypto from "node:crypto";
 import { auditRepoRootOf, enrolElements } from "./audit.ts";
-import { AUDIT_BRIEF_SECTIONS, AUDIT_VERSION, auditKeyOf, listAudits, newAuditId, readAudit, transitionAudit, writeAudit } from "./auditRecord.ts";
+import { AUDIT_BRIEF_SECTIONS, AUDIT_VERSION, auditKeyOf, listAudits, newAuditId, readAudit, readAuditReportDraft, transitionAudit, writeAudit } from "./auditRecord.ts";
 import type { AuditLaunchOutcome, AuditRecord, AuditStatus } from "./auditRecord.ts";
 import type { PipelineCommand } from "./commands.ts";
-import { briefRubricsMissing, writeBrief } from "./context.ts";
+import { briefRubricsMissing, writeBrief, writeReport } from "./context.ts";
 import { realpathOr } from "./git.ts";
 import { lotFeature, lotRepoKey, readLot } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
@@ -255,6 +255,8 @@ export function createAuditService(deps: AuditServiceDeps): AuditService {
 
       const run = (async () => {
         writeBrief(stateDir, audit.key, brief);
+        const report = readAuditReportDraft(stateDir, id);
+        if (report !== null) writeReport(stateDir, audit.key, report);
         const controller = deps.pilot.controllerFor(audit.repoRoot);
         const outcomes = await enrolElements({
           add: feature => controller.add(feature),

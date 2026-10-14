@@ -393,8 +393,12 @@ const BRIEF = {
   nonGoals: ["Pas de refonte du panneau."],
 };
 
+/** Le rapport COMPLET exigé par `audit_propose` (analyse de l'étape 2). */
+const RAPPORT = "## Faiblesses\n\n1. borne-file — lot.ts : aucune borne sur la file\n\n## Features proposées\n\n1. alpha — Borner la file du lot.";
+
 const PROPOSAL = {
   brief: BRIEF,
+  rapport: RAPPORT,
   weaknesses: [
     { name: "borne-file", intention: "lot.ts : aucune borne sur la file" },
     { name: "relais-readme", intention: "README.md : le relais n'est pas documenté" },
@@ -1294,6 +1298,7 @@ test("audit-multi/AC-4 : deux éléments cochés sans dépendance entre eux tour
   const proposal = {
     weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
     brief: BRIEF,
+    rapport: RAPPORT,
     features: [
       { name: "fa", intention: "Faire A." },
       { name: "fb", intention: "Faire B." },
@@ -1328,6 +1333,7 @@ test("audit-multi/AC-5 : un élément qui dépend d'un autre élément coché ne
   const proposal = {
     weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
     brief: BRIEF,
+    rapport: RAPPORT,
     features: [
       { name: "b", intention: "Bâtir sur A.", deps: ["a"] },
       { name: "a", intention: "Poser A." },
@@ -1515,6 +1521,7 @@ test("audit-multi/AC-7 : relancer depuis la même session /audit — les éléme
   const all = await fx.call("audit_propose", {
     weaknesses: [{ name: "gamma", intention: "constat" }],
     brief: BRIEF,
+    rapport: RAPPORT,
     features: [{ name: "alpha", intention: "intention" }],
   });
   assert.equal(all.isError, undefined);

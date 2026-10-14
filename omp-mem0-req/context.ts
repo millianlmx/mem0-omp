@@ -16,6 +16,18 @@ export type JournalKind = "question" | "jalon" | "quota" | "contexte";
 /** La phase d'une entrée : un maillon du pipeline, ou la session parente hébergée qui note un dépassement de contexte. */
 export type JournalPhase = PipelinePhase | "project" | "audit";
 
+/**
+ * Ce qui a fondé une décision de l'arbitre (S-11), VÉRIFIÉ par le pilote : le motif
+ * de l'arbitre et les justifications retenues — citations du corpus, références
+ * `chemin:ligne`, rubriques du rapport. Les décisions de l'utilisateur n'en portent pas.
+ */
+export type DecisionJustification = {
+  reason: string;
+  citations: string[];
+  references: string[];
+  rubriques: string[];
+};
+
 export type JournalEntry = {
   version: 1;
   at: number;
@@ -26,6 +38,8 @@ export type JournalEntry = {
   answer: string;
   source: DecisionSource;
   context: string | null;
+  /** La justification d'une décision d'arbitre (S-11) ; absente des lignes antérieures et des décisions de l'utilisateur. */
+  justification?: DecisionJustification;
 };
 
 /** Les cinq rubriques d'un brief, dans l'ordre du gabarit. */
@@ -248,6 +262,30 @@ export function readBrief(stateDir: string, contextKey: string): string | null {
 }
 
 
+/** Le fichier du rapport d'un contexte : à côté du brief, même clé (`contextIdOf`). */
+export function reportPathFor(stateDir: string, contextKey: string): string {
+  return path.join(stateDir, "reports", `${contextIdOf(contextKey)}.md`);
+}
+
+/** Écrit le rapport TEL QUEL et en entier, atomiquement (temporaire puis `rename`). */
+export function writeReport(stateDir: string, contextKey: string, text: string): void {
+  const file = reportPathFor(stateDir, contextKey);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text, "utf8");
+  fs.renameSync(tmp, file);
+}
+
+/** Le rapport d'un contexte, relu depuis le fichier à chaque usage ; `null` s'il est absent ou illisible. */
+export function readReport(stateDir: string, contextKey: string): string | null {
+  try {
+    return fs.readFileSync(reportPathFor(stateDir, contextKey), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+
 // --- le journal (S-7) --------------------------------------------------------
 
 export function journalPathFor(stateDir: string, repoKey: string): string {
@@ -277,6 +315,15 @@ const KINDS: ReadonlySet<string> = new Set(["question", "jalon", "quota", "conte
 const SOURCES: ReadonlySet<string> = new Set(["contexte", "arbitrage", "utilisateur"]);
 
 
+function asJustification(raw: unknown): DecisionJustification | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+  if (typeof r.reason !== "string" || !strings(r.citations) || !strings(r.references) || !strings(r.rubriques)) return null;
+  return { reason: r.reason, citations: [...r.citations], references: [...r.references], rubriques: [...r.rubriques] };
+}
+
+
 function asEntry(raw: unknown): JournalEntry | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
@@ -285,6 +332,7 @@ function asEntry(raw: unknown): JournalEntry | null {
   if (typeof r.kind !== "string" || !KINDS.has(r.kind)) return null;
   if (typeof r.question !== "string" || typeof r.answer !== "string") return null;
   if (typeof r.source !== "string" || !SOURCES.has(r.source)) return null;
+  const justification = asJustification(r.justification);
   return {
     version: 1,
     at: r.at,
@@ -295,12 +343,13 @@ function asEntry(raw: unknown): JournalEntry | null {
     answer: r.answer,
     source: r.source as DecisionSource,
     context: typeof r.context === "string" ? r.context : null,
+    ...(justification !== null ? { justification } : {}),
   };
 }
 
 
-/** Les entrées d'une feature, dans l'ordre d'écriture ; les lignes illisibles sont ignorées. */
-export function journalFor(stateDir: string, repoKey: string, slug: string): JournalEntry[] {
+/** Les entrées lisibles du journal du dépôt, dans l'ordre d'écriture ; les lignes illisibles sont ignorées. */
+function readJournal(stateDir: string, repoKey: string, keep: (entry: JournalEntry) => boolean): JournalEntry[] {
   let text: string;
   try {
     text = fs.readFileSync(journalPathFor(stateDir, repoKey), "utf8");
@@ -312,7 +361,7 @@ export function journalFor(stateDir: string, repoKey: string, slug: string): Jou
     if (line.trim() === "") continue;
     try {
       const entry = asEntry(JSON.parse(line));
-      if (entry !== null && entry.slug === slug) out.push(entry);
+      if (entry !== null && keep(entry)) out.push(entry);
     } catch {
       // ligne illisible : ignorée
     }
@@ -321,11 +370,32 @@ export function journalFor(stateDir: string, repoKey: string, slug: string): Jou
 }
 
 
+/** Les entrées d'une feature, dans l'ordre d'écriture ; les lignes illisibles sont ignorées. */
+export function journalFor(stateDir: string, repoKey: string, slug: string): JournalEntry[] {
+  return readJournal(stateDir, repoKey, (entry) => entry.slug === slug);
+}
+
+
+/**
+ * Les entrées de TOUT un contexte (toutes les features d'un même audit ou projet),
+ * dans l'ordre d'écriture (chronologique) : celles dont `context` égale `context`.
+ */
+export function journalOfContext(stateDir: string, repoKey: string, context: string): JournalEntry[] {
+  return readJournal(stateDir, repoKey, (entry) => entry.context === context);
+}
+
+
 // --- le bloc de contexte d'une étape (S-8) -----------------------------------
 
 /** Une entrée du journal au format de S-8 : `- [/<phase>] Q : <question> → R : <réponse> (source : <source>)`. */
 export function journalLine(e: JournalEntry): string {
   return `- [/${e.phase}] Q : ${e.question} → R : ${e.answer} (source : ${e.source})`;
+}
+
+
+/** Une entrée du journal du LOT : comme `journalLine`, avec la feature qui l'a écrite. */
+export function lotJournalLine(e: JournalEntry): string {
+  return `- [${e.slug} /${e.phase}] Q : ${e.question} → R : ${e.answer} (source : ${e.source})`;
 }
 
 

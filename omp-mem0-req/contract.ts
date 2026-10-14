@@ -111,6 +111,47 @@ export function contractLots(contract: string): string[] {
 }
 
 
+const AC_HEAD = /^\s*(?:[-*]\s+)?(?:\*\*)?\s*(AC-\d+)(?![0-9])/;
+
+/**
+ * Les ids `AC-<n>` de la section `## Critères d'acceptation` (dernière occurrence),
+ * dans l'ordre et sans doublon, reconnus sur la TÊTE de chaque ligne (S-10).
+ */
+export function contractAcIds(contract: string): string[] {
+  const body = contractSection(contract, "Critères d'acceptation");
+  if (body === null) return [];
+  const ids: string[] = [];
+  for (const line of body.split("\n")) {
+    const id = AC_HEAD.exec(line)?.[1];
+    if (id !== undefined && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+
+const SPEC_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(S-\d+)(?![0-9])/;
+
+/**
+ * Les AC du contrat qu'AUCUN bloc de `## Spécifications` ne référence (S-10) : un bloc
+ * court de la tête `S-<n>` à la tête suivante ; aucune expansion de plage
+ * (`AC-1..AC-4` ne référence que AC-1 et AC-4).
+ */
+export function uncoveredAcIds(contract: string): string[] {
+  const ids = contractAcIds(contract);
+  if (ids.length === 0) return [];
+  const body = contractSection(contract, "Spécifications") ?? "";
+  const blocks: string[] = [];
+  for (const line of body.split("\n")) {
+    if (SPEC_HEAD.test(line)) blocks.push(line);
+    else if (blocks.length > 0) blocks[blocks.length - 1] += `\n${line}`;
+  }
+  return ids.filter((id) => {
+    const reference = new RegExp(`(?<![A-Za-z0-9])${id}(?![0-9])`);
+    return !blocks.some((block) => reference.test(block));
+  });
+}
+
+
 // Libellés du verdict de /review (REVIEW_DIRECTIVE), dans l'ordre où ils sont
 // écrits : ils bornent le corps du champ BLOQUANTS — le champ suivant n'est pas un
 // bloquant, et une recommandation n'en est jamais un.

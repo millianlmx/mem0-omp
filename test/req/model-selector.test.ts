@@ -679,11 +679,13 @@ const textOf = (result: { content: { text: string }[] }) => result.content.map((
 const BRIEF_EMPTY = { purpose: "But.", function: "Fonction.", decisions: [], constraints: [], nonGoals: [] };
 const PROPOSAL_ALPHA = {
   brief: BRIEF_EMPTY,
+  rapport: "## Faiblesses\n\n1. borne-file — lot.ts",
   weaknesses: [{ name: "borne-file", intention: "lot.ts : aucune borne sur la file" }],
   features: [{ name: "alpha", intention: "Borner la file du lot.\nPérimètre : lot.ts." }],
 };
 const PROPOSAL_BETA = {
   brief: BRIEF_EMPTY,
+  rapport: "## Faiblesses\n\n1. modele-readme — README.md",
   weaknesses: [{ name: "modele-readme", intention: "README.md : le modèle n'est pas documenté" }],
   features: [{ name: "beta", intention: "Documenter le choix du modèle." }],
 };

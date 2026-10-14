@@ -319,6 +319,7 @@ function proposal(weaknesses: string[], features: string[], fn = FACT) {
     weaknesses: weaknesses.map(name => ({ name, intention: `Corriger ${name}.` })),
     features: features.map(name => ({ name, intention: `Construire ${name}.` })),
     brief: { purpose: "Exporter les données.", function: fn, decisions: ["Pas de base distante."], constraints: [], nonGoals: [] },
+    rapport: "## Faiblesses\n\n1. constat — fichiers et symboles cités\n\n## Features proposées\n\n1. feature — intention",
   };
 }
 
@@ -652,6 +653,8 @@ test("audit-panel-in-omp-console/AC-5 : une feature lancée par la route franchi
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, text);
     };
+    // Le jalon « revue propre » exige qu'AC-1 soit porté par un fichier du worktree (hors `.omp/`).
+    if (spec.phase === "review") fs.writeFileSync(path.join(spec.worktree, "preuve.txt"), "AC-1 : preuve\n");
     if (spec.phase === "req") put(base);
     else if (spec.phase === "specs") put(contract);
     else if (spec.phase === "review") put(`${contract}\n## Revue\n\n- STATUT : APPROUVÉ\n- BLOQUANTS : aucun\n`);

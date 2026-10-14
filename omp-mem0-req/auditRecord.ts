@@ -212,6 +212,30 @@ export function writeAudit(stateDir: string, audit: AuditRecord): void {
 }
 
 
+/** `<stateDir>/audits/<id>.report.md` : le rapport de l'analyse, en attente du lancement (`listAudits` ne lit que `*.json`). */
+export function auditReportDraftPathFor(stateDir: string, id: string): string {
+  return path.join(auditsDirOf(stateDir), `${id}.report.md`);
+}
+
+/** Écrit le brouillon du rapport TEL QUEL, atomiquement ; lève si l'écriture échoue. */
+export function writeAuditReportDraft(stateDir: string, id: string, text: string): void {
+  const file = auditReportDraftPathFor(stateDir, id);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, text, "utf8");
+  fs.renameSync(tmp, file);
+}
+
+/** Le brouillon du rapport de l'audit `id` ; `null` s'il est absent ou illisible. */
+export function readAuditReportDraft(stateDir: string, id: string): string | null {
+  try {
+    return fs.readFileSync(auditReportDraftPathFor(stateDir, id), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+
 // --- les transitions ---------------------------------------------------------
 
 /** `analysing → proposed | failed | stopped`, `proposed → launched | stopped`, `launched → stopped`, `failed → stopped`. */

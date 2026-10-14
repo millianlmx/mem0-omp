@@ -25,7 +25,7 @@ import type { PublishDeps } from "./publish.ts";
 import { createServiceClient, createServiceLotActions } from "./serviceClient.ts";
 import { createServiceHost } from "./serviceHost.ts";
 import { arbiterCaptureOf, auditSessionOf, hostedSettingsOverrides, maillonIdentityOf } from "./serviceSessions.ts";
-import { registerArbiterTool } from "./arbiter.ts";
+import { ARBITER_TOOLS, registerArbiterTool } from "./arbiter.ts";
 import { exhaustedUntil, quotaStopReason, startModelFor } from "./quota.ts";
 import { SERVICE_FLAG, isMarkedServiceProcess, serviceFilePath, serviceRunning } from "./serviceState.ts";
 import { buildConversationRunArgv, conversationOverlayPathFor, conversationRefusal, handOverCollecte, lotDriverFor, repoRootOf, selfExtensionArg, workerModeOf } from "./runs.ts";
@@ -769,6 +769,9 @@ export default function reqExtension(pi: ExtensionAPI) {
       const capture = arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx));
       if (capture !== null) {
         registerArbiterTool(pi, capture);
+        // Lecture seule : l'outil de décision vient d'être enregistré, le runner
+        // attend la barrière d'enregistrement avant d'appliquer la liste.
+        await pi.setActiveTools([...ARBITER_TOOLS]);
         return;
       }
       // ANALYSE D'UN AUDIT DE L'APP (S-1) : un seul outil, `audit_report` — ni
@@ -830,6 +833,21 @@ export default function reqExtension(pi: ExtensionAPI) {
     // La session hôte d'un projet en cours (`omp --resume` de la session /project)
     // réarme son relais : le projet reprend là où il en était (S-4).
     projectRelay.sync(ctx);
+  });
+
+  // ARBITRE EN LECTURE SEULE (S-5), défense en profondeur : `setActiveTools` retire
+  // les outils d'écriture de la session, et ce crochet refuse tout appel d'un outil
+  // hors liste blanche — une session d'arbitre peut lire le dépôt, jamais le
+  // modifier. Gardé par la capture de la session d'arbitre : aucune autre session
+  // (maillon, audit, relais, conversation) n'est jamais restreinte.
+  pi.on("tool_call", (event, ctx) => {
+    if (!isServiceProcess()) return;
+    if (arbiterCaptureOf(sessionIdOf(ctx as PipelineCtx)) === null) return;
+    if ((ARBITER_TOOLS as readonly string[]).includes(event.toolName)) return;
+    return {
+      block: true,
+      reason: `outil refusé à l'arbitre : ${event.toolName} — lecture seule (${ARBITER_TOOLS.join(", ")})`,
+    };
   });
 
   // RETOUR AU PRINCIPAL entre deux appels modèle d'une même boucle d'outils (S-3) :
@@ -1490,6 +1508,7 @@ export default function reqExtension(pi: ExtensionAPI) {
 }
 
 export * from "./arbiter.ts";
+export * from "./arbiterReview.ts";
 export * from "./audit.ts";
 export * from "./chain.ts";
 export * from "./commands.ts";

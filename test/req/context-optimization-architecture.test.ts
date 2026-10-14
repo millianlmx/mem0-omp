@@ -1204,6 +1204,7 @@ const BR2_BRIEF = {
 
 const BR2_PROPOSAL = {
   brief: BR2_BRIEF,
+  rapport: "## Faiblesses\n\n1. w — constat\n\n## Features proposées\n\n1. alpha — Faire A.\n2. bravo — Faire B.",
   weaknesses: [{ name: "w", intention: "constat" }],
   features: [
     { name: "alpha", intention: "Faire A." },
@@ -1980,7 +1981,7 @@ test("brief : les schémas de `project_plan`, `project_amend` et `audit_propose`
   assert.equal(project.calls.length, 0, "aucun dialogue sur un plan refusé");
   void fake;
   const audit = br2Audit({ runner: recordingRunner().runner, answers: [] });
-  const noBrief = await audit.call("audit_propose", { weaknesses: BR2_PROPOSAL.weaknesses, features: BR2_PROPOSAL.features });
+  const noBrief = await audit.call("audit_propose", { weaknesses: BR2_PROPOSAL.weaknesses, features: BR2_PROPOSAL.features, rapport: BR2_PROPOSAL.rapport });
   assert.equal(noBrief.isError, true);
   assert.equal(br2Text(noBrief), "Error: brief is missing");
   const badList = await audit.call("audit_propose", { ...BR2_PROPOSAL, brief: { ...BR2_BRIEF, constraints: "x" } });
@@ -2215,7 +2216,7 @@ const BR4_PARENT_BYTES = '{"type":"session","id":"parent"}\n{"type":"message","m
  * octets sont comparés à la fin : l'arbitre ne lui fait faire aucun tour), son
  * premier run lancé, un brief qui porte `BR4_FACT`.
  */
-async function br4Scenario(script: Br4Script, options: { arbiterModel?: boolean; profile?: "audit" | "project" } = {}) {
+async function br4Scenario(script: Br4Script, options: { arbiterModel?: boolean; profile?: "audit" | "project"; covered?: boolean } = {}) {
   const clock = { now: T0 };
   const { runner, specs } = recordingRunner();
   const repoRoot = emptyGitRepo("coa-repo-");
@@ -2246,6 +2247,14 @@ async function br4Scenario(script: Br4Script, options: { arbiterModel?: boolean;
   await controller.launch();
   await flush(30);
   assert.equal(specs.length, 1, "le premier run est parti");
+  if (options.covered) {
+    // Un contrat dont chaque AC est référencé par une S-n, et un fichier qui porte AC-1 : les
+    // vérifications déterministes des jalons (S-9, S-10) laissent passer l'approbation.
+    const worktree = lotFeature(findLot(stateDir)!, "alpha")!.worktree;
+    fs.mkdirSync(path.dirname(contractPathFor(worktree)), { recursive: true });
+    fs.writeFileSync(contractPathFor(worktree), "## Critères d'acceptation\n\nAC-1 (B-1) : un critère.\n\n## Spécifications\n\n### S-1 (AC-1) — une spec\n");
+    fs.writeFileSync(path.join(worktree, "preuve.txt"), "AC-1 : preuve\n");
+  }
   /** Parque la feature à un jalon ou une question, comme le fait la fin d'un run. */
   const park = (waitKind: "answer" | "specs" | "review", phase: "req" | "specs" | "impl" | "review", waitPrompt: string | null) => {
     const lot = findLot(stateDir)!;
@@ -2303,7 +2312,7 @@ test("context-optimization-architecture/AC-11 : un brief qui contient la répons
 });
 
 test("context-optimization-architecture/AC-13 : un jalon prêt est tranché par une session d'arbitre distincte des runs de la feature, consigné au journal, et la chaîne repart", async () => {
-  const s = await br4Scenario(() => ({ decision: "approve", reason: "les specs couvrent chaque AC" }));
+  const s = await br4Scenario(() => ({ decision: "approve", reason: "les specs couvrent chaque AC" }), { covered: true });
   s.park("specs", "specs", null);
   await s.controller.tick();
   await br2Until(() => s.specs.length === 2);
@@ -2350,7 +2359,7 @@ test("context-optimization-architecture/AC-10 : trois décisions — contexte, a
     if (call === 1) return citeFact("JSON");
     if (call === 2) return { decision: "approve", reason: "les specs couvrent chaque AC" };
     return { decision: "escalate", reason: "le corpus ne dit pas le nom de la table" };
-  });
+  }, { covered: true });
   // 1. une question tranchée par l'arbitre sur le contexte.
   s.park("answer", "req", "Quel format de sortie ?");
   await s.controller.tick();
@@ -2512,26 +2521,29 @@ test("arbitre : le premier appel d'`arbiter_decide` est retenu, un second est re
 test("arbitre : la validation déterministe n'accorde rien sur parole (citations aux espaces repliés, jalon, source, décision absente)", () => {
   const question = { kind: "question" as const, slug: "alpha", phase: "req" as const, question: "Quel format ?", options: ["JSON", "CSV"] };
   const jalon = { kind: "specs" as const, slug: "alpha", phase: "specs" as const, question: null, options: [] };
-  const corpus = buildArbiterCorpus({ brief: "## But\nLe format de\n   sortie est JSON.", slug: "alpha", entries: [], contract: null });
+  const corpus = buildArbiterCorpus({ report: null, brief: "## But\nLe format de\n   sortie est JSON.", contract: null, slug: "alpha", lotEntries: [], lotMax: 200, featureEntries: [] });
+  const ground = { corpus, report: null, worktree: emptyGitRepo("coa-ground-"), contract: null, review: null };
   const escalade = (motif: string) => ({ kind: "escalate", reason: motif });
+  const justification = (citations: string[]) => ({ reason: "r", citations, references: [], rubriques: [] });
   // Une réponse citée (espaces repliés) est acceptée ; exactement une option vaut `selected`.
-  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", source: "contexte", citations: ["Le   format de sortie est JSON."], reason: "r" }, corpus), { kind: "answer", answer: "JSON", source: "contexte", selected: true });
-  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "YAML", source: "arbitrage", citations: ["sortie est JSON."], reason: "r" }, corpus), { kind: "answer", answer: "YAML", source: "arbitrage", selected: false });
+  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", source: "contexte", citations: ["Le   format de sortie est JSON."], reason: "r" }, ground), { kind: "answer", answer: "JSON", source: "contexte", selected: true, justification: justification(["Le   format de sortie est JSON."]) });
+  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "YAML", source: "arbitrage", citations: ["sortie est JSON."], reason: "r" }, ground), { kind: "answer", answer: "YAML", source: "arbitrage", selected: false, justification: justification(["sortie est JSON."]) });
   // Tout le reste escalade, avec son motif.
-  assert.deepEqual(validateArbiterDecision(question, null, corpus), escalade("arbitre sans décision"));
-  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", source: "contexte", citations: ["Le format est XML."], reason: "r" }, corpus), escalade("décision d'arbitre invalide : aucune citation ne figure dans le corpus"));
-  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", source: "contexte", reason: "r" }, corpus), escalade("décision d'arbitre invalide : aucune citation du corpus"));
-  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "  ", source: "contexte", citations: ["sortie est JSON."], reason: "r" }, corpus), escalade("décision d'arbitre invalide : réponse vide"));
-  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", citations: ["sortie est JSON."], reason: "r" }, corpus), escalade("décision d'arbitre invalide : source absente ou inconnue"));
-  assert.deepEqual(validateArbiterDecision(question, { decision: "approve", reason: "r" }, corpus), escalade("décision d'arbitre invalide : une question se répond ou s'escalade"));
-  assert.deepEqual(validateArbiterDecision(jalon, { decision: "answer", answer: "x", source: "contexte", citations: ["x"], reason: "r" }, corpus), escalade("décision d'arbitre invalide : un jalon s'approuve ou s'escalade"));
-  assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: " " }, corpus), escalade("décision d'arbitre invalide : motif d'approbation vide"));
-  assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: "couvert" }, corpus), { kind: "approve" });
-  assert.deepEqual(validateArbiterDecision(jalon, { decision: "escalate", reason: "doute" }, corpus), escalade("doute"));
+  assert.deepEqual(validateArbiterDecision(question, null, ground), escalade("arbitre sans décision"));
+  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", source: "contexte", citations: ["Le format est XML."], reason: "r" }, ground), escalade("décision d'arbitre invalide : aucune justification vérifiée — citation absente du corpus « Le format est XML. »"));
+  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", source: "contexte", reason: "r" }, ground), escalade("décision d'arbitre invalide : aucune justification"));
+  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "  ", source: "contexte", citations: ["sortie est JSON."], reason: "r" }, ground), escalade("décision d'arbitre invalide : réponse vide"));
+  assert.deepEqual(validateArbiterDecision(question, { decision: "answer", answer: "JSON", citations: ["sortie est JSON."], reason: "r" }, ground), escalade("décision d'arbitre invalide : source absente ou inconnue"));
+  assert.deepEqual(validateArbiterDecision(question, { decision: "approve", reason: "r" }, ground), escalade("décision d'arbitre invalide : une question se répond ou s'escalade"));
+  assert.deepEqual(validateArbiterDecision(jalon, { decision: "answer", answer: "x", source: "contexte", citations: ["x"], reason: "r" }, ground), escalade("décision d'arbitre invalide : un jalon s'approuve ou s'escalade"));
+  assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: " " }, ground), escalade("décision d'arbitre invalide : motif d'approbation vide"));
+  const covered = { ...ground, contract: "## Critères d'acceptation\n\nAC-1 : c.\n\n## Spécifications\n\n### S-1 (AC-1) — s\n" };
+  assert.deepEqual(validateArbiterDecision(jalon, { decision: "approve", reason: "couvert" }, covered), { kind: "approve", justification: { ...justification([]), reason: "couvert" } });
+  assert.deepEqual(validateArbiterDecision(jalon, { decision: "escalate", reason: "doute" }, ground), escalade("doute"));
   // Le prompt porte l'élément, ses options et le corpus ; ARBITER_DEADLINE_MS vaut dix minutes.
   const prompt = buildArbiterPrompt(question, corpus);
   assert.ok(prompt.includes("options :\n1. JSON\n2. CSV"));
-  assert.ok(prompt.endsWith("(contrat absent)"));
+  assert.ok(prompt.includes("### Contrat\n(contrat absent)"));
   assert.equal(ARBITER_DEADLINE_MS, 600_000);
 });
 
@@ -2554,7 +2566,7 @@ test("arbitre : sans modèle disponible, une décision invalide, ou une feature 
   bad.park("answer", "req", "Quel format de sortie ?");
   await bad.controller.tick();
   await br2Until(() => bad.feature().escalation !== undefined);
-  assert.equal(bad.feature().escalation!.reason, "décision d'arbitre invalide : aucune citation ne figure dans le corpus");
+  assert.equal(bad.feature().escalation!.reason, "décision d'arbitre invalide : aucune justification vérifiée — citation absente du corpus « phrase inventée »");
   assert.equal(bad.specs.length, 1);
   assert.deepEqual(journalFor(bad.stateDir, bad.key, "alpha"), []);
   // Aucun appel de l'outil ⇒ « arbitre sans décision ».
@@ -2801,7 +2813,7 @@ test("context-optimization-architecture/AC-16 : relais désarmé, deux élément
     if (call === 1) return citeFact("JSON");
     if (call === 2) return { decision: "approve", reason: "les specs couvrent chaque AC" };
     return { decision: "escalate", reason: "le corpus ne dit pas le nom de la table" };
-  });
+  }, { covered: true });
   const rig = br5Relay(s, "audit"); // jamais armé : la session parente est fermée
   await br5Settle(s, "answer", "req", "Quel format de sortie ?", 2);
   await br5Settle(s, "specs", "specs", null, 3);

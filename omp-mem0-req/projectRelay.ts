@@ -6,7 +6,7 @@ import { saysFin } from "./contract.ts";
 import { branchFor, branchTaken, resolveFeatureRoot } from "./git.ts";
 import type { GitResult, GitRunner } from "./git.ts";
 import { AUDIT_RELAY_STALE_MS, LOT_EDITOR_MAX, lotFeature, lotRepoKey, readLot } from "./lot.ts";
-import { checkBriefLists, checkBriefPatch, editBrief, parseBrief, readBrief, renderBrief, writeBrief } from "./context.ts";
+import { checkBriefLists, checkBriefPatch, editBrief, parseBrief, readBrief, renderBrief, writeBrief, writeReport } from "./context.ts";
 import type { BriefInput } from "./context.ts";
 import type { LotController } from "./lotController.ts";
 import { askFeatureModels } from "./models.ts";
@@ -29,7 +29,7 @@ import {
   writeProject,
 } from "./project.ts";
 import type { PlanDraft, PlanSegment, Project, ProjectSegment } from "./project.ts";
-import { createProjectDriver, projectState } from "./projectDriver.ts";
+import { createProjectDriver, projectRepoName, projectState } from "./projectDriver.ts";
 import type { ProjectDriver } from "./projectDriver.ts";
 import { sessionFileOf } from "./publish.ts";
 import { createRelay, escalationRelayMessage, quotaRelayMessage, relayToolText as toolText } from "./relay.ts";
@@ -432,6 +432,8 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
     core.scan();
 
     const after = projectOf(repoRoot) ?? project;
+    // Le rapport du projet : PROJECT.md rendu, relu par l'arbitre (S-3).
+    writeReport(deps.stateDir(), project.relayKey, renderProjectDoc(after, projectRepoName(repoRoot)));
     const first = after.segments[0] as ProjectSegment;
     const waiting = driver.waiting();
     const launchLines =
@@ -550,6 +552,7 @@ export function createProjectRelay(deps: ProjectRelayDeps): ProjectRelay {
       // Le brief d'abord (S-6) : un plan amendé a toujours son brief à jour.
       writeBrief(deps.stateDir(), fresh.relayKey, brief);
       writeProject(deps.stateDir(), fresh);
+      writeReport(deps.stateDir(), fresh.relayKey, renderProjectDoc(fresh, projectRepoName(repoRoot)));
       driverFor(repoRoot).syncDoc(["plan modifié"]);
       return toolText(`Plan modifié : ${after.length} segment(s) à venir, ${slugsOf(after).length} feature(s) à venir.`);
     } finally {

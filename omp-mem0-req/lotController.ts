@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { REQUIRED_CONTRACT_SECTIONS, contractHashOf, effectiveReviewVerdict, isReviewCapReason, lostSections, nextChainAction, readContractText, reconcileInterrupted, reviewSectionHash } from "./chain.ts";
 import type { ChainOutcome } from "./chain.ts";
-import { contractHasSection, contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
+import { contractAcIds, contractHasSection, contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
 import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
 import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
@@ -17,11 +17,12 @@ import { defaultSchedule } from "./panelView.ts";
 import { ARBITER_MODEL_GROUP, fallbackEqualsPrimaryRefusal, fallbackSlotsField, featureFallbackForGroup, featureFallbackForPhase, featureModelForGroup, featureModelForPhase, modelGroupOf, modelSlotsField } from "./models.ts";
 import { clipTail } from "./panelWidth.ts";
 import { reportStateWriteFailure } from "./publish.ts";
-import { questionOf } from "./lot.ts";
-import { appendJournal, contextBlock, journalFor, readBrief } from "./context.ts";
-import type { DecisionSource, JournalKind } from "./context.ts";
+import { questionOf, lotArbiterJournalMax } from "./lot.ts";
+import { appendJournal, contextBlock, journalFor, journalOfContext, readBrief, readReport } from "./context.ts";
+import type { DecisionJustification, DecisionSource, JournalKind } from "./context.ts";
 import { ARBITER_DEADLINE_MS, buildArbiterCorpus, buildArbiterPrompt, itemQuestion, normalizeQuestion, validateArbiterDecision } from "./arbiter.ts";
 import type { ArbiterEffect, ArbiterItem } from "./arbiter.ts";
+import { ARBITER_DIFF_MAX_CHARS, collectReviewEvidence } from "./arbiterReview.ts";
 import { relayItemsOf } from "./relay.ts";
 import type { RelayItem } from "./relay.ts";
 import { applyWorktreeFate, buildLotPrompt, lastLine, latestSessionFile, milestoneLine, parsePrUrl, prUrlOfView, releaseArgs, releaseTarget } from "./runs.ts";
@@ -105,11 +106,15 @@ export type LotPanelActions = {
    * `arbitrage` pour l'arbitre. `viaRelay` : le relais ou l'arbitre répondent eux-mêmes —
    * une question relayée n'est pas refusée comme « confiée à la session » (S-3, S-6).
    */
-  answer(slug: string, text: string, options?: { source?: DecisionSource; viaRelay?: boolean }): Promise<string | null>;
+  answer(
+    slug: string,
+    text: string,
+    options?: { source?: DecisionSource; viaRelay?: boolean; justification?: DecisionJustification },
+  ): Promise<string | null>;
   /** Ce que cette feature accepte comme écriture — la MÊME règle que `answer` applique. */
   reply(slug: string): RowReply;
-  validate(slug: string, options?: { source?: DecisionSource }): Promise<string | null>;
-  accept(slug: string, options?: { source?: DecisionSource }): Promise<string | null>;
+  validate(slug: string, options?: { source?: DecisionSource; justification?: DecisionJustification }): Promise<string | null>;
+  accept(slug: string, options?: { source?: DecisionSource; justification?: DecisionJustification }): Promise<string | null>;
   relaunch(slug: string): Promise<string | null>;
   cancel(slug: string, fate: WorktreeFate): Promise<string | null>;
 };
@@ -133,6 +138,12 @@ export type LotControllerDeps = {
   worktreesBase?: string;
   archiveBase?: string;
   reviewCap?: number;
+  /** Entrées du journal du lot soumises à l'arbitre : lues sur `MEM0_PIPELINE_ARBITER_JOURNAL` (défaut 200) si absent. */
+  arbiterJournalMax?: number;
+  /** Borne en caractères du corpus de l'arbitre (défaut `ARBITER_CORPUS_MAX_CHARS`). */
+  arbiterCorpusMax?: number;
+  /** Borne en caractères du diff soumis à l'arbitre de « revue propre » (défaut `ARBITER_DIFF_MAX_CHARS`). */
+  arbiterDiffMax?: number;
   /**
    * Le plafond de runs parallèles du lot (S-2) : injecté par les tests, lu sinon
    * sur `MEM0_PIPELINE_SLOTS`. Comme `reviewCap`, il n'est lu qu'à la CRÉATION ou
@@ -219,6 +230,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     question: string,
     answer: string,
     source: DecisionSource = "utilisateur",
+    justification?: DecisionJustification,
   ): void {
     appendJournal(stateDir, repoKey, {
       at: now(),
@@ -229,10 +241,12 @@ export function createLotController(deps: LotControllerDeps): LotController {
       answer,
       source,
       context: feature.auditSession ?? null,
+      ...(justification !== undefined ? { justification } : {}),
     });
   }
 
   const cap = deps.reviewCap ?? lotReviewCap();
+  const arbiterJournalMax = deps.arbiterJournalMax ?? lotArbiterJournalMax();
   const slots = deps.slots ?? lotSlots();
   const runTimeout = deps.runTimeoutMs ?? lotRunTimeoutMs();
   const pilotRole = deps.pilotRole ?? "session";
@@ -1356,16 +1370,33 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if ("blocked" in started) {
       return { kind: "escalate", reason: `arbitre indisponible : quota épuisé (${started.blocked.provider})` };
     }
+    const report = readReport(stateDir, feature.auditSession);
+    const contract = readContractText(feature.worktree) || null;
     const corpus = buildArbiterCorpus({
+      report,
       brief: readBrief(stateDir, feature.auditSession),
+      contract,
       slug,
-      entries,
-      contract: readContractText(feature.worktree) || null,
+      lotEntries: journalOfContext(stateDir, repoKey, feature.auditSession),
+      lotMax: arbiterJournalMax,
+      featureEntries: entries,
+      ...(deps.arbiterCorpusMax !== undefined ? { maxChars: deps.arbiterCorpusMax } : {}),
     });
+    // Jalon « revue propre » : le diff du worktree et les fichiers qui portent chaque
+    // AC (S-9). Le MÊME objet va au prompt et à la vérification de l'approbation.
+    const review =
+      arbiterItem.kind === "review"
+        ? await collectReviewEvidence({
+            worktree: feature.worktree,
+            acIds: contractAcIds(contract ?? ""),
+            runGit: deps.runGit,
+            maxChars: deps.arbiterDiffMax ?? ARBITER_DIFF_MAX_CHARS,
+          })
+        : null;
     const result = await deps.arbiter({
       stateDir,
       cwd: feature.worktree,
-      prompt: buildArbiterPrompt(arbiterItem, corpus),
+      prompt: buildArbiterPrompt(arbiterItem, corpus, review),
       model: started.model,
       fallback,
       deadline: now() + ARBITER_DEADLINE_MS,
@@ -1394,7 +1425,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (typeof result.contextExceeded === "number") {
       return { kind: "escalate", reason: `contexte dépassé (${result.contextExceeded} tokens)` };
     }
-    return validateArbiterDecision(arbiterItem, result.decision, corpus);
+    return validateArbiterDecision(arbiterItem, result.decision, { corpus, report, worktree: feature.worktree, contract, review });
   }
 
   /**
@@ -1416,8 +1447,8 @@ export function createLotController(deps: LotControllerDeps): LotController {
     if (effect.kind === "approve") {
       refusal =
         item.kind === "specs"
-          ? await controller.validate(slug, { source: "arbitrage" })
-          : await controller.accept(slug, { source: "arbitrage" });
+          ? await controller.validate(slug, { source: "arbitrage", ...(effect.justification !== undefined ? { justification: effect.justification } : {}) })
+          : await controller.accept(slug, { source: "arbitrage", ...(effect.justification !== undefined ? { justification: effect.justification } : {}) });
     } else if (item.kind === "ask") {
       refusal = deliverAskAnswer(
         {
@@ -1431,9 +1462,14 @@ export function createLotController(deps: LotControllerDeps): LotController {
           ...(effect.selected ? { selected: effect.answer } : { custom: effect.answer }),
         },
         effect.source,
+        effect.justification,
       );
     } else {
-      refusal = await controller.answer(slug, effect.answer, { source: effect.source, viaRelay: true });
+      refusal = await controller.answer(slug, effect.answer, {
+        source: effect.source,
+        viaRelay: true,
+        ...(effect.justification !== undefined ? { justification: effect.justification } : {}),
+      });
     }
     if (refusal !== null) escalateItem(slug, item, `décision d'arbitre refusée : ${refusal}`);
   }
@@ -1862,6 +1898,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
   function deliverAskAnswer(
     cmd: Extract<PipelineCommand, { kind: "answer" }>,
     source: DecisionSource = "utilisateur",
+    justification?: DecisionJustification,
   ): string | null {
     const lot = read();
     if (!lot) return LOT_NONE_REFUSAL;
@@ -1891,6 +1928,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       asked && asked.toolCallId === cmd.toolCallId ? asked.question : (questionOf(feature.waitPrompt) ?? "(question sans texte)"),
       cmd.selected ?? cmd.custom ?? "",
       source,
+      justification,
     );
     return null;
   }
@@ -2571,7 +2609,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       });
       // Le journal (S-7) : une réponse À UNE QUESTION, une fois appliquée.
       if (started === null && asked !== null) {
-        journalDecision(feature, feature.phase, "question", questionOf(asked) ?? asked, trimmed, source);
+        journalDecision(feature, feature.phase, "question", questionOf(asked) ?? asked, trimmed, source, options?.justification);
       }
       return started;
     },
@@ -2612,7 +2650,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
         delete feature.implLot;
       }
       const started = await startPlanned(lot, feature, { slug, phase: "impl", fix: false, kind: "phase", resume: false });
-      if (started === null) journalDecision(feature, "specs", "jalon", "specs validées ?", "validé", source);
+      if (started === null) journalDecision(feature, "specs", "jalon", "specs validées ?", "validé", source, options?.justification);
       else {
         delete feature.milestoneSource;
         delete feature.implLots;
@@ -2634,7 +2672,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       feature.milestoneSource = source;
       delete feature.escalation;
       const started = await startPlanned(lot, feature, { slug, phase: "release", fix: false, kind: "phase", resume: false });
-      if (started === null) journalDecision(feature, "review", "jalon", "revue propre : livrer ?", "accepté", source);
+      if (started === null) journalDecision(feature, "review", "jalon", "revue propre : livrer ?", "accepté", source, options?.justification);
       else delete feature.milestoneSource;
       return started;
     },
