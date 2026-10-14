@@ -52,7 +52,6 @@ test("buildReqHandoff : fige besoins ET critères validés dans le contrat, pas 
   assert.match(out, /## Critères d'acceptation/);
   assert.match(out, /validation/);
   assert.match(out, /Ne mets pas les besoins ni les critères en mémoire mem0/); // pas de transport mem0
-  assert.match(out, /\/specs/); // renvoie vers l'étape suivante
 });
 
 test("buildSpecsSeed : lit le contrat, y écrit specs ET lots, ambiguïtés techniques seules", () => {

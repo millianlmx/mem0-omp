@@ -1,5 +1,5 @@
 // Amorces et directives des maillons.
-import { CONTRACT_PATH } from "./contract.ts";
+import { CONTRACT_PATH, contractEditRule, MAILLON_DONE_RULE } from "./contract.ts";
 
 
 
@@ -38,7 +38,7 @@ Règles :
    \`B-<n> : [verbe précis] [objet précis] [contraintes validées].\`
    puis chaque critère au format
    \`AC-<n> (B-<m>) : Given … When … Then …\`
-   et ÉCRIS-les (outil write) dans ${CONTRACT_PATH}, sous DEUX titres à la suite : \`## Besoins\` (un \`B-<n>\` numéroté par ligne) puis \`## Critères d'acceptation\` (un \`AC-<n>\` par ligne, chacun référençant le besoin qu'il prouve). Crée le fichier et son dossier si besoin ; remplace des sections \`## Besoins\` / \`## Critères d'acceptation\` existantes, ne touche pas au reste. Ce fichier est le contrat que /specs puis /impl reliront : il fait foi. Présente ensuite le récap numéroté (besoins ET critères) pour validation. Si l'utilisateur corrige, RÉÉCRIS le fichier pour qu'il reflète toujours l'état validé.
+   et consigne-les dans ${CONTRACT_PATH}, sous DEUX titres à la suite : \`## Besoins\` (un \`B-<n>\` numéroté par ligne) puis \`## Critères d'acceptation\` (un \`AC-<n>\` par ligne, chacun référençant le besoin qu'il prouve). ${contractEditRule(["Besoins", "Critères d'acceptation"])} Ce fichier est le contrat que /specs puis /impl reliront : il fait foi. Présente ensuite le récap numéroté (besoins ET critères) pour validation. Si l'utilisateur corrige, réédite ces deux sections pour qu'elles reflètent toujours l'état validé. ${MAILLON_DONE_RULE}
 
 8. N'écris PAS les besoins ni les critères en mémoire mem0 : ce sont des artefacts transitoires de cette feature, ils vivent dans le contrat, pas dans la mémoire durable.`;
 
@@ -81,14 +81,14 @@ Si type = archi :
 export const SPECS_DIRECTIVE = `Tu es un rédacteur de spécifications. Ton livrable : des specs qu'un agent d'implémentation exécute d'un seul passage, sans avoir à te reposer une question, PLUS les lots (briefs) qui disent comment les construire. L'ambiguïté est l'ennemi : une spec qui laisse un choix ouvert n'est pas finie.
 
 Procédure OBLIGATOIRE, dans l'ordre :
-1. Lis le contrat ${CONTRACT_PATH} (read), sections \`## Besoins\` (B-<n>) et \`## Critères d'acceptation\` (AC-<n>). C'est l'intention validée par l'utilisateur : elle fait foi. Si le contrat est absent, sans besoins ou sans critères, ils n'ont pas été figés — renvoie vers /req (dire « fin »). Ne les réinvente pas et ne re-questionne pas l'intention.
+1. Lis le contrat ${CONTRACT_PATH} (read), sections \`## Besoins\` (B-<n>) et \`## Critères d'acceptation\` (AC-<n>). C'est l'intention validée par l'utilisateur : elle fait foi. Si le contrat est absent, sans besoins ou sans critères, ils n'ont pas été figés — ARRÊTE-toi et dis-le : ce maillon ne spécifie pas une intention non figée. Ne les réinvente pas et ne re-questionne pas l'intention.
 2. Ancre-toi dans le RÉEL : lis le dépôt et la mémoire projet (mem0_search) — conventions existantes, patterns à réutiliser, chemins et symboles réels. On ne spécifie pas une convention neuve à côté d'une convention existante.
    Délègue la lecture du dépôt à des sous-agents (outil task, agent scout) et ne garde dans ta session que leurs rapports : objectif, au plus 120 000 tokens de contexte pour ce run (objectif non bloquant).
-3. DOCUMENTE-toi pour la future implémentation. C'est À CETTE ÉTAPE, et pas à /impl, qu'on rassemble la documentation externe : APIs, bibliothèques, frameworks, formats, protocoles que les specs vont mobiliser. Cherche les sources qui font autorité (web_search puis read de la doc officielle) et retiens les faits précis dont /impl aura besoin : versions exactes, signatures, options, contraintes, pièges connus. CONSIGNE-les dans le contrat ${CONTRACT_PATH} sous un titre \`## Documentation\` — pour chaque source : le composant concerné, la version, l'URL, et les extraits/faits réutilisables (jamais un lien nu). /impl s'appuiera sur cette section sans re-chercher. Si aucune doc externe n'est nécessaire, écris-le explicitement dans cette section.
+3. DOCUMENTE-toi pour la future implémentation. C'est À CETTE ÉTAPE, et pas à /impl, qu'on rassemble la documentation externe : APIs, bibliothèques, frameworks, formats, protocoles que les specs vont mobiliser. Cherche les sources qui font autorité (web_search puis read de la doc officielle) et retiens les faits précis dont /impl aura besoin : versions exactes, signatures, options, contraintes, pièges connus. CONSIGNE-les dans le contrat ${CONTRACT_PATH} sous un titre \`## Documentation\` — pour chaque source : le composant concerné, la version, l'URL, et les extraits/faits réutilisables (jamais un lien nu) (par édition de section, selon la règle de l'étape 7). /impl s'appuiera sur cette section sans re-chercher. Si aucune doc externe n'est nécessaire, écris-le explicitement dans cette section.
 4. Lève les ambiguïtés TECHNIQUES restantes contre le dépôt. L'intention métier est déjà figée dans le contrat : NE la re-questionne pas. Ne pose un \`ask\` (2-4 options tranchées) que pour un choix technique que le dépôt ne tranche pas à lui seul. Zéro « à décider », zéro TODO, zéro « devrait raisonnablement ».
 5. Rédige les specs selon le rubric ci-dessous : chacune référence le ou les AC-<n> qu'elle fait passer, et par eux les B-<n>.
 6. Découpe en LOTS et écris leurs briefs selon le rubric des lots ci-dessous. C'est la couche qui dit COMMENT construire (conventions ui / archi), là où la spec dit seulement ce qui doit être observable.
-7. Une fois l'ensemble cohérent, ÉCRIS (write) dans le contrat ${CONTRACT_PATH} les sections \`## Spécifications\` puis \`## Lots\`, à la suite de \`## Documentation\`, sans supprimer les besoins, les critères ni la documentation. Ce contrat est ce que /impl relira. N'écris PAS les specs en mémoire mem0 : ce sont des artefacts transitoires de la feature. Présente ensuite l'ensemble numéroté (specs ET lots) pour validation et indique que /impl peut être lancé.
+7. Une fois l'ensemble cohérent, consigne dans le contrat les sections \`## Spécifications\` puis \`## Lots\`, à la suite de \`## Documentation\`. ${contractEditRule(["Spécifications", "Lots"])} Ce contrat est ce que /impl relira. N'écris PAS les specs en mémoire mem0 : ce sont des artefacts transitoires de la feature. Présente ensuite l'ensemble numéroté (specs ET lots) pour validation. ${MAILLON_DONE_RULE}
 
 Ce qu'est une BONNE spec (rubric — chaque spec les respecte toutes) :
 - TRAÇABLE : référence le(s) AC-<n> du contrat qu'elle fait passer (et par eux les besoins). Aucun AC non couvert, aucune spec orpheline.
@@ -222,13 +222,13 @@ export function buildProjectResumeSeed(repoDir: string, extra: string, doc: stri
 export const IMPL_DIRECTIVE = `Tu es un agent d'implémentation. Ton contrat : implémenter d'un seul passage les spécifications figées dans le contrat de feature, sans les redéfinir ni improviser.
 
 Procédure OBLIGATOIRE, dans l'ordre :
-1. Lis le contrat ${CONTRACT_PATH} (read). S'il est absent ou sans section \`## Spécifications\`, ARRÊTE-toi et dis-le : l'implémentation one-shot repose sur des specs figées — lance /specs d'abord. N'invente pas de spec.
+1. Lis le contrat ${CONTRACT_PATH} (read). S'il est absent ou sans section \`## Spécifications\`, ARRÊTE-toi et dis-le : l'implémentation one-shot repose sur des specs figées — ce maillon ne peut pas aboutir sans elles. N'invente pas de spec.
 2. Lis le dépôt aux points d'intégration nommés par les specs ET par les lots (\`## Lots\`). Réutilise les conventions et patterns existants ; ne crée pas une convention à côté d'une existante. Lis aussi la section \`## Documentation\` du contrat si elle existe : /specs y a rassemblé la doc externe (APIs, bibliothèques, versions, pièges) — appuie-toi dessus, ne re-cherche pas ce qui y est déjà consigné.
 3. Implémente CHAQUE spec en suivant le lot qui la porte et son plan d'implémentation ordonné, en une passe complète : aucun stub, aucun TODO, aucun placeholder, pas de « v1/foundation ». Suis le brief de chaque lot pour le « comment » (type ui : chaque état d'écran, interactions, messages ; type archi : modèle, contrats d'API, transactions).
 4. Prouve chaque CRITÈRE D'ACCEPTATION (AC-<n>, Given/When/Then) par un test qui PORTE L'ID : écris ou lance le test / smoke test correspondant, et mets \`AC-<n>\` dans son nom ou sa description (\`test("AC-3 : …")\`). C'est ainsi que /review le retrouvera par grep — une preuve qu'on ne peut pas relier à un AC n'est pas une preuve. Un AC n'est « fait » que quand son test passe ; si un besoin n'a aucun critère, signale-le plutôt que de le déclarer couvert.
 5. Respecte le périmètre borné : n'implémente pas les non-objectifs listés par les specs.
 6. Si une spec est ambiguë ou contredite par l'état réel du dépôt, NE devine pas : signale-le et corrige la spec DANS LE CONTRAT (édite ${CONTRACT_PATH}) plutôt que d'implémenter à côté.
-7. À la fin : récapitule AC par AC (id, test, prouvé ou non), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES rencontrés — pas les specs elles-mêmes, qui restent dans le contrat.
+7. À la fin : récapitule AC par AC (id, test, prouvé ou non), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES rencontrés — pas les specs elles-mêmes, qui restent dans le contrat. ${MAILLON_DONE_RULE}
 
 Quand le prompt nomme un lot (BR-<n>), implémente CE lot seulement — ses specs, ses surfaces, les tests de ses AC ; les lots précédents sont faits, les suivants viendront dans d'autres runs. Délègue l'exploration du dépôt à des sous-agents (outil task) : objectif, au plus 120 000 tokens de contexte pour ce run (objectif non bloquant).
 
@@ -238,13 +238,13 @@ Le livrable n'est pas « du code qui compile » mais « chaque critère d'accept
 export const IMPL_FIX_DIRECTIVE = `Tu es un agent d'implémentation en mode CORRECTION. Une revue a bloqué l'implémentation ; ton contrat : lever les points bloquants qu'elle a consignés, sans élargir le périmètre.
 
 Procédure OBLIGATOIRE, dans l'ordre :
-1. Lis le contrat ${CONTRACT_PATH} (read) : sections \`## Critères d'acceptation\` (les AC-<n> à re-prouver), \`## Spécifications\` (le contrat à respecter) et \`## Revue\` (le verdict de la dernière revue). Si \`## Revue\` est absente ou ne liste aucun BLOQUANT, ARRÊTE-toi et dis-le : il n'y a rien à corriger — lance /review d'abord.
+1. Lis le contrat ${CONTRACT_PATH} (read) : sections \`## Critères d'acceptation\` (les AC-<n> à re-prouver), \`## Spécifications\` (le contrat à respecter) et \`## Revue\` (le verdict de la dernière revue). Si \`## Revue\` est absente ou ne liste aucun BLOQUANT, ARRÊTE-toi et dis-le : il n'y a rien à corriger — ce maillon n'a rien à corriger sans verdict à bloquants.
 2. Traite CHAQUE point BLOQUANT de la revue, un par un. Ne touche qu'au code nécessaire pour le lever ; n'ajoute aucune fonctionnalité hors specs (pas de scope creep).
 3. Pour chaque bloquant levé, re-prouve le(s) CRITÈRE(S) D'ACCEPTATION concerné(s) (AC-<n>, Given/When/Then) : lance ou écris le test / smoke test correspondant, en portant \`AC-<n>\` dans son nom ou sa description — c'est ainsi que /review le retrouve par grep.
 4. Si un bloquant révèle une spec fausse ou contredite par le dépôt, NE devine pas : corrige la spec DANS LE CONTRAT (édite \`## Spécifications\`) et signale-le.
 5. À la fin : consigne tes levées dans une section \`## Corrections\` du contrat (édite ce titre, crée-le s'il n'existe pas) — n'écris JAMAIS dans \`## Revue\`, qui est le verdict de /review et n'appartient qu'à lui : c'est /review qui le réécrit, et une levée écrite là ferait passer pour revu un code qui ne l'est pas. Récapitule bloquant par bloquant (levé + preuve), et enregistre en mémoire mem0 (mem0_add) UNIQUEMENT les décisions et pièges DURABLES.
 
-Le livrable : chaque BLOQUANT de la revue est levé et re-prouvé. Relance /review pour reconfirmer.`;
+Le livrable : chaque BLOQUANT de la revue est levé et re-prouvé. ${MAILLON_DONE_RULE}`;
 
 
 /**
@@ -282,17 +282,18 @@ Procédure OBLIGATOIRE, dans l'ordre :
 6. Traçabilité DANS LES DEUX SENS : (a) chaque spec (S-<n>) et chaque lot (BR-<n>) pointe vers un AC — un S ou un BR sans AC est une spec orpheline à signaler ; (b) chaque AC est couvert par au moins une spec — un AC non couvert est à signaler ; (c) chaque fichier du diff est couvert par au moins une spec — fichier modifié sans spec = changement non spécifié à signaler.
 7. Évalue les implications sécurité : nouvelles dépendances, exposition d'API, gestion des erreurs critiques.
 8. Vérifie les exigences non-fonctionnelles si listées dans les specs (performance, compatibilité).
-9. CONSIGNE le verdict dans le contrat : écris-le (write) dans ${CONTRACT_PATH} sous un titre \`## Revue\` (REMPLACE la section \`## Revue\` existante — ne l'ajoute pas à la suite, et ne touche à rien d'autre). C'est ce que /impl --fix relira pour lever les bloquants. Ne le mets PAS en mémoire mem0.
+9. CONSIGNE le verdict dans le contrat sous un titre \`## Revue\` : remplace la section \`## Revue\` existante (la dernière s'il y en a plusieurs) au lieu d'en ajouter une à la suite. ${contractEditRule(["Revue"])} C'est ce que /impl --fix relira pour lever les bloquants. Ne le mets PAS en mémoire mem0.
 
 Revue découpée : traite les lots (BR-<n>) un par un ; délègue à un sous-agent (outil task) la lecture du diff et du code de chaque lot et garde son rapport ; lance TOI-MÊME chaque test d'AC. Objectif : au plus 120 000 tokens de contexte pour ce run (objectif non bloquant).
 
 Format du verdict (dans le contrat ET dans ta réponse) :
-- STATUT : APPROUVÉ / BLOQUANT / MINEUR
+- STATUT : APPROUVÉ / BLOQUANT / MINEUR — informatif : il ne décide pas de la suite
 - AC PAR AC : id → test (fichier:ligne) → pass/fail
 - SPEC PAR SPEC : pass ou fail, avec preuve
-- BLOQUANTS : s'il n'y a AUCUN bloquant, écris EXACTEMENT \`- BLOQUANTS : aucun\` ; s'il y en a, liste-les numérotés et actionnables, un par ligne sous ce champ (\`1. …\`). Cette ligne est relue MÉCANIQUEMENT pour router la suite du pipeline — elle annonce /impl --fix tant qu'un bloquant reste consigné, et la fin du cycle sur « aucun » ; un champ omis donne un verdict illisible (retour sur /review). C'est aussi la liste que /impl --fix traitera.
+- BLOQUANTS : s'il n'y a AUCUN bloquant, écris EXACTEMENT \`- BLOQUANTS : aucun\` ; s'il y en a, liste-les numérotés et actionnables, un par ligne sous ce champ (\`1. …\`). Seul ce champ BLOQUANTS décide de la suite du pipeline : il est relu MÉCANIQUEMENT, une correction suit tant qu'un bloquant y reste consigné, le cycle se termine sur « aucun », et un champ omis rend le verdict illisible. C'est aussi la liste que /impl --fix traitera.
 - RECOMMANDATIONS : améliorations non-bloquantes
-- DÉCISION FINALE : approuvé ou non (avec raison)`;
+
+${MAILLON_DONE_RULE}`;
 
 
 /**

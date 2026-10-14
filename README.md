@@ -284,10 +284,12 @@ Ensuite, deux causes couvrent la quasi-totalité des cas :
   besoins, critères, specs et lots sont des artefacts transitoires de la feature ;
   mem0 ne garde que les décisions durables.
   `/review` rend une évaluation structurée (STATUT, AC PAR AC, SPEC PAR SPEC,
-  BLOQUANTS, DÉCISION) et la consigne dans le contrat sous `## Revue`. La boucle se
+  BLOQUANTS, RECOMMANDATIONS) et la consigne dans le contrat sous `## Revue`. La boucle se
   ferme avec `/impl --fix` : une session qui lit ce verdict et lève chaque BLOQUANT
-  sans élargir le périmètre, puis relance `/review` pour reconfirmer. Le champ
-  `BLOQUANTS` est relu mécaniquement : sans bloquant, il s'écrit `BLOQUANTS : aucun`.
+  sans élargir le périmètre. Seul le champ
+  `BLOQUANTS` décide de la suite : `STATUT` est informatif (un ancien verdict qui porte
+  encore `DÉCISION FINALE` reste lisible, la ligne n'est jamais comptée). Le champ est
+  relu mécaniquement : sans bloquant, il s'écrit `BLOQUANTS : aucun`.
 
   **Chaque maillon annonce la suite.** À la retombée terminale de la session — le seul
   instant où « la phase est finie » est vrai, OMP n'émettant `session_stop` que là, et
@@ -296,9 +298,17 @@ Ensuite, deux causes couvrent la quasi-totalité des cas :
   maillon suivant : `/specs` après `/req`, `/impl` après `/specs`, `/review` après
   `/impl`, puis `/impl --fix` tant que `## Revue` consigne un BLOQUANT — et la fin du
   cycle est signalée quand il n'y en a aucun. Un maillon qui s'arrête faute de section
-  `## Spécifications` dans le contrat renvoie vers `/specs`. En session interactive, la
+  `## Spécifications` dans le contrat le dit sans prescrire de commande. En session interactive, la
   commande est en plus préremplie dans la zone de saisie, prête à valider par Entrée —
   et jamais par-dessus un brouillon déjà tapé.
+
+  **L'agent d'un maillon n'annonce aucune commande.** Il termine sa réponse par « ce
+  maillon est terminé » : la commande suivante n'est annoncée que par la notice
+  `[pipeline] Phase /x terminée — commande suivante : …` de `session_stop`. Chaque maillon
+  qui écrit le contrat le fait par ÉDITION de section — il lit le contrat, ne remplace que
+  la ou les sections visées, conserve le reste à l'identique, puis relit le contrat après
+  écriture et vérifie que `## Besoins`, `## Critères d'acceptation`, `## Documentation`,
+  `## Spécifications` et `## Lots` présents avant le sont toujours.
 
   **Les modèles et leurs replis se choisissent au lancement de la feature.** `/req` demande, **avant
   toute écriture** (ni branche, ni worktree, ni session), **quatre** choix dans la liste des
@@ -821,7 +831,8 @@ s'affiche tel quel au lieu d'être avalé.
   posée **en texte** (pas par l'outil `ask`) arrête la chaîne de la même façon, quel que soit
   le maillon : la feature passe *attend réponse*, et ta réponse la relance dans sa session.
 - **L'implémentation par lot (impl par lot)** : à la validation des specs (`v`), si la
-  section `## Lots` du contrat compte **au moins deux** lots (`BR-<n> — type: …`), le
+  section `## Lots` du contrat compte **au moins deux** lots (`BR-<n> — type: …`, le tiret
+  pouvant aussi être `–` ou `-` entouré d'espaces), le
   pilote **fige** la découpe (`implLots`, `implLot` dans le lot de la feature) et lance
   **un run `/impl` par lot, chacun dans une session neuve**, au lieu d'un seul run pour
   tout le contrat. Le prompt du run du lot *i* porte, après la graine et avant la
@@ -843,8 +854,13 @@ s'affiche tel quel au lieu d'être avalé.
   `## Corrections` et **n'écrit jamais** dans `## Revue` (seule `/review` écrit le verdict), et
   une revue qui rend la main **sans réécrire** `## Revue` est jugée *illisible* — jamais
   « propre » sur le verdict laissé par la correction précédente. Le verdict est lu dans la
-  **dernière** section `## Revue` du contrat, et « aucun bloquant » s'écrit de plusieurs
-  façons (`- BLOQUANTS : aucun`, `Aucun bloquant.`, `aucun (tous levés)`, `néant`…).
+  **dernière** section `## Revue` du contrat. L'en-tête du champ accepte `BLOQUANTS :`,
+  `BLOQUANTS:` et `BLOQUANTS (2) :` (le nombre entre parenthèses est ignoré). « Aucun
+  bloquant » s'écrit de plusieurs façons (`- BLOQUANTS : aucun`, `Aucun bloquant.`,
+  `aucun (tous levés)`, `néant`, `Aucun bloquant ; voir …` — la suite n'est tolérée
+  après `;`, `,`, `—` ou `(` que si le constat nomme le mot « bloquant » : `0 ; manque le
+  test AC-2` reste un bloquant). Le compte est celui des lignes non vides et non barrées
+  du champ, quelle que soit leur forme (numérotée, puce, phrase libre).
   Deux compteurs la bornent, chacun à `MEM0_PIPELINE_REVIEW_CAP` : `fixes` (tours
   `/impl --fix` consommés) et `unreadableRuns` (revues illisibles d'affilée, remis à zéro par
   tout verdict lisible) ; tous deux sont comptés au lancement du run et remis à zéro par une
@@ -860,6 +876,14 @@ s'affiche tel quel au lieu d'être avalé.
   « /impl n'a rien produit » au lieu d'enchaîner `/review` ; une question posée en texte
   garde la priorité, et une vérification git impossible bloque aussi (« vérification du
   worktree impossible : … »).
+- **Un contrat endommagé bloque la feature.** Au lancement de chaque run (`/req`,
+  `/specs`, `/impl` y compris `--fix`, `/review`), le pilote retient les titres
+  `## Besoins`, `## Critères d'acceptation` et `## Spécifications` présents dans le
+  contrat. Un run qui se termine en succès après avoir fait **disparaître** l'un d'eux
+  passe la feature en `blocked`, raison « contrat endommagé par /<phase> — section(s)
+  disparue(s) : … », et aucun maillon suivant ne part. Seule la disparition du titre
+  compte : une section vidée mais présente, ou absente dès le départ, ne déclenche rien.
+  Le maillon de livraison (release) et le mode interactif sont hors garde.
 - **Une question de l'agent ne consomme pas le budget du run** : le délai du maillon est
   suspendu tant qu'une question est en vol, et une question qui arrive déclenche une alerte
   (transcript + toast) avec son texte — sans elle, un maillon pouvait expirer en « délai

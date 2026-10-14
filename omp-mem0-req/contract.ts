@@ -91,11 +91,13 @@ export function contractSection(contract: string, title: string): string | null 
 }
 
 
-const LOT_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(BR-\d+)\s*—\s*type\s*:/;
+const LOT_HEAD = /^\s*(?:#{1,6}\s+|[-*]\s+)?(?:\*\*)?\s*(BR-\d+)(?:\s*—|\s+[–-](?=\s))\s*type\s*:/;
 
 /**
  * Les ids `BR-<n>` de la section `## Lots` (dernière occurrence), dans l'ordre et sans
- * doublon, reconnus sur les lignes d'en-tête de lot `BR-<n> — type : …` (S-13).
+ * doublon, reconnus sur les lignes d'en-tête de lot `BR-<n> — type : …` (S-13). Le
+ * séparateur est le tiret cadratin, avec ou sans espaces, ou un demi-cadratin / tiret
+ * simple ENTOURÉ d'espaces : le tiret interne de `BR-<n>` n'est jamais un séparateur.
  */
 export function contractLots(contract: string): string[] {
   const body = contractSection(contract, "Lots");
@@ -145,12 +147,21 @@ const VACUOUS_HEAD =
   /^(aucun|aucune|néant|none|0|n\/a)\b\s*(\([^)]*\))?\s*(bloquants?|points?(\s+bloquants?)?|probl[èe]mes?|r[ée]serves?|remarques?|[ée]carts?)?\s*(identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?)?\s*[.!:;,—–-]*\s*$/i;
 
 
+// Constat d'absence qui NOMME le bloquant, suivi d'un texte après `;`, `,`, `—` ou
+// `(` (`Aucun bloquant ; voir recommandations`). Le mot « bloquant(s) » est
+// obligatoire : un jeton nu suivi d'un texte (`0 ; manque le test AC-2`) reste un
+// bloquant. Ce qui suit le séparateur n'est pas lu.
+const NAMED_ABSENCE =
+  /^(?:aucun|aucune|néant|none|0|n\/a)\s+(?:points?\s+)?bloquants?(?:\s+(?:identifi[ée]s?|restants?|consign[ée]s?|trouv[ée]s?|d[ée]tect[ée]s?|list[ée]s?|lev[ée]s?))?\s*[;,—(]/i;
+
+
 /**
- * Une ligne de champ qui ne consigne RIEN. Trois formes : vide, jeton seul
- * (`aucun`, `néant`, `0`, `(aucun)`…), ou jeton suivi d'un constat (`Aucun
- * bloquant.`, `aucun (tous levés)`, `0 (les 2 bloquants précédents sont levés)`).
- * Une ligne BARRÉE (`~~…~~`) compte comme levée : c'est ainsi qu'une relecture
- * annule un bloquant sans réécrire la phrase.
+ * Une ligne de champ qui ne consigne RIEN. Quatre formes : vide, jeton seul
+ * (`aucun`, `néant`, `0`, `(aucun)`…), jeton suivi d'un constat (`Aucun
+ * bloquant.`, `aucun (tous levés)`, `0 (les 2 bloquants précédents sont levés)`),
+ * ou constat d'absence NOMMANT le bloquant suivi d'un texte (`Aucun bloquant ;
+ * voir recommandations`). Une ligne BARRÉE (`~~…~~`) compte comme levée : c'est
+ * ainsi qu'une relecture annule un bloquant sans réécrire la phrase.
  */
 export function isVacuous(line: string): boolean {
   const n = normalizeLine(line).replace(/[.!]$/, "").trim();
@@ -160,7 +171,7 @@ export function isVacuous(line: string): boolean {
   // barré (`~~…~~ ✅ levé`) laisse la ligne actionnable, donc bloquante : le
   // numéro reste la marque d'un point à traiter.
   if (/^(?:\d+[.)]\s+)?~~.*~~$/.test(n)) return true;
-  return VACUOUS_HEAD.test(n);
+  return VACUOUS_HEAD.test(n) || NAMED_ABSENCE.test(n);
 }
 
 
@@ -171,10 +182,10 @@ export function isVacuous(line: string): boolean {
  */
 function blockersField(section: string): string[] | null {
   const lines = section.split("\n");
-  const at = lines.findIndex((line) => /^BLOQUANTS\s*(?::|：|$)/i.test(normalizeLine(line)));
+  const at = lines.findIndex((line) => /^BLOQUANTS\s*(?:\(\s*\d+\s*\))?\s*(?::|：|$)/i.test(normalizeLine(line)));
   if (at === -1) return null;
   const head = normalizeLine(lines[at] as string);
-  const sep = /^BLOQUANTS\s*(?::|：)?/i.exec(head) as RegExpExecArray;
+  const sep = /^BLOQUANTS\s*(?:\(\s*\d+\s*\))?\s*(?::|：)?/i.exec(head) as RegExpExecArray;
   const body = [head.slice(sep[0].length)];
   for (const line of lines.slice(at + 1)) {
     if (line.trimStart().startsWith("## ") || isReviewLabel(line)) break;
@@ -200,9 +211,10 @@ export function reviewVerdict(contract: string): "blockers" | "clean" | "unreada
 
 
 /**
- * Le nombre de bloquants NUMÉROTÉS du champ `BLOQUANTS` de la dernière `## Revue`.
- * La directive de /review impose un bloquant par ligne numérotée (`1. …`) : c'est
- * ce que ce compte lit — jamais une phrase, qui n'est pas un bloquant actionnable.
+ * Le nombre de bloquants du champ `BLOQUANTS` de la dernière `## Revue` : toute
+ * ligne du champ (en-tête comprise) qui n'est pas vacuous en compte UN, quelle que
+ * soit sa forme — numérotée, en puce ou phrase libre. Une ligne vide ou barrée ne
+ * compte pas. Invariant : `reviewVerdict === "blockers"` ⇔ `reviewBlockers >= 1`.
  * Publié pour le panneau, il n'entre dans aucune décision du pilote.
  */
 export function reviewBlockers(contract: string): number {
@@ -210,11 +222,7 @@ export function reviewBlockers(contract: string): number {
   if (section === null) return 0;
   const body = blockersField(section);
   if (body === null) return 0;
-  let count = 0;
-  for (const line of body) {
-    if (/^\d+[.)]\s+\S/.test(normalizeLine(line).trim())) count += 1;
-  }
-  return count;
+  return body.filter((line) => !isVacuous(line)).length;
 }
 
 
@@ -285,11 +293,47 @@ export function isPipelineNotice(prompt: string): boolean {
 
 
 /**
+ * Sections du contrat que l'écriture d'un maillon doit laisser intactes quand
+ * elles existaient déjà : la règle d'édition (`contractEditRule`) demande de les
+ * revérifier après écriture. Non exportée : seule la règle rendue fait foi.
+ */
+const CONTRACT_KEPT_SECTIONS = ["Besoins", "Critères d'acceptation", "Documentation", "Spécifications", "Lots"];
+
+
+/**
+ * Consigne d'ÉDITION de section pour un maillon qui écrit le contrat : lire,
+ * remplacer les seules sections visées, conserver le reste à l'identique, puis
+ * relire après écriture. `targets` = titres SANS `## ` (ex. `["Revue"]`).
+ * Réécrire tout le fichier est ce qui a effacé des sections voisines.
+ */
+export function contractEditRule(targets: readonly string[]): string {
+  const L = (titles: readonly string[]) => titles.map((t) => `\`## ${t}\``).join(", ");
+  return (
+    `Écris le contrat par ÉDITION de section, jamais en réécrivant tout le fichier : lis ${CONTRACT_PATH}, ` +
+    `remplace UNIQUEMENT ${L(targets)} (ajoute à la fin du fichier une section visée qui n'existe pas encore ; ` +
+    "crée le fichier et son dossier s'ils n'existent pas) et conserve tout le reste du fichier à l'identique. " +
+    `Relis ensuite le contrat APRÈS écriture et vérifie que celles des sections ${L(CONTRACT_KEPT_SECTIONS)} ` +
+    "qui étaient présentes avant le sont toujours ; s'il en manque une, restaure-la avant de rendre la main."
+  );
+}
+
+
+/**
+ * Clôture neutre d'un maillon : l'agent dit que son maillon est terminé sans
+ * annoncer de commande. La commande suivante, en interactif, est annoncée par
+ * session_stop (`nextStepFor` / `buildNextStepNotice`), jamais par l'agent.
+ */
+export const MAILLON_DONE_RULE =
+  "Quand ton livrable est consigné, termine ta réponse par la phrase « ce maillon est terminé » : " +
+  "n'annonce et ne prescris aucune commande de pipeline, la suite est annoncée hors de cette session.";
+
+
+/**
  * Message de clôture, envoyé quand l'utilisateur dit « fin ». Il fige : l'agent
  * reformule chaque besoin (B-<n>) et chaque critère d'acceptation (AC-<n>), et
- * les écrit dans le contrat. C'est après validation que le fichier est (ré)écrit,
- * donc les corrections de l'utilisateur y sont capturées — pas de récap
- * pré-validation perdu.
+ * les consigne dans le contrat. C'est après validation que les sections sont
+ * (ré)éditées, donc les corrections de l'utilisateur y sont capturées — pas de
+ * récap pré-validation perdu.
  */
 export function buildReqHandoff(): string {
   return (
@@ -299,15 +343,12 @@ export function buildReqHandoff(): string {
     "2. reformule chaque critère d'acceptation validé au format " +
     "AC-<n> (B-<m>) : Given … When … Then … — une condition binaire pass/fail, chaque " +
     "besoin devant en avoir AU MOINS un ;\n" +
-    `3. écris-les (write) dans ${CONTRACT_PATH}, sous deux titres à la suite : \`## Besoins\` ` +
+    `3. consigne-les dans ${CONTRACT_PATH}, sous deux titres à la suite : \`## Besoins\` ` +
     "(B-<n> numérotés) puis `## Critères d'acceptation` (AC-<n> numérotés, chacun référençant " +
-    "le besoin qu'il prouve) — crée le fichier et son dossier si besoin, remplace des sections " +
-    "existantes sans toucher au reste ;\n" +
+    `le besoin qu'il prouve). ${contractEditRule(["Besoins", "Critères d'acceptation"])}\n` +
     "4. présente-moi le récap numéroté (besoins ET critères) pour validation. Si je corrige, " +
-    "réécris le fichier pour qu'il reflète l'état validé.\n\n" +
+    "réédite ces deux sections pour qu'elles reflètent l'état validé.\n\n" +
     `Ne mets pas les besoins ni les critères en mémoire mem0 : ce contrat (${CONTRACT_PATH}) ` +
-    "est leur seul support. Quand besoins et critères sont figés, lance /specs — une session de " +
-    "spécification lira ce contrat et produira des specs non ambiguës, tracées vers les " +
-    "critères, prêtes à implémenter d'un trait."
+    `est leur seul support. ${MAILLON_DONE_RULE}`
   );
 }
