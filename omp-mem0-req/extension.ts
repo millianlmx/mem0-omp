@@ -189,14 +189,6 @@ export default function reqExtension(pi: ExtensionAPI) {
     type: "string",
     description: "Boîte de réception d'un run lancé par le panneau (/pipelines)",
   });
-  // Borne DURE d'un run enfant (epoch ms), posée par le pilote : le délai de
-  // `pi.exec` ne s'applique qu'au process parent, donc un enfant qui survit à un
-  // pilote tué n'aurait aucune échéance (l'outil ask attendrait indéfiniment).
-  // Le mécanisme principal reste le chien de garde sur le parent (`process.ppid`).
-  pi.registerFlag("pipeline-deadline", {
-    type: "string",
-    description: "Échéance absolue (epoch ms) d'un run de lot, au-delà de laquelle il rend la main",
-  });
 
   // Le drapeau qui fait d'un process `omp` le SERVICE (S-1) : un booléen, posé
   // par la ligne de commande du job launchd — `omp -p --no-session

@@ -87,7 +87,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     contractHash: null,
     addedAt: at,
     sinceAt: at,

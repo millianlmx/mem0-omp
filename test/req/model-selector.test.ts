@@ -133,7 +133,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     lastVerdict: null,
     lastBlockers: 0,
@@ -1433,7 +1432,7 @@ test("model-selector/AC-5 : un remplacement remplace les groupes, sans toucher a
     // lot), qui n'est pas un changement de la feature.
     const untouched = [
       "slug", "name", "branch", "worktree", "deps", "origin", "state", "phase", "waitKind",
-      "waitPrompt", "sessionFile", "pendingTexts", "prUrl", "stopReason", "fixes", "reviewRuns",
+      "waitPrompt", "sessionFile", "pendingTexts", "prUrl", "stopReason", "fixes",
       "unreadableRuns", "lastVerdict", "lastBlockers", "lastRunSessionFile", "contractHash",
       "addedAt", "sinceAt", "updatedAt", "endedAt",
     ];

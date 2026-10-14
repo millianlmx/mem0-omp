@@ -6,8 +6,8 @@ import { contractHashOf, effectiveReviewVerdict, isReviewCapReason, nextChainAct
 import type { ChainOutcome } from "./chain.ts";
 import { contractLots, reviewBlockers, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
-import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreePathFor, worktreesBaseDir } from "./git.ts";
-import type { GitResult, GitRunner } from "./git.ts";
+import { branchFor, branchTaken, contractPathFor, createFeatureWorktree, realpathOr, toSlug, worktreeHead, worktreePathFor, worktreeProduced, worktreesBaseDir } from "./git.ts";
+import type { GitResult, GitRunner, WorktreeCheck } from "./git.ts";
 import { LOT_ALERT_PROMPT_MAX, LOT_EDITOR_MAX, LOT_NONE_REFUSAL, LOT_PENDING_FULL, LOT_PENDING_MAX, LOT_PENDING_TOTAL_MAX, LOT_REASON_MAX, LOT_RUN_DEADLINE_MARGIN_MS, LOT_TICK_MS, LOT_VERSION, LOT_WAIT_PROMPT_MAX, appendRunRecord, auditRelayOpen, buildLotAlert, buildLotRecap, dependencyBlock, dependencyStopReason, freeSlots, hasFreeSlot, isLotBaseSha, lotArchiveBaseDir, lotBranchTakenRefusal, lotCancelRefusal, lotCyclicDepRefusal, lotFeature, lotFeatureMissingRefusal, lotOwnerAlive, lotRemoveDependentRefusal, lotRemoveStartedRefusal, lotRepoKey, lotReplaceable, lotReviewCap, lotRunTimeoutMs, lotSlots, lotSlugPresentRefusal, lotStateCancellable, lotStateLabel, lotStateTerminal, lotTotals, lotUnknownDepRefusal, readLot, quotaGroupsOf, rowReply, runnable, trailingQuestion, writeLot } from "./lot.ts";
 import type { HeldLaunch, Lot, LotFeature, LotFeatureState, RowLiveWriter, RowReply } from "./lot.ts";
 import { ARBITRATION_REFUSAL } from "./lot.ts";
@@ -584,7 +584,6 @@ export function createLotController(deps: LotControllerDeps): LotController {
       delete feature.implLot;
     }
     feature.fixes += launch.fix ? 1 : 0;
-    feature.reviewRuns += launch.phase === "review" ? 1 : 0;
     feature.unreadableRuns = (feature.unreadableRuns ?? 0) + (launch.phase === "review" ? 1 : 0);
     touch(feature, now());
   }
@@ -787,33 +786,52 @@ export function createLotController(deps: LotControllerDeps): LotController {
       return;
     }
     const startedAt = now();
+    // La référence HEAD d'un run d'impl (S-2) : relevée APRÈS la sauvegarde du lot
+    // et AVANT le lancement, gardée en mémoire seulement — un run repris par la
+    // réconciliation n'en a donc pas, et sa chaîne reste celle d'avant. Une
+    // exception (capture ou `deps.run`, synchrone ou non) garde son sort : code 127.
+    // Les autres phases gardent EXACTEMENT leur chaîne d'avant : aucun saut de
+    // microtâche de plus entre la fin d'un run et son traitement.
+    let check: WorktreeCheck | null = null;
     // `deps.run` peut jeter AVANT de rendre sa promesse (argv inexploitable,
     // spawn refusé) : l'échec appartient alors à CETTE feature, jamais à la passe.
-    let launched: Promise<LotRunnerResult>;
-    try {
-      launched = Promise.resolve(
-        // Le délai du runner est la MÊME borne de sécurité que celle du run : le
-        // budget de TRAVAIL est tenu par la passe (elle seule sait suspendre le
-        // décompte pendant une question en vol, cf. `workBudget`). Un délai de
-        // runner calé sur le budget de travail tuerait un run qui ATTEND.
-        deps.run({
-          spec,
-          cwd: feature.worktree,
-          timeout: runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
-          signal: abort.signal,
-        }),
-      );
-    } catch (err) {
-      launched = Promise.reject(err);
-    }
-    void launched
+    const spawn = (): Promise<LotRunnerResult> => {
+      try {
+        return Promise.resolve(
+          // Le délai du runner est la MÊME borne de sécurité que celle du run : le
+          // budget de TRAVAIL est tenu par la passe (elle seule sait suspendre le
+          // décompte pendant une question en vol, cf. `workBudget`). Un délai de
+          // runner calé sur le budget de travail tuerait un run qui ATTEND.
+          deps.run({
+            spec,
+            cwd: feature.worktree,
+            timeout: runTimeout + LOT_RUN_DEADLINE_MARGIN_MS,
+            signal: abort.signal,
+          }),
+        );
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    };
+    // La vérification du worktree : seulement un run d'impl rendu en succès, ni
+    // tué, ni en quota, et dont on a la référence. Elle a lieu pendant que la
+    // feature est encore `inFlight` : la passe ne la relance pas.
+    const spawnImpl = async (): Promise<LotRunnerResult> => {
+      const head = await worktreeHead(deps.runGit, feature.worktree);
+      const result = await spawn();
+      if (head !== null && result.code === 0 && !result.killed && result.quota === undefined) {
+        check = await worktreeProduced(deps.runGit, feature.worktree, head);
+      }
+      return result;
+    };
+    void (launch.phase === "impl" ? spawnImpl() : spawn())
       .catch((err: unknown) => ({
         code: 127,
         killed: false,
         stdout: "",
         stderr: err instanceof Error ? err.message : String(err),
       }))
-      .then((result: LotRunnerResult) => finishRun(feature.slug, launch.phase, result, startedAt));
+      .then((result: LotRunnerResult) => finishRun(feature.slug, launch.phase, result, startedAt, check));
   }
 
   /**
@@ -834,7 +852,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
 
   /** La raison consignée quand un run ne rend pas `ok` (S-4). */
   function failureReason(result: LotRunnerResult): string {
-    if (result.killed) return `délai dépassé (${Math.round(runTimeout / 60_000)} min)`;
+    if (result.killed) return `délai dépassé (${Math.round((runTimeout + LOT_RUN_DEADLINE_MARGIN_MS) / 60_000)} min)`;
     if (result.code === 127) return "binaire omp introuvable (code 127)";
     // 200 caractères : un motif de panne tient dans une ligne de panneau et dans
     // une alerte ; une trace entière n'y tient pas et noierait le reste.
@@ -843,7 +861,13 @@ export function createLotController(deps: LotControllerDeps): LotController {
   }
 
   /** Le run a rendu la main : la chaîne décide de la suite, pour CETTE feature. */
-  function finishRun(slug: string, phase: PipelinePhase, result: LotRunnerResult, startedAt: number): void {
+  function finishRun(
+    slug: string,
+    phase: PipelinePhase,
+    result: LotRunnerResult,
+    startedAt: number,
+    check: WorktreeCheck | null,
+  ): void {
     inFlight.delete(slug);
     workBudget.delete(slug);
     watched.set(slug, "settled");
@@ -912,6 +936,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       outcome,
       stdout: result.stdout,
       reason: expired ? `délai dépassé (${Math.round(runTimeout / 60_000)} min)` : failureReason(result),
+      worktree: check,
     });
     // Rien n'a été écrit : la chaîne ne part pas, et le marqueur `settled` est
     // retiré — sans lui, la passe croirait la fin de ce run déjà traitée et
@@ -936,7 +961,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
   function route(
     lot: Lot,
     feature: LotFeature,
-    result: { outcome: ChainOutcome; stdout: string; reason: string },
+    result: { outcome: ChainOutcome; stdout: string; reason: string; worktree?: WorktreeCheck | null },
   ): { launches: PlannedLaunch[]; release: boolean } {
     const out: { launches: PlannedLaunch[]; release: boolean } = { launches: [], release: false };
     const before = feature.state;
@@ -969,6 +994,7 @@ export function createLotController(deps: LotControllerDeps): LotController {
       cap: lot.reviewCap,
       question: trailingQuestion(result.stdout),
       reviewRewritten,
+      worktree: result.worktree ?? null,
     });
     if (action.kind === "run") {
       // Le maillon suivant du MÊME run : le créneau est déjà tenu, donc aucun
@@ -2261,7 +2287,6 @@ export function createLotController(deps: LotControllerDeps): LotController {
         prUrl: null,
         stopReason: null,
         fixes: 0,
-        reviewRuns: 0,
         unreadableRuns: 0,
         lastRunSessionFile: null,
         contractHash: null,
@@ -2333,7 +2358,6 @@ export function createLotController(deps: LotControllerDeps): LotController {
         prUrl: null,
         stopReason: null,
         fixes: 0,
-        reviewRuns: 0,
         unreadableRuns: 0,
         lastRunSessionFile: null,
         contractHash: null,
@@ -2663,7 +2687,6 @@ export function createLotController(deps: LotControllerDeps): LotController {
       target.branch = preparedBranch;
       // Le plafond est une borne par tentative : relancer ouvre un nouveau crédit.
       target.fixes = 0;
-      target.reviewRuns = 0;
       target.unreadableRuns = 0;
       // Un blocage au PLAFOND laisse la feature en phase `review` avec un verdict
       // bloquant : la relancer en /review relancerait une revue sur un code

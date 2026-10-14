@@ -3,7 +3,9 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import { contractHasSection, contractSection, reviewVerdict } from "./contract.ts";
 import type { PipelinePhase } from "./contract.ts";
+import type { WorktreeCheck } from "./git.ts";
 import { contractPathFor } from "./git.ts";
+import { LOT_REASON_MAX } from "./lot.ts";
 import type { LotWaitKind } from "./lot.ts";
 
 
@@ -30,6 +32,14 @@ export function effectiveReviewVerdict(contract: string, reviewRewritten: boolea
   if (!reviewRewritten) return "unreadable";
   return reviewVerdict(contract);
 }
+
+
+/** Motif d'un /impl rendu en succès sans aucun changement du worktree. */
+export const IMPL_NOTHING_PRODUCED = "/impl n'a rien produit";
+
+
+/** Préfixe du motif quand la vérification git du worktree échoue. */
+export const WORKTREE_CHECK_IMPOSSIBLE = "vérification du worktree impossible";
 
 
 /** Le motif de blocage d'une boucle revue ⇄ correction arrivée à son plafond (S-6). */
@@ -76,6 +86,11 @@ export function nextChainAction(input: {
   cap: number;
   question?: string | null;
   reviewRewritten?: boolean;
+  /**
+   * Le worktree a-t-il changé pendant le run ? Seule la phase `impl` le lit.
+   * Absent/null : non vérifié (aucune référence HEAD de début de run).
+   */
+  worktree?: WorktreeCheck | null;
 }): ChainAction {
   const { phase, outcome, contract, fixes, cap } = input;
   const unreadableRuns = input.unreadableRuns ?? 0;
@@ -99,11 +114,20 @@ export function nextChainAction(input: {
       // sortie qui a écrit les specs garde son jalon, options comprises.
       if (asked !== null) return { kind: "wait", waitKind: "answer" };
       return { kind: "blocked", reason: "aucune spécification écrite par /specs" };
-    case "impl":
+    case "impl": {
       if (asked !== null) return { kind: "wait", waitKind: "answer" };
+      // Un /impl qui rend la main sans avoir touché le worktree n'a rien produit :
+      // enchaîner /review jugerait du vide. Absent/null = non vérifié (run sans
+      // référence HEAD, réconciliation) : la chaîne antérieure continue.
+      if (input.worktree?.kind === "unchanged") return { kind: "blocked", reason: IMPL_NOTHING_PRODUCED };
+      if (input.worktree?.kind === "unknown") {
+        const reason = `${WORKTREE_CHECK_IMPOSSIBLE} : ${input.worktree.detail}`;
+        return { kind: "blocked", reason: reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason };
+      }
       return hasSpecs
         ? { kind: "run", phase: "review", fix: false }
         : { kind: "blocked", reason: "le contrat n'a plus de section ## Spécifications" };
+    }
     case "review": {
       // Une section `## Revue` inchangée veut dire que CE run de revue n'a rien
       // écrit : le verdict n'est pas lisible, quel que soit le texte laissé par un
@@ -116,8 +140,8 @@ export function nextChainAction(input: {
       }
       // Illisible : la question en texte du run passe avant une nouvelle passe.
       if (asked !== null) return { kind: "wait", waitKind: "answer" };
-      // Le budget de l'illisible est le SIEN (S-5) : le compter sur `reviewRuns`
-      // faisait bloquer une feature dès qu'elle avait corrigé ses bloquants.
+      // Le budget de l'illisible est le SIEN (S-5) : les corrections ont le leur
+      // (`fixes`), un seul compteur ferait bloquer une feature dès son 1er bloquant.
       if (unreadableRuns < cap) return { kind: "run", phase: "review", fix: false };
       return { kind: "blocked", reason: `verdict de revue illisible après ${cap} passes` };
     }

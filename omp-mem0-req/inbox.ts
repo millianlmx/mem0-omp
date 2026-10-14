@@ -6,7 +6,6 @@ import { LOT_EDITOR_MAX } from "./lot.ts";
 import { publishCurrentCwd, runStateOf } from "./publish.ts";
 import type { ArmedRunState } from "./runState.ts";
 import type { FlagReader } from "./runs.ts";
-import { pipelineDeadlineOf } from "./runs.ts";
 import { PANEL_INBOX_POLL_MS, PIPELINE_PHASES, consumeDelivery, readDeliveries } from "./store.ts";
 import type { AskSource, PanelAskOption, PanelDelivery, PanelPendingAsk, PipelineCtx } from "./store.ts";
 
@@ -107,8 +106,8 @@ export type AskAnswer = {
   source?: AskSource;
   custom?: string;
   /**
-   * La question n'aura pas de réponse : le run s'arrête (pilote disparu, échéance
-   * du drapeau atteinte, tour interrompu). Le canal est le MÊME que la réponse —
+   * La question n'aura pas de réponse : le run s'arrête (pilote disparu, tour
+   * interrompu). Le canal est le MÊME que la réponse —
    * `runState.askWaiters` est partagé par les instances de l'extension d'un même
    * process, et c'est par lui que la pompe atteint la question en vol.
    */
@@ -123,21 +122,18 @@ export type AskAnswer = {
 // qui a armé, parce que c'est sa pompe qui tourne.
 //
 // Il ne concerne QUE les runs d'un process ENFANT : un maillon exécuté par le
-// service (S-3) n'a pas de pilote parent à surveiller — sa borne est l'échéance
-// de son identité — et surveiller `process.ppid` y ferait tomber le maillon dès
-// que le service est lancé par un shell qui se termine.
+// service (S-3) n'a pas de pilote parent à surveiller — sa borne dure est le
+// minuteur du runner (serviceRuns.ts), qui interrompt la session — et
+// surveiller `process.ppid` y ferait tomber le maillon dès que le service est
+// lancé par un shell qui se termine.
 let armedParentPid: number | null = null;
 
 
-/** Le motif d'arrêt d'un run armé : le pilote a disparu, ou l'échéance est passée. */
-export function runStopReason(pi: FlagReader, watchParent = true): string | null {
+/** Le motif d'arrêt d'un run armé : le pilote a disparu (seul motif restant). */
+export function runStopReason(watchParent = true): string | null {
   if (watchParent) {
     const parent = armedParentPid ?? process.ppid;
     if (process.ppid === 1 || process.ppid !== parent) return "pilote disparu — termine ton tour";
-  }
-  const deadline = pipelineDeadlineOf(pi);
-  if (deadline !== null && Date.now() >= deadline) {
-    return "délai du run atteint — termine ton tour et rends la main";
   }
   return null;
 }
@@ -210,10 +206,10 @@ export function resolveAskDelivery(delivery: Extract<PanelDelivery, { kind: "ask
 export function pumpInbox(pi: ExtensionAPI, ctx: PipelineCtx, dir: string, watchParent: boolean): void {
   const state = runStateOf(ctx);
   // Le chien de garde passe AVANT les livraisons : un run dont le pilote est mort
-  // (ou dont l'échéance est passée) n'a plus personne à qui répondre — sa question
+  // n'a plus personne à qui répondre — sa question
   // en vol est rejetée, et sa pompe s'éteint au lieu de tourner indéfiniment sur
   // une boîte que plus personne n'alimente (RUNS-2).
-  const stop = runStopReason(pi, watchParent);
+  const stop = runStopReason(watchParent);
   if (stop !== null) {
     stopArmedRun(stop, state);
     return;
@@ -348,10 +344,10 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
       // La question appartient à la SESSION de l'appel : deux maillons du même
       // process ne se volent ni leur question en vol ni leur boîte (S-3).
       const callState = runStateOf((toolCtx ?? ctx) as PipelineCtx);
-      // Le run n'a plus personne pour répondre : le pilote est mort, ou l'échéance
-      // est passée. Une question posée MAINTENANT resterait sans réponse jusqu'à la
+      // Le run n'a plus personne pour répondre : le pilote est mort. Une question
+      // posée MAINTENANT resterait sans réponse jusqu'à la
       // fin du process — le modèle doit rendre la main.
-      const stop = runStopReason(pi, callState.watchParent);
+      const stop = runStopReason(callState.watchParent);
       if (stop !== null) {
         return { content: [{ type: "text" as const, text: `Error: ${stop}` }], isError: true };
       }
@@ -408,7 +404,7 @@ export function registerAskTool(pi: ExtensionAPI, ctx: PipelineCtx, deps: { noti
         publish();
       }
       // Le run s'est arrêté PENDANT que la question était en vol (pilote disparu,
-      // échéance du drapeau) : la question est rejetée avec le motif, jamais
+      // tour interrompu) : la question est rejetée avec le motif, jamais
       // laissée en attente d'une réponse qui ne viendra pas.
       if (answer.failed !== undefined) {
         return { content: [{ type: "text" as const, text: `Error: ${answer.failed}` }], isError: true };

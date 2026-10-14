@@ -210,7 +210,6 @@ function feature(slug: string, worktree: string, state: "pending" | "running" = 
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     unreadableRuns: 0,
     reviewHash: null,
     lastVerdict: null,
@@ -385,6 +384,8 @@ test("replace-rpc-mode-by-native-rest-api/AC-4 : le service fait avancer un mail
   // le suivant démarre dès que le premier rend la main (le tour est immédiat ici).
   pilot.sweep();
   await eventually(() => readLot(stateDir, lotRepoKey(repoRoot))?.features[0]?.state !== "pending", "le maillon doit avancer");
+  // La référence HEAD d'un run d'impl est relevée avant son lancement : le prompt part un instant après.
+  await eventually(() => stub.prompts.length === 1, "le run d'impl doit démarrer");
   assert.equal(stub.prompts.length, 1);
   assert.equal(pilot.health().sessions, 0, "aucune session servie n'était nécessaire");
   // La CONDUITE d'un projet vit dans le service et reçoit l'AMORCE `/project`

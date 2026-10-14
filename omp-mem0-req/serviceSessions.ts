@@ -27,7 +27,6 @@ export type MaillonIdentity = {
   stateDir: string;
   worktree: string;
   inbox: string | null;
-  deadlineAt: number | null;
   /** Le modèle principal du groupe (S-2) : `null` = « défaut OMP ». Pilote le retour au principal (S-3). */
   primary: string | null;
   /** Le repli du groupe (S-2) : `null` = aucun repli. */

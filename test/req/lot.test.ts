@@ -214,7 +214,6 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
     prUrl: null,
     stopReason: null,
     fixes: 0,
-    reviewRuns: 0,
     // Champs publiés pour le panneau et compteurs de la revue : le lot les ÉCRIT,
     // donc un lot relu les porte — un fixture qui les omettait ne serait plus
     // identique à ce que `readLot` rend (l'invariant du lot est l'aller-retour).
@@ -584,7 +583,7 @@ test("un run interrompu ne reprend que si le contrat a bougé", () => {
 // ---------------------------------------------------------------------------
 
 test("la chaîne route chaque maillon sur le seul contrat", () => {
-  const base = { fixes: 0, reviewRuns: 1, cap: 3 };
+  const base = { fixes: 0, cap: 3 };
   assert.deepEqual(nextChainAction({ ...base, phase: "req", outcome: "ok", contract: "" }), {
     kind: "wait",
     waitKind: "answer",
@@ -1186,7 +1185,7 @@ test("le plafond est celui FIGÉ dans le lot, pas celui de l'environnement du pi
   seedLot(
     stateDir,
     repoRoot,
-    [feature("alpha", { worktree, state: "running", phase: "review", fixes: 3, reviewRuns: 1, contractHash: "autre" })],
+    [feature("alpha", { worktree, state: "running", phase: "review", fixes: 3, contractHash: "autre" })],
     { reviewCap: 3 },
   );
 
@@ -1292,7 +1291,7 @@ test("lot/AC-5 : la chaîne enchaîne collecte, specs, implémentation et revue 
   lot = readLot(deps.stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "waiting");
   assert.equal(lot.features[0]!.waitKind, "review");
-  assert.equal(lot.features[0]!.reviewRuns, 1);
+  assert.equal(lot.features[0]!.unreadableRuns, 0, "un verdict lisible remet le compteur illisible à zéro");
   assert.equal(lot.features[0]!.lastVerdict, "clean", "le verdict lu est publié pour le panneau");
   assert.equal(lot.features[0]!.lastBlockers, 0);
 });
@@ -1386,7 +1385,7 @@ test("lot/AC-6 : une revue qui remonte des problèmes relance l'implémentation 
   writeContract(worktree, CONTRACT_BLOCKERS);
   const { controller, runs, stateDir } = mkCtl(repoRoot, { runner: mkRunner({ mode: "pending" }).runner });
   const seeded = seedLot(stateDir, repoRoot, [
-    feature("alpha", { worktree, state: "running", phase: "review", reviewRuns: 1, contractHash: "x" }),
+    feature("alpha", { worktree, state: "running", phase: "review", contractHash: "x" }),
   ]);
   seeded.features[0]!.contractHash = "different-du-contrat";
 
@@ -1407,7 +1406,7 @@ test("lot/AC-7 : au plafond, la boucle s'arrête et la feature apparaît bloqué
   seedLot(
     stateDir,
     repoRoot,
-    [feature("alpha", { worktree, state: "running", phase: "review", fixes: 3, reviewRuns: 4, contractHash: "autre" })],
+    [feature("alpha", { worktree, state: "running", phase: "review", fixes: 3, contractHash: "autre" })],
     { reviewCap: 3 },
   );
 
@@ -1651,7 +1650,7 @@ test("lot/AC-13 : relancer une feature bloquée ne touche pas aux autres pipelin
       phase: "impl",
       stopReason: "boom",
       fixes: 2,
-      reviewRuns: 2,
+      unreadableRuns: 2,
       contractHash: "x",
     }),
     feature("beta", { worktree: tmpdir("lot-other-wt-"), state: "running", phase: "review" }),
@@ -1659,6 +1658,8 @@ test("lot/AC-13 : relancer une feature bloquée ne touche pas aux autres pipelin
   const otherBefore = readLot(stateDir, lotRepoKey(repoRoot))!.features[1]!;
 
   assert.equal(await controller.relaunch("alpha"), null);
+  // La référence HEAD d'un run d'impl est relevée avant son lancement : le run part un instant après.
+  await flush();
 
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
   assert.equal(lot.features[0]!.state, "running");
@@ -1667,7 +1668,7 @@ test("lot/AC-13 : relancer une feature bloquée ne touche pas aux autres pipelin
     1,
     "la relance ouvre un nouveau crédit, et le run de correction qu'elle lance est compté",
   );
-  assert.equal(lot.features[0]!.reviewRuns, 0, "aucune revue n'a été lancée");
+  assert.equal(lot.features[0]!.unreadableRuns, 0, "la relance remet le compteur illisible à zéro, aucune revue lancée");
   assert.match(runs[0]!.spec.prompt, /^\[reprise\]/);
   assert.match(runs[0]!.spec.prompt, /\[impl --fix\]/, "la revue bloquante impose la correction");
   assert.deepEqual(lot.features[1]!, otherBefore, "l'autre pipeline est intact");
@@ -2901,7 +2902,6 @@ test("un run de lot arme son maillon au démarrage et clôt son entrée à la fi
   );
   assert.deepEqual(app.flags.sort(), [
     "panel-inbox",
-    "pipeline-deadline",
     "pipeline-feature",
     "pipeline-lot",
     "pipeline-phase",

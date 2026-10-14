@@ -952,14 +952,18 @@ export function lotFeatureLabel(feature: LotFeature): string {
 
 /**
  * Le TOUR de la boucle `/review` ⇄ `/impl --fix` (PANEL-5), quand il y a quelque
- * chose à lire : un tour de CORRECTION en cours dit lequel et sur quel plafond
- * (`fixes` passes consommées), une revue en cours dit son tour (`reviewRuns`).
+ * chose à lire : le compteur réellement BORNÉ, affiché tel quel — `fixes` en
+ * correction, `unreadableRuns` en revue (relancée après un verdict illisible).
+ * Les compteurs sont incrémentés AU LANCEMENT par `arm()` : ils disent déjà le
+ * tour en cours, donc aucun +1. Rien quand le compteur concerné vaut 0.
  * Pur : tout vient du lot, rien d'une horloge.
  */
 export function reviewLoopLabel(lot: Lot, feature: LotFeature): string | null {
   if (feature.state !== "running" && feature.state !== "waiting") return null;
-  if (feature.phase === "impl" && feature.fixes > 0) return `--fix · tour ${feature.fixes + 1}/${lot.reviewCap}`;
-  if (feature.phase === "review") return `tour ${feature.reviewRuns + 1}/${lot.reviewCap}`;
+  if (feature.phase === "impl" && feature.fixes > 0) return `--fix · tour ${feature.fixes}/${lot.reviewCap}`;
+  if (feature.phase === "review" && (feature.unreadableRuns ?? 0) > 0) {
+    return `tour ${feature.unreadableRuns}/${lot.reviewCap}`;
+  }
   return null;
 }
 

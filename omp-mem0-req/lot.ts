@@ -164,13 +164,12 @@ export type LotFeature = {
   stopReason: string | null;
   /** Tours de correction `impl --fix` consommés (plafond, S-5). */
   fixes: number;
-  /** Passes de `review` consommées (borne du verdict illisible). */
-  reviewRuns: number;
   /**
-   * Passes de revue au verdict ILLISIBLE consommées. Compteur DISTINCT de
-   * `reviewRuns` : borner l'illisible sur le total des revues faisait bloquer une
-   * feature dès qu'elle avait corrigé ses bloquants (« verdict illisible après 4
-   * passes » alors qu'une seule l'était). Remis à zéro par tout verdict lisible.
+   * Passes de revue au verdict ILLISIBLE consommées (borne du verdict illisible),
+   * comptées au lancement. Borner l'illisible sur le total des revues faisait
+   * bloquer une feature dès qu'elle avait corrigé ses bloquants (« verdict
+   * illisible après 4 passes » alors qu'une seule l'était). Remis à zéro par tout
+   * verdict lisible.
    */
   unreadableRuns?: number;
   /**
@@ -917,7 +916,6 @@ export function asLotFeature(raw: unknown): LotFeature | null {
     prUrl: asStringOrNull(f.prUrl),
     stopReason: asStringOrNull(f.stopReason),
     fixes: Math.max(0, Math.trunc(num(f.fixes, 0))),
-    reviewRuns: Math.max(0, Math.trunc(num(f.reviewRuns, 0))),
     unreadableRuns: Math.max(0, Math.trunc(num(f.unreadableRuns, 0))),
     reviewHash: asStringOrNull(f.reviewHash),
     // Un verdict hors vocabulaire est lu comme ABSENT plutôt que de faire rejeter
@@ -1254,11 +1252,11 @@ export function auditRelayOpen(stateDir: string, feature: LotFeature, ownerPid: 
 export const LOT_RUN_TIMEOUT_MS = 3_600_000;
 
 /**
- * Marge de SÉCURITÉ ajoutée à l'échéance passée à l'enfant (`--pipeline-deadline`) :
- * c'est une borne d'orphelin, jamais l'échéance de travail. Le pilote est seul juge
- * du budget de travail, qu'il suspend pendant une question en vol (S-8 §1) ; une
- * échéance d'enfant calée sur le budget de travail tuerait un run qui attend une
- * réponse humaine, exactement le défaut qu'on répare.
+ * Marge de SÉCURITÉ ajoutée à l'échéance `spec.deadline` du runner hébergé
+ * (minuteur du runner → abort → code 124) : borne de sécurité, jamais budget de
+ * travail. Le pilote est seul juge du budget de travail, qu'il suspend pendant une
+ * question en vol (S-8 §1) ; une échéance de runner calée sur le budget de travail
+ * tuerait un run qui attend une réponse humaine, exactement le défaut qu'on répare.
  */
 export const LOT_RUN_DEADLINE_MARGIN_MS = 3_600_000;
 
