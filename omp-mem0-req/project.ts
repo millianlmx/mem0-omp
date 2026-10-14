@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { isReviewCapReason } from "./chain.ts";
 import { realpathOr, toSlug } from "./git.ts";
 import { LOT_EDITOR_MAX, isLotBaseSha, lotFeature, lotRepoKey } from "./lot.ts";
-import type { Lot } from "./lot.ts";
+import type { Lot, LotFeature } from "./lot.ts";
 import { fallbackSlotsField, modelSlotsField } from "./models.ts";
 import type { ModelSlots } from "./models.ts";
 import type { RelayItem } from "./relay.ts";
@@ -552,6 +552,18 @@ export function renderProjectDoc(project: Project, repoName: string): string {
 // --- l'avancement depuis le lot (S-7) ----------------------------------------
 
 /**
+ * Le suffixe du motif de l'arbitre (S-8) : une feature dont le cap ou l'échec a été
+ * escaladé par l'arbitre devient l'échec de projet habituel, avec son motif en plus.
+ */
+function arbiterMotive(lf: LotFeature): string {
+  const escalation = lf.escalation;
+  if (escalation === undefined) return "";
+  if (!escalation.key.startsWith("cap:") && !escalation.key.startsWith("failure:")) return "";
+  return ` — motif de l'arbitre : ${escalation.reason}`;
+}
+
+
+/**
  * Les features du segment courant resynchronisées depuis le lot (S-7 §1) : PURE.
  * Rend le projet mis à jour (copie) et les évènements du document, un par
  * transition — aucun évènement, aucun changement.
@@ -586,17 +598,21 @@ export function syncFromLot(project: Project, lot: Lot | null, now: number): { p
           else fail("lot", "pipeline terminée sans PR");
           break;
         case "failed":
-          fail("lot", `pipeline en erreur : ${lf.stopReason ?? "sans motif"}`);
+          // Un cap ou un échec en arbitrage n'est pas encore un échec de projet (S-8) :
+          // l'arbitre peut relancer la feature, qui repart sans jamais l'avoir été.
+          if (lf.arbitration !== undefined) break;
+          fail("lot", `pipeline en erreur : ${lf.stopReason ?? "sans motif"}${arbiterMotive(lf)}`);
           break;
         case "blocked":
           // Un quota épuisé n'est pas un échec (S-5) : la feature attend la décision
           // de l'utilisateur, groupée par fournisseur (relais ou /pipelines).
           if (lf.quota !== undefined) break;
-          if (isReviewCapReason(lf.stopReason)) fail("lot", `plafond de revue atteint : ${lf.stopReason}`);
-          else fail("lot", `pipeline bloquée : ${lf.stopReason ?? "sans motif"}`);
+          if (lf.arbitration !== undefined) break;
+          if (isReviewCapReason(lf.stopReason)) fail("lot", `plafond de revue atteint : ${lf.stopReason}${arbiterMotive(lf)}`);
+          else fail("lot", `pipeline bloquée : ${lf.stopReason ?? "sans motif"}${arbiterMotive(lf)}`);
           break;
         case "cancelled":
-          fail("lot", "pipeline abandonnée");
+          fail("lot", lf.stopReason !== null ? `pipeline abandonnée : ${lf.stopReason}` : "pipeline abandonnée");
           break;
         default:
           break;

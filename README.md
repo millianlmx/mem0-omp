@@ -492,6 +492,12 @@ le pipeline ne choisit jamais un modèle de remplacement à sa place.
   (`[reprise] …`) sur `M` tant que le principal est épuisé, et revient sur lui à son
   échéance. Deux refus, rien n'est modifié : `aucune feature bloquée par le quota <fournisseur>`
   et `<M> est épuisé <échéance> — choisis un autre modèle`.
+- **Quota dans un lot arbitré** : une feature `blocked` par un quota, dans un lot arbitré
+  (session `/audit` ou `/project` de la feature), est **relancée automatiquement à
+  l'échéance** du quota (registre `quota.json` compris), sans aucun changement de modèle ni
+  de repli et sans compter dans la borne de relances de l'arbitre ; avant l'échéance, et
+  dans un lot sans arbitre, l'escalade ci-dessus reste le seul chemin (voir « L'arbitre
+  éphémère »).
 
 ### Contexte des runs
 
@@ -1033,9 +1039,13 @@ s'affiche tel quel au lieu d'être avalé.
   options d'origine), et ta réponse — ou `Valider les specs` / `Accepter la revue et livrer
   (PR)` — part **mot pour mot**, source `utilisateur`. Les outils `audit_reply` et
   `audit_approve` n'existent plus : la session ne répond jamais seule. Elle reçoit encore
-  les échecs, le plafond de la boucle revue ⇄ correction et les groupes de quota ; aucune
-  PR n'est ouverte avant ta décision. Quand plusieurs pipelines demandent en même temps,
-  leurs dialogues s'ouvrent **un à la fois**, dans l'ordre des demandes. Pendant un
+  les groupes de quota ; le plafond de la boucle revue ⇄ correction et l'échec d'un run
+  lui sont relayés **directement** quand le lot n'a pas d'arbitre, et seulement **escaladés**
+  sinon (un échec est un élément `failure`, message `[audit] Échec — feature <slug>`,
+  dialogue « Relancer la feature » / « Abandonner la feature (worktree et branche
+  conservés) ») ; aucune PR n'est ouverte avant ta décision. Quand plusieurs pipelines
+  demandent en même temps, leurs dialogues s'ouvrent **un à la fois**, dans l'ordre des
+  demandes. Pendant un
   arbitrage le panneau affiche `arbitrage en cours` et refuse réponse, `v` et `y`
   (`arbitrage en cours — la décision sera consignée au journal`, de même par la commande de
   canal). Une feature escaladée n'est plus jamais arbitrée pour la même question : seule une
@@ -1148,7 +1158,11 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   segment suivant ne démarre, et l'échec te revient avec trois choix : **relancer** la
   feature, la **retirer** du plan (le segment s'achève sans elle), ou **arrêter** le
   projet (plus aucune pipeline n'est lancée ; celles en cours continuent sous
-  `/pipelines`).
+  `/pipelines`). Un plafond ou un échec d'une feature arbitrée n'est retenu qu'une fois
+  l'arbitre passé : tant que l'arbitrage court, le projet n'en voit rien ; une relance de
+  l'arbitre remet la feature en marche sans qu'elle ait été un échec de projet ; une
+  escalade ou un abandon de l'arbitre devient l'échec habituel, avec le motif de l'arbitre
+  dans la raison.
 - **Évolution du plan** : `project_amend` propose la nouvelle liste des segments pas
   encore démarrés — ajout, retrait ou modification de features, sur ta demande ou à
   l'initiative de l'agent. Tu l'appliques, la corriges ou la rejettes : rien n'est
@@ -1181,8 +1195,9 @@ feature), dans une session interactive — le contexte optionnel est transmis à
   reprise, sur le modèle cadrage+revue de la feature (principal puis repli, gardés par le registre des
   quotas), avec pour cwd le worktree de la feature. **L'arbitre tourne toujours sur le groupe
   cadrage+revue (principal puis repli), quelle que soit la phase de l'élément arbitré** : s'il est
-  épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe exécution. Les quotas,
-  les échecs et le plafond de la boucle revue ⇄ correction ne sont jamais arbitrés.
+  épuisé pour quota, l'élément est escaladé, jamais basculé sur le groupe exécution. Le **plafond**
+  de la boucle revue ⇄ correction et l'**échec** d'un run sont arbitrés aussi, et le **quota**
+  épuisé a son propre traitement (sous-puces Plafond, Échec, Quota ci-dessous).
   - **Corpus** : le rapport du contexte (`(aucun rapport)` quand il n'existe pas — audits et
     projets antérieurs —, sans bloquer), le brief, le contrat, le **journal du lot** (les
     entrées de toutes les features du même audit ou projet — feature, question, source,
@@ -1224,6 +1239,48 @@ feature), dans une session interactive — le contexte optionnel est transmis à
     `feature.escalation` posée) ; chaque décision acceptée est consignée au journal avec sa
     justification (motif, citations, références, rubriques ; les anciennes lignes sans ce
     champ restent lues). Une question déjà au journal est livrée telle quelle, sans arbitre.
+  - **Plafond de la boucle revue ⇄ correction** (arbitré dès qu'une feature a un contexte
+    d'audit ou de projet) : l'arbitre lit `## Revue` (les bloquants) et `## Corrections`, puis
+    rend l'une de trois décisions — **relancer** avec un recentrage (les bloquants précis à
+    lever, ce qui a déjà été tenté ; le recentrage n'est injecté que dans le prompt du run
+    `/impl --fix` qui suit, jamais dans une relance `R` ultérieure ni dans le journal), **abandonner**
+    (la feature est annulée avec le motif de l'arbitre comme raison d'arrêt ; worktree et
+    branche conservés) ou **escalader** quand les bloquants dépendent d'un préalable extérieur
+    (PR à fusionner, décision produit).
+  - **Échec d'un run** : l'arbitre reçoit la raison d'arrêt, la fin de stderr (2 000
+    caractères) et la fin de stdout (4 000 caractères) du run, puis **relance** — le run repart
+    avec les mêmes modèle principal et repli, sans aucune écriture de modèle — ou
+    **escalade** quand la cause est hors de portée (binaire absent, git refusé,
+    authentification). Un échec ne s'abandonne pas.
+  - **Quota épuisé** : jamais arbitré, et l'arbitre ne choisit jamais un modèle ni un repli
+    (le repli est celui de l'utilisateur, déjà appliqué par le runner). Avant l'échéance du
+    quota, l'élément `quota:<fournisseur>` est relayé à l'utilisateur comme ci-dessus ; une
+    fois l'échéance (`exhaustedUntil`) passée et le registre `quota.json` libéré, chaque
+    feature **arbitrée** encore bloquée par ce quota est relancée **sans changement de
+    configuration de modèles** (une seule fois, à sa propre échéance). Ces relances ne
+    comptent dans aucune borne. **Sans arbitre**, aucune relance n'a lieu, même après
+    l'échéance : tu relances toi-même (`R`) ou tu choisis un repli.
+  - **Bornes** : au plus **2 relances** par l'arbitre au titre du plafond et **2** au titre de
+    l'échec, pour une même feature, avec deux compteurs **indépendants**
+    (`feature.arbiterRelaunches`, persisté dans le lot). Une fois la borne atteinte, le
+    plafond ou l'échec suivant est escaladé sans relance ni session d'arbitre, avec le motif
+    `borne de relances par l'arbitre atteinte (2/2)`. Les compteurs ne sont remis à zéro que
+    par la **livraison** de la feature : ni `R`, ni une réponse, ni un choix de repli ne les
+    remettent à zéro. Le nombre de relances n'est pas configurable.
+  - **Journal** : une relance (plafond ou échec), un abandon et une relance de quota à
+    l'échéance sont consignés au journal avec la source `arbitrage`, la phase de la feature
+    et la justification de l'arbitre ; une escalade n'est pas journalisée. Le panneau
+    affiche sur le rang d'une feature relancée par l'arbitre `relancé par l'arbitre (k/2)`,
+    où `k` est le compteur du motif de la dernière relance (plafond ou échec), jusqu'à la
+    livraison.
+  - **Repli à l'utilisateur** : sans arbitre (lot non arbitré) ou arbitre indisponible
+    (modèle de la phase épuisé — `arbitre indisponible : quota épuisé (<fournisseur>)` —,
+    run de l'arbitre en échec ou sans décision — `arbitre sans décision`), le plafond,
+    l'échec et le quota remontent à l'utilisateur comme avant : aucune relance automatique
+    et aucun compteur incrémenté. Pour `/project`, un plafond ou un échec **en cours
+    d'arbitrage** n'est pas encore un échec de projet ; s'il est escaladé, l'échec de projet
+    habituel est relayé avec ` — motif de l'arbitre : …` ajouté à sa raison, et une feature
+    abandonnée par l'arbitre porte `pipeline abandonnée : <motif>`.
   Aucun message ne part vers la session `/project`, qu'elle soit ouverte ou non.
   L'étape sait d'où vient la réponse : `[réponse de l'utilisateur]`, `[réponse tirée du
   contexte]` ou `[réponse de l'arbitre]` en tête du prompt, `Réponse tirée du contexte` /

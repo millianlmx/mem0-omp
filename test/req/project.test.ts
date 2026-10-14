@@ -230,7 +230,7 @@ function feature(slug: string, over: Partial<LotFeature> = {}): LotFeature {
 /** Pose l'escalade que le verdict `escalate` d'un arbitre laisserait sur chaque élément courant de la clé de relais. */
 function escalateAll(stateDir: string, repoRoot: string, key: string): void {
   const lot = readLot(stateDir, lotRepoKey(repoRoot))!;
-  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false });
+  const items = relayItemsOf(lot, key, (f) => (f.worktree === "" ? null : liveRunFor(stateDir, f.worktree)), { cap: false, failure: false });
   for (const item of items) {
     if (item.kind === "cap" || item.kind === "quota" || item.kind === "failure") continue;
     const milestone = item.kind === "specs" || item.kind === "review";

@@ -1627,7 +1627,7 @@ test("context-optimization-architecture/AC-5 : deux features sans repli sur un m
 
   // Le relais : UN élément pour le fournisseur, quel que soit le nombre de features.
   const key = fx.featureOf("alpha").auditSession!;
-  const items = relayItemsOf(fx.lot()!, key, () => null, { cap: false });
+  const items = relayItemsOf(fx.lot()!, key, () => null, { cap: false, failure: false });
   assert.equal(items.length, 1, "un seul élément pour deux features bloquées");
   assert.equal(items[0]!.kind, "quota");
   assert.equal(items[0]!.key, "quota:prov");
@@ -2770,7 +2770,7 @@ async function br5Scenario(profile: Br5Profile) {
       `Décision réservée à l'utilisateur : appelle ${profile}_escalate avec l'élément ${escalation.key}.`,
     ].join("\n"),
   );
-  assert.equal(content, escalationRelayMessage(profile, { ...relayItemsOf(findLot(s.stateDir)!, s.auditKey, () => null, { cap: profile === "audit" })[0]!, escalation } as never));
+  assert.equal(content, escalationRelayMessage(profile, { ...relayItemsOf(findLot(s.stateDir)!, s.auditKey, () => null, { cap: profile === "audit", failure: false })[0]!, escalation } as never));
   assert.deepEqual(rig.messages[0]!.options, { triggerTurn: true, deliverAs: "followUp" });
 
   // Session parente FERMÉE : /pipelines porte l'escalade.

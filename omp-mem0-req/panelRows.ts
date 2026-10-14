@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { PipelinePhase } from "./contract.ts";
 import { realpathOr, toSlug } from "./git.ts";
-import { auditRelayOpen, blockedQuotaOf, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, quotaGroupsOf, readLot, relayFooter, rowReply, runnable } from "./lot.ts";
+import { ARBITER_RELAUNCH_MAX, auditRelayOpen, blockedQuotaOf, freeSlots, hasFreeSlot, heldBySlots, lotFeature, lotOwnerAlive, lotPathFor, lotRepoKey, lotStateLabel, lotTotals, lotWaitLabel, quotaGroupsOf, readLot, relayFooter, rowReply, runnable } from "./lot.ts";
 import type { Lot, LotFeature, LotFeatureState, LotRunRecord, QuotaGroup } from "./lot.ts";
 import type { AddFeatureInput } from "./lotController.ts";
 import { DEFAULT_MODEL_CHOICE, DEFAULT_MODEL_SHORT_LABEL, MODEL_GROUP_LABELS, featureFallbackForPhase, featureModelSlots, filterModelChoices, groupOfStep, isFallbackStep, stepChoices } from "./models.ts";
@@ -1044,6 +1044,17 @@ export function escalationRows(feature: LotFeature): Array<{ text: string; tone:
   return [];
 }
 
+/**
+ * La sous-ligne « relancé par l'arbitre (<k>/<borne>) » (S-12) : `k` est le compteur
+ * du motif de la DERNIÈRE relance de l'arbitre (cap ou échec). `null` tant que
+ * l'arbitre n'a jamais relancé la feature ; le champ disparaît à la livraison.
+ */
+export function arbiterRelaunchRow(feature: LotFeature): string | null {
+  const relaunches = feature.arbiterRelaunches;
+  if (relaunches === undefined) return null;
+  return `relancé par l'arbitre (${relaunches[relaunches.last]}/${ARBITER_RELAUNCH_MAX})`;
+}
+
 
 /** Le maillon d'un rang : `/impl <id> (<i>/<N>)` pendant l'impl par lot (S-13), `/<phase>` sinon. */
 function phaseLabel(feature: LotFeature, phase: PipelinePhase): string {
@@ -1560,6 +1571,8 @@ export function buildPanelRows(
         for (const row of escalationRows(feature)) {
           entry.push(...serviceRow(row.text, row.tone, innerW, { target: index, selected }));
         }
+        const relaunched = arbiterRelaunchRow(feature);
+        if (relaunched !== null) entry.push(...serviceRow(relaunched, "dim", innerW, { target: index, selected }));
         const pr = prRow(feature);
         if (pr !== null) entry.push(...serviceRow(pr, "dim", innerW, { target: index, selected }));
         const peaks = contextPeakLine(feature.runs);

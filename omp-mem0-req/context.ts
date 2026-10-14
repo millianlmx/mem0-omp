@@ -11,7 +11,7 @@ import type { PipelinePhase } from "./contract.ts";
 /** D'où vient une décision : le contexte (brief, journal), l'arbitre, l'utilisateur. */
 export type DecisionSource = "contexte" | "arbitrage" | "utilisateur";
 
-export type JournalKind = "question" | "jalon" | "quota" | "contexte";
+export type JournalKind = "question" | "jalon" | "quota" | "contexte" | "plafond" | "echec";
 
 /** La phase d'une entrée : un maillon du pipeline, ou la session parente hébergée qui note un dépassement de contexte. */
 export type JournalPhase = PipelinePhase | "project" | "audit";
@@ -311,7 +311,7 @@ export function appendJournal(
 
 
 const PHASES: ReadonlySet<string> = new Set(["req", "specs", "impl", "review", "release", "project", "audit"]);
-const KINDS: ReadonlySet<string> = new Set(["question", "jalon", "quota", "contexte"]);
+const KINDS: ReadonlySet<string> = new Set(["question", "jalon", "quota", "contexte", "plafond", "echec"]);
 const SOURCES: ReadonlySet<string> = new Set(["contexte", "arbitrage", "utilisateur"]);
 
 

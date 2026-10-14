@@ -29,23 +29,32 @@ export const ARBITER_DEADLINE_MS = 600_000;
  */
 export const ARBITER_TOOLS = ["read", "grep", "glob", "lsp", "arbiter_decide"] as const;
 
-/** Les genres d'éléments que l'arbitre peut juger : `cap`, `failure` et `quota` n'y vont JAMAIS. */
-export type ArbiterItemKind = "ask" | "question" | "specs" | "review";
+/** Les genres d'éléments que l'arbitre peut juger : le quota n'y va JAMAIS. */
+export type ArbiterItemKind = "ask" | "question" | "specs" | "review" | "cap" | "failure";
 
 export type ArbiterItem = {
   kind: ArbiterItemKind;
   slug: string;
   phase: PipelinePhase;
-  /** La question d'une étape (`ask`, `question`) ; `null` pour un jalon. */
+  /** La question d'une étape (`ask`, `question`) ; `null` pour un jalon, un plafond et un échec. */
   question: string | null;
   options: string[];
+  /** La raison d'arrêt de la feature (cap, failure). */
+  stopReason?: string | null;
+  /** La fin de sortie du run échoué (failure) : `feature.failureOutput ?? null`. */
+  output?: { stderr: string; stdout: string } | null;
+  /** Les sections `## Revue` et `## Corrections` du contrat du worktree (cap). */
+  review?: string | null;
+  corrections?: string | null;
 };
 
 /** Ce que l'outil `arbiter_decide` transporte (S-6). */
 export type ArbiterDecision = {
-  decision: "answer" | "approve" | "escalate";
+  decision: "answer" | "approve" | "escalate" | "relaunch" | "abandon";
   answer?: string;
   source?: "contexte" | "arbitrage";
+  /** Le recentrage d'une relance du plafond : les bloquants à lever et ce qui a déjà été tenté. */
+  refocus?: string;
   /** Passages copiés tels quels du corpus (espaces repliés). */
   citations?: string[];
   /** `chemin:ligne` ou `chemin:début-fin`, chemin relatif au worktree. */
@@ -79,7 +88,9 @@ export type ArbiterGround = {
 export type ArbiterEffect =
   | { kind: "answer"; answer: string; source: "contexte" | "arbitrage"; selected: boolean; justification?: DecisionJustification }
   | { kind: "approve"; justification?: DecisionJustification }
-  | { kind: "escalate"; reason: string };
+  | { kind: "escalate"; reason: string }
+  | { kind: "relaunch"; refocus: string | null; justification: DecisionJustification }
+  | { kind: "abandon"; reason: string; justification: DecisionJustification };
 
 export const ARBITER_RECORDED = "décision enregistrée";
 export const ARBITER_ALREADY = "Error: décision déjà enregistrée";
@@ -103,8 +114,10 @@ export function milestoneQuestion(kind: "specs" | "review"): string {
 }
 
 
-/** La question affichée d'un élément : celle de l'étape, ou le jalon. */
+/** La question affichée d'un élément : celle de l'étape, le jalon, ou le plafond / l'échec (S-3 §5). */
 export function itemQuestion(item: ArbiterItem): string {
+  if (item.kind === "cap") return "plafond de la boucle revue ⇄ correction atteint : relancer un cycle, répondre au maillon /review ou abandonner ?";
+  if (item.kind === "failure") return `échec du run /${item.phase} : relancer ou abandonner ?`;
   return item.question ?? milestoneQuestion(item.kind as "specs" | "review");
 }
 
@@ -203,6 +216,47 @@ export function buildArbiterCorpus(input: {
 }
 
 
+/**
+ * Le bloc d'un élément de type plafond ou échec (S-2), ou `null` pour les autres genres.
+ * Il suit `étape : /<phase>` dans le prompt ET précède le corpus dans le texte où les
+ * citations sont vérifiées : une citation tirée de la revue, des corrections ou de la
+ * sortie du run est donc vérifiable.
+ */
+export function arbiterItemBlock(item: ArbiterItem): string | null {
+  if (item.kind === "cap") {
+    return [
+      "type : plafond de la boucle revue ⇄ correction",
+      `motif : ${item.stopReason ?? "(sans motif)"}`,
+      "décisions possibles :",
+      "- relaunch : relancer un cycle de correction ; `refocus` OBLIGATOIRE — les bloquants précis à lever et ce qui a déjà été tenté",
+      "- abandon : abandonner la feature (worktree et branche conservés) ; `reason` est le motif d'arrêt",
+      "- escalate : seulement si les bloquants dépendent d'un préalable extérieur (PR à fusionner, décision produit)",
+      "",
+      "## Revue (bloquants)",
+      item.review ?? "(section absente)",
+      "",
+      "## Corrections",
+      item.corrections ?? "(section absente)",
+    ].join("\n");
+  }
+  if (item.kind === "failure") {
+    const output =
+      item.output === undefined || item.output === null
+        ? ["sortie : (aucune sortie conservée)"]
+        : ["stderr (fin) :", item.output.stderr || "(vide)", "stdout (fin) :", item.output.stdout || "(vide)"];
+    return [
+      "type : échec du run",
+      `raison d'arrêt : ${item.stopReason ?? "(sans motif)"}`,
+      ...output,
+      "décisions possibles :",
+      "- relaunch : relancer le run tel quel (mêmes modèle principal et repli) ; `refocus` est ignoré",
+      "- escalate : quand la cause est hors de portée d'une relance (binaire absent, git refusé, authentification)",
+    ].join("\n");
+  }
+  return null;
+}
+
+
 /** Le prompt de l'arbitre : directive, élément, corpus (S-9). */
 export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: ReviewEvidence | null = null): string {
   const head = [
@@ -210,7 +264,10 @@ export function buildArbiterPrompt(item: ArbiterItem, corpus: string, review: Re
     `feature : ${item.slug}`,
     `étape : /${item.phase}`,
   ];
-  if (item.question !== null) {
+  const block = arbiterItemBlock(item);
+  if (block !== null) {
+    head.push(block);
+  } else if (item.question !== null) {
     head.push(`type : question`, `question : ${item.question}`);
     if (item.options.length > 0) head.push("options :", ...item.options.map((label, index) => `${index + 1}. ${label}`));
   } else {
@@ -233,8 +290,14 @@ export function recordArbiterDecision(
   if (capture.decision !== null) return { text: ARBITER_ALREADY, isError: true };
   const record = params && typeof params === "object" && !Array.isArray(params) ? (params as Record<string, unknown>) : {};
   const decision = record.decision;
-  if (decision !== "answer" && decision !== "approve" && decision !== "escalate") {
-    return { text: "Error: decision doit valoir answer, approve ou escalate", isError: true };
+  if (
+    decision !== "answer" &&
+    decision !== "approve" &&
+    decision !== "escalate" &&
+    decision !== "relaunch" &&
+    decision !== "abandon"
+  ) {
+    return { text: "Error: decision doit valoir answer, approve, escalate, relaunch ou abandon", isError: true };
   }
   const source = record.source === "contexte" || record.source === "arbitrage" ? record.source : undefined;
   const strings = (value: unknown): string[] | undefined =>
@@ -246,6 +309,7 @@ export function recordArbiterDecision(
     decision,
     reason: typeof record.reason === "string" ? record.reason : "",
     ...(typeof record.answer === "string" ? { answer: record.answer } : {}),
+    ...(typeof record.refocus === "string" ? { refocus: record.refocus } : {}),
     ...(source !== undefined ? { source } : {}),
     ...(citations !== undefined ? { citations } : {}),
     ...(references !== undefined ? { references } : {}),
@@ -440,6 +504,30 @@ export function validateArbiterDecision(
     references: verified.references,
     rubriques: verified.rubriques,
   });
+  /** Au moins une justification VÉRIFIÉE, sinon le motif du refus. */
+  const verifiedOrRefusal = (): VerifiedJustifications | string => {
+    const verified = verifyJustifications(decision, ground);
+    if (verified.provided === 0) return "aucune justification";
+    if (verified.citations.length + verified.references.length + verified.rubriques.length === 0) {
+      return `aucune justification vérifiée — ${verified.rejected.join(" ; ")}`;
+    }
+    return verified;
+  };
+  if (item.kind === "cap" || item.kind === "failure") {
+    const where = item.kind === "cap" ? "au plafond" : "à un échec";
+    if (decision.decision === "answer" || decision.decision === "approve") return invalid(`« ${decision.decision} » ne s'applique pas ${where}`);
+    if (decision.decision === "abandon" && item.kind === "failure") return invalid("« abandon » ne s'applique pas à un échec");
+    const refocus = (decision.refocus ?? "").trim();
+    if (item.kind === "cap" && decision.decision === "relaunch" && refocus === "") return invalid("recentrage vide");
+    if (decision.reason.trim() === "") return invalid("motif d'approbation vide");
+    const verified = verifiedOrRefusal();
+    if (typeof verified === "string") return invalid(verified);
+    if (decision.decision === "abandon") return { kind: "abandon", reason: decision.reason.trim(), justification: justify(verified) };
+    return { kind: "relaunch", refocus: item.kind === "cap" ? refocus : null, justification: justify(verified) };
+  }
+  if (decision.decision === "relaunch" || decision.decision === "abandon") {
+    return invalid(`« ${decision.decision} » ne s'applique qu'au plafond ou à un échec`);
+  }
   if (item.question === null) {
     if (decision.decision !== "approve") return invalid("un jalon s'approuve ou s'escalade");
     if (decision.reason.trim() === "") return invalid("motif d'approbation vide");
@@ -451,11 +539,8 @@ export function validateArbiterDecision(
   const answer = (decision.answer ?? "").trim();
   if (answer === "") return invalid("réponse vide");
   if (decision.source !== "contexte" && decision.source !== "arbitrage") return invalid("source absente ou inconnue");
-  const verified = verifyJustifications(decision, ground);
-  if (verified.provided === 0) return invalid("aucune justification");
-  if (verified.citations.length + verified.references.length + verified.rubriques.length === 0) {
-    return invalid(`aucune justification vérifiée — ${verified.rejected.join(" ; ")}`);
-  }
+  const verified = verifiedOrRefusal();
+  if (typeof verified === "string") return invalid(verified);
   const chosen = chooseOption(item.options, answer);
   if ("escalate" in chosen) return invalid(chosen.escalate);
   return { kind: "answer", answer: chosen.answer, source: decision.source, selected: chosen.selected, justification: justify(verified) };
@@ -474,13 +559,14 @@ export function registerArbiterTool(pi: ExtensionAPI, capture: ArbiterCapture): 
     name: "arbiter_decide",
     label: "Arbitre — décider",
     description:
-      "Rend la décision de l'arbitre sur l'élément soumis, UNE seule fois : decision = answer (réponse à une question : answer — le libellé exact ou le numéro d'une option —, source contexte ou arbitrage, et au moins une justification : citations = passages du corpus copiés tels quels, references = chemin:ligne ou chemin:début-fin dans le worktree, rubriques = titres du rapport), approve (jalon justifié par le contrat) ou escalate (l'utilisateur tranchera) ; reason dit pourquoi en une phrase.",
+      "Rend la décision de l'arbitre sur l'élément soumis, UNE seule fois : decision = answer (réponse à une question : answer — le libellé exact ou le numéro d'une option —, source contexte ou arbitrage, et au moins une justification : citations = passages du corpus copiés tels quels, references = chemin:ligne ou chemin:début-fin dans le worktree, rubriques = titres du rapport), approve (jalon justifié par le contrat), relaunch (plafond de la boucle revue ⇄ correction : refocus = les bloquants précis à lever et ce qui a déjà été tenté ; échec d'un run : relance telle quelle), abandon (plafond seulement : reason est le motif d'arrêt) ou escalate (l'utilisateur tranchera) ; relaunch et abandon portent au moins une justification vérifiable ; reason dit pourquoi en une phrase.",
     approval: "read",
     loadMode: "essential",
     parameters: pi.arktype({
-      decision: "'answer' | 'approve' | 'escalate'",
+      decision: "'answer' | 'approve' | 'escalate' | 'relaunch' | 'abandon'",
       "answer?": "string",
       "source?": "'contexte' | 'arbitrage'",
+      "refocus?": "string",
       "citations?": "string[]",
       "references?": "string[]",
       "rubriques?": "string[]",
