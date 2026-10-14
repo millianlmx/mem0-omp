@@ -6,7 +6,7 @@ import { appendJournal } from "./context.ts";
 import { LOT_EDITOR_MAX, isRelayRefusal, lotCancelRefusal, lotReplyRefusal, lotRepoKey, lotStateCancellable, lotStateTerminal, milestoneGestureRefusal, rowReply } from "./lot.ts";
 import type { LotFeature } from "./lot.ts";
 import type { AddFeatureInput, LotPanelActions } from "./lotController.ts";
-import { DEFAULT_MODEL_CHOICE, MODEL_STEPS, featureFallbackForPhase, featureModelOf, featureModelSlots, filterModelChoices, isFallbackStep, stepChoices } from "./models.ts";
+import { DEFAULT_MODEL_CHOICE, MODEL_STEPS, featureFallbackForPhase, featureFallbackOf, featureModelOf, featureModelSlots, filterModelChoices, isFallbackStep, stepChoices } from "./models.ts";
 import type { ModelChoice, ModelStep, ModelStepDraft } from "./models.ts";
 import { exhaustedUntil } from "./quota.ts";
 import { applyExpanded, buildSessionComponents, cursorGlyph, disposeAssembly, entryKey, evictEntries, toolUi } from "./panelHost.ts";
@@ -578,6 +578,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
         if (ownSession([file])) return { kind: "closed", reason: "c'est ta session — réponds-y directement" };
         if (!deps.sessionReply) return { kind: "closed", reason: "session terminée" };
         const rowModel = featureModelOf(model.lot ?? null, row.cwd, row.phase);
+        const rowFallback = featureFallbackOf(model.lot ?? null, row.cwd, row.phase);
         return inputZone({
           slug: row.label,
           phase: row.phase,
@@ -592,6 +593,7 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
             sessionFile: file,
             label: row.label,
             ...(rowModel === null ? {} : { model: rowModel }),
+            ...(rowModel === null || rowFallback === null ? {} : { fallback: rowFallback }),
           },
         });
       }
@@ -1104,6 +1106,8 @@ export function pipelinesPanelFactory(deps: PipelinesPanelDeps) {
               // Le modèle du rang (S-5 §3) : `--model` suit la cible jusqu'à l'argv.
               // Absent, la cible est celle d'avant cette feature, sans clé `model`.
               ...(target.model ? { model: target.model } : {}),
+              // Le repli du groupe (S-5) : seulement avec un modèle porté.
+              ...(target.model && target.fallback ? { fallback: target.fallback } : {}),
             },
             text,
           );

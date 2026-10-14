@@ -319,14 +319,20 @@ Ensuite, deux causes couvrent la quasi-totalité des cas :
   choisi juste avant**. `Échap` annule
   sans rien créer. Les quatre sont **modifiables à tout moment**, depuis OMP Console ou par le
   geste `m` du panneau `/pipelines` (et par la commande de canal `models`) : un run déjà lancé n'est ni interrompu ni relancé, tout
-  run suivant utilise la valeur courante. Chaque modèle part en `--model` sur les runs de
-  **son groupe** : le groupe cadrage+revue porte `req`, `specs` et `review` (la collecte, `/specs`
-  et la revue), le groupe exécution porte `impl` (y compris `/impl --fix`) et `release` (la
-  livraison). Le repli ne sert que si ce principal est épuisé (voir « Repli
-  de modèle et quota »), et le tout s'affiche sur son rang du panneau
-  (`… · cadrage+revue anthropic/claude-opus-4-7 (repli cerebras/llama3.1-8b) · exécution défaut OMP`). Un groupe laissé sur
-  `défaut OMP` ne transmet aucun `--model`, et le niveau de réflexion n'est jamais transmis :
-  il reste celui de la config OMP.
+  run suivant utilise la valeur courante. Les runs du service (maillons du lot, arbitre) partent
+  sur le principal et reçoivent le repli de **leur groupe** — le groupe cadrage+revue porte `req`,
+  `specs` et `review` (la collecte, `/specs` et la revue), le groupe exécution porte `impl` (y
+  compris `/impl --fix`) et `release` (la livraison) —, le repli ne servant que si ce principal
+  est épuisé (voir « Repli de modèle et quota »). Les sessions interactives, elles, **basculent
+  par `setModel`** (non persisté, jamais écrit dans la config OMP) : `/req` juste après sa
+  relocalisation dans le worktree, `/specs`, `/impl`, `/impl --fix` et `/review` juste après leur
+  nouvelle session, sur le modèle du groupe de la phase lu sur la feature du lot dont le
+  worktree est le cwd. Un groupe laissé sur `défaut OMP`, un cwd **hors lot** ou une feature
+  sans modèle pour ce groupe : aucun `setModel`, le modèle de la session est conservé et la
+  notice le dit. La notice d'accueil de `/req` et celle de chaque commande nomment le modèle
+  appliqué. Le tout s'affiche sur son rang du panneau
+  (`… · cadrage+revue anthropic/claude-opus-4-7 (repli cerebras/llama3.1-8b) · exécution défaut OMP`),
+  et le niveau de réflexion n'est jamais transmis : il reste celui de la config OMP.
 
   **Chaque feature vit dans son propre worktree git.** `/req <nom-de-feature>` crée
   `<base>/<dépôt>-<hash7>/<nom>` sur la branche `feat/<nom>` (base :
@@ -442,6 +448,24 @@ le pipeline ne choisit jamais un modèle de remplacement à sa place.
   en `blocked` avec `quota` (fournisseur, modèle, échéance, phase) — jamais `failed` —,
   sa session et son worktree intacts. L'échéance s'écrit `jusqu'au JJ/MM HH:MM` ou
   `échéance non annoncée`.
+- **Les sessions interactives suivent la même règle, par `setModel`.** `/req` (après sa
+  relocalisation dans le worktree), `/specs`, `/impl`, `/impl --fix` et `/review` (après leur
+  nouvelle session) appliquent le modèle de leur groupe : principal non épuisé → le principal ;
+  principal épuisé et repli non épuisé → le repli ; sinon le modèle de la session est conservé,
+  avec un avertissement qui nomme le modèle épuisé et son échéance. L'application n'est jamais
+  persistée, et un échec (modèle inconnu d'OMP, `setModel` sans clé d'API ou qui jette)
+  avertit en nommant le modèle sans rien défaire : la session ouverte est conservée et la
+  feature reste enrôlée. Groupe sur `défaut OMP`, cwd **hors lot** ou feature sans modèle pour
+  ce groupe : aucun `setModel`, et la notice dit que le modèle de la session est conservé.
+- **Le run de conversation du panneau `/pipelines`** (une réponse envoyée à une session de
+  feature, lancée en `omp -p`) part en `--model` sur le modèle de départ de la même règle et
+  reçoit le repli du groupe en chaîne native par un overlay `--config`
+  (`<état>/conversation-overlays/<empreinte du repli>.json`, écrit de façon atomique et jamais
+  supprimé : OMP le relit pendant le run). Principal épuisé et repli disponible : le run part sur
+  le repli, sans overlay. Principal épuisé sans repli, ou repli épuisé aussi : le lancement est
+  **refusé avant tout process**, par un motif affiché dans la zone du panneau qui nomme le
+  modèle épuisé et son échéance. Cible hors lot ou sans modèle de groupe : ni `--model`, ni
+  repli, ni refus de quota.
 - `bun scripts/fallback-bench.ts <sans-repli|repli|retour|epuise>` rejoue ces
   scénarios dans une vraie session OMP, sans réseau (fournisseur `banc` scripté, HOME
   factice, `config.yml` amorcé dont l'empreinte est comparée avant/après) et imprime une

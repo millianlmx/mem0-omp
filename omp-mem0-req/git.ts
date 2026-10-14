@@ -271,7 +271,7 @@ export async function createFeatureWorktree(input: {
 // il se poste en message d'AFFICHAGE (pi.sendMessage, triggerTurn:false), jamais via
 // sendUserMessage — un tour démarré là ferait détecter le mot « fin » par
 // before_agent_start et la collecte se clôturerait avant que l'utilisateur ait parlé.
-export function buildWelcome(feature: { slug: string; branch: string; path: string }): string {
+export function buildWelcome(feature: { slug: string; branch: string; path: string; model?: string }): string {
   return (
     `[req] Feature « ${feature.slug} » ouverte dans son worktree : ${feature.path}\n` +
     `(branche ${feature.branch}, créée depuis le dépôt principal, qui n'est pas modifié ; la session\n` +
@@ -279,7 +279,8 @@ export function buildWelcome(feature: { slug: string; branch: string; path: stri
     "l'intention — résultat attendu, périmètre, criticité — et les critères d'acceptation\n" +
     "(Given/When/Then), sans toucher aux choix techniques (ça, c'est /specs).\n" +
     "Dites « fin » quand tout est dit : je figerai vos besoins et leurs critères dans\n" +
-    `${CONTRACT_PATH}, puis lancez /specs.`
+    `${CONTRACT_PATH}, puis lancez /specs.` +
+    (feature.model === undefined ? "" : `\nModèle : ${feature.model}`)
   );
 }
 
