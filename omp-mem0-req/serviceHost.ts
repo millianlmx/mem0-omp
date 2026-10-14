@@ -87,6 +87,7 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
   const api: ServiceApi = {
     health: () => pilot.health(),
     pilot: repo => pilot.pilot(repo),
+    lot: repo => pilot.lot(repo),
     command: (repo, body) => pilot.command(repo, body),
     listSessions: () => sessions.list(),
     createSession: async body => {
@@ -108,6 +109,8 @@ export function createServiceHost(options: ServiceHostOptions): ServiceHost {
         purpose,
         state: hosted.state,
         sessionFile: hosted.sessionFile,
+        contextPeak: hosted.meter?.peak() ?? null,
+        compactions: hosted.meter?.compactions() ?? 0,
       };
       return description;
     },

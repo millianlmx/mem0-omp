@@ -145,7 +145,7 @@ export function createServiceUIContext(channel: DialogChannel, log: (line: strin
  * d'extension se scinde en deux arguments positionnels côté session — la même
  * scission que `runExtensionCompact` de l'hôte (Doc-1 §5).
  */
-async function runCompact(session: AgentSession, instructions: string | CompactOptions | undefined): Promise<void> {
+export async function runCompact(session: AgentSession, instructions: string | CompactOptions | undefined): Promise<void> {
   const text = typeof instructions === "string" ? instructions : undefined;
   const options = instructions !== null && typeof instructions === "object" ? instructions : undefined;
   await session.compact(text, options);

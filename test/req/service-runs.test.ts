@@ -289,7 +289,7 @@ test("service-runs/AC-8 : une session en cours est « en cours » tant que le se
   // Le tour rend la main par le runneur : le résultat est celui de la chaîne
   // (`code 0`, `stdout` = textes assistant) et l'entrée du run disparaît (S-8).
   const result = await runner({ spec, cwd: worktree, timeout: 60_000, signal: new AbortController().signal });
-  assert.deepEqual(result, { code: 0, killed: false, stdout: "le maillon a travaillé", stderr: "", peakContext: null });
+  assert.deepEqual(result, { code: 0, killed: false, stdout: "le maillon a travaillé", stderr: "", peakContext: null, compactions: 0 });
   assert.equal(
     readStore(stateDir).running.some(candidate => candidate.cwd === worktree),
     false,

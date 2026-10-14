@@ -16,13 +16,14 @@ function fakeApi(over: Partial<ServiceApi> = {}): ServiceApi {
   return {
     health: () => ({ version: 1, pid: process.pid, startedAt: 1, sessions: 0, lots: 0 }),
     pilot: async repo => ({ repoKey: `key:${repo}`, lotId: null, state: "piloting" }),
+    lot: repo => ({ repoKey: `key:${repo}`, lot: null }),
     command: async (_repo, body) => ({
       command: body as never,
       ack: { version: 1, id: "c1", repo: "/repo", kind: "start", state: "taken", reason: null, at: 1 },
     }),
     listSessions: () => [],
-    createSession: async () => ({ id: "s1", cwd: "/repo", purpose: "session", state: "idle", sessionFile: null }),
-    getSession: id => (id === "s1" ? { id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, dialogs: [] } : null),
+    createSession: async () => ({ id: "s1", cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0 }),
+    getSession: id => (id === "s1" ? { id, cwd: "/repo", purpose: "session", state: "idle", sessionFile: null, contextPeak: null, compactions: 0, dialogs: [] } : null),
     promptSession: async id => {
       if (id !== "s1") {
         const { notFound } = await import("../../omp-mem0-req/serviceApi.ts");

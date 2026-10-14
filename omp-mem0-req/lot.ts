@@ -114,7 +114,11 @@ export type FeatureArbitration = { key: string; startedAt: number };
 /** Plafond des enregistrements de run conservés par feature (S-12). */
 export const LOT_RUNS_MAX = 100;
 
-/** Un run terminé (S-12) : son étape, son lot d'impl, le pic de contexte mesuré (`null` sans usage) et sa session. */
+/**
+ * Un run terminé (S-12) : son étape, son lot d'impl, le pic de contexte mesuré
+ * (`null` sans usage), le nombre de compactions réussies pendant le run (entier
+ * ≥ 0 ; un record ancien sans ce champ est relu à 0) et sa session.
+ */
 export type LotRunRecord = {
   step: PipelinePhase | "arbitre";
   lot: string | null;
@@ -122,6 +126,7 @@ export type LotRunRecord = {
   startedAt: number;
   endedAt: number;
   peakContext: number | null;
+  compactions: number;
   sessionFile: string | null;
 };
 
@@ -826,6 +831,7 @@ function asRunRecords(raw: unknown): LotRunRecord[] {
       startedAt: r.startedAt,
       endedAt: r.endedAt,
       peakContext: peak,
+      compactions: typeof r.compactions === "number" && Number.isInteger(r.compactions) && r.compactions >= 0 ? r.compactions : 0,
       sessionFile: typeof r.sessionFile === "string" && r.sessionFile !== "" ? r.sessionFile : null,
     });
   }
@@ -1339,6 +1345,40 @@ export function lotSlots(env: Record<string, string | undefined> = process.env):
 /** `MEM0_PIPELINE_RUN_TIMEOUT_MS` : budget d'un run (défaut 1 h). */
 export function lotRunTimeoutMs(env: Record<string, string | undefined> = process.env): number {
   return envInt(env.MEM0_PIPELINE_RUN_TIMEOUT_MS, LOT_RUN_TIMEOUT_MS, 10_000, 86_400_000);
+}
+
+
+/** Seuil SOFT par défaut (tokens) : au franchissement, le run hébergé est compacté. */
+export const LOT_CONTEXT_SOFT_DEFAULT = 120_000;
+
+/** Seuil HARD par défaut (tokens) : encore atteint après une compaction, le run est coupé. */
+export const LOT_CONTEXT_HARD_DEFAULT = 250_000;
+
+/** Les deux seuils de contexte d'un run ou d'une session hébergés. */
+export type ContextThresholds = { soft: number; hard: number };
+
+/** Entier ≥ 1 d'une variable de seuil, ou le défaut de CETTE variable (pas de borne : `envInt` bornerait au lieu de retomber). */
+function thresholdFromEnv(raw: string | undefined, fallback: number): number {
+  const text = (raw ?? "").trim();
+  if (text === "") return fallback;
+  const value = Number(text);
+  if (!Number.isFinite(value)) return fallback;
+  const whole = Math.trunc(value);
+  return whole >= 1 ? whole : fallback;
+}
+
+/**
+ * `MEM0_PIPELINE_CONTEXT_SOFT` (défaut 120000) et `MEM0_PIPELINE_CONTEXT_HARD`
+ * (défaut 250000) : seuils de contexte, relus au démarrage de chaque run ou
+ * session hébergés et jamais persistés dans le lot. Une valeur absente, vide, non
+ * numérique, nulle ou négative retombe sur le défaut de sa variable ; si `soft`
+ * atteint ou dépasse `hard`, les deux défauts s'appliquent.
+ */
+export function lotContextThresholds(env: Record<string, string | undefined> = process.env): ContextThresholds {
+  const soft = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_SOFT, LOT_CONTEXT_SOFT_DEFAULT);
+  const hard = thresholdFromEnv(env.MEM0_PIPELINE_CONTEXT_HARD, LOT_CONTEXT_HARD_DEFAULT);
+  if (soft >= hard) return { soft: LOT_CONTEXT_SOFT_DEFAULT, hard: LOT_CONTEXT_HARD_DEFAULT };
+  return { soft, hard };
 }
 
 

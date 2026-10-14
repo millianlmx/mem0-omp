@@ -906,8 +906,26 @@ export function createLotController(deps: LotControllerDeps): LotController {
       startedAt,
       endedAt: now(),
       peakContext: result.peakContext ?? null,
+      compactions: result.compactions ?? 0,
       sessionFile: session ?? null,
     });
+    // Un run coupé au plafond de contexte APRÈS une compaction (S-4) ne passe pas
+    // par la chaîne : `failed`, ou `blocked` quand une question attendait (comme
+    // l'échéance), et la session du run reste reprenable.
+    if (typeof result.contextExceeded === "number") {
+      const exceeded = `contexte dépassé (${result.contextExceeded} tokens)`;
+      // Le runner a relevé la question AVANT de clore son entrée : le magasin n'a plus rien à lire ici.
+      const pending = publishedAsk(feature.worktree) ?? result.pendingAsk ?? null;
+      if (pending) {
+        const reason = `${exceeded} pendant une question en attente : ${pending.question}`;
+        settle(lot, feature, "blocked", reason.length > LOT_REASON_MAX ? `${reason.slice(0, LOT_REASON_MAX - 1)}…` : reason);
+      } else {
+        settle(lot, feature, "failed", exceeded);
+      }
+      if (save(lot) !== null) watched.delete(slug);
+      void Promise.resolve().then(() => tick().catch(() => undefined));
+      return;
+    }
     // Un run rendu SANS modèle disponible (S-2) n'a pas échoué : son quota est
     // épuisé. La feature devient `blocked` (jamais `failed`), avec sa session et son
     // worktree intacts ; l'inscription au registre précède la sauvegarde (S-4), pour
@@ -1365,10 +1383,16 @@ export function createLotController(deps: LotControllerDeps): LotController {
           startedAt: result.startedAt,
           endedAt: result.endedAt,
           peakContext: result.peakContext ?? null,
+          compactions: result.compactions ?? 0,
           sessionFile: result.sessionFile,
         });
         save(after);
       }
+    }
+    // Un arbitre coupé au plafond de contexte n'a pas de décision exploitable :
+    // l'élément escalade par le chemin d'échec existant (S-5).
+    if (typeof result.contextExceeded === "number") {
+      return { kind: "escalate", reason: `contexte dépassé (${result.contextExceeded} tokens)` };
     }
     return validateArbiterDecision(arbiterItem, result.decision, corpus);
   }

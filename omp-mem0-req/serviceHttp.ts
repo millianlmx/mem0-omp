@@ -92,6 +92,7 @@ function decodeSegment(segment: string): string {
 type Matched =
   | { kind: "health" }
   | { kind: "pilot"; repo: string }
+  | { kind: "lot"; repo: string }
   | { kind: "command"; repo: string }
   | { kind: "sessions" }
   | { kind: "session"; id: string }
@@ -116,6 +117,7 @@ function match(method: string, segments: string[]): Matched | null {
   if (head === "health" && segments.length === 1 && method === "GET") return { kind: "health" };
   if (head === "repos" && segments.length === 3 && one !== undefined && two !== undefined) {
     if (two === "pilot" && method === "POST") return { kind: "pilot", repo: one };
+    if (two === "lot" && method === "GET") return { kind: "lot", repo: one };
     if (two === "commands" && method === "POST") return { kind: "command", repo: one };
     return null;
   }
@@ -235,6 +237,8 @@ export function createServiceRequestHandler(deps: RouterDeps) {
           return json(await deps.api.health());
         case "pilot":
           return json(await deps.api.pilot(route.repo));
+        case "lot":
+          return json(deps.api.lot(route.repo));
         case "command":
           return json({ ack: (await deps.api.command(route.repo, await readJsonBody(req, "commande"))).ack });
         case "sessions":
