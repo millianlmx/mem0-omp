@@ -15,26 +15,6 @@ import Testing
 
 @testable import OMPConsoleIOS
 
-@MainActor
-private func eventually(timeout: Double = 5, _ condition: @MainActor () -> Bool) async -> Bool {
-    let deadline = Date().addingTimeInterval(timeout)
-    while Date() < deadline {
-        if condition() { return true }
-        try? await Task.sleep(nanoseconds: 20_000_000)
-    }
-    return condition()
-}
-
-/// Attend que le trousseau ait reçu `count` lectures (borné à 5 s).
-private func readsReached(_ store: CountingTokenStore, _ count: Int) async -> Bool {
-    let deadline = Date().addingTimeInterval(5)
-    while Date() < deadline {
-        if await store.reads >= count { return true }
-        try? await Task.sleep(nanoseconds: 20_000_000)
-    }
-    return await store.reads >= count
-}
-
 /// Le résultat d'une réponse lancée en tâche : `nil` tant qu'elle n'a pas rendu.
 @MainActor
 private final class AnswerOutcome {
@@ -113,7 +93,7 @@ struct IOSSiriStatusTests {
             discovery: AnnouncingDiscovery(mac)
         )
         client.start()
-        #expect(await eventually { client.state == .connected(endpoint: mac.endpoint) })
+        await ClientDoubles.until(client, state: { $0 == .connected(endpoint: mac.endpoint) })
         #expect(streamCount(transport) == 1)
 
         let answer = await IOSSiriStatus.answer(for: client)
@@ -149,7 +129,7 @@ struct IOSSiriStatusTests {
         let task = Task { @MainActor in
             outcome.value = await IOSSiriStatus.answer(for: client)
         }
-        #expect(await readsReached(tokens, 1))
+        await tokens.readsReached(1)
         #expect(outcome.value == nil)
         #expect(client.pairing == .restoring)
 
@@ -208,7 +188,7 @@ struct IOSSiriStatusTests {
         let offAnswer = await IOSSiriStatus.answer(for: off)
         #expect(offAnswer == IOSSiriText.pairedNotJoined)
         #expect(offAnswer == "Appairé, Mac non joint")
-        #expect(await eventually { if case .macAbsent = off.state { return true } else { return false } })
+        await ClientDoubles.until(off, state: { if case .macAbsent = $0 { return true } else { return false } })
         #expect(await IOSSiriStatus.answer(for: off) == "Appairé, Mac non joint")
         off.stop()
 

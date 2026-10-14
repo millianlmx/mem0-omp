@@ -5,7 +5,12 @@
 // paquet, invisibles du projet Xcode. Les préférences et le trousseau sont les
 // doublures publiques de ConsoleClient (`InMemoryClientPreferences`,
 // `InMemoryTokenStore`). AUCUN réseau, AUCUN Mac réel, AUCUN trousseau réel.
+// AUCUNE horloge réelle non plus : sur le runner CI, les tests parallèles d'une
+// même app se disputent l'acteur principal pendant des dizaines de secondes, et
+// toute échéance murale y tombe avant que le client ait publié ce qu'il publie.
+// Les attentes suivent donc les publications (`until`, `readsReached`).
 
+import Combine
 import ConsoleClient
 import ConsoleCore
 import Foundation
@@ -62,7 +67,9 @@ final class SilentPathSource: ClientPathSource {
     func stop() {}
 }
 
-/// L'horloge de repli qui n'attend jamais et interrompt toute boucle.
+/// L'horloge de repli qui n'attend jamais et interrompt toute boucle. Passée en
+/// `readinessPacer`, l'échéance de `waitUntilReady()` ne tombe JAMAIS : seul un
+/// verdict publié par le client (prêt, refus, version, non appairé) rend l'attente.
 struct ImmediatePacer: ClientPacer {
     func sleep(seconds: Double) async throws {
         throw CancellationError()
@@ -83,6 +90,7 @@ actor CountingTokenStore: TokenStore {
     private var held: Bool
     private var gates: [CheckedContinuation<Void, Never>] = []
     private(set) var reads = 0
+    private var readWaiters: [(count: Int, continuation: CheckedContinuation<Void, Never>)] = []
 
     init(_ tokens: [String: String] = [:], held: Bool = false) {
         self.tokens = tokens
@@ -95,10 +103,20 @@ actor CountingTokenStore: TokenStore {
 
     func token(for deviceId: String) async throws -> String? {
         reads += 1
+        let reached = readWaiters.filter { $0.count <= reads }
+        readWaiters.removeAll { $0.count <= reads }
+        for waiter in reached { waiter.continuation.resume() }
         if held {
             await withCheckedContinuation { gates.append($0) }
         }
         return tokens[deviceId]
+    }
+
+    /// Rend dès que le trousseau a reçu `count` lectures (retenues ou non), sans
+    /// échéance d'horloge.
+    func readsReached(_ count: Int) async {
+        guard reads < count else { return }
+        await withCheckedContinuation { readWaiters.append((count, $0)) }
     }
 
     func remove(deviceId: String) async throws {
@@ -232,7 +250,9 @@ enum ClientDoubles {
     /// Un modèle client APPAIRÉ (préférence `client.deviceId` = `dev-1`, le jeton
     /// est celui de `tokens`), câblé sur `transport` et `discovery`, avec
     /// l'adresse manuelle `address` si elle est donnée, et l'échéance de
-    /// `waitUntilReady()` mesurée par `readinessPacer`. Le modèle n'est PAS
+    /// `waitUntilReady()` mesurée par `readinessPacer` : par défaut elle ne tombe
+    /// jamais (`ImmediatePacer`), l'attente rend le verdict que le client publie ;
+    /// `ReturningPacer` la fait tomber aussitôt (Mac muet). Le modèle n'est PAS
     /// démarré : c'est le lancement à froid d'un intent.
     @MainActor
     static func pairedModel(
@@ -240,7 +260,7 @@ enum ClientDoubles {
         transport: any ClientTransport,
         discovery: (any DiscoverySource)? = nil,
         address: String? = nil,
-        readinessPacer: any ClientPacer = LiveClientPacer()
+        readinessPacer: any ClientPacer = ImmediatePacer()
     ) -> ConsoleClientModel {
         var preferences = [ClientPreferenceKey.deviceId: "dev-1"]
         if let address { preferences[ClientPreferenceKey.manualAddress] = address }
@@ -260,5 +280,19 @@ enum ClientDoubles {
     /// Une réponse du Mac à la version de protocole de l'app.
     static func response(status: Int, json: String) -> ClientHTTPResponse {
         ClientHTTPResponse(status: status, protocolVersion: ConsoleAPI.protocolVersion, body: Data(json.utf8))
+    }
+
+    /// Attend que `client` publie un état qui satisfait `condition` (l'état
+    /// courant compris), sans échéance d'horloge.
+    @MainActor
+    static func until(_ client: ConsoleClientModel, state condition: (ClientState) -> Bool) async {
+        for await state in client.$state.values where condition(state) { return }
+    }
+
+    /// Attend que `client` publie un statut d'appairage qui satisfait `condition`
+    /// (le statut courant compris), sans échéance d'horloge.
+    @MainActor
+    static func until(_ client: ConsoleClientModel, pairing condition: (ClientPairingStatus) -> Bool) async {
+        for await pairing in client.$pairing.values where condition(pairing) { return }
     }
 }

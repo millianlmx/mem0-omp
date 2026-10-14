@@ -251,10 +251,7 @@ struct IOSSiriSessionPromptTests {
         let unauthorized = try await dictate(revokedClient)
         #expect(unauthorized == VoiceIssue.notPaired.phrase)
         #expect(prompts(revokedTransport.requests).count == 1)
-        for _ in 0..<200 {
-            if case .refused = revokedClient.pairing { break }
-            try await Task.sleep(for: .milliseconds(10))
-        }
+        await ClientDoubles.until(revokedClient, pairing: { if case .refused = $0 { return true } else { return false } })
         #expect(await revokedClient.waitUntilReady() == .pairingRefused)
         let refused = try await dictate(revokedClient)
         revokedClient.stop()
